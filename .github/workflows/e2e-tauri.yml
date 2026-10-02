@@ -102,7 +102,25 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y \
             libwebkit2gtk-4.1-dev libgtk-3-dev libsoup-3.0-dev \
-            libjavascriptcoregtk-4.1-dev webkit2gtk-driver xvfb openbox x11-utils xclip xdotool dbus-daemon nasm
+            libjavascriptcoregtk-4.1-dev webkit2gtk-driver xvfb openbox x11-utils xclip xdotool dbus-daemon nasm libavif-bin
+
+      - name: Install independent Windows AVIF decoder
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $archive = Join-Path $env:RUNNER_TEMP 'libavif-1.4.2.zip'
+          $destination = Join-Path $env:RUNNER_TEMP 'libavif-1.4.2'
+          Invoke-WebRequest 'https://github.com/AOMediaCodec/libavif/releases/download/v1.4.2/windows-artifacts.zip' -OutFile $archive
+          $expected = 'cb2d9fea43dcbab1d0707e3b37eb7b08070ad2fb60a2c188c39ec12382c0484a'
+          if ((Get-FileHash $archive -Algorithm SHA256).Hash.ToLowerInvariant() -ne $expected) {
+            throw 'Official libavif decoder archive checksum mismatch'
+          }
+          Expand-Archive $archive -DestinationPath $destination -Force
+          if (-not (Test-Path (Join-Path $destination 'avifdec.exe'))) {
+            throw 'Official libavif decoder is missing'
+          }
+          $destination >> $env:GITHUB_PATH
+          & (Join-Path $destination 'avifdec.exe') --version
 
       # Linux uses tauri-driver as its WebDriver proxy. Windows attaches
       # msedgedriver directly to the WebView2 CDP endpoint below.

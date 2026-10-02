@@ -72,6 +72,22 @@ impl PreparedCopy {
         self,
         progress: &mut impl CopyProgress,
     ) -> Result<FileMutationReceipt, AppError> {
+        self.execute_verified(progress, None)
+    }
+
+    /// Validate the original independently of the generated copy source.
+    pub(super) fn execute_verified(
+        self,
+        progress: &mut impl CopyProgress,
+        original: Option<&crate::files::image_crop::SourceRevision>,
+    ) -> Result<FileMutationReceipt, AppError> {
+        if let Some(revision) = original {
+            if let Err(error) =
+                crate::files::image_crop::verify_source(&self.spec.target.0, revision)
+            {
+                return Err(Self::retire(vec![self], error));
+            }
+        }
         let Self {
             reservation,
             spec,
@@ -98,7 +114,13 @@ impl PreparedCopy {
             // Cancellation is honored until displacement. Once the original is
             // parked, finish publication without allowing cancellation to strand it.
             progress.check_cancelled()?;
+            if let Some(revision) = original {
+                crate::files::image_crop::verify_source(&committed, revision)?;
+            }
             execution.displace_copy()?;
+            if let Some(revision) = original {
+                execution.verify_original_revision(revision)?;
+            }
             execution.publish_copy()?;
             Ok::<_, AppError>(execution.operation.state().effect_revision)
         })();

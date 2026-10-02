@@ -494,13 +494,39 @@ fn is_icns(path: &Path) -> bool {
         .unwrap_or(false)
 }
 
+/// rust-icns classifies combined monochrome+alpha images as masks, excluding
+/// valid standalone representations from available_icons(). Pure alpha masks
+/// remain excluded; each complete image type is returned only once.
+pub(crate) fn complete_icns_icons(family: &icns::IconFamily) -> Vec<icns::IconType> {
+    let mut kinds = Vec::new();
+    for kind in family
+        .elements
+        .iter()
+        .filter_map(|element| element.icon_type())
+    {
+        if kind.encoding() == icns::Encoding::MonoA && !kinds.contains(&kind) {
+            kinds.push(kind);
+        }
+    }
+    kinds.extend(family.available_icons());
+    if kinds.contains(&icns::IconType::MonoA_32x32) {
+        kinds.retain(|kind| *kind != icns::IconType::Mono_32x32);
+    }
+    let mut unique = Vec::new();
+    for kind in kinds {
+        if !unique.contains(&kind) {
+            unique.push(kind);
+        }
+    }
+    unique
+}
+
 fn decode_icns(path: &Path) -> Result<image::DynamicImage, AppError> {
     let file = fs::File::open(path)?;
     let icon_family = icns::IconFamily::read(file)
         .map_err(|e| AppError::Other(format!("Failed to read icns: {}", e)))?;
 
-    let best = icon_family
-        .available_icons()
+    let best = complete_icns_icons(&icon_family)
         .iter()
         .max_by_key(|t| t.pixel_width())
         .copied()
@@ -508,7 +534,8 @@ fn decode_icns(path: &Path) -> Result<image::DynamicImage, AppError> {
 
     let icon_image = icon_family
         .get_icon_with_type(best)
-        .map_err(|e| AppError::Other(format!("Failed to decode icns icon: {}", e)))?;
+        .map_err(|e| AppError::Other(format!("Failed to decode icns icon: {}", e)))?
+        .convert_to(icns::PixelFormat::RGBA);
 
     let width = icon_image.width();
     let height = icon_image.height();
@@ -1461,6 +1488,92 @@ mod tests {
 
     fn touch(dir: &Path, name: &str) {
         File::create(dir.join(name)).unwrap();
+    }
+
+    #[test]
+    fn cropped_legacy_icns_remains_previewable_with_original_mask_and_palette_colors() {
+        for palette in [false, true] {
+            let mut family = icns::IconFamily::new();
+            let bare =
+                icns::Image::from_data(icns::PixelFormat::Gray, 32, 32, vec![255; 1024]).unwrap();
+            family
+                .add_icon_with_type(&bare, icns::IconType::Mono_32x32)
+                .unwrap();
+            let mut image = icns::Image::new(icns::PixelFormat::RGBA, 32, 32);
+            for (index, pixel) in image
+                .data_mut()
+                .as_chunks_mut::<4>()
+                .0
+                .iter_mut()
+                .enumerate()
+            {
+                pixel.copy_from_slice(&[0, 0, 0, if index == 8 * 32 + 8 { 0 } else { 255 }]);
+            }
+            family
+                .add_icon_with_type(&image, icns::IconType::MonoA_32x32)
+                .unwrap();
+            if palette {
+                let mut colored = image.clone();
+                for pixel in colored.data_mut().as_chunks_mut::<4>().0 {
+                    pixel[..3].fill(255);
+                }
+                // Keep the independently black original MonoA pixels instead
+                // of replacing them with a regenerated white palette mask.
+                for kind in [
+                    icns::IconType::Palette4_32x32,
+                    icns::IconType::Palette8_32x32,
+                ] {
+                    family
+                        .elements
+                        .push(icns::IconElement::encode_image_with_type(&colored, kind).unwrap());
+                }
+            }
+            let dir = tempdir().unwrap();
+            let source = dir.path().join("source.icns");
+            let mut bytes = Vec::new();
+            family.write(&mut bytes).unwrap();
+            fs::write(&source, &bytes).unwrap();
+            let before = decode_icns(&source).unwrap().to_rgba8();
+            assert_eq!(before.get_pixel(8, 8).0[3], 0);
+            if palette {
+                assert_eq!(before.get_pixel(9, 8).0, [255, 255, 255, 255]);
+            }
+            let result = crate::image_crop::encode(
+                &bytes,
+                crate::image_crop::CropRect {
+                    left: 8,
+                    top: 8,
+                    right: 24,
+                    bottom: 24,
+                },
+            )
+            .unwrap();
+            let output = dir.path().join("crop.icns");
+            fs::write(&output, &result).unwrap();
+            let after = decode_icns(&output).unwrap().to_rgba8();
+            assert_eq!(after.dimensions(), (32, 32));
+            assert_eq!(after.get_pixel(0, 0).0[3], 0);
+            for y in 8..24 {
+                for x in 8..24 {
+                    assert_eq!(after.get_pixel(x, y), before.get_pixel(x, y));
+                }
+            }
+            let result = icns::IconFamily::read(result.as_slice()).unwrap();
+            for kind in complete_icns_icons(&result) {
+                let decoded = result
+                    .get_icon_with_type(kind)
+                    .unwrap()
+                    .convert_to(icns::PixelFormat::RGBA);
+                let index = ((8 * 32 + 8) * 4) as usize;
+                assert_eq!(decoded.data()[index + 3], 0);
+                let expected = if kind.encoding() == icns::Encoding::MonoA {
+                    [0, 0, 0, 255]
+                } else {
+                    [255, 255, 255, 255]
+                };
+                assert_eq!(&decoded.data()[index + 4..index + 8], &expected);
+            }
+        }
     }
 
     #[test]

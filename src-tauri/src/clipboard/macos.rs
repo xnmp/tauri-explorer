@@ -269,7 +269,17 @@ mod native_clipboard_tests {
     #[test]
     #[ignore = "replaces the macOS pasteboard"]
     fn native_clipboard_ownership_round_trip() {
-        let paths = vec!["/tmp/cut me é.txt".to_string()];
+        // clipboard-rs 0.3 validates file URLs against the filesystem.
+        // Exercise ownership with real files, as Copy/Cut supplies in the app.
+        let directory = tempfile::tempdir().unwrap();
+        let paths: Vec<String> = ["cut me é.txt", "100% #?.md"]
+            .into_iter()
+            .map(|name| {
+                let path = directory.path().join(name);
+                std::fs::write(&path, b"native clipboard fixture").unwrap();
+                path.to_str().unwrap().to_owned()
+            })
+            .collect();
         let mut backend = backend();
         assert_eq!(backend.cut_unavailable_reason(), None);
 

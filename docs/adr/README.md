@@ -32,3 +32,4 @@ decision during review.
 | [0024](0024-mutation-admission-coverage.md) | Mutation admission coverage | Accepted |
 | [0025](0025-linux-volume-mount-authority.md) | Linux volume discovery and mount authority | Proposed |
 | [0026](0026-durable-recovery-checkpoint-engine.md) | One checkpoint engine for durable recovery kinds | Proposed |
+| [0027](0027-git-avatar-cache-lifecycle.md) | Git avatar lookup and cache lifecycle | Accepted |

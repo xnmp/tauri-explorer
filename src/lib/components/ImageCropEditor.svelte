@@ -26,10 +26,16 @@
   onMount(() => { void session.open(sourcePath, sourceName); });
   onDestroy(() => session.dispose());
   function close(): void { if (editorState.phase !== "saving") session.close(); }
+  function commitPosition(input: HTMLInputElement, edge: CropEdge): void {
+    session.edge(edge, input.valueAsNumber);
+    // Intermediate text belongs to the native input until blur or Enter.
+    // Restore invalid input and normalize clamped coordinates at that boundary.
+    if (session.state.rect) input.value = String(session.state.rect[edge]);
+  }
   const edges: readonly CropEdge[] = ["left", "top", "right", "bottom"];
 </script>
 
-<Modal open={true} onClose={close} label="Crop image" overlayClass="image-crop-overlay" closeOnBackdrop={false} closeOnEscape={editorState.phase !== "saving"}>
+<Modal open={true} onClose={close} canClose={() => editorState.phase !== "saving"} label="Crop image" overlayClass="image-crop-overlay" closeOnBackdrop={false} closeOnEscape={editorState.phase !== "saving"}>
   <div class="modal-card crop-editor" aria-busy={busy}>
     <div class="dialog-header">
       <h2>Crop image</h2>
@@ -47,7 +53,8 @@
           <label>{edge[0].toUpperCase()}{edge.slice(1)}
             <input type="number" aria-label={`${edge} pixel position`} min="0" max={edge === "left" || edge === "right" ? editorState.size.width : editorState.size.height}
               step="1" value={editorState.rect[edge]} disabled={busy || confirmReplace}
-              oninput={(event) => session.edge(edge, event.currentTarget.valueAsNumber)} />
+              onchange={(event) => commitPosition(event.currentTarget, edge)}
+              onkeydown={(event) => { if (event.key === "Enter") { event.preventDefault(); commitPosition(event.currentTarget, edge); } }} />
           </label>
         {/each}
         <span class="crop-output" role="status">Selected: {output?.width} × {output?.height} px</span>

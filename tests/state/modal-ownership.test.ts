@@ -46,3 +46,18 @@ it("a close callback may close remaining dialogs without closing itself twice", 
   ownership.closeAll();
   expect(closed).toBe(1);
 });
+
+it("a surface that cannot close retains ownership until its work settles", async () => {
+  const { createModalOwnership } = await import("$lib/state/modal-ownership.svelte");
+  const ownership = createModalOwnership();
+  let pending = true;
+  let closed = 0;
+  ownership.register(() => { closed++; }, () => !pending);
+  ownership.closeAll();
+  expect(closed).toBe(0);
+  expect(ownership.hasOpen).toBe(true);
+  pending = false;
+  ownership.closeAll();
+  expect(closed).toBe(1);
+  expect(ownership.hasOpen).toBe(false);
+});

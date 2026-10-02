@@ -111,3 +111,46 @@ for (const mode of VIEW_MODES) {
     await expect.poll(() => page.locator(".preview-image").evaluate((image) => (image as HTMLImageElement).naturalWidth)).toBe(480);
   });
 }
+
+test("pixel positions can be typed digit by digit and commit on blur or Enter", async ({ page }) => {
+  await open(page, "details");
+  const left = page.getByRole("spinbutton", { name: "left pixel position" });
+  await left.fill("32"); await left.press("Tab");
+  const right = page.getByRole("spinbutton", { name: "right pixel position" });
+  await right.focus(); await right.press("ControlOrMeta+A"); await right.pressSequentially("480");
+  await expect(right).toHaveValue("480");
+  await right.press("Tab");
+  await expect(page.getByRole("slider", { name: "Right crop edge" })).toHaveAttribute("aria-valuenow", "480");
+  await left.fill(""); await left.press("Tab");
+  await expect(left).toHaveValue("32");
+  await right.fill("470"); await right.press("Enter");
+  await expect(page.locator(".crop-output")).toHaveText("Selected: 438 × 384 px");
+});
+
+test("an accepted save keeps modal input ownership through Escape and settles once", async ({ page }) => {
+  await open(page, "details");
+  await page.evaluate(async () => {
+    const { getMockControl } = await import("/src/lib/api/mock-control.ts");
+    const control = getMockControl();
+    control.imageCropSave = async () => {
+      document.documentElement.dataset.cropSaveAccepted = "true";
+      await new Promise<void>((resolve) => window.addEventListener("release-crop-save", () => resolve(), { once: true }));
+      delete control.imageCropSave;
+      throw new Error("Held native save refused for this fixture");
+    };
+  });
+  await page.getByRole("button", { name: "Save copy", exact: true }).click();
+  await expect.poll(() => page.evaluate(() => document.documentElement.dataset.cropSaveAccepted)).toBe("true");
+  await page.keyboard.press("Escape"); await page.keyboard.press("ControlOrMeta+Shift+P");
+  await expect(page.locator(".command-palette-dialog")).toBeHidden();
+  await expect(page.getByRole("dialog", { name: "Crop image", exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Cancel", exact: true })).toBeDisabled();
+  await page.evaluate(() => window.dispatchEvent(new Event("release-crop-save")));
+  await expect(page.getByRole("alert")).toHaveText("Held native save refused for this fixture");
+  const count = await page.evaluate(async () => (await import("/src/lib/api/mock-control.ts")).getMockControl().invokeCounts?.save_image_crop);
+  expect(count).toBe(1);
+  await page.getByRole("button", { name: "Cancel", exact: true }).click();
+  await expect(page.getByRole("dialog", { name: "Crop image", exact: true })).toBeHidden();
+  await page.keyboard.press("ControlOrMeta+Shift+P");
+  await expect(page.locator(".command-palette-dialog")).toBeVisible();
+});

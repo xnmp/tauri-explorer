@@ -37,7 +37,10 @@ async function open(file: string): Promise<void> {
 }
 async function crop(left = 32, top = 24, right = 480, bottom = 360): Promise<void> {
   for (const [edge, position] of [["left", left], ["top", top], ["right", right], ["bottom", bottom]] as const) {
-    await $(`input[aria-label="${edge} pixel position"]`).setValue(String(position));
+    await $(`input[aria-label="${edge} pixel position"]`).click();
+    await browser.keys(["Control", "a"]);
+    await browser.keys(String(position));
+    await browser.keys("Tab");
     await expect(slider(edge[0].toUpperCase() + edge.slice(1))).toHaveAttribute("aria-valuenow", String(position));
   }
 }
@@ -89,6 +92,12 @@ function icons(bytes: Buffer): Map<string, Buffer> {
 const nativeDescribe = process.platform === "linux" || process.platform === "win32" ? describe : describe.skip;
 nativeDescribe("native image cropping", () => {
   before(async () => { await browser.setWindowSize(1400, 1000); });
+  afterEach(async () => {
+    if (await $(dialog).isDisplayed()) {
+      await browser.keys("Escape");
+      await $(dialog).waitForDisplayed({ reverse: true });
+    }
+  });
   for (const extension of ["png", "jpg", "gif", "webp", "bmp", "svg", "avif", "icns"]) {
     it(`saves a real ${extension} copy, preserves the original and displays the output`, async () => {
       const name = `quadrants.${extension}`;

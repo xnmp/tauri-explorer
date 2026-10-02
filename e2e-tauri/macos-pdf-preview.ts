@@ -36,7 +36,9 @@ export async function qualifyMacosPdf(browser: Browser, fixture: string, output:
     { display, fixtureSha256: originalHash, steps: [], passed: false, error: null };
   const save = () => fs.writeFileSync(path.join(directory, "report.json"), `${JSON.stringify(report, null, 2)}\n`);
   const record = (name: string, result: unknown) => { report.steps.push({ name, result }); save(); };
-  const textElement = (text: string) => browser.$(`//XCUIElementTypeStaticText[@value='${text}']`);
+  // Exact text has an own-attribute native XCTest locator; XPath instead
+  // searches a serialized accessibility snapshot, which can omit live rows.
+  const textElement = (text: string) => browser.$(`-ios predicate string:elementType == 48 AND value == '${text}'`);
   const button = (label: string) => browser.$(`-ios predicate string:elementType == 9 AND (label == '${label}' OR title == '${label}')`);
   async function rect(element: Awaited<ReturnType<typeof browser.$>>): Promise<Rect> {
     return { ...await element.getLocation(), ...await element.getSize() };
@@ -44,17 +46,77 @@ export async function qualifyMacosPdf(browser: Browser, fixture: string, output:
   async function key(key: string, modifierFlags = 0) {
     await browser.execute("macos: keys", { keys: [{ key, modifierFlags }] });
   }
-  async function command(label: string) {
+  async function accessibilityProbe(stage: string) {
+    const observations: Record<string, unknown> = { stage };
+    async function observe(name: string, operation: () => Promise<unknown>) {
+      try { observations[name] = await operation(); }
+      catch (error) { observations[name] = { error: String(error) }; }
+    }
+    // Preserve each discovery path before any selection or recovery gesture.
+    await observe("xml", async () => {
+      const file = `${stage}.xml`;
+      fs.writeFileSync(path.join(directory, file), await browser.getPageSource());
+      return file;
+    });
+    await observe("description", async () => {
+      const file = `${stage}.txt`;
+      const source = await browser.execute("macos: source", { format: "description" });
+      fs.writeFileSync(path.join(directory, file), String(source));
+      return file;
+    });
+    await observe("screenshot", async () => {
+      const file = `${stage}.png`;
+      await browser.saveScreenshot(path.join(directory, file));
+      return file;
+    });
+    const queries = {
+      nativePdf: `-ios predicate string:elementType == 48 AND value == '${pdfName}'`,
+      xpathPdf: `//XCUIElementTypeStaticText[@value='${pdfName}']`,
+      focused: "-ios predicate string:amHasKeyboardInputFocus == true",
+    };
+    for (const [name, selector] of Object.entries(queries)) {
+      await observe(name, async () => {
+        const elements = await browser.$$(selector);
+        const matches = [];
+        for (const element of elements) {
+          if (matches.length === 12) break;
+          const attributes: Record<string, unknown> = { id: element.elementId };
+          for (const attribute of ["elementType", "value", "label", "title", "selected", "enabled", "hittable"]) {
+            try { attributes[attribute] = await element.getAttribute(attribute); }
+            catch (error) { attributes[attribute] = { error: String(error) }; }
+          }
+          try { attributes.rect = { ...await element.getLocation(), ...await element.getSize() }; }
+          catch (error) { attributes.rect = { error: String(error) }; }
+          matches.push(attributes);
+        }
+        return { count: elements.length, matches };
+      });
+    }
+    await observe("rows", async () => (await browser.$$("XCUIElementTypeTableRow")).length);
+    await observe("cells", async () => (await browser.$$("XCUIElementTypeCell")).length);
+    await observe("tablePdf", async () => {
+      const table = await browser.$("-ios predicate string:elementType == 26 AND label == 'Files'");
+      return (await table.$$(queries.nativePdf)).length;
+    });
+    await observe("paletteInputs", async () => (await browser.$$("-ios predicate string:placeholderValue == 'Type a command...'")).length);
+    fs.writeFileSync(path.join(directory, `${stage}.json`), `${JSON.stringify(observations, null, 2)}\n`);
+    record(stage, observations);
+  }
+  async function command(label: string, diagnose = false) {
+    if (diagnose) await accessibilityProbe("ax-01-before-palette");
     await key("p", (1 << 4) | (1 << 1));
     const input = await browser.$("-ios predicate string:placeholderValue == 'Type a command...'");
     await input.waitForDisplayed({ timeout: 15_000 });
+    if (diagnose) await accessibilityProbe("ax-02-palette-open");
     await browser.execute("macos: keys", { keys: Array.from(label), elementId: input.elementId });
     // WKWebView exposes the selected option as one flattened accessibility
     // row: its title includes the category and optional shortcut.
     const result = await browser.$(`-ios predicate string:elementType == 48 AND selected == true AND (title == 'VIEW ${label}' OR title BEGINSWITH 'VIEW ${label} ')`);
     await result.waitForDisplayed({ timeout: 15_000 });
+    if (diagnose) await accessibilityProbe("ax-03-before-result-click");
     await result.click();
     await input.waitForExist({ reverse: true, timeout: 15_000 });
+    if (diagnose) await accessibilityProbe("ax-04-palette-closed");
   }
   async function select(name: string) {
     const entry = await textElement(name);
@@ -119,7 +181,7 @@ export async function qualifyMacosPdf(browser: Browser, fixture: string, output:
     await (await textElement(`${percent}%`)).waitForDisplayed({ timeout: 15_000 });
   }
   try {
-    await command("Reset Zoom");
+    await command("Reset Zoom", true);
     await select(pdfName);
     await command("Dock Preview Pane Right");
     const fit = await rendered("01-fit-page-1", 1, result => fitted(result, 1));

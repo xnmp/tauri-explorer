@@ -78,6 +78,27 @@ mod platform {
                         url.absoluteString().map(|value| value.to_string()),
                         url.path().map(|value| value.to_string()),
                     );
+                    #[cfg(test)]
+                    {
+                        use objc2_foundation::NSURLComponents;
+
+                        let explicit = NSURL::fileURLWithPath_isDirectory(&NSString::from_str(path), false);
+                        let components = NSURLComponents::new();
+                        components.setScheme(Some(&NSString::from_str("file")));
+                        components.setHost(Some(&NSString::from_str("")));
+                        components.setPath(Some(&NSString::from_str(path)));
+                        for (name, candidate) in [("explicit_directory", Some(explicit)), ("components", components.URL())] {
+                            let encoded = candidate.as_ref().and_then(|url| url.absoluteString());
+                            let parsed = encoded.as_ref().and_then(|encoded| NSURL::URLWithString(encoded));
+                            let decoded = parsed.as_ref().and_then(|url| url.path()).map(|value| value.to_string());
+                            eprintln!(
+                                "846-MAC-DIAG constructor={name} input={path:?} encoded={:?} decoded={decoded:?} bytes={:?} exact={}",
+                                encoded.map(|value| value.to_string()),
+                                decoded.as_ref().map(|value| value.as_bytes()),
+                                decoded.as_deref() == Some(path.as_str()),
+                            );
+                        }
+                    }
                     let url = url.absoluteString()?;
                     let item = NSPasteboardItem::new();
                     // SAFETY: the pasteboard type is an immutable AppKit constant.

@@ -1,6 +1,7 @@
 import { browser, $, expect } from "@wdio/globals";
 import fs from "node:fs";
 import path from "node:path";
+import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { domText, entryPathSelector, navigateTo } from "./helpers";
 import { createNativeFixtureDirectory } from "../native-qualification";
@@ -9,6 +10,8 @@ import { formatSize } from "../../src/lib/domain/file";
 const fixtures = fileURLToPath(new URL("../fixtures/image-crop/", import.meta.url));
 const codecFixtures = fileURLToPath(new URL("../../src-tauri/test_support/fixtures/", import.meta.url));
 const scratch = fs.realpathSync(createNativeFixtureDirectory("explorer-image-crop-"));
+const oracleRoot = createNativeFixtureDirectory("avif-decoder-oracle-");
+let oracleNumber = 0;
 const screenshotRoot = process.env.IMAGE_CROP_SCREENSHOTS;
 const slider = (edge: string) => $(`[role="slider"][aria-label="${edge} crop edge"]`);
 const button = (name: string) => $(`button=${name}`);
@@ -52,7 +55,20 @@ async function crop(left = 32, top = 24, right = 480, bottom = 360): Promise<voi
   }
 }
 const dataUrl = (data: Buffer, extension: string) => `data:${({ png: "image/png", jpg: "image/jpeg", gif: "image/gif", webp: "image/webp", bmp: "image/bmp", svg: "image/svg+xml", avif: "image/avif" } as Record<string, string>)[extension]};base64,${data.toString("base64")}`;
+function independentlyDecoded(data: Buffer, extension: string): { data: Buffer; extension: string } {
+  if (extension !== "avif" || !["linux", "win32"].includes(process.platform)) return { data, extension };
+  // Ubuntu WebKit cannot decode AVIF; WebView2 and PNG references can use
+  // different decode/color pipelines. Decode actual filesystem output with
+  // the independent system/official libavif CLI on both native test platforms.
+  // Keep exact assertions and avoid using the app's own display fallback.
+  const prefix = path.join(oracleRoot, String(++oracleNumber));
+  fs.writeFileSync(`${prefix}.avif`, data);
+  execFileSync("avifdec", [`${prefix}.avif`, `${prefix}.png`], { stdio: "pipe", timeout: 15_000 });
+  return { data: fs.readFileSync(`${prefix}.png`), extension: "png" };
+}
 async function compare(original: Buffer, output: Buffer, extension: string, padded = false, rectangle: number[] = [32, 24, 448, 336], referenceExtension = extension) {
+  const source = independentlyDecoded(original, referenceExtension);
+  const saved = independentlyDecoded(output, extension);
   return browser.executeAsync(async (original: string, saved: string, padded: boolean, measureEdges: boolean, rectangle: number[], done: (result: unknown) => void) => {
     try {
       const load = async (url: string) => { const image = new Image(); image.src = url; await image.decode(); return image; };
@@ -105,7 +121,7 @@ async function compare(original: Buffer, output: Buffer, extension: string, padd
         edgeDisplacement,
         cornerAlpha: actual[3], centerAlpha: actual[(Math.floor(canvas.height / 2) * canvas.width + Math.floor(canvas.width / 2)) * 4 + 3] });
     } catch (error) { done({ error: String(error) }); }
-  }, dataUrl(original, referenceExtension), dataUrl(output, extension), padded, extension === "jpg", rectangle) as Promise<{
+  }, dataUrl(source.data, source.extension), dataUrl(saved.data, saved.extension), padded, extension === "jpg", rectangle) as Promise<{
     size: number[]; maximumError: number; interiorError: number; edgeDisplacement: number; cornerAlpha: number; centerAlpha: number; error?: string;
   }>;
 }
@@ -139,6 +155,7 @@ nativeDescribe("native image cropping", () => {
       const original = fs.readFileSync(path.join(fixtures, name)); fs.writeFileSync(source, original);
       await open(source);
       await expect(slider("Right")).toHaveAttribute("aria-valuenow", extension === "icns" ? "256" : "512");
+      if (extension === "avif") await expect($(".crop-note")).toHaveText(expect.stringContaining("First-frame crop preview"));
       if (extension === "icns") {
         await crop(16, 16, 240, 240);
         await expect($(".crop-note")).toHaveText(expect.stringContaining("transparent padding"));

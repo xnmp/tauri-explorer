@@ -19,6 +19,8 @@ typedef struct {
 typedef struct {
     uint8_t * data;
     size_t size;
+    uint8_t * icc;
+    size_t icc_size;
     ExplorerAvifMetadata metadata;
     char error[512];
 } ExplorerAvifOutput;

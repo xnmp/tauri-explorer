@@ -967,9 +967,20 @@ fn read_image_data_url_impl(path: String, max_bytes: Option<u64>) -> Result<Stri
         .is_some_and(|ext| ext.eq_ignore_ascii_case("icns"))
     {
         ("image/png", crate::image_crop::icon_preview(&bytes)?)
+    } else if file_path
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .is_some_and(|ext| ext.eq_ignore_ascii_case("avif"))
+    {
+        ("image/png", crate::image_crop::avif_preview(&bytes)?)
     } else {
         (mime_for_extension(&file_path), bytes)
     };
+    if bytes.len() as u64 > limit {
+        return Err(AppError::Other(
+            "Normalized image exceeds the preview size limit".into(),
+        ));
+    }
     let encoded = base64::engine::general_purpose::STANDARD.encode(&bytes);
     Ok(format!("data:{};base64,{}", mime, encoded))
 }
@@ -1104,6 +1115,28 @@ mod tests {
     use super::*;
     use std::fs::File;
     use tempfile::tempdir;
+
+    #[test]
+    fn avif_backend_preview_is_png_and_does_not_modify_the_actual_avif() {
+        use base64::Engine;
+        let root = tempdir().unwrap();
+        let path = root.path().join("oriented.AVIF");
+        let input = include_bytes!("../../test_support/fixtures/image-crop-oriented.avif");
+        fs::write(&path, input).unwrap();
+        let data = read_image_data_url_impl(path.to_string_lossy().into_owned(), None).unwrap();
+        let payload = data.strip_prefix("data:image/png;base64,").unwrap();
+        let image = image::load_from_memory(
+            &base64::engine::general_purpose::STANDARD
+                .decode(payload)
+                .unwrap(),
+        )
+        .unwrap()
+        .to_rgba8();
+        let expected = explorer_avif::decode_frame(input, 0).unwrap();
+        assert_eq!(image.dimensions(), (8, 12));
+        assert_eq!(image.as_raw(), &expected.pixels);
+        assert_eq!(fs::read(path).unwrap(), input);
+    }
 
     #[test]
     fn icns_preview_uses_largest_original_canvas_and_keeps_cropped_padding() {

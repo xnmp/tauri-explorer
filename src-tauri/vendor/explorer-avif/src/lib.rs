@@ -65,6 +65,8 @@ impl Default for Metadata {
 struct RawOutput {
     data: *mut u8,
     size: usize,
+    icc: *mut u8,
+    icc_size: usize,
     metadata: Metadata,
     error: [c_char; 512],
 }
@@ -73,6 +75,8 @@ impl Default for RawOutput {
         Self {
             data: std::ptr::null_mut(),
             size: 0,
+            icc: std::ptr::null_mut(),
+            icc_size: 0,
             metadata: Metadata::default(),
             error: [0; 512],
         }
@@ -114,6 +118,7 @@ impl Drop for Output {
 #[derive(Debug)]
 pub struct DecodedFrame {
     pub pixels: Vec<u8>,
+    pub icc_profile: Vec<u8>,
     pub metadata: Metadata,
 }
 
@@ -139,6 +144,23 @@ fn collect(output: &Output, success: i32) -> Result<Vec<u8>, String> {
     Ok(result)
 }
 
+fn collect_profile(output: &Output) -> Result<Vec<u8>, String> {
+    if output.0.icc_size == 0 {
+        return Ok(Vec::new());
+    }
+    if output.0.icc.is_null() || output.0.icc_size > 32 * 1024 * 1024 {
+        return Err("AVIF codec returned an invalid ICC profile".into());
+    }
+    // Copied while the same output owner holds both native allocations.
+    let source = unsafe { std::slice::from_raw_parts(output.0.icc, output.0.icc_size) };
+    let mut profile = Vec::new();
+    profile
+        .try_reserve_exact(source.len())
+        .map_err(|error| error.to_string())?;
+    profile.extend_from_slice(source);
+    Ok(profile)
+}
+
 pub fn crop(bytes: &[u8], rect: CropRect) -> Result<Vec<u8>, String> {
     let mut output = Output(RawOutput::default());
     // Both slices and the geometry remain live for the synchronous native call;
@@ -160,6 +182,7 @@ pub fn decode_frame(bytes: &[u8], index: u32) -> Result<DecodedFrame, String> {
         unsafe { explorer_avif_decode_frame(bytes.as_ptr(), bytes.len(), index, &mut output.0) };
     Ok(DecodedFrame {
         pixels: collect(&output, success)?,
+        icc_profile: collect_profile(&output)?,
         metadata: output.0.metadata,
     })
 }
@@ -176,6 +199,7 @@ pub fn tone_map_frame(bytes: &[u8], headroom: f32) -> Result<DecodedFrame, Strin
     };
     Ok(DecodedFrame {
         pixels: collect(&output, success)?,
+        icc_profile: collect_profile(&output)?,
         metadata: output.0.metadata,
     })
 }

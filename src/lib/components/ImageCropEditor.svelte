@@ -62,6 +62,8 @@
       </div>
       {#if editorState.capture?.format === "ICNS"}
         <p class="crop-note">ICNS retains each original icon size. The selected region is centered with transparent padding; largest output canvas: {editorState.size.width} × {editorState.size.height} px.</p>
+      {:else if editorState.capture?.format === "AVIF"}
+        <p class="crop-note">First-frame crop preview. Saving retains AVIF format, all frames, timing, color and HDR metadata.</p>
       {/if}
     {/if}
     {#if editorState.error}<p class="error-message" role="alert">{editorState.error}</p>{/if}

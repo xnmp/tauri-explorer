@@ -563,7 +563,7 @@ fn normalized_preview_refusal_preserves_the_captured_source() {
 }
 
 #[test]
-fn canonical_avif_capture_preserves_pixel_grid_and_every_frame() {
+fn canonical_avif_capture_uses_browser_compatible_first_frame_without_changing_source() {
     for name in [
         "image-crop-static.avif",
         "image-crop-oriented.avif",
@@ -583,43 +583,83 @@ fn canonical_avif_capture_preserves_pixel_grid_and_every_frame() {
         let path = root.path().join(name);
         fs::write(&path, &original).unwrap();
         let captured = capture(path.clone()).unwrap();
+        assert_eq!(captured.format, "AVIF");
         let preview = STANDARD
             .decode(
                 captured
                     .data_url
-                    .strip_prefix("data:image/avif;base64,")
+                    .strip_prefix("data:image/png;base64,")
                     .unwrap(),
             )
             .unwrap();
-        let frames = explorer_avif::decode_frame(&original, 0)
-            .unwrap()
-            .metadata
-            .frame_count;
-        for index in 0..frames {
-            let expected = explorer_avif::decode_frame(&original, index).unwrap();
-            let actual = explorer_avif::decode_frame(&preview, index).unwrap();
+        let expected = explorer_avif::decode_frame(&original, 0).unwrap();
+        let actual = image::load_from_memory(&preview).unwrap();
+        let reader = png::Decoder::new(std::io::Cursor::new(&preview))
+            .read_info()
+            .unwrap();
+        if expected.icc_profile.is_empty() {
+            assert!(reader.info().icc_profile.is_none());
             assert_eq!(
-                (actual.metadata.width, actual.metadata.height),
-                (expected.metadata.width, expected.metadata.height),
+                reader.info().coding_independent_code_points,
+                Some(png::CodingIndependentCodePoints {
+                    color_primaries: expected.metadata.color_primaries as u8,
+                    transfer_function: expected.metadata.transfer_function as u8,
+                    matrix_coefficients: 0,
+                    is_video_full_range_image: true,
+                }),
                 "{name}"
             );
-            assert_eq!(actual.pixels, expected.pixels, "{name}/{index}");
-            assert_eq!(actual.metadata.depth, expected.metadata.depth);
-            assert_eq!(actual.metadata.frame_count, expected.metadata.frame_count);
-            assert_eq!(actual.metadata.timescale, expected.metadata.timescale);
+        } else {
             assert_eq!(
-                actual.metadata.frame_duration,
-                expected.metadata.frame_duration
+                reader.info().icc_profile.as_deref(),
+                Some(expected.icc_profile.as_slice()),
+                "{name}"
             );
-            assert_eq!(actual.metadata.repetitions, expected.metadata.repetitions);
-            assert_eq!(
-                actual.metadata.sequence_present,
-                expected.metadata.sequence_present
-            );
+            assert!(reader.info().coding_independent_code_points.is_none());
         }
-        assert!(explorer_avif::decode_frame(&preview, frames).is_err());
+        let light = (expected.metadata.max_cll != 0 || expected.metadata.max_pall != 0).then_some(
+            png::ContentLightLevelInfo {
+                max_content_light_level: expected.metadata.max_cll * 10_000,
+                max_frame_average_light_level: expected.metadata.max_pall * 10_000,
+            },
+        );
+        assert_eq!(reader.info().content_light_level, light, "{name}");
+        assert_eq!(
+            (actual.width(), actual.height()),
+            (expected.metadata.width, expected.metadata.height),
+            "{name}"
+        );
+        if expected.metadata.depth == 8 {
+            assert_eq!(actual.to_rgba8().as_raw(), &expected.pixels, "{name}");
+        } else {
+            let maximum = (1u32 << expected.metadata.depth) - 1;
+            let scaled: Vec<u16> = expected
+                .pixels
+                .as_chunks::<2>()
+                .0
+                .iter()
+                .map(|sample| {
+                    ((u32::from(u16::from_ne_bytes(*sample)) * 65_535 + maximum / 2) / maximum)
+                        as u16
+                })
+                .collect();
+            assert_eq!(actual.to_rgba16().as_raw(), &scaled, "{name}");
+        }
         assert_eq!(fs::read(path).unwrap(), original);
     }
+}
+
+#[test]
+fn avif_crop_preview_keeps_authoritative_base_icc_instead_of_overriding_it_with_cicp() {
+    let preview =
+        crate::image_crop::avif_preview(include_bytes!("fixtures/image-crop-static.avif")).unwrap();
+    let decoder = png::Decoder::new(std::io::Cursor::new(preview));
+    let reader = decoder.read_info().unwrap();
+    assert_eq!(
+        reader.info().icc_profile.as_deref(),
+        Some(include_bytes!("fixtures/image-crop-srgb.icc").as_slice())
+    );
+    assert!(reader.info().coding_independent_code_points.is_none());
 }
 
 #[test]

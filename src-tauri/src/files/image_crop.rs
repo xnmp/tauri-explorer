@@ -184,7 +184,7 @@ fn capture_with_preview_limit(path: PathBuf, preview_limit: u64) -> Result<Captu
         "webp" => ("WebP", "image/webp"),
         "bmp" => ("BMP", "image/bmp"),
         "svg" => ("SVG", "image/svg+xml"),
-        "avif" => ("AVIF", "image/avif"),
+        "avif" => ("AVIF", "image/png"),
         "icns" => ("ICNS", "image/png"),
         _ => {
             return Err(AppError::Other(

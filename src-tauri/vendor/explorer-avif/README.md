@@ -3,7 +3,8 @@
 This small Rust/C interface builds pinned libavif and AOM from local source
 archives. A normal Cargo build needs CMake and a C/C++ compiler, and makes no
 network requests. Generic portable C implementations avoid an assembler
-requirement. Linux native tests pass; Windows/macOS builds still need qualification.
+requirement. The image-crop workflow qualifies codecs and filesystem saves on Linux,
+Windows and macOS; native UI qualification is tracked separately in the PR.
 
 ## Provenance
 
@@ -46,13 +47,16 @@ and gain maps in multi-frame sequences. Those inputs fail explicitly rather than
 flattening or dropping their auxiliary content. Its HDR reconstruction utility
 also refuses ICC color conversion; alternate ICC retention is tested separately.
 
-Native allocations have one Rust RAII owner and are released on all paths.
+Native pixel/profile allocations have one Rust RAII owner and are released on
+all paths. Base ICC profiles are copied into a separately bounded owned buffer
+(at most32MiB) before decoder retirement. The image layer uses that profile for
+browser-compatible PNG first-frame previews without changing AVIF save inputs.
 Input/output files are capped at200MiB, dimensions at16384 per side, a decoded
 canvas at33554432 pixels, frames at1024 and aggregate base decode work at268435456
 pixels. These are individual validation/work bounds, **not a process-memory
 ceiling**: the output-size check runs after native encoding, and codecs retain
-compressed frames. Save-worker admission/cancellation and resource qualification
-remain part of the unfinished crop feature.
+compressed frames. The file layer owns renderer/session admission, source revalidation, staged
+publication and recovery. Codec tests alone do not qualify that lifecycle.
 
 ## Verification
 

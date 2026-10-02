@@ -288,6 +288,7 @@ import { openFile } from "$lib/api/open";
 
   // Preview content state
   let previewImageUrl = $state<string | null>(null);
+  let previewImageNote = $state<string | null>(null);
   let previewText = $state<string | null>(null);
   let previewHighlightedHtml = $state<string | null>(null);
   let previewMarkdownHtml = $state<string | null>(null);
@@ -532,6 +533,7 @@ import { openFile } from "$lib/api/open";
       previewLifetime.clearBlob();
       lastPreviewKey = null;
       previewImageUrl = null;
+      previewImageNote = null;
       previewText = null;
       previewHighlightedHtml = null;
       previewMarkdownHtml = null;
@@ -563,6 +565,7 @@ import { openFile } from "$lib/api/open";
     // bytes aren't pinned in memory across navigations.
     previewLifetime.clearBlob();
     previewImageUrl = null;
+    previewImageNote = null;
     previewText = null;
     previewHighlightedHtml = null;
     previewMarkdownHtml = null;
@@ -677,6 +680,7 @@ import { openFile } from "$lib/api/open";
             await decodeImage(fallback.data);
             if (!previewLifetime.isCurrent(request)) return;
             previewImageUrl = fallback.data;
+            previewImageNote = /\.avif$/i.test(file.name) ? "AVIF fallback preview shows the first frame." : null;
           } catch (error) {
             if (!previewLifetime.isCurrent(request)) return;
             previewLifetime.releaseBlob(request, fallback.data);
@@ -985,6 +989,7 @@ import { openFile } from "$lib/api/open";
             style:transform={imageTransform}
             draggable="false"
           />
+          {#if previewImageNote}<p class="image-preview-note">{previewImageNote}</p>{/if}
           {#if fullscreen}
             <div class="fs-zoom-indicator">{Math.round(zoom * 100)}%</div>
           {/if}
@@ -1468,6 +1473,8 @@ import { openFile } from "$lib/api/open";
     height: 100%;
     border: none;
   }
+
+  .image-preview-note { position: absolute; bottom: 8px; left: 8px; right: 8px; margin: 0; padding: 4px 8px; background: var(--background-solid); color: var(--text-secondary); font-size: var(--font-size-caption); pointer-events: none; }
 
   .preview-image-container {
     display: flex;

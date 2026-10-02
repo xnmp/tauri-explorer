@@ -190,10 +190,15 @@ does not establish animated publication.
 PNG/WebP EXIF and AVIF aperture/rotation/mirroring do not have consistent
 webview support. A correctly oriented native save can therefore crop a
 different region than the editor shows. Normalize captured preview bytes
-through the same full-rectangle encoder used for saving, retaining animation
-and color metadata. Keep the original path, revision and format for publication.
-Release the first AVIF frame before encoding the whole sequence and bound
-the resulting preview before base64 IPC; that output bound does not establish
+through the same normalized pixel decoder used for saving. PNG/WebP previews
+retain animation; AVIF crop previews use a first-frame PNG because hosted
+Ubuntu WebKit cannot decode AVIF at all. Label that first-frame display and
+keep the original path, revision, format and whole sequence for publication.
+Retain base ICC in PNG iCCP without competing cICP (PNG 3 precedence); otherwise
+carry RGB/full-range cICP and content-light metadata. Scale 10/12-bit samples to
+the PNG 16-bit range in network byte order. The independent system/official avifdec CLI
+verifies saved AVIF pixels with the same PNG pipeline as the committed references.
+Bound the resulting preview before base64 IPC; that output bound does not establish
 aggregate codec memory or latency. Compare native UI saves against independent
 untagged pixel references, rather than drawing the same metadata-bearing input
 through the same browser and calling that an oracle.
@@ -216,3 +221,11 @@ the app then correctly clamps that incomplete value on blur. Trusted DOM event
 receipts distinguish this harness failure from premature input clamping. Assert
 the typed value before Tab and use real per-character actions; assigning a DOM
 value and dispatching input does not exercise the native change/blur contract.
+
+
+Hosted Windows successfully cropped and displayed oriented AVIF at 6 × 8 but
+its native AVIF decode differed by four channel values from a PNG reference.
+Do not relax the exact assertion: decode actual saved AVIF independently to
+PNG before comparing those pixels. Linux loading failures and Windows oracle
+differences are separate findings. The PNG display fallback does not replace
+real codec/filesystem tests or prove gain-map HDR reconstruction in webviews.

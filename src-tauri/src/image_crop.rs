@@ -261,31 +261,33 @@ pub(crate) fn encode_with_viewport(
 
 /// Crop and renderer coordinates must describe the same normalized pixels.
 /// Webviews ignore PNG/WebP EXIF or disagree on AVIF aperture/rotation.
-/// Normalize through the save codec, retaining animation and color metadata;
+/// Normalize through the save codec. AVIF uses a browser-compatible first-frame
+/// PNG for display; the original sequence remains the save source. Other
+/// normalized previews retain animation and color metadata;
 /// source bytes and their revision remain separate in the capture owner.
 pub(crate) fn canonical_preview(bytes: &[u8]) -> Result<Option<Vec<u8>>, AppError> {
-    let (width, height) = if explorer_avif::is_avif(bytes) {
-        // Release the first-frame pixel allocation before encoding the sequence.
-        let frame = explorer_avif::decode_frame(bytes, 0).map_err(failure)?;
-        (frame.metadata.width, frame.metadata.height)
-    } else if let Ok(format @ (ImageFormat::Png | ImageFormat::WebP)) = image::guess_format(bytes) {
-        let mut decoder = decoder(bytes, format)?;
-        use image::metadata::Orientation;
-        let orientation = decoder.orientation().map_err(failure)?;
-        if orientation == Orientation::NoTransforms {
+    if explorer_avif::is_avif(bytes) {
+        return avif_preview(bytes).map(Some);
+    }
+    let (width, height) =
+        if let Ok(format @ (ImageFormat::Png | ImageFormat::WebP)) = image::guess_format(bytes) {
+            let mut decoder = decoder(bytes, format)?;
+            use image::metadata::Orientation;
+            let orientation = decoder.orientation().map_err(failure)?;
+            if orientation == Orientation::NoTransforms {
+                return Ok(None);
+            }
+            let (width, height) = decoder.dimensions();
+            match orientation {
+                Orientation::Rotate90
+                | Orientation::Rotate270
+                | Orientation::Rotate90FlipH
+                | Orientation::Rotate270FlipH => (height, width),
+                _ => (width, height),
+            }
+        } else {
             return Ok(None);
-        }
-        let (width, height) = decoder.dimensions();
-        match orientation {
-            Orientation::Rotate90
-            | Orientation::Rotate270
-            | Orientation::Rotate90FlipH
-            | Orientation::Rotate270FlipH => (height, width),
-            _ => (width, height),
-        }
-    } else {
-        return Ok(None);
-    };
+        };
     dimensions(width, height)?;
     encode_with_viewport(
         bytes,
@@ -298,6 +300,82 @@ pub(crate) fn canonical_preview(bytes: &[u8]) -> Result<Option<Vec<u8>>, AppErro
         None,
     )
     .map(Some)
+}
+
+/// Browser-compatible normalized first frame. Display conversion is separate
+/// from save encoding: crops retain every AVIF frame, depth and source metadata.
+pub(crate) fn avif_preview(bytes: &[u8]) -> Result<Vec<u8>, AppError> {
+    let frame = explorer_avif::decode_frame(bytes, 0).map_err(failure)?;
+    let metadata = frame.metadata;
+    dimensions(metadata.width, metadata.height)?;
+    let depth = match metadata.depth {
+        8 => png::BitDepth::Eight,
+        10 | 12 | 16 => png::BitDepth::Sixteen,
+        _ => return Err(failure("Unsupported AVIF preview sample depth")),
+    };
+    let mut output = Encoded::default();
+    let mut info = png::Info::with_size(metadata.width, metadata.height);
+    info.color_type = png::ColorType::Rgba;
+    info.bit_depth = depth;
+    if frame.icc_profile.is_empty() {
+        // PNG 3 gives cICP precedence over iCCP. As in libavif's own PNG
+        // converter, an authoritative ICC profile must be emitted alone.
+        info.coding_independent_code_points = Some(png::CodingIndependentCodePoints {
+            color_primaries: u8::try_from(metadata.color_primaries).map_err(failure)?,
+            transfer_function: u8::try_from(metadata.transfer_function).map_err(failure)?,
+            matrix_coefficients: 0,
+            is_video_full_range_image: true,
+        });
+    } else {
+        info.icc_profile = Some(std::borrow::Cow::Borrowed(&frame.icc_profile));
+    }
+    if metadata.max_cll != 0 || metadata.max_pall != 0 {
+        info.content_light_level = Some(png::ContentLightLevelInfo {
+            max_content_light_level: metadata.max_cll * 10_000,
+            max_frame_average_light_level: metadata.max_pall * 10_000,
+        });
+    }
+    let color_metadata = png_crop::ColorMetadata::from(&info);
+    let mut encoder = png::Encoder::with_info(&mut output, info).map_err(failure)?;
+    if frame.icc_profile.is_empty()
+        && metadata.color_primaries == 1
+        && metadata.transfer_function == 13
+    {
+        // Older PNG decoders also understand the exact sRGB case.
+        encoder.set_source_srgb(png::SrgbRenderingIntent::RelativeColorimetric);
+        encoder.set_source_gamma(png::ScaledFloat::from_scaled(45_455));
+        encoder.set_source_chromaticities(png::SourceChromaticities::new(
+            (0.3127, 0.3290),
+            (0.64, 0.33),
+            (0.30, 0.60),
+            (0.15, 0.06),
+        ));
+    }
+    let mut writer = encoder.write_header().map_err(failure)?;
+    png_crop::color_chunks(&color_metadata, &mut writer)?;
+    let mut stream = writer.stream_writer().map_err(failure)?;
+    if depth == png::BitDepth::Eight {
+        stream.write_all(&frame.pixels)?;
+    } else {
+        // PNG samples use network byte order and the full 16-bit range.
+        // Scale 10/12-bit native samples before serializing each bounded row.
+        let maximum = (1u32 << metadata.depth) - 1;
+        for row in frame.pixels.chunks_exact(metadata.width as usize * 8) {
+            let scaled: Vec<u8> = row
+                .as_chunks::<2>()
+                .0
+                .iter()
+                .flat_map(|sample| {
+                    let value = u32::from(u16::from_ne_bytes(*sample));
+                    (((value * 65_535 + maximum / 2) / maximum) as u16).to_be_bytes()
+                })
+                .collect();
+            stream.write_all(&scaled)?;
+        }
+    }
+    stream.finish().map_err(failure)?;
+    writer.finish().map_err(failure)?;
+    Ok(output.into_bytes())
 }
 
 pub(crate) fn format_name(bytes: &[u8]) -> Result<&'static str, AppError> {

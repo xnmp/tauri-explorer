@@ -7,6 +7,7 @@
 #define MAX_PIXELS (256U * 1024U * 1024U / 8U)
 #define MAX_WORK_PIXELS ((uint64_t)256 * 1024 * 1024)
 #define MAX_FRAMES 1024
+#define MAX_PROFILE_BYTES ((size_t)32 * 1024 * 1024)
 
 int explorer_avif_is_avif(const uint8_t * bytes, size_t size)
 {
@@ -196,6 +197,17 @@ int explorer_avif_decode_frame(const uint8_t * bytes, size_t size, uint32_t inde
     }
     if (!check(output, avifDecoderNthImage(decoder, index)) || !pixels(decoder->image, NULL, &rgb, output)) goto cleanup;
     metadata(decoder, &rgb, output);
+    if (decoder->image->icc.size > MAX_PROFILE_BYTES) {
+        fail(output, "AVIF ICC profile exceeds the preview limit"); goto cleanup;
+    }
+    if (decoder->image->icc.size != 0) {
+        avifRWData profile = { NULL, 0 };
+        if (!check(output, avifRWDataSet(&profile, decoder->image->icc.data, decoder->image->icc.size))) {
+            avifRWDataFree(&profile); goto cleanup;
+        }
+        output->icc = profile.data;
+        output->icc_size = profile.size;
+    }
     output->data = rgb.pixels;
     output->size = (size_t)rgb.rowBytes * rgb.height;
     rgb.pixels = NULL; // Transfer to the Rust-owned output handle.
@@ -357,4 +369,8 @@ void explorer_avif_free(ExplorerAvifOutput * output)
     avifRWDataFree(&data);
     output->data = NULL;
     output->size = 0;
+    avifRWData profile = { output->icc, output->icc_size };
+    avifRWDataFree(&profile);
+    output->icc = NULL;
+    output->icc_size = 0;
 }

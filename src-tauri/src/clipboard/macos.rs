@@ -28,8 +28,6 @@ mod platform {
     use objc2_app_kit::{
         NSPasteboard, NSPasteboardItem, NSPasteboardTypeFileURL, NSPasteboardWriting,
     };
-    #[cfg(test)]
-    use objc2_foundation::NSURL;
     use objc2_foundation::{NSArray, NSData, NSString, NSURLComponents};
     use std::process::Command;
 
@@ -72,7 +70,7 @@ mod platform {
             let items: Option<Vec<Retained<NSPasteboardItem>>> = paths
                 .iter()
                 .map(|path| {
-                    // fileURLWithPath normalizes NFC filenames to NFD on macOS.
+                    // fileURLWithPath can normalize NFC filenames to NFD on macOS.
                     // Build a textual file URL so read-back keeps the spelling
                     // accepted by the coordinator's exact-path contract.
                     let components = NSURLComponents::new();
@@ -83,40 +81,13 @@ mod platform {
                     // Escape it in Foundation's already-encoded path component,
                     // preserving Unicode and existing percent escapes (#846).
                     let encoded_path = components.percentEncodedPath()?;
-                    let encoded_path = encoded_path.stringByReplacingOccurrencesOfString_withString(
-                        &NSString::from_str(";"),
-                        &NSString::from_str("%3B"),
-                    );
+                    let encoded_path = encoded_path
+                        .stringByReplacingOccurrencesOfString_withString(
+                            &NSString::from_str(";"),
+                            &NSString::from_str("%3B"),
+                        );
                     components.setPercentEncodedPath(Some(&encoded_path));
                     let url = components.URL()?;
-                    #[cfg(test)]
-                    eprintln!(
-                        "846-MAC-DIAG prepare input={path:?} input_bytes={:?} file_url={:?} url_path={:?}",
-                        path.as_bytes(),
-                        url.absoluteString().map(|value| value.to_string()),
-                        url.path().map(|value| value.to_string()),
-                    );
-                    #[cfg(test)]
-                    {
-                        use objc2_foundation::NSURLComponents;
-
-                        let explicit = NSURL::fileURLWithPath_isDirectory(&NSString::from_str(path), false);
-                        let components = NSURLComponents::new();
-                        components.setScheme(Some(&NSString::from_str("file")));
-                        components.setHost(Some(&NSString::from_str("")));
-                        components.setPath(Some(&NSString::from_str(path)));
-                        for (name, candidate) in [("explicit_directory", Some(explicit)), ("components", components.URL())] {
-                            let encoded = candidate.as_ref().and_then(|url| url.absoluteString());
-                            let parsed = encoded.as_ref().and_then(|encoded| NSURL::URLWithString(encoded));
-                            let decoded = parsed.as_ref().and_then(|url| url.path()).map(|value| value.to_string());
-                            eprintln!(
-                                "846-MAC-DIAG constructor={name} input={path:?} encoded={:?} decoded={decoded:?} bytes={:?} exact={}",
-                                encoded.map(|value| value.to_string()),
-                                decoded.as_ref().map(|value| value.as_bytes()),
-                                decoded.as_deref() == Some(path.as_str()),
-                            );
-                        }
-                    }
                     let url = url.absoluteString()?;
                     let item = NSPasteboardItem::new();
                     // SAFETY: the pasteboard type is an immutable AppKit constant.
@@ -139,33 +110,8 @@ mod platform {
                 .map(ProtocolObject::from_retained)
                 .collect();
             let pasteboard = NSPasteboard::generalPasteboard();
-            #[cfg(test)]
-            {
-                use objc2_foundation::NSObjectProtocol;
-
-                for (index, object) in objects.iter().enumerate() {
-                    let has_options =
-                        object.respondsToSelector(objc2::sel!(writingOptionsForType:pasteboard:));
-                    for item_type in object.writableTypesForPasteboard(&pasteboard) {
-                        let options = has_options.then(|| {
-                            object.writingOptionsForType_pasteboard(&item_type, &pasteboard)
-                        });
-                        eprintln!("846-MAC-DIAG writer item={index} writable_type={item_type:?} explicit_options={options:?}");
-                    }
-                }
-            }
-            #[cfg(test)]
-            eprintln!(
-                "846-MAC-DIAG before_clear count={}",
-                pasteboard.changeCount()
-            );
-            let _cleared_count = pasteboard.clearContents();
+            pasteboard.clearContents();
             let wrote_files = pasteboard.writeObjects(&NSArray::from_retained_slice(&objects));
-            #[cfg(test)]
-            eprintln!(
-                "846-MAC-DIAG publish cleared_count={_cleared_count} wrote_files={wrote_files} wrote_token={wrote_token} after_write_count={}",
-                pasteboard.changeCount(),
-            );
             (wrote_files, wrote_token)
         })
     }
@@ -178,80 +124,11 @@ mod platform {
         })
     }
 
-    // Diagnostic reads run after the existing proof has been committed, so
-    // they cannot supply any observation used to admit ownership.
-    #[cfg(test)]
-    fn log_pasteboard() {
-        use objc2::ClassType;
-
-        autoreleasepool(|_| {
-            let pasteboard = NSPasteboard::generalPasteboard();
-            let before = pasteboard.changeCount();
-            let token_type = NSString::from_str(TOKEN_TYPE);
-            let items = pasteboard.pasteboardItems();
-            eprintln!(
-                "846-MAC-DIAG snapshot before={before} item_count={:?} board_token={:?}",
-                items.as_ref().map(|items| items.len()),
-                pasteboard
-                    .dataForType(&token_type)
-                    .map(|data| data.to_vec()),
-            );
-            if let Some(items) = items {
-                for (index, item) in items.iter().enumerate() {
-                    // SAFETY: this is AppKit's immutable public file-URL type.
-                    let file_url = item.stringForType(unsafe { NSPasteboardTypeFileURL });
-                    let decoded = file_url
-                        .as_ref()
-                        .and_then(|value| NSURL::URLWithString(value));
-                    let path = decoded
-                        .as_ref()
-                        .and_then(|url| url.path())
-                        .map(|value| value.to_string());
-                    eprintln!(
-                        "846-MAC-DIAG snapshot item={index} types={:?} file_url={:?} decoded_path={path:?} decoded_bytes={:?} token={:?}",
-                        item.types().iter().map(|value| value.to_string()).collect::<Vec<_>>(),
-                        file_url.map(|value| value.to_string()),
-                        path.as_ref().map(|value| value.as_bytes()),
-                        item.dataForType(&token_type).map(|data| data.to_vec()),
-                    );
-                }
-            }
-            let classes = NSArray::arrayWithObject(NSURL::class());
-            // SAFETY: NSURL is an AppKit-supported pasteboard reading class.
-            let objects = unsafe { pasteboard.readObjectsForClasses_options(&classes, None) };
-            eprintln!(
-                "846-MAC-DIAG native_url_object_count={:?}",
-                objects.as_ref().map(|objects| objects.len())
-            );
-            if let Some(objects) = objects {
-                for (index, object) in objects.into_iter().enumerate() {
-                    eprintln!(
-                        "846-MAC-DIAG native_object index={index} class={:?}",
-                        object.class().name()
-                    );
-                    match object.downcast::<NSURL>() {
-                        Ok(url) => eprintln!(
-                            "846-MAC-DIAG native_url index={index} is_file={} absolute={:?} path={:?}",
-                            url.isFileURL(),
-                            url.absoluteString().map(|value| value.to_string()),
-                            url.path().map(|value| value.to_string()),
-                        ),
-                        Err(_) => eprintln!("846-MAC-DIAG native_object index={index} NSURL_downcast_failed"),
-                    }
-                }
-            }
-            eprintln!("846-MAC-DIAG snapshot after={}", pasteboard.changeCount());
-        });
-    }
-
     impl ClipboardBackend for MacFileClipboard {
         fn read_files(&mut self) -> Result<Vec<String>, AppError> {
             use clipboard_rs::Clipboard;
             // clipboard-rs reports an empty clipboard as "no files".
-            let files = pasteboard()?.get_files();
-            #[cfg(test)]
-            eprintln!("846-MAC-DIAG clipboard_rs_get_files={files:?}");
-            Ok(files.unwrap_or_default())
+            Ok(pasteboard()?.get_files().unwrap_or_default())
         }
 
         fn write_files(
@@ -273,36 +150,16 @@ mod platform {
             // Accept ownership only when both the private token and the
             // ordered file list read back at a stable change count.
             let before = Some(change_count());
-            let files = self.read_files();
-            #[cfg(test)]
-            eprintln!(
-                "846-MAC-DIAG verify before={before:?} expected={paths:?} read_files={files:?}"
-            );
-            let files_read_back = files.is_ok_and(|files| files == paths);
-            let read_back = read_token();
-            #[cfg(test)]
-            eprintln!("846-MAC-DIAG verify files_match={files_read_back} raw_token={read_back:?} expected_token={:?}", token.as_bytes());
-            let read_back = read_back.filter(|_| wrote_token && files_read_back);
+            let files_read_back = self.read_files().is_ok_and(|files| files == paths);
+            let read_back = read_token().filter(|_| wrote_token && files_read_back);
             let after = Some(change_count());
             self.ownership
                 .record_write(token, before, read_back.as_deref(), after);
-            #[cfg(test)]
-            {
-                eprintln!(
-                    "846-MAC-DIAG commit before={before:?} after={after:?} accepted_token={read_back:?} owner_at_commit={:?}",
-                    self.ownership.owner_token(after),
-                );
-                log_pasteboard();
-            }
             Ok(())
         }
 
         fn owner_token(&mut self) -> Option<String> {
-            let now = Some(change_count());
-            let owner = self.ownership.owner_token(now);
-            #[cfg(test)]
-            eprintln!("846-MAC-DIAG owner_query count={now:?} token={owner:?}");
-            owner
+            self.ownership.owner_token(Some(change_count()))
         }
 
         /// The change count identifies the ownership generation, which is

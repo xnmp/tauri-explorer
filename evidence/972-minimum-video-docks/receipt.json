@@ -1,0 +1,368 @@
+{
+  "capturedAtUTC": "2026-10-02T21:51:15.516603+00:00",
+  "head": "150d5979cb978d10262f757b871e9f1dd219e3fa",
+  "sourceSha256": {
+    "src/lib/components/VideoPreview.svelte": "e6311a48cddcd72c1e96eaf406685ba1ce5ef56b0cfa31a0877ef77ed66ffce7",
+    "src/lib/components/PreviewPane.svelte": "ae9567bf96ff3d4b73c50ef7b7f68934bb4952330969726c9c807c1fbf27e8d0",
+    "src/routes/+page.svelte": "4b0d05886edfd66fcaf994ee13867330f38818a2ab6105df72f6cd473001201c"
+  },
+  "scope": "Private headless Chromium; real browser media decode, mocked source transport and external-open IPC. No native OS launch or platform qualification claimed.",
+  "captions": {
+    "minimum-bottom-150-one-row-decoded-blue.png": "1280x720, minimum 120px bottom dock at 150%: actual decoded video sought to blue at 4s; playback, seek, sound and fullscreen controls occupy one row.",
+    "minimum-bottom-150-real-decoder-error.png": "Same viewport/dock/zoom: actual decoder rejects PDF payload; ordinary scrolling exposes the complete error and Open externally action. Actual mocked open_file dispatch observed once."
+  },
+  "video": {
+    "kind": "decoded-video",
+    "url": "http://localhost:1436/?path=/home/preview-containment",
+    "viewport": {
+      "width": 1280,
+      "height": 720
+    },
+    "userAgent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/145.0.7632.6 Safari/537.36",
+    "settings": {
+      "viewMode": "details",
+      "showPreviewPane": true,
+      "previewPanePosition": "bottom",
+      "previewPaneHeight": 120,
+      "previewPaneWidth": 160,
+      "zoomLevel": 150
+    },
+    "source": "http://localhost:1436/src/lib/api/fixtures/video-preview.webm",
+    "video": {
+      "width": 320,
+      "height": 180,
+      "readyState": 4,
+      "currentTime": 4,
+      "paused": true,
+      "rgba": [
+        0,
+        0,
+        253,
+        255
+      ],
+      "timeText": "0:04 / 0:06"
+    },
+    "player": {
+      "x": 360,
+      "y": 576.5,
+      "width": 920,
+      "height": 101.5,
+      "right": 1280,
+      "bottom": 678
+    },
+    "stage": {
+      "x": 360,
+      "y": 576.5,
+      "width": 920,
+      "height": 46.5,
+      "right": 1280,
+      "bottom": 623
+    },
+    "controlGrid": "129.135px 338.198px 114px",
+    "controls": [
+      {
+        "label": "Play video",
+        "rect": {
+          "x": 372,
+          "y": 630,
+          "width": 42,
+          "height": 42,
+          "right": 414,
+          "bottom": 672
+        },
+        "centerHit": true
+      },
+      {
+        "label": "View video fullscreen",
+        "rect": {
+          "x": 523.703125,
+          "y": 630,
+          "width": 42,
+          "height": 42,
+          "right": 565.703125,
+          "bottom": 672
+        },
+        "centerHit": true
+      },
+      {
+        "label": "Seek video",
+        "rect": {
+          "x": 577.703125,
+          "y": 630,
+          "width": 507.296875,
+          "height": 42,
+          "right": 1085,
+          "bottom": 672
+        },
+        "centerHit": true
+      },
+      {
+        "label": "Mute video",
+        "rect": {
+          "x": 1097,
+          "y": 630,
+          "width": 69,
+          "height": 42,
+          "right": 1166,
+          "bottom": 672
+        },
+        "centerHit": true
+      },
+      {
+        "label": "Video volume",
+        "rect": {
+          "x": 1172,
+          "y": 639,
+          "width": 96,
+          "height": 24,
+          "right": 1268,
+          "bottom": 663
+        },
+        "centerHit": true
+      }
+    ]
+  },
+  "error": {
+    "kind": "actual-decoder-error",
+    "url": "http://localhost:1436/?path=/home/preview-containment",
+    "viewport": {
+      "width": 1280,
+      "height": 720
+    },
+    "userAgent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/145.0.7632.6 Safari/537.36",
+    "settings": {
+      "viewMode": "details",
+      "showPreviewPane": true,
+      "previewPanePosition": "bottom",
+      "previewPaneHeight": 120,
+      "previewPaneWidth": 160,
+      "zoomLevel": 150
+    },
+    "invalidPayload": "/src/lib/api/fixtures/preview-landmarks.pdf",
+    "message": "This video format or codec is not supported by your system.",
+    "text": {
+      "x": 589.1875,
+      "y": 599.125,
+      "width": 461.625,
+      "height": 24.75,
+      "right": 1050.8125,
+      "bottom": 623.875
+    },
+    "button": {
+      "x": 749,
+      "y": 635.875,
+      "width": 142,
+      "height": 42,
+      "right": 891,
+      "bottom": 677.875
+    },
+    "buttonCenterHit": true,
+    "viewportContainsBoth": true,
+    "playerScroll": {
+      "top": 6.666666507720947,
+      "height": 133,
+      "clientHeight": 68
+    },
+    "ancestors": [
+      {
+        "tag": "DIV",
+        "className": "video-message svelte-1u4orsr",
+        "overflowX": "auto",
+        "overflowY": "auto",
+        "rect": {
+          "x": 360,
+          "y": 566.5,
+          "width": 920,
+          "height": 144,
+          "right": 1280,
+          "bottom": 710.5
+        },
+        "textWithin": true,
+        "buttonWithin": true
+      },
+      {
+        "tag": "DIV",
+        "className": "video-stage svelte-1u4orsr failed",
+        "overflowX": "hidden",
+        "overflowY": "hidden",
+        "rect": {
+          "x": 360,
+          "y": 566.5,
+          "width": 920,
+          "height": 144,
+          "right": 1280,
+          "bottom": 710.5
+        },
+        "textWithin": true,
+        "buttonWithin": true
+      },
+      {
+        "tag": "DIV",
+        "className": "video-preview svelte-1u4orsr",
+        "overflowX": "auto",
+        "overflowY": "auto",
+        "rect": {
+          "x": 360,
+          "y": 576.5,
+          "width": 920,
+          "height": 101.5,
+          "right": 1280,
+          "bottom": 678
+        },
+        "textWithin": true,
+        "buttonWithin": true
+      },
+      {
+        "tag": "DIV",
+        "className": "preview-content svelte-1d7ghmm",
+        "overflowX": "auto",
+        "overflowY": "auto",
+        "rect": {
+          "x": 360,
+          "y": 576.5,
+          "width": 920,
+          "height": 101.5,
+          "right": 1280,
+          "bottom": 678
+        },
+        "textWithin": true,
+        "buttonWithin": true
+      },
+      {
+        "tag": "DIV",
+        "className": "preview-pane svelte-1d7ghmm vertical dock-bottom",
+        "overflowX": "hidden",
+        "overflowY": "hidden",
+        "rect": {
+          "x": 360,
+          "y": 498,
+          "width": 920,
+          "height": 180,
+          "right": 1280,
+          "bottom": 678
+        },
+        "textWithin": true,
+        "buttonWithin": true
+      },
+      {
+        "tag": "DIV",
+        "className": "preview-island svelte-1uha8ag vertical",
+        "overflowX": "visible",
+        "overflowY": "visible",
+        "rect": {
+          "x": 360,
+          "y": 498,
+          "width": 920,
+          "height": 180,
+          "right": 1280,
+          "bottom": 678
+        },
+        "textWithin": true,
+        "buttonWithin": true
+      },
+      {
+        "tag": "DIV",
+        "className": "pane-preview-stack svelte-1uha8ag",
+        "overflowX": "hidden",
+        "overflowY": "hidden",
+        "rect": {
+          "x": 360,
+          "y": 57,
+          "width": 920,
+          "height": 621,
+          "right": 1280,
+          "bottom": 678
+        },
+        "textWithin": true,
+        "buttonWithin": true
+      },
+      {
+        "tag": "DIV",
+        "className": "main-content svelte-1uha8ag",
+        "overflowX": "hidden",
+        "overflowY": "hidden",
+        "rect": {
+          "x": 0,
+          "y": 57,
+          "width": 1280,
+          "height": 621,
+          "right": 1280,
+          "bottom": 678
+        },
+        "textWithin": true,
+        "buttonWithin": true
+      },
+      {
+        "tag": "MAIN",
+        "className": "explorer svelte-1uha8ag",
+        "overflowX": "visible",
+        "overflowY": "visible",
+        "rect": {
+          "x": 0,
+          "y": 0,
+          "width": 1280,
+          "height": 720,
+          "right": 1280,
+          "bottom": 720
+        },
+        "textWithin": true,
+        "buttonWithin": true
+      },
+      {
+        "tag": "DIV",
+        "className": "",
+        "overflowX": "visible",
+        "overflowY": "visible",
+        "rect": {
+          "x": 0,
+          "y": 0,
+          "width": 0,
+          "height": 0,
+          "right": 0,
+          "bottom": 0
+        },
+        "textWithin": false,
+        "buttonWithin": false
+      },
+      {
+        "tag": "BODY",
+        "className": "",
+        "overflowX": "hidden",
+        "overflowY": "hidden",
+        "rect": {
+          "x": 0,
+          "y": 0,
+          "width": 1280,
+          "height": 720,
+          "right": 1280,
+          "bottom": 720
+        },
+        "textWithin": true,
+        "buttonWithin": true
+      },
+      {
+        "tag": "HTML",
+        "className": "hljs-light",
+        "overflowX": "hidden",
+        "overflowY": "hidden",
+        "rect": {
+          "x": 0,
+          "y": 0,
+          "width": 1280,
+          "height": 0,
+          "right": 1280,
+          "bottom": 0
+        },
+        "textWithin": false,
+        "buttonWithin": false
+      }
+    ],
+    "releasedSources": 1,
+    "externalOpenDispatches": 1,
+    "rootClipNote": "Root HTML overflow applies to viewport; its zero-height CSS box is recorded but not used as viewport bounds."
+  },
+  "pngSha256": {
+    "minimum-bottom-150-real-decoder-error.png": "d945b01b8a802f87a5ef09d843d492d283ce9f4a190ed5c9a8337eaef2f069d0",
+    "minimum-bottom-150-one-row-decoded-blue.png": "39083683d7a7fcc80f30a1477e5a48fcc2f279b8b4594f2c80fe4691b2e8db80"
+  }
+}

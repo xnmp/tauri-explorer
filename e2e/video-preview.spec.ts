@@ -7,11 +7,12 @@ import type { MockControl } from "../src/lib/api/mock-control";
 // CI uses GTK on an isolated Xvfb display for decoder outcomes (#970).
 test.use({ headless: process.env.PW_VIDEO_HEADED !== "1" });
 
-async function openVideo(page: Page, mode = "details", dock = "right", zoom = 100, waitForReady = true) {
-  await page.addInitScript(({ mode, dock, zoom }) => {
+async function openVideo(page: Page, mode = "details", dock = "right", zoom = 100, waitForReady = true,
+  size = { width: 300, height: 220 }) {
+  await page.addInitScript(({ mode, dock, zoom, size }) => {
     localStorage.setItem("explorer-settings", JSON.stringify({ viewMode: mode, showPreviewPane: false,
-      previewPanePosition: dock, previewPaneWidth: 300, previewPaneHeight: 220, zoomLevel: zoom }));
-  }, { mode, dock, zoom });
+      previewPanePosition: dock, previewPaneWidth: size.width, previewPaneHeight: size.height, zoomLevel: zoom }));
+  }, { mode, dock, zoom, size });
   await page.goto("/?path=/home/user/Videos");
   await waitForEntries(page);
   await page.locator('.entry-item[data-path="/home/user/Videos/recording.mp4"]').click();
@@ -70,6 +71,38 @@ for (const mode of ALL_VIEW_MODES) {
   });
 }
 for (const dock of ["right", "top", "bottom"]) {
+  test(`minimum ${dock} dock retains decoded video and reachable controls at 150%`, async ({ page }) => {
+    await page.setViewportSize({ width: 800, height: 600 });
+    const player = await openVideo(page, "details", dock, 150, true, { width: 160, height: 120 });
+    const video = player.locator("video");
+    await expect(video).toBeVisible();
+    await expect(player.getByRole("button", { name: "Play video", exact: true })).toBeEnabled();
+    const initial = await video.boundingBox();
+    expect(initial!.height).toBeGreaterThanOrEqual(24 * 1.5 - 1);
+    await player.getByRole("button", { name: "Play video", exact: true }).click();
+    await expect.poll(() => video.evaluate(v => (v as HTMLVideoElement).currentTime)).toBeGreaterThan(0.15);
+    await player.getByRole("button", { name: "Pause video", exact: true }).click();
+    const seek = player.getByRole("slider", { name: "Seek video", exact: true });
+    await seek.scrollIntoViewIfNeeded();
+    await expect(seek).toBeInViewport();
+    await seek.fill("4");
+    await expect.poll(async () => (await decodedColor(page))[2]).toBeGreaterThan(220);
+    for (const control of await player.locator(".video-controls button,.video-controls input").all()) {
+      await control.scrollIntoViewIfNeeded();
+      await expect(control).toBeInViewport();
+      expect(await control.evaluate(element => {
+        const rect = element.getBoundingClientRect();
+        return element.contains(document.elementFromPoint(rect.x + rect.width / 2, rect.y + rect.height / 2));
+      })).toBe(true);
+    }
+    await player.evaluate(element => { element.scrollTop = 0; });
+    if (process.env.CAPTURE_EVIDENCE) {
+      await page.screenshot({ path: `screenshots/test/972-preview-containment/minimum-${dock}-150.png` });
+    }
+    await player.getByRole("button", { name: "View video fullscreen", exact: true }).click();
+    await expect(page.locator(".preview-pane")).toHaveClass(/fullscreen/);
+    await expect(video).toBeVisible();
+  });
   test(`video controls remain operable at 150% in narrow ${dock} dock`, async ({ page }) => {
     await page.setViewportSize({ width: 800, height: 600 });
     const player = await openVideo(page, "details", dock, 150);
@@ -109,6 +142,44 @@ test("unavailable source explains failure and offers external opening", async ({
   await expect(page.getByRole("button",{name:"Open externally",exact:true})).toBeVisible();
   await expect(page.getByRole("button",{name:"Play video",exact:true})).toBeDisabled();
   await expect.poll(() => page.evaluate(() => (window as unknown as { __mockControl?: MockControl }).__mockControl?.releasedVideoPreviews?.length)).toBe(1);
+});
+test("minimum dock keeps the complete media error and external-open action reachable", async ({ page }) => {
+  await page.setViewportSize({ width: 800, height: 600 });
+  await page.addInitScript(() => {
+    ((window as unknown as { __mockControl?: MockControl }).__mockControl ??= {}).videoPreview = () => {
+      throw new Error("Video file is unavailable");
+    };
+  });
+  const player = await openVideo(page, "details", "bottom", 150, false, { width: 160, height: 120 });
+  const message = player.getByRole("status");
+  await expect(message).toContainText("Video file is unavailable");
+  const text = message.locator("span");
+  await text.scrollIntoViewIfNeeded();
+  expect(await text.evaluate(element => {
+    const rect = element.getBoundingClientRect();
+    const message = element.closest(".video-message")!.getBoundingClientRect();
+    const stage = element.closest(".video-stage")!.getBoundingClientRect();
+    const player = element.closest(".video-preview")!.getBoundingClientRect();
+    return rect.top >= Math.max(message.top, stage.top, player.top) - 1 &&
+      rect.bottom <= Math.min(message.bottom, stage.bottom, player.bottom) + 1;
+  })).toBe(true);
+  const external = message.getByRole("button", { name: "Open externally", exact: true });
+  await external.scrollIntoViewIfNeeded();
+  expect(await external.evaluate(element => {
+    const rect = element.getBoundingClientRect();
+    const stage = element.closest(".video-stage")!.getBoundingClientRect();
+    const message = element.closest(".video-message")!.getBoundingClientRect();
+    const player = element.closest(".video-preview")!.getBoundingClientRect();
+    return rect.top >= Math.max(stage.top, message.top, player.top) - 1 &&
+      rect.bottom <= Math.min(stage.bottom, message.bottom, player.bottom) + 1;
+  })).toBe(true);
+  if (process.env.CAPTURE_EVIDENCE) {
+    await page.screenshot({ path: "screenshots/test/972-preview-containment/minimum-error-150.png" });
+  }
+  await external.click();
+  await expect.poll(() => page.evaluate(() =>
+    (window as unknown as { __mockControl?: MockControl }).__mockControl?.invokeCounts?.open_file ?? 0,
+  )).toBe(1);
 });
 test("changing selection and hiding preview unload the old playing source", async ({ page }) => {
   const player = await openVideo(page);

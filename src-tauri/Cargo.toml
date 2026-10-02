@@ -103,6 +103,8 @@ avif = ["image/avif-native"]
 # Pure-Rust (zbus) + no system deps, so safe to build everywhere Linux.
 [target.'cfg(target_os = "linux")'.dependencies]
 gio = "0.22"
+# GDesktopAppInfo moved out of gio in gtk-rs 0.22.
+gio-unix = "0.22"
 x11rb = "0.14"
 linux-raw-sys = { version = "0.12.1", default-features = false, features = ["general", "no_std"] }
 zbus = { version = "5", default-features = false, features = ["tokio"] }

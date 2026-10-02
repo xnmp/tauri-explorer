@@ -1,8 +1,13 @@
-# Local Wry 0.55.1 patch
+# Local Wry 0.57.0 patch
 
-This directory is the published `wry` 0.55.1 crate, selected through
+This directory is the published `wry` 0.57.0 crate, selected through
 `src-tauri/Cargo.toml`'s `[patch.crates-io]`. Its crates.io checksum before the
-patch was `186f9871daa55fd9c016578b810d149de58367113db7fb72b462d2323ce19514`.
+patch was `a819957a01b3119af85e638a38d242af76dbc87d130dca67bfd0441072e21ff0`.
+The published archive records upstream Git revision
+`792d0359ba6501a4fc360ece17de2ae42329a47c` in `.cargo_vcs_info.json`.
+All files match the published 0.57.0 crate except this provenance document,
+the weak-capture change below, and one trailing-space cleanup in `SECURITY.md`; the callback retains 0.57.0's fallible
+request construction and missing-URI handling.
 
 The sole code change is in `src/webkitgtk/mod.rs`:
 `InnerWebView::attach_ipc_handler` captures a `glib::WeakRef<WebView>` rather

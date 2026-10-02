@@ -1,0 +1,50 @@
+[
+  {
+    "pid": 1027908,
+    "command": "dbus-run-sessio",
+    "display": ":1",
+    "backend": "x11",
+    "wayland": false,
+    "runtime": "/home/chong/Repos/tauri-explorer/.claude/worktrees/pr-maintenance-846/qualification-results/wry-private-scheme-upstream/runtime"
+  },
+  {
+    "pid": 1027909,
+    "command": "dbus-daemon",
+    "display": ":1",
+    "backend": "x11",
+    "wayland": false,
+    "runtime": "/home/chong/Repos/tauri-explorer/.claude/worktrees/pr-maintenance-846/qualification-results/wry-private-scheme-upstream/runtime"
+  },
+  {
+    "pid": 1027910,
+    "command": "wry-ipc-churn-u",
+    "display": ":1",
+    "backend": "x11",
+    "wayland": false,
+    "runtime": "/home/chong/Repos/tauri-explorer/.claude/worktrees/pr-maintenance-846/qualification-results/wry-private-scheme-upstream/runtime"
+  },
+  {
+    "pid": 1027911,
+    "command": "openbox",
+    "display": ":1",
+    "backend": "x11",
+    "wayland": false,
+    "runtime": "/home/chong/Repos/tauri-explorer/.claude/worktrees/pr-maintenance-846/qualification-results/wry-private-scheme-upstream/runtime"
+  },
+  {
+    "pid": 1028040,
+    "command": "WebKitNetworkPr",
+    "display": ":1",
+    "backend": "x11",
+    "wayland": false,
+    "runtime": "/home/chong/Repos/tauri-explorer/.claude/worktrees/pr-maintenance-846/qualification-results/wry-private-scheme-upstream/runtime"
+  },
+  {
+    "pid": 1028087,
+    "command": "WebKitWebProces",
+    "display": ":1",
+    "backend": "x11",
+    "wayland": false,
+    "runtime": "/home/chong/Repos/tauri-explorer/.claude/worktrees/pr-maintenance-846/qualification-results/wry-private-scheme-upstream/runtime"
+  }
+]

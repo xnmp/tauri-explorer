@@ -130,11 +130,15 @@ export async function qualifyMacosPdf(browser: Browser, fixture: string, output:
   }
   async function capture(name: string, region: Rect, color: readonly number[], allowAbsent = false): Promise<Landmark | null> {
     const file = path.join(directory, `${name}.png`);
+    // Mac2 4.2.0 returns a dictionary keyed by display ID. Its published
+    // execute-method documentation incorrectly describes this as an array.
     const screens = await browser.execute("macos: screenshots", { displayId: display.id }) as unknown as
-      Array<{ id: number; isMain: boolean; payload: string }>;
-    const screen = screens.find(item => Number(item.id) === display.id && item.isMain);
-    assert(!!screen, "Mac2 did not return the measured main display");
-    fs.writeFileSync(file, Buffer.from(screen!.payload, "base64"));
+      Record<string, { id: number; isMain: boolean; payload: string | null }>;
+    const screen = screens[String(display.id)];
+    assert(!!screen && Number(screen.id) === display.id && screen.isMain === true &&
+      typeof screen.payload === "string" && screen.payload.length > 0,
+      "Mac2 did not return pixels for the measured main display");
+    fs.writeFileSync(file, Buffer.from(screen!.payload!, "base64"));
     const request = JSON.stringify({ display, viewport: region, color, allowAbsent });
     return JSON.parse(execFileSync(process.env.PDF_SCREENSHOT_PYTHON ?? "python3",
       ["e2e-tauri/pdf_screenshot.py", file, request], { encoding: "utf8" })) as Landmark | null;

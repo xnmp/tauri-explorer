@@ -526,3 +526,61 @@ directory onto itself after the walk observed it, which keeps its device and
 inode, and checks that the walk never enters it. Run them with the command
 above, replacing the test name with the filter `mount_inside` (which also
 selects the two older move-retirement mount tests) and then `never_entered`.
+
+
+## Native video playback (#970)
+
+`specs/video-preview.spec.ts` covers six actual Linux decoder/transport outcomes:
+play/pause and decoded red-to-blue seeking, focused controls/fullscreen, three
+docks at 150% app zoom, selection/hide/revision retirement, invalid-container
+failure, and an encoded file above 1 GiB. The large-file case measures startup,
+distant seeking, over ten seconds of playback, a thirty-second paused soak,
+transport reads and combined application/WebKit RSS against a 256 MiB growth
+budget. `specs/video-preview-lifecycle.spec.ts` adds three outcomes: invalid
+container cleanup, List/Tiles decoded selection and seeking, and actual Ctrl+N
+activation followed by destruction of a playing native window. Retirement checks
+include HTTP 404 for old capabilities, native counters and actual source handles.
+
+Both specs opt in only on Linux with `TAURI_NATIVE_VIDEO_PROFILE`. Build with:
+
+```sh
+VITE_E2E_HOOKS=1 bun run tauri build --debug --no-bundle --features e2e-hooks
+```
+
+Generate silent VP8 WebM fixtures on the same filesystem as the qualification
+fixtures, outside a live Vite watch root. The generator requires FFmpeg with
+`libvpx`, writes fully allocated encoded packets above 1 GiB, and records hashes
+and metadata; sparse padding does not qualify decoder performance.
+
+```sh
+python3 e2e-tauri/fixtures/video/generate-native-video.py "$TAURI_NATIVE_VIDEO_FIXTURES"
+```
+
+Use a fresh profile outside the watched worktree and a private Xvfb display with
+Openbox, isolated D-Bus, `GDK_BACKEND=x11`, and no `WAYLAND_DISPLAY`. Set:
+
+- `TAURI_NATIVE_VIDEO_PROFILE`: absolute private profile directory.
+- `TAURI_NATIVE_VIDEO_FIXTURES`: absolute generated fixture directory.
+- `TAURI_NATIVE_VIDEO_ARTIFACT_DIR`: absolute directory for JSON measurements.
+- `XDG_CONFIG_HOME`: `$TAURI_NATIVE_VIDEO_PROFILE/config`; also isolate the XDG
+  data, cache, state and runtime directories, plus `TMPDIR`.
+- `TAURI_NATIVE_DRIVER_PORT` and `TAURI_NATIVE_BACKEND_PORT`: distinct owned ports.
+
+The normal native driver dependencies plus `ffmpeg`, `ffprobe` and `xprop` are
+required for decoded-pixel and process/resource checks. Verify the actual app,
+WebKit helpers and driver inherited the private environment before qualification.
+Run each spec in that private session with a fresh profile:
+
+```sh
+bunx wdio run e2e-tauri/wdio.conf.ts --spec e2e-tauri/specs/video-preview.spec.ts
+bunx wdio run e2e-tauri/wdio.conf.ts --spec e2e-tauri/specs/video-preview-lifecycle.spec.ts
+```
+
+Keep warming enabled: the lifecycle test checks that a parked owner admits no
+video lease before real activation. Captures, raw counters, buffered intervals
+and owned-process RSS samples accompany outcomes. The lifecycle captures go to
+`screenshots/feat/970-ability-to-watch-videos-in-the-preview-pane/`; preserve
+existing proof before a rerun. Confirm the private processes and ports are gone
+afterwards. Never run these interactions against the active desktop. These
+fixtures qualify Linux VP8 WebM decoding; other codecs and platforms need their
+own native qualification.

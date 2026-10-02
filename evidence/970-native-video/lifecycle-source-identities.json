@@ -1,0 +1,13 @@
+{
+  "sourceHeadAfter": "b51f40fb20d6b451c433bf39e4d6ea4489ab09e3",
+  "binarySha256After": "58843d2c7f6bd5e36bce0326afc8c2c6bb4e0b84ce67880e9a9ffc4afa7ba80e",
+  "identitiesAfter": {
+    "e2e-tauri/specs/video-preview-lifecycle.spec.ts": "4ed3802617003eb89e90eb7943c664097103b57cda79315d01460d4e434ee94a",
+    "e2e-tauri/video-observations.ts": "5b43e2577b11381eed1454d070d0f3d82cf095485ab9cb404aa672197e017d32",
+    "e2e-tauri/fixtures/video/generate-native-video.py": "5e26e5e394d7793b45e70968e1d2f7b367b4d3002fb512c03815a213c3b1c56c",
+    "e2e-tauri/.claude-video970.conf.ts": "eac8f0d183002aa0d38b0fff354b63fabe348ffe04dc6e7e4e7f9a6dd8f43acc",
+    "e2e-tauri/.claude-video970-extra.conf.ts": "adf89b2a9716c857e270feb0811963c9db684b50cda358308eba6736bf6995a1",
+    ".claude-native-video-970/run-extra.sh": "c029902cdca513dafe029b0b7459005796f2ee7b0a40b1d96c7006ae22ef1177"
+  },
+  "productionDiffFromBuild": []
+}

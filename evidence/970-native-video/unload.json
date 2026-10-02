@@ -1,0 +1,303 @@
+{
+  "selectionOldUrlRevoked": true,
+  "hiddenOldUrlRevoked": true,
+  "cleanup": {
+    "active_streams": 0,
+    "active_connections": 0,
+    "max_chunk_bytes": 6118,
+    "read_calls": 74,
+    "read_bytes": 403640,
+    "active_leases": 0,
+    "responses": [
+      {
+        "size": 6118,
+        "head": false,
+        "length": 5647,
+        "status": 206,
+        "at": 1790975259993,
+        "start": 471,
+        "requested_range": "bytes=471-"
+      },
+      {
+        "size": 6118,
+        "head": false,
+        "length": 5647,
+        "status": 206,
+        "at": 1790975260002,
+        "start": 471,
+        "requested_range": "bytes=471-"
+      },
+      {
+        "size": 6118,
+        "head": false,
+        "length": 5647,
+        "status": 206,
+        "at": 1790975260012,
+        "start": 471,
+        "requested_range": "bytes=471-"
+      },
+      {
+        "size": 6118,
+        "head": false,
+        "length": 5647,
+        "status": 206,
+        "at": 1790975260020,
+        "start": 471,
+        "requested_range": "bytes=471-"
+      },
+      {
+        "size": 6118,
+        "head": false,
+        "length": 5647,
+        "status": 206,
+        "at": 1790975260027,
+        "start": 471,
+        "requested_range": "bytes=471-"
+      },
+      {
+        "size": 6118,
+        "head": false,
+        "length": 5647,
+        "status": 206,
+        "at": 1790975260035,
+        "start": 471,
+        "requested_range": "bytes=471-"
+      },
+      {
+        "size": 6118,
+        "head": false,
+        "length": 5647,
+        "status": 206,
+        "at": 1790975260044,
+        "start": 471,
+        "requested_range": "bytes=471-"
+      },
+      {
+        "size": 6118,
+        "head": false,
+        "length": 5647,
+        "status": 206,
+        "at": 1790975260053,
+        "start": 471,
+        "requested_range": "bytes=471-"
+      },
+      {
+        "size": 6118,
+        "head": false,
+        "length": 5647,
+        "status": 206,
+        "at": 1790975260062,
+        "start": 471,
+        "requested_range": "bytes=471-"
+      },
+      {
+        "size": 6118,
+        "head": false,
+        "length": 5647,
+        "status": 206,
+        "at": 1790975260072,
+        "start": 471,
+        "requested_range": "bytes=471-"
+      },
+      {
+        "size": 6118,
+        "head": false,
+        "length": 5647,
+        "status": 206,
+        "at": 1790975260081,
+        "start": 471,
+        "requested_range": "bytes=471-"
+      },
+      {
+        "size": 6118,
+        "head": false,
+        "length": 5647,
+        "status": 206,
+        "at": 1790975260091,
+        "start": 471,
+        "requested_range": "bytes=471-"
+      },
+      {
+        "size": 6118,
+        "head": false,
+        "length": 5647,
+        "status": 206,
+        "at": 1790975260101,
+        "start": 471,
+        "requested_range": "bytes=471-"
+      },
+      {
+        "size": 6118,
+        "head": false,
+        "length": 5647,
+        "status": 206,
+        "at": 1790975260851,
+        "start": 471,
+        "requested_range": "bytes=471-"
+      },
+      {
+        "size": 6118,
+        "head": false,
+        "length": 5647,
+        "status": 206,
+        "at": 1790975260862,
+        "start": 471,
+        "requested_range": "bytes=471-"
+      },
+      {
+        "size": 6118,
+        "head": false,
+        "length": 5647,
+        "status": 206,
+        "at": 1790975260867,
+        "start": 471,
+        "requested_range": "bytes=471-"
+      },
+      {
+        "size": 6118,
+        "head": false,
+        "length": 5647,
+        "status": 206,
+        "at": 1790975260874,
+        "start": 471,
+        "requested_range": "bytes=471-"
+      },
+      {
+        "size": 6118,
+        "head": false,
+        "length": 5647,
+        "status": 206,
+        "at": 1790975260879,
+        "start": 471,
+        "requested_range": "bytes=471-"
+      },
+      {
+        "size": 6118,
+        "head": false,
+        "length": 5647,
+        "status": 206,
+        "at": 1790975260884,
+        "start": 471,
+        "requested_range": "bytes=471-"
+      },
+      {
+        "size": 6118,
+        "head": false,
+        "length": 5647,
+        "status": 206,
+        "at": 1790975260889,
+        "start": 471,
+        "requested_range": "bytes=471-"
+      },
+      {
+        "size": 6118,
+        "head": false,
+        "length": 5647,
+        "status": 206,
+        "at": 1790975260897,
+        "start": 471,
+        "requested_range": "bytes=471-"
+      },
+      {
+        "size": 6118,
+        "head": false,
+        "length": 5647,
+        "status": 206,
+        "at": 1790975260908,
+        "start": 471,
+        "requested_range": "bytes=471-"
+      },
+      {
+        "size": 6118,
+        "head": false,
+        "length": 5647,
+        "status": 206,
+        "at": 1790975260917,
+        "start": 471,
+        "requested_range": "bytes=471-"
+      },
+      {
+        "size": 6118,
+        "head": false,
+        "length": 5647,
+        "status": 206,
+        "at": 1790975260926,
+        "start": 471,
+        "requested_range": "bytes=471-"
+      },
+      {
+        "size": 6118,
+        "head": false,
+        "length": 5647,
+        "status": 206,
+        "at": 1790975260934,
+        "start": 471,
+        "requested_range": "bytes=471-"
+      },
+      {
+        "size": 6118,
+        "head": false,
+        "length": 5647,
+        "status": 206,
+        "at": 1790975260944,
+        "start": 471,
+        "requested_range": "bytes=471-"
+      },
+      {
+        "size": 6118,
+        "head": false,
+        "length": 5647,
+        "status": 206,
+        "at": 1790975260953,
+        "start": 471,
+        "requested_range": "bytes=471-"
+      },
+      {
+        "size": 6118,
+        "head": false,
+        "length": 5647,
+        "status": 206,
+        "at": 1790975260964,
+        "start": 471,
+        "requested_range": "bytes=471-"
+      },
+      {
+        "size": 6118,
+        "head": false,
+        "length": 5647,
+        "status": 206,
+        "at": 1790975260974,
+        "start": 471,
+        "requested_range": "bytes=471-"
+      },
+      {
+        "size": 6118,
+        "head": false,
+        "length": 5647,
+        "status": 206,
+        "at": 1790975260984,
+        "start": 471,
+        "requested_range": "bytes=471-"
+      },
+      {
+        "size": 6118,
+        "head": false,
+        "length": 6118,
+        "status": 200,
+        "at": 1790975261951,
+        "start": 0,
+        "requested_range": null
+      },
+      {
+        "size": 6118,
+        "head": false,
+        "length": 6118,
+        "status": 200,
+        "at": 1790975262220,
+        "start": 0,
+        "requested_range": null
+      }
+    ],
+    "open_workers": 0
+  }
+}

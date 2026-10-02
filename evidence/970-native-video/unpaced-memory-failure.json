@@ -1,0 +1,433 @@
+{
+  "size": 1265205529,
+  "startupToMetadataMs": 338,
+  "seekToDecodedMs": 314,
+  "initial": {
+    "readyState": 4,
+    "volume": 1,
+    "rect": {
+      "x": 1001,
+      "height": 625,
+      "width": 279,
+      "y": 112
+    },
+    "src": "http://127.0.0.1:46685/media/a1be59c247edb9ac5efe0001e91f64d5e2d6f814d419ae64",
+    "width": 960,
+    "height": 540,
+    "duration": 348,
+    "errorCode": null,
+    "currentTime": 0,
+    "seeking": false,
+    "viewport": {
+      "height": 900,
+      "width": 1280
+    },
+    "paused": true,
+    "muted": false
+  },
+  "seeked": {
+    "rgb": [
+      122.7265625,
+      122.2080078125,
+      129.7783203125
+    ],
+    "deviation": [
+      110.48075623183702,
+      111.3615254472452,
+      104.39388245512114
+    ],
+    "state": {
+      "readyState": 2,
+      "volume": 1,
+      "rect": {
+        "x": 1001,
+        "height": 625,
+        "width": 279,
+        "y": 112
+      },
+      "src": "http://127.0.0.1:46685/media/a1be59c247edb9ac5efe0001e91f64d5e2d6f814d419ae64",
+      "width": 960,
+      "height": 540,
+      "duration": 348,
+      "errorCode": null,
+      "currentTime": 277.2,
+      "seeking": false,
+      "viewport": {
+        "height": 900,
+        "width": 1280
+      },
+      "paused": true,
+      "muted": false
+    },
+    "sample": {
+      "x": 1125,
+      "y": 409,
+      "size": 32
+    },
+    "image": {
+      "width": 1280,
+      "height": 900
+    }
+  },
+  "baseline": {
+    "active_streams": 0,
+    "active_connections": 0,
+    "max_chunk_bytes": 7858,
+    "read_calls": 77,
+    "read_bytes": 423263,
+    "active_leases": 0,
+    "open_workers": 0
+  },
+  "afterStartup": {
+    "active_streams": 0,
+    "active_connections": 0,
+    "max_chunk_bytes": 65536,
+    "read_calls": 668,
+    "read_bytes": 39155039,
+    "active_leases": 1,
+    "open_workers": 0
+  },
+  "afterSeek": {
+    "active_streams": 0,
+    "active_connections": 0,
+    "max_chunk_bytes": 65536,
+    "read_calls": 1440,
+    "read_bytes": 89625003,
+    "active_leases": 1,
+    "open_workers": 0
+  },
+  "settled": {
+    "active_streams": 0,
+    "active_connections": 0,
+    "max_chunk_bytes": 65536,
+    "read_calls": 1440,
+    "read_bytes": 89625003,
+    "active_leases": 0,
+    "open_workers": 0
+  },
+  "readBytes": 89201740,
+  "peakRssGrowthBytes": 329023488,
+  "samples": [
+    {
+      "at": 1790974573995,
+      "processes": [
+        {
+          "pid": 776017,
+          "executable": "/home/chong/Repos/tauri-explorer/.claude/worktrees/issue17-native-cache/debug/tauri-explorer",
+          "startTime": "1138781",
+          "rssBytes": 383823872
+        },
+        {
+          "pid": 776132,
+          "executable": "/usr/lib/webkit2gtk-4.1/WebKitNetworkProcess",
+          "startTime": "1138797",
+          "rssBytes": 61161472
+        },
+        {
+          "pid": 776136,
+          "executable": "/usr/lib/webkit2gtk-4.1/WebKitWebProcess",
+          "startTime": "1138798",
+          "rssBytes": 705482752
+        },
+        {
+          "pid": 776346,
+          "executable": "/usr/lib/webkit2gtk-4.1/WebKitWebProcess",
+          "startTime": "1139106",
+          "rssBytes": 461959168
+        }
+      ],
+      "appRssBytes": 383823872,
+      "webKitRssBytes": 1228603392,
+      "totalRssBytes": 1612427264
+    },
+    {
+      "at": 1790974574201,
+      "processes": [
+        {
+          "pid": 776017,
+          "executable": "/home/chong/Repos/tauri-explorer/.claude/worktrees/issue17-native-cache/debug/tauri-explorer",
+          "startTime": "1138781",
+          "rssBytes": 383905792
+        },
+        {
+          "pid": 776132,
+          "executable": "/usr/lib/webkit2gtk-4.1/WebKitNetworkProcess",
+          "startTime": "1138797",
+          "rssBytes": 145989632
+        },
+        {
+          "pid": 776136,
+          "executable": "/usr/lib/webkit2gtk-4.1/WebKitWebProcess",
+          "startTime": "1138798",
+          "rssBytes": 835637248
+        },
+        {
+          "pid": 776346,
+          "executable": "/usr/lib/webkit2gtk-4.1/WebKitWebProcess",
+          "startTime": "1139106",
+          "rssBytes": 461860864
+        }
+      ],
+      "appRssBytes": 383905792,
+      "webKitRssBytes": 1443487744,
+      "totalRssBytes": 1827393536
+    },
+    {
+      "at": 1790974574401,
+      "processes": [
+        {
+          "pid": 776017,
+          "executable": "/home/chong/Repos/tauri-explorer/.claude/worktrees/issue17-native-cache/debug/tauri-explorer",
+          "startTime": "1138781",
+          "rssBytes": 383750144
+        },
+        {
+          "pid": 776132,
+          "executable": "/usr/lib/webkit2gtk-4.1/WebKitNetworkProcess",
+          "startTime": "1138797",
+          "rssBytes": 145768448
+        },
+        {
+          "pid": 776136,
+          "executable": "/usr/lib/webkit2gtk-4.1/WebKitWebProcess",
+          "startTime": "1138798",
+          "rssBytes": 860819456
+        },
+        {
+          "pid": 776346,
+          "executable": "/usr/lib/webkit2gtk-4.1/WebKitWebProcess",
+          "startTime": "1139106",
+          "rssBytes": 461742080
+        }
+      ],
+      "appRssBytes": 383750144,
+      "webKitRssBytes": 1468329984,
+      "totalRssBytes": 1852080128
+    },
+    {
+      "at": 1790974574599,
+      "processes": [
+        {
+          "pid": 776017,
+          "executable": "/home/chong/Repos/tauri-explorer/.claude/worktrees/issue17-native-cache/debug/tauri-explorer",
+          "startTime": "1138781",
+          "rssBytes": 383741952
+        },
+        {
+          "pid": 776132,
+          "executable": "/usr/lib/webkit2gtk-4.1/WebKitNetworkProcess",
+          "startTime": "1138797",
+          "rssBytes": 64475136
+        },
+        {
+          "pid": 776136,
+          "executable": "/usr/lib/webkit2gtk-4.1/WebKitWebProcess",
+          "startTime": "1138798",
+          "rssBytes": 832471040
+        },
+        {
+          "pid": 776346,
+          "executable": "/usr/lib/webkit2gtk-4.1/WebKitWebProcess",
+          "startTime": "1139106",
+          "rssBytes": 461742080
+        }
+      ],
+      "appRssBytes": 383741952,
+      "webKitRssBytes": 1358688256,
+      "totalRssBytes": 1742430208
+    },
+    {
+      "at": 1790974575012,
+      "processes": [
+        {
+          "pid": 776017,
+          "executable": "/home/chong/Repos/tauri-explorer/.claude/worktrees/issue17-native-cache/debug/tauri-explorer",
+          "startTime": "1138781",
+          "rssBytes": 383995904
+        },
+        {
+          "pid": 776132,
+          "executable": "/usr/lib/webkit2gtk-4.1/WebKitNetworkProcess",
+          "startTime": "1138797",
+          "rssBytes": 64458752
+        },
+        {
+          "pid": 776136,
+          "executable": "/usr/lib/webkit2gtk-4.1/WebKitWebProcess",
+          "startTime": "1138798",
+          "rssBytes": 832143360
+        },
+        {
+          "pid": 776346,
+          "executable": "/usr/lib/webkit2gtk-4.1/WebKitWebProcess",
+          "startTime": "1139106",
+          "rssBytes": 461742080
+        }
+      ],
+      "appRssBytes": 383995904,
+      "webKitRssBytes": 1358344192,
+      "totalRssBytes": 1742340096
+    },
+    {
+      "at": 1790974575211,
+      "processes": [
+        {
+          "pid": 776017,
+          "executable": "/home/chong/Repos/tauri-explorer/.claude/worktrees/issue17-native-cache/debug/tauri-explorer",
+          "startTime": "1138781",
+          "rssBytes": 383787008
+        },
+        {
+          "pid": 776132,
+          "executable": "/usr/lib/webkit2gtk-4.1/WebKitNetworkProcess",
+          "startTime": "1138797",
+          "rssBytes": 64458752
+        },
+        {
+          "pid": 776136,
+          "executable": "/usr/lib/webkit2gtk-4.1/WebKitWebProcess",
+          "startTime": "1138798",
+          "rssBytes": 832671744
+        },
+        {
+          "pid": 776346,
+          "executable": "/usr/lib/webkit2gtk-4.1/WebKitWebProcess",
+          "startTime": "1139106",
+          "rssBytes": 461742080
+        }
+      ],
+      "appRssBytes": 383787008,
+      "webKitRssBytes": 1358872576,
+      "totalRssBytes": 1742659584
+    },
+    {
+      "at": 1790974575412,
+      "processes": [
+        {
+          "pid": 776017,
+          "executable": "/home/chong/Repos/tauri-explorer/.claude/worktrees/issue17-native-cache/debug/tauri-explorer",
+          "startTime": "1138781",
+          "rssBytes": 383758336
+        },
+        {
+          "pid": 776132,
+          "executable": "/usr/lib/webkit2gtk-4.1/WebKitNetworkProcess",
+          "startTime": "1138797",
+          "rssBytes": 156991488
+        },
+        {
+          "pid": 776136,
+          "executable": "/usr/lib/webkit2gtk-4.1/WebKitWebProcess",
+          "startTime": "1138798",
+          "rssBytes": 938958848
+        },
+        {
+          "pid": 776346,
+          "executable": "/usr/lib/webkit2gtk-4.1/WebKitWebProcess",
+          "startTime": "1139106",
+          "rssBytes": 461742080
+        }
+      ],
+      "appRssBytes": 383758336,
+      "webKitRssBytes": 1557692416,
+      "totalRssBytes": 1941450752
+    },
+    {
+      "at": 1790974575760,
+      "processes": [
+        {
+          "pid": 776017,
+          "executable": "/home/chong/Repos/tauri-explorer/.claude/worktrees/issue17-native-cache/debug/tauri-explorer",
+          "startTime": "1138781",
+          "rssBytes": 384008192
+        },
+        {
+          "pid": 776132,
+          "executable": "/usr/lib/webkit2gtk-4.1/WebKitNetworkProcess",
+          "startTime": "1138797",
+          "rssBytes": 64729088
+        },
+        {
+          "pid": 776136,
+          "executable": "/usr/lib/webkit2gtk-4.1/WebKitWebProcess",
+          "startTime": "1138798",
+          "rssBytes": 864501760
+        },
+        {
+          "pid": 776346,
+          "executable": "/usr/lib/webkit2gtk-4.1/WebKitWebProcess",
+          "startTime": "1139106",
+          "rssBytes": 461713408
+        }
+      ],
+      "appRssBytes": 384008192,
+      "webKitRssBytes": 1390944256,
+      "totalRssBytes": 1774952448
+    },
+    {
+      "at": 1790974575959,
+      "processes": [
+        {
+          "pid": 776017,
+          "executable": "/home/chong/Repos/tauri-explorer/.claude/worktrees/issue17-native-cache/debug/tauri-explorer",
+          "startTime": "1138781",
+          "rssBytes": 383807488
+        },
+        {
+          "pid": 776132,
+          "executable": "/usr/lib/webkit2gtk-4.1/WebKitNetworkProcess",
+          "startTime": "1138797",
+          "rssBytes": 64729088
+        },
+        {
+          "pid": 776136,
+          "executable": "/usr/lib/webkit2gtk-4.1/WebKitWebProcess",
+          "startTime": "1138798",
+          "rssBytes": 764465152
+        },
+        {
+          "pid": 776346,
+          "executable": "/usr/lib/webkit2gtk-4.1/WebKitWebProcess",
+          "startTime": "1139106",
+          "rssBytes": 461713408
+        }
+      ],
+      "appRssBytes": 383807488,
+      "webKitRssBytes": 1290907648,
+      "totalRssBytes": 1674715136
+    },
+    {
+      "at": 1790974576022,
+      "processes": [
+        {
+          "pid": 776017,
+          "executable": "/home/chong/Repos/tauri-explorer/.claude/worktrees/issue17-native-cache/debug/tauri-explorer",
+          "startTime": "1138781",
+          "rssBytes": 383811584
+        },
+        {
+          "pid": 776132,
+          "executable": "/usr/lib/webkit2gtk-4.1/WebKitNetworkProcess",
+          "startTime": "1138797",
+          "rssBytes": 64712704
+        },
+        {
+          "pid": 776136,
+          "executable": "/usr/lib/webkit2gtk-4.1/WebKitWebProcess",
+          "startTime": "1138798",
+          "rssBytes": 765714432
+        },
+        {
+          "pid": 776346,
+          "executable": "/usr/lib/webkit2gtk-4.1/WebKitWebProcess",
+          "startTime": "1139106",
+          "rssBytes": 461713408
+        }
+      ],
+      "appRssBytes": 383811584,
+      "webKitRssBytes": 1292140544,
+      "totalRssBytes": 1675952128
+    }
+  ],
+  "errors": []
+}

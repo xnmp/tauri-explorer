@@ -1,0 +1,299 @@
+{
+  "active_streams": 0,
+  "active_connections": 0,
+  "max_chunk_bytes": 6118,
+  "read_calls": 51,
+  "read_bytes": 261565,
+  "active_leases": 0,
+  "responses": [
+    {
+      "size": 6118,
+      "head": false,
+      "length": 116,
+      "status": 206,
+      "at": 1790975746479,
+      "start": 6002,
+      "requested_range": "bytes=6002-"
+    },
+    {
+      "size": 6118,
+      "head": false,
+      "length": 5647,
+      "status": 206,
+      "at": 1790975746484,
+      "start": 471,
+      "requested_range": "bytes=471-"
+    },
+    {
+      "size": 6118,
+      "head": false,
+      "length": 5647,
+      "status": 206,
+      "at": 1790975746494,
+      "start": 471,
+      "requested_range": "bytes=471-"
+    },
+    {
+      "size": 6118,
+      "head": false,
+      "length": 5647,
+      "status": 206,
+      "at": 1790975746503,
+      "start": 471,
+      "requested_range": "bytes=471-"
+    },
+    {
+      "size": 6118,
+      "head": false,
+      "length": 5647,
+      "status": 206,
+      "at": 1790975746512,
+      "start": 471,
+      "requested_range": "bytes=471-"
+    },
+    {
+      "size": 6118,
+      "head": false,
+      "length": 5647,
+      "status": 206,
+      "at": 1790975746518,
+      "start": 471,
+      "requested_range": "bytes=471-"
+    },
+    {
+      "size": 6118,
+      "head": false,
+      "length": 5647,
+      "status": 206,
+      "at": 1790975746525,
+      "start": 471,
+      "requested_range": "bytes=471-"
+    },
+    {
+      "size": 6118,
+      "head": false,
+      "length": 5647,
+      "status": 206,
+      "at": 1790975746535,
+      "start": 471,
+      "requested_range": "bytes=471-"
+    },
+    {
+      "size": 6118,
+      "head": false,
+      "length": 5647,
+      "status": 206,
+      "at": 1790975746543,
+      "start": 471,
+      "requested_range": "bytes=471-"
+    },
+    {
+      "size": 6118,
+      "head": false,
+      "length": 5647,
+      "status": 206,
+      "at": 1790975746554,
+      "start": 471,
+      "requested_range": "bytes=471-"
+    },
+    {
+      "size": 6118,
+      "head": false,
+      "length": 5647,
+      "status": 206,
+      "at": 1790975746564,
+      "start": 471,
+      "requested_range": "bytes=471-"
+    },
+    {
+      "size": 6118,
+      "head": false,
+      "length": 5647,
+      "status": 206,
+      "at": 1790975746572,
+      "start": 471,
+      "requested_range": "bytes=471-"
+    },
+    {
+      "size": 6118,
+      "head": false,
+      "length": 5647,
+      "status": 206,
+      "at": 1790975746582,
+      "start": 471,
+      "requested_range": "bytes=471-"
+    },
+    {
+      "size": 6118,
+      "head": false,
+      "length": 5647,
+      "status": 206,
+      "at": 1790975746592,
+      "start": 471,
+      "requested_range": "bytes=471-"
+    },
+    {
+      "size": 6118,
+      "head": false,
+      "length": 5647,
+      "status": 206,
+      "at": 1790975746601,
+      "start": 471,
+      "requested_range": "bytes=471-"
+    },
+    {
+      "size": 6118,
+      "head": false,
+      "length": 6118,
+      "status": 200,
+      "at": 1790975748638,
+      "start": 0,
+      "requested_range": null
+    },
+    {
+      "size": 6118,
+      "head": false,
+      "length": 116,
+      "status": 206,
+      "at": 1790975748903,
+      "start": 6002,
+      "requested_range": "bytes=6002-"
+    },
+    {
+      "size": 6118,
+      "head": false,
+      "length": 5647,
+      "status": 206,
+      "at": 1790975748906,
+      "start": 471,
+      "requested_range": "bytes=471-"
+    },
+    {
+      "size": 6118,
+      "head": false,
+      "length": 5647,
+      "status": 206,
+      "at": 1790975748918,
+      "start": 471,
+      "requested_range": "bytes=471-"
+    },
+    {
+      "size": 6118,
+      "head": false,
+      "length": 5647,
+      "status": 206,
+      "at": 1790975748925,
+      "start": 471,
+      "requested_range": "bytes=471-"
+    },
+    {
+      "size": 6118,
+      "head": false,
+      "length": 5647,
+      "status": 206,
+      "at": 1790975748931,
+      "start": 471,
+      "requested_range": "bytes=471-"
+    },
+    {
+      "size": 6118,
+      "head": false,
+      "length": 5647,
+      "status": 206,
+      "at": 1790975748939,
+      "start": 471,
+      "requested_range": "bytes=471-"
+    },
+    {
+      "size": 6118,
+      "head": false,
+      "length": 5647,
+      "status": 206,
+      "at": 1790975748948,
+      "start": 471,
+      "requested_range": "bytes=471-"
+    },
+    {
+      "size": 6118,
+      "head": false,
+      "length": 5647,
+      "status": 206,
+      "at": 1790975748957,
+      "start": 471,
+      "requested_range": "bytes=471-"
+    },
+    {
+      "size": 6118,
+      "head": false,
+      "length": 5647,
+      "status": 206,
+      "at": 1790975748965,
+      "start": 471,
+      "requested_range": "bytes=471-"
+    },
+    {
+      "size": 6118,
+      "head": false,
+      "length": 5647,
+      "status": 206,
+      "at": 1790975748973,
+      "start": 471,
+      "requested_range": "bytes=471-"
+    },
+    {
+      "size": 6118,
+      "head": false,
+      "length": 5647,
+      "status": 206,
+      "at": 1790975748984,
+      "start": 471,
+      "requested_range": "bytes=471-"
+    },
+    {
+      "size": 6118,
+      "head": false,
+      "length": 5647,
+      "status": 206,
+      "at": 1790975748993,
+      "start": 471,
+      "requested_range": "bytes=471-"
+    },
+    {
+      "size": 6118,
+      "head": false,
+      "length": 5647,
+      "status": 206,
+      "at": 1790975749003,
+      "start": 471,
+      "requested_range": "bytes=471-"
+    },
+    {
+      "size": 6118,
+      "head": false,
+      "length": 5647,
+      "status": 206,
+      "at": 1790975749019,
+      "start": 471,
+      "requested_range": "bytes=471-"
+    },
+    {
+      "size": 6118,
+      "head": false,
+      "length": 5647,
+      "status": 206,
+      "at": 1790975749036,
+      "start": 471,
+      "requested_range": "bytes=471-"
+    },
+    {
+      "size": 6118,
+      "head": false,
+      "length": 5647,
+      "status": 206,
+      "at": 1790975749047,
+      "start": 471,
+      "requested_range": "bytes=471-"
+    }
+  ],
+  "open_workers": 0
+}

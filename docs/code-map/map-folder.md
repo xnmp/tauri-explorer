@@ -753,3 +753,4 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `src-tauri/test_support/media_preview.rs` — real TCP and filesystem contracts for ranges, concurrent seeks, scope, replacement, overload and retirement.
 - `e2e-tauri/video-observations.ts` — read-only native playback/transport observations, owned process RSS and unedited screenshot pixel qualification.
 - `e2e-tauri/specs/video-preview.spec.ts` — actual native decoder/range/lifetime and encoded large-file performance outcomes.
+- `e2e-tauri/specs/video-preview-lifecycle.spec.ts` — actual List/Tiles decoded selection, warm-window activation and playing-owner destruction with capability/file-handle retirement.

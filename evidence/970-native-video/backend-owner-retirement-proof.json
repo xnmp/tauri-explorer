@@ -1,0 +1,35 @@
+{
+  "warmLabel": "explorer-warm-1ddcf467-65e8-46dc-a0fb-09018e1c6ac9",
+  "token": "b780a321869e8a74351e5d91467f159cc88fb3cfd0835ada",
+  "matchingBackendEvents": [
+    "[2026-10-03][07:15:48][INFO][tauri_explorer_lib::files::media_preview] Video(begin): window=explorer-warm-1ddcf467-65e8-46dc-a0fb-09018e1c6ac9 session=0 token=b780a321869e8a74351e5d91467f159cc88fb3cfd0835ada"
+  ],
+  "frontendReleaseForToken": false,
+  "oldCapabilityRevoked": true,
+  "windowDestroyed": true,
+  "oldFileHandles": [],
+  "before": {
+    "active_streams": 0,
+    "active_connections": 0,
+    "max_chunk_bytes": 6118,
+    "read_calls": 34,
+    "read_bytes": 170626,
+    "active_leases": 0,
+    "open_workers": 0
+  },
+  "settled": {
+    "active_streams": 0,
+    "active_connections": 0,
+    "max_chunk_bytes": 6118,
+    "read_calls": 51,
+    "read_bytes": 261565,
+    "active_leases": 0,
+    "open_workers": 0
+  },
+  "decodedRgb": [
+    0,
+    0,
+    253
+  ],
+  "playingTime": 4.110564014
+}

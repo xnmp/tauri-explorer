@@ -105,14 +105,20 @@ const FORMATS: readonly Format[] = [
   },
   {
     name: "clip.mp4",
-    rendered: (page) =>
-      expect
-        .poll(() =>
-          pane(page)
-            .locator(".preview-image")
-            .evaluate((image: HTMLImageElement) => image.naturalWidth),
-        )
-        .toBeGreaterThan(0),
+    rendered: async (page) => {
+      const player = pane(page).getByRole("group", { name: "Video player for clip.mp4", exact: true });
+      await expect(player.locator("video")).toBeVisible();
+      await expect.poll(() => player.locator("video").evaluate((video: HTMLVideoElement) => ({
+        width: video.videoWidth,
+        height: video.videoHeight,
+        duration: video.duration,
+        paused: video.paused,
+        decoded: video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA,
+        error: video.error,
+      }))).toEqual({ width: 320, height: 180, duration: 6, paused: true, decoded: true, error: null });
+      await expect(player.getByRole("button", { name: "Play video", exact: true })).toBeEnabled();
+      await expect(player.getByRole("slider", { name: "Seek video", exact: true })).toBeEnabled();
+    },
   },
   {
     name: "archive.zip",

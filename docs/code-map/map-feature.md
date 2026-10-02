@@ -350,7 +350,9 @@ backend for E2E/browser).
 - `state/deferred-focus.ts`, `state/terminal.svelte.ts` — cancellable terminal-opening focus across lazy loading; new interactions retire obsolete focus requests while queued insertions still arrive.
 - `+page.svelte` — composes the window keyboard owner with active explorer and surface commands
 - `state/keybindings.svelte.ts` — `keybindingsStore`: binding map, resolve
-- `domain/keybinding-parser.ts` — parse "Ctrl+Shift+P" ↔ event
+- `domain/keybinding-parser.ts` — parse "Ctrl+Shift+P" ↔ event; capture/runtime share the existing recorder identity (physical Alt letters/shifted digits, logical other keys), with US shifted-digit aliases
+- `domain/shortcut-conflicts.ts`, `domain/shortcut-import.ts` — modifier/key overlap and prospective import validation, including swaps/cycles and fallback-default conflicts
+- `domain/shortcut-recording.ts`, `state/shortcut-recorder.ts` — explicit two-step recording, immutable transitions and owned timeout/cancellation; runtime ignores modifiers/repeats without renewing its deadline (#759)
 - `domain/keyboard.ts` — key event normalization
 - `components/KeybindingsSettings.svelte`, `components/ShortcutCheatsheet.svelte` — edit + cheat sheet UI
 - FLOW: keydown → keybindingsStore resolves binding → runs command id via `executeCommand`. Bindings persisted (localStorage).
@@ -439,6 +441,7 @@ backend for E2E/browser).
 
 ## Terminal panel
 
+- `state/terminal-key-handler.ts` — shared xterm adapter resolves eligible Explorer command ownership before clipboard/readline side effects (#759)
 - `state/terminal-session.ts` — frontend resource owner for reserve/listen/spawn/kill; late completions drain before restart/disposal. All PTY input (keys, shortcut bytes, pastes, path insertions, `cd` sync) goes through `session.write` into `domain/terminal-input-queue.ts`, which accepts promises so a clipboard read or a dialect-dependent insertion keeps its key position (#709, #882).
 - `domain/terminal-paste.ts` — paste source order per platform (#732) and the bytes xterm's `paste()` would emit.
 - `src-tauri/src/terminal/input.rs` — the ordering guarantee: `terminal_write(id, seq, data)` is admitted in `seq` order whatever order the async commands run in; typeahead before the PTY exists is held (64 KiB). An overflow discards ALL pre-start input, reports it in the receipt, and the panel logs it and shows a toast. One writer thread per PTY (#882).

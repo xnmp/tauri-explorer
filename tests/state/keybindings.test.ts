@@ -51,6 +51,23 @@ describe("keybindingsStore", () => {
     vi.unstubAllGlobals();
   });
 
+  it("allows actual modifier keydown before a modified chord suffix", () => {
+    keybindingsStore.registerDefault("test", "Alt+M Ctrl+C");
+    const press = (key: string, extra = {}) => keybindingsStore.findMatchingCommand({ ...createKeyboardEvent({ key }), ...extra } as KeyboardEvent);
+    expect(press("m", { altKey: true })).toBe("chord:waiting");
+    expect(press("Control", { ctrlKey: true })).toBeUndefined();
+    expect(press("c", { ctrlKey: true })).toBe("test");
+  });
+
+  it.each(["Alt+M Alt+M", "Alt+M M"])("holding the prefix never completes or cancels %s", (shortcut) => {
+    keybindingsStore.registerDefault("test", shortcut);
+    const event = { ...createKeyboardEvent({ key: "m", altKey: true }), repeat: false } as KeyboardEvent;
+    expect(keybindingsStore.findMatchingCommand(event)).toBe("chord:waiting");
+    expect(keybindingsStore.findMatchingCommand({ ...event, repeat: true } as KeyboardEvent)).toBeUndefined();
+    expect(keybindingsStore.isChordActive).toBe(true);
+    expect(keybindingsStore.findMatchingCommand({ ...event, altKey: shortcut.endsWith("Alt+M") } as KeyboardEvent)).toBe("test");
+  });
+
   describe("registerDefaults", () => {
     it("registers default shortcuts", () => {
       keybindingsStore.registerDefaults({
@@ -105,6 +122,12 @@ describe("keybindingsStore", () => {
     it("can unbind a shortcut by setting null", () => {
       keybindingsStore.setShortcut("edit.copy", null);
       expect(keybindingsStore.getShortcut("edit.copy")).toBeUndefined();
+    });
+    it("persists explicit unbinding so a conflict cannot return after restart", () => {
+      keybindingsStore.setShortcut("edit.copy", null);
+      const writes = vi.mocked(localStorage.setItem).mock.calls;
+      const saved = JSON.parse(writes.at(-1)![1]);
+      expect(saved).toEqual({ "edit.copy": null });
     });
   });
 
@@ -177,6 +200,30 @@ describe("keybindingsStore", () => {
   });
 
   describe("findMatchingCommand", () => {
+    it("custom shared-prefix chords execute one suffix once and expire at the deadline", () => {
+      vi.useFakeTimers();
+      try {
+        keybindingsStore.registerDefaults({ "one": "Ctrl+1", "two": "Ctrl+2" });
+        keybindingsStore.setShortcut("one", "Alt+M M");
+        keybindingsStore.setShortcut("two", "Alt+M T");
+        const prefix = createKeyboardEvent({ key: "m", altKey: true }) as KeyboardEvent;
+        const m = createKeyboardEvent({ key: "m" }) as KeyboardEvent;
+        const t = createKeyboardEvent({ key: "t" }) as KeyboardEvent;
+        expect(keybindingsStore.findMatchingCommand(prefix)).toBe("chord:waiting");
+        vi.advanceTimersByTime(1499);
+        expect(keybindingsStore.findMatchingCommand(t)).toBe("two");
+        expect(keybindingsStore.findMatchingCommand(t)).toBeUndefined();
+        keybindingsStore.findMatchingCommand(prefix);
+        vi.advanceTimersByTime(1500);
+        expect(keybindingsStore.findMatchingCommand(m)).toBeUndefined();
+        keybindingsStore.findMatchingCommand(prefix);
+        expect(keybindingsStore.findMatchingCommand(createKeyboardEvent({ key: "Escape" }) as KeyboardEvent)).toBeUndefined();
+        expect(keybindingsStore.findMatchingCommand(m)).toBeUndefined();
+        keybindingsStore.findMatchingCommand(prefix);
+        expect(keybindingsStore.findMatchingCommand(createKeyboardEvent({ key: "x" }) as KeyboardEvent)).toBeUndefined();
+        expect(keybindingsStore.findMatchingCommand(m)).toBeUndefined();
+      } finally { vi.useRealTimers(); }
+    });
     beforeEach(() => {
       keybindingsStore.registerDefaults({
         "edit.copy": "Ctrl+C",
@@ -254,6 +301,12 @@ describe("keybindingsStore", () => {
   });
 
   describe("findConflicts", () => {
+    it("reports every ambiguous single-key prefix but allows distinct chord suffixes", () => {
+      keybindingsStore.registerDefaults({ "one": "Alt+M M", "two": "Alt+M T" });
+      expect(keybindingsStore.findConflicts("Alt+M")).toEqual(["one", "two"]);
+      expect(keybindingsStore.findConflicts("Alt+M B")).toEqual([]);
+      expect(keybindingsStore.findConflicts("Alt+M M")).toEqual(["one"]);
+    });
     beforeEach(() => {
       keybindingsStore.registerDefaults({
         "edit.copy": "Ctrl+C",

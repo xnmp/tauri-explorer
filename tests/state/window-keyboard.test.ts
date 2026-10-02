@@ -47,6 +47,71 @@ function fixture(terminalFocus = false) {
 }
 
 describe("window keyboard ownership", () => {
+  it.each([
+    ["Ctrl+J M", [["j", { ctrlKey: true }], ["m", {}]]],
+    ["Alt+M Ctrl+J", [["m", { altKey: true }], ["j", { ctrlKey: true }]]],
+    ["Ctrl+, M", [[",", { ctrlKey: true }], ["m", {}]]],
+    ["Alt+M Ctrl+F", [["m", { altKey: true }], ["f", { ctrlKey: true }]]],
+    ["Ctrl+` M", [["`", { ctrlKey: true }], ["m", {}]]],
+  ] as const)("configured %s dispatches without a hardcoded surface action", (shortcut, keys) => {
+    const f = fixture();
+    f.bind("navigation.goUp", shortcut);
+    for (const [key, modifiers] of keys) f.press(key, modifiers);
+    expect(f.executeCommand).toHaveBeenCalledExactlyOnceWith("navigation.goUp");
+    expect(f.dialogs.openJobsPanel).not.toHaveBeenCalled();
+    expect(f.dialogs.openSettings).not.toHaveBeenCalled();
+    expect(f.explorer.openFilter).not.toHaveBeenCalled();
+    expect(f.terminal.toggle).not.toHaveBeenCalled();
+  });
+
+  it("consumes an unmatched Explorer suffix without opening native Find or a surface", () => {
+    const f = fixture();
+    f.bind("navigation.goUp", "Alt+M M");
+    f.press("m", { altKey: true });
+    expect(f.press("f", { ctrlKey: true }).defaultPrevented).toBe(true);
+    expect(f.explorer.openFilter).not.toHaveBeenCalled();
+    expect(f.executeCommand).not.toHaveBeenCalled();
+    expect(keybindingsStore.isChordActive).toBe(false);
+  });
+
+  it("an Explorer-owned chord cannot suppress the terminal's default toggle", () => {
+    const f = fixture(true);
+    f.bind("navigation.goUp", "Ctrl+` M");
+    f.press("`", { ctrlKey: true, code: "Backquote" });
+    expect(f.terminal.toggle).toHaveBeenCalledOnce();
+    expect(f.executeCommand).not.toHaveBeenCalled();
+  });
+
+  it("custom Quick Open chords remain terminal-owned while configured terminal-toggle chords work", () => {
+    const f = fixture(true);
+    f.bind("edit.copy", "Ctrl+C");
+    f.bind("general.openQuickOpen", "Ctrl+P");
+    keybindingsStore.setShortcut("edit.copy", "Alt+M M");
+    keybindingsStore.setShortcut("general.openQuickOpen", "Alt+M P");
+    expect(f.press("m", { altKey: true }).defaultPrevented).toBe(false);
+    expect(f.press("p").defaultPrevented).toBe(false);
+    expect(f.executeCommand).not.toHaveBeenCalled();
+    f.bind("general.openTerminal", "Ctrl+`");
+    keybindingsStore.setShortcut("general.openTerminal", "Alt+M Ctrl+T");
+    expect(f.press("m", { altKey: true }).defaultPrevented).toBe(true);
+    f.press("Control", { ctrlKey: true });
+    f.press("t", { ctrlKey: true });
+    expect(f.executeCommand).toHaveBeenCalledExactlyOnceWith("general.openTerminal");
+  });
+
+  it("input focus retires a custom chord before its suffix can execute", () => {
+    const f = fixture();
+    f.bind("navigation.goUp", "Ctrl+Alt+Up");
+    keybindingsStore.setShortcut("navigation.goUp", "Alt+M M");
+    f.press("m", { altKey: true });
+    Object.assign(f.target, { tagName: "INPUT" });
+    f.target.dispatchEvent(new Event("focusin"));
+    expect(f.press("m").defaultPrevented).toBe(false);
+    expect(f.executeCommand).not.toHaveBeenCalled();
+    Object.assign(f.target, { tagName: "DIV" });
+    f.press("m");
+    expect(f.executeCommand).not.toHaveBeenCalled();
+  });
   it("a terminal core shortcut dispatches its eligible command despite an earlier conflicting binding", () => {
     const f = fixture(true);
     f.bind("plugin.other", "Ctrl+P");

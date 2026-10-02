@@ -1,0 +1,94 @@
+{
+  "fit": {
+    "cx": 790.5,
+    "cy": 445,
+    "height": 279,
+    "vcx": 790.5,
+    "vcy": 445,
+    "vh": 327,
+    "vw": 419,
+    "vx": 581,
+    "vy": 281.5,
+    "width": 209.25,
+    "x": 685.875,
+    "y": 305.5
+  },
+  "layout": {
+    "controls": [
+      {
+        "bottom": 218.5,
+        "height": 42,
+        "label": "Previous PDF page",
+        "right": 657,
+        "width": 42,
+        "x": 615,
+        "y": 176.5
+      },
+      {
+        "bottom": 218.5,
+        "height": 42,
+        "label": "Next PDF page",
+        "right": 762,
+        "width": 42,
+        "x": 720,
+        "y": 176.5
+      },
+      {
+        "bottom": 218.5,
+        "height": 42,
+        "label": "Zoom PDF out",
+        "right": 816,
+        "width": 42,
+        "x": 774,
+        "y": 176.5
+      },
+      {
+        "bottom": 218.5,
+        "height": 42,
+        "label": "Zoom PDF in",
+        "right": 921,
+        "width": 42,
+        "x": 879,
+        "y": 176.5
+      },
+      {
+        "bottom": 218.5,
+        "height": 42,
+        "label": "Fit",
+        "right": 966,
+        "width": 42,
+        "x": 924,
+        "y": 176.5
+      },
+      {
+        "bottom": 272.5,
+        "height": 42,
+        "label": "View PDF fullscreen",
+        "right": 811.5,
+        "width": 42,
+        "x": 769.5,
+        "y": 230.5
+      }
+    ],
+    "explorer": {
+      "bottom": 708,
+      "right": 580,
+      "x": 360,
+      "y": 57
+    },
+    "pane": {
+      "bottom": 708,
+      "right": 1000,
+      "x": 580,
+      "y": 57
+    },
+    "viewport": {
+      "height": 327,
+      "width": 419
+    },
+    "window": {
+      "height": 750,
+      "width": 1000
+    }
+  }
+}

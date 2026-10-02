@@ -1,0 +1,235 @@
+{
+  "sourceCommit": "0b09afccc48a5f436231d567c503e65a92480215",
+  "qualifiedBaseCommit": "dddd1cd21fcc973c9f2aab28d2601fafbabb10dd",
+  "actualRemoteDev": "8d7fc4d26944bedfe95cbc9b501a1d3b77d7790e",
+  "build": {
+    "schemaVersion": 1,
+    "sourceCommit": "0b09afccc48a5f436231d567c503e65a92480215",
+    "profile": "debug-custom-protocol-e2e-hooks",
+    "buildCommand": [
+      "bun",
+      "run",
+      "tauri",
+      "build",
+      "--debug",
+      "--no-bundle",
+      "--features",
+      "e2e-hooks"
+    ],
+    "startedAt": "2026-10-02T19:01:00.877679+00:00",
+    "completedAt": "2026-10-02T19:01:59.487563+00:00",
+    "binary": "/home/chong/Repos/tauri-explorer/.claude/worktrees/issue17-native-cache/debug/tauri-explorer",
+    "binarySha256": "6252574db7d01540c94cb9c8e5e04f0d9182ce7f2081728e9abe9578eee1270a",
+    "binaryBytes": 712634128,
+    "binaryModifiedAt": "2026-10-02T19:01:17.548466+00:00"
+  },
+  "noRebuildPerformed": true,
+  "postRunBinarySha256": "6252574db7d01540c94cb9c8e5e04f0d9182ce7f2081728e9abe9578eee1270a",
+  "binaryUnchangedDuringRun": true,
+  "identitiesBefore": {
+    "../issue17-pdf/e2e-tauri/specs/pdf-preview.spec.ts": "92eaf7d550440210730294968740867b2546b78683cfe78f59646cf36d9c246c",
+    "e2e-tauri/specs/.claude-pdf-singlepage-final.spec.ts": "92eaf7d550440210730294968740867b2546b78683cfe78f59646cf36d9c246c",
+    "e2e-tauri/fixtures/preview-single-page.pdf": "58b39b56a84e2781f48551dd7c840cf5b2a5ca8255518368ab5a21a4c040f9cc",
+    "e2e-tauri/specs/pdf-preview.spec.ts": "820fd775851a360bb4a519a18bc23101e85a8f8024f4410a714d3c8631320d03",
+    "e2e-tauri/run-scaled-selection.py": "fb23ea3023555f624476a586102ac77e58ee83e8d8f04ce6e500a18849d39042",
+    "e2e-tauri/wdio.pdf-preview.conf.ts": "8dbdd186bb090918f20b7b6bbd554f52dc0c4d2fe5b547f82efd4ad446a6c434"
+  },
+  "identitiesAfter": {
+    "../issue17-pdf/e2e-tauri/specs/pdf-preview.spec.ts": "92eaf7d550440210730294968740867b2546b78683cfe78f59646cf36d9c246c",
+    "e2e-tauri/specs/.claude-pdf-singlepage-final.spec.ts": "92eaf7d550440210730294968740867b2546b78683cfe78f59646cf36d9c246c",
+    "e2e-tauri/fixtures/preview-single-page.pdf": "58b39b56a84e2781f48551dd7c840cf5b2a5ca8255518368ab5a21a4c040f9cc",
+    "e2e-tauri/specs/pdf-preview.spec.ts": "820fd775851a360bb4a519a18bc23101e85a8f8024f4410a714d3c8631320d03",
+    "e2e-tauri/run-scaled-selection.py": "fb23ea3023555f624476a586102ac77e58ee83e8d8f04ce6e500a18849d39042",
+    "e2e-tauri/wdio.pdf-preview.conf.ts": "8dbdd186bb090918f20b7b6bbd554f52dc0c4d2fe5b547f82efd4ad446a6c434"
+  },
+  "specAndHarnessUnchanged": true,
+  "temporaryHarnessIdentitiesBefore": {
+    "e2e-tauri/.claude-pdf-singlepage-final.conf.ts": "71fd67273a043f6f756935f6f78fba3d20cbab33acc3cd9dbe19f10f048b5b1e",
+    ".claude-native-integration-private/pdf-singlepage-final-run.sh": "10adc33d077ce02735cd7545413e0de8c29178d7d4eb383b1518b3222862918d"
+  },
+  "temporaryHarnessIdentitiesAfter": {
+    "e2e-tauri/.claude-pdf-singlepage-final.conf.ts": "71fd67273a043f6f756935f6f78fba3d20cbab33acc3cd9dbe19f10f048b5b1e",
+    ".claude-native-integration-private/pdf-singlepage-final-run.sh": "10adc33d077ce02735cd7545413e0de8c29178d7d4eb383b1518b3222862918d"
+  },
+  "temporaryHarnessUnchanged": true,
+  "modifiedTrackedProductionFiles": [],
+  "exitCode": 0,
+  "passing": 12,
+  "failing": 0,
+  "caseDuration": "56.7s",
+  "specDuration": "00:00:59",
+  "outcomes": [
+    {
+      "suite": "native PDF preview (#728/#729/#730)",
+      "title": "uses a real module worker to render known bytes in the native WebView",
+      "passed": true,
+      "duration": 447,
+      "error": null
+    },
+    {
+      "suite": "native PDF preview (#728/#729/#730)",
+      "title": "centers 130%, follows pan and preserves wheel anchor at app 100% fullscreen false",
+      "passed": true,
+      "duration": 2703,
+      "error": null
+    },
+    {
+      "suite": "native PDF preview (#728/#729/#730)",
+      "title": "centers 130%, follows pan and preserves wheel anchor at app 100% fullscreen true",
+      "passed": true,
+      "duration": 6207,
+      "error": null
+    },
+    {
+      "suite": "native PDF preview (#728/#729/#730)",
+      "title": "centers 130%, follows pan and preserves wheel anchor at app 150% fullscreen false",
+      "passed": true,
+      "duration": 6454,
+      "error": null
+    },
+    {
+      "suite": "native PDF preview (#728/#729/#730)",
+      "title": "centers 130%, follows pan and preserves wheel anchor at app 150% fullscreen true",
+      "passed": true,
+      "duration": 8374,
+      "error": null
+    },
+    {
+      "suite": "native PDF preview (#728/#729/#730)",
+      "title": "navigates all mixed-size pages and internal links without changing bytes",
+      "passed": true,
+      "duration": 4266,
+      "error": null
+    },
+    {
+      "suite": "native PDF preview (#728/#729/#730)",
+      "title": "a link drag launches nothing; an ordinary zoomed click dispatches the intact URL to an owned native handler",
+      "passed": true,
+      "duration": 2348,
+      "error": null
+    },
+    {
+      "suite": "native PDF preview (#728/#729/#730)",
+      "title": "reaches off-screen corners, resets to fit, and navigates pages by keyboard",
+      "passed": true,
+      "duration": 12118,
+      "error": null
+    },
+    {
+      "suite": "native PDF preview (#728/#729/#730)",
+      "title": "keeps fit centered when docking and narrowing the native preview at app150",
+      "passed": true,
+      "duration": 5932,
+      "error": null
+    },
+    {
+      "suite": "native PDF preview (#728/#729/#730)",
+      "title": "real native blur ends a held pan and later movement cannot continue it",
+      "passed": true,
+      "duration": 2369,
+      "error": null
+    },
+    {
+      "suite": "native PDF preview (#728/#729/#730)",
+      "title": "renders a single-page file with both page boundaries disabled and preserves its bytes",
+      "passed": true,
+      "duration": 1620,
+      "error": null
+    },
+    {
+      "suite": "native PDF preview (#728/#729/#730)",
+      "title": "shows image-consistent framing and a truthful corrupt-document error; stops departed workers",
+      "passed": true,
+      "duration": 1838,
+      "error": null
+    }
+  ],
+  "nativeHooksReady": true,
+  "actualCustomProtocolWorkerStartup": {
+    "receipts": [
+      {
+        "origin": "tauri://localhost",
+        "url": "tauri://localhost/_app/immutable/assets/pdf.worker.min.BmVo14Nb.mjs",
+        "phase": "created",
+        "at": 2376,
+        "path": "/home/chong/tauri-native-cleanup-UzaeZa/native-pdf-proof-8YTMTL/0-landmarks.pdf",
+        "id": "0d2b079d-661f-4593-9b65-97e66f4e2f9c"
+      },
+      {
+        "origin": "tauri://localhost",
+        "url": "tauri://localhost/_app/immutable/assets/pdf.worker.min.BmVo14Nb.mjs",
+        "phase": "ready",
+        "at": 2451,
+        "path": "/home/chong/tauri-native-cleanup-UzaeZa/native-pdf-proof-8YTMTL/0-landmarks.pdf",
+        "id": "0d2b079d-661f-4593-9b65-97e66f4e2f9c"
+      }
+    ],
+    "location": {
+      "href": "tauri://localhost",
+      "origin": "tauri://localhost"
+    },
+    "color": [
+      255,
+      0,
+      0,
+      255
+    ]
+  },
+  "singlePageOutcome": {
+    "beforeSha256": "58b39b56a84e2781f48551dd7c840cf5b2a5ca8255518368ab5a21a4c040f9cc",
+    "afterSha256": "58b39b56a84e2781f48551dd7c840cf5b2a5ca8255518368ab5a21a4c040f9cc",
+    "fit": {
+      "cx": 1386.75,
+      "width": 370.5,
+      "vcy": 555.25,
+      "height": 494,
+      "vh": 547.5,
+      "cy": 555.25,
+      "y": 308.25,
+      "vy": 281.5,
+      "x": 1201.5,
+      "vx": 1177.5,
+      "vcx": 1386.75,
+      "vw": 418.5
+    },
+    "enlarged": {
+      "cx": 1386.8203125,
+      "width": 481.640625,
+      "vcy": 555.25,
+      "height": 642.1875,
+      "vh": 547.5,
+      "cy": 555.34375,
+      "y": 234.25,
+      "vy": 281.5,
+      "x": 1146,
+      "vx": 1177.5,
+      "vcx": 1386.75,
+      "vw": 418.5
+    },
+    "color": [
+      255,
+      0,
+      0,
+      255
+    ],
+    "pageCount": 1
+  },
+  "profileOutsideViteRoot": true,
+  "cleanup": {
+    "namespace": "host, escalated diagnostic",
+    "ownedProfile": "/home/chong/Repos/tauri-explorer/.claude/issue17-pdf-native-singlepage-profile/p.se4k4u",
+    "ownedRuntime": "/home/chong/Repos/tauri-explorer/.claude/pdfr.FsFm2e",
+    "survivors": [],
+    "ownedPortListeners": [],
+    "procEntries": 573
+  },
+  "captureCount": 17,
+  "restoredCount": 16,
+  "singlePageCapture": "captures/screenshots/fix/728-zooming-in-pdf-in-preview-isnt-centred/pdf-single-page-native-125-output-150-app.png",
+  "singlePageScreenshotInspected": true,
+  "productionFileComparison": {
+    "frontendFiles": 397,
+    "rustSourceFiles": 185,
+    "different": []
+  }
+}

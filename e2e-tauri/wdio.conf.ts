@@ -1,5 +1,5 @@
 import { spawn, type ChildProcess } from "node:child_process";
-import { createWriteStream, mkdirSync, existsSync } from "node:fs";
+import { appendFileSync, createWriteStream, mkdirSync, existsSync } from "node:fs";
 import net from "node:net";
 import path from "node:path";
 import os from "node:os";
@@ -191,6 +191,17 @@ export const config: WebdriverIO.Config = {
   framework: "mocha",
   reporters: ["spec"],
   mochaOpts: { ui: "bdd", timeout: 60_000 },
+  afterTest: (test, _context, outcome) => {
+    // Persist runner outcomes even when native process output obscures the
+    // console reporter. Separate worker files avoid concurrent append races.
+    mkdirSync(path.join(here, "logs"), { recursive: true });
+    appendFileSync(path.join(here, "logs", `case-outcomes-${process.pid}.jsonl`), `${JSON.stringify({
+      sourceCommit: process.env.GITHUB_SHA ?? null, suite: test.parent, title: test.title,
+      passed: outcome.passed, skipped: outcome.skipped ?? test.pending,
+      duration: outcome.duration, retries: outcome.retries,
+      error: outcome.error?.stack ?? outcome.error?.message ?? null,
+    })}\n`);
+  },
   onPrepare: () => {
     processCleanupHooks.prepare();
     installExternalJobFixture(process.env);

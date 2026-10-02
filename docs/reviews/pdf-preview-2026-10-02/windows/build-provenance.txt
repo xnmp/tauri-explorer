@@ -1,0 +1,11 @@
+revision=c18bb30932015a4737745cc480351bcee0957c84
+runner_os=Windows
+runner_arch=X64
+cargo_registry_cache_key=Windows-cargo-registry-e02649ecde78a0698717da58d6136abd91b8adf93f12392e4799b0dba02d61c1
+target_cache_key=Windows-X64-target-debug-5477f9bad65b15c4-335c7c4319c34e80c6361a3e04227bea0372aa433930881116ae71050c28005f
+cargo_registry_cache_hit=
+rust_target_cache_hit=
+contract_outcome=success
+build_outcome=success
+cache_storage_bytes=5995163648
+cache_transfer_estimate_bytes=5995163648

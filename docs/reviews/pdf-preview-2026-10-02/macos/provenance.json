@@ -1,0 +1,73 @@
+{
+  "run": "https://github.com/xnmp/tauri-explorer/actions/runs/37044383860",
+  "headCommit": "0df0fc08a33cd2a02fed299403683d30a54b6c66",
+  "checkoutCommit": "74e6d223853759e0d25e036e0eb4e65234fe95f5",
+  "binarySha256": "56a62fa1c509db91a7bcee7ed0350dc05a1bcee86bdac49697c0fce2b4ea6110",
+  "binaryBytes": 23795456,
+  "profile": "production-WKWebView-custom-protocol",
+  "platform": {
+    "os": "darwin",
+    "release": "24.6.0",
+    "arch": "arm64"
+  },
+  "appZoomPercent": 100,
+  "overallPassed": false,
+  "qualifiedScope": "Eleven native pixel outcomes through fullscreen exit; narrow-window app-zoom, docks, errors, image replacement and final source-preservation are pending.",
+  "files": [
+    {
+      "file": "screenshots/fix/728-zooming-in-pdf-in-preview-isnt-centred/macos/01-fit-page-1.png",
+      "sha256": "89ca5ae06270675121d1d1945a535fd4ced482720a035427a4c551e161690dc4",
+      "bytes": 171854
+    },
+    {
+      "file": "screenshots/fix/728-zooming-in-pdf-in-preview-isnt-centred/macos/02-centered-130-percent.png",
+      "sha256": "5a0689d6c8aa16f5cffb3e02a56eaa7adcce3e0655c4215067714cdf312e465d",
+      "bytes": 169072
+    },
+    {
+      "file": "screenshots/fix/728-zooming-in-pdf-in-preview-isnt-centred/macos/03-page-2.png",
+      "sha256": "b55751969f1b50744ff0f051def2ddf42c0bb99c2ef678ca3b7911a0edeb6b08",
+      "bytes": 171644
+    },
+    {
+      "file": "screenshots/fix/728-zooming-in-pdf-in-preview-isnt-centred/macos/03-page-3.png",
+      "sha256": "6f469f7d81d5e084c85f730195ee8de39bd3cefa35af206b2c2a44237a2246ab",
+      "bytes": 173221
+    },
+    {
+      "file": "screenshots/fix/728-zooming-in-pdf-in-preview-isnt-centred/macos/04-returned-page-1.png",
+      "sha256": "27665561db98b41f3417fce95dfdc43a3a44b7936e1281a8b9351ccc1ee443e4",
+      "bytes": 172073
+    },
+    {
+      "file": "screenshots/fix/728-zooming-in-pdf-in-preview-isnt-centred/macos/04-returned-page-2.png",
+      "sha256": "e3d4f6f5e8b22871450f31c5eef3db1f07f10747f9fe13a73ea109f762c3e5e6",
+      "bytes": 171670
+    },
+    {
+      "file": "screenshots/fix/728-zooming-in-pdf-in-preview-isnt-centred/macos/05-before-pan-400-percent.png",
+      "sha256": "84ca270fbc5ad43c54559b6ef7ab69f47102becefc53613e0ed9460b0c14ea3c",
+      "bytes": 164359
+    },
+    {
+      "file": "screenshots/fix/728-zooming-in-pdf-in-preview-isnt-centred/macos/06-after-native-pan.png",
+      "sha256": "eb286a3514dbb530f08f6cc41008cf419fa224eb2e56bbc0eff5bfe0833c6b27",
+      "bytes": 164344
+    },
+    {
+      "file": "screenshots/fix/728-zooming-in-pdf-in-preview-isnt-centred/macos/07-reset-fit.png",
+      "sha256": "d63b9d14224393c1057622e43a38f13921df494968e437bb58f1cc7b7a6ebb70",
+      "bytes": 169907
+    },
+    {
+      "file": "screenshots/fix/728-zooming-in-pdf-in-preview-isnt-centred/macos/08-fullscreen.png",
+      "sha256": "ab8d9e4f48b09e75f33cd9c16f388b2a451fc938245e123015aa08ad20cf3c8c",
+      "bytes": 125169
+    },
+    {
+      "file": "screenshots/fix/728-zooming-in-pdf-in-preview-isnt-centred/macos/09-exit-fullscreen.png",
+      "sha256": "8acc0c128389e94b25ac90ff01950d0728cf2d210a8299beb35b72630fe11947",
+      "bytes": 169904
+    }
+  ]
+}

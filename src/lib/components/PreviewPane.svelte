@@ -40,6 +40,7 @@ import { openFile } from "$lib/api/open";
   function openCrop(): void {
     if (selectedFile) cropTarget = { path: selectedFile.path, name: selectedFile.name };
   }
+  import { dialogStore } from "$lib/state/dialogs.svelte";
 
   // Window-global surface: the preview's SCM diff follows the ACTIVE pane's
   // store (#334) — reactive through windowTabsManager.activePaneId.
@@ -125,7 +126,7 @@ import { openFile } from "$lib/api/open";
   function handlePaneDoubleClick(event: MouseEvent): void {
     const target = event.target;
     if (!(target instanceof Element) || target.closest(
-      'button, a, input, textarea, select, [contenteditable], [role="separator"], .preview-image-container, video, audio, iframe',
+      'button, a, input, textarea, select, [contenteditable], [role="separator"], .preview-image-container, .pdf-preview, video, audio, iframe',
     )) return;
     toggleFullscreen();
   }
@@ -223,6 +224,8 @@ import { openFile } from "$lib/api/open";
     const onKey = (event: KeyboardEvent) => {
       if (cropTarget) return;
       const k = event.key;
+      if (selectedFile && isPdfFile(selectedFile) && dialogStore.hasModalOpen) return;
+      if (selectedFile && isPdfFile(selectedFile) && k !== "Escape") return;
       const stop = () => {
         event.preventDefault();
         event.stopImmediatePropagation();
@@ -293,7 +296,8 @@ import { openFile } from "$lib/api/open";
   let previewHighlightedHtml = $state<string | null>(null);
   let previewMarkdownHtml = $state<string | null>(null);
   let previewCsv = $state<CsvPreview | null>(null);
-  let previewPdfUrl = $state<string | null>(null);
+  let previewPdf = $state<{ path: string; key: string } | null>(null);
+  let PdfPreview = $state<typeof import("./PdfPreview.svelte").default | null>(null);
   let previewFolderChildrenRaw = $state<readonly FileEntry[]>([]);
   // Set when a folder/ZIP preview descended through one or more single-child
   // folders: the collapsed path (e.g. "a/b") and a short note describing it.
@@ -538,7 +542,7 @@ import { openFile } from "$lib/api/open";
       previewHighlightedHtml = null;
       previewMarkdownHtml = null;
       previewCsv = null;
-      previewPdfUrl = null;
+      previewPdf = null;
       previewFolderChildrenRaw = [];
       previewCollapsedRoot = null;
       previewCollapsedNote = null;
@@ -570,7 +574,7 @@ import { openFile } from "$lib/api/open";
     previewHighlightedHtml = null;
     previewMarkdownHtml = null;
     previewCsv = null;
-    previewPdfUrl = null;
+    previewPdf = null;
     previewFolderChildrenRaw = [];
     previewCollapsedRoot = null;
     previewCollapsedNote = null;
@@ -641,22 +645,14 @@ import { openFile } from "$lib/api/open";
     const bust = encodeURIComponent(`${file.modified}-${file.size}-${localPreviewRevision}`);
 
     if (isPdfFile(file)) {
-      if (isTauri()) {
-        try {
-          const { convertFileSrc } = await import("@tauri-apps/api/core");
-          if (!previewLifetime.isCurrent(request)) return;
-          previewPdfUrl = `${convertFileSrc(file.path)}?v=${bust}`;
-        } catch (error) {
-          if (!previewLifetime.isCurrent(request)) return;
-          console.warn("[preview] PDF asset URL creation failed", { path: file.path, error });
-          logFrontendDiagnostic("preview PDF asset URL creation failed", {
-            path: file.path,
-            error: error instanceof Error ? error.message : String(error),
-          });
-          previewError = "Cannot preview PDF";
-        }
-      } else {
-        previewError = "PDF preview requires Tauri runtime";
+      try {
+        const component = await import("./PdfPreview.svelte");
+        if (!previewLifetime.isCurrent(request)) return;
+        PdfPreview = component.default;
+        previewPdf = { path: file.path, key: request.key };
+      } catch (error) {
+        if (!previewLifetime.isCurrent(request)) return;
+        previewError = `Cannot preview PDF: ${error instanceof Error ? error.message : String(error)}`;
       }
       previewLoading = false;
       return;
@@ -962,10 +958,11 @@ import { openFile } from "$lib/api/open";
             <div class="spinner"></div>
           </div>
         {/if}
-      {:else if previewPdfUrl}
-        <div class="preview-pdf-container">
-          <iframe src={previewPdfUrl} title={selectedFile.name} class="preview-pdf"></iframe>
-        </div>
+      {:else if previewPdf && PdfPreview}
+        {#key previewPdf.key}
+          <PdfPreview path={previewPdf.path} name={selectedFile.name} {fullscreen}
+            ontogglefullscreen={toggleFullscreen} onnavigate={navigateSibling} />
+        {/key}
       {:else if previewImageUrl}
         <!-- This surface owns click/pan/zoom; the pane's double-click policy
              leaves it alone. Clicking at fit zoom toggles fullscreen (#219). -->
@@ -1463,16 +1460,6 @@ import { openFile } from "$lib/api/open";
     to { transform: rotate(360deg); }
   }
 
-  .preview-pdf-container {
-    flex: 1;
-    display: flex;
-  }
-
-  .preview-pdf {
-    width: 100%;
-    height: 100%;
-    border: none;
-  }
 
   .image-preview-note { position: absolute; bottom: 8px; left: 8px; right: 8px; margin: 0; padding: 4px 8px; background: var(--background-solid); color: var(--text-secondary); font-size: var(--font-size-caption); pointer-events: none; }
 

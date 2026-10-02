@@ -1,0 +1,87 @@
+{
+  "appZoom": 100,
+  "nativeMetrics": {
+    "devicePixelRatio": 1,
+    "innerHeight": 900,
+    "innerWidth": 1200,
+    "outerHeight": 900,
+    "outerWidth": 1200
+  },
+  "fullscreen": true,
+  "centered": {
+    "cx": 600,
+    "cy": 470,
+    "height": 1076.390625,
+    "vcx": 600,
+    "vcy": 470,
+    "vh": 860,
+    "vw": 1200,
+    "vx": 0,
+    "vy": 40,
+    "width": 807.296875,
+    "x": 196.3515625,
+    "y": -68.1953125
+  },
+  "before": {
+    "cx": 600,
+    "cy": 470,
+    "height": 3312,
+    "vcx": 600,
+    "vcy": 470,
+    "vh": 860,
+    "vw": 1200,
+    "vx": 0,
+    "vy": 40,
+    "width": 2484,
+    "x": -642,
+    "y": -1186
+  },
+  "panned": {
+    "cx": 540,
+    "cy": 420,
+    "height": 3312,
+    "vcx": 600,
+    "vcy": 470,
+    "vh": 860,
+    "vw": 1200,
+    "vx": 0,
+    "vy": 40,
+    "width": 2484,
+    "x": -702,
+    "y": -1236
+  },
+  "anchor": {
+    "x": 620,
+    "y": 490
+  },
+  "wheeled": {
+    "cx": 528,
+    "cy": 409.5,
+    "height": 3808.796875,
+    "vcx": 600,
+    "vcy": 470,
+    "vh": 860,
+    "vw": 1200,
+    "vx": 0,
+    "vy": 40,
+    "width": 2856.59375,
+    "x": -900.296875,
+    "y": -1494.8984375
+  },
+  "fit": {
+    "cx": 600,
+    "cy": 470,
+    "height": 828,
+    "vcx": 600,
+    "vcy": 470,
+    "vh": 860,
+    "vw": 1200,
+    "vx": 0,
+    "vy": 40,
+    "width": 621,
+    "x": 289.5,
+    "y": 56
+  },
+  "nativeWheelDelivery": "DOM",
+  "heldPointerCursor": "grabbing"
+}

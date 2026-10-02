@@ -55,6 +55,7 @@ pub(crate) mod mutation;
 mod native_directory;
 mod object_id;
 pub mod open_with;
+pub mod pdf_preview;
 mod permanent_delete;
 // Selections are admitted on Linux; other Unix platforms prepare one native
 // permanent deletion through the same observation and budget.

@@ -1,0 +1,36 @@
+{
+  "schemaVersion": 1,
+  "runId": "2026-10-02T20-04-18-588Z-cc29b3de",
+  "sourceCommit": "e9bd9caaa306b95d03c450aa5c351ea8eb4a3ec3",
+  "binary": "/Users/runner/work/tauri-explorer/tauri-explorer/src-tauri/target/release/bundle/macos/tauri-explorer.app/Contents/MacOS/tauri-explorer",
+  "binarySha256": "8c87193139a4936559d015abcab20b5f5c5626a04800e360201e029fc5b43f90",
+  "binaryBytes": 28922592,
+  "platform": {
+    "os": "darwin",
+    "release": "24.6.0",
+    "arch": "arm64"
+  },
+  "driver": {
+    "requested": {
+      "appium": "3.8.0",
+      "mac2": "4.2.0"
+    },
+    "observedAppiumVersion": "3.8.0",
+    "observedMac2Version": "4.2.0",
+    "observedInstalledDrivers": "{\n    \"mac2\": {\n        \"pkgName\": \"appium-mac2-driver\",\n        \"version\": \"4.2.0\",\n        \"installType\": \"npm\",\n        \"installSpec\": \"mac2@4.2.0\",\n        \"installPath\": \"/Users/runner/.appium/node_modules/appium-mac2-driver\",\n        \"appiumVersion\": \"^3.0.0-rc.2\",\n        \"automationName\": \"Mac2\",\n        \"platformNames\": [\n            \"Mac\"\n        ],\n        \"mainClass\": \"Mac2Driver\",\n        \"scripts\": {\n            \"open-wda\": \"./scripts/open-wda.mjs\"\n        },\n        \"doctor\": {\n            \"checks\": [\n                \"./build/lib/doctor/required-checks.js\",\n                \"./build/lib/doctor/optional-checks.js\"\n            ]\n        },\n        \"installed\": true,\n        \"repositoryUrl\": \"https://github.com/appium/appium-mac2-driver\"\n    }\n}"
+  },
+  "fixture": {
+    "child": "/var/folders/nj/vtw8zd2j31d1gdrtntc5y4600000gn/T/tauri-macos-ui-Tl7rsn/child",
+    "childName": "child-visible-6444c705.txt",
+    "parentName": "parent-visible-6444c705.txt"
+  },
+  "startedAt": "2026-10-02T20:04:18.594Z",
+  "finishedAt": "2026-10-02T20:07:13.039Z",
+  "initialChildVisible": true,
+  "navigatedParentVisible": true,
+  "childAbsentAfterNavigation": true,
+  "pdfPreviewPassed": true,
+  "screenshot": "/Users/runner/work/tauri-explorer/tauri-explorer/qualification-results/macos-native-ui/2026-10-02T20-04-18-588Z-cc29b3de/navigated-parent.png",
+  "error": null,
+  "passed": true
+}

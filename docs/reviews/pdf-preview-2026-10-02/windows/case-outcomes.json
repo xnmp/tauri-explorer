@@ -1,0 +1,110 @@
+[
+  {
+    "sourceCommit": "c18bb30932015a4737745cc480351bcee0957c84",
+    "suite": "native PDF preview (#728/#729/#730)",
+    "title": "uses a real module worker to render known bytes in the native WebView",
+    "passed": true,
+    "duration": 191,
+    "retries": {
+      "attempts": 0,
+      "limit": 0
+    },
+    "error": null
+  },
+  {
+    "sourceCommit": "c18bb30932015a4737745cc480351bcee0957c84",
+    "suite": "native PDF preview (#728/#729/#730)",
+    "title": "centers 130%, follows pan and preserves wheel anchor at app 100% fullscreen false",
+    "passed": true,
+    "duration": 3498,
+    "retries": {
+      "attempts": 0,
+      "limit": 0
+    },
+    "error": null
+  },
+  {
+    "sourceCommit": "c18bb30932015a4737745cc480351bcee0957c84",
+    "suite": "native PDF preview (#728/#729/#730)",
+    "title": "centers 130%, follows pan and preserves wheel anchor at app 100% fullscreen true",
+    "passed": true,
+    "duration": 4318,
+    "retries": {
+      "attempts": 0,
+      "limit": 0
+    },
+    "error": null
+  },
+  {
+    "sourceCommit": "c18bb30932015a4737745cc480351bcee0957c84",
+    "suite": "native PDF preview (#728/#729/#730)",
+    "title": "centers 130%, follows pan and preserves wheel anchor at app 150% fullscreen false",
+    "passed": true,
+    "duration": 5378,
+    "retries": {
+      "attempts": 0,
+      "limit": 0
+    },
+    "error": null
+  },
+  {
+    "sourceCommit": "c18bb30932015a4737745cc480351bcee0957c84",
+    "suite": "native PDF preview (#728/#729/#730)",
+    "title": "centers 130%, follows pan and preserves wheel anchor at app 150% fullscreen true",
+    "passed": true,
+    "duration": 5209,
+    "retries": {
+      "attempts": 0,
+      "limit": 0
+    },
+    "error": null
+  },
+  {
+    "sourceCommit": "c18bb30932015a4737745cc480351bcee0957c84",
+    "suite": "native PDF preview (#728/#729/#730)",
+    "title": "navigates all mixed-size pages and internal links without changing bytes",
+    "passed": true,
+    "duration": 2379,
+    "retries": {
+      "attempts": 0,
+      "limit": 0
+    },
+    "error": null
+  },
+  {
+    "sourceCommit": "c18bb30932015a4737745cc480351bcee0957c84",
+    "suite": "native PDF preview (#728/#729/#730)",
+    "title": "reaches off-screen corners, resets to fit, and navigates pages by keyboard",
+    "passed": true,
+    "duration": 13450,
+    "retries": {
+      "attempts": 0,
+      "limit": 0
+    },
+    "error": null
+  },
+  {
+    "sourceCommit": "c18bb30932015a4737745cc480351bcee0957c84",
+    "suite": "native PDF preview (#728/#729/#730)",
+    "title": "keeps fit centered when docking and narrowing the native preview at app150",
+    "passed": true,
+    "duration": 3560,
+    "retries": {
+      "attempts": 0,
+      "limit": 0
+    },
+    "error": null
+  },
+  {
+    "sourceCommit": "c18bb30932015a4737745cc480351bcee0957c84",
+    "suite": "native PDF preview (#728/#729/#730)",
+    "title": "shows image-consistent framing and a truthful corrupt-document error; stops departed workers",
+    "passed": true,
+    "duration": 687,
+    "retries": {
+      "attempts": 0,
+      "limit": 0
+    },
+    "error": null
+  }
+]

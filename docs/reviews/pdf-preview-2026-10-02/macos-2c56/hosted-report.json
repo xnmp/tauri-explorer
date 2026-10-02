@@ -1,0 +1,36 @@
+{
+  "schemaVersion": 1,
+  "runId": "2026-10-02T19-40-20-862Z-3c5d40b4",
+  "sourceCommit": "4cd591801d5b8a589fb53c9328f19062d24e210f",
+  "binary": "/Users/runner/work/tauri-explorer/tauri-explorer/src-tauri/target/release/bundle/macos/tauri-explorer.app/Contents/MacOS/tauri-explorer",
+  "binarySha256": "3e507f431fbb71f8a9f65961853b38b44154a6310c112f76539b7e7d016a8b4e",
+  "binaryBytes": 28922592,
+  "platform": {
+    "os": "darwin",
+    "release": "24.6.0",
+    "arch": "arm64"
+  },
+  "driver": {
+    "requested": {
+      "appium": "3.8.0",
+      "mac2": "4.2.0"
+    },
+    "observedAppiumVersion": "3.8.0",
+    "observedMac2Version": "4.2.0",
+    "observedInstalledDrivers": "{\n    \"mac2\": {\n        \"pkgName\": \"appium-mac2-driver\",\n        \"version\": \"4.2.0\",\n        \"installType\": \"npm\",\n        \"installSpec\": \"mac2@4.2.0\",\n        \"installPath\": \"/Users/runner/.appium/node_modules/appium-mac2-driver\",\n        \"appiumVersion\": \"^3.0.0-rc.2\",\n        \"automationName\": \"Mac2\",\n        \"platformNames\": [\n            \"Mac\"\n        ],\n        \"mainClass\": \"Mac2Driver\",\n        \"scripts\": {\n            \"open-wda\": \"./scripts/open-wda.mjs\"\n        },\n        \"doctor\": {\n            \"checks\": [\n                \"./build/lib/doctor/required-checks.js\",\n                \"./build/lib/doctor/optional-checks.js\"\n            ]\n        },\n        \"installed\": true,\n        \"repositoryUrl\": \"https://github.com/appium/appium-mac2-driver\"\n    }\n}"
+  },
+  "fixture": {
+    "child": "/var/folders/nj/vtw8zd2j31d1gdrtntc5y4600000gn/T/tauri-macos-ui-vTPjlZ/child",
+    "childName": "child-visible-e84897a4.txt",
+    "parentName": "parent-visible-e84897a4.txt"
+  },
+  "startedAt": "2026-10-02T19:40:20.944Z",
+  "finishedAt": "2026-10-02T19:42:27.348Z",
+  "initialChildVisible": true,
+  "navigatedParentVisible": true,
+  "childAbsentAfterNavigation": true,
+  "pdfPreviewPassed": false,
+  "screenshot": "/Users/runner/work/tauri-explorer/tauri-explorer/qualification-results/macos-native-ui/2026-10-02T19-40-20-862Z-3c5d40b4/navigated-parent.png",
+  "error": "Error: Right dock is not on the right",
+  "passed": false
+}

@@ -41,3 +41,30 @@ frames; accepted and ignored HDR chunks; bare and combined legacy icons; black
 monochrome pixels sharing an alpha mask with white Palette4/Palette8 pixels;
 and a JPEG2000 representation with uniform component subsampling. Decoder output
 pixels and metadata are the contracts, rather than encoder implementation steps.
+
+
+## AVIF codec checkpoint
+
+Bundle checksummed libavif1.4.2/AOM3.14.1 source archives rather than depend on
+an unpinned build-time download or a host-only native package. Build the public
+`avif_static` merged archive explicitly: upstream's internal `avif` target emits
+`avif_internal`, and an install target alone does not build an excluded archive.
+
+Recognize animated `avis` with libavif's file-type probe; image's format guesser
+only recognized the static fixture. Enable gain-map and sample-transform decode
+content before parsing, or valid16-bit inputs silently expose an8-bit base layer.
+Preserve CLLI and swap PASP axes after an odd rotation. Retain a one-frame track
+using its actual sequence flag, and preserve absent edit lists for unspecified
+looping. The pinned writer needs small checked corrections for those two cases.
+
+Crop lower-resolution gain maps on the expanded original base grid before
+orientation/crop, following libavif's own HDR reconstruction scaler. Re-encode
+losslessly and retain all gain/alternate metadata, including `altYUVRange` which
+this upstream image-copy implementation omits. Verify actual half-float HDR
+reconstruction at several headrooms, not just a retained gain-map marker.
+
+Current native crop regression set passes36 tests, including13 AVIF cases.
+The independent CLI decoder validates generated fixtures; before-fix runs
+reproduce the four metadata/sequence failures,16-bit base-layer truncation and
+lost gain map. These are codec checks only. SVG, owned saving, UI, screenshots,
+resource admission and Windows/macOS AVIF qualification remain unfinished.

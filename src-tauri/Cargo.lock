@@ -1499,6 +1499,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "explorer-avif"
+version = "0.1.0"
+dependencies = [
+ "cmake",
+]
+
+[[package]]
 name = "fallible-iterator"
 version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5261,6 +5268,7 @@ dependencies = [
  "clipboard-rs",
  "criterion",
  "dirs",
+ "explorer-avif",
  "getrandom 0.4.2",
  "gif",
  "gio",

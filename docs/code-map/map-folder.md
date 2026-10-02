@@ -704,3 +704,8 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `src-tauri/src/image_crop/webp_crop.rs` — lossless animated WebP crop of composited frames with retained timing/looping.
 
 - `src-tauri/src/image_crop/png_crop.rs` — APNG raw-frame crop with preserved disposal/blending, separate default image, color metadata, 8/16-bit samples and normalized orientation.
+
+- `src-tauri/vendor/explorer-avif/src/lib.rs` — owned Rust AVIF crop/decode interface to pinned native codecs; includes HDR reconstruction utilities.
+- `src-tauri/vendor/explorer-avif/native/bridge.c` — lossless crop/animation/16-bit/gain-map encoding and MIAF orientation mapping.
+- `src-tauri/vendor/explorer-avif/native/CMakeLists.txt` — offline checksum-verified source build with portable AOM and merged libavif static linkage.
+- `src-tauri/vendor/explorer-avif/native/patch-sequences.cmake` — checked libavif writer corrections for one-frame sequences and unspecified repeat policy.

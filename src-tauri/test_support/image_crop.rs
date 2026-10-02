@@ -85,6 +85,466 @@ fn jpeg_retains_format_dimensions_and_recognizable_region() {
     }
 }
 
+fn avif_region() -> CropRect {
+    CropRect {
+        left: 3,
+        top: 2,
+        right: 13,
+        bottom: 9,
+    }
+}
+
+#[test]
+fn avif_static_crop_preserves_decoded_rgba_alpha_and_icc_profile() {
+    let original = include_bytes!("fixtures/image-crop-static.avif");
+    let source = explorer_avif::decode_frame(original, 0).unwrap();
+    assert_eq!(
+        (
+            source.metadata.width,
+            source.metadata.height,
+            source.metadata.depth
+        ),
+        (16, 12, 8)
+    );
+    let output = encode(original, avif_region()).unwrap();
+    assert_eq!(image::guess_format(&output).unwrap(), ImageFormat::Avif);
+    let decoded = explorer_avif::decode_frame(&output, 0).unwrap();
+    assert_eq!(
+        (
+            decoded.metadata.width,
+            decoded.metadata.height,
+            decoded.metadata.depth
+        ),
+        (10, 7, 8)
+    );
+    assert_eq!(decoded.metadata.alpha_present, 1);
+    for y in 0..7_usize {
+        for x in 0..10_usize {
+            let actual = &decoded.pixels[(y * 10 + x) * 4..(y * 10 + x + 1) * 4];
+            let sx = x + 3;
+            let sy = y + 2;
+            assert_eq!(
+                actual,
+                &[
+                    sx as u8 * 13,
+                    sy as u8 * 19,
+                    83,
+                    if sx % 3 == 0 { 64 } else { 255 }
+                ]
+            );
+        }
+    }
+    let profile = include_bytes!("fixtures/image-crop-srgb.icc");
+    assert!(output.windows(profile.len()).any(|bytes| bytes == profile));
+}
+
+#[test]
+fn avif_hdr_crop_keeps_twelve_bit_samples_color_interpretation_and_alpha() {
+    let original = include_bytes!("fixtures/image-crop-hdr.avif");
+    let source = explorer_avif::decode_frame(original, 0).unwrap();
+    assert_eq!(source.metadata.depth, 12);
+    assert_eq!(
+        (
+            source.metadata.color_primaries,
+            source.metadata.transfer_function
+        ),
+        (9, 16)
+    );
+    assert_eq!(
+        (source.metadata.max_cll, source.metadata.max_pall),
+        (3000, 1000)
+    );
+    let output = encode(original, avif_region()).unwrap();
+    let result = explorer_avif::decode_frame(&output, 0).unwrap();
+    assert_eq!(
+        (
+            result.metadata.width,
+            result.metadata.height,
+            result.metadata.depth
+        ),
+        (10, 7, 12)
+    );
+    assert_eq!(
+        (
+            result.metadata.color_primaries,
+            result.metadata.transfer_function
+        ),
+        (9, 16)
+    );
+    assert_eq!(
+        (result.metadata.max_cll, result.metadata.max_pall),
+        (3000, 1000)
+    );
+    for y in 0..7_usize {
+        for x in 0..10_usize {
+            let actual = (y * 10 + x) * 8;
+            let expected = ((y + 2) * 16 + x + 3) * 8;
+            assert_eq!(
+                &result.pixels[actual..actual + 8],
+                &source.pixels[expected..expected + 8]
+            );
+        }
+    }
+    assert!(result
+        .pixels
+        .chunks_exact(2)
+        .any(|word| u16::from_ne_bytes([word[0], word[1]]) > 255));
+}
+
+#[test]
+fn avif_animation_keeps_each_frame_pixels_unequal_duration_timescale_and_repetitions() {
+    let original = include_bytes!("fixtures/image-crop-animation.avif");
+    let output = encode(original, avif_region()).unwrap();
+    for (index, duration) in [7, 12, 15].into_iter().enumerate() {
+        let source = explorer_avif::decode_frame(original, index as u32).unwrap();
+        let result = explorer_avif::decode_frame(&output, index as u32).unwrap();
+        assert_eq!(result.metadata.frame_count, 3);
+        assert_eq!(result.metadata.repetitions, 2);
+        assert_eq!(result.metadata.timescale, 100);
+        assert_eq!(result.metadata.frame_duration, duration);
+        for y in 0..7_usize {
+            for x in 0..10_usize {
+                let actual = (y * 10 + x) * 4;
+                let expected = ((y + 2) * 16 + x + 3) * 4;
+                assert_eq!(
+                    &result.pixels[actual..actual + 4],
+                    &source.pixels[expected..expected + 4]
+                );
+            }
+        }
+    }
+    assert!(explorer_avif::decode_frame(&output, 3).is_err());
+}
+
+#[test]
+fn avif_clean_aperture_rotation_and_mirroring_match_independent_decoder() {
+    let original = include_bytes!("fixtures/image-crop-oriented.avif");
+    let reference =
+        image::load_from_memory(include_bytes!("fixtures/image-crop-oriented-reference.png"))
+            .unwrap()
+            .to_rgba8();
+    let source = explorer_avif::decode_frame(original, 0).unwrap();
+    assert_eq!(
+        (source.metadata.width, source.metadata.height),
+        reference.dimensions()
+    );
+    assert_eq!(source.pixels, *reference.as_raw());
+    let crop = CropRect {
+        left: 1,
+        top: 2,
+        right: 7,
+        bottom: 10,
+    };
+    let output = encode(original, crop).unwrap();
+    let actual = explorer_avif::decode_frame(&output, 0).unwrap();
+    assert_eq!((actual.metadata.width, actual.metadata.height), (6, 8));
+    assert_eq!(
+        actual.pixels,
+        image::imageops::crop_imm(&reference, 1, 2, 6, 8)
+            .to_image()
+            .into_raw()
+    );
+}
+
+#[test]
+fn avif_rotated_pixel_aspect_is_normalized_with_the_pixel_axes() {
+    let original = include_bytes!("fixtures/image-crop-aspect.avif");
+    let source = explorer_avif::decode_frame(original, 0).unwrap();
+    assert_eq!((source.metadata.width, source.metadata.height), (12, 16));
+    assert_eq!(
+        (
+            source.metadata.aspect_horizontal,
+            source.metadata.aspect_vertical
+        ),
+        (2, 1)
+    );
+    let output = encode(
+        original,
+        CropRect {
+            left: 1,
+            top: 2,
+            right: 9,
+            bottom: 13,
+        },
+    )
+    .unwrap();
+    let result = explorer_avif::decode_frame(&output, 0).unwrap();
+    assert_eq!(
+        (
+            result.metadata.aspect_horizontal,
+            result.metadata.aspect_vertical
+        ),
+        (1, 2)
+    );
+    for y in 0..11_usize {
+        for x in 0..8_usize {
+            let actual = (y * 8 + x) * 4;
+            let expected = ((y + 2) * 12 + x + 1) * 4;
+            assert_eq!(
+                &result.pixels[actual..actual + 4],
+                &source.pixels[expected..expected + 4]
+            );
+        }
+    }
+}
+
+#[test]
+fn avif_unknown_loop_policy_remains_unspecified_without_losing_frames() {
+    let original = include_bytes!("fixtures/image-crop-unknown-loops.avif");
+    assert_eq!(
+        explorer_avif::decode_frame(original, 0)
+            .unwrap()
+            .metadata
+            .repetitions,
+        -2
+    );
+    let output = encode(original, avif_region()).unwrap();
+    for (index, duration) in [7, 12, 15].into_iter().enumerate() {
+        let source = explorer_avif::decode_frame(original, index as u32).unwrap();
+        let result = explorer_avif::decode_frame(&output, index as u32).unwrap();
+        assert_eq!(result.metadata.repetitions, -2);
+        assert_eq!(result.metadata.frame_count, 3);
+        assert_eq!(result.metadata.timescale, 100);
+        assert_eq!(result.metadata.frame_duration, duration);
+        for y in 0..7_usize {
+            let expected = ((y + 2) * 16 + 3) * 4;
+            assert_eq!(
+                &result.pixels[y * 40..(y + 1) * 40],
+                &source.pixels[expected..expected + 40]
+            );
+        }
+    }
+}
+
+#[test]
+fn avif_one_frame_sequence_keeps_track_duration_and_repetitions() {
+    let original = include_bytes!("fixtures/image-crop-one-frame-sequence.avif");
+    let source = explorer_avif::decode_frame(original, 0).unwrap();
+    assert_eq!(source.metadata.sequence_present, 1);
+    assert_eq!(
+        (
+            source.metadata.frame_count,
+            source.metadata.timescale,
+            source.metadata.frame_duration,
+            source.metadata.repetitions
+        ),
+        (1, 100, 7, 2)
+    );
+    let output = encode(original, avif_region()).unwrap();
+    let result = explorer_avif::decode_frame(&output, 0).unwrap();
+    assert_eq!(result.metadata.sequence_present, 1);
+    assert_eq!(
+        (
+            result.metadata.frame_count,
+            result.metadata.timescale,
+            result.metadata.frame_duration,
+            result.metadata.repetitions
+        ),
+        (1, 100, 7, 2)
+    );
+    for y in 0..7_usize {
+        let expected = ((y + 2) * 16 + 3) * 4;
+        assert_eq!(
+            &result.pixels[y * 40..(y + 1) * 40],
+            &source.pixels[expected..expected + 40]
+        );
+    }
+    assert!(explorer_avif::decode_frame(&output, 1).is_err());
+}
+
+#[test]
+fn avif_extended_samples_keep_sixteen_bit_precision() {
+    let original = include_bytes!("fixtures/image-crop-sixteen-bit.avif");
+    let source = explorer_avif::decode_frame(original, 0).unwrap();
+    assert_eq!(source.metadata.depth, 16);
+    let output = encode(original, avif_region()).unwrap();
+    let result = explorer_avif::decode_frame(&output, 0).unwrap();
+    assert_eq!(result.metadata.depth, 16);
+    for y in 0..7_usize {
+        for x in 0..10_usize {
+            let actual = (y * 10 + x) * 8;
+            let expected = ((y + 2) * 16 + x + 3) * 8;
+            let values = [
+                (x + 3) as u16 * 3801,
+                (y + 2) as u16 * 5101,
+                23456,
+                if (x + 3) % 3 == 0 { 30001 } else { 65535 },
+            ];
+            let independent: Vec<u8> = values.into_iter().flat_map(u16::to_ne_bytes).collect();
+            assert_eq!(&source.pixels[expected..expected + 8], &independent);
+            assert_eq!(&result.pixels[actual..actual + 8], &independent);
+        }
+    }
+}
+
+#[test]
+fn avif_gain_map_crop_keeps_hdr_reconstruction_and_alternate_image_metadata() {
+    let original = include_bytes!("fixtures/image-crop-gain-map.avif");
+    let source = explorer_avif::decode_frame(original, 0).unwrap();
+    assert_eq!(source.metadata.gain_map_present, 1);
+    assert_eq!(
+        (source.metadata.gain_width, source.metadata.gain_height),
+        (8, 6)
+    );
+    assert_eq!(
+        &source.metadata.gain_parameters[35..],
+        &[1, 16, 0, 1, 12, 3, 6000, 1400]
+    );
+    let output = encode(original, avif_region()).unwrap();
+    let result = explorer_avif::decode_frame(&output, 0).unwrap();
+    assert_eq!(result.metadata.gain_map_present, 1);
+    assert_eq!(
+        result.metadata.gain_parameters,
+        source.metadata.gain_parameters
+    );
+    assert_eq!(
+        (result.metadata.gain_width, result.metadata.gain_height),
+        (10, 7)
+    );
+    for headroom in [0.0, 1.0, 2.0] {
+        let source = explorer_avif::tone_map_frame(original, headroom).unwrap();
+        let result = explorer_avif::tone_map_frame(&output, headroom).unwrap();
+        for y in 0..7_usize {
+            let expected = ((y + 2) * 16 + 3) * 8;
+            assert_eq!(
+                &result.pixels[y * 80..(y + 1) * 80],
+                &source.pixels[expected..expected + 80],
+                "headroom {headroom}, row {y}"
+            );
+        }
+    }
+}
+
+#[test]
+fn avif_transformed_gain_map_matches_independent_base_pixel_coordinates() {
+    let original = include_bytes!("fixtures/image-crop-gain-map-oriented.avif");
+    let crop = CropRect {
+        left: 1,
+        top: 2,
+        right: 7,
+        bottom: 10,
+    };
+    let source = explorer_avif::decode_frame(original, 0).unwrap();
+    assert_eq!((source.metadata.width, source.metadata.height), (8, 12));
+    let output = encode(original, crop).unwrap();
+    let result = explorer_avif::decode_frame(&output, 0).unwrap();
+    assert_eq!(
+        result.metadata.gain_parameters,
+        source.metadata.gain_parameters
+    );
+    for headroom in [0.0, 1.0, 2.0] {
+        let source = explorer_avif::tone_map_frame(original, headroom).unwrap();
+        let result = explorer_avif::tone_map_frame(&output, headroom).unwrap();
+        for y in 0..8_usize {
+            for x in 0..6_usize {
+                // The independently encoded CLAP/IROT1/IMIR1 source maps
+                // normalized pixel(x+1,y+2) to coded pixel(11-y,7-x).
+                let expected = ((7 - x) * 16 + 11 - y) * 8;
+                let actual = (y * 6 + x) * 8;
+                assert_eq!(
+                    &result.pixels[actual..actual + 8],
+                    &source.pixels[expected..expected + 8],
+                    "headroom {headroom} at{x},{y}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn avif_subsampled_gain_map_keeps_nonlinear_hdr_reconstruction() {
+    let original = include_bytes!("fixtures/image-crop-gain-map-subsampled.avif");
+    let source = explorer_avif::decode_frame(original, 0).unwrap();
+    let output = encode(original, avif_region()).unwrap();
+    let result = explorer_avif::decode_frame(&output, 0).unwrap();
+    assert_eq!(
+        result.metadata.gain_parameters,
+        source.metadata.gain_parameters
+    );
+    for headroom in [0.5, 1.0, 2.0] {
+        let source = explorer_avif::tone_map_frame(original, headroom).unwrap();
+        let result = explorer_avif::tone_map_frame(&output, headroom).unwrap();
+        for y in 0..7_usize {
+            let expected = ((y + 2) * 16 + 3) * 8;
+            assert_eq!(
+                &result.pixels[y * 80..(y + 1) * 80],
+                &source.pixels[expected..expected + 80],
+                "headroom {headroom} at row{y}"
+            );
+        }
+    }
+}
+
+#[test]
+fn avif_alternate_icc_survives_without_changing_selected_base_pixels() {
+    let original = include_bytes!("fixtures/image-crop-gain-map-icc.avif");
+    let source = explorer_avif::decode_frame(original, 0).unwrap();
+    let output = encode(original, avif_region()).unwrap();
+    let result = explorer_avif::decode_frame(&output, 0).unwrap();
+    let profile = include_bytes!("fixtures/image-crop-srgb.icc");
+    assert!(output.windows(profile.len()).any(|bytes| bytes == profile));
+    assert_eq!(result.metadata.gain_map_present, 1);
+    assert_eq!(
+        result.metadata.gain_parameters,
+        source.metadata.gain_parameters
+    );
+    for y in 0..7_usize {
+        let expected = ((y + 2) * 16 + 3) * 4;
+        assert_eq!(
+            &result.pixels[y * 40..(y + 1) * 40],
+            &source.pixels[expected..expected + 40]
+        );
+    }
+    // The upstream reconstruction utility explicitly does not implement ICC
+    // color conversion; retaining the profile does not claim that capability.
+    assert!(explorer_avif::tone_map_frame(original, 1.0).is_err());
+    assert!(explorer_avif::tone_map_frame(&output, 1.0).is_err());
+}
+
+#[test]
+fn avif_malformed_input_and_invalid_crops_return_errors_without_panics() {
+    for bytes in [
+        b"".as_slice(),
+        b"broken AVIF",
+        &include_bytes!("fixtures/image-crop-static.avif")[..32],
+    ] {
+        assert!(explorer_avif::decode_frame(bytes, 0).is_err());
+        assert!(explorer_avif::crop(
+            bytes,
+            explorer_avif::CropRect {
+                left: 0,
+                top: 0,
+                right: 1,
+                bottom: 1
+            }
+        )
+        .is_err());
+    }
+    let original = include_bytes!("fixtures/image-crop-static.avif");
+    for crop in [
+        CropRect {
+            left: 2,
+            top: 1,
+            right: 2,
+            bottom: 4,
+        },
+        CropRect {
+            left: 2,
+            top: 1,
+            right: u32::MAX,
+            bottom: 4,
+        },
+        CropRect {
+            left: 8,
+            top: 1,
+            right: 2,
+            bottom: 4,
+        },
+    ] {
+        assert!(encode(original, crop).is_err());
+    }
+}
+
 #[test]
 fn png_sixteen_bit_samples_are_not_reduced_to_eight_bits() {
     let source = image::ImageBuffer::<image::Rgba<u16>, Vec<u16>>::from_fn(8, 6, |x, y| {

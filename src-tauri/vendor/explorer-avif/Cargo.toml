@@ -1,0 +1,9 @@
+[package]
+name = "explorer-avif"
+version = "0.1.0"
+edition = "2021"
+license = "BSD-2-Clause"
+links = "explorer_avif"
+
+[build-dependencies]
+cmake = "0.1"

@@ -203,6 +203,18 @@ pub(crate) fn encode(bytes: &[u8], crop: CropRect) -> Result<Vec<u8>, AppError> 
     if bytes.starts_with(b"icns") {
         return icon_crop::encode(bytes, crop);
     }
+    if explorer_avif::is_avif(bytes) {
+        return explorer_avif::crop(
+            bytes,
+            explorer_avif::CropRect {
+                left: crop.left,
+                top: crop.top,
+                right: crop.right,
+                bottom: crop.bottom,
+            },
+        )
+        .map_err(failure);
+    }
     let format = image::guess_format(bytes).map_err(failure)?;
     match format {
         ImageFormat::Gif => gif_crop::encode(bytes, crop),

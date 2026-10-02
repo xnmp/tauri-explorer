@@ -21,7 +21,10 @@ it("shares one lazy session across concurrent Git and directory watches and thei
     if (command === "watch_directory") return Promise.resolve({ id: `directory:${args.path}`, path: args.path });
     return Promise.resolve();
   });
-  const [git, files] = await Promise.all([import("$lib/api/git"), import("$lib/api/files")]);
+  // Resolve the shared mocked dependency after resetModules before loading its
+  // second consumer. The watch requests below still begin concurrently.
+  const git = await import("$lib/api/git");
+  const files = await import("$lib/api/files");
   expect(invoke).not.toHaveBeenCalled();
   const first = git.gitWatchRepo("/a");
   const second = files.watchDirectory("/b");
@@ -57,7 +60,8 @@ it("retries a failed acknowledgement without sending an unscoped watch", async (
 
 it("does not re-acknowledge after stale Git or directory commands are rejected", async () => {
   invoke.mockResolvedValueOnce("9").mockRejectedValue("renderer replaced");
-  const [git, files] = await Promise.all([import("$lib/api/git"), import("$lib/api/files")]);
+  const git = await import("$lib/api/git");
+  const files = await import("$lib/api/files");
   expect((await git.gitWatchRepo("/a")).ok).toBe(false);
   await expect(files.watchDirectory("/b")).rejects.toBe("renderer replaced");
   expect(invoke.mock.calls).toEqual([

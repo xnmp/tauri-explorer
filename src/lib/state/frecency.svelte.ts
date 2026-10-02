@@ -22,6 +22,7 @@ const MS_PER_HOUR = 3_600_000;
 export interface FrecencyEntry {
   path: string;
   accesses: number[]; // timestamps of recent accesses
+  dismissedFromRecent?: boolean;
 }
 
 export type FrecencyData = FrecencyEntry[];
@@ -70,7 +71,9 @@ function createFrecencyStore() {
     const existing = data.find((e) => directoryKey(e.path) === key);
 
     if (existing) {
-      existing.accesses = [...existing.accesses.slice(-(MAX_ACCESSES_PER_ENTRY - 1)), now];
+      data = data.map((entry) => entry === existing
+        ? { path: entry.path, accesses: [...entry.accesses.slice(-(MAX_ACCESSES_PER_ENTRY - 1)), now] }
+        : entry);
     } else {
       data = [...data, { path, accesses: [now] }];
     }
@@ -126,7 +129,7 @@ function createFrecencyStore() {
    * but recovers when the path is accessed again — this is not a blacklist. If
    * the entry has no accesses left afterwards it is removed entirely.
    */
-  function penalize(path: string): void {
+  function downvote(path: string, dismissFromRecent: boolean): void {
     const key = directoryKey(path);
     const idx = data.findIndex((e) => directoryKey(e.path) === key);
     if (idx === -1) return;
@@ -134,9 +137,18 @@ function createFrecencyStore() {
     if (reduced.length === 0) {
       data = data.filter((_, i) => i !== idx);
     } else {
-      data = data.map((e, i) => (i === idx ? { ...e, accesses: reduced } : e));
+      data = data.map((e, i) => (i === idx ? { ...e, accesses: reduced, ...(dismissFromRecent ? { dismissedFromRecent: true } : {}) } : e));
     }
     save();
+  }
+
+  function penalize(path: string): void {
+    downvote(path, false);
+  }
+
+  /** Hide a Recent row until new qualifying use, retaining its reduced ranking history. */
+  function dismissRecent(path: string): void {
+    downvote(path, true);
   }
 
   /** Remove a path from tracking. */
@@ -166,11 +178,13 @@ function createFrecencyStore() {
 
   return {
     get entries() { return data; },
+    get recentEntries() { return data.filter((entry) => !entry.dismissedFromRecent); },
     recordAccess,
     recordFileAction,
     getScore,
     getScoreMap,
     penalize,
+    dismissRecent,
     remove,
     clear,
     pruneNonExistent,

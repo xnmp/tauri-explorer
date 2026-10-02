@@ -7,7 +7,7 @@ are in `docs/reviews/pdf-preview-2026-10-02/macos/`.
 
 - `01-fit-page-1.png`: centered whole first page with both corners.
 - `02-centered-130-percent.png`: native130% document zoom stays centered.
-- `03-page-2.png` / `03-page-3.png`: landscape/purple and portrait/blue pages.
+- `03-page-2.png` / `03-page-3.png`: landscape/purple and portrait/orange pages.
 - `04-returned-page-2.png` / `04-returned-page-1.png`: actual return navigation.
 - `05-before-pan-400-percent.png` / `06-after-native-pan.png`: red landmark
   moves40points left and30up after native dragging; still images alone do not

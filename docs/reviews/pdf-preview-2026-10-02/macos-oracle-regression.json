@@ -1,0 +1,457 @@
+{
+  "kind": "offline regression of oracle against prior captures; not fresh native qualification",
+  "oracleSha256": "85cb62cf6bf09be67141f816f089e0cb432e7aa80270dadcaa2d8f2985d7d972",
+  "nativeCount": 11,
+  "proxyCount": 18,
+  "constraints": {
+    "centeringNativePoints": 3,
+    "fittedExtentNativePoints": 2,
+    "minimumSolidPixels": 16,
+    "minimumSolidDensity": 0.85,
+    "magnification130WidthNativePoints": 3,
+    "magnification400WidthNativePoints": 5,
+    "panNativePoints": 4
+  },
+  "failures": [],
+  "checks": [
+    {
+      "name": "01-fit-page-1",
+      "type": "previous actual native Mac capture",
+      "solidPixels": 756,
+      "extent": [
+        28.90980392156871,
+        29.40784313725493
+      ],
+      "expectedExtent": 28.816666666666666,
+      "centerError": [
+        0.5,
+        0.8313725490196475
+      ],
+      "errors": []
+    },
+    {
+      "name": "02-centered-130-percent",
+      "type": "previous actual native Mac capture",
+      "solidPixels": 1296,
+      "extent": [
+        38.22745098039218,
+        37.46274509803925
+      ],
+      "expectedExtent": 37.582745098039325,
+      "centerError": [
+        0.5235294117646845,
+        0.5686274509803866
+      ],
+      "errors": []
+    },
+    {
+      "name": "03-page-2",
+      "type": "previous actual native Mac capture",
+      "solidPixels": 400,
+      "extent": [
+        22.307189542483684,
+        22.307189542483627
+      ],
+      "expectedExtent": 21.6125,
+      "centerError": [
+        0.5,
+        0.5620915032679932
+      ],
+      "errors": []
+    },
+    {
+      "name": "03-page-3",
+      "type": "previous actual native Mac capture",
+      "solidPixels": 1056,
+      "extent": [
+        33.89952436109127,
+        34.45525790472436
+      ],
+      "expectedExtent": 33.9,
+      "centerError": [
+        0.5706434679743779,
+        0.5
+      ],
+      "errors": []
+    },
+    {
+      "name": "04-returned-page-2",
+      "type": "previous actual native Mac capture",
+      "solidPixels": 400,
+      "extent": [
+        22.307189542483684,
+        22.307189542483627
+      ],
+      "expectedExtent": 21.6125,
+      "centerError": [
+        0.5,
+        0.5620915032679932
+      ],
+      "errors": []
+    },
+    {
+      "name": "04-returned-page-1",
+      "type": "previous actual native Mac capture",
+      "solidPixels": 756,
+      "extent": [
+        28.90980392156871,
+        29.411764705882376
+      ],
+      "expectedExtent": 28.816666666666666,
+      "centerError": [
+        0.5,
+        0.8333333333333712
+      ],
+      "errors": []
+    },
+    {
+      "name": "05-before-pan-400-percent",
+      "type": "previous actual native Mac capture",
+      "solidPixels": 12996,
+      "extent": [
+        115.2705882352941,
+        115.63529411764705
+      ],
+      "expectedExtent": 115.63921568627484,
+      "centerError": [
+        0.5,
+        0.8313725490195907
+      ],
+      "errors": []
+    },
+    {
+      "name": "06-after-native-pan",
+      "type": "previous actual native Mac capture",
+      "solidPixels": 12996,
+      "extent": [
+        115.2705882352941,
+        115.63529411764705
+      ],
+      "expectedExtent": 28.816666666666666,
+      "centerError": [
+        -39.5,
+        -29.16862745098041
+      ],
+      "errors": [],
+      "panDelta": [
+        -40.0,
+        -30.0
+      ]
+    },
+    {
+      "name": "07-reset-fit",
+      "type": "previous actual native Mac capture",
+      "solidPixels": 756,
+      "extent": [
+        28.90980392156871,
+        29.411764705882376
+      ],
+      "expectedExtent": 28.816666666666666,
+      "centerError": [
+        0.5,
+        0.8333333333333712
+      ],
+      "errors": []
+    },
+    {
+      "name": "08-fullscreen",
+      "type": "previous actual native Mac capture",
+      "solidPixels": 2450,
+      "extent": [
+        51.47058823529409,
+        50.925490196078385
+      ],
+      "expectedExtent": 50.8375,
+      "centerError": [
+        0.42941176470583287,
+        0.5
+      ],
+      "errors": []
+    },
+    {
+      "name": "09-exit-fullscreen",
+      "type": "previous actual native Mac capture",
+      "solidPixels": 756,
+      "extent": [
+        28.90980392156871,
+        29.411764705882376
+      ],
+      "expectedExtent": 28.816666666666666,
+      "centerError": [
+        0.5,
+        0.8333333333333712
+      ],
+      "errors": []
+    },
+    {
+      "name": "h576-right-page1",
+      "type": "headless Playwright WebKit proxy",
+      "solidPixels": 64,
+      "extent": [
+        9.584313725490233,
+        10.094117647058795
+      ],
+      "expectedExtent": 9.1875,
+      "centerError": [
+        0.2058823529412166,
+        0.03137254901957931
+      ],
+      "errors": []
+    },
+    {
+      "name": "h576-right-page2",
+      "type": "headless Playwright WebKit proxy",
+      "solidPixels": 120,
+      "extent": [
+        12.262745098039204,
+        12.627450980392211
+      ],
+      "expectedExtent": 12.25,
+      "centerError": [
+        0.5843137254902331,
+        0.03137254901957931
+      ],
+      "errors": []
+    },
+    {
+      "name": "h576-top-page1",
+      "type": "headless Playwright WebKit proxy",
+      "solidPixels": 64,
+      "extent": [
+        10.352941176470608,
+        10.352941176470608
+      ],
+      "expectedExtent": 9.66875,
+      "centerError": [
+        0.06274509803915862,
+        0.25
+      ],
+      "errors": []
+    },
+    {
+      "name": "h576-top-page2",
+      "type": "headless Playwright WebKit proxy",
+      "solidPixels": 144,
+      "extent": [
+        12.950326797385515,
+        12.996078431372553
+      ],
+      "expectedExtent": 12.891666666666667,
+      "centerError": [
+        0.0,
+        0.25
+      ],
+      "errors": []
+    },
+    {
+      "name": "h576-bottom-page1",
+      "type": "headless Playwright WebKit proxy",
+      "solidPixels": 64,
+      "extent": [
+        10.352941176470608,
+        10.352941176470608
+      ],
+      "expectedExtent": 9.66875,
+      "centerError": [
+        0.06274509803915862,
+        0.25
+      ],
+      "errors": []
+    },
+    {
+      "name": "h576-bottom-page2",
+      "type": "headless Playwright WebKit proxy",
+      "solidPixels": 144,
+      "extent": [
+        12.950326797385515,
+        12.996078431372553
+      ],
+      "expectedExtent": 12.891666666666667,
+      "centerError": [
+        0.0,
+        0.25
+      ],
+      "errors": []
+    },
+    {
+      "name": "h582-right-page1",
+      "type": "headless Playwright WebKit proxy",
+      "solidPixels": 64,
+      "extent": [
+        10.356862745098056,
+        10.356862745097999
+      ],
+      "expectedExtent": 9.7125,
+      "centerError": [
+        0.5882352941175668,
+        0.03333333333330302
+      ],
+      "errors": []
+    },
+    {
+      "name": "h582-right-page2",
+      "type": "headless Playwright WebKit proxy",
+      "solidPixels": 144,
+      "extent": [
+        12.960784313725526,
+        13.47843137254904
+      ],
+      "expectedExtent": 12.95,
+      "centerError": [
+        0.5882352941176805,
+        0.2836601307189426
+      ],
+      "errors": []
+    },
+    {
+      "name": "h582-top-page1",
+      "type": "headless Playwright WebKit proxy",
+      "solidPixels": 72,
+      "extent": [
+        10.698039215686208,
+        10.611764705882365
+      ],
+      "expectedExtent": 10.19375,
+      "centerError": [
+        0.21176470588238772,
+        0.25
+      ],
+      "errors": []
+    },
+    {
+      "name": "h582-top-page2",
+      "type": "headless Playwright WebKit proxy",
+      "solidPixels": 144,
+      "extent": [
+        13.647058823529505,
+        14.32026143790847
+      ],
+      "expectedExtent": 13.591666666666665,
+      "centerError": [
+        0.0,
+        0.25
+      ],
+      "errors": []
+    },
+    {
+      "name": "h582-bottom-page1",
+      "type": "headless Playwright WebKit proxy",
+      "solidPixels": 72,
+      "extent": [
+        10.698039215686208,
+        10.611764705882365
+      ],
+      "expectedExtent": 10.19375,
+      "centerError": [
+        0.21176470588238772,
+        0.25
+      ],
+      "errors": []
+    },
+    {
+      "name": "h582-bottom-page2",
+      "type": "headless Playwright WebKit proxy",
+      "solidPixels": 144,
+      "extent": [
+        13.647058823529505,
+        14.32026143790847
+      ],
+      "expectedExtent": 13.591666666666665,
+      "centerError": [
+        0.0,
+        0.25
+      ],
+      "errors": []
+    },
+    {
+      "name": "h584-right-page1",
+      "type": "headless Playwright WebKit proxy",
+      "solidPixels": 81,
+      "extent": [
+        9.850980392156771,
+        11.047058823529426
+      ],
+      "expectedExtent": 9.8875,
+      "centerError": [
+        0.7392156862745196,
+        0.4921568627451052
+      ],
+      "errors": []
+    },
+    {
+      "name": "h584-right-page2",
+      "type": "headless Playwright WebKit proxy",
+      "solidPixels": 144,
+      "extent": [
+        13.137254901960773,
+        14.075163398692837
+      ],
+      "expectedExtent": 13.183333333333334,
+      "centerError": [
+        0.5901960784312905,
+        0.021241830065378053
+      ],
+      "errors": []
+    },
+    {
+      "name": "h584-top-page1",
+      "type": "headless Playwright WebKit proxy",
+      "solidPixels": 81,
+      "extent": [
+        11.094117647058738,
+        10.682352941176418
+      ],
+      "expectedExtent": 10.36875,
+      "centerError": [
+        0.5,
+        0.12450980392156907
+      ],
+      "errors": []
+    },
+    {
+      "name": "h584-top-page2",
+      "type": "headless Playwright WebKit proxy",
+      "solidPixels": 144,
+      "extent": [
+        13.82091503267975,
+        14.40718954248365
+      ],
+      "expectedExtent": 13.825000000000001,
+      "centerError": [
+        0.0,
+        0.1248366013071518
+      ],
+      "errors": []
+    },
+    {
+      "name": "h584-bottom-page1",
+      "type": "headless Playwright WebKit proxy",
+      "solidPixels": 81,
+      "extent": [
+        11.094117647058738,
+        10.682352941176418
+      ],
+      "expectedExtent": 10.36875,
+      "centerError": [
+        0.5,
+        0.12450980392156907
+      ],
+      "errors": []
+    },
+    {
+      "name": "h584-bottom-page2",
+      "type": "headless Playwright WebKit proxy",
+      "solidPixels": 144,
+      "extent": [
+        13.82091503267975,
+        14.40718954248365
+      ],
+      "expectedExtent": 13.825000000000001,
+      "centerError": [
+        0.0,
+        0.1248366013071518
+      ],
+      "errors": []
+    }
+  ]
+}

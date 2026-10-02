@@ -33,7 +33,7 @@ After rebasing onto dev `abb4e8fbeadcd1845d58c9bf07be2dc436cf7688f`, application
 
 Fresh private Linux native verification passed **11/11 in 57.8 seconds**. The rebuilt binary SHA-256 is `f5dc9b1194af117f281b4bd8dbb4dbe992ae94bbbdc630a9e1b6f697742b9b07`; [build provenance](pdf-preview-2026-10-02/native-build-rebase.json) identifies the exact application source. Refreshed screenshots were inspected and copied into `evidence/pdf-preview/`, and the receipt directory now includes measured listing/preview bounds and each control's visible geometry. Dock placement is asserted relative to the actual listing container: a tall bottom dock can correctly begin above the window midpoint.
 
-The new Mac2 production harness uses only native accessibility actions and actual full-display screenshots. CoreGraphics measures physical-pixel/point calibration; a read-only Pillow oracle measures known PDF landmarks, with five negative-control tests. Its assertions cover fitted page size and centering, exact 130%/400% magnification plus pixel enlargement, trusted panning, mixed-size page navigation, fullscreen, a restored/resized owned window at app150% in all three docks, displayed corrupt-file errors without old page pixels, substantive 3:2 image replacement, and unchanged PDF bytes. Independent review corrected driver typing, resize admission, weak pixel oracles and page-readiness synchronization before publication. This harness is prepared for hosted execution; it is **not yet a macOS acceptance pass**. It covers sequential replacement and does not independently measure production worker cleanup.
+The new Mac2 production harness uses only native accessibility actions and actual full-display screenshots. CoreGraphics measures physical-pixel/point calibration; a read-only Pillow oracle measures known PDF landmarks, with twelve negative-control tests. Its assertions cover fitted page size and centering, exact 130%/400% magnification plus pixel enlargement, trusted panning, mixed-size page navigation, fullscreen, a restored/resized owned window at app150% in all three docks, displayed corrupt-file errors without old page pixels, substantive 3:2 image replacement, and unchanged PDF bytes. Independent review corrected driver typing, resize admission, weak pixel oracles and page-readiness synchronization before publication. This harness is prepared for hosted execution; it is **not yet a macOS acceptance pass**. It covers sequential replacement and does not independently measure production worker cleanup.
 
 ## Windows native PDF outcomes
 
@@ -79,6 +79,58 @@ This run did not reach150% app-zoom/dock outcomes, error/image replacement or
 the final unchanged-source assertion. The recorded initial fixture hash is not
 final source-preservation proof. The overall run and #730 platform acceptance
 remain incomplete.
+
+## Fractional native screenshot measurement
+
+[Mac run37046617534](https://github.com/xnmp/tauri-explorer/actions/runs/37046617534)
+confirmed the fixture's100→150% app zoom, then stopped at the narrow right dock.
+Its fitted70-point square was about5.86 native pixels wide: strict-color matching
+found only12 fully covered pixels in a4×3 box, while its antialiased footprint
+remained centered with the expected size. This was a measurement failure; it
+does not count as a complete native pass.
+
+The oracle retains the16 strict-pixel minimum,85% solid-box density, full-display
+and ICC calibration, and existing2-pixel fit/3-point center tolerances. It now
+recovers edge coverage using the known fixture color on a white page and the
+[standard source-over formula](https://www.w3.org/TR/compositing-1/#simplealphacompositing).
+Only the connected footprint within two pixels of the verified solid box
+contributes. Global horizontal and vertical boundary extents measure width and height separately;
+verified solid pixels retain full coverage and interior gaps do not shrink a
+wrong rectangular shape. Only outside boundary pixels receive fractional
+correction. Their midpoint measures position. Negative controls cover fractional edges at1×/2×, all three
+fixture colors, nonzero display origins, wrong size/aspect, tolerated solid tint, interior gaps, sheared landmarks, disconnected tinted
+noise, gray pixels, and insufficient solid presence in addition to the existing
+wrong-page, blank, crop, viewport, and scattered-color controls.
+
+The native resize still reduces width by200 and height by60 points and requires
+more than100/50 points of actual reduction. The604-point test window provides
+enough fully covered pixels at150% zoom for the unchanged presence gate. This
+test-only change does not enlarge a production minimum window size or alter
+PDF rendering. [Offline regression](pdf-preview-2026-10-02/macos-oracle-regression.json) passes
+all eleven previous native captures and eighteen WebKit proxy captures using
+the unchanged fit, center, magnification and pan constraints. Independent
+adversarial review also checks24 RGB tolerance corner cases and confirms the
+three reproduced tint/gap/shear errors are fixed. These are oracle regressions,
+not a fresh native Mac acceptance pass. Fresh native qualification is required
+before platform acceptance.
+
+## Combined current-dev qualification
+
+Application source at local merge `1ece9560c1c72fc391e8a1d29d152359806d1737`
+is byte-identical under `src/` and `src-tauri/` to rehearsal
+`0b09afccc48a5f436231d567c503e65a92480215`. That combined build includes
+#681, #820, #822 and the PDF changes on current dev. All1323 browser outcomes
+pass across Details/List/Tiles. The unit run passes3183 unique tests after
+rerunning sandbox-denied socket tests with network permission;3 existing cases
+remain skipped. Fresh native Linux smoke passes139 executed outcomes in53spec
+files;91 feature/profile cases are intentionally skipped. Four separate
+installed-GTK OpenWith outcomes also pass. This ordinary Xvfb profile does not
+execute the separate software-Sway PDF profile or qualify macOS.
+
+The fresh no-hooks production bundle passes main/startup limits at92706 and
+223801 bytes gzip, with no test-support chunk or E2E marker. Native binary
+SHA256 is `600153b76044babcbcf90e3e125f487a6cd6beb92364e8746339de7b6e474074`.
+The task's actual final-dev all-view run remains due after video issue #970.
 
 ## Screenshot captions
 

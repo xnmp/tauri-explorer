@@ -238,7 +238,9 @@ export async function qualifyMacosPdf(browser: Browser, fixture: string, output:
       "restored owned Mac window extends outside the measured display");
     await browser.execute("macos: clickAndDrag", {
       startX: large.x + large.width - 2, startY: large.y + large.height - 2,
-      endX: large.x + large.width - 202, endY: large.y + large.height - 102, duration: 0.3,
+      // Keep the window substantially smaller while leaving enough solid
+      // landmark pixels for the independent screenshot presence check.
+      endX: large.x + large.width - 202, endY: large.y + large.height - 62, duration: 0.3,
     });
     await browser.waitUntil(async () => {
       const current = await rect(window);

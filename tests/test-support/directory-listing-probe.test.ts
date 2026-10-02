@@ -9,6 +9,7 @@ vi.mock("$lib/api/common", () => ({
   dataUriToBlobUrl: () => "blob:test",
   isTauri: () => false,
 }));
+vi.mock("$lib/state/window-tabs.svelte", () => ({ windowTabsManager: { windowLabel: "probe-window" } }));
 vi.mock("$lib/plugins/fs-providers", () => ({ providerFor: () => undefined }));
 vi.mock("$lib/api/frontend-log", () => ({ logFrontendDiagnostic: vi.fn() }));
 
@@ -32,6 +33,12 @@ describe("directory listing native E2E probe", () => {
     for (const key of Object.keys(document.documentElement.dataset)) {
       delete document.documentElement.dataset[key];
     }
+    const stored = new Map<string, string>();
+    vi.stubGlobal("localStorage", {
+      getItem: (key: string) => stored.get(key) ?? null,
+      setItem: (key: string, value: string) => { stored.set(key, value); },
+      removeItem: (key: string) => { stored.delete(key); },
+    });
     session = new AbortController();
     startDirectoryListingProbe(session.signal);
   });
@@ -97,6 +104,62 @@ describe("directory listing native E2E probe", () => {
     );
     await expect(loadDirectory("/probe")).resolves.toMatchObject({ ok: true });
     expect(document.documentElement.dataset.e2eDirectoryListingProbe).toBeUndefined();
+  });
+
+  const gateKey = "e2e-launch-listing-gate:probe-window";
+  const releaseKey = "e2e-launch-listing-release:probe-window";
+  const receiptKey = "e2e-launch-listing-receipt:probe-window";
+  const receipt = () => JSON.parse(localStorage.getItem(receiptKey) ?? "null");
+  function arm(token = "unique-request") {
+    localStorage.setItem(gateKey, JSON.stringify({ token, targetPath: "/probe" }));
+    const event = Object.assign(new Event("storage"), { key: gateKey });
+    window.dispatchEvent(event);
+  }
+
+  it("reconciles a release stored before a fresh page boots", async () => {
+    session.abort();
+    localStorage.setItem(gateKey, JSON.stringify({ token: "early", targetPath: "/probe" }));
+    localStorage.setItem(releaseKey, "early");
+    session = new AbortController();
+    startDirectoryListingProbe(session.signal);
+    const settled = vi.fn();
+    const listing = loadDirectory("/probe").then(settled);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(settled).toHaveBeenCalledOnce();
+    expect(receipt()).toMatchObject({ token: "early", status: "released" });
+    await listing;
+  });
+
+  it("records terminal cancellation when a held page session ends", async () => {
+    arm();
+    const settled = vi.fn();
+    const listing = loadDirectory("/probe").then(settled);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(settled).not.toHaveBeenCalled();
+    expect(receipt()).toMatchObject({ status: "held" });
+    session.abort();
+    await listing;
+    expect(receipt()).toMatchObject({ status: "cancelled" });
+    expect(document.documentElement.dataset.e2eLaunchListingGate).toBeUndefined();
+  });
+
+  it("holds only the captured path, rejects wrong tokens, and releases old work on rearm", async () => {
+    arm("first");
+    await expect(loadDirectory("/elsewhere")).resolves.toMatchObject({ ok: true });
+    const settled = vi.fn();
+    const listing = loadDirectory("/probe").then(settled);
+    await vi.advanceTimersByTimeAsync(0);
+    window.dispatchEvent(new CustomEvent("e2e-launch-listing-release", { detail: { token: "wrong" } }));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(settled).not.toHaveBeenCalled();
+    arm("replacement");
+    await listing;
+    expect(receipt()).toMatchObject({ token: "replacement", status: "armed" });
+    const next = loadDirectory("/probe");
+    await vi.advanceTimersByTimeAsync(0);
+    window.dispatchEvent(new CustomEvent("e2e-launch-listing-release", { detail: { token: "replacement" } }));
+    await expect(next).resolves.toMatchObject({ ok: true });
+    expect(receipt()).toMatchObject({ token: "replacement", status: "released" });
   });
 
   it("publishes a directory watch only after the backend accepts it", async () => {

@@ -25,7 +25,7 @@ async function selection() {
     return input ? { value: input.value, start: input.selectionStart, end: input.selectionEnd, active: input === document.activeElement } : null;
   });
 }
-async function assertChild(label: string, initial: string, previous: ReturnType<typeof nativeActive>, name: string, ownedHandle?: string) {
+async function assertChild(label: string, initial: string, previous: ReturnType<typeof nativeActive>, name: string, ownedHandle?: string, lateValidation?: { token: string; entry: string }) {
   // Native focus is observed before changing WebDriver's selected window.
   await browser.waitUntil(() => {
     const active = nativeActive();
@@ -46,11 +46,19 @@ async function assertChild(label: string, initial: string, previous: ReturnType<
   expect(nativeActive().id).toBe(active.id);
   fs.mkdirSync(proof, { recursive: true });
   await browser.saveScreenshot(`${proof}/${name}-complete-path-selected.png`);
+  if (lateValidation) await expect($(entryPathSelector(lateValidation.entry))).not.toBeDisplayed();
   // Real key input replaces the native selection; do not setValue or select it here.
   const typing = browser.action("key");
   for (const character of replacement) typing.down(character).up(character);
   await typing.perform();
   expect((await selection())?.value).toBe(replacement);
+  if (lateValidation) {
+    await browser.execute((token: string) => window.dispatchEvent(new CustomEvent("e2e-launch-listing-release", { detail: { token } })), lateValidation.token);
+    await expect($(entryPathSelector(lateValidation.entry))).toBeDisplayed();
+    expect(await selection()).toEqual({ value: replacement, start: replacement.length, end: replacement.length, active: true });
+    expect(nativeActive().id).toBe(active.id);
+    await browser.saveScreenshot(`${proof}/${name}-late-reply-preserved-typing.png`);
+  }
   await browser.keys("Enter");
   await expect($(".status-path")).toHaveAttribute("title", replacement);
   await expect($(entryPathSelector(path.join(replacement, "replacement-proof.txt")))).toBeDisplayed();
@@ -68,6 +76,32 @@ async function assertChild(label: string, initial: string, previous: ReturnType<
   childHandle = undefined;
   console.log(JSON.stringify({ name, nativeActive: active, initial, selectedRange: [0, initial.length], replacement }));
 }
+async function armListing(label: string, token: string, targetPath: string): Promise<void> {
+  await browser.execute((label: string, token: string, targetPath: string) => {
+    localStorage.setItem(`e2e-launch-listing-gate:${label}`, JSON.stringify({ token, targetPath }));
+  }, label, token, targetPath);
+}
+async function waitGate(label: string, token: string, status: string): Promise<void> {
+  await browser.waitUntil(async () => browser.execute((label: string, token: string, status: string) => {
+    const raw = localStorage.getItem(`e2e-launch-listing-receipt:${label}`);
+    const receipt = raw ? JSON.parse(raw) : null;
+    return receipt?.token === token && receipt?.status === status;
+  }, label, token, status), { timeout: 15_000, timeoutMsg: `exact ${label}/${token} listing did not become ${status}` });
+}
+async function dispatchLaunch(op: string, token: string, target: string, seedOmit?: string): Promise<void> {
+  // Dispatch once without blocking WebDriver in executeAsync while a reply is held.
+  await browser.execute((op: string, token: string, target: string, seedOmit?: string) => {
+    window.dispatchEvent(new CustomEvent("e2e-window-operation", { detail: { op, token, target, seedOmit } }));
+  }, op, token, target, seedOmit);
+}
+async function launchResult(token: string): Promise<{ kind: string; label: string }> {
+  await browser.waitUntil(async () => browser.execute((token: string) => {
+    return JSON.parse(document.documentElement.dataset.e2eWindowResult ?? "{}").token === token;
+  }, token), { timeoutMsg: "held launch did not settle" });
+  const reply = await browser.execute(() => JSON.parse(document.documentElement.dataset.e2eWindowResult ?? "{}"));
+  expect(reply.error).toBeUndefined();
+  return reply.result;
+}
 (process.platform === "linux" ? describe : describe.skip)("new native window address selection (#820)", () => {
   before(async () => {
     if (process.platform !== "linux" || !process.env.DISPLAY || process.env.WAYLAND_DISPLAY || process.env.GDK_BACKEND !== "x11") throw new Error("Run this native-focus fixture on a private Linux X11 display");
@@ -77,6 +111,7 @@ async function assertChild(label: string, initial: string, previous: ReturnType<
     replacement = path.join(scratch, "replacement");
     for (const directory of [source, requested, replacement]) fs.mkdirSync(directory);
     fs.writeFileSync(path.join(source, "origin-proof.txt"), "origin stays unchanged");
+    fs.writeFileSync(path.join(source, "late-validation-proof.txt"), "real listing validation marker");
     fs.writeFileSync(path.join(requested, "requested-proof.txt"), "requested directory");
     fs.writeFileSync(path.join(replacement, "replacement-proof.txt"), "typed directory");
     await navigateTo(source);
@@ -116,4 +151,97 @@ async function assertChild(label: string, initial: string, previous: ReturnType<
     }
     await assertChild(warm.label, source, previous, entrypoint === "shortcut" ? "ctrl-n" : "palette", warm.handle);
   });
+  it("an unseeded fresh child waits for its real first response before selecting the address", async () => {
+    const token = crypto.randomUUID();
+    childLabel = `explorer-${token}`;
+    await armListing(childLabel, token, requested);
+    const previous = nativeActive();
+    const opened = await windowOperation("fresh-open", requested, token) as { kind: string; label: string };
+    expect(opened).toMatchObject({ kind: "fresh", label: childLabel });
+    await waitGate(childLabel, token, "held");
+    await browser.waitUntil(() => nativeActive().id !== previous.id);
+    await switchToWindowLabel(childLabel);
+    childHandle = await browser.getWindowHandle();
+    await expect($(".path-input")).not.toBeDisplayed();
+    await expect($(entryPathSelector(path.join(requested, "requested-proof.txt")))).not.toBeDisplayed();
+    await browser.execute((token: string) => window.dispatchEvent(new CustomEvent("e2e-launch-listing-release", { detail: { token } })), token);
+    await assertChild(childLabel, requested, previous, "fresh-first-response", childHandle);
+  });
+  it("late real validation in a seeded fresh child preserves immediate typing and its caret", async () => {
+    const token = crypto.randomUUID();
+    childLabel = `explorer-${token}`;
+    const marker = path.join(source, "late-validation-proof.txt");
+    await expect($(entryPathSelector(marker))).toBeDisplayed();
+    await armListing(childLabel, token, source);
+    const previous = nativeActive();
+    await dispatchLaunch("fresh-open", token, source, "late-validation-proof.txt");
+    const opened = await launchResult(token);
+    expect(opened).toMatchObject({ kind: "fresh", label: childLabel });
+    await waitGate(childLabel, token, "held");
+    await assertChild(childLabel, source, previous, "fresh-late-validation", undefined, { token, entry: marker });
+  });
+  it("a parked warm child completes held real navigation before reveal, focus and selection", async () => {
+    const parked = await parkedWarmWindow();
+    const token = crypto.randomUUID();
+    childLabel = parked.label;
+    await armListing(parked.label, token, requested);
+    await waitGate(parked.label, token, "armed");
+    const previous = nativeActive();
+    await dispatchLaunch("warm-open", token, requested);
+    await waitGate(parked.label, token, "held");
+    expect(nativeActive().id).toBe(previous.id);
+    // The parent releases by exact label/token without scripting the parked webview.
+    await browser.execute((label: string, token: string) => localStorage.setItem(`e2e-launch-listing-release:${label}`, token), parked.label, token);
+    const opened = await launchResult(token);
+    expect(opened).toMatchObject({ kind: "warm", label: parked.label });
+    await assertChild(parked.label, requested, previous, "warm-held-navigation", parked.handle);
+  });
+  for (const gesture of ["vertical", "desktop"] as const) it(`the actual ${gesture} tab tear-off selects the moved path and preserves the other tab`, async () => {
+    await browser.keys(["Control", "t"]);
+    await navigateTo(requested);
+    await browser.waitUntil(async () => browser.execute(() => document.querySelectorAll(".tab-list > .tab").length === 2));
+    const existing = await windowOperation("window-states") as Array<{ label: string; visible: boolean }>;
+    await browser.setWindowSize(900, 600);
+    const previous = nativeActive();
+    execFileSync("xdotool", ["windowmove", previous.id, "100", "100"]);
+    const geometry = execFileSync("xwininfo", ["-id", previous.id], { encoding: "utf8" });
+    const originX = Number(geometry.match(/Absolute upper-left X:\s+(\d+)/)?.[1]);
+    const originY = Number(geometry.match(/Absolute upper-left Y:\s+(\d+)/)?.[1]);
+    const tab = await browser.execute(() => {
+      const rect = document.querySelector(".tab-list > .tab.active")!.getBoundingClientRect();
+      return { x: Math.round(rect.x + rect.width / 2), y: Math.round(rect.y + rect.height / 2) };
+    });
+    const x = originX + tab.x, y = originY + tab.y;
+    if (!Number.isFinite(x) || !Number.isFinite(y)) throw new Error("private test window geometry unavailable");
+    execFileSync("xdotool", ["mousemove", "--sync", String(x), String(y), "mousedown", "1"]);
+    try {
+      execFileSync("xdotool", ["mousemove", "--sync", String(gesture === "vertical" ? x + 15 : 1500), String(gesture === "vertical" ? y + 100 : y)]);
+      if (gesture === "vertical") await browser.waitUntil(async () => browser.execute(() => document.querySelectorAll(".tab-list > .tab").length === 1));
+    } finally { execFileSync("xdotool", ["mouseup", "1"]); }
+    await browser.waitUntil(async () => browser.execute(() => document.querySelectorAll(".tab-list > .tab").length === 1));
+    const current = await windowOperation("window-states") as Array<{ label: string; visible: boolean }>;
+    const opened = current.filter(item => item.visible && !existing.some(before => before.label === item.label));
+    expect(opened).toHaveLength(1);
+    childLabel = opened[0].label;
+    await assertChild(childLabel, requested, previous, `tear-off-${gesture}`);
+  });
+  it("the actual closed-window restore shortcut selects the recovered window path", async () => {
+    const opened = await windowOperation("fresh-open", requested) as { label: string };
+    childLabel = opened.label;
+    await switchToWindowLabel(opened.label);
+    childHandle = await browser.getWindowHandle();
+    await $(".path-input").waitForDisplayed();
+    await browser.keys("Escape");
+    await $(".path-input").waitForDisplayed({ reverse: true });
+    await browser.keys(["Control", "w"]);
+    await browser.waitUntil(async () => !(await browser.getWindowHandles()).includes(childHandle!));
+    childLabel = undefined; childHandle = undefined;
+    await browser.switchToWindow(owner);
+    const warm = await parkedWarmWindow();
+    const previous = nativeActive();
+    childLabel = warm.label;
+    await browser.keys(["Control", "Shift", "t"]);
+    await assertChild(warm.label, requested, previous, "closed-window-restore", warm.handle);
+  });
+
 });

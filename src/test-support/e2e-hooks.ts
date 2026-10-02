@@ -17,6 +17,9 @@ import { startFileMutationProbe } from "./file-mutation-probe";
 import { startFileRecoveryProbe } from "./file-recovery-probe";
 import { childReadyKey, WARM_READY_PREFIX, windowOperationHandlers, type WindowOperationRequest } from "./window-operations";
 
+/** Called with the actual page-session lifetime before its first native listing. */
+export const prepareWindowSessionProbe = startDirectoryListingProbe;
+
 export function startWindowSessionProbe(signal: AbortSignal, warmReady?: Promise<boolean>): void {
   if (signal.aborted) return;
   startFileHistoryProbe(signal);

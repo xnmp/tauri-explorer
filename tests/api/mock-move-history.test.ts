@@ -1,6 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
 import type { FileMutationReceipt } from "$lib/domain/file";
 import type { HistoryReply, HistorySummary, UndoAction } from "$lib/domain/file-history";
+import type { CopySessionOutcome } from "$lib/domain/copy-session";
+import { decodeDirectoryListing, type CompactDirectoryListing } from "$lib/api/directory-wire";
 
 vi.stubGlobal("window", {} as Window & typeof globalThis);
 const { mockInvoke } = await import("$lib/api/mock-invoke");
@@ -30,13 +32,17 @@ describe("mock move history execution", () => {
     expect(result.error).toBeUndefined();
     expect(result.summary.undoId).toBeNull();
     expect(result.summary.redoId).not.toBeNull();
-    const sourceListing = await mockInvoke<{ entries: { path: string }[] }>("list_directory", { path: sourceDir });
+    const sourceListing = decodeDirectoryListing(await mockInvoke<CompactDirectoryListing>("list_directory", { path: sourceDir }));
     expect(sourceListing.entries.map(({ path }) => path)).toContain(`${sourceDir}/a.txt`);
 
-    const reply = await mockInvoke<{ result: FileMutationReceipt; history: HistorySummary }>("move_entry", {
-      source: `${otherSource}/b.txt`, destDir: otherDest, overwrite: false, sessionId: "mock-session",
+    // Forward moves have no standalone `move_entry` command (#881); the
+    // production path is the ordered `move_entries` session, which is what
+    // must invalidate the redo entry the undo above reserved.
+    const sessionReply = await mockInvoke<{ result: CopySessionOutcome; history: HistorySummary }>("move_entries", {
+      request: { requestId: `mock-forward-${suffix}`, sources: [`${otherSource}/b.txt`], destDir: otherDest },
+      events: () => {},
     });
-    expect(reply.history.undoId).toBeNull();
-    expect(reply.history.redoId).toBeNull();
+    expect(sessionReply.result.items).toEqual([expect.objectContaining({ status: "succeeded" })]);
+    expect(sessionReply.history.redoId).toBeNull();
   });
 });

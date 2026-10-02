@@ -1,12 +1,14 @@
 /** Rejected native tab handoffs must leave the source as the sole owner. */
-import { browser } from "@wdio/globals";
+import { browser, $ } from "@wdio/globals";
 import { expect } from "expect-webdriverio";
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
-import { domTexts, navigateTo } from "./helpers";
+import {
+  closeOtherWindows, domTexts, navigateTo, parkedWarmWindow, switchToWindowLabel, switchToWindowUrl,
+} from "./helpers";
+import { createNativeFixtureDirectory } from "../native-qualification";
 
-const scratch = fs.mkdtempSync(path.join(os.tmpdir(), "explorer-transfer-rejection-"));
+const scratch = createNativeFixtureDirectory("explorer-transfer-rejection-");
 const leftDirectory = path.join(scratch, "left");
 const rightDirectory = path.join(scratch, "right");
 const warmDirectory = path.join(scratch, "warm");
@@ -59,59 +61,13 @@ async function uninitializedWindowHandle(previous: string[]): Promise<string> {
   return result;
 }
 
-async function switchToLabel(label: string): Promise<string> {
-  let result = "";
-  await browser.waitUntil(async () => {
-    for (const handle of await browser.getWindowHandles()) {
-      await browser.switchToWindow(handle);
-      if (await browser.execute(() => document.documentElement.dataset.e2eWindowLabel) === label) {
-        result = handle;
-        return true;
-      }
-    }
-    return false;
-  }, { timeout: 20_000, timeoutMsg: `window ${label} did not become ready` });
-  return result;
-}
-
-async function parkedWindow(): Promise<{ label: string; handle: string }> {
-  const original = await browser.getWindowHandle();
-  let parked: { label: string; handle: string } | undefined;
-  await browser.waitUntil(async () => {
-    for (const handle of await browser.getWindowHandles()) {
-      if (handle === original) continue;
-      await browser.switchToWindow(handle);
-      const state = await browser.execute(() => ({
-        label: document.documentElement.dataset.e2eWindowLabel,
-        ready: document.documentElement.dataset.e2eWarmReady,
-      }));
-      if (state.label && state.ready === "1") {
-        parked = { label: state.label, handle };
-        return true;
-      }
-    }
-    return false;
-  }, { timeout: 20_000, timeoutMsg: "parked warm window did not become ready" });
-  await browser.switchToWindow(original);
-  return parked!;
-}
-
 async function switchToPicker(token: string): Promise<string> {
-  let result = "";
-  await browser.waitUntil(async () => {
-    for (const handle of await browser.getWindowHandles()) {
-      await browser.switchToWindow(handle);
-      const matches = await browser.execute((expected) =>
-        new URLSearchParams(location.search).get("token") === expected
-          && document.querySelector(".picker") !== null, token);
-      if (matches) {
-        result = handle;
-        return true;
-      }
-    }
-    return false;
-  }, { timeout: 20_000, timeoutMsg: `picker ${token} did not become ready` });
-  return result;
+  // The picker's URL carries its token, so no other page is scripted to find it.
+  const handle = await switchToWindowUrl((url) => {
+    try { return new URL(url).searchParams.get("token") === token; } catch { return false; }
+  }, `picker ${token} did not become ready`);
+  await $(".picker").waitForExist({ timeout: 20_000 });
+  return handle;
 }
 
 async function sourceShape(): Promise<{
@@ -139,10 +95,10 @@ describe("native window transfer rejection", () => {
     sourceHandle = await browser.getWindowHandle();
     // Native sessions share persisted tabs. Start the transfer fixture in a
     // fresh single-pane tab even if a previous session left a split layout.
-    const previousTabs = await browser.execute(() => document.querySelectorAll(".tab-area > .tab").length);
+    const previousTabs = await browser.execute(() => document.querySelectorAll(".tab-list > .tab").length);
     await browser.keys(["Control", "t"]);
     await browser.waitUntil(async () => await browser.execute((expectedTabs) =>
-      document.querySelectorAll(".tab-area > .tab").length === expectedTabs
+      document.querySelectorAll(".tab-list > .tab").length === expectedTabs
         && document.querySelectorAll(".explorer-pane").length === 1,
     previousTabs + 1), { timeoutMsg: "fresh transfer source did not have exactly one pane" });
     await browser.keys(["Control", "m"]);
@@ -157,13 +113,8 @@ describe("native window transfer rejection", () => {
   });
 
   after(async () => {
-    for (const handle of await browser.getWindowHandles()) {
-      if (handle === sourceHandle) continue;
-      await browser.switchToWindow(handle);
-      await browser.closeWindow();
-    }
+    await closeOtherWindows(sourceHandle);
     if ((await browser.getWindowHandles()).includes(sourceHandle)) {
-      await browser.switchToWindow(sourceHandle);
       await browser.execute(() => {
         for (let index = localStorage.length - 1; index >= 0; index -= 1) {
           const key = localStorage.key(index);
@@ -171,7 +122,6 @@ describe("native window transfer rejection", () => {
         }
       });
     }
-    fs.rmSync(scratch, { recursive: true, force: true });
   });
 
   async function verifySourceOwnsTab(marker: string): Promise<void> {
@@ -193,8 +143,14 @@ describe("native window transfer rejection", () => {
     expect(await operation("transfer", missing)).toEqual({ moved: false, target: missing });
     await verifySourceOwnsTab("after-missing.txt");
 
+    // A warm window is scripted only once activated, and found by handle (#931).
+    // Prime explicitly: Windows has not parked one by this point on its own.
+    await operation("warm-prime");
+    const target = await parkedWarmWindow();
     const opened = await operation("warm-open", warmDirectory) as { label: string };
-    const destroyedHandle = await switchToLabel(opened.label);
+    expect(opened.label).toBe(target.label);
+    const destroyedHandle = target.handle;
+    await browser.switchToWindow(destroyedHandle);
     await browser.execute(() => {
       window.dispatchEvent(new CustomEvent("e2e-window-operation", {
         detail: { token: "destroy-transfer-target", op: "native-destroy" },
@@ -209,16 +165,16 @@ describe("native window transfer rejection", () => {
     await verifySourceOwnsTab("after-destroyed.txt");
 
     await operation("warm-prime");
-    const parked = await parkedWindow();
+    const parked = await parkedWarmWindow();
     expect(await operation("target-state", parked.label)).toEqual({ exists: true, visible: false });
     expect(await operation("transfer", parked.label)).toEqual({ moved: false, target: parked.label });
     await verifySourceOwnsTab("after-hidden.txt");
 
     const activated = await operation("warm-open", warmDirectory) as { kind: string; label: string };
     expect(activated).toEqual({ kind: "warm", label: parked.label });
-    await switchToLabel(parked.label);
+    await browser.switchToWindow(parked.handle);
     expect(await browser.execute(() => document.querySelectorAll(".explorer-pane").length)).toBe(1);
-    expect(await browser.execute(() => document.querySelectorAll(".tab-area > .tab").length)).toBe(1);
+    expect(await browser.execute(() => document.querySelectorAll(".tab-list > .tab").length)).toBe(1);
     expect(await domTexts(".explorer-pane .entry-name")).toContain("warm.txt");
     await browser.switchToWindow(sourceHandle);
     await verifySourceOwnsTab("after-warm-activation.txt");
@@ -277,7 +233,7 @@ describe("native window transfer rejection", () => {
     await browser.waitUntil(async () => (await domTexts(".explorer-pane .entry-name")).includes("warm.txt"), {
       timeout: 20_000, timeoutMsg: "formerly unready destination did not list its requested directory",
     });
-    expect(await browser.execute(() => document.querySelectorAll(".tab-area > .tab").length)).toBe(1);
+    expect(await browser.execute(() => document.querySelectorAll(".tab-list > .tab").length)).toBe(1);
     expect(await browser.execute(() => document.querySelectorAll(".explorer-pane").length)).toBe(1);
     expect(await browser.execute(() => document.querySelector(".status-path")?.getAttribute("title")))
       .toBe(warmDirectory);
@@ -287,7 +243,7 @@ describe("native window transfer rejection", () => {
   it("retains the source when a destination closes after receiving the native handoff", async () => {
     await browser.switchToWindow(sourceHandle);
     const opened = await operation("fresh-open", warmDirectory) as { kind: string; label: string };
-    const targetHandle = await switchToLabel(opened.label);
+    const targetHandle = await switchToWindowLabel(opened.label);
     await browser.waitUntil(async () => (await domTexts(".explorer-pane .entry-name")).includes("warm.txt"), {
       timeout: 20_000, timeoutMsg: "closing destination did not list its requested directory",
     });
@@ -324,7 +280,7 @@ describe("native window transfer rejection", () => {
     await browser.switchToWindow(sourceHandle);
     const opened = await operation("fresh-open", warmDirectory) as { kind: string; label: string };
     expect(opened.kind).toBe("fresh");
-    const targetHandle = await switchToLabel(opened.label);
+    const targetHandle = await switchToWindowLabel(opened.label);
     await browser.waitUntil(async () => (await domTexts(".explorer-pane .entry-name")).includes("warm.txt"), {
       timeout: 20_000, timeoutMsg: "collision target did not list its requested directory",
     });

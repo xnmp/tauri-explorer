@@ -33,9 +33,10 @@
     scrollToIndex?: (index: number) => void;
     containsIndex?: (index: number) => boolean;
     fallbackTabStop: boolean;
+    onviewportscroll?: () => void;
   }
 
-  let { explorer, contentWidth, onitemclick, onitemdblclick, scrollToIndex = $bindable(), containsIndex = $bindable(), fallbackTabStop }: Props = $props();
+  let { explorer, contentWidth, onitemclick, onitemdblclick, scrollToIndex = $bindable(), containsIndex = $bindable(), fallbackTabStop, onviewportscroll }: Props = $props();
 
   // Fixed row height: a single-line list item (16px icon / one text line +
   // 4px vertical padding + border) plus the 4px inter-row gap. List names are
@@ -73,6 +74,7 @@
     itemOverflow="visible"
     viewportPadding="6px 8px"
     getKey={(row) => row.startIndex}
+    {onviewportscroll}
     bind:scrollToIndex={grid.rowScrollToIndex}
   >
     {#snippet children(row, rowIndex)}
@@ -145,21 +147,24 @@
     border-left-color: var(--accent);
   }
 
-  .list-view :global(.list-item.cut) {
-    opacity: 0.5;
+  /* Ghosted entries (hidden, empty folder, cut) dim their icon and quiet
+     their label to --text-secondary. Dimming the whole row pulled the name
+     below WCAG AA contrast in every theme (#785); Windows Explorer ghosts
+     the icon for the same states. */
+  .list-view :global(.list-item:is(.hidden-entry, .empty-folder, .cut)) {
+    color: var(--text-secondary);
   }
 
-  .list-view :global(.list-item.hidden-entry) {
+  .list-view :global(.list-item:is(.hidden-entry, .empty-folder) [data-drag-icon]) {
     opacity: 0.55;
   }
 
-  .list-view :global(.list-item.empty-folder) {
-    opacity: 0.55;
-  }
-
-  .list-view :global(.list-item.empty-folder:hover),
-  .list-view :global(.list-item.empty-folder.selected) {
+  .list-view :global(.list-item:is(.hidden-entry, .empty-folder):is(:hover, .selected) [data-drag-icon]) {
     opacity: 0.8;
+  }
+
+  .list-view :global(.list-item.cut [data-drag-icon]) {
+    opacity: 0.5;
   }
 
   .list-view :global(.list-item.in-clipboard:not(.cut)) {

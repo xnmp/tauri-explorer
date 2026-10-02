@@ -15,15 +15,18 @@ import {
   type ParsedChord,
 } from "$lib/domain/keybinding-parser";
 import { loadPersisted, savePersisted } from "./persisted";
+import { shortcutsConflict } from "$lib/domain/shortcut-conflicts";
+import { isModifierKey } from "$lib/domain/keyboard";
+import { CHORD_TIMEOUT_MS } from "$lib/domain/shortcut-recording";
 
 /** A single keybinding entry */
 export interface Keybinding {
   commandId: string;
   defaultShortcut: string;
-  userShortcut: string | null; // null means use default
+  userShortcut: string | null; // null means explicitly unbound (or no override in getAllBindings)
 }
 
-/** Map of command ID to user's custom shortcut (null = use default) */
+/** Map of command ID to user's custom shortcut (null = explicitly unbound) */
 export type UserKeybindings = Record<string, string | null>;
 
 const STORAGE_KEY = "explorer-keybindings";
@@ -38,7 +41,6 @@ let userShortcuts = $state<UserKeybindings>({});
 let activeChordPrefix = $state<string | null>(null);
 let activeChordCommandIds = $state<string[] | null>(null);
 let chordTimeoutId: ReturnType<typeof setTimeout> | null = null;
-const CHORD_TIMEOUT_MS = 1500;
 
 /** WebKitGTK maps only GDK_META_MASK into event.metaKey — the Super/Mod4
  * modifier (the Linux "Cmd") never sets it, so Cmd+… bindings could not fire
@@ -57,11 +59,9 @@ function loadUserShortcuts(): UserKeybindings {
 }
 
 function saveUserShortcuts(): void {
-  // Only save non-null entries (user customizations)
-  const toSave = Object.fromEntries(
-    Object.entries(userShortcuts).filter(([_, shortcut]) => shortcut !== null)
-  );
-  savePersisted(STORAGE_KEY, toSave);
+  // Reset deletes an override. Null must survive restart to keep a command
+  // explicitly unbound, including every binding displaced by an override.
+  savePersisted(STORAGE_KEY, userShortcuts);
 }
 
 /**
@@ -114,8 +114,14 @@ function createKeybindingsStore() {
    * Pass null to unbind the command.
    */
   function setShortcut(commandId: string, shortcut: string | null): void {
-    userShortcuts = { ...userShortcuts, [commandId]: shortcut };
-    chordCache.delete(commandId); // effective shortcut changed
+    setShortcuts({ [commandId]: shortcut });
+  }
+
+  /** Publish an import or explicit override atomically, with no intermediate conflicts. */
+  function setShortcuts(shortcuts: UserKeybindings): void {
+    cancelChord();
+    userShortcuts = { ...userShortcuts, ...shortcuts };
+    for (const commandId of Object.keys(shortcuts)) chordCache.delete(commandId);
     saveUserShortcuts();
   }
 
@@ -191,6 +197,10 @@ function createKeybindingsStore() {
   ): string | undefined {
     const matchOpts = superKeyHeld && !event.metaKey ? { metaHeld: true } : undefined;
 
+    // Modifiers and held-key repeats never start or finish a chord, and do
+    // not renew its deadline. Ordinary single-key shortcuts retain repeats.
+    if (isModifierKey(event.key) || (event.repeat && activeChordCommandIds !== null)) return undefined;
+
     // If we're in chord-waiting mode, check suffix keys
     if (activeChordCommandIds !== null) {
       const commandIds = activeChordCommandIds;
@@ -219,7 +229,7 @@ function createKeybindingsStore() {
     const matchingChordCommandIds: string[] = [];
     for (const commandId of Object.keys(defaultShortcuts)) {
       const chord = getChordForCommand(commandId);
-      if (!chord) continue;
+      if (!chord || event.repeat) continue;
 
       if (matchesShortcut(event, chord.prefix, matchOpts)) {
         if (!isAvailable || isAvailable(commandId)) {
@@ -303,6 +313,12 @@ function createKeybindingsStore() {
     return matchesShortcut(event, chord.suffix, matchOpts);
   }
 
+  /** Side-effect-free ownership check for configured chord prefixes. */
+  function matchesAnyChordPrefix(event: KeyboardEvent, isAvailable?: (id: string) => boolean): boolean {
+    return !event.repeat && Object.keys(defaultShortcuts).some((id) =>
+      (!isAvailable || isAvailable(id)) && matchesChordPrefixForCommand(event, id));
+  }
+
   /**
    * Check for shortcut conflicts.
    * Returns command IDs that would conflict with the given shortcut.
@@ -314,7 +330,7 @@ function createKeybindingsStore() {
       if (commandId === excludeCommandId) continue;
 
       const existingShortcut = getShortcut(commandId);
-      if (existingShortcut && existingShortcut.toLowerCase() === shortcut.toLowerCase()) {
+      if (existingShortcut && shortcutsConflict(existingShortcut, shortcut)) {
         conflicts.push(commandId);
       }
     }
@@ -353,12 +369,14 @@ function createKeybindingsStore() {
     getShortcut,
     getDisplayShortcut,
     setShortcut,
+    setShortcuts,
     resetToDefault,
     resetAllToDefaults,
     hasCustomShortcut,
     getAllBindings,
     findMatchingCommand,
     matchesAnyBinding,
+    matchesAnyChordPrefix,
     matchesChordPrefixForCommand,
     isChordActiveForCommand,
     findConflicts,

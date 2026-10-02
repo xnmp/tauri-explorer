@@ -30,6 +30,7 @@ mod git_watch;
 mod github;
 mod nano_banana;
 mod palette;
+mod platform;
 mod plugin_job;
 #[cfg(target_os = "linux")]
 mod portal;
@@ -80,7 +81,8 @@ fn e2e_webview2_browser_args() -> String {
 mod wsl;
 
 use system::{
-    get_launch_cwd, get_log_dir, log_startup_timing, open_recycle_bin, set_window_theme, LaunchCwd,
+    get_launch_cwd, get_log_dir, log_startup_progress, log_startup_timing, open_recycle_bin,
+    set_window_theme, LaunchCwd,
 };
 use tauri_plugin_log::{RotationStrategy, Target, TargetKind, TimezoneStrategy};
 
@@ -179,10 +181,12 @@ pub fn run_with_process_entry(launch_dir: Option<String>, t_process_entry: std::
         .unwrap_or(log::LevelFilter::Info);
 
     let builder = tauri::Builder::default();
-    #[cfg(any(target_os = "macos", target_os = "ios"))]
+    #[cfg(target_os = "macos")]
     let builder = builder.on_web_content_process_terminate(|webview| {
-        renderer_owner::on_page_started(&webview.window());
+        renderer_owner::on_web_content_terminated(webview);
     });
+    #[cfg(target_os = "linux")]
+    let builder = builder.plugin(renderer_owner::termination_log());
     // Every WebView sharing Windows' data directory must use the exact same
     // environment options. Inject the main window's attach-build arguments
     // into every spawning page so fresh and warm descendants preserve them.
@@ -195,9 +199,6 @@ pub fn run_with_process_entry(launch_dir: Option<String>, t_process_entry: std::
             ))
             .build(),
     );
-
-    #[cfg(target_os = "linux")]
-    let builder = builder.manage(files::recovery::Runtime::default());
 
     builder
         .manage(LaunchCwd(launch_cwd_for_state))
@@ -230,7 +231,6 @@ pub fn run_with_process_entry(launch_dir: Option<String>, t_process_entry: std::
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_drag::init())
-        .plugin(tauri_plugin_clipboard_x::init())
         .on_window_event(|window, event| {
             if matches!(event, tauri::WindowEvent::Destroyed) {
                 renderer_owner::on_window_destroyed(window);
@@ -239,6 +239,8 @@ pub fn run_with_process_entry(launch_dir: Option<String>, t_process_entry: std::
         .on_page_load(|webview, payload| {
             if payload.event() == tauri::webview::PageLoadEvent::Started {
                 renderer_owner::on_page_started(&webview.window());
+                #[cfg(target_os = "macos")]
+                renderer_owner::on_document_committed(&webview.window(), payload.url());
             }
         })
         .invoke_handler(tauri::generate_handler![
@@ -255,6 +257,7 @@ pub fn run_with_process_entry(launch_dir: Option<String>, t_process_entry: std::
             config::write_theme_file,
             update_check::check_for_update,
             log_startup_timing,
+            log_startup_progress,
             // Trash operations
             file_mutation::delete_entries,
             files::recovery::commands::file_recovery_list,
@@ -268,21 +271,17 @@ pub fn run_with_process_entry(launch_dir: Option<String>, t_process_entry: std::
             files::dir_listing::list_directory,
             files::dir_listing::invalidate_dir_cache,
             files::dir_listing::is_directory_empty,
-            files::dir_listing::start_streaming_directory,
+            files::dir_listing::list_directory_fresh,
             files::dir_listing::start_observed_directory,
-            files::dir_listing::cancel_directory_listing,
             // File operations — CRUD
             files::file_ops::get_home_directory,
             file_mutation::create_directory,
             file_mutation::create_empty_file,
             file_mutation::rename_entry,
-            file_mutation::copy_entry,
             file_mutation::copy_entries,
             file_mutation::move_entries,
             file_mutation::resolve_copy_conflict,
             file_mutation::cancel_copy_session,
-            files::file_ops::cancel_copy,
-            file_mutation::move_entry,
             files::file_ops::read_text_file,
             files::file_ops::read_image_data_url,
             file_mutation::write_text_file,
@@ -308,9 +307,13 @@ pub fn run_with_process_entry(launch_dir: Option<String>, t_process_entry: std::
             content_search::start_content_search,
             content_search::cancel_content_search,
             // Clipboard (Linux native)
-            clipboard::clipboard_has_files,
-            clipboard::clipboard_read_files,
-            clipboard::clipboard_write_files,
+            clipboard::clipboard_read_text,
+            clipboard::clipboard_publish,
+            clipboard::clipboard_snapshot,
+            clipboard::clipboard_compare_and_clear,
+            clipboard::clipboard_rekey,
+            clipboard::clipboard_claim_cut,
+            clipboard::clipboard_release_cut,
             clipboard::clipboard_has_image,
             clipboard::clipboard_read_report_image,
             clipboard::clipboard_paste_image,
@@ -398,6 +401,7 @@ pub fn run_with_process_entry(launch_dir: Option<String>, t_process_entry: std::
             // Drives / volumes
             files::drives::list_drives,
             files::drives::mount_drive,
+            files::drives::drive_updates_live,
             // Wallpaper
             wallpaper::set_as_wallpaper,
             // Nano Banana (AI image editing)
@@ -428,6 +432,15 @@ pub fn run_with_process_entry(launch_dir: Option<String>, t_process_entry: std::
         ])
         .setup(move |app| {
             let t_setup = std::time::Instant::now();
+            // Before any window exists, so every mutation command can admit.
+            // Without a data directory, mutations fail rather than run unadmitted.
+            #[cfg(target_os = "linux")]
+            match tauri::Manager::path(app).app_local_data_dir() {
+                Ok(data) => {
+                    tauri::Manager::manage(app, files::recovery::Runtime::new(data.join("file-recovery")));
+                }
+                Err(error) => log::error!("File recovery storage is unavailable: {error}"),
+            }
             #[cfg(all(target_os = "linux", feature = "e2e-renderer-recovery"))]
             files::recovery::native_probe::seed(app.handle())?;
 
@@ -439,6 +452,11 @@ pub fn run_with_process_entry(launch_dir: Option<String>, t_process_entry: std::
 
             // Initialize filesystem watcher for auto-refresh
             files::fs_watcher::init_watcher(app.handle());
+
+            // Removable-volume discovery: one UDisks2 subscription per process,
+            // connected lazily on the first `list_drives` (#888).
+            #[cfg(target_os = "linux")]
+            files::linux_volumes::init_monitor(app.handle());
 
             // Portal-backend mode: no main window — serve the FileChooser
             // D-Bus interface and open picker windows on demand.

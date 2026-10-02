@@ -347,10 +347,6 @@ import { nextRemovableRoot } from "$lib/domain/drives";
       opacity var(--transition-fast);
   }
 
-  .explorer-pane:focus {
-    outline: none;
-  }
-
   /* Active border only shows in dual pane mode */
   .explorer-pane.active {
     border-color: var(--accent);

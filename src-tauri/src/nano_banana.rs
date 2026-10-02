@@ -350,37 +350,61 @@ mod tests {
         assert_eq!(sanitized_ext(Path::new("x.-'-")), "png");
     }
 
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     #[test]
-    fn cancellation_kills_owned_cli_before_it_can_finish() {
+    fn cancellation_kills_and_reaps_owned_cli_before_it_can_finish() {
         let dir = tempfile::tempdir().unwrap();
         let marker = dir.path().join("late-marker");
         let control = plugin_job::JobControl::new();
-        let cancel = control.clone();
         let child_marker = marker.clone();
         let runtime = tokio::runtime::Builder::new_current_thread()
-            .enable_io()
-            .enable_time()
+            .enable_all()
             .build()
             .unwrap();
-        let result = runtime.block_on(async move {
+        let (result, pid) = runtime.block_on(async move {
+            #[cfg(unix)]
             let mut command = tokio::process::Command::new("sh");
+            #[cfg(unix)]
             command
                 .args(["-c", "sleep 1; printf late > \"$MARKER\""])
                 .env("MARKER", &child_marker)
                 .kill_on_drop(true);
+            #[cfg(windows)]
+            let mut command = {
+                let mut command = tokio::process::Command::new("cmd.exe");
+                let command_line = format!(
+                    "ping -n 30 127.0.0.1 >NUL & echo late>\"{}\"",
+                    child_marker.display()
+                );
+                command
+                    .args(["/D", "/C"])
+                    .arg(command_line)
+                    .kill_on_drop(true);
+                command
+            };
             let mut child = command.spawn().unwrap();
-            tokio::spawn(async move {
-                tokio::time::sleep(std::time::Duration::from_millis(20)).await;
-                cancel.cancel();
-            });
-            wait_for_child(&mut child, &control).await
+            let pid = child.id().unwrap();
+            assert!(control.cancel(), "new child accepts cancellation");
+            let result = wait_for_child(&mut child, &control).await;
+            assert!(
+                child.try_wait().unwrap().is_some(),
+                "cancelled CLI was not waited"
+            );
+            (result, pid)
         });
         assert!(result.unwrap_err().to_string().contains("cancelled"));
-        std::thread::sleep(std::time::Duration::from_millis(100));
-        assert!(
-            !marker.exists(),
-            "cancelled CLI survived and wrote late output"
+        assert!(!marker.exists(), "cancelled CLI wrote late output");
+        #[cfg(windows)]
+        let _ = pid;
+        #[cfg(unix)]
+        let pid = pid as libc::pid_t;
+        #[cfg(unix)]
+        let probe = unsafe { libc::kill(pid, 0) };
+        #[cfg(unix)]
+        assert_eq!(
+            (probe, std::io::Error::last_os_error().raw_os_error()),
+            (-1, Some(libc::ESRCH)),
+            "cancelled CLI {pid} was not reaped"
         );
     }
 

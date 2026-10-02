@@ -7,9 +7,14 @@ export const USER_REPORT_IMAGE_TYPES = [
 ] as const;
 export type UserReportImageType = (typeof USER_REPORT_IMAGE_TYPES)[number];
 
+// Mirrors the native boundary and the relay; all three assert these against
+// tests/contract/fixtures/report_relay.json.
 export const MAX_USER_REPORT_ATTACHMENTS = 3;
 export const MAX_USER_REPORT_ATTACHMENT_BYTES = 2 * 1024 * 1024;
 export const MAX_USER_REPORT_ATTACHMENTS_BYTES = 3 * 1024 * 1024;
+export const MAX_USER_REPORT_TITLE_UNITS = 120;
+export const MAX_USER_REPORT_DESCRIPTION_UNITS = 8000;
+export const MAX_USER_REPORT_CONTACT_UNITS = 100;
 
 export interface UserReportAttachment {
   name: string;
@@ -32,6 +37,19 @@ export interface UserReportAttachmentUsage {
 export function userReportAttachmentBytes(data: string): number {
   const padding = data.endsWith("==") ? 2 : data.endsWith("=") ? 1 : 0;
   return Math.max(0, Math.floor(data.length * 3 / 4) - padding);
+}
+
+/** Current count/byte usage of an attachment list, for validating an addition against it. */
+export function userReportAttachmentUsage(
+  attachments: readonly UserReportAttachment[],
+): UserReportAttachmentUsage {
+  return {
+    count: attachments.length,
+    bytes: attachments.reduce(
+      (total, attachment) => total + userReportAttachmentBytes(attachment.data),
+      0,
+    ),
+  };
 }
 
 export function validateUserReportAttachmentFiles(
@@ -77,6 +95,7 @@ export type UserReportErrorKind =
   | "rate_limited"
   | "daily_cap"
   | "server_rejected"
+  | "submission_uncertain"
   | "attachment_uploader_unavailable"
   | "attachment_upload_failed"
   | "clipboard_unavailable";
@@ -86,25 +105,39 @@ export interface UserReportError {
   message: string;
 }
 
+const NOTHING_SENT = "Couldn't reach the report server — nothing was sent";
+
+/** Toast for a definite in-app failure that falls back to GitHub's form.
+ *  `submission_uncertain` never reaches here: it must not invite a retry. */
+export function userReportFallbackNotice(kind: UserReportErrorKind | undefined): string {
+  if (kind === "network_unreachable") return `${NOTHING_SENT}. Opening GitHub instead`;
+  if (kind === "daily_cap") return "Reports are temporarily unavailable — opening GitHub instead";
+  return "Could not submit in-app — opening GitHub instead";
+}
+
 export function userReportAttachmentFailureMessage(
   kind: UserReportErrorKind | undefined,
 ): string {
+  const retry = "Your text is saved; images remain available until this window closes.";
   if (kind === "attachment_uploader_unavailable") {
-    return "Install GitHub CLI and the gh-image extension to submit images: gh extension install drogers0/gh-image. Your draft is saved for retry.";
+    return `Could not reach an image uploader. ${retry}`;
   }
   if (kind === "attachment_upload_failed") {
-    return "Could not upload the image through gh-image. Install or configure the extension, then reopen Report Issue to retry; your draft is saved.";
+    return `Could not upload the image. ${retry}`;
   }
   if (kind === "malformed_input") {
-    return "One of your attached images is not valid. Your draft is saved; reopen Report Issue, remove it, and try again.";
+    return `One of your attached images is not valid. ${retry} Reopen Report Issue, remove it, and try again.`;
   }
   if (kind === "daily_cap") {
-    return "Reports are temporarily unavailable. Your draft is saved for retry.";
+    return `Reports are temporarily unavailable. ${retry}`;
+  }
+  if (kind === "network_unreachable") {
+    return `${NOTHING_SENT}. ${retry}`;
   }
   if (kind === "rate_limited") {
-    return "Too many reports were submitted. Your draft is saved; try again later.";
+    return `Too many reports were submitted. ${retry} Try again later.`;
   }
-  return "Could not submit the report with its attachments. Your draft is saved for retry.";
+  return `Could not submit the report with its attachments. ${retry}`;
 }
 
 const REPO_ISSUES_URL = "https://github.com/xnmp/tauri-explorer/issues/new";

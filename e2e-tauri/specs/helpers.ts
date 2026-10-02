@@ -1,134 +1,111 @@
 import { browser, $, $$ } from "@wdio/globals";
 // Keep command types available to standalone fixture-contract tests too.
 import type {} from "webdriverio";
-import path from "node:path";
+import { beginFreshWindowLookup, beginFreshWindowSelection } from "../diagnostics/fresh-window";
+import { isWarmWindowUrl, scanWindows, selectWindowByLabel, type WindowScanDriver } from "../owned-windows";
 import {
-  collectNativeProcessEvidence,
-  firstMissingRendererAt,
-  newestRenderer,
-  writeFreshWindowDiagnostics,
-  type FreshWindowDiagnostics,
-  type FreshWindowPageSnapshot,
-  type NativeProcessSample,
-} from "../fresh-window-diagnostics";
+  waitForWindowOperation, type RendererWaitResult, type WindowOperationResponse, type WindowOperationWaitRequest,
+} from "../window-transfer-waits";
 
-const applicationBinary = path.resolve(
-  "src-tauri",
-  "target",
-  "debug",
-  process.platform === "win32" ? "tauri-explorer.exe" : "tauri-explorer",
-);
-
-const diagnosticsDirectory =
-  process.env.TAURI_NATIVE_DIAGNOSTICS_DIR
-  ?? path.resolve("e2e-tauri", "logs", "fresh-window");
-
-/**
- * Evidence for the most recent fresh-window selection (#703).
- *
- * The Linux session loss happened between selection and the first element
- * lookup, so this is captured unconditionally at selection and replayed if the
- * lookup fails — by then the session can already be invalid.
- */
-let lastFreshWindow: FreshWindowDiagnostics | null = null;
-
-/**
- * One atomic renderer sample. WebKitWebDriver may evaluate injected scripts in
- * an isolated world, so read DOM state only — never application globals.
- */
-async function captureFreshWindowPage(): Promise<FreshWindowPageSnapshot | { error: string }> {
-  try {
-    return await browser.execute(() => {
-      const data = document.documentElement.dataset;
-      const status = document.querySelector(".status-path");
-      return {
-        capturedAt: Date.now(),
-        label: data.e2eWindowLabel ?? null,
-        hooksReady: data.e2eHooksReady === "true",
-        fileListCount: document.querySelectorAll(".file-list").length,
-        entryCount: document.querySelectorAll(".entry-item").length,
-        statusPath: status ? status.getAttribute("title") : null,
-        url: location.href,
-        readyState: document.readyState,
-        visibility: document.visibilityState,
-      };
-    }) as FreshWindowPageSnapshot;
-  } catch (error) {
-    return { error: String(error) };
-  }
+/** Exact entry selector for native paths, including Windows `\` and quotes. */
+export function entryPathSelector(
+  entryPath: string,
+  scope = ".entry-item",
+): string {
+  const escaped = Array.from(entryPath, character => {
+    const code = character.charCodeAt(0);
+    if (character === "\\" || character === '"') return `\\${character}`;
+    if (code === 0) return "\uFFFD";
+    if (code <= 0x1f || code === 0x7f) return `\\${code.toString(16)} `;
+    return character;
+  }).join("");
+  return `${scope}[data-path="${escaped}"]`;
 }
 
 /**
- * Record why a first lookup in a fresh window failed, using process evidence
- * only: a lost session cannot answer another WebDriver command. Exported for
- * contract tests; specs reach it through `waitForFreshWindowElement`.
- */
-export function recordFreshWindowLookupFailure(
-  selector: string,
-  error: unknown,
-  lookupStartedAt = Date.now(),
-  nativeDuringLookup: NativeProcessSample[] = [],
-): string | null {
-  const selected = lastFreshWindow;
-  if (!selected) return null;
-  const nativeAfterFailure = nativeDuringLookup.at(-1)
-    ?? collectNativeProcessEvidence({ applicationPath: applicationBinary });
-  const selectedRendererAtSelection = newestRenderer(selected.nativeAtSelection);
-  return writeFreshWindowDiagnostics({
-    ...selected,
-    phase: "lookup-failed",
-    lookup: {
-      selector,
-      startedAt: lookupStartedAt,
-      failedAt: Date.now(),
-      error: String(error),
-    },
-    nativeAfterFailure,
-    nativeDuringLookup,
-    selectedRendererAtSelection,
-    selectedRendererFirstMissingAt: firstMissingRendererAt(
-      selectedRendererAtSelection,
-      nativeDuringLookup,
-    ),
-  }, diagnosticsDirectory);
-}
-
-/**
- * Wait for the first element of a freshly opened window, retaining diagnostics
- * when it never resolves. The existence contract is unchanged; only the
- * failure path gains evidence.
+ * Wait for the first element of a freshly opened window. Session-loss
+ * evidence is recorded on failure (#781); the existence contract and the
+ * rejection are unchanged.
  */
 export async function waitForFreshWindowElement(
   selector: string,
   timeout: number,
 ): Promise<void> {
-  const lookupStartedAt = Date.now();
-  const nativeDuringLookup: NativeProcessSample[] = [];
-  const sampleInterval = 500;
-  const maxSamples = Math.ceil(timeout / sampleInterval) + 2;
-  const sampleProcesses = () => {
-    if (nativeDuringLookup.length >= maxSamples) return;
-    nativeDuringLookup.push(collectNativeProcessEvidence({
-      applicationPath: applicationBinary,
-    }));
-  };
-  sampleProcesses();
-  const sampler = setInterval(sampleProcesses, sampleInterval);
-  sampler.unref();
+  const evidence = beginFreshWindowLookup(selector, timeout);
   try {
     await $(selector).waitForExist({ timeout });
   } catch (error) {
-    sampleProcesses();
-    recordFreshWindowLookupFailure(
-      selector,
-      error,
-      lookupStartedAt,
-      nativeDuringLookup,
-    );
+    evidence.failed(error);
     throw error;
   } finally {
-    clearInterval(sampler);
+    evidence.stop();
   }
+}
+
+const windows: WindowScanDriver = {
+  listHandles: () => browser.getWindowHandles(),
+  switchTo: (handle) => browser.switchToWindow(handle),
+  currentUrl: () => browser.getUrl(),
+  pause: (ms) => browser.pause(ms),
+  now: () => Date.now(),
+};
+const pageLabel = () => browser.execute(() => document.documentElement.dataset.e2eWindowLabel);
+
+/** Run one `e2e-window-operation` in the current page and return its result. */
+export async function windowOperation(op: string, target?: string): Promise<unknown> {
+  const observed = await browser.executeAsync<
+    RendererWaitResult<WindowOperationResponse>, [WindowOperationWaitRequest]
+  >(waitForWindowOperation, { token: crypto.randomUUID(), op, target, timeoutMs: 20_000 });
+  if (!observed.ok) throw new Error(observed.reason);
+  if (observed.value.error) throw new Error(observed.value.error);
+  return observed.value.result;
+}
+
+/** Select the owned window labelled `label` and return its handle; warm pages are never scripted. */
+export function switchToWindowLabel(label: string, timeoutMs = 20_000): Promise<string> {
+  return selectWindowByLabel({ ...windows, currentLabel: pageLabel }, label, timeoutMs);
+}
+
+/** Select the window whose URL matches, without running script in any page. */
+export function switchToWindowUrl(matches: (url: string) => boolean, timeoutMsg: string): Promise<string> {
+  return scanWindows(windows, async (handle) => handle, { timeoutMs: 20_000, timeoutMsg }, matches);
+}
+
+/** Close every window except `keep` and the application's warm windows, then select `keep`. */
+export async function closeOtherWindows(keep: string): Promise<void> {
+  for (const handle of await browser.getWindowHandles()) {
+    if (handle === keep) continue;
+    await browser.switchToWindow(handle);
+    if (!isWarmWindowUrl(await browser.getUrl())) await browser.closeWindow();
+  }
+  if ((await browser.getWindowHandles()).includes(keep)) await browser.switchToWindow(keep);
+}
+
+/**
+ * The registered parked warm window, found without scripting it (#931): the
+ * current page reports registered hidden warm labels, and the handle is the
+ * one warm URL outside `exclude` (activated warm windows the test knows).
+ */
+export async function parkedWarmWindow(exclude: Iterable<string> = []): Promise<{ label: string; handle: string }> {
+  const owner = await browser.getWindowHandle();
+  const known = new Set([owner, ...exclude]);
+  let parked: { label: string; handle: string } | undefined;
+  await browser.waitUntil(async () => {
+    const labels = await windowOperation("warm-ready") as string[];
+    const handles: string[] = [];
+    try {
+      for (const handle of await browser.getWindowHandles()) {
+        if (known.has(handle)) continue;
+        await browser.switchToWindow(handle);
+        if (isWarmWindowUrl(await browser.getUrl())) handles.push(handle);
+      }
+    } finally {
+      await browser.switchToWindow(owner);
+    }
+    if (labels.length === 1 && handles.length === 1) parked = { label: labels[0], handle: handles[0] };
+    return parked !== undefined;
+  }, { timeout: 20_000, timeoutMsg: "no registered parked warm window" });
+  return parked!;
 }
 
 /** A fresh launch must introduce a new handle and expose its requested label. */
@@ -136,34 +113,19 @@ export async function switchToFreshWindow(
   label: string,
   existingHandles: readonly string[],
 ): Promise<string> {
-  // Existing pages cannot satisfy fresh-open. Avoid probing their renderers:
-  // a parked/retiring WebKit page can block script execution indefinitely.
+  const evidence = beginFreshWindowSelection(label, existingHandles);
+  // Existing pages cannot satisfy fresh-open; only new, owned pages are scripted.
   const existing = new Set(existingHandles);
-  let selected = "";
-  await browser.waitUntil(async () => {
-    for (const handle of await browser.getWindowHandles()) {
-      if (existing.has(handle)) continue;
-      await browser.switchToWindow(handle);
-      if (await browser.execute(() => document.documentElement.dataset.e2eWindowLabel) === label) {
-        selected = handle;
-        return true;
-      }
-    }
-    return false;
-  }, { timeout: 20_000, timeoutMsg: `fresh native window ${label} did not become ready` });
-
-  // Always-on: one renderer round trip plus one /proc scan, recorded before the
-  // first element lookup can lose the session (#703).
-  lastFreshWindow = {
-    issue: 703,
-    phase: "selected",
-    requestedLabel: label,
-    handle: selected,
-    selectedAt: Date.now(),
-    pageAtSelection: await captureFreshWindowPage(),
-    nativeAtSelection: collectNativeProcessEvidence({ applicationPath: applicationBinary }),
-  };
-  writeFreshWindowDiagnostics(lastFreshWindow, diagnosticsDirectory);
+  let selected: string;
+  try {
+    selected = await scanWindows(windows, async (handle) =>
+      !existing.has(handle) && await pageLabel() === label ? handle : undefined,
+    { timeoutMs: 20_000, timeoutMsg: `fresh native window ${label} did not become ready` });
+  } catch (error) {
+    evidence.failed(error);
+    throw error;
+  }
+  await evidence.selected(selected);
   return selected;
 }
 
@@ -208,9 +170,11 @@ export async function entryNames(): Promise<string[]> {
  *
  * Confirmation reads the status bar's full-path title attribute — the
  * breadcrumbs apply p10k-style truncation, so long directory names never
- * appear in them verbatim.
+ * appear in them verbatim. The backend resolves each request to one native
+ * spelling per directory (#799); pass `resolved` when `dir` is another
+ * spelling of it, such as a trailing-separator or Windows case variant.
  */
-export async function navigateTo(dir: string): Promise<void> {
+export async function navigateTo(dir: string, resolved = dir): Promise<void> {
   // Close any commit graph restored from a prior spec's persisted state.
   // localStorage is shared across every tauri-driver
   // session (same origin), so a spec that left the graph open would relaunch
@@ -242,13 +206,19 @@ export async function navigateTo(dir: string): Promise<void> {
     );
   }, dir, token);
 
-  await browser.waitUntil(
-    async () => {
+  let shown: string | null = null;
+  try {
+    await browser.waitUntil(async () => {
       const completedToken = await browser.execute(
         () => document.documentElement.dataset.e2eNavigationComplete,
       );
-      return completedToken === token && (await $(".status-path").getAttribute("title")) === dir;
-    },
-    { timeoutMsg: `status bar never showed ${dir}` },
-  );
+      shown = await $(".status-path").getAttribute("title");
+      return completedToken === token && shown === resolved;
+    });
+  } catch (error) {
+    throw new Error(
+      `status bar never showed ${resolved} for ${dir}; last showed ${shown}`,
+      { cause: error },
+    );
+  }
 }

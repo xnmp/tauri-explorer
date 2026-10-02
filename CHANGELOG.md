@@ -2,6 +2,147 @@
 
 All notable changes to Tauri Explorer.
 
+## v1.11.2 — 2026-09-30
+
+### Fixed
+
+- Reopening Report Issue while a report is still submitting keeps Submit
+  disabled, preventing duplicate reports (#851).
+- A completed report preserves newer draft edits. Image retries use the
+  current in-memory selection, including images removed or replaced after a
+  failure. Text survives application restarts; image drafts last until the
+  window closes (#851).
+
+## v1.11.1 — 2026-09-30
+
+This update prepares a small alpha tester cohort with safer file actions and
+more reliable feedback. Qualify the downloaded installer on each invited
+platform before sending invitations.
+
+### Fixed
+
+- File clipboard writes now follow one process-wide order across windows. On
+  X11, Cut verifies native clipboard ownership before moving a file; an
+  external Copy of the same path remains a Copy (#835).
+- Enter on a complete address-bar path navigates to that directory instead of
+  its first child (#711).
+- Embedded terminal paste uses the native clipboard fallback when WebKit
+  denies browser clipboard access, and paste bytes stay ordered with other
+  terminal input (#732).
+- Embedded zsh history respects the selected `HISTFILE` through startup-file
+  initialization (#784).
+- The Linux Trash shortcut opens the file manager's native Trash view even
+  when the default directory handler is a terminal (#723, #733, #757).
+- In-app report text is saved before submission, remains available after a
+  definite failure, and avoids prompting a duplicate after an uncertain
+  response. Reports with images use the same relay path as text reports.
+- The showcase's download fallback opens the releases page when the GitHub
+  release API is unavailable.
+
+### Release limits
+
+- File Cut is available only on X11 until native clipboard ownership can be
+  verified on Wayland, Windows, and macOS. File Copy remains available.
+- Display-scale-specific marquee selection on Linux (#756) and platform
+  acceptance beyond the qualified first cohort remain separate follow-ups.
+
+## v1.11.0 — 2026-09-29
+
+File operations have clearer ownership and recovery behavior, and keyboard and
+preview layouts work more consistently across window sizes and platforms.
+
+### Improved
+
+- **Copy and paste use one ordered copy session.** Per-item conflict decisions,
+  cancellation, progress, and one Undo follow the confirmed completed prefix
+  rather than a second legacy copy path (#776, #802).
+- **File Recovery handles more interrupted moves safely on Linux.** Retirement
+  refuses mount boundaries and retains retryable records when a retained root
+  cannot be inspected or removed (#760).
+- **Keyboard traversal has a visible focus path** through the main regions in
+  Details, List, and Tiles; the selected file row also keeps DOM focus when
+  pointer drag acquisition suppresses native focus (#797, #800).
+- **Tested preview layouts contain long filenames, metadata, and controls**
+  across narrow docks, zoom levels, and fullscreen states (#792).
+- **Terminal input reaches terminal-hosted applications in order**, including
+  the core navigation chords that Explorer owns (#709).
+- **Focus and theme contrast are clearer** in the tested light and dark
+  themes (#785).
+
+### Fixed
+
+- Copy followed immediately by Paste in the same Windows window no longer
+  waits for the operating-system clipboard mirror to finish (#715).
+- Closing many child windows on Linux releases their WebKit views instead of
+  retaining shared-memory descriptors until the main window stops responding
+  (#817).
+- **Windows case and separator variants of a directory share one listing and
+  watcher identity.** A pane continues refreshing after navigation through a
+  variant spelling (#799).
+- Atomic installation of the zsh integration shim avoids concurrent startup
+  races (#780).
+- A failing plugin command reports its own error without disabling an unrelated
+  active plugin (#782).
+- Symlinked recovery artifact roots are rejected before they can claim an
+  unrelated destination (#788).
+
+### Qualification
+
+- Native recovery cases run in a dedicated gated Linux CI job. macOS runner
+  contracts cover real PTY lifecycle and case-only filesystem rename (#774,
+  #798). A hosted Windows bounded soak completed one deterministic cycle, and
+  the Mac2 native UI pilot exercised child listing and parent navigation on
+  merged changes (#809, #825). A pinned Linux qualification build completed a
+  four-hour native soak with 2,510 cycles and bounded late resource growth
+  (#817).
+- The final `dev` product source at `de35c97b` passed type, unit, performance,
+  Rust, load, and all-view browser gates (2,372 browser cases passed, 36
+  skipped). Exact-commit hosted recovery passed 19 gated cases; full native
+  smoke passed 76 Windows cases with 36 skips and 97 Linux cases with 18 skips.
+  Mac2 UI, platform Rust, and CI passed, following five consecutive full
+  post-fix Windows `dev` smoke runs. Virtual-Mac startup measurements do not
+  qualify the physical-Mac half-bounce target.
+
+### Release limits
+
+- Durable copy and move recovery remain opt-in Linux build features. Durable
+  recovery admission adapters on Windows and macOS are not implemented.
+- Physical-Mac startup against the hardware half-bounce target remains
+  unqualified.
+- UNC server/share case folding is outside the qualified Windows directory
+  identity scope.
+
+## v1.10.0 — 2026-09-26
+
+Faster large folders, removable drives that mount on demand, and file operations
+that can no longer act on something other than what you selected.
+
+### Added
+
+- **Unmounted USB and SD volumes appear in the Linux sidebar** and mount when opened, through UDisks2. Labels with spaces display correctly, and a mount failure leaves the current folder in place (#677).
+- **Durable move retirement** (opt-in build feature `durable-move-recovery`, Linux): discarding a completed move, or reclaiming artifacts after a restore, is journaled across both artifact roots. A root that cannot be emptied is refused before anything is recorded (#736).
+
+### Improved
+
+- **Large folders open faster and scroll with shorter pauses.** Listings are delivered as one complete immutable snapshot, in a compact columnar format (#737, #748). Arch release measurements on a 100,000-file folder:
+  - Immutable listings (#737): startup p50 fell from 837 ms to 626 ms, and the median maximum frame gap from 462 ms to 155 ms.
+  - Columnar delivery (#748), measured against a separate baseline: p50 fell from 653 ms to 595 ms, and frame gaps in Details, List and Tiles fell to 94–113 ms.
+- **Every native Undo and Redo takes part in operation ownership.** Trash restore, Copy Undo and rename inverses now wait for, or refuse to run beside, another operation on the same files. They no longer mutate paths that operation holds (#740, #749).
+- **Deleting now reserves the files it will touch before it starts**, so it cannot remove a file that a running copy is reading (#735).
+
+### Fixed
+
+- **Permanent delete removes only the entry you selected** (Linux; macOS uses the same code but was not qualified natively). If another program swaps a different file or folder into its place first, nothing unrelated is deleted. Any leftover item is reported with its location instead of silently removed (#739).
+- **Renaming `foo` to `FOO`** no longer overwrites a separate `FOO` entry on case-sensitive filesystems (#749).
+- Two windows starting at the same moment no longer fail recovery initialization (#742).
+
+### Release limits
+
+- The macOS half-bounce startup target remains unmet and unverified. The performance numbers above are Linux (WebKitGTK) measurements (#696).
+- The permanent-delete identity protection was qualified natively on Linux only. Windows keeps its previous path-based removal. macOS requires read access to the containing folder (#739).
+- Durable copy and move recovery remain opt-in build features.
+- A noticeable pause remains when opening very large folders (#748).
+
 ## v1.9.1 — 2026-09-11
 
 Durable file-operation recovery, safer archive extraction, and qualification

@@ -1,5 +1,6 @@
 import { expect, test, type Page } from "./fixtures";
 import { switchViewMode, waitForEntries } from "./helpers";
+import { MOCK_LOCAL_KEYS } from "../src/lib/api/mock-control";
 
 const HOME = "/?path=/home/user";
 
@@ -20,12 +21,12 @@ async function runListColumnPicker(page: Page): Promise<void> {
 }
 
 function seedPersistedSettings(page: Page, settings: Record<string, unknown>): Promise<void> {
-  return page.addInitScript((persisted) => {
+  return page.addInitScript(({ persisted, configSeedKey }) => {
     localStorage.setItem(
-      "mock-config-files",
+      configSeedKey,
       JSON.stringify({ "settings.json": JSON.stringify(persisted) }),
     );
-  }, settings);
+  }, { persisted: settings, configSeedKey: MOCK_LOCAL_KEYS.configSeed });
 }
 
 test.describe("Numeric settings outcomes", () => {

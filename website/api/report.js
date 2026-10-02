@@ -5,7 +5,8 @@ import {
   createInMemoryRateLimitStore,
   createRestRateLimitStore,
   processReport,
-} from "./report-core.js";
+  submissionUncertain,
+} from "./_report-core.js";
 
 /** @typedef {{status(code: number): HttpResponse, setHeader(name: string, value: string): HttpResponse, json(payload: unknown): HttpResponse, end(): HttpResponse}} HttpResponse */
 /** @typedef {Record<string, string | string[] | undefined>} RequestHeaders */
@@ -26,10 +27,12 @@ function rateLimitStore() {
 }
 
 /** @param {{title: string, body: string, labels: string[]}} issue @returns {Promise<{url: string, number: number}>} */
-async function createGitHubIssue(issue) {
+export async function createGitHubIssue(issue) {
   const token = process.env.GITHUB_ISSUE_TOKEN;
   if (!token) throw new ReportError("server_rejected", "Report service is not configured", 503);
-  const response = await fetch("https://api.github.com/repos/xnmp/tauri-explorer/issues", {
+  let response;
+  try {
+    response = await fetch("https://api.github.com/repos/xnmp/tauri-explorer/issues", {
     method: "POST",
     headers: {
       Accept: "application/vnd.github+json",
@@ -39,10 +42,19 @@ async function createGitHubIssue(issue) {
       "X-GitHub-Api-Version": "2022-11-28",
     },
     body: JSON.stringify(issue),
-  });
-  const payload = await response.json().catch(() => ({}));
-  if (!response.ok || typeof payload.html_url !== "string") {
+    });
+  } catch {
+    throw submissionUncertain();
+  }
+  if (!response.ok && response.status < 500 && response.status !== 408) {
     throw new ReportError("server_rejected", "GitHub rejected the report", 502);
+  }
+  if (!response.ok) {
+    throw submissionUncertain();
+  }
+  const payload = await response.json().catch(() => ({}));
+  if (typeof payload.html_url !== "string" || !Number.isSafeInteger(payload.number)) {
+    throw submissionUncertain();
   }
   return { url: payload.html_url, number: payload.number };
 }

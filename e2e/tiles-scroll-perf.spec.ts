@@ -25,6 +25,7 @@
  * without flaking on ordinary headless CPU contention.
  */
 import { test, expect } from "./fixtures";
+import { seedSettings } from "./helpers";
 
 const IMAGES_DIR = "/perf/images-500"; // synthetic all-image dir served by mock-invoke
 
@@ -42,12 +43,7 @@ interface SweepReport {
 test("Tiles view scrolls a large image directory without long-frame jank (#593)", async ({ page }) => {
   // Large thumbnail size: fewer tiles per row, bigger decode surface per
   // tile, which is closest to the reported "lots of image thumbnails" case.
-  await page.addInitScript(() => {
-    const raw = localStorage.getItem("explorer-settings");
-    const settings = raw ? JSON.parse(raw) : {};
-    settings.thumbnailSize = "xlarge";
-    localStorage.setItem("explorer-settings", JSON.stringify(settings));
-  });
+  await seedSettings(page, { thumbnailSize: "xlarge" });
 
   await page.goto(`/?path=${IMAGES_DIR}&viewMode=tiles`);
 

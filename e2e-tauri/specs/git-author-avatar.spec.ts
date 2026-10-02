@@ -10,9 +10,10 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { navigateTo, domTexts } from "./helpers";
+import { createNativeFixtureDirectory } from "../native-qualification";
 
 const repository = fs.realpathSync(
-  fs.mkdtempSync(path.join(os.homedir(), ".tauri-explorer-e2e-avatar-")),
+  createNativeFixtureDirectory("tauri-explorer-e2e-avatar-"),
 );
 const subject = "native GitHub avatar resolution";
 const githubAvatarUrl = "https://avatars.githubusercontent.com/u/583231?s=64";
@@ -78,11 +79,11 @@ describe("native GitHub author avatar", () => {
 
   after(async () => {
     await browser.execute(() => window.dispatchEvent(new CustomEvent("e2e-reset-view")));
-    // Reset navigation is asynchronous. Keep the fixture alive until the
-    // explorer has visibly left it so the next native session cannot restore
-    // a repository this hook has already deleted.
+    // Reset navigation is asynchronous. Leave graph mode before session teardown
+    // so later native sessions do not restore this temporary repository.
     await $(".file-list").waitForExist({ timeout: 15_000 });
-    fs.rmSync(repository, { recursive: true, force: true });
+    // The shared native cleanup retires this fixture only after the application
+    // session stops, so delayed watcher work cannot race fixture deletion.
   });
 
   it("renders a GitHub noreply avatar through production IPC without breaking virtualized rows", async () => {

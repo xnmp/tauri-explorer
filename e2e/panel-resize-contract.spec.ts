@@ -1,13 +1,16 @@
 import { test, expect, type Page } from "./fixtures";
+import { seedSettings } from "./helpers";
 
 let pageErrors: string[] = [];
 test.beforeEach(({ page }) => { pageErrors = []; page.on("pageerror", error => pageErrors.push(error.message)); });
 test.afterEach(() => expect(pageErrors).toEqual([]));
 
 async function openPanels(page: Page, zoomLevel = 100) {
-  await page.addInitScript(zoom => {
-    localStorage.setItem("explorer-settings", JSON.stringify({ zoomLevel: zoom, showGitStatus: true, showScmPanel: true, millerLayers: 1 }));
-  }, zoomLevel);
+  await seedSettings(
+    page,
+    { zoomLevel, showGitStatus: true, showScmPanel: true, millerLayers: 1 },
+    { replace: true },
+  );
   await page.setViewportSize({ width: 1800, height: 1000 });
   await page.goto("/?path=/home/user/Documents");
   await expect(page.locator('.file-list .entry-item[data-path="/home/user/Documents/notes.md"]')).toBeVisible();
@@ -103,11 +106,11 @@ for (const mode of ["details", "list", "tiles"]) {
 
 for (const mode of ["Details", "List", "Tiles"]) {
   test(`opening inline panels through commands keeps ${mode} filenames reachable`, async ({ page }) => {
-    await page.addInitScript(() => {
-      localStorage.setItem("explorer-settings", JSON.stringify({
-        zoomLevel: 100, showGitStatus: true, showScmPanel: false, millerLayers: 0,
-      }));
-    });
+    await seedSettings(
+      page,
+      { zoomLevel: 100, showGitStatus: true, showScmPanel: false, millerLayers: 0 },
+      { replace: true },
+    );
     await page.setViewportSize({ width: 800, height: 600 });
     await page.goto("/?path=/home/user/Documents");
     await expect(page.locator('.file-list .entry-item[data-path="/home/user/Documents/notes.md"]')).toBeVisible();
@@ -185,7 +188,7 @@ test("inline panels release geometry on hide and island hoist", async ({ page })
 
 for (const zoom of [80, 150]) {
   test(`left-edge Git columns follow zoomed pointer movement at ${zoom}%`, async ({ page }) => {
-    await page.addInitScript(value => localStorage.setItem("explorer-settings", JSON.stringify({ zoomLevel: value })), zoom);
+    await seedSettings(page, { zoomLevel: zoom }, { replace: true });
     await page.setViewportSize({ width: 1800, height: 1000 });
     await page.goto("/?path=/home/user/Documents/project");
     await expect(page.locator(".file-list .entry-item").first()).toBeVisible();

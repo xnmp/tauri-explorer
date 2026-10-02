@@ -1,6 +1,8 @@
 import { afterEach, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({ list: vi.fn(), watch: vi.fn(), unwatch: vi.fn(), listen: vi.fn() }));
-vi.mock("$lib/api/drives", () => ({ listDrives: mocks.list }));
+vi.mock("$lib/api/drives", () => ({
+  listDrives: mocks.list, driveUpdatesLive: async () => false, DRIVES_CHANGED_EVENT: "drives-changed",
+}));
 vi.mock("$lib/api/files", () => ({ watchDirectory: mocks.watch, unwatchDirectory: mocks.unwatch }));
 vi.mock("@tauri-apps/api/event", () => ({ listen: mocks.listen }));
 import { drivesStore } from "$lib/state/drives.svelte";

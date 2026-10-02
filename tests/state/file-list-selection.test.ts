@@ -1,13 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { FileEntry } from "$lib/domain/file";
 import type {
-  DirectoryListingCallbacks,
   DirectoryListingResult,
 } from "$lib/state/directory-listing";
 
 type Load = (
   path: string,
-  callbacks: DirectoryListingCallbacks,
 ) => Promise<DirectoryListingResult>;
 
 const mocks = vi.hoisted(() => ({
@@ -20,8 +18,8 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock("$lib/state/directory-listing", () => ({
   createDirectoryListing: () => ({
-    load: (path: string, callbacks: DirectoryListingCallbacks) =>
-      mocks.load.current(path, callbacks),
+    load: (path: string) =>
+      mocks.load.current(path),
     cleanup: mocks.cleanup,
   }),
 }));
@@ -284,7 +282,6 @@ describe("explorer selection and focus cursor", () => {
       ok: true,
       path,
       entries: next,
-      streaming: false,
     });
 
     expect(await explorer.navigateTo("/next")).toBe(true);

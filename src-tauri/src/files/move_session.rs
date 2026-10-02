@@ -9,14 +9,14 @@
 //! inverse is the durable record, never a path, so a receipt that carries a
 //! relocation record must not also produce a path-only Move action.
 use super::{
+    admission,
     copy_session::{Conflict, Control, Inspection, Work},
-    file_ops,
+    file_ops, move_execution,
+    move_plan::MovePlan,
     mutation::FileMutationReceipt,
     WorkerCompletion,
 };
 use crate::{error::AppError, files, progress::ProgressTracker};
-#[cfg(target_os = "linux")]
-use std::path::PathBuf;
 use std::{fs, path::Path, sync::Arc};
 
 #[derive(Clone)]
@@ -24,8 +24,10 @@ pub(crate) struct MoveWork {
     /// Progress travels on the request channel, so this session emits no
     /// global job events; `job_id` only labels the tracker's cancel reason.
     pub job_id: u64,
-    #[cfg(target_os = "linux")]
-    pub recovery: (files::recovery::Runtime, PathBuf),
+    /// The same admission seam `move_execution::execute` and the native
+    /// history move adapter use (#881 follow-up, lesson 680). Trivial on
+    /// non-Linux hosts, exactly like every other admitted mutation command.
+    pub runtime: admission::Runtime,
 }
 
 impl Work for MoveWork {
@@ -45,17 +47,113 @@ impl Work for MoveWork {
         control: Arc<Control>,
         progress: Arc<dyn Fn(crate::progress::ByteProgress) + Send + Sync>,
     ) -> WorkerCompletion<FileMutationReceipt> {
-        files::run_blocking_context(
-            RelocateWork {
-                native: self.clone(),
-                inspection,
-                overwrite,
-                control,
-                progress,
-            },
-            RelocateWork::execute,
+        let source = Path::new(&inspection.source);
+        let destination = Path::new(&inspection.destination);
+        let name = match source.file_name() {
+            Some(name) => name,
+            None => {
+                return WorkerCompletion {
+                    result: Err(AppError::InvalidPath("Move source has no name".into())),
+                    warning: None,
+                }
+            }
+        };
+        let target = destination.join(name);
+        // Relocating an entry to the directory it already occupies is a
+        // success that touches nothing. Reporting it as a conflict or an
+        // overwrite would let a same-directory paste destroy the entry.
+        if source == target {
+            let mut receipt = present(FileMutationReceipt::committed(&target), &inspection);
+            receipt.unchanged = true;
+            return WorkerCompletion {
+                result: Ok(receipt),
+                warning: None,
+            };
+        }
+
+        let tracker = ProgressTracker::new(
+            None,
+            "move-progress",
+            "Move cancelled",
+            self.job_id,
+            inspection.bytes,
+            Some(control.cancelled.cancellation_flag()),
         )
-        .await
+        .report_to(progress.as_ref());
+        if let Err(error) = tracker.check_cancelled() {
+            return WorkerCompletion {
+                result: Err(error),
+                warning: None,
+            };
+        }
+
+        #[cfg(target_os = "linux")]
+        if files::recovery::Runtime::DURABLE {
+            // The durable path decides overwriting from the target it observes,
+            // so an un-prompted conflict must fail closed here. A target that
+            // appears after this check is still safe: the durable overwrite
+            // retains the displaced original rather than discarding it.
+            if !overwrite && fs::symlink_metadata(&target).is_ok() {
+                return WorkerCompletion {
+                    result: Err(AppError::AlreadyExists(
+                        target.to_string_lossy().into_owned(),
+                    )),
+                    warning: None,
+                };
+            }
+            let completion = files::run_blocking_context(
+                DurableRelocateWork {
+                    runtime: self.runtime.clone(),
+                    control: control.clone(),
+                    progress: progress.clone(),
+                    job_id: self.job_id,
+                    bytes: inspection.bytes,
+                    source: source.to_path_buf(),
+                    target: target.clone(),
+                },
+                DurableRelocateWork::execute,
+            )
+            .await;
+            return map_completion(completion, &inspection);
+        }
+
+        // Non-durable: admit the resolved source/target through the same
+        // seam the native history move adapter uses (`admission::admitted_execute`
+        // plus the shared `move_execution` worker), so a session item can never run
+        // while a recovery claim on either path is held (lesson 680; ADR 0024
+        // level 3). Plugin moves used to lose this admission when they went
+        // through the single-item `move_entry` command's own plan instead of
+        // this session's `file_ops::move_entry_impl` shortcut (#881 follow-up).
+        let plan = match MovePlan::new(
+            inspection.source.clone(),
+            inspection.destination.clone(),
+            overwrite,
+        ) {
+            Ok(plan) => plan,
+            Err(error) => {
+                return WorkerCompletion {
+                    result: Err(error),
+                    warning: None,
+                }
+            }
+        };
+        let job_id = self.job_id;
+        let bytes = inspection.bytes;
+        let outcome = admission::admitted_execute(plan, &self.runtime, move |plan, owner| {
+            move_execution::execute_owned_checked(plan, owner, move || {
+                ProgressTracker::new(
+                    None,
+                    "move-progress",
+                    "Move cancelled",
+                    job_id,
+                    bytes,
+                    Some(control.cancelled.cancellation_flag()),
+                )
+                .check_cancelled()
+            })
+        })
+        .await;
+        map_completion(outcome.completion, &inspection)
     }
 }
 
@@ -124,78 +222,56 @@ fn inspect(source: String, destination: String, remaining: usize) -> Result<Insp
     })
 }
 
-struct RelocateWork {
-    native: MoveWork,
-    inspection: Inspection,
-    overwrite: bool,
+/// The real blocking effect for the durable journal branch only. The
+/// non-durable branch is admitted through `move_execution::execute` instead
+/// (see `MoveWork::apply`), which owns its own blocking worker.
+#[cfg(target_os = "linux")]
+struct DurableRelocateWork {
+    runtime: admission::Runtime,
     control: Arc<Control>,
     progress: Arc<dyn Fn(crate::progress::ByteProgress) + Send + Sync>,
+    job_id: u64,
+    bytes: u64,
+    source: std::path::PathBuf,
+    target: std::path::PathBuf,
 }
 
-impl RelocateWork {
+#[cfg(target_os = "linux")]
+impl DurableRelocateWork {
     fn execute(&mut self) -> Result<FileMutationReceipt, AppError> {
-        let source = Path::new(&self.inspection.source);
-        let destination = Path::new(&self.inspection.destination);
-        let name = source
-            .file_name()
-            .ok_or_else(|| AppError::InvalidPath("Move source has no name".into()))?;
-        let target = destination.join(name);
-        // Relocating an entry to the directory it already occupies is a
-        // success that touches nothing. Reporting it as a conflict or an
-        // overwrite would let a same-directory paste destroy the entry.
-        if source == target {
-            let mut receipt = present(FileMutationReceipt::committed(&target), &self.inspection);
-            receipt.unchanged = true;
-            return Ok(receipt);
-        }
         let mut tracker = ProgressTracker::new(
             None,
             "move-progress",
             "Move cancelled",
-            self.native.job_id,
-            self.inspection.bytes,
+            self.job_id,
+            self.bytes,
             Some(self.control.cancelled.cancellation_flag()),
         )
         .report_to(self.progress.as_ref());
-        #[cfg(target_os = "linux")]
-        if cfg!(feature = "durable-move-recovery") {
-            // The durable path decides overwriting from the target it observes,
-            // so an un-prompted conflict must fail closed here. A target that
-            // appears after this check is still safe: the durable overwrite
-            // retains the displaced original rather than discarding it.
-            if !self.overwrite && fs::symlink_metadata(&target).is_ok() {
-                return Err(AppError::AlreadyExists(
-                    target.to_string_lossy().into_owned(),
-                ));
-            }
-            return self
-                .native
-                .recovery
-                .0
-                .move_entry(
-                    self.native.recovery.1.clone(),
-                    source,
-                    &target,
-                    &mut tracker,
-                )
-                .map(|receipt| present(receipt, &self.inspection));
-        }
-        let _ = &mut tracker;
-        let receipt = file_ops::move_entry_impl(
-            self.inspection.source.clone(),
-            self.inspection.destination.clone(),
-            Some(self.overwrite),
-        )?;
-        // A destination that committed while its source removal did not finish
-        // is not a success: the entry may still exist at both names, and an
-        // inverse derived from it could destroy whichever copy is the real one.
-        // The session records it as uncertain, which stops the run, keeps the
-        // cut clipboard and offers no Undo.
+        // The blocking worker may sit queued after the async supervisor's
+        // final cancellation check. Fence the native effect at worker entry.
+        tracker.check_cancelled()?;
+        self.runtime
+            .move_entry(&self.source, &self.target, &mut tracker)
+    }
+}
+
+/// A destination that committed while its source removal did not finish is
+/// not a success: the entry may still exist at both names, and an inverse
+/// derived from it could destroy whichever copy is the real one. The session
+/// records it as uncertain, which stops the run, keeps the cut clipboard and
+/// offers no Undo. Also restores the pane's requested display spelling.
+fn map_completion(
+    mut completion: WorkerCompletion<FileMutationReceipt>,
+    inspection: &Inspection,
+) -> WorkerCompletion<FileMutationReceipt> {
+    completion.result = completion.result.and_then(|receipt| {
         if let Some(recovery) = &receipt.recovery {
             return Err(AppError::MutationUncertain(recovery.message()));
         }
-        Ok(present(receipt, &self.inspection))
-    }
+        Ok(present(receipt, inspection))
+    });
+    completion
 }
 
 /// Physical paths remain the recovery authority. Preserve the pane's spelling

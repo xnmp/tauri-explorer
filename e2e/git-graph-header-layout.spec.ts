@@ -1,12 +1,10 @@
 import { test, expect, type Locator, type Page } from "./fixtures";
-import { waitForEntries } from "./helpers";
+import { seedSettings, waitForEntries } from "./helpers";
 
 async function openGraph(page: Page, zoom: number, width: number, query = "") {
   const errors: string[] = [];
   page.on("pageerror", error => errors.push(error.message));
-  await page.addInitScript(value => {
-    localStorage.setItem("explorer-settings", JSON.stringify({ zoomLevel: value }));
-  }, zoom);
+  await seedSettings(page, { zoomLevel: zoom }, { replace: true });
   await page.setViewportSize({ width, height: 800 });
   await page.goto(`/?path=/home/user/Documents/project${query}`);
   await waitForEntries(page);

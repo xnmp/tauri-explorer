@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   buildMacStartupQualificationReport,
+  correlationToleranceMs,
   loadInteractiveMacStartupEvidence,
   parseAttributedMacStartupLog,
   qualifyHalfBounce,
@@ -120,6 +121,50 @@ describe("macOS startup phase attribution", () => {
         attributedLog.replace("receipt-epoch-ms=1800.0", "receipt-epoch-ms=1799.6"),
       ).phases.unattributedMs,
     ).toBeCloseTo(10.4, 3);
+  });
+
+  it("scales the correlation bound with launch length at the wall-clock slew rate", () => {
+    expect(correlationToleranceMs(0)).toBe(5);
+    expect(correlationToleranceMs(830)).toBe(5.415);
+    expect(correlationToleranceMs(10_000)).toBe(10);
+    // attributedLog launches in 830ms: a residual exactly at -5.415ms is
+    // accepted and anything beyond it is refused.
+    expect(
+      parseAttributedMacStartupLog(
+        attributedLog.replace("receipt-epoch-ms=1800.0", "receipt-epoch-ms=1815.415"),
+      ).phases.unattributedMs,
+    ).toBe(-5.415);
+    expect(() =>
+      parseAttributedMacStartupLog(
+        attributedLog.replace("receipt-epoch-ms=1800.0", "receipt-epoch-ms=1815.5"),
+      ),
+    ).toThrow("residual -5.500ms");
+  });
+
+  it("accepts the slow cold CI sample a fixed 5ms bound misreported as missing markers (#936)", () => {
+    // Verbatim markers from the 2026-09-26 macOS run whose sample 1 failed as
+    // "startup markers missing": a 12.3s cold launch during a wall-clock slew.
+    const slowCold = [
+      "Startup(native-window): window=main app-run-epoch-ms=1790384428279.574 process-entry-to-run=0.3ms window-built=6377.6ms",
+      "Startup(webview): window=main boot-epoch-ms=1790384437638.000 bundle-exec=460.0ms mount=709.0ms commands-ready=747.0ms settings-ready=841.0ms list-ready=2814.0ms app-ready=2814.0ms ui-ready=2945.0ms total=2945.0ms",
+      "Startup(native-ready): window=main app-run-to-ready=12302.9ms receipt-epoch-ms=1790384440588.656",
+    ].join("\n");
+    const measured = parseAttributedMacStartupLog(slowCold, {
+      firstFunctionalFrame: "not-observed",
+      firstFunctionalFrameMs: null,
+      inputOutcome: "not-verified",
+      inputReadyMs: null,
+      measureWarm: false,
+    });
+    expect(measured.launchTotalMs).toBe(12303.2);
+    expect(measured.phases.unattributedMs).toBe(-6.182);
+    // The same launch still refuses a disagreement beyond the slew allowance.
+    expect(() =>
+      parseAttributedMacStartupLog(
+        slowCold.replace("receipt-epoch-ms=1790384440588.656", "receipt-epoch-ms=1790384440593.656"),
+        { firstFunctionalFrame: "not-observed", firstFunctionalFrameMs: null, inputOutcome: "not-verified", inputReadyMs: null, measureWarm: false },
+      ),
+    ).toThrow("correlated startup clocks disagree");
   });
 
   it("refuses a duplicated webview marker instead of shifting time between phases", () => {

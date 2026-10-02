@@ -2,6 +2,7 @@
  * Native event delivery/window construction does not establish tab adoption. */
 import { listen, emitTo } from "@tauri-apps/api/event";
 import { isRecord, isWindowPath } from "$lib/domain/window-input";
+import { traceError, traceWindowFailure, traceWindowProgress } from "./window-trace";
 
 export const TAB_ADOPT_EVENT = "explorer://adopt-tab";
 const ADOPTED_EVENT = "explorer://tab-adopted";
@@ -49,6 +50,9 @@ export function requestWindowAcknowledgement(
 ): Promise<boolean> {
   const handoff = { sourceWindow, requestId: crypto.randomUUID() };
   return new Promise<boolean>((resolve) => {
+    const startedAt = Date.now();
+    let listeningAt: number | null = null;
+    let dispatchedAt: number | null = null;
     let settled = false;
     let unlisten: (() => void) | undefined;
     const stopListening = (stop: () => void) => {
@@ -56,26 +60,45 @@ export function requestWindowAcknowledgement(
       try { void Promise.resolve(stop()).catch(report); }
       catch (error) { report(error); }
     };
-    const finish = (adopted: boolean) => {
+    const finish = (adopted: boolean, phase: string, error?: unknown) => {
       if (settled) return;
       settled = true;
+      const context = {
+        event, sourceWindow, targetWindow, requestId: handoff.requestId, phase, adopted,
+        elapsedMs: Date.now() - startedAt,
+        listenMs: listeningAt === null ? null : listeningAt - startedAt,
+        dispatchMs: dispatchedAt === null || listeningAt === null ? null : dispatchedAt - listeningAt,
+      };
+      // Settle before tracing, so no trace failure can leave the hand-off pending.
       clearTimeout(timer);
       signal?.removeEventListener("abort", abort);
       if (unlisten) stopListening(unlisten);
       unlisten = undefined;
       resolve(adopted);
+      // Timeouts, rejections and dispatch errors are the failures users hit.
+      const traced = { ...context, error: traceError(error) };
+      if (adopted) traceWindowProgress("window handoff acknowledged", traced);
+      else traceWindowFailure("window handoff failed", traced);
     };
-    const abort = () => finish(false);
-    const timer = setTimeout(() => finish(false), timeoutMs);
+    const abort = () => finish(false, "abort");
+    const timer = setTimeout(() => finish(false, "timeout"), timeoutMs);
     signal?.addEventListener("abort", abort, { once: true });
-    if (signal?.aborted) { finish(false); return; }
+    if (signal?.aborted) { finish(false, "abort"); return; }
     void listen<unknown>(event, ({ payload }) => {
       if (isRecord(payload) && payload.requestId === handoff.requestId && payload.targetWindow === targetWindow
-        && (payload.accepted === undefined || typeof payload.accepted === "boolean")) finish(payload.accepted !== false);
+        && (payload.accepted === undefined || typeof payload.accepted === "boolean")) {
+        finish(payload.accepted !== false, "acknowledgement");
+      }
     }, { target: sourceWindow }).then(async (stop) => {
       if (settled) { stopListening(stop); return; }
       unlisten = stop;
-      await dispatch(handoff);
-    }).catch(() => finish(false));
+      listeningAt = Date.now();
+      try {
+        await dispatch(handoff);
+        dispatchedAt = Date.now();
+      } catch (error) {
+        finish(false, "dispatch-error", error);
+      }
+    }).catch((error) => finish(false, "listener-error", error));
   });
 }

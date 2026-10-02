@@ -5,34 +5,104 @@ import {
   createRestRateLimitStore,
   enforceReportLimits,
   processReport,
+  REPORT_ERROR_CODES,
+  REPORT_LIMITS,
+  ReportError,
   validateReport,
-} from "../../website/api/report-core.js";
-import reportHandler, { reporterIp } from "../../website/api/report.js";
+} from "../../website/api/_report-core.js";
+import contract from "../contract/fixtures/report_relay.json";
+import reportHandler, { createGitHubIssue, reporterIp } from "../../website/api/report.js";
 
 const valid = {
   title: "Explorer freezes 🧊",
   body: "Opening a directory hangs.",
   kind: "bug",
-  contact: "",
-  version: "1.7.0",
-  os: "linux",
-  arch: "x86_64",
 };
 const pngData = Buffer.from([
   0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3,
 ]).toString("base64");
+
+describe("GitHub issue submission boundary", () => {
+  const issue = { title: "Alpha report", body: "Body", labels: ["user-report", "bug"] };
+
+  it("returns the public issue URL after an acknowledged creation", async () => {
+    vi.stubEnv("GITHUB_ISSUE_TOKEN", "test-token");
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
+      ok: true,
+      status: 201,
+      json: async () => ({ html_url: "https://github.com/xnmp/tauri-explorer/issues/900", number: 900 }),
+    }));
+    try {
+      await expect(createGitHubIssue(issue)).resolves.toEqual({
+        url: "https://github.com/xnmp/tauri-explorer/issues/900",
+        number: 900,
+      });
+    } finally {
+      vi.unstubAllGlobals();
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it.each([
+    ["lost response", () => { throw new Error("connection reset"); }, "submission_uncertain"],
+    ["malformed success", () => ({ ok: true, status: 201, json: async () => ({}) }), "submission_uncertain"],
+    ["upstream failure", () => ({ ok: false, status: 503 }), "submission_uncertain"],
+    ["definite rejection", () => ({ ok: false, status: 422 }), "server_rejected"],
+  ])("classifies %s without inviting an automatic duplicate", async (_case, respond, code) => {
+    vi.stubEnv("GITHUB_ISSUE_TOKEN", "test-token");
+    vi.stubGlobal("fetch", vi.fn().mockImplementation(respond));
+    try {
+      await expect(createGitHubIssue(issue)).rejects.toMatchObject({ code });
+    } finally {
+      vi.unstubAllGlobals();
+      vi.unstubAllEnvs();
+    }
+  });
+});
+
+describe("report relay contract (shared with the native boundary)", () => {
+  it("enforces the limits in the shared fixture", () => {
+    expect(REPORT_LIMITS).toEqual(contract.limits);
+  });
+
+  it("emits only error codes the app maps", () => {
+    expect(REPORT_ERROR_CODES).toEqual(contract.relayErrorCodes);
+  });
+
+  it("accepts exactly the title, attachment-name and body limits", () => {
+    const { maxTitleUnits, maxAttachmentNameUnits, maxRelayBodyUnits } = contract.limits;
+    const at = (name: string) => [{ name, mediaType: "image/png", data: pngData }];
+    expect(validateReport({ ...valid, title: "t".repeat(maxTitleUnits) }).title).toHaveLength(maxTitleUnits);
+    expect(() => validateReport({ ...valid, title: "t".repeat(maxTitleUnits + 1) }))
+      .toThrow(expect.objectContaining({ code: "malformed_input" }));
+    expect(validateReport({ ...valid, body: "b".repeat(maxRelayBodyUnits) }).body).toHaveLength(maxRelayBodyUnits);
+    expect(() => validateReport({ ...valid, body: "b".repeat(maxRelayBodyUnits + 1) }))
+      .toThrow(expect.objectContaining({ code: "malformed_input" }));
+    expect(validateReport({ ...valid, attachments: at("n".repeat(maxAttachmentNameUnits)) }).attachments)
+      .toHaveLength(1);
+    expect(() => validateReport({ ...valid, attachments: at("n".repeat(maxAttachmentNameUnits + 1)) }))
+      .toThrow(expect.objectContaining({ code: "malformed_input" }));
+  });
+
+  it("publishes only the request fields the app sends and ignores legacy metadata", () => {
+    const legacy = { ...valid, contact: "x".repeat(500), version: "1.7.0", os: "linux", arch: "x86_64", website: "" };
+    const report = validateReport(legacy);
+    expect(Object.keys(report).sort()).toEqual(
+      contract.requestFields.filter((field) => field !== "website").sort(),
+    );
+    expect(buildGitHubIssue(report).body).toBe(valid.body);
+  });
+});
 
 describe("report relay validation", () => {
   it("normalizes a valid report and selects observable GitHub labels", () => {
     const report = validateReport({
       ...valid,
       title: "  Explorer\nfreezes 🧊  ",
-      contact: "  @reporter  ",
     });
     expect(report).toEqual({
       ...valid,
       title: "Explorer freezes 🧊",
-      contact: "@reporter",
       attachments: [],
     });
     expect(buildGitHubIssue(report)).toMatchObject({
@@ -53,7 +123,6 @@ describe("report relay validation", () => {
     [{ ...valid, body: "x".repeat(10_000) }],
     [{ ...valid, body: "https://spam.example/path" }],
     [{ ...valid, kind: "question" }],
-    [{ ...valid, contact: "x".repeat(101) }],
     [{ ...valid, title: "bad\u0000title" }],
   ])("rejects malformed input with a typed error", (input) => {
     expect(() => validateReport(input)).toThrow(
@@ -67,6 +136,13 @@ describe("report relay validation", () => {
 
   it("accepts an 8000-character unicode body", () => {
     expect(validateReport({ ...valid, body: "🐛".repeat(4000) }).body).toHaveLength(8000);
+  });
+
+  it("accepts the full description with appended app metadata but rejects larger relay bodies", () => {
+    expect(validateReport({ ...valid, body: "x".repeat(8500) }).body).toHaveLength(8500);
+    expect(() => validateReport({ ...valid, body: "x".repeat(8501) })).toThrow(
+      expect.objectContaining({ code: "malformed_input" }),
+    );
   });
 
   it("decodes supported image attachments for the hosting boundary", () => {
@@ -208,7 +284,7 @@ describe("report attachment delivery", () => {
   });
 
   it("reports failed blob cleanup while preserving the delivery error", async () => {
-    const createIssue = vi.fn().mockRejectedValue(new Error("GitHub unavailable"));
+    const createIssue = vi.fn().mockRejectedValue(new ReportError("server_rejected", "GitHub rejected the report", 502));
     const attachmentStore = {
       upload: vi.fn().mockResolvedValue("https://blob.test/orphan.png"),
       remove: vi.fn().mockRejectedValue(new Error("Blob cleanup unavailable")),
@@ -221,13 +297,28 @@ describe("report attachment delivery", () => {
       createInMemoryRateLimitStore(),
       createIssue,
       attachmentStore,
-    )).rejects.toThrow("GitHub unavailable");
+    )).rejects.toThrow("GitHub rejected the report");
     expect(attachmentStore.remove).toHaveBeenCalledWith(["https://blob.test/orphan.png"]);
     expect(consoleError).toHaveBeenCalledWith(
       "Failed to remove report attachment blobs",
       expect.any(Error),
     );
     consoleError.mockRestore();
+  });
+
+  it("keeps hosted images when GitHub may have created an issue before its response was lost", async () => {
+    const attachmentStore = {
+      upload: vi.fn().mockResolvedValue("https://blob.test/possibly-published.png"),
+      remove: vi.fn(),
+    };
+    await expect(processReport(
+      { ...valid, attachments: [{ name: "shot.png", mediaType: "image/png", data: pngData }] },
+      "198.51.100.12",
+      createInMemoryRateLimitStore(),
+      vi.fn().mockRejectedValue(new ReportError("submission_uncertain", "Check recent issues", 503)),
+      attachmentStore,
+    )).rejects.toMatchObject({ code: "submission_uncertain" });
+    expect(attachmentStore.remove).not.toHaveBeenCalled();
   });
 
   it("cleans up earlier blobs when a later image upload fails", async () => {
@@ -258,6 +349,62 @@ describe("report attachment delivery", () => {
 });
 
 describe("report relay rate limits", () => {
+  it.each([
+    {}, { result: null }, { result: 0 }, { result: false },
+    { result: [] }, { result: {} }, { result: "unknown" },
+    { result: "", error: "Redis failure" }, null, [],
+  ].map((payload) => ({ payload })))("rejects malformed shared-store reply $payload before any publication", async ({ payload }) => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async () =>
+      new Response(JSON.stringify(payload), { status: 200 }),
+    );
+    const createIssue = vi.fn();
+    const attachmentStore = { upload: vi.fn(), remove: vi.fn() };
+    try {
+      await expect(processReport(
+        { ...valid, attachments: [{ name: "proof.png", mediaType: "image/png", data: pngData }] },
+        "198.51.100.21",
+        createRestRateLimitStore("https://kv.example", "token"),
+        createIssue,
+        attachmentStore,
+      )).rejects.toMatchObject({ code: "server_rejected", status: 503 });
+      expect(createIssue).not.toHaveBeenCalled();
+      expect(attachmentStore.upload).not.toHaveBeenCalled();
+    } finally {
+      fetchMock.mockRestore();
+    }
+  });
+
+  it("creates a report only after acknowledged shared-store allowance", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async () =>
+      new Response(JSON.stringify({ result: "" }), { status: 200 }),
+    );
+    const createIssue = vi.fn().mockResolvedValue({ url: "https://github.com/xnmp/tauri-explorer/issues/900", number: 900 });
+    try {
+      await expect(processReport(valid, "198.51.100.21", createRestRateLimitStore("https://kv.example", "token"), createIssue))
+        .resolves.toMatchObject({ number: 900 });
+      expect(createIssue).toHaveBeenCalledOnce();
+    } finally {
+      fetchMock.mockRestore();
+    }
+  });
+
+  it.each([
+    { name: "invalid JSON", reply: () => Promise.resolve(new Response("not JSON", { status: 200 })) },
+    { name: "HTTP rejection", reply: () => Promise.resolve(new Response(JSON.stringify({ result: "" }), { status: 503 })) },
+    { name: "transport failure", reply: () => Promise.reject(new Error("private transport detail")) },
+    { name: "unsubmitted scope", reply: () => Promise.resolve(new Response(JSON.stringify({ result: "day" }), { status: 200 })) },
+  ])("rejects $name without creating a report", async ({ reply }) => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(reply);
+    const createIssue = vi.fn();
+    try {
+      await expect(processReport(valid, "198.51.100.21", createRestRateLimitStore("https://kv.example", "token"), createIssue))
+        .rejects.toMatchObject({ code: "server_rejected", status: 503 });
+      expect(createIssue).not.toHaveBeenCalled();
+    } finally {
+      fetchMock.mockRestore();
+    }
+  });
+
   it.each(["burst", "hour", "day"])(
     "preserves the %s scope returned by the atomic REST store",
     async (scope) => {
@@ -386,7 +533,7 @@ describe("report relay HTTP contract", () => {
     expect(res.state.body).toBeUndefined();
   });
 
-  it("logs unexpected relay failures and returns a sanitized error", async () => {
+  it("returns a typed unavailable response without exposing store transport errors", async () => {
     const previous = {
       vercel: process.env.VERCEL,
       url: process.env.KV_REST_API_URL,
@@ -418,13 +565,10 @@ describe("report relay HTTP contract", () => {
       else process.env.KV_REST_API_TOKEN = previous.token;
     }
 
-    expect(consoleError).toHaveBeenCalledWith(
-      "Unexpected user report relay failure",
-      expect.any(Error),
-    );
-    expect(res.state.status).toBe(500);
+    expect(consoleError).not.toHaveBeenCalled();
+    expect(res.state.status).toBe(503);
     expect(res.state.body).toEqual({
-      error: { code: "server_rejected", message: "Unable to submit report" },
+      error: { code: "server_rejected", message: "Rate limit store unavailable" },
     });
     consoleError.mockRestore();
   });

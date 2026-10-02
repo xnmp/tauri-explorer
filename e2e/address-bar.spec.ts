@@ -7,7 +7,7 @@
  * without navigating, and the designed behaviour for a non-existent path.
  */
 import { test, expect, type Page } from "./fixtures";
-import { waitForEntries } from "./helpers";
+import { applySettingsAndReload, waitForEntries } from "./helpers";
 
 /** Click the empty right area of the breadcrumbs bar to enter edit mode. */
 async function openAddressBar(page: Page) {
@@ -38,12 +38,7 @@ test.describe("Address bar path entry", () => {
 
   test("Ctrl+L stays unavailable when the address bar is hidden", async ({ page }) => {
     await page.goto("/?path=/home/user");
-    await page.evaluate(() => {
-      const raw = localStorage.getItem("explorer-settings");
-      const settings = raw ? JSON.parse(raw) : {};
-      localStorage.setItem("explorer-settings", JSON.stringify({ ...settings, showAddressBar: false }));
-    });
-    await page.reload();
+    await applySettingsAndReload(page, { showAddressBar: false });
     await waitForEntries(page);
 
     await page.keyboard.press("Control+l");
@@ -62,10 +57,9 @@ test.describe("Address bar path entry", () => {
 
     const input = await openAddressBar(page);
     await input.fill("/home/user/Documents");
-    // Dismiss the autocomplete dropdown so Enter confirms navigation instead
-    // of applying the highlighted suggestion.
+    // The completed directory has children. Enter must navigate to the typed
+    // path even after the debounce has displayed those child suggestions.
     await page.locator(".suggestions-dropdown").waitFor({ state: "visible", timeout: 2000 });
-    await input.press("Escape");
     await input.press("Enter");
 
     // The pane navigated: breadcrumb + listing both reflect Documents.
@@ -73,6 +67,22 @@ test.describe("Address bar path entry", () => {
     await waitForEntries(page);
     await expect(page.locator(".entry-item", { hasText: "report.pdf" })).toBeVisible();
     await expect(page.locator(".entry-item", { hasText: "readme.txt" })).toHaveCount(0);
+    await page.screenshot({ path: "screenshots/fix/address-bar-enter-prefers-typed-path/typed-path-navigation.png" });
+  });
+
+  test("Tab completes a directory suggestion before Enter navigates", async ({ page }) => {
+    await page.goto("/?path=/home/user");
+    await waitForEntries(page);
+
+    const input = await openAddressBar(page);
+    await input.fill("/home/user/Doc");
+    await expect(page.locator(".suggestions-dropdown")).toBeVisible();
+    await input.press("Tab");
+    await expect(input).toHaveValue("/home/user/Documents/");
+    await input.press("Enter");
+
+    await expect(page.locator(".breadcrumbs-container")).toContainText("Documents");
+    await expect(page.locator(".entry-item", { hasText: "report.pdf" })).toBeVisible();
   });
 
   test("Escape cancels editing without navigating", async ({ page }) => {

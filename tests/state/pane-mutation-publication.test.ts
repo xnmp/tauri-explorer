@@ -2,14 +2,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ApiResult } from "$lib/api/common";
 import type { FileEntry, FileMutationReceipt } from "$lib/domain/file";
 import type {
-  DirectoryListingCallbacks,
   DirectoryListingResult,
   DirectoryObservation,
 } from "$lib/state/directory-listing";
 
 type Load = (
   path: string,
-  callbacks: DirectoryListingCallbacks,
   observation?: DirectoryObservation,
 ) => Promise<DirectoryListingResult>;
 
@@ -26,9 +24,8 @@ vi.mock("$lib/state/directory-listing", () => ({
   createDirectoryListing: () => ({
     load: (
       path: string,
-      callbacks: DirectoryListingCallbacks,
-      observation?: DirectoryObservation,
-    ) => mocks.load.current(path, callbacks, observation),
+          observation?: DirectoryObservation,
+    ) => mocks.load.current(path, observation),
     cleanup: mocks.cleanup,
   }),
 }));
@@ -130,10 +127,10 @@ function selectedPaths(explorer: ExplorerInstance): string[] {
 }
 
 function serveListing(entries: FileEntry[]): void {
-  mocks.load.current = async (path, _callbacks, observation) => {
+  mocks.load.current = async (path, observation) => {
     await observation?.ready;
     observation?.accept(null);
-    return { ok: true, path, entries, streaming: false };
+    return { ok: true, path, entries };
   };
 }
 

@@ -2,7 +2,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { FileEntry } from "$lib/domain/file";
 import type {
-  DirectoryListingCallbacks,
   DirectoryListingResult,
   DirectoryObservation,
 } from "$lib/state/directory-listing";
@@ -27,14 +26,13 @@ vi.mock("$lib/state/directory-listing", () => ({
   createDirectoryListing: () => ({
     load: async (
       path: string,
-      _callbacks: DirectoryListingCallbacks,
       observation?: DirectoryObservation,
     ): Promise<DirectoryListingResult> => {
       await observation?.ready;
       if (observation && !observation.accept(null)) {
         return { ok: false, error: "Directory navigation was superseded" };
       }
-      return { ok: true, path, entries: [...harness.diskEntries], streaming: false };
+      return { ok: true, path, entries: [...harness.diskEntries] };
     },
     cleanup: async () => {},
   }),

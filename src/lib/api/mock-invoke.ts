@@ -7,38 +7,29 @@ import type { FileBatchOutcome } from "$lib/domain/file-batch-outcome";
 import type { HistoryDirection, HistorySummary, UndoAction } from "$lib/domain/file-history";
 import { createMockFileHistory } from "./mock-file-history";
 import type { DirectoryListing, FileEntry, FileMutationReceipt } from "$lib/domain/file";
+import { encodeDirectoryListing, type CompactDirectoryListing } from "./directory-wire";
 import { selectPreviewImages } from "$lib/domain/folder-preview";
 import { parentDir, basename, sameDirectory } from "$lib/domain/path";
 import type { GitNetworkPhaseEvent } from "$lib/domain/git-network-operation";
 import { emitWatcherGitChange } from "$lib/state/git-refresh";
 import { broadcastFileChange } from "$lib/state/file-events";
-import type { GitFileEntry, GitStatusCode, GitStatusSummary, GitOpState } from "$lib/api/git";
+import type { GitFileEntry, GitStatusCode, GitStatusSummary } from "$lib/api/git";
 import type { CopyDecision, CopySessionEvent, CopySessionOutcome } from "$lib/domain/copy-session";
-
-// Deterministic, varied timestamps: each created entry gets a distinct
-// modified time (1h apart from a fixed base) so sort-by-modified is testable.
-const TIMESTAMP_BASE = Date.UTC(2024, 0, 1, 12, 0, 0);
-const TIMESTAMP_STEP_MS = 60 * 60 * 1000;
-let timestampSeq = 0;
-function nextTimestamp(): string {
-  return new Date(TIMESTAMP_BASE + timestampSeq++ * TIMESTAMP_STEP_MS).toISOString();
-}
-
-const DAY_MS = 24 * 60 * 60 * 1000;
-function daysAgo(days: number): string {
-  return new Date(Date.now() - days * DAY_MS).toISOString();
-}
-
-// Helper to create mock file entry
-function file(name: string, path: string, size: number): FileEntry {
-  return { name, path, kind: "file", size, modified: nextTimestamp() };
-}
-
-// Ground-truth emptiness for mock directories that have no children keyed in
-// `mockFiles` (e.g. a seeded-empty folder). Listings deliberately omit is_empty
-// to mirror the backend (#129); the frontend resolves it via is_directory_empty,
-// which consults this map for such folders.
-const mockDirEmpty: Record<string, boolean> = {};
+import { getMockControl, MOCK_LOCAL_KEYS, type MockGitCommit, type MockGitState } from "./mock-control";
+import {
+  TIMESTAMP_BASE,
+  daysAgo,
+  dir,
+  file,
+  fullOid,
+  mockDirEmpty,
+  mockDrivesFixture,
+  mockFileContent,
+  mockFiles,
+  MOCK_GRAPH_REFS,
+  MOCK_GRAPH_SPEC,
+  nextTimestamp,
+} from "./mock-fixtures";
 
 interface MockCopyControl {
   cancelled: boolean;
@@ -46,20 +37,30 @@ interface MockCopyControl {
 }
 const mockCopyControls = new Map<string, MockCopyControl>();
 
-function dir(name: string, path: string, is_empty?: boolean, is_git_repo?: boolean): FileEntry {
-  if (is_empty !== undefined) mockDirEmpty[path] = is_empty;
-  // is_empty is intentionally absent from the listing contract (#129).
-  return {
-    name,
-    path,
-    kind: "directory",
-    size: 0,
-    modified: nextTimestamp(),
-    ...(is_git_repo ? { is_git_repo: true } : {}),
-  };
-}
-
 const mutationReceipt = (entry: FileEntry): FileMutationReceipt => ({ path: entry.path, entry });
+
+/** Relocate one entry's mock listing state. Backs the `move_entries` session
+ *  mock's per-item relocation, and is injected into `createMockFileHistory`
+ *  (as `relocate`) for undo/redo re-execution of a "move" `UndoAction` —
+ *  there is no standalone `move_entry` Rust command since #881 routed plugin
+ *  moves through the session too, and `tests/api/mock-invoke-parity.test.ts`
+ *  enforces that `mockCommands` never grows a command Rust does not have. */
+function relocateMockEntry(source: string, destDir: string): FileMutationReceipt {
+  const name = basename(source);
+  const sourcePath = parentDir(source);
+  const sourceEntries = mockFiles[sourcePath] || [];
+  const entryIndex = sourceEntries.findIndex((e) => e.path === source);
+  if (entryIndex < 0) throw new Error("Source not found");
+
+  const entry = sourceEntries[entryIndex];
+  sourceEntries.splice(entryIndex, 1);
+
+  const newPath = `${destDir}/${name}`;
+  const newEntry: FileEntry = { ...entry, path: newPath };
+  if (!mockFiles[destDir]) mockFiles[destDir] = [];
+  mockFiles[destDir].push(newEntry);
+  return mutationReceipt(newEntry);
+}
 
 interface MockTrashItem { entry: FileEntry; listings: [string, FileEntry[]][] }
 const mockTrash = new Map<string, MockTrashItem[]>();
@@ -106,310 +107,10 @@ function mockBatch(paths: string[], operation: (path: string) => void): FileBatc
   return result;
 }
 
-// Mock file system structure
-const mockFiles: Record<string, FileEntry[]> = {
-  // Matches get_log_dir so "Open Logs Folder" (#197) is navigable in e2e.
-  "/tmp": [dir("tauri-explorer", "/tmp/tauri-explorer")],
-  "/tmp/tauri-explorer": [dir("logs", "/tmp/tauri-explorer/logs")],
-  "/tmp/tauri-explorer/logs": [file("tauri-explorer.log", "/tmp/tauri-explorer/logs/tauri-explorer.log", 2048)],
-  "/home": [
-    dir("user", "/home/user"),
-  ],
-  "/home/user": [
-    dir("Documents", "/home/user/Documents", false),
-    dir("Downloads", "/home/user/Downloads", false),
-    dir("Pictures", "/home/user/Pictures", false),
-    dir("Music", "/home/user/Music", false),
-    dir("Videos", "/home/user/Videos", false),
-    dir("Archive", "/home/user/Archive", true),
-    // A git repo root (has a `.git` dir on the real backend) alongside a plain
-    // folder, so the folder-with-git icon is visible in every view mode (#463).
-    dir("my-project", "/home/user/my-project", false, true),
-    dir(".config", "/home/user/.config", false),
-    file("readme.txt", "/home/user/readme.txt", 1024),
-    file("notes.md", "/home/user/notes.md", 2048),
-  ],
-  // Keep preview fixtures out of the shared home directory. Many browser
-  // tests deliberately search or count that directory's baseline contents.
-  "/home/csv-preview": [
-    file("people.csv", "/home/csv-preview/people.csv", 256),
-    file("broken.csv", "/home/csv-preview/broken.csv", 128),
-    file("many-people.csv", "/home/csv-preview/many-people.csv", 8192),
-    file("wide.csv", "/home/csv-preview/wide.csv", 1024),
-  ],
-  "/home/user/Archive": [],
-  "/home/user/my-project": [
-    dir("src", "/home/user/my-project/src", false),
-    file("README.md", "/home/user/my-project/README.md", 2048),
-    file(".gitignore", "/home/user/my-project/.gitignore", 64),
-    file("package.json", "/home/user/my-project/package.json", 512),
-  ],
-  "/home/user/my-project/src": [
-    file("index.ts", "/home/user/my-project/src/index.ts", 256),
-  ],
-  // Removable drive contents — lets the browser mock navigate onto a removable
-  // drive so the "removable drive removed" state can be exercised.
-  "/media/user/USB_DRIVE": [
-    dir("Backups", "/media/user/USB_DRIVE/Backups"),
-    file("photo.jpg", "/media/user/USB_DRIVE/photo.jpg", 1048576),
-    file("notes.txt", "/media/user/USB_DRIVE/notes.txt", 2048),
-  ],
-  "/media/user/USB_DRIVE/Backups": [
-    file("backup-2024.zip", "/media/user/USB_DRIVE/Backups/backup-2024.zip", 8388608),
-  ],
-  // Google Drive File Stream mount — browsable so the breadcrumb's Google-mark
-  // anchor (which collapses the mount crumb) can be exercised.
-  "/media/user/GoogleDrive": [
-    dir("My Drive", "/media/user/GoogleDrive/My Drive"),
-  ],
-  "/media/user/GoogleDrive/My Drive": [
-    file("doc.gdoc", "/media/user/GoogleDrive/My Drive/doc.gdoc", 1024),
-  ],
-  "/home/user/Documents": [
-    { ...dir("project", "/home/user/Documents/project"), modified: daysAgo(150) },
-    { ...file("report.pdf", "/home/user/Documents/report.pdf", 102400), modified: daysAgo(35) },
-    { ...file("budget.xlsx", "/home/user/Documents/budget.xlsx", 51200), modified: daysAgo(5) },
-    { ...file("presentation.pptx", "/home/user/Documents/presentation.pptx", 204800), modified: daysAgo(1) },
-    { ...file("notes.md", "/home/user/Documents/notes.md", 4096), modified: daysAgo(0) },
-  ],
-  "/home/user/Downloads": [
-    dir("wrapper", "/home/user/Downloads/wrapper", false),
-    file("archive.zip", "/home/user/Downloads/archive.zip", 1048576),
-    file("bundle.zip", "/home/user/Downloads/bundle.zip", 2097152),
-    file("installer.exe", "/home/user/Downloads/installer.exe", 5242880),
-    file("image.png", "/home/user/Downloads/image.png", 524288),
-    // Hidden by default (#160); visible only with show-hidden on.
-    file("desktop.ini", "/home/user/Downloads/desktop.ini", 128),
-  ],
-  // A chain of single-child folders: wrapper → payload → inner → {real content}.
-  // Previewing "wrapper" descends through the chain and shows inner's contents.
-  "/home/user/Downloads/wrapper": [
-    dir("payload", "/home/user/Downloads/wrapper/payload", false),
-  ],
-  "/home/user/Downloads/wrapper/payload": [
-    dir("inner", "/home/user/Downloads/wrapper/payload/inner", false),
-  ],
-  "/home/user/Downloads/wrapper/payload/inner": [
-    dir("assets", "/home/user/Downloads/wrapper/payload/inner/assets"),
-    file("app.js", "/home/user/Downloads/wrapper/payload/inner/app.js", 1024),
-    file("style.css", "/home/user/Downloads/wrapper/payload/inner/style.css", 512),
-  ],
-  "/home/user/Pictures": [
-    dir("vacation", "/home/user/Pictures/vacation"),
-    file("photo1.jpg", "/home/user/Pictures/photo1.jpg", 2097152),
-    file("photo2.jpg", "/home/user/Pictures/photo2.jpg", 1572864),
-    file("screenshot.png", "/home/user/Pictures/screenshot.png", 262144),
-  ],
-  "/home/user/Pictures/vacation": [
-    file("beach.jpg", "/home/user/Pictures/vacation/beach.jpg", 3145728),
-    file("sunset.png", "/home/user/Pictures/vacation/sunset.png", 2621440),
-    file("itinerary.txt", "/home/user/Pictures/vacation/itinerary.txt", 1024),
-  ],
-  "/home/user/Music": [
-    dir("playlist", "/home/user/Music/playlist"),
-    file("song1.mp3", "/home/user/Music/song1.mp3", 4194304),
-    file("song2.mp3", "/home/user/Music/song2.mp3", 3670016),
-  ],
-  "/home/user/Videos": [
-    file("recording.mp4", "/home/user/Videos/recording.mp4", 52428800),
-    file("tutorial.mkv", "/home/user/Videos/tutorial.mkv", 104857600),
-    file("soundtrack.mp3", "/home/user/Videos/soundtrack.mp3", 8388608),
-  ],
-  "/home/user/Documents/project": [
-    dir("src", "/home/user/Documents/project/src"),
-    dir("tests", "/home/user/Documents/project/tests"),
-    dir("docs", "/home/user/Documents/project/docs"),
-    dir("scripts", "/home/user/Documents/project/scripts"),
-    dir("config", "/home/user/Documents/project/config"),
-    dir("assets", "/home/user/Documents/project/assets"),
-    dir("lib", "/home/user/Documents/project/lib"),
-    file("package.json", "/home/user/Documents/project/package.json", 512),
-    file("README.md", "/home/user/Documents/project/README.md", 4096),
-    file("tsconfig.json", "/home/user/Documents/project/tsconfig.json", 256),
-    file("index.ts", "/home/user/Documents/project/index.ts", 180),
-    file("main.py", "/home/user/Documents/project/main.py", 120),
-    file(".gitignore", "/home/user/Documents/project/.gitignore", 64),
-    file("Makefile", "/home/user/Documents/project/Makefile", 800),
-    file("Dockerfile", "/home/user/Documents/project/Dockerfile", 350),
-    file("docker-compose.yml", "/home/user/Documents/project/docker-compose.yml", 420),
-    file("jest.config.js", "/home/user/Documents/project/jest.config.js", 200),
-    file("babel.config.js", "/home/user/Documents/project/babel.config.js", 150),
-    file(".env.example", "/home/user/Documents/project/.env.example", 100),
-    file("LICENSE", "/home/user/Documents/project/LICENSE", 1100),
-    file("CHANGELOG.md", "/home/user/Documents/project/CHANGELOG.md", 6200),
-  ],
-  "/home/user/Documents/project/src": [
-    dir("components", "/home/user/Documents/project/src/components"),
-    dir("utils", "/home/user/Documents/project/src/utils"),
-    dir("hooks", "/home/user/Documents/project/src/hooks"),
-    dir("services", "/home/user/Documents/project/src/services"),
-    dir("types", "/home/user/Documents/project/src/types"),
-    dir("styles", "/home/user/Documents/project/src/styles"),
-    file("App.tsx", "/home/user/Documents/project/src/App.tsx", 2400),
-    file("main.tsx", "/home/user/Documents/project/src/main.tsx", 500),
-    file("index.css", "/home/user/Documents/project/src/index.css", 1200),
-    file("vite-env.d.ts", "/home/user/Documents/project/src/vite-env.d.ts", 80),
-    file("router.tsx", "/home/user/Documents/project/src/router.tsx", 1800),
-    file("constants.ts", "/home/user/Documents/project/src/constants.ts", 600),
-  ],
-  "/home/user/Documents/project/src/components": [
-    dir("Button", "/home/user/Documents/project/src/components/Button"),
-    dir("Modal", "/home/user/Documents/project/src/components/Modal"),
-    dir("Sidebar", "/home/user/Documents/project/src/components/Sidebar"),
-    file("Header.tsx", "/home/user/Documents/project/src/components/Header.tsx", 1800),
-    file("Footer.tsx", "/home/user/Documents/project/src/components/Footer.tsx", 900),
-    file("Layout.tsx", "/home/user/Documents/project/src/components/Layout.tsx", 1200),
-    file("ErrorBoundary.tsx", "/home/user/Documents/project/src/components/ErrorBoundary.tsx", 700),
-    file("Loading.tsx", "/home/user/Documents/project/src/components/Loading.tsx", 400),
-    file("Avatar.tsx", "/home/user/Documents/project/src/components/Avatar.tsx", 600),
-    file("Badge.tsx", "/home/user/Documents/project/src/components/Badge.tsx", 350),
-    file("Card.tsx", "/home/user/Documents/project/src/components/Card.tsx", 550),
-    file("Tooltip.tsx", "/home/user/Documents/project/src/components/Tooltip.tsx", 800),
-    file("Dropdown.tsx", "/home/user/Documents/project/src/components/Dropdown.tsx", 1100),
-    file("index.ts", "/home/user/Documents/project/src/components/index.ts", 300),
-  ],
-  "/home/user/Documents/project/src/components/Button": [
-    file("Button.tsx", "/home/user/Documents/project/src/components/Button/Button.tsx", 900),
-    file("Button.test.tsx", "/home/user/Documents/project/src/components/Button/Button.test.tsx", 1200),
-    file("Button.module.css", "/home/user/Documents/project/src/components/Button/Button.module.css", 400),
-    file("index.ts", "/home/user/Documents/project/src/components/Button/index.ts", 60),
-  ],
-  "/home/user/Documents/project/src/components/Modal": [
-    file("Modal.tsx", "/home/user/Documents/project/src/components/Modal/Modal.tsx", 1400),
-    file("Modal.test.tsx", "/home/user/Documents/project/src/components/Modal/Modal.test.tsx", 1600),
-    file("Modal.module.css", "/home/user/Documents/project/src/components/Modal/Modal.module.css", 600),
-    file("index.ts", "/home/user/Documents/project/src/components/Modal/index.ts", 60),
-  ],
-  "/home/user/Documents/project/src/components/Sidebar": [
-    file("Sidebar.tsx", "/home/user/Documents/project/src/components/Sidebar/Sidebar.tsx", 2200),
-    file("Sidebar.test.tsx", "/home/user/Documents/project/src/components/Sidebar/Sidebar.test.tsx", 1800),
-    file("Sidebar.module.css", "/home/user/Documents/project/src/components/Sidebar/Sidebar.module.css", 700),
-    file("SidebarItem.tsx", "/home/user/Documents/project/src/components/Sidebar/SidebarItem.tsx", 500),
-    file("index.ts", "/home/user/Documents/project/src/components/Sidebar/index.ts", 80),
-  ],
-  "/home/user/Documents/project/src/utils": [
-    file("format.ts", "/home/user/Documents/project/src/utils/format.ts", 800),
-    file("validate.ts", "/home/user/Documents/project/src/utils/validate.ts", 1200),
-    file("helpers.ts", "/home/user/Documents/project/src/utils/helpers.ts", 600),
-    file("debounce.ts", "/home/user/Documents/project/src/utils/debounce.ts", 300),
-    file("cn.ts", "/home/user/Documents/project/src/utils/cn.ts", 150),
-    file("date.ts", "/home/user/Documents/project/src/utils/date.ts", 900),
-    file("api-client.ts", "/home/user/Documents/project/src/utils/api-client.ts", 1500),
-    file("storage.ts", "/home/user/Documents/project/src/utils/storage.ts", 700),
-    file("index.ts", "/home/user/Documents/project/src/utils/index.ts", 200),
-  ],
-  "/home/user/Documents/project/src/hooks": [
-    file("useAuth.ts", "/home/user/Documents/project/src/hooks/useAuth.ts", 1100),
-    file("useTheme.ts", "/home/user/Documents/project/src/hooks/useTheme.ts", 500),
-    file("useDebounce.ts", "/home/user/Documents/project/src/hooks/useDebounce.ts", 250),
-    file("useLocalStorage.ts", "/home/user/Documents/project/src/hooks/useLocalStorage.ts", 400),
-    file("useFetch.ts", "/home/user/Documents/project/src/hooks/useFetch.ts", 800),
-    file("index.ts", "/home/user/Documents/project/src/hooks/index.ts", 150),
-  ],
-  "/home/user/Documents/project/src/services": [
-    file("auth.service.ts", "/home/user/Documents/project/src/services/auth.service.ts", 2000),
-    file("api.service.ts", "/home/user/Documents/project/src/services/api.service.ts", 1500),
-    file("user.service.ts", "/home/user/Documents/project/src/services/user.service.ts", 1200),
-    file("notification.service.ts", "/home/user/Documents/project/src/services/notification.service.ts", 800),
-    file("index.ts", "/home/user/Documents/project/src/services/index.ts", 120),
-  ],
-  "/home/user/Documents/project/src/types": [
-    file("user.ts", "/home/user/Documents/project/src/types/user.ts", 400),
-    file("api.ts", "/home/user/Documents/project/src/types/api.ts", 600),
-    file("theme.ts", "/home/user/Documents/project/src/types/theme.ts", 200),
-    file("index.ts", "/home/user/Documents/project/src/types/index.ts", 100),
-  ],
-  "/home/user/Documents/project/src/styles": [
-    file("globals.css", "/home/user/Documents/project/src/styles/globals.css", 2400),
-    file("variables.css", "/home/user/Documents/project/src/styles/variables.css", 800),
-    file("reset.css", "/home/user/Documents/project/src/styles/reset.css", 500),
-    file("animations.css", "/home/user/Documents/project/src/styles/animations.css", 600),
-  ],
-  "/home/user/Documents/project/tests": [
-    dir("unit", "/home/user/Documents/project/tests/unit"),
-    dir("integration", "/home/user/Documents/project/tests/integration"),
-    dir("e2e", "/home/user/Documents/project/tests/e2e"),
-    file("setup.ts", "/home/user/Documents/project/tests/setup.ts", 500),
-    file("fixtures.ts", "/home/user/Documents/project/tests/fixtures.ts", 1200),
-  ],
-  "/home/user/Documents/project/tests/unit": [
-    file("format.test.ts", "/home/user/Documents/project/tests/unit/format.test.ts", 1400),
-    file("validate.test.ts", "/home/user/Documents/project/tests/unit/validate.test.ts", 1800),
-    file("helpers.test.ts", "/home/user/Documents/project/tests/unit/helpers.test.ts", 900),
-    file("date.test.ts", "/home/user/Documents/project/tests/unit/date.test.ts", 1100),
-  ],
-  "/home/user/Documents/project/tests/integration": [
-    file("auth.test.ts", "/home/user/Documents/project/tests/integration/auth.test.ts", 2200),
-    file("api.test.ts", "/home/user/Documents/project/tests/integration/api.test.ts", 1900),
-    file("user.test.ts", "/home/user/Documents/project/tests/integration/user.test.ts", 1600),
-  ],
-  "/home/user/Documents/project/tests/e2e": [
-    file("login.spec.ts", "/home/user/Documents/project/tests/e2e/login.spec.ts", 2400),
-    file("dashboard.spec.ts", "/home/user/Documents/project/tests/e2e/dashboard.spec.ts", 3200),
-    file("settings.spec.ts", "/home/user/Documents/project/tests/e2e/settings.spec.ts", 1800),
-  ],
-  "/home/user/Documents/project/docs": [
-    file("architecture.md", "/home/user/Documents/project/docs/architecture.md", 5400),
-    file("api-reference.md", "/home/user/Documents/project/docs/api-reference.md", 8200),
-    file("contributing.md", "/home/user/Documents/project/docs/contributing.md", 3100),
-    file("deployment.md", "/home/user/Documents/project/docs/deployment.md", 2800),
-  ],
-  "/home/user/Documents/project/scripts": [
-    file("build.sh", "/home/user/Documents/project/scripts/build.sh", 400),
-    file("deploy.sh", "/home/user/Documents/project/scripts/deploy.sh", 600),
-    file("seed-db.ts", "/home/user/Documents/project/scripts/seed-db.ts", 1500),
-    file("migrate.ts", "/home/user/Documents/project/scripts/migrate.ts", 900),
-  ],
-  "/home/user/Documents/project/config": [
-    file("default.json", "/home/user/Documents/project/config/default.json", 800),
-    file("production.json", "/home/user/Documents/project/config/production.json", 600),
-    file("development.json", "/home/user/Documents/project/config/development.json", 700),
-    file("test.json", "/home/user/Documents/project/config/test.json", 500),
-  ],
-  "/home/user/Documents/project/assets": [
-    dir("images", "/home/user/Documents/project/assets/images"),
-    dir("fonts", "/home/user/Documents/project/assets/fonts"),
-    file("logo.svg", "/home/user/Documents/project/assets/logo.svg", 4800),
-    file("favicon.ico", "/home/user/Documents/project/assets/favicon.ico", 15000),
-  ],
-  "/home/user/Documents/project/assets/images": [
-    file("hero.png", "/home/user/Documents/project/assets/images/hero.png", 245000),
-    file("banner.jpg", "/home/user/Documents/project/assets/images/banner.jpg", 180000),
-    file("icon-set.svg", "/home/user/Documents/project/assets/images/icon-set.svg", 12000),
-    file("placeholder.png", "/home/user/Documents/project/assets/images/placeholder.png", 3200),
-  ],
-  "/home/user/Documents/project/assets/fonts": [
-    file("Inter-Regular.woff2", "/home/user/Documents/project/assets/fonts/Inter-Regular.woff2", 48000),
-    file("Inter-Bold.woff2", "/home/user/Documents/project/assets/fonts/Inter-Bold.woff2", 49000),
-    file("FiraCode-Regular.woff2", "/home/user/Documents/project/assets/fonts/FiraCode-Regular.woff2", 52000),
-  ],
-  "/home/user/Documents/project/lib": [
-    dir("core", "/home/user/Documents/project/lib/core"),
-    dir("plugins", "/home/user/Documents/project/lib/plugins"),
-    file("index.ts", "/home/user/Documents/project/lib/index.ts", 200),
-    file("types.d.ts", "/home/user/Documents/project/lib/types.d.ts", 500),
-  ],
-  "/home/user/Documents/project/lib/core": [
-    file("engine.ts", "/home/user/Documents/project/lib/core/engine.ts", 3200),
-    file("parser.ts", "/home/user/Documents/project/lib/core/parser.ts", 2800),
-    file("compiler.ts", "/home/user/Documents/project/lib/core/compiler.ts", 4100),
-    file("runtime.ts", "/home/user/Documents/project/lib/core/runtime.ts", 2200),
-    file("index.ts", "/home/user/Documents/project/lib/core/index.ts", 150),
-  ],
-  "/home/user/Documents/project/lib/plugins": [
-    file("logger.ts", "/home/user/Documents/project/lib/plugins/logger.ts", 800),
-    file("cache.ts", "/home/user/Documents/project/lib/plugins/cache.ts", 1100),
-    file("metrics.ts", "/home/user/Documents/project/lib/plugins/metrics.ts", 950),
-    file("index.ts", "/home/user/Documents/project/lib/plugins/index.ts", 120),
-  ],
-};
 
 if (typeof window !== "undefined") {
-  const previewHooks = window as unknown as {
-    __mockVideoRevision?: () => void;
-    __mockPreviewRevision?: (path: string) => void;
-  };
-  previewHooks.__mockPreviewRevision = (path) => {
+  const control = getMockControl();
+  control.previewRevision = (path) => {
     const parent = parentDir(path);
     const entries = mockFiles[parent];
     const current = entries?.find((entry) => entry.path === path);
@@ -420,7 +121,7 @@ if (typeof window !== "undefined") {
         : entry,
     );
   };
-  previewHooks.__mockVideoRevision = () => {
+  control.videoRevision = () => {
     const videos = mockFiles["/home/user/Videos"];
     const recording = videos.find((entry) => entry.path.endsWith("recording.mp4"));
     if (!recording) return;
@@ -618,6 +319,33 @@ function sortListing(entries: FileEntry[]): FileEntry[] {
   });
 }
 
+/** Copy one child for the ordered-session mock. Copy is not a standalone IPC. */
+function copySessionEntry(source: string, destDir: string, overwrite: boolean): FileMutationReceipt {
+  const name = basename(source);
+  const sourceEntry = (mockFiles[parentDir(source)] || []).find((entry) => entry.path === source);
+  if (!sourceEntry) throw new Error("Source not found");
+  if (!mockFiles[destDir]) mockFiles[destDir] = [];
+  const dest = mockFiles[destDir];
+  let finalName = name;
+  if (dest.some((entry) => entry.name === name) && !overwrite) {
+    const dot = sourceEntry.kind === "directory" ? -1 : name.lastIndexOf(".");
+    const base = dot > 0 ? name.slice(0, dot) : name;
+    const ext = dot > 0 ? name.slice(dot) : "";
+    finalName = `${base} - Copy${ext}`;
+    for (let n = 2; dest.some((entry) => entry.name === finalName); n++) {
+      finalName = `${base} - Copy (${n})${ext}`;
+    }
+  }
+  const newEntry: FileEntry = { ...sourceEntry, name: finalName, path: `${destDir}/${finalName}` };
+  const existing = dest.findIndex((entry) => entry.name === finalName);
+  if (existing >= 0) dest[existing] = newEntry;
+  else dest.push(newEntry);
+  return {
+    ...mutationReceipt(newEntry),
+    ...(existing >= 0 ? { replacement: { id: crypto.randomUUID().replaceAll("-", "").repeat(2) } } : {}),
+  };
+}
+
 // Mock command handlers
 type CommandHandler = (args: Record<string, unknown>) => unknown;
 
@@ -633,23 +361,6 @@ const mockGitArchived = new Set<string>();
 // those observable, the mock keeps a mutable working-tree/index model and
 // moves entries between sections the same way the git2-backed backend would.
 const MOCK_REPO_ROOT = "/home/user/Documents/project";
-
-interface MockGitState {
-  branch: string;
-  detached: boolean;
-  staged: GitFileEntry[];
-  changes: GitFileEntry[];
-  untracked: GitFileEntry[];
-  merge: GitFileEntry[];
-  op_state: GitOpState;
-}
-
-interface MockGitCommit {
-  message: string;
-  amend: boolean;
-  files: string[];
-  commit_id: string;
-}
 
 const mockGitCommits: MockGitCommit[] = [];
 let pendingGitNetworkOperation:
@@ -719,7 +430,7 @@ function seedGitState(): MockGitState {
       { path: "assets/logo.png", old_path: null, status: "Untracked" },
     ],
     // Default seed is a normal dirty tree (no operation in progress). E2E can
-    // drive a merge-conflict flow via `__mockGitStartMergeConflict()`.
+    // drive a merge-conflict flow via `window.__mockControl.gitStartMergeConflict()`.
     merge: [],
     op_state: "clean",
   };
@@ -843,31 +554,23 @@ function mockClearOperation(): void {
 }
 
 if (typeof window !== "undefined") {
-  const w = window as unknown as {
-    __mockGitReset?: () => void;
-    __mockGitCommits?: MockGitCommit[];
-    __mockGitExternalModify?: (path: string) => void;
-    __mockGitSetClean?: () => void;
-    __mockGitStartMergeConflict?: () => void;
-    __mockGitState?: () => MockGitState;
-    __mockGitArchived?: string[];
-  };
+  const control = getMockControl();
   // Reset the repo to its seed state (mock/browser only).
-  w.__mockGitReset = () => {
+  control.gitReset = () => {
     mockGit = seedGitState();
     mockHunkState.clear();
     mockGitCommits.length = 0;
     mockGitignored.clear();
     mockGitArchived.clear();
-    w.__mockGitArchived = [];
+    control.gitArchived = [];
   };
   // Recorded commits, so tests can assert the message that was committed.
-  w.__mockGitCommits = mockGitCommits;
-  w.__mockGitArchived = [];
+  control.gitCommits = mockGitCommits;
+  control.gitArchived = [];
   // Simulate an edit made outside the app (e.g. another process): add a
   // modified file to the working tree and fire the watcher change so the
   // SCM store re-fetches, exactly as the real filesystem watcher would.
-  w.__mockGitExternalModify = (path: string) => {
+  control.gitExternalModify = (path: string) => {
     if (
       !mockGit.changes.some((e) => e.path === path) &&
       !mockGit.staged.some((e) => e.path === path)
@@ -878,7 +581,7 @@ if (typeof window !== "undefined") {
   };
   // Simulate the working tree becoming clean (all sections empty) as it would
   // after committing/discarding everything, then fire the watcher change.
-  w.__mockGitSetClean = () => {
+  control.gitSetClean = () => {
     mockGit.staged = [];
     mockGit.changes = [];
     mockGit.untracked = [];
@@ -889,14 +592,14 @@ if (typeof window !== "undefined") {
   // Put the mock repo into an in-progress merge with one conflicted file, then
   // fire the watcher change so the SCM panel refreshes into the banner state.
   // Drives the merge-conflict E2E flow.
-  w.__mockGitStartMergeConflict = () => {
+  control.gitStartMergeConflict = () => {
     mockGit.op_state = "merge";
     if (!mockGit.merge.some((e) => e.path === "src/constants.ts")) {
       mockGit.merge.push({ path: "src/constants.ts", old_path: null, status: "Conflicted" });
     }
     emitWatcherGitChange(MOCK_REPO_ROOT);
   };
-  w.__mockGitState = () => mockGit;
+  control.gitState = () => mockGit;
 }
 
 /** Contents of files created via the mocked write_text_file. */
@@ -904,6 +607,11 @@ const mockWrittenFiles: Record<string, string> = {};
 
 /** In-memory OS clipboard file list, round-tripped by the clipboard_* mocks. */
 let mockClipboardFiles: string[] = [];
+let mockClipboardEntries: unknown[] | null = null;
+let mockClipboardOperation: "copy" | "cut" | null = null;
+let mockClipboardRevision = 0;
+/** Revision whose Cut a paste has claimed (mirrors the native CutLease). */
+let mockClipboardLease: number | null = null;
 
 // ----- Deterministic commit graph for git_log / git_refs mocks (#57) -----
 
@@ -927,35 +635,10 @@ export const MOCK_LONG_COMMIT_FILE_PATH =
   "src/lib/components/experimental/deeply/nested/generated/" +
   "AnExtremelyLongGeneratedComponentFileNameThatOverflowsThePanel.svelte";
 
-/** Deterministic 40-char hex OID from a small commit number. */
-function fullOid(n: number): string {
-  return n.toString(16).padStart(4, "0").repeat(10);
-}
-
 // Newest-first, topologically ordered. 12 commits, a feature branch (#9,#10)
 // merged into main at #12, and tags on #1 and #5. Parents reference lower
 // numbers, so the array is a valid topological linearization.
 const GRAPH_BASE_TIME = Math.floor(Date.UTC(2024, 5, 1, 9, 0, 0) / 1000);
-const MOCK_GRAPH_SPEC: Array<{ n: number; parents: number[]; summary: string; stash?: string }> = [
-  { n: 16, parents: [15, 13], summary: "Merge hotfix into main" },
-  { n: 15, parents: [12, 14], summary: "Merge experiment" },
-  { n: 14, parents: [9], summary: "Try alternative parser" },
-  { n: 13, parents: [7], summary: "Hotfix: crash on empty input" },
-  { n: 12, parents: [11, 10], summary: "Merge branch 'feature'" },
-  { n: 11, parents: [8], summary: "Update README with usage" },
-  { n: 10, parents: [9], summary: "Add tests for feature X" },
-  { n: 9, parents: [8], summary: "Implement feature X" },
-  { n: 8, parents: [7], summary: "Refactor config loader" },
-  { n: 7, parents: [6], summary: "Fix bug in argument parser" },
-  { n: 6, parents: [5], summary: "Add structured logging" },
-  { n: 5, parents: [4], summary: "Bump version to 1.0" },
-  { n: 4, parents: [3], summary: "Wire up CLI entry point" },
-  { n: 3, parents: [2], summary: "Add core module" },
-  { n: 2, parents: [1], summary: "Project scaffolding" },
-  { n: 1, parents: [], summary: "Initial commit" },
-  // Stash entry woven in by git_log right before its base (16).
-  { n: 99, parents: [16], summary: "WIP on main: experimenting", stash: "stash@{0}" },
-];
 
 let mockCommitGraphCache: MockCommit[] | null = null;
 function mockCommitGraph(): MockCommit[] {
@@ -983,33 +666,6 @@ function mockCommitGraph(): MockCommit[] {
   }
   return mockCommitGraphCache;
 }
-
-/** OID → decorating refs, matching git_refs targets. */
-const MOCK_GRAPH_REFS: Record<
-  string,
-  Array<{ name: string; kind: "LocalBranch" | "RemoteBranch" | "Tag" | "Head" }>
-> = {
-  [fullOid(16)]: [
-    { name: "HEAD", kind: "Head" },
-    { name: "main", kind: "LocalBranch" },
-    // A second local branch on the HEAD commit: exercises the #433 rule that
-    // only the checked-out branch (main) gets the "current" highlight — this
-    // one renders as an ordinary chip.
-    { name: "release", kind: "LocalBranch" },
-    { name: "origin/main", kind: "RemoteBranch" },
-  ],
-  [fullOid(13)]: [
-    { name: "hotfix", kind: "LocalBranch" },
-    { name: "origin/hotfix", kind: "RemoteBranch" },
-  ],
-  [fullOid(14)]: [{ name: "experiment", kind: "LocalBranch" }],
-  // Remote-only branch (no local counterpart) — exercises the remote-only
-  // chip indicator and the local-only filter (#381).
-  [fullOid(8)]: [{ name: "origin/legacy-import", kind: "RemoteBranch" }],
-  [fullOid(10)]: [{ name: "feature", kind: "LocalBranch" }],
-  [fullOid(5)]: [{ name: "v1.0", kind: "Tag" }],
-  [fullOid(1)]: [{ name: "v0.9", kind: "Tag" }],
-};
 
 type MockRefKind = "LocalBranch" | "RemoteBranch" | "Tag" | "Head";
 
@@ -1266,88 +922,34 @@ function mockAppendCommit(summary: string): string {
   return oid;
 }
 
-/** Static fake file contents, served by read_text_file and searched by
- *  start_content_search (written files take precedence over these). */
-const mockFileContent: Record<string, string> = {
-  "/home/user/Documents/project/index.ts": 'export function greet(name: string): string {\n  return `Hello, ${name}!`;\n}\n',
-  "/home/user/Documents/project/main.py": 'def greet(name: str) -> str:\n    return f"Hello, {name}!"\n',
-  "/home/user/Documents/project/package.json": '{\n  "name": "project",\n  "version": "1.0.0"\n}\n',
-  "/home/user/Documents/project/tsconfig.json": '{\n  "compilerOptions": {\n    "strict": true\n  }\n}\n',
-  "/home/user/Documents/project/README.md": '# Project\n\nA sample project.\n',
-  "/home/user/readme.txt": "This is a readme file.\n",
-  "/home/csv-preview/people.csv": 'name,note\nAda,"first, second"\nGrace,"said ""hello""\nand left"\n',
-  "/home/csv-preview/broken.csv": 'name,note\nAda,"unterminated',
-  "/home/csv-preview/many-people.csv": ["name,note", ...Array.from({ length: 250 }, (_, index) => `Person ${index + 1},record ${index + 1}`)].join("\n"),
-  "/home/csv-preview/wide.csv": "first,description,final\nA,This is a deliberately long value that makes the table scroll horizontally,reachable final value\n",
-  "/home/user/notes.md": [
-    "---",
-    "title: August notes",
-    "status: published",
-    "tags: [tauri, explorer]",
-    "authors:",
-    "  - Alice",
-    "  - Bob",
-    "---",
-    "",
-    "# Notes",
-    "",
-    "Some notes here, with **bold** and *italic* text.",
-    "",
-    "## Tasks",
-    "",
-    "- [x] write the spec",
-    "- [ ] ship the feature",
-    "",
-    "## Snippet",
-    "",
-    "```ts",
-    "const answer: number = 42;",
-    "```",
-    "",
-    "| key | value |",
-    "|-----|-------|",
-    "| a   | 1     |",
-    "",
-    "> Blockquotes render too. See [the docs](https://example.com).",
-    "",
-  ].join("\n"),
-};
-
-// Browser-only Linux volume fixtures. Native builds never import this module.
-function linuxVolumeFixture() {
-  return globalThis as typeof globalThis & {
-    __mockLinuxVolumes?: import("./drives").Drive[];
-    __mockUDisksUnavailable?: boolean;
-    __mockMountError?: string;
-  };
-}
-
 // Mutable so manual/E2E testing can simulate ejecting a removable drive: the
 // drives store re-polls `list_drives` every ~1.5s, so replacing this list makes
-// the change propagate. `window.__mockEjectDrive(path)` (set below) removes one.
-let mockDrives: { name: string; path: string; kind: string; detail?: string; provider?: string }[] = [
-  // Removable drive showing a volume label with the drive letter as dimmed detail.
-  { name: "USB Backup", path: "/media/user/USB_DRIVE", kind: "removable", detail: "E:" },
-  { name: "Memory Stick", path: "/media/user/Memory_Stick", kind: "removable", detail: "F:" },
-  // Cloud / remote section: Google Drive File Stream + a WSL home mount.
-  { name: "Google Drive", path: "/media/user/GoogleDrive", kind: "cloud", detail: "G:", provider: "googledrive" },
-  { name: "Ubuntu", path: "\\\\wsl$\\Ubuntu\\home", kind: "cloud", detail: "WSL", provider: "wsl" },
-];
+// the change propagate. `window.__mockControl.ejectDrive(path)` (set below)
+// removes one. Cloned from the fixture at load so reassigning this local
+// binding doesn't try to rebind mock-fixtures.ts's export.
+let mockDrives: { name: string; path: string; kind: string; detail?: string; provider?: string }[] =
+  [...mockDrivesFixture];
 
 if (typeof window !== "undefined") {
+  const control = getMockControl();
   // Test affordance (mock/browser only): drop a drive to mimic an eject.
-  (window as unknown as { __mockEjectDrive?: (path: string) => void }).__mockEjectDrive = (path: string) => {
+  control.ejectDrive = (path: string) => {
     mockDrives = mockDrives.filter((d) => d.path !== path);
   };
   // Test affordance (mock/browser only): fire the watcher signal a repo on a
   // UNC path gets every 3s from the poll watcher (#387). Used to prove a diff
   // still lands while those refreshes rain on it (#396).
-  (window as unknown as { __mockGitPoll?: () => void }).__mockGitPoll = () => {
+  control.gitPoll = () => {
     emitWatcherGitChange(MOCK_REPO_ROOT);
   };
 }
 
-const mockFileHistory = createMockFileHistory((command, args) => invokeMockCommand(command, args), broadcastFileChange);
+const mockFileHistory = createMockFileHistory(
+  (command, args) => invokeMockCommand(command, args),
+  broadcastFileChange,
+  (paths) => mockBatch(paths, restoreMockEntry),
+  relocateMockEntry,
+);
 
 // --- File Recovery fixture (ADR 0023 retention/retirement) -----------------
 // The browser build exercises the same commands as the native backend so the
@@ -1361,11 +963,15 @@ interface MockRecoveryRecord {
   retainedBytes: string | null;
   status: "pending" | "busy" | "ready" | "attention" | "retained";
   message: string;
-  actions: ("restore" | "discard")[];
+  actions: ("restore" | "discard" | "release")[];
   autoEligible: boolean;
   /** Simulates a cleanup that cannot remove its artifacts (EACCES, missing volume). */
   cleanupFails: boolean;
+  /** A move whose committed discard stopped: it can only be retried or forgotten. */
+  stranded?: boolean;
 }
+
+const MOCK_STRANDED_MESSAGE = "Discard stopped before finishing; its Undo history is gone and the remaining recovery files are preserved. Retry Discard once this is resolved: Read-only file system (os error 30). If it cannot be resolved, Forget releases this record and its locks without deleting anything; its remaining files stay in the listed folder";
 
 const mockRecoveryBudgetBytes = 2 * 1024 * 1024 * 1024;
 let mockRecoveryRevision = 4n;
@@ -1394,6 +1000,19 @@ let mockRecoveryRecords: MockRecoveryRecord[] = [
     autoEligible: false,
     cleanupFails: true,
   },
+  {
+    id: "c".repeat(64),
+    generation: 5n,
+    originalPath: "/run/media/user/Backup/site-assets",
+    retainedPath: "/run/media/user/Backup/.tauri-explorer-recovery-9e41",
+    retainedBytes: "18874368",
+    status: "attention",
+    message: MOCK_STRANDED_MESSAGE,
+    actions: [],
+    autoEligible: false,
+    cleanupFails: true,
+    stranded: true,
+  },
 ];
 let mockRecoveryError: string | null = null;
 let mockRecoveryReceive: ((snapshot: unknown) => void) | null = null;
@@ -1403,7 +1022,7 @@ function mockRecoverySnapshot(): unknown {
   const unmeasured = mockRecoveryRecords.filter((record) => record.retainedBytes === null).length;
   return {
     revision: mockRecoveryRevision.toString(),
-    items: mockRecoveryRecords.map(({ autoEligible: _auto, cleanupFails: _fails, generation, ...item }) => ({
+    items: mockRecoveryRecords.map(({ autoEligible: _auto, cleanupFails: _fails, stranded: _stranded, generation, ...item }) => ({
       ...item,
       generation: generation.toString(),
       actions: [...item.actions],
@@ -1428,45 +1047,59 @@ function mockRecoveryPublish(): unknown {
   return snapshot;
 }
 
+/** Both listing commands reply in the native compact wire format (#868). */
+function mockDirectoryListing(raw: string): CompactDirectoryListing {
+  const path = raw !== "/" && raw.endsWith("/") ? raw.slice(0, -1) : raw;
+  const isSynthetic = isPerfHugePath(path) || isPerfImagesPath(path);
+  if (!isSynthetic && !(path in mockFiles)) {
+    throw new Error(`Path not found: ${path}`);
+  }
+  return encodeDirectoryListing({ path, entries: sortListing(getDirectoryEntries(path)) });
+}
+
 const mockCommands: Record<string, CommandHandler> = {
   get_home_directory: () => "/home/user",
   get_launch_cwd: () => "/home/user",
   list_drives: () => {
-    const fixture = linuxVolumeFixture();
-    const drives = fixture.__mockLinuxVolumes ?? mockDrives;
+    const control = getMockControl();
+    const drives = control.linuxVolumes ?? mockDrives;
     // Model the native mount-table/cloud fallback when the optional service
     // disappears. Only mounted paths survive, without a UDisks identity.
-    return fixture.__mockUDisksUnavailable
-      ? drives.filter(d => d.path).map(d => ({ ...d, device_id: undefined }))
+    return control.udisksUnavailable
+      ? drives.filter((d) => d.path !== null).map((d) => ({ ...d, deviceId: undefined }))
       : drives;
   },
   mount_drive: (args) => {
-    const fixture = linuxVolumeFixture();
-    if (fixture.__mockUDisksUnavailable) throw new Error("Linux storage service (UDisks2) unavailable");
-    if (fixture.__mockMountError) throw new Error(fixture.__mockMountError);
-    const drive = fixture.__mockLinuxVolumes?.find(d => d.device_id === args?.deviceId);
+    const control = getMockControl();
+    if (control.udisksUnavailable) throw new Error("Linux storage service (UDisks2) unavailable");
+    if (control.mountError) throw new Error(control.mountError);
+    const drive = control.linuxVolumes?.find((d) => d.deviceId === args?.deviceId);
     if (!drive) throw new Error("Linux storage service (UDisks2) unavailable");
-    drive.path ||= "/media/user/USB_DRIVE";
+    drive.path ??= "/media/user/USB_DRIVE";
     return drive.path;
   },
+  // The mock has no UDisks push subscription, so the drive store stays in
+  // poll mode; the volume evidence specs assert on that polling.
+  drive_updates_live: () => false,
   log_startup_timing: () => undefined,
+  log_startup_progress: () => undefined,
 
   // Crash reporting (#184, #302): a Rust crash is simulated when the e2e test
   // sets localStorage.mockCrashReport before load; a frontend crash is
   // simulated by record_frontend_crash writing localStorage.mockFrontendCrash.
   // Either is consumed on first read, mirroring take_crash_report's mark-seen.
   take_crash_report: () => {
-    if (localStorage.getItem("mockCrashReport") === "1") {
-      localStorage.removeItem("mockCrashReport");
+    if (localStorage.getItem(MOCK_LOCAL_KEYS.crashReport) === "1") {
+      localStorage.removeItem(MOCK_LOCAL_KEYS.crashReport);
       return {
         fileName: "crash-1700000000.txt",
         contents:
           "tauri-explorer 1.0.0 crash report\nos: linux (x86_64)\ntime: 1700000000 (unix)\npanic: mock panic for testing\nlocation: src/lib.rs:1:1\n\nbacktrace:\n<omitted>\n",
       };
     }
-    const frontend = localStorage.getItem("mockFrontendCrash");
+    const frontend = localStorage.getItem(MOCK_LOCAL_KEYS.frontendCrash);
     if (frontend) {
-      localStorage.removeItem("mockFrontendCrash");
+      localStorage.removeItem(MOCK_LOCAL_KEYS.frontendCrash);
       return JSON.parse(frontend);
     }
     return null;
@@ -1478,7 +1111,7 @@ const mockCommands: Record<string, CommandHandler> = {
     const message = String(args.message ?? "");
     const stack = args.stack ? String(args.stack) : "<no stack captured>";
     localStorage.setItem(
-      "mockFrontendCrash",
+      MOCK_LOCAL_KEYS.frontendCrash,
       JSON.stringify({
         fileName: "crash-1700000001.txt",
         contents:
@@ -1490,16 +1123,16 @@ const mockCommands: Record<string, CommandHandler> = {
     return undefined;
   },
   open_external_url: (args) => {
-    if (localStorage.getItem("mock-open-url-error") === "1") {
+    if (localStorage.getItem(MOCK_LOCAL_KEYS.openUrlError) === "1") {
       throw new Error("Mock browser handoff failed");
     }
     const url = args.url as string;
-    localStorage.setItem("mock-opened-url", url);
+    localStorage.setItem(MOCK_LOCAL_KEYS.openedUrl, url);
     return undefined;
   },
   submit_user_report: (args) => {
-    localStorage.setItem("mock-submitted-report", JSON.stringify(args));
-    const error = localStorage.getItem("mock-report-error");
+    localStorage.setItem(MOCK_LOCAL_KEYS.submittedReport, JSON.stringify(args));
+    const error = localStorage.getItem(MOCK_LOCAL_KEYS.reportError);
     if (error) {
       throw {
         kind: error,
@@ -1517,11 +1150,11 @@ const mockCommands: Record<string, CommandHandler> = {
   // Update check (#185): a newer release is simulated when the e2e test
   // sets localStorage.mockUpdateAvailable before load.
   check_for_update: () =>
-    localStorage.getItem("mockUpdateAvailable") === "1"
+    localStorage.getItem(MOCK_LOCAL_KEYS.updateAvailable) === "1"
       ? {
           version: "9.9.9",
           url:
-            localStorage.getItem("mock-update-url") ??
+            localStorage.getItem(MOCK_LOCAL_KEYS.updateUrl) ??
             "https://github.com/xnmp/tauri-explorer/releases/tag/v9.9.9",
         }
       : null,
@@ -1536,16 +1169,7 @@ const mockCommands: Record<string, CommandHandler> = {
   warm_pool_discard: () => undefined,
   warm_pool_shutdown: () => undefined,
 
-  list_directory: (args) => {
-    const raw = args.path as string;
-    const path = raw !== "/" && raw.endsWith("/") ? raw.slice(0, -1) : raw;
-    const isSynthetic = isPerfHugePath(path) || isPerfImagesPath(path);
-    if (!isSynthetic && !(path in mockFiles)) {
-      throw new Error(`Path not found: ${path}`);
-    }
-    const entries = sortListing(getDirectoryEntries(path));
-    return { path, entries, listing_id: null } as DirectoryListing;
-  },
+  list_directory: (args) => mockDirectoryListing(args.path as string),
 
   is_directory_empty: (args) => {
     const path = args.path as string;
@@ -1566,6 +1190,10 @@ const mockCommands: Record<string, CommandHandler> = {
       return Array.isArray(entries) && entries.some((e: { path: string }) => e.path === p);
     }));
   },
+
+  // `.lnk` shortcuts don't exist in the browser fixture; the real command
+  // also resolves to null on every non-Windows platform.
+  resolve_shortcut: () => null,
 
   estimate_size: (args) => {
     const paths = args.paths as string[];
@@ -1590,16 +1218,7 @@ const mockCommands: Record<string, CommandHandler> = {
     return { fileCount, totalBytes };
   },
 
-  start_streaming_directory: (args) => {
-    const raw = args.path as string;
-    const path = raw !== "/" && raw.endsWith("/") ? raw.slice(0, -1) : raw;
-    const isSynthetic = isPerfHugePath(path) || isPerfImagesPath(path);
-    if (!isSynthetic && !(path in mockFiles)) {
-      throw new Error(`Path not found: ${path}`);
-    }
-    const entries = sortListing(getDirectoryEntries(path));
-    return { path, entries, listing_id: null } as DirectoryListing;
-  },
+  list_directory_fresh: (args) => mockDirectoryListing(args.path as string),
 
   create_directory: (args) => {
     const parentPath = args.parentPath as string;
@@ -1648,71 +1267,7 @@ const mockCommands: Record<string, CommandHandler> = {
     throw new Error("Entry not found");
   },
 
-  move_to_trash: (args) => removeMockEntry(args.path as string, true),
-
-  move_multiple_to_trash: (args) => mockBatch(args.paths as string[], (path) => removeMockEntry(path, true)),
-
   delete_entries: (args) => mockBatch(args.paths as string[], (path) => removeMockEntry(path, !args.permanent)),
-
-  restore_from_trash: (args) => mockBatch(args.paths as string[], restoreMockEntry),
-
-  copy_entry: (args) => {
-    const source = args.source as string;
-    const destDir = args.destDir as string;
-    const overwrite = (args.overwrite as boolean) ?? false;
-    const name = basename(source);
-    const sourcePath = parentDir(source);
-    const sourceEntries = mockFiles[sourcePath] || [];
-    const sourceEntry = sourceEntries.find((e) => e.path === source);
-    if (!sourceEntry) throw new Error("Source not found");
-
-    if (!mockFiles[destDir]) mockFiles[destDir] = [];
-    const dest = mockFiles[destDir];
-
-    // Mirror the Rust backend: when the target name already exists and we're not
-    // overwriting (e.g. pasting into the same folder), generate a "X - Copy"
-    // name instead of clobbering. Used by the same-folder paste-copy behavior.
-    let finalName = name;
-    if (dest.some((e) => e.name === name) && !overwrite) {
-      const isDir = sourceEntry.kind === "directory";
-      const dot = isDir ? -1 : name.lastIndexOf(".");
-      const base = dot > 0 ? name.slice(0, dot) : name;
-      const ext = dot > 0 ? name.slice(dot) : "";
-      finalName = `${base} - Copy${ext}`;
-      for (let n = 2; dest.some((e) => e.name === finalName); n++) {
-        finalName = `${base} - Copy (${n})${ext}`;
-      }
-    }
-
-    const newPath = `${destDir}/${finalName}`;
-    const newEntry: FileEntry = { ...sourceEntry, name: finalName, path: newPath };
-    const existingIdx = dest.findIndex((e) => e.name === finalName);
-    if (existingIdx >= 0) dest[existingIdx] = newEntry;
-    else dest.push(newEntry);
-    return {
-      ...mutationReceipt(newEntry),
-      ...(existingIdx >= 0 ? { replacement: { id: crypto.randomUUID().replaceAll("-", "").repeat(2) } } : {}),
-    };
-  },
-
-  move_entry: (args) => {
-    const source = args.source as string;
-    const destDir = args.destDir as string;
-    const name = basename(source);
-    const sourcePath = parentDir(source);
-    const sourceEntries = mockFiles[sourcePath] || [];
-    const entryIndex = sourceEntries.findIndex((e) => e.path === source);
-    if (entryIndex < 0) throw new Error("Source not found");
-
-    const entry = sourceEntries[entryIndex];
-    sourceEntries.splice(entryIndex, 1);
-
-    const newPath = `${destDir}/${name}`;
-    const newEntry: FileEntry = { ...entry, path: newPath };
-    if (!mockFiles[destDir]) mockFiles[destDir] = [];
-    mockFiles[destDir].push(newEntry);
-    return mutationReceipt(newEntry);
-  },
 
   write_text_file: (args) => {
     const path = args.path as string;
@@ -1729,24 +1284,12 @@ const mockCommands: Record<string, CommandHandler> = {
 
   read_text_file: (args) => {
     const path = args.path as string;
-    const hook = (globalThis as { __mockPreviewReadText?: (path: string) => string | Promise<string> })
-      .__mockPreviewReadText;
+    const hook = getMockControl().previewReadText;
     if (hook) return hook(path);
     if (path in mockWrittenFiles) return mockWrittenFiles[path];
     const content = mockFileContent[path];
     if (content !== undefined) return content;
     throw new Error(`File not found: ${path}`);
-  },
-
-  delete_entry_permanent: (args) => {
-    const path = args.path as string;
-    const parentPath = parentDir(path);
-    const entries = mockFiles[parentPath] || [];
-    const entryIndex = entries.findIndex((e) => e.path === path);
-    if (entryIndex >= 0) {
-      entries.splice(entryIndex, 1);
-    }
-    delete mockFiles[path];
   },
 
   open_file: () => {
@@ -1766,11 +1309,11 @@ const mockCommands: Record<string, CommandHandler> = {
     // Browser mode falls back to this complete-result search when Tauri event
     // streaming is unavailable; record the same Quick Open search boundary as
     // `start_streaming_search` below.
-    const calls = JSON.parse(localStorage.getItem("mock-streaming-searches") ?? "[]") as Array<{
+    const calls = JSON.parse(localStorage.getItem(MOCK_LOCAL_KEYS.streamingSearches) ?? "[]") as Array<{
       query: string;
     }>;
     calls.push({ query: String(args.query ?? "") });
-    localStorage.setItem("mock-streaming-searches", JSON.stringify(calls));
+    localStorage.setItem(MOCK_LOCAL_KEYS.streamingSearches, JSON.stringify(calls));
     const root = (args.root as string) || "/home/user";
     const limit = args.limit as number || 20;
     const results: Array<{ name: string; path: string; relativePath: string; score: number; kind: "file" | "directory" }> = [];
@@ -1807,19 +1350,17 @@ const mockCommands: Record<string, CommandHandler> = {
     // Browser Quick Open regressions can assert the real component's IPC
     // boundary without replacing its search API. This stays mock-only: the
     // production backend never reads this diagnostic key.
-    const calls = JSON.parse(localStorage.getItem("mock-streaming-searches") ?? "[]") as Array<{
+    const calls = JSON.parse(localStorage.getItem(MOCK_LOCAL_KEYS.streamingSearches) ?? "[]") as Array<{
       query: string;
     }>;
     calls.push({ query: String(args.query ?? "") });
-    localStorage.setItem("mock-streaming-searches", JSON.stringify(calls));
+    localStorage.setItem(MOCK_LOCAL_KEYS.streamingSearches, JSON.stringify(calls));
     return 1; // Mock search ID
   },
 
   cancel_search: () => {},
 
-  cancel_directory_listing: () => {},
 
-  cancel_copy: () => {},
 
   // Browser mode has no Tauri event system to stream results through, so the
   // mock searches the virtual filesystem synchronously and returns the
@@ -1936,8 +1477,7 @@ const mockCommands: Record<string, CommandHandler> = {
   },
 
   read_image_data_url: (args) => {
-    const hook = (globalThis as { __mockPreviewReadImage?: (path: string) => string | Promise<string> })
-      .__mockPreviewReadImage;
+    const hook = getMockControl().previewReadImage;
     if (hook) return hook((args.path as string) ?? "");
     // Full-size preview in browser/E2E mode: reuse the realistic thumbnail
     // JPEG so the preview pane (and its fullscreen mode) can be exercised.
@@ -1945,9 +1485,7 @@ const mockCommands: Record<string, CommandHandler> = {
   },
 
   get_video_thumbnail_data: (args) => {
-    const videoThumbnailMock = (globalThis as {
-      __mockVideoThumbnail?: (path: string, size?: number) => string | Promise<string>;
-    }).__mockVideoThumbnail;
+    const videoThumbnailMock = getMockControl().videoThumbnail;
     if (videoThumbnailMock) {
       return videoThumbnailMock((args.path as string) ?? "", args.size as number | undefined);
     }
@@ -1977,7 +1515,7 @@ const mockCommands: Record<string, CommandHandler> = {
   // but never emits output. Real terminal behavior is covered by e2e-tauri.
   terminal_reserve_id: () => 1,
   terminal_spawn: () => ({ id: 1, shellKind: "posix", wslDistro: null }),
-  terminal_write: () => {},
+  terminal_write: () => ({ droppedBytes: 0 }),
   terminal_resize: () => {},
   terminal_kill: () => {},
   terminal_status: () => ({ busy: false, cwd: null }),
@@ -2063,7 +1601,7 @@ const mockCommands: Record<string, CommandHandler> = {
       mockGitArchived.add(`.archive/${path}`);
     }
 if (typeof window !== "undefined") {
-      (window as unknown as { __mockGitArchived?: string[] }).__mockGitArchived = [...mockGitArchived];
+      getMockControl().gitArchived = [...mockGitArchived];
     }
     return null;
   },
@@ -2298,9 +1836,15 @@ if (typeof window !== "undefined") {
     if (!record) throw new Error("Recovery operation is no longer available");
     record.generation += 1n;
     mockRecoveryRevision += 1n;
-    record.status = "retained";
-    record.message = "Retained recovery files can be discarded";
-    record.actions = ["discard"];
+    if (record.stranded) {
+      record.status = "attention";
+      record.message = MOCK_STRANDED_MESSAGE;
+      record.actions = ["discard", "release"];
+    } else {
+      record.status = "retained";
+      record.message = "Retained recovery files can be discarded";
+      record.actions = ["discard"];
+    }
     record.retainedBytes ??= "1073741824";
     mockRecoveryError = null;
     return mockRecoveryPublish();
@@ -2312,6 +1856,18 @@ if (typeof window !== "undefined") {
     }
     record.generation += 1n;
     mockRecoveryRevision += 1n;
+    if (choice === "release" && !record.stranded) {
+      mockRecoveryError = "Only a move whose discard stopped before finishing can be forgotten";
+      return mockRecoveryPublish();
+    }
+    if (choice === "discard" && record.stranded) {
+      // The committed discard stops again; it can still be retried or forgotten.
+      record.status = "attention";
+      record.actions = ["discard", "release"];
+      record.message = MOCK_STRANDED_MESSAGE;
+      mockRecoveryError = `Could not remove ${record.retainedPath}: Read-only file system (os error 30)`;
+      return mockRecoveryPublish();
+    }
     if (choice === "discard" && record.cleanupFails) {
       // Retained-evidence failure: nothing is removed and the record stays.
       record.status = "attention";
@@ -2650,10 +2206,9 @@ if (typeof window !== "undefined") {
     const headBranch = mockDetached
       ? null
       : ((MOCK_GRAPH_REFS[headOid] ?? []).find((r) => r.kind === "LocalBranch")?.name ?? null);
-    // Test hook (like __MOCK_LATENCY__): force `has_more` so the infinite-
+    // Test hook (like `latency`/`failures`): force `has_more` so the infinite-
     // scroll loading row (#433) is reachable/observable with a small history.
-    const forceHasMore =
-      (globalThis as { __mockGraphForceHasMore?: boolean }).__mockGraphForceHasMore === true;
+    const forceHasMore = getMockControl().graphForceHasMore === true;
     return {
       commits: page,
       refs: MOCK_GRAPH_REFS,
@@ -2946,7 +2501,7 @@ if (typeof window !== "undefined") {
 
   // Records the response so e2e tests can assert on the actual outcome.
   picker_respond: (args) => {
-    localStorage.setItem("mock-picker-response", JSON.stringify(args));
+    localStorage.setItem(MOCK_LOCAL_KEYS.pickerResponse, JSON.stringify(args));
     return null;
   },
 
@@ -3025,6 +2580,12 @@ if (typeof window !== "undefined") {
     return destPath;
   },
 
+  // compress_to_zip/extract_archive resolve synchronously in the mock, so any
+  // cancellation always races a job that has already finished — a no-op,
+  // matching the real command's "best-effort" cancellation semantics.
+  cancel_compress: () => undefined,
+  cancel_extract: () => undefined,
+
   // ----- Filesystem watcher (no-op in mock) -----
 
   watch_directory: ({ path }) => ({ id: crypto.randomUUID(), path }),
@@ -3039,18 +2600,56 @@ if (typeof window !== "undefined") {
   // In-memory clipboard so write → has → read round-trips in browser/E2E mode,
   // mirroring the real OS clipboard contract (write paths, then read them back).
 
-  clipboard_has_files: () => mockClipboardFiles.length > 0,
-
-  clipboard_read_files: () => [...mockClipboardFiles],
-
-  clipboard_write_files: (args) => {
-    const paths = (args.paths as string[]) ?? [];
-    mockClipboardFiles = [...paths];
+  clipboard_publish: (args: Record<string, unknown>) => {
+    // Browser tests admit Cut by default, as every native backend does when
+    // it proves ownership (#877). Set this flag to exercise Cut refusal.
+    if (args.operation === "cut" && localStorage.getItem(MOCK_LOCAL_KEYS.cutOwnershipUnavailable) === "1") {
+      throw new Error("Cut requires native clipboard ownership; Copy is available here");
+    }
+    const entries = args.entries as Array<{ path: string }>;
+    mockClipboardFiles = entries.map((entry) => entry.path);
+    mockClipboardEntries = entries;
+    mockClipboardOperation = args.operation as "copy" | "cut";
+    mockClipboardRevision++;
+    return { revision: mockClipboardRevision, entries, paths: [...mockClipboardFiles], operation: mockClipboardOperation, mirrorError: null };
+  },
+  clipboard_snapshot: () => ({
+    revision: mockClipboardRevision, entries: mockClipboardEntries,
+    paths: [...mockClipboardFiles], operation: mockClipboardOperation, mirrorError: null,
+  }),
+  clipboard_compare_and_clear: (args: Record<string, unknown>) => {
+    if (args.revision !== mockClipboardRevision || !mockClipboardEntries) return false;
+    mockClipboardRevision++;
+    mockClipboardEntries = null;
+    mockClipboardOperation = null;
     return true;
   },
+  clipboard_claim_cut: (args: Record<string, unknown>) => {
+    if (args.revision !== mockClipboardRevision || mockClipboardOperation !== "cut"
+      || !mockClipboardEntries || mockClipboardLease === mockClipboardRevision) return false;
+    mockClipboardLease = mockClipboardRevision;
+    return true;
+  },
+  clipboard_release_cut: (args: Record<string, unknown>) => {
+    if (args.revision !== mockClipboardRevision || mockClipboardLease !== args.revision) return false;
+    mockClipboardLease = null;
+    return true;
+  },
+  clipboard_rekey: (args: Record<string, unknown>) => {
+    if (args.revision !== mockClipboardRevision || !mockClipboardEntries) return null;
+    const entries = mockClipboardEntries as Array<{ path: string }>;
+    const index = entries.findIndex((entry) => entry.path === args.oldPath);
+    if (index < 0) return null;
+    mockClipboardEntries = entries.map((entry, at) => at === index ? args.entry : entry);
+    mockClipboardFiles = (mockClipboardEntries as Array<{ path: string }>).map((entry) => entry.path);
+    mockClipboardRevision++;
+    return { revision: mockClipboardRevision, entries: mockClipboardEntries,
+      paths: [...mockClipboardFiles], operation: mockClipboardOperation, mirrorError: null };
+  },
+  clipboard_read_text: () => localStorage.getItem(MOCK_LOCAL_KEYS.clipboardText) ?? "",
 
   clipboard_has_image: () =>
-    localStorage.getItem("mock-report-clipboard-image") === "1",
+    localStorage.getItem(MOCK_LOCAL_KEYS.reportClipboardImage) === "1",
 
   clipboard_read_report_image: () => ({
     name: "Clipboard screenshot.png",
@@ -3063,7 +2662,7 @@ if (typeof window !== "undefined") {
   open_file_with: () => {},
 
   open_recycle_bin: () => {
-    const error = localStorage.getItem("mock-open-recycle-bin-error");
+    const error = localStorage.getItem(MOCK_LOCAL_KEYS.openRecycleBinError);
     if (error) throw new Error(error);
   },
 
@@ -3128,7 +2727,11 @@ if (typeof window !== "undefined") {
 
 /**
  * localStorage key an e2e/unit test can set to pre-seed the mock config store
- * with `{ [filename]: contents }` before the app boots.
+ * with `{ [filename]: contents }` before the app boots. Re-exported here
+ * (rather than requiring every caller to import `MOCK_LOCAL_KEYS` just for
+ * this one key) since `tests/state/settings-migration.test.ts` already
+ * imports it from this module; the value itself lives in
+ * `MOCK_LOCAL_KEYS.configSeed` alongside every other mock localStorage key.
  *
  * The mock config store is in-memory and starts empty, so without this there
  * is no way to present the app with an EXISTING settings.json — every mock
@@ -3136,7 +2739,7 @@ if (typeof window !== "undefined") {
  * a settings migration only runs against the durable store of record, which
  * the mock could never populate.
  */
-export const MOCK_CONFIG_SEED_KEY = "mock-config-files";
+export const MOCK_CONFIG_SEED_KEY = MOCK_LOCAL_KEYS.configSeed;
 
 /** In-memory config file store for mock mode, optionally test-seeded. */
 const mockConfigFiles: Record<string, string> = loadMockConfigSeed();
@@ -3208,10 +2811,13 @@ export async function mockInvoke<T>(cmd: string, args?: Record<string, unknown>)
         if (decision?.choice === "skip") { items.push({ status: "skipped" }); continue; }
         send({ type: "started", item, total: sources.length });
         try {
-          const receipt = await invokeMockCommand<FileMutationReceipt>(
-            relocating ? "move_entry" : "copy_entry",
-            { source, destDir, overwrite: decision?.choice === "overwrite" },
-          );
+          if (!relocating) {
+            await waitForMockLatency("copy_entries");
+            if (control.cancelled) break;
+          }
+          const receipt = relocating
+            ? relocateMockEntry(source, destDir)
+            : copySessionEntry(source, destDir, decision?.choice === "overwrite");
           items.push({ status: "succeeded", receipt });
           send({ type: "completed", item, total: sources.length, entry: receipt.entry });
         } catch (error) {
@@ -3259,7 +2865,7 @@ export async function mockInvoke<T>(cmd: string, args?: Record<string, unknown>)
     // history with no undoable action (which discards the redo stack).
     return { result, history: mockFileHistory.push(null).summary } as T;
   }
-  if (["create_directory", "create_empty_file", "rename_entry", "write_text_file", "create_symlink", "copy_entry", "move_entry"].includes(cmd)) {
+  if (["create_directory", "create_empty_file", "rename_entry", "write_text_file", "create_symlink"].includes(cmd)) {
     const receipt = result as FileMutationReceipt;
     if (cmd === "rename_entry" && basename(args!.path as string) === args!.newName) {
       return { result, history: mockFileHistory.summary() } as T;
@@ -3276,37 +2882,18 @@ export async function mockInvoke<T>(cmd: string, args?: Record<string, unknown>)
 }
 
 async function invokeMockCommand<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
-  const testWindow = globalThis as { __mockInvokeCounts?: Record<string, number> };
   if (typeof window !== "undefined") {
-    testWindow.__mockInvokeCounts ??= {};
-    testWindow.__mockInvokeCounts[cmd] = (testWindow.__mockInvokeCounts[cmd] ?? 0) + 1;
+    const control = getMockControl();
+    control.invokeCounts ??= {};
+    control.invokeCounts[cmd] = (control.invokeCounts[cmd] ?? 0) + 1;
   }
 
-  // Add small delay to simulate async operation
-  await new Promise((resolve) => setTimeout(resolve, 10));
+  await waitForMockLatency(cmd);
 
-  // Per-command extra latency, settable from E2E tests / the console
-  // (window.__MOCK_LATENCY__ = { git_status: 2000 }) or via URL for
-  // fetches that fire during boot (?mockLatency=git_status:2000,foo:500),
-  // to make transient loading states observable and assertable (#271).
-  const g = globalThis as {
-    __MOCK_LATENCY__?: Record<string, number>;
-    __MOCK_FAILURES__?: Record<string, string>;
-    location?: Location;
-  };
-  if (!g.__MOCK_LATENCY__ && typeof location !== "undefined") {
-    g.__MOCK_LATENCY__ = {};
-    const param = new URLSearchParams(location.search).get("mockLatency");
-    for (const pair of param?.split(",") ?? []) {
-      const [name, ms] = pair.split(":");
-      if (name && Number(ms) > 0) g.__MOCK_LATENCY__[name] = Number(ms);
-    }
-  }
-  const extraLatency = g.__MOCK_LATENCY__?.[cmd];
-  if (extraLatency) await new Promise((resolve) => setTimeout(resolve, extraLatency));
-
-  const failure = g.__MOCK_FAILURES__?.[cmd];
-  if (failure) throw new Error(failure);
+  // Reject the way the real backend does: Tauri serializes AppError as
+  // { kind, message } (src-tauri/src/error.rs), not as an Error.
+  const failure = getMockControl().failures?.[cmd];
+  if (failure) throw { kind: "other", message: failure };
 
   const handler = mockCommands[cmd];
   if (!handler) {
@@ -3314,4 +2901,25 @@ async function invokeMockCommand<T>(cmd: string, args?: Record<string, unknown>)
   }
 
   return handler(args || {}) as T;
+}
+
+async function waitForMockLatency(cmd: string): Promise<void> {
+  // Add small delay to simulate async operation.
+  await new Promise((resolve) => setTimeout(resolve, 10));
+
+  // Per-command extra latency, settable from E2E tests / the console
+  // (window.__mockControl.latency = { git_status: 2000 }) or via URL for
+  // fetches that fire during boot (?mockLatency=git_status:2000,foo:500),
+  // to make transient loading states observable and assertable (#271).
+  const control = getMockControl();
+  if (!control.latency && typeof location !== "undefined") {
+    control.latency = {};
+    const param = new URLSearchParams(location.search).get("mockLatency");
+    for (const pair of param?.split(",") ?? []) {
+      const [name, ms] = pair.split(":");
+      if (name && Number(ms) > 0) control.latency[name] = Number(ms);
+    }
+  }
+  const extraLatency = control.latency?.[cmd];
+  if (extraLatency) await new Promise((resolve) => setTimeout(resolve, extraLatency));
 }

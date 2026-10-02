@@ -13,6 +13,7 @@ export function createWindowClose(dependencies: {
   let disposed = false;
   let closing: Promise<boolean> | null = null;
   let stopObservation: (() => void) | undefined;
+  let observationReady: Promise<boolean> = Promise.resolve(false);
 
   function request(): Promise<boolean> {
     if (disposed) return Promise.resolve(false);
@@ -41,6 +42,8 @@ export function createWindowClose(dependencies: {
   function observe(): () => void {
     stopObservation?.();
     if (disposed) return () => {};
+    let resolveReady!: (ready: boolean) => void;
+    observationReady = new Promise<boolean>((resolve) => { resolveReady = resolve; });
     let retired = false;
     let unlisten: (() => void | Promise<void>) | undefined;
     const release = (stop: () => void | Promise<void>) => {
@@ -50,6 +53,7 @@ export function createWindowClose(dependencies: {
     const stop = () => {
       if (retired) return;
       retired = true;
+      resolveReady(false);
       if (stopObservation === stop) stopObservation = undefined;
       if (unlisten) release(unlisten);
       unlisten = undefined;
@@ -64,8 +68,12 @@ export function createWindowClose(dependencies: {
           if (!retired && !disposed) void request();
         });
         if (retired) release(acquired);
-        else unlisten = acquired;
+        else {
+          unlisten = acquired;
+          resolveReady(true);
+        }
       } catch (error) {
+        resolveReady(false);
         if (!retired) dependencies.reportError(error);
       }
     })();
@@ -75,6 +83,7 @@ export function createWindowClose(dependencies: {
   return {
     request,
     observe,
+    whenObserved: () => observationReady,
     dispose(): void {
       disposed = true;
       stopObservation?.();

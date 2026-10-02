@@ -22,13 +22,14 @@ import { SvelteSet } from "svelte/reactivity";
 import { toastStore } from "./toast.svelte";
 import { basename, toNativeSeparators } from "$lib/domain/path";
 import { isWindows } from "$lib/domain/platform";
-import { clipboardHasImage, clipboardPasteImage } from "$lib/api/clipboard-image";
+import { clipboardImageStatus, clipboardPasteImage } from "$lib/api/clipboard-image";
+import { withClipboardImageProgress } from "$lib/state/clipboard-image-progress.svelte";
 import { fetchDirectory } from "$lib/api/files";
 import { sortEntries, filterHidden, type FileEntry, type SortField } from "$lib/domain/file";
 import type { ExplorerCoreState, SelectOptions, ViewMode } from "./types";
 import * as selection from "./selection";
 import * as navigation from "./navigation";
-import { clipboardStore } from "./clipboard.svelte";
+import { clipboardStore, CUT_ALREADY_PASTED } from "./clipboard.svelte";
 import { dialogStore } from "./dialogs.svelte";
 import { recentFilesStore } from "./recent-files.svelte";
 import { contextMenuStore } from "./context-menu.svelte";
@@ -37,6 +38,7 @@ import { settingsStore } from "./settings.svelte";
 import { manualHiddenStore } from "./manual-hidden.svelte";
 import { getSortPref, saveSortPref } from "./sort-prefs";
 import { pasteEntries, type PasteResult } from "./paste-operations";
+import { selectPasteSource } from "$lib/domain/paste-source";
 import { createDirectoryListing } from "./directory-listing";
 import { createPaneWatch } from "./pane-watch";
 import { createPaneRefresh } from "./pane-refresh";
@@ -47,6 +49,10 @@ import { broadcastFileChange } from "./file-events";
 import type { ExplorerSeed } from "$lib/domain/window-input";
 
 function createExplorerState(seed?: ExplorerSeed) {
+  // Listings are immutable revisions. Deep proxies would create per-entry
+  // signals during whole-directory filtering, sorting and status aggregation.
+  let entries = $state.raw<readonly FileEntry[]>(seed?.entries ?? []);
+
   // Core per-pane state using $state rune
   let coreState = $state<ExplorerCoreState>({
     // Navigation
@@ -55,7 +61,8 @@ function createExplorerState(seed?: ExplorerSeed) {
     historyIndex: -1,
 
     // Entries
-    entries: seed?.entries ?? [],
+    get entries() { return entries; },
+    set entries(next: readonly FileEntry[]) { entries = next; },
     loading: !seed, // not loading if seeded
     error: null,
 
@@ -192,54 +199,10 @@ function createExplorerState(seed?: ExplorerSeed) {
       filterQuery = "";
       showFilter = false;
 
-      // Accumulate streamed continuation batches off the reactive graph. Writing
-      // `coreState.entries = [...coreState.entries, ...batch]` per batch is O(n^2):
-      // each write copies the growing array AND re-runs the `displayEntries`
-      // filter+sort over everything so far (~50 full re-sorts for a 5000-entry
-      // dir). Instead we push into a private buffer and commit a snapshot on a
-      // throttle (preserving progressive fill-in) plus once at done. See
-      // docs/perf-review.md findings #1/#2. The buffer seeds from the wholesale
-      // `result.entries` assignment below, which always runs before the first
-      // streaming callback (the continuation between them is synchronous).
-      const FLUSH_INTERVAL_MS = 100;
-      let streamBuffer: FileEntry[] | null = null;
-      let pendingFlush: ReturnType<typeof setTimeout> | null = null;
-
-      const commitBuffer = () => {
-        pendingFlush = null;
-        if (gen !== navGeneration || streamBuffer === null) return;
-        coreState.entries = streamBuffer.slice();
-      };
-
-      const result = await dirListing.load(path, {
-        onEntries: (entries) => {
-          if (gen !== navGeneration) return;
-          if (streamBuffer === null) streamBuffer = coreState.entries.slice();
-          for (const e of entries) streamBuffer.push(e);
-          if (pendingFlush === null) {
-            pendingFlush = setTimeout(commitBuffer, FLUSH_INTERVAL_MS);
-          }
-        },
-        onCancelled: () => {
-          if (pendingFlush !== null) clearTimeout(pendingFlush);
-          pendingFlush = null;
-          streamBuffer = null;
-        },
-        onDone: () => {
-          if (gen !== navGeneration) return;
-          if (pendingFlush !== null) {
-            clearTimeout(pendingFlush);
-            pendingFlush = null;
-          }
-          if (streamBuffer !== null) {
-            coreState.entries = streamBuffer.slice();
-          }
-          coreState.loading = false;
-        },
-      }, observation);
+      const result = await dirListing.load(path, observation);
 
       // A newer navigation started while this one was in flight — discard.
-      if (gen !== navGeneration) return "stale";
+      if (gen !== navGeneration || (!result.ok && result.cancelled)) return "stale";
 
       if (result.ok) {
         coreState.currentPath = result.path;
@@ -265,9 +228,7 @@ function createExplorerState(seed?: ExplorerSeed) {
 
         onNavigateCallback?.();
 
-        if (!result.streaming) {
-          coreState.loading = false;
-        }
+        coreState.loading = false;
         return "ok";
       } else {
         coreState.error = result.error;
@@ -611,13 +572,13 @@ function createExplorerState(seed?: ExplorerSeed) {
   // ===================
 
   async function copyToClipboard(entries: FileEntry[]) {
-    await clipboardStore.copy(entries);
+    if (!await clipboardStore.copy(entries)) return;
     const label = entries.length === 1 ? entries[0].name : `${entries.length} items`;
     toastStore.clipboard(`Copied: ${label}`, false);
   }
 
   async function cutToClipboard(entries: FileEntry[]) {
-    await clipboardStore.cut(entries);
+    if (!await clipboardStore.cut(entries)) return;
     const label = entries.length === 1 ? entries[0].name : `${entries.length} items`;
     toastStore.clipboard(`Cut: ${label}`, true);
   }
@@ -650,46 +611,71 @@ function createExplorerState(seed?: ExplorerSeed) {
     };
   }
 
+  async function pasteImageAt(origin: ReturnType<typeof captureMutation>, probe: boolean): Promise<string | null | undefined> {
+    return withClipboardImageProgress(origin.path, async () => {
+      if (probe) {
+        const status = await clipboardImageStatus();
+        if (!status.ok) {
+          toastStore.error(`Could not read clipboard image: ${status.error}`);
+          return status.error;
+        }
+        if (!status.data) return undefined;
+      }
+      const result = await clipboardPasteImage(origin.path);
+      if (!result.ok) {
+        toastStore.error(`Could not paste clipboard image into ${basename(origin.path) || origin.path}: ${result.error}`);
+        return result.error;
+      }
+      broadcastFileChange([origin.path]);
+      if (origin.current()) await refresh({ silent: true });
+      toastStore.success(`Clipboard image saved to ${basename(origin.path) || origin.path}`);
+      return null;
+    });
+  }
+
+  async function pasteImage(): Promise<string | null> {
+    const origin = captureMutation();
+    if (!origin.current()) return "Pane is closed";
+    if (!origin.path) return "No current directory";
+    return (await pasteImageAt(origin, false)) ?? null;
+  }
+
   async function paste(): Promise<string | null> {
     const origin = captureMutation();
     if (!origin.current()) return "Pane is closed";
     if (!origin.path) return "No current directory";
     const context = makePasteContext(origin);
 
-    // The OS clipboard is the single source of truth for what was most
-    // recently copied. We keep an internal clipboard too (it carries cut
-    // semantics and richer metadata), but it's only authoritative while it
-    // still matches the OS clipboard. If the user copied something in another
-    // app since, the OS clipboard differs and must win — otherwise pasting a
-    // file copied in Explorer silently pastes our stale internal selection.
-    const internal = clipboardStore.content;
-    const { content: osContent, error: osReadError } = await clipboardStore.readOsFiles();
+    // The native snapshot waits behind every accepted file clipboard job,
+    // including jobs from other windows. Paste never bypasses this order.
+    const { error: osReadError, snapshot } = await clipboardStore.readOsFiles();
+    const source = selectPasteSource(snapshot, osReadError);
 
-    const internalPaths = internal ? internal.entries.map((e) => e.path) : null;
-    const osMatchesInternal =
-      internalPaths !== null &&
-      osContent !== null &&
-      osContent.paths.length === internalPaths.length &&
-      osContent.paths.every((p) => internalPaths.includes(p));
-    const useInternal = internal !== null && (osContent === null || osMatchesInternal);
-
-    if (useInternal) {
-      const { entries, operation } = internal!;
-      const isCut = operation === "cut";
-      const error = await pasteEntries(
-        entries.map((e) => ({ path: e.path, name: e.name, size: e.size, modified: e.modified })),
-        isCut,
-        context,
-        () => { if (isCut && clipboardStore.content === internal) clipboardStore.clear(); },
-      );
+    if (source.kind === "internal") {
+      const sources = source.entries.map((e) => ({ path: e.path, name: e.name, size: e.size, modified: e.modified }));
+      let error: string | null;
+      if (source.operation === "cut") {
+        const outcome = await clipboardStore.withCutClaim(source.revision, async () => {
+          let complete = false;
+          const result = await pasteEntries(sources, true, context, () => { complete = true; });
+          return { result, complete };
+        });
+        if (!outcome.claimed) {
+          toastStore.show(CUT_ALREADY_PASTED, "info");
+          return null;
+        }
+        error = outcome.result;
+      } else {
+        error = await pasteEntries(sources, false, context);
+      }
       if (origin.current()) pasteResult = { error, timestamp: Date.now() };
       return error;
     }
 
     // OS clipboard (files copied from external apps like Explorer/Finder)
-    if (osContent && osContent.paths.length > 0) {
+    if (source.kind === "external") {
       const error = await pasteEntries(
-        osContent.paths.map((p) => ({ path: p, name: p.split(/[/\\]/).pop() || p })),
+        source.paths.map((p) => ({ path: p, name: basename(p) })),
         false,
         context,
       );
@@ -698,23 +684,15 @@ function createExplorerState(seed?: ExplorerSeed) {
     }
 
     // Fall back to clipboard image
-    if (await clipboardHasImage()) {
-      const result = await clipboardPasteImage(origin.path);
-      if (result.ok) {
-        broadcastFileChange([origin.path]);
-        if (origin.current()) await refresh({ silent: true });
-        return null;
-      }
-      return result.error;
-    }
+    const imageError = await pasteImageAt(origin, true);
+    if (imageError !== undefined) return imageError;
 
     // Nothing pasted: only now is a clipboard read failure worth surfacing
     // (#401) — when another source (internal clipboard, image) satisfied the
     // paste, the failed file-list probe was inconsequential noise.
-    if (osReadError) {
-      return `Reading the system clipboard failed: ${osReadError}`;
-    }
-    return "Nothing in clipboard";
+    const error = osReadError ? `Reading the system clipboard failed: ${osReadError}` : "Nothing in clipboard";
+    toastStore.error(error);
+    return error;
   }
 
   // ===================
@@ -886,6 +864,7 @@ function createExplorerState(seed?: ExplorerSeed) {
     copyToClipboard,
     cutToClipboard,
     paste,
+    pasteImage,
     get pasteResult() {
       return pasteResult;
     },
@@ -899,8 +878,8 @@ function createExplorerState(seed?: ExplorerSeed) {
     directoryChanged: watch.changed,
     // Cleanup
     destroy: async (): Promise<void> => {
-      // Tear down the streaming listener and any in-flight listing,
-      // otherwise each closed tab leaks a Tauri event listener.
+      // Seal pending listings and release late observation leases,
+      // so a closed tab cannot retain a late native observation lease.
       destroyed = true;
       creationSession = null;
       navGeneration += 1;

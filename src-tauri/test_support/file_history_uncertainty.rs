@@ -10,9 +10,18 @@ use crate::{
 };
 use std::{fs, path::Path};
 
+/// Native operations admitted on recovery storage outside the files under test.
+fn native(storage: &tempfile::TempDir) -> NativeOperations {
+    NativeOperations {
+        runtime: crate::files::admission::Runtime::new(storage.path().join("recovery")),
+    }
+}
+
 #[test]
 fn move_history_uses_recorded_source_parent_despite_inconsistent_legacy_metadata() {
     let root = tempfile::tempdir().unwrap();
+    let storage = tempfile::tempdir().unwrap();
+    let operations = native(&storage);
     let source = root.path().join("source");
     let destination = root.path().join("destination");
     let unrelated = root.path().join("unrelated");
@@ -30,14 +39,11 @@ fn move_history_uses_recorded_source_parent_despite_inconsistent_legacy_metadata
         original_dir: unrelated.to_string_lossy().into_owned(),
     };
     // Exercise renderer admission as well as the real native filesystem port.
-    let action = super::action::prepare_renderer(action, true)
+    let action = super::action::prepare_renderer(action, crate::platform::TrashRestore::Supported)
         .unwrap()
         .unwrap();
-    let result = tauri::async_runtime::block_on(execution::execute(
-        action,
-        &NativeOperations::default(),
-        Direction::Undo,
-    ));
+    let result =
+        tauri::async_runtime::block_on(execution::execute(action, &operations, Direction::Undo));
     assert!(result.error.is_none(), "{:?}", result.error);
     assert!(
         source.join("landed.txt").is_file(),
@@ -59,7 +65,7 @@ fn move_history_uses_recorded_source_parent_despite_inconsistent_legacy_metadata
     assert_eq!(affected, expected);
     let result = tauri::async_runtime::block_on(execution::execute(
         result.opposite.expect("Undo retains Redo"),
-        &NativeOperations::default(),
+        &operations,
         Direction::Redo,
     ));
     assert!(result.error.is_none(), "{:?}", result.error);
@@ -88,19 +94,16 @@ fn native_move_inverse_obeys_recovery_admission_and_reports_physical_parents() {
     let original = original_parent.join("moved.txt");
     let destination = destination_parent.join("moved.txt");
     fs::write(&destination, b"moved bytes").unwrap();
-    let runtime = Runtime::default();
     let storage = root.path().join("recovery");
-    let held = tauri::async_runtime::block_on(runtime.clone().admit(
-        storage.clone(),
-        vec![ResourceRequest {
-            path: destination.clone(),
-            access: Access::Write,
-            scope: Scope::Subtree,
-        }],
-    ))
+    let runtime = Runtime::new(storage.clone());
+    let held = tauri::async_runtime::block_on(runtime.clone().admit(vec![ResourceRequest {
+        path: destination.clone(),
+        access: Access::Write,
+        scope: Scope::Subtree,
+    }]))
     .unwrap();
     let operations = NativeOperations {
-        recovery: Some((runtime.clone(), storage.clone())),
+        runtime: runtime.clone(),
     };
 
     let rejected = tauri::async_runtime::block_on(operations.move_entry(
@@ -157,13 +160,13 @@ fn undo_restores_its_own_deletion_when_the_same_path_is_trashed_again_externally
         std::path::PathBuf::from(std::env::var_os("TAURI_HISTORY_TRASH_IDENTITY_ROOT").unwrap());
     let directory = root.join("files");
     fs::create_dir_all(&directory).unwrap();
+    let storage = tempfile::tempdir().unwrap();
+    let operations = native(&storage);
     let file = directory.join("same-name.txt");
     let requested = file.to_string_lossy().into_owned();
     fs::write(&file, b"bytes deleted by this history entry").unwrap();
-    let deletion = tauri::async_runtime::block_on(
-        NativeOperations::default().trash_many(vec![requested.clone()]),
-    )
-    .unwrap();
+    let deletion =
+        tauri::async_runtime::block_on(operations.trash_many(vec![requested.clone()])).unwrap();
     assert_eq!(deletion.succeeded, std::slice::from_ref(&requested));
     let action = Action::Delete {
         recovery: super::model::Recovery::Restore(std::sync::Arc::new(deletion.artifacts)),
@@ -209,7 +212,7 @@ fn undo_restores_its_own_deletion_when_the_same_path_is_trashed_again_externally
         .unwrap();
     let result = tauri::async_runtime::block_on(execution::execute(
         reservation.action.clone(),
-        &NativeOperations::default(),
+        &operations,
         Direction::Undo,
     ));
     assert!(result.error.is_none(), "{:?}", result.error);
@@ -247,33 +250,36 @@ fn auxiliary_directory_effects_publish_without_completing_a_history_action() {
     assert!(result.opposite.is_none());
 }
 
-struct PanicAfterRename;
+struct PanicAfterRename(NativeOperations);
 impl Operations for PanicAfterRename {
-    async fn rename(&self, path: String, name: String) -> Result<(), OperationError> {
+    async fn rename(&self, path: String, name: String) -> execution::RenameResult {
         if !path.ends_with("panic-new.txt") {
-            return NativeOperations::default().rename(path, name).await;
+            return self.0.rename(path, name).await;
         }
-        run_blocking(move || -> Result<(), AppError> {
+        let result = run_blocking(move || -> Result<std::path::PathBuf, AppError> {
             let source = Path::new(&path);
             fs::rename(source, source.parent().unwrap().join(name))?;
             panic!("injected inverse worker panic after committed rename");
         })
         .await
-        .map_err(operation_error)
+        .map_err(operation_error);
+        execution::RenameResult {
+            result,
+            warning: None,
+            affected: Vec::new(),
+        }
     }
     async fn move_entry(&self, path: String, destination: String) -> execution::MoveResult {
-        NativeOperations::default()
-            .move_entry(path, destination)
-            .await
+        self.0.move_entry(path, destination).await
     }
     async fn trash_many(&self, paths: Vec<String>) -> Result<FileBatchOutcome, OperationError> {
-        NativeOperations::default().trash_many(paths).await
+        self.0.trash_many(paths).await
     }
     async fn restore(
         &self,
         requests: Vec<crate::files::trash_artifact::RestoreRequest>,
     ) -> Result<FileBatchOutcome, OperationError> {
-        NativeOperations::default().restore(requests).await
+        self.0.restore(requests).await
     }
 }
 
@@ -293,6 +299,8 @@ fn fixture(root: &Path, stem: &str) -> Action {
 fn supervisor_panic_after_native_inverse_consumes_history_and_reconciles_planned_parents() {
     for direction in [Direction::Undo, Direction::Redo] {
         let root = tempfile::tempdir().unwrap();
+        let storage = tempfile::tempdir().unwrap();
+        let operations = native(&storage);
         let action = fixture(root.path(), "supervisor");
         let directory = root.path().join("supervisor");
         let renamed = directory.join("supervisor-new.txt");
@@ -306,7 +314,7 @@ fn supervisor_panic_after_native_inverse_consumes_history_and_reconciles_planned
                 .unwrap();
             let result = tauri::async_runtime::block_on(execution::execute(
                 reservation.action.clone(),
-                &NativeOperations::default(),
+                &operations,
                 Direction::Undo,
             ));
             assert!(result.error.is_none());
@@ -322,8 +330,7 @@ fn supervisor_panic_after_native_inverse_consumes_history_and_reconciles_planned
         let (result, affected) = tauri::async_runtime::block_on(super::supervise_inverse(
             prepared,
             |prepared| async move {
-                let result =
-                    execution::execute_prepared(prepared, &NativeOperations::default()).await;
+                let result = execution::execute_prepared(prepared, &operations).await;
                 assert!(result.error.is_none());
                 panic!("injected outer supervisor panic after native rename");
             },
@@ -363,6 +370,7 @@ fn supervisor_panic_after_native_inverse_consumes_history_and_reconciles_planned
 #[test]
 fn worker_panic_after_inverse_commit_is_not_retryable_and_reconciles_its_parent() {
     let root = tempfile::tempdir().unwrap();
+    let storage = tempfile::tempdir().unwrap();
     let action = fixture(root.path(), "panic");
     let mut histories = Histories::default();
     histories.register(1);
@@ -371,7 +379,7 @@ fn worker_panic_after_inverse_commit_is_not_retryable_and_reconciles_its_parent(
     let reservation = histories.begin(1, Direction::Undo, id).unwrap();
     let result = tauri::async_runtime::block_on(execution::execute(
         action.clone(),
-        &PanicAfterRename,
+        &PanicAfterRename(native(&storage)),
         Direction::Undo,
     ));
     assert_eq!(
@@ -404,6 +412,7 @@ fn worker_panic_after_inverse_commit_is_not_retryable_and_reconciles_its_parent(
 #[test]
 fn uncertain_batch_child_reconciles_while_known_and_unstarted_siblings_keep_their_contracts() {
     let root = tempfile::tempdir().unwrap();
+    let storage = tempfile::tempdir().unwrap();
     let untouched = fixture(root.path(), "untouched");
     let uncertain = fixture(root.path(), "panic");
     let completed = fixture(root.path(), "completed");
@@ -417,7 +426,7 @@ fn uncertain_batch_child_reconciles_while_known_and_unstarted_siblings_keep_thei
             uncertain.clone(),
             completed.clone(),
         ]),
-        &PanicAfterRename,
+        &PanicAfterRename(native(&storage)),
         Direction::Undo,
     ));
     assert_eq!(result.completed, Some(batch(vec![completed.clone()])));

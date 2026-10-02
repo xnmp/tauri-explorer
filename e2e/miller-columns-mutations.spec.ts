@@ -3,18 +3,13 @@
  * Issue: #598
  */
 import { test, expect, type Page } from "./fixtures";
-import { waitForEntries } from "./helpers";
+import { applySettingsAndReload, waitForEntries } from "./helpers";
 
 async function openProjectWithMillerColumns(page: Page): Promise<void> {
   await page.goto("/?path=/home/user/Documents/project");
   await waitForEntries(page);
 
-  await page.evaluate(() => {
-    const settings = JSON.parse(localStorage.getItem("explorer-settings") || "{}");
-    settings.millerLayers = 2;
-    localStorage.setItem("explorer-settings", JSON.stringify(settings));
-    location.reload();
-  });
+  await applySettingsAndReload(page, { millerLayers: 2 });
 
   await waitForEntries(page);
   await expect(page.locator('.miller-col[data-path="/home/user"]')).toBeVisible();

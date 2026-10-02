@@ -1,0 +1,2 @@
+123 45 0:99 / /media/user/GoogleDrive rw,nosuid,nodev - fuse.rclone gdrive: rw,user_id=1000
+124 45 0:100 / /home/user/Documents rw,nosuid,nodev - fuse.rclone remote: rw,user_id=1000

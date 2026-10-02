@@ -228,7 +228,9 @@ impl ArchivePlan {
         dirs.dedup();
         dirs
     }
+}
 
+impl super::admission::Plan for ArchivePlan {
     /// The same owned request determines execution and recovery ownership.
     ///
     /// This is a superset of the operation's **writes**. It is not a superset
@@ -245,7 +247,7 @@ impl ArchivePlan {
     /// archive chooses. A conservative superset is correct; a claim narrower
     /// than the effect would admit a competitor into the same bytes.
     #[cfg(target_os = "linux")]
-    pub(crate) fn resources(&self) -> Vec<super::recovery::ResourceRequest> {
+    fn resources(&self) -> Vec<super::recovery::ResourceRequest> {
         use super::recovery::{Access, ResourceRequest, Scope};
         let mut resources = vec![ResourceRequest {
             path: self.output.clone(),
@@ -272,10 +274,7 @@ impl ArchivePlan {
     /// Bind execution to the exact ordered resources returned by admission,
     /// so a managed alias replacement cannot redirect the worker's writes.
     #[cfg(target_os = "linux")]
-    pub(crate) fn resolve(
-        mut self,
-        paths: impl Iterator<Item = PathBuf>,
-    ) -> Result<Self, AppError> {
+    fn resolve(mut self, paths: impl Iterator<Item = PathBuf>) -> Result<Self, AppError> {
         let mut paths = paths;
         let invalid =
             || AppError::Other("Archive admission returned inconsistent path bindings".into());

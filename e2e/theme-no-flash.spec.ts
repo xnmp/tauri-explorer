@@ -10,6 +10,7 @@
  */
 
 import { test, expect } from "./fixtures";
+import { applySettingsAndReload } from "./helpers";
 
 test.describe("Theme applied without flash", () => {
   test("saved theme is applied on reload before any post-load correction", async ({ page }) => {
@@ -17,14 +18,7 @@ test.describe("Theme applied without flash", () => {
     await page.waitForSelector(".file-list");
 
     // Persist a non-default theme the way the settings store does.
-    await page.evaluate(() => {
-      const raw = localStorage.getItem("explorer-settings");
-      const s = raw ? JSON.parse(raw) : {};
-      s.theme = "hacker";
-      localStorage.setItem("explorer-settings", JSON.stringify(s));
-    });
-
-    await page.reload();
+    await applySettingsAndReload(page, { theme: "hacker" });
 
     // data-theme must reflect the saved theme. The synchronous apply means it
     // is correct as soon as the document is interactive — no default-theme

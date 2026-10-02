@@ -17,6 +17,12 @@ impl From<String> for OperationError {
     }
 }
 
+pub(crate) struct RenameResult {
+    pub result: Result<std::path::PathBuf, OperationError>,
+    pub warning: Option<String>,
+    pub affected: Vec<String>,
+}
+
 pub(crate) struct MoveResult {
     pub result: Result<Option<String>, OperationError>,
     pub warning: Option<String>,
@@ -46,11 +52,7 @@ pub(crate) trait Operations: Sync {
             ))
         }
     }
-    fn rename(
-        &self,
-        path: String,
-        name: String,
-    ) -> impl Future<Output = Result<(), OperationError>> + Send;
+    fn rename(&self, path: String, name: String) -> impl Future<Output = RenameResult> + Send;
     fn move_entry(
         &self,
         path: String,
@@ -123,7 +125,7 @@ fn execute_plan<'a, O: Operations>(
                 }
             }
             Request::Rename { path, name } => {
-                settled(action, operations.rename(path, name).await, true)
+                settled_rename(action, operations.rename(path, name).await)
             }
             Request::Move { path, destination } => {
                 let outcome = operations.move_entry(path, destination).await;
@@ -240,6 +242,44 @@ fn settled(action: Action, result: Result<(), OperationError>, has_opposite: boo
     }
 }
 
+fn settled_rename(action: Action, outcome: RenameResult) -> Execution {
+    let mut warnings: Warnings = outcome.warning.into_iter().collect();
+    let mut execution = match outcome.result {
+        Ok(target) => {
+            let Action::Rename {
+                old_name, new_name, ..
+            } = &action
+            else {
+                unreachable!("rename request retains its action");
+            };
+            // A rename action always stores the forward target, even after Undo.
+            // Bind the next direction to the admitted physical parent, not a
+            // requested alias which could have changed during execution.
+            let opposite = target
+                .parent()
+                .map(|parent| parent.join(new_name))
+                .and_then(|path| path.to_str().map(str::to_owned))
+                .map(|path| Action::Rename {
+                    path,
+                    old_name: old_name.clone(),
+                    new_name: new_name.clone(),
+                });
+            if opposite.is_none() {
+                warnings.push("Rename completed, but its native path cannot be represented in history; the opposite action is unavailable");
+            }
+            Execution {
+                completed: Some(action),
+                opposite,
+                ..Execution::default()
+            }
+        }
+        Err(error) => failed(action, error),
+    };
+    execution.refresh_dirs = outcome.affected;
+    execution.warnings = warnings.into_vec();
+    execution
+}
+
 fn settled_copy(action: Action, outcome: FileBatchOutcome, direction: Direction) -> Execution {
     let Action::Copy {
         copied_path,
@@ -286,9 +326,13 @@ fn settled_copy(action: Action, outcome: FileBatchOutcome, direction: Direction)
         let restored = outcome
             .publications
             .get(copied_path)
+            // The display key can be lossy for a native filename. Compare
+            // against the prior native authority, never reconstruct a path
+            // from that key; restoration may legitimately recreate its parent.
             .filter(|entry| {
-                entry.path == std::path::Path::new(copied_path)
-                    && entry.path.parent() == Some(std::path::Path::new(parent_dir))
+                publication
+                    .as_ref()
+                    .is_some_and(|previous| entry.path == previous.path)
             })
             .cloned();
         if restored.is_none() {

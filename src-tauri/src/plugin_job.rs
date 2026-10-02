@@ -19,6 +19,30 @@ static NEXT_JOB_ID: AtomicU64 = AtomicU64::new(1);
 pub const JOB_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10 * 60);
 const CANCEL_DRAIN_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
 
+/// Native acceptance shortens the timeout through the environment. Builds
+/// without the `e2e-hooks` feature never read the variable at all.
+#[cfg(feature = "e2e-hooks")]
+fn job_timeout() -> std::time::Duration {
+    job_timeout_with_override(
+        std::env::var("TAURI_EXPLORER_E2E_PLUGIN_JOB_TIMEOUT_MS")
+            .ok()
+            .as_deref(),
+    )
+}
+
+#[cfg(not(feature = "e2e-hooks"))]
+fn job_timeout() -> std::time::Duration {
+    JOB_TIMEOUT
+}
+
+#[cfg(feature = "e2e-hooks")]
+fn job_timeout_with_override(override_ms: Option<&str>) -> std::time::Duration {
+    override_ms
+        .and_then(|value| value.parse::<u64>().ok())
+        .filter(|value| *value > 0)
+        .map_or(JOB_TIMEOUT, std::time::Duration::from_millis)
+}
+
 #[derive(Clone)]
 pub struct JobControl {
     state: Arc<Mutex<JobState>>,
@@ -163,7 +187,7 @@ pub async fn run_and_emit(
     control: JobControl,
     job: impl std::future::Future<Output = Result<String, AppError>>,
 ) {
-    run_and_emit_with_timeout(app, event_prefix, job_id, control, JOB_TIMEOUT, job).await;
+    run_and_emit_with_timeout(app, event_prefix, job_id, control, job_timeout(), job).await;
 }
 
 async fn run_and_emit_with_timeout(
@@ -227,6 +251,96 @@ fn emit_result(app: &AppHandle, event_prefix: &str, job_id: u64, result: Result<
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(feature = "e2e-hooks")]
+    #[test]
+    fn hook_builds_honour_a_positive_timeout_override() {
+        assert_eq!(
+            job_timeout_with_override(Some("100")),
+            std::time::Duration::from_millis(100)
+        );
+    }
+
+    #[cfg(not(feature = "e2e-hooks"))]
+    #[test]
+    fn builds_without_hooks_ignore_the_timeout_override() {
+        // The variable is never read (it is absent from release binaries), so
+        // the production timeout is fixed even when the override is set. No
+        // other code in a build without the feature reads this variable, so
+        // setting it cannot race a concurrently running test.
+        const OVERRIDE: &str = "TAURI_EXPLORER_E2E_PLUGIN_JOB_TIMEOUT_MS";
+        std::env::set_var(OVERRIDE, "100");
+        let timeout = job_timeout();
+        std::env::remove_var(OVERRIDE);
+        assert_eq!(timeout, JOB_TIMEOUT);
+        assert_ne!(timeout, std::time::Duration::from_millis(100));
+    }
+
+    #[cfg(feature = "e2e-hooks")]
+    #[test]
+    fn malformed_or_zero_e2e_timeout_overrides_keep_the_default() {
+        for value in [
+            None,
+            Some(""),
+            Some("0"),
+            Some("-5"),
+            Some("ten"),
+            Some("99999999999999999999999"),
+        ] {
+            assert_eq!(job_timeout_with_override(value), JOB_TIMEOUT, "{value:?}");
+        }
+    }
+
+    #[test]
+    fn cancellation_of_a_held_staging_file_removes_it_without_publication() {
+        let dir = tempfile::tempdir().unwrap();
+        let final_output = dir.path().join("result.png");
+        let control = JobControl::new();
+        let mut staging = StagedOutput::new(&final_output).unwrap();
+        std::io::Write::write_all(staging.file_mut(), b"complete bytes").unwrap();
+
+        assert!(
+            !final_output.exists(),
+            "staging became visible before commit"
+        );
+        assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 1);
+        assert!(control.cancel());
+        assert!(staging.commit(&final_output, &control).is_err());
+        assert!(!final_output.exists(), "cancelled staging was published");
+        assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 0);
+    }
+
+    #[test]
+    fn cancellation_and_publication_have_one_serialized_winner() {
+        for attempt in 0..64 {
+            let dir = tempfile::tempdir().unwrap();
+            let final_output = dir.path().join("result.png");
+            let control = JobControl::new();
+            let publish_control = control.clone();
+            let publish_output = final_output.clone();
+            let gate = Arc::new(std::sync::Barrier::new(2));
+            let publish_gate = Arc::clone(&gate);
+            let publisher = std::thread::spawn(move || {
+                let mut staging = StagedOutput::new(&publish_output).unwrap();
+                std::io::Write::write_all(staging.file_mut(), b"owned").unwrap();
+                publish_gate.wait();
+                staging.commit(&publish_output, &publish_control)
+            });
+
+            gate.wait();
+            let cancelled = control.cancel();
+            let published = publisher.join().unwrap().is_ok();
+            assert_ne!(
+                cancelled, published,
+                "attempt {attempt} had no unique winner"
+            );
+            assert_eq!(final_output.exists(), published);
+            assert_eq!(
+                std::fs::read_dir(dir.path()).unwrap().count(),
+                usize::from(published)
+            );
+        }
+    }
 
     #[test]
     fn output_filename_cannot_traverse() {
@@ -301,7 +415,13 @@ mod tests {
                 tokio::task::spawn_blocking(move || {
                     let mut staging = StagedOutput::new(&worker_final)?;
                     std::io::Write::write_all(staging.file_mut(), b"late").unwrap();
-                    std::thread::sleep(std::time::Duration::from_millis(40));
+                    // Finish only after the timeout has cancelled the job. A fixed
+                    // sleep raced the timer on loaded runners: when the runtime
+                    // polled late, the finished job won and the test saw Ok.
+                    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+                    while worker_control.check().is_ok() && std::time::Instant::now() < deadline {
+                        std::thread::sleep(std::time::Duration::from_millis(1));
+                    }
                     staging.commit(&worker_final, &worker_control)?;
                     Ok(worker_final.to_string_lossy().into_owned())
                 })

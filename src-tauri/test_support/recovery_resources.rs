@@ -570,3 +570,56 @@ fn selection_rejects_excessive_unique_artifact_authority() {
     );
     assert!(fs::read_dir(root.path()).unwrap().next().is_none());
 }
+
+#[test]
+fn private_directory_ensures_commute_but_exclude_ordinary_readers_and_writers() {
+    let root = tempfile::tempdir().unwrap();
+    let directory = root.path().join("private");
+    let ensure = capture(&directory, Access::EnsurePrivateDirectory, Scope::Entry).unwrap();
+    assert!(!conflicts(&ensure, &ensure));
+    for access in [Access::Read, Access::Write] {
+        for scope in [Scope::Entry, Scope::Subtree] {
+            let ordinary = capture(&directory, access, scope).unwrap();
+            assert!(conflicts(&ensure, &ordinary));
+            assert!(conflicts(&ordinary, &ensure));
+            let ancestor = capture(root.path(), access, Scope::Subtree).unwrap();
+            assert!(conflicts(&ensure, &ancestor));
+            assert!(conflicts(&ancestor, &ensure));
+        }
+    }
+    for access in [Access::Read, Access::Write] {
+        let descendant =
+            capture(&directory.join("separate-payload"), access, Scope::Subtree).unwrap();
+        assert!(!conflicts(&ensure, &descendant));
+        assert!(!conflicts(&descendant, &ensure));
+    }
+    let unrelated = capture(&root.path().join("sibling"), Access::Write, Scope::Subtree).unwrap();
+    assert!(!conflicts(&ensure, &unrelated));
+    assert!(!conflicts(&unrelated, &ensure));
+    assert!(capture(&directory, Access::EnsurePrivateDirectory, Scope::Subtree).is_err());
+}
+
+#[test]
+fn private_directory_ensure_preserves_exclusion_through_parent_aliases() {
+    let root = tempfile::tempdir().unwrap();
+    let physical = root.path().join("physical");
+    let alias = root.path().join("alias");
+    fs::create_dir(&physical).unwrap();
+    std::os::unix::fs::symlink(&physical, &alias).unwrap();
+    let ensure = capture(
+        &alias.join("new"),
+        Access::EnsurePrivateDirectory,
+        Scope::Entry,
+    )
+    .unwrap();
+    let same = capture(
+        &physical.join("new"),
+        Access::EnsurePrivateDirectory,
+        Scope::Entry,
+    )
+    .unwrap();
+    assert!(!conflicts(&ensure, &same));
+    let writer = capture(&physical.join("new"), Access::Write, Scope::Entry).unwrap();
+    assert!(conflicts(&ensure, &writer));
+    assert!(conflicts(&writer, &ensure));
+}

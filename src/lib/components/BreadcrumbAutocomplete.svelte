@@ -57,7 +57,9 @@
     const filtered = filterDirectorySuggestions(result.data.entries, prefix);
 
     suggestions = filtered;
-    selectedIndex = filtered.length > 0 ? 0 : -1;
+    // A visible suggestion is not an explicit selection. Enter confirms the
+    // typed path; Arrow keys, Tab, or a click can still choose a suggestion.
+    selectedIndex = -1;
     showSuggestions = filtered.length > 0;
   }
 
@@ -237,7 +239,7 @@
   }
 
   .suggestion-item.directory .suggestion-icon {
-    color: var(--accent);
+    color: var(--accent-text, var(--accent));
   }
 
   .suggestion-name {

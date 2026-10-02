@@ -1,0 +1,4722 @@
+[
+  {
+    "scale": 1,
+    "zoom": 100,
+    "displayBackend": "wayland",
+    "webkitGTK": "2.52.5",
+    "mode": "details",
+    "reverse": false,
+    "geometry": {
+      "appZoom": "100%",
+      "dpr": 1,
+      "entries": [
+        {
+          "name": "selection-00.txt",
+          "left": 241,
+          "bottom": 148,
+          "right": 1595,
+          "top": 116
+        },
+        {
+          "name": "selection-01.txt",
+          "left": 241,
+          "bottom": 180,
+          "right": 1595,
+          "top": 148
+        },
+        {
+          "name": "selection-02.txt",
+          "left": 241,
+          "bottom": 212,
+          "right": 1595,
+          "top": 180
+        },
+        {
+          "name": "selection-03.txt",
+          "left": 241,
+          "bottom": 244,
+          "right": 1595,
+          "top": 212
+        },
+        {
+          "name": "selection-04.txt",
+          "left": 241,
+          "bottom": 276,
+          "right": 1595,
+          "top": 244
+        },
+        {
+          "name": "selection-05.txt",
+          "left": 241,
+          "bottom": 308,
+          "right": 1595,
+          "top": 276
+        },
+        {
+          "name": "selection-06.txt",
+          "left": 241,
+          "bottom": 340,
+          "right": 1595,
+          "top": 308
+        },
+        {
+          "name": "selection-07.txt",
+          "left": 241,
+          "bottom": 372,
+          "right": 1595,
+          "top": 340
+        }
+      ],
+      "start": {
+        "x": 246,
+        "y": 384
+      },
+      "end": {
+        "x": 1590,
+        "y": 346
+      },
+      "hitClass": "virtual-viewport file-rows svelte-141dx9j",
+      "content": {
+        "left": 241,
+        "bottom": 941,
+        "right": 1595,
+        "top": 79
+      }
+    },
+    "band": {
+      "left": 246,
+      "bottom": 384,
+      "right": 1590,
+      "top": 346
+    },
+    "expected": [
+      "selection-07.txt"
+    ],
+    "selected": [
+      "selection-07.txt"
+    ]
+  },
+  {
+    "scale": 1,
+    "zoom": 100,
+    "displayBackend": "wayland",
+    "webkitGTK": "2.52.5",
+    "mode": "details",
+    "reverse": true,
+    "geometry": {
+      "appZoom": "100%",
+      "dpr": 1,
+      "entries": [
+        {
+          "name": "selection-00.txt",
+          "left": 241,
+          "bottom": 148,
+          "right": 1595,
+          "top": 116
+        },
+        {
+          "name": "selection-01.txt",
+          "left": 241,
+          "bottom": 180,
+          "right": 1595,
+          "top": 148
+        },
+        {
+          "name": "selection-02.txt",
+          "left": 241,
+          "bottom": 212,
+          "right": 1595,
+          "top": 180
+        },
+        {
+          "name": "selection-03.txt",
+          "left": 241,
+          "bottom": 244,
+          "right": 1595,
+          "top": 212
+        },
+        {
+          "name": "selection-04.txt",
+          "left": 241,
+          "bottom": 276,
+          "right": 1595,
+          "top": 244
+        },
+        {
+          "name": "selection-05.txt",
+          "left": 241,
+          "bottom": 308,
+          "right": 1595,
+          "top": 276
+        },
+        {
+          "name": "selection-06.txt",
+          "left": 241,
+          "bottom": 340,
+          "right": 1595,
+          "top": 308
+        },
+        {
+          "name": "selection-07.txt",
+          "left": 241,
+          "bottom": 372,
+          "right": 1595,
+          "top": 340
+        }
+      ],
+      "start": {
+        "x": 1590,
+        "y": 384
+      },
+      "end": {
+        "x": 246,
+        "y": 346
+      },
+      "hitClass": "virtual-viewport file-rows svelte-141dx9j",
+      "content": {
+        "left": 241,
+        "bottom": 941,
+        "right": 1595,
+        "top": 79
+      }
+    },
+    "band": {
+      "left": 246,
+      "bottom": 384,
+      "right": 1590,
+      "top": 346
+    },
+    "expected": [
+      "selection-07.txt"
+    ],
+    "selected": [
+      "selection-07.txt"
+    ]
+  },
+  {
+    "scale": 1,
+    "zoom": 100,
+    "displayBackend": "wayland",
+    "webkitGTK": "2.52.5",
+    "mode": "list",
+    "reverse": false,
+    "geometry": {
+      "appZoom": "100%",
+      "dpr": 1,
+      "entries": [
+        {
+          "name": "selection-00.txt",
+          "left": 249,
+          "bottom": 114,
+          "right": 513.390625,
+          "top": 85
+        },
+        {
+          "name": "selection-01.txt",
+          "left": 517.390625,
+          "bottom": 114,
+          "right": 781.796875,
+          "top": 85
+        },
+        {
+          "name": "selection-02.txt",
+          "left": 785.796875,
+          "bottom": 114,
+          "right": 1050.1875,
+          "top": 85
+        },
+        {
+          "name": "selection-03.txt",
+          "left": 1054.1875,
+          "bottom": 114,
+          "right": 1318.59375,
+          "top": 85
+        },
+        {
+          "name": "selection-04.txt",
+          "left": 1322.59375,
+          "bottom": 114,
+          "right": 1586.984375,
+          "top": 85
+        },
+        {
+          "name": "selection-05.txt",
+          "left": 249,
+          "bottom": 144,
+          "right": 513.390625,
+          "top": 115
+        },
+        {
+          "name": "selection-06.txt",
+          "left": 517.390625,
+          "bottom": 144,
+          "right": 781.796875,
+          "top": 115
+        },
+        {
+          "name": "selection-07.txt",
+          "left": 785.796875,
+          "bottom": 144,
+          "right": 1050.1875,
+          "top": 115
+        }
+      ],
+      "start": {
+        "x": 254,
+        "y": 156
+      },
+      "end": {
+        "x": 777,
+        "y": 121
+      },
+      "hitClass": "virtual-viewport list-scroller file-rows svelte-141dx9j",
+      "content": {
+        "left": 241,
+        "bottom": 941,
+        "right": 1595,
+        "top": 79
+      }
+    },
+    "band": {
+      "left": 254,
+      "bottom": 156,
+      "right": 777,
+      "top": 121
+    },
+    "expected": [
+      "selection-05.txt",
+      "selection-06.txt"
+    ],
+    "selected": [
+      "selection-05.txt",
+      "selection-06.txt"
+    ]
+  },
+  {
+    "scale": 1,
+    "zoom": 100,
+    "displayBackend": "wayland",
+    "webkitGTK": "2.52.5",
+    "mode": "list",
+    "reverse": true,
+    "geometry": {
+      "appZoom": "100%",
+      "dpr": 1,
+      "entries": [
+        {
+          "name": "selection-00.txt",
+          "left": 249,
+          "bottom": 114,
+          "right": 513.390625,
+          "top": 85
+        },
+        {
+          "name": "selection-01.txt",
+          "left": 517.390625,
+          "bottom": 114,
+          "right": 781.796875,
+          "top": 85
+        },
+        {
+          "name": "selection-02.txt",
+          "left": 785.796875,
+          "bottom": 114,
+          "right": 1050.1875,
+          "top": 85
+        },
+        {
+          "name": "selection-03.txt",
+          "left": 1054.1875,
+          "bottom": 114,
+          "right": 1318.59375,
+          "top": 85
+        },
+        {
+          "name": "selection-04.txt",
+          "left": 1322.59375,
+          "bottom": 114,
+          "right": 1586.984375,
+          "top": 85
+        },
+        {
+          "name": "selection-05.txt",
+          "left": 249,
+          "bottom": 144,
+          "right": 513.390625,
+          "top": 115
+        },
+        {
+          "name": "selection-06.txt",
+          "left": 517.390625,
+          "bottom": 144,
+          "right": 781.796875,
+          "top": 115
+        },
+        {
+          "name": "selection-07.txt",
+          "left": 785.796875,
+          "bottom": 144,
+          "right": 1050.1875,
+          "top": 115
+        }
+      ],
+      "start": {
+        "x": 777,
+        "y": 156
+      },
+      "end": {
+        "x": 254,
+        "y": 121
+      },
+      "hitClass": "virtual-viewport list-scroller file-rows svelte-141dx9j",
+      "content": {
+        "left": 241,
+        "bottom": 941,
+        "right": 1595,
+        "top": 79
+      }
+    },
+    "band": {
+      "left": 254,
+      "bottom": 156,
+      "right": 777,
+      "top": 121
+    },
+    "expected": [
+      "selection-05.txt",
+      "selection-06.txt"
+    ],
+    "selected": [
+      "selection-05.txt",
+      "selection-06.txt"
+    ]
+  },
+  {
+    "scale": 1,
+    "zoom": 100,
+    "displayBackend": "wayland",
+    "webkitGTK": "2.52.5",
+    "mode": "tiles",
+    "reverse": false,
+    "geometry": {
+      "appZoom": "100%",
+      "dpr": 1,
+      "entries": [
+        {
+          "name": "selection-00.txt",
+          "left": 249,
+          "bottom": 192,
+          "right": 336.328125,
+          "top": 87
+        },
+        {
+          "name": "selection-01.txt",
+          "left": 338.328125,
+          "bottom": 192,
+          "right": 425.65625,
+          "top": 87
+        },
+        {
+          "name": "selection-02.txt",
+          "left": 427.65625,
+          "bottom": 192,
+          "right": 514.984375,
+          "top": 87
+        },
+        {
+          "name": "selection-03.txt",
+          "left": 516.984375,
+          "bottom": 192,
+          "right": 604.328125,
+          "top": 87
+        },
+        {
+          "name": "selection-04.txt",
+          "left": 606.328125,
+          "bottom": 192,
+          "right": 693.65625,
+          "top": 87
+        },
+        {
+          "name": "selection-05.txt",
+          "left": 695.65625,
+          "bottom": 192,
+          "right": 782.984375,
+          "top": 87
+        },
+        {
+          "name": "selection-06.txt",
+          "left": 784.984375,
+          "bottom": 192,
+          "right": 872.328125,
+          "top": 87
+        },
+        {
+          "name": "selection-07.txt",
+          "left": 874.328125,
+          "bottom": 192,
+          "right": 961.65625,
+          "top": 87
+        }
+      ],
+      "start": {
+        "x": 254,
+        "y": 204
+      },
+      "end": {
+        "x": 421,
+        "y": 93
+      },
+      "hitClass": "virtual-viewport tiles-scroller file-rows svelte-141dx9j",
+      "content": {
+        "left": 241,
+        "bottom": 941,
+        "right": 1595,
+        "top": 79
+      }
+    },
+    "band": {
+      "left": 254,
+      "bottom": 204,
+      "right": 421,
+      "top": 93
+    },
+    "expected": [
+      "selection-00.txt",
+      "selection-01.txt"
+    ],
+    "selected": [
+      "selection-00.txt",
+      "selection-01.txt"
+    ]
+  },
+  {
+    "scale": 1,
+    "zoom": 100,
+    "displayBackend": "wayland",
+    "webkitGTK": "2.52.5",
+    "mode": "tiles",
+    "reverse": true,
+    "geometry": {
+      "appZoom": "100%",
+      "dpr": 1,
+      "entries": [
+        {
+          "name": "selection-00.txt",
+          "left": 249,
+          "bottom": 192,
+          "right": 336.328125,
+          "top": 87
+        },
+        {
+          "name": "selection-01.txt",
+          "left": 338.328125,
+          "bottom": 192,
+          "right": 425.65625,
+          "top": 87
+        },
+        {
+          "name": "selection-02.txt",
+          "left": 427.65625,
+          "bottom": 192,
+          "right": 514.984375,
+          "top": 87
+        },
+        {
+          "name": "selection-03.txt",
+          "left": 516.984375,
+          "bottom": 192,
+          "right": 604.328125,
+          "top": 87
+        },
+        {
+          "name": "selection-04.txt",
+          "left": 606.328125,
+          "bottom": 192,
+          "right": 693.65625,
+          "top": 87
+        },
+        {
+          "name": "selection-05.txt",
+          "left": 695.65625,
+          "bottom": 192,
+          "right": 782.984375,
+          "top": 87
+        },
+        {
+          "name": "selection-06.txt",
+          "left": 784.984375,
+          "bottom": 192,
+          "right": 872.328125,
+          "top": 87
+        },
+        {
+          "name": "selection-07.txt",
+          "left": 874.328125,
+          "bottom": 192,
+          "right": 961.65625,
+          "top": 87
+        }
+      ],
+      "start": {
+        "x": 421,
+        "y": 204
+      },
+      "end": {
+        "x": 254,
+        "y": 93
+      },
+      "hitClass": "virtual-viewport tiles-scroller file-rows svelte-141dx9j",
+      "content": {
+        "left": 241,
+        "bottom": 941,
+        "right": 1595,
+        "top": 79
+      }
+    },
+    "band": {
+      "left": 254,
+      "bottom": 204,
+      "right": 421,
+      "top": 93
+    },
+    "expected": [
+      "selection-00.txt",
+      "selection-01.txt"
+    ],
+    "selected": [
+      "selection-00.txt",
+      "selection-01.txt"
+    ]
+  },
+  {
+    "scale": 1,
+    "zoom": 150,
+    "displayBackend": "wayland",
+    "webkitGTK": "2.52.5",
+    "mode": "details",
+    "reverse": false,
+    "geometry": {
+      "appZoom": "150%",
+      "dpr": 1,
+      "entries": [
+        {
+          "name": "selection-00.txt",
+          "left": 361,
+          "bottom": 221,
+          "right": 1583,
+          "top": 173
+        },
+        {
+          "name": "selection-01.txt",
+          "left": 361,
+          "bottom": 269,
+          "right": 1583,
+          "top": 221
+        },
+        {
+          "name": "selection-02.txt",
+          "left": 361,
+          "bottom": 317,
+          "right": 1583,
+          "top": 269
+        },
+        {
+          "name": "selection-03.txt",
+          "left": 361,
+          "bottom": 365,
+          "right": 1583,
+          "top": 317
+        },
+        {
+          "name": "selection-04.txt",
+          "left": 361,
+          "bottom": 413,
+          "right": 1583,
+          "top": 365
+        },
+        {
+          "name": "selection-05.txt",
+          "left": 361,
+          "bottom": 461,
+          "right": 1583,
+          "top": 413
+        },
+        {
+          "name": "selection-06.txt",
+          "left": 361,
+          "bottom": 509,
+          "right": 1583,
+          "top": 461
+        },
+        {
+          "name": "selection-07.txt",
+          "left": 361,
+          "bottom": 557,
+          "right": 1583,
+          "top": 509
+        }
+      ],
+      "start": {
+        "x": 366,
+        "y": 569
+      },
+      "end": {
+        "x": 1578,
+        "y": 515
+      },
+      "hitClass": "virtual-viewport file-rows svelte-141dx9j",
+      "content": {
+        "left": 361,
+        "bottom": 915.5,
+        "right": 1583,
+        "top": 118
+      }
+    },
+    "band": {
+      "left": 366,
+      "bottom": 569,
+      "right": 1578,
+      "top": 515
+    },
+    "expected": [
+      "selection-07.txt"
+    ],
+    "selected": [
+      "selection-07.txt"
+    ]
+  },
+  {
+    "scale": 1,
+    "zoom": 150,
+    "displayBackend": "wayland",
+    "webkitGTK": "2.52.5",
+    "mode": "details",
+    "reverse": true,
+    "geometry": {
+      "appZoom": "150%",
+      "dpr": 1,
+      "entries": [
+        {
+          "name": "selection-00.txt",
+          "left": 361,
+          "bottom": 221,
+          "right": 1583,
+          "top": 173
+        },
+        {
+          "name": "selection-01.txt",
+          "left": 361,
+          "bottom": 269,
+          "right": 1583,
+          "top": 221
+        },
+        {
+          "name": "selection-02.txt",
+          "left": 361,
+          "bottom": 317,
+          "right": 1583,
+          "top": 269
+        },
+        {
+          "name": "selection-03.txt",
+          "left": 361,
+          "bottom": 365,
+          "right": 1583,
+          "top": 317
+        },
+        {
+          "name": "selection-04.txt",
+          "left": 361,
+          "bottom": 413,
+          "right": 1583,
+          "top": 365
+        },
+        {
+          "name": "selection-05.txt",
+          "left": 361,
+          "bottom": 461,
+          "right": 1583,
+          "top": 413
+        },
+        {
+          "name": "selection-06.txt",
+          "left": 361,
+          "bottom": 509,
+          "right": 1583,
+          "top": 461
+        },
+        {
+          "name": "selection-07.txt",
+          "left": 361,
+          "bottom": 557,
+          "right": 1583,
+          "top": 509
+        }
+      ],
+      "start": {
+        "x": 1578,
+        "y": 569
+      },
+      "end": {
+        "x": 366,
+        "y": 515
+      },
+      "hitClass": "virtual-viewport file-rows svelte-141dx9j",
+      "content": {
+        "left": 361,
+        "bottom": 915.5,
+        "right": 1583,
+        "top": 118
+      }
+    },
+    "band": {
+      "left": 366,
+      "bottom": 569,
+      "right": 1578,
+      "top": 515
+    },
+    "expected": [
+      "selection-07.txt"
+    ],
+    "selected": [
+      "selection-07.txt"
+    ]
+  },
+  {
+    "scale": 1,
+    "zoom": 150,
+    "displayBackend": "wayland",
+    "webkitGTK": "2.52.5",
+    "mode": "list",
+    "reverse": false,
+    "geometry": {
+      "appZoom": "150%",
+      "dpr": 1,
+      "entries": [
+        {
+          "name": "selection-00.txt",
+          "left": 373,
+          "bottom": 170,
+          "right": 768.328125,
+          "top": 127
+        },
+        {
+          "name": "selection-01.txt",
+          "left": 774.328125,
+          "bottom": 170,
+          "right": 1169.65625,
+          "top": 127
+        },
+        {
+          "name": "selection-02.txt",
+          "left": 1175.65625,
+          "bottom": 170,
+          "right": 1570.984375,
+          "top": 127
+        },
+        {
+          "name": "selection-03.txt",
+          "left": 373,
+          "bottom": 215,
+          "right": 768.328125,
+          "top": 172
+        },
+        {
+          "name": "selection-04.txt",
+          "left": 774.328125,
+          "bottom": 215,
+          "right": 1169.65625,
+          "top": 172
+        },
+        {
+          "name": "selection-05.txt",
+          "left": 1175.65625,
+          "bottom": 215,
+          "right": 1570.984375,
+          "top": 172
+        },
+        {
+          "name": "selection-06.txt",
+          "left": 373,
+          "bottom": 260,
+          "right": 768.328125,
+          "top": 217
+        },
+        {
+          "name": "selection-07.txt",
+          "left": 774.328125,
+          "bottom": 260,
+          "right": 1169.65625,
+          "top": 217
+        }
+      ],
+      "start": {
+        "x": 378,
+        "y": 272
+      },
+      "end": {
+        "x": 1165,
+        "y": 223
+      },
+      "hitClass": "virtual-viewport list-scroller file-rows svelte-141dx9j",
+      "content": {
+        "left": 361,
+        "bottom": 915.5,
+        "right": 1583,
+        "top": 118
+      }
+    },
+    "band": {
+      "left": 378,
+      "bottom": 272,
+      "right": 1165,
+      "top": 223
+    },
+    "expected": [
+      "selection-06.txt",
+      "selection-07.txt"
+    ],
+    "selected": [
+      "selection-06.txt",
+      "selection-07.txt"
+    ]
+  },
+  {
+    "scale": 1,
+    "zoom": 150,
+    "displayBackend": "wayland",
+    "webkitGTK": "2.52.5",
+    "mode": "list",
+    "reverse": true,
+    "geometry": {
+      "appZoom": "150%",
+      "dpr": 1,
+      "entries": [
+        {
+          "name": "selection-00.txt",
+          "left": 373,
+          "bottom": 170,
+          "right": 768.328125,
+          "top": 127
+        },
+        {
+          "name": "selection-01.txt",
+          "left": 774.328125,
+          "bottom": 170,
+          "right": 1169.65625,
+          "top": 127
+        },
+        {
+          "name": "selection-02.txt",
+          "left": 1175.65625,
+          "bottom": 170,
+          "right": 1570.984375,
+          "top": 127
+        },
+        {
+          "name": "selection-03.txt",
+          "left": 373,
+          "bottom": 215,
+          "right": 768.328125,
+          "top": 172
+        },
+        {
+          "name": "selection-04.txt",
+          "left": 774.328125,
+          "bottom": 215,
+          "right": 1169.65625,
+          "top": 172
+        },
+        {
+          "name": "selection-05.txt",
+          "left": 1175.65625,
+          "bottom": 215,
+          "right": 1570.984375,
+          "top": 172
+        },
+        {
+          "name": "selection-06.txt",
+          "left": 373,
+          "bottom": 260,
+          "right": 768.328125,
+          "top": 217
+        },
+        {
+          "name": "selection-07.txt",
+          "left": 774.328125,
+          "bottom": 260,
+          "right": 1169.65625,
+          "top": 217
+        }
+      ],
+      "start": {
+        "x": 1165,
+        "y": 272
+      },
+      "end": {
+        "x": 378,
+        "y": 223
+      },
+      "hitClass": "virtual-viewport list-scroller file-rows svelte-141dx9j",
+      "content": {
+        "left": 361,
+        "bottom": 915.5,
+        "right": 1583,
+        "top": 118
+      }
+    },
+    "band": {
+      "left": 378,
+      "bottom": 272,
+      "right": 1165,
+      "top": 223
+    },
+    "expected": [
+      "selection-06.txt",
+      "selection-07.txt"
+    ],
+    "selected": [
+      "selection-06.txt",
+      "selection-07.txt"
+    ]
+  },
+  {
+    "scale": 1,
+    "zoom": 150,
+    "displayBackend": "wayland",
+    "webkitGTK": "2.52.5",
+    "mode": "tiles",
+    "reverse": false,
+    "geometry": {
+      "appZoom": "150%",
+      "dpr": 1,
+      "entries": [
+        {
+          "name": "selection-00.txt",
+          "left": 373,
+          "bottom": 286.5,
+          "right": 503.4375,
+          "top": 130
+        },
+        {
+          "name": "selection-01.txt",
+          "left": 506.4375,
+          "bottom": 286.5,
+          "right": 636.875,
+          "top": 130
+        },
+        {
+          "name": "selection-02.txt",
+          "left": 639.875,
+          "bottom": 286.5,
+          "right": 770.328125,
+          "top": 130
+        },
+        {
+          "name": "selection-03.txt",
+          "left": 773.328125,
+          "bottom": 286.5,
+          "right": 903.765625,
+          "top": 130
+        },
+        {
+          "name": "selection-04.txt",
+          "left": 906.765625,
+          "bottom": 286.5,
+          "right": 1037.21875,
+          "top": 130
+        },
+        {
+          "name": "selection-05.txt",
+          "left": 1040.21875,
+          "bottom": 286.5,
+          "right": 1170.65625,
+          "top": 130
+        },
+        {
+          "name": "selection-06.txt",
+          "left": 1173.65625,
+          "bottom": 286.5,
+          "right": 1304.109375,
+          "top": 130
+        },
+        {
+          "name": "selection-07.txt",
+          "left": 1307.109375,
+          "bottom": 286.5,
+          "right": 1437.546875,
+          "top": 130
+        }
+      ],
+      "start": {
+        "x": 378,
+        "y": 299
+      },
+      "end": {
+        "x": 632,
+        "y": 136
+      },
+      "hitClass": "virtual-viewport tiles-scroller file-rows svelte-141dx9j",
+      "content": {
+        "left": 361,
+        "bottom": 915.5,
+        "right": 1583,
+        "top": 118
+      }
+    },
+    "band": {
+      "left": 378,
+      "bottom": 299,
+      "right": 632,
+      "top": 136
+    },
+    "expected": [
+      "selection-00.txt",
+      "selection-01.txt"
+    ],
+    "selected": [
+      "selection-00.txt",
+      "selection-01.txt"
+    ]
+  },
+  {
+    "scale": 1,
+    "zoom": 150,
+    "displayBackend": "wayland",
+    "webkitGTK": "2.52.5",
+    "mode": "tiles",
+    "reverse": true,
+    "geometry": {
+      "appZoom": "150%",
+      "dpr": 1,
+      "entries": [
+        {
+          "name": "selection-00.txt",
+          "left": 373,
+          "bottom": 286.5,
+          "right": 503.4375,
+          "top": 130
+        },
+        {
+          "name": "selection-01.txt",
+          "left": 506.4375,
+          "bottom": 286.5,
+          "right": 636.875,
+          "top": 130
+        },
+        {
+          "name": "selection-02.txt",
+          "left": 639.875,
+          "bottom": 286.5,
+          "right": 770.328125,
+          "top": 130
+        },
+        {
+          "name": "selection-03.txt",
+          "left": 773.328125,
+          "bottom": 286.5,
+          "right": 903.765625,
+          "top": 130
+        },
+        {
+          "name": "selection-04.txt",
+          "left": 906.765625,
+          "bottom": 286.5,
+          "right": 1037.21875,
+          "top": 130
+        },
+        {
+          "name": "selection-05.txt",
+          "left": 1040.21875,
+          "bottom": 286.5,
+          "right": 1170.65625,
+          "top": 130
+        },
+        {
+          "name": "selection-06.txt",
+          "left": 1173.65625,
+          "bottom": 286.5,
+          "right": 1304.109375,
+          "top": 130
+        },
+        {
+          "name": "selection-07.txt",
+          "left": 1307.109375,
+          "bottom": 286.5,
+          "right": 1437.546875,
+          "top": 130
+        }
+      ],
+      "start": {
+        "x": 632,
+        "y": 299
+      },
+      "end": {
+        "x": 378,
+        "y": 136
+      },
+      "hitClass": "virtual-viewport tiles-scroller file-rows svelte-141dx9j",
+      "content": {
+        "left": 361,
+        "bottom": 915.5,
+        "right": 1583,
+        "top": 118
+      }
+    },
+    "band": {
+      "left": 378,
+      "bottom": 299,
+      "right": 632,
+      "top": 136
+    },
+    "expected": [
+      "selection-00.txt",
+      "selection-01.txt"
+    ],
+    "selected": [
+      "selection-00.txt",
+      "selection-01.txt"
+    ]
+  },
+  {
+    "scale": 1.25,
+    "zoom": 100,
+    "displayBackend": "wayland",
+    "webkitGTK": "2.52.5",
+    "mode": "details",
+    "reverse": false,
+    "geometry": {
+      "appZoom": "100%",
+      "dpr": 2,
+      "entries": [
+        {
+          "name": "selection-00.txt",
+          "left": 241,
+          "bottom": 148,
+          "right": 1595,
+          "top": 116
+        },
+        {
+          "name": "selection-01.txt",
+          "left": 241,
+          "bottom": 180,
+          "right": 1595,
+          "top": 148
+        },
+        {
+          "name": "selection-02.txt",
+          "left": 241,
+          "bottom": 212,
+          "right": 1595,
+          "top": 180
+        },
+        {
+          "name": "selection-03.txt",
+          "left": 241,
+          "bottom": 244,
+          "right": 1595,
+          "top": 212
+        },
+        {
+          "name": "selection-04.txt",
+          "left": 241,
+          "bottom": 276,
+          "right": 1595,
+          "top": 244
+        },
+        {
+          "name": "selection-05.txt",
+          "left": 241,
+          "bottom": 308,
+          "right": 1595,
+          "top": 276
+        },
+        {
+          "name": "selection-06.txt",
+          "left": 241,
+          "bottom": 340,
+          "right": 1595,
+          "top": 308
+        },
+        {
+          "name": "selection-07.txt",
+          "left": 241,
+          "bottom": 372,
+          "right": 1595,
+          "top": 340
+        }
+      ],
+      "start": {
+        "x": 246,
+        "y": 384
+      },
+      "end": {
+        "x": 1590,
+        "y": 346
+      },
+      "hitClass": "virtual-viewport file-rows svelte-141dx9j",
+      "content": {
+        "left": 241,
+        "bottom": 941,
+        "right": 1595,
+        "top": 79
+      }
+    },
+    "band": {
+      "left": 246,
+      "bottom": 384,
+      "right": 1590,
+      "top": 346
+    },
+    "expected": [
+      "selection-07.txt"
+    ],
+    "selected": [
+      "selection-07.txt"
+    ]
+  },
+  {
+    "scale": 1.25,
+    "zoom": 100,
+    "displayBackend": "wayland",
+    "webkitGTK": "2.52.5",
+    "mode": "details",
+    "reverse": true,
+    "geometry": {
+      "appZoom": "100%",
+      "dpr": 2,
+      "entries": [
+        {
+          "name": "selection-00.txt",
+          "left": 241,
+          "bottom": 148,
+          "right": 1595,
+          "top": 116
+        },
+        {
+          "name": "selection-01.txt",
+          "left": 241,
+          "bottom": 180,
+          "right": 1595,
+          "top": 148
+        },
+        {
+          "name": "selection-02.txt",
+          "left": 241,
+          "bottom": 212,
+          "right": 1595,
+          "top": 180
+        },
+        {
+          "name": "selection-03.txt",
+          "left": 241,
+          "bottom": 244,
+          "right": 1595,
+          "top": 212
+        },
+        {
+          "name": "selection-04.txt",
+          "left": 241,
+          "bottom": 276,
+          "right": 1595,
+          "top": 244
+        },
+        {
+          "name": "selection-05.txt",
+          "left": 241,
+          "bottom": 308,
+          "right": 1595,
+          "top": 276
+        },
+        {
+          "name": "selection-06.txt",
+          "left": 241,
+          "bottom": 340,
+          "right": 1595,
+          "top": 308
+        },
+        {
+          "name": "selection-07.txt",
+          "left": 241,
+          "bottom": 372,
+          "right": 1595,
+          "top": 340
+        }
+      ],
+      "start": {
+        "x": 1590,
+        "y": 384
+      },
+      "end": {
+        "x": 246,
+        "y": 346
+      },
+      "hitClass": "virtual-viewport file-rows svelte-141dx9j",
+      "content": {
+        "left": 241,
+        "bottom": 941,
+        "right": 1595,
+        "top": 79
+      }
+    },
+    "band": {
+      "left": 246,
+      "bottom": 384,
+      "right": 1590,
+      "top": 346
+    },
+    "expected": [
+      "selection-07.txt"
+    ],
+    "selected": [
+      "selection-07.txt"
+    ]
+  },
+  {
+    "scale": 1.25,
+    "zoom": 100,
+    "displayBackend": "wayland",
+    "webkitGTK": "2.52.5",
+    "mode": "list",
+    "reverse": false,
+    "geometry": {
+      "appZoom": "100%",
+      "dpr": 2,
+      "entries": [
+        {
+          "name": "selection-00.txt",
+          "left": 249,
+          "bottom": 114,
+          "right": 513.390625,
+          "top": 85
+        },
+        {
+          "name": "selection-01.txt",
+          "left": 517.390625,
+          "bottom": 114,
+          "right": 781.796875,
+          "top": 85
+        },
+        {
+          "name": "selection-02.txt",
+          "left": 785.796875,
+          "bottom": 114,
+          "right": 1050.1875,
+          "top": 85
+        },
+        {
+          "name": "selection-03.txt",
+          "left": 1054.1875,
+          "bottom": 114,
+          "right": 1318.59375,
+          "top": 85
+        },
+        {
+          "name": "selection-04.txt",
+          "left": 1322.59375,
+          "bottom": 114,
+          "right": 1586.984375,
+          "top": 85
+        },
+        {
+          "name": "selection-05.txt",
+          "left": 249,
+          "bottom": 144,
+          "right": 513.390625,
+          "top": 115
+        },
+        {
+          "name": "selection-06.txt",
+          "left": 517.390625,
+          "bottom": 144,
+          "right": 781.796875,
+          "top": 115
+        },
+        {
+          "name": "selection-07.txt",
+          "left": 785.796875,
+          "bottom": 144,
+          "right": 1050.1875,
+          "top": 115
+        }
+      ],
+      "start": {
+        "x": 254,
+        "y": 156
+      },
+      "end": {
+        "x": 777,
+        "y": 121
+      },
+      "hitClass": "virtual-viewport list-scroller file-rows svelte-141dx9j",
+      "content": {
+        "left": 241,
+        "bottom": 941,
+        "right": 1595,
+        "top": 79
+      }
+    },
+    "band": {
+      "left": 254,
+      "bottom": 156,
+      "right": 777,
+      "top": 121
+    },
+    "expected": [
+      "selection-05.txt",
+      "selection-06.txt"
+    ],
+    "selected": [
+      "selection-05.txt",
+      "selection-06.txt"
+    ]
+  },
+  {
+    "scale": 1.25,
+    "zoom": 100,
+    "displayBackend": "wayland",
+    "webkitGTK": "2.52.5",
+    "mode": "list",
+    "reverse": true,
+    "geometry": {
+      "appZoom": "100%",
+      "dpr": 2,
+      "entries": [
+        {
+          "name": "selection-00.txt",
+          "left": 249,
+          "bottom": 114,
+          "right": 513.390625,
+          "top": 85
+        },
+        {
+          "name": "selection-01.txt",
+          "left": 517.390625,
+          "bottom": 114,
+          "right": 781.796875,
+          "top": 85
+        },
+        {
+          "name": "selection-02.txt",
+          "left": 785.796875,
+          "bottom": 114,
+          "right": 1050.1875,
+          "top": 85
+        },
+        {
+          "name": "selection-03.txt",
+          "left": 1054.1875,
+          "bottom": 114,
+          "right": 1318.59375,
+          "top": 85
+        },
+        {
+          "name": "selection-04.txt",
+          "left": 1322.59375,
+          "bottom": 114,
+          "right": 1586.984375,
+          "top": 85
+        },
+        {
+          "name": "selection-05.txt",
+          "left": 249,
+          "bottom": 144,
+          "right": 513.390625,
+          "top": 115
+        },
+        {
+          "name": "selection-06.txt",
+          "left": 517.390625,
+          "bottom": 144,
+          "right": 781.796875,
+          "top": 115
+        },
+        {
+          "name": "selection-07.txt",
+          "left": 785.796875,
+          "bottom": 144,
+          "right": 1050.1875,
+          "top": 115
+        }
+      ],
+      "start": {
+        "x": 777,
+        "y": 156
+      },
+      "end": {
+        "x": 254,
+        "y": 121
+      },
+      "hitClass": "virtual-viewport list-scroller file-rows svelte-141dx9j",
+      "content": {
+        "left": 241,
+        "bottom": 941,
+        "right": 1595,
+        "top": 79
+      }
+    },
+    "band": {
+      "left": 254,
+      "bottom": 156,
+      "right": 777,
+      "top": 121
+    },
+    "expected": [
+      "selection-05.txt",
+      "selection-06.txt"
+    ],
+    "selected": [
+      "selection-05.txt",
+      "selection-06.txt"
+    ]
+  },
+  {
+    "scale": 1.25,
+    "zoom": 100,
+    "displayBackend": "wayland",
+    "webkitGTK": "2.52.5",
+    "mode": "tiles",
+    "reverse": false,
+    "geometry": {
+      "appZoom": "100%",
+      "dpr": 2,
+      "entries": [
+        {
+          "name": "selection-00.txt",
+          "left": 249,
+          "bottom": 192,
+          "right": 336.328125,
+          "top": 87
+        },
+        {
+          "name": "selection-01.txt",
+          "left": 338.328125,
+          "bottom": 192,
+          "right": 425.65625,
+          "top": 87
+        },
+        {
+          "name": "selection-02.txt",
+          "left": 427.65625,
+          "bottom": 192,
+          "right": 514.984375,
+          "top": 87
+        },
+        {
+          "name": "selection-03.txt",
+          "left": 516.984375,
+          "bottom": 192,
+          "right": 604.328125,
+          "top": 87
+        },
+        {
+          "name": "selection-04.txt",
+          "left": 606.328125,
+          "bottom": 192,
+          "right": 693.65625,
+          "top": 87
+        },
+        {
+          "name": "selection-05.txt",
+          "left": 695.65625,
+          "bottom": 192,
+          "right": 782.984375,
+          "top": 87
+        },
+        {
+          "name": "selection-06.txt",
+          "left": 784.984375,
+          "bottom": 192,
+          "right": 872.328125,
+          "top": 87
+        },
+        {
+          "name": "selection-07.txt",
+          "left": 874.328125,
+          "bottom": 192,
+          "right": 961.65625,
+          "top": 87
+        }
+      ],
+      "start": {
+        "x": 254,
+        "y": 204
+      },
+      "end": {
+        "x": 421,
+        "y": 93
+      },
+      "hitClass": "virtual-viewport tiles-scroller file-rows svelte-141dx9j",
+      "content": {
+        "left": 241,
+        "bottom": 941,
+        "right": 1595,
+        "top": 79
+      }
+    },
+    "band": {
+      "left": 254,
+      "bottom": 204,
+      "right": 421,
+      "top": 93
+    },
+    "expected": [
+      "selection-00.txt",
+      "selection-01.txt"
+    ],
+    "selected": [
+      "selection-00.txt",
+      "selection-01.txt"
+    ]
+  },
+  {
+    "scale": 1.25,
+    "zoom": 100,
+    "displayBackend": "wayland",
+    "webkitGTK": "2.52.5",
+    "mode": "tiles",
+    "reverse": true,
+    "geometry": {
+      "appZoom": "100%",
+      "dpr": 2,
+      "entries": [
+        {
+          "name": "selection-00.txt",
+          "left": 249,
+          "bottom": 192,
+          "right": 336.328125,
+          "top": 87
+        },
+        {
+          "name": "selection-01.txt",
+          "left": 338.328125,
+          "bottom": 192,
+          "right": 425.65625,
+          "top": 87
+        },
+        {
+          "name": "selection-02.txt",
+          "left": 427.65625,
+          "bottom": 192,
+          "right": 514.984375,
+          "top": 87
+        },
+        {
+          "name": "selection-03.txt",
+          "left": 516.984375,
+          "bottom": 192,
+          "right": 604.328125,
+          "top": 87
+        },
+        {
+          "name": "selection-04.txt",
+          "left": 606.328125,
+          "bottom": 192,
+          "right": 693.65625,
+          "top": 87
+        },
+        {
+          "name": "selection-05.txt",
+          "left": 695.65625,
+          "bottom": 192,
+          "right": 782.984375,
+          "top": 87
+        },
+        {
+          "name": "selection-06.txt",
+          "left": 784.984375,
+          "bottom": 192,
+          "right": 872.328125,
+          "top": 87
+        },
+        {
+          "name": "selection-07.txt",
+          "left": 874.328125,
+          "bottom": 192,
+          "right": 961.65625,
+          "top": 87
+        }
+      ],
+      "start": {
+        "x": 421,
+        "y": 204
+      },
+      "end": {
+        "x": 254,
+        "y": 93
+      },
+      "hitClass": "virtual-viewport tiles-scroller file-rows svelte-141dx9j",
+      "content": {
+        "left": 241,
+        "bottom": 941,
+        "right": 1595,
+        "top": 79
+      }
+    },
+    "band": {
+      "left": 254,
+      "bottom": 204,
+      "right": 421,
+      "top": 93
+    },
+    "expected": [
+      "selection-00.txt",
+      "selection-01.txt"
+    ],
+    "selected": [
+      "selection-00.txt",
+      "selection-01.txt"
+    ]
+  },
+  {
+    "scale": 1.25,
+    "zoom": 150,
+    "displayBackend": "wayland",
+    "webkitGTK": "2.52.5",
+    "mode": "details",
+    "reverse": false,
+    "geometry": {
+      "appZoom": "150%",
+      "dpr": 2,
+      "entries": [
+        {
+          "name": "selection-00.txt",
+          "left": 361.5,
+          "bottom": 222,
+          "right": 1582.5,
+          "top": 174
+        },
+        {
+          "name": "selection-01.txt",
+          "left": 361.5,
+          "bottom": 270,
+          "right": 1582.5,
+          "top": 222
+        },
+        {
+          "name": "selection-02.txt",
+          "left": 361.5,
+          "bottom": 318,
+          "right": 1582.5,
+          "top": 270
+        },
+        {
+          "name": "selection-03.txt",
+          "left": 361.5,
+          "bottom": 366,
+          "right": 1582.5,
+          "top": 318
+        },
+        {
+          "name": "selection-04.txt",
+          "left": 361.5,
+          "bottom": 414,
+          "right": 1582.5,
+          "top": 366
+        },
+        {
+          "name": "selection-05.txt",
+          "left": 361.5,
+          "bottom": 462,
+          "right": 1582.5,
+          "top": 414
+        },
+        {
+          "name": "selection-06.txt",
+          "left": 361.5,
+          "bottom": 510,
+          "right": 1582.5,
+          "top": 462
+        },
+        {
+          "name": "selection-07.txt",
+          "left": 361.5,
+          "bottom": 558,
+          "right": 1582.5,
+          "top": 510
+        }
+      ],
+      "start": {
+        "x": 367,
+        "y": 570
+      },
+      "end": {
+        "x": 1578,
+        "y": 516
+      },
+      "hitClass": "virtual-viewport file-rows svelte-141dx9j",
+      "content": {
+        "left": 361.5,
+        "bottom": 915,
+        "right": 1582.5,
+        "top": 118.5
+      }
+    },
+    "band": {
+      "left": 367,
+      "bottom": 570,
+      "right": 1578,
+      "top": 516
+    },
+    "expected": [
+      "selection-07.txt"
+    ],
+    "selected": [
+      "selection-07.txt"
+    ]
+  },
+  {
+    "scale": 1.25,
+    "zoom": 150,
+    "displayBackend": "wayland",
+    "webkitGTK": "2.52.5",
+    "mode": "details",
+    "reverse": true,
+    "geometry": {
+      "appZoom": "150%",
+      "dpr": 2,
+      "entries": [
+        {
+          "name": "selection-00.txt",
+          "left": 361.5,
+          "bottom": 222,
+          "right": 1582.5,
+          "top": 174
+        },
+        {
+          "name": "selection-01.txt",
+          "left": 361.5,
+          "bottom": 270,
+          "right": 1582.5,
+          "top": 222
+        },
+        {
+          "name": "selection-02.txt",
+          "left": 361.5,
+          "bottom": 318,
+          "right": 1582.5,
+          "top": 270
+        },
+        {
+          "name": "selection-03.txt",
+          "left": 361.5,
+          "bottom": 366,
+          "right": 1582.5,
+          "top": 318
+        },
+        {
+          "name": "selection-04.txt",
+          "left": 361.5,
+          "bottom": 414,
+          "right": 1582.5,
+          "top": 366
+        },
+        {
+          "name": "selection-05.txt",
+          "left": 361.5,
+          "bottom": 462,
+          "right": 1582.5,
+          "top": 414
+        },
+        {
+          "name": "selection-06.txt",
+          "left": 361.5,
+          "bottom": 510,
+          "right": 1582.5,
+          "top": 462
+        },
+        {
+          "name": "selection-07.txt",
+          "left": 361.5,
+          "bottom": 558,
+          "right": 1582.5,
+          "top": 510
+        }
+      ],
+      "start": {
+        "x": 1578,
+        "y": 570
+      },
+      "end": {
+        "x": 367,
+        "y": 516
+      },
+      "hitClass": "virtual-viewport file-rows svelte-141dx9j",
+      "content": {
+        "left": 361.5,
+        "bottom": 915,
+        "right": 1582.5,
+        "top": 118.5
+      }
+    },
+    "band": {
+      "left": 367,
+      "bottom": 570,
+      "right": 1578,
+      "top": 516
+    },
+    "expected": [
+      "selection-07.txt"
+    ],
+    "selected": [
+      "selection-07.txt"
+    ]
+  },
+  {
+    "scale": 1.25,
+    "zoom": 150,
+    "displayBackend": "wayland",
+    "webkitGTK": "2.52.5",
+    "mode": "list",
+    "reverse": false,
+    "geometry": {
+      "appZoom": "150%",
+      "dpr": 2,
+      "entries": [
+        {
+          "name": "selection-00.txt",
+          "left": 373.5,
+          "bottom": 171.5,
+          "right": 768.5,
+          "top": 127.5
+        },
+        {
+          "name": "selection-01.txt",
+          "left": 774.5,
+          "bottom": 171.5,
+          "right": 1169.5,
+          "top": 127.5
+        },
+        {
+          "name": "selection-02.txt",
+          "left": 1175.5,
+          "bottom": 171.5,
+          "right": 1570.5,
+          "top": 127.5
+        },
+        {
+          "name": "selection-03.txt",
+          "left": 373.5,
+          "bottom": 216.5,
+          "right": 768.5,
+          "top": 172.5
+        },
+        {
+          "name": "selection-04.txt",
+          "left": 774.5,
+          "bottom": 216.5,
+          "right": 1169.5,
+          "top": 172.5
+        },
+        {
+          "name": "selection-05.txt",
+          "left": 1175.5,
+          "bottom": 216.5,
+          "right": 1570.5,
+          "top": 172.5
+        },
+        {
+          "name": "selection-06.txt",
+          "left": 373.5,
+          "bottom": 261.5,
+          "right": 768.5,
+          "top": 217.5
+        },
+        {
+          "name": "selection-07.txt",
+          "left": 774.5,
+          "bottom": 261.5,
+          "right": 1169.5,
+          "top": 217.5
+        }
+      ],
+      "start": {
+        "x": 379,
+        "y": 274
+      },
+      "end": {
+        "x": 1165,
+        "y": 224
+      },
+      "hitClass": "virtual-viewport list-scroller file-rows svelte-141dx9j",
+      "content": {
+        "left": 361.5,
+        "bottom": 915,
+        "right": 1582.5,
+        "top": 118.5
+      }
+    },
+    "band": {
+      "left": 379,
+      "bottom": 274,
+      "right": 1165,
+      "top": 224
+    },
+    "expected": [
+      "selection-06.txt",
+      "selection-07.txt"
+    ],
+    "selected": [
+      "selection-06.txt",
+      "selection-07.txt"
+    ]
+  },
+  {
+    "scale": 1.25,
+    "zoom": 150,
+    "displayBackend": "wayland",
+    "webkitGTK": "2.52.5",
+    "mode": "list",
+    "reverse": true,
+    "geometry": {
+      "appZoom": "150%",
+      "dpr": 2,
+      "entries": [
+        {
+          "name": "selection-00.txt",
+          "left": 373.5,
+          "bottom": 171.5,
+          "right": 768.5,
+          "top": 127.5
+        },
+        {
+          "name": "selection-01.txt",
+          "left": 774.5,
+          "bottom": 171.5,
+          "right": 1169.5,
+          "top": 127.5
+        },
+        {
+          "name": "selection-02.txt",
+          "left": 1175.5,
+          "bottom": 171.5,
+          "right": 1570.5,
+          "top": 127.5
+        },
+        {
+          "name": "selection-03.txt",
+          "left": 373.5,
+          "bottom": 216.5,
+          "right": 768.5,
+          "top": 172.5
+        },
+        {
+          "name": "selection-04.txt",
+          "left": 774.5,
+          "bottom": 216.5,
+          "right": 1169.5,
+          "top": 172.5
+        },
+        {
+          "name": "selection-05.txt",
+          "left": 1175.5,
+          "bottom": 216.5,
+          "right": 1570.5,
+          "top": 172.5
+        },
+        {
+          "name": "selection-06.txt",
+          "left": 373.5,
+          "bottom": 261.5,
+          "right": 768.5,
+          "top": 217.5
+        },
+        {
+          "name": "selection-07.txt",
+          "left": 774.5,
+          "bottom": 261.5,
+          "right": 1169.5,
+          "top": 217.5
+        }
+      ],
+      "start": {
+        "x": 1165,
+        "y": 274
+      },
+      "end": {
+        "x": 379,
+        "y": 224
+      },
+      "hitClass": "virtual-viewport list-scroller file-rows svelte-141dx9j",
+      "content": {
+        "left": 361.5,
+        "bottom": 915,
+        "right": 1582.5,
+        "top": 118.5
+      }
+    },
+    "band": {
+      "left": 379,
+      "bottom": 274,
+      "right": 1165,
+      "top": 224
+    },
+    "expected": [
+      "selection-06.txt",
+      "selection-07.txt"
+    ],
+    "selected": [
+      "selection-06.txt",
+      "selection-07.txt"
+    ]
+  },
+  {
+    "scale": 1.25,
+    "zoom": 150,
+    "displayBackend": "wayland",
+    "webkitGTK": "2.52.5",
+    "mode": "tiles",
+    "reverse": false,
+    "geometry": {
+      "appZoom": "150%",
+      "dpr": 2,
+      "entries": [
+        {
+          "name": "selection-00.txt",
+          "left": 373.5,
+          "bottom": 288,
+          "right": 503.828125,
+          "top": 130.5
+        },
+        {
+          "name": "selection-01.txt",
+          "left": 506.828125,
+          "bottom": 288,
+          "right": 637.15625,
+          "top": 130.5
+        },
+        {
+          "name": "selection-02.txt",
+          "left": 640.15625,
+          "bottom": 288,
+          "right": 770.5,
+          "top": 130.5
+        },
+        {
+          "name": "selection-03.txt",
+          "left": 773.5,
+          "bottom": 288,
+          "right": 903.828125,
+          "top": 130.5
+        },
+        {
+          "name": "selection-04.txt",
+          "left": 906.828125,
+          "bottom": 288,
+          "right": 1037.15625,
+          "top": 130.5
+        },
+        {
+          "name": "selection-05.txt",
+          "left": 1040.15625,
+          "bottom": 288,
+          "right": 1170.5,
+          "top": 130.5
+        },
+        {
+          "name": "selection-06.txt",
+          "left": 1173.5,
+          "bottom": 288,
+          "right": 1303.828125,
+          "top": 130.5
+        },
+        {
+          "name": "selection-07.txt",
+          "left": 1306.828125,
+          "bottom": 288,
+          "right": 1437.15625,
+          "top": 130.5
+        }
+      ],
+      "start": {
+        "x": 379,
+        "y": 300
+      },
+      "end": {
+        "x": 632,
+        "y": 137
+      },
+      "hitClass": "virtual-viewport tiles-scroller file-rows svelte-141dx9j",
+      "content": {
+        "left": 361.5,
+        "bottom": 915,
+        "right": 1582.5,
+        "top": 118.5
+      }
+    },
+    "band": {
+      "left": 379,
+      "bottom": 300,
+      "right": 632,
+      "top": 137
+    },
+    "expected": [
+      "selection-00.txt",
+      "selection-01.txt"
+    ],
+    "selected": [
+      "selection-00.txt",
+      "selection-01.txt"
+    ]
+  },
+  {
+    "scale": 1.25,
+    "zoom": 150,
+    "displayBackend": "wayland",
+    "webkitGTK": "2.52.5",
+    "mode": "tiles",
+    "reverse": true,
+    "geometry": {
+      "appZoom": "150%",
+      "dpr": 2,
+      "entries": [
+        {
+          "name": "selection-00.txt",
+          "left": 373.5,
+          "bottom": 288,
+          "right": 503.828125,
+          "top": 130.5
+        },
+        {
+          "name": "selection-01.txt",
+          "left": 506.828125,
+          "bottom": 288,
+          "right": 637.15625,
+          "top": 130.5
+        },
+        {
+          "name": "selection-02.txt",
+          "left": 640.15625,
+          "bottom": 288,
+          "right": 770.5,
+          "top": 130.5
+        },
+        {
+          "name": "selection-03.txt",
+          "left": 773.5,
+          "bottom": 288,
+          "right": 903.828125,
+          "top": 130.5
+        },
+        {
+          "name": "selection-04.txt",
+          "left": 906.828125,
+          "bottom": 288,
+          "right": 1037.15625,
+          "top": 130.5
+        },
+        {
+          "name": "selection-05.txt",
+          "left": 1040.15625,
+          "bottom": 288,
+          "right": 1170.5,
+          "top": 130.5
+        },
+        {
+          "name": "selection-06.txt",
+          "left": 1173.5,
+          "bottom": 288,
+          "right": 1303.828125,
+          "top": 130.5
+        },
+        {
+          "name": "selection-07.txt",
+          "left": 1306.828125,
+          "bottom": 288,
+          "right": 1437.15625,
+          "top": 130.5
+        }
+      ],
+      "start": {
+        "x": 632,
+        "y": 300
+      },
+      "end": {
+        "x": 379,
+        "y": 137
+      },
+      "hitClass": "virtual-viewport tiles-scroller file-rows svelte-141dx9j",
+      "content": {
+        "left": 361.5,
+        "bottom": 915,
+        "right": 1582.5,
+        "top": 118.5
+      }
+    },
+    "band": {
+      "left": 379,
+      "bottom": 300,
+      "right": 632,
+      "top": 137
+    },
+    "expected": [
+      "selection-00.txt",
+      "selection-01.txt"
+    ],
+    "selected": [
+      "selection-00.txt",
+      "selection-01.txt"
+    ]
+  },
+  {
+    "scale": 1.5,
+    "zoom": 100,
+    "displayBackend": "wayland",
+    "webkitGTK": "2.52.5",
+    "mode": "details",
+    "reverse": false,
+    "geometry": {
+      "appZoom": "100%",
+      "dpr": 2,
+      "entries": [
+        {
+          "name": "selection-00.txt",
+          "left": 241,
+          "bottom": 148,
+          "right": 1595,
+          "top": 116
+        },
+        {
+          "name": "selection-01.txt",
+          "left": 241,
+          "bottom": 180,
+          "right": 1595,
+          "top": 148
+        },
+        {
+          "name": "selection-02.txt",
+          "left": 241,
+          "bottom": 212,
+          "right": 1595,
+          "top": 180
+        },
+        {
+          "name": "selection-03.txt",
+          "left": 241,
+          "bottom": 244,
+          "right": 1595,
+          "top": 212
+        },
+        {
+          "name": "selection-04.txt",
+          "left": 241,
+          "bottom": 276,
+          "right": 1595,
+          "top": 244
+        },
+        {
+          "name": "selection-05.txt",
+          "left": 241,
+          "bottom": 308,
+          "right": 1595,
+          "top": 276
+        },
+        {
+          "name": "selection-06.txt",
+          "left": 241,
+          "bottom": 340,
+          "right": 1595,
+          "top": 308
+        },
+        {
+          "name": "selection-07.txt",
+          "left": 241,
+          "bottom": 372,
+          "right": 1595,
+          "top": 340
+        }
+      ],
+      "start": {
+        "x": 246,
+        "y": 384
+      },
+      "end": {
+        "x": 1590,
+        "y": 346
+      },
+      "hitClass": "virtual-viewport file-rows svelte-141dx9j",
+      "content": {
+        "left": 241,
+        "bottom": 941,
+        "right": 1595,
+        "top": 79
+      }
+    },
+    "band": {
+      "left": 246,
+      "bottom": 384,
+      "right": 1590,
+      "top": 346
+    },
+    "expected": [
+      "selection-07.txt"
+    ],
+    "selected": [
+      "selection-07.txt"
+    ]
+  },
+  {
+    "scale": 1.5,
+    "zoom": 100,
+    "displayBackend": "wayland",
+    "webkitGTK": "2.52.5",
+    "mode": "details",
+    "reverse": true,
+    "geometry": {
+      "appZoom": "100%",
+      "dpr": 2,
+      "entries": [
+        {
+          "name": "selection-00.txt",
+          "left": 241,
+          "bottom": 148,
+          "right": 1595,
+          "top": 116
+        },
+        {
+          "name": "selection-01.txt",
+          "left": 241,
+          "bottom": 180,
+          "right": 1595,
+          "top": 148
+        },
+        {
+          "name": "selection-02.txt",
+          "left": 241,
+          "bottom": 212,
+          "right": 1595,
+          "top": 180
+        },
+        {
+          "name": "selection-03.txt",
+          "left": 241,
+          "bottom": 244,
+          "right": 1595,
+          "top": 212
+        },
+        {
+          "name": "selection-04.txt",
+          "left": 241,
+          "bottom": 276,
+          "right": 1595,
+          "top": 244
+        },
+        {
+          "name": "selection-05.txt",
+          "left": 241,
+          "bottom": 308,
+          "right": 1595,
+          "top": 276
+        },
+        {
+          "name": "selection-06.txt",
+          "left": 241,
+          "bottom": 340,
+          "right": 1595,
+          "top": 308
+        },
+        {
+          "name": "selection-07.txt",
+          "left": 241,
+          "bottom": 372,
+          "right": 1595,
+          "top": 340
+        }
+      ],
+      "start": {
+        "x": 1590,
+        "y": 384
+      },
+      "end": {
+        "x": 246,
+        "y": 346
+      },
+      "hitClass": "virtual-viewport file-rows svelte-141dx9j",
+      "content": {
+        "left": 241,
+        "bottom": 941,
+        "right": 1595,
+        "top": 79
+      }
+    },
+    "band": {
+      "left": 246,
+      "bottom": 384,
+      "right": 1590,
+      "top": 346
+    },
+    "expected": [
+      "selection-07.txt"
+    ],
+    "selected": [
+      "selection-07.txt"
+    ]
+  },
+  {
+    "scale": 1.5,
+    "zoom": 100,
+    "displayBackend": "wayland",
+    "webkitGTK": "2.52.5",
+    "mode": "list",
+    "reverse": false,
+    "geometry": {
+      "appZoom": "100%",
+      "dpr": 2,
+      "entries": [
+        {
+          "name": "selection-00.txt",
+          "left": 249,
+          "bottom": 114,
+          "right": 513.390625,
+          "top": 85
+        },
+        {
+          "name": "selection-01.txt",
+          "left": 517.390625,
+          "bottom": 114,
+          "right": 781.796875,
+          "top": 85
+        },
+        {
+          "name": "selection-02.txt",
+          "left": 785.796875,
+          "bottom": 114,
+          "right": 1050.1875,
+          "top": 85
+        },
+        {
+          "name": "selection-03.txt",
+          "left": 1054.1875,
+          "bottom": 114,
+          "right": 1318.59375,
+          "top": 85
+        },
+        {
+          "name": "selection-04.txt",
+          "left": 1322.59375,
+          "bottom": 114,
+          "right": 1586.984375,
+          "top": 85
+        },
+        {
+          "name": "selection-05.txt",
+          "left": 249,
+          "bottom": 144,
+          "right": 513.390625,
+          "top": 115
+        },
+        {
+          "name": "selection-06.txt",
+          "left": 517.390625,
+          "bottom": 144,
+          "right": 781.796875,
+          "top": 115
+        },
+        {
+          "name": "selection-07.txt",
+          "left": 785.796875,
+          "bottom": 144,
+          "right": 1050.1875,
+          "top": 115
+        }
+      ],
+      "start": {
+        "x": 254,
+        "y": 156
+      },
+      "end": {
+        "x": 777,
+        "y": 121
+      },
+      "hitClass": "virtual-viewport list-scroller file-rows svelte-141dx9j",
+      "content": {
+        "left": 241,
+        "bottom": 941,
+        "right": 1595,
+        "top": 79
+      }
+    },
+    "band": {
+      "left": 254,
+      "bottom": 156,
+      "right": 777,
+      "top": 121
+    },
+    "expected": [
+      "selection-05.txt",
+      "selection-06.txt"
+    ],
+    "selected": [
+      "selection-05.txt",
+      "selection-06.txt"
+    ]
+  },
+  {
+    "scale": 1.5,
+    "zoom": 100,
+    "displayBackend": "wayland",
+    "webkitGTK": "2.52.5",
+    "mode": "list",
+    "reverse": true,
+    "geometry": {
+      "appZoom": "100%",
+      "dpr": 2,
+      "entries": [
+        {
+          "name": "selection-00.txt",
+          "left": 249,
+          "bottom": 114,
+          "right": 513.390625,
+          "top": 85
+        },
+        {
+          "name": "selection-01.txt",
+          "left": 517.390625,
+          "bottom": 114,
+          "right": 781.796875,
+          "top": 85
+        },
+        {
+          "name": "selection-02.txt",
+          "left": 785.796875,
+          "bottom": 114,
+          "right": 1050.1875,
+          "top": 85
+        },
+        {
+          "name": "selection-03.txt",
+          "left": 1054.1875,
+          "bottom": 114,
+          "right": 1318.59375,
+          "top": 85
+        },
+        {
+          "name": "selection-04.txt",
+          "left": 1322.59375,
+          "bottom": 114,
+          "right": 1586.984375,
+          "top": 85
+        },
+        {
+          "name": "selection-05.txt",
+          "left": 249,
+          "bottom": 144,
+          "right": 513.390625,
+          "top": 115
+        },
+        {
+          "name": "selection-06.txt",
+          "left": 517.390625,
+          "bottom": 144,
+          "right": 781.796875,
+          "top": 115
+        },
+        {
+          "name": "selection-07.txt",
+          "left": 785.796875,
+          "bottom": 144,
+          "right": 1050.1875,
+          "top": 115
+        }
+      ],
+      "start": {
+        "x": 777,
+        "y": 156
+      },
+      "end": {
+        "x": 254,
+        "y": 121
+      },
+      "hitClass": "virtual-viewport list-scroller file-rows svelte-141dx9j",
+      "content": {
+        "left": 241,
+        "bottom": 941,
+        "right": 1595,
+        "top": 79
+      }
+    },
+    "band": {
+      "left": 254,
+      "bottom": 156,
+      "right": 777,
+      "top": 121
+    },
+    "expected": [
+      "selection-05.txt",
+      "selection-06.txt"
+    ],
+    "selected": [
+      "selection-05.txt",
+      "selection-06.txt"
+    ]
+  },
+  {
+    "scale": 1.5,
+    "zoom": 100,
+    "displayBackend": "wayland",
+    "webkitGTK": "2.52.5",
+    "mode": "tiles",
+    "reverse": false,
+    "geometry": {
+      "appZoom": "100%",
+      "dpr": 2,
+      "entries": [
+        {
+          "name": "selection-00.txt",
+          "left": 249,
+          "bottom": 192,
+          "right": 336.328125,
+          "top": 87
+        },
+        {
+          "name": "selection-01.txt",
+          "left": 338.328125,
+          "bottom": 192,
+          "right": 425.65625,
+          "top": 87
+        },
+        {
+          "name": "selection-02.txt",
+          "left": 427.65625,
+          "bottom": 192,
+          "right": 514.984375,
+          "top": 87
+        },
+        {
+          "name": "selection-03.txt",
+          "left": 516.984375,
+          "bottom": 192,
+          "right": 604.328125,
+          "top": 87
+        },
+        {
+          "name": "selection-04.txt",
+          "left": 606.328125,
+          "bottom": 192,
+          "right": 693.65625,
+          "top": 87
+        },
+        {
+          "name": "selection-05.txt",
+          "left": 695.65625,
+          "bottom": 192,
+          "right": 782.984375,
+          "top": 87
+        },
+        {
+          "name": "selection-06.txt",
+          "left": 784.984375,
+          "bottom": 192,
+          "right": 872.328125,
+          "top": 87
+        },
+        {
+          "name": "selection-07.txt",
+          "left": 874.328125,
+          "bottom": 192,
+          "right": 961.65625,
+          "top": 87
+        }
+      ],
+      "start": {
+        "x": 254,
+        "y": 204
+      },
+      "end": {
+        "x": 421,
+        "y": 93
+      },
+      "hitClass": "virtual-viewport tiles-scroller file-rows svelte-141dx9j",
+      "content": {
+        "left": 241,
+        "bottom": 941,
+        "right": 1595,
+        "top": 79
+      }
+    },
+    "band": {
+      "left": 254,
+      "bottom": 204,
+      "right": 421,
+      "top": 93
+    },
+    "expected": [
+      "selection-00.txt",
+      "selection-01.txt"
+    ],
+    "selected": [
+      "selection-00.txt",
+      "selection-01.txt"
+    ]
+  },
+  {
+    "scale": 1.5,
+    "zoom": 100,
+    "displayBackend": "wayland",
+    "webkitGTK": "2.52.5",
+    "mode": "tiles",
+    "reverse": true,
+    "geometry": {
+      "appZoom": "100%",
+      "dpr": 2,
+      "entries": [
+        {
+          "name": "selection-00.txt",
+          "left": 249,
+          "bottom": 192,
+          "right": 336.328125,
+          "top": 87
+        },
+        {
+          "name": "selection-01.txt",
+          "left": 338.328125,
+          "bottom": 192,
+          "right": 425.65625,
+          "top": 87
+        },
+        {
+          "name": "selection-02.txt",
+          "left": 427.65625,
+          "bottom": 192,
+          "right": 514.984375,
+          "top": 87
+        },
+        {
+          "name": "selection-03.txt",
+          "left": 516.984375,
+          "bottom": 192,
+          "right": 604.328125,
+          "top": 87
+        },
+        {
+          "name": "selection-04.txt",
+          "left": 606.328125,
+          "bottom": 192,
+          "right": 693.65625,
+          "top": 87
+        },
+        {
+          "name": "selection-05.txt",
+          "left": 695.65625,
+          "bottom": 192,
+          "right": 782.984375,
+          "top": 87
+        },
+        {
+          "name": "selection-06.txt",
+          "left": 784.984375,
+          "bottom": 192,
+          "right": 872.328125,
+          "top": 87
+        },
+        {
+          "name": "selection-07.txt",
+          "left": 874.328125,
+          "bottom": 192,
+          "right": 961.65625,
+          "top": 87
+        }
+      ],
+      "start": {
+        "x": 421,
+        "y": 204
+      },
+      "end": {
+        "x": 254,
+        "y": 93
+      },
+      "hitClass": "virtual-viewport tiles-scroller file-rows svelte-141dx9j",
+      "content": {
+        "left": 241,
+        "bottom": 941,
+        "right": 1595,
+        "top": 79
+      }
+    },
+    "band": {
+      "left": 254,
+      "bottom": 204,
+      "right": 421,
+      "top": 93
+    },
+    "expected": [
+      "selection-00.txt",
+      "selection-01.txt"
+    ],
+    "selected": [
+      "selection-00.txt",
+      "selection-01.txt"
+    ]
+  },
+  {
+    "scale": 1.5,
+    "zoom": 150,
+    "displayBackend": "wayland",
+    "webkitGTK": "2.52.5",
+    "mode": "details",
+    "reverse": false,
+    "geometry": {
+      "appZoom": "150%",
+      "dpr": 2,
+      "entries": [
+        {
+          "name": "selection-00.txt",
+          "left": 361.5,
+          "bottom": 222,
+          "right": 1582.5,
+          "top": 174
+        },
+        {
+          "name": "selection-01.txt",
+          "left": 361.5,
+          "bottom": 270,
+          "right": 1582.5,
+          "top": 222
+        },
+        {
+          "name": "selection-02.txt",
+          "left": 361.5,
+          "bottom": 318,
+          "right": 1582.5,
+          "top": 270
+        },
+        {
+          "name": "selection-03.txt",
+          "left": 361.5,
+          "bottom": 366,
+          "right": 1582.5,
+          "top": 318
+        },
+        {
+          "name": "selection-04.txt",
+          "left": 361.5,
+          "bottom": 414,
+          "right": 1582.5,
+          "top": 366
+        },
+        {
+          "name": "selection-05.txt",
+          "left": 361.5,
+          "bottom": 462,
+          "right": 1582.5,
+          "top": 414
+        },
+        {
+          "name": "selection-06.txt",
+          "left": 361.5,
+          "bottom": 510,
+          "right": 1582.5,
+          "top": 462
+        },
+        {
+          "name": "selection-07.txt",
+          "left": 361.5,
+          "bottom": 558,
+          "right": 1582.5,
+          "top": 510
+        }
+      ],
+      "start": {
+        "x": 367,
+        "y": 570
+      },
+      "end": {
+        "x": 1578,
+        "y": 516
+      },
+      "hitClass": "virtual-viewport file-rows svelte-141dx9j",
+      "content": {
+        "left": 361.5,
+        "bottom": 915,
+        "right": 1582.5,
+        "top": 118.5
+      }
+    },
+    "band": {
+      "left": 367,
+      "bottom": 570,
+      "right": 1578,
+      "top": 516
+    },
+    "expected": [
+      "selection-07.txt"
+    ],
+    "selected": [
+      "selection-07.txt"
+    ]
+  },
+  {
+    "scale": 1.5,
+    "zoom": 150,
+    "displayBackend": "wayland",
+    "webkitGTK": "2.52.5",
+    "mode": "details",
+    "reverse": true,
+    "geometry": {
+      "appZoom": "150%",
+      "dpr": 2,
+      "entries": [
+        {
+          "name": "selection-00.txt",
+          "left": 361.5,
+          "bottom": 222,
+          "right": 1582.5,
+          "top": 174
+        },
+        {
+          "name": "selection-01.txt",
+          "left": 361.5,
+          "bottom": 270,
+          "right": 1582.5,
+          "top": 222
+        },
+        {
+          "name": "selection-02.txt",
+          "left": 361.5,
+          "bottom": 318,
+          "right": 1582.5,
+          "top": 270
+        },
+        {
+          "name": "selection-03.txt",
+          "left": 361.5,
+          "bottom": 366,
+          "right": 1582.5,
+          "top": 318
+        },
+        {
+          "name": "selection-04.txt",
+          "left": 361.5,
+          "bottom": 414,
+          "right": 1582.5,
+          "top": 366
+        },
+        {
+          "name": "selection-05.txt",
+          "left": 361.5,
+          "bottom": 462,
+          "right": 1582.5,
+          "top": 414
+        },
+        {
+          "name": "selection-06.txt",
+          "left": 361.5,
+          "bottom": 510,
+          "right": 1582.5,
+          "top": 462
+        },
+        {
+          "name": "selection-07.txt",
+          "left": 361.5,
+          "bottom": 558,
+          "right": 1582.5,
+          "top": 510
+        }
+      ],
+      "start": {
+        "x": 1578,
+        "y": 570
+      },
+      "end": {
+        "x": 367,
+        "y": 516
+      },
+      "hitClass": "virtual-viewport file-rows svelte-141dx9j",
+      "content": {
+        "left": 361.5,
+        "bottom": 915,
+        "right": 1582.5,
+        "top": 118.5
+      }
+    },
+    "band": {
+      "left": 367,
+      "bottom": 570,
+      "right": 1578,
+      "top": 516
+    },
+    "expected": [
+      "selection-07.txt"
+    ],
+    "selected": [
+      "selection-07.txt"
+    ]
+  },
+  {
+    "scale": 1.5,
+    "zoom": 150,
+    "displayBackend": "wayland",
+    "webkitGTK": "2.52.5",
+    "mode": "list",
+    "reverse": false,
+    "geometry": {
+      "appZoom": "150%",
+      "dpr": 2,
+      "entries": [
+        {
+          "name": "selection-00.txt",
+          "left": 373.5,
+          "bottom": 171.5,
+          "right": 768.5,
+          "top": 127.5
+        },
+        {
+          "name": "selection-01.txt",
+          "left": 774.5,
+          "bottom": 171.5,
+          "right": 1169.5,
+          "top": 127.5
+        },
+        {
+          "name": "selection-02.txt",
+          "left": 1175.5,
+          "bottom": 171.5,
+          "right": 1570.5,
+          "top": 127.5
+        },
+        {
+          "name": "selection-03.txt",
+          "left": 373.5,
+          "bottom": 216.5,
+          "right": 768.5,
+          "top": 172.5
+        },
+        {
+          "name": "selection-04.txt",
+          "left": 774.5,
+          "bottom": 216.5,
+          "right": 1169.5,
+          "top": 172.5
+        },
+        {
+          "name": "selection-05.txt",
+          "left": 1175.5,
+          "bottom": 216.5,
+          "right": 1570.5,
+          "top": 172.5
+        },
+        {
+          "name": "selection-06.txt",
+          "left": 373.5,
+          "bottom": 261.5,
+          "right": 768.5,
+          "top": 217.5
+        },
+        {
+          "name": "selection-07.txt",
+          "left": 774.5,
+          "bottom": 261.5,
+          "right": 1169.5,
+          "top": 217.5
+        }
+      ],
+      "start": {
+        "x": 379,
+        "y": 274
+      },
+      "end": {
+        "x": 1165,
+        "y": 224
+      },
+      "hitClass": "virtual-viewport list-scroller file-rows svelte-141dx9j",
+      "content": {
+        "left": 361.5,
+        "bottom": 915,
+        "right": 1582.5,
+        "top": 118.5
+      }
+    },
+    "band": {
+      "left": 379,
+      "bottom": 274,
+      "right": 1165,
+      "top": 224
+    },
+    "expected": [
+      "selection-06.txt",
+      "selection-07.txt"
+    ],
+    "selected": [
+      "selection-06.txt",
+      "selection-07.txt"
+    ]
+  },
+  {
+    "scale": 1.5,
+    "zoom": 150,
+    "displayBackend": "wayland",
+    "webkitGTK": "2.52.5",
+    "mode": "list",
+    "reverse": true,
+    "geometry": {
+      "appZoom": "150%",
+      "dpr": 2,
+      "entries": [
+        {
+          "name": "selection-00.txt",
+          "left": 373.5,
+          "bottom": 171.5,
+          "right": 768.5,
+          "top": 127.5
+        },
+        {
+          "name": "selection-01.txt",
+          "left": 774.5,
+          "bottom": 171.5,
+          "right": 1169.5,
+          "top": 127.5
+        },
+        {
+          "name": "selection-02.txt",
+          "left": 1175.5,
+          "bottom": 171.5,
+          "right": 1570.5,
+          "top": 127.5
+        },
+        {
+          "name": "selection-03.txt",
+          "left": 373.5,
+          "bottom": 216.5,
+          "right": 768.5,
+          "top": 172.5
+        },
+        {
+          "name": "selection-04.txt",
+          "left": 774.5,
+          "bottom": 216.5,
+          "right": 1169.5,
+          "top": 172.5
+        },
+        {
+          "name": "selection-05.txt",
+          "left": 1175.5,
+          "bottom": 216.5,
+          "right": 1570.5,
+          "top": 172.5
+        },
+        {
+          "name": "selection-06.txt",
+          "left": 373.5,
+          "bottom": 261.5,
+          "right": 768.5,
+          "top": 217.5
+        },
+        {
+          "name": "selection-07.txt",
+          "left": 774.5,
+          "bottom": 261.5,
+          "right": 1169.5,
+          "top": 217.5
+        }
+      ],
+      "start": {
+        "x": 1165,
+        "y": 274
+      },
+      "end": {
+        "x": 379,
+        "y": 224
+      },
+      "hitClass": "virtual-viewport list-scroller file-rows svelte-141dx9j",
+      "content": {
+        "left": 361.5,
+        "bottom": 915,
+        "right": 1582.5,
+        "top": 118.5
+      }
+    },
+    "band": {
+      "left": 379,
+      "bottom": 274,
+      "right": 1165,
+      "top": 224
+    },
+    "expected": [
+      "selection-06.txt",
+      "selection-07.txt"
+    ],
+    "selected": [
+      "selection-06.txt",
+      "selection-07.txt"
+    ]
+  },
+  {
+    "scale": 1.5,
+    "zoom": 150,
+    "displayBackend": "wayland",
+    "webkitGTK": "2.52.5",
+    "mode": "tiles",
+    "reverse": false,
+    "geometry": {
+      "appZoom": "150%",
+      "dpr": 2,
+      "entries": [
+        {
+          "name": "selection-00.txt",
+          "left": 373.5,
+          "bottom": 288,
+          "right": 503.828125,
+          "top": 130.5
+        },
+        {
+          "name": "selection-01.txt",
+          "left": 506.828125,
+          "bottom": 288,
+          "right": 637.15625,
+          "top": 130.5
+        },
+        {
+          "name": "selection-02.txt",
+          "left": 640.15625,
+          "bottom": 288,
+          "right": 770.5,
+          "top": 130.5
+        },
+        {
+          "name": "selection-03.txt",
+          "left": 773.5,
+          "bottom": 288,
+          "right": 903.828125,
+          "top": 130.5
+        },
+        {
+          "name": "selection-04.txt",
+          "left": 906.828125,
+          "bottom": 288,
+          "right": 1037.15625,
+          "top": 130.5
+        },
+        {
+          "name": "selection-05.txt",
+          "left": 1040.15625,
+          "bottom": 288,
+          "right": 1170.5,
+          "top": 130.5
+        },
+        {
+          "name": "selection-06.txt",
+          "left": 1173.5,
+          "bottom": 288,
+          "right": 1303.828125,
+          "top": 130.5
+        },
+        {
+          "name": "selection-07.txt",
+          "left": 1306.828125,
+          "bottom": 288,
+          "right": 1437.15625,
+          "top": 130.5
+        }
+      ],
+      "start": {
+        "x": 379,
+        "y": 300
+      },
+      "end": {
+        "x": 632,
+        "y": 137
+      },
+      "hitClass": "virtual-viewport tiles-scroller file-rows svelte-141dx9j",
+      "content": {
+        "left": 361.5,
+        "bottom": 915,
+        "right": 1582.5,
+        "top": 118.5
+      }
+    },
+    "band": {
+      "left": 379,
+      "bottom": 300,
+      "right": 632,
+      "top": 137
+    },
+    "expected": [
+      "selection-00.txt",
+      "selection-01.txt"
+    ],
+    "selected": [
+      "selection-00.txt",
+      "selection-01.txt"
+    ]
+  },
+  {
+    "scale": 1.5,
+    "zoom": 150,
+    "displayBackend": "wayland",
+    "webkitGTK": "2.52.5",
+    "mode": "tiles",
+    "reverse": true,
+    "geometry": {
+      "appZoom": "150%",
+      "dpr": 2,
+      "entries": [
+        {
+          "name": "selection-00.txt",
+          "left": 373.5,
+          "bottom": 288,
+          "right": 503.828125,
+          "top": 130.5
+        },
+        {
+          "name": "selection-01.txt",
+          "left": 506.828125,
+          "bottom": 288,
+          "right": 637.15625,
+          "top": 130.5
+        },
+        {
+          "name": "selection-02.txt",
+          "left": 640.15625,
+          "bottom": 288,
+          "right": 770.5,
+          "top": 130.5
+        },
+        {
+          "name": "selection-03.txt",
+          "left": 773.5,
+          "bottom": 288,
+          "right": 903.828125,
+          "top": 130.5
+        },
+        {
+          "name": "selection-04.txt",
+          "left": 906.828125,
+          "bottom": 288,
+          "right": 1037.15625,
+          "top": 130.5
+        },
+        {
+          "name": "selection-05.txt",
+          "left": 1040.15625,
+          "bottom": 288,
+          "right": 1170.5,
+          "top": 130.5
+        },
+        {
+          "name": "selection-06.txt",
+          "left": 1173.5,
+          "bottom": 288,
+          "right": 1303.828125,
+          "top": 130.5
+        },
+        {
+          "name": "selection-07.txt",
+          "left": 1306.828125,
+          "bottom": 288,
+          "right": 1437.15625,
+          "top": 130.5
+        }
+      ],
+      "start": {
+        "x": 632,
+        "y": 300
+      },
+      "end": {
+        "x": 379,
+        "y": 137
+      },
+      "hitClass": "virtual-viewport tiles-scroller file-rows svelte-141dx9j",
+      "content": {
+        "left": 361.5,
+        "bottom": 915,
+        "right": 1582.5,
+        "top": 118.5
+      }
+    },
+    "band": {
+      "left": 379,
+      "bottom": 300,
+      "right": 632,
+      "top": 137
+    },
+    "expected": [
+      "selection-00.txt",
+      "selection-01.txt"
+    ],
+    "selected": [
+      "selection-00.txt",
+      "selection-01.txt"
+    ]
+  },
+  {
+    "scale": 2,
+    "zoom": 100,
+    "displayBackend": "wayland",
+    "webkitGTK": "2.52.5",
+    "mode": "details",
+    "reverse": false,
+    "geometry": {
+      "appZoom": "100%",
+      "dpr": 2,
+      "entries": [
+        {
+          "name": "selection-00.txt",
+          "left": 241,
+          "bottom": 148,
+          "right": 1595,
+          "top": 116
+        },
+        {
+          "name": "selection-01.txt",
+          "left": 241,
+          "bottom": 180,
+          "right": 1595,
+          "top": 148
+        },
+        {
+          "name": "selection-02.txt",
+          "left": 241,
+          "bottom": 212,
+          "right": 1595,
+          "top": 180
+        },
+        {
+          "name": "selection-03.txt",
+          "left": 241,
+          "bottom": 244,
+          "right": 1595,
+          "top": 212
+        },
+        {
+          "name": "selection-04.txt",
+          "left": 241,
+          "bottom": 276,
+          "right": 1595,
+          "top": 244
+        },
+        {
+          "name": "selection-05.txt",
+          "left": 241,
+          "bottom": 308,
+          "right": 1595,
+          "top": 276
+        },
+        {
+          "name": "selection-06.txt",
+          "left": 241,
+          "bottom": 340,
+          "right": 1595,
+          "top": 308
+        },
+        {
+          "name": "selection-07.txt",
+          "left": 241,
+          "bottom": 372,
+          "right": 1595,
+          "top": 340
+        }
+      ],
+      "start": {
+        "x": 246,
+        "y": 384
+      },
+      "end": {
+        "x": 1590,
+        "y": 346
+      },
+      "hitClass": "virtual-viewport file-rows svelte-141dx9j",
+      "content": {
+        "left": 241,
+        "bottom": 941,
+        "right": 1595,
+        "top": 79
+      }
+    },
+    "band": {
+      "left": 246,
+      "bottom": 384,
+      "right": 1590,
+      "top": 346
+    },
+    "expected": [
+      "selection-07.txt"
+    ],
+    "selected": [
+      "selection-07.txt"
+    ]
+  },
+  {
+    "scale": 2,
+    "zoom": 100,
+    "displayBackend": "wayland",
+    "webkitGTK": "2.52.5",
+    "mode": "details",
+    "reverse": true,
+    "geometry": {
+      "appZoom": "100%",
+      "dpr": 2,
+      "entries": [
+        {
+          "name": "selection-00.txt",
+          "left": 241,
+          "bottom": 148,
+          "right": 1595,
+          "top": 116
+        },
+        {
+          "name": "selection-01.txt",
+          "left": 241,
+          "bottom": 180,
+          "right": 1595,
+          "top": 148
+        },
+        {
+          "name": "selection-02.txt",
+          "left": 241,
+          "bottom": 212,
+          "right": 1595,
+          "top": 180
+        },
+        {
+          "name": "selection-03.txt",
+          "left": 241,
+          "bottom": 244,
+          "right": 1595,
+          "top": 212
+        },
+        {
+          "name": "selection-04.txt",
+          "left": 241,
+          "bottom": 276,
+          "right": 1595,
+          "top": 244
+        },
+        {
+          "name": "selection-05.txt",
+          "left": 241,
+          "bottom": 308,
+          "right": 1595,
+          "top": 276
+        },
+        {
+          "name": "selection-06.txt",
+          "left": 241,
+          "bottom": 340,
+          "right": 1595,
+          "top": 308
+        },
+        {
+          "name": "selection-07.txt",
+          "left": 241,
+          "bottom": 372,
+          "right": 1595,
+          "top": 340
+        }
+      ],
+      "start": {
+        "x": 1590,
+        "y": 384
+      },
+      "end": {
+        "x": 246,
+        "y": 346
+      },
+      "hitClass": "virtual-viewport file-rows svelte-141dx9j",
+      "content": {
+        "left": 241,
+        "bottom": 941,
+        "right": 1595,
+        "top": 79
+      }
+    },
+    "band": {
+      "left": 246,
+      "bottom": 384,
+      "right": 1590,
+      "top": 346
+    },
+    "expected": [
+      "selection-07.txt"
+    ],
+    "selected": [
+      "selection-07.txt"
+    ]
+  },
+  {
+    "scale": 2,
+    "zoom": 100,
+    "displayBackend": "wayland",
+    "webkitGTK": "2.52.5",
+    "mode": "list",
+    "reverse": false,
+    "geometry": {
+      "appZoom": "100%",
+      "dpr": 2,
+      "entries": [
+        {
+          "name": "selection-00.txt",
+          "left": 249,
+          "bottom": 114,
+          "right": 513.390625,
+          "top": 85
+        },
+        {
+          "name": "selection-01.txt",
+          "left": 517.390625,
+          "bottom": 114,
+          "right": 781.796875,
+          "top": 85
+        },
+        {
+          "name": "selection-02.txt",
+          "left": 785.796875,
+          "bottom": 114,
+          "right": 1050.1875,
+          "top": 85
+        },
+        {
+          "name": "selection-03.txt",
+          "left": 1054.1875,
+          "bottom": 114,
+          "right": 1318.59375,
+          "top": 85
+        },
+        {
+          "name": "selection-04.txt",
+          "left": 1322.59375,
+          "bottom": 114,
+          "right": 1586.984375,
+          "top": 85
+        },
+        {
+          "name": "selection-05.txt",
+          "left": 249,
+          "bottom": 144,
+          "right": 513.390625,
+          "top": 115
+        },
+        {
+          "name": "selection-06.txt",
+          "left": 517.390625,
+          "bottom": 144,
+          "right": 781.796875,
+          "top": 115
+        },
+        {
+          "name": "selection-07.txt",
+          "left": 785.796875,
+          "bottom": 144,
+          "right": 1050.1875,
+          "top": 115
+        }
+      ],
+      "start": {
+        "x": 254,
+        "y": 156
+      },
+      "end": {
+        "x": 777,
+        "y": 121
+      },
+      "hitClass": "virtual-viewport list-scroller file-rows svelte-141dx9j",
+      "content": {
+        "left": 241,
+        "bottom": 941,
+        "right": 1595,
+        "top": 79
+      }
+    },
+    "band": {
+      "left": 254,
+      "bottom": 156,
+      "right": 777,
+      "top": 121
+    },
+    "expected": [
+      "selection-05.txt",
+      "selection-06.txt"
+    ],
+    "selected": [
+      "selection-05.txt",
+      "selection-06.txt"
+    ]
+  },
+  {
+    "scale": 2,
+    "zoom": 100,
+    "displayBackend": "wayland",
+    "webkitGTK": "2.52.5",
+    "mode": "list",
+    "reverse": true,
+    "geometry": {
+      "appZoom": "100%",
+      "dpr": 2,
+      "entries": [
+        {
+          "name": "selection-00.txt",
+          "left": 249,
+          "bottom": 114,
+          "right": 513.390625,
+          "top": 85
+        },
+        {
+          "name": "selection-01.txt",
+          "left": 517.390625,
+          "bottom": 114,
+          "right": 781.796875,
+          "top": 85
+        },
+        {
+          "name": "selection-02.txt",
+          "left": 785.796875,
+          "bottom": 114,
+          "right": 1050.1875,
+          "top": 85
+        },
+        {
+          "name": "selection-03.txt",
+          "left": 1054.1875,
+          "bottom": 114,
+          "right": 1318.59375,
+          "top": 85
+        },
+        {
+          "name": "selection-04.txt",
+          "left": 1322.59375,
+          "bottom": 114,
+          "right": 1586.984375,
+          "top": 85
+        },
+        {
+          "name": "selection-05.txt",
+          "left": 249,
+          "bottom": 144,
+          "right": 513.390625,
+          "top": 115
+        },
+        {
+          "name": "selection-06.txt",
+          "left": 517.390625,
+          "bottom": 144,
+          "right": 781.796875,
+          "top": 115
+        },
+        {
+          "name": "selection-07.txt",
+          "left": 785.796875,
+          "bottom": 144,
+          "right": 1050.1875,
+          "top": 115
+        }
+      ],
+      "start": {
+        "x": 777,
+        "y": 156
+      },
+      "end": {
+        "x": 254,
+        "y": 121
+      },
+      "hitClass": "virtual-viewport list-scroller file-rows svelte-141dx9j",
+      "content": {
+        "left": 241,
+        "bottom": 941,
+        "right": 1595,
+        "top": 79
+      }
+    },
+    "band": {
+      "left": 254,
+      "bottom": 156,
+      "right": 777,
+      "top": 121
+    },
+    "expected": [
+      "selection-05.txt",
+      "selection-06.txt"
+    ],
+    "selected": [
+      "selection-05.txt",
+      "selection-06.txt"
+    ]
+  },
+  {
+    "scale": 2,
+    "zoom": 100,
+    "displayBackend": "wayland",
+    "webkitGTK": "2.52.5",
+    "mode": "tiles",
+    "reverse": false,
+    "geometry": {
+      "appZoom": "100%",
+      "dpr": 2,
+      "entries": [
+        {
+          "name": "selection-00.txt",
+          "left": 249,
+          "bottom": 192,
+          "right": 336.328125,
+          "top": 87
+        },
+        {
+          "name": "selection-01.txt",
+          "left": 338.328125,
+          "bottom": 192,
+          "right": 425.65625,
+          "top": 87
+        },
+        {
+          "name": "selection-02.txt",
+          "left": 427.65625,
+          "bottom": 192,
+          "right": 514.984375,
+          "top": 87
+        },
+        {
+          "name": "selection-03.txt",
+          "left": 516.984375,
+          "bottom": 192,
+          "right": 604.328125,
+          "top": 87
+        },
+        {
+          "name": "selection-04.txt",
+          "left": 606.328125,
+          "bottom": 192,
+          "right": 693.65625,
+          "top": 87
+        },
+        {
+          "name": "selection-05.txt",
+          "left": 695.65625,
+          "bottom": 192,
+          "right": 782.984375,
+          "top": 87
+        },
+        {
+          "name": "selection-06.txt",
+          "left": 784.984375,
+          "bottom": 192,
+          "right": 872.328125,
+          "top": 87
+        },
+        {
+          "name": "selection-07.txt",
+          "left": 874.328125,
+          "bottom": 192,
+          "right": 961.65625,
+          "top": 87
+        }
+      ],
+      "start": {
+        "x": 254,
+        "y": 204
+      },
+      "end": {
+        "x": 421,
+        "y": 93
+      },
+      "hitClass": "virtual-viewport tiles-scroller file-rows svelte-141dx9j",
+      "content": {
+        "left": 241,
+        "bottom": 941,
+        "right": 1595,
+        "top": 79
+      }
+    },
+    "band": {
+      "left": 254,
+      "bottom": 204,
+      "right": 421,
+      "top": 93
+    },
+    "expected": [
+      "selection-00.txt",
+      "selection-01.txt"
+    ],
+    "selected": [
+      "selection-00.txt",
+      "selection-01.txt"
+    ]
+  },
+  {
+    "scale": 2,
+    "zoom": 100,
+    "displayBackend": "wayland",
+    "webkitGTK": "2.52.5",
+    "mode": "tiles",
+    "reverse": true,
+    "geometry": {
+      "appZoom": "100%",
+      "dpr": 2,
+      "entries": [
+        {
+          "name": "selection-00.txt",
+          "left": 249,
+          "bottom": 192,
+          "right": 336.328125,
+          "top": 87
+        },
+        {
+          "name": "selection-01.txt",
+          "left": 338.328125,
+          "bottom": 192,
+          "right": 425.65625,
+          "top": 87
+        },
+        {
+          "name": "selection-02.txt",
+          "left": 427.65625,
+          "bottom": 192,
+          "right": 514.984375,
+          "top": 87
+        },
+        {
+          "name": "selection-03.txt",
+          "left": 516.984375,
+          "bottom": 192,
+          "right": 604.328125,
+          "top": 87
+        },
+        {
+          "name": "selection-04.txt",
+          "left": 606.328125,
+          "bottom": 192,
+          "right": 693.65625,
+          "top": 87
+        },
+        {
+          "name": "selection-05.txt",
+          "left": 695.65625,
+          "bottom": 192,
+          "right": 782.984375,
+          "top": 87
+        },
+        {
+          "name": "selection-06.txt",
+          "left": 784.984375,
+          "bottom": 192,
+          "right": 872.328125,
+          "top": 87
+        },
+        {
+          "name": "selection-07.txt",
+          "left": 874.328125,
+          "bottom": 192,
+          "right": 961.65625,
+          "top": 87
+        }
+      ],
+      "start": {
+        "x": 421,
+        "y": 204
+      },
+      "end": {
+        "x": 254,
+        "y": 93
+      },
+      "hitClass": "virtual-viewport tiles-scroller file-rows svelte-141dx9j",
+      "content": {
+        "left": 241,
+        "bottom": 941,
+        "right": 1595,
+        "top": 79
+      }
+    },
+    "band": {
+      "left": 254,
+      "bottom": 204,
+      "right": 421,
+      "top": 93
+    },
+    "expected": [
+      "selection-00.txt",
+      "selection-01.txt"
+    ],
+    "selected": [
+      "selection-00.txt",
+      "selection-01.txt"
+    ]
+  },
+  {
+    "scale": 2,
+    "zoom": 150,
+    "displayBackend": "wayland",
+    "webkitGTK": "2.52.5",
+    "mode": "details",
+    "reverse": false,
+    "geometry": {
+      "appZoom": "150%",
+      "dpr": 2,
+      "entries": [
+        {
+          "name": "selection-00.txt",
+          "left": 361.5,
+          "bottom": 222,
+          "right": 1582.5,
+          "top": 174
+        },
+        {
+          "name": "selection-01.txt",
+          "left": 361.5,
+          "bottom": 270,
+          "right": 1582.5,
+          "top": 222
+        },
+        {
+          "name": "selection-02.txt",
+          "left": 361.5,
+          "bottom": 318,
+          "right": 1582.5,
+          "top": 270
+        },
+        {
+          "name": "selection-03.txt",
+          "left": 361.5,
+          "bottom": 366,
+          "right": 1582.5,
+          "top": 318
+        },
+        {
+          "name": "selection-04.txt",
+          "left": 361.5,
+          "bottom": 414,
+          "right": 1582.5,
+          "top": 366
+        },
+        {
+          "name": "selection-05.txt",
+          "left": 361.5,
+          "bottom": 462,
+          "right": 1582.5,
+          "top": 414
+        },
+        {
+          "name": "selection-06.txt",
+          "left": 361.5,
+          "bottom": 510,
+          "right": 1582.5,
+          "top": 462
+        },
+        {
+          "name": "selection-07.txt",
+          "left": 361.5,
+          "bottom": 558,
+          "right": 1582.5,
+          "top": 510
+        }
+      ],
+      "start": {
+        "x": 367,
+        "y": 570
+      },
+      "end": {
+        "x": 1578,
+        "y": 516
+      },
+      "hitClass": "virtual-viewport file-rows svelte-141dx9j",
+      "content": {
+        "left": 361.5,
+        "bottom": 915,
+        "right": 1582.5,
+        "top": 118.5
+      }
+    },
+    "band": {
+      "left": 367,
+      "bottom": 570,
+      "right": 1578,
+      "top": 516
+    },
+    "expected": [
+      "selection-07.txt"
+    ],
+    "selected": [
+      "selection-07.txt"
+    ]
+  },
+  {
+    "scale": 2,
+    "zoom": 150,
+    "displayBackend": "wayland",
+    "webkitGTK": "2.52.5",
+    "mode": "details",
+    "reverse": true,
+    "geometry": {
+      "appZoom": "150%",
+      "dpr": 2,
+      "entries": [
+        {
+          "name": "selection-00.txt",
+          "left": 361.5,
+          "bottom": 222,
+          "right": 1582.5,
+          "top": 174
+        },
+        {
+          "name": "selection-01.txt",
+          "left": 361.5,
+          "bottom": 270,
+          "right": 1582.5,
+          "top": 222
+        },
+        {
+          "name": "selection-02.txt",
+          "left": 361.5,
+          "bottom": 318,
+          "right": 1582.5,
+          "top": 270
+        },
+        {
+          "name": "selection-03.txt",
+          "left": 361.5,
+          "bottom": 366,
+          "right": 1582.5,
+          "top": 318
+        },
+        {
+          "name": "selection-04.txt",
+          "left": 361.5,
+          "bottom": 414,
+          "right": 1582.5,
+          "top": 366
+        },
+        {
+          "name": "selection-05.txt",
+          "left": 361.5,
+          "bottom": 462,
+          "right": 1582.5,
+          "top": 414
+        },
+        {
+          "name": "selection-06.txt",
+          "left": 361.5,
+          "bottom": 510,
+          "right": 1582.5,
+          "top": 462
+        },
+        {
+          "name": "selection-07.txt",
+          "left": 361.5,
+          "bottom": 558,
+          "right": 1582.5,
+          "top": 510
+        }
+      ],
+      "start": {
+        "x": 1578,
+        "y": 570
+      },
+      "end": {
+        "x": 367,
+        "y": 516
+      },
+      "hitClass": "virtual-viewport file-rows svelte-141dx9j",
+      "content": {
+        "left": 361.5,
+        "bottom": 915,
+        "right": 1582.5,
+        "top": 118.5
+      }
+    },
+    "band": {
+      "left": 367,
+      "bottom": 570,
+      "right": 1578,
+      "top": 516
+    },
+    "expected": [
+      "selection-07.txt"
+    ],
+    "selected": [
+      "selection-07.txt"
+    ]
+  },
+  {
+    "scale": 2,
+    "zoom": 150,
+    "displayBackend": "wayland",
+    "webkitGTK": "2.52.5",
+    "mode": "list",
+    "reverse": false,
+    "geometry": {
+      "appZoom": "150%",
+      "dpr": 2,
+      "entries": [
+        {
+          "name": "selection-00.txt",
+          "left": 373.5,
+          "bottom": 171.5,
+          "right": 768.5,
+          "top": 127.5
+        },
+        {
+          "name": "selection-01.txt",
+          "left": 774.5,
+          "bottom": 171.5,
+          "right": 1169.5,
+          "top": 127.5
+        },
+        {
+          "name": "selection-02.txt",
+          "left": 1175.5,
+          "bottom": 171.5,
+          "right": 1570.5,
+          "top": 127.5
+        },
+        {
+          "name": "selection-03.txt",
+          "left": 373.5,
+          "bottom": 216.5,
+          "right": 768.5,
+          "top": 172.5
+        },
+        {
+          "name": "selection-04.txt",
+          "left": 774.5,
+          "bottom": 216.5,
+          "right": 1169.5,
+          "top": 172.5
+        },
+        {
+          "name": "selection-05.txt",
+          "left": 1175.5,
+          "bottom": 216.5,
+          "right": 1570.5,
+          "top": 172.5
+        },
+        {
+          "name": "selection-06.txt",
+          "left": 373.5,
+          "bottom": 261.5,
+          "right": 768.5,
+          "top": 217.5
+        },
+        {
+          "name": "selection-07.txt",
+          "left": 774.5,
+          "bottom": 261.5,
+          "right": 1169.5,
+          "top": 217.5
+        }
+      ],
+      "start": {
+        "x": 379,
+        "y": 274
+      },
+      "end": {
+        "x": 1165,
+        "y": 224
+      },
+      "hitClass": "virtual-viewport list-scroller file-rows svelte-141dx9j",
+      "content": {
+        "left": 361.5,
+        "bottom": 915,
+        "right": 1582.5,
+        "top": 118.5
+      }
+    },
+    "band": {
+      "left": 379,
+      "bottom": 274,
+      "right": 1165,
+      "top": 224
+    },
+    "expected": [
+      "selection-06.txt",
+      "selection-07.txt"
+    ],
+    "selected": [
+      "selection-06.txt",
+      "selection-07.txt"
+    ]
+  },
+  {
+    "scale": 2,
+    "zoom": 150,
+    "displayBackend": "wayland",
+    "webkitGTK": "2.52.5",
+    "mode": "list",
+    "reverse": true,
+    "geometry": {
+      "appZoom": "150%",
+      "dpr": 2,
+      "entries": [
+        {
+          "name": "selection-00.txt",
+          "left": 373.5,
+          "bottom": 171.5,
+          "right": 768.5,
+          "top": 127.5
+        },
+        {
+          "name": "selection-01.txt",
+          "left": 774.5,
+          "bottom": 171.5,
+          "right": 1169.5,
+          "top": 127.5
+        },
+        {
+          "name": "selection-02.txt",
+          "left": 1175.5,
+          "bottom": 171.5,
+          "right": 1570.5,
+          "top": 127.5
+        },
+        {
+          "name": "selection-03.txt",
+          "left": 373.5,
+          "bottom": 216.5,
+          "right": 768.5,
+          "top": 172.5
+        },
+        {
+          "name": "selection-04.txt",
+          "left": 774.5,
+          "bottom": 216.5,
+          "right": 1169.5,
+          "top": 172.5
+        },
+        {
+          "name": "selection-05.txt",
+          "left": 1175.5,
+          "bottom": 216.5,
+          "right": 1570.5,
+          "top": 172.5
+        },
+        {
+          "name": "selection-06.txt",
+          "left": 373.5,
+          "bottom": 261.5,
+          "right": 768.5,
+          "top": 217.5
+        },
+        {
+          "name": "selection-07.txt",
+          "left": 774.5,
+          "bottom": 261.5,
+          "right": 1169.5,
+          "top": 217.5
+        }
+      ],
+      "start": {
+        "x": 1165,
+        "y": 274
+      },
+      "end": {
+        "x": 379,
+        "y": 224
+      },
+      "hitClass": "virtual-viewport list-scroller file-rows svelte-141dx9j",
+      "content": {
+        "left": 361.5,
+        "bottom": 915,
+        "right": 1582.5,
+        "top": 118.5
+      }
+    },
+    "band": {
+      "left": 379,
+      "bottom": 274,
+      "right": 1165,
+      "top": 224
+    },
+    "expected": [
+      "selection-06.txt",
+      "selection-07.txt"
+    ],
+    "selected": [
+      "selection-06.txt",
+      "selection-07.txt"
+    ]
+  },
+  {
+    "scale": 2,
+    "zoom": 150,
+    "displayBackend": "wayland",
+    "webkitGTK": "2.52.5",
+    "mode": "tiles",
+    "reverse": false,
+    "geometry": {
+      "appZoom": "150%",
+      "dpr": 2,
+      "entries": [
+        {
+          "name": "selection-00.txt",
+          "left": 373.5,
+          "bottom": 288,
+          "right": 503.828125,
+          "top": 130.5
+        },
+        {
+          "name": "selection-01.txt",
+          "left": 506.828125,
+          "bottom": 288,
+          "right": 637.15625,
+          "top": 130.5
+        },
+        {
+          "name": "selection-02.txt",
+          "left": 640.15625,
+          "bottom": 288,
+          "right": 770.5,
+          "top": 130.5
+        },
+        {
+          "name": "selection-03.txt",
+          "left": 773.5,
+          "bottom": 288,
+          "right": 903.828125,
+          "top": 130.5
+        },
+        {
+          "name": "selection-04.txt",
+          "left": 906.828125,
+          "bottom": 288,
+          "right": 1037.15625,
+          "top": 130.5
+        },
+        {
+          "name": "selection-05.txt",
+          "left": 1040.15625,
+          "bottom": 288,
+          "right": 1170.5,
+          "top": 130.5
+        },
+        {
+          "name": "selection-06.txt",
+          "left": 1173.5,
+          "bottom": 288,
+          "right": 1303.828125,
+          "top": 130.5
+        },
+        {
+          "name": "selection-07.txt",
+          "left": 1306.828125,
+          "bottom": 288,
+          "right": 1437.15625,
+          "top": 130.5
+        }
+      ],
+      "start": {
+        "x": 379,
+        "y": 300
+      },
+      "end": {
+        "x": 632,
+        "y": 137
+      },
+      "hitClass": "virtual-viewport tiles-scroller file-rows svelte-141dx9j",
+      "content": {
+        "left": 361.5,
+        "bottom": 915,
+        "right": 1582.5,
+        "top": 118.5
+      }
+    },
+    "band": {
+      "left": 379,
+      "bottom": 300,
+      "right": 632,
+      "top": 137
+    },
+    "expected": [
+      "selection-00.txt",
+      "selection-01.txt"
+    ],
+    "selected": [
+      "selection-00.txt",
+      "selection-01.txt"
+    ]
+  },
+  {
+    "scale": 2,
+    "zoom": 150,
+    "displayBackend": "wayland",
+    "webkitGTK": "2.52.5",
+    "mode": "tiles",
+    "reverse": true,
+    "geometry": {
+      "appZoom": "150%",
+      "dpr": 2,
+      "entries": [
+        {
+          "name": "selection-00.txt",
+          "left": 373.5,
+          "bottom": 288,
+          "right": 503.828125,
+          "top": 130.5
+        },
+        {
+          "name": "selection-01.txt",
+          "left": 506.828125,
+          "bottom": 288,
+          "right": 637.15625,
+          "top": 130.5
+        },
+        {
+          "name": "selection-02.txt",
+          "left": 640.15625,
+          "bottom": 288,
+          "right": 770.5,
+          "top": 130.5
+        },
+        {
+          "name": "selection-03.txt",
+          "left": 773.5,
+          "bottom": 288,
+          "right": 903.828125,
+          "top": 130.5
+        },
+        {
+          "name": "selection-04.txt",
+          "left": 906.828125,
+          "bottom": 288,
+          "right": 1037.15625,
+          "top": 130.5
+        },
+        {
+          "name": "selection-05.txt",
+          "left": 1040.15625,
+          "bottom": 288,
+          "right": 1170.5,
+          "top": 130.5
+        },
+        {
+          "name": "selection-06.txt",
+          "left": 1173.5,
+          "bottom": 288,
+          "right": 1303.828125,
+          "top": 130.5
+        },
+        {
+          "name": "selection-07.txt",
+          "left": 1306.828125,
+          "bottom": 288,
+          "right": 1437.15625,
+          "top": 130.5
+        }
+      ],
+      "start": {
+        "x": 632,
+        "y": 300
+      },
+      "end": {
+        "x": 379,
+        "y": 137
+      },
+      "hitClass": "virtual-viewport tiles-scroller file-rows svelte-141dx9j",
+      "content": {
+        "left": 361.5,
+        "bottom": 915,
+        "right": 1582.5,
+        "top": 118.5
+      }
+    },
+    "band": {
+      "left": 379,
+      "bottom": 300,
+      "right": 632,
+      "top": 137
+    },
+    "expected": [
+      "selection-00.txt",
+      "selection-01.txt"
+    ],
+    "selected": [
+      "selection-00.txt",
+      "selection-01.txt"
+    ]
+  }
+]

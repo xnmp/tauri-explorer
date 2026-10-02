@@ -13,6 +13,7 @@
  */
 import { test, expect, type Page } from "./fixtures";
 import { waitForEntries } from "./helpers";
+import { MOCK_LOCAL_KEYS } from "../src/lib/api/mock-control";
 
 const REPO_SUBFOLDER_URL = "/?path=/home/user/Documents/project/src";
 
@@ -21,7 +22,7 @@ const REPO_SUBFOLDER_URL = "/?path=/home/user/Documents/project/src";
  *  Seeding localStorage instead would not do: that is a cache the app
  *  overwrites from settings.json, and the migration only runs on the latter. */
 const seedSettingsFile = (page: Page, blob: Record<string, unknown>) =>
-  page.addInitScript((persisted) => {
+  page.addInitScript(({ persisted, configSeedKey }) => {
     const settings = {
       // Hold the title bar row open with a single tab (#504) so the strip
       // renders; keep the macOS integrated bar out of it.
@@ -30,10 +31,10 @@ const seedSettingsFile = (page: Page, blob: Record<string, unknown>) =>
       ...persisted,
     };
     localStorage.setItem(
-      "mock-config-files",
+      configSeedKey,
       JSON.stringify({ "settings.json": JSON.stringify(settings) }),
     );
-  }, blob);
+  }, { persisted: blob, configSeedKey: MOCK_LOCAL_KEYS.configSeed });
 
 /** Capture the title bar region at 3x so the 16px glyph is legible. */
 const shootTitleBar = (page: Page, path: string) =>

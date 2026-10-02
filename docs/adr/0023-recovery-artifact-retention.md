@@ -4,7 +4,8 @@ Status: Proposed — Linux only; Windows/macOS adapters and native acceptance
 outstanding.
 
 Governs: `src-tauri/src/files/recovery/retention.rs`,
-`src-tauri/src/files/recovery/retirement.rs`,
+`src-tauri/src/files/recovery/retirement.rs` (amended by
+[ADR 0026](0026-durable-recovery-checkpoint-engine.md)),
 `src-tauri/src/files/recovery/replacement_retire.rs`,
 `src-tauri/src/files/recovery/coordinator/retirement.rs`,
 `src-tauri/src/files/recovery/commands.rs`,
@@ -121,22 +122,27 @@ reclaimable total nor a decision to retire something else.
 ### Retirement state machine
 
 Retirement is journaled with the same intent-precedes-effect discipline as every
-other phase, using the existing `DiscardIntent` / `Discarded` phases:
+other phase. Per ADR 0026 it is the checkpoint's `retirement` side-car for every
+kind; the phase stays at its settled position. The steps below cover one root.
+A record with two roots removes source, then target, each with its own
+intent and completion.
 
 1. **Claim** the exact native owner at the inspected generation.
 2. **Verify safe** — reopen the artifact root, classify all endpoints, and
    require the public endpoint to hold the exact recorded live version. Failure
    here changes nothing.
-3. **`DiscardIntent`** — journaled intent. Nothing has been removed yet.
+3. **Decision** — `BeginRetirement` journals the decision and every root's
+   exact plan. Nothing has been removed yet.
 4. **Re-observe, then remove** — journaling the intent released and retook the
    admission gate, so the live endpoint is classified once more immediately
    before anything is unlinked. A changed endpoint refuses the removal and
-   preserves every file. Removal then goes through the retained,
+   preserves every file. A decision that has removed nothing is withdrawn,
+   which restores Undo. Removal then goes through the retained,
    identity-verified root handle:
-   the private namespace is revalidated, each recorded entry is unlinked
+   the private namespace is revalidated, each planned entry is unlinked
    handle-relatively, the root is synced, and only then is the root directory
    itself unlinked from its verified parent and that parent synced.
-5. **`Discarded`** — journaled completion.
+5. **Completed** — the retirement's journaled completion.
 6. **Retire the record** — remove the journal row, retire the catalog evidence,
    and retire the owner lock once nothing references it.
 
@@ -154,7 +160,8 @@ already absent is a completed step, not an error. Because the artifact root may
 legitimately be gone at step 4's checkpoints, retirement opens the root
 tolerantly, unlike execution's reopen, which requires it.
 
-Original data and history authority survive until step 5 commits. Native
+Original data survives until its root's removal begins. History authority is
+consumed by the decision and returns only if the decision is withdrawn. Native
 replacement history entries pointing at a record are invalidated by the record's
 disappearance through the existing generation check; they are never given a
 different record.
@@ -167,17 +174,37 @@ artifact in place, and leaves the record in the inventory in a **retained
 evidence** state with the reason shown to the user. It is reported, not retried
 automatically, and never silently converted into a completed retirement.
 
+Enforcement therefore resumes only a *crash-interrupted* retirement, one with no
+recorded failure (#760). A journaled retirement carrying an error waits for the
+user's explicit retry; one whose artifact parents cannot be opened with their
+recorded identities (checked read-only, before any claim) is left unclaimed and
+counted unavailable; and one that is claimed but cannot proceed records its
+reason, so later passes skip it. None of these is claimed on every pass, which
+would otherwise advance its generation each time and invalidate the one the user
+is inspecting.
+
+The same holds for an automatic discard of any kind that cannot even be journaled: a
+removal preflight refusal (a read-only root or `EROFS`), declined journal
+headroom, or an endpoint that changed while its plans were captured. It records
+its reason in the checkpoint's `deferred` field, measures the record, and leaves it for the user's explicit Discard,
+which retries it. Nothing was removed and Undo is untouched. A journaled
+decision or any phase change clears the deferral. It is not re-attempted when
+the condition clears by itself, because observing that would itself need a
+claim; the record stays listed, measured and discardable. A settled record whose
+artifact parents or roots cannot all be observed is likewise not claimed for its
+first measurement.
+
 `ENOSPC` cannot lose records. The intent write precedes every effect, so a
 disk-full journal write aborts retirement before anything is removed. A
-disk-full write of the *completion* checkpoint leaves `DiscardIntent` with the
-artifacts already gone, which the tolerant reopen resumes to completion. No
+disk-full write of the *completion* checkpoint leaves the decision journaled
+with the artifacts already gone, which the tolerant reopen resumes to completion. No
 retirement step deletes catalog evidence before its journal completion commits.
 
 ### Catalog schema, versioning and migration
 
 `recovery_records`, `PRAGMA user_version = 1` and the `TERCV001` catalog frame
-are unchanged; retirement needs no new persisted fields, so pre-existing records
-remain readable and retirable without migration. Usage accounting is derived and
+are unchanged. ADR 0026 replaced the checkpoint encoding at record version 3,
+without migration, so records from earlier versions fence instead of retiring. Usage accounting is derived and
 memoised, never journaled, specifically so accounting can change without a
 schema version. A future field follows `effect_revision`'s precedent —
 `#[serde(default)]` with a documented legacy meaning — and a `user_version`
@@ -185,24 +212,119 @@ greater than the supported version continues to fail closed rather than migrate.
 
 ### Operation kinds
 
-Retirement dispatches on `OperationSpec` / `OperationState` through a single
-`retention` function that names the artifact a record retains and its disposal
-rule, paired with a `retirement_step` observation that verifies the live
-endpoints before anything may be removed.
+Every kind goes through the same `Checkpoint::retention` policy and the same
+`Retirement` observation and cleanup (ADR 0026). A kind contributes only its
+disposal rule, its witness and the live endpoints that must verify before
+anything may be removed. Durable moves' settled positions have these rules:
 
-Durable moves (#685) are classified `Unsupported`: listed, measured by a
-read-only walk of both artifact roots, and counted against both bounds, but
-never retired — not automatically and not on explicit request. A move's
-artifacts do not reduce to a replacement's: a parked cross-filesystem source is
-the relocated object itself rather than an independent copy of something still
-published, and a displaced overwrite target is the only copy of what the
-destination held. Because that measurement is not journaled, it needs no
-`MoveState` field and no schema change; it is recomputed on each pass. Move
-retirement needs its own plan, naming which artifact a move may release and the
-endpoints that prove it. That plan is the outstanding follow-up. A kind without a
-plan is listed, never retired, and reported as requiring further support. Move
-records (#685) slot in by supplying their plan — parked source and destination
-endpoints — with no change to the state machine, the budget or the UI.
+| Move position | Disposal |
+| --- | --- |
+| Same-volume Published, including a rename with no artifact root | Explicit only: the record is still its Undo authority |
+| Cross-volume Published | Unresolved: source parking has not completed |
+| Cross-volume Parked | Explicit only: the parked source is the exact original required by Undo |
+| Removed with displaced target original | Explicit only |
+| Removed without displaced target original | Automatic verified residue cleanup |
+| Restored rename | Automatic verified empty-root/evidence cleanup |
+| Restored cross-volume regular file | Automatic only after both public endpoints verify |
+| Restored cross-volume directory or symlink | Explicit only |
+
+One durable decision authorizes the whole immutable cleanup plan. Each root has
+its own `Pending -> Removing -> Removed` checkpoints, in source-then-target
+order. Root removal intent precedes effects; completion follows the parent
+sync. The final record-completion checkpoint requires both roots to be removed.
+A resumed explicit decision may finish automatically, but enforcement can never
+invent a decision to discard an original. Beginning retirement prevents both
+history claims and forward/inverse execution, and retains full mutation claims
+until record retirement releases them.
+
+The decision is not allowed to consume Undo for nothing (#760). Immediately
+before `BeginRetirement` is journaled, the same verification that follows it
+runs read-only against the freshly captured plans: public endpoints, each
+root's namespace, manifest and payload version, and every planned entry.
+Planning a large tree takes time, and a root that drifts from its plan in that
+window could not be withdrawn afterwards, because withdrawal proves the root
+untouched by matching that plan. If
+verification after the decision refuses while no root is `Removed` and every
+root still strictly matches its captured plan, manifest and exact payload
+version, `WithdrawRetirement` returns the record to its settled phase with its
+effect revision unchanged. The native history entry, which survives a refused
+claim, therefore claims it again. An interrupted decision that removed nothing
+withdraws itself the same way when it is resumed. Once any root is retired the
+decision can only be completed or forgotten.
+
+A decision holds its cleanup plans in the journal until it completes, so
+`BeginRetirement` must leave a quarter of the 64 MiB journal free
+(`Journal::replace_leaving`). At most three maximal decisions can be pending
+while ordinary operations keep that headroom. A declined decision journals
+nothing and keeps Undo.
+
+**Forget** (`RecoveryChoice::Release`) is the escape hatch for a committed
+move discard that cannot finish: a persistent native error such as `EROFS`, a
+reused endpoint, or a volume that changed identity. It is offered only for such
+a stopped decision and is decided from durable evidence alone, because the
+stranded volume may be exactly what cannot be observed. It removes the journal
+row and catalog evidence under exact ownership and touches nothing on disk. The
+record's locks are released, and any private folder it still names stays at its
+listed location, owned by the user. The item lists every artifact folder whose
+removal the journal does not record, source first (`retainedPaths`, with
+`retainedPath` its first entry for older ports). A discard stopped after the
+source root was removed therefore names only the target's folder, and one
+stopped inside the source root names both. Undo was already consumed by the decision,
+so no recovery authority is lost. If the process dies between the two commits,
+the catalog-only residue is retired automatically once those folders are gone.
+
+Observation verifies both recorded public parents, the expected source and
+target versions, exact private root identities and manifests, and the allowed
+child set. Missing volumes, unplanned children and changed endpoints preserve
+evidence. Removal deletes the expected payload first, the manifest last, and
+then the empty root. Missing payloads/roots are completed work only after their
+removal intent. Before the global retirement decision, bounded, no-follow walks capture both
+payloads' descendant native paths and versions. Both plans are journaled with
+that decision before any root effect; restart never recaptures a pending root. The journal validates that preorder tree
+against the immutable top-level payload, with unique child paths, directory
+parents and no cross-mount traversal. Resumption permits missing planned entries
+but rejects newly added descendants and changed files before deleting anything.
+Directory size/mtime may differ after the application's own child removals;
+its native identity, ownership, mode and complete remaining child set must still
+match the recorded plan. Every leaf is rechecked before unlink and each parent
+is synced. Plans have depth, entry-count and exact encoded-byte bounds: one
+decision's plans share a quarter of the journal (16 MiB, below the 32 MiB
+checkpoint limit), split evenly across the record's planned roots (ADR 0026
+gives the encoding and its sizing). Forward moves therefore apply the same walk, budgets
+and no-cross-mount rule to every payload they would retain *before* any record
+exists, and refuse a payload that could never be discarded (#760). The parked source and a displaced
+original live in private storage from then on. The one retained payload a user
+can still change is a cross-volume destination, which Undo parks as the
+target root's `publication`. Undo therefore walks it under the same bounds
+before `BeginRestoration` and refuses, with nothing changed, the destination in
+place and the same Undo still available, when it no longer fits; the settled
+record stays discardable, which keeps the destination. The walk is repeated
+immediately before the destination is parked. If the destination grew in
+between, restoration stops with the source already home and the destination
+still public, and the interrupted restoration can be retried once it fits.
+Neither walk defends against an external writer racing the final
+walk-to-rename interval or writing into private storage. Each completed
+root releases its descendant plan; all later pending plans remain durable. This does not claim protection from an external same-user writer
+swapping a leaf in the final check-to-unlink syscall interval.
+
+Byte measurements are bounded and journaled in the checkpoint's `retained_bytes`;
+confirmed effects and retirement steps invalidate them. Cleanup refusal does
+not prevent measuring observable retained roots; unknown interrupted-retirement
+bytes remain explicitly unmeasured rather than becoming zero. A rootless completed
+rename measures zero bytes but still consumes a record and retains Undo.
+Repeated enforcement of measured, explicit-only records does not claim them or
+advance their generations. Absent fields never grant cleanup authority.
+Catalog-only residue requires
+verified absence of every planned root, not just the first one.
+
+Rust acceptance includes real same-volume/cross-volume files and directories,
+overwrite and restoration, changed endpoints, unexpected root children, missing
+roots, accounting stability, injected failures and subprocess kills at both
+roots' intent/removal/completion boundaries. Native UI acceptance covers actual
+file/directory move discard, accounting and preservation of externally edited
+endpoints. ADR 0020 describes the journaled per-volume capability preflight:
+interrupted probes permit only evidence-checked explicit cleanup, and aborted
+preflight records retire only after every planned probe name is absent.
 
 ### Platforms and adapters
 
@@ -227,5 +349,5 @@ is the same class ADR 0020 already creates for a changed restoration target; it
 consumes the record bound until the user acts. Enforcement never stops early on
 such a record, so one unverifiable record does not hide the rest.
 Process-kill acceptance covers the checkpoints in this document with the kernel
-alive; power-loss durability is not claimed. Windows/macOS retirement, Move
-retirement plans and a retention view of native history remain outstanding.
+alive; power-loss durability is not claimed. Windows/macOS retirement and a
+retention view of native history remain outstanding.

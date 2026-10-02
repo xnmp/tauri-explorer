@@ -9,6 +9,7 @@
  */
 
 import type { SettingRowDescriptor, SettingsSectionDescriptor, PluginStorage } from "./api";
+import { createOrderedRegistry } from "$lib/state/ordered-registry";
 
 export interface RegisteredSettingsSection {
   pluginId: string;
@@ -34,7 +35,7 @@ function defaultsFrom(rows: SettingRowDescriptor[]): Record<string, unknown> {
 function createSection(
   pluginId: string,
   desc: SettingsSectionDescriptor,
-  storage: PluginStorage
+  storage: PluginStorage,
 ): RegisteredSettingsSection {
   const defaults = defaultsFrom(desc.rows);
   let values = $state<Record<string, unknown>>({ ...defaults });
@@ -82,29 +83,31 @@ function createSection(
 
 function createSettingsRegistry() {
   let sections = $state<RegisteredSettingsSection[]>([]);
+  const registrations = createOrderedRegistry<RegisteredSettingsSection>();
 
   return {
     get sections() {
       return sections;
     },
-    /** Register a section; returns a disposer that removes it. */
+    /** Register a section; returns a disposer that removes it. Sections appear
+     *  by `order` (the plugin's list position), then registration; a plugin
+     *  registering the same section id twice throws. */
     register(
       pluginId: string,
       desc: SettingsSectionDescriptor,
-      storage: PluginStorage
+      storage: PluginStorage,
+      order = Number.MAX_SAFE_INTEGER,
     ): () => void {
       const section = createSection(pluginId, desc, storage);
-      sections = [...sections, section];
-      // Remove by (pluginId, id), not object reference: Svelte's `$state` array
-      // deep-proxies elements, so the stored section never `===` this `section`.
+      const dispose = registrations.register(`${pluginId}\u0000${desc.id}`, section, order);
+      sections = registrations.values();
       return () => {
-        sections = sections.filter(
-          (s) => !(s.pluginId === section.pluginId && s.id === section.id)
-        );
+        if (dispose()) sections = registrations.values();
       };
     },
     /** Remove all sections. Test helper. */
     clear(): void {
+      registrations.clear();
       sections = [];
     },
   };

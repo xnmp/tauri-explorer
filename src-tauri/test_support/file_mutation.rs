@@ -1,7 +1,7 @@
-use super::{delete_outcome, entry_outcome, outcome, AppError, EntryPlan, ForwardEffect};
+use super::{delete_outcome, AppError, EntryPlan, ForwardEffect};
 use crate::{
-    file_history::Action,
-    files::{batch, file_ops, mutation::FileMutationReceipt, run_blocking},
+    file_history::{Action, MutationOutcome},
+    files::{admission, batch, file_ops, mutation::FileMutationReceipt},
 };
 use std::fs;
 
@@ -9,99 +9,15 @@ fn native(path: &std::path::Path) -> String {
     path.to_string_lossy().into_owned()
 }
 
-#[cfg(target_os = "linux")]
-#[test]
-fn real_replacement_cleanup_warning_retains_the_exact_forward_inverse_and_refresh() {
-    struct CopyContext {
-        runtime: crate::files::recovery::Runtime,
-        storage: std::path::PathBuf,
-        source: std::path::PathBuf,
-        target: std::path::PathBuf,
-    }
-    impl CopyContext {
-        fn execute(&mut self) -> Result<FileMutationReceipt, AppError> {
-            let mut progress = crate::progress::ProgressTracker::new(
-                None,
-                "copy-progress",
-                "Copy cancelled",
-                0,
-                0,
-                None,
-            );
-            self.runtime.replace_copy(
-                self.storage.clone(),
-                &self.source,
-                &self.target,
-                &mut progress,
-            )
-        }
-    }
-    impl Drop for CopyContext {
-        fn drop(&mut self) {
-            panic!("post-result copy context cleanup failed");
-        }
-    }
-    let directory = tempfile::tempdir().unwrap();
-    let source = directory.path().join("source");
-    let target = directory.path().join("target");
-    fs::write(&source, "new bytes").unwrap();
-    fs::write(&target, "old bytes").unwrap();
-    let storage = directory.path().join("recovery");
-    let runtime = crate::files::recovery::Runtime::default();
-    let directories = vec![native(directory.path())];
-    let settled = tauri::async_runtime::block_on(async {
-        let completion = crate::files::run_blocking_context(
-            CopyContext {
-                runtime: runtime.clone(),
-                storage: storage.clone(),
-                source,
-                target: target.clone(),
-            },
-            CopyContext::execute,
-        )
-        .await;
-        super::copy_outcome(directories.clone(), completion).await
-    });
-    assert!(settled
-        .warning
-        .unwrap()
-        .contains("post-result copy context cleanup failed"));
-    assert_eq!(settled.affected, directories);
-    let receipt = settled.result.unwrap();
-    let ForwardEffect::Changed(Some(Action::Replacement {
-        path,
-        recovery: Some(inverse),
-    })) = settled.effect
-    else {
-        panic!("cleanup warning lost the native inverse")
-    };
-    assert_eq!(path, receipt.path);
-    assert_eq!(inverse, receipt.replacement.unwrap().history);
-    assert_eq!(fs::read(&target).unwrap(), b"new bytes");
-    tauri::async_runtime::block_on(runtime.execute_history(
-        storage,
-        inverse,
-        crate::files::recovery::ReplacementDirection::Restore,
-    ))
-    .unwrap();
-    assert_eq!(fs::read(target).unwrap(), b"old bytes");
-}
-
-#[test]
-fn ordinary_copy_cleanup_warning_is_visible_without_replacement_metadata() {
-    let directory = tempfile::tempdir().unwrap();
-    let target = directory.path().join("copied");
-    fs::write(&target, "copied bytes").unwrap();
-    let outcome = tauri::async_runtime::block_on(super::copy_outcome(
-        vec![native(directory.path())],
-        crate::files::WorkerCompletion {
-            result: Ok(FileMutationReceipt::committed(&target)),
-            warning: Some("worker cleanup warning".into()),
-        },
-    ));
-    assert_eq!(outcome.warning.as_deref(), Some("worker cleanup warning"));
-    assert!(outcome.result.is_ok());
-    assert!(matches!(outcome.effect, ForwardEffect::Changed(None)));
+/// The production entry path. Recovery storage lives outside the directory
+/// under test, as application-local storage does.
+async fn entry_outcome(plan: EntryPlan) -> MutationOutcome<FileMutationReceipt> {
+    let storage = tempfile::tempdir().unwrap();
+    super::entry_outcome(
+        plan,
+        &admission::Runtime::new(storage.path().join("recovery")),
+    )
+    .await
 }
 
 #[test]
@@ -149,29 +65,6 @@ fn same_name_rename_still_rejects_a_missing_source() {
     assert!(matches!(result.result, Err(AppError::NotFound(_))));
     assert!(matches!(result.effect, ForwardEffect::Unchanged));
     assert!(result.affected.is_empty());
-}
-
-#[test]
-fn blocking_worker_panic_after_a_write_requires_history_invalidation_and_reconciliation() {
-    let root = tempfile::tempdir().unwrap();
-    let path = root.path().join("committed.txt");
-    let worker_path = path.clone();
-    let directories = vec![root.path().to_string_lossy().into_owned()];
-    let result = tauri::async_runtime::block_on(outcome(
-        directories.clone(),
-        run_blocking(move || -> Result<FileMutationReceipt, AppError> {
-            fs::write(worker_path, "committed before worker failure")?;
-            panic!("injected post-effect worker panic");
-        }),
-        |_| ForwardEffect::Changed(None),
-    ));
-    assert!(result.result.is_err());
-    assert_eq!(
-        fs::read_to_string(path).unwrap(),
-        "committed before worker failure"
-    );
-    assert!(matches!(result.effect, ForwardEffect::Changed(None)));
-    assert_eq!(result.affected, directories);
 }
 
 #[test]
@@ -534,7 +427,9 @@ fn wholly_failed_delete_batch_is_unchanged_and_publishes_no_refresh() {
 #[cfg(target_os = "linux")]
 mod recovery_admission {
     use super::*;
-    use crate::file_mutation::{entry_outcome_owned, entry_with_recovery, settle_entry};
+    use crate::file_mutation::{entry_outcome, settle_entry};
+    use crate::files::admission;
+    use crate::files::entry_execution::execute_owned;
     use crate::files::recovery::{Access, ResourceRequest, Runtime, Scope};
     use std::path::{Path, PathBuf};
 
@@ -551,7 +446,7 @@ mod recovery_admission {
         tauri::async_runtime::block_on(async {
             let root = tempfile::tempdir().unwrap();
             let storage = root.path().join("app-data/recovery");
-            let runtime = Runtime::default();
+            let runtime = Runtime::new(storage.clone());
             assert!(!storage.parent().unwrap().exists());
             for kind in ["directory", "empty", "text", "rename"] {
                 let target = root.path().join(kind);
@@ -567,18 +462,15 @@ mod recovery_admission {
                     "text" => EntryPlan::write_text(native(&target), "new bytes".into()),
                     _ => EntryPlan::rename(native(&source), kind.into()).unwrap(),
                 };
-                let held = runtime
-                    .admit(storage.clone(), writing(&target))
-                    .await
-                    .unwrap();
-                let refused = entry_with_recovery(plan(), runtime.clone(), storage.clone()).await;
+                let held = runtime.admit(writing(&target)).await.unwrap();
+                let refused = entry_outcome(plan(), &runtime).await;
                 assert!(refused.result.is_err());
                 assert!(matches!(refused.effect, ForwardEffect::Unchanged));
                 assert!(refused.affected.is_empty());
                 assert!(!target.exists());
                 assert_eq!(fs::read(&source).unwrap(), b"original bytes");
                 held.finish().unwrap();
-                let completed = entry_with_recovery(plan(), runtime.clone(), storage.clone()).await;
+                let completed = entry_outcome(plan(), &runtime).await;
                 assert_eq!(completed.result.unwrap().path, native(&target));
                 assert!(completed.warning.is_none());
                 if kind == "directory" {
@@ -594,7 +486,7 @@ mod recovery_admission {
                     );
                 }
                 runtime
-                    .admit(storage.clone(), writing(&target))
+                    .admit(writing(&target))
                     .await
                     .unwrap()
                     .finish()
@@ -607,27 +499,21 @@ mod recovery_admission {
     fn rename_owns_source_descendants_without_blocking_unrelated_siblings() {
         tauri::async_runtime::block_on(async {
             let root = tempfile::tempdir().unwrap();
-            let storage = root.path().join("recovery");
-            let runtime = Runtime::default();
+            let runtime = Runtime::new(root.path().join("recovery"));
             let source = root.path().join("source");
             fs::create_dir(&source).unwrap();
             fs::write(source.join("child"), b"retained child").unwrap();
-            let held = runtime
-                .admit(storage.clone(), writing(&source.join("child")))
-                .await
-                .unwrap();
-            let result = entry_with_recovery(
+            let held = runtime.admit(writing(&source.join("child"))).await.unwrap();
+            let result = entry_outcome(
                 EntryPlan::rename(native(&source), "moved".into()).unwrap(),
-                runtime.clone(),
-                storage.clone(),
+                &runtime,
             )
             .await;
             assert!(result.result.is_err());
             assert_eq!(fs::read(source.join("child")).unwrap(), b"retained child");
-            let sibling = entry_with_recovery(
+            let sibling = entry_outcome(
                 EntryPlan::create_empty_file(native(root.path()), "sibling".into()).unwrap(),
-                runtime,
-                storage,
+                &runtime,
             )
             .await;
             assert_eq!(fs::read(sibling.result.unwrap().path).unwrap(), b"");
@@ -639,36 +525,24 @@ mod recovery_admission {
     fn symlink_admission_reads_the_target_and_writes_only_the_new_link_namespace() {
         tauri::async_runtime::block_on(async {
             let root = tempfile::tempdir().unwrap();
-            let storage = root.path().join("recovery");
-            let runtime = Runtime::default();
+            let runtime = Runtime::new(root.path().join("recovery"));
             let target = root.path().join("target");
             let link = root.path().join("link");
             fs::write(&target, b"target bytes").unwrap();
-            let held = runtime
-                .admit(storage.clone(), writing(&target))
-                .await
-                .unwrap();
+            let held = runtime.admit(writing(&target)).await.unwrap();
             let plan = || EntryPlan::symlink(native(&target), native(&link));
-            assert!(
-                entry_with_recovery(plan(), runtime.clone(), storage.clone())
-                    .await
-                    .result
-                    .is_err()
-            );
+            assert!(entry_outcome(plan(), &runtime).await.result.is_err());
             assert!(fs::symlink_metadata(&link).is_err());
             held.finish().unwrap();
             let read = runtime
-                .admit(
-                    storage.clone(),
-                    vec![ResourceRequest {
-                        path: target.clone(),
-                        access: Access::Read,
-                        scope: Scope::Entry,
-                    }],
-                )
+                .admit(vec![ResourceRequest {
+                    path: target.clone(),
+                    access: Access::Read,
+                    scope: Scope::Entry,
+                }])
                 .await
                 .unwrap();
-            let result = entry_with_recovery(plan(), runtime.clone(), storage).await;
+            let result = entry_outcome(plan(), &runtime).await;
             assert!(result.result.is_ok());
             assert_eq!(fs::read_link(&link).unwrap(), target);
             assert_eq!(fs::read(&link).unwrap(), b"target bytes");
@@ -681,8 +555,7 @@ mod recovery_admission {
         tauri::async_runtime::block_on(async {
             for kind in ["directory", "empty", "text", "rename", "symlink"] {
                 let root = tempfile::tempdir().unwrap();
-                let storage = root.path().join("recovery");
-                let runtime = Runtime::default();
+                let runtime = Runtime::new(root.path().join("recovery"));
                 let original = root.path().join("original");
                 let other = root.path().join("other");
                 let alias = root.path().join("alias");
@@ -705,36 +578,36 @@ mod recovery_admission {
                     ),
                     _ => EntryPlan::write_text(native(&alias.join("new")), "owned bytes".into()),
                 };
-                let (plan, admission) =
-                    crate::file_mutation::admit_entry(plan, runtime.clone(), storage.clone())
-                        .await
-                        .unwrap();
-                let renamed = entry_with_recovery(
-                    EntryPlan::rename(native(&alias), "old-alias".into()).unwrap(),
-                    runtime.clone(),
-                    storage.clone(),
-                )
-                .await;
-                assert!(
-                    renamed.result.is_err(),
-                    "managed alias replacement must remain fenced"
-                );
-                // Also test an uncoordinated external writer: execution still
-                // owns the captured destination rather than following this alias.
-                fs::rename(&alias, root.path().join("old-alias")).unwrap();
-                let replaced = entry_with_recovery(
-                    EntryPlan::symlink(native(&other), native(&alias)),
-                    runtime,
-                    storage,
-                )
-                .await;
-                assert!(
-                    replaced.result.is_err(),
-                    "the literal alias name remains reserved after removal"
-                );
-                std::os::unix::fs::symlink(&other, &alias).unwrap();
-                let outcome = entry_outcome_owned(plan, admission.context()).await;
-                let result = settle_entry(outcome, admission).await;
+                let (competitor, old_alias) = (runtime.clone(), root.path().join("old-alias"));
+                let (alias_path, other_path) = (alias.clone(), other.clone());
+                let outcome =
+                    admission::admitted_execute(plan, &runtime, |plan, owner| async move {
+                        let renamed = entry_outcome(
+                            EntryPlan::rename(native(&alias_path), "old-alias".into()).unwrap(),
+                            &competitor,
+                        )
+                        .await;
+                        assert!(
+                            renamed.result.is_err(),
+                            "managed alias replacement must remain fenced"
+                        );
+                        // Also test an uncoordinated external writer: execution still
+                        // owns the captured destination rather than following this alias.
+                        fs::rename(&alias_path, old_alias).unwrap();
+                        let replaced = entry_outcome(
+                            EntryPlan::symlink(native(&other_path), native(&alias_path)),
+                            &competitor,
+                        )
+                        .await;
+                        assert!(
+                            replaced.result.is_err(),
+                            "the literal alias name remains reserved after removal"
+                        );
+                        std::os::unix::fs::symlink(&other_path, &alias_path).unwrap();
+                        execute_owned(plan, owner).await
+                    })
+                    .await;
+                let result = settle_entry(outcome);
                 assert_eq!(result.result.unwrap().path, native(&original.join("new")));
                 assert!(result.affected.contains(&native(&alias)));
                 assert!(result.affected.contains(&native(&original)));
@@ -767,42 +640,37 @@ mod recovery_admission {
             let outer = root.path().join("outer");
             std::os::unix::fs::symlink("original", &inner).unwrap();
             std::os::unix::fs::symlink("inner", &outer).unwrap();
-            let runtime = Runtime::default();
-            let storage = root.path().join("recovery");
+            let runtime = Runtime::new(root.path().join("recovery"));
             let target = outer.join("source");
             let link = root.path().join("new-link");
-            let (plan, admission) = crate::file_mutation::admit_entry(
-                EntryPlan::symlink(native(&target), native(&link)),
-                runtime.clone(),
-                storage.clone(),
-            )
-            .await
-            .unwrap();
-            for alias in [&inner, &outer] {
-                let changed = entry_with_recovery(
-                    EntryPlan::rename(native(alias), "moved-alias".into()).unwrap(),
-                    runtime.clone(),
-                    storage.clone(),
-                )
-                .await;
-                assert!(
-                    changed.result.is_err(),
-                    "every traversed alias must remain owned"
-                );
-                assert!(fs::symlink_metadata(alias)
-                    .unwrap()
-                    .file_type()
-                    .is_symlink());
-            }
-            let outcome = entry_outcome_owned(plan, admission.context()).await;
-            let result = settle_entry(outcome, admission).await;
+            let (competitor, aliases) = (runtime.clone(), [inner.clone(), outer.clone()]);
+            let plan = EntryPlan::symlink(native(&target), native(&link));
+            let outcome = admission::admitted_execute(plan, &runtime, |plan, owner| async move {
+                for alias in &aliases {
+                    let changed = entry_outcome(
+                        EntryPlan::rename(native(alias), "moved-alias".into()).unwrap(),
+                        &competitor,
+                    )
+                    .await;
+                    assert!(
+                        changed.result.is_err(),
+                        "every traversed alias must remain owned"
+                    );
+                    assert!(fs::symlink_metadata(alias)
+                        .unwrap()
+                        .file_type()
+                        .is_symlink());
+                }
+                execute_owned(plan, owner).await
+            })
+            .await;
+            let result = settle_entry(outcome);
             assert!(result.result.is_ok());
             assert_eq!(fs::read_link(&link).unwrap(), target);
             assert_eq!(fs::read(&link).unwrap(), b"owned source");
-            assert!(entry_with_recovery(
+            assert!(entry_outcome(
                 EntryPlan::rename(native(&inner), "moved-alias".into()).unwrap(),
-                runtime,
-                storage
+                &runtime,
             )
             .await
             .result
@@ -819,10 +687,9 @@ mod recovery_admission {
             fs::create_dir(&original).unwrap();
             std::os::unix::fs::symlink(&original, &alias).unwrap();
             fs::write(original.join("before"), b"same bytes").unwrap();
-            let result = entry_with_recovery(
+            let result = entry_outcome(
                 EntryPlan::rename(native(&alias.join("before")), "after".into()).unwrap(),
-                Runtime::default(),
-                root.path().join("recovery"),
+                &Runtime::new(root.path().join("recovery")),
             )
             .await;
             let receipt = result.result.unwrap();
@@ -837,21 +704,45 @@ mod recovery_admission {
     }
 
     #[test]
+    fn non_utf8_rename_keeps_the_receipt_without_lossy_history_authority() {
+        use std::os::unix::ffi::OsStringExt;
+        tauri::async_runtime::block_on(async {
+            let root = tempfile::tempdir().unwrap();
+            let physical = root
+                .path()
+                .join(std::ffi::OsString::from_vec(b"native-\xff".to_vec()));
+            let alias = root.path().join("alias");
+            fs::create_dir(&physical).unwrap();
+            std::os::unix::fs::symlink(&physical, &alias).unwrap();
+            fs::write(physical.join("before"), b"owned").unwrap();
+            let result = entry_outcome(
+                EntryPlan::rename(native(&alias.join("before")), "after".into()).unwrap(),
+                &Runtime::new(root.path().join("recovery")),
+            )
+            .await;
+            assert_eq!(result.result.unwrap().path, native(&alias.join("after")));
+            assert_eq!(fs::read(physical.join("after")).unwrap(), b"owned");
+            assert!(matches!(result.effect, ForwardEffect::Changed(None)));
+            assert!(result.warning.unwrap().contains("native path"));
+        });
+    }
+
+    #[test]
     fn cleanup_failure_keeps_the_confirmed_receipt_and_history_effect() {
         tauri::async_runtime::block_on(async {
             let root = tempfile::tempdir().unwrap();
             let storage = root.path().join("recovery");
-            let runtime = Runtime::default();
+            let runtime = Runtime::new(storage.clone());
             let target = root.path().join("created");
             let plan = EntryPlan::write_text(native(&target), "confirmed bytes".into());
-            let admission = runtime
-                .admit(storage.clone(), plan.resources())
-                .await
-                .unwrap();
-            let outcome = entry_outcome_owned(plan, admission.context()).await;
-            // Real namespace substitution makes the coordinator reject settlement.
-            fs::rename(storage.join("admission.lock"), storage.join("moved-gate")).unwrap();
-            let result = settle_entry(outcome, admission).await;
+            let outcome = admission::admitted_execute(plan, &runtime, |plan, owner| async move {
+                let outcome = execute_owned(plan, owner).await;
+                // Real namespace substitution makes the coordinator reject settlement.
+                fs::rename(storage.join("admission.lock"), storage.join("moved-gate")).unwrap();
+                outcome
+            })
+            .await;
+            let result = settle_entry(outcome);
             assert_eq!(result.result.unwrap().path, native(&target));
             assert_eq!(fs::read(&target).unwrap(), b"confirmed bytes");
             assert!(matches!(result.effect, ForwardEffect::Changed(None)));
@@ -860,7 +751,7 @@ mod recovery_admission {
                 .warning
                 .unwrap()
                 .contains("ownership record could not be retired"));
-            assert!(runtime.admit(storage, writing(&target)).await.is_err());
+            assert!(runtime.admit(writing(&target)).await.is_err());
         });
     }
 
@@ -876,9 +767,9 @@ mod recovery_admission {
                     let target = root.path().join(format!("entry-{number}"));
                     let barrier = barrier.clone();
                     std::thread::spawn(move || {
-                        let runtime = Runtime::default();
+                        let runtime = Runtime::new(storage);
                         barrier.wait();
-                        tauri::async_runtime::block_on(runtime.admit(storage, writing(&target)))
+                        tauri::async_runtime::block_on(runtime.admit(writing(&target)))
                     })
                 })
                 .collect();
@@ -887,12 +778,11 @@ mod recovery_admission {
                 .into_iter()
                 .map(|worker| worker.join().unwrap().unwrap())
                 .collect();
-            let competitor = Runtime::default();
+            let competitor = Runtime::new(storage.clone());
             for number in 0..2 {
-                assert!(tauri::async_runtime::block_on(competitor.admit(
-                    storage.clone(),
-                    writing(&root.path().join(format!("entry-{number}")))
-                ))
+                assert!(tauri::async_runtime::block_on(
+                    competitor.admit(writing(&root.path().join(format!("entry-{number}"))))
+                )
                 .is_err());
             }
             for admission in held {
@@ -905,17 +795,16 @@ mod recovery_admission {
     fn concurrent_first_admissions_share_initialization_and_keep_independent_claims() {
         let root = tempfile::tempdir().unwrap();
         let storage = root.path().join("app-data/recovery");
-        let runtime = Runtime::default();
+        let runtime = Runtime::new(storage.clone());
         let barrier = std::sync::Arc::new(std::sync::Barrier::new(3));
         let workers: Vec<_> = (0..2)
             .map(|number| {
                 let runtime = runtime.clone();
-                let storage = storage.clone();
                 let path = root.path().join(format!("file-{number}"));
                 let barrier = barrier.clone();
                 std::thread::spawn(move || {
                     barrier.wait();
-                    tauri::async_runtime::block_on(runtime.admit(storage, writing(&path))).unwrap()
+                    tauri::async_runtime::block_on(runtime.admit(writing(&path))).unwrap()
                 })
             })
             .collect();
@@ -924,13 +813,10 @@ mod recovery_admission {
             .into_iter()
             .map(|worker| worker.join().unwrap())
             .collect();
-        let competitor = Runtime::default();
+        let competitor = Runtime::new(storage.clone());
         for number in 0..2 {
             let path: PathBuf = root.path().join(format!("file-{number}"));
-            assert!(tauri::async_runtime::block_on(
-                competitor.admit(storage.clone(), writing(&path))
-            )
-            .is_err());
+            assert!(tauri::async_runtime::block_on(competitor.admit(writing(&path))).is_err());
             assert!(!path.exists());
         }
         for claim in held {

@@ -2,7 +2,6 @@
 import { browser, $ } from "@wdio/globals";
 import { expect } from "expect-webdriverio";
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import { exactApplicationPid } from "../native-process";
 import {
@@ -11,11 +10,11 @@ import {
   type InotifyWatch,
   type NativeProcessIdentity,
 } from "../native-resources";
-import { domTexts, navigateTo, switchToFreshWindow, waitForFreshWindowElement } from "./helpers";
+import { closeOtherWindows, domTexts, navigateTo, switchToFreshWindow, waitForFreshWindowElement } from "./helpers";
+import { monitorFreshWindowOpen } from "../diagnostics/fresh-window";
+import { createNativeFixtureDirectory } from "../native-qualification";
 
-const scratch = fs.mkdtempSync(
-  path.join(os.homedir(), ".tauri-explorer-e2e-directory-owner-"),
-);
+const scratch = createNativeFixtureDirectory("tauri-explorer-e2e-directory-owner-");
 const mainDirectory = path.join(scratch, "main");
 const reloadDirectory = path.join(scratch, "reload-raw-watch");
 const childDirectories = Array.from(
@@ -23,14 +22,12 @@ const childDirectories = Array.from(
   (_, index) => path.join(scratch, `child-${index + 1}`),
 );
 
-type WindowOperationResult = { kind: string; label: string } | null;
 type DirectoryWatchLease = { id: string; path: string };
 
 let mainHandle = "";
 let application: NativeProcessIdentity;
 
-async function operation(op: string, target?: string): Promise<unknown> {
-  const token = crypto.randomUUID();
+async function operation(op: string, target?: string, token = crypto.randomUUID()): Promise<unknown> {
   await browser.execute((detail) => {
     window.dispatchEvent(new CustomEvent("e2e-window-operation", { detail }));
   }, { token, op, target });
@@ -96,6 +93,11 @@ async function waitForCausalMutation(directory: string, marker: string): Promise
   });
 }
 
+// Linux-only: asserts directly on kernel inotify watch descriptors via
+// `/proc/<pid>/fdinfo` (native-resources.ts). Windows has no documented
+// per-process introspection of ReadDirectoryChangesW watch handles, so the
+// exact-watch-count claims this spec makes (acquired/reclaimed/retired) have
+// no Windows-native equivalent to assert on (#800).
 const linuxDescribe = process.platform === "linux" ? describe : describe.skip;
 
 linuxDescribe("pane directory native window ownership", () => {
@@ -116,27 +118,21 @@ linuxDescribe("pane directory native window ownership", () => {
   });
 
   after(async () => {
-    if (mainHandle) {
-      for (const handle of await browser.getWindowHandles()) {
-        if (handle === mainHandle) continue;
-        await browser.switchToWindow(handle);
-        await browser.closeWindow();
-      }
-      await browser.switchToWindow(mainHandle);
-    }
-    // Retain watched directories until all resource assertions finish. Removing
-    // them earlier lets the kernel discard leaked watches and masks the defect.
-    fs.rmSync(scratch, { recursive: true, force: true });
+    if (mainHandle) await closeOtherWindows(mainHandle);
+    // The fixture directory outlives this process (createNativeFixtureDirectory);
+    // removing it earlier would let the kernel discard leaked watches and mask
+    // the defect this suite exists to catch.
   });
 
   it("reclaims each unique child watch while the main window keeps observing", async () => {
     for (const [index, directory] of childDirectories.entries()) {
       await browser.switchToWindow(mainHandle);
       const existingHandles = await browser.getWindowHandles();
-      const opened = await operation("fresh-open", directory) as WindowOperationResult;
-      expect(opened).not.toBeNull();
-      expect(opened?.kind).toBe("fresh");
-      const childHandle = await switchToFreshWindow(opened!.label, existingHandles);
+      const openToken = crypto.randomUUID();
+      const label = `explorer-${openToken}`;
+      const opened = await monitorFreshWindowOpen(label,
+        () => operation("fresh-open", directory, openToken));
+      const childHandle = await switchToFreshWindow(opened.label, existingHandles);
       await waitForFreshWindowElement(".file-list", 20_000);
       await browser.waitUntil(async () =>
         (await $(".status-path").getAttribute("title")) === directory,

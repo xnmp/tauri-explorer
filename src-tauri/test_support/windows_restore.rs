@@ -704,6 +704,7 @@ mod native {
 
     #[test]
     fn mixed_batch_keeps_exact_success_and_stops_after_collision() {
+        let _serial = crate::files::batch::serialize_dedicated_workers();
         thread::spawn(|| {
             let apartment = StaApartment::new().expect("STA");
             let directory = tempfile::tempdir().expect("fixture directory");

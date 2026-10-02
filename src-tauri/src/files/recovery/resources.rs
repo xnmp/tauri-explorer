@@ -205,6 +205,11 @@ fn add_budget(total: usize, path: &Path, ancestors: usize) -> io::Result<usize> 
 pub(crate) enum Access {
     Read,
     Write,
+    /// Exclusive mkdir, or validate/adopt an existing private directory.
+    /// This may never replace an entry or repair its permissions. Two ensures
+    /// commute. Ordinary claims on this entry or an enclosing subtree exclude
+    /// it; distinct descendant entries retain their own independent authority.
+    EnsurePrivateDirectory,
 }
 
 /// Queries scale with resource depth and indexed lookup, not the product of two
@@ -213,6 +218,7 @@ pub(crate) enum Access {
 pub(super) struct ConflictIndex {
     readers: Claims,
     writers: Claims,
+    directory_ensures: Claims,
 }
 
 #[derive(Default)]
@@ -229,6 +235,7 @@ impl ConflictIndex {
         let claims = match resource.access {
             Access::Read => &mut self.readers,
             Access::Write => &mut self.writers,
+            Access::EnsurePrivateDirectory => &mut self.directory_ensures,
         };
         claims.insert(resource);
     }
@@ -236,7 +243,9 @@ impl ConflictIndex {
     pub(super) fn conflicts(&self, resource: &Resource) -> bool {
         let path = PathKey::new(&resource.path.0);
         self.writers.conflicts(resource, &path)
-            || resource.access == Access::Write && self.readers.conflicts(resource, &path)
+            || resource.access != Access::Read && self.readers.conflicts(resource, &path)
+            || resource.access != Access::EnsurePrivateDirectory
+                && self.directory_ensures.conflicts(resource, &path)
     }
 }
 
@@ -525,6 +534,9 @@ pub(crate) struct Resource {
 impl Resource {
     pub(super) fn validate(&self) -> io::Result<()> {
         validate_path(&self.path.0)?;
+        if self.access == Access::EnsurePrivateDirectory && self.scope != Scope::Entry {
+            return Err(invalid("Private directory creation requires entry scope"));
+        }
         if self.ancestors.is_empty()
             || self.ancestors.len() > MAX_DEPTH
             || self.ancestors.len() >= self.path.0.ancestors().count()

@@ -187,10 +187,14 @@ impl Cleanup {
 }
 
 impl Drop for Cleanup {
+    // Teardown never panics: a peer that already failed its assertion has
+    // dropped these channels, and a panic here would abort the whole suite.
+    // A missed handshake leaves the marker unwritten, which the test reports.
     fn drop(&mut self) {
-        self.started.send(()).unwrap();
-        self.release.recv_timeout(DEADLINE).unwrap();
-        fs::write(&self.path, b"batch cleanup completed").unwrap();
+        let _ = self.started.send(());
+        if self.release.recv_timeout(DEADLINE).is_ok() {
+            let _ = fs::write(&self.path, b"batch cleanup completed");
+        }
     }
 }
 
@@ -202,12 +206,13 @@ struct ObservedOwner {
 impl Drop for ObservedOwner {
     fn drop(&mut self) {
         drop(self.context.take());
-        self.released.send(()).unwrap();
+        let _ = self.released.send(());
     }
 }
 
 #[test]
 fn pooled_and_dedicated_batches_keep_cleanup_owned_after_the_waiter_disappears() {
+    let _serial = crate::files::batch::serialize_dedicated_workers();
     use crate::files::batch;
     for worker in ["pool", "dedicated", "pool-setup"] {
         let (directory, coordinator, path) = fixture();
@@ -258,17 +263,19 @@ fn pooled_and_dedicated_batches_keep_cleanup_owned_after_the_waiter_disappears()
                     .await)
                 }
             });
-            polled_tx.send(poll_once(future.as_mut())).unwrap();
-            drop_rx.recv_timeout(DEADLINE).unwrap();
+            let early = batch::drive_until_stopped(future.as_mut(), &drop_rx, |pending| {
+                let _ = polled_tx.send(pending);
+            });
+            assert!(
+                early.is_none(),
+                "{worker} waiter completed while cleanup was held"
+            );
             drop(future);
         });
-        assert!(matches!(
-            polled_rx.recv_timeout(DEADLINE).unwrap(),
-            Poll::Pending
-        ));
+        assert!(polled_rx.recv_timeout(DEADLINE).unwrap());
         cleanup_rx
             .recv_timeout(DEADLINE)
-            .expect("worker reached capture cleanup");
+            .unwrap_or_else(|error| panic!("{worker} worker reached capture cleanup: {error:?}"));
         drop(admission);
         drop_tx.send(()).unwrap();
         caller.join().unwrap();
@@ -293,6 +300,7 @@ fn pooled_and_dedicated_batches_keep_cleanup_owned_after_the_waiter_disappears()
 
 #[test]
 fn setup_failures_and_worker_panics_release_the_lease_before_the_result() {
+    let _serial = crate::files::batch::serialize_dedicated_workers();
     use crate::files::{batch, trash_artifact::TrashSuccess};
     for pooled in [false, true] {
         for failure in ["setup-error", "setup-panic", "operation-panic", "success"] {
@@ -417,6 +425,7 @@ impl Drop for PanicDuringCleanup {
 
 #[test]
 fn cleanup_panics_remain_visible_after_successful_items_and_release_the_lease() {
+    let _serial = crate::files::batch::serialize_dedicated_workers();
     use crate::files::batch;
     for worker in [
         "pool",
@@ -506,6 +515,7 @@ fn cleanup_panics_remain_visible_after_successful_items_and_release_the_lease() 
 
 #[test]
 fn empty_dedicated_batch_reports_context_cleanup_panic() {
+    let _serial = crate::files::batch::serialize_dedicated_workers();
     use crate::files::batch;
     let outcome = tauri::async_runtime::block_on(batch::run_dedicated_receipts(
         batch::BatchPlan::new(Vec::new()).unwrap(),

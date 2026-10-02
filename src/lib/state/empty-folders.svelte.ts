@@ -17,6 +17,7 @@ import { SvelteMap } from "svelte/reactivity";
 import { isDirectoryEmpty as invokeIsDirectoryEmpty } from "$lib/api/files";
 import { settingsStore } from "./settings.svelte";
 import type { FileEntry } from "$lib/domain/file";
+import { nativeDirectoryKey } from "$lib/domain/path";
 
 const DEFAULT_MAX_CONCURRENT = 8;
 
@@ -35,9 +36,9 @@ export interface EmptyFolderDeps {
  * tested with injected dependencies; the shared instance is exported below.
  */
 export class EmptyFolderResolver {
-  #cache = new SvelteMap<string, boolean>();
-  #inFlight = new Set<string>();
-  #queue: string[] = [];
+  #cache = new SvelteMap<string, { path: string; empty: boolean }>();
+  #inFlight = new Map<string, { path: string; key: string }>();
+  #queue: Array<{ path: string; key: string }> = [];
   #active = 0;
   #key = "";
   #resolveEmpty: EmptyFolderDeps["resolveEmpty"];
@@ -56,30 +57,24 @@ export class EmptyFolderResolver {
    * elsewhere doesn't invalidate unrelated entries.
    */
   isEmpty(path: string): boolean | undefined {
-    return this.#cache.get(path);
+    return this.#cache.get(nativeDirectoryKey(path))?.empty;
   }
 
   /**
    * Request resolution for a directory entry. No-op for files or for paths
    * already known or in flight, so it is safe to call on every render. If the
-   * entry already carries a backend-resolved `is_empty` (create/rename/copy
-   * results), that value is trusted instead of a redundant round-trip.
+   * entry carries `is_empty`, it still needs a probe: physical metadata has no
+   * hidden-visibility or observation revision and may belong to an old listing.
    */
   request(entry: FileEntry): void {
     if (entry.kind !== "directory") return;
     this.#syncKey();
 
     const { path } = entry;
-    if (this.#cache.has(path) || this.#inFlight.has(path)) return;
+    const key = nativeDirectoryKey(path);
+    if (this.#cache.has(key) || this.#inFlight.has(key)) return;
 
-    if (entry.is_empty !== undefined) {
-      this.#cache.set(path, entry.is_empty);
-      return;
-    }
-
-    this.#inFlight.add(path);
-    this.#queue.push(path);
-    this.#pump();
+    this.#enqueue(path);
   }
 
   /** Drop all resolved state (setting flips, forced refresh, tests). */
@@ -87,6 +82,20 @@ export class EmptyFolderResolver {
     this.#cache.clear();
     this.#inFlight.clear();
     this.#queue = [];
+  }
+
+  /**
+   * Recheck folders changed by a successful file operation. A probe that began
+   * before the mutation loses its identity so it cannot restore an old result.
+   */
+  invalidate(paths: readonly string[]): void {
+    for (const key of new Set(paths.map(nativeDirectoryKey))) {
+      const path = this.#inFlight.get(key)?.path ?? this.#cache.get(key)?.path;
+      this.#cache.delete(key);
+      this.#queue = this.#queue.filter((work) => work.key !== key);
+      this.#inFlight.delete(key);
+      if (path !== undefined) this.#enqueue(path);
+    }
   }
 
   #syncKey(): void {
@@ -97,18 +106,34 @@ export class EmptyFolderResolver {
     }
   }
 
+  #enqueue(path: string): void {
+    const key = nativeDirectoryKey(path);
+    // Identity belongs only to live work. Dropping/replacing it invalidates old
+    // results without retaining a revision for every directory ever mutated.
+    const work = { path, key };
+    this.#inFlight.set(key, work);
+    this.#queue.push(work);
+    this.#pump();
+  }
+
   #pump(): void {
     while (this.#active < this.#maxConcurrent && this.#queue.length > 0) {
-      const path = this.#queue.shift()!;
+      const work = this.#queue.shift()!;
+      const { path, key } = work;
+      const includeHidden = this.#includeHidden();
       this.#active += 1;
-      void this.#resolveEmpty(path, this.#includeHidden())
-        .then((empty) => this.#cache.set(path, empty))
+      void this.#resolveEmpty(path, includeHidden)
+        .then((empty) => {
+          if (this.#inFlight.get(key) === work && this.#includeHidden() === includeHidden) {
+            this.#cache.set(key, { path, empty });
+          }
+        })
         .catch(() => {
           // resolveEmpty is expected to swallow errors (unreadable dirs resolve
           // to "not empty"); guard anyway so one rejection can't stall the pool.
         })
         .finally(() => {
-          this.#inFlight.delete(path);
+          if (this.#inFlight.get(key) === work) this.#inFlight.delete(key);
           this.#active -= 1;
           this.#pump();
         });

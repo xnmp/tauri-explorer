@@ -18,9 +18,22 @@ interface Navigation {
   path: string;
   startedAt: number;
   staged: DirectoryWatchLease | null | undefined;
+  unmatched: Map<string, DirectoryChange>;
+  unmatchedOverflow: boolean;
   closed: boolean;
   done: Promise<void>;
   finish(): void;
+}
+
+const MAX_PENDING_UNMATCHED_CHANGES = 256;
+
+function mergeChange(previous: DirectoryChange | undefined, change: DirectoryChange): DirectoryChange {
+  return previous ? {
+    path: change.path,
+    origin: previous.origin === "mutation" || change.origin === "mutation" ? "mutation" : "watcher",
+    observedAt: previous.observedAt == null || change.observedAt == null
+      ? undefined : Math.max(previous.observedAt, change.observedAt),
+  } : change;
 }
 
 export function createPaneWatch(deps: PaneWatchDependencies) {
@@ -49,13 +62,7 @@ export function createPaneWatch(deps: PaneWatchDependencies) {
     releases.add(task);
   }
   function remember(change: DirectoryChange): void {
-    const previous = dirty.get(change.path);
-    dirty.set(change.path, previous ? {
-      path: change.path,
-      origin: previous.origin === "mutation" || change.origin === "mutation" ? "mutation" : "watcher",
-      observedAt: previous.observedAt == null || change.observedAt == null
-        ? undefined : Math.max(previous.observedAt, change.observedAt),
-    } : change);
+    dirty.set(change.path, mergeChange(dirty.get(change.path), change));
   }
   function request(change: DirectoryChange): void {
     schedule((options) => {
@@ -73,12 +80,23 @@ export function createPaneWatch(deps: PaneWatchDependencies) {
     if (change && !destroyed) request(change);
   }
   function changed(change: DirectoryChange): void {
-    if (destroyed || (committed?.path !== change.path && pending?.path !== change.path)) return;
+    if (destroyed) return;
     if (pending) {
+      // Observation starts before the listing returns its resolved lease path.
+      // Retain unmatched events during that handoff; accept() rekeys the one
+      // belonging to the resolved navigation and commit() drops the rest.
+      if (committed?.path !== change.path && pending.path !== change.path) {
+        if (pending.unmatched.has(change.path) || pending.unmatched.size < MAX_PENDING_UNMATCHED_CHANGES) {
+          pending.unmatched.set(change.path, mergeChange(pending.unmatched.get(change.path), change));
+        } else {
+          pending.unmatchedOverflow = true;
+        }
+        return;
+      }
       // The forthcoming scan covers changes observed before navigation began.
       if (pending.path === change.path && change.observedAt != null && change.observedAt < pending.startedAt) return;
       remember(change);
-    } else {
+    } else if (committed?.path === change.path) {
       request(change);
     }
   }
@@ -96,7 +114,8 @@ export function createPaneWatch(deps: PaneWatchDependencies) {
     }
     let finish!: () => void;
     const navigation: Navigation = {
-      path, startedAt: Date.now(), staged: undefined, closed: false,
+      path, startedAt: Date.now(), staged: undefined,
+      unmatched: new Map(), unmatchedOverflow: false, closed: false,
       done: new Promise<void>((resolve) => { finish = resolve; }),
       finish: () => finish(),
     };
@@ -121,10 +140,22 @@ export function createPaneWatch(deps: PaneWatchDependencies) {
     return {
       ready,
       current,
-      // The transport transfers ownership before publishing stream callbacks.
+      // The listing owner transfers observation before publishing a snapshot.
       // The old committed lease survives until the caller commits its UI state.
       accept(lease: DirectoryWatchLease | null): boolean {
         if (!current() || navigation.staged !== undefined) return false;
+        if (lease && navigation.path !== lease.path) {
+          const changes = [dirty.get(navigation.path), navigation.unmatched.get(lease.path)];
+          dirty.delete(navigation.path);
+          navigation.path = lease.path;
+          for (const change of changes) {
+            if (change && (change.observedAt == null || change.observedAt >= navigation.startedAt)) {
+              remember({ ...change, path: lease.path });
+            }
+          }
+          if (navigation.unmatchedOverflow) remember({ path: lease.path });
+        }
+        navigation.unmatched.clear();
         navigation.staged = lease;
         return true;
       },
@@ -132,11 +163,13 @@ export function createPaneWatch(deps: PaneWatchDependencies) {
       commit(): boolean {
         if (!current() || navigation.staged === undefined) return false;
         const previous = committed;
-        committed = { path, lease: navigation.staged };
+        const lease = navigation.staged;
+        const committedPath = navigation.path;
+        committed = { path: committedPath, lease };
         navigation.staged = undefined;
         pending = null;
         if (previous?.lease) release(previous.lease);
-        flush(path);
+        flush(committedPath);
         close();
         return true;
       },

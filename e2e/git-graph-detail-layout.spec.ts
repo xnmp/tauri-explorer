@@ -1,14 +1,12 @@
 import { test, expect, type Page, type Locator } from "./fixtures";
-import { waitForEntries } from "./helpers";
+import { seedSettings, waitForEntries } from "./helpers";
 
 const RESIZE_LOOP = "ResizeObserver loop completed with undelivered notifications";
 
 async function openGraph(page: Page, zoom: number, width: number) {
   const errors: string[] = [];
   page.on("pageerror", error => errors.push(error.message));
-  await page.addInitScript(value => {
-    localStorage.setItem("explorer-settings", JSON.stringify({ zoomLevel: value }));
-  }, zoom);
+  await seedSettings(page, { zoomLevel: zoom }, { replace: true });
   await page.setViewportSize({ width, height: 720 });
   await page.goto("/?path=/home/user/Documents/project");
   await waitForEntries(page);

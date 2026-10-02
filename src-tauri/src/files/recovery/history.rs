@@ -28,12 +28,15 @@ pub(super) fn execute(
             ));
         }
         let mut execution = super::move_execution::MoveExecution::reopen(operation)?;
-        execution.restore_move().map_err(|error| {
+        // A refusal here precedes every durable effect, so it is reported as
+        // unchanged and this same Undo stays available.
+        let admitted = execution.admit_restoration()?;
+        execution.restore_admitted(admitted).map_err(|error| {
             AppError::MutationUncertain(format!(
                 "Move history could not complete; inspect File Recovery before continuing. {error}"
             ))
         })?;
-        history.revision = execution.operation.state().move_state()?.effect_revision;
+        history.revision = execution.operation.state().effect_revision;
         return Ok(ReplacementOutcome {
             history,
             warning: None,
@@ -48,8 +51,7 @@ pub(super) fn execute(
         ReplacementDirection::Restore => execution.restore_copy(),
         ReplacementDirection::Reapply => execution.reapply_copy(),
     }.map_err(|error| AppError::MutationUncertain(format!("Replacement history could not complete; inspect File Recovery before continuing. {error}")))?;
-    let state = execution.operation.state().replacement()?;
-    history.revision = state.effect_revision;
+    history.revision = execution.operation.state().effect_revision;
     Ok(ReplacementOutcome {
         history,
         warning: None,

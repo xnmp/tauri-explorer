@@ -1,48 +1,61 @@
 //! Pure retention policy (ADR 0023). No filesystem or coordinator ownership.
 use super::*;
+use crate::files::recovery::checkpoint::{
+    Checkpoint, Decision, Phase, RetirementState, Sides, State, Step,
+};
 use crate::files::recovery::coordinator::test_fixture::fixture;
-use crate::files::recovery::model::{ReplacementState, StagedPayload};
+use crate::files::recovery::model::{OperationSpec, ReplacementSpec, StagedPayload};
 
-fn spec() -> OperationSpec {
+fn spec() -> ReplacementSpec {
     let (_directory, _coordinator, reservation, spec) = fixture();
     reservation.finish().unwrap();
+    let OperationSpec::CopyReplacement(spec) = spec else {
+        panic!("copy replacement fixture");
+    };
     spec
 }
 
-fn staged(spec: &OperationSpec) -> StagedPayload {
-    let OperationSpec::CopyReplacement(replacement) = spec else {
-        panic!("copy replacement fixture");
-    };
+fn state(spec: &ReplacementSpec, phase: Phase, error: Option<&str>) -> State {
     // A staged payload is only shape evidence here; retention never reads it.
-    StagedPayload {
-        version: replacement.source_version.clone(),
-        final_mode: None,
+    let staged = !matches!(
+        phase,
+        Phase::Planned
+            | Phase::RootIntent
+            | Phase::Rooted
+            | Phase::ManifestIntent
+            | Phase::Prepared
+            | Phase::StageIntent
+    );
+    State {
+        phase,
+        staged: staged.then(|| StagedPayload {
+            version: spec.source_version.clone(),
+            final_mode: None,
+        }),
+        error: error.map(str::to_owned),
+        ..State::default()
     }
 }
 
-fn state(spec: &OperationSpec, phase: Phase, error: Option<&str>) -> OperationState {
-    let published = matches!(
-        phase,
-        Phase::Staged
-            | Phase::DisplaceIntent
-            | Phase::Displaced
-            | Phase::PublishIntent
-            | Phase::Published
-            | Phase::RestoreIntent
-            | Phase::Restored
-            | Phase::ReapplyIntent
-            | Phase::DiscardIntent
-            | Phase::Discarded
-    )
-    .then(|| staged(spec));
-    OperationState::Replacement(ReplacementState {
-        effect_revision: 0,
-        retained_bytes: None,
-        root: None,
-        phase,
-        published,
-        error: error.map(str::to_owned),
-    })
+fn retention(spec: &ReplacementSpec, state: &State) -> Retention {
+    Checkpoint { spec, state }.retention()
+}
+
+fn retiring(mut state: State, completed: bool) -> State {
+    state.retirement = Some(RetirementState {
+        decision: Decision::Explicit,
+        steps: Sides {
+            source: None,
+            target: Some(if completed {
+                Step::Removed
+            } else {
+                Step::Pending
+            }),
+        },
+        plans: Sides::default(),
+        completed,
+    });
+    state
 }
 
 #[test]
@@ -51,7 +64,6 @@ fn a_completed_overwrite_retains_the_only_original_and_needs_an_explicit_decisio
     assert_eq!(
         retention(&spec, &state(&spec, Phase::Published, None)),
         Retention::Settled {
-            retained: Retained::Original,
             disposal: Disposal::ExplicitOnly,
         }
     );
@@ -63,7 +75,6 @@ fn a_completed_restoration_retains_a_copy_that_automatic_retirement_may_reclaim(
     assert_eq!(
         retention(&spec, &state(&spec, Phase::Restored, None)),
         Retention::Settled {
-            retained: Retained::Publication,
             disposal: Disposal::AutomaticWhenSourceIntact,
         }
     );
@@ -89,7 +100,7 @@ fn every_incomplete_phase_is_unresolved_and_never_retirable() {
         let retention = retention(&spec, &state(&spec, phase, None));
         assert_eq!(retention, Retention::Unresolved, "{phase:?}");
         assert!(!retention.retirable(), "{phase:?}");
-        assert!(retention.settled().is_none(), "{phase:?}");
+        assert!(!retention.settled(), "{phase:?}");
     }
 }
 
@@ -104,46 +115,29 @@ fn a_recorded_error_preserves_evidence_instead_of_offering_disposal() {
         );
     }
     // A retirement already under way stays resumable while reporting its error.
+    let failed = state(&spec, Phase::Published, Some("cleanup failed"));
     assert_eq!(
-        retention(
-            &spec,
-            &state(&spec, Phase::DiscardIntent, Some("cleanup failed"))
-        ),
+        retention(&spec, &retiring(failed.clone(), false)),
         Retention::Retiring
     );
     assert_eq!(
-        retention(
-            &spec,
-            &state(&spec, Phase::Discarded, Some("cleanup failed"))
-        ),
+        retention(&spec, &retiring(failed, true)),
         Retention::Residue
     );
 }
 
 #[test]
-fn retirement_phases_are_retirable_without_offering_a_user_discard() {
+fn retirement_is_retirable_without_offering_a_user_discard() {
     let spec = spec();
-    for (phase, expected) in [
-        (Phase::DiscardIntent, Retention::Retiring),
-        (Phase::Discarded, Retention::Residue),
-    ] {
-        let retention = retention(&spec, &state(&spec, phase, None));
+    for (completed, expected) in [(false, Retention::Retiring), (true, Retention::Residue)] {
+        let retention = retention(
+            &spec,
+            &retiring(state(&spec, Phase::Restored, None), completed),
+        );
         assert_eq!(retention, expected);
         assert!(retention.retirable());
-        assert!(retention.settled().is_none());
+        assert!(!retention.settled());
     }
-}
-
-#[test]
-fn an_operation_kind_without_a_retention_plan_is_never_retired() {
-    let spec = spec();
-    // A checkpoint of another kind never adopts the replacement plan, and a
-    // replacement checkpoint never authorizes another kind's artifacts.
-    let other_kind = OperationState::Move(crate::files::recovery::move_model::MoveState::default());
-    let retention = retention(&spec, &other_kind);
-    assert_eq!(retention, Retention::Unresolved);
-    assert!(!retention.retirable());
-    assert_eq!(measured_bytes(&other_kind), None);
 }
 
 #[test]
@@ -202,7 +196,6 @@ fn every_durable_record_consumes_the_record_bound_even_when_unresolved() {
 #[test]
 fn usage_counts_records_and_separates_unmeasured_from_unavailable() {
     let settled = Retention::Settled {
-        retained: Retained::Original,
         disposal: Disposal::ExplicitOnly,
     };
     let mut usage = Usage::default();
@@ -231,7 +224,6 @@ fn capacity_is_reached_by_either_bound_and_unmeasured_records_still_consume_it()
         records: 2,
     };
     let settled = Retention::Settled {
-        retained: Retained::Publication,
         disposal: Disposal::AutomaticWhenSourceIntact,
     };
     let mut under = Usage::default();
@@ -247,4 +239,12 @@ fn capacity_is_reached_by_either_bound_and_unmeasured_records_still_consume_it()
     by_records.add(settled, None, true);
     assert!(by_records.at_capacity(&budget));
     assert_eq!(by_records.bytes, 0);
+}
+
+#[test]
+fn interrupted_retirement_without_a_measurement_is_reported_as_unknown() {
+    let mut usage = Usage::default();
+    usage.add(Retention::Retiring, None, true);
+    assert_eq!(usage.records, 1);
+    assert_eq!(usage.unmeasured, 1);
 }

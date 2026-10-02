@@ -1,5 +1,5 @@
 import { extractError } from "$lib/api/common";
-import { logFrontendDiagnostic } from "$lib/api/frontend-log";
+import { traceWindowFailure, traceWindowProgress } from "$lib/state/window-trace";
 import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import type { ExplorerSeed } from "$lib/domain/window-input";
@@ -33,6 +33,8 @@ export interface WindowLaunchFailure {
   label: string;
   phase: "geometry" | "construct" | "listener" | "native" | "timeout" | "retire";
   error?: unknown;
+  /** Time since this launch began. */
+  elapsedMs: number;
 }
 
 export interface WindowLaunchDependencies {
@@ -61,8 +63,8 @@ export interface WindowLaunchDependencies {
 }
 
 const defaultDependencies: WindowLaunchDependencies = {
-  reportFailure: ({ label, phase, error }) => logFrontendDiagnostic("window launch failed", {
-    label, phase, error: error === undefined ? null : extractError(error),
+  reportFailure: ({ label, phase, error, elapsedMs }) => traceWindowFailure("window launch failed", {
+    label, phase, elapsedMs, error: error === undefined ? null : extractError(error),
   }),
   warmEnabled: () => settingsStore.warmWindow,
   consumeWarm: consumeWarmWindow,
@@ -104,7 +106,7 @@ const SEED_RETENTION_MS = 10_000;
 function createCreationOwner(
   child: LaunchWindow,
   dependencies: WindowLaunchDependencies,
-  onFailure: (failure: Omit<WindowLaunchFailure, "label">) => void,
+  onFailure: (failure: Omit<WindowLaunchFailure, "label" | "elapsedMs">) => void,
   onCreated: () => void,
 ): { result: Promise<boolean>; expire(): void } {
   let expire = () => {};
@@ -116,7 +118,7 @@ function createCreationOwner(
       for (const stop of stops) stop();
       stops.clear();
     };
-    const finish = (created: boolean, failure: Omit<WindowLaunchFailure, "label">) => {
+    const finish = (created: boolean, failure: Omit<WindowLaunchFailure, "label" | "elapsedMs">) => {
       if (settled && !draining) return;
       // A JS window handle is only a label proxy. Native success is the first
       // point at which this invocation owns a window, including after timeout.
@@ -133,7 +135,7 @@ function createCreationOwner(
       if (!created) onFailure(failure);
       resolve(created);
     };
-    const failPending = (failure: Omit<WindowLaunchFailure, "label">) => {
+    const failPending = (failure: Omit<WindowLaunchFailure, "label" | "elapsedMs">) => {
       if (settled && !draining) return;
       settled = true;
       draining = true;
@@ -175,6 +177,9 @@ export function createWindowLauncher(overrides: Partial<WindowLaunchDependencies
     tabSnapshot?: TabSnapshot,
     at?: { x: number; y: number },
   ): Promise<WindowLaunchResult | null> {
+    const startedAt = Date.now();
+    const reportFailure = (failure: Omit<WindowLaunchFailure, "elapsedMs">) =>
+      dependencies.reportFailure?.({ ...failure, elapsedMs: Date.now() - startedAt });
     const normalizedTabSnapshot = tabSnapshot ? normalizeSnapshot(tabSnapshot) : null;
     if (tabSnapshot && !normalizedTabSnapshot) return null;
     if (!tabSnapshot && dependencies.warmEnabled()) {
@@ -188,7 +193,7 @@ export function createWindowLauncher(overrides: Partial<WindowLaunchDependencies
     try {
       geometry = await dependencies.prepareGeometry();
     } catch (error) {
-      dependencies.reportFailure?.({ label, phase: "geometry", error });
+      reportFailure({ label, phase: "geometry", error });
       return null;
     }
 
@@ -206,6 +211,7 @@ export function createWindowLauncher(overrides: Partial<WindowLaunchDependencies
     };
 
     let child: WebviewWindow | null = null;
+    let requestId: string | null = null;
     let seedKey: string | null = null;
     let seedTimer: ReturnType<typeof setTimeout> | null = null;
     let retired = false;
@@ -232,7 +238,7 @@ export function createWindowLauncher(overrides: Partial<WindowLaunchDependencies
       destroyRequested = true;
       // Rollback must not depend on the rejected child's close-request handler.
       void child.destroy().catch((error) => {
-        dependencies.reportFailure?.({ label, phase: "retire", error });
+        reportFailure({ label, phase: "retire", error });
       });
     };
     const construct = (): { result: Promise<boolean>; expire(): void } | null => {
@@ -240,13 +246,16 @@ export function createWindowLauncher(overrides: Partial<WindowLaunchDependencies
         child = dependencies.createWindow(label, options);
         return createCreationOwner(child, dependencies, (failure) => {
           retireChild();
-          dependencies.reportFailure?.({ label, ...failure });
+          reportFailure({ label, ...failure });
         }, () => {
+          traceWindowProgress("window native created", {
+            label, requestId, elapsedMs: Date.now() - startedAt,
+          });
           owned = true;
           if (retired) retireChild();
         });
       } catch (error) {
-        dependencies.reportFailure?.({ label, phase: "construct", error });
+        reportFailure({ label, phase: "construct", error });
         retireChild();
         return null;
       }
@@ -265,6 +274,7 @@ export function createWindowLauncher(overrides: Partial<WindowLaunchDependencies
       dependencies.sourceWindow(),
       label,
       async (handoff) => {
+        requestId = handoff.requestId;
         if (!publishSeed(tabSeedKey(label), { snapshot: normalizedTabSnapshot, ts: Date.now(), handoff })) {
           throw new Error("Tab snapshot exceeds the window handoff budget");
         }

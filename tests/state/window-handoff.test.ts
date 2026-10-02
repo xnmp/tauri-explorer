@@ -5,7 +5,9 @@ const harness = vi.hoisted(() => ({
   deferred: false,
   unlisten: vi.fn(),
   emitTo: vi.fn(async () => {}),
+  log: vi.fn(),
 }));
+vi.mock("$lib/api/frontend-log", () => ({ logFrontendDiagnostic: harness.log }));
 vi.mock("@tauri-apps/api/event", () => ({
   emitTo: harness.emitTo,
   listen: vi.fn(async (_event: string, listener: typeof harness.listener) => {
@@ -16,7 +18,7 @@ vi.mock("@tauri-apps/api/event", () => ({
 }));
 import { requestWindowHandoff, acknowledgeWindowHandoff, type WindowHandoff } from "$lib/state/window-handoff";
 
-beforeEach(() => { harness.deferred = false; harness.listener = undefined; harness.unlisten.mockReset(); harness.emitTo.mockClear(); });
+beforeEach(() => { harness.deferred = false; harness.listener = undefined; harness.unlisten.mockReset(); harness.emitTo.mockClear(); harness.log.mockClear(); });
 afterEach(() => vi.useRealTimers());
 
 it("keeps the source until the intended target acknowledges actual adoption", async () => {
@@ -92,4 +94,65 @@ it("settles rejected activation without waiting for its timeout", async () => {
   harness.listener!({ payload: { requestId: request.requestId, targetWindow: "target", accepted: false } });
   expect(await result).toBe(false);
   expect(harness.unlisten).toHaveBeenCalledOnce();
+});
+
+it("logs a timed-out handoff in every build, with its phase, elapsed time and windows", async () => {
+  vi.useFakeTimers();
+  const result = requestWindowHandoff("source", "target", async () => {}, 250);
+  await vi.advanceTimersByTimeAsync(250);
+  expect(await result).toBe(false);
+  expect(harness.log).toHaveBeenCalledOnce();
+  expect(harness.log).toHaveBeenCalledWith("window handoff failed", expect.objectContaining({
+    phase: "timeout", adopted: false, elapsedMs: 250, sourceWindow: "source", targetWindow: "target", error: null,
+  }));
+});
+
+it("logs a failed dispatch with a bounded error message", async () => {
+  const failure = "x".repeat(1_000);
+  expect(await requestWindowHandoff("source", "target", async () => { throw new Error(failure); })).toBe(false);
+  expect(harness.log).toHaveBeenCalledWith("window handoff failed", expect.objectContaining({
+    phase: "dispatch-error", error: `Error: ${failure}`.slice(0, 240),
+  }));
+});
+
+/** Resolves to "pending" if `promise` has not settled within a short real-time bound. */
+function settledWithin<T>(promise: Promise<T>, ms = 200): Promise<T | "pending"> {
+  return Promise.race([promise, new Promise<"pending">((resolve) => setTimeout(() => resolve("pending"), ms))]);
+}
+
+it("settles a dispatch failure whose rejection value cannot be stringified", async () => {
+  const unprintable = { toString() { throw new Error("toString exploded"); } };
+  const result = requestWindowHandoff("source", "target", async () => { throw unprintable; }, 60_000);
+  expect(await settledWithin(result)).toBe(false);
+  expect(harness.unlisten).toHaveBeenCalledOnce();
+  expect(harness.log).toHaveBeenCalledWith("window handoff failed", expect.objectContaining({
+    phase: "dispatch-error", error: "(unprintable error)",
+  }));
+});
+
+it("settles a failed handoff even when the log sink throws", async () => {
+  harness.log.mockImplementationOnce(() => { throw new Error("log sink down"); });
+  const result = requestWindowHandoff("source", "target", async () => { throw new Error("emit failed"); }, 60_000);
+  expect(await settledWithin(result)).toBe(false);
+  expect(harness.unlisten).toHaveBeenCalledOnce();
+});
+
+it("logs a target's explicit rejection", async () => {
+  let request!: WindowHandoff;
+  const result = requestWindowHandoff("source", "target", async (value) => { request = value; });
+  await vi.waitFor(() => expect(request).toBeDefined());
+  harness.listener!({ payload: { requestId: request.requestId, targetWindow: "target", accepted: false } });
+  expect(await result).toBe(false);
+  expect(harness.log).toHaveBeenCalledWith("window handoff failed", expect.objectContaining({
+    phase: "acknowledgement", adopted: false, requestId: request.requestId,
+  }));
+});
+
+it("does not log a successful handoff in builds without hooks", async () => {
+  let request!: WindowHandoff;
+  const result = requestWindowHandoff("source", "target", async (value) => { request = value; });
+  await vi.waitFor(() => expect(request).toBeDefined());
+  harness.listener!({ payload: { requestId: request.requestId, targetWindow: "target" } });
+  expect(await result).toBe(true);
+  expect(harness.log).not.toHaveBeenCalled();
 });

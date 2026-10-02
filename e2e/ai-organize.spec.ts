@@ -96,6 +96,37 @@ test.describe("AI destination suggestions", () => {
     ).toBeVisible();
   });
 
+  test("keeps a failed move visible after the session toast clears", async ({ page }) => {
+    await page.goto("/?path=/home/user/Documents");
+    await waitForEntries(page);
+    await setApiKey(page, "test-key-123");
+    const entry = page.locator(".entry-item").filter({ hasText: "notes.md" }).first();
+    await entry.click();
+    await entry.click({ button: "right" });
+    await page.locator(".context-menu").waitFor({ state: "visible" });
+    await chooseAiMenuItem(page, "Suggest destination");
+    const dialog = page.locator('[aria-labelledby="ai-organize-title"]');
+    const suggestion = dialog.locator('[data-testid="ai-organize-suggestions"] .suggestion').first();
+    await expect(suggestion).toContainText("project");
+
+    // An external deletion after suggestions load makes the real plugin
+    // session fail. Verify the persistent UI outcome, not a mocked dialog.
+    await page.evaluate(async () => {
+      const modulePath = "/src/lib/api/mock-invoke.ts";
+      const { mockInvoke } = await import(modulePath);
+      await mockInvoke("delete_entries", { paths: ["/home/user/Documents/notes.md"], permanent: true });
+    });
+    await suggestion.click();
+    await expect(dialog.locator(".warning-row")).toContainText("Source not found");
+    const failureToast = page.locator(".toast").filter({ hasText: "Source not found" });
+    await expect(failureToast).toBeVisible();
+    await expect(failureToast).toHaveCount(0, { timeout: 6000 });
+    await expect(dialog).toBeVisible();
+    await expect(dialog.locator(".warning-row")).toContainText("Source not found");
+    await expect(dialog.getByRole("button", { name: "Retry", exact: true })).toBeVisible();
+    await page.screenshot({ path: "screenshots/refactor/plugin-move-ordered-session/organizer-move-failure.png" });
+  });
+
   test("without an API key the picker points to Settings", async ({ page }) => {
     await page.goto("/?path=/home/user/Documents");
     await waitForEntries(page);

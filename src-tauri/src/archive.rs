@@ -4,7 +4,7 @@
 use crate::error::AppError;
 use crate::file_history::{self, ForwardEffect, MutationOutcome, MutationReply};
 use crate::files::archive_plan::{ArchivePlan, CompressRequest, ExtractRequest, Request};
-use crate::files::{FileEntry, FileKind};
+use crate::files::{admission, FileEntry, FileKind};
 use crate::renderer_owner::{self, Owner};
 use crate::task_registry::TaskRegistry;
 use chrono::{DateTime, Local};
@@ -125,32 +125,18 @@ async fn run_archive(
         use tauri::Manager;
         window.app_handle().clone()
     };
-    #[cfg(target_os = "linux")]
-    let recovery = crate::files::recovery::commands::owner(window)?;
+    let runtime = admission::runtime(window)?;
     let supervisor = owner.clone();
     file_history::run_forward(owner, false, potential_directories, async move {
         let plan = match crate::files::run_blocking(move || Ok(job.select())).await {
             Ok(plan) => plan,
             Err(error) => return rejected(error),
         };
-        #[cfg(target_os = "linux")]
-        let (plan, admission) = {
-            let admission = match recovery.0.admit(recovery.1, plan.resources()).await {
-                Ok(admission) => admission,
-                Err(error) => return rejected(error),
-            };
-            match plan.resolve(admission.paths().map(Path::to_path_buf)) {
-                Ok(plan) => (plan, admission),
-                // No work was dispatched. Retire the reservation explicitly
-                // rather than abandoning a row for the next admission to
-                // reclaim; a failed retirement is still only a warning.
-                Err(error) => return settle(rejected(error), admission).await,
-            }
-        };
-        let outcome = execute(plan, Some(app), job_id, supervisor).await;
-        #[cfg(target_os = "linux")]
-        let outcome = settle(outcome, admission).await;
-        outcome
+        admission::admitted_execute(plan, &runtime, |plan, _owner| async move {
+            Archived(execute(plan, Some(app), job_id, supervisor).await)
+        })
+        .await
+        .0
     })
     .await
 }
@@ -165,19 +151,18 @@ fn rejected(error: AppError) -> MutationOutcome<String> {
     }
 }
 
-#[cfg(target_os = "linux")]
-async fn settle(
-    mut outcome: MutationOutcome<String>,
-    admission: crate::files::recovery::MutationAdmission,
-) -> MutationOutcome<String> {
-    if let Err(error) = crate::files::run_blocking(move || admission.finish()).await {
-        let warning = format!(
-            "Archive operation finished, but its ownership record could not be retired: {error}"
-        );
-        log::warn!("{warning}");
-        outcome.warning = Some(warning);
+struct Archived(MutationOutcome<String>);
+
+impl admission::Settle for Archived {
+    fn refused(error: AppError) -> Self {
+        Self(rejected(error))
     }
-    outcome
+
+    fn unretired(&mut self, error: AppError) {
+        let warning = admission::unretired_warning("Archive operation", &error);
+        log::warn!("{warning}");
+        self.0.warning = Some(warning);
+    }
 }
 
 fn registry_for(request: &Request) -> &'static TaskRegistry {

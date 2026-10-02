@@ -5,6 +5,7 @@
 //! `Published` checkpoint, so an error or crash while preparing leaves the
 //! user's source exactly where it was.
 use super::{
+    checkpoint::DurableKind,
     coordinator::{Coordinator, Reservation},
     model::{NativePath, OperationSpec},
     move_execution::MoveExecution,
@@ -37,6 +38,8 @@ pub(super) struct PreparedMove {
 struct PendingMove {
     requests: Vec<Request>,
     source_token: Option<String>,
+    probe_source_token: Option<String>,
+    probe_target_token: Option<String>,
     target_token: Option<String>,
     requested_source: PathBuf,
     presentation: PathBuf,
@@ -69,6 +72,8 @@ impl PendingMove {
         let overwriting = fs::symlink_metadata(target).is_ok();
         let source_token = cross_volume.then(token).transpose()?;
         let target_token = (cross_volume || overwriting).then(token).transpose()?;
+        let probe_source_token = Some(token()?);
+        let probe_target_token = cross_volume.then(token).transpose()?;
         let mut requests: Vec<Request> = [
             (source.to_owned(), Access::Write),
             (target.to_owned(), Access::Write),
@@ -83,6 +88,8 @@ impl PendingMove {
         for (token, parent) in [
             (source_token.as_ref(), &source_parent),
             (target_token.as_ref(), &target_parent),
+            (probe_source_token.as_ref(), &source_parent),
+            (probe_target_token.as_ref(), &target_parent),
         ] {
             let Some(token) = token else { continue };
             requests.push(Request {
@@ -94,6 +101,8 @@ impl PendingMove {
         Ok(Self {
             requests,
             source_token,
+            probe_source_token,
+            probe_target_token,
             target_token,
             requested_source: source.to_owned(),
             presentation: target.to_owned(),
@@ -119,12 +128,17 @@ impl PendingMove {
         let target_parent = Directory::open(&parent_of(&target, "destination")?)?;
         let source_identity = of_file(&source_parent.file)?;
         let target_identity = of_file(&target_parent.file)?;
+        refuse_bind_mounted_endpoints(&source_parent, &target_parent)?;
         let cross_volume = !source_identity.same_volume(target_identity);
         let target_original = match fs::symlink_metadata(&target) {
             Ok(metadata) => Some(version_from_metadata(&metadata)?),
             Err(error) if error.kind() == io::ErrorKind::NotFound => None,
             Err(error) => return Err(error.into()),
         };
+        refuse_mount_point(&source_parent, &source, "source")?;
+        if target_original.is_some() {
+            refuse_mount_point(&target_parent, &target, "destination")?;
+        }
         // The artifact layout was planned before admission. If the volumes or
         // the conflict changed underneath it, retire rather than improvise.
         if cross_volume != self.source_token.is_some()
@@ -149,10 +163,19 @@ impl PendingMove {
             };
         let source_root = plan(&self.source_token, &parent_of(&source, "source")?)?;
         let target_root = plan(&self.target_token, &parent_of(&target, "destination")?)?;
+        let rename_probes = super::move_capability_model::Plans {
+            source: plan(&self.probe_source_token, &parent_of(&source, "source")?)?
+                .ok_or_else(invalid)?,
+            target: plan(
+                &self.probe_target_token,
+                &parent_of(&target, "destination")?,
+            )?,
+        };
         if paths.next().is_some() {
             return Err(invalid());
         }
         let spec = MoveSpec {
+            rename_probes,
             source_version: version_from_metadata(&fs::symlink_metadata(&source)?)?,
             source: NativePath(source),
             source_parent: source_identity,
@@ -168,8 +191,100 @@ impl PendingMove {
             target_root,
         };
         reservation.validate_operation(OperationSpec::Move(spec.clone()))?;
+        admit_retirement(&spec, &source_parent, &target_parent)?;
         Ok(spec)
     }
+}
+
+/// Every payload this move would retain must already fit a retirement plan.
+/// Otherwise its record could never be discarded (#760). Refusing here, before
+/// promotion, leaves no record, no artifact root and no moved entry.
+fn admit_retirement(
+    spec: &MoveSpec,
+    source_parent: &Directory,
+    target_parent: &Directory,
+) -> Result<(), AppError> {
+    use super::artifact_layout::{ORIGINAL, PARKED, PUBLICATION};
+    let inside =
+        |root: &Option<ArtifactPlan>, name: &str| root.as_ref().map(|root| root.path.0.join(name));
+    let refuse = |what: &str, path: &Path, error: AppError| {
+        AppError::Other(format!(
+            "File Recovery cannot retain {what} '{}' for a recoverable move, so it could never \
+             be discarded ({error}). Nothing was moved.",
+            path.display()
+        ))
+    };
+    let name = |path: &Path| {
+        path.file_name()
+            .ok_or_else(|| AppError::InvalidPath("Move endpoint has no name".into()))
+            .map(std::ffi::OsStr::to_owned)
+    };
+    if spec.strategy == Strategy::CopyParked {
+        // Parked in the source root; after Undo, retained as the publication.
+        let destinations: Vec<_> = [
+            inside(&spec.source_root, PARKED),
+            inside(&spec.target_root, PUBLICATION),
+        ]
+        .into_iter()
+        .flatten()
+        .collect();
+        super::move_cleanup::Plan::admit(
+            source_parent,
+            &name(&spec.source.0)?,
+            &destinations,
+            spec.plan_allowance(),
+        )
+        .map_err(|error| refuse("the moved entry", &spec.source.0, error))?;
+    }
+    if spec.target_original.is_some() {
+        let destinations: Vec<_> = inside(&spec.target_root, ORIGINAL).into_iter().collect();
+        super::move_cleanup::Plan::admit(
+            target_parent,
+            &name(&spec.target.0)?,
+            &destinations,
+            spec.plan_allowance(),
+        )
+        .map_err(|error| refuse("the replaced destination", &spec.target.0, error))?;
+    }
+    Ok(())
+}
+
+/// One device is not one mount. A bind mount exposes the same st_dev as its
+/// source, yet rename(2) between the two fails with EXDEV, and no probe
+/// renaming inside one directory can observe that. A durable move's layout is
+/// derived from device identity alone, so such a pair is refused before any
+/// record or effect exists rather than failing at publication (#760).
+/// Kernels without STATX_MNT_ID keep the device-only decision.
+fn refuse_bind_mounted_endpoints(source: &Directory, target: &Directory) -> Result<(), AppError> {
+    if !of_file(&source.file)?.same_volume(of_file(&target.file)?) {
+        return Ok(());
+    }
+    match (source.mount_id()?, target.mount_id()?) {
+        (Some(source), Some(target)) if source != target => Err(AppError::Other(
+            "The source and destination are different mounts of one filesystem (a bind \
+             mount), which recoverable moves cannot rename between yet. Nothing was moved."
+                .into(),
+        )),
+        _ => Ok(()),
+    }
+}
+
+/// rename(2) refuses a mount point with EBUSY, which a durable move would
+/// only meet after journaling: at publication for a same-volume move, or when
+/// parking the source beside its already published copy across volumes.
+/// Refuse such an endpoint before any record or effect exists (#760).
+fn refuse_mount_point(parent: &Directory, path: &Path, what: &str) -> Result<(), AppError> {
+    let name = path
+        .file_name()
+        .ok_or_else(|| AppError::InvalidPath(format!("Move {what} has no name")))?;
+    if parent.is_mount_root(name)? {
+        return Err(AppError::Other(format!(
+            "The {what} '{}' is a mount point, which a recoverable move cannot rename. \
+             Nothing was moved.",
+            path.display()
+        )));
+    }
+    Ok(())
 }
 
 fn same_volume(left: &Path, right: &Path) -> Result<bool, AppError> {
@@ -194,6 +309,14 @@ impl PreparedMove {
             }),
             Err(error) => Err(retire(vec![reservation], error)),
         }
+    }
+
+    #[cfg(test)]
+    pub(super) fn into_operation(self) -> super::coordinator::DurableOperation {
+        self.reservation
+            .promote(OperationSpec::Move(self.spec))
+            .map_err(|failure| failure.error)
+            .unwrap()
     }
 
     #[cfg(test)]
@@ -235,6 +358,7 @@ impl PreparedMove {
                 drop(failure.reservation);
                 retained(error)
             })?;
+        let operation = super::move_capability::qualify(operation, hook.as_ref())?;
         let id = operation.intent().id.clone();
         let result = (|| {
             let mut execution = MoveExecution::prepare_with(operation, hook)?;
@@ -251,7 +375,7 @@ impl PreparedMove {
                 // Only now may the source stop being reachable at its name.
                 execution.park_source()?;
             }
-            Ok::<_, AppError>(execution.operation.state().move_state()?.effect_revision)
+            Ok::<_, AppError>(execution.operation.state().effect_revision)
         })();
         let revision = result.map_err(retained)?;
         let mut receipt = FileMutationReceipt::committed(&committed);

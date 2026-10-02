@@ -13,7 +13,7 @@ pub(in crate::files::recovery) struct InventoryEntry {
     pub generation: Option<u64>,
     /// The validated checkpoint state, retained so retention policy can be
     /// evaluated without claiming ownership of every record (ADR 0023).
-    pub state: Option<super::super::model::OperationState>,
+    pub state: Option<super::super::checkpoint::State>,
     /// Immutable evidence digest, required to retire catalog-only residue.
     pub digest: [u8; 32],
 }

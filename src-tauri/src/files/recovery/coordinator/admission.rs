@@ -9,6 +9,36 @@ struct CapturedChild {
 }
 
 impl Coordinator {
+    /// Bind a read-only operation plan and its exact captured authority in one
+    /// revision interval. A retry rebuilds the entire plan, including candidate
+    /// names and fallback layouts; recapturing only its old paths is unsound.
+    pub(in crate::files::recovery) fn reserve_prepared<T>(
+        self: &Arc<Self>,
+        mut prepare: impl FnMut() -> Result<(T, Vec<Resource>), AppError>,
+    ) -> Result<(T, Reservation), AppError> {
+        for _ in 0..4 {
+            let revision = self.admitted(|inner| inner.journal.revision())?;
+            let mut value = None;
+            let captured = prepare().and_then(|(prepared, resources)| {
+                resources::validate(&resources)?;
+                value = Some(prepared);
+                Ok(vec![CapturedChild {
+                    resources,
+                    request_count: 0,
+                }])
+            });
+            if let Some(mut reservations) =
+                self.try_reserve_batch_with(captured, revision, || {})?
+            {
+                return Ok((
+                    value.expect("successful preparation"),
+                    reservations.pop().expect("one prepared operation"),
+                ));
+            }
+        }
+        Err(invalid("Filesystem ownership changed repeatedly while preparing the operation; retry the request"))
+    }
+
     pub(in crate::files::recovery) fn reserve(
         self: &Arc<Self>,
         requests: Vec<Request>,

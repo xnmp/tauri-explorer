@@ -1,7 +1,7 @@
 import { expect, it, vi } from "vitest";
 import { createDriveOpener } from "$lib/state/drive-opening";
 
-const volume = { name: "USB Backup", path: "", kind: "removable" as const, device_id: "/org/freedesktop/UDisks2/block_devices/sdb1" };
+const volume = { name: "USB Backup", path: null, kind: "removable" as const, deviceId: "/org/freedesktop/UDisks2/block_devices/sdb1" };
 function setup() {
   const deps = { mount: vi.fn().mockResolvedValue({ ok: true, data: "/media/USB Backup" }), navigate: vi.fn(), error: vi.fn(), refresh: vi.fn().mockResolvedValue(undefined) };
   return { ...deps, open: createDriveOpener(deps) };
@@ -11,7 +11,7 @@ it("mounts before navigating, preserving spaces in the returned path", async () 
   let finish!: (value: unknown) => void;
   s.mount.mockImplementation(() => new Promise(r => { finish = r; }));
   const opening = s.open(volume);
-  expect(s.mount).toHaveBeenCalledWith(volume.device_id);
+  expect(s.mount).toHaveBeenCalledWith(volume.deviceId);
   expect(s.navigate).not.toHaveBeenCalled();
   finish({ ok: true, data: "/media/USB Backup" });
   await opening;
@@ -35,6 +35,13 @@ it.each(["", "relative/path", "/media/bad\0path"])("rejects invalid mount result
   await s.open(volume);
   expect(s.navigate).not.toHaveBeenCalled();
   expect(s.error).toHaveBeenCalledOnce();
+});
+it("reports an unmounted row without an identity instead of mounting or navigating", async () => {
+  const s = setup();
+  await s.open({ name: "Mystery", path: null, kind: "removable" });
+  expect(s.mount).not.toHaveBeenCalled();
+  expect(s.navigate).not.toHaveBeenCalled();
+  expect(s.error).toHaveBeenCalledWith(expect.stringContaining("no mountable volume"));
 });
 it("coalesces repeated clicks while a mount is pending", async () => {
   const s = setup(); let finish!: (value: unknown) => void;

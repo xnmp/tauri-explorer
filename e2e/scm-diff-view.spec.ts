@@ -6,18 +6,12 @@
  * action buttons. Clicking another file switches the diff.
  */
 import { test, expect, type Page } from "./fixtures";
+import { applySettingsAndReload } from "./helpers";
+import type { MockControl } from "../src/lib/api/mock-control";
 
 async function openScmOnRepo(page: Page): Promise<void> {
   await page.goto("/");
-  await page.evaluate(() => {
-    const raw = localStorage.getItem("explorer-settings");
-    const s = raw ? JSON.parse(raw) : {};
-    s.showGitStatus = true;
-    s.showScmPanel = true;
-    s.showPreviewPane = true;
-    localStorage.setItem("explorer-settings", JSON.stringify(s));
-  });
-  await page.reload();
+  await applySettingsAndReload(page, { showGitStatus: true, showScmPanel: true, showPreviewPane: true });
   await page.waitForLoadState("domcontentloaded");
 
   // Walk the pane: /home → /home/user → Documents → project.
@@ -99,8 +93,8 @@ test.describe("SCM inline diff viewer", () => {
     // Keep polling THROUGHOUT the assertion below (not before it): starvation
     // only bites while the refreshes keep coming.
     await page.evaluate(() => {
-      const w = window as unknown as { __mockGitPoll?: () => void; __stormId?: number };
-      w.__stormId = window.setInterval(() => w.__mockGitPoll?.(), 400);
+      const w = window as unknown as { __mockControl?: MockControl; __stormId?: number };
+      w.__stormId = window.setInterval(() => w.__mockControl?.gitPoll?.(), 400);
     });
 
     const previewPane = page.locator(".preview-pane");

@@ -3,39 +3,32 @@
 //!
 //! * a same-filesystem move without an overwrite is one no-replace rename;
 //! * an overwritten destination is parked in private storage before publication;
-//! * a cross-filesystem source is parked only after its destination exists,
-//!   and its parked copy is removed only after that parking is durable.
+//! * a cross-filesystem source is parked only after its destination exists.
 //!
-//! No method here deletes a user entry outside `remove_source`, which requires
-//! an already-durable park, so no boundary can leave both endpoints absent.
+//! No method here deletes a user entry; parked sources are discarded only by
+//! explicit retirement (`retirement`), so no boundary can leave both
+//! endpoints absent.
+use super::artifact_layout::{probe, ORIGINAL, PARKED, PUBLICATION};
 use super::{
+    checkpoint::{DurableKind, Effect, Event, Side, Sides},
     coordinator::DurableOperation,
     model::{EntryVersion, ObjectId, StagedPayload},
     move_model::{MoveSpec, Strategy},
-    move_transition::{restoration_source, MoveTransition, RestorationSource},
     rename_outcome::{classify, RenamePosition},
-    replacement_artifact::{Anchor, Root, RootPlan},
+    replacement_artifact::{Anchor, Root},
 };
 use crate::{
     error::AppError,
     files::{
-        file_identity::{of_file, version_at, version_from_metadata},
+        file_identity::{of_file, version_from_metadata},
         native_directory::Directory,
     },
 };
 use std::{ffi::OsStr, io, os::unix::fs::PermissionsExt, path::Path};
 
-/// Private names inside an artifact root. `publication` matches the copy
-/// executor's spelling; `original` is a displaced destination; `parked` is a
-/// cross-filesystem source hidden after its destination was published.
-const PUBLICATION: &str = "publication";
-const ORIGINAL: &str = "original";
-const PARKED: &str = "parked";
-
 pub(super) struct MoveExecution {
     pub(super) operation: DurableOperation,
-    source_root: Option<Root>,
-    target_root: Option<Root>,
+    roots: Sides<Option<Root>>,
     /// Interruption seam. Each labelled boundary sits after a native effect and
     /// before the checkpoint that records it — exactly where a crash must be
     /// survivable. Production callers always pass `None`.
@@ -43,6 +36,11 @@ pub(super) struct MoveExecution {
 }
 
 pub(super) type Boundary = Box<dyn Fn(&'static str) -> Result<(), AppError> + Send>;
+
+/// Proof that an Undo passed its read-only admission. Only
+/// [`MoveExecution::admit_restoration`] creates one, so no caller can reach
+/// restoration's durable effects without it.
+pub(super) struct AdmittedRestoration(());
 
 /// A user endpoint addressed through its retained parent handle. Reopening the
 /// public path instead would let a namespace substitution redirect the effect.
@@ -104,51 +102,17 @@ impl MoveExecution {
         Endpoint::open(&spec.target.0, spec.target_parent)
     }
 
-    fn require<'a>(root: &'a Option<Root>, which: &str) -> Result<&'a Root, AppError> {
-        root.as_ref().ok_or_else(|| {
-            AppError::MutationUncertain(format!("Move has no opened {which} artifact root"))
+    fn require(&self, side: Side) -> Result<&Root, AppError> {
+        self.roots.get(side).as_ref().ok_or_else(|| {
+            AppError::MutationUncertain(format!("Move has no opened {side:?} artifact root"))
         })
     }
 
-    /// Plan both roots exactly as the immutable intent named them. A root is a
-    /// private sibling of the user entry whose displacement it will retain.
-    pub(in crate::files::recovery) fn plans(spec: &MoveSpec) -> Vec<(bool, RootPlan)> {
-        let mut excluded = vec![spec.source_version.object];
-        if let Some(original) = &spec.target_original {
-            excluded.push(original.object);
-        }
-        let mut plans = Vec::new();
-        for (is_source, plan, user, parent) in [
-            (
-                true,
-                spec.source_root.as_ref(),
-                &spec.source,
-                spec.source_parent,
-            ),
-            (
-                false,
-                spec.target_root.as_ref(),
-                &spec.target,
-                spec.target_parent,
-            ),
-        ] {
-            let Some(plan) = plan else { continue };
-            plans.push((
-                is_source,
-                RootPlan {
-                    parent_path: user
-                        .0
-                        .parent()
-                        .expect("validated move endpoint parent")
-                        .to_owned(),
-                    parent,
-                    root: plan.path.0.clone(),
-                    token: plan.token.clone(),
-                    excluded: excluded.clone(),
-                },
-            ));
-        }
-        plans
+    /// The sides whose private roots the immutable intent planned.
+    fn planned(spec: &MoveSpec) -> impl Iterator<Item = Side> + '_ {
+        [Side::Source, Side::Target]
+            .into_iter()
+            .filter(|side| spec.root(*side).is_some())
     }
 
     /// A dropped or failed preparation leaves catalog authority and any native
@@ -158,56 +122,42 @@ impl MoveExecution {
         hook: Option<Boundary>,
     ) -> Result<Self, AppError> {
         let spec = operation.intent().operation.move_spec()?.clone();
-        let plans = Self::plans(&spec);
-        if plans.is_empty() {
+        let anchors: Vec<_> = Self::planned(&spec)
+            .map(|side| Anchor::open(operation.intent(), side).map(|anchor| (side, anchor)))
+            .collect::<Result<_, _>>()?;
+        if anchors.is_empty() {
             // The same-filesystem non-overwrite fast path owns no private
             // storage: there is nothing to displace and nothing to retain.
             // It still carries the boundary seam, so its single publication
             // rename is coverable by the crash tests like any other effect.
             return Ok(Self {
                 operation,
-                source_root: None,
-                target_root: None,
+                roots: Sides::default(),
                 hook,
             });
         }
-        let anchors: Vec<_> = plans
-            .into_iter()
-            .map(|(is_source, plan)| {
-                Anchor::open_plan(operation.intent(), plan).map(|anchor| (is_source, anchor))
-            })
-            .collect::<Result<_, _>>()?;
-        operation.advance_move(MoveTransition::BeginRoots)?;
-        let mut source_root = None;
-        let mut target_root = None;
-        for (is_source, anchor) in anchors {
-            let root = anchor.create()?;
-            if is_source {
-                source_root = Some(root);
-            } else {
-                target_root = Some(root);
-            }
+        operation.advance(Event::Begin(Effect::Root))?;
+        let mut roots = Sides::default();
+        for (side, anchor) in anchors {
+            *roots.get_mut(side) = Some(anchor.create()?);
         }
-        for label in ["root"] {
-            if let Some(hook) = &hook {
-                hook(label)?;
-            }
+        if let Some(hook) = &hook {
+            hook("root")?;
         }
-        operation.advance_move(MoveTransition::RootsObserved {
-            source: source_root.as_ref().map(Root::identity),
-            target: target_root.as_ref().map(Root::identity),
-        })?;
+        operation.advance(Event::Rooted(Sides {
+            source: roots.source.as_ref().map(Root::identity),
+            target: roots.target.as_ref().map(Root::identity),
+        }))?;
         let mut execution = Self {
             operation,
-            source_root,
-            target_root,
+            roots,
             hook,
         };
         execution
             .operation
-            .advance_move(MoveTransition::BeginManifests)?;
+            .advance(Event::Begin(Effect::Manifest))?;
         let result = (|| {
-            for root in execution.roots() {
+            for root in execution.opened() {
                 root.publish_manifest(execution.operation.intent())?;
                 root.verify_namespace()?;
             }
@@ -218,7 +168,7 @@ impl MoveExecution {
         }
         execution
             .operation
-            .advance_move(MoveTransition::ManifestsCompleted)?;
+            .advance(Event::Complete(Effect::Manifest))?;
         Ok(execution)
     }
 
@@ -227,32 +177,20 @@ impl MoveExecution {
     /// method reconciles its own recorded phase against live endpoints.
     pub(super) fn reopen(operation: DurableOperation) -> Result<Self, AppError> {
         let spec = operation.intent().operation.move_spec()?.clone();
-        let state = operation.state().move_state()?.clone();
-        let mut source_root = None;
-        let mut target_root = None;
-        for (is_source, plan) in Self::plans(&spec) {
-            let recorded = if is_source {
-                state.source_root
-            } else {
-                state.target_root
-            };
-            let identity = recorded.ok_or_else(|| {
+        let mut roots = Sides::default();
+        for side in Self::planned(&spec) {
+            let identity = operation.state().roots.get(side).ok_or_else(|| {
                 AppError::MutationUncertain(
                     "Move has no recorded artifact root identity for its phase".into(),
                 )
             })?;
-            let root = Anchor::open_plan(operation.intent(), plan)?.open_existing(identity)?;
+            let root = Anchor::open(operation.intent(), side)?.open_existing(identity)?;
             root.verify_manifest(operation.intent())?;
-            if is_source {
-                source_root = Some(root);
-            } else {
-                target_root = Some(root);
-            }
+            *roots.get_mut(side) = Some(root);
         }
         Ok(Self {
             operation,
-            source_root,
-            target_root,
+            roots,
             hook: None,
         })
     }
@@ -270,12 +208,12 @@ impl MoveExecution {
         }
     }
 
-    fn roots(&self) -> impl Iterator<Item = &Root> {
-        self.source_root.iter().chain(self.target_root.iter())
+    fn opened(&self) -> impl Iterator<Item = &Root> {
+        self.roots.iter().filter_map(|(_, root)| root.as_ref())
     }
 
     fn verify_authority(&self) -> Result<(), AppError> {
-        for root in self.roots() {
+        for root in self.opened() {
             root.verify_manifest(self.operation.intent())?;
         }
         Ok(())
@@ -287,7 +225,7 @@ impl MoveExecution {
         &mut self,
         progress: &mut impl crate::files::anchored_copy::CopyProgress,
     ) -> Result<(), AppError> {
-        self.operation.advance_move(MoveTransition::BeginStaging)?;
+        self.operation.advance(Event::Begin(Effect::Stage))?;
         let payload = match self
             .copy_payload(progress)
             .and_then(|payload| self.at("stage").map(|()| payload))
@@ -295,8 +233,7 @@ impl MoveExecution {
             Ok(payload) => payload,
             Err(error) => return Err(self.retain_failure(error)),
         };
-        self.operation
-            .advance_move(MoveTransition::StagingCompleted(payload))
+        self.operation.advance(Event::Staged(payload))
     }
 
     fn copy_payload(
@@ -306,7 +243,7 @@ impl MoveExecution {
         use crate::files::anchored_copy;
         self.verify_authority()?;
         let spec = self.spec()?.clone();
-        let root = Self::require(&self.target_root, "target")?;
+        let root = self.require(Side::Target)?;
         let source = self.source()?;
         if source.probe()? != Some(spec.source_version.clone()) {
             return Err(invalid("Move source changed before staging"));
@@ -333,8 +270,7 @@ impl MoveExecution {
 
     /// Retain the destination that an overwriting move is about to replace.
     pub(super) fn displace_target(&mut self) -> Result<(), AppError> {
-        self.operation
-            .advance_move(MoveTransition::BeginDisplacement)?;
+        self.operation.advance(Event::Begin(Effect::Displace))?;
         let result = (|| {
             self.verify_authority()?;
             let original = self
@@ -342,7 +278,7 @@ impl MoveExecution {
                 .target_original
                 .clone()
                 .ok_or_else(|| invalid("Move displacement has no recorded original"))?;
-            let root = Self::require(&self.target_root, "target")?;
+            let root = self.require(Side::Target)?;
             let target = self.target()?;
             relocate(
                 &target.directory,
@@ -357,16 +293,14 @@ impl MoveExecution {
         if let Err(error) = result {
             return Err(self.retain_failure(error));
         }
-        self.operation
-            .advance_move(MoveTransition::DisplacementCompleted)
+        self.operation.advance(Event::Complete(Effect::Displace))
     }
 
     /// Move the payload into its public destination. A same-filesystem move
     /// renames the user's own object; a cross-filesystem move publishes the
     /// staged copy while its source is still untouched at its public name.
     pub(super) fn publish_move(&mut self) -> Result<EntryVersion, AppError> {
-        self.operation
-            .advance_move(MoveTransition::BeginPublication)?;
+        self.operation.advance(Event::Begin(Effect::Publish))?;
         let published = match self.publish_payload().and_then(|published| {
             self.at("publish")?;
             Ok(published)
@@ -374,8 +308,7 @@ impl MoveExecution {
             Ok(published) => published,
             Err(error) => return Err(self.retain_failure(error)),
         };
-        self.operation
-            .advance_move(MoveTransition::PublicationCompleted)?;
+        self.operation.advance(Event::Complete(Effect::Publish))?;
         Ok(published)
     }
 
@@ -400,11 +333,10 @@ impl MoveExecution {
                 let staged = self
                     .operation
                     .state()
-                    .move_state()?
                     .staged
                     .clone()
                     .ok_or_else(|| invalid("Move publication lacks its staged payload"))?;
-                let root = Self::require(&self.target_root, "target")?;
+                let root = self.require(Side::Target)?;
                 self.publish_staged(root, &target, &staged)?
             }
         };
@@ -485,11 +417,11 @@ impl MoveExecution {
     /// method at all requires a `Published` checkpoint, so the destination
     /// already holds the payload before the source stops being reachable.
     pub(super) fn park_source(&mut self) -> Result<(), AppError> {
-        self.operation.advance_move(MoveTransition::BeginPark)?;
+        self.operation.advance(Event::Begin(Effect::Park))?;
         let result = (|| {
             self.verify_authority()?;
             let spec = self.spec()?.clone();
-            let root = Self::require(&self.source_root, "source")?;
+            let root = self.require(Side::Source)?;
             let source = self.source()?;
             // Never park before the destination is verifiably present.
             let target = self.target()?;
@@ -512,70 +444,86 @@ impl MoveExecution {
         if let Err(error) = result {
             return Err(self.retain_failure(error));
         }
-        self.operation.advance_move(MoveTransition::ParkCompleted)
-    }
-
-    /// Discard the parked source. This is the only deletion in this executor,
-    /// it is reachable only from a durable `Parked` checkpoint, and it is never
-    /// part of the forward move or of restoration. It has no production caller
-    /// yet — finishing a parked move belongs with durable retirement (#687) —
-    /// but the crash boundary tests exercise the ordering it enforces.
-    #[allow(dead_code)]
-    pub(super) fn remove_source(&mut self) -> Result<(), AppError> {
-        self.operation
-            .advance_move(MoveTransition::BeginSourceRemoval)?;
-        let result = (|| {
-            self.verify_authority()?;
-            let spec = self.spec()?.clone();
-            let root = Self::require(&self.source_root, "source")?;
-            let target = self.target()?;
-            let published = target
-                .probe()?
-                .ok_or_else(|| uncertain("Move destination is absent; the source is retained"))?;
-            let expected = match spec.strategy {
-                Strategy::CopyParked => self
-                    .operation
-                    .state()
-                    .move_state()?
-                    .staged
-                    .as_ref()
-                    .ok_or_else(|| invalid("Move removal lacks its staged payload"))?
-                    .published_version()?,
-                Strategy::Rename => spec.source_version.clone(),
-            };
-            if published != expected {
-                return Err(uncertain(
-                    "Move destination differs from the published payload; the source is retained",
-                ));
-            }
-            match probe(root.directory(), OsStr::new(PARKED))? {
-                None => Ok(()),
-                Some(parked) if parked == spec.source_version => {
-                    remove_tree(root.directory(), OsStr::new(PARKED), parked.directory, 0)?;
-                    root.directory().sync()?;
-                    if probe(root.directory(), OsStr::new(PARKED))?.is_some() {
-                        return Err(uncertain("Move parked source was not removed"));
-                    }
-                    self.at("remove")
-                }
-                Some(_) => Err(uncertain(
-                    "Move parked source differs from its recorded identity; it is retained",
-                )),
-            }
-        })();
-        if let Err(error) = result {
-            return Err(self.retain_failure(error));
-        }
-        self.operation.advance_move(MoveTransition::SourceRemoved)
+        self.operation.advance(Event::Complete(Effect::Park))
     }
 
     /// The record's own exact inverse. Nothing is deleted before the source
     /// exists again at its original name.
     pub(super) fn restore_move(&mut self) -> Result<(), AppError> {
+        let admitted = self.admit_restoration()?;
+        self.restore_admitted(admitted)
+    }
+
+    /// Read-only Undo admission. An `Err` here precedes every durable effect,
+    /// so the caller may keep offering the same Undo.
+    ///
+    /// Undo retains a cross-volume destination as the target root's
+    /// `publication`, which is the one retained payload a user can still
+    /// change after the move's own admission. It must fit a retirement plan
+    /// under the bounds a discard captures, or the restored record could never
+    /// be discarded (#760).
+    pub(super) fn admit_restoration(&self) -> Result<AdmittedRestoration, AppError> {
+        if let Some(target) = self.parkable_publication()? {
+            self.admit_publication(&target).map_err(|error| {
+                let reason = if error.to_string().contains("budget") {
+                    format!("it has grown too large to be discarded later ({error})")
+                } else {
+                    format!("it cannot be read safely ({error})")
+                };
+                AppError::Other(format!(
+                    "Undo cannot keep '{}' in File Recovery: {reason}. Nothing was changed. \
+                     Fix the reported entry and Undo again, or discard this move's recovery data \
+                     to keep it where it is.",
+                    target.path.display()
+                ))
+            })?;
+        }
+        Ok(AdmittedRestoration(()))
+    }
+
+    /// The destination restoration would park as `publication`: present and
+    /// still exactly the published payload. An absent destination parks
+    /// nothing; a changed one is kept public by `park_publication`.
+    fn parkable_publication(&self) -> Result<Option<Endpoint>, AppError> {
+        if self.spec()?.strategy != Strategy::CopyParked {
+            return Ok(None);
+        }
+        let Some(staged) = self.operation.state().staged.as_ref() else {
+            return Ok(None);
+        };
+        let target = self.target()?;
+        Ok(match target.probe()? {
+            Some(observed)
+                if observed == staged.version || observed == staged.published_version()? =>
+            {
+                Some(target)
+            }
+            _ => None,
+        })
+    }
+
+    /// Walk the destination under exactly the bounds `Plan::capture` will
+    /// apply to it inside the target root.
+    fn admit_publication(&self, target: &Endpoint) -> Result<(), AppError> {
+        let spec = self.spec()?;
+        let root = spec
+            .target_root
+            .as_ref()
+            .ok_or_else(|| invalid("Move has no target artifact root"))?;
+        super::move_cleanup::Plan::admit(
+            &target.directory,
+            &target.name,
+            &[root.path.0.join(PUBLICATION)],
+            spec.plan_allowance(),
+        )
+    }
+
+    pub(super) fn restore_admitted(
+        &mut self,
+        _admitted: AdmittedRestoration,
+    ) -> Result<(), AppError> {
         let spec = self.spec()?.clone();
-        let origin = restoration_source(&spec);
-        self.operation
-            .advance_move(MoveTransition::BeginRestoration)?;
+        self.operation.advance(Event::Begin(Effect::Restore))?;
         let result = (|| {
             // A durable restoration intent exists from here on: an interruption
             // at this boundary must stay retryable, not strand a parked source.
@@ -583,8 +531,9 @@ impl MoveExecution {
             self.verify_authority()?;
             let source = self.source()?;
             let target = self.target()?;
-            match origin {
-                RestorationSource::Published => {
+            match spec.strategy {
+                // A same-filesystem publication is itself the original object.
+                Strategy::Rename => {
                     if source.probe()?.is_none() {
                         relocate(
                             &target.directory,
@@ -595,8 +544,11 @@ impl MoveExecution {
                         )?;
                     }
                 }
-                RestorationSource::Parked => {
-                    let root = Self::require(&self.source_root, "source")?;
+                // A cross-filesystem source may be hidden under private
+                // storage; the published destination is retired only after
+                // the source is verified present at its own name.
+                Strategy::CopyParked => {
+                    let root = self.require(Side::Source)?;
                     // A cross-filesystem source may never have been parked
                     // (a restoration from `Published`), or may already be home
                     // (a reasserted restoration). Observe, never assume.
@@ -620,7 +572,7 @@ impl MoveExecution {
                 ));
             }
             if let Some(original) = &spec.target_original {
-                let root = Self::require(&self.target_root, "target")?;
+                let root = self.require(Side::Target)?;
                 if target.probe()?.is_none() {
                     relocate(
                         root.directory(),
@@ -644,8 +596,7 @@ impl MoveExecution {
         if let Err(error) = result {
             return Err(self.retain_failure(error));
         }
-        self.operation
-            .advance_move(MoveTransition::RestorationCompleted)
+        self.operation.advance(Event::Complete(Effect::Restore))
     }
 
     /// Return a cross-filesystem publication to the private root it came from,
@@ -663,11 +614,10 @@ impl MoveExecution {
         let staged = self
             .operation
             .state()
-            .move_state()?
             .staged
             .clone()
             .ok_or_else(|| invalid("Move restoration lacks its staged payload"))?;
-        let root = Self::require(&self.target_root, "target")?;
+        let root = self.require(Side::Target)?;
         // Publication may have been interrupted before its final directory
         // mode was restored, so both recorded permission states are valid here.
         let observed = match target.probe()? {
@@ -684,6 +634,17 @@ impl MoveExecution {
                 "Move destination differs from the published payload; it is retained",
             ));
         }
+        // Admission ran before `BeginRestoration`; the destination can have
+        // grown since. Refusing here keeps it public beside the returned
+        // source, and the interrupted restoration stays retryable.
+        self.admit_publication(target).map_err(|error| {
+            uncertain(&format!(
+                "'{}' grew too large to be kept in File Recovery while Undo ran ({error}). \
+                 It stays in place and the source is back at its original location; remove \
+                 entries from it and retry Restore in File Recovery.",
+                target.path.display()
+            ))
+        })?;
         relocate(
             &target.directory,
             &target.name,
@@ -694,21 +655,7 @@ impl MoveExecution {
     }
 
     fn retain_failure(&mut self, error: AppError) -> AppError {
-        let mut message = error.to_string();
-        if message.len() > super::model::MAX_ERROR_BYTES {
-            let mut end = super::model::MAX_ERROR_BYTES;
-            while !message.is_char_boundary(end) {
-                end -= 1;
-            }
-            message.truncate(end);
-        }
-        if let Err(persistence) = self
-            .operation
-            .advance_move(MoveTransition::ReportError(message))
-        {
-            log::warn!("Could not persist move failure: {persistence}");
-        }
-        error
+        self.operation.retain_failure(error)
     }
 }
 
@@ -756,41 +703,6 @@ fn relocate(
     }
 }
 
-/// Remove one entry through its retained parent handle. Every descendant is
-/// reached relative to an opened directory, so no path component can be
-/// substituted between the decision to remove and the removal itself.
-fn remove_tree(
-    parent: &Directory,
-    name: &OsStr,
-    directory: bool,
-    depth: usize,
-) -> Result<(), AppError> {
-    const MAX_DEPTH: usize = 256;
-    if depth > MAX_DEPTH {
-        return Err(invalid(
-            "Move parked source exceeds its removal depth budget",
-        ));
-    }
-    if directory {
-        let child = parent.open_existing(name)?;
-        for entry in child.entries()? {
-            let entry = entry?;
-            let is_directory = version_at(&child, &entry)?.directory;
-            remove_tree(&child, &entry, is_directory, depth + 1)?;
-        }
-    }
-    parent.unlink(name, directory)?;
-    Ok(())
-}
-
-fn probe(directory: &Directory, name: &OsStr) -> Result<Option<EntryVersion>, AppError> {
-    match version_at(directory, name) {
-        Ok(version) => Ok(Some(version)),
-        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
-        Err(error) => Err(error.into()),
-    }
-}
-
 fn invalid(message: &str) -> AppError {
     io::Error::new(io::ErrorKind::InvalidData, message.to_owned()).into()
 }
@@ -799,6 +711,7 @@ fn uncertain(message: &str) -> AppError {
     AppError::MutationUncertain(message.into())
 }
 
-#[cfg(test)]
+// The crash acceptance plans moves through `forward_move`, which is Linux-only.
+#[cfg(all(test, target_os = "linux"))]
 #[path = "../../../test_support/recovery_move_execution.rs"]
 mod tests;

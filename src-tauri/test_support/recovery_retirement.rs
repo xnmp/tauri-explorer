@@ -2,8 +2,9 @@
 //! Every test asserts the exact bytes that survive, not just a returned status.
 use super::*;
 use crate::files::recovery::{
+    checkpoint::{Effect, Event, Phase, State},
     coordinator::test_fixture::fixture,
-    model::{OperationSpec, Phase},
+    model::OperationSpec,
     replacement_execution::ReplacementExecution,
     resources::{Access, Request, Scope},
     retention::Budget,
@@ -59,7 +60,7 @@ impl Fixture {
             .expect("record remains indexed")
     }
 
-    fn phase(&self) -> Option<Phase> {
+    fn state(&self) -> Option<State> {
         self.coordinator
             .inventory()
             .unwrap()
@@ -67,23 +68,21 @@ impl Fixture {
             .into_iter()
             .find(|entry| entry.intent.id == self.id)
             .and_then(|entry| entry.state)
-            .and_then(|state| state.replacement().ok().map(|state| state.phase))
+    }
+
+    fn phase(&self) -> Option<Phase> {
+        self.state().map(|state| state.phase)
+    }
+
+    /// Whether a journaled discard decision exists and has completed.
+    fn retiring(&self) -> Option<bool> {
+        self.state()?
+            .retirement
+            .map(|retirement| retirement.completed)
     }
 
     fn recorded_error(&self) -> Option<String> {
-        self.coordinator
-            .inventory()
-            .unwrap()
-            .entries
-            .into_iter()
-            .find(|entry| entry.intent.id == self.id)
-            .and_then(|entry| entry.state)
-            .and_then(|state| {
-                state
-                    .replacement()
-                    .ok()
-                    .and_then(|state| state.error.clone())
-            })
+        self.state()?.error
     }
 
     fn indexed(&self) -> bool {
@@ -199,6 +198,7 @@ fn no_retirement_path_removes_the_only_copy_of_a_published_entry() {
     );
     assert!(fixture.indexed());
     assert_eq!(fixture.phase(), Some(Phase::Published));
+    assert_eq!(fixture.retiring(), None, "Undo was not consumed");
 }
 
 #[test]
@@ -255,7 +255,7 @@ fn automatic_retirement_reclaims_a_redundant_parked_copy() {
 }
 
 #[test]
-fn a_cleanup_failure_preserves_the_inventory_and_reports_its_reason() {
+fn a_cleanup_this_user_cannot_perform_is_refused_before_the_decision_consumes_undo() {
     let fixture = published();
     let root = fixture.root();
     // Deny removal inside the artifact root without making it non-private.
@@ -274,10 +274,43 @@ fn a_cleanup_failure_preserves_the_inventory_and_reports_its_reason() {
         "a failed cleanup removes nothing"
     );
     assert!(fixture.indexed(), "the record stays reportable");
-    assert_eq!(fixture.phase(), Some(Phase::DiscardIntent));
-    assert!(fixture.recorded_error().is_some());
+    // The read-only preflight refused before any decision was journaled, so
+    // the record keeps its Undo and its settled position.
+    assert_eq!(fixture.phase(), Some(Phase::Published));
+    assert_eq!(fixture.retiring(), None);
+    assert!(fixture.recorded_error().is_none());
 
-    // The reported failure is resumable, not terminal.
+    // Once the cause is fixed the same explicit discard succeeds.
+    let retirement = fixture.retirement();
+    assert_eq!(retirement.eligibility(), &Eligibility::Discardable);
+    retirement.retire().unwrap();
+    assert!(!root.exists());
+    assert!(!fixture.indexed());
+}
+
+#[test]
+fn a_failure_after_the_decision_is_reported_and_resumes_on_retry() {
+    let fixture = published();
+    let root = fixture.root();
+    let error = fixture
+        .retirement()
+        .retire_with(|checkpoint| {
+            if checkpoint == "target-intent" {
+                Err(AppError::Other("injected removal failure".into()))
+            } else {
+                Ok(())
+            }
+        })
+        .unwrap_err();
+    assert!(format!("{error}").contains("injected removal failure"));
+    assert_eq!(fs::read(root.join("original")).unwrap(), ORIGINAL_BYTES);
+    assert_eq!(fixture.retiring(), Some(false));
+    assert!(fixture.recorded_error().is_some());
+    // A reported failure waits for an explicit retry; enforcement leaves it.
+    let generation = fixture.current_generation();
+    enforce(&fixture.coordinator).unwrap();
+    assert_eq!(fixture.current_generation(), generation);
+
     let retirement = fixture.retirement();
     assert_eq!(retirement.eligibility(), &Eligibility::Resume);
     retirement.retire().unwrap();
@@ -304,7 +337,7 @@ fn a_journal_failure_before_removal_keeps_every_artifact() {
         ORIGINAL_BYTES
     );
     assert!(fixture.indexed());
-    assert_eq!(fixture.phase(), Some(Phase::DiscardIntent));
+    assert_eq!(fixture.retiring(), Some(false));
     // The record is intact and its retirement still completes on retry.
     fixture.retirement().retire().unwrap();
     assert!(!fixture.indexed());
@@ -316,7 +349,7 @@ fn a_journal_failure_after_removal_keeps_the_record_and_resumes() {
     let error = fixture
         .retirement()
         .retire_with(|checkpoint| {
-            if checkpoint == "removed" {
+            if checkpoint == "target-removed" {
                 Err(AppError::Other(
                     "injected disk-full completion write".into(),
                 ))
@@ -328,7 +361,7 @@ fn a_journal_failure_after_removal_keeps_the_record_and_resumes() {
     assert!(format!("{error}").contains("disk-full"));
     assert!(!fixture.root().exists(), "removal already committed");
     assert!(fixture.indexed(), "the record is never lost");
-    assert_eq!(fixture.phase(), Some(Phase::DiscardIntent));
+    assert_eq!(fixture.retiring(), Some(false));
 
     let retirement = fixture.retirement();
     assert_eq!(retirement.eligibility(), &Eligibility::Resume);
@@ -351,7 +384,7 @@ fn a_failure_after_the_completion_checkpoint_leaves_retirable_residue() {
         })
         .is_err());
     assert!(!fixture.root().exists());
-    assert_eq!(fixture.phase(), Some(Phase::Discarded));
+    assert_eq!(fixture.retiring(), Some(true));
     // A discarded residue never blocks its own completion.
     let retirement = fixture.retirement();
     assert_eq!(retirement.eligibility(), &Eligibility::Resume);
@@ -373,10 +406,21 @@ fn an_interrupted_retirement_holding_an_intact_artifact_refuses_a_lost_publicati
             }
         })
         .is_err());
-    assert_eq!(fixture.phase(), Some(Phase::DiscardIntent));
+    assert_eq!(fixture.retiring(), Some(false));
     // Nothing was removed yet and the published copy has since disappeared:
-    // resuming would destroy the last copy, so it must not.
+    // resuming would destroy the last copy, so it must not. The decision
+    // removed nothing, so it is withdrawn and the record keeps its Undo.
     fs::remove_file(fixture.target()).unwrap();
+    let error = fixture.retirement().retire().unwrap_err();
+    assert!(format!("{error}").contains("withdrawn"), "{error}");
+    assert_eq!(
+        fs::read(fixture.root().join("original")).unwrap(),
+        ORIGINAL_BYTES
+    );
+    assert_eq!(fixture.retiring(), None);
+    assert_eq!(fixture.phase(), Some(Phase::Published));
+    assert!(fixture.recorded_error().is_none());
+    // With the published copy gone, nothing may discard the only original.
     let retirement = fixture.retirement();
     assert!(
         matches!(retirement.eligibility(), Eligibility::Preserved(_)),
@@ -437,7 +481,7 @@ fn a_full_budget_refuses_a_new_record_instead_of_evicting_recovery() {
 }
 
 #[test]
-fn a_legacy_checkpoint_without_retention_fields_still_lists_and_retires() {
+fn a_checkpoint_from_an_earlier_record_version_fences_without_removing_anything() {
     let fixture = published();
     let database = fixture.base.join("recovery/recovery.sqlite3");
     let connection = rusqlite::Connection::open(&database).unwrap();
@@ -449,10 +493,9 @@ fn a_legacy_checkpoint_without_retention_fields_still_lists_and_retires() {
         )
         .unwrap();
     let mut value: serde_json::Value = serde_json::from_slice(&payload).unwrap();
-    // The schema before ADR 0023 had neither key; both must default.
-    let state = value["state"]["state"].as_object_mut().unwrap();
-    assert!(state.remove("retained_bytes").is_some());
-    assert!(state.remove("effect_revision").is_some());
+    // The version-1 replacement checkpoint nested its state under a kind tag.
+    let state = value["state"].take();
+    value["state"] = serde_json::json!({ "kind": "copyReplacement", "state": state });
     connection
         .execute(
             "UPDATE recovery_records SET payload = ?1 WHERE kind = 'operation'",
@@ -461,11 +504,14 @@ fn a_legacy_checkpoint_without_retention_fields_still_lists_and_retires() {
         .unwrap();
     drop(connection);
 
-    assert!(fixture.indexed(), "a legacy checkpoint still decodes");
-    let retirement = fixture.retirement();
-    assert_eq!(retirement.eligibility(), &Eligibility::Discardable);
-    retirement.retire().unwrap();
-    assert!(!fixture.root().exists());
+    // ADR 0026: it is rejected, never migrated, and fences instead of
+    // being executed or deleted.
+    assert!(fixture.coordinator.inventory().is_err());
+    assert!(enforce(&fixture.coordinator).is_err());
+    assert_eq!(
+        fs::read(fixture.root().join("original")).unwrap(),
+        ORIGINAL_BYTES
+    );
     assert_eq!(fs::read(fixture.target()).unwrap(), NEW_BYTES);
 }
 
@@ -591,7 +637,7 @@ fn killing_retirement_at_every_checkpoint_leaves_a_resumable_consistent_catalog(
         process::{Command, Stdio},
         time::{Duration, Instant},
     };
-    for boundary in ["intent", "removed", "completed"] {
+    for boundary in ["intent", "target-removed", "completed"] {
         let fixture = published();
         let ready = fixture.base.join("retirement-ready");
         fs::write(fixture.base.join("record.json"), &fixture.id).unwrap();
@@ -737,50 +783,60 @@ fn a_parked_directory_copy_is_never_reclaimed_automatically_on_an_unchanged_top_
 }
 
 #[test]
-fn an_interrupted_retirement_whose_endpoint_changed_is_preserved_and_still_resolvable() {
+fn an_interrupted_retirement_whose_endpoint_changed_is_withdrawn_and_still_resolvable() {
     // A journaled retirement re-verifies its live endpoint immediately before
     // unlinking, because journaling the intent released and retook the
     // admission gate. A changed endpoint refuses the removal, preserves every
-    // file, and — crucially — does not pin the record: once the endpoint is
-    // resolvable again the same committed decision completes.
+    // file, and does not pin the record: a decision that removed nothing is
+    // withdrawn, returning the record to its settled position and its Undo.
     let fixture = published();
-    let mut operation = fixture.claim();
-    operation
-        .advance(
-            crate::files::recovery::replacement_transition::ReplacementTransition::BeginDiscard,
-        )
-        .unwrap();
-    drop(operation);
-    assert_eq!(fixture.phase(), Some(Phase::DiscardIntent));
+    assert!(fixture
+        .retirement()
+        .retire_with(|checkpoint| {
+            if checkpoint == "intent" {
+                Err(AppError::Other("interrupted".into()))
+            } else {
+                Ok(())
+            }
+        })
+        .is_err());
+    assert_eq!(fixture.retiring(), Some(false));
     let root = fixture.root();
     // A foreign writer replaces the published entry after the intent commit.
     fs::write(fixture.target(), b"a foreign editor rewrote this").unwrap();
 
     let error = fixture.retirement().retire().unwrap_err();
-    assert!(format!("{error}").contains("no longer matches"), "{error}");
+    assert!(format!("{error}").contains("no longer match"), "{error}");
+    assert!(format!("{error}").contains("withdrawn"), "{error}");
     assert_eq!(fs::read(root.join("original")).unwrap(), ORIGINAL_BYTES);
     assert!(fixture.indexed());
-    // The refusal is a classification, not an effect: it journals nothing,
-    // and the reason reaches the user through the recovery service instead.
+    assert_eq!(fixture.retiring(), None);
+    assert!(fixture.recorded_error().is_none());
 
-    // Repeated automatic passes must neither remove anything nor lose it.
+    // Repeated automatic passes must neither remove anything nor lose it, and
+    // after the first measures it none claims the record again.
+    enforce(&fixture.coordinator).unwrap();
+    let measured = fixture.current_generation();
     for _ in 0..3 {
         enforce(&fixture.coordinator).unwrap();
     }
+    assert_eq!(
+        fixture.current_generation(),
+        measured,
+        "an unprogressable record is re-claimed every pass"
+    );
     assert_eq!(fs::read(root.join("original")).unwrap(), ORIGINAL_BYTES);
     assert!(fixture.indexed());
-    // Restoration remains a legal transition out of an interrupted retirement,
-    // so the record is never stranded by the phase machine itself.
+    // Restoration is legal again, so the record is never stranded by the
+    // phase machine itself.
     let claimed = fixture.claim();
-    assert!(crate::files::recovery::replacement_transition::transition(
-        claimed.intent(),
-        claimed.state(),
-        crate::files::recovery::replacement_transition::ReplacementTransition::BeginRestoration,
-    )
-    .is_ok());
+    assert!(claimed
+        .intent()
+        .transition(claimed.state(), Event::Begin(Effect::Restore))
+        .is_ok());
     drop(claimed);
 
-    // It is reported to the user with the reason, not silently pinned.
+    // It is reported to the user, not silently pinned or discarded.
     let snapshot =
         crate::files::recovery::service::inspect(&fixture.coordinator, &fixture.id).unwrap();
     let item = snapshot
@@ -789,11 +845,8 @@ fn an_interrupted_retirement_whose_endpoint_changed_is_preserved_and_still_resol
         .find(|item| item.id == fixture.id)
         .expect("the record stays in the inventory");
     assert_eq!(item.status, "attention");
-    assert!(
-        item.message.contains("no longer matches"),
-        "{}",
-        item.message
-    );
+    assert!(item.actions.is_empty(), "{:?}", item.actions);
+    assert_eq!(fs::read(root.join("original")).unwrap(), ORIGINAL_BYTES);
 }
 
 #[test]
@@ -917,13 +970,14 @@ fn a_full_record_budget_refuses_a_new_durable_record_through_promotion() {
         .exists());
 }
 
-/// A durable move's artifacts are not a replacement's, and this is the record
-/// of exactly what retention does with one until #685 supplies its plan.
+/// Completed moves retain Undo authority until the user explicitly discards it.
+/// Moves are planned by `forward_move`, which is Linux-only.
+#[cfg(target_os = "linux")]
 mod moves {
     use super::*;
     use crate::files::recovery::{
         forward_move::PreparedMove,
-        retention::{retention, Retention, Usage},
+        retention::{Retention, Usage},
     };
     use std::os::unix::fs::MetadataExt;
 
@@ -962,10 +1016,10 @@ mod moves {
                 .into_iter()
                 .find(|entry| matches!(entry.intent.operation, OperationSpec::Move(_)))
                 .expect("the durable move record is listed");
-            retention(
-                &entry.intent.operation,
-                &entry.state.expect("an indexed move has a checkpoint"),
-            )
+            entry
+                .intent
+                .checkpoint(&entry.state.expect("an indexed move has a checkpoint"))
+                .retention()
         }
 
         fn artifacts(&self) -> Vec<PathBuf> {
@@ -1047,7 +1101,12 @@ mod moves {
     #[test]
     fn a_durable_move_is_listed_and_measured_but_never_retired_automatically() {
         let moved = overwriting();
-        assert_eq!(moved.record(), Retention::Unsupported);
+        assert_eq!(
+            moved.record(),
+            Retention::Settled {
+                disposal: Disposal::ExplicitOnly
+            }
+        );
         let roots = moved.artifacts();
         assert!(!roots.is_empty(), "an overwriting move retains artifacts");
 
@@ -1056,7 +1115,10 @@ mod moves {
         for _ in 0..3 {
             let usage = moved.usage();
             assert!(usage.records >= 1, "the move occupies the record bound");
-            assert_eq!(usage.discardable, 0, "no discard is offered without a plan");
+            assert_eq!(
+                usage.discardable, 1,
+                "explicit discard is available without automatic eviction"
+            );
             measured = Some(usage.bytes);
         }
         assert!(
@@ -1072,7 +1134,12 @@ mod moves {
     #[test]
     fn a_parked_move_source_is_never_reclaimed_while_it_is_the_only_copy_there() {
         let Some(moved) = parked() else { return };
-        assert_eq!(moved.record(), Retention::Unsupported);
+        assert_eq!(
+            moved.record(),
+            Retention::Settled {
+                disposal: Disposal::ExplicitOnly
+            }
+        );
         let parked_copies: Vec<PathBuf> = moved
             .artifacts()
             .into_iter()
@@ -1083,7 +1150,7 @@ mod moves {
 
         for _ in 0..3 {
             let usage = moved.usage();
-            assert_eq!(usage.discardable, 0);
+            assert_eq!(usage.discardable, 1);
         }
 
         assert_eq!(
@@ -1094,4 +1161,165 @@ mod moves {
         assert_eq!(fs::read(moved.to.join("entry")).unwrap(), PAYLOAD);
         assert!(!moved.from.join("entry").exists());
     }
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn completed_move_discard_reclaims_its_overwritten_original() {
+    let directory = tempfile::tempdir().unwrap();
+    let base = fs::canonicalize(directory.path()).unwrap();
+    let source = base.join("source");
+    let target = base.join("target");
+    fs::write(&source, NEW_BYTES).unwrap();
+    fs::write(&target, ORIGINAL_BYTES).unwrap();
+    let coordinator = Coordinator::open(&base.join("recovery")).unwrap();
+    let mut progress = crate::progress::ProgressTracker::new(None, "move", "cancelled", 0, 0, None);
+    crate::files::recovery::forward_move::PreparedMove::prepare(&coordinator, &source, &target)
+        .unwrap()
+        .execute(&mut progress)
+        .unwrap();
+    let entry = coordinator.inventory().unwrap().entries.remove(0);
+    let root = entry
+        .intent
+        .operation
+        .move_spec()
+        .unwrap()
+        .target_root
+        .as_ref()
+        .unwrap()
+        .path
+        .0
+        .clone();
+    assert_eq!(fs::read(root.join("original")).unwrap(), ORIGINAL_BYTES);
+    let operation = coordinator
+        .try_claim(&entry.intent.id, entry.generation.unwrap())
+        .unwrap()
+        .unwrap();
+    let retirement = Retirement::open(operation).unwrap();
+    assert_eq!(retirement.eligibility(), &Eligibility::Discardable);
+    retirement.retire().unwrap();
+    assert_eq!(fs::read(target).unwrap(), NEW_BYTES);
+    assert!(!source.exists());
+    assert!(!root.exists());
+    assert!(coordinator.inventory().unwrap().entries.is_empty());
+}
+
+/// A mount inside a private artifact root is someone else's filesystem, never
+/// retained evidence: retirement refuses it and keeps every byte it exposes.
+/// A bind mount of the same filesystem keeps its device, so this needs mount
+/// identity, not a device comparison (#875). Run as documented in
+/// `e2e-tauri/README.md` for the other ignored mount-namespace tests.
+#[cfg(target_os = "linux")]
+#[test]
+#[ignore = "requires an isolated user/mount namespace; see e2e-tauri/README.md"]
+fn replacement_retirement_never_descends_into_a_mount_inside_its_root() {
+    use crate::files::mount_namespace::{require_private_namespace, BindMount};
+    require_private_namespace();
+    let fixture = published_directories();
+    let outside = fixture.base.join("outside");
+    fs::create_dir(&outside).unwrap();
+    fs::write(outside.join("foreign.txt"), b"foreign bytes").unwrap();
+    let nested = fixture.root().join("original/nested");
+    let mount = BindMount::new(&outside, &nested);
+
+    let result = fixture.retirement().retire();
+
+    assert!(result.is_err(), "retirement crossed a mount: {result:?}");
+    assert_eq!(
+        fs::read(outside.join("foreign.txt")).unwrap(),
+        b"foreign bytes"
+    );
+    assert_eq!(
+        fs::read(nested.join("foreign.txt")).unwrap(),
+        b"foreign bytes"
+    );
+    drop(mount);
+    assert!(fixture.root().join("original/nested/deep.txt").is_file());
+    assert!(fixture.indexed());
+}
+
+/// A discard stopped after it began removing the root still names that
+/// folder, which can hold the whole original, and Forget releases the record
+/// while leaving those files on disk (#874).
+#[test]
+fn a_stopped_replacement_discard_names_its_folder_and_can_be_forgotten() {
+    use crate::files::recovery::{model::RecoveryChoice, service};
+    let fixture = published();
+    let root = fixture.root();
+    // A settled replacement still holds its Undo, so it cannot be forgotten.
+    let refused = service::resolve(
+        &fixture.coordinator,
+        &fixture.id,
+        fixture.current_generation(),
+        RecoveryChoice::Release,
+    )
+    .unwrap();
+    assert!(refused.error.is_some());
+    assert!(fixture.indexed());
+    let stopped = fixture.retirement().retire_with(|checkpoint| {
+        if checkpoint == "target-intent" {
+            Err(AppError::Other("injected removal failure".into()))
+        } else {
+            Ok(())
+        }
+    });
+    assert!(stopped.is_err());
+    assert_eq!(fs::read(root.join("original")).unwrap(), ORIGINAL_BYTES);
+    let snapshot = service::inspect(&fixture.coordinator, &fixture.id).unwrap();
+    let item = &snapshot.items[0];
+    assert_eq!(
+        item.retained_paths,
+        vec![root.to_string_lossy().into_owned()]
+    );
+    assert!(
+        item.actions.contains(&RecoveryChoice::Release),
+        "{:?}",
+        item.actions
+    );
+    assert!(
+        item.message.contains("the listed folder"),
+        "{}",
+        item.message
+    );
+    let reply = service::resolve(
+        &fixture.coordinator,
+        &fixture.id,
+        item.generation,
+        RecoveryChoice::Release,
+    )
+    .unwrap();
+    assert!(reply.error.is_none(), "{:?}", reply.error);
+    assert!(!fixture.indexed());
+    assert!(fixture.claims_released());
+    // Forget removes only the record; the files stay where it said they are.
+    assert_eq!(fs::read(root.join("original")).unwrap(), ORIGINAL_BYTES);
+    assert_eq!(fs::read(fixture.target()).unwrap(), NEW_BYTES);
+}
+
+/// Removal deletes exactly what the discard planned: a child that appears in
+/// the retained original after planning is never removed, nor anything else.
+#[test]
+fn an_unplanned_child_in_a_retained_original_preserves_every_file() {
+    let fixture = published_directories();
+    let root = fixture.root();
+    let foreign = root.join("original/nested/foreign");
+    let error = fixture
+        .retirement()
+        .retire_with(|checkpoint| {
+            if checkpoint == "target-intent" {
+                fs::write(&foreign, b"written after planning").unwrap();
+            }
+            Ok(())
+        })
+        .unwrap_err();
+    assert!(error.to_string().contains("unplanned"), "{error}");
+    assert_eq!(fs::read(&foreign).unwrap(), b"written after planning");
+    assert!(root.join("original/nested/deep.txt").is_file());
+    assert!(root.join("manifest.intent").is_file());
+    assert!(fixture.indexed());
+    // Once the foreign child is gone, the same discard completes.
+    fs::remove_file(&foreign).unwrap();
+    fixture.retirement().retire().unwrap();
+    assert!(!root.exists());
+    assert!(!fixture.indexed());
 }

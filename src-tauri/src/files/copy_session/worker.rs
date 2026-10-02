@@ -5,8 +5,6 @@ use crate::{
     files::{self, file_ops, mutation::FileMutationReceipt, WorkerCompletion},
     progress::ProgressTracker,
 };
-#[cfg(target_os = "linux")]
-use std::path::PathBuf;
 use std::{fs, path::Path, sync::Arc};
 
 #[derive(Clone)]
@@ -14,7 +12,7 @@ pub(crate) struct NativeWork {
     pub app: Option<tauri::AppHandle>,
     pub job_id: u64,
     #[cfg(target_os = "linux")]
-    pub recovery: (files::recovery::Runtime, PathBuf),
+    pub runtime: files::recovery::Runtime,
 }
 
 impl Work for NativeWork {
@@ -147,8 +145,7 @@ impl CopyWork {
                 &mut tracker,
                 self.inspection.observation.as_ref(),
                 |source, _, target, tracker| {
-                    self.native.recovery.0.copy_overwriting(
-                        self.native.recovery.1.clone(),
+                    self.native.runtime.copy_overwriting(
                         source,
                         target,
                         self.inspection.observation.as_ref(),

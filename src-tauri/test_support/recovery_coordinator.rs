@@ -1,4 +1,4 @@
-use super::super::model::{NativePath, OperationSpec, OperationState, ReplacementSpec};
+use super::super::model::{NativePath, OperationSpec, ReplacementSpec};
 use super::super::resources::{Access, Scope};
 use super::*;
 use crate::files::file_identity::from_metadata as object;
@@ -31,7 +31,7 @@ fn replacement_intent(directory: &Path, source: &Path, owner: &OperationLock) ->
     let root = directory.join(".tauri-explorer-recovery-planned");
     let original = fs::symlink_metadata(&target).unwrap();
     DurableIntent {
-        version: 1,
+        version: crate::files::recovery::model::RECORD_VERSION,
         id: owner.identity.name.trim_end_matches(".lock").into(),
         operation: OperationSpec::CopyReplacement(ReplacementSpec {
             artifact_token: "planned".into(),
@@ -280,7 +280,7 @@ fn manifest_authority_requires_the_exact_opened_private_root() {
 
 #[test]
 fn indexed_phase_evidence_is_validated_before_admission() {
-    use super::super::model::Phase;
+    use super::super::checkpoint::Phase;
     for case in [
         "wrong-digest",
         "unknown-state-field",
@@ -324,27 +324,25 @@ fn indexed_phase_evidence_is_validated_before_admission() {
                 let OperationSpec::CopyReplacement(spec) = &record.intent.operation else {
                     panic!("expected copy replacement fixture");
                 };
-                let OperationState::Replacement(state) = &mut record.state else {
-                    panic!("expected copy replacement fixture");
-                };
+                let state = &mut record.state;
                 match case {
                     "missing-root" => state.phase = Phase::Displaced,
                     "missing-publication" => {
                         state.phase = Phase::PublishIntent;
-                        state.root = Some(root_identity);
+                        state.roots.target = Some(root_identity);
                     }
                     "premature-publication" => {
-                        state.published = Some(crate::files::recovery::model::StagedPayload {
+                        state.staged = Some(crate::files::recovery::model::StagedPayload {
                             version: spec.original.clone(),
                             final_mode: None,
                         })
                     }
                     "invalid-publication" => {
                         state.phase = Phase::Published;
-                        state.root = Some(root_identity);
+                        state.roots.target = Some(root_identity);
                         let mut published = published.clone();
                         published.modified_nanos = 1_000_000_000;
-                        state.published = Some(crate::files::recovery::model::StagedPayload {
+                        state.staged = Some(crate::files::recovery::model::StagedPayload {
                             version: published,
                             final_mode: None,
                         });
@@ -352,42 +350,42 @@ fn indexed_phase_evidence_is_validated_before_admission() {
                     "oversized-error" => state.error = Some("x".repeat(16 * 1024 + 1)),
                     "valid-publish-intent" => {
                         state.phase = Phase::PublishIntent;
-                        state.root = Some(root_identity);
-                        state.published = Some(crate::files::recovery::model::StagedPayload {
+                        state.roots.target = Some(root_identity);
+                        state.staged = Some(crate::files::recovery::model::StagedPayload {
                             version: published.clone(),
                             final_mode: None,
                         });
                     }
                     "root-parent-alias" => {
                         state.phase = Phase::Rooted;
-                        state.root = Some(spec.parent);
+                        state.roots.target = Some(spec.parent);
                     }
                     "root-original-alias" => {
                         state.phase = Phase::Rooted;
-                        state.root = Some(spec.original.object);
+                        state.roots.target = Some(spec.original.object);
                     }
                     "published-original-alias" => {
                         state.phase = Phase::PublishIntent;
-                        state.root = Some(root_identity);
-                        state.published = Some(crate::files::recovery::model::StagedPayload {
+                        state.roots.target = Some(root_identity);
+                        state.staged = Some(crate::files::recovery::model::StagedPayload {
                             version: spec.original.clone(),
                             final_mode: None,
                         });
                     }
                     "root-source-alias" => {
                         state.phase = Phase::Rooted;
-                        state.root = Some(spec.source_version.object);
+                        state.roots.target = Some(spec.source_version.object);
                     }
                     "root-other-device" => {
                         state.phase = Phase::Rooted;
-                        state.root = Some(other_volume(root_identity));
+                        state.roots.target = Some(other_volume(root_identity));
                     }
                     "published-root-alias"
                     | "published-source-alias"
                     | "published-parent-alias"
                     | "published-other-device" => {
                         state.phase = Phase::PublishIntent;
-                        state.root = Some(root_identity);
+                        state.roots.target = Some(root_identity);
                         let mut published = published.clone();
                         published.object = match case {
                             "published-root-alias" => root_identity,
@@ -395,7 +393,7 @@ fn indexed_phase_evidence_is_validated_before_admission() {
                             "published-parent-alias" => spec.parent,
                             _ => other_volume(published.object),
                         };
-                        state.published = Some(crate::files::recovery::model::StagedPayload {
+                        state.staged = Some(crate::files::recovery::model::StagedPayload {
                             version: published,
                             final_mode: None,
                         });
@@ -412,7 +410,7 @@ fn indexed_phase_evidence_is_validated_before_admission() {
                         serde_json::json!((checkpoint.intent_digest[0] as u16 + 1) % 256);
                 }
                 if case == "unknown-state-field" {
-                    json["state"]["state"]["futureStateAuthority"] = serde_json::json!(true);
+                    json["state"]["futureStateAuthority"] = serde_json::json!(true);
                 }
                 if case == "unknown-operation-state" {
                     json["state"]["kind"] = serde_json::json!("futureOperation");
@@ -683,6 +681,75 @@ fn missing_admission_lock_does_not_recreate_authority_over_existing_evidence() {
 }
 
 #[test]
+fn initializer_published_after_gate_miss_is_reopened_without_enumerating_storage() {
+    let directory = tempfile::tempdir().unwrap();
+    let storage = directory.path().join("recovery");
+    let first_path = directory.path().join("first");
+    let second_path = directory.path().join("second");
+    let mut competing_owner = None;
+
+    let coordinator = Coordinator::open_after_gate_miss(&storage, || {
+        let competing = Coordinator::open(&storage).unwrap();
+        let owner = competing.reserve(writing(&first_path)).unwrap();
+        competing_owner = Some((competing, owner));
+    })
+    .unwrap();
+    let second_owner = coordinator.reserve(writing(&second_path)).unwrap();
+    let observer = Coordinator::open(&storage).unwrap();
+
+    let first_conflict = observer
+        .reserve(writing(&first_path))
+        .err()
+        .expect("first path is owned by the competing initializer");
+    assert!(
+        first_conflict.to_string().contains("owns these files"),
+        "{first_conflict}"
+    );
+    let second_conflict = observer
+        .reserve(writing(&second_path))
+        .err()
+        .expect("second path is owned by this coordinator");
+    assert!(
+        second_conflict.to_string().contains("owns these files"),
+        "{second_conflict}"
+    );
+
+    second_owner.finish().unwrap();
+    let (competing, first_owner) = competing_owner.unwrap();
+    first_owner.finish().unwrap();
+    drop(competing);
+}
+
+#[test]
+fn populated_root_without_gate_fails_closed_with_the_missing_lock_message() {
+    // Root has entries but never got a gate published (unlike the empty-probe
+    // path, which creates one). The bounded emptiness probe rejects a root
+    // this populated before the gate is even considered, and the retried
+    // gate open must still report the standard missing-lock message rather
+    // than leaking the probe's raw "entry limit" error.
+    let directory = tempfile::tempdir().unwrap();
+    let storage = directory.path().join("recovery");
+    fs::create_dir(&storage).unwrap();
+    fs::set_permissions(
+        &storage,
+        std::os::unix::fs::PermissionsExt::from_mode(0o700),
+    )
+    .unwrap();
+    fs::write(storage.join("one"), b"").unwrap();
+    fs::write(storage.join("two"), b"").unwrap();
+
+    let error = Coordinator::open(&storage)
+        .err()
+        .expect("a populated root with no gate must fail closed");
+    assert!(
+        error
+            .to_string()
+            .contains("Recovery admission lock is missing"),
+        "{error}"
+    );
+}
+
+#[test]
 fn managed_mutations_cannot_modify_storage_or_its_ancestors() {
     let (directory, coordinator, _path) = fixture();
     let storage = directory.path().join("recovery");
@@ -794,4 +861,56 @@ fn other_volume(identity: ObjectId) -> ObjectId {
     let mut value = serde_json::to_value(identity).unwrap();
     value["device"] = value["device"].as_u64().unwrap().wrapping_add(1).into();
     serde_json::from_value(value).unwrap()
+}
+
+/// #798: a case-only rename admits its own target and source (the order
+/// `EntryPlan::resources` requests) without conflicting with itself. Where the
+/// volume folds case both claims capture the one existing object, so another
+/// operation naming a third spelling is excluded; where it does not, the target
+/// is a new name and a third spelling is unrelated work.
+#[test]
+fn case_variant_claims_capture_one_object_only_where_the_volume_folds_case() {
+    use crate::files::case_only_rename_tests::{folds_case, report};
+    let directory = tempfile::tempdir().unwrap();
+    let parent = fs::canonicalize(directory.path()).unwrap().join("fixture");
+    fs::create_dir(&parent).unwrap();
+    let folds = folds_case(&parent);
+    let source = parent.join("readme.txt");
+    fs::write(&source, b"original").unwrap();
+    let storage = directory.path().join("recovery");
+    let (coordinator, peer) = (
+        Coordinator::open(&storage).unwrap(),
+        Coordinator::open(&storage).unwrap(),
+    );
+
+    let rename = coordinator
+        .reserve([writing(&parent.join("README.txt")), writing(&source)].concat())
+        .expect("a case-only rename does not conflict with itself");
+    assert!(peer.reserve(writing(&source)).is_err());
+    let third_spelling = peer.reserve(writing(&parent.join("ReadMe.TXT")));
+    if folds {
+        assert!(
+            third_spelling.is_err(),
+            "another spelling names the object this rename owns"
+        );
+    } else {
+        third_spelling
+            .expect("an unrelated name on a case-sensitive volume")
+            .finish()
+            .unwrap();
+    }
+    rename.finish().unwrap();
+    peer.reserve(writing(&parent.join("ReadMe.TXT")))
+        .unwrap()
+        .finish()
+        .unwrap();
+    report(
+        "case_variant_claims",
+        folds,
+        if folds {
+            "a third spelling was excluded until the original reservation finished"
+        } else {
+            "the target was a new name; a third spelling was independent"
+        },
+    );
 }

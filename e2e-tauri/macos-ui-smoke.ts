@@ -5,7 +5,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { remote, type Browser } from "webdriverio";
-import { qualifyMacosPdf } from "./macos-pdf-preview";
+import { prepareMacosPdfFixtures, qualifyMacosPdf } from "./macos-pdf-preview";
 
 const RUN_ID = `${new Date().toISOString().replace(/[:.]/g, "-")}-${randomUUID().slice(0, 8)}`;
 const OUTPUT = path.resolve("qualification-results/macos-native-ui", RUN_ID);
@@ -82,6 +82,9 @@ async function run(): Promise<void> {
     const parentName = `parent-visible-${token}.txt`;
     fs.writeFileSync(path.join(child, childName), "child fixture\n");
     fs.writeFileSync(path.join(fixture, parentName), "parent fixture\n");
+    // Seed PDF files before launch so initial listings contain the fixtures,
+    // independently of filesystem watcher registration and event delivery.
+    prepareMacosPdfFixtures(fixture);
     report.fixture = { child, childName, parentName };
 
     // These Mac2-specific capabilities are valid W3C extension keys, but WDIO's

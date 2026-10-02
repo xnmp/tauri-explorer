@@ -10,22 +10,27 @@ interface Display extends Rect { id: number; pixelWidth: number; pixelHeight: nu
 interface Landmark extends Rect { cx: number; cy: number; pixels: number; pixelScale: number }
 const COLORS = [[255, 0, 0], [153, 0, 204], [255, 128, 0]] as const;
 const PAGE_SIZES = [[600, 800], [800, 600], [500, 700]] as const;
+const PDF_FILES = { pdf: "native-pdf-landmarks.pdf", corrupt: "native-corrupt.pdf", image: "native-replacement.svg" } as const;
 const hash = (file: string) => createHash("sha256").update(fs.readFileSync(file)).digest("hex");
 const assert = (condition: boolean, message: string): void => { if (!condition) throw new Error(message); };
 const near = (actual: number, expected: number, tolerance: number, message: string) =>
   assert(Math.abs(actual - expected) <= tolerance, `${message}: observed ${actual}, expected ${expected} ± ${tolerance}`);
+
+export function prepareMacosPdfFixtures(fixture: string): void {
+  fs.copyFileSync("src/lib/api/fixtures/preview-landmarks.pdf", path.join(fixture, PDF_FILES.pdf));
+  fs.writeFileSync(path.join(fixture, PDF_FILES.corrupt), "%PDF-1.7\ninvalid object stream\n");
+  fs.writeFileSync(path.join(fixture, PDF_FILES.image), '<svg xmlns="http://www.w3.org/2000/svg" width="300" height="200"><rect width="300" height="200" fill="#0000ff"/></svg>');
+}
 
 export async function qualifyMacosPdf(browser: Browser, fixture: string, output: string): Promise<void> {
   assert(process.platform === "darwin" && process.env.GITHUB_ACTIONS === "true" &&
     process.env.RUNNER_ENVIRONMENT === "github-hosted", "PDF native input requires the disposable hosted Mac runner");
   const directory = path.join(output, "pdf-preview");
   fs.mkdirSync(directory, { recursive: true });
-  const pdfName = "native-pdf-landmarks.pdf", badName = "native-corrupt.pdf", imageName = "native-replacement.svg";
+  const { pdf: pdfName, corrupt: badName, image: imageName } = PDF_FILES;
   const pdf = path.join(fixture, pdfName);
-  fs.copyFileSync("src/lib/api/fixtures/preview-landmarks.pdf", pdf);
-  fs.writeFileSync(path.join(fixture, badName), "%PDF-1.7\ninvalid object stream\n");
-  fs.writeFileSync(path.join(fixture, imageName), '<svg xmlns="http://www.w3.org/2000/svg" width="300" height="200"><rect width="300" height="200" fill="#0000ff"/></svg>');
   const originalHash = hash(pdf);
+  assert(originalHash === hash("src/lib/api/fixtures/preview-landmarks.pdf"), "prepared native PDF differs from the known landmark fixture");
   const display = JSON.parse(execFileSync("swift", ["e2e-tauri/macos-display.swift"], { encoding: "utf8" })) as Display;
   const report: { display: Display; fixtureSha256: string; steps: unknown[]; passed: boolean; error: string | null } =
     { display, fixtureSha256: originalHash, steps: [], passed: false, error: null };

@@ -1,0 +1,49 @@
+name: macOS clipboard provider probe
+
+on:
+  pull_request:
+    branches: [main, dev]
+    paths:
+      - "src-tauri/src/error.rs"
+      - "src-tauri/src/clipboard/**"
+      - "src-tauri/Cargo.toml"
+      - "src-tauri/Cargo.lock"
+      - "docs/reviews/846-macos-clipboard-probe/**"
+      - ".github/workflows/macos-clipboard-probe.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: macos-clipboard-probe-${{ github.head_ref || github.ref_name }}
+  cancel-in-progress: true
+
+jobs:
+  native:
+    runs-on: macos-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: docs/reviews/846-macos-clipboard-probe
+          key: macos-clipboard-provider
+          cache-on-failure: true
+      - name: Canonical temporary directory
+        shell: bash
+        run: printf 'TMPDIR=%s\n' "$(cd "$RUNNER_TEMP" && pwd -P)" >> "$GITHUB_ENV"
+      - name: Run exact production native fixture
+        shell: bash
+        run: bash docs/reviews/846-macos-clipboard-probe/run-probe.sh
+      - name: Upload complete probe output
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: macos-clipboard-probe-${{ github.run_id }}-${{ github.run_attempt }}
+          path: docs/reviews/846-macos-clipboard-probe/logs/
+          if-no-files-found: error

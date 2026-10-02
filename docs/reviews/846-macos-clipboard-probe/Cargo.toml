@@ -1,0 +1,19 @@
+[package]
+name = "native-macos-clipboard-probe"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+serde = { version = "=1.0.229", features = ["derive"] }
+thiserror = "=2.0.21"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+# Image codecs do not participate in file-list/ownership behavior.
+clipboard-rs = { version = "=0.3.5", default-features = false }
+objc2 = "=0.6.4"
+objc2-foundation = { version = "=0.3.2", default-features = false, features = ["std", "NSArray", "NSData", "NSString", "NSURL"] }
+objc2-app-kit = { version = "=0.3.2", default-features = false, features = ["std", "NSPasteboard", "NSPasteboardItem"] }
+
+[dev-dependencies]
+tempfile = "=3.27.0"

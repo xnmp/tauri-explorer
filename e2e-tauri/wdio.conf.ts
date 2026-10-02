@@ -212,8 +212,6 @@ export const config: WebdriverIO.Config = {
       });
       mkdirSync(path.dirname(webkitDriverLogPath), { recursive: true });
       const driverLog = createWriteStream(webkitDriverLogPath, { flags: "a" });
-      driverProcess.stdout?.pipe(process.stdout, { end: false });
-      driverProcess.stderr?.pipe(process.stderr, { end: false });
       driverTranscript = captureNativeDriverTranscript(driverProcess, driverLog);
       if (process.platform === "linux") {
         driverProcessGroup = nativeProcessGroup(driverProcess);

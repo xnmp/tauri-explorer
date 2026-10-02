@@ -25,3 +25,9 @@ Independent review reproduced an exited child that never closed stdio and a
 Writable whose final callback never fired. Both previously left cleanup pending
 indefinitely. Regression cases now require bounded failure and resource/timer
 release for both attacks, and preserve original transcript write errors.
+
+On any failed transcript completion, also release owned stdio. Destroying a
+Readable does not remove its console destinations, so the owner explicitly
+unpipes both log and console tees before destruction. Contracts check that
+stdout/stderr handles and console listener counts return to their baseline
+when EOF is withheld or a log write fails.

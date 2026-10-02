@@ -20,6 +20,14 @@ export function captureNativeDriverTranscript(
     child.removeListener("close", onClose);
     child.stdout?.unpipe(log);
     child.stderr?.unpipe(log);
+    child.stdout?.unpipe(process.stdout);
+    child.stderr?.unpipe(process.stderr);
+  };
+  const releaseFailedTranscript = () => {
+    detach();
+    child.stdout?.destroy();
+    child.stderr?.destroy();
+    log.destroy();
   };
   // Observe errors immediately, even when spawn/session admission fails before
   // cleanup awaits this owner. Rejection is deferred to finish(), not dropped.
@@ -27,7 +35,9 @@ export function captureNativeDriverTranscript(
     () => ({ ok: true as const }),
     (error: unknown) => ({ ok: false as const, error }),
   );
+  child.stdout?.pipe(process.stdout, { end: false });
   child.stdout?.pipe(log, { end: false });
+  child.stderr?.pipe(process.stderr, { end: false });
   child.stderr?.pipe(log, { end: false });
   // `close` follows stdio drain, including failed spawn with no `exit`.
   child.once("close", onClose);
@@ -36,19 +46,19 @@ export function captureNativeDriverTranscript(
     finish: () => new Promise<void>((resolve, reject) => {
       const timeout = setTimeout(() => {
         const error = new Error(`native driver transcript did not finish within ${timeoutMs}ms`);
-        detach();
         // finish() follows owned-process termination. Release pipe handles too
         // if an inherited descriptor prevents stdio from ever announcing EOF.
-        child.stdout?.destroy();
-        child.stderr?.destroy();
-        log.destroy(error);
+        releaseFailedTranscript();
         reject(error);
       }, timeoutMs);
       completion.then((result) => {
         clearTimeout(timeout);
         detach();
         if (result.ok) resolve();
-        else reject(result.error);
+        else {
+          releaseFailedTranscript();
+          reject(result.error);
+        }
       });
     }),
   };

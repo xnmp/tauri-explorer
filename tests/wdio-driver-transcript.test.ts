@@ -183,6 +183,27 @@ describe.skipIf(process.platform === "win32")("WDIO driver transcript lifecycle"
     harness.child.emit("exit", 0, null);
     harness.transcript.destroy(failure);
     await expect(cleanup()).rejects.toBe(failure);
+    expect(harness.child.stdout.destroyed).toBe(true);
+    expect(harness.child.stderr.destroyed).toBe(true);
+    expect(harness.child.listenerCount("close")).toBe(0);
+  });
+
+  it("releases console tees when inherited driver stdio never closes", async () => {
+    const events = ["close", "error", "finish", "unpipe"];
+    const counts = () => events.flatMap((event) => [
+      process.stdout.listenerCount(event), process.stderr.listenerCount(event),
+    ]);
+    const before = counts();
+    const cleanup = await runningSession();
+    harness.stop = async () => {
+      harness.child.exitCode = 0;
+      harness.child.emit("exit", 0, null);
+    };
+    vi.useFakeTimers();
+    const assertion = expect(cleanup()).rejects.toThrow("transcript did not finish");
+    await vi.advanceTimersByTimeAsync(5_000);
+    await assertion;
+    expect(counts()).toEqual(before);
   });
 
 });

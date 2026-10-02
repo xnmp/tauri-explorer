@@ -79,6 +79,15 @@ mod platform {
                     components.setScheme(Some(&NSString::from_str("file")));
                     components.setHost(Some(&NSString::from_str("")));
                     components.setPath(Some(&NSString::from_str(path)));
+                    // NSURL's legacy parser treats ';' as a parameter separator.
+                    // Escape it in Foundation's already-encoded path component,
+                    // preserving Unicode and existing percent escapes (#846).
+                    let encoded_path = components.percentEncodedPath()?;
+                    let encoded_path = encoded_path.stringByReplacingOccurrencesOfString_withString(
+                        &NSString::from_str(";"),
+                        &NSString::from_str("%3B"),
+                    );
+                    components.setPercentEncodedPath(Some(&encoded_path));
                     let url = components.URL()?;
                     #[cfg(test)]
                     eprintln!(

@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { Drive } from "$lib/api/drives";
+import recordedDiscovery from "../fixtures/sidebar-cloud-mounts.json";
 
 // Backend-pushed drive changes (#888): push-driven updates, the slow backstop
 // poll while pushes are live, and fast polling whenever nothing is pushed.
@@ -30,6 +31,23 @@ function pushChange() {
 async function settle() {
   await vi.advanceTimersByTimeAsync(0);
 }
+
+it("keeps Google Drive discovered but omits its sidebar row after every discovery", async () => {
+  const [google, other] = recordedDiscovery as Drive[];
+  const wsl: Drive = { name: "Ubuntu", path: "/mnt/wsl", kind: "cloud", provider: "wsl" };
+  backend = [google, wsl, other, usb("/media/USB Backup")];
+  mocks.live.mockResolvedValue(true);
+  await drivesStore.startPolling();
+  expect(drivesStore.cloud).toEqual([wsl, other]);
+  expect(drivesStore.list).toContainEqual(google);
+  expect(drivesStore.mountedRoots.has(google.path!)).toBe(true);
+  expect(drivesStore.removable).toEqual([usb("/media/USB Backup")]);
+  backend = [google];
+  pushChange();
+  await settle();
+  expect(drivesStore.cloud).toEqual([]);
+  expect(drivesStore.list).toEqual([google]);
+});
 
 beforeEach(() => {
   vi.useFakeTimers();

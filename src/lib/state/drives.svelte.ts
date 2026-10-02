@@ -4,6 +4,7 @@ import {
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { createDirectoryWatch } from "./directory-watch";
 import { directoryKey } from "$lib/domain/path";
+import { sidebarCloudDrives } from "$lib/domain/drives";
 import { pageForeground, type ForegroundGate } from "./page-foreground";
 
 // Change sources: the backend's `drives-changed` push, fs-watcher events on
@@ -185,9 +186,9 @@ export function createDrivesStore(foreground: ForegroundGate) {
     get removable() {
       return drives.filter((d) => d.kind === "removable" || d.kind === "unknown");
     },
-    /** Cloud / remote mounts (Google Drive, WSL home) for the dedicated section. */
+    /** Cloud / remote shortcuts eligible for the dedicated sidebar section. */
     get cloud() {
-      return drives.filter((d) => d.kind === "cloud");
+      return sidebarCloudDrives(drives);
     },
     /**
      * Normalised mount roots of currently-mounted removable drives (same

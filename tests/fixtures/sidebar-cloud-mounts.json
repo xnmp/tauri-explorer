@@ -1,0 +1,4 @@
+[
+  { "name": "Google Drive", "path": "/media/user/GoogleDrive", "kind": "cloud", "detail": "gdrive", "provider": "googledrive" },
+  { "name": "Documents", "path": "/home/user/Documents", "kind": "cloud", "detail": "remote" }
+]

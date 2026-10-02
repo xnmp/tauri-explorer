@@ -33,8 +33,8 @@ also passed on pristine Wry, so that fixture was rejected as retention proof.
 
 Each run used a separate Xvfb + Openbox display, X11 backend, isolated XDG
 config/cache/data/runtime and private D-Bus session. Before churn, the wrapper
-verified the probe, window manager and WebKit helper environments. The two
-environment audit files record those process identities. Only the wrapper's
+verified the probe, window manager and WebKit helper environments. The two environment audits remain under ignored
+`qualification-results/`, with their hashes below. Only the wrapper's
 owned process groups were stopped; the user's desktop and clipboard were not
 used. `private-display.py` contains the executed isolation wrapper.
 
@@ -74,3 +74,19 @@ to that executable and `PROBE_PROFILE` set to a unique leaf name. Artifacts
 go under ignored `qualification-results/<profile>/`. The wrapper checks
 process isolation before enabling the 450-cycle loop and tears down only its
 owned groups on success, failure or interruption.
+
+## Artifact hashes
+
+Runtime logs and complete process audit arrays remain ignored locally.
+The following SHA-256 values identify the executed/archived proof artifacts.
+
+| Artifact | SHA-256 |
+| --- | --- |
+| `docs/reviews/846-wry-ipc-lifetime/probe.rs` | `5ff05d54a5d80a7095cdffd7a302f4fb6c79e3a3d6f4dc4d84273b4e521bd43d` |
+| `docs/reviews/846-wry-ipc-lifetime/private-display.py` | `0036fc5127d0919b44cf16ed068dc54cc0ac68a8ce71f477dec86c729240a3b3` |
+| `docs/reviews/846-wry-ipc-lifetime/patched-result.txt` | `732360800afcbc88c108dc09b8aa84a27ac30720b5c42874905c6e8decb00eff` |
+| `docs/reviews/846-wry-ipc-lifetime/upstream-result.txt` | `aac737416a89eaa96521a27e02e931be5c61502a1d2f3818e0eb69a7c87f0225` |
+| `qualification-results/wry-private-scheme/environment-audit.json` | `9c102d92e17c69db5097dac1b2d3558c5a6167d11a9590c7a9d436c157370395` |
+| `qualification-results/wry-private-scheme/churn.log` | `2feb348b14fd09f19d18410c8fbae1e477e8395336450b74a3cd4240334696a9` |
+| `qualification-results/wry-private-scheme-upstream/environment-audit.json` | `d9a261d567d2124db10608131d7b024cefe003a48800b030f831db3d5dfc9467` |
+| `qualification-results/wry-private-scheme-upstream/churn.log` | `2491396d4005ba92f12a913fb2834379d11c5a946e28814ab12a1dfa196ea94c` |

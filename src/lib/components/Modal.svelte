@@ -36,6 +36,8 @@
     closeOnBackdrop?: boolean;
     /** Close on Escape (default true). Disable to handle Escape in `onkeydown`. */
     closeOnEscape?: boolean;
+    /** Retain input ownership when a global close cannot cancel pending work. */
+    canClose?: () => boolean;
     /** Keydown events not consumed by Escape/Tab handling. */
     onkeydown?: (event: KeyboardEvent) => void;
     children: Snippet;
@@ -53,6 +55,7 @@
     describedby,
     closeOnBackdrop = true,
     closeOnEscape = true,
+    canClose = () => true,
     onkeydown,
     children,
   }: Props = $props();
@@ -60,7 +63,7 @@
   let overlayRef = $state<HTMLElement | null>(null);
 
   $effect(() => {
-    if (open) return untrack(() => modalOwnership.register(() => onClose()));
+    if (open) return untrack(() => modalOwnership.register(() => onClose(), canClose));
   });
 
   // `:not([tabindex="-1"])` on every clause so an element opted out of the tab

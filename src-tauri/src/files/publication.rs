@@ -28,6 +28,12 @@ pub(super) struct StagedEntry {
 }
 
 impl StagedEntry {
+    /// Borrow a generated source while its private directory owner stays live.
+    #[cfg(target_os = "linux")]
+    pub(super) fn payload(&self) -> &Path {
+        &self.payload
+    }
+
     /// Reserve a private namespace on the destination filesystem, then build
     /// an unpublished payload. Errors cannot leave a partial public target.
     pub(super) fn prepare(

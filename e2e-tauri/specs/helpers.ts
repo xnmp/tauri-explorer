@@ -52,10 +52,10 @@ const windows: WindowScanDriver = {
 const pageLabel = () => browser.execute(() => document.documentElement.dataset.e2eWindowLabel);
 
 /** Run one `e2e-window-operation` in the current page and return its result. */
-export async function windowOperation(op: string, target?: string): Promise<unknown> {
+export async function windowOperation(op: string, target?: string, token = crypto.randomUUID()): Promise<unknown> {
   const observed = await browser.executeAsync<
     RendererWaitResult<WindowOperationResponse>, [WindowOperationWaitRequest]
-  >(waitForWindowOperation, { token: crypto.randomUUID(), op, target, timeoutMs: 20_000 });
+  >(waitForWindowOperation, { token, op, target, timeoutMs: 20_000 });
   if (!observed.ok) throw new Error(observed.reason);
   if (observed.value.error) throw new Error(observed.value.error);
   return observed.value.result;

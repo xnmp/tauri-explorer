@@ -42,6 +42,8 @@
  */
 import type { Drive } from "./drives";
 import type { GitFileEntry, GitOpState } from "./git";
+import type { ImageCropCapture, ImageCropSave } from "./image-crop";
+import type { FileMutationReceipt } from "$lib/domain/file";
 
 export interface MockGitState {
   branch: string;
@@ -66,6 +68,8 @@ export interface MockControl {
   previewReadText?: (path: string) => string | Promise<string>;
   /** Overrides `read_image_data_url` for the path under test. */
   previewReadImage?: (path: string) => string | Promise<string>;
+  imageCropCapture?: (path: string) => ImageCropCapture | Promise<ImageCropCapture>;
+  imageCropSave?: (request: ImageCropSave) => FileMutationReceipt | Promise<FileMutationReceipt>;
   /** Overrides bounded binary PDF transport for cancellation/revision tests. */
   previewReadPdf?: (path: string) => ArrayBuffer | Promise<ArrayBuffer>;
   /** Most recent PDF annotation URI sent to the mock native opener. */
@@ -106,6 +110,8 @@ export interface MockControl {
   mountError?: string;
   /** Action hook: drop a drive from the fixture list to mimic an eject. */
   ejectDrive?: (path: string) => void;
+  /** Installed suitable applications for browser Open with acceptance. */
+  openWithApplications?: Array<{ id: string; name: string }>;
 
   // ----- Cross-cutting test instrumentation -----
   /** Per-command invocation counter, incremented by every `mockInvoke` call. */

@@ -34,6 +34,7 @@ pub mod file_ops;
 mod freedesktop_trash;
 pub mod fs_watcher;
 pub mod git_status;
+pub(crate) mod image_crop;
 #[cfg(target_os = "linux")]
 pub mod linux_gvfs_watch;
 #[cfg(target_os = "linux")]
@@ -54,6 +55,7 @@ pub(crate) mod mutation;
 mod native_directory;
 mod object_id;
 pub mod pdf_preview;
+pub mod open_with;
 mod permanent_delete;
 // Selections are admitted on Linux; other Unix platforms prepare one native
 // permanent deletion through the same observation and budget.

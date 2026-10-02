@@ -28,6 +28,7 @@ pub mod git_log;
 mod git_observation_probe;
 mod git_watch;
 mod github;
+mod image_crop;
 mod nano_banana;
 mod palette;
 mod platform;
@@ -284,6 +285,8 @@ pub fn run_with_process_entry(launch_dir: Option<String>, t_process_entry: std::
             file_mutation::cancel_copy_session,
             files::file_ops::read_text_file,
             files::file_ops::read_image_data_url,
+            files::image_crop::capture_image_crop,
+            file_mutation::save_image_crop,
             files::pdf_preview::read_pdf_bytes,
             files::pdf_preview::open_pdf_link,
             file_mutation::write_text_file,
@@ -297,6 +300,8 @@ pub fn run_with_process_entry(launch_dir: Option<String>, t_process_entry: std::
             files::external_apps::open_file,
             files::external_apps::open_file_at_line,
             files::external_apps::open_file_with,
+            files::open_with::list_open_with_applications,
+            files::open_with::open_file_with_application,
             files::external_apps::open_image_with_siblings,
             files::external_apps::open_in_terminal,
             files::external_apps::list_installed_terminals,

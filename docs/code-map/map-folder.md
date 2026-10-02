@@ -22,6 +22,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `src/lib/components/FileRecoveryDialog.svelte`, `src/lib/components/FileRecoveryNotice.svelte` — page-owned recovery inspection/choices, stable async-action focus and persistent attention notice; deferred mounting uses WindowDialogs and the status-bar snippet or standalone attention row.
 
 - `WindowDialogs.svelte` — typed lazy dialog host, crash boundaries, plugin dialogs and window-level feedback, including portal mode.
+- `OpenWithDialog.svelte` — accessible installed-application choice with captured filename, loading/empty/error feedback and unchanged-default messaging.
 
 - `FileList.svelte` — dispatches to Details/List/Tiles by view mode; hosts marquee, drop, empty-state. Central view entry.
 - `DetailsView.svelte` — virtual-scrolled table view (columns, resize, sort headers).
@@ -116,6 +117,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `owned-registry.ts` — framework-free contribution registration identity; old disposers cannot remove replacements even when values are reused.
 - `ordered-registry.ts` — owned contributions sorted by plugin list position, then registration; shared by context-menu items and plugin settings sections.
 - `modal-ownership.svelte.ts` — shared input ownership for mounted and contributed modals; closing releases only the corresponding registration.
+- `open-with.svelte.ts` — captured application-choice sessions, late-result rejection and single launch lifecycle.
 
 - `recycle-bin.ts` — turns the native Recycle Bin IPC result into a user-visible failure toast; called by `FilesSidebarView.svelte`.
 - `git-graph-component.ts` — resolved lazy graph component cache with an injected importer; coalesces first loads and preserves synchronous cached remounts.
@@ -307,6 +309,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `directory-reconciliation.ts` — complete-listing three-way merge and selection identity reconciliation after concurrent mutations.
 - `file.ts` — file entry types (incl. `is_git_repo`) + pure ops (sort, filter, format). Hot.
 - `file-types.ts` — extension→type/category detection + display; `isGitRepoFolder` (git-repo folder icon selection, #463).
+- `open-with.ts` — single-file selection eligibility and explicit Linux-only application-choice availability.
 - `relative-time.ts` — shared compact elapsed-time labels for file metadata, today's git commits, and PR comments.
 - `path.ts` — path normalization/join/parent/relative helpers.
 - `paste-source.ts` — pure file-list Paste source selection: the app's own Copy/Cut while the system clipboard mirrors it (or, for Copy only, when it cannot be read), otherwise an external file list (#865).
@@ -354,6 +357,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `settings-numbers.ts` — Numeric preference consumer contracts shared by persisted validation and interactive setters.
 - `folder-preview.ts` — folder preview image selection (#146).
 - `preview-size.ts` — pure dock-to-setting resize policy; source-zero defaults and bounded width/height options.
+- `image-crop.ts` — full-resolution crop bounds and measured pointer mapping; fixed ICNS canvas projection with transparent padding (#681, crop UI/save implementation pending).
 - `preview-pane-position.ts` — validate/cycle preview dock edge right/bottom/top, plus "auto" mode/heuristic (`resolveAutoDockPosition`, #460, #467).
 - `nerd-icons.ts` — nerd-font icon mappings (Material theme).
 - `syntax-highlight.ts` — highlight.js wrapper for preview.
@@ -560,6 +564,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `linux_mount_watch.rs` — POLLPRI watch on `/proc/self/mountinfo` that pushes `drives-changed` when mount-table-derived drives (rclone FUSE, bind/manual mounts) change. The opt-in real-kernel/namespace test moved to `src-tauri/test_support/linux_mount_watch.rs` (#926); run via `cargo test --lib files::linux_mount_watch::privileged_tests -- --ignored` under the documented `unshare`.
 - `linux_volume_monitor.rs` — one long-lived UDisks2 subscription (ObjectManager + PropertiesChanged + NameOwnerChanged) feeding a cached snapshot, 30 s backstop resync, reconnect/fallback, and `drives-changed` notifications.
 - `external_apps.rs` — open files / image viewers / terminals externally.
+- `open_with.rs` — Linux suitable GIO application catalogue and revalidated desktop-ID launch for regular files, without association changes.
 - `shortcuts.rs` — Windows `.lnk` shortcut resolution.
 
 ## src/test-support/ — opt-in E2E fixtures; loaded only by `loadE2EHooks()` in hook builds (`VITE_E2E_HOOKS=1`).
@@ -712,3 +717,23 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `tests/e2e-tauri/owned-windows.test.ts` — complete-pass deadlines, closing handles, and never scripting warm or uncommitted pages.
 - `tests/e2e-tauri/window-transfer-diagnostics.test.ts` — native-spec call-site coverage for partial failure artifacts and failing-window capture.
 - `docs/testing/interactive-mac-startup-runbook.md` — operator procedure for producing the interactive Mac startup evidence JSON the qualification report ingests.
+
+- `src-tauri/src/image_crop.rs` — bounded full-resolution crop encoding and EXIF orientation normalization (#681; save/UI integration pending).
+- `src-tauri/src/files/image_crop.rs` — bounded immutable crop source capture, identity/content validation, admitted staged copy and confirmed replacement execution.
+- `src/lib/api/image-crop.ts` — typed crop capture/save IPC and native history settlement.
+- `src/lib/api/mock-image-crop.ts` — synthetic PNG/JPEG browser fixtures that save actual cropped pixels into the mock listing; native formats and file safety are verified separately.
+- `src/lib/state/image-crop-session.ts` — editor opening, crop coordinates, blob ownership and accepted-save lifetime.
+- `src/lib/state/image-crop-effects.ts` — crop receipt publication through shared pane refresh and thumbnail invalidation.
+- `src/lib/components/ImageCropEditor.svelte` — original image crop dialog with pixel controls and explicit copy/replacement choices.
+- `src/lib/components/ImageCropCanvas.svelte` — measured-image pointer/keyboard crop edges with fit/zoom and scroll panning.
+- `src-tauri/src/image_crop/gif_crop.rs` — indexed GIF crop preserving frame regions, palettes, disposal, timing and looping.
+- `src-tauri/src/image_crop/icon_crop.rs` — validates ICNS/embedded PNG/JP2 bounds and preserves original canvas sizes with transparent crop padding.
+- `src-tauri/src/image_crop/svg_crop.rs` — bounded UTF-8/UTF-16 SVG crop using the captured viewport; independent-document clipping for static/CSS animation and same-document ordinary SMIL with explicit context refusals.
+- `src-tauri/src/image_crop/webp_crop.rs` — lossless animated WebP crop of composited frames with retained timing/looping.
+
+- `src-tauri/src/image_crop/png_crop.rs` — APNG raw-frame crop with preserved disposal/blending, separate default image, color metadata, 8/16-bit samples and normalized orientation.
+
+- `src-tauri/vendor/explorer-avif/src/lib.rs` — owned Rust AVIF crop/decode interface to pinned native codecs; includes HDR reconstruction utilities.
+- `src-tauri/vendor/explorer-avif/native/bridge.c` — lossless crop/animation/16-bit/gain-map encoding and MIAF orientation mapping.
+- `src-tauri/vendor/explorer-avif/native/CMakeLists.txt` — offline checksum-verified source build with portable AOM and merged libavif static linkage.
+- `src-tauri/vendor/explorer-avif/native/patch-sequences.cmake` — checked libavif writer corrections for one-frame sequences and unspecified repeat policy.

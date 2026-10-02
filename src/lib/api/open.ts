@@ -13,6 +13,23 @@ import {
   virtualPathGuard,
   type ApiResult,
 } from "./common";
+import type { OpenWithApplication } from "$lib/domain/open-with";
+
+export async function listOpenWithApplications(path: string): Promise<ApiResult<OpenWithApplication[]>> {
+  const guard = virtualPathGuard(path);
+  if (guard) return guard;
+  try { return { ok: true, data: await invoke<OpenWithApplication[]>("list_open_with_applications", { path }) }; }
+  catch (error) { return { ok: false, error: extractError(error) }; }
+}
+
+export async function openFileWithApplication(path: string, applicationId: string): Promise<ApiResult<void>> {
+  const guard = virtualPathGuard(path);
+  if (guard) return guard;
+  try {
+    await invoke("open_file_with_application", { path, applicationId });
+    return { ok: true, data: undefined };
+  } catch (error) { return { ok: false, error: extractError(error) }; }
+}
 
 /**
  * Open a file in the system's default application.

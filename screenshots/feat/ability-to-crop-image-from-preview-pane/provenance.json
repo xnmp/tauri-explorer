@@ -1,0 +1,173 @@
+{
+  "sourceCommit": "386e5438abf9819d054c26db509d5b47870267fc",
+  "binarySha256": "376df41475e7184f37cea8055315d78fcd790d0eb83bf263d016acfed60a5cac",
+  "binaryBytes": 706357736,
+  "profile": "debug-custom-protocol-e2e-hooks",
+  "capture": "Unedited real Tauri application on isolated Linux Xvfb/Openbox, private D-Bus/XDG profile",
+  "viewport": [
+    1400,
+    1000
+  ],
+  "appZoom": 100,
+  "nativeResult": "16 passing (37.4s)",
+  "browserResult": "Previous qualification: 96 passing (3.3m), Chromium/WebKit across all views; current rebase additionally passes 42 unit contracts and native types.",
+  "nativeSpecSha256": "af4c5192dc41e09ac08c56b72a2f8b9a31f6898e631a44349fff3bba2028411e",
+  "files": [
+    {
+      "path": "native/avif-aspect-saved-copy.png",
+      "sha256": "c1d57b0e4c23e29620dcbdcb8b017ba67a3b10b1dc88148a27ff31a70a3d2c90",
+      "bytes": 165465
+    },
+    {
+      "path": "native/avif-aspect-selected-region.png",
+      "sha256": "c6623cf669bb1627bfa3780a4f824a807337bd0693647499b8d75fee79c6bb05",
+      "bytes": 93583
+    },
+    {
+      "path": "native/avif-oriented-saved-copy.png",
+      "sha256": "40cc53ac86c92d9e386a68ec99397d03362c8d0e903626a6124710422fbbee56",
+      "bytes": 156876
+    },
+    {
+      "path": "native/avif-oriented-selected-region.png",
+      "sha256": "6f3578170aecc97a5bcf193df6123a5378fd54f284bf85b11bdc69de802334b7",
+      "bytes": 90633
+    },
+    {
+      "path": "native/avif-saved-copy.png",
+      "sha256": "09de6ee863b4144e9c308f0be2b9676d99a2e52664aa4ffd9c9bbb6069035732",
+      "bytes": 122734
+    },
+    {
+      "path": "native/avif-selected-region.png",
+      "sha256": "1cda90fc0c653dcf736826c525bb0178bde844e07181976fd29bf49514561acc",
+      "bytes": 90420
+    },
+    {
+      "path": "native/bmp-saved-copy.png",
+      "sha256": "064b00d80c38cf2c6774780b7e897a25bc0a805c6c03cc42ac5347ca8d26a7cd",
+      "bytes": 104345
+    },
+    {
+      "path": "native/bmp-selected-region.png",
+      "sha256": "498c5e95e76b5316aab7505b5daad6a10a03ad06300f1be2e47ec48d9559a6e8",
+      "bytes": 87220
+    },
+    {
+      "path": "native/changed-source-refused.png",
+      "sha256": "546685ef72eb6c85e2439c49d54bd2120bd4ba7033d101c5fd7570f20b959497",
+      "bytes": 87712
+    },
+    {
+      "path": "native/details-confirm-replacement.png",
+      "sha256": "0e5930a902d401d1ca4482d06277c787343d5e2cf537add087a7ad3d73594c29",
+      "bytes": 94549
+    },
+    {
+      "path": "native/details-replaced-original.png",
+      "sha256": "c739dfb3a86f66fdfd2f50c2a346b1ebe79e672e1d1e2a4e78f67deb9d9ba502",
+      "bytes": 169202
+    },
+    {
+      "path": "native/gif-saved-copy.png",
+      "sha256": "0cbd7b5946b38e75a4c1b41a60765162ad45ff142a537b9ae146b351ed7aa43c",
+      "bytes": 188613
+    },
+    {
+      "path": "native/gif-selected-region.png",
+      "sha256": "e8891602344167d1a061c661dbb740df221e8696f4e7c781a454faa3e7502093",
+      "bytes": 322678
+    },
+    {
+      "path": "native/icns-saved-copy.png",
+      "sha256": "4437aae5459cd7db0cea5120f11cf35fb5217f47d51e7d49a72aed473f6f17ca",
+      "bytes": 131246
+    },
+    {
+      "path": "native/icns-selected-region.png",
+      "sha256": "abf409dd4187f4e367eb95e0dfd916c97f6472ae480ce7960bfa39620db6ae5c",
+      "bytes": 89591
+    },
+    {
+      "path": "native/jpg-saved-copy.png",
+      "sha256": "1feed70c957280d882c51b121dff746a642a35b6e845c5a9fd3fe93a072e173c",
+      "bytes": 76627
+    },
+    {
+      "path": "native/jpg-selected-region.png",
+      "sha256": "edf29a0452e29388322441bf3f668d7f5ee340cfd9fcf2ffecb429f0b9b38169",
+      "bytes": 86242
+    },
+    {
+      "path": "native/list-confirm-replacement.png",
+      "sha256": "d8539c15ff8e2fed52064f012d583e9f90a24932adac36466817362d63267fb7",
+      "bytes": 91801
+    },
+    {
+      "path": "native/list-replaced-original.png",
+      "sha256": "74746b79cca49019149f5d64842939208fd4613aa6f7f186877fcf1ace97a02a",
+      "bytes": 90866
+    },
+    {
+      "path": "native/oriented-saved-copy.png",
+      "sha256": "293a75a4fb42dde8e01badb165815f87b7675721bb4ffeffa4ba9649d100ef0e",
+      "bytes": 138904
+    },
+    {
+      "path": "native/oriented-selected-region.png",
+      "sha256": "22af2cbcd379721b8dca99c32d66ffe6d1f2f6d83a5d2635712040c80b7458ca",
+      "bytes": 86212
+    },
+    {
+      "path": "native/png-saved-copy.png",
+      "sha256": "7d87810b9cc451ef32b38c2af4b4ac9091b00625dc43f5fd9fc0ef0bb7e9a9e4",
+      "bytes": 68546
+    },
+    {
+      "path": "native/png-selected-region.png",
+      "sha256": "51ebd170203367a53d2eb465715ceb20c8384e0f7cba0cc564b5c7fc8bc6cf0e",
+      "bytes": 89369
+    },
+    {
+      "path": "native/svg-saved-copy.png",
+      "sha256": "b89ab2f27c0e60084f5319c2889ed12c632de90f22c109be246ad6ce5d8d8409",
+      "bytes": 114637
+    },
+    {
+      "path": "native/svg-selected-region.png",
+      "sha256": "4fb0d177f00c0a4d6a7f3d783bf2c42f26851a882fa502ee179868e62271766f",
+      "bytes": 87759
+    },
+    {
+      "path": "native/tiles-confirm-replacement.png",
+      "sha256": "1dba4923ed338cdc94687fddc0e3370d1f369feb3ed54f978973c752c6303553",
+      "bytes": 88150
+    },
+    {
+      "path": "native/tiles-replaced-original.png",
+      "sha256": "d8850bd3910b35b0847c894227f587f663395bb38afd8996e54718a62e06adc4",
+      "bytes": 99237
+    },
+    {
+      "path": "native/webp-oriented-saved-copy.png",
+      "sha256": "f6fd415c67f8b97c7f79e648a361e4e4ecb82813f157f8ef9a9692f977cc2bf3",
+      "bytes": 153419
+    },
+    {
+      "path": "native/webp-oriented-selected-region.png",
+      "sha256": "23f044aae9e556bdb05851785b9439d093966b64b3b4b1c63924bbfd70e20374",
+      "bytes": 96911
+    },
+    {
+      "path": "native/webp-saved-copy.png",
+      "sha256": "aad3eb7ff30c998262df2cc2f06da784c0f6c0ed5c203330fb6e21239b06f6c1",
+      "bytes": 99056
+    },
+    {
+      "path": "native/webp-selected-region.png",
+      "sha256": "f2e5d4f09bcf54045152182a4c2ca8de06f47dace358221a711596fed0f76251",
+      "bytes": 95132
+    }
+  ],
+  "captureCompletedAt": "2026-10-02T08:25:28Z"
+}

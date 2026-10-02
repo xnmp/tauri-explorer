@@ -1,0 +1,19 @@
+# #822 Open with acceptance
+
+Linux single regular files now expose Open with immediately after ordinary Open. GIO content-type application discovery excludes hidden/unusable entries and deduplicates stable installed desktop IDs. Application choice passes GFile paths without shell interpolation and does not set a default association. Folder/multiple selection and Windows/macOS expose a disabled action with a truthful reason.
+
+The captured-path state machine rejects late catalogue results and duplicate launch requests. Lazy modal ownership starts before component loading. Accepted launch retains ownership through Escape/backdrop/global shortcut attempts until settlement. A real error remains visible and cancellable. Keyboard context-menu focus follows visible DOM; all three views and zoomed placement are verified. The chooser uses an opaque theme surface for legibility in WebKit.
+
+## Native acceptance
+
+Arch Linux x86_64, actual hooks-enabled Tauri binary; private Xvfb 1600×1000, Openbox, X11 only, separate D-Bus session and task-owned XDG profile. Task driver ports are 4520/4521. An installed disposable GTK application receives a real desktop-entry launch, displays the filename/content, and records its exact argv path and SHA-256. Assertions independently read its /proc environment and actual native window PID/title. It receives `a space ü ' " $(touch injected);.txt` intact; source bytes remain unchanged and no injected file exists. The default xdg-mime text/plain association remains acceptance-default.desktop.
+
+Four native cases pass: cancel/no launch, exact alternate application dispatch/default preservation, admitted application launch error and deleted-file error. The launch-error desktop entry uses a valid executable but `Path=/nonexistent/acceptance-working-directory`, yielding a GIO spawn error with details. A nonexistent Exec is filtered before dispatch, and a bad interpreter may fail after gio-launch-desktop accepts dispatch; neither is equivalent proof. Universal external application startup acknowledgment is outside AppInfo's contract.
+
+The opt-in `e2e-tauri/specs/open-with.spec.ts` requires TAURI_NATIVE_OPEN_WITH_PROFILE and TAURI_NATIVE_OPEN_WITH_RECEIPT. Install acceptance-default.desktop and acceptance-alternate.desktop invoking `/usr/bin/python3 <absolute fixture>/open-with-viewer.py %f`, register text/plain/text/markdown, and set default MIME association to acceptance-default.desktop. Install acceptance-broken.desktop with a suitable executable and nonexistent Path. Keep all desktop entries and mimeapps.list in the disposable profile. Set private XDG homes, short 0700 runtime path, GDK_BACKEND=x11 and unset WAYLAND_DISPLAY; launch WDIO through xvfb-run, dbus-run-session and with-window-manager.sh. Validate actual driver/app/helper inherited environments before accepting proof. Ordinary native suite runs skip this opt-in external-app test.
+
+## Verification and proof
+
+Full units: 2966 pass, 3 existing skips; performance: 29 pass. Focused state/domain/modal/virtual-path contracts: 22 pass. Rust Open with contracts: 2 pass; clippy all-targets with denied project warnings passes. Svelte check: zero errors/warnings; native TypeScript passes; code-map coverage 547/547. Browser: 32 pass across Chromium and WebKit, including neighboring archive/copy outcomes. Baseline browser test fails because Open with is absent. Independent adversarial review confirms all acceptance criteria with no remaining blocker.
+
+All 15 browser PNGs and four native PNGs were inspected. Browser screenshots are Chromium (both engines execute the interaction/rendering assertions); finite entrance animations and opacity settle before capture. Light is 100%, dark 150%; narrow is 640×480 at 150%. Native screenshots are actual Linux desktop/application images, Details 100%. All files are under screenshots/fix/add-open-with-to-right-click-context-menu; representative image-only proof is under evidence/822.

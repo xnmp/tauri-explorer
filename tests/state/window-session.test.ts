@@ -94,6 +94,20 @@ describe("page session ownership", () => {
     expect(callbacks.commandsReady).not.toHaveBeenCalled();
   });
 
+  it("observes the initial listing and retires that observer with the session", () => {
+    const observed: string[] = [];
+    let receiveListing: ((path: string) => void) | undefined;
+    f.initTabs.mockImplementationOnce(() => { receiveListing?.("/requested"); return {}; });
+    const session = startWindowSession({ ...options(), beforeInitialListing(signal) {
+      receiveListing = (path) => observed.push(path);
+      signal.addEventListener("abort", () => { receiveListing = undefined; }, { once: true });
+    } });
+    expect(observed).toEqual(["/requested"]);
+    session.dispose();
+    receiveListing?.("/retired");
+    expect(observed).toEqual(["/requested"]);
+  });
+
   it("does not prime optional windows before the foreground reports core readiness", async () => {
     const session = startWindowSession(options());
     await vi.advanceTimersByTimeAsync(5000);

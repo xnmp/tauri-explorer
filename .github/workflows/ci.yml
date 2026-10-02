@@ -129,7 +129,10 @@ jobs:
       - name: E2E tests (WebKit)
         env:
           WEBKIT: "1"
-        run: npx playwright test --project=webkit --shard=${{ matrix.shard }}/4 --reporter=line,html
+          PW_VIDEO_HEADED: "1"
+        # Only video decoder specs opt into GTK; other specs retain headless WPE.
+        # The display belongs to this hosted runner and is destroyed after testing.
+        run: xvfb-run -a --server-args="-screen 0 1920x1080x24 -nolisten tcp" npx playwright test --project=webkit --shard=${{ matrix.shard }}/4 --reporter=line,html
 
       - name: Upload Playwright report on failure
         if: failure()

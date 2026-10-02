@@ -2,6 +2,10 @@ import { test, expect } from "./fixtures";
 import { waitForEntries } from "./helpers";
 import type { MockControl } from "../src/lib/api/mock-control";
 
+// Linux's headless WPE proxy advances time but emits transparent video frames.
+// CI uses GTK on an isolated Xvfb display for decoder outcomes (#970).
+test.use({ headless: process.env.PW_VIDEO_HEADED !== "1" });
+
 test("video playback leaves Tiles' cached thumbnail size independent", async ({ page }) => {
   await page.addInitScript(() => {
     localStorage.setItem("explorer-settings",JSON.stringify({viewMode:"tiles",showPreviewPane:true}));

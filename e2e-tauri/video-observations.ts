@@ -87,6 +87,8 @@ export function videoResources(): VideoResourceSample {
   for (const value of fs.readdirSync("/proc").filter(value => /^\d+$/.test(value))) {
     const pid = Number(value);
     try {
+      if (fs.statSync(`/proc/${pid}`).uid !== process.getuid?.()) continue;
+      if (!/^(tauri-explorer|WebKitWebProces|WebKitNetworkPr)$/.test(fs.readFileSync(`/proc/${pid}/comm`, "utf8").trim())) continue;
       const env = Object.fromEntries(fs.readFileSync(`/proc/${pid}/environ`, "utf8").split("\0").filter(v => v.includes("=")).map(v => { const i=v.indexOf("="); return [v.slice(0,i),v.slice(i+1)]; }));
       if (env.XDG_CONFIG_HOME !== process.env.XDG_CONFIG_HOME) continue;
       const identity = nativeProcessIdentity(pid);

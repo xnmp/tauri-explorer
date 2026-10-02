@@ -3,6 +3,10 @@ import { test, expect, type Page } from "./fixtures";
 import { ALL_VIEW_MODES, waitForEntries } from "./helpers";
 import type { MockControl } from "../src/lib/api/mock-control";
 
+// Linux's headless WPE proxy advances time but emits transparent video frames.
+// CI uses GTK on an isolated Xvfb display for decoder outcomes (#970).
+test.use({ headless: process.env.PW_VIDEO_HEADED !== "1" });
+
 async function openVideo(page: Page, mode = "details", dock = "right", zoom = 100, waitForReady = true) {
   await page.addInitScript(({ mode, dock, zoom }) => {
     localStorage.setItem("explorer-settings", JSON.stringify({ viewMode: mode, showPreviewPane: false,

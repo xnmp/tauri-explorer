@@ -21,7 +21,7 @@ function rustRegisteredCommands(): string[] {
   return body
     .split("\n")
     .map((line) => line.replace(/\/\/.*$/, "").trim())
-    .filter((line) => line.length > 0)
+    .filter((line) => line.length > 0 && !line.startsWith("#["))
     .map((line) => line.replace(/,$/, ""))
     .map((line) => line.split("::").pop()!.trim())
     .filter((name) => name.length > 0);
@@ -77,6 +77,9 @@ const BROWSER_UNREACHABLE_ALLOWLIST = new Set([
   // Rust invalidates its own directory cache internally via
   // `invalidate_dir_cache_sync` (src-tauri/src/files/fs_watcher.rs).
   "invalidate_dir_cache",
+  // Qualification-only native streaming metrics are deliberately not mocked.
+  // Browser UI tests cannot provide evidence about native reads or handles.
+  "e2e_video_preview_stats",
 ]);
 
 describe("mock-invoke / Rust command registration parity (#869)", () => {

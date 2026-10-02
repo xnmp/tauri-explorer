@@ -3,7 +3,7 @@
 These are unedited screenshots of the real Tauri application on Linux/WebKitGTK,
 captured on a private Xvfb display with Openbox and isolated D-Bus/XDG profiles.
 The window is 1400 × 1000 at 100% app zoom. `provenance.json` records the exact
-production source, native binary and image hashes. No host clipboard or desktop
+application source, native binary and image hashes. No host clipboard or desktop
 interaction was used.
 
 For PNG, JPEG, GIF, WebP, BMP, SVG and AVIF, each `native/<format>-selected-region.png`
@@ -44,7 +44,9 @@ still uses the webview's existing metadata handling.
 The AVIF orientation pair shows a canonical 8 × 12 grid after clean-aperture,
 rotation and mirror metadata, selecting 6 × 8 pixels. Its actual saved bytes
 match the independent CLI-decoded PNG reference. The pixel-aspect pair selects
-10 × 12 from a 12 × 16 canonical grid. Both editors are at 8× crop zoom. The tiny
+10 × 12 from a 12 × 16 canonical grid. Both editors are at 8× crop zoom. AVIF editor captures use a browser-compatible
+PNG of the normalized first frame; saved files retain AVIF format, all frames,
+timing, color and HDR metadata. The caption states this preview behavior. The tiny
 saved previews show publication and selection, not visually inspectable pixel
 geometry; decoded-file assertions supply that proof.
 
@@ -54,7 +56,7 @@ fit/zoom/scroll/pointer geometry, numeric typing, accepted-save modal ownership
 and keyboard access after resizing an open editor to 640 × 480. Separate native
 save tests decode animated GIF/WebP/APNG/AVIF filesystem results and verify
 frames/timing/looping. Static images do not demonstrate animated playback.
-The combined crop/shallow-dock run passes 96 browser cases, including filename,
+The previous combined crop/shallow-dock qualification passed 96 browser cases, including filename,
 metadata and content reachability in minimum top/bottom docks. Windows/macOS
 codec CI and native platform UI are separate qualification. Some editor shots
 include a previous operation's success toast; the active editor is the evidence

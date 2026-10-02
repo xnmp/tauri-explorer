@@ -33,9 +33,10 @@
     scrollToIndex?: (index: number) => void;
     containsIndex?: (index: number) => boolean;
     fallbackTabStop: boolean;
+    onviewportscroll?: () => void;
   }
 
-  let { explorer, contentWidth, onitemclick, onitemdblclick, scrollToIndex = $bindable(), containsIndex = $bindable(), fallbackTabStop }: Props = $props();
+  let { explorer, contentWidth, onitemclick, onitemdblclick, scrollToIndex = $bindable(), containsIndex = $bindable(), fallbackTabStop, onviewportscroll }: Props = $props();
 
   // Fixed row height: a single-line list item (16px icon / one text line +
   // 4px vertical padding + border) plus the 4px inter-row gap. List names are
@@ -73,6 +74,7 @@
     itemOverflow="visible"
     viewportPadding="6px 8px"
     getKey={(row) => row.startIndex}
+    {onviewportscroll}
     bind:scrollToIndex={grid.rowScrollToIndex}
   >
     {#snippet children(row, rowIndex)}

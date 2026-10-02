@@ -4,7 +4,7 @@
   variable-height lists (offsets become prefix sums, lookup a binary search).
 -->
 <script lang="ts" generics="T">
-  import { onDestroy, type Snippet } from "svelte";
+  import { onDestroy, tick, type Snippet } from "svelte";
   import {
     computeOffsets,
     firstVisibleIndex,
@@ -42,6 +42,8 @@
     /** Called when the rendered window nears the end of `items` — incremental
      *  loaders (git graph paging) append more items in response. */
     onnearend?: () => void;
+    /** Called after scrolled rows have reached the DOM, for viewport hit testing. */
+    onviewportscroll?: () => void;
   }
 
   let {
@@ -62,6 +64,7 @@
     itemOverflow = "hidden",
     viewportPadding,
     onnearend,
+    onviewportscroll,
   }: Props = $props();
 
   let viewportRef = $state<HTMLElement | null>(null);
@@ -78,6 +81,13 @@
   // marquee's move batching).
   const scrollCoalescer = createRafCoalescer<number>((top) => {
     scrollTop = top;
+    if (onviewportscroll) {
+      // Hit testing must see the new virtual rows, rather than the previous
+      // window that existed when the browser dispatched the scroll event.
+      void tick().then(() => {
+        if (viewportRef?.isConnected) onviewportscroll?.();
+      });
+    }
   });
 
   function handleScroll(event: Event) {

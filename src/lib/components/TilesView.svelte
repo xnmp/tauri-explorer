@@ -40,9 +40,10 @@
     scrollToIndex?: (index: number) => void;
     containsIndex?: (index: number) => boolean;
     fallbackTabStop: boolean;
+    onviewportscroll?: () => void;
   }
 
-  let { explorer, contentWidth, onitemclick, onitemdblclick, scrollToIndex = $bindable(), containsIndex = $bindable(), fallbackTabStop }: Props = $props();
+  let { explorer, contentWidth, onitemclick, onitemdblclick, scrollToIndex = $bindable(), containsIndex = $bindable(), fallbackTabStop, onviewportscroll }: Props = $props();
 
   // Reserved fixed name height: two lines at line-height 1.4 * 13px font.
   const NAME_HEIGHT = 37;
@@ -158,6 +159,7 @@
     itemOverflow="visible"
     viewportPadding="8px"
     getKey={(row) => row.startIndex}
+    {onviewportscroll}
     bind:scrollToIndex={grid.rowScrollToIndex}
   >
     {#snippet children(row, rowIndex)}

@@ -1,0 +1,179 @@
+{
+  "sourceCommit": "0b09afccc48a5f436231d567c503e65a92480215",
+  "qualifiedBaseCommit": "dddd1cd21fcc973c9f2aab28d2601fafbabb10dd",
+  "actualRemoteDev": "8d7fc4d26944bedfe95cbc9b501a1d3b77d7790e",
+  "build": {
+    "schemaVersion": 1,
+    "sourceCommit": "0b09afccc48a5f436231d567c503e65a92480215",
+    "profile": "debug-custom-protocol-e2e-hooks",
+    "buildCommand": [
+      "bun",
+      "run",
+      "tauri",
+      "build",
+      "--debug",
+      "--no-bundle",
+      "--features",
+      "e2e-hooks"
+    ],
+    "startedAt": "2026-10-02T19:01:00.877679+00:00",
+    "completedAt": "2026-10-02T19:01:59.487563+00:00",
+    "binary": "/home/chong/Repos/tauri-explorer/.claude/worktrees/issue17-native-cache/debug/tauri-explorer",
+    "binarySha256": "6252574db7d01540c94cb9c8e5e04f0d9182ce7f2081728e9abe9578eee1270a",
+    "binaryBytes": 712634128,
+    "binaryModifiedAt": "2026-10-02T19:01:17.548466+00:00"
+  },
+  "postRunBinarySha256": "6252574db7d01540c94cb9c8e5e04f0d9182ce7f2081728e9abe9578eee1270a",
+  "binaryUnchangedDuringRun": true,
+  "identitiesBefore": {
+    "e2e-tauri/specs/pdf-preview.spec.ts": "820fd775851a360bb4a519a18bc23101e85a8f8024f4410a714d3c8631320d03",
+    "e2e-tauri/run-scaled-selection.py": "fb23ea3023555f624476a586102ac77e58ee83e8d8f04ce6e500a18849d39042",
+    "e2e-tauri/wdio.pdf-preview.conf.ts": "8dbdd186bb090918f20b7b6bbd554f52dc0c4d2fe5b547f82efd4ad446a6c434",
+    "e2e-tauri/fixtures/pdf-link-viewer.py": "7f08aec8bf604fab95d4996484f4f21bf76adf9fc0a0b4c6fd0e9e1c5b875066"
+  },
+  "identitiesAfter": {
+    "e2e-tauri/specs/pdf-preview.spec.ts": "820fd775851a360bb4a519a18bc23101e85a8f8024f4410a714d3c8631320d03",
+    "e2e-tauri/run-scaled-selection.py": "fb23ea3023555f624476a586102ac77e58ee83e8d8f04ce6e500a18849d39042",
+    "e2e-tauri/wdio.pdf-preview.conf.ts": "8dbdd186bb090918f20b7b6bbd554f52dc0c4d2fe5b547f82efd4ad446a6c434",
+    "e2e-tauri/fixtures/pdf-link-viewer.py": "7f08aec8bf604fab95d4996484f4f21bf76adf9fc0a0b4c6fd0e9e1c5b875066"
+  },
+  "specAndHarnessUnchanged": true,
+  "modifiedTrackedProductionFiles": [],
+  "exitCode": 0,
+  "passing": 11,
+  "failing": 0,
+  "caseDuration": "53s",
+  "specDuration": "00:00:55",
+  "outcomes": [
+    {
+      "suite": "native PDF preview (#728/#729/#730)",
+      "title": "uses a real module worker to render known bytes in the native WebView",
+      "passed": true,
+      "duration": 394,
+      "error": null
+    },
+    {
+      "suite": "native PDF preview (#728/#729/#730)",
+      "title": "centers 130%, follows pan and preserves wheel anchor at app 100% fullscreen false",
+      "passed": true,
+      "duration": 2715,
+      "error": null
+    },
+    {
+      "suite": "native PDF preview (#728/#729/#730)",
+      "title": "centers 130%, follows pan and preserves wheel anchor at app 100% fullscreen true",
+      "passed": true,
+      "duration": 5452,
+      "error": null
+    },
+    {
+      "suite": "native PDF preview (#728/#729/#730)",
+      "title": "centers 130%, follows pan and preserves wheel anchor at app 150% fullscreen false",
+      "passed": true,
+      "duration": 5937,
+      "error": null
+    },
+    {
+      "suite": "native PDF preview (#728/#729/#730)",
+      "title": "centers 130%, follows pan and preserves wheel anchor at app 150% fullscreen true",
+      "passed": true,
+      "duration": 7940,
+      "error": null
+    },
+    {
+      "suite": "native PDF preview (#728/#729/#730)",
+      "title": "navigates all mixed-size pages and internal links without changing bytes",
+      "passed": true,
+      "duration": 3956,
+      "error": null
+    },
+    {
+      "suite": "native PDF preview (#728/#729/#730)",
+      "title": "a link drag launches nothing; an ordinary zoomed click dispatches the intact URL to an owned native handler",
+      "passed": true,
+      "duration": 2575,
+      "error": null
+    },
+    {
+      "suite": "native PDF preview (#728/#729/#730)",
+      "title": "reaches off-screen corners, resets to fit, and navigates pages by keyboard",
+      "passed": true,
+      "duration": 12552,
+      "error": null
+    },
+    {
+      "suite": "native PDF preview (#728/#729/#730)",
+      "title": "keeps fit centered when docking and narrowing the native preview at app150",
+      "passed": true,
+      "duration": 5953,
+      "error": null
+    },
+    {
+      "suite": "native PDF preview (#728/#729/#730)",
+      "title": "real native blur ends a held pan and later movement cannot continue it",
+      "passed": true,
+      "duration": 2048,
+      "error": null
+    },
+    {
+      "suite": "native PDF preview (#728/#729/#730)",
+      "title": "shows image-consistent framing and a truthful corrupt-document error; stops departed workers",
+      "passed": true,
+      "duration": 1856,
+      "error": null
+    }
+  ],
+  "nativeHooksReady": true,
+  "actualCustomProtocolWorkerStartup": {
+    "receipts": [
+      {
+        "origin": "tauri://localhost",
+        "url": "tauri://localhost/_app/immutable/assets/pdf.worker.min.BmVo14Nb.mjs",
+        "phase": "created",
+        "at": 1925,
+        "path": "/home/chong/tauri-native-cleanup-vaVmOW/native-pdf-proof-ekqjds/0-landmarks.pdf",
+        "id": "dcf656a8-1136-4460-9dc0-ee910c03a9f4"
+      },
+      {
+        "origin": "tauri://localhost",
+        "url": "tauri://localhost/_app/immutable/assets/pdf.worker.min.BmVo14Nb.mjs",
+        "phase": "ready",
+        "at": 1987,
+        "path": "/home/chong/tauri-native-cleanup-vaVmOW/native-pdf-proof-ekqjds/0-landmarks.pdf",
+        "id": "dcf656a8-1136-4460-9dc0-ee910c03a9f4"
+      }
+    ],
+    "location": {
+      "href": "tauri://localhost",
+      "origin": "tauri://localhost"
+    },
+    "color": [
+      255,
+      0,
+      0,
+      255
+    ]
+  },
+  "profileOutsideViteRoot": true,
+  "cleanup": {
+    "namespace": "host, escalated diagnostic",
+    "ownedProfile": "/home/chong/Repos/tauri-explorer/.claude/issue17-pdf-native-final-profile/p.THk3Dh",
+    "ownedRuntime": "/home/chong/Repos/tauri-explorer/.claude/pdfr.UrjIzd",
+    "survivors": [],
+    "ownedPortListeners": [],
+    "procEntries": 537
+  },
+  "captureCount": 16,
+  "restoredCount": 16,
+  "representativeInspectedScreenshots": [
+    "pdf-fit-native-125-output-100-app.png",
+    "pdf-130-native-125-output-150-app.png",
+    "pdf-active-pan-native-125-output-150-app.png",
+    "pdf-corner-bottom-right-native-125-output-150-app.png",
+    "pdf-narrow-top-native-125-output-150-app.png",
+    "pdf-narrow-right-native-125-output-150-app.png",
+    "pdf-error-native-125-output-150-app.png",
+    "pdf-external-link-native-owned-handler.png"
+  ],
+  "setupIssue": "Initial compositor admission rejected overlong Unix IPC socket path before app launch; temporary runner used separate shorter owned runtime path."
+}

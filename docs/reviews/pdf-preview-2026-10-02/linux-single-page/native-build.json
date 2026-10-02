@@ -1,0 +1,21 @@
+{
+  "schemaVersion": 1,
+  "sourceCommit": "0b09afccc48a5f436231d567c503e65a92480215",
+  "profile": "debug-custom-protocol-e2e-hooks",
+  "buildCommand": [
+    "bun",
+    "run",
+    "tauri",
+    "build",
+    "--debug",
+    "--no-bundle",
+    "--features",
+    "e2e-hooks"
+  ],
+  "startedAt": "2026-10-02T19:01:00.877679+00:00",
+  "completedAt": "2026-10-02T19:01:59.487563+00:00",
+  "binary": "/home/chong/Repos/tauri-explorer/.claude/worktrees/issue17-native-cache/debug/tauri-explorer",
+  "binarySha256": "6252574db7d01540c94cb9c8e5e04f0d9182ce7f2081728e9abe9578eee1270a",
+  "binaryBytes": 712634128,
+  "binaryModifiedAt": "2026-10-02T19:01:17.548466+00:00"
+}

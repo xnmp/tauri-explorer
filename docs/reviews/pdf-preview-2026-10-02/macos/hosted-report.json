@@ -1,0 +1,36 @@
+{
+  "schemaVersion": 1,
+  "runId": "2026-10-02T18-10-25-434Z-22017db1",
+  "sourceCommit": "74e6d223853759e0d25e036e0eb4e65234fe95f5",
+  "binary": "/Users/runner/work/tauri-explorer/tauri-explorer/src-tauri/target/release/bundle/macos/tauri-explorer.app/Contents/MacOS/tauri-explorer",
+  "binarySha256": "56a62fa1c509db91a7bcee7ed0350dc05a1bcee86bdac49697c0fce2b4ea6110",
+  "binaryBytes": 23795456,
+  "platform": {
+    "os": "darwin",
+    "release": "24.6.0",
+    "arch": "arm64"
+  },
+  "driver": {
+    "requested": {
+      "appium": "3.8.0",
+      "mac2": "4.2.0"
+    },
+    "observedAppiumVersion": "3.8.0",
+    "observedMac2Version": "4.2.0",
+    "observedInstalledDrivers": "{\n    \"mac2\": {\n        \"pkgName\": \"appium-mac2-driver\",\n        \"version\": \"4.2.0\",\n        \"installType\": \"npm\",\n        \"installSpec\": \"mac2@4.2.0\",\n        \"installPath\": \"/Users/runner/.appium/node_modules/appium-mac2-driver\",\n        \"appiumVersion\": \"^3.0.0-rc.2\",\n        \"automationName\": \"Mac2\",\n        \"platformNames\": [\n            \"Mac\"\n        ],\n        \"mainClass\": \"Mac2Driver\",\n        \"scripts\": {\n            \"open-wda\": \"./scripts/open-wda.mjs\"\n        },\n        \"doctor\": {\n            \"checks\": [\n                \"./build/lib/doctor/required-checks.js\",\n                \"./build/lib/doctor/optional-checks.js\"\n            ]\n        },\n        \"installed\": true,\n        \"repositoryUrl\": \"https://github.com/appium/appium-mac2-driver\"\n    }\n}"
+  },
+  "fixture": {
+    "child": "/var/folders/nj/vtw8zd2j31d1gdrtntc5y4600000gn/T/tauri-macos-ui-8OCYWl/child",
+    "childName": "child-visible-6fa80c15.txt",
+    "parentName": "parent-visible-6fa80c15.txt"
+  },
+  "startedAt": "2026-10-02T18:10:25.443Z",
+  "finishedAt": "2026-10-02T18:12:55.389Z",
+  "initialChildVisible": true,
+  "navigatedParentVisible": true,
+  "childAbsentAfterNavigation": true,
+  "pdfPreviewPassed": false,
+  "screenshot": "/Users/runner/work/tauri-explorer/tauri-explorer/qualification-results/macos-native-ui/2026-10-02T18-10-25-434Z-22017db1/navigated-parent.png",
+  "error": "Error: Can't call getLocation on element with selector \"-ios predicate string:elementType == 9 AND (label == 'Go up one level' OR title == 'Go up one level')\" because element wasn't found",
+  "passed": false
+}

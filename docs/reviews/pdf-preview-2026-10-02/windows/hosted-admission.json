@@ -1,0 +1,6 @@
+{
+  "platform": "win32",
+  "githubActions": "true",
+  "sourceCommit": "c18bb30932015a4737745cc480351bcee0957c84",
+  "runnerEnvironment": "github-hosted"
+}

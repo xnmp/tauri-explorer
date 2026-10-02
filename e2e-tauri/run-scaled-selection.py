@@ -1,4 +1,4 @@
-"""Run #756 native acceptance on a private software Wayland compositor.
+"""Run native acceptance on a private software Wayland compositor.
 
 Requires sway/swaymsg, grim, Python GTK3, tauri-driver and a hooks-enabled
 native debug binary. No host display, compositor or clipboard is used.
@@ -12,7 +12,7 @@ import tempfile
 import time
 
 root = Path(__file__).resolve().parent.parent
-artifacts = root / "e2e-tauri/logs/scaled-selection"
+artifacts = Path(os.environ.get("TAURI_NATIVE_SELECTION_ARTIFACT_DIR", root / "e2e-tauri/logs/scaled-selection"))
 artifacts.mkdir(parents=True, exist_ok=True)
 private_session = "--private-session" in sys.argv
 profile = Path(os.environ["TAURI_NATIVE_SELECTION_PROFILE"]) if private_session else Path(tempfile.mkdtemp(prefix="profile-", dir=artifacts))
@@ -87,7 +87,7 @@ with (artifacts / "sway.log").open("w") as log:
         keyboard_args = ["wtype", "-s", "600000", alphabet]
         for key in ["Control_L", "Shift_L", "Alt_L", "Super_L"]:
             keyboard_args.extend(["-P", key, "-p", key])
-        for key in ["Return", "Escape", "Tab", "BackSpace", "Up", "Down", "Left", "Right"] + [f"F{value}" for value in range(1, 13)]:
+        for key in ["Return", "Escape", "Tab", "BackSpace", "Up", "Down", "Left", "Right", "Page_Up", "Page_Down", "Home", "End"] + [f"F{value}" for value in range(1, 13)]:
             keyboard_args.extend(["-k", key])
         keyboard = subprocess.Popen(keyboard_args, env=native_env, stdout=log, stderr=subprocess.STDOUT)
         try:
@@ -106,7 +106,7 @@ with (artifacts / "sway.log").open("w") as log:
                 if keyboard_env.get(key) != native_env[key]:
                     raise RuntimeError(f"Owned virtual keyboard lost private {key}")
             (artifacts / "keyboard.json").write_text(json.dumps({"pid": keyboard.pid, "inputs": inputs, "environment": {key: keyboard_env.get(key) for key in ["WAYLAND_DISPLAY", "XDG_RUNTIME_DIR", "DBUS_SESSION_BUS_ADDRESS", "XDG_CONFIG_HOME"]}}, indent=2))
-            subprocess.run(["bunx", "wdio", "run", "e2e-tauri/wdio.scaled-selection.conf.ts"], cwd=root, env=native_env, check=True)
+            subprocess.run(["bunx", "wdio", "run", os.environ.get("TAURI_NATIVE_PRIVATE_CONFIG", "e2e-tauri/wdio.scaled-selection.conf.ts")], cwd=root, env=native_env, check=True)
         finally:
             keyboard.terminate()
             keyboard.wait(timeout=5)

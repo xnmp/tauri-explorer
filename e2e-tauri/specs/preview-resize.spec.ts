@@ -77,10 +77,16 @@ nativeDescribe("native preview resizing", () => {
     await browser.keys(" ");
     await expectContent();
 
+    // Zoom persists across native driver sessions too. Establish the baseline
+    // through the real command before asserting five shortcut increments.
+    await command("Reset Zoom");
+    await browser.waitUntil(async () => await browser.execute(() =>
+      parseFloat(document.documentElement.style.getPropertyValue("--app-zoom"))) === 1,
+    { timeoutMsg: "root zoom did not reset to 100% before resize verification" });
     for (let i = 0; i < 5; i++) await browser.keys(["Control", "="]);
     await browser.waitUntil(async () => await browser.execute(() =>
       parseFloat(document.documentElement.style.getPropertyValue("--app-zoom"))) === 1.5,
-    { timeoutMsg: "root zoom did not reach 150% from a fresh profile" });
+    { timeoutMsg: "root zoom did not reach 150% after five increments from 100%" });
 
     const rightHandle = await $('[aria-label="Resize preview"]');
     await rightHandle.waitForDisplayed();

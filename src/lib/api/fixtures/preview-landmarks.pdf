@@ -1,0 +1,80 @@
+%PDF-1.7
+1 0 obj
+<< /Type /Catalog /Pages 2 0 R >>
+endobj
+2 0 obj
+<< /Type /Pages /Count 3 /Kids [3 0 R 5 0 R 7 0 R] >>
+endobj
+3 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 600 800] /Resources << /Font << /F1 9 0 R >> >> /Contents 4 0 R /Annots [10 0 R 11 0 R] >>
+endobj
+4 0 obj
+<< /Length 303 >>
+stream
+1 1 1 rg 0 0 600 800 re f
+0 0.7 0 rg 20 700 80 80 re f
+0 0 1 rg 500 20 80 80 re f
+1 0 0 rg 265.0 365.0 70 70 re f
+0 0 0 rg BT /F1 24 Tf 140 740 Td (PAGE 1 - CENTER / CORNERS) Tj ET
+0 0 0 rg BT /F1 16 Tf 50 180 Td (Click for next page) Tj ET
+0 0 0 rg BT /F1 16 Tf 50 140 Td (External example link) Tj ET
+endstream
+endobj
+5 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 800 600] /Resources << /Font << /F1 9 0 R >> >> /Contents 6 0 R >>
+endobj
+6 0 obj
+<< /Length 307 >>
+stream
+1 1 1 rg 0 0 800 600 re f
+0 0.7 0 rg 20 500 80 80 re f
+0 0 1 rg 700 20 80 80 re f
+0.6 0 0.8 rg 365.0 265.0 70 70 re f
+0 0 0 rg BT /F1 24 Tf 140 540 Td (PAGE 2 - CENTER / CORNERS) Tj ET
+0 0 0 rg BT /F1 16 Tf 50 180 Td (Click for next page) Tj ET
+0 0 0 rg BT /F1 16 Tf 50 140 Td (External example link) Tj ET
+endstream
+endobj
+7 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 500 700] /Resources << /Font << /F1 9 0 R >> >> /Contents 8 0 R >>
+endobj
+8 0 obj
+<< /Length 305 >>
+stream
+1 1 1 rg 0 0 500 700 re f
+0 0.7 0 rg 20 600 80 80 re f
+0 0 1 rg 400 20 80 80 re f
+1 0.5 0 rg 215.0 315.0 70 70 re f
+0 0 0 rg BT /F1 24 Tf 140 640 Td (PAGE 3 - CENTER / CORNERS) Tj ET
+0 0 0 rg BT /F1 16 Tf 50 180 Td (Click for next page) Tj ET
+0 0 0 rg BT /F1 16 Tf 50 140 Td (External example link) Tj ET
+endstream
+endobj
+9 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>
+endobj
+10 0 obj
+<< /Type /Annot /Subtype /Link /Rect [50 175 240 200] /Dest [5 0 R /Fit] /Border [0 0 1] >>
+endobj
+11 0 obj
+<< /Type /Annot /Subtype /Link /Rect [50 135 250 160] /A << /S /URI /URI (https://example.com/pdf-proof) >> /Border [0 0 1] >>
+endobj
+xref
+0 12
+0000000000 65535 f 
+0000000009 00000 n 
+0000000058 00000 n 
+0000000127 00000 n 
+0000000277 00000 n 
+0000000630 00000 n 
+0000000756 00000 n 
+0000001113 00000 n 
+0000001239 00000 n 
+0000001594 00000 n 
+0000001664 00000 n 
+0000001772 00000 n 
+trailer
+<< /Root 1 0 R /Size 12 >>
+startxref
+1915
+%%EOF

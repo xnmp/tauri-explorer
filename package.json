@@ -4,8 +4,8 @@
   "description": "A minimalistic, high-performance file explorer",
   "type": "module",
   "scripts": {
-    "dev": "vite dev",
-    "build": "vite build",
+    "dev": "bun run prepare:pdf && vite dev",
+    "build": "bun run prepare:pdf && vite build",
     "preview": "vite preview",
     "check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
     "check:watch": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json --watch",
@@ -36,7 +36,8 @@
     "start": "bash scripts/dev.sh",
     "start:clean": "bash scripts/dev.sh --clean",
     "tauri": "tauri",
-    "install-app": "tauri build && sudo rm -rf /Applications/tauri-explorer.app && cp -R src-tauri/target/release/bundle/macos/tauri-explorer.app /Applications/ && fileicon set /Applications/tauri-explorer.app src-tauri/icons/icon.png && killall Dock"
+    "install-app": "tauri build && sudo rm -rf /Applications/tauri-explorer.app && cp -R src-tauri/target/release/bundle/macos/tauri-explorer.app /Applications/ && fileicon set /Applications/tauri-explorer.app src-tauri/icons/icon.png && killall Dock",
+    "prepare:pdf": "node scripts/prepare-pdf-assets.mjs"
   },
   "license": "MIT",
   "dependencies": {
@@ -48,6 +49,7 @@
     "@xterm/xterm": "^6.0.0",
     "highlight.js": "^11.11.1",
     "marked": "^18.0.5",
+    "pdfjs-dist": "^6.3.289",
     "yaml": "^2.9.0"
   },
   "devDependencies": {

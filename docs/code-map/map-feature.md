@@ -254,6 +254,9 @@ backend for E2E/browser).
 
 ## Preview pane
 
+- `components/PdfPreview.svelte`, `state/pdf-preview.svelte.ts`, `domain/pdf-preview.ts`, `api/pdf-preview.ts`, `src-tauri/src/files/pdf_preview.rs` — lazy read-only PDF.js canvas preview: explicit owned module worker, bounded binary transport, latest page/document/render lifetimes, centered zoom and measured pointer pan, annotation links and image-consistent fullscreen framing (#728–#730). `scripts/prepare-pdf-assets.mjs` prepares offline fonts/CMaps; native app CSP permits packaged workers. Native proof uses the private software Wayland runner in `e2e-tauri/run-scaled-selection.py` and `wdio.pdf-preview.conf.ts`.
+- Supported-platform PDF proof also uses the hosted Windows native suite and `e2e-tauri/macos-pdf-preview.ts` through Appium Mac2/XCTest. `e2e-tauri/macos-display.swift` measures display geometry; `e2e-tauri/pdf_screenshot.py` reads native page landmarks without browser scripting or modifying screenshots, with negative controls in `e2e-tauri/test_pdf_screenshot.py`.
+
 - `state/preview-lifetime.ts` — revision tokens and blob ownership across text/image/archive/directory/video loads and unmount.
 
 - `components/PreviewPane.svelte` — text/image/diff/archive/CSV preview + syntax highlight; CSV uses shared column sizing, a single outer horizontal scroll surface, and virtualized data rows; shared controlled resize (width at right, height at top/bottom); pointer capture, dock-aware keyboard bounds and fullscreen retirement; reads `settingsStore.resolvedPreviewPanePosition` (never the raw mode) for its own dock class

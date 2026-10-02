@@ -114,10 +114,19 @@ Up control, and verifies the parent listing replaces it. It retains source
 snapshots, a screenshot and a provenance report in
 `qualification-results/macos-native-ui/`. This route requires Xcode Helper
 Accessibility permission; CI grants it only on its disposable runner. To run
-locally, grant that permission in System Settings, install Appium 3 with the
-Mac2 4.2 driver, build with `bun run tauri build --bundles app`, start Appium
-on port 4723, then run `bun run e2e-tauri/macos-ui-smoke.ts`. The pilot remains
-unqualified until the hosted test demonstrates the app outcome.
+the qualifier, dispatch that workflow on the branch to qualify. Interactive
+input is admitted only on a disposable GitHub-hosted runner, never a developer's
+active desktop. Appium 3.8.0 and Mac2 4.2.0 are pinned and recorded in the report.
+
+The same production bundle also runs `macos-pdf-preview.ts`: real PDF page
+pixels, centered magnification, trusted native panning, fullscreen, narrow
+right/top/bottom docks at application zoom 150%, corrupt-file handling and an
+image/PDF replacement. `macos-display.swift` measures the display's points and
+physical pixels; `pdf_screenshot.py` uses Pillow 12.3.0 to measure the fixture's
+solid color landmarks inside the native accessibility viewport. These checks
+use no DOM evaluation or synthetic acceptance screenshots. The uploaded report
+retains the source/binary identity, geometry, fixture hash and each actual image.
+Production worker cleanup is not independently measured by this AX-only route.
 
 ## Session-loss failure evidence (`diagnostics/`)
 

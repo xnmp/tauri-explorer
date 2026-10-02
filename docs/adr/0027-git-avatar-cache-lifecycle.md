@@ -32,23 +32,27 @@ loading, scrolling and Git operations never wait for a successful avatar.
 
 The frontend deduplicates lookup requests and admits at most four active IPC
 calls. A mounted avatar owns one subscription: unmounting cancels queued work
-when it has no other subscriber, while an already-started request may finish
-within the native timeout. Frontend pending and resolved maps retain at most 256
+when it has no other subscriber, while an already-started lookup may finish
+after its row unmounts. Frontend pending and resolved maps retain at most 256
 identities.
 
 The native command independently admits at most four blocking tasks. Cache
 inspection, remote fetch and publication are serialized inside the process so
 concurrent windows cannot publish or prune the same entry against each other.
-The HTTP request has an eight-second global timeout and reads at most 256 KiB.
-Cross-process races are allowed to lose cache reuse, but must not affect Git data
-or UI availability.
+Each HTTP provider request has an eight-second timeout and reads at most
+256 KiB. This is not an end-to-end IPC deadline: lookups can also wait for
+semaphore admission and the serialized cache/fetch lock, so total latency can
+exceed eight seconds. Cross-process races are allowed to lose cache reuse, but
+must not affect Git data or UI availability.
 
 ### Validation, publication and restart persistence
 
 A positive entry is accepted only when it is PNG, JPEG or WebP, has non-zero
-dimensions no larger than 512 by 512, and is no larger than 256 KiB. It is
-written to a sibling temporary file and renamed into place on the same
-filesystem. This cache deliberately makes no `fsync` durability promise: it is
+dimensions no larger than 512 by 512, and is no larger than 256 KiB. Header
+inspection alone is insufficient: the image must fully decode after byte and
+dimension admission. Both readers apply strict dimension limits and an 8 MiB
+allocation limit where supported by the decoder. It is written to a sibling
+temporary file and renamed into place on the same filesystem. This cache deliberately makes no `fsync` durability promise: it is
 cheaply reproducible operational state, not user data.
 
 A failed or invalid remote response publishes a zero-byte negative marker.

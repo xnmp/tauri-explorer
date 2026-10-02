@@ -8,6 +8,7 @@ use std::time::{Duration, SystemTime};
 
 const MAX_AVATAR_BYTES: usize = 256 * 1024;
 const MAX_AVATAR_DIMENSION: u32 = 512;
+const MAX_AVATAR_DECODE_BYTES: u64 = 8 * 1024 * 1024;
 const MISSING_TTL: Duration = Duration::from_secs(24 * 60 * 60);
 const MAX_CACHE_ENTRIES: usize = 512;
 const MAX_CACHE_BYTES: u64 = 32 * 1024 * 1024;
@@ -67,11 +68,23 @@ fn image_mime(bytes: &[u8]) -> Option<&'static str> {
         image::ImageFormat::WebP => "image/webp",
         _ => return None,
     };
-    let (width, height) = image::ImageReader::with_format(Cursor::new(bytes), format)
-        .into_dimensions()
-        .ok()?;
-    (width > 0 && height > 0 && width <= MAX_AVATAR_DIMENSION && height <= MAX_AVATAR_DIMENSION)
-        .then_some(mime)
+    let mut limits = image::Limits::default();
+    limits.max_image_width = Some(MAX_AVATAR_DIMENSION);
+    limits.max_image_height = Some(MAX_AVATAR_DIMENSION);
+    limits.max_alloc = Some(MAX_AVATAR_DECODE_BYTES);
+    let mut header = image::ImageReader::with_format(Cursor::new(bytes), format);
+    header.limits(limits.clone());
+    let (width, height) = header.into_dimensions().ok()?;
+    if width == 0 || height == 0 || width > MAX_AVATAR_DIMENSION || height > MAX_AVATAR_DIMENSION {
+        return None;
+    }
+    // Header parsing can succeed for truncated pixel data. Validate the full
+    // image before accepting either downloaded bytes or a persistent entry.
+    // Dimensions are strict; allocation limits also constrain supporting decoders.
+    let mut reader = image::ImageReader::with_format(Cursor::new(bytes), format);
+    reader.limits(limits);
+    reader.decode().ok()?;
+    Some(mime)
 }
 fn fresh_missing(path: &Path) -> bool {
     path.metadata()
@@ -332,6 +345,49 @@ mod tests {
             None
         );
     }
+    #[test]
+    fn truncated_image_download_is_rejected_without_a_positive_cache_entry() {
+        let temp = tempfile::tempdir().unwrap();
+        let png = include_bytes!("../icons/32x32.png");
+        let email = "octocat@users.noreply.github.com";
+        let url = resolve_avatar_url(email, false).unwrap();
+        let (image_path, missing_path) = cache_paths(temp.path(), &url);
+
+        assert_eq!(
+            load_or_fetch(temp.path(), email, false, |_| Ok(png[..128].to_vec())),
+            None
+        );
+        assert!(!image_path.exists());
+        assert!(missing_path.exists());
+    }
+
+    #[test]
+    fn header_valid_truncated_cache_is_replaced_by_a_valid_download() {
+        let temp = tempfile::tempdir().unwrap();
+        let png = include_bytes!("../icons/32x32.png").to_vec();
+        let email = "octocat@users.noreply.github.com";
+        let url = resolve_avatar_url(email, false).unwrap();
+        let (image_path, _) = cache_paths(temp.path(), &url);
+        std::fs::write(&image_path, &png[..128]).unwrap();
+        let calls = Cell::new(0);
+
+        assert_eq!(
+            load_or_fetch(temp.path(), email, false, |_| {
+                calls.set(calls.get() + 1);
+                Ok(png.clone())
+            }),
+            Some(png.clone())
+        );
+        assert_eq!(calls.get(), 1);
+        assert_eq!(std::fs::read(image_path).unwrap(), png);
+        assert_eq!(
+            load_or_fetch(temp.path(), email, false, |_| panic!(
+                "repaired cache must be reusable"
+            )),
+            Some(png)
+        );
+    }
+
     #[test]
     fn production_http_reader_rejects_a_response_above_the_byte_limit() {
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();

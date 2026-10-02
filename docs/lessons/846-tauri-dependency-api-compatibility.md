@@ -42,3 +42,5 @@ counter does not promise to detect in-place additions to an existing owner.
 The ignored hosted native test checks real Unicode and `%#?` files, URL decoding
 and item order, nonce placement, invalid-input preservation, successive writes,
 and ownership revocation by an independent identical-file writer.
+
+The Open With feature landed during the dependency merge and added another DesktopAppInfo construction path. Its launcher must also use gio_unix::DesktopAppInfo with GIO 0.22; the old gio namespace fails the actual locked cargo check before the native launch contracts can run.

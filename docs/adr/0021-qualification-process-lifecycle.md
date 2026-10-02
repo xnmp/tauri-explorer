@@ -51,7 +51,11 @@ and signal to `runErrors`, and retains the scenarios and process log.
 The runner tees child stdout and stderr into a run-specific log and references
 that log from every failed report, including failures before a WebDriver session
 exists. Scenario failures additionally retain their screenshot and available
-driver artifacts.
+driver artifacts. A piped WebDriver transcript ends only on the child
+`close` event, after stdout/stderr drain (also following spawn failure), rather
+than on `exit`. Successful session cleanup awaits the transcript's final write
+before releasing its evidence ownership. Log-write errors are reported best
+effort and do not replace a primary process or cleanup failure (#965).
 
 Raw replay seeds remain in report configuration and scenario ordering. Any seed
 used in a filename is converted to a bounded readable prefix plus a SHA-256

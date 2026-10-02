@@ -1,4 +1,5 @@
 import { spawn, type ChildProcess } from "node:child_process";
+import { finished } from "node:stream/promises";
 import { createWriteStream, mkdirSync, existsSync } from "node:fs";
 import net from "node:net";
 import path from "node:path";
@@ -59,6 +60,7 @@ const webkitDriverLogPath = path.join(here, "logs", "tauri-driver.log");
 let driverProcess: ChildProcess | undefined;
 let applicationProcess: ChildProcess | undefined;
 let driverProcessGroup: NativeProcessGroup | undefined;
+let driverTranscriptFinished: Promise<void> | undefined;
 
 const waitForPort = async (
   port: number,
@@ -99,6 +101,7 @@ const stopProcesses = async (): Promise<void> => {
   const ownedDriver = driverProcess;
   const ownedApplication = applicationProcess;
   const ownedGroup = driverProcessGroup;
+  const ownedTranscript = driverTranscriptFinished;
   try {
     if (ownedGroup) {
       // WebKitWebDriver launches the application below tauri-driver. The group
@@ -110,6 +113,12 @@ const stopProcesses = async (): Promise<void> => {
         { label: "WebDriver", child: ownedDriver },
         { label: "native application", child: ownedApplication },
       ]);
+    }
+    // Process termination can precede stdio drain and the log's final write.
+    // ADR 0021: finish evidence before declaring this session cleaned up.
+    await ownedTranscript;
+    if (driverTranscriptFinished === ownedTranscript) {
+      driverTranscriptFinished = undefined;
     }
   } finally {
     if (
@@ -207,7 +216,12 @@ export const config: WebdriverIO.Config = {
       driverProcess.stdout?.pipe(driverLog, { end: false });
       driverProcess.stderr?.pipe(process.stderr, { end: false });
       driverProcess.stderr?.pipe(driverLog, { end: false });
-      driverProcess.once("exit", () => driverLog.end());
+      driverTranscriptFinished = finished(driverLog, { cleanup: true }).catch((error) => {
+        // Diagnostics are best effort; preserve the authoritative process error.
+        console.error("[native-driver-transcript]", error);
+      });
+      // `close` follows stdio drain, including a failed spawn with no `exit`.
+      driverProcess.once("close", () => driverLog.end());
       if (process.platform === "linux") {
         driverProcessGroup = nativeProcessGroup(driverProcess);
         await waitForOwnedNativePorts(driverProcess, driverPorts);

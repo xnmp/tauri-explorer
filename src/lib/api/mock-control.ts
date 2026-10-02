@@ -74,6 +74,12 @@ export interface MockControl {
   previewReadPdf?: (path: string) => ArrayBuffer | Promise<ArrayBuffer>;
   /** Most recent PDF annotation URI sent to the mock native opener. */
   openedPdfUrl?: string;
+  /** Overrides progressive micro loading for input/lifetime interleavings. */
+  microThumbnail?: (
+    path: string,
+    prewarmSize?: number,
+    prewarmQuality?: number,
+  ) => string | Promise<string>;
   /** Overrides `get_video_thumbnail_data`. */
   videoThumbnail?: (path: string, size?: number) => string | Promise<string>;
   /** Real browser media URL; tests can delay source admission, not fake playback. */

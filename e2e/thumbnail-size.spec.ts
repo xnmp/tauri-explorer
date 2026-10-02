@@ -7,7 +7,13 @@
  */
 
 import { test, expect } from "./fixtures";
-import { switchViewMode } from "./helpers";
+import {
+  switchViewMode,
+  seedSettings,
+  waitForEntries,
+  pressShortcut,
+} from "./helpers";
+import type { MockControl } from "../src/lib/api/mock-control";
 
 async function waitForFileList(page: import("@playwright/test").Page) {
   await page.waitForSelector(".file-list");
@@ -170,4 +176,63 @@ test.describe("Thumbnail Size Setting", () => {
     const select = row.locator("select");
     await expect(select).toHaveValue("large");
   });
+});
+
+
+test("a thumbnail arriving during a pointer press preserves image selection and preview", async ({ page }) => {
+  await page.setViewportSize({ width: 1600, height: 900 });
+  await seedSettings(page, {
+    viewMode: "tiles",
+    thumbnailSize: "xlarge",
+    zoomLevel: 150,
+    theme: "dark",
+    iconTheme: "material",
+  });
+  await page.addInitScript(() => {
+    const ready = new Promise<void>((resolve) => {
+      document.addEventListener(
+        "e2e-release-micro-thumbnail",
+        () => resolve(),
+        { once: true },
+      );
+    });
+    const control = ((window as unknown as { __mockControl?: MockControl })
+      .__mockControl ??= {});
+    control.microThumbnail = async (path) => {
+      await ready;
+      const invokeUrl = "/src/lib/api/mock-invoke.ts";
+      const { mockInvoke } = await import(/* @vite-ignore */ invokeUrl);
+      return mockInvoke("get_thumbnail_data", { path, size: 16 });
+    };
+  });
+  await page.goto("/?path=/home/user/Pictures");
+  await waitForEntries(page);
+  await switchViewMode(page, "tiles");
+  const preview = page.locator(".preview-pane");
+  if (!(await preview.isVisible())) await pressShortcut(page, " ", {});
+  const row = page.locator('.entry-item[data-path="/home/user/Pictures/photo1.jpg"]');
+  await row.scrollIntoViewIfNeeded();
+  await expect(row.locator(".thumbnail-placeholder")).toBeVisible();
+  await expect(row).toHaveAttribute("aria-selected", "false");
+  const icon = await row.locator(".tile-icon").boundingBox();
+  expect(icon).not.toBeNull();
+  await page.mouse.move(icon!.x + icon!.width / 2, icon!.y + icon!.height / 2);
+  await page.mouse.down();
+  try {
+    await page.evaluate(() => document.dispatchEvent(new Event("e2e-release-micro-thumbnail")));
+    await expect.poll(() => row.locator(".thumbnail-full").evaluate((element) => {
+      const image = element as HTMLImageElement;
+      return image.complete && image.naturalWidth > 0 && getComputedStyle(image).opacity === "1";
+    })).toBe(true);
+  } finally {
+    await page.mouse.up();
+  }
+  await expect(row).toHaveAttribute("aria-selected", "true");
+  await expect(preview.locator(".preview-image")).toHaveAttribute("alt", "photo1.jpg");
+  await expect.poll(() => preview.locator(".preview-image").evaluate((element) => {
+    const image = element as HTMLImageElement;
+    return image.complete && image.naturalWidth > 0;
+  })).toBe(true);
+  if (process.env.CAPTURE_846_THUMBNAIL === "1")
+    await page.screenshot({ path: "evidence/846-thumbnail-input-retirement.png" });
 });

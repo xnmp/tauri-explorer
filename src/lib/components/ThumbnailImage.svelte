@@ -337,6 +337,8 @@
 
 <style>
   .thumbnail-container {
+    /* Keep presses on the stable file cell while decorative images load. */
+    pointer-events: none;
     width: var(--size);
     height: var(--size);
     display: flex;

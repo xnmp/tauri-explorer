@@ -1475,6 +1475,14 @@ const mockCommands: Record<string, CommandHandler> = {
 
   get_micro_thumbnail: (args) => {
     const path = (args.path as string) ?? "";
+    const hook = getMockControl().microThumbnail;
+    if (hook) {
+      return hook(
+        path,
+        args.prewarmSize as number | undefined,
+        args.prewarmQuality as number | undefined,
+      );
+    }
     const cropped = mockImageCrop.read(path);
     if (cropped) return cropped;
     const size = (args.prewarmSize as number) ?? 16;

@@ -79,3 +79,24 @@ sends real keyboard input; it does not inject zoom state. Retain the deadline,
 400% readiness, pointer pan/cancellation, 460% wheel anchor, Fit geometry and
 selected-file assertions. Paired controls cover headless WebKit, private
 headed WebKitGTK and Chromium with retries disabled.
+
+Decorative thumbnails must leave pointer input to their stable file-cell
+ancestors. A separate WebKit admission failure left a renamed image focused
+but unselected. A controlled run reproduced that outcome when a naturally
+loaded thumbnail replaced the SVG that received mouse-down before mouse-up.
+The original SVG was disconnected, mouse-up hit the loaded image, and WebKit
+emitted no click. The unchanged preview assertion failed its full five-second
+wait. The hosted trace has matching symptoms; its exact native event sequence
+was not recorded, so that causal attribution remains an inference.
+
+This follows the [native mouse-event target lifetime contract](https://www.w3.org/TR/pointerevents4/#mouse-event-order).
+Keep `pointer-events: none` on the decorative thumbnail container so its
+placeholder, micro and full layers share the stable ancestor's input target.
+The file cell continues to own selection, activation, context menus and drag;
+rendering, thumbnail scheduling and the cross-fade stay intact.
+
+The typed browser `microThumbnail` override holds the real response until a
+trusted mouse press, then releases normal image loading before mouse-up. The
+regression asserts selected-file state and an actually decoded matching
+preview. Verify it with the CSS fix alone reverted and restored; a timed
+click delay does not prove that input crossed the thumbnail transition.

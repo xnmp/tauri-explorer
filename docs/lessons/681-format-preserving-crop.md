@@ -1,9 +1,9 @@
 # #681: format-preserving crop codecs
 
-This records the native codec and save checkpoints. Crop controls and preview
-integration are implemented, but application interaction, screenshots and
-platform/resource qualification remain pending. This does not establish
-acceptance of the complete feature.
+This records the native codec, owned-save and application verification. Linux
+native UI and filesystem saves are verified; Windows/macOS codec CI and native
+platform UI qualification are recorded separately. Per-buffer limits are not
+a guarantee of bounded aggregate codec process memory.
 
 PNG color interpretation is part of the image. Preserve accepted gamma,
 chromaticity, ICC and HDR metadata when retaining its sample values. The PNG
@@ -92,11 +92,11 @@ losslessly and retain all gain/alternate metadata, including `altYUVRange` which
 this upstream image-copy implementation omits. Verify actual half-float HDR
 reconstruction at several headrooms, not just a retained gain-map marker.
 
-Current native crop regression set passes36 tests, including13 AVIF cases.
+The AVIF codec checkpoint passed 36 tests, including 13 AVIF cases.
 The independent CLI decoder validates generated fixtures; before-fix runs
 reproduce the four metadata/sequence failures,16-bit base-layer truncation and
-lost gain map. These are codec checks only. SVG, owned saving, UI, screenshots,
-resource admission and Windows/macOS AVIF qualification remain unfinished.
+lost gain map. That checkpoint established codec behavior only. Later SVG, owned-save and
+application verification are recorded below; platform CI remains distinct.
 
 
 ## SVG codec checkpoint
@@ -138,7 +138,7 @@ Chromium and WebKit. Solid geometry requires exact premultiplied pixels. Curves
 and filter buffers are re-rasterized by the engine, so those cases require
 corresponding source colors within one device pixel and at most 8/255 color
 rounding. This is vector rendering qualification, not proof of the Explorer UI
-or native file publication. Those remain unfinished.
+or native file publication; those require the separate native application suite.
 
 References: [SVG embedded image rules](https://www.w3.org/TR/SVG/embedded.html#ImageElement),
 [XML names and characters](https://www.w3.org/TR/xml/),
@@ -152,4 +152,37 @@ entity-escaped inline styles, prefixed namespaces and visible animation. Before-
 fix runs reproduce malformed XML, namespace inheritance, escaped-style changes,
 incorrect animation-target priority and document-relative geometry acceptance.
 Styled/document-relative SMIL remains an explicit unsupported context; this
-checkpoint does not qualify arbitrary animated SVGs, app saving or platform UI.
+checkpoint does not qualify arbitrary animated SVGs or platform UI.
+
+
+## Application verification
+
+A connected SVG image can report its CSS layout width as `naturalWidth` in
+WebKit. Decode an unattached image from the immutable capture to establish
+the source viewport before fitting the canvas. Read ICNS preview data as the
+validated largest PNG representation: browsers do not decode a raw ICNS
+container. Use BMP V4 alpha masks for alpha fixtures; the high byte of BI_RGB
+pixels is reserved and engines legitimately interpret ambiguous fixtures
+differently.
+
+Numeric crop inputs must retain intermediate digits until blur or Enter.
+Clamping each keystroke makes a valid coordinate such as 480 impossible to type
+when the first digit lies outside the current rectangle. Accepted saves retain
+modal ownership through Escape until the operation settles; a component-local
+close guard alone does not protect the shared modal stack.
+
+Physical viewport bounds and app zoom use different coordinate spaces. The
+crop overlay cancels root zoom, restores the requested zoom on its card, and
+provides scrolling for a resized viewport. Crop controls must use existing
+theme tokens; undefined background variables silently erase transparency
+checkerboards and handle borders.
+
+JPEG geometry checks must find real interior quadrant transitions and fail
+when they are absent. A first-dark-pixel check against a JPEG without a black
+center is vacuous. Independent shifted crops demonstrate that the transition
+check catches four-pixel offsets even when interior color samples still match.
+
+The actual save pipeline is also tested with animated GIF, WebP, APNG and
+AVIF files. Decode saved filesystem bytes and compare composited cropped frames,
+frame count, duration and looping; a codec-only byte test or static screenshot
+does not establish animated publication.

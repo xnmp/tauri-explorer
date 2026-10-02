@@ -1,0 +1,131 @@
+{
+  "sourceCommit": "715e9db74fea85dc9ca371820262acce556a6b0d",
+  "binarySha256": "0fca1d9da86dee69662b934aa5e7d2c7a0bb02197bb20a720941dd8ade1aace1",
+  "binaryBytes": 704110144,
+  "profile": "debug-custom-protocol-e2e-hooks",
+  "capture": "Unedited real Tauri application on isolated Linux Xvfb/Openbox, private D-Bus/XDG profile",
+  "viewport": [
+    1400,
+    1000
+  ],
+  "appZoom": 100,
+  "nativeResult": "12 passing (23.6s)",
+  "browserResult": "40 passing (1.6m), Chromium and WebKit, all three views",
+  "files": [
+    {
+      "path": "native/avif-saved-copy.png",
+      "sha256": "62e5e65c3e3cb7c0b5856380058fa74c40d24e492d93a5f38dfd2e3407fb964a",
+      "bytes": 125808
+    },
+    {
+      "path": "native/avif-selected-region.png",
+      "sha256": "97f0522ad824e6f9d3bdb0ad10e289d5a5c161494e1ff6d992aafa064e99ca6a",
+      "bytes": 97805
+    },
+    {
+      "path": "native/bmp-saved-copy.png",
+      "sha256": "cfa4431a04908fcead0f2251da2290c8adf28e1e77afd00e0d263d680dd8b80b",
+      "bytes": 107908
+    },
+    {
+      "path": "native/bmp-selected-region.png",
+      "sha256": "95e3771256f8691666a52706fc382df610c41469d06bea6cdca55e7e36097d30",
+      "bytes": 98049
+    },
+    {
+      "path": "native/changed-source-refused.png",
+      "sha256": "d853da82bad7d1ae244d36863c4463ab35a4bf61941b56b6353534ef391bfdc6",
+      "bytes": 97461
+    },
+    {
+      "path": "native/details-confirm-replacement.png",
+      "sha256": "1d7480ca7cc2a017eb9e479a44b73049f44b48321731798d6009c4e1cd391a5e",
+      "bytes": 93557
+    },
+    {
+      "path": "native/details-replaced-original.png",
+      "sha256": "e28b3494a35e042da62350aeb282582a1f365e9df15c83ee4172653e56b7e944",
+      "bytes": 136600
+    },
+    {
+      "path": "native/gif-saved-copy.png",
+      "sha256": "85f4794959f54b0c4c9966222a93ae2c3e52c3eb147285d97b7e62a60e0fc6c5",
+      "bytes": 191530
+    },
+    {
+      "path": "native/gif-selected-region.png",
+      "sha256": "a6d5bca88708ecd10cd3908ffc6624ff9631d1e57c905e3edf951a50037080f1",
+      "bytes": 333528
+    },
+    {
+      "path": "native/icns-saved-copy.png",
+      "sha256": "f49a06ffd4938451fe3bf449389789f7a92138fd7d9c047b20bf408ed0e35dcc",
+      "bytes": 134121
+    },
+    {
+      "path": "native/icns-selected-region.png",
+      "sha256": "175765069d878985e599c55a62e6b214b95e44d834ea9db1cf9f053bf3e289ce",
+      "bytes": 93657
+    },
+    {
+      "path": "native/jpg-saved-copy.png",
+      "sha256": "c8c158f309d0a211e090cf506f28e7772a45afa1ce9d2547a3ff72eac0cbc4f9",
+      "bytes": 79214
+    },
+    {
+      "path": "native/jpg-selected-region.png",
+      "sha256": "858ad4080ece34ef8467c18abd994c57622bcbf014b718370919bc16d46a945f",
+      "bytes": 96794
+    },
+    {
+      "path": "native/list-confirm-replacement.png",
+      "sha256": "32b2dffa4f7f0ecfec2b7c8d835a30759bc080486f382ef855c3d960acbc533c",
+      "bytes": 94690
+    },
+    {
+      "path": "native/list-replaced-original.png",
+      "sha256": "ae20ad19d90fb764dd97b1a719b15b06f07102bcfd0146172f0de800bbc79390",
+      "bytes": 81538
+    },
+    {
+      "path": "native/png-saved-copy.png",
+      "sha256": "fa8a2884008165a72ffde48e2baa4f306b3436deb73099b6ab177363793f998d",
+      "bytes": 71610
+    },
+    {
+      "path": "native/png-selected-region.png",
+      "sha256": "ab76d6a6c8a083309eb9730c7d7ea03bd4de9b90812ac5fdfe09abd988e1ba9e",
+      "bytes": 93083
+    },
+    {
+      "path": "native/svg-saved-copy.png",
+      "sha256": "60d8133f852c6ea37b7b12b1e331c12b1dfd3fbeb97333d99eb4bfd0007b48b7",
+      "bytes": 117168
+    },
+    {
+      "path": "native/svg-selected-region.png",
+      "sha256": "b3ec6408763b607d7324690b9d9bd4b010b928d31f9d94451421858ac058e8f4",
+      "bytes": 91308
+    },
+    {
+      "path": "native/tiles-confirm-replacement.png",
+      "sha256": "f5745cc78e26d4922121ff4fc6f3342242354a94f0e21a23affed9a1bc939e7e",
+      "bytes": 92795
+    },
+    {
+      "path": "native/tiles-replaced-original.png",
+      "sha256": "020d146d7ed0153ed981cf345cbf5a2071392160d2001fad433655ec049348fd",
+      "bytes": 88763
+    },
+    {
+      "path": "native/webp-saved-copy.png",
+      "sha256": "ae18565796318280292f94a09a0df1970403e6678eca0fb8cd143cdbacdc3142",
+      "bytes": 101696
+    },
+    {
+      "path": "native/webp-selected-region.png",
+      "sha256": "0faf05c82fe7f2552edc8898e129df7056d0232322b2a27377ed24ba7b4df7d3",
+      "bytes": 105581
+    }
+  ]
+}

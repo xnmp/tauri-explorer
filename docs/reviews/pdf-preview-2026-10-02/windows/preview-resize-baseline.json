@@ -1,0 +1,56 @@
+{
+  "conclusion": "CONFIRMED test initial-state failure: PDF persists 150% app zoom; preview-resize applies five additional 10% increases while expecting 150%.",
+  "windowsEvidence": {
+    "run": 36994174992,
+    "job": 110796973638,
+    "artifactSource": "c18bb30932015a4737745cc480351bcee0957c84",
+    "outcome": "case-outcomes-1856.jsonl: root zoom did not reach 150% from a fresh profile, duration 16723ms",
+    "cleanup": "pdf-preview/suite-cleanup.json completed=true; cleanup does not reset app zoom",
+    "limits": "Windows artifact does not directly expose preview-resize failure zoom. Controlled native Linux reproduction shows causal 200% state."
+  },
+  "nativeSource": "eb1107fc1990f8e2b1a8feb8352fdc7fe13a40d5",
+  "nativeBinarySha256": "cc897795205661042cf7c5ccaa4ccdc45f50de3f215144971d13bcf3059832c9",
+  "manifestSha256": "c38506f781fd210eda8c83987c56a99e5bb7d89cc56e2a5f031b2ac4ffd7e55c",
+  "unchangedNativeSpecSha256": "06810cf43c2f1c17bd948768da362c535bd908d5f0c8753c8de23dbdc840530c",
+  "runs": [
+    {
+      "log": ".claude-preview-resize-fresh.log",
+      "baseline": 100,
+      "finish": 150,
+      "result": "1 pass",
+      "seconds": 4.4
+    },
+    {
+      "log": ".claude-preview-resize-contaminated.log",
+      "baseline": 150,
+      "finish": 200,
+      "result": "1 fail, exact Windows error",
+      "seconds": 15.6,
+      "trustedFiveIncrements": true
+    },
+    {
+      "log": ".claude-preview-resize-normalized.log",
+      "baseline": "150 then actual Ctrl+0 to100",
+      "finish": 150,
+      "result": "1 pass",
+      "seconds": 4.3
+    }
+  ],
+  "minimalFix": "In preview-resize, invoke existing command(\"Reset Zoom\") and await 100% before the five zoom-in UI actions. No application change or extra delay needed.",
+  "dockAssessment": "Current PDF loop ends Right and ordinary model sizes remain 280/240. Earlier suspicion of bottom/narrowed separator contamination was refuted.",
+  "cleanup": "All owned private app/driver/Xvfb/Openbox/D-Bus processes stopped. No tracked diff; generated native screenshot retained untracked as .claude-preview-resize-normalized.png; tracked screenshot restored.",
+  "exactModifiedSpecVerification": {
+    "specSha256": "6cc2154100ad4e64f3e48961b07079e51653970542a245270946f71609b5c655",
+    "copyEqualsPdfWorktree": true,
+    "copy": "e2e-tauri/specs/.claude-preview-resize-baseline.spec.ts",
+    "log": ".claude-preview-resize-modified-baseline.log",
+    "baseline": "actual trusted UI150%; Reset Zoom remains inside the exact modified spec after Markdown loads",
+    "result": "1 pass,4.8s, exit0",
+    "allAssertionsReached": "continuous pointer sample and final delta; dock interruption; fullscreen bounds and restored geometry; keyboard growth/min/max; hidden-visible content restoration",
+    "screenshot": ".claude-preview-resize-modified-baseline.png",
+    "screenshotSha256": "4256a3e677f92b00af615f6371c37d7e579fe196689beaa53b2342b4a8024654",
+    "visualInspection": "Bottom-docked Markdown heading, bullets, and complete proof marker readable at150% with visible selected source and separator. No screenshot issues.",
+    "cleanup": "No owned private GUI processes survive; no tracked diff."
+  },
+  "windowsCausalAttribution": "Inference from source ordering and the controlled native Linux reproduction; starting/final Windows zoom was not directly recorded."
+}

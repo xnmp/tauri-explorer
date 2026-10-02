@@ -25,7 +25,7 @@ Worker startup records actual packaged module-worker readiness. Departed documen
 
 The final PDF browser suite passes 38 outcomes across Chromium and WebKit. Neighboring image/fullscreen/preview-lifetime verification previously passed in the 52-case combined suite. The final unit suite passes 2,999 tests with 3 existing skips, plus 29 performance tests. Type checking reports 0 errors/warnings; native test TypeScript, Rust formatting/all-target clippy and 548/548 source-map coverage pass. The final no-hooks production build passes startup/main bundle budgets and contains no test-support/e2e marker; main gzip 91,443 bytes and startup gzip 220,662 bytes remain below their 239,791/277,378-byte limits.
 
-**Native Windows/macOS rendering is unverified.** Browser WebKit is a useful rendering proxy, not native platform qualification. #730's supported-platform acceptance stays unchecked until those runs are available. The display scale is an owned software compositor output, not a physical monitor.
+**Windows native PDF scenarios pass; macOS qualification remains pending.** Browser WebKit is a useful rendering proxy, not native Mac qualification. #730's supported-platform acceptance stays unchecked until the Mac run and remaining native gate are resolved. The Linux display scale is an owned software compositor output, not a physical monitor.
 
 ## Rebase qualification and supported-platform work
 
@@ -35,9 +35,19 @@ Fresh private Linux native verification passed **11/11 in 57.8 seconds**. The re
 
 The new Mac2 production harness uses only native accessibility actions and actual full-display screenshots. CoreGraphics measures physical-pixel/point calibration; a read-only Pillow oracle measures known PDF landmarks, with five negative-control tests. Its assertions cover fitted page size and centering, exact 130%/400% magnification plus pixel enlargement, trusted panning, mixed-size page navigation, fullscreen, a restored/resized owned window at app150% in all three docks, displayed corrupt-file errors without old page pixels, substantive 3:2 image replacement, and unchanged PDF bytes. Independent review corrected driver typing, resize admission, weak pixel oracles and page-readiness synchronization before publication. This harness is prepared for hosted execution; it is **not yet a macOS acceptance pass**. It covers sequential replacement and does not independently measure production worker cleanup.
 
+## Windows native PDF outcomes
+
+[Hosted run 36994174992](https://github.com/xnmp/tauri-explorer/actions/runs/36994174992) passed all **nine distinct PDF cases** against actual filesystem bytes in WebView2. The per-case runner outcomes and cleanup receipt identify checkout `c18bb30932015a4737745cc480351bcee0957c84`, the GitHub merge checkout for PR head `f47050901d7095a5e17b31f589bae93e11c073a1`. [Windows receipts](pdf-preview-2026-10-02/windows/) retain geometry, module-worker startup/termination, source preservation and each case's result. The workflow recorded a successful native build; it did not record a binary hash, so none is claimed.
+
+The cases cover centered 130% zoom, trusted hand panning, pointer wheel anchors, fit and fullscreen at app zoom 100%/150%, all three mixed-size pages and internal navigation, initially hidden corners and keyboard navigation, resized top/bottom/right docks, image replacement, corrupt-file errors, and departed worker/font cleanup. Native wheel delivery is a DOM event; device wheel input remains covered by browser Playwright. External-handler and compositor-blur cases are Linux-only.
+
+All 15 hosted screenshots were inspected individually. Their `native-windows` suffix distinguishes them from private Linux captures; measured Windows device pixel ratio was 1. Representative originals are also copied into `evidence/pdf-preview/`.
+
+The **full Windows smoke suite failed** in the separate preview-resize test when its expected 150% app zoom was not reached. Its starting/final zoom was not captured in that Windows failure. Source ordering and an independent private Linux native reproduction support the inference that the test started from the PDF suite's persisted 150% instead of its assumed 100%: the unchanged test passes from 100%, fails after 150% with the same error and five trusted increments reaching 200%, and passes after the actual Reset Zoom command restores 100%. The exact modified spec also passes after starting at 150%, with every original outcome assertion retained; [the baseline diagnosis](pdf-preview-2026-10-02/windows/preview-resize-baseline.json) records source, binary and spec identities. Passing PDF cases are not a claim that the full required gate passed; hosted verification of the setup correction and production Mac PDF qualification are still pending.
+
 ## Screenshot captions
 
-Actual captures live under `screenshots/fix/728-zooming-in-pdf-in-preview-isnt-centred/`; representative unchanged copies are in `evidence/pdf-preview/`. All use the light theme on the private125% output. Filename suffixes specify app zoom; unspecified screenshots use150% app zoom.
+Actual captures live under `screenshots/fix/728-zooming-in-pdf-in-preview-isnt-centred/`; representative unchanged copies are in `evidence/pdf-preview/`. Linux captures use the light theme on the private output at 125%; Windows captures use the light theme on the disposable hosted display at device pixel ratio 1. Filename suffixes specify app zoom; unspecified screenshots use 150% app zoom. The Windows screenshots demonstrate the same corresponding outcomes described below.
 
 - `pdf-fit-native-125-output-100-app.png`: whole first page at centered fit, both corner landmarks visible.
 - `pdf-130-native-125-output-150-app.png`: centered130% document zoom with Explorer's compact controls; deliberate enlargement clips page edges equally.

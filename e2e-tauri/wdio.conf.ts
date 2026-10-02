@@ -188,7 +188,8 @@ export const config: WebdriverIO.Config = {
     mkdirSync(path.join(here, "logs"), { recursive: true });
     appendFileSync(path.join(here, "logs", `case-outcomes-${process.pid}.jsonl`), `${JSON.stringify({
       sourceCommit: process.env.GITHUB_SHA ?? null, suite: test.parent, title: test.title,
-      passed: outcome.passed, duration: outcome.duration, retries: outcome.retries,
+      passed: outcome.passed, skipped: outcome.skipped ?? test.pending,
+      duration: outcome.duration, retries: outcome.retries,
       error: outcome.error?.stack ?? outcome.error?.message ?? null,
     })}\n`);
   },

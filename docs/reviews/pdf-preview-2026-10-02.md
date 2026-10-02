@@ -157,6 +157,33 @@ to select the exact requested filename. It retains every pixel, geometry,
 error, replacement and source-preservation assertion; fresh hosted execution
 is still required.
 
+## Acceptance coverage follow-up
+
+An independent audit found that the previous rendering fixture was exclusively
+multipage, and the full browser suite did not expand the PDF spec to List/Tiles.
+A real, separately authored single-page PDF now qualifies rendered pixels,
+`1 / 1`, disabled page boundaries, centered fit, enlargement, fullscreen/exit,
+fit reset and unchanged bytes. All **12 native Linux PDF outcomes pass in
+56.7 seconds** on the unchanged current-dev binary `6252574d`. The exact updated
+spec hash is `92eaf7d550440210730294968740867b2546b78683cfe78f59646cf36d9c246c`;
+[receipts](pdf-preview-2026-10-02/linux-single-page/) identify the test-only copy,
+fixture, application build and clean private process teardown. The original
+eleven cases remain intact. The single-page screenshot is an inspected,
+unedited capture from that run.
+
+Three unconditional browser cases additionally select distinct PDFs in actual
+Details, List and Tiles, acknowledge the first pending read, assert visible
+`Loading PDF…`, then render the current single-page file before releasing the
+old multipage response. The two documents have distinct center colors; current
+red pixels, page count, file path and centered zoom remain correct after the
+old response completes. Cancellation before bytes arrive prevents the old
+worker from starting; separate loaded-document cases verify termination.
+All **22 focused Chromium outcomes pass in 33.8 seconds**, and these three new
+cases pass in the WebKit proxy in 11.4 seconds. Initial test-only failures
+incorrectly required creation of the cancelled old worker; independent review
+corrected that oracle before the final passes. Proxy rendering is not native
+Mac qualification.
+
 ## Screenshot captions
 
 Actual captures live under `screenshots/fix/728-zooming-in-pdf-in-preview-isnt-centred/`; representative unchanged copies are in `evidence/pdf-preview/`. Linux captures use the light theme on the private output at 125%; Windows captures use the light theme on the disposable hosted display at device pixel ratio 1. Filename suffixes specify app zoom; unspecified screenshots use 150% app zoom. The Windows screenshots demonstrate the same corresponding outcomes described below.
@@ -168,6 +195,7 @@ Actual captures live under `screenshots/fix/728-zooming-in-pdf-in-preview-isnt-c
 - `pdf-corner-before-native-125-output-150-app.png`, `pdf-corner-top-left-native-125-output-150-app.png`, `pdf-corner-bottom-right-native-125-output-150-app.png`:same400% page before/after reverse panning; initially hidden green/blue landmarks become visible.
 - `pdf-reset-after-pan-native-125-output-150-app.png`:same page/app scale reset to centered fit after corner panning.
 - `pdf-page-2-native-125-output-150-app.png`:landscape second page, purple center, compact2/3 navigation.
+- `pdf-single-page-native-125-output-150-app.png`:real one-page document at fit, both page-boundary arrows disabled, centered red content and visible corner landmarks.
 - `pdf-narrow-{top,bottom,right}-native-125-output-150-app.png`:actual resized native window, each dock retaining centered full-page fit and usable controls.
 - `image-comparison-native-125-output-150-app.png`:matched SVG landmarks in the same pane/theme/app scale as PDF fit, showing Explorer-owned framing.
 - `pdf-error-native-125-output-150-app.png`:actual malformed filesystem PDF produces a pane error with no stale page.

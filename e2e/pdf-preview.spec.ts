@@ -1,7 +1,85 @@
 import { test, expect, type Page } from "./fixtures";
-import { waitForEntries } from "./helpers";
+import { ALL_VIEW_MODES, waitForEntries } from "./helpers";
 import { readFileSync } from "node:fs";
 import type { MockControl } from "../src/lib/api/mock-control";
+
+for (const mode of ALL_VIEW_MODES) {
+  test(`${mode}: distinct pending PDF selection shows loading and keeps the current single-page document`, async ({ page }) => {
+    const root = "/pdf-selection-proof";
+    const first = `${root}/old-multipage.pdf`;
+    const second = `${root}/current-single-page.pdf`;
+    const single = [...readFileSync(new URL("../e2e-tauri/fixtures/preview-single-page.pdf", import.meta.url))];
+    // Equal-length color replacement retains the real PDF's xref offsets.
+    // A stale old page is blue, visibly distinct from the current red page.
+    const multiple = [...Buffer.from(readFileSync(new URL("../src/lib/api/fixtures/preview-landmarks.pdf", import.meta.url))
+      .toString("ascii").replace("1 0 0 rg 265.0", "0 0 1 rg 265.0"), "ascii")];
+    await page.addInitScript((viewMode) => {
+      localStorage.setItem("explorer-settings", JSON.stringify({ viewMode, showPreviewPane: false, zoomLevel: 150, previewPaneWidth: 420 }));
+    }, mode);
+    await page.goto("/?path=/home/user");
+    await waitForEntries(page);
+    await page.evaluate(async ({ root, first, second }) => {
+      const fixtureUrl = "/src/lib/api/mock-fixtures.ts";
+      const { mockFiles } = await import(/* @vite-ignore */ fixtureUrl);
+      mockFiles[root] = [first, second].map((path) => ({ path, name: path.split("/").at(-1)!, kind: "file", size: 2000, modified: "2026-10-02T00:00:00Z" }));
+      const w = window as unknown as {
+        __mockControl?: MockControl;
+        __pdfSelectionReads: Array<{ path: string; resolve(value: ArrayBuffer): void; completed: boolean }>;
+      };
+      w.__pdfSelectionReads = [];
+      (w.__mockControl ??= {}).previewReadPdf = (path) => new Promise<ArrayBuffer>((resolve) => {
+        const read = { path, completed: false, resolve: (value: ArrayBuffer) => { read.completed = true; resolve(value); } };
+        w.__pdfSelectionReads.push(read);
+      });
+    }, { root, first, second });
+    await page.keyboard.press("Control+l");
+    await page.locator(".path-input").fill(root);
+    await page.locator(".path-input").press("Enter");
+    await expect(page.locator(`.${mode}-view`)).toBeVisible();
+    await page.locator(`.entry-item[data-path="${first}"]`).click();
+    await page.keyboard.press("Space");
+    await expect(page.locator(".pdf-message[role=status]")).toHaveText("Loading PDF…");
+    await expect(page.locator(".pdf-page.ready")).toHaveCount(0);
+    await expect.poll(() => page.evaluate(() => (window as unknown as {
+      __pdfSelectionReads: Array<{ path: string; completed: boolean }>;
+    }).__pdfSelectionReads.map((read) => ({ path: read.path, completed: read.completed })))).toEqual([{ path: first, completed: false }]);
+    await page.locator(`.entry-item[data-path="${second}"]`).click();
+    await expect(page.locator(".pdf-preview")).toHaveAttribute("data-path", second);
+    await expect(page.locator(".pdf-message[role=status]")).toHaveText("Loading PDF…");
+    await expect.poll(() => page.evaluate(() => (window as unknown as { __pdfSelectionReads: unknown[] }).__pdfSelectionReads.length)).toBe(2);
+    const finish = async (path: string, bytes: number[]) => page.evaluate(({ path, bytes }) => {
+      const reads = (window as unknown as { __pdfSelectionReads: Array<{ path: string; resolve(value: ArrayBuffer): void }> }).__pdfSelectionReads;
+      const read = reads.find((item) => item.path === path);
+      if (!read) throw new Error(`No pending read for ${path}`);
+      read.resolve(new Uint8Array(bytes).buffer);
+    }, { path, bytes });
+    await finish(second, single);
+    await expect(page.locator(".pdf-page.ready")).toBeVisible({ timeout: 15000 });
+    await expect.poll(() => centerColor(page)).toEqual([255, 0, 0, 255]);
+    await expect(page.locator(".page-count")).toHaveText("1 / 1");
+    await expect(page.getByRole("button", { name: "Previous PDF page", exact: true })).toBeDisabled();
+    await expect(page.getByRole("button", { name: "Next PDF page", exact: true })).toBeDisabled();
+    await finish(first, multiple);
+    await expect.poll(() => page.evaluate((oldPath) => (window as unknown as {
+      __pdfSelectionReads: Array<{ path: string; completed: boolean }>;
+    }).__pdfSelectionReads.find((read) => read.path === oldPath)?.completed, first)).toBe(true);
+    // Cancellation before bytes arrive prevents the old worker from starting.
+    // Loaded-document termination is covered separately by the lifetime cases.
+    expect(await page.evaluate((oldPath) => {
+      const events = JSON.parse(document.documentElement.dataset.e2ePdfWorkers || "[]") as Array<{ path: string; phase: string }>;
+      return events.some((event) => event.path === oldPath && event.phase === "created");
+    }, first)).toBe(false);
+    await expect(page.locator(".pdf-preview")).toHaveAttribute("data-path", second);
+    await expect(page.locator(".page-count")).toHaveText("1 / 1");
+    await expect(page.locator(".pdf-message[role=alert]")).toHaveCount(0);
+    await expect.poll(() => centerColor(page)).toEqual([255, 0, 0, 255]);
+    await zoomTo(page, 130);
+    const enlarged = await geometry(page);
+    expect(Math.abs(enlarged.centerX - enlarged.viewportCenterX)).toBeLessThan(2);
+    expect(Math.abs(enlarged.centerY - enlarged.viewportCenterY)).toBeLessThan(2);
+    await expect.poll(() => centerColor(page)).toEqual([255, 0, 0, 255]);
+  });
+}
 
 test("PDF pointer cancellation ends a held pan and later motion does not move the page", async ({
   page,

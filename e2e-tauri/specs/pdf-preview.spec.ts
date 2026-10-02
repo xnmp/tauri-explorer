@@ -314,6 +314,8 @@ async function capture(name: string) {
         path.join(directory, "2-image.svg"),
         '<svg xmlns="http://www.w3.org/2000/svg" width="600" height="800"><rect width="600" height="800" fill="white"/><rect x="20" y="20" width="80" height="80" fill="#00b300"/><rect x="500" y="700" width="80" height="80" fill="blue"/><rect x="265" y="365" width="70" height="70" fill="red"/></svg>',
       );
+      fs.copyFileSync(path.resolve("e2e-tauri/fixtures/preview-single-page.pdf"),
+        path.join(directory, "3-single-page.pdf"));
       await navigateTo(directory);
       if (isLinux) {
         const pids: number[] = [];
@@ -786,6 +788,33 @@ async function capture(name: string) {
         after,
         nativeFocusLoss: true,
       });
+    });
+    it("renders a single-page file with both page boundaries disabled and preserves its bytes", async () => {
+      const single = path.join(directory, "3-single-page.pdf");
+      const before = createHash("sha256").update(fs.readFileSync(single)).digest("hex");
+      await $(entryPathSelector(single)).click();
+      await ready();
+      await expect($(".page-count")).toHaveText("1 / 1");
+      await expect($('[aria-label="Previous PDF page"]')).toBeDisabled();
+      await expect($('[aria-label="Next PDF page"]')).toBeDisabled();
+      const fit = await geometry();
+      expect(Math.abs(fit.cx - fit.vcx)).toBeLessThan(2);
+      expect(Math.abs(fit.cy - fit.vcy)).toBeLessThan(2);
+      await zoomTo(130);
+      const enlarged = await geometry();
+      expect(enlarged.width).toBeGreaterThan(fit.width);
+      await $('[aria-label="View PDF fullscreen"]').click();
+      await ready();
+      await expect($(".preview-pane.fullscreen")).toExist();
+      await browser.keys("Escape");
+      await expect($(".preview-pane.fullscreen")).not.toExist();
+      await $(".pdf-controls .fit-button").click();
+      await ready();
+      await expect($(".page-count")).toHaveText("1 / 1");
+      await capture("pdf-single-page-native-125-output-150-app.png");
+      const after = createHash("sha256").update(fs.readFileSync(single)).digest("hex");
+      expect(after).toBe(before);
+      report("single-page.json", { beforeSha256: before, afterSha256: after, fit, enlarged, color: await color(), pageCount: 1 });
     });
     it("shows image-consistent framing and a truthful corrupt-document error; stops departed workers", async () => {
       await $(entryPathSelector(path.join(directory, "2-image.svg"))).click();

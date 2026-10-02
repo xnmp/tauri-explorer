@@ -32,6 +32,10 @@ foreach(feature DOCS EXAMPLES TESTDATA TESTS TOOLS)
     set(ENABLE_${feature} OFF CACHE BOOL "" FORCE)
 endforeach()
 add_subdirectory("${CMAKE_CURRENT_BINARY_DIR}/aom-source" aom EXCLUDE_FROM_ALL)
+# Upstream exports only INSTALL_INTERFACE headers. libavif consumes this
+# build-tree target, so propagate the pinned public headers explicitly.
+target_include_directories(aom INTERFACE
+    "$<BUILD_INTERFACE:${CMAKE_CURRENT_BINARY_DIR}/aom-source>")
 set_property(TARGET aom PROPERTY AVIF_LOCAL ON)
 
 # The existing target satisfies SYSTEM without a system package lookup.

@@ -7,6 +7,7 @@ import { createNativeFixtureDirectory } from "../native-qualification";
 import { formatSize } from "../../src/lib/domain/file";
 
 const fixtures = fileURLToPath(new URL("../fixtures/image-crop/", import.meta.url));
+const codecFixtures = fileURLToPath(new URL("../../src-tauri/test_support/fixtures/", import.meta.url));
 const scratch = fs.realpathSync(createNativeFixtureDirectory("explorer-image-crop-"));
 const screenshotRoot = process.env.IMAGE_CROP_SCREENSHOTS;
 const slider = (edge: string) => $(`[role="slider"][aria-label="${edge} crop edge"]`);
@@ -46,8 +47,8 @@ async function crop(left = 32, top = 24, right = 480, bottom = 360): Promise<voi
   }
 }
 const dataUrl = (data: Buffer, extension: string) => `data:${({ png: "image/png", jpg: "image/jpeg", gif: "image/gif", webp: "image/webp", bmp: "image/bmp", svg: "image/svg+xml", avif: "image/avif" } as Record<string, string>)[extension]};base64,${data.toString("base64")}`;
-async function compare(original: Buffer, output: Buffer, extension: string, padded = false) {
-  return browser.executeAsync(async (original: string, saved: string, padded: boolean, measureEdges: boolean, done: (result: unknown) => void) => {
+async function compare(original: Buffer, output: Buffer, extension: string, padded = false, rectangle: number[] = [32, 24, 448, 336], referenceExtension = extension) {
+  return browser.executeAsync(async (original: string, saved: string, padded: boolean, measureEdges: boolean, rectangle: number[], done: (result: unknown) => void) => {
     try {
       const load = async (url: string) => { const image = new Image(); image.src = url; await image.decode(); return image; };
       const [source, result] = await Promise.all([load(original), load(saved)]);
@@ -55,7 +56,7 @@ async function compare(original: Buffer, output: Buffer, extension: string, padd
       canvas.width = result.naturalWidth; canvas.height = result.naturalHeight;
       const context = canvas.getContext("2d")!;
       if (padded) context.drawImage(source, 16, 16, 224, 224, 16, 16, 224, 224);
-      else context.drawImage(source, 32, 24, 448, 336, 0, 0, 448, 336);
+      else context.drawImage(source, rectangle[0], rectangle[1], rectangle[2], rectangle[3], 0, 0, rectangle[2], rectangle[3]);
       const expected = context.getImageData(0, 0, canvas.width, canvas.height).data;
       context.clearRect(0, 0, canvas.width, canvas.height); context.drawImage(result, 0, 0);
       const actual = context.getImageData(0, 0, canvas.width, canvas.height).data;
@@ -63,7 +64,9 @@ async function compare(original: Buffer, output: Buffer, extension: string, padd
       // JPEG edges may change when the selected area is encoded as new blocks;
       // compare interior samples there, every pixel in the lossless formats.
       for (let i = 0; i < actual.length; i++) maximumError = Math.max(maximumError, Math.abs(actual[i] - expected[i]));
-      const samples = [[40, 40], [canvas.width - 40, 40], [40, canvas.height - 40], [canvas.width - 40, canvas.height - 40]];
+      const insetX = Math.min(40, Math.floor(canvas.width / 4));
+      const insetY = Math.min(40, Math.floor(canvas.height / 4));
+      const samples = [[insetX, insetY], [canvas.width - 1 - insetX, insetY], [insetX, canvas.height - 1 - insetY], [canvas.width - 1 - insetX, canvas.height - 1 - insetY]];
       let interiorError = 0;
       for (const [x, y] of samples) for (let c = 0; c < 3; c++) {
         const index = (y * canvas.width + x) * 4 + c;
@@ -97,7 +100,7 @@ async function compare(original: Buffer, output: Buffer, extension: string, padd
         edgeDisplacement,
         cornerAlpha: actual[3], centerAlpha: actual[(Math.floor(canvas.height / 2) * canvas.width + Math.floor(canvas.width / 2)) * 4 + 3] });
     } catch (error) { done({ error: String(error) }); }
-  }, dataUrl(original, extension), dataUrl(output, extension), padded, extension === "jpg") as Promise<{
+  }, dataUrl(original, referenceExtension), dataUrl(output, extension), padded, extension === "jpg", rectangle) as Promise<{
     size: number[]; maximumError: number; interiorError: number; edgeDisplacement: number; cornerAlpha: number; centerAlpha: number; error?: string;
   }>;
 }
@@ -172,6 +175,83 @@ nativeDescribe("native image cropping", () => {
         catch { done(false); }
       }, extension === "icns" ? [256, 256] : [448, 336]), { timeoutMsg: "native output dimensions did not reach the preview" });
       await screenshot(`${extension}-saved-copy`);
+    });
+  }
+  it("maps an EXIF-oriented original through editor zoom and scrolling without rotating twice", async () => {
+    const source = path.join(scratch, "oriented.png");
+    const original = fs.readFileSync(path.join(fixtures, "oriented.png")); fs.writeFileSync(source, original);
+    await open(source);
+    await expect(slider("Right")).toHaveAttribute("aria-valuenow", "384");
+    await expect(slider("Bottom")).toHaveAttribute("aria-valuenow", "512");
+    await crop(24, 32, 360, 480);
+    await screenshot("oriented-selected-region");
+    await $("button[aria-label='Zoom in crop']").click();
+    await $("button[aria-label='Zoom in crop']").click();
+    await browser.execute(() => document.querySelector(".crop-scroller")?.scrollTo(90, 120));
+    await expect(slider("Right")).toHaveAttribute("aria-valuenow", "360");
+    await button("Save copy").click(); await $(dialog).waitForDisplayed({ reverse: true });
+    const target = path.join(scratch, "oriented - Cropped.png");
+    expect(fs.readFileSync(source).equals(original)).toBe(true);
+    const reference = fs.readFileSync(path.join(fixtures, "oriented-reference.png"));
+    const observed = await compare(reference, fs.readFileSync(target), "png", false, [24, 32, 336, 448]);
+    expect(observed.error).toBeUndefined(); expect(observed.size).toEqual([336, 448]); expect(observed.maximumError).toBe(0);
+    await $(entryPathSelector(target)).click();
+    await browser.waitUntil(async () => browser.execute(() => {
+      const image = document.querySelector<HTMLImageElement>(".preview-image");
+      return image?.naturalWidth === 336 && image.naturalHeight === 448;
+    }));
+    await screenshot("oriented-saved-copy");
+  });
+  it("maps WebP EXIF coordinates to the full-resolution saved region", async () => {
+    const source = path.join(scratch, "oriented.webp");
+    const original = fs.readFileSync(path.join(fixtures, "oriented.webp")); fs.writeFileSync(source, original);
+    const referenceUrl = await browser.executeAsync(async (url: string, done: (url: string) => void) => {
+      const image = new Image(); image.src = url; await image.decode();
+      const canvas = document.createElement("canvas"); canvas.width = image.naturalHeight; canvas.height = image.naturalWidth;
+      const context = canvas.getContext("2d")!;
+      context.translate(canvas.width, 0); context.rotate(Math.PI / 2); context.drawImage(image, 0, 0);
+      done(canvas.toDataURL("image/png"));
+    }, dataUrl(fs.readFileSync(path.join(fixtures, "quadrants.webp")), "webp"));
+    const reference = Buffer.from(referenceUrl.split(",")[1], "base64");
+    await open(source);
+    await expect(slider("Right")).toHaveAttribute("aria-valuenow", "384");
+    await expect(slider("Bottom")).toHaveAttribute("aria-valuenow", "512");
+    await crop(24, 32, 360, 480); await screenshot("webp-oriented-selected-region");
+    await button("Save copy").click(); await $(dialog).waitForDisplayed({ reverse: true });
+    const target = path.join(scratch, "oriented - Cropped.webp");
+    expect(fs.readFileSync(source).equals(original)).toBe(true);
+    const observed = await compare(reference, fs.readFileSync(target), "webp", false, [24, 32, 336, 448], "png");
+    expect(observed.error).toBeUndefined(); expect(observed.size).toEqual([336, 448]); expect(observed.maximumError).toBe(0);
+    await $(entryPathSelector(target)).click();
+    await browser.waitUntil(async () => browser.execute(() => document.querySelector<HTMLImageElement>(".preview-image")?.naturalWidth === 336));
+    await screenshot("webp-oriented-saved-copy");
+  });
+  for (const [name, width, height] of [["oriented", 8, 12], ["aspect", 12, 16]] as const) {
+    it(`uses normalized AVIF ${name} pixels through capture and actual save`, async () => {
+      const source = path.join(scratch, `${name}.avif`);
+      const original = fs.readFileSync(path.join(codecFixtures, `image-crop-${name}.avif`)); fs.writeFileSync(source, original);
+      await open(source);
+      await expect(slider("Right")).toHaveAttribute("aria-valuenow", String(width));
+      await expect(slider("Bottom")).toHaveAttribute("aria-valuenow", String(height));
+      await crop(1, 2, width - 1, height - 2);
+      await $("button[aria-label='Zoom in crop']").click();
+      await $("button[aria-label='Zoom in crop']").click();
+      await $("button[aria-label='Zoom in crop']").click();
+      await screenshot(`avif-${name}-selected-region`);
+      await button("Save copy").click(); await $(dialog).waitForDisplayed({ reverse: true });
+      const target = path.join(scratch, `${name} - Cropped.avif`);
+      expect(fs.readFileSync(source).equals(original)).toBe(true);
+      await $(entryPathSelector(target)).click();
+      await browser.waitUntil(async () => browser.execute((size: number[]) => {
+        const image = document.querySelector<HTMLImageElement>(".preview-image");
+        return image?.naturalWidth === size[0] && image.naturalHeight === size[1];
+      }, [width - 2, height - 4]));
+      if (name === "oriented") {
+        const reference = fs.readFileSync(path.join(codecFixtures, "image-crop-oriented-reference.png"));
+        const observed = await compare(reference, fs.readFileSync(target), "avif", false, [1, 2, 6, 8], "png");
+        expect(observed.error).toBeUndefined(); expect(observed.size).toEqual([6, 8]); expect(observed.maximumError).toBe(0);
+      }
+      await screenshot(`avif-${name}-saved-copy`);
     });
   }
   for (const mode of ["Details", "List", "Tiles"]) {

@@ -159,6 +159,10 @@ pub(super) fn verify_source(
 }
 
 fn capture(path: PathBuf) -> Result<Capture, AppError> {
+    capture_with_preview_limit(path, MAX_CAPTURE_BYTES)
+}
+
+fn capture_with_preview_limit(path: PathBuf, preview_limit: u64) -> Result<Capture, AppError> {
     let parent = fs::canonicalize(
         path.parent()
             .ok_or_else(|| AppError::InvalidPath("Image has no parent directory".into()))?,
@@ -194,8 +198,13 @@ fn capture(path: PathBuf) -> Result<Capture, AppError> {
     let preview = if format == "ICNS" {
         image_crop::icon_preview(&bytes)?
     } else {
-        bytes
+        image_crop::canonical_preview(&bytes)?.unwrap_or(bytes)
     };
+    if preview.len() as u64 > preview_limit {
+        return Err(AppError::Other(
+            "Normalized image preview exceeds the crop capture size limit".into(),
+        ));
+    }
     Ok(Capture {
         path: path.to_string_lossy().into_owned(),
         revision,

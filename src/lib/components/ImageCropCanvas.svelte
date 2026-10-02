@@ -94,5 +94,5 @@
   .crop-edge.left, .crop-edge.right { width: 12px; height: 40px; top: calc(50% - 20px); cursor: ew-resize; }
   .crop-edge.top, .crop-edge.bottom { height: 12px; width: 40px; left: calc(50% - 20px); cursor: ns-resize; }
   .crop-edge.left { left: -6px; } .crop-edge.right { right: -6px; } .crop-edge.top { top: -6px; } .crop-edge.bottom { bottom: -6px; }
-  .crop-edge:focus-visible { outline: 2px solid var(--text-primary); outline-offset: 3px; }
+  .crop-edge:focus-visible { outline: 2px solid var(--focus-stroke-outer); outline-offset: 3px; }
 </style>

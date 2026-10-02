@@ -257,6 +257,47 @@ pub(crate) fn encode_with_viewport(
     }
 }
 
+/// Crop and renderer coordinates must describe the same normalized pixels.
+/// Webviews ignore PNG/WebP EXIF or disagree on AVIF aperture/rotation.
+/// Normalize through the save codec, retaining animation and color metadata;
+/// source bytes and their revision remain separate in the capture owner.
+pub(crate) fn canonical_preview(bytes: &[u8]) -> Result<Option<Vec<u8>>, AppError> {
+    let (width, height) = if explorer_avif::is_avif(bytes) {
+        // Release the first-frame pixel allocation before encoding the sequence.
+        let frame = explorer_avif::decode_frame(bytes, 0).map_err(failure)?;
+        (frame.metadata.width, frame.metadata.height)
+    } else if let Ok(format @ (ImageFormat::Png | ImageFormat::WebP)) = image::guess_format(bytes) {
+        let mut decoder = decoder(bytes, format)?;
+        use image::metadata::Orientation;
+        let orientation = decoder.orientation().map_err(failure)?;
+        if orientation == Orientation::NoTransforms {
+            return Ok(None);
+        }
+        let (width, height) = decoder.dimensions();
+        match orientation {
+            Orientation::Rotate90
+            | Orientation::Rotate270
+            | Orientation::Rotate90FlipH
+            | Orientation::Rotate270FlipH => (height, width),
+            _ => (width, height),
+        }
+    } else {
+        return Ok(None);
+    };
+    dimensions(width, height)?;
+    encode_with_viewport(
+        bytes,
+        CropRect {
+            left: 0,
+            top: 0,
+            right: width,
+            bottom: height,
+        },
+        None,
+    )
+    .map(Some)
+}
+
 pub(crate) fn format_name(bytes: &[u8]) -> Result<&'static str, AppError> {
     if svg_crop::candidate(bytes) {
         return Ok("SVG");

@@ -433,3 +433,241 @@ fn symlink_is_refused_without_touching_target() {
     assert!(read_source(&alias).is_err());
     assert_eq!(fs::read(&path).unwrap(), b"first");
 }
+
+#[tokio::test]
+async fn canonical_capture_and_save_use_the_same_oriented_pixel_grid() {
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().join("oriented.png");
+    let original = include_bytes!("../../e2e-tauri/fixtures/image-crop/oriented.png");
+    fs::write(&path, original).unwrap();
+    let captured = capture(path.clone()).unwrap();
+    let preview = STANDARD
+        .decode(
+            captured
+                .data_url
+                .strip_prefix("data:image/png;base64,")
+                .unwrap(),
+        )
+        .unwrap();
+    let expected = image::load_from_memory(original)
+        .unwrap()
+        .rotate90()
+        .to_rgba8();
+    let observed = image::load_from_memory(&preview).unwrap().to_rgba8();
+    assert_eq!(observed.dimensions(), (384, 512));
+    assert_eq!(observed, expected);
+    let mut save = request(
+        &path,
+        captured.revision,
+        Destination::Copy {
+            name: "copy.png".into(),
+        },
+    );
+    save.viewport = image_crop::SvgViewport {
+        width: 384,
+        height: 512,
+    };
+    save.rect = image_crop::CropRect {
+        left: 24,
+        top: 32,
+        right: 360,
+        bottom: 480,
+    };
+    let runtime = super::super::admission::Runtime::new(root.path().join("recovery"));
+    let receipt = execute(SavePlan::new(save).unwrap(), &runtime)
+        .await
+        .completion
+        .result
+        .unwrap();
+    assert_eq!(
+        image::load_from_memory(&fs::read(receipt.path).unwrap())
+            .unwrap()
+            .to_rgba8(),
+        image::imageops::crop_imm(&expected, 24, 32, 336, 448).to_image()
+    );
+    assert_eq!(fs::read(path).unwrap(), original);
+}
+
+#[test]
+fn canonical_capture_preserves_every_oriented_apng_frame_and_timing() {
+    use image::metadata::Orientation;
+    let input = include_bytes!("fixtures/image-crop-animation.png");
+    for (tag, orientation) in [
+        (1, Orientation::NoTransforms),
+        (2, Orientation::FlipHorizontal),
+        (3, Orientation::Rotate180),
+        (4, Orientation::FlipVertical),
+        (5, Orientation::Rotate90FlipH),
+        (6, Orientation::Rotate90),
+        (7, Orientation::Rotate270FlipH),
+        (8, Orientation::Rotate270),
+    ] {
+        let exif = [
+            73, 73, 42, 0, 8, 0, 0, 0, 1, 0, 18, 1, 3, 0, 1, 0, 0, 0, tag, 0, 0, 0, 0, 0, 0, 0,
+        ];
+        let mut encoded = Vec::new();
+        {
+            let mut header = png::Encoder::new(&mut encoded, 1, 1)
+                .write_header()
+                .unwrap();
+            header
+                .write_chunk(png::chunk::ChunkType(*b"eXIf"), &exif)
+                .unwrap();
+        }
+        let original = [
+            &input[..33],
+            &encoded[33..33 + 12 + exif.len()],
+            &input[33..],
+        ]
+        .concat();
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("animated.png");
+        fs::write(&path, &original).unwrap();
+        let captured = capture(path.clone()).unwrap();
+        let preview = STANDARD
+            .decode(
+                captured
+                    .data_url
+                    .strip_prefix("data:image/png;base64,")
+                    .unwrap(),
+            )
+            .unwrap();
+        let expected = animated_frames(&original, "png");
+        let actual = animated_frames(&preview, "png");
+        assert_eq!(actual.len(), expected.len());
+        for (actual, expected) in actual.iter().zip(expected) {
+            let mut oriented = image::DynamicImage::ImageRgba8(expected.buffer().clone());
+            oriented.apply_orientation(orientation);
+            assert_eq!(actual.buffer(), &oriented.to_rgba8(), "EXIF {tag}");
+            assert_eq!(actual.delay(), expected.delay());
+        }
+        assert_eq!(fs::read(path).unwrap(), original);
+    }
+}
+
+#[test]
+fn normalized_preview_refusal_preserves_the_captured_source() {
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().join("oriented.png");
+    let original = include_bytes!("../../e2e-tauri/fixtures/image-crop/oriented.png");
+    fs::write(&path, original).unwrap();
+    assert!(original.len() as u64 <= MAX_CAPTURE_BYTES);
+    let error = capture_with_preview_limit(path.clone(), 1024)
+        .err()
+        .unwrap();
+    assert!(error
+        .to_string()
+        .contains("Normalized image preview exceeds"));
+    assert_eq!(fs::read(path).unwrap(), original);
+    assert_eq!(fs::read_dir(root.path()).unwrap().count(), 1);
+}
+
+#[test]
+fn canonical_avif_capture_preserves_pixel_grid_and_every_frame() {
+    for name in [
+        "image-crop-static.avif",
+        "image-crop-oriented.avif",
+        "image-crop-aspect.avif",
+        "image-crop-animation.avif",
+        "image-crop-one-frame-sequence.avif",
+        "image-crop-sixteen-bit.avif",
+        "image-crop-gain-map-oriented.avif",
+    ] {
+        let original = fs::read(
+            Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("test_support/fixtures")
+                .join(name),
+        )
+        .unwrap();
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join(name);
+        fs::write(&path, &original).unwrap();
+        let captured = capture(path.clone()).unwrap();
+        let preview = STANDARD
+            .decode(
+                captured
+                    .data_url
+                    .strip_prefix("data:image/avif;base64,")
+                    .unwrap(),
+            )
+            .unwrap();
+        let frames = explorer_avif::decode_frame(&original, 0)
+            .unwrap()
+            .metadata
+            .frame_count;
+        for index in 0..frames {
+            let expected = explorer_avif::decode_frame(&original, index).unwrap();
+            let actual = explorer_avif::decode_frame(&preview, index).unwrap();
+            assert_eq!(
+                (actual.metadata.width, actual.metadata.height),
+                (expected.metadata.width, expected.metadata.height),
+                "{name}"
+            );
+            assert_eq!(actual.pixels, expected.pixels, "{name}/{index}");
+            assert_eq!(actual.metadata.depth, expected.metadata.depth);
+            assert_eq!(actual.metadata.frame_count, expected.metadata.frame_count);
+            assert_eq!(actual.metadata.timescale, expected.metadata.timescale);
+            assert_eq!(
+                actual.metadata.frame_duration,
+                expected.metadata.frame_duration
+            );
+            assert_eq!(actual.metadata.repetitions, expected.metadata.repetitions);
+            assert_eq!(
+                actual.metadata.sequence_present,
+                expected.metadata.sequence_present
+            );
+        }
+        assert!(explorer_avif::decode_frame(&preview, frames).is_err());
+        assert_eq!(fs::read(path).unwrap(), original);
+    }
+}
+
+#[test]
+fn canonical_capture_preserves_oriented_animated_webp_frames_and_timing() {
+    use image::metadata::Orientation;
+    let input = include_bytes!("fixtures/image-crop-animation.webp");
+    for (tag, orientation) in [
+        (1, Orientation::NoTransforms),
+        (2, Orientation::FlipHorizontal),
+        (3, Orientation::Rotate180),
+        (4, Orientation::FlipVertical),
+        (5, Orientation::Rotate90FlipH),
+        (6, Orientation::Rotate90),
+        (7, Orientation::Rotate270FlipH),
+        (8, Orientation::Rotate270),
+    ] {
+        let exif = [
+            73, 73, 42, 0, 8, 0, 0, 0, 1, 0, 18, 1, 3, 0, 1, 0, 0, 0, tag, 0, 0, 0, 0, 0, 0, 0,
+        ];
+        let mut original = input.to_vec();
+        assert_eq!(&original[12..16], b"VP8X");
+        original[20] |= 8;
+        original.extend_from_slice(b"EXIF");
+        original.extend_from_slice(&(exif.len() as u32).to_le_bytes());
+        original.extend_from_slice(&exif);
+        let length = (original.len() as u32 - 8).to_le_bytes();
+        original[4..8].copy_from_slice(&length);
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("animated.webp");
+        fs::write(&path, &original).unwrap();
+        let captured = capture(path.clone()).unwrap();
+        let preview = STANDARD
+            .decode(
+                captured
+                    .data_url
+                    .strip_prefix("data:image/webp;base64,")
+                    .unwrap(),
+            )
+            .unwrap();
+        let expected = animated_frames(&original, "webp");
+        let actual = animated_frames(&preview, "webp");
+        assert_eq!(actual.len(), expected.len());
+        for (actual, expected) in actual.iter().zip(expected) {
+            let mut oriented = image::DynamicImage::ImageRgba8(expected.buffer().clone());
+            oriented.apply_orientation(orientation);
+            assert_eq!(actual.buffer(), &oriented.to_rgba8(), "EXIF {tag}");
+            assert_eq!(actual.delay(), expected.delay());
+        }
+        assert_eq!(fs::read(path).unwrap(), original);
+    }
+}

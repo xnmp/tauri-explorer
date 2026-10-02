@@ -280,6 +280,7 @@ import { openFile } from "$lib/api/open";
 
   /** Stable primitive that changes when the selected path OR its mtime changes,
    * so external edits to the same file invalidate the cached preview. */
+  const canCrop = $derived(selectedFile?.kind === "file" && /\.(jpe?g|png|gif|webp|bmp|svg|avif|icns)$/i.test(selectedFile.name));
   const selectedPath = $derived(selectedFile?.path ?? null);
   const previewKey = $derived(
     selectedFile ? `${selectedFile.path}|${selectedFile.modified}|${selectedFile.size}|${localPreviewRevision}` : null,
@@ -808,6 +809,10 @@ import { openFile } from "$lib/api/open";
   });
 </script>
 
+{#snippet cropButton(compact: boolean)}
+  <button class="crop-button" aria-label="Crop image…" onclick={openCrop}>{compact ? "Crop" : "Crop image…"}</button>
+{/snippet}
+
 <!-- svelte-ignore a11y_no_static_element_interactions -->
 <div
   id={paneId}
@@ -932,14 +937,15 @@ import { openFile } from "$lib/api/open";
     <!-- Auxiliary metadata (name + type badge, and the size/modified footer
          below) is opt-out for a minimal, content-only preview (#494). -->
     {#if settingsStore.showPreviewInfo}
-      <div class="preview-header">
+      <div class="preview-header" class:with-crop={canCrop && isVertical && !fullscreen}>
         <span class="preview-filename" title={selectedFile.path}>{selectedFile.name}</span>
         <span class="preview-type-badge">{getFileType(selectedFile)}</span>
+        {#if canCrop && isVertical && !fullscreen}{@render cropButton(true)}{/if}
       </div>
     {/if}
 
-    {#if /\.(jpe?g|png|gif|webp|bmp|svg|avif|icns)$/i.test(selectedFile.name)}
-      <div class="preview-crop-action"><button onclick={openCrop}>Crop image…</button></div>
+    {#if canCrop && (!isVertical || fullscreen || !settingsStore.showPreviewInfo)}
+      <div class="preview-crop-action">{@render cropButton(false)}</div>
     {/if}
     <!-- svelte-ignore a11y_no_noninteractive_tabindex -- a scrollable region must be keyboard-focusable (WCAG 2.1.1, #797). -->
     <div class="preview-content" role="region" aria-label="Preview of {selectedFile.name}{isVideoMediaFile(selectedFile) ? ' (video)' : ''}" tabindex="0">
@@ -1074,13 +1080,13 @@ import { openFile } from "$lib/api/open";
 
 <style>
   .preview-crop-action { padding: var(--spacing-sm) var(--spacing-md); display: flex; justify-content: flex-end; }
-  .preview-crop-action button {
+  .crop-button {
     padding: var(--spacing-xs) var(--spacing-sm); background: var(--control-fill);
     border: 1px solid var(--control-stroke); border-radius: var(--radius-sm);
     color: var(--text-primary); font: inherit; cursor: pointer;
   }
-  .preview-crop-action button:hover { background: var(--control-fill-secondary); }
-  .preview-crop-action button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .crop-button:hover { background: var(--control-fill-secondary); }
+  .crop-button:focus-visible { outline: 2px solid var(--focus-stroke-outer); outline-offset: 2px; }
   .preview-pane.fullscreen > .preview-crop-action {
     position: absolute; top: 12px; right: 48px; z-index: 1001; padding: 0;
   }
@@ -1138,6 +1144,16 @@ import { openFile } from "$lib/api/open";
     min-width: 0;
     overflow: hidden;
     padding: 8px 12px;
+  }
+
+  .preview-pane.vertical:not(.fullscreen) > .preview-header.with-crop {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  /* Crop shares the shallow dock's header. The filename retains its extension;
+     omit the auxiliary badge so both controls remain readable at root zoom. */
+  .preview-pane.vertical:not(.fullscreen) > .preview-header.with-crop .preview-type-badge {
+    display: none;
   }
 
   .preview-pane.vertical:not(.fullscreen) > .preview-header .preview-type-badge {

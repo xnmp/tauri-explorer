@@ -27,9 +27,35 @@ def png(width, height):
 
 
 ROOT.joinpath("quadrants.png").write_bytes(png(512, 384))
+# EXIF orientation6 rotates stored512×384 pixels to displayed384×512.
+base = ROOT.joinpath("quadrants.png").read_bytes()
+exif = bytes([73,73,42,0,8,0,0,0,1,0,18,1,3,0,1,0,0,0,6,0,0,0,0,0,0,0])
+payload = b"eXIf" + exif
+ROOT.joinpath("oriented.png").write_bytes(base[:33] + struct.pack(">I", len(exif)) + payload
+    + struct.pack(">I", zlib.crc32(payload)) + base[33:])
 for extension in ["jpg", "gif", "webp"]:
     subprocess.run(["ffmpeg", "-y", "-v", "error", "-i", str(ROOT / "quadrants.png"),
                     "-frames:v", "1", "-threads", "1", str(ROOT / f"quadrants.{extension}")], check=True)
+# Independent pixel permutation supplies the PNG orientation oracle.
+base = ROOT.joinpath("quadrants.png").read_bytes()
+raw = zlib.decompress(base[41:-16])
+rows = bytearray()
+for y in range(512):
+    rows.append(0)
+    for x in range(384):
+        offset = (383 - x) * (1 + 512 * 4) + 1 + y * 4
+        rows.extend(raw[offset:offset + 4])
+def reference_chunk(kind, payload):
+    return struct.pack(">I", len(payload)) + kind + payload + struct.pack(">I", zlib.crc32(kind + payload))
+ROOT.joinpath("oriented-reference.png").write_bytes(b"\x89PNG\r\n\x1a\n"
+    + reference_chunk(b"IHDR", struct.pack(">IIBBBBB", 384, 512, 8, 6, 0, 0, 0))
+    + reference_chunk(b"IDAT", zlib.compress(rows)) + reference_chunk(b"IEND", b""))
+webp = bytearray(ROOT.joinpath("quadrants.webp").read_bytes())
+assert webp[12:16] == b"VP8X"
+webp[20] |= 8
+webp.extend(b"EXIF" + struct.pack("<I", len(exif)) + exif)
+webp[4:8] = struct.pack("<I", len(webp) - 8)
+ROOT.joinpath("oriented.webp").write_bytes(webp)
 subprocess.run(["avifenc", "--jobs", "1", "--lossless", str(ROOT / "quadrants.png"),
                 str(ROOT / "quadrants.avif")], check=True)
 elements = []

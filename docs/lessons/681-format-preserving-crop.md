@@ -186,3 +186,26 @@ The actual save pipeline is also tested with animated GIF, WebP, APNG and
 AVIF files. Decode saved filesystem bytes and compare composited cropped frames,
 frame count, duration and looping; a codec-only byte test or static screenshot
 does not establish animated publication.
+
+PNG/WebP EXIF and AVIF aperture/rotation/mirroring do not have consistent
+webview support. A correctly oriented native save can therefore crop a
+different region than the editor shows. Normalize captured preview bytes
+through the same full-rectangle encoder used for saving, retaining animation
+and color metadata. Keep the original path, revision and format for publication.
+Release the first AVIF frame before encoding the whole sequence and bound
+the resulting preview before base64 IPC; that output bound does not establish
+aggregate codec memory or latency. Compare native UI saves against independent
+untagged pixel references, rather than drawing the same metadata-bearing input
+through the same browser and calling that an oracle.
+
+At root zoom 150%, WebKit evaluates the tested container width query against
+the zoomed width while Chromium uses CSS layout width. Shallow top/bottom
+preview docks need a header allocation that works without that query. Share
+the row between filename and Crop, omitting the auxiliary image badge; a new
+action row consumes the minimum dock's usable preview height. Check filename
+width, metadata width and content height in both engines.
+
+AOM's build target exports only install-interface headers. When libavif uses
+the bundled target, explicitly propagate its pinned source headers with an
+interface build include. Host-installed AOM headers can mask the omission,
+so inspect the actual compiler dependency file and qualify clean hosted builds.

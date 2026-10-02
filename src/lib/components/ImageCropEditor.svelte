@@ -99,7 +99,7 @@
   .crop-dimensions { display: flex; align-items: end; flex-wrap: wrap; gap: var(--spacing-md); }
   label { display: flex; flex-direction: column; gap: var(--spacing-xs); font-size: var(--font-size-caption); }
   input { padding: var(--spacing-sm); border: 1px solid var(--control-stroke); border-radius: var(--radius-sm); background: var(--control-fill); color: var(--text-primary); font: inherit; }
-  input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  input:focus-visible { outline: 2px solid var(--focus-stroke-outer); outline-offset: 2px; }
   .crop-dimensions input { width: 6em; }
   .crop-output { margin: auto 0; color: var(--text-secondary); }
   .crop-note { color: var(--text-secondary); font-size: var(--font-size-caption); margin: 0; }

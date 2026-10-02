@@ -1,4 +1,12 @@
 /** Two-phase native acquisition: disposal never adopts a late capability. */
+import { E2E_HOOKS_ENABLED } from "$lib/api/e2e-hooks";
+
+function trace(stage: string, token: string | null): void {
+  if (!E2E_HOOKS_ENABLED || typeof document === "undefined") return;
+  const root = document.documentElement;
+  const previous = JSON.parse(root.dataset.e2eVideoLifetime ?? "[]") as unknown[];
+  root.dataset.e2eVideoLifetime = JSON.stringify([...previous.slice(-19), { stage, token }]);
+}
 export interface VideoSource {
   readonly url: string;
   release(): void;
@@ -20,16 +28,23 @@ export function createVideoLoadJob(path: string, transport: VideoTransport): Vid
   const release = () => {
     if (released || token === null) return;
     released = true;
-    void transport.release(token).catch(error => console.error("Video preview release failed:", error));
+    trace("release-request", token);
+    void transport.release(token).then(() => trace("release-accepted", token)).catch(error => {
+      trace(`release-failed: ${String(error)}`, token);
+      console.error("Video preview release failed:", error);
+    });
   };
   const promise = (async (): Promise<VideoSource> => {
     token = await transport.begin();
+    trace("registered", token);
     if (cancelled) {
       release();
       throw new Error("Video preview was released");
     }
     try {
+      trace("preparing", token);
       const url = await transport.prepare(token, path);
+      trace("prepared", token);
       if (cancelled) throw new Error("Video preview was released");
       return { url, release };
     } catch (error) {
@@ -37,5 +52,5 @@ export function createVideoLoadJob(path: string, transport: VideoTransport): Vid
       throw error;
     }
   })();
-  return { promise, cancel() { cancelled = true; release(); } };
+  return { promise, cancel() { cancelled = true; trace("cancel", token); release(); } };
 }

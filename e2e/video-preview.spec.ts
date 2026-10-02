@@ -47,6 +47,14 @@ for (const mode of ALL_VIEW_MODES) {
     expect(await video.evaluate(v => [(v as HTMLVideoElement).volume, (v as HTMLVideoElement).muted])).toEqual([0.25,false]);
     await player.getByRole("button", { name: "View video fullscreen", exact: true }).click();
     await expect(page.locator(".preview-pane")).toHaveClass(/fullscreen/);
+    for (const control of await player.locator(".video-controls button,.video-controls input").all()) {
+      await expect(control).toBeInViewport();
+      expect(await control.evaluate(element => {
+        const rect=element.getBoundingClientRect();
+        const hit=document.elementFromPoint(rect.x+rect.width/2,rect.y+rect.height/2);
+        return {unobscured:element.contains(hit),control:element.getAttribute("aria-label"),hit:hit?.className};
+      })).toMatchObject({unobscured:true});
+    }
     await expect.poll(async () => { const c = await decodedColor(page); return c[2] > 220 && c[0] < 30; }).toBe(true);
     await player.focus(); await page.keyboard.press("Home");
     await expect.poll(async () => { const c = await decodedColor(page); return c[0] > 220 && c[2] < 30; }).toBe(true);

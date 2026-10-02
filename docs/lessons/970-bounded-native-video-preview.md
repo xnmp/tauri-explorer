@@ -13,3 +13,5 @@ Detach the video source synchronously before releasing its capability on selecti
 Codec support follows the native platform and installed decoders. Browser mock playback verifies UI behavior only. Qualify supported encoded files and unsupported sources with the actual binary, and record measured startup, seek, read bounds and process memory rather than inferring decoder memory from bounded HTTP chunks.
 
 The Linux headless WPE Playwright proxy can advance time and report decoded dimensions while emitting transparent frames. A bare `<video>` reproduces this independently of Explorer. Keep decoded-color assertions; run those specs with `PW_VIDEO_HEADED=1` in WebKitGTK on a private Xvfb display. CI provides that display while other specs retain WPE. Timing and metadata alone do not prove that a video is visible.
+
+A fullscreen child with a high z-index still belongs to its parent's stacking context. Explorer's main content and later status bar both used z-index 1, so the footer covered bottom playback controls. Raise the main-content context during fullscreen, and verify control centers with hit tests; viewport bounds alone do not detect sibling occlusion.

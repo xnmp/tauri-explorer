@@ -128,12 +128,12 @@ export async function screenshotPixels(file: string, sampleSize=9) {
   const windows=clients.flatMap(id=>{
     const properties=execFileSync("xprop",["-id",id,"_NET_WM_PID"],{encoding:"utf8"});
     const pid=Number(properties.match(/= (\d+)/)?.[1]);
-    const geometry=execFileSync("xwininfo",["-id",id],{encoding:"utf8"});
-    return appPids.includes(pid)&&geometry.includes("Map State: IsViewable")?[{id,width:Number(geometry.match(/Width: (\d+)/)?.[1]),height:Number(geometry.match(/Height: (\d+)/)?.[1])}]:[];
+    const mapped=execFileSync("xprop",["-id",id,"WM_STATE"],{encoding:"utf8"});
+    return appPids.includes(pid)&&mapped.includes("window state: Normal")?[{id}]:[];
   });
   if(windows.length!==1)throw new Error(`Native video window identity is ambiguous: ${windows.length}`);
   const window=windows[0];
-  execFileSync("ffmpeg",["-hide_banner","-loglevel","error","-f","x11grab","-draw_mouse","0","-window_id",String(Number(window.id)),"-video_size",`${window.width}x${window.height}`,"-i",process.env.DISPLAY,"-frames:v","1","-y",file]);
+  execFileSync("ffmpeg",["-hide_banner","-loglevel","error","-f","x11grab","-draw_mouse","0","-window_id",String(Number(window.id)),"-i",process.env.DISPLAY,"-frames:v","1","-y",file]);
   const probe=JSON.parse(execFileSync("ffprobe",["-v","error","-show_entries","stream=width,height","-of","json",file],{encoding:"utf8"}));
   const {width,height}=probe.streams[0];
   const x=Math.round((state.rect.x+state.rect.width/2)*width/state.viewport.width-sampleSize/2);

@@ -527,6 +527,12 @@
     overflow: visible;
   }
 
+  /* Fullscreen is inside this stacking context. It must also cover the
+     later status-bar sibling, whose z-index is 1 (#970). */
+  :global([data-preview-fullscreen]) .main-content {
+    z-index: 2;
+  }
+
   /* Mica effect gradient overlay — disabled due to gradient banding artifacts */
 
 

@@ -48,6 +48,8 @@ async function cleanup(identity?:NativeFileIdentity){let stats=await videoStats(
     await $('[aria-label="Mute video"]').click();expect((await videoState())?.muted).toBe(true);
     await rangeKeys('[aria-label="Video volume"]',5);expect((await videoState())?.volume).toBeCloseTo(0.25,5);expect((await videoState())?.muted).toBe(false);
     await $('[aria-label="View video fullscreen"]').click();await $(".preview-pane.fullscreen").waitForDisplayed();await pixel("native-fullscreen-blue","blue");
+    const fullscreenControls=await browser.execute(()=>Array.from(document.querySelectorAll(".video-controls button,.video-controls input")).map(element=>{const rect=element.getBoundingClientRect();const x=rect.x+rect.width/2;const y=rect.y+rect.height/2;const hit=document.elementFromPoint(x,y);return {label:element.getAttribute("aria-label"),rect:rect.toJSON(),visibleWithinViewport:rect.width>0&&rect.height>0&&rect.left>=0&&rect.top>=0&&rect.right<=innerWidth+1&&rect.bottom<=innerHeight+1,centerReachesControl:!!hit&&(hit===element||element.contains(hit)),hit:hit?.outerHTML.slice(0,300)};}));
+    report("native-fullscreen-controls.json",fullscreenControls);expect(fullscreenControls.length).toBeGreaterThan(0);expect(fullscreenControls.every(control=>control.visibleWithinViewport&&control.centerReachesControl)).toBe(true);
     await $(".video-preview").click();await browser.keys("Home");await pixel("native-keyboard-start-red","red");
     await browser.keys(" ");await browser.waitUntil(async()=>!(await videoState())?.paused);await browser.keys(" ");expect((await videoState())?.paused).toBe(true);
     await browser.keys("Escape");await $(".preview-pane.fullscreen").waitForExist({reverse:true});expect(await hashFile(colors)).toBe(hash);

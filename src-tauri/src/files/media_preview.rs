@@ -34,7 +34,15 @@ pub async fn begin_video_preview(
     session_id: String,
 ) -> Result<String, AppError> {
     let owner = renderer_owner::acquire_owner(&window, &session_id)?;
-    server().await?.service.begin(owner)
+    let token = server().await?.service.begin(owner)?;
+    #[cfg(feature = "e2e-hooks")]
+    log::info!(
+        "Video(begin): window={} session={} token={}",
+        window.label(),
+        session_id,
+        token
+    );
+    Ok(token)
 }
 #[tauri::command]
 pub async fn prepare_video_preview(
@@ -54,11 +62,25 @@ pub async fn prepare_video_preview(
 }
 #[tauri::command]
 pub async fn release_video_preview(window: tauri::Window, session_id: String, token: String) {
-    if let (Some(server), Some(owner)) = (
-        SERVER.get(),
-        renderer_owner::release_owner(&window, &session_id),
-    ) {
+    let server = SERVER.get();
+    let owner = renderer_owner::release_owner(&window, &session_id);
+    #[cfg(feature = "e2e-hooks")]
+    log::info!(
+        "Video(release): window={} session={} token={} server={} owner={}",
+        window.label(),
+        session_id,
+        token,
+        server.is_some(),
+        owner.is_some()
+    );
+    if let (Some(server), Some(owner)) = (server, owner) {
         server.service.release(&token, &owner);
+        #[cfg(feature = "e2e-hooks")]
+        log::info!(
+            "Video(released): token={} remains={}",
+            token,
+            server.service.lookup(&token).is_some()
+        );
     }
 }
 

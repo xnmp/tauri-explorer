@@ -812,7 +812,7 @@ fn png_retains_gamma_interpretation_instead_of_darkening_the_crop() {
     encoder.set_depth(png::BitDepth::Eight);
     encoder.set_source_gamma(png::ScaledFloat::new(1.0));
     let mut writer = encoder.write_header().unwrap();
-    writer.write_image_data(&vec![128; 8 * 6 * 3]).unwrap();
+    writer.write_image_data(&[128; 8 * 6 * 3]).unwrap();
     writer.finish().unwrap();
     let output = encode(&original, REGION).unwrap();
     let decoder = png::Decoder::new(Cursor::new(&output)).read_info().unwrap();

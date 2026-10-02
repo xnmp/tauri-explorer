@@ -20,7 +20,7 @@ fn chunk(output: &mut Vec<u8>, name: &[u8; 4], bytes: &[u8]) -> Result<(), AppEr
     output.extend_from_slice(name);
     output.extend_from_slice(&(bytes.len() as u32).to_le_bytes());
     output.extend_from_slice(bytes);
-    if bytes.len() % 2 != 0 {
+    if !bytes.len().is_multiple_of(2) {
         output.push(0);
     }
     Ok(())

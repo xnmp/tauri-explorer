@@ -138,7 +138,7 @@ fn xml_text(bytes: &[u8]) -> Result<Cow<'_, str>, AppError> {
         let bom =
             usize::from(bytes.starts_with(&[0xff, 0xfe]) || bytes.starts_with(&[0xfe, 0xff])) * 2;
         let data = &bytes[bom..];
-        if data.len() % 2 != 0 {
+        if !data.len().is_multiple_of(2) {
             return Err(failure("Truncated UTF-16 SVG document"));
         }
         let mut words = Vec::new();
@@ -378,7 +378,7 @@ fn intrinsic_pixels(value: Option<&str>) -> Option<u32> {
     let value = value?.trim();
     let value = value.strip_suffix("px").unwrap_or(value).trim();
     let number: f64 = value.parse().ok()?;
-    (number.is_finite() && number >= 1.0 && number <= 16384.0 && number.fract() == 0.0)
+    (number.is_finite() && (1.0..=16384.0).contains(&number) && number.fract() == 0.0)
         .then_some(number as u32)
 }
 

@@ -199,6 +199,7 @@ fn still(bytes: &[u8], format: ImageFormat, crop: CropRect) -> Result<Vec<u8>, A
     Ok(output.into_bytes())
 }
 
+#[cfg(test)]
 pub(crate) fn encode(bytes: &[u8], crop: CropRect) -> Result<Vec<u8>, AppError> {
     encode_with_viewport(bytes, crop, None)
 }

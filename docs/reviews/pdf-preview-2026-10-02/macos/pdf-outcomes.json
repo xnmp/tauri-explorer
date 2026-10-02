@@ -1,0 +1,615 @@
+{
+  "display": {
+    "height": 768,
+    "id": 1,
+    "pixelHeight": 768,
+    "pixelWidth": 1024,
+    "width": 1024,
+    "x": 0,
+    "y": 0
+  },
+  "fixtureSha256": "0da8104a2e0fe1bb6a31f65e455446fa301c757726a1ca70a26f18835f578c92",
+  "steps": [
+    {
+      "name": "ax-01-before-palette",
+      "result": {
+        "stage": "ax-01-before-palette",
+        "xml": "ax-01-before-palette.xml",
+        "description": "ax-01-before-palette.txt",
+        "screenshot": "ax-01-before-palette.png",
+        "nativePdf": {
+          "count": 1,
+          "matches": [
+            {
+              "id": "B41BEE64-67CF-4994-93F7-F24F0B78CE59",
+              "elementType": "48",
+              "value": "native-pdf-landmarks.pdf",
+              "label": "",
+              "title": "",
+              "selected": "false",
+              "enabled": "true",
+              "hittable": "true",
+              "rect": {
+                "x": 292,
+                "y": 241,
+                "width": 155,
+                "height": 17
+              }
+            }
+          ]
+        },
+        "xpathPdf": {
+          "count": 1,
+          "matches": [
+            {
+              "id": "37B47548-CCB9-44B8-A6C8-9577FAF2E913",
+              "elementType": "48",
+              "value": "native-pdf-landmarks.pdf",
+              "label": "",
+              "title": "",
+              "selected": "false",
+              "enabled": "true",
+              "hittable": "true",
+              "rect": {
+                "x": 292,
+                "y": 241,
+                "width": 155,
+                "height": 17
+              }
+            }
+          ]
+        },
+        "focused": {
+          "count": 3,
+          "matches": [
+            {
+              "id": "0E7CC1A8-8986-415E-A9A2-E0A538F5899D",
+              "elementType": "46",
+              "value": "",
+              "label": "",
+              "title": "",
+              "selected": "false",
+              "enabled": "true",
+              "hittable": "true",
+              "rect": {
+                "x": 0,
+                "y": 53,
+                "width": 1024,
+                "height": 653
+              }
+            },
+            {
+              "id": "686CF8C3-0CF9-4EB8-9990-7BF7401B9CA1",
+              "elementType": "58",
+              "value": "",
+              "label": "tauri-macos-ui-8OCYWl - Tauri Explorer",
+              "title": "",
+              "selected": "false",
+              "enabled": "true",
+              "hittable": "true",
+              "rect": {
+                "x": 0,
+                "y": 53,
+                "width": 1024,
+                "height": 653
+              }
+            },
+            {
+              "id": "27A375F7-EFF6-4204-9226-E4C004B0FCAF",
+              "elementType": "75",
+              "value": "",
+              "label": "",
+              "title": "",
+              "selected": "true",
+              "enabled": "true",
+              "hittable": "true",
+              "rect": {
+                "x": 241,
+                "y": 169,
+                "width": 782,
+                "height": 32
+              }
+            }
+          ]
+        },
+        "rows": 5,
+        "cells": 5,
+        "tablePdf": 1,
+        "paletteInputs": 0
+      }
+    },
+    {
+      "name": "ax-02-palette-open",
+      "result": {
+        "stage": "ax-02-palette-open",
+        "xml": "ax-02-palette-open.xml",
+        "description": "ax-02-palette-open.txt",
+        "screenshot": "ax-02-palette-open.png",
+        "nativePdf": {
+          "count": 0,
+          "matches": []
+        },
+        "xpathPdf": {
+          "count": 0,
+          "matches": []
+        },
+        "focused": {
+          "count": 3,
+          "matches": [
+            {
+              "id": "56B48DEC-5E68-4050-AF48-26E62307D2DD",
+              "elementType": "46",
+              "value": "",
+              "label": "",
+              "title": "",
+              "selected": "false",
+              "enabled": "true",
+              "hittable": "true",
+              "rect": {
+                "x": 0,
+                "y": 53,
+                "width": 1024,
+                "height": 653
+              }
+            },
+            {
+              "id": "6CB0AF7E-7A0D-4E6F-8581-4D5BDB506480",
+              "elementType": "58",
+              "value": "",
+              "label": "tauri-macos-ui-8OCYWl - Tauri Explorer",
+              "title": "",
+              "selected": "false",
+              "enabled": "true",
+              "hittable": "true",
+              "rect": {
+                "x": 0,
+                "y": 53,
+                "width": 1024,
+                "height": 653
+              }
+            },
+            {
+              "id": "1EBA4430-05B3-44C4-9F61-F1877DE15168",
+              "elementType": "49",
+              "value": "",
+              "label": "",
+              "title": "",
+              "selected": "false",
+              "enabled": "true",
+              "hittable": "true",
+              "rect": {
+                "x": 248,
+                "y": 171,
+                "width": 547,
+                "height": 21
+              }
+            }
+          ]
+        },
+        "rows": 0,
+        "cells": 0,
+        "tablePdf": {
+          "error": "Error: Can't call $$ on element with selector \"-ios predicate string:elementType == 26 AND label == 'Files'\" because element wasn't found"
+        },
+        "paletteInputs": 1
+      }
+    },
+    {
+      "name": "ax-03-before-result-click",
+      "result": {
+        "stage": "ax-03-before-result-click",
+        "xml": "ax-03-before-result-click.xml",
+        "description": "ax-03-before-result-click.txt",
+        "screenshot": "ax-03-before-result-click.png",
+        "nativePdf": {
+          "count": 0,
+          "matches": []
+        },
+        "xpathPdf": {
+          "count": 0,
+          "matches": []
+        },
+        "focused": {
+          "count": 3,
+          "matches": [
+            {
+              "id": "205D9F89-3BBD-455C-B49B-E2D8978ECD21",
+              "elementType": "46",
+              "value": "",
+              "label": "",
+              "title": "",
+              "selected": "false",
+              "enabled": "true",
+              "hittable": "true",
+              "rect": {
+                "x": 0,
+                "y": 53,
+                "width": 1024,
+                "height": 653
+              }
+            },
+            {
+              "id": "797E68E9-A39B-496C-9643-283A69D49753",
+              "elementType": "58",
+              "value": "",
+              "label": "tauri-macos-ui-8OCYWl - Tauri Explorer",
+              "title": "",
+              "selected": "false",
+              "enabled": "true",
+              "hittable": "true",
+              "rect": {
+                "x": 0,
+                "y": 53,
+                "width": 1024,
+                "height": 653
+              }
+            },
+            {
+              "id": "45845969-85F8-4880-8909-609D8A6407EA",
+              "elementType": "49",
+              "value": "Reset Zoom",
+              "label": "",
+              "title": "",
+              "selected": "false",
+              "enabled": "true",
+              "hittable": "true",
+              "rect": {
+                "x": 248,
+                "y": 171,
+                "width": 547,
+                "height": 21
+              }
+            }
+          ]
+        },
+        "rows": 0,
+        "cells": 0,
+        "tablePdf": {
+          "error": "Error: Can't call $$ on element with selector \"-ios predicate string:elementType == 26 AND label == 'Files'\" because element wasn't found"
+        },
+        "paletteInputs": 1
+      }
+    },
+    {
+      "name": "ax-04-palette-closed",
+      "result": {
+        "stage": "ax-04-palette-closed",
+        "xml": "ax-04-palette-closed.xml",
+        "description": "ax-04-palette-closed.txt",
+        "screenshot": "ax-04-palette-closed.png",
+        "nativePdf": {
+          "count": 1,
+          "matches": [
+            {
+              "id": "56BC3E43-930E-4EAE-9108-F75C42BEB081",
+              "elementType": "48",
+              "value": "native-pdf-landmarks.pdf",
+              "label": "",
+              "title": "",
+              "selected": "false",
+              "enabled": "true",
+              "hittable": "true",
+              "rect": {
+                "x": 292,
+                "y": 241,
+                "width": 155,
+                "height": 17
+              }
+            }
+          ]
+        },
+        "xpathPdf": {
+          "count": 1,
+          "matches": [
+            {
+              "id": "F09799B3-20E5-4D97-AEE6-D59BC4D30992",
+              "elementType": "48",
+              "value": "native-pdf-landmarks.pdf",
+              "label": "",
+              "title": "",
+              "selected": "false",
+              "enabled": "true",
+              "hittable": "true",
+              "rect": {
+                "x": 292,
+                "y": 241,
+                "width": 155,
+                "height": 17
+              }
+            }
+          ]
+        },
+        "focused": {
+          "count": 3,
+          "matches": [
+            {
+              "id": "DFF55CF1-AC7D-49AC-B883-3ECA6C0C7748",
+              "elementType": "46",
+              "value": "",
+              "label": "",
+              "title": "",
+              "selected": "false",
+              "enabled": "true",
+              "hittable": "true",
+              "rect": {
+                "x": 0,
+                "y": 53,
+                "width": 1024,
+                "height": 653
+              }
+            },
+            {
+              "id": "3C592D5D-95EC-4C6E-B1C7-248497232654",
+              "elementType": "58",
+              "value": "",
+              "label": "tauri-macos-ui-8OCYWl - Tauri Explorer",
+              "title": "",
+              "selected": "false",
+              "enabled": "true",
+              "hittable": "true",
+              "rect": {
+                "x": 0,
+                "y": 53,
+                "width": 1024,
+                "height": 653
+              }
+            },
+            {
+              "id": "040389B5-2DD5-4B61-BFA3-F9E7C5C216B5",
+              "elementType": "75",
+              "value": "",
+              "label": "",
+              "title": "",
+              "selected": "true",
+              "enabled": "true",
+              "hittable": "true",
+              "rect": {
+                "x": 241,
+                "y": 169,
+                "width": 782,
+                "height": 32
+              }
+            }
+          ]
+        },
+        "rows": 5,
+        "cells": 5,
+        "tablePdf": 1,
+        "paletteInputs": 0
+      }
+    },
+    {
+      "name": "01-fit-page-1",
+      "result": {
+        "viewport": {
+          "x": 745,
+          "y": 241,
+          "width": 279,
+          "height": 371
+        },
+        "landmark": {
+          "pixels": 756,
+          "pixelScale": 1,
+          "x": 871,
+          "y": 414,
+          "width": 28,
+          "height": 27,
+          "cx": 885,
+          "cy": 427.5
+        }
+      }
+    },
+    {
+      "name": "02-centered-130-percent",
+      "result": {
+        "viewport": {
+          "x": 745,
+          "y": 241,
+          "width": 279,
+          "height": 371
+        },
+        "landmark": {
+          "pixels": 1296,
+          "pixelScale": 1,
+          "x": 867,
+          "y": 409,
+          "width": 36,
+          "height": 36,
+          "cx": 885,
+          "cy": 427
+        }
+      }
+    },
+    {
+      "name": "03-page-2",
+      "result": {
+        "viewport": {
+          "x": 745,
+          "y": 241,
+          "width": 279,
+          "height": 371
+        },
+        "landmark": {
+          "pixels": 400,
+          "pixelScale": 1,
+          "x": 875,
+          "y": 417,
+          "width": 20,
+          "height": 20,
+          "cx": 885,
+          "cy": 427
+        }
+      }
+    },
+    {
+      "name": "03-page-3",
+      "result": {
+        "viewport": {
+          "x": 745,
+          "y": 241,
+          "width": 279,
+          "height": 371
+        },
+        "landmark": {
+          "pixels": 1056,
+          "pixelScale": 1,
+          "x": 869,
+          "y": 411,
+          "width": 33,
+          "height": 32,
+          "cx": 885.5,
+          "cy": 427
+        }
+      }
+    },
+    {
+      "name": "04-returned-page-2",
+      "result": {
+        "viewport": {
+          "x": 745,
+          "y": 241,
+          "width": 279,
+          "height": 371
+        },
+        "landmark": {
+          "pixels": 400,
+          "pixelScale": 1,
+          "x": 875,
+          "y": 417,
+          "width": 20,
+          "height": 20,
+          "cx": 885,
+          "cy": 427
+        }
+      }
+    },
+    {
+      "name": "04-returned-page-1",
+      "result": {
+        "viewport": {
+          "x": 745,
+          "y": 241,
+          "width": 279,
+          "height": 371
+        },
+        "landmark": {
+          "pixels": 756,
+          "pixelScale": 1,
+          "x": 871,
+          "y": 414,
+          "width": 28,
+          "height": 27,
+          "cx": 885,
+          "cy": 427.5
+        }
+      }
+    },
+    {
+      "name": "05-before-pan-400-percent",
+      "result": {
+        "viewport": {
+          "x": 745,
+          "y": 241,
+          "width": 279,
+          "height": 371
+        },
+        "landmark": {
+          "pixels": 12996,
+          "pixelScale": 1,
+          "x": 828,
+          "y": 370,
+          "width": 114,
+          "height": 114,
+          "cx": 885,
+          "cy": 427
+        }
+      }
+    },
+    {
+      "name": "06-after-native-pan",
+      "result": {
+        "viewport": {
+          "x": 745,
+          "y": 241,
+          "width": 279,
+          "height": 371
+        },
+        "landmark": {
+          "pixels": 12996,
+          "pixelScale": 1,
+          "x": 788,
+          "y": 340,
+          "width": 114,
+          "height": 114,
+          "cx": 845,
+          "cy": 397
+        }
+      }
+    },
+    {
+      "name": "07-reset-fit",
+      "result": {
+        "viewport": {
+          "x": 745,
+          "y": 241,
+          "width": 279,
+          "height": 371
+        },
+        "landmark": {
+          "pixels": 756,
+          "pixelScale": 1,
+          "x": 871,
+          "y": 414,
+          "width": 28,
+          "height": 27,
+          "cx": 885,
+          "cy": 427.5
+        }
+      }
+    },
+    {
+      "name": "08-fullscreen",
+      "result": {
+        "viewport": {
+          "x": 0,
+          "y": 93,
+          "width": 1024,
+          "height": 613
+        },
+        "landmark": {
+          "pixels": 2450,
+          "pixelScale": 1,
+          "x": 488,
+          "y": 375,
+          "width": 49,
+          "height": 50,
+          "cx": 512.5,
+          "cy": 400
+        }
+      }
+    },
+    {
+      "name": "09-exit-fullscreen",
+      "result": {
+        "viewport": {
+          "x": 745,
+          "y": 241,
+          "width": 279,
+          "height": 371
+        },
+        "landmark": {
+          "pixels": 756,
+          "pixelScale": 1,
+          "x": 871,
+          "y": 414,
+          "width": 28,
+          "height": 27,
+          "cx": 885,
+          "cy": 427.5
+        }
+      }
+    }
+  ],
+  "passed": false,
+  "error": "Error: Can't call getLocation on element with selector \"-ios predicate string:elementType == 9 AND (label == 'Go up one level' OR title == 'Go up one level')\" because element wasn't found"
+}

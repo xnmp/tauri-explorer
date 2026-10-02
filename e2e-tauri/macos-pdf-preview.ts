@@ -245,14 +245,17 @@ export async function qualifyMacosPdf(browser: Browser, fixture: string, output:
       return current.width < large.width - 100 && current.height < large.height - 50;
     }, { timeout: 15_000, timeoutMsg: "owned Mac window did not become narrower and shorter" });
     const narrow = await rect(window);
-    const up100 = await rect(await button("Go up one level"));
+    // Responsive navigation hides its buttons in a narrow pane. The fixture
+    // retains the fixed-size New Tab control under the normal root CSS zoom.
+    const anchor100 = await rect(await button("New tab"));
     await command("Zoom In");
-    const at110 = await rect(await button("Go up one level"));
+    const anchor110 = await rect(await button("New tab"));
     for (let count = 0; count < 4; count++) await command("Zoom In");
-    const at150 = await rect(await button("Go up one level"));
-    near(at150.width / up100.width, 1.5, 0.08, "actual application zoom from 100% to 150%");
-    near(at150.width / at110.width, 150 / 110, 0.08, "actual application 150% magnification");
-    record("narrow-native-window-and-app-zoom", { large, narrow, at110, at150, up100 });
+    const anchor150 = await rect(await button("New tab"));
+    near(anchor150.width / anchor100.width, 1.5, 0.08, "actual application zoom from 100% to 150%");
+    near(anchor150.width / anchor110.width, 150 / 110, 0.08, "actual application 150% magnification");
+    near(anchor150.height / anchor100.height, 1.5, 0.08, "actual application vertical zoom from 100% to 150%");
+    record("narrow-native-window-and-app-zoom", { large, narrow, anchor: "New tab", anchor110, anchor150, anchor100 });
     for (const dock of ["Right", "Top", "Bottom"]) {
       await command(`Dock Preview Pane ${dock}`);
       const result = await rendered(`10-narrow-150-${dock.toLowerCase()}`, 1, result => fitted(result, 1, 1.5));

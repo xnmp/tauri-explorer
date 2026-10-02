@@ -57,6 +57,29 @@ The harness compares XML/XPath with native XCTest predicates and debug descripti
 
 Pixel qualification then failed because the harness treated `macos: screenshots` as an array. The actual pinned4.2.0 response is a dictionary keyed by display ID, confirmed in the retained driver log and [the pinned upstream implementation](https://github.com/appium/appium-mac2-driver/blob/v4.2.0/WebDriverAgentMac/WebDriverAgentLib/Commands/FBScreenshotCommands.m). The harness now selects the measured ID from that dictionary and requires matching identity, main-display status and a nonempty payload before the unchanged calibrated pixel oracle. The full Mac outcome remains pending. [Native run37001395978](https://github.com/xnmp/tauri-explorer/actions/runs/37001395978) passed both Linux and Windows smoke jobs, including hosted verification of the preview-resize baseline correction.
 
+## Partial production macOS pixel outcomes
+
+[Hosted run37044383860](https://github.com/xnmp/tauri-explorer/actions/runs/37044383860)
+verified eleven actual pixel outcomes: centered fit and130% document zoom,
+mixed-size page navigation/return,400% native dragging, reset, fullscreen and
+exit. Production checkout `74e6d223853759e0d25e036e0eb4e65234fe95f5` built
+binary SHA-256 `56a62fa1c509db91a7bcee7ed0350dc05a1bcee86bdac49697c0fce2b4ea6110`.
+[Reports and exact provenance](pdf-preview-2026-10-02/macos/) and eleven
+unedited screenshots under the branch's `macos/` directory retain this partial
+evidence.
+
+The owned window was successfully resized. The subsequent app-zoom measurement
+failed because NavigationBar's400px container rule hides its Up button in the
+narrow pane. The corrected harness measures the fixture's fixed30px New Tab
+control under normal root CSS zoom, preserving the100→150 and110→150 width
+ratios and adding a height ratio. All PDF pixel/dock/error/replacement/source
+assertions remain required.
+
+This run did not reach150% app-zoom/dock outcomes, error/image replacement or
+the final unchanged-source assertion. The recorded initial fixture hash is not
+final source-preservation proof. The overall run and #730 platform acceptance
+remain incomplete.
+
 ## Screenshot captions
 
 Actual captures live under `screenshots/fix/728-zooming-in-pdf-in-preview-isnt-centred/`; representative unchanged copies are in `evidence/pdf-preview/`. Linux captures use the light theme on the private output at 125%; Windows captures use the light theme on the disposable hosted display at device pixel ratio 1. Filename suffixes specify app zoom; unspecified screenshots use 150% app zoom. The Windows screenshots demonstrate the same corresponding outcomes described below.

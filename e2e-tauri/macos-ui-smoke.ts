@@ -5,6 +5,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { remote, type Browser } from "webdriverio";
+import { qualifyMacosPdf } from "./macos-pdf-preview";
 
 const RUN_ID = `${new Date().toISOString().replace(/[:.]/g, "-")}-${randomUUID().slice(0, 8)}`;
 const OUTPUT = path.resolve("qualification-results/macos-native-ui", RUN_ID);
@@ -44,6 +45,7 @@ async function run(): Promise<void> {
     initialChildVisible: false,
     navigatedParentVisible: false,
     childAbsentAfterNavigation: false,
+    pdfPreviewPassed: false,
     screenshot: path.join(OUTPUT, "navigated-parent.png"),
     error: null as string | null,
     passed: false,
@@ -51,7 +53,10 @@ async function run(): Promise<void> {
   let browser: Browser | undefined;
   let fixture: string | undefined;
   try {
-    if (process.platform !== "darwin") throw new Error("macOS UI qualification requires macOS");
+    if (process.platform !== "darwin" || process.env.GITHUB_ACTIONS !== "true" ||
+      process.env.RUNNER_ENVIRONMENT !== "github-hosted") {
+      throw new Error("macOS UI qualification requires a disposable hosted Mac runner");
+    }
     report.sourceCommit = git("rev-parse HEAD");
     if (git("status --porcelain")) throw new Error("macOS UI qualification requires clean source");
     if (!fs.existsSync(binary) || !fs.existsSync(builtBinary) || sha256(binary) !== sha256(builtBinary)) {
@@ -128,8 +133,10 @@ async function run(): Promise<void> {
     report.childAbsentAfterNavigation = true;
     fs.writeFileSync(path.join(OUTPUT, "final-page-source.xml"), await browser.getPageSource());
     await browser.saveScreenshot(report.screenshot);
-    report.passed = fs.statSync(report.screenshot).size > 1_000;
-    if (!report.passed) throw new Error("native screenshot is empty");
+    if (fs.statSync(report.screenshot).size <= 1_000) throw new Error("native screenshot is empty");
+    await qualifyMacosPdf(browser, fixture, OUTPUT);
+    report.pdfPreviewPassed = true;
+    report.passed = true;
   } catch (error) {
     report.error = String(error);
     if (browser) {

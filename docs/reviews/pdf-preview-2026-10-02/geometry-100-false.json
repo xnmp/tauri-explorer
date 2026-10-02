@@ -1,6 +1,12 @@
 {
   "appZoom": 100,
-  "outputScale": 1.25,
+  "nativeMetrics": {
+    "devicePixelRatio": 2,
+    "innerHeight": 970,
+    "outerWidth": 1596,
+    "innerWidth": 1596,
+    "outerHeight": 970
+  },
   "fullscreen": false,
   "centered": {
     "cx": 1456.546875,

@@ -713,16 +713,17 @@ async function capture(name: string) {
         );
         const layout = await browser.execute(() => {
           const pane = document.querySelector(".preview-pane")!.getBoundingClientRect();
+          const explorer = document.querySelector(".pane-container")!.getBoundingClientRect();
           const viewport = document.querySelector(".pdf-viewport")!.getBoundingClientRect();
           const controls = Array.from(document.querySelectorAll(".pdf-controls button")).map(button => {
             const rect = button.getBoundingClientRect();
             return { label: button.getAttribute("aria-label") ?? button.textContent, x: rect.x, y: rect.y, right: rect.right, bottom: rect.bottom, width: rect.width, height: rect.height };
           });
-          return { pane: { x: pane.x, y: pane.y, right: pane.right, bottom: pane.bottom }, viewport: { width: viewport.width, height: viewport.height }, window: { width: innerWidth, height: innerHeight }, controls };
+          return { pane: { x: pane.x, y: pane.y, right: pane.right, bottom: pane.bottom }, explorer: { x: explorer.x, y: explorer.y, right: explorer.right, bottom: explorer.bottom }, viewport: { width: viewport.width, height: viewport.height }, window: { width: innerWidth, height: innerHeight }, controls };
         });
-        if (dock === "Right") expect(layout.pane.x).toBeGreaterThan(layout.window.width / 2);
-        else if (dock === "Top") expect(layout.pane.y).toBeLessThan(layout.window.height / 2);
-        else expect(layout.pane.y).toBeGreaterThan(layout.window.height / 2);
+        if (dock === "Right") expect(layout.pane.x).toBeGreaterThanOrEqual(layout.explorer.right - 1);
+        else if (dock === "Top") expect(layout.pane.bottom).toBeLessThanOrEqual(layout.explorer.y + 1);
+        else expect(layout.pane.y).toBeGreaterThanOrEqual(layout.explorer.bottom - 1);
         expect(layout.viewport.width).toBeLessThan(layout.window.width);
         expect(layout.viewport.height).toBeLessThan(layout.window.height);
         expect(layout.controls.length).toBeGreaterThan(0);

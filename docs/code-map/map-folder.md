@@ -33,6 +33,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `EntryCell.svelte` — shared List/Tiles gridcell with roving focus, selection semantics and drag-drop interactions.
 - `EntryName.svelte` — shared inline rename input/display across all views.
 - `FileIcon.svelte` — file/folder icon resolution (Material/nerd-font theme); also renders the linked-folder and git-repo-folder badge overlays (all themes, all 3 view modes since it's the shared icon renderer).
+- `KeybindingsDialog.svelte` — dedicated lazy-loaded Keyboard Shortcuts configuration surface; reuses KeybindingsSettings and shared modal ownership, with viewport/zoom bounded card sizing (#758).
 - `ThumbnailImage.svelte` — lazy image/video thumbnail loader w/ cache + intersection. `decoding="async"` on both `<img>`s; no loading spinner (a continuous CSS animation on many concurrently-loading tiles cost a doubled long-frame rate on WebKitGTK, #593 — static SVG placeholder instead). Hot.
 - `VideoIndicator.svelte` — passive, contrast-backed video type badge shared by Tiles and Preview Pane; remains present during loading and frame extraction failure (#823).
 - `FolderThumbnail.svelte` — Windows-style folder preview tile (up to 3 nested images, #146).

@@ -44,6 +44,7 @@ function createDialogStore() {
   let jobsPanelOpen = $state(false);
   let themePickerOpen = $state(false);
   let shortcutsOpen = $state(false);
+  let keybindingsOpen = $state(false);
   let pickerConfig = $state<PickerConfig | null>(null);
   let userReportOpen = $state(false);
   let fileRecoveryOpen = $state(false);
@@ -105,6 +106,9 @@ function createDialogStore() {
     get isSettingsOpen() {
       return settingsOpen;
     },
+    get isKeybindingsOpen() {
+      return keybindingsOpen;
+    },
     get isContentSearchOpen() {
       return contentSearchOpen;
     },
@@ -157,7 +161,7 @@ function createDialogStore() {
 
     /** True when any modal dialog is open (file ops or overlays). */
     get hasModalOpen(): boolean {
-      return modalOwnership.hasOpen || shortcutsOpen || activeDialog !== null || quickOpenOpen || commandPaletteOpen || settingsOpen || contentSearchOpen || workspaceOpen || bulkRenameOpen || jobsPanelOpen || themePickerOpen || pickerConfig !== null || userReportOpen || fileRecoveryOpen;
+      return modalOwnership.hasOpen || shortcutsOpen || keybindingsOpen || activeDialog !== null || quickOpenOpen || commandPaletteOpen || settingsOpen || contentSearchOpen || workspaceOpen || bulkRenameOpen || jobsPanelOpen || themePickerOpen || pickerConfig !== null || userReportOpen || fileRecoveryOpen;
     },
 
     // Overlay dialog actions
@@ -178,7 +182,19 @@ function createDialogStore() {
     },
 
     openSettings(): void {
+      keybindingsOpen = false;
       settingsOpen = true;
+    },
+
+    openKeybindings(): void {
+      commandPaletteOpen = false;
+      shortcutsOpen = false;
+      settingsOpen = false;
+      keybindingsOpen = true;
+    },
+
+    closeKeybindings(): void {
+      keybindingsOpen = false;
     },
 
     openShortcuts(): void {
@@ -263,6 +279,7 @@ function createDialogStore() {
       modalOwnership.closeAll();
       shortcutsOpen = false;
       activeDialog = null;
+      keybindingsOpen = false;
       fileOperationSession = null;
       permanentDelete = false;
       targetEntry = null;

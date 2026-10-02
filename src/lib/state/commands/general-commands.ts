@@ -303,6 +303,18 @@ export const terminalCommands: Command[] = [
 /** General dialog commands */
 export const generalDialogCommands: Command[] = [
   {
+    id: "general.openSettings",
+    label: "Settings",
+    category: "general",
+    handler: () => dialogStore.openSettings(),
+  },
+  {
+    id: "general.openKeybindings",
+    label: "Keyboard Shortcuts",
+    category: "general",
+    handler: () => dialogStore.openKeybindings(),
+  },
+  {
     id: "general.fileRecovery",
     label: "File Recovery",
     category: "general",
@@ -328,7 +340,7 @@ export const generalDialogCommands: Command[] = [
   },
   {
     id: "help.shortcuts",
-    label: "Keyboard Shortcuts",
+    label: "Keyboard Shortcut Reference",
     category: "general",
     shortcut: "Ctrl+/",
     handler: () => {

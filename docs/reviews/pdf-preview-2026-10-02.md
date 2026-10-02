@@ -132,6 +132,31 @@ The fresh no-hooks production bundle passes main/startup limits at92706 and
 SHA256 is `600153b76044babcbcf90e3e125f487a6cd6beb92364e8746339de7b6e474074`.
 The task's actual final-dev all-view run remains due after video issue #970.
 
+The separate current-dev software-Sway PDF run now passes all **11 outcomes in
+53 seconds**, including actual packaged module-worker startup, zoom/pan at
+100% and 150% app zoom, mixed page sizes, links, resized docks, native blur,
+errors and departed-worker cleanup. Its rebuilt custom-protocol binary is
+`6252574db7d01540c94cb9c8e5e04f0d9182ce7f2081728e9abe9578eee1270a`.
+[Qualification, build and cleanup receipts](pdf-preview-2026-10-02/linux-current-dev/)
+record the exact combined source, unchanged harness identities, private
+display/D-Bus/XDG admission and zero surviving owned processes or ports.
+Sixteen fresh, unedited native captures replace the earlier Linux captures;
+representative copies remain in `evidence/pdf-preview/`.
+
+The fresh Mac run at PR head `5c4fa28471e96dcb22a15303d1987e35fa43380f`
+([37050480381](https://github.com/xnmp/tauri-explorer/actions/runs/37050480381))
+failed **before PDF selection**, so it does not qualify the corrected pixel
+oracle. After the command palette closed, native predicate and XPath discovery
+both omitted the PDF filename. The failure screenshot still shows all five
+fixture rows, while XCTest's native description and serialized accessibility
+tree expose only the selected `child` row. This distinguishes the failure from
+a blank or incorrectly rendered PDF without establishing whether the omission
+belongs to WebKit accessibility or XCTest's projection. The harness now owns
+file-list focus and uses Control+Home and individually acknowledged Down keys
+to select the exact requested filename. It retains every pixel, geometry,
+error, replacement and source-preservation assertion; fresh hosted execution
+is still required.
+
 ## Screenshot captions
 
 Actual captures live under `screenshots/fix/728-zooming-in-pdf-in-preview-isnt-centred/`; representative unchanged copies are in `evidence/pdf-preview/`. Linux captures use the light theme on the private output at 125%; Windows captures use the light theme on the disposable hosted display at device pixel ratio 1. Filename suffixes specify app zoom; unspecified screenshots use 150% app zoom. The Windows screenshots demonstrate the same corresponding outcomes described below.

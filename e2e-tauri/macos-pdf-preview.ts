@@ -119,9 +119,44 @@ export async function qualifyMacosPdf(browser: Browser, fixture: string, output:
     if (diagnose) await accessibilityProbe("ax-04-palette-closed");
   }
   async function select(name: string) {
-    const entry = await textElement(name);
-    await entry.waitForDisplayed({ timeout: 30_000 });
-    await entry.click();
+    const names = new Set(fs.readdirSync(fixture));
+    assert(names.size === 5 && names.has(name) && fs.statSync(path.join(fixture, "child")).isDirectory(),
+      "native selection requires the unchanged five-entry fixture");
+    const table = () => browser.$("-ios predicate string:elementType == 26 AND label == 'Files'");
+    async function selected() {
+      const collection = await table();
+      const cell = await collection.$("-ios predicate string:elementType == 75 AND selected == true");
+      const labels = await cell.$$("-ios predicate string:elementType == 48");
+      const matches: string[] = [];
+      for (const label of labels) {
+        const value = await label.getAttribute("value");
+        if (value && names.has(value)) matches.push(value);
+      }
+      assert(matches.length === 1, "selected native Files cell does not identify exactly one fixture entry");
+      return { name: matches[0], cell };
+    }
+    // Closing the palette can leave XCTest exposing only the selected row,
+    // despite all five rows remaining visible. Own collection focus and use
+    // real keyboard navigation; no coordinates or debounced typeahead.
+    const initial = await selected();
+    await initial.cell.click();
+    await browser.waitUntil(async () => (await (await table()).$(
+      "-ios predicate string:elementType == 75 AND amHasKeyboardInputFocus == true")).isExisting(),
+    { timeout: 15_000, timeoutMsg: "native file collection did not acquire keyboard focus" });
+    await key("XCUIKeyboardKeyHome", 1 << 2);
+    await browser.waitUntil(async () => (await selected()).name === "child",
+      { timeout: 15_000, timeoutMsg: "native Control+Home did not select the first fixture entry" });
+    for (let index = 0; index < names.size; index++) {
+      const current = await selected();
+      record("native-file-selection", { requested: name, index, selected: current.name });
+      if (current.name === name) return;
+      if (index + 1 === names.size) break;
+      // Send each key once, then acknowledge its outcome before advancing.
+      await key("XCUIKeyboardKeyDownArrow");
+      await browser.waitUntil(async () => (await selected()).name !== current.name,
+        { timeout: 15_000, timeoutMsg: `native Down did not advance selection from ${current.name}` });
+    }
+    throw new Error(`native keyboard selection did not reach ${name}`);
   }
   async function viewport(page: number) {
     const element = await browser.$(`-ios predicate string:label == '${pdfName}, PDF page ${page}'`);

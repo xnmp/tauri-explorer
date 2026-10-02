@@ -106,6 +106,8 @@ export interface MockControl {
   mountError?: string;
   /** Action hook: drop a drive from the fixture list to mimic an eject. */
   ejectDrive?: (path: string) => void;
+  /** Installed suitable applications for browser Open with acceptance. */
+  openWithApplications?: Array<{ id: string; name: string }>;
 
   // ----- Cross-cutting test instrumentation -----
   /** Per-command invocation counter, incremented by every `mockInvoke` call. */

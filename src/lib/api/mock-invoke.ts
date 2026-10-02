@@ -2672,6 +2672,13 @@ if (typeof window !== "undefined") {
   // ----- Commands that launch external processes (no-op in mock) -----
 
   open_file_with: () => {},
+  list_open_with_applications: () => getMockControl().openWithApplications ?? [
+    { id: "text-editor.desktop", name: "Text Editor" },
+    { id: "alternate-editor.desktop", name: "Alternate Editor" },
+  ],
+  open_file_with_application: (args) => {
+    localStorage.setItem("mock-open-with-launch", JSON.stringify(args));
+  },
 
   open_recycle_bin: () => {
     const error = localStorage.getItem(MOCK_LOCAL_KEYS.openRecycleBinError);

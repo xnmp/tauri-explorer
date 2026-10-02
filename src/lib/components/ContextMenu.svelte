@@ -4,6 +4,7 @@
   Issue: tauri-explorer-83z, tauri-explorer-1k9k
 -->
 <script lang="ts">
+  import { tick } from "svelte";
   import type { ExplorerInstance } from "$lib/state/explorer.svelte";
   import { contextMenuStore } from "$lib/state/context-menu.svelte";
   import { bookmarksStore } from "$lib/state/bookmarks.svelte";
@@ -20,6 +21,9 @@
   import { getZoomFactor, clientToFixed } from "$lib/domain/zoom";
   import type { ViewMode } from "$lib/state/types";
   import { contextMenuItems } from "$lib/state/context-menu-items.svelte";
+  import { openWithStore } from "$lib/state/open-with.svelte";
+  import { openWithUnavailableReason } from "$lib/domain/open-with";
+  import { isMac, isWindows } from "$lib/domain/platform";
 
   interface Props {
     explorer: ExplorerInstance;
@@ -172,6 +176,23 @@
     }
   }
 
+  function handleMenuKeydown(event: KeyboardEvent): void {
+    if (!menuEl) return;
+    const buttons = [...menuEl.querySelectorAll<HTMLButtonElement>("button.menu-item:not([disabled])")]
+      .filter(button => button.getClientRects().length > 0);
+    const index = buttons.indexOf(document.activeElement as HTMLButtonElement);
+    const next = event.key === "Home" ? 0 : event.key === "End" ? buttons.length - 1
+      : event.key === "ArrowDown" ? (index + 1) % buttons.length
+      : event.key === "ArrowUp" ? (index - 1 + buttons.length) % buttons.length : null;
+    if (next !== null && buttons[next]) {
+      event.preventDefault();
+      buttons[next].focus();
+    } else if ((event.key === "Enter" || event.key === " ") && index >= 0) {
+      event.preventDefault();
+      buttons[index].click();
+    }
+  }
+
   const ARCHIVE_EXTENSIONS = new Set(["zip", "jar", "war", "ear"]);
 
   const selectedArchive = $derived.by((): FileEntry | null => {
@@ -217,6 +238,15 @@
     if (entries.length !== 1 || entries[0].kind !== "file") return null;
     return entries[0];
   });
+  const openWithReason = $derived(openWithUnavailableReason(explorer.getSelectedEntries(), isWindows ? "windows" : isMac ? "macos" : "linux"));
+
+  function handleOpenWith(): void {
+    if (openWithReason || !selectedFile) return;
+    const path = selectedFile.path;
+    recordActioned();
+    contextMenuStore.close();
+    void openWithStore.open(path);
+  }
 
   /** The single selected image file for wallpaper action */
   const selectedImage = $derived.by((): FileEntry | null => {
@@ -310,7 +340,7 @@
     // Measure after layout, clamp, then reveal.
     // Use offsetWidth/offsetHeight instead of getBoundingClientRect — the latter
     // returns the animated (scaled-down) size due to the menuIn animation.
-    requestAnimationFrame(() => {
+    requestAnimationFrame(async () => {
       if (!menuEl) return;
       // With CSS zoom, position:fixed coordinates are in CSS pixels but the
       // visible viewport shrinks. clientToFixed converts the viewport size
@@ -334,6 +364,11 @@
       clampedX = x;
       clampedY = y;
       menuVisible = true;
+      const visibleMenu = menuEl;
+      await tick();
+      if (menuEl === visibleMenu && menuEl.isConnected && contextMenuStore.isOpen && contextMenuStore.owner === explorer.contextMenuOwner && !menuEl.contains(document.activeElement)) {
+        menuEl.querySelector<HTMLButtonElement>("button.menu-item:not([disabled])")?.focus();
+      }
     });
   });
 </script>
@@ -373,6 +408,8 @@
     class="context-menu"
     style="left: {clampedX}px; top: {clampedY}px; visibility: {menuVisible ? 'visible' : 'hidden'};"
     role="menu"
+    tabindex="-1"
+    onkeydown={handleMenuKeydown}
   >
     {#if hasSelection}
       {#if selectedFile}
@@ -385,6 +422,12 @@
           <span>Open</span>
           <span class="shortcut">Enter</span>
         </button>
+      {/if}
+      <button class="menu-item" onclick={handleOpenWith} role="menuitem" disabled={openWithReason !== null} title={openWithReason ?? undefined}>
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true"><rect x="2" y="2" width="12" height="12" rx="2" stroke="currentColor" stroke-width="1.25"/><path d="M5 8H11M8 5V11" stroke="currentColor" stroke-width="1.25" stroke-linecap="round"/></svg>
+        <span>Open with…</span>
+      </button>
+      {#if selectedFile}
         {#if selectedImage}
           <button class="menu-item" onclick={handleSetAsWallpaper} role="menuitem">
             <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
@@ -777,6 +820,7 @@
     box-shadow: var(--shadow-flyout);
     animation: menuIn 100ms cubic-bezier(0, 0, 0, 1);
   }
+  .menu-item:focus-visible { outline: 2px solid var(--focus-stroke-outer); outline-offset: -2px; }
 
   @keyframes menuIn {
     from {

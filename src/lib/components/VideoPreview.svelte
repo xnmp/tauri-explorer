@@ -96,7 +96,7 @@
 
 <!-- svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_noninteractive_element_interactions -- focusable media group owns playback shortcuts; its controls retain native input behavior. -->
 <div class="video-preview" role="group" aria-label="Video player for {name}" tabindex="0" onkeydown={onKey}>
-  <div class="video-stage">
+  <div class="video-stage" class:failed={!!error}>
     <video bind:this={video} src={source?.url} preload="metadata" playsinline aria-label="Video preview of {name}"
       onloadedmetadata={sync} onloadeddata={sync} ondurationchange={sync} ontimeupdate={sync}
       onplay={sync} onpause={sync} onended={sync} onvolumechange={sync} onseeked={sync} onerror={mediaFailed}>
@@ -128,11 +128,12 @@
 </div>
 
 <style>
-  .video-preview {display:flex;flex-direction:column;width:100%;height:100%;min-width:0;min-height:0;overflow:hidden;}
-  .video-stage {position:relative;flex:1;min-height:0;overflow:hidden;background:var(--background-solid);}
+  .video-preview {display:flex;flex-direction:column;width:100%;height:100%;min-width:0;min-height:0;overflow:auto;container-type:inline-size;}
+  .video-stage {position:relative;flex:1;min-height:24px;overflow:hidden;background:var(--background-solid);}
+  .video-stage.failed {flex-shrink:0;min-height:96px;}
   video {display:block;width:100%;height:100%;object-fit:contain;}
-  .video-message {position:absolute;inset:0;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:8px;padding:12px;background:var(--background-solid);color:var(--text-secondary);text-align:center;font-size:var(--font-size-caption);}
-  .video-controls {display:grid;grid-template-columns:minmax(0,1fr) auto;gap:4px 8px;padding:4px 8px;border-top:1px solid var(--divider);background:var(--background-solid);}
+  .video-message {position:absolute;inset:0;display:flex;align-items:center;justify-content:safe center;flex-direction:column;gap:8px;padding:12px;overflow:auto;background:var(--background-solid);color:var(--text-secondary);text-align:center;font-size:var(--font-size-caption);}
+  .video-controls {display:grid;flex-shrink:0;grid-template-columns:minmax(0,1fr) auto;gap:4px 8px;padding:4px 8px;border-top:1px solid var(--divider);background:var(--background-solid);}
   .transport {grid-column:1 / -1;display:flex;align-items:center;gap:8px;min-width:0;}
   .video-time {font-size:var(--font-size-caption);font-variant-numeric:tabular-nums;white-space:nowrap;}
   .fullscreen-button {margin-left:auto;}
@@ -144,4 +145,8 @@
   button:disabled {opacity:0.4;cursor:default;}
   button:focus-visible,input:focus-visible,.video-preview:focus-visible {outline:2px solid var(--focus-stroke-outer);outline-offset:-2px;}
   input {accent-color:var(--accent);}
+  @container (min-width:440px) {
+    .video-controls {grid-template-columns:auto minmax(0,1fr) auto;}
+    .transport {grid-column:auto;}
+  }
 </style>

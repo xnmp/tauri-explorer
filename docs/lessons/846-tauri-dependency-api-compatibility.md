@@ -63,3 +63,19 @@ probe. Final admission also requires the full application's ignored native
 fixture after removing the diagnostic instrumentation.
 
 The Open With feature landed during the dependency merge and added another DesktopAppInfo construction path. Its launcher must also use gio_unix::DesktopAppInfo with GIO 0.22; the old gio namespace fails the actual locked cargo check before the native launch contracts can run.
+
+The final dependency admission also exposed a PDF test setup timeout. On the
+unchanged production tree, hosted WebKit job `111050049114` spent 24.3 seconds
+on thirty successful Zoom-in clicks; 22.8 seconds were mouse actionability
+waits. The pan and wheel-anchor outcomes passed before the final Fit action
+ran out of the existing 30-second deadline. A constrained local run reproduced
+that deadline exhaustion before setup finished.
+
+Keep normal pointer coverage for the initial Zoom-in action and the complete
+130% zoom case. For the 400% pan precondition, activate the focused native
+button with Enter after the first click and its 110% assertion. Playwright's
+[locator.press](https://playwright.dev/docs/api/class-locator#locator-press)
+sends real keyboard input; it does not inject zoom state. Retain the deadline,
+400% readiness, pointer pan/cancellation, 460% wheel anchor, Fit geometry and
+selected-file assertions. Paired controls cover headless WebKit, private
+headed WebKitGTK and Chromium with retries disabled.

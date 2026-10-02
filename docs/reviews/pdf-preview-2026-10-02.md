@@ -184,6 +184,30 @@ incorrectly required creation of the cancelled old worker; independent review
 corrected that oracle before the final passes. Proxy rendering is not native
 Mac qualification.
 
+## Native dock boundary correction
+
+[Mac run 37054032684](https://github.com/xnmp/tauri-explorer/actions/runs/37054032684)
+successfully selects the PDF through acknowledged native keys. It passes the
+previous eleven production pixel outcomes, actual 150% application zoom,
+window resize, narrow-right fit and all six visible controls. It then fails
+the test's right-dock midpoint assertion, before top/bottom and replacement
+qualification. [Actual reports and failure geometry](pdf-preview-2026-10-02/macos-2c56/)
+retain this partial result; it is not a full Mac pass.
+
+The visible listing spans x360–385 and the preview x385–804. The native resize
+splitter marks x385, while the inner Explorer pane reports width360 because
+its 240-CSS-pixel minimum is intentionally scrolled inside a clipped outer
+container at app150%. The old midpoint x540 therefore does not identify the
+listing/preview boundary. Independent source and screenshot review confirms
+this is a test measurement error. The native harness now checks the unique
+displayed resize splitter: vertical boundary and alignment for right;
+horizontal extent, boundary alignment and listing order for top/bottom. The
+top handle overlays the last six native pixels, so its bottom edge is the
+correct boundary. Sixteen imported-helper controls cover the actual failed
+geometry, cross-dock misclassification, disconnected rectangles, clipping and
+invalid coordinates. Pixel, fit, control visibility, page, replacement and
+source assertions remain intact. Fresh hosted execution is still required.
+
 ## Screenshot captions
 
 Actual captures live under `screenshots/fix/728-zooming-in-pdf-in-preview-isnt-centred/`; representative unchanged copies are in `evidence/pdf-preview/`. Linux captures use the light theme on the private output at 125%; Windows captures use the light theme on the disposable hosted display at device pixel ratio 1. Filename suffixes specify app zoom; unspecified screenshots use 150% app zoom. The Windows screenshots demonstrate the same corresponding outcomes described below.

@@ -16,6 +16,35 @@ const assert = (condition: boolean, message: string): void => { if (!condition) 
 const near = (actual: number, expected: number, tolerance: number, message: string) =>
   assert(Math.abs(actual - expected) <= tolerance, `${message}: observed ${actual}, expected ${expected} ± ${tolerance}`);
 
+/** Native splitter coordinates identify the clipped listing/preview boundary.
+ * ExplorerPane's inner minimum width can overflow its scroll viewport. */
+export function nativePdfDockError(dock: "Right" | "Top" | "Bottom", viewport: Rect,
+  splitter: Rect, listing: Rect, window: Rect): string | null {
+  const rects = [viewport, splitter, listing, window];
+  if (rects.some(rect => !Object.values(rect).every(Number.isFinite) || rect.width <= 0 || rect.height <= 0))
+    return "Invalid native dock geometry";
+  const within = (rect: Rect) => rect.x >= window.x - 2 && rect.y >= window.y - 2
+    && rect.x + rect.width <= window.x + window.width + 2
+    && rect.y + rect.height <= window.y + window.height + 2;
+  if (!within(viewport) || !within(splitter)) return "Native PDF or splitter extends outside its window";
+  if (dock === "Right") {
+    if (splitter.height <= splitter.width * 5 || Math.abs(viewport.x - splitter.x) > 2
+      || listing.x >= splitter.x - 1 || viewport.x + viewport.width <= splitter.x + splitter.width
+      || viewport.y < splitter.y - 2 || viewport.y + viewport.height > splitter.y + splitter.height + 2)
+      return "Right dock does not share a vertical boundary after the listing";
+  } else {
+    if (splitter.width <= splitter.height * 5) return `${dock} dock has no horizontal boundary`;
+    if (Math.abs(viewport.x - splitter.x) > 2
+      || Math.abs(viewport.x + viewport.width - splitter.x - splitter.width) > 2)
+      return `${dock} PDF does not span its horizontal boundary`;
+    if (dock === "Top" && (Math.abs(viewport.y + viewport.height - splitter.y - splitter.height) > 2
+      || listing.y < splitter.y + splitter.height - 2)) return "Top dock is not above the listing boundary";
+    if (dock === "Bottom" && (viewport.y < splitter.y + splitter.height - 2
+      || listing.y >= splitter.y - 1)) return "Bottom dock is not below the listing boundary";
+  }
+  return null;
+}
+
 export function prepareMacosPdfFixtures(fixture: string): void {
   fs.copyFileSync("src/lib/api/fixtures/preview-landmarks.pdf", path.join(fixture, PDF_FILES.pdf));
   fs.writeFileSync(path.join(fixture, PDF_FILES.corrupt), "%PDF-1.7\ninvalid object stream\n");
@@ -306,10 +335,13 @@ export async function qualifyMacosPdf(browser: Browser, fixture: string, output:
         record(`${dock}-control-${label}`, bounds);
       }
       const content = await rect(await browser.$("-ios predicate string:label == 'file browser pane'"));
-      const region = result.viewport;
-      if (dock === "Right") assert(region.x > content.x + content.width / 2, "Right dock is not on the right");
-      if (dock === "Top") assert(region.y < content.y + content.height / 2, "Top dock is not above the list");
-      if (dock === "Bottom") assert(region.y > content.y + content.height / 2, "Bottom dock is not below the list");
+      const splitters = await browser.$$("-ios predicate string:elementType == 65 AND label == 'Resize preview'");
+      assert(await splitters.length === 1 && await splitters[0].isDisplayed(), "native preview boundary is missing or ambiguous");
+      const splitter = await rect(splitters[0]);
+      const placement = { viewport: result.viewport, splitter, listing: content, window: narrow };
+      record(`${dock}-native-dock-boundary`, placement);
+      const dockError = nativePdfDockError(dock as "Right" | "Top" | "Bottom", result.viewport, splitter, content, narrow);
+      assert(dockError === null, dockError ?? "Invalid native PDF dock");
       await (await button("Next PDF page")).click();
       await rendered(`11-narrow-${dock.toLowerCase()}-page-2`, 2, result => fitted(result, 2, 1.5));
       await (await button("Previous PDF page")).click();

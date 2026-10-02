@@ -5,37 +5,36 @@
 //! `parse_applescript_png` decodes. The parser also compiles in tests on
 //! every platform so it stays covered off-Mac.
 //!
-//! Cut ownership (#877): a file write declares `NSFilenamesPboardType` (what
-//! Finder pastes, as `clipboard-rs` wrote it before) and a private type that
-//! carries the write's token, in one pasteboard ownership change. The
-//! `changeCount` is then read around a read-back of the files and token
-//! (`change_counter.rs`); the write owns the pasteboard while the count is
-//! unchanged, so any later write by any program ends it.
+//! Cut ownership (#877): one prepared pasteboard batch carries a file-URL
+//! item per path, with the write's private token on its first item. This
+//! matches clipboard-rs 0.3's NSURL reader. `changeCount` is then read
+//! around a read-back of the files and token (`change_counter.rs`); the
+//! write owns the pasteboard while the count is
+//! unchanged; an external pasteboard replacement ends that ownership.
 
 #[cfg(target_os = "macos")]
 pub(super) use platform::{backend, reader};
 
 #[cfg(target_os = "macos")]
 mod platform {
-    use super::parse_applescript_png;
+    use super::{parse_applescript_png, valid_file_paths};
     use crate::clipboard::backend::{
         ClipboardBackend, ClipboardOperation, ClipboardReader, SelectionOwner,
     };
     use crate::clipboard::change_counter::CounterOwnership;
     use crate::error::AppError;
     use objc2::rc::{autoreleasepool, Retained};
-    // Deprecated in favour of one file-URL item per file, but it is what
-    // Finder pastes and what `clipboard-rs` writes and reads (`get_files`).
-    #[allow(deprecated)]
-    use objc2_app_kit::NSFilenamesPboardType;
-    use objc2_app_kit::NSPasteboard;
-    use objc2_foundation::{NSArray, NSData, NSString};
+    use objc2::runtime::ProtocolObject;
+    use objc2_app_kit::{
+        NSPasteboard, NSPasteboardItem, NSPasteboardTypeFileURL, NSPasteboardWriting,
+    };
+    use objc2_foundation::{NSArray, NSData, NSString, NSURL};
     use std::process::Command;
 
     /// The private pasteboard type that carries a write's token. The change
     /// count, not the type, proves ownership; the token proves that the count
     /// observed after the write names this write.
-    const TOKEN_TYPE: &str = "io.github.xnmp.tauri-explorer.file-clipboard-token";
+    pub(super) const TOKEN_TYPE: &str = "io.github.xnmp.tauri-explorer.file-clipboard-token";
 
     pub(in crate::clipboard) fn backend() -> Box<dyn ClipboardBackend> {
         Box::new(MacFileClipboard::default())
@@ -63,28 +62,40 @@ mod platform {
         autoreleasepool(|_| NSPasteboard::generalPasteboard().changeCount() as i64)
     }
 
-    /// Replace the general pasteboard with `paths` plus `token`, in one
-    /// ownership change. Returns whether both types were written.
-    #[allow(deprecated)] // NSFilenamesPboardType, as imported above.
+    /// Publish prepared file-URL items together with their private token.
+    /// Preparing the representations first keeps the token and files in the
+    /// same writeObjects batch, rather than adding a token to a later writer.
     fn write_pasteboard(paths: &[String], token: &str) -> (bool, bool) {
         autoreleasepool(|_| {
+            let items: Option<Vec<Retained<NSPasteboardItem>>> = paths
+                .iter()
+                .map(|path| {
+                    let url = NSURL::fileURLWithPath(&NSString::from_str(path));
+                    let url = url.absoluteString()?;
+                    let item = NSPasteboardItem::new();
+                    // SAFETY: the pasteboard type is an immutable AppKit constant.
+                    item.setString_forType(&url, unsafe { NSPasteboardTypeFileURL })
+                        .then_some(item)
+                })
+                .collect();
+            let Some(items) = items else {
+                return (false, false);
+            };
+            let Some(first) = items.first() else {
+                return (false, false);
+            };
+            let wrote_token = first.setData_forType(
+                &NSData::with_bytes(token.as_bytes()),
+                &NSString::from_str(TOKEN_TYPE),
+            );
+            let objects: Vec<Retained<ProtocolObject<dyn NSPasteboardWriting>>> = items
+                .into_iter()
+                .map(ProtocolObject::from_retained)
+                .collect();
             let pasteboard = NSPasteboard::generalPasteboard();
-            let token_type = NSString::from_str(TOKEN_TYPE);
-            let files: Vec<Retained<NSString>> =
-                paths.iter().map(|path| NSString::from_str(path)).collect();
-            let files = NSArray::from_retained_slice(&files);
-            // SAFETY: `NSFilenamesPboardType` is an immutable AppKit constant;
-            // no owner object is passed; the property list is an array of
-            // strings, which is what this type holds.
-            unsafe {
-                let filenames = NSFilenamesPboardType;
-                pasteboard
-                    .declareTypes_owner(&NSArray::from_slice(&[filenames, &token_type]), None);
-                let wrote_files = pasteboard.setPropertyList_forType(&files, filenames);
-                let wrote_token = pasteboard
-                    .setData_forType(Some(&NSData::with_bytes(token.as_bytes())), &token_type);
-                (wrote_files, wrote_token)
-            }
+            pasteboard.clearContents();
+            let wrote_files = pasteboard.writeObjects(&NSArray::from_retained_slice(&objects));
+            (wrote_files, wrote_token)
         })
     }
 
@@ -109,15 +120,18 @@ mod platform {
             _operation: ClipboardOperation,
             token: &str,
         ) -> Result<(), AppError> {
-            if paths.is_empty() {
-                return Err(AppError::InvalidPath("No paths to copy".into()));
+            if !valid_file_paths(paths) {
+                return Err(AppError::InvalidPath(
+                    "Clipboard file paths must be nonempty, absolute and contain no NUL bytes"
+                        .into(),
+                ));
             }
             let (wrote_files, wrote_token) = write_pasteboard(paths, token);
             if !wrote_files {
                 return Err(AppError::Other("Mac clipboard write failed".into()));
             }
-            // The token alone would survive another program adding its data
-            // to our declared types; the files must read back as well.
+            // Accept ownership only when both the private token and the
+            // ordered file list read back at a stable change count.
             let before = Some(change_count());
             let files_read_back = self.read_files().is_ok_and(|files| files == paths);
             let read_back = read_token().filter(|_| wrote_token && files_read_back);
@@ -131,8 +145,8 @@ mod platform {
             self.ownership.owner_token(Some(change_count()))
         }
 
-        /// The change count identifies the pasteboard's content, which is what
-        /// a failed Copy mirror compares.
+        /// The change count identifies the ownership generation, which is
+        /// what a failed Copy mirror compares.
         fn selection_owner(&mut self) -> SelectionOwner {
             SelectionOwner::Known(change_count().unsigned_abs())
         }
@@ -210,6 +224,16 @@ mod platform {
     }
 }
 
+// NSURL resolves relative and empty paths against the working directory.
+// Reject those inputs before the writer can replace the current clipboard.
+#[cfg(any(target_os = "macos", test))]
+fn valid_file_paths(paths: &[String]) -> bool {
+    !paths.is_empty()
+        && paths
+            .iter()
+            .all(|path| path.starts_with('/') && !path.contains('\0'))
+}
+
 /// Parse osascript's «data PNGf<hex>» output into PNG bytes.
 fn parse_applescript_png(text: &str) -> Option<Vec<u8>> {
     let tag = "\u{ab}data PNGf"; // «data PNGf
@@ -235,7 +259,22 @@ fn parse_applescript_png(text: &str) -> Option<Vec<u8>> {
 
 #[cfg(test)]
 mod tests {
-    use super::parse_applescript_png;
+    use super::{parse_applescript_png, valid_file_paths};
+
+    #[test]
+    fn file_paths_require_an_absolute_nonempty_nul_free_selection() {
+        assert!(valid_file_paths(&[
+            "/tmp/cut me é.txt".into(),
+            "/tmp/100% #?.md".into()
+        ]));
+        assert!(!valid_file_paths(&[]));
+        for invalid in ["", "relative.txt", "/tmp/nul\0.txt"] {
+            assert!(!valid_file_paths(&[
+                "/tmp/valid.txt".into(),
+                invalid.into()
+            ]));
+        }
+    }
 
     #[test]
     fn applescript_png_parses_hex_dump() {
@@ -263,8 +302,11 @@ mod tests {
 // cargo test --lib native_clipboard_ownership -- --ignored
 #[cfg(all(test, target_os = "macos"))]
 mod native_clipboard_tests {
-    use super::platform::backend;
+    use super::platform::{backend, TOKEN_TYPE};
     use crate::clipboard::backend::ClipboardOperation;
+    use objc2::rc::autoreleasepool;
+    use objc2_app_kit::{NSPasteboard, NSPasteboardTypeFileURL};
+    use objc2_foundation::{NSString, NSURL};
 
     #[test]
     #[ignore = "replaces the macOS pasteboard"]
@@ -288,8 +330,45 @@ mod native_clipboard_tests {
             .write_files(&paths, ClipboardOperation::Cut, &first)
             .unwrap();
         assert_eq!(backend.owner_token(), Some(first.clone()));
-        assert_eq!(backend.read_files().unwrap(), paths, "Finder's file list");
+        // Inspect the published wire representation, not just our reader:
+        // each ordered item is a real file URL and only the first carries
+        // the private nonce. Reserved filename characters stay in the path.
+        autoreleasepool(|_| {
+            let items = NSPasteboard::generalPasteboard().pasteboardItems().unwrap();
+            assert_eq!(items.len(), paths.len());
+            for (index, (item, path)) in items.iter().zip(&paths).enumerate() {
+                // SAFETY: this is AppKit's immutable public file-URL type.
+                let encoded = item
+                    .stringForType(unsafe { NSPasteboardTypeFileURL })
+                    .unwrap();
+                let url = NSURL::URLWithString(&encoded).unwrap();
+                assert!(url.isFileURL());
+                assert_eq!(url.path().unwrap().to_string(), *path);
+                assert!(url.query().is_none());
+                assert!(url.fragment().is_none());
+                assert_eq!(
+                    item.dataForType(&NSString::from_str(TOKEN_TYPE))
+                        .map(|data| data.to_vec()),
+                    (index == 0).then(|| first.as_bytes().to_vec()),
+                );
+            }
+        });
+        assert_eq!(backend.read_files().unwrap(), paths, "native file list");
         assert_eq!(backend.owner_token(), Some(first), "reads keep ownership");
+
+        // Invalid paths must fail before publication and preserve our lease.
+        for invalid in [
+            vec![],
+            vec![String::new()],
+            vec!["relative.txt".into()],
+            vec!["/tmp/nul\0.txt".into()],
+        ] {
+            assert!(backend
+                .write_files(&invalid, ClipboardOperation::Copy, "invalid")
+                .is_err());
+            assert_eq!(backend.owner_token(), Some("a".repeat(32)));
+            assert_eq!(backend.read_files().unwrap(), paths);
+        }
 
         let second = "b".repeat(32);
         backend
@@ -307,6 +386,11 @@ mod native_clipboard_tests {
                 .unwrap();
         }
         assert_eq!(backend.owner_token(), None);
+        autoreleasepool(|_| {
+            assert!(NSPasteboard::generalPasteboard()
+                .dataForType(&NSString::from_str(TOKEN_TYPE))
+                .is_none());
+        });
         assert_ne!(backend.selection_owner(), owner_before);
         assert_eq!(backend.read_files().unwrap(), paths);
     }

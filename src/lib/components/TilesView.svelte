@@ -13,7 +13,8 @@
   import { useRowGridView } from "$lib/composables/use-row-grid-view.svelte";
   import { windowTabsManager } from "$lib/state/window-tabs.svelte";
   import { autoFillColumns } from "$lib/domain/virtual-layout";
-  import { getFileIconColor, isImageFile, isVideoFile } from "$lib/domain/file-types";
+  import { getFileIconColor, isImageFile, isVideoFile, isVideoMediaFile } from "$lib/domain/file-types";
+  import VideoIndicator from "./VideoIndicator.svelte";
   import { createScrollJankMonitor } from "$lib/domain/scroll-jank-monitor";
   import { logFrontendDiagnostic } from "$lib/api/frontend-log";
 
@@ -179,6 +180,9 @@
               {:else}
                 <FileIcon {entry} size="large" />
               {/if}
+              {#if isVideoMediaFile(entry)}
+                <span class="video-thumbnail-marker"><VideoIndicator /></span>
+              {/if}
             </div>
             <span data-drag-name><EntryName {entry} {explorer} variant="tiles" /></span>
             <GitStatusBadge entryName={entry.name} />
@@ -292,12 +296,21 @@
   }
 
   .tiles-view :global(.tile-icon) {
+    position: relative;
     display: flex;
     align-items: center;
     justify-content: center;
     width: var(--tile-icon-size, 64px);
     height: var(--tile-icon-size, 64px);
     flex-shrink: 0;
+  }
+
+  .video-thumbnail-marker {
+    position: absolute;
+    bottom: 2px;
+    right: 2px;
+    line-height: 0;
+    pointer-events: none;
   }
 
   /* Scale file icons (64px SVGs) to fill the tile at medium/large sizes.

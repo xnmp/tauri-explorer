@@ -240,6 +240,7 @@ backend for E2E/browser).
 
 - `components/ThumbnailImage.svelte` — img element + load/error/placeholder states; `decoding="async"` on both micro and full `<img>`s, no animated loading spinner (static SVG placeholder instead — a continuous CSS animation across many concurrently-loading tiles doubled the long-frame rate on WebKitGTK, #593)
 - `components/FolderThumbnail.svelte` — folder collage from children
+- `components/VideoIndicator.svelte` — passive video badge for tile frames/fallbacks and previews; `domain/file-types.ts::isVideoMediaFile` separates true video from audio cover art that shares extraction IPC. `FileIcon.svelte` gives every recognized video a consistent play glyph in compact views and fallback icons (#823).
 - `components/TilesView.svelte` — runs `domain/scroll-jank-monitor.ts` while scrolling and logs a `tiles-scroll-jank` diagnostic event only when a sampled window actually had long frames (#593)
 - `domain/scroll-jank-monitor.ts` — pure rAF-gap sampler (long-frame count, worst gap, duration); rAF/cancel injected so it's unit-testable with synthetic frame timelines
 - `state/thumbnail-cache.ts` — in-memory cache (`getThumbnailCache`, `renameThumbnailCache`)

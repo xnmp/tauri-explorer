@@ -28,7 +28,9 @@ mod platform {
     use objc2_app_kit::{
         NSPasteboard, NSPasteboardItem, NSPasteboardTypeFileURL, NSPasteboardWriting,
     };
-    use objc2_foundation::{NSArray, NSData, NSString, NSURL};
+    #[cfg(test)]
+    use objc2_foundation::NSURL;
+    use objc2_foundation::{NSArray, NSData, NSString, NSURLComponents};
     use std::process::Command;
 
     /// The private pasteboard type that carries a write's token. The change
@@ -70,7 +72,14 @@ mod platform {
             let items: Option<Vec<Retained<NSPasteboardItem>>> = paths
                 .iter()
                 .map(|path| {
-                    let url = NSURL::fileURLWithPath(&NSString::from_str(path));
+                    // fileURLWithPath normalizes NFC filenames to NFD on macOS.
+                    // Build a textual file URL so read-back keeps the spelling
+                    // accepted by the coordinator's exact-path contract.
+                    let components = NSURLComponents::new();
+                    components.setScheme(Some(&NSString::from_str("file")));
+                    components.setHost(Some(&NSString::from_str("")));
+                    components.setPath(Some(&NSString::from_str(path)));
+                    let url = components.URL()?;
                     #[cfg(test)]
                     eprintln!(
                         "846-MAC-DIAG prepare input={path:?} input_bytes={:?} file_url={:?} url_path={:?}",
@@ -449,21 +458,32 @@ mod native_clipboard_tests {
     use objc2::rc::autoreleasepool;
     use objc2_app_kit::{NSPasteboard, NSPasteboardTypeFileURL};
     use objc2_foundation::{NSString, NSURL};
+    use std::os::unix::fs::MetadataExt;
 
     #[test]
     #[ignore = "replaces the macOS pasteboard"]
     fn native_clipboard_ownership_round_trip() {
-        // clipboard-rs 0.3 validates file URLs against the filesystem.
-        // Exercise ownership with real files, as Copy/Cut supplies in the app.
+        // clipboard-rs 0.3's external set_files filters nonexistent paths.
+        // Exercise ownership with real files and a directory, as Copy/Cut does.
         let directory = tempfile::tempdir().unwrap();
-        let paths: Vec<String> = ["cut me é.txt", "100% #?.md"]
-            .into_iter()
-            .map(|name| {
-                let path = directory.path().join(name);
+        let paths: Vec<String> = [
+            ("cut me é.txt", false),
+            ("100% #?.md", false),
+            ("semi;colon.txt", false),
+            ("decomposed e\u{301}.txt", false),
+            ("folder é; #%", true),
+        ]
+        .into_iter()
+        .map(|(name, is_directory)| {
+            let path = directory.path().join(name);
+            if is_directory {
+                std::fs::create_dir(&path).unwrap();
+            } else {
                 std::fs::write(&path, b"native clipboard fixture").unwrap();
-                path.to_str().unwrap().to_owned()
-            })
-            .collect();
+            }
+            path.to_str().unwrap().to_owned()
+        })
+        .collect();
         let mut backend = backend();
         assert_eq!(backend.cut_unavailable_reason(), None);
 
@@ -483,6 +503,8 @@ mod native_clipboard_tests {
                 let encoded = item
                     .stringForType(unsafe { NSPasteboardTypeFileURL })
                     .unwrap();
+                // Foundation documents ';' escaping for NSURL compatibility.
+                assert!(!encoded.to_string().contains(';'));
                 let url = NSURL::URLWithString(&encoded).unwrap();
                 assert!(url.isFileURL());
                 assert_eq!(url.path().unwrap().to_string(), *path);
@@ -534,6 +556,40 @@ mod native_clipboard_tests {
                 .is_none());
         });
         assert_ne!(backend.selection_owner(), owner_before);
-        assert_eq!(backend.read_files().unwrap(), paths);
+        // The external writer uses fileURLWithPath and may offer NFD paths.
+        // Check its actual wire spelling and ordered filesystem identities;
+        // our own writes above still require byte-exact original paths.
+        let external_wire_paths: Vec<String> = autoreleasepool(|_| {
+            NSPasteboard::generalPasteboard()
+                .pasteboardItems()
+                .unwrap()
+                .iter()
+                .map(|item| {
+                    // SAFETY: this is AppKit's immutable public file-URL type.
+                    let encoded = item
+                        .stringForType(unsafe { NSPasteboardTypeFileURL })
+                        .unwrap();
+                    let url = NSURL::URLWithString(&encoded).unwrap();
+                    assert!(url.isFileURL());
+                    url.path().unwrap().to_string()
+                })
+                .collect()
+        });
+        let external_paths = backend.read_files().unwrap();
+        assert_eq!(external_paths, external_wire_paths);
+        assert_eq!(external_paths.len(), paths.len());
+        for (expected, observed) in paths.iter().zip(&external_paths) {
+            let expected = std::fs::metadata(expected).unwrap();
+            let observed = std::fs::metadata(observed).unwrap();
+            assert_eq!(
+                (observed.dev(), observed.ino()),
+                (expected.dev(), expected.ino())
+            );
+        }
+        assert_eq!(
+            backend.owner_token(),
+            None,
+            "external reads never restore our ownership"
+        );
     }
 }

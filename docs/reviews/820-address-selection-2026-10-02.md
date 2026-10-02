@@ -29,3 +29,21 @@ assertions supply those outcomes. No host desktop or clipboard was used.
 There is no folder context-menu New Window action in this version. Current
 requested-directory cases qualify the shared launcher rather than asserting a
 nonexistent UI action. Hosted CI and required PR review remain merge gates.
+
+## Qualification limits and assertion refresh
+
+The recorded ten-case run above used `debug-custom-protocol-e2e-hooks`. Hook
+builds load the listing observer before creating the session; release builds
+start the session synchronously. The observer holds decoded replies from the
+real backend, but equivalence with release startup timing remains supported
+by source rather than a direct release-runtime test.
+
+Independent audit found that the original unseeded first-response case checked
+only that native focus left the source before switching the driver, and checked
+the target title afterward. It also inferred the warm child's invisibility
+during the hold from source ordering. The spec now checks the requested native
+title before that first switch and directly asserts the exact warm label exists
+and remains invisible while its reply is held. Independent review confirms
+both gaps are closed in the assertions. Fresh native verification of those
+strengthened assertions is pending; the earlier run is retained as earlier
+evidence, without claiming it performed the new checks.

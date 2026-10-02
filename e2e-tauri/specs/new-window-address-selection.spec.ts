@@ -32,13 +32,16 @@ async function selection() {
     return input ? { value: input.value, start: input.selectionStart, end: input.selectionEnd, active: input === document.activeElement } : null;
   });
 }
-async function assertChild(label: string, initial: string, previous: ReturnType<typeof nativeActive>, name: string, ownedHandle?: string, lateValidation?: { token: string; entry: string }) {
-  // Native focus is observed before changing WebDriver's selected window.
+async function waitForChildFocus(initial: string, previous: ReturnType<typeof nativeActive>, name: string) {
   await browser.waitUntil(() => {
     const active = nativeActive();
     return active.id !== previous.id && active.title.includes(`${path.basename(initial)} - Tauri Explorer`);
   }, { timeout: 15_000, timeoutMsg: `${name} did not receive native focus` });
-  const active = nativeActive();
+  return nativeActive();
+}
+async function assertChild(label: string, initial: string, previous: ReturnType<typeof nativeActive>, name: string, ownedHandle?: string, lateValidation?: { token: string; entry: string }) {
+  // Native focus is observed before changing WebDriver's selected window.
+  const active = await waitForChildFocus(initial, previous, name);
   if (ownedHandle) {
     const state = await windowOperation("target-state", label) as { visible: boolean };
     expect(state.visible).toBe(true);
@@ -175,7 +178,7 @@ async function launchResult(token: string): Promise<{ kind: string; label: strin
     const opened = await windowOperation("fresh-open", requested, token) as { kind: string; label: string };
     expect(opened).toMatchObject({ kind: "fresh", label: childLabel });
     await waitGate(childLabel, token, "held");
-    await browser.waitUntil(() => nativeActive().id !== previous.id);
+    await waitForChildFocus(requested, previous, "fresh-first-response-before-release");
     await switchToWindowLabel(childLabel);
     childHandle = await browser.getWindowHandle();
     await expect($(".path-input")).not.toBeDisplayed();
@@ -205,6 +208,7 @@ async function launchResult(token: string): Promise<{ kind: string; label: strin
     const previous = nativeActive();
     await dispatchLaunch("warm-open", token, requested);
     await waitGate(parked.label, token, "held");
+    expect(await windowOperation("target-state", parked.label)).toEqual({ exists: true, visible: false });
     expect(nativeActive().id).toBe(previous.id);
     // The parent releases by exact label/token without scripting the parked webview.
     await browser.execute((label: string, token: string) => localStorage.setItem(`e2e-launch-listing-release:${label}`, token), parked.label, token);

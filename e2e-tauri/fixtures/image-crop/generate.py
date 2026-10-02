@@ -27,7 +27,7 @@ def png(width, height):
 
 
 ROOT.joinpath("quadrants.png").write_bytes(png(512, 384))
-for extension in ["jpg", "bmp", "gif", "webp"]:
+for extension in ["jpg", "gif", "webp"]:
     subprocess.run(["ffmpeg", "-y", "-v", "error", "-i", str(ROOT / "quadrants.png"),
                     "-frames:v", "1", "-threads", "1", str(ROOT / f"quadrants.{extension}")], check=True)
 subprocess.run(["avifenc", "--jobs", "1", "--lossless", str(ROOT / "quadrants.png"),
@@ -38,6 +38,20 @@ for kind, size in [(b"ic07", 128), (b"ic08", 256)]:
     elements.append(kind + struct.pack(">I", 8 + len(payload)) + payload)
 body = b"".join(elements)
 ROOT.joinpath("quadrants.icns").write_bytes(b"icns" + struct.pack(">I", 8 + len(body)) + body)
+# Explicit BITMAPV4HEADER/BI_BITFIELDS alpha. The high byte in legacy 32-bit
+# BI_RGB is reserved, and Chromium/WebKit disagree about interpreting it.
+width, height = 512, 384
+header = bytearray(108)
+struct.pack_into("<IiiHHIIiiII", header, 0, 108, width, height, 1, 32, 3, width * height * 4, 0, 0, 0, 0)
+struct.pack_into("<IIIII", header, 40, 0x00ff0000, 0x0000ff00, 0x000000ff, 0xff000000, 0x73524742)
+pixels = bytearray()
+colors = [(231, 76, 60), (46, 204, 113), (52, 152, 219), (241, 196, 15)]
+for y in reversed(range(height)):
+    for x in range(width):
+        red, green, blue = colors[(x >= width // 2) + 2 * (y >= height // 2)]
+        alpha = 0 if width * 0.40 <= x < width * 0.60 and height * 0.40 <= y < height * 0.60 else 255
+        pixels.extend((blue, green, red, alpha))
+ROOT.joinpath("quadrants.bmp").write_bytes(b"BM" + struct.pack("<IHHI", 14 + len(header) + len(pixels), 0, 0, 14 + len(header)) + header + pixels)
 ROOT.joinpath("quadrants.svg").write_text('''<svg xmlns="http://www.w3.org/2000/svg" width="512" height="384" viewBox="0 0 512 384">
 <path fill="#e74c3c" d="M0 0H256V192H0Z"/><path fill="#2ecc71" d="M256 0H512V192H256Z"/>
 <path fill="#3498db" d="M0 192H256V384H0Z"/><path fill="#f1c40f" d="M256 192H512V384H256Z"/>

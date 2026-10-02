@@ -44,6 +44,17 @@
     event.preventDefault();
     onedge(edge, event.key === "Home" ? min : event.key === "End" ? max : rect[edge] + direction * (event.shiftKey ? 10 : 1));
   }
+  async function measureOriginal(): Promise<void> {
+    // WebKit can report a rendered SVG's CSS viewport as its natural size.
+    // An unattached image resolves the immutable source's intrinsic viewport
+    // before fit/zoom styles participate in layout.
+    const original = new Image();
+    original.src = url;
+    try {
+      await original.decode();
+      onload({ width: original.naturalWidth, height: original.naturalHeight });
+    } catch { onerror(); }
+  }
 </script>
 
 <div class="crop-view-controls">
@@ -54,7 +65,7 @@
 </div>
 <div class="crop-scroller" bind:this={scroller}>
   <div class="crop-image" style:width={size ? `${size.width * scale}px` : undefined} style:height={size ? `${size.height * scale}px` : undefined}>
-    <img bind:this={image} src={url} alt={name} draggable="false" onload={() => { if (image) onload({ width: image.naturalWidth, height: image.naturalHeight }); }} {onerror} />
+    <img bind:this={image} src={url} alt={name} draggable="false" onload={measureOriginal} {onerror} />
     {#if size && rect}
       <div class="crop-selection" style:left={`${rect.left / size.width * 100}%`} style:top={`${rect.top / size.height * 100}%`}
         style:width={`${(rect.right - rect.left) / size.width * 100}%`} style:height={`${(rect.bottom - rect.top) / size.height * 100}%`}>

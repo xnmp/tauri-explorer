@@ -68,11 +68,26 @@ async function compare(original: Buffer, output: Buffer, extension: string, padd
         const index = (y * canvas.width + x) * 4 + c;
         interiorError = Math.max(interiorError, Math.abs(actual[index] - expected[index]));
       }
+      let edgeDisplacement = 0;
+      const darkBounds = (data: Uint8ClampedArray, y: number) => {
+        const positions: number[] = [];
+        for (let x = 0; x < canvas.width; x++) {
+          const i = (y * canvas.width + x) * 4;
+          if (Math.max(data[i], data[i + 1], data[i + 2]) < 40) positions.push(x);
+        }
+        return [positions[0] ?? -1, positions.at(-1) ?? -1];
+      };
+      for (const offset of [-30, 0, 30]) {
+        const y = Math.floor(canvas.height / 2) + offset;
+        const wanted = darkBounds(expected, y); const observed = darkBounds(actual, y);
+        for (let i = 0; i < 2; i++) edgeDisplacement = Math.max(edgeDisplacement, Math.abs(wanted[i] - observed[i]));
+      }
       done({ size: [result.naturalWidth, result.naturalHeight], maximumError, interiorError,
+        edgeDisplacement,
         cornerAlpha: actual[3], centerAlpha: actual[(Math.floor(canvas.height / 2) * canvas.width + Math.floor(canvas.width / 2)) * 4 + 3] });
     } catch (error) { done({ error: String(error) }); }
   }, dataUrl(original, extension), dataUrl(output, extension), padded) as Promise<{
-    size: number[]; maximumError: number; interiorError: number; cornerAlpha: number; centerAlpha: number; error?: string;
+    size: number[]; maximumError: number; interiorError: number; edgeDisplacement: number; cornerAlpha: number; centerAlpha: number; error?: string;
   }>;
 }
 function icons(bytes: Buffer): Map<string, Buffer> {
@@ -120,7 +135,7 @@ nativeDescribe("native image cropping", () => {
         const inputIcons = icons(original); const outputIcons = icons(output);
         expect([...outputIcons.keys()].sort()).toEqual([...inputIcons.keys()].sort());
         const observed = await compare(inputIcons.get("ic08")!, outputIcons.get("ic08")!, "png", true);
-        expect(observed).toEqual({ size: [256, 256], maximumError: 0, interiorError: 0, cornerAlpha: 0, centerAlpha: 0 });
+        expect(observed).toEqual({ size: [256, 256], maximumError: 0, interiorError: 0, edgeDisplacement: 0, cornerAlpha: 0, centerAlpha: 0 });
         const small = outputIcons.get("ic07")!;
         expect(small.subarray(1, 4).toString()).toBe("PNG");
         expect([small.readUInt32BE(16), small.readUInt32BE(20)]).toEqual([128, 128]);
@@ -128,14 +143,22 @@ nativeDescribe("native image cropping", () => {
         const observed = await compare(original, output, extension);
         expect(observed.error).toBeUndefined();
         expect(observed.size).toEqual([448, 336]);
-        if (extension === "jpg") expect(observed.interiorError).toBeLessThanOrEqual(25);
+        if (extension === "jpg") {
+          expect(observed.interiorError).toBeLessThanOrEqual(25);
+          expect(observed.edgeDisplacement).toBeLessThanOrEqual(1);
+        }
         else expect(observed.maximumError).toBe(0);
-        if (["png", "webp", "avif"].includes(extension)) expect(observed.centerAlpha).toBe(0);
+        if (["png", "webp", "bmp", "avif"].includes(extension)) expect(observed.centerAlpha).toBe(0);
       }
       const row = $(entryPathSelector(target)); await row.waitForDisplayed(); await row.click();
-      await browser.waitUntil(async () => browser.execute((expected: number[]) => {
+      await browser.waitUntil(async () => browser.executeAsync(async (expected: number[], done: (ready: boolean) => void) => {
         const image = document.querySelector<HTMLImageElement>(".preview-image");
-        return !!image?.complete && image.naturalWidth === expected[0] && image.naturalHeight === expected[1];
+        if (!image?.complete || !image.naturalWidth) { done(false); return; }
+        // SVG naturalWidth is CSS-layout-dependent in WebKit. Inspect the
+        // actual displayed URL through an unstyled image instead.
+        const intrinsic = new Image(); intrinsic.src = image.src;
+        try { await intrinsic.decode(); done(intrinsic.naturalWidth === expected[0] && intrinsic.naturalHeight === expected[1]); }
+        catch { done(false); }
       }, extension === "icns" ? [256, 256] : [448, 336]), { timeoutMsg: "native output dimensions did not reach the preview" });
       await screenshot(`${extension}-saved-copy`);
     });

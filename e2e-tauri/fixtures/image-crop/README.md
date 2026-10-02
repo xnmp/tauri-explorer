@@ -4,6 +4,8 @@
 Python zlib, FFmpeg and libavif's `avifenc`. The ordinary images are 512×384;
 ICNS contains independent 128×128 and 256×256 PNG representations. SVG contains
 four vector quadrants and a white center. These input images are not screenshots.
+BMP uses an explicit V4 alpha mask; the high byte of 32-bit BI_RGB is reserved
+and is interpreted differently by Chromium and WebKit.
 
 The native spec loads them through real Explorer capture/save commands, compares
 the unchanged original bytes and decoded cropped pixels, and captures the live

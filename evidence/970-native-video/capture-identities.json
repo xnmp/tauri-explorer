@@ -1,0 +1,58 @@
+{
+  "sourceCommit": "b51f40fb20d6b451c433bf39e4d6ea4489ab09e3",
+  "binarySha256": "58843d2c7f6bd5e36bce0326afc8c2c6bb4e0b84ce67880e9a9ffc4afa7ba80e",
+  "captures": [
+    {
+      "file": "screenshots/feat/970-ability-to-watch-videos-in-the-preview-pane/native-playing-red.png",
+      "sha256": "8ae2aefafa74119e6a570eab717676de463cb3389dbe4c2f4aac298dae6d8d6c"
+    },
+    {
+      "file": "screenshots/feat/970-ability-to-watch-videos-in-the-preview-pane/native-seek-blue.png",
+      "sha256": "e07a0af076f3b126090e7a5401e0a04214ff2dbd64040392a987941b3ae5e09f"
+    },
+    {
+      "file": "screenshots/feat/970-ability-to-watch-videos-in-the-preview-pane/native-fullscreen-blue.png",
+      "sha256": "3aa36db6046921af046f92752bac621812d6697474c27cbc1194e8e12c2bf5d2"
+    },
+    {
+      "file": "screenshots/feat/970-ability-to-watch-videos-in-the-preview-pane/native-dock-right-150.png",
+      "sha256": "421d29670095249606ada013d8c82ed3306bf539ae1153470a212f58d5c2c2b8"
+    },
+    {
+      "file": "screenshots/feat/970-ability-to-watch-videos-in-the-preview-pane/native-dock-top-150.png",
+      "sha256": "bcfa69d2e73c51bb4479e7536539f93a4853c927d47a3827230f204964b82707"
+    },
+    {
+      "file": "screenshots/feat/970-ability-to-watch-videos-in-the-preview-pane/native-dock-bottom-150.png",
+      "sha256": "1d9a73834bc85462e0502c545a12229d98c93e9f15d732f3ba9eb8b67c07305c"
+    },
+    {
+      "file": "screenshots/feat/970-ability-to-watch-videos-in-the-preview-pane/native-invalid-container.png",
+      "sha256": "06e1e1d163be19f753131bf0716a54ab040e6975f8282485cdf70bbe17baef87"
+    },
+    {
+      "file": "screenshots/feat/970-ability-to-watch-videos-in-the-preview-pane/native-large-decoded-noise.png",
+      "sha256": "7700360fd98a65fa4b86357450056beeee4c0076b338a0bcbd6121d80501146a"
+    },
+    {
+      "file": "screenshots/feat/970-ability-to-watch-videos-in-the-preview-pane/native-large-distant-seek.png",
+      "sha256": "f2c8814af12b07f28ecb67c4bd1b89bd47f5f19ad53daf7186b899c89a925be7"
+    },
+    {
+      "file": "screenshots/feat/970-ability-to-watch-videos-in-the-preview-pane/native-large-continuous-playback.png",
+      "sha256": "f8b8097b76401d9f988a8d65d18bb55b2438842d3bd7d62c303bc2950d6de144"
+    },
+    {
+      "file": "screenshots/feat/970-ability-to-watch-videos-in-the-preview-pane/native-list-seek-blue.png",
+      "sha256": "9b6656f22189a319cccb7d39f209c4e51397861a3c241cd342889153f41a85b7"
+    },
+    {
+      "file": "screenshots/feat/970-ability-to-watch-videos-in-the-preview-pane/native-tiles-seek-blue.png",
+      "sha256": "d35e67b43dc85e9b091f977cc80ea0bfad243ff60d1f963faecd135e74095b6e"
+    },
+    {
+      "file": "screenshots/feat/970-ability-to-watch-videos-in-the-preview-pane/native-activated-warm-seek-blue.png",
+      "sha256": "a1df5822012b6c78be1123e45b75059481b2a781087a98774b921ca75dd7e980"
+    }
+  ]
+}

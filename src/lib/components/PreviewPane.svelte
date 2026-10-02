@@ -15,7 +15,7 @@ import { openFile } from "$lib/api/open";
   import { isImageFile, isSvgFile, isTextFile, isPdfFile, isVideoFile, isVideoMediaFile, isZipFile, getFileType, formatDate } from "$lib/domain/file-types";
   import VideoIndicator from "./VideoIndicator.svelte";
   import { formatSize, isSystemHidden, type FileEntry } from "$lib/domain/file";
-  import { isTauri } from "$lib/api/common";
+  import { isTauri, extractError } from "$lib/api/common";
   import { highlightCode, highlightDiffLine } from "$lib/domain/syntax-highlight";
   import { renderMarkdown } from "$lib/domain/markdown";
   import { settingsStore } from "$lib/state/settings.svelte";
@@ -126,7 +126,7 @@ import { openFile } from "$lib/api/open";
   function handlePaneDoubleClick(event: MouseEvent): void {
     const target = event.target;
     if (!(target instanceof Element) || target.closest(
-      'button, a, input, textarea, select, [contenteditable], [role="separator"], .preview-image-container, .pdf-preview, video, audio, iframe',
+      'button, a, input, textarea, select, [contenteditable], [role="separator"], .preview-image-container, .pdf-preview, .video-preview, video, audio, iframe',
     )) return;
     toggleFullscreen();
   }
@@ -224,8 +224,8 @@ import { openFile } from "$lib/api/open";
     const onKey = (event: KeyboardEvent) => {
       if (cropTarget) return;
       const k = event.key;
-      if (selectedFile && isPdfFile(selectedFile) && dialogStore.hasModalOpen) return;
-      if (selectedFile && isPdfFile(selectedFile) && k !== "Escape") return;
+      if (selectedFile && (isPdfFile(selectedFile) || isVideoMediaFile(selectedFile)) && dialogStore.hasModalOpen) return;
+      if (selectedFile && (isPdfFile(selectedFile) || isVideoMediaFile(selectedFile)) && k !== "Escape") return;
       const stop = () => {
         event.preventDefault();
         event.stopImmediatePropagation();
@@ -298,6 +298,8 @@ import { openFile } from "$lib/api/open";
   let previewCsv = $state<CsvPreview | null>(null);
   let previewPdf = $state<{ path: string; key: string } | null>(null);
   let PdfPreview = $state<typeof import("./PdfPreview.svelte").default | null>(null);
+  let previewVideo = $state<{ path: string; name: string; key: string } | null>(null);
+  let VideoPreview = $state<typeof import("./VideoPreview.svelte").default | null>(null);
   let previewFolderChildrenRaw = $state<readonly FileEntry[]>([]);
   // Set when a folder/ZIP preview descended through one or more single-child
   // folders: the collapsed path (e.g. "a/b") and a short note describing it.
@@ -543,6 +545,7 @@ import { openFile } from "$lib/api/open";
       previewMarkdownHtml = null;
       previewCsv = null;
       previewPdf = null;
+      previewVideo = null;
       previewFolderChildrenRaw = [];
       previewCollapsedRoot = null;
       previewCollapsedNote = null;
@@ -575,6 +578,7 @@ import { openFile } from "$lib/api/open";
     previewMarkdownHtml = null;
     previewCsv = null;
     previewPdf = null;
+    previewVideo = null;
     previewFolderChildrenRaw = [];
     previewCollapsedRoot = null;
     previewCollapsedNote = null;
@@ -658,6 +662,21 @@ import { openFile } from "$lib/api/open";
       return;
     }
 
+    if (isVideoMediaFile(file)) {
+      const key = `${file.path}|${file.modified}|${file.size}|${localPreviewRevision}`;
+      try {
+        const component = await import("./VideoPreview.svelte");
+        if (!previewLifetime.isCurrent(request)) return;
+        VideoPreview = component.default;
+        previewVideo = { path: file.path, name: file.name, key };
+      } catch (error) {
+        if (!previewLifetime.isCurrent(request)) return;
+        previewError = `Cannot preview video: ${extractError(error)}`;
+      }
+      previewLoading = false;
+      return;
+    }
+
     if (isImageFile(file) || isSvgFile(file)) {
       // Pull the bytes through the backend. Used when the asset: protocol
       // can't stream a file — notably cloud-mounted images (Google Drive,
@@ -722,8 +741,7 @@ import { openFile } from "$lib/api/open";
         await loadViaBackend();
       }
     } else if (isVideoFile(file)) {
-      // Reuse the ffmpeg-backed thumbnail seam from TilesView. The pane shows
-      // its extracted still frame rather than attempting inline playback.
+      // Audio cover art retains the independent ffmpeg-backed preview seam.
       const result = await getVideoThumbnailData(file.path, VIDEO_PREVIEW_SIZE);
       if (!previewLifetime.isCurrent(request)) {
         if (result.ok) previewLifetime.adoptBlob(request, result.data);
@@ -962,6 +980,10 @@ import { openFile } from "$lib/api/open";
         {#key previewPdf.key}
           <PdfPreview path={previewPdf.path} name={selectedFile.name} {fullscreen}
             ontogglefullscreen={toggleFullscreen} onnavigate={navigateSibling} />
+        {/key}
+      {:else if previewVideo && VideoPreview}
+        {#key previewVideo.key}
+          <VideoPreview path={previewVideo.path} name={previewVideo.name} {fullscreen} ontogglefullscreen={toggleFullscreen} />
         {/key}
       {:else if previewImageUrl}
         <!-- This surface owns click/pan/zoom; the pane's double-click policy

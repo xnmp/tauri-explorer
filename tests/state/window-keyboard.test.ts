@@ -464,3 +464,21 @@ it("keeps a file-entry Space accepted by type-ahead local", () => {
   f.target.dispatchEvent(event);
   expect(f.executeCommand).not.toHaveBeenCalled();
 });
+
+
+it.each([false, true])("accepted media keys retire Explorer chords (pending: %s)", (pending) => {
+  const f = fixture();
+  Object.assign(f.target, { closest: (selector: string) => selector === ".video-preview" ? f.target : null });
+  f.bind("file.openSelected", "Enter");
+  f.bind("general.openQuickOpen", "Ctrl+P");
+  f.bind("plugin.chord", "Alt+M T");
+  if (pending) f.press("m", { altKey: true });
+  const event = new Event("keydown", { cancelable: true });
+  Object.assign(event, { key: "Enter", code: "Enter", ctrlKey: false, metaKey: false, altKey: false, shiftKey: false });
+  event.preventDefault();
+  f.target.dispatchEvent(event);
+  f.press("t");
+  expect(f.executeCommand).not.toHaveBeenCalled();
+  f.press("p", { ctrlKey: true });
+  expect(f.executeCommand).toHaveBeenCalledExactlyOnceWith("general.openQuickOpen");
+});

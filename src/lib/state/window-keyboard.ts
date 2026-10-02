@@ -30,6 +30,7 @@ export function startWindowKeyboard(target: EventTarget, dependencies: WindowKey
       terminal: !!element?.closest?.(".terminal-panel"),
       customButton: !!element?.closest?.('[role="button"]'),
       separator: !!element?.closest?.('[role="separator"]'),
+      media: !!element?.closest?.('.video-preview'),
     };
   };
   const cancelChord = () => { if (!disposed) bindings.cancelChord(); };
@@ -39,10 +40,10 @@ export function startWindowKeyboard(target: EventTarget, dependencies: WindowKey
     const event = raw as KeyboardEvent;
     // WebKitGTK reports Super separately from metaKey; track before routing.
     bindings.trackModifierKey(event, true);
-    const { input, nativeButton, fileEntry, terminal: terminalFocus, separator, customButton } = inputContext(event);
+    const { input, nativeButton, fileEntry, terminal: terminalFocus, separator, customButton, media } = inputContext(event);
     // Custom controls own keys they explicitly accept. Unhandled commands
     // keep normal routing; accepted local input retires an unfinished chord.
-    if ((separator || customButton || fileEntry) && event.defaultPrevented) { bindings.cancelChord(); return; }
+    if ((separator || customButton || fileEntry || media) && event.defaultPrevented) { bindings.cancelChord(); return; }
     const terminalCommand = terminalFocus ? getTerminalCommand(event, bindings, isAvailable) : undefined;
     const explorer = dependencies.getActiveExplorer();
     const chord = terminalFocus

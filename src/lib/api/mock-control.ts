@@ -76,6 +76,9 @@ export interface MockControl {
   openedPdfUrl?: string;
   /** Overrides `get_video_thumbnail_data`. */
   videoThumbnail?: (path: string, size?: number) => string | Promise<string>;
+  /** Real browser media URL; tests can delay source admission, not fake playback. */
+  videoPreview?: (path: string) => string | Promise<string>;
+  releasedVideoPreviews?: string[];
   /** Action hook: bump the mtime/size of a previewed file to simulate an
    * external edit landing while its preview is open. */
   previewRevision?: (path: string) => void;

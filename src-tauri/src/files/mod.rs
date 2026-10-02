@@ -26,8 +26,8 @@ pub(crate) mod entry_execution;
 pub(crate) mod entry_plan;
 mod entry_version;
 pub mod external_apps;
-#[cfg(any(unix, test))]
-#[cfg_attr(target_os = "macos", allow(dead_code, unused_imports))]
+#[cfg(any(unix, windows, test))]
+#[cfg_attr(any(target_os = "macos", windows), allow(dead_code, unused_imports))]
 mod file_identity;
 pub mod file_ops;
 #[cfg(target_os = "linux")]
@@ -43,6 +43,7 @@ pub mod linux_mount_watch;
 pub mod linux_volume_monitor;
 #[cfg(target_os = "linux")]
 pub mod linux_volumes;
+pub mod media_preview;
 #[cfg(all(test, target_os = "linux"))]
 #[path = "../../test_support/mount_namespace.rs"]
 pub(crate) mod mount_namespace;
@@ -50,8 +51,10 @@ pub(crate) mod move_execution;
 pub(crate) mod move_plan;
 pub(crate) mod move_session;
 pub(crate) mod mutation;
-#[cfg(any(unix, test))]
-#[cfg_attr(target_os = "macos", allow(dead_code, unused_imports))]
+#[cfg(any(unix, windows, test))]
+// Recovery-only operations are currently exercised by tests on these platforms;
+// native media also uses their handle-relative read/identity subset (#970).
+#[cfg_attr(any(target_os = "macos", windows), allow(dead_code, unused_imports))]
 mod native_directory;
 mod object_id;
 pub mod open_with;
@@ -77,7 +80,7 @@ mod trash_outcome;
 #[cfg(unix)]
 mod tree_removal;
 mod watch_observation;
-#[cfg(all(windows, test))]
+#[cfg(windows)]
 mod windows_io;
 #[cfg(target_os = "windows")]
 mod windows_paths;

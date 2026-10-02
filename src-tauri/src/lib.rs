@@ -289,6 +289,11 @@ pub fn run_with_process_entry(launch_dir: Option<String>, t_process_entry: std::
             file_mutation::save_image_crop,
             files::pdf_preview::read_pdf_bytes,
             files::pdf_preview::open_pdf_link,
+            #[cfg(feature = "e2e-hooks")]
+            files::media_preview::e2e_video_preview_stats,
+            files::media_preview::begin_video_preview,
+            files::media_preview::prepare_video_preview,
+            files::media_preview::release_video_preview,
             file_mutation::write_text_file,
             file_mutation::create_symlink,
             files::file_ops::estimate_size,

@@ -1,0 +1,82 @@
+[
+  {
+    "label": "Play video",
+    "rect": {
+      "x": 8,
+      "width": 28,
+      "left": 8,
+      "right": 36,
+      "top": 836,
+      "height": 28,
+      "y": 836,
+      "bottom": 864
+    },
+    "visibleWithinViewport": true,
+    "hit": "<button type=\"button\" class=\"svelte-1u4orsr\" aria-label=\"Play video\" title=\"Play (Space)\">▶</button>",
+    "centerReachesControl": true
+  },
+  {
+    "label": "Exit video fullscreen",
+    "rect": {
+      "x": 1244,
+      "width": 28,
+      "left": 1244,
+      "right": 1272,
+      "top": 836,
+      "height": 28,
+      "y": 836,
+      "bottom": 864
+    },
+    "visibleWithinViewport": true,
+    "hit": "<button type=\"button\" class=\"fullscreen-button svelte-1u4orsr\" title=\"Fullscreen (F)\" aria-label=\"Exit video fullscreen\">⛶</button>",
+    "centerReachesControl": true
+  },
+  {
+    "label": "Seek video",
+    "rect": {
+      "x": 8,
+      "width": 1139,
+      "left": 8,
+      "right": 1147,
+      "top": 868,
+      "height": 28,
+      "y": 868,
+      "bottom": 896
+    },
+    "visibleWithinViewport": true,
+    "hit": "<input class=\"seek svelte-1u4orsr\" type=\"range\" aria-label=\"Seek video\" min=\"0\" step=\"0.1\" aria-valuetext=\"0:04 of 0:06\" max=\"6\">",
+    "centerReachesControl": true
+  },
+  {
+    "label": "Mute video",
+    "rect": {
+      "x": 1155,
+      "width": 49,
+      "left": 1155,
+      "right": 1204,
+      "top": 868,
+      "height": 28,
+      "y": 868,
+      "bottom": 896
+    },
+    "visibleWithinViewport": true,
+    "hit": "<button type=\"button\" title=\"Mute (M)\" class=\"svelte-1u4orsr\" aria-label=\"Mute video\">Sound</button>",
+    "centerReachesControl": true
+  },
+  {
+    "label": "Video volume",
+    "rect": {
+      "x": 1208,
+      "width": 64,
+      "left": 1208,
+      "right": 1272,
+      "top": 872,
+      "height": 20,
+      "y": 872,
+      "bottom": 892
+    },
+    "visibleWithinViewport": true,
+    "hit": "<input type=\"range\" aria-label=\"Video volume\" min=\"0\" max=\"1\" step=\"0.05\" class=\"svelte-1u4orsr\">",
+    "centerReachesControl": true
+  }
+]

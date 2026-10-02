@@ -40,7 +40,7 @@ impl ObjectId {
         Self(identity)
     }
 
-    #[cfg(all(windows, test))]
+    #[cfg(windows)]
     pub(super) fn windows(volume_serial: u64, file_id: [u8; 16]) -> Self {
         Self(Identity::Windows {
             volume_serial,

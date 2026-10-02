@@ -103,6 +103,7 @@ fn retire(owner: Option<Owner>) {
         crate::git_watch::retire_owner(&owner);
         crate::files::fs_watcher::retire_owners();
         crate::file_history::retire_owners();
+        crate::files::media_preview::retire_owners();
     }
 }
 

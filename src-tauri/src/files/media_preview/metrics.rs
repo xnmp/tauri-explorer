@@ -15,6 +15,7 @@ static RESPONSES: LazyLock<Mutex<VecDeque<ResponseObservation>>> =
     LazyLock::new(|| Mutex::new(VecDeque::new()));
 #[derive(Clone, Serialize)]
 pub(super) struct ResponseObservation {
+    at: u128,
     requested_range: Option<String>,
     head: bool,
     status: u16,
@@ -46,6 +47,10 @@ pub(super) fn record_response(
         rows.pop_front();
     }
     rows.push_back(ResponseObservation {
+        at: std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis(),
         requested_range: range.map(|value| value.chars().take(128).collect()),
         head,
         status,

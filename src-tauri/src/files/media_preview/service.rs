@@ -27,7 +27,34 @@ pub(super) struct Lease {
     pub renderer: Owner,
     pub lifetime: Owner,
     phase: Mutex<Phase>,
-    read_budget: Mutex<tokio::time::Instant>,
+    read_budget: Mutex<ReadBudget>,
+}
+struct ReadBudget {
+    updated: tokio::time::Instant,
+    credit: f64,
+}
+impl ReadBudget {
+    fn new() -> Self {
+        Self {
+            updated: tokio::time::Instant::now(),
+            credit: READ_BURST_BYTES as f64,
+        }
+    }
+    fn claim(&mut self, bytes: u64) -> Option<Duration> {
+        let now = tokio::time::Instant::now();
+        self.credit = (self.credit
+            + now.duration_since(self.updated).as_secs_f64() * READ_RATE_BYTES as f64)
+            .min(READ_BURST_BYTES as f64);
+        self.updated = now;
+        if self.credit >= bytes as f64 {
+            self.credit -= bytes as f64;
+            None
+        } else {
+            Some(Duration::from_secs_f64(
+                (bytes as f64 - self.credit) / READ_RATE_BYTES as f64,
+            ))
+        }
+    }
 }
 enum Phase {
     Provisional,
@@ -87,18 +114,28 @@ impl Lease {
     /// Aggregate across concurrent ranges/restarts: fast initial metadata,
     /// then bounded localhost read-ahead into the WebView's media buffers.
     pub async fn admit_read(&self, bytes: u64) -> io::Result<()> {
-        let deadline = {
-            let now = tokio::time::Instant::now();
-            let burst = Duration::from_secs_f64(READ_BURST_BYTES as f64 / READ_RATE_BYTES as f64);
-            let cost = Duration::from_secs_f64(bytes as f64 / READ_RATE_BYTES as f64);
-            let mut budget = self.read_budget.lock().unwrap();
-            *budget = (*budget).max(now - burst) + cost;
-            *budget
-        };
-        tokio::select! {
-            _ = self.retired() => Err(io::Error::new(io::ErrorKind::Interrupted, "Video preview was released")),
-            _ = tokio::time::sleep_until(deadline) => {
-                if self.active() { Ok(()) } else { Err(io::Error::new(io::ErrorKind::Interrupted, "Video preview was released")) }
+        if bytes > READ_BURST_BYTES {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "Read exceeds the media admission burst",
+            ));
+        }
+        loop {
+            if !self.active() {
+                return Err(io::Error::new(
+                    io::ErrorKind::Interrupted,
+                    "Video preview was released",
+                ));
+            }
+            let delay = self.read_budget.lock().unwrap().claim(bytes);
+            let Some(delay) = delay else {
+                return Ok(());
+            };
+            // Waiting does not reserve tokens: dropping a range request cannot
+            // charge future reads for bytes that were never admitted.
+            tokio::select! {
+                _ = self.retired() => return Err(io::Error::new(io::ErrorKind::Interrupted, "Video preview was released")),
+                _ = tokio::time::sleep(delay) => {}
             }
         }
     }
@@ -149,10 +186,7 @@ impl Service {
                 renderer: owner,
                 lifetime: Owner::default(),
                 phase: Mutex::new(Phase::Provisional),
-                read_budget: Mutex::new(
-                    tokio::time::Instant::now()
-                        - Duration::from_secs_f64(READ_BURST_BYTES as f64 / READ_RATE_BYTES as f64),
-                ),
+                read_budget: Mutex::new(ReadBudget::new()),
             }),
         );
         Ok(token)

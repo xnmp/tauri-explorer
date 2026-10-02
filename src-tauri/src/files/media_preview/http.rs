@@ -123,6 +123,11 @@ async fn respond(
     if !head && request.method() != hyper::Method::GET {
         return empty(StatusCode::METHOD_NOT_ALLOWED);
     }
+    #[cfg(feature = "e2e-hooks")]
+    let raw_range = headers
+        .get(header::RANGE)
+        .and_then(|value| value.to_str().ok())
+        .map(str::to_owned);
     let Some(token) = request
         .uri()
         .path()
@@ -163,8 +168,6 @@ async fn respond(
         }
     };
     let mut response = empty(status);
-    #[cfg(feature = "e2e-hooks")]
-    super::metrics::record_response(range, head, status.as_u16(), start, length, media.size);
     response.headers_mut().insert(
         header::ACCEPT_RANGES,
         header::HeaderValue::from_static("bytes"),
@@ -185,12 +188,23 @@ async fn respond(
         );
     }
     if head || length == 0 {
+        #[cfg(feature = "e2e-hooks")]
+        super::metrics::record_response(
+            raw_range.as_deref(),
+            head,
+            status.as_u16(),
+            start,
+            length,
+            media.size,
+        );
         return response;
     }
     let Ok(permit) = server.service.streams.clone().try_acquire_owned() else {
         return empty(StatusCode::SERVICE_UNAVAILABLE);
     };
     let active = lease.clone();
+    #[cfg(feature = "e2e-hooks")]
+    let media_size = media.size;
     let opened = tokio::task::spawn_blocking(move || {
         if !active.active() {
             return Err(io::Error::new(
@@ -202,6 +216,15 @@ async fn respond(
     });
     let file = tokio::select! {_=lease.retired()=>return empty(StatusCode::GONE),
     opened=opened=>match opened {Ok(Ok(file))=>file,_=>return empty(StatusCode::CONFLICT)} };
+    #[cfg(feature = "e2e-hooks")]
+    super::metrics::record_response(
+        raw_range.as_deref(),
+        head,
+        status.as_u16(),
+        start,
+        length,
+        media_size,
+    );
     let chunks=stream::try_unfold((file,start,length,lease),|(file,offset,remaining,lease)| async move {
         if remaining==0 {return Ok::<_,io::Error>(None);}
         lease.admit_read(remaining.min(super::service::CHUNK_BYTES as u64)).await?;

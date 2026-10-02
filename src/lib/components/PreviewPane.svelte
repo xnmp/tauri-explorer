@@ -28,6 +28,18 @@ import { openFile } from "$lib/api/open";
   import VirtualList from "./VirtualList.svelte";
   import { parseCsvPreview, type CsvPreview } from "$lib/domain/csv-preview";
   import { createPreviewLifetime, type PreviewRequest } from "$lib/state/preview-lifetime";
+  import ImageCropEditor from "./ImageCropEditor.svelte";
+  import { subscribeToLocalFileChanges } from "$lib/state/file-events";
+  import { parentDir } from "$lib/domain/path";
+  let localPreviewRevision = $state(0);
+  const unsubscribePreviewChanges = subscribeToLocalFileChanges((directories) => {
+    if (selectedFile && directories.includes(parentDir(selectedFile.path))) localPreviewRevision++;
+  });
+  onDestroy(unsubscribePreviewChanges);
+  let cropTarget = $state<{ path: string; name: string } | null>(null);
+  function openCrop(): void {
+    if (selectedFile) cropTarget = { path: selectedFile.path, name: selectedFile.name };
+  }
 
   // Window-global surface: the preview's SCM diff follows the ACTIVE pane's
   // store (#334) — reactive through windowTabsManager.activePaneId.
@@ -209,6 +221,7 @@ import { openFile } from "$lib/api/open";
     if (!fullscreen) return;
     const PAN = 60;
     const onKey = (event: KeyboardEvent) => {
+      if (cropTarget) return;
       const k = event.key;
       const stop = () => {
         event.preventDefault();
@@ -269,7 +282,7 @@ import { openFile } from "$lib/api/open";
    * so external edits to the same file invalidate the cached preview. */
   const selectedPath = $derived(selectedFile?.path ?? null);
   const previewKey = $derived(
-    selectedFile ? `${selectedFile.path}|${selectedFile.modified}|${selectedFile.size}` : null,
+    selectedFile ? `${selectedFile.path}|${selectedFile.modified}|${selectedFile.size}|${localPreviewRevision}` : null,
   );
 
   // Preview content state
@@ -621,7 +634,7 @@ import { openFile } from "$lib/api/open";
 
     // Cache-busting suffix derived from mtime+size — same value as previewKey,
     // ensures the webview re-fetches when the on-disk file changes.
-    const bust = encodeURIComponent(`${file.modified}-${file.size}`);
+    const bust = encodeURIComponent(`${file.modified}-${file.size}-${localPreviewRevision}`);
 
     if (isPdfFile(file)) {
       if (isTauri()) {
@@ -925,6 +938,9 @@ import { openFile } from "$lib/api/open";
       </div>
     {/if}
 
+    {#if /\.(jpe?g|png|gif|webp|bmp|svg|avif|icns)$/i.test(selectedFile.name)}
+      <div class="preview-crop-action"><button class="btn" onclick={openCrop}>Crop image…</button></div>
+    {/if}
     <!-- svelte-ignore a11y_no_noninteractive_tabindex -- a scrollable region must be keyboard-focusable (WCAG 2.1.1, #797). -->
     <div class="preview-content" role="region" aria-label="Preview of {selectedFile.name}{isVideoMediaFile(selectedFile) ? ' (video)' : ''}" tabindex="0">
       {#if isVideoMediaFile(selectedFile)}
@@ -1052,7 +1068,12 @@ import { openFile } from "$lib/api/open";
   {/if}
 </div>
 
+{#if cropTarget}
+  <ImageCropEditor path={cropTarget.path} name={cropTarget.name} onclose={() => cropTarget = null} />
+{/if}
+
 <style>
+  .preview-crop-action { padding: var(--spacing-sm) var(--spacing-md); display: flex; justify-content: flex-end; }
   .preview-pane {
     display: flex;
     flex-direction: column;

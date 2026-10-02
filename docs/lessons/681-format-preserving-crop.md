@@ -1,8 +1,9 @@
 # #681: format-preserving crop codecs
 
-This records the native codec checkpoint. Crop controls, owned save operations, and
-preview integration are still pending; this does not establish acceptance
-of the complete feature.
+This records the native codec and save checkpoints. Crop controls and preview
+integration are implemented, but application interaction, screenshots and
+platform/resource qualification remain pending. This does not establish
+acceptance of the complete feature.
 
 PNG color interpretation is part of the image. Preserve accepted gamma,
 chromaticity, ICC and HDR metadata when retaining its sample values. The PNG
@@ -35,6 +36,34 @@ representations as the preview preference. Decode legacy samples into RGBA
 before constructing an image buffer. Encode original combined masks first and
 deduplicate OSType entries so palette-generated companion masks do not overwrite
 independently different monochrome pixels.
+
+## Source capture and save checkpoint
+
+Crop from immutable captured bytes rather than the preview's mutable asset URL.
+Bound the capture separately from encoded output (32 MiB input, 200 MiB encoded
+output), and compare retained-handle identity, size, modification time,
+permissions and SHA-256 before saving. Filename extensions must agree with the
+encoded format. A file replaced by identical bytes is still a different source.
+
+Stage encoded content before displacing an original. Copy publication must use
+the existing atomic no-overwrite rename, including a collision racing the
+initial name choice. Failed rollback that retains the original while a foreign
+writer occupies its name is `MutationUncertain`, so native history and affected
+directory refresh cannot incorrectly report an unchanged filesystem.
+
+Durable copy replacement expressly requires independent source and destination
+authority. Using the original as its own source violates admission and breaks
+the source guard after displacement. Keep a separate generated `StagedEntry`
+and its parent alive through the entire forward transaction. Completed Undo and
+Redo use retained journal artifacts and must work after staging cleanup. Check
+the original digest again on retained `ORIGINAL`, after displacement and before
+publication; restoring a timestamp must not conceal an intervening content edit.
+
+The editor opening owns its captured source and blob URL. A late capture cannot
+reopen a closed editor; an accepted save cannot be redirected by selection,
+reopening or duplicate activation. Publication survives editor destruction and
+uses the existing pane refresh policy. Explicit local preview revision and
+thumbnail invalidation cover replacements retaining coarse mtime/byte size.
 
 Regression fixtures must distinguish these cases: independent Adam7 partial
 frames; accepted and ignored HDR chunks; bare and combined legacy icons; black

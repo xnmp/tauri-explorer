@@ -699,6 +699,12 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `docs/testing/interactive-mac-startup-runbook.md` — operator procedure for producing the interactive Mac startup evidence JSON the qualification report ingests.
 
 - `src-tauri/src/image_crop.rs` — bounded full-resolution crop encoding and EXIF orientation normalization (#681; save/UI integration pending).
+- `src-tauri/src/files/image_crop.rs` — bounded immutable crop source capture, identity/content validation, admitted staged copy and confirmed replacement execution.
+- `src/lib/api/image-crop.ts` — typed crop capture/save IPC and native history settlement.
+- `src/lib/state/image-crop-session.ts` — editor opening, crop coordinates, blob ownership and accepted-save lifetime.
+- `src/lib/state/image-crop-effects.ts` — crop receipt publication through shared pane refresh and thumbnail invalidation.
+- `src/lib/components/ImageCropEditor.svelte` — original image crop dialog with pixel controls and explicit copy/replacement choices.
+- `src/lib/components/ImageCropCanvas.svelte` — measured-image pointer/keyboard crop edges with fit/zoom and scroll panning.
 - `src-tauri/src/image_crop/gif_crop.rs` — indexed GIF crop preserving frame regions, palettes, disposal, timing and looping.
 - `src-tauri/src/image_crop/icon_crop.rs` — validates ICNS/embedded PNG/JP2 bounds and preserves original canvas sizes with transparent crop padding.
 - `src-tauri/src/image_crop/svg_crop.rs` — bounded UTF-8/UTF-16 SVG crop using the captured viewport; independent-document clipping for static/CSS animation and same-document ordinary SMIL with explicit context refusals.

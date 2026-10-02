@@ -59,6 +59,26 @@ impl ReplacementExecution {
         self.publish_with(|_| Ok(()))
     }
 
+    /// Generated replacements also verify the full captured content after
+    /// displacement. Timestamp restoration cannot conceal an intervening edit.
+    #[cfg(target_os = "linux")]
+    pub(super) fn verify_original_revision(
+        &mut self,
+        revision: &crate::files::image_crop::SourceRevision,
+    ) -> Result<(), AppError> {
+        let result = (|| {
+            self.root.verify_namespace()?;
+            let held = self
+                .root
+                .directory()
+                .path()?
+                .join(super::artifact_layout::ORIGINAL);
+            crate::files::image_crop::verify_source(&held, revision)?;
+            self.root.verify_namespace()
+        })();
+        result.map_err(|error| self.retain_failure(error))
+    }
+
     fn publish_with(
         &mut self,
         after_native: impl FnOnce(&super::model::EntryVersion) -> Result<(), AppError>,

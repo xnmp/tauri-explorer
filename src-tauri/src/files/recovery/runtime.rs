@@ -201,6 +201,39 @@ impl Runtime {
         .map(super::forward_copy::BatchExecution::into_single)?
     }
 
+    pub(crate) fn replace_generated(
+        &self,
+        generated: &std::path::Path,
+        original: &std::path::Path,
+        revision: &crate::files::image_crop::SourceRevision,
+    ) -> Result<crate::files::mutation::FileMutationReceipt, AppError> {
+        struct Progress;
+        impl crate::files::anchored_copy::CopyProgress for Progress {
+            fn check_cancelled(&mut self) -> Result<(), AppError> {
+                Ok(())
+            }
+            fn advance(&mut self, _: u64, _: &std::path::Path) -> Result<(), AppError> {
+                Ok(())
+            }
+        }
+        let coordinator = self.coordinator()?;
+        let mut prepared = super::forward_copy::prepare_batch(
+            &coordinator,
+            &[(generated, original)],
+            &mut Progress,
+        )?;
+        let receipt = prepared
+            .pop()
+            .expect("one generated replacement")
+            .execute_verified(&mut Progress, Some(revision));
+        // Discovery failure never revokes a completed replacement receipt.
+        match super::service::enforce(&coordinator) {
+            Ok(snapshot) => self.subscriptions.publish(&snapshot),
+            Err(error) => log::warn!("Could not refresh generated replacement inventory: {error}"),
+        }
+        receipt
+    }
+
     fn replace_copy_with(
         &self,
         source: &std::path::Path,

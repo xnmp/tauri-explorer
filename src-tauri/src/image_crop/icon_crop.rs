@@ -2,7 +2,7 @@
 //! The normalized crop is centered without resampling, with transparent padding.
 use super::{dimensions, failure, CropRect, Encoded};
 use crate::error::AppError;
-use image::ImageDecoder;
+use image::{ImageDecoder, ImageEncoder};
 use std::io::Cursor;
 
 fn word(bytes: &[u8], offset: usize) -> Result<u32, AppError> {
@@ -172,6 +172,32 @@ fn jpeg2000_dimensions(bytes: &[u8]) -> Result<(u32, u32), AppError> {
     } else {
         Ok((width, height))
     }
+}
+
+pub(crate) fn preview(bytes: &[u8]) -> Result<Vec<u8>, AppError> {
+    preflight(bytes)?;
+    let family = icns::IconFamily::read(bytes).map_err(failure)?;
+    let kind = crate::thumbnails::complete_icns_icons(&family)
+        .into_iter()
+        .max_by_key(|kind| kind.pixel_width())
+        .ok_or_else(|| failure("ICNS has no complete image representation"))?;
+    let icon = family
+        .get_icon_with_type(kind)
+        .map_err(failure)?
+        .convert_to(icns::PixelFormat::RGBA);
+    dimensions(icon.width(), icon.height())?;
+    let image = image::RgbaImage::from_raw(icon.width(), icon.height(), icon.data().to_vec())
+        .ok_or_else(|| failure("Invalid ICNS pixels"))?;
+    let mut output = Encoded::default();
+    image::codecs::png::PngEncoder::new(&mut output)
+        .write_image(
+            image.as_raw(),
+            image.width(),
+            image.height(),
+            image::ExtendedColorType::Rgba8,
+        )
+        .map_err(failure)?;
+    Ok(output.into_bytes())
 }
 
 pub(super) fn encode(bytes: &[u8], crop: CropRect) -> Result<Vec<u8>, AppError> {

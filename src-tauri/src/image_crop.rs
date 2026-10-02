@@ -7,6 +7,7 @@ use std::io::{Cursor, Write};
 
 mod gif_crop;
 mod icon_crop;
+pub(crate) use icon_crop::preview as icon_preview;
 mod png_crop;
 mod svg_crop;
 pub(crate) use svg_crop::SvgViewport;
@@ -252,6 +253,26 @@ pub(crate) fn encode_with_viewport(
             still(bytes, format, crop)
         }
         _ => still(bytes, format, crop),
+    }
+}
+
+pub(crate) fn format_name(bytes: &[u8]) -> Result<&'static str, AppError> {
+    if svg_crop::candidate(bytes) {
+        return Ok("SVG");
+    }
+    if bytes.starts_with(b"icns") {
+        return Ok("ICNS");
+    }
+    if explorer_avif::is_avif(bytes) {
+        return Ok("AVIF");
+    }
+    match image::guess_format(bytes).map_err(failure)? {
+        ImageFormat::Jpeg => Ok("JPEG"),
+        ImageFormat::Png => Ok("PNG"),
+        ImageFormat::Gif => Ok("GIF"),
+        ImageFormat::WebP => Ok("WebP"),
+        ImageFormat::Bmp => Ok("BMP"),
+        _ => Err(failure("This image format cannot be cropped")),
     }
 }
 

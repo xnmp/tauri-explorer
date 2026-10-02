@@ -11,6 +11,45 @@ use crate::files::{
 };
 use std::{fs, path::Path, sync::Arc};
 
+#[cfg(target_os = "linux")]
+#[test]
+fn generated_crop_detects_edit_of_displaced_original_with_restored_timestamp() {
+    struct Progress;
+    impl crate::files::anchored_copy::CopyProgress for Progress {
+        fn check_cancelled(&mut self) -> Result<(), AppError> {
+            Ok(())
+        }
+        fn advance(&mut self, _: u64, _: &Path) -> Result<(), AppError> {
+            Ok(())
+        }
+    }
+    let (directory, _coordinator, operation) = fixture();
+    let target = directory.path().join("target");
+    let (_, captured, _) = crate::files::image_crop::read_source(&target).unwrap();
+    let mut execution = ReplacementExecution::prepare(operation).unwrap();
+    execution.stage_copy(&mut Progress).unwrap();
+    execution.displace_copy().unwrap();
+    let held = execution
+        .root
+        .directory()
+        .path()
+        .unwrap()
+        .join(super::super::artifact_layout::ORIGINAL);
+    let modified = fs::metadata(&held).unwrap().modified().unwrap();
+    let mut edited = fs::read(&held).unwrap();
+    edited[0] ^= 1;
+    fs::write(&held, &edited).unwrap();
+    fs::File::options()
+        .write(true)
+        .open(&held)
+        .unwrap()
+        .set_times(fs::FileTimes::new().set_modified(modified))
+        .unwrap();
+    assert!(execution.verify_original_revision(&captured).is_err());
+    assert!(!target.exists());
+    assert_eq!(fs::read(&held).unwrap(), edited);
+}
+
 fn writing(path: &Path) -> Vec<Request> {
     vec![Request {
         path: path.to_owned(),

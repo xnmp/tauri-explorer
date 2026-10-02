@@ -467,6 +467,40 @@ async fn entry(
 }
 
 #[tauri::command]
+pub(crate) async fn save_image_crop(
+    window: tauri::Window,
+    session_id: String,
+    request: crate::files::image_crop::SaveRequest,
+) -> Result<MutationReply<FileMutationReceipt>, AppError> {
+    let owner = renderer_owner::acquire_owner(&window, &session_id)?;
+    let plan = crate::files::image_crop::SavePlan::new(request)?;
+    let runtime = admission::runtime(&window)?;
+    let directories = plan.affected_dirs();
+    file_history::run_forward(owner, false, directories, async move {
+        let outcome = crate::files::image_crop::execute(plan, &runtime).await;
+        let effect = match &outcome.completion.result {
+            Ok(receipt) => ForwardEffect::Changed(copy_inverse(receipt)),
+            Err(_) if admission::changed(&outcome.completion.result) => {
+                ForwardEffect::Changed(None)
+            }
+            Err(_) => ForwardEffect::Unchanged,
+        };
+        let affected = if matches!(effect, ForwardEffect::Changed(_)) {
+            outcome.affected
+        } else {
+            Vec::new()
+        };
+        MutationOutcome {
+            result: outcome.completion.result,
+            warning: outcome.completion.warning,
+            effect,
+            affected,
+        }
+    })
+    .await
+}
+
+#[tauri::command]
 pub(crate) async fn create_directory(
     window: tauri::Window,
     session_id: String,

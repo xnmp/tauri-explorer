@@ -385,3 +385,11 @@ jobs:
             logs/
             e2e-tauri/logs/
           if-no-files-found: ignore
+
+      - name: Upload native clipboard image acceptance
+        if: ${{ always() && runner.os == 'Windows' }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: clipboard-image-acceptance-windows
+          path: screenshots/fix/722-progress-bar-when-copying-images/*-win32.png
+          if-no-files-found: ignore

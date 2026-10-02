@@ -2,8 +2,13 @@
 import { invoke, extractError, type ApiResult } from "./common";
 
 export async function clipboardHasImage(): Promise<boolean> {
-  try { return await invoke<boolean>("clipboard_has_image"); }
-  catch { return false; }
+  const result = await clipboardImageStatus();
+  return result.ok && result.data;
+}
+
+export async function clipboardImageStatus(): Promise<ApiResult<boolean>> {
+  try { return { ok: true, data: await invoke<boolean>("clipboard_has_image") }; }
+  catch (err) { return { ok: false, error: extractError(err) }; }
 }
 
 export async function clipboardPasteImage(directory: string): Promise<ApiResult<string>> {

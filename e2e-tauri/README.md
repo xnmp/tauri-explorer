@@ -88,6 +88,17 @@ profile under the home filesystem; never repurpose `HOME` to redirect tests.
 The suites currently share persisted settings when they share one profile, so
 use a fresh profile when qualifying a scenario that requires default settings.
 
+`clipboard-image-progress.spec.ts` copies a three-megapixel PNG through an
+external X11 `xclip` owner or Windows PowerShell/WinForms helper, then uses both
+Explorer Paste paths and previews the actual output in all three views. Linux
+runs require the private display/session/profile above; Windows automation is
+restricted to a disposable hosted CI desktop. The WDIO runner defaults
+`TAURI_EXPLORER_E2E_CLIPBOARD_IMAGE_DELAY_MS` to 2000 so a hook build can retain
+accepted image work for its progress screenshot. Only hook builds honor that
+bounded delay; the subsequent clipboard read, encoding and filesystem write
+use the real platform backend. This proves pending presentation and final
+output, not a measured percentage or encoding throughput.
+
 ## CI
 
 See `.github/workflows/e2e-tauri.yml`. Runs on `pull_request` and `push` to

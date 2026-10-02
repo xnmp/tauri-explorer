@@ -19,6 +19,9 @@ import { installExternalJobFixture } from "./external-job-fixture";
 import { assertNativePortsAvailable, resolveNativeDriverPorts, waitForOwnedNativePorts } from "./native-driver-ports";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
+// Hook-only native hold makes image-paste progress observable before the real
+// clipboard read/encode/write starts, including on a fast CI filesystem.
+process.env.TAURI_EXPLORER_E2E_CLIPBOARD_IMAGE_DELAY_MS ??= "2000";
 const isWindows = process.platform === "win32";
 const binaryName = isWindows ? "tauri-explorer.exe" : "tauri-explorer";
 const application = resolveNativeApplication(

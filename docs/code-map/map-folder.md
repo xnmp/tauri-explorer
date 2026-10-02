@@ -80,6 +80,8 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 
 ## src/lib/state/ — Svelte 5 runes stores + pure pane logic. Business state lives here.
 
+- `clipboard-image-progress.svelte.ts` — independent accepted image-paste lifetimes, retained until clipboard/write/listing settlement; shared by normal and explicit Paste Image.
+
 - `src/lib/state/file-recovery.svelte.ts` — page-created revision-ordered recovery state, explicit inspection/action capabilities and independently retired subscription lifetimes; no module-global active store.
 - `src/lib/state/file-recovery-session.svelte.ts` — lazy page-owned recovery loading/reconnection and awaitable idempotent retirement; late imports cannot attach to a disposed page. Contracts in `tests/state/file-recovery-session.test.ts`; browser behavior in `e2e/file-recovery.spec.ts`.
 

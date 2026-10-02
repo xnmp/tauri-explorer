@@ -157,31 +157,55 @@ mod platform {
         }
 
         fn has_image(&self) -> bool {
-            Command::new("osascript")
+            self.has_image_result().unwrap_or(false)
+        }
+
+        fn has_image_result(&self) -> Result<bool, AppError> {
+            let output = Command::new("osascript")
                 .args(["-e", "clipboard info"])
                 .output()
-                .map(|output| {
-                    output.status.success() && {
-                        let info = String::from_utf8_lossy(&output.stdout);
-                        info.contains("PNGf") || info.contains("TIFF") || info.contains("picture")
-                    }
-                })
-                .unwrap_or(false)
+                .map_err(|error| {
+                    AppError::Other(format!("Could not inspect clipboard: {error}"))
+                })?;
+            if !output.status.success() {
+                return Err(AppError::Other(format!(
+                    "Could not inspect clipboard: {}",
+                    String::from_utf8_lossy(&output.stderr).trim()
+                )));
+            }
+            let info = String::from_utf8_lossy(&output.stdout);
+            Ok(info.contains("PNGf") || info.contains("TIFF") || info.contains("picture"))
         }
 
         /// PNG only: AppKit transcodes other pasteboard images to it.
         fn read_image(&self, media_type: &str) -> Option<Vec<u8>> {
+            self.read_image_result(media_type).ok().flatten()
+        }
+
+        fn read_image_result(&self, media_type: &str) -> Result<Option<Vec<u8>>, AppError> {
             if media_type != "image/png" {
-                return None;
+                return Ok(None);
+            }
+            if !self.has_image_result()? {
+                return Ok(None);
             }
             let output = Command::new("osascript")
                 .args(["-e", "get the clipboard as \u{ab}class PNGf\u{bb}"])
                 .output()
-                .ok()?;
+                .map_err(|error| {
+                    AppError::Other(format!("Could not read clipboard image: {error}"))
+                })?;
             if !output.status.success() {
-                return None;
+                return Err(AppError::Other(format!(
+                    "Could not read or encode clipboard image: {}",
+                    String::from_utf8_lossy(&output.stderr).trim()
+                )));
             }
             parse_applescript_png(&String::from_utf8_lossy(&output.stdout))
+                .map(Some)
+                .ok_or_else(|| {
+                    AppError::Other("Clipboard image encoding returned invalid PNG data".into())
+                })
         }
     }
 }

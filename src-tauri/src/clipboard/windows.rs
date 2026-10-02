@@ -170,39 +170,80 @@ $text = [System.Windows.Forms.Clipboard]::GetText()
     }
 
     fn has_image(&self) -> bool {
+        self.has_image_result().unwrap_or(false)
+    }
+
+    fn has_image_result(&self) -> Result<bool, AppError> {
         let script = r#"
+$ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName System.Windows.Forms
 if ([System.Windows.Forms.Clipboard]::ContainsImage()) { 'yes' } else { 'no' }
 "#;
-        run_powershell(script, &[])
-            .map(|o| String::from_utf8_lossy(&o.stdout).contains("yes"))
-            .unwrap_or(false)
+        let output = run_powershell(script, &[]).ok_or_else(|| {
+            AppError::Other("Could not start PowerShell to inspect clipboard".into())
+        })?;
+        if !output.status.success() {
+            return Err(AppError::Other(format!(
+                "Could not inspect clipboard: {}",
+                String::from_utf8_lossy(&output.stderr).trim()
+            )));
+        }
+        match String::from_utf8_lossy(&output.stdout).trim() {
+            "yes" => Ok(true),
+            "no" => Ok(false),
+            _ => Err(AppError::Other(
+                "Clipboard inspection returned an invalid response".into(),
+            )),
+        }
     }
 
     /// PNG only: the clipboard bitmap is re-encoded as PNG.
     fn read_image(&self, media_type: &str) -> Option<Vec<u8>> {
+        self.read_image_result(media_type).ok().flatten()
+    }
+
+    fn read_image_result(&self, media_type: &str) -> Result<Option<Vec<u8>>, AppError> {
         use base64::Engine as _;
         if media_type != "image/png" {
-            return None;
+            return Ok(None);
         }
         let script = r#"
+$ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
 $img = [System.Windows.Forms.Clipboard]::GetImage()
-if ($null -eq $img) { exit 1 }
+if ($null -eq $img) { exit 2 }
 $ms = New-Object System.IO.MemoryStream
-$img.Save($ms, [System.Drawing.Imaging.ImageFormat]::Png)
-[Convert]::ToBase64String($ms.ToArray())
+try {
+    $img.Save($ms, [System.Drawing.Imaging.ImageFormat]::Png)
+    [Convert]::ToBase64String($ms.ToArray())
+} finally {
+    $ms.Dispose()
+    $img.Dispose()
+}
 "#;
-        let output = run_powershell(script, &[])?;
+        let output = run_powershell(script, &[]).ok_or_else(|| {
+            AppError::Other("Could not start PowerShell to read clipboard image".into())
+        })?;
+        if output.status.code() == Some(2) {
+            return Ok(None);
+        }
         if !output.status.success() {
-            return None;
+            return Err(AppError::Other(format!(
+                "Could not read or encode clipboard image: {}",
+                String::from_utf8_lossy(&output.stderr).trim()
+            )));
         }
         let b64: String = ps_lines(&output.stdout).concat();
         if b64.is_empty() {
-            return None;
+            return Err(AppError::Other(
+                "Clipboard image encoding returned no data".into(),
+            ));
         }
-        base64::engine::general_purpose::STANDARD.decode(b64).ok()
+        base64::engine::general_purpose::STANDARD
+            .decode(b64)
+            .map(Some)
+            .map_err(|error| AppError::Other(format!("Invalid encoded clipboard image: {error}")))
     }
 }
 

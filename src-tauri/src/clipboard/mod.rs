@@ -59,10 +59,10 @@ pub async fn clipboard_read_text() -> Result<String, AppError> {
 
 /// Check if the clipboard contains image data.
 #[tauri::command]
-pub async fn clipboard_has_image() -> bool {
-    tokio::task::spawn_blocking(|| platform::reader().has_image())
+pub async fn clipboard_has_image() -> Result<bool, AppError> {
+    tokio::task::spawn_blocking(|| platform::reader().has_image_result())
         .await
-        .unwrap_or(false)
+        .map_err(|error| AppError::Other(format!("Clipboard task failed: {error}")))?
 }
 
 /// Read a clipboard screenshot for a user report without creating a file in
@@ -101,6 +101,15 @@ pub async fn clipboard_read_report_image(
 /// Returns the path of the created file, or an error.
 #[tauri::command]
 pub async fn clipboard_paste_image(directory: String) -> Result<String, AppError> {
+    // Hook builds can hold accepted work for a native screenshot. Clipboard
+    // reading, encoding and writing below still use the real platform backend.
+    #[cfg(feature = "e2e-hooks")]
+    if let Some(delay) = std::env::var("TAURI_EXPLORER_E2E_CLIPBOARD_IMAGE_DELAY_MS")
+        .ok()
+        .and_then(|value| value.parse::<u64>().ok())
+    {
+        tokio::time::sleep(std::time::Duration::from_millis(delay.min(10_000))).await;
+    }
     tokio::task::spawn_blocking(move || {
         content::paste_image(
             platform::reader().as_ref(),

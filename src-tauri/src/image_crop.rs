@@ -8,6 +8,8 @@ use std::io::{Cursor, Write};
 mod gif_crop;
 mod icon_crop;
 mod png_crop;
+mod svg_crop;
+pub(crate) use svg_crop::SvgViewport;
 mod webp_crop;
 
 pub(crate) const MAX_BYTES: usize = 200 * 1024 * 1024;
@@ -197,8 +199,19 @@ fn still(bytes: &[u8], format: ImageFormat, crop: CropRect) -> Result<Vec<u8>, A
 }
 
 pub(crate) fn encode(bytes: &[u8], crop: CropRect) -> Result<Vec<u8>, AppError> {
+    encode_with_viewport(bytes, crop, None)
+}
+
+pub(crate) fn encode_with_viewport(
+    bytes: &[u8],
+    crop: CropRect,
+    viewport: Option<SvgViewport>,
+) -> Result<Vec<u8>, AppError> {
     if bytes.len() > MAX_BYTES {
         return Err(failure("Image file exceeds the crop size limit"));
+    }
+    if svg_crop::candidate(bytes) {
+        return svg_crop::encode(bytes, crop, viewport);
     }
     if bytes.starts_with(b"icns") {
         return icon_crop::encode(bytes, crop);

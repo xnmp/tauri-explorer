@@ -701,6 +701,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `src-tauri/src/image_crop.rs` — bounded full-resolution crop encoding and EXIF orientation normalization (#681; save/UI integration pending).
 - `src-tauri/src/image_crop/gif_crop.rs` — indexed GIF crop preserving frame regions, palettes, disposal, timing and looping.
 - `src-tauri/src/image_crop/icon_crop.rs` — validates ICNS/embedded PNG/JP2 bounds and preserves original canvas sizes with transparent crop padding.
+- `src-tauri/src/image_crop/svg_crop.rs` — bounded UTF-8/UTF-16 SVG crop using the captured viewport; independent-document clipping for static/CSS animation and same-document ordinary SMIL with explicit context refusals.
 - `src-tauri/src/image_crop/webp_crop.rs` — lossless animated WebP crop of composited frames with retained timing/looping.
 
 - `src-tauri/src/image_crop/png_crop.rs` — APNG raw-frame crop with preserved disposal/blending, separate default image, color metadata, 8/16-bit samples and normalized orientation.

@@ -502,6 +502,251 @@ fn avif_alternate_icc_survives_without_changing_selected_base_pixels() {
 }
 
 #[test]
+fn svg_crop_preserves_the_vector_document_and_uses_pixel_bounds() {
+    let original = br#"<svg xmlns="http://www.w3.org/2000/svg" width="8" height="6" viewBox="0 0 80 60"><defs><linearGradient id="paint"><stop stop-color="red"/><stop offset="1" stop-color="blue"/></linearGradient></defs><rect width="100%" height="100%" fill="url(#paint)"/><circle cx="30" cy="20" r="9" opacity=".5"/></svg>"#;
+    let output = encode(original, REGION).unwrap();
+    let output = String::from_utf8(output).unwrap();
+    assert!(output.contains("width=\"5\""));
+    assert!(output.contains("height=\"3\""));
+    assert!(output.contains("viewBox=\"2 1 5 3\""));
+    let marker = "data:image/svg+xml;base64,";
+    let start = output.find(marker).unwrap() + marker.len();
+    let end = output[start..].find('"').unwrap() + start;
+    use base64::Engine as _;
+    assert_eq!(
+        base64::engine::general_purpose::STANDARD
+            .decode(&output[start..end])
+            .unwrap(),
+        original
+    );
+}
+
+#[test]
+fn svg_malformed_xml_is_rejected() {
+    for child in [
+        "<1bad/>",
+        "<rect 1bad=\"x\"/>",
+        "<text>&#1;</text>",
+        "<rect fill=\"&#1;\"/>",
+        "<rect fill=\"<\"/>",
+    ] {
+        let original = format!(
+            "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"8\" height=\"6\">{child}</svg>"
+        );
+        assert!(
+            encode(original.as_bytes(), REGION).is_err(),
+            "accepted {child}"
+        );
+    }
+}
+
+#[test]
+fn svg_requires_a_captured_viewport_when_intrinsic_dimensions_are_ambiguous() {
+    for attributes in [
+        "",
+        "width=\"100%\" height=\"100%\"",
+        "width=\"2in\" height=\"1in\"",
+        "width=\"8\" height=\"6\" style=\"width:100%\"",
+    ] {
+        let source = format!("<svg xmlns=\"http://www.w3.org/2000/svg\" {attributes}><rect width=\"100%\" height=\"100%\"/></svg>");
+        assert!(encode(source.as_bytes(), REGION).is_err());
+        assert!(encode_with_viewport(
+            source.as_bytes(),
+            REGION,
+            Some(SvgViewport {
+                width: 8,
+                height: 6
+            })
+        )
+        .is_ok());
+    }
+}
+
+#[test]
+fn svg_refuses_unsupported_animated_document_context_instead_of_changing_its_appearance() {
+    for body in [
+        "<style>:root > rect {fill:red}</style><rect><animate attributeName=\"fill\" dur=\"1s\"/></rect>",
+        "<script/><animate attributeName=\"opacity\" dur=\"1s\"/>",
+        "<foreignObject/><animate attributeName=\"opacity\" dur=\"1s\"/>",
+        "<animate attributeName=\"width\" dur=\"1s\"/>",
+        "<g><animate href=\"#root\" attributeName=\"style\" dur=\"1s\"/></g>",
+    ] {
+        let source = format!("<svg xmlns=\"http://www.w3.org/2000/svg\" id=\"root\" width=\"8\" height=\"6\">{body}</svg>");
+        assert!(encode_with_viewport(source.as_bytes(), REGION, Some(SvgViewport { width: 8, height: 6 })).unwrap_err().to_string().contains("cannot preserve"));
+    }
+    let source = br#"<?xml-stylesheet href="theme.css"?><svg xmlns="http://www.w3.org/2000/svg" width="8" height="6"><animate attributeName="opacity" dur="1s"/></svg>"#;
+    assert!(encode(source, REGION)
+        .unwrap_err()
+        .to_string()
+        .contains("cannot preserve"));
+}
+
+#[test]
+fn svg_utf16_and_invalid_crop_inputs_are_handled_without_panics() {
+    let source = "<?xml version=\"1.0\" encoding=\"UTF-16\"?><svg xmlns=\"http://www.w3.org/2000/svg\" width=\"8\" height=\"6\"><text>é</text></svg>";
+    for little in [false, true] {
+        let mut bytes = if little {
+            vec![0xff, 0xfe]
+        } else {
+            vec![0xfe, 0xff]
+        };
+        for word in source.encode_utf16() {
+            bytes.extend_from_slice(&if little {
+                word.to_le_bytes()
+            } else {
+                word.to_be_bytes()
+            });
+        }
+        assert!(encode(&bytes, REGION).is_ok());
+        bytes.pop();
+        assert!(encode(&bytes, REGION).is_err());
+    }
+    let source = br#"<svg xmlns="http://www.w3.org/2000/svg" width="8" height="6"/>"#;
+    for crop in [
+        CropRect { right: 2, ..REGION },
+        CropRect { right: 9, ..REGION },
+        CropRect {
+            bottom: u32::MAX,
+            ..REGION
+        },
+    ] {
+        assert!(encode(source, crop).is_err());
+    }
+    assert!(encode_with_viewport(
+        source,
+        REGION,
+        Some(SvgViewport {
+            width: u32::MAX,
+            height: 6
+        })
+    )
+    .is_err());
+}
+
+#[test]
+fn svg_root_animation_guard_uses_svg_href_priority_and_namespace() {
+    for attributes in [
+        "href=\"#root\" xlink:href=\"#rect\" attributeName=\"width\"",
+        "href=\"#root\" p:href=\"#rect\" attributeName=\"style\"",
+        "href=\"#root\" attributeName=\"width\" p:attributeName=\"fill\"",
+        "href=\"#%72oot\" attributeName=\"width\"",
+    ] {
+        let source = format!("<svg xmlns=\"http://www.w3.org/2000/svg\" xmlns:xlink=\"http://www.w3.org/1999/xlink\" xmlns:p=\"urn:metadata\" id=\"root\" width=\"8\" height=\"6\"><rect id=\"rect\"/><animate {attributes} dur=\"1s\"/></svg>");
+        assert!(
+            encode(source.as_bytes(), REGION).is_err(),
+            "accepted root animation: {attributes}"
+        );
+    }
+}
+
+#[test]
+fn svg_smil_refuses_document_relative_units_including_css_escapes() {
+    for attributes in [
+        "width=\"50vw\"",
+        "height=\"50dvh\"",
+        "width=\"5rem\"",
+        "height=\"2rlh\"",
+        "style=\"width:10cqw\"",
+        r#"style="width:calc(50v\77 + 2px)""#,
+        r#"style="width:50\76&#13;&#10;w""#,
+    ] {
+        let source = format!("<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"8\" height=\"6\"><rect {attributes}/><set attributeName=\"opacity\" to=\"1\" begin=\"indefinite\"/></svg>");
+        assert!(
+            encode_with_viewport(
+                source.as_bytes(),
+                REGION,
+                Some(SvgViewport {
+                    width: 8,
+                    height: 6
+                })
+            )
+            .is_err(),
+            "accepted document-relative units: {attributes}"
+        );
+    }
+}
+
+/// Export only outputs from the production Rust encoder for the independent
+/// headless renderer check in scripts/verify-image-crop-svg.mjs.
+#[test]
+fn svg_renderer_fixtures() {
+    use base64::Engine as _;
+    let cases = [
+        ("letterbox", "viewBox=\"0 0 100 100\"", "<rect width=\"100\" height=\"100\" fill=\"red\"/>", false),
+        ("aligned-meet", "viewBox=\"10 20 100 100\" preserveAspectRatio=\"xMinYMax meet\"", "<rect x=\"10\" y=\"20\" width=\"100\" height=\"100\" fill=\"green\"/>", false),
+        ("slice", "viewBox=\"10 20 100 100\" preserveAspectRatio=\"xMaxYMin slice\"", "<rect x=\"10\" y=\"20\" width=\"100\" height=\"100\" fill=\"blue\"/><rect x=\"30\" y=\"40\" width=\"20\" height=\"20\" fill=\"red\"/>", false),
+        ("stretch", "viewBox=\"0 0 100 100\" preserveAspectRatio=\"none\"", "<circle cx=\"50\" cy=\"50\" r=\"40\" fill=\"purple\"/>", false),
+        ("css-root-percent", "style=\"width:200px;height:100px\"", "<style>:root { color: #2468ac } :root > rect { fill: currentColor }</style><rect width=\"75%\" height=\"80%\"/>", false),
+        ("gradient-mask-filter", "viewBox=\"0 0 200 100\"", "<defs><linearGradient id=\"g\"><stop stop-color=\"red\"/><stop offset=\"1\" stop-color=\"blue\"/></linearGradient><mask id=\"m\"><rect width=\"100%\" height=\"100%\" fill=\"white\"/><circle cx=\"100\" cy=\"50\" r=\"20\" fill=\"black\"/></mask><filter id=\"f\"><feGaussianBlur stdDeviation=\"2\"/></filter></defs><rect width=\"100%\" height=\"100%\" fill=\"url(#g)\" mask=\"url(#m)\" filter=\"url(#f)\"/>", false),
+        ("embedded-vector", "", "<image width=\"200\" height=\"100\" href=\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='200' height='100'%3E%3Crect width='150' height='90' fill='orange'/%3E%3C/svg%3E\"/>", false),
+        ("smil-animation", "", "<rect width=\"200\" height=\"100\" fill=\"red\"><animate attributeName=\"fill\" values=\"red;blue;red\" dur=\".4s\" repeatCount=\"indefinite\"/></rect>", true),
+        ("entity-inline-style", "style=\"fill:&#114;ed;font-family:&quot;Arial&quot;\"", "<rect width=\"200\" height=\"100\"/>", false),
+        ("prefixed-namespace", "xmlns:p=\"http://www.w3.org/2000/svg\"", "<p:rect width=\"200\" height=\"100\" fill=\"red\"/><rect width=\"200\" height=\"100\" fill=\"green\"/><p:set attributeName=\"opacity\" to=\"1\" begin=\"indefinite\"/>", false),
+        ("css-animation", "", "<style>@keyframes pulse { from { fill: red } to { fill: blue } } rect { animation: pulse .2s infinite alternate }</style><rect width=\"200\" height=\"100\"/>", true),
+    ];
+    let viewport = SvgViewport {
+        width: 200,
+        height: 100,
+    };
+    let crop = CropRect {
+        left: 25,
+        top: 15,
+        right: 180,
+        bottom: 85,
+    };
+    let second = CropRect {
+        left: 10,
+        top: 8,
+        right: 145,
+        bottom: 62,
+    };
+    let mut exported = Vec::new();
+    for (name, attributes, body, animated) in cases {
+        let variants = if !animated && !body.contains("<style>") && name != "prefixed-namespace" {
+            vec![false, true]
+        } else {
+            vec![false]
+        };
+        for inline in variants {
+            let name = if inline {
+                format!("smil-{name}")
+            } else {
+                name.to_owned()
+            };
+            let body = if inline {
+                format!("{body}<set attributeName=\"opacity\" to=\"1\" begin=\"indefinite\"/>")
+            } else {
+                body.to_owned()
+            };
+            let original = if name == "prefixed-namespace" {
+                format!("<p:svg width=\"200\" height=\"100\" {attributes}>{body}</p:svg>")
+            } else {
+                format!("<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"200\" height=\"100\" {attributes}>{body}</svg>")
+            };
+            let output = encode_with_viewport(original.as_bytes(), crop, Some(viewport)).unwrap();
+            let repeated = encode_with_viewport(
+                &output,
+                second,
+                Some(SvgViewport {
+                    width: crop.width(),
+                    height: crop.height(),
+                }),
+            )
+            .unwrap();
+            let base64 = |bytes: &[u8]| base64::engine::general_purpose::STANDARD.encode(bytes);
+            exported.push(serde_json::json!({
+                "name": name, "original": base64(original.as_bytes()),
+                "output": base64(&output), "repeated": base64(&repeated),
+                "viewport": viewport, "crop": crop, "second": second, "animated": animated,
+            }));
+        }
+    }
+    if let Some(path) = std::env::var_os("EXPLORER_SVG_RENDER_FIXTURES") {
+        std::fs::write(path, serde_json::to_vec(&exported).unwrap()).unwrap();
+    }
+}
+
+#[test]
 fn avif_malformed_input_and_invalid_crops_return_errors_without_panics() {
     for bytes in [
         b"".as_slice(),

@@ -42,6 +42,8 @@
  */
 import type { Drive } from "./drives";
 import type { GitFileEntry, GitOpState } from "./git";
+import type { ImageCropCapture, ImageCropSave } from "./image-crop";
+import type { FileMutationReceipt } from "$lib/domain/file";
 
 export interface MockGitState {
   branch: string;
@@ -66,6 +68,8 @@ export interface MockControl {
   previewReadText?: (path: string) => string | Promise<string>;
   /** Overrides `read_image_data_url` for the path under test. */
   previewReadImage?: (path: string) => string | Promise<string>;
+  imageCropCapture?: (path: string) => ImageCropCapture | Promise<ImageCropCapture>;
+  imageCropSave?: (request: ImageCropSave) => FileMutationReceipt | Promise<FileMutationReceipt>;
   /** Overrides `get_video_thumbnail_data`. */
   videoThumbnail?: (path: string, size?: number) => string | Promise<string>;
   /** Action hook: bump the mtime/size of a previewed file to simulate an

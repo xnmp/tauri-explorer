@@ -34,6 +34,7 @@ pub mod file_ops;
 mod freedesktop_trash;
 pub mod fs_watcher;
 pub mod git_status;
+pub(crate) mod image_crop;
 #[cfg(target_os = "linux")]
 pub mod linux_gvfs_watch;
 #[cfg(target_os = "linux")]

@@ -36,6 +36,8 @@ export interface WindowSessionOptions {
   homePath?: string;
   settingsReady(): void;
   commandsReady(): void;
+  /** Optional observer installed before the first listing, with this session's lifetime. */
+  beforeInitialListing?(signal: AbortSignal): void;
 }
 
 export function startWindowSession(options: WindowSessionOptions) {
@@ -88,6 +90,7 @@ export function startWindowSession(options: WindowSessionOptions) {
     const watchers = useFileWatchers({ getAllExplorers: () => windowTabsManager.getAllExplorers() });
     stops.push(() => watchers.cleanup());
     watchers.setup();
+    options.beforeInitialListing?.(lifetime.signal);
     const tab = windowTabsManager.init(plan.initialPath, plan.skipRestore, plan.overridePath);
     stops.push(startWindowTitleSync(() => windowTabsManager.getActiveExplorer()?.currentPath, plan.homePath));
     if (plan.viewMode && tab) windowTabsManager.getActiveExplorer()?.setViewMode(plan.viewMode);

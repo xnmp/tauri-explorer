@@ -17,6 +17,8 @@ export interface WindowOperationRequest {
   token: string;
   op: WindowOperation;
   target?: string;
+  /** Omit one actual seed entry to make late backend validation observable. */
+  seedOmit?: string;
 }
 
 type Handler = (request: WindowOperationRequest) => Promise<unknown>;
@@ -219,9 +221,25 @@ export function windowOperationHandlers(signal: AbortSignal): Record<WindowOpera
       return { receiptKey };
     },
 
-    "fresh-open": async ({ token, target }) => {
+    "fresh-open": async ({ token, target, seedOmit }) => {
       const { createWindowLauncher } = await whileActive(import("$lib/state/window-launch"));
-      const opened = await createWindowLauncher({ warmEnabled: () => false, uuid: () => token })(
+      const { normalizeDirectorySeed, directorySeedFitsBudget } = await whileActive(import("$lib/domain/window-input"));
+      const opened = await createWindowLauncher({
+        warmEnabled: () => false, uuid: () => token,
+        ...(seedOmit ? { captureDirectorySeed(path: string) {
+          const explorer = windowTabsManager.getActiveExplorer();
+          if (!explorer || explorer.currentPath !== path) return null;
+          const now = Date.now();
+          // Keep an actual directory snapshot but omit one real fixture entry.
+          // The unchanged native listing restores it after the held reply;
+          // that observable publication is stronger than a settling delay.
+          const seed = normalizeDirectorySeed({ currentPath: path,
+            entries: explorer.displayEntries.filter(entry => entry.name !== seedOmit),
+            sortBy: explorer.sortBy, sortAscending: explorer.sortAscending,
+            viewMode: explorer.viewMode, ts: now }, path, now);
+          return seed && directorySeedFitsBudget(seed) ? seed : null;
+        } } : {}),
+      })(
         target ?? windowTabsManager.getActiveExplorer()!.currentPath,
       );
       return opened ? { kind: opened.kind, label: opened.label } : null;

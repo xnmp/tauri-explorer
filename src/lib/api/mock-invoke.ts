@@ -6,6 +6,8 @@
 import type { FileBatchOutcome } from "$lib/domain/file-batch-outcome";
 import type { HistoryDirection, HistorySummary, UndoAction } from "$lib/domain/file-history";
 import { createMockFileHistory } from "./mock-file-history";
+import { createMockImageCrop } from "./mock-image-crop";
+import type { ImageCropSave } from "./image-crop";
 import type { DirectoryListing, FileEntry, FileMutationReceipt } from "$lib/domain/file";
 import { encodeDirectoryListing, type CompactDirectoryListing } from "./directory-wire";
 import { selectPreviewImages } from "$lib/domain/folder-preview";
@@ -38,6 +40,7 @@ interface MockCopyControl {
 const mockCopyControls = new Map<string, MockCopyControl>();
 
 const mutationReceipt = (entry: FileEntry): FileMutationReceipt => ({ path: entry.path, entry });
+const mockImageCrop = createMockImageCrop(mockFiles, nextTimestamp);
 
 /** Relocate one entry's mock listing state. Backs the `move_entries` session
  *  mock's per-item relocation, and is injected into `createMockFileHistory`
@@ -1450,6 +1453,8 @@ const mockCommands: Record<string, CommandHandler> = {
   },
 
   get_thumbnail_data: (args) => {
+    const cropped = mockImageCrop.read((args.path as string) ?? "");
+    if (cropped) return cropped;
     // #593 regression guard: a single hardcoded JPEG for every path let the
     // browser satisfy N tiles from ONE cached decoded bitmap, hiding scroll
     // jank that only appears when N distinct images must each be decoded.
@@ -1467,6 +1472,8 @@ const mockCommands: Record<string, CommandHandler> = {
 
   get_micro_thumbnail: (args) => {
     const path = (args.path as string) ?? "";
+    const cropped = mockImageCrop.read(path);
+    if (cropped) return cropped;
     const size = (args.prewarmSize as number) ?? 16;
     const quality = (args.prewarmQuality as number) ?? 50;
     return (
@@ -1479,10 +1486,15 @@ const mockCommands: Record<string, CommandHandler> = {
   read_image_data_url: (args) => {
     const hook = getMockControl().previewReadImage;
     if (hook) return hook((args.path as string) ?? "");
+    const cropped = mockImageCrop.read((args.path as string) ?? "");
+    if (cropped) return cropped;
     // Full-size preview in browser/E2E mode: reuse the realistic thumbnail
     // JPEG so the preview pane (and its fullscreen mode) can be exercised.
     return mockInvoke<string>("get_thumbnail_data");
   },
+
+  capture_image_crop: (args) => getMockControl().imageCropCapture?.(args.path as string) ?? mockImageCrop.capture(args.path as string),
+  save_image_crop: (args) => getMockControl().imageCropSave?.(args.request as ImageCropSave) ?? mockImageCrop.save(args.request as ImageCropSave),
 
   get_video_thumbnail_data: (args) => {
     const videoThumbnailMock = getMockControl().videoThumbnail;
@@ -2872,7 +2884,7 @@ export async function mockInvoke<T>(cmd: string, args?: Record<string, unknown>)
     // history with no undoable action (which discards the redo stack).
     return { result, history: mockFileHistory.push(null).summary } as T;
   }
-  if (["create_directory", "create_empty_file", "rename_entry", "write_text_file", "create_symlink"].includes(cmd)) {
+  if (["create_directory", "create_empty_file", "rename_entry", "write_text_file", "create_symlink", "save_image_crop"].includes(cmd)) {
     const receipt = result as FileMutationReceipt;
     if (cmd === "rename_entry" && basename(args!.path as string) === args!.newName) {
       return { result, history: mockFileHistory.summary() } as T;

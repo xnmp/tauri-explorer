@@ -1,0 +1,132 @@
+[
+  {
+    "name": "fresh",
+    "nativeActive": {
+      "id": "0x40003c",
+      "title": "_NET_WM_NAME(UTF8_STRING) = \"requested - Tauri Explorer\"\n"
+    },
+    "initial": "/home/chong/tauri-native-cleanup-pj5Bya/address-selection-v1GhzZ/requested",
+    "selectedRange": [
+      0,
+      74
+    ],
+    "replacement": "/home/chong/tauri-native-cleanup-pj5Bya/address-selection-v1GhzZ/replacement"
+  },
+  {
+    "name": "warm",
+    "nativeActive": {
+      "id": "0x4000ca",
+      "title": "_NET_WM_NAME(UTF8_STRING) = \"requested - Tauri Explorer\"\n"
+    },
+    "initial": "/home/chong/tauri-native-cleanup-pj5Bya/address-selection-v1GhzZ/requested",
+    "selectedRange": [
+      0,
+      74
+    ],
+    "replacement": "/home/chong/tauri-native-cleanup-pj5Bya/address-selection-v1GhzZ/replacement"
+  },
+  {
+    "name": "ctrl-n",
+    "nativeActive": {
+      "id": "0x400146",
+      "title": "_NET_WM_NAME(UTF8_STRING) = \"origin - Tauri Explorer\"\n"
+    },
+    "initial": "/home/chong/tauri-native-cleanup-pj5Bya/address-selection-v1GhzZ/origin",
+    "selectedRange": [
+      0,
+      71
+    ],
+    "replacement": "/home/chong/tauri-native-cleanup-pj5Bya/address-selection-v1GhzZ/replacement"
+  },
+  {
+    "name": "palette",
+    "nativeActive": {
+      "id": "0x4001d4",
+      "title": "_NET_WM_NAME(UTF8_STRING) = \"origin - Tauri Explorer\"\n"
+    },
+    "initial": "/home/chong/tauri-native-cleanup-pj5Bya/address-selection-v1GhzZ/origin",
+    "selectedRange": [
+      0,
+      71
+    ],
+    "replacement": "/home/chong/tauri-native-cleanup-pj5Bya/address-selection-v1GhzZ/replacement"
+  },
+  {
+    "name": "fresh-first-response",
+    "nativeActive": {
+      "id": "0x400250",
+      "title": "_NET_WM_NAME(UTF8_STRING) = \"requested - Tauri Explorer\"\n"
+    },
+    "initial": "/home/chong/tauri-native-cleanup-pj5Bya/address-selection-v1GhzZ/requested",
+    "selectedRange": [
+      0,
+      74
+    ],
+    "replacement": "/home/chong/tauri-native-cleanup-pj5Bya/address-selection-v1GhzZ/replacement"
+  },
+  {
+    "name": "fresh-late-validation",
+    "nativeActive": {
+      "id": "0x4002ed",
+      "title": "_NET_WM_NAME(UTF8_STRING) = \"origin - Tauri Explorer\"\n"
+    },
+    "initial": "/home/chong/tauri-native-cleanup-pj5Bya/address-selection-v1GhzZ/origin",
+    "selectedRange": [
+      0,
+      71
+    ],
+    "replacement": "/home/chong/tauri-native-cleanup-pj5Bya/address-selection-v1GhzZ/replacement"
+  },
+  {
+    "name": "warm-held-navigation",
+    "nativeActive": {
+      "id": "0x40037e",
+      "title": "_NET_WM_NAME(UTF8_STRING) = \"requested - Tauri Explorer\"\n"
+    },
+    "initial": "/home/chong/tauri-native-cleanup-pj5Bya/address-selection-v1GhzZ/requested",
+    "selectedRange": [
+      0,
+      74
+    ],
+    "replacement": "/home/chong/tauri-native-cleanup-pj5Bya/address-selection-v1GhzZ/replacement"
+  },
+  {
+    "name": "tear-off-vertical",
+    "nativeActive": {
+      "id": "0x400429",
+      "title": "_NET_WM_NAME(UTF8_STRING) = \"requested - Tauri Explorer\"\n"
+    },
+    "initial": "/home/chong/tauri-native-cleanup-pj5Bya/address-selection-v1GhzZ/requested",
+    "selectedRange": [
+      0,
+      74
+    ],
+    "replacement": "/home/chong/tauri-native-cleanup-pj5Bya/address-selection-v1GhzZ/replacement"
+  },
+  {
+    "name": "tear-off-desktop",
+    "nativeActive": {
+      "id": "0x4004f6",
+      "title": "_NET_WM_NAME(UTF8_STRING) = \"requested - Tauri Explorer\"\n"
+    },
+    "initial": "/home/chong/tauri-native-cleanup-pj5Bya/address-selection-v1GhzZ/requested",
+    "selectedRange": [
+      0,
+      74
+    ],
+    "replacement": "/home/chong/tauri-native-cleanup-pj5Bya/address-selection-v1GhzZ/replacement"
+  },
+  {
+    "name": "closed-window-restore",
+    "nativeActive": {
+      "id": "0x4005b2",
+      "title": "_NET_WM_NAME(UTF8_STRING) = \"requested - Tauri Explorer\"\n"
+    },
+    "initial": "/home/chong/tauri-native-cleanup-pj5Bya/address-selection-v1GhzZ/requested",
+    "selectedRange": [
+      0,
+      74
+    ],
+    "replacement": "/home/chong/tauri-native-cleanup-pj5Bya/address-selection-v1GhzZ/replacement"
+  }
+]

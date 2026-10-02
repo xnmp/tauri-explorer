@@ -88,6 +88,18 @@ for (const dock of ["right", "top", "bottom"]) {
     await expect.poll(async () => (await decodedColor(page))[2]).toBeGreaterThan(220);
   });
 }
+test("fullscreen video covers an open terminal's resize handle", async ({ page }) => {
+  const player = await openVideo(page);
+  await page.keyboard.press("Control+`");
+  await expect(page.locator(".terminal-panel")).toBeVisible();
+  const resize = await page.locator(".terminal-panel .resize-handle").boundingBox();
+  expect(resize).not.toBeNull();
+  await player.getByRole("button", {name:"View video fullscreen",exact:true}).click();
+  expect(await page.evaluate(rect => {
+    const hit = document.elementFromPoint(rect.x + rect.width/2, rect.y + rect.height/2);
+    return {covered:!!hit?.closest(".video-preview"),hit:hit?.className};
+  }, resize!)).toMatchObject({covered:true});
+});
 test("unavailable source explains failure and offers external opening", async ({ page }) => {
   await page.addInitScript(() => { ((window as unknown as { __mockControl?: MockControl }).__mockControl ??= {}).videoPreview = () => {throw new Error("Video file is unavailable");}; });
   await page.addInitScript(() => localStorage.setItem("explorer-settings",JSON.stringify({showPreviewPane:true})));

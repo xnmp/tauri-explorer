@@ -527,10 +527,10 @@
     overflow: visible;
   }
 
-  /* Fullscreen is inside this stacking context. It must also cover the
-     later status-bar sibling, whose z-index is 1 (#970). */
+  /* Fullscreen is inside this stacking context. It must cover the later
+     status bar (1) and terminal resize handle (2), below root dialogs (#970). */
   :global([data-preview-fullscreen]) .main-content {
-    z-index: 2;
+    z-index: 3;
   }
 
   /* Mica effect gradient overlay — disabled due to gradient banding artifacts */

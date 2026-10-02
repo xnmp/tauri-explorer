@@ -1,5 +1,6 @@
 /** Two-phase native acquisition: disposal never adopts a late capability. */
 import { E2E_HOOKS_ENABLED } from "$lib/api/e2e-hooks";
+import type { ForegroundGate } from "./page-foreground";
 
 function trace(stage: string, token: string | null): void {
   if (!E2E_HOOKS_ENABLED || typeof document === "undefined") return;
@@ -21,10 +22,11 @@ export interface VideoTransport {
   release(token: string): Promise<void>;
 }
 
-export function createVideoLoadJob(path: string, transport: VideoTransport): VideoLoadJob {
+export function createVideoLoadJob(path: string, transport: VideoTransport, foreground?: ForegroundGate): VideoLoadJob {
   let cancelled = false;
   let token: string | null = null;
   let released = false;
+  let cancelWaiting: (() => void) | null = null;
   const release = () => {
     if (released || token === null) return;
     released = true;
@@ -35,6 +37,14 @@ export function createVideoLoadJob(path: string, transport: VideoTransport): Vid
     });
   };
   const promise = (async (): Promise<VideoSource> => {
+    if (foreground && !foreground.isForeground) {
+      const admitted = await new Promise<boolean>(resolve => {
+        const stop = foreground.whenForeground(() => { resolve(true); });
+        cancelWaiting = () => { stop(); resolve(false); };
+      });
+      cancelWaiting = null;
+      if (!admitted || cancelled) throw new Error("Video preview was released");
+    }
     token = await transport.begin();
     trace("registered", token);
     if (cancelled) {
@@ -52,5 +62,5 @@ export function createVideoLoadJob(path: string, transport: VideoTransport): Vid
       throw error;
     }
   })();
-  return { promise, cancel() { cancelled = true; trace("cancel", token); release(); } };
+  return { promise, cancel() { cancelled = true; cancelWaiting?.(); trace("cancel", token); release(); } };
 }

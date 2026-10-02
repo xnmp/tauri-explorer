@@ -1,7 +1,31 @@
 import { describe,expect,it,vi } from "vitest";
 import { createVideoLoadJob } from "$lib/state/video-preview-lifetime";
+import { createForegroundGate } from "$lib/state/page-foreground";
 const deferred=<T>()=>{let resolve!:(value:T)=>void;const promise=new Promise<T>(value=>resolve=value);return {promise,resolve};};
 describe("video capability lifetime",()=>{
+  it("parked previews acquire no resource until the window becomes foreground",async()=>{
+    const gate=createForegroundGate(false);
+    const begin=vi.fn(async()=>"capability");const prepare=vi.fn(async()=>"url");const release=vi.fn(async()=>{});
+    const job=createVideoLoadJob("/movie.webm",{begin,prepare,release},gate);
+    await Promise.resolve();expect(begin).not.toHaveBeenCalled();expect(prepare).not.toHaveBeenCalled();
+    await gate.enterForeground();const source=await job.promise;
+    expect(source.url).toBe("url");source.release();expect(release.mock.calls).toEqual([["capability"]]);
+  });
+  it("cancels a parked preview without admitting it on later activation",async()=>{
+    const gate=createForegroundGate(false);const begin=vi.fn(async()=>"capability");
+    const prepare=vi.fn(async()=>"url");const release=vi.fn(async()=>{});
+    const job=createVideoLoadJob("/movie.webm",{begin,prepare,release},gate);
+    const outcome=expect(job.promise).rejects.toThrow("released");job.cancel();await outcome;
+    await gate.enterForeground();expect(begin).not.toHaveBeenCalled();expect(prepare).not.toHaveBeenCalled();expect(release).not.toHaveBeenCalled();
+  });
+  it("only the current selection is admitted when a parked window activates",async()=>{
+    const gate=createForegroundGate(false);const begin=vi.fn(async()=>"capability");
+    const prepare=vi.fn(async()=>"url");const release=vi.fn(async()=>{});const transport={begin,prepare,release};
+    const old=createVideoLoadJob("/old.webm",transport,gate);
+    const outcome=expect(old.promise).rejects.toThrow("released");old.cancel();await outcome;
+    const current=createVideoLoadJob("/current.webm",transport,gate);await gate.enterForeground();
+    const source=await current.promise;expect(prepare.mock.calls).toEqual([["capability","/current.webm"]]);source.release();
+  });
   it("never starts file access when cancelled before registration completes",async()=>{
     const begun=deferred<string>();const prepare=vi.fn(async()=>"url");const release=vi.fn(async()=>{});
     const job=createVideoLoadJob("/movie.webm",{begin:()=>begun.promise,prepare,release});

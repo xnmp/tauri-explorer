@@ -187,7 +187,9 @@ fn avif_hdr_crop_keeps_twelve_bit_samples_color_interpretation_and_alpha() {
     }
     assert!(result
         .pixels
-        .chunks_exact(2)
+        .as_chunks::<2>()
+        .0
+        .iter()
         .any(|word| u16::from_ne_bytes([word[0], word[1]]) > 255));
 }
 
@@ -1142,7 +1144,9 @@ fn animated_png_sixteen_bit_frame_samples_and_fractional_delays_survive_crop() {
             for x in 0..5_usize {
                 let offset = (y * 5 + x) * 8;
                 let actual: Vec<_> = pixels[offset..offset + 8]
-                    .chunks_exact(2)
+                    .as_chunks::<2>()
+                    .0
+                    .iter()
                     .map(|word| u16::from_be_bytes([word[0], word[1]]))
                     .collect();
                 assert_eq!(
@@ -1319,7 +1323,13 @@ fn icns_keeps_every_original_canvas_density_and_transparent_padding() {
     for kind in kinds {
         let size = kind.pixel_width();
         let mut image = icns::Image::new(icns::PixelFormat::RGBA, size, size);
-        for (index, pixel) in image.data_mut().chunks_exact_mut(4).enumerate() {
+        for (index, pixel) in image
+            .data_mut()
+            .as_chunks_mut::<4>()
+            .0
+            .iter_mut()
+            .enumerate()
+        {
             pixel.copy_from_slice(&[
                 (index as u32 % size) as u8,
                 (index as u32 / size) as u8,
@@ -1418,7 +1428,13 @@ fn icns_existing_masked_representation_wins_over_maskless_promotion() {
         .add_icon_with_type(&bare, icns::IconType::Mono_32x32)
         .unwrap();
     let mut masked = icns::Image::new(icns::PixelFormat::RGBA, 32, 32);
-    for (index, pixel) in masked.data_mut().chunks_exact_mut(4).enumerate() {
+    for (index, pixel) in masked
+        .data_mut()
+        .as_chunks_mut::<4>()
+        .0
+        .iter_mut()
+        .enumerate()
+    {
         pixel.copy_from_slice(&[0, 0, 0, if index == 8 * 32 + 8 { 0 } else { 255 }]);
     }
     source

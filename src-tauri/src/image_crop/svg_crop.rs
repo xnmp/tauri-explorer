@@ -143,7 +143,7 @@ fn xml_text(bytes: &[u8]) -> Result<Cow<'_, str>, AppError> {
         }
         let mut words = Vec::new();
         words.try_reserve_exact(data.len() / 2).map_err(failure)?;
-        words.extend(data.chunks_exact(2).map(|pair| {
+        words.extend(data.as_chunks::<2>().0.iter().map(|pair| {
             if little {
                 u16::from_le_bytes([pair[0], pair[1]])
             } else {

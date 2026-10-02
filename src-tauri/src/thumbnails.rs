@@ -1500,7 +1500,13 @@ mod tests {
                 .add_icon_with_type(&bare, icns::IconType::Mono_32x32)
                 .unwrap();
             let mut image = icns::Image::new(icns::PixelFormat::RGBA, 32, 32);
-            for (index, pixel) in image.data_mut().chunks_exact_mut(4).enumerate() {
+            for (index, pixel) in image
+                .data_mut()
+                .as_chunks_mut::<4>()
+                .0
+                .iter_mut()
+                .enumerate()
+            {
                 pixel.copy_from_slice(&[0, 0, 0, if index == 8 * 32 + 8 { 0 } else { 255 }]);
             }
             family
@@ -1508,7 +1514,7 @@ mod tests {
                 .unwrap();
             if palette {
                 let mut colored = image.clone();
-                for pixel in colored.data_mut().chunks_exact_mut(4) {
+                for pixel in colored.data_mut().as_chunks_mut::<4>().0 {
                     pixel[..3].fill(255);
                 }
                 // Keep the independently black original MonoA pixels instead

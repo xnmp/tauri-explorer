@@ -33,10 +33,29 @@ matches the exact selected 448 × 336 PNG pixels.
 changes the captured source. Native tests verify no stale copy was published
 and the other writer's bytes remain intact.
 
-Verification: 12 real native UI/filesystem cases; 40 browser cases in Chromium
+The `oriented-*` PNG and `webp-oriented-*` pairs show EXIF orientation 6 normalized
+to a portrait 384 × 512 editor grid. Left 24 / top 32 / right 360 / bottom 480
+selects 336 × 448; the saved previews retain the rotated quadrant layout. The PNG
+case zooms and scrolls before saving. Decoded filesystem output matches independent
+untagged references exactly and each original remains unchanged. These captures
+qualify the crop editor and saved output; the background ordinary source preview
+still uses the webview's existing metadata handling.
+
+The AVIF orientation pair shows a canonical 8 × 12 grid after clean-aperture,
+rotation and mirror metadata, selecting 6 × 8 pixels. Its actual saved bytes
+match the independent CLI-decoded PNG reference. The pixel-aspect pair selects
+10 × 12 from a 12 × 16 canonical grid. Both editors are at 8× crop zoom. The tiny
+saved previews show publication and selection, not visually inspectable pixel
+geometry; decoded-file assertions supply that proof.
+
+Verification: 16 real native UI/filesystem cases; 40 crop browser cases in Chromium
 and WebKit across Details/List/Tiles, pane/fullscreen previews, 100 / 150% zoom,
 fit/zoom/scroll/pointer geometry, numeric typing, accepted-save modal ownership
 and keyboard access after resizing an open editor to 640 × 480. Separate native
 save tests decode animated GIF/WebP/APNG/AVIF filesystem results and verify
 frames/timing/looping. Static images do not demonstrate animated playback.
-Windows/macOS codec CI and native platform UI are separate qualification.
+The combined crop/shallow-dock run passes 96 browser cases, including filename,
+metadata and content reachability in minimum top/bottom docks. Windows/macOS
+codec CI and native platform UI are separate qualification. Some editor shots
+include a previous operation's success toast; the active editor is the evidence
+for the selected region.

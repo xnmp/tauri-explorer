@@ -157,7 +157,9 @@ fn still(bytes: &[u8], format: ImageFormat, crop: CropRect) -> Result<Vec<u8>, A
                 let row_bytes = image.width() as usize * color.samples() * 2;
                 for row in image.as_bytes().chunks_exact(row_bytes) {
                     let big_endian: Vec<_> = row
-                        .chunks_exact(2)
+                        .as_chunks::<2>()
+                        .0
+                        .iter()
                         .flat_map(|sample| u16::from_ne_bytes([sample[0], sample[1]]).to_be_bytes())
                         .collect();
                     stream.write_all(&big_endian)?;

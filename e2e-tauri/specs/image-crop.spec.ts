@@ -39,9 +39,14 @@ async function open(file: string): Promise<void> {
 }
 async function crop(left = 32, top = 24, right = 480, bottom = 360): Promise<void> {
   for (const [edge, position] of [["left", left], ["top", top], ["right", right], ["bottom", bottom]] as const) {
-    await $(`input[aria-label="${edge} pixel position"]`).click();
+    const input = $(`input[aria-label="${edge} pixel position"]`);
+    await input.click();
     await browser.keys(["Control", "a"]);
-    await browser.keys(String(position));
+    // Explicit releases preserve repeated digits in WebKitWebDriver's keys path.
+    const typing = browser.action("key");
+    for (const character of String(position)) typing.down(character).up(character);
+    await typing.perform();
+    await expect(input).toHaveValue(String(position));
     await browser.keys("Tab");
     await expect(slider(edge[0].toUpperCase() + edge.slice(1))).toHaveAttribute("aria-valuenow", String(position));
   }

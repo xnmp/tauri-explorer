@@ -209,3 +209,10 @@ AOM's build target exports only install-interface headers. When libavif uses
 the bundled target, explicitly propagate its pinned source headers with an
 interface build include. Host-installed AOM headers can mask the omission,
 so inspect the actual compiler dependency file and qualify clean hosted builds.
+
+Native numeric-input probes need explicit key down/up pairs for every digit.
+In the tested WebKitWebDriver path, `browser.keys("11")` sends only one `1`;
+the app then correctly clamps that incomplete value on blur. Trusted DOM event
+receipts distinguish this harness failure from premature input clamping. Assert
+the typed value before Tab and use real per-character actions; assigning a DOM
+value and dispatching input does not exercise the native change/blur contract.

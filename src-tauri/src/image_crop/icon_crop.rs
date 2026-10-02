@@ -118,7 +118,7 @@ fn jpeg2000_dimensions(bytes: &[u8]) -> Result<(u32, u32), AppError> {
     {
         return Err(failure("Invalid JP2 component table"));
     }
-    for component in stream[42..4 + size_length].chunks_exact(3) {
+    for component in stream[42..4 + size_length].as_chunks::<3>().0 {
         if (component[0] & 0x7f) >= 16 || component[1] == 0 || component[2] == 0 {
             return Err(failure("Unsupported JP2 sample geometry"));
         }
@@ -162,7 +162,9 @@ fn jpeg2000_dimensions(bytes: &[u8]) -> Result<(u32, u32), AppError> {
     let components = &stream[42..4 + size_length];
     let sampling = [components[1], components[2]];
     let uniform = components
-        .chunks_exact(3)
+        .as_chunks::<3>()
+        .0
+        .iter()
         .all(|component| component[1..] == sampling);
     if uniform {
         Ok((

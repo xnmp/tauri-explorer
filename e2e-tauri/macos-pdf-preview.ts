@@ -44,7 +44,9 @@ export async function qualifyMacosPdf(browser: Browser, fixture: string, output:
     const input = await browser.$("-ios predicate string:placeholderValue == 'Type a command...'");
     await input.waitForDisplayed({ timeout: 15_000 });
     await browser.execute("macos: keys", { keys: Array.from(label), elementId: input.elementId });
-    const result = await textElement(label);
+    // WKWebView exposes the selected option as one flattened accessibility
+    // row: its title includes the category and optional shortcut.
+    const result = await browser.$(`-ios predicate string:elementType == 48 AND selected == true AND (title == 'VIEW ${label}' OR title BEGINSWITH 'VIEW ${label} ')`);
     await result.waitForDisplayed({ timeout: 15_000 });
     await result.click();
     await input.waitForExist({ reverse: true, timeout: 15_000 });

@@ -834,6 +834,7 @@ async function capture(name: string) {
     after(async () => {
       stopLinkViewer();
       await browser.releaseActions();
+      report("suite-cleanup.json", { sourceCommit: process.env.GITHUB_SHA ?? null, completed: true });
     });
   },
 );

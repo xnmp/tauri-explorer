@@ -27,6 +27,7 @@ pub mod git_log;
 mod git_observation_probe;
 mod git_watch;
 mod github;
+mod image_crop;
 mod nano_banana;
 mod palette;
 mod platform;

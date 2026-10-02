@@ -697,3 +697,10 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `tests/e2e-tauri/owned-windows.test.ts` — complete-pass deadlines, closing handles, and never scripting warm or uncommitted pages.
 - `tests/e2e-tauri/window-transfer-diagnostics.test.ts` — native-spec call-site coverage for partial failure artifacts and failing-window capture.
 - `docs/testing/interactive-mac-startup-runbook.md` — operator procedure for producing the interactive Mac startup evidence JSON the qualification report ingests.
+
+- `src-tauri/src/image_crop.rs` — bounded full-resolution crop encoding and EXIF orientation normalization (#681; save/UI integration pending).
+- `src-tauri/src/image_crop/gif_crop.rs` — indexed GIF crop preserving frame regions, palettes, disposal, timing and looping.
+- `src-tauri/src/image_crop/icon_crop.rs` — validates ICNS/embedded PNG/JP2 bounds and preserves original canvas sizes with transparent crop padding.
+- `src-tauri/src/image_crop/webp_crop.rs` — lossless animated WebP crop of composited frames with retained timing/looping.
+
+- `src-tauri/src/image_crop/png_crop.rs` — APNG raw-frame crop with preserved disposal/blending, separate default image, color metadata, 8/16-bit samples and normalized orientation.

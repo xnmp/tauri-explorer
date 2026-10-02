@@ -17,15 +17,15 @@ For browser verification, run `WEBKIT=1 bunx playwright test e2e/pdf-preview.spe
 
 ## Outcomes and limits
 
-The final native run passed **11/11** against WebKitGTK 2.52.5 / Wry 0.55.1 on the private 125% scaled Wayland output, including the final readiness cancellation guard. Fit/130% center, exact 60px/50px pan and pointer wheel anchors were asserted at 100%/150% application zoom in pane and fullscreen. Native wheel delivery is a DOM WheelEvent; browser Playwright additionally sends device wheel input.
+The current native Linux run passed **12/12** against WebKitGTK 2.52.5 / Wry 0.55.1 on the private 125% scaled Wayland output, including the final readiness cancellation guard. Fit/130% center, exact 60px/50px pan and pointer wheel anchors were asserted at 100%/150% application zoom in pane and fullscreen. Native wheel delivery is a DOM WheelEvent; browser Playwright additionally sends device wheel input.
 
 Further native assertions reach both initially hidden corners by native WebDriver reverse drags, reset at the same 150% app zoom, navigate all three actual page colors with page controls and keyboard, resize/dock top/bottom/right, and end a held pan on real document focus loss. The source SHA-256 remains unchanged. A dragged external link launches nothing; an ordinary zoomed click sends the exact URI to a disposable installed GTK handler, which displays it without fetching it. Source preservation, geometry, corner/keyboard and blur receipts are committed in [the receipt directory](pdf-preview-2026-10-02/).
 
 Worker startup records actual packaged module-worker readiness. Departed documents must acknowledge termination and leave no PDF FontFaces. Browser regressions additionally cover stale binary/page/render responses, visible rejected-link errors, pointer cancellation, modal keyboard ownership and repeated open/close cleanup. A fullscreen coordinate regression failed before its correction (60px became 40px at app150); readiness-turn cancellation also failed before its guard. Independent review reproduced destination ordering, captured-link activation and font cleanup faults, then confirmed their corrections and inspected all 16 native screenshots.
 
-The final PDF browser suite passes 38 outcomes across Chromium and WebKit. Neighboring image/fullscreen/preview-lifetime verification previously passed in the 52-case combined suite. The final unit suite passes 2,999 tests with 3 existing skips, plus 29 performance tests. Type checking reports 0 errors/warnings; native test TypeScript, Rust formatting/all-target clippy and 548/548 source-map coverage pass. The final no-hooks production build passes startup/main bundle budgets and contains no test-support/e2e marker; main gzip 91,443 bytes and startup gzip 220,662 bytes remain below their 239,791/277,378-byte limits.
+Current focused browser coverage passes22 Chromium outcomes and22 WebKit-proxy outcomes (the original19 and the three new selection cases, verified separately). The combined current-dev rehearsal passes1323 all-view browser outcomes and3183 unique unit tests with3 existing skips;16 additional native-dock contract tests and29 performance tests pass. Full Rust verification passes1703 tests with44 existing ignored cases. Types, native-test types and579/579 map coverage pass. The no-hooks production bundle passes at92706 main/223801 startup bytes gzip with no test-support/E2E marker.
 
-**Windows native PDF scenarios pass; macOS qualification remains pending.** Browser WebKit is a useful rendering proxy, not native Mac qualification. #730's supported-platform acceptance stays unchecked until the Mac run and remaining native gate are resolved. The Linux display scale is an owned software compositor output, not a physical monitor.
+**Actual native Linux, Windows and production macOS PDF qualification pass.** The final Mac qualification below supersedes the earlier failed-run diagnostics. Linux uses an owned125% software output; it is not a physical-monitor test. Browser WebKit remains a proxy and is not used as native Mac evidence.
 
 ## Rebase qualification and supported-platform work
 
@@ -207,6 +207,16 @@ correct boundary. Sixteen imported-helper controls cover the actual failed
 geometry, cross-dock misclassification, disconnected rectangles, clipping and
 invalid coordinates. Pixel, fit, control visibility, page, replacement and
 source assertions remain intact. Fresh hosted execution is still required.
+
+## Final production macOS acceptance
+
+[Native Mac run37056764930](https://github.com/xnmp/tauri-explorer/actions/runs/37056764930) **passes the complete production PDF qualification**. Actual checkout `e9bd9caaa306b95d03c450aa5c351ea8eb4a3ec3` has parents current dev `8d7fc4d26944bedfe95cbc9b501a1d3b77d7790e` and qualified PR head `548eb80dc1ceab77ebee8f1d6f86479e8c15522b`. The bundled release binary is SHA256 `8c87193139a4936559d015abcab20b5f5c5626a04800e360201e029fc5b43f90`, 28,922,592 bytes. It runs on hosted macOS15.7.9 arm64 through actual Appium3.8.0/Mac2 4.2.0, with no application E2E hooks. [Final reports and capture hashes](pdf-preview-2026-10-02/macos-final/) retain exact provenance and all outcomes.
+
+The actual calibrated display captures confirm centered fit and130% zoom, all three mixed-size page colors and return navigation,400% native hand drag, reset, fullscreen and exit. The resized804×604-point window verifies actual app150% and each right/top/bottom dock, all six visible controls, landscape page2 and return to portrait page1. Each dock's observed native splitter boundary matches its classification. A malformed file shows its actual error and no prior red page; a real3:2 SVG then replaces the PDF, and selecting the PDF again restores a centered page. The final source SHA256 equals the original `0da8104a2e0fe1bb6a31f65e455446fa301c757726a1ca70a26f18835f578c92`.
+
+The final evidence commit also corrects only the alphabetical order of the adjacent `open_with`/`pdf_preview` module declarations, which CI formatting rejected after integration. `cargo fmt --all --check` passes; no function, harness or frontend behavior changes after the qualified head.
+
+Twenty-four unedited native outcome captures are committed in the branch's `macos/` screenshot directory, including the final narrow/error/replacement states. Earlier failed-run evidence remains a historical diagnostic, superseded by this full pass. Mac qualification does not independently measure worker cleanup or external-link dispatch; those outcomes retain their actual Linux/Windows receipts. The separate real single-page case is native Linux proof, and the three rapid pending-selection cases are browser interaction proof. Platform boundaries remain explicit.
 
 ## Screenshot captions
 

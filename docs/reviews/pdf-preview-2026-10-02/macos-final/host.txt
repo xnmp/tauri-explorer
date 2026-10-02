@@ -1,0 +1,10 @@
+runner=macOS
+arch=ARM64
+source=e9bd9caaa306b95d03c450aa5c351ea8eb4a3ec3
+ProductName:		macOS
+ProductVersion:		15.7.9
+BuildVersion:		24G830
+Xcode 16.4
+Build version 16F6
+/Applications/Xcode_16.4.app/Contents/Developer
+System Integrity Protection status: disabled.

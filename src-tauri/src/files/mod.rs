@@ -54,8 +54,8 @@ pub(crate) mod mutation;
 #[cfg_attr(target_os = "macos", allow(dead_code, unused_imports))]
 mod native_directory;
 mod object_id;
-pub mod pdf_preview;
 pub mod open_with;
+pub mod pdf_preview;
 mod permanent_delete;
 // Selections are admitted on Linux; other Unix platforms prepare one native
 // permanent deletion through the same observation and budget.

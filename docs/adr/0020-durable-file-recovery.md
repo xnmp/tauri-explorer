@@ -64,15 +64,16 @@ configurations: Linux default, Linux `durable-recovery`, macOS default and
 Windows default. The `cfg(unix)` recovery modules still build and test in the
 macOS default job.
 
-**Record formats.** Copy-replacement intents are version 1 and move intents are
-version 2. Each operation kind accepts exactly its own version; any other
-version, including a future one, fails validation instead of being guessed at.
+**Record formats.** Every intent is record version 3, and every checkpoint is
+the unified `State` defined in [ADR 0026](0026-durable-recovery-checkpoint-engine.md).
+Any other version fails validation instead of being guessed at, including a
+future one, the earlier copy-replacement version 1 and the earlier move version 2.
 Version-1 move intents, which had no `rename_probes`, came only from
 pre-#736 development builds. Their compatibility paths and fixtures are
 removed, and `rename_probes` is now required.
 
 A leftover version-1 move record no longer decodes, because `rename_probes` is
-missing. `Coordinator::open` still succeeds, but inventory, catalog discovery
+missing. Neither does any record written before ADR 0026. `Coordinator::open` still succeeds, but inventory, catalog discovery
 and every reservation fail with "Recovery record cannot be decoded; evidence is
 preserved". That fences all Linux admission until the record is dealt with; it
 is never executed or deleted.
@@ -986,12 +987,17 @@ execution and presentation metadata live in `files::move_execution`. The actual
 blocking context owns the reservation until work and context cleanup finish.
 
 The forward command owns native history settlement before replying and invalidates
-Redo after a confirmed or uncertain effect. Existing frontend paste/drop code still
-groups path-based Move inverses; this is not ordered move-session completion.
-The inverse adapter uses the same recovery runtime and returns additional physical
-refresh parents and cleanup warnings to its existing history supervisor. Cleanup
-warnings do not revoke a completed move or its opposite; incomplete source removal
-continues to consume the inverse without offering a destructive retry.
+Redo after a confirmed or uncertain effect. Cut/paste, drag-drop, and plugin moves
+all go through the ordered move session (`files/move_session.rs`) instead of a
+path-based Move inverse grouped by frontend code; its non-durable item builds the
+same `MovePlan` and runs it through `move_execution::execute` /
+`admission::admitted_execute` that the native history move adapter uses, so a
+session item can never commit while a recovery claim on its source or target is
+held (#881 follow-up). The inverse adapter uses the same recovery runtime and
+returns additional physical refresh parents and cleanup warnings to its existing
+history supervisor. Cleanup warnings do not revoke a completed move or its
+opposite; incomplete source removal continues to consume the inverse without
+offering a destructive retry.
 
 These reservations coordinate managed application operations. They do not pin the
 source/parent objects against external replacement. A copy replacement record
@@ -1003,25 +1009,24 @@ distinguish those execution paths.
 
 ### Executable durable moves
 
-`OperationSpec::Move` now has its own state contract and phase machine rather
-than borrowing the replacement's: `MovePhase`/`MoveState` in `recovery/move_model.rs`
-and the pure legal transitions in `recovery/move_transition.rs`. Parking and source
-removal exist only here, and a same-filesystem move without an overwrite reaches
+`OperationSpec::Move` implements `DurableKind` in `recovery/move_model.rs`. Its
+legal transitions come from the shared checkpoint engine in
+`recovery/checkpoint.rs` (ADR 0026), and its shape removes the edges it never
+takes. Parking exists only for moves, and a same-filesystem move without an overwrite reaches
 `Published` from `Planned` with no retained artifact root. User publication is
 one `renameat2(RENAME_NOREPLACE)`; new durable moves first perform the journaled
 capability preflight below, so the whole operation is not a single syscall.
 
 The transition function, not execution discipline, enforces the crash ordering.
-`BeginPark` is reachable only from `Published`; `BeginSourceRemoval` only from a
-durable `Parked`; `BeginRestoration` is unreachable from `Removed`, because the
-exact original no longer exists. An overwritten destination is displaced into
+`Begin(Park)` is reachable only from `Published`, and a parked source is the
+exact original that `Begin(Restore)` returns. An overwritten destination is displaced into
 private storage before publication. Nothing in the forward path deletes a user
 entry, and restoration removes nothing at all: returning a cross-filesystem
 publication renames it back into the destination's private root, so a destination
 edited after the move survives its own inverse. `recovery/move_execution.rs` addresses every
 endpoint through retained parent handles and classifies each rename from both
 observed versions, as replacement transfer does. Artifact-root ownership is shared:
-`Anchor::open_plan` opens any planned private namespace, so move roots reuse the
+`Anchor::open` opens either side's planned private namespace, so move roots reuse the
 replacement manifest, namespace and durability discipline.
 
 Undo executes the durable record itself, claimed by ID, revision and stable

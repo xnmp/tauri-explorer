@@ -1,5 +1,6 @@
 use super::*;
 use crate::files::recovery::coordinator::{test_fixture::fixture, DurableOperation};
+use crate::files::recovery::replacement_execution::ReplacementExecution;
 use std::{fs, path::Path};
 
 fn published() -> (tempfile::TempDir, Arc<Coordinator>, ReplacementExecution) {

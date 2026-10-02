@@ -108,4 +108,14 @@ pub(super) trait ClipboardReader {
     /// Bytes of the clipboard image in `media_type`, or `None` when the
     /// clipboard offers no image this backend can deliver in that type.
     fn read_image(&self, media_type: &str) -> Option<Vec<u8>>;
+
+    /// Checked image operations distinguish an empty clipboard from failed
+    /// tooling/encoding. Optional report attachment discovery may stay best-effort.
+    fn has_image_result(&self) -> Result<bool, AppError> {
+        Ok(self.has_image())
+    }
+
+    fn read_image_result(&self, media_type: &str) -> Result<Option<Vec<u8>>, AppError> {
+        Ok(self.read_image(media_type))
+    }
 }

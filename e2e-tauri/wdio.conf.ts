@@ -16,8 +16,12 @@ import {
   stopNativeQualificationProcesses,
 } from "./native-qualification";
 import { installExternalJobFixture } from "./external-job-fixture";
+import { assertNativePortsAvailable, resolveNativeDriverPorts, waitForOwnedNativePorts } from "./native-driver-ports";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
+// Hook-only native hold makes image-paste progress observable before the real
+// clipboard read/encode/write starts, including on a fast CI filesystem.
+process.env.TAURI_EXPLORER_E2E_CLIPBOARD_IMAGE_DELAY_MS ??= "2000";
 const isWindows = process.platform === "win32";
 const binaryName = isWindows ? "tauri-explorer.exe" : "tauri-explorer";
 const application = resolveNativeApplication(
@@ -41,9 +45,13 @@ const nativeDriver =
     ? path.join(process.env.EDGEWEBDRIVER, "msedgedriver.exe")
     : undefined);
 
-const tauriDriverArgs = nativeDriver ? ["--native-driver", nativeDriver] : [];
-
-const driverPort = 4444;
+const driverPorts = resolveNativeDriverPorts(process.env);
+const driverPort = driverPorts.driver;
+const backendPort = driverPorts.backend;
+const tauriDriverArgs = [
+  ...(nativeDriver ? ["--native-driver", nativeDriver] : []),
+  "--port", String(driverPort), "--native-port", String(backendPort),
+];
 const driverLogPath = path.join(here, "logs", "msedgedriver.log");
 // Each worker appends its own session; the file is uploaded with the WDIO logs.
 const webkitDriverLogPath = path.join(here, "logs", "tauri-driver.log");
@@ -184,6 +192,7 @@ export const config: WebdriverIO.Config = {
     // keeps fixtures alive even when the exit reaper cannot confirm teardown.
     processCleanupHooks.begin();
     if (!isWindows) {
+      await assertNativePortsAvailable(driverPorts);
       // WebKitWebDriver inherits tauri-driver's stdio, so its own diagnostics
       // (including "page crash or hang") land here. Retain them as a run
       // artifact as well as on the console: a lost session leaves nothing else
@@ -201,6 +210,7 @@ export const config: WebdriverIO.Config = {
       driverProcess.once("exit", () => driverLog.end());
       if (process.platform === "linux") {
         driverProcessGroup = nativeProcessGroup(driverProcess);
+        await waitForOwnedNativePorts(driverProcess, driverPorts);
       }
       return;
     }

@@ -57,12 +57,10 @@ impl Fixture {
             .execute(&mut progress)
             .unwrap();
         let entry = coordinator.inventory().unwrap().entries.remove(0);
-        let roots = entry
-            .intent
-            .operation
-            .move_spec()
-            .unwrap()
-            .roots()
+        let kind = entry.intent.operation.kind();
+        let roots = [Side::Source, Side::Target]
+            .into_iter()
+            .filter_map(|side| kind.root(side))
             .map(|root| root.path.0.clone())
             .collect();
         Self {
@@ -82,8 +80,8 @@ impl Fixture {
             .unwrap()
             .unwrap()
     }
-    pub(super) fn retirement(&self) -> MoveRetirement {
-        MoveRetirement::open(self.claim()).unwrap()
+    pub(super) fn retirement(&self) -> Retirement {
+        Retirement::open(self.claim()).unwrap()
     }
     pub(super) fn restore(&self) {
         MoveExecution::reopen(self.claim())

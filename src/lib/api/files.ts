@@ -209,23 +209,6 @@ export const deleteEntryPermanent = (path: string): Promise<ApiResult<void>> => 
 export const deleteMultipleEntries = (paths: string[]): Promise<ApiResult<FileBatchOutcome>> => deleteEntries(paths);
 
 
-/**
- * Move a file or directory to a destination.
- *
- * @param source - Full path to source file/directory
- * @param destDir - Destination directory path
- * @returns Result with the committed path and optional entry metadata
- */
-export async function moveEntry(
-  source: string,
-  destDir: string,
-  overwrite = false
-): Promise<ApiResult<FileMutationReceipt>> {
-  const guard = virtualPathGuard(source, destDir);
-  if (guard) return guard;
-  return invokeFileMutation<FileMutationReceipt>("move_entry", { source, destDir, overwrite });
-}
-
 /** Resolved target of a Windows `.lnk` shortcut. */
 export interface ShortcutTarget {
   target: string;

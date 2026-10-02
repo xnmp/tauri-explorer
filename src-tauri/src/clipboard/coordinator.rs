@@ -281,10 +281,10 @@ impl FileClipboardCoordinator {
             Mirror::Owned(token) => (Some(token), None),
             Mirror::Unproven => (None, None),
             // Observed only after a failure, so a successful Copy costs no
-            // extra OS read (a PowerShell spawn on Windows). Failures
-            // cluster: when this read fails too, the list last observed
-            // before the write stands in, so recovering reads cannot let
-            // that older list displace the accepted Copy.
+            // extra OS read. Failures cluster: when this read fails too,
+            // the list last observed before the write stands in, so
+            // recovering reads cannot let that older list displace the
+            // accepted Copy.
             Mirror::Failed(error) => (
                 None,
                 Some(FailedMirror {

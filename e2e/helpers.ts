@@ -2,7 +2,7 @@
  * Shared helpers for e2e tests.
  */
 
-import type { Page } from "@playwright/test";
+import { expect, type Page } from "@playwright/test";
 
 /** The three view modes */
 export const ALL_VIEW_MODES = ["details", "list", "tiles"] as const;
@@ -169,3 +169,24 @@ export async function applySettingsAndReload(
   }, patch);
   await page.reload();
 }
+
+/** Focus the last sequential focus target before the rows in DOM order. */
+export async function focusBeforeFileList(page: Page): Promise<void> {
+  const focused = await page.evaluate(() => {
+    const rowViewport = document.querySelector(".file-list .file-rows");
+    if (!rowViewport) return null;
+    const candidates = [...document.querySelectorAll<HTMLElement>(
+      'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+    )].filter((element) => {
+      const style = getComputedStyle(element);
+      return element.tabIndex >= 0 && style.display !== "none" && style.visibility !== "hidden"
+        && !!(element.offsetWidth || element.offsetHeight || element.getClientRects().length)
+        && !!(element.compareDocumentPosition(rowViewport) & Node.DOCUMENT_POSITION_FOLLOWING);
+    });
+    const previous = candidates.at(-1);
+    previous?.focus();
+    return previous ? { tag: previous.tagName, className: previous.className } : null;
+  });
+  expect(focused, "the file list must have a preceding sequential focus target").not.toBeNull();
+}
+

@@ -69,7 +69,7 @@ fn fixture() -> Fixture {
     let service = Service::spawn(
         Box::new(move |_target, callback| {
             if failing_registration
-                .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |n| n.checked_sub(1))
+                .try_update(Ordering::SeqCst, Ordering::SeqCst, |n| n.checked_sub(1))
                 .is_ok()
             {
                 return Err(AppError::Other("registration denied".into()));
@@ -85,7 +85,7 @@ fn fixture() -> Fixture {
         }),
         Box::new(move |key| {
             if failing_delivery
-                .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |n| n.checked_sub(1))
+                .try_update(Ordering::SeqCst, Ordering::SeqCst, |n| n.checked_sub(1))
                 .is_ok()
             {
                 return Err("delivery denied".into());

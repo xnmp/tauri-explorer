@@ -11,9 +11,10 @@
 import { browser } from "@wdio/globals";
 import path from "node:path";
 import { NATIVE_LOG_DIRECTORY, writeDiagnosticArtifact } from "./artifact";
+import { mayScriptPage } from "../owned-windows";
 
 /**
- * Capture every window's state into `e2e-tauri/logs/window-transfer-<reason>.json`
+ * Capture every non-warm window's state into `e2e-tauri/logs/window-transfer-<reason>.json`
  * plus a screenshot of the current window. `reason` is spec-authored and
  * reduced to `[a-z0-9-]`. Persistence is best-effort; the caller rethrows
  * its own failure.
@@ -50,6 +51,15 @@ export async function captureDiagnostics(
   for (const handle of handles) {
     try {
       await browser.switchToWindow(handle);
+      // A warm or not-yet-loaded page is not the test's: scripting one it
+      // cannot answer ends the session this record exists to explain (#931).
+      // Its URL comes from the driver without page script.
+      const url = await browser.getUrl();
+      if (!mayScriptPage(url)) {
+        diagnostics.push({ reason, handle, url, skipped: "page is not scripted (#931)" });
+        persist();
+        continue;
+      }
       diagnostics.push(await browser.execute((windowHandle, failureReason) => ({
         reason: failureReason,
         handle: windowHandle,

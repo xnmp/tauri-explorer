@@ -1,175 +1,31 @@
-//! Identity-checked removal and measurement of one artifact root's contents.
-//! Every removal here is authorized by the caller's journaled discard intent;
-//! nothing in this file decides *whether* an artifact may be destroyed.
+//! Identity-checked planning, removal and measurement of one artifact root's
+//! contents. Every removal here is authorized by the caller's journaled discard
+//! intent; nothing in this file decides *whether* an artifact may be destroyed.
 
-use super::super::{
-    model::{DurableIntent, EntryVersion, StagedPayload},
-    retention::Retained,
-};
+use super::super::{model::DurableIntent, model::EntryVersion, move_cleanup::Plan};
 use super::Root;
-use crate::files::recovery::artifact_layout::{probe, ORIGINAL, PUBLICATION};
-use crate::{
-    error::AppError,
-    files::{
-        native_directory::Directory,
-        tree_removal::{self, AbsentRoot, MountEvidence, Policy, Removal},
-    },
-};
+use crate::files::recovery::artifact_layout::probe;
+use crate::{error::AppError, files::native_directory::Directory};
 use std::{ffi::OsStr, io};
 
 /// Recovery roots are our own private storage; these bounds exist so a
-/// substituted or pathological namespace cannot make cleanup unbounded.
+/// substituted or pathological namespace cannot make measurement unbounded.
 const MAX_DEPTH: usize = 256;
 const MAX_ENTRIES: usize = 65_536;
-
-/// Removal of a root's entries is resumable, so an entry already gone is a
-/// completed step. Measurement counts a root's child as depth 0 and removal
-/// counts it as 1, so both admit the same trees. Durable evidence never meets
-/// a same-device bind mount it cannot see: without mount ids it refuses.
-const REMOVAL: Policy = Policy {
-    max_depth: MAX_DEPTH + 1,
-    mount_evidence: MountEvidence::Required,
-    absent_root: AbsentRoot::Removed,
-};
-
-/// Each emptied directory reaches disk before its own name is removed.
-struct Retire;
-
-impl Removal for Retire {
-    type Error = AppError;
-
-    fn emptied(&mut self, directory: &Directory) -> Result<(), AppError> {
-        Ok(directory.sync()?)
-    }
-}
-
-/// What the observed endpoints permit next. Derived from all three positions,
-/// never from the recorded phase alone.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(in crate::files::recovery) enum RetirementStep {
-    /// The retained artifact is present and exactly as recorded, and the live
-    /// public endpoint independently holds the payload that survives it.
-    Remove,
-    /// The retained artifact is already gone and the live endpoint is intact:
-    /// an interrupted retirement resuming past its removal checkpoint.
-    Removed,
-    /// Anything else. Every entry is preserved and reported.
-    Conflict,
-}
+const MANIFEST: &str = "manifest.intent";
 
 impl Root {
-    /// Classify the retained artifact, its sibling and the public endpoint.
-    pub(in crate::files::recovery) fn retirement_step(
-        &self,
-        intent: &DurableIntent,
-        staged: &StagedPayload,
-        retained: Retained,
-    ) -> Result<RetirementStep, AppError> {
-        self.verify_manifest(intent)?;
-        let spec = intent.operation.replacement()?;
-        let target_name = spec
-            .target
-            .0
-            .file_name()
-            .ok_or_else(|| invalid("Recovery replacement target has no name"))?;
-        let finalized = staged.published_version()?;
-        let target = probe(&self.parent, target_name)?;
-        let original = probe(&self.directory, OsStr::new(ORIGINAL))?;
-        let publication = probe(&self.directory, OsStr::new(PUBLICATION))?;
-        // The copy is recorded either as staged or with its final permissions;
-        // both are the same object, and restoration may have parked either.
-        let is_copy = |entry: &EntryVersion| *entry == staged.version || *entry == finalized;
-        Ok(match retained {
-            // A completed overwrite: the copy is public, the original private.
-            Retained::Original => match (original, publication, target) {
-                (Some(held), None, Some(live)) if held == spec.original && is_copy(&live) => {
-                    RetirementStep::Remove
-                }
-                (None, None, Some(live)) if is_copy(&live) => RetirementStep::Removed,
-                _ => RetirementStep::Conflict,
-            },
-            // A completed restoration: the original is public, the copy private.
-            Retained::Publication => match (original, publication, target) {
-                (None, Some(held), Some(live)) if is_copy(&held) && live == spec.original => {
-                    RetirementStep::Remove
-                }
-                (None, None, Some(live)) if live == spec.original => RetirementStep::Removed,
-                _ => RetirementStep::Conflict,
-            },
-        })
-    }
-
-    /// Does the root still hold exactly one recorded artifact, unmodified?
-    /// An interrupted retirement that has removed nothing answers `true`, so a
-    /// resumption can refuse when its live counterpart has since disappeared.
-    pub(in crate::files::recovery) fn retained_intact(
-        &self,
-        intent: &DurableIntent,
-        staged: &StagedPayload,
-    ) -> Result<bool, AppError> {
-        let spec = intent.operation.replacement()?;
-        let finalized = staged.published_version()?;
-        let original = probe(&self.directory, OsStr::new(ORIGINAL))?;
-        let publication = probe(&self.directory, OsStr::new(PUBLICATION))?;
-        Ok(match (original, publication) {
-            (Some(held), None) => held == spec.original,
-            (None, Some(held)) => held == staged.version || held == finalized,
-            _ => false,
-        })
-    }
-
-    /// Is the recorded source still exactly as captured? A parked copy is only
-    /// redundant while an independent live original of its content survives.
-    /// Any doubt — including an unreadable parent — answers no.
-    ///
-    /// A directory source is always doubt: `EntryVersion` is explicitly not a
-    /// recursive snapshot, so an unchanged directory version cannot show that
-    /// the tree beneath it still holds the payload the parked copy retains.
-    /// Directory payloads therefore need an explicit user decision.
-    pub(in crate::files::recovery) fn source_intact(&self, intent: &DurableIntent) -> bool {
-        let observed = || -> Result<bool, AppError> {
-            let spec = intent.operation.replacement()?;
-            if spec.source_version.directory {
-                return Ok(false);
-            }
-            let parent = Directory::open(
-                spec.source
-                    .0
-                    .parent()
-                    .ok_or_else(|| invalid("Recovery copy source has no parent"))?,
-            )?;
-            let name = spec
-                .source
-                .0
-                .file_name()
-                .ok_or_else(|| invalid("Recovery copy source has no name"))?;
-            Ok(probe(&parent, name)?.as_ref() == Some(&spec.source_version))
-        };
-        observed().unwrap_or(false)
-    }
-
-    /// Bounded measurement of the retained artifact. `None` means the artifact
-    /// is absent or exceeded the walk bounds; it is never reported as zero.
-    pub(in crate::files::recovery) fn measure_retained(
-        &self,
-        retained: Retained,
-    ) -> Result<Option<u64>, AppError> {
-        let name = OsStr::new(retained.name());
-        if !self.directory.entry_exists(name)? {
-            return Ok(None);
-        }
-        let mut budget = MAX_ENTRIES;
-        Ok(measure(&self.directory, name, 0, &mut budget).ok())
-    }
-
-    /// Bounded measurement of every entry a root retains. Used for operation
-    /// kinds whose artifacts are not one named payload — a durable move keeps
-    /// a parked source in one root and a displaced original in another — so
-    /// their retained bytes are accounted even before a retirement plan exists.
-    pub(in crate::files::recovery) fn measure_all(&self) -> Result<Option<u64>, AppError> {
+    /// Bounded measurement of every payload entry a root retains, excluding
+    /// its own manifest, so retained bytes are accounted even before a
+    /// retirement plan exists. `None` means the walk exceeded its bounds; it
+    /// is never reported as zero.
+    pub(in crate::files::recovery) fn measure_payload(&self) -> Result<Option<u64>, AppError> {
         let mut budget = MAX_ENTRIES;
         let mut total = 0u64;
         for name in self.directory.names(MAX_ENTRIES)? {
+            if name == MANIFEST {
+                continue;
+            }
             match measure(&self.directory, &name, 0, &mut budget) {
                 Ok(bytes) => total = total.saturating_add(bytes),
                 // Over bounds is unknown, never zero.
@@ -179,26 +35,27 @@ impl Root {
         Ok(Some(total))
     }
 
-    /// A move owns an exact child set, not a replacement's generic root. A
-    /// missing manifest is acceptable only after a journaled removal consumed
-    /// the payload; a mismatching manifest is never treated as missing.
-    pub(in crate::files::recovery) fn verify_move_retirement(
+    /// A root owns an exact child set: its manifest and at most its one
+    /// expected payload. A missing manifest is acceptable only after a
+    /// journaled removal consumed the payload; a mismatching manifest is never
+    /// treated as missing.
+    pub(in crate::files::recovery) fn verify_retirement(
         &self,
         intent: &DurableIntent,
         expected: Option<&(&str, Vec<EntryVersion>)>,
-        plan: Option<&super::super::move_cleanup::Plan>,
+        plan: Option<&Plan>,
         removing: bool,
     ) -> Result<(), AppError> {
         self.verify_namespace()?;
         let names = self.directory.names(3)?;
-        let manifest = OsStr::new("manifest.intent");
+        let manifest = OsStr::new(MANIFEST);
         let payload_name = expected.map(|(name, _)| OsStr::new(name));
         if names
             .iter()
             .any(|name| name != manifest && Some(name.as_os_str()) != payload_name)
         {
             return Err(invalid(
-                "Move artifact contains an unplanned entry; evidence is preserved",
+                "Recovery artifact contains an unplanned entry; evidence is preserved",
             ));
         }
         let payload_present =
@@ -207,7 +64,7 @@ impl Root {
             self.verify_manifest(intent)?;
         } else if !removing || payload_present {
             return Err(invalid(
-                "Move artifact manifest is missing before payload removal",
+                "Recovery artifact manifest is missing before payload removal",
             ));
         }
         if let Some((name, versions)) = expected {
@@ -229,7 +86,7 @@ impl Root {
                 None if removing => {}
                 _ => {
                     return Err(invalid(
-                        "Move retained payload changed or disappeared; evidence is preserved",
+                        "Retained recovery payload changed or disappeared; evidence is preserved",
                     ))
                 }
             }
@@ -240,36 +97,39 @@ impl Root {
         self.verify_namespace()
     }
 
-    pub(in crate::files::recovery) fn plan_move_retirement(
+    pub(in crate::files::recovery) fn plan_retirement(
         &self,
         intent: &DurableIntent,
         expected: Option<&(&str, Vec<EntryVersion>)>,
-    ) -> Result<super::super::move_cleanup::Plan, AppError> {
-        self.verify_move_retirement(intent, expected, None, false)?;
-        let plan = super::super::move_cleanup::Plan::capture(
+    ) -> Result<Plan, AppError> {
+        self.verify_retirement(intent, expected, None, false)?;
+        let allowance = intent.operation.kind().plan_allowance();
+        let plan = Plan::capture(
             &self.directory,
             &self.path,
             expected.map(|(name, _)| *name),
+            allowance,
         )?;
         plan.validate(
             &self.path,
             expected.map(|(name, versions)| (*name, versions.as_slice())),
+            allowance,
         )?;
-        self.verify_move_retirement(intent, expected, None, false)?;
+        self.verify_retirement(intent, expected, None, false)?;
         plan.verify(&self.directory, &self.path, false)?;
         Ok(plan)
     }
 
     /// Read-only proof, before the discard decision is journaled, that this
     /// user may unlink every planned entry, the manifest and the root itself.
-    pub(in crate::files::recovery) fn preflight_move_retirement(
+    pub(in crate::files::recovery) fn preflight_retirement(
         &self,
-        plan: &super::super::move_cleanup::Plan,
+        plan: &Plan,
     ) -> Result<(), AppError> {
         for directory in [&self.parent, &self.directory] {
             directory.permits_entry_removal().map_err(|error| {
                 AppError::PermissionDenied(format!(
-                    "Discard cannot remove this move's recovery folder ({error}). \
+                    "Discard cannot remove this recovery folder ({error}). \
                      Nothing was removed and its recovery record is unchanged."
                 ))
             })?;
@@ -277,23 +137,23 @@ impl Root {
         plan.preflight(&self.directory, &self.path)
     }
 
-    /// Remove the recorded child first and the manifest last. Unlike the
-    /// replacement remover this never sweeps arbitrary entries in a root.
-    pub(in crate::files::recovery) fn retire_move_artifacts(
+    /// Remove the recorded child first and the manifest last. This never
+    /// sweeps arbitrary entries in a root: only the captured plan is removed.
+    pub(in crate::files::recovery) fn retire_artifacts(
         self,
         intent: &DurableIntent,
         expected: Option<&(&str, Vec<EntryVersion>)>,
-        plan: &super::super::move_cleanup::Plan,
+        plan: &Plan,
         checkpoint: &mut impl FnMut(&'static str) -> Result<(), AppError>,
     ) -> Result<(), AppError> {
-        self.verify_move_retirement(intent, expected, Some(plan), true)?;
+        self.verify_retirement(intent, expected, Some(plan), true)?;
         if expected.is_some() {
             plan.remove(&self.directory, &self.path, checkpoint)?;
             self.directory.sync()?;
             checkpoint("payload-removed")?;
         }
-        self.verify_move_retirement(intent, None, Some(plan), true)?;
-        let manifest = OsStr::new("manifest.intent");
+        self.verify_retirement(intent, None, Some(plan), true)?;
+        let manifest = OsStr::new(MANIFEST);
         if self.directory.entry_exists(manifest)? {
             self.verify_manifest(intent)?;
             self.directory.unlink(manifest, false)?;
@@ -305,29 +165,8 @@ impl Root {
         self.parent.unlink(&self.name, true)?;
         self.parent.sync()?;
         if self.parent.entry_exists(&self.name)? {
-            return Err(invalid("Move artifact root reappeared after retirement"));
-        }
-        Ok(())
-    }
-
-    /// Remove the retained artifact, then every remaining private entry, then
-    /// the root itself. Requires a journaled discard intent and a `Remove` or
-    /// `Removed` step observed under the same native ownership.
-    pub(in crate::files::recovery) fn retire_artifacts(self) -> Result<(), AppError> {
-        self.verify_namespace()?;
-        let mut budget = MAX_ENTRIES;
-        for name in self.directory.names(MAX_ENTRIES)? {
-            tree_removal::remove(&self.directory, &name, REMOVAL, &mut budget, &mut Retire)
-                .map_err(|partial| partial.error)?;
-        }
-        self.directory.sync()?;
-        // Only the exact retained handle and its named link may be unlinked.
-        self.verify_namespace()?;
-        self.parent.unlink(&self.name, true)?;
-        self.parent.sync()?;
-        if self.parent.entry_exists(&self.name)? {
             return Err(invalid(
-                "Recovery artifact root reappeared after retirement; evidence is preserved",
+                "Recovery artifact root reappeared after retirement",
             ));
         }
         Ok(())

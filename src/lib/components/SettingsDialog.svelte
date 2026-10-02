@@ -11,7 +11,7 @@
   import { listInstalledTerminals } from "$lib/api/open";
   import { warmPoolShutdown } from "$lib/api/warm-pool";
   import { spawnWarmWindow } from "$lib/state/warm-window";
-  import KeybindingsSettings from "./KeybindingsSettings.svelte";
+  import { dialogStore } from "$lib/state/dialogs.svelte";
   import Modal from "./Modal.svelte";
   import { tick } from "svelte";
   import { pluginRegistry } from "$lib/plugins/registry.svelte";
@@ -231,7 +231,7 @@
   closeOnEscape={false}
   onkeydown={handleKeydown}
 >
-    <div class="settings-dialog">
+    <div class="settings-dialog" style:--settings-zoom={settingsStore.zoomLevel / 100}>
       <header class="dialog-header">
         <h2 id="settings-title">Settings</h2>
         <input
@@ -1045,11 +1045,10 @@
           </section>
         {/each}
 
-        <!-- Keyboard Shortcuts Section -->
+        <!-- Navigation to the dedicated keyboard configuration surface. -->
         <section class="settings-section" class:hidden={!sectionVisible(rows.keyboardShortcuts)}>
           <h3 class="section-title">Keyboard Shortcuts</h3>
-          <p class="section-hint">Click on a shortcut to change it. Press Escape to cancel.</p>
-          <KeybindingsSettings />
+          <button class="shortcuts-link" onclick={() => dialogStore.openKeybindings()}>Open Keyboard Shortcuts</button>
         </section>
       </div>
     </div>
@@ -1058,8 +1057,8 @@
 <style>
   .settings-dialog {
     width: 600px;
-    max-width: 90vw;
-    max-height: 85vh;
+    max-width: calc(90vw / var(--settings-zoom, 1));
+    max-height: calc(85vh / var(--settings-zoom, 1));
     background: var(--background-solid);
     border: 1px solid var(--surface-stroke);
     border-radius: var(--radius-lg);
@@ -1134,6 +1133,21 @@
   .close-btn:hover {
     background: var(--subtle-fill-secondary);
     color: var(--text-primary);
+  }
+
+  .shortcuts-link {
+    padding: 8px 12px;
+    border: 1px solid var(--control-stroke);
+    border-radius: var(--radius-sm);
+    background: var(--control-fill);
+    color: var(--text-primary);
+    font: inherit;
+    cursor: pointer;
+  }
+
+  .shortcuts-link:focus-visible {
+    outline: 2px solid var(--focus-stroke-outer);
+    outline-offset: 2px;
   }
 
   .dialog-content {
@@ -1227,12 +1241,6 @@
     margin: 0 0 8px 0;
     padding-bottom: 8px;
     border-bottom: 1px solid var(--divider);
-  }
-
-  .section-hint {
-    font-size: 12px;
-    color: var(--text-tertiary);
-    margin: 0 0 12px 0;
   }
 
   .setting-row {

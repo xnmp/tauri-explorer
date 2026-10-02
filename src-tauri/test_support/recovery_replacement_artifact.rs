@@ -2,7 +2,8 @@ use super::*;
 use crate::files::{
     file_identity::{of_file, version_from_metadata},
     recovery::{
-        model::{LockIdentity, NativePath, ReplacementSpec},
+        checkpoint::Side,
+        model::{LockIdentity, NativePath, OperationSpec, ReplacementSpec},
         resources::{capture_requests, Access, Request, Resource, Scope},
     },
 };
@@ -48,7 +49,7 @@ impl Fixture {
         ])
         .unwrap();
         let intent = DurableIntent {
-            version: 1,
+            version: crate::files::recovery::model::RECORD_VERSION,
             id: "a".repeat(64),
             lock: LockIdentity {
                 name: format!("{}.lock", "a".repeat(64)),
@@ -87,7 +88,10 @@ impl Fixture {
 #[test]
 fn creates_only_the_exact_private_root_and_retains_its_namespace() {
     let fixture = Fixture::new("exact-root");
-    let root = Anchor::open(&fixture.intent).unwrap().create().unwrap();
+    let root = Anchor::open(&fixture.intent, Side::Target)
+        .unwrap()
+        .create()
+        .unwrap();
 
     assert_eq!(
         root.identity(),
@@ -112,7 +116,10 @@ fn creation_is_exclusive_and_never_repairs_an_existing_root() {
     fs::create_dir(&fixture.root).unwrap();
     fs::set_permissions(&fixture.root, fs::Permissions::from_mode(0o755)).unwrap();
 
-    assert!(Anchor::open(&fixture.intent).unwrap().create().is_err());
+    assert!(Anchor::open(&fixture.intent, Side::Target)
+        .unwrap()
+        .create()
+        .is_err());
     assert_eq!(
         fs::symlink_metadata(&fixture.root)
             .unwrap()
@@ -132,10 +139,10 @@ fn wrong_or_replaced_parent_is_rejected_before_root_creation() {
         panic!("expected copy replacement fixture");
     };
     spec.parent = spec.original.object;
-    assert!(Anchor::open(&wrong).is_err());
+    assert!(Anchor::open(&wrong, Side::Target).is_err());
     assert!(!fixture.root.exists());
 
-    let anchor = Anchor::open(&fixture.intent).unwrap();
+    let anchor = Anchor::open(&fixture.intent, Side::Target).unwrap();
     let held = fixture._temporary.path().join("held-parent");
     fs::rename(&fixture.base, &held).unwrap();
     fs::create_dir(&fixture.base).unwrap();
@@ -149,7 +156,10 @@ fn wrong_or_replaced_parent_is_rejected_before_root_creation() {
 #[test]
 fn an_open_root_detects_named_root_replacement_without_touching_user_data() {
     let fixture = Fixture::new("root-check");
-    let root = Anchor::open(&fixture.intent).unwrap().create().unwrap();
+    let root = Anchor::open(&fixture.intent, Side::Target)
+        .unwrap()
+        .create()
+        .unwrap();
     let retained = fixture.base.join("retained-root");
     fs::rename(&fixture.root, &retained).unwrap();
     fs::create_dir(&fixture.root).unwrap();
@@ -164,16 +174,19 @@ fn an_open_root_detects_named_root_replacement_without_touching_user_data() {
 #[test]
 fn an_existing_root_requires_the_exact_identity_and_private_permissions() {
     let fixture = Fixture::new("existing");
-    let created = Anchor::open(&fixture.intent).unwrap().create().unwrap();
+    let created = Anchor::open(&fixture.intent, Side::Target)
+        .unwrap()
+        .create()
+        .unwrap();
     let identity = created.identity();
     drop(created);
-    Anchor::open(&fixture.intent)
+    Anchor::open(&fixture.intent, Side::Target)
         .unwrap()
         .open_existing(identity)
         .unwrap();
 
     fs::set_permissions(&fixture.root, fs::Permissions::from_mode(0o755)).unwrap();
-    assert!(Anchor::open(&fixture.intent)
+    assert!(Anchor::open(&fixture.intent, Side::Target)
         .unwrap()
         .open_existing(identity)
         .is_err());
@@ -191,7 +204,10 @@ fn an_existing_root_requires_the_exact_identity_and_private_permissions() {
 #[test]
 fn manifest_publication_is_durable_exact_and_read_only_on_verification() {
     let fixture = Fixture::new("manifest");
-    let root = Anchor::open(&fixture.intent).unwrap().create().unwrap();
+    let root = Anchor::open(&fixture.intent, Side::Target)
+        .unwrap()
+        .create()
+        .unwrap();
     root.publish_manifest(&fixture.intent).unwrap();
     let manifest = fixture.root.join("manifest.intent");
     let bytes = fs::read(&manifest).unwrap();
@@ -210,12 +226,18 @@ fn manifest_publication_is_durable_exact_and_read_only_on_verification() {
 #[test]
 fn missing_malformed_and_different_manifests_are_rejected_and_retained() {
     let missing = Fixture::new("missing-manifest");
-    let missing_root = Anchor::open(&missing.intent).unwrap().create().unwrap();
+    let missing_root = Anchor::open(&missing.intent, Side::Target)
+        .unwrap()
+        .create()
+        .unwrap();
     assert!(missing_root.verify_manifest(&missing.intent).is_err());
     assert!(!missing.root.join("manifest.intent").exists());
 
     let malformed = Fixture::new("malformed-manifest");
-    let malformed_root = Anchor::open(&malformed.intent).unwrap().create().unwrap();
+    let malformed_root = Anchor::open(&malformed.intent, Side::Target)
+        .unwrap()
+        .create()
+        .unwrap();
     let malformed_path = malformed.root.join("manifest.intent");
     fs::write(&malformed_path, b"not framed recovery evidence").unwrap();
     fs::set_permissions(&malformed_path, fs::Permissions::from_mode(0o600)).unwrap();
@@ -226,7 +248,10 @@ fn missing_malformed_and_different_manifests_are_rejected_and_retained() {
     );
 
     let different = Fixture::new("different-manifest");
-    let different_root = Anchor::open(&different.intent).unwrap().create().unwrap();
+    let different_root = Anchor::open(&different.intent, Side::Target)
+        .unwrap()
+        .create()
+        .unwrap();
     different_root.publish_manifest(&different.intent).unwrap();
     let different_path = different.root.join("manifest.intent");
     let before = fs::read(&different_path).unwrap();
@@ -245,7 +270,10 @@ fn missing_malformed_and_different_manifests_are_rejected_and_retained() {
 fn manifest_for_another_planned_root_is_rejected_without_publication() {
     let fixture = Fixture::new("first");
     let other = Fixture::new("second");
-    let root = Anchor::open(&fixture.intent).unwrap().create().unwrap();
+    let root = Anchor::open(&fixture.intent, Side::Target)
+        .unwrap()
+        .create()
+        .unwrap();
 
     assert!(root.publish_manifest(&other.intent).is_err());
     assert!(!fixture.root.join("manifest.intent").exists());
@@ -315,7 +343,10 @@ fn manifest_payload_rejects_a_subject_alias_even_when_excluded_is_empty() {
 #[test]
 fn same_spec_with_a_different_valid_owner_cannot_use_the_root() {
     let fixture = Fixture::new("owner-bound");
-    let root = Anchor::open(&fixture.intent).unwrap().create().unwrap();
+    let root = Anchor::open(&fixture.intent, Side::Target)
+        .unwrap()
+        .create()
+        .unwrap();
     let mut other_owner = fixture.intent.clone();
     other_owner.id = "c".repeat(64);
     other_owner.lock.name = format!("{}.lock", other_owner.id);
@@ -335,7 +366,10 @@ fn same_spec_with_a_different_valid_owner_cannot_use_the_root() {
 #[test]
 fn changed_valid_claims_cannot_use_an_existing_manifest() {
     let fixture = Fixture::new("claims-bound");
-    let root = Anchor::open(&fixture.intent).unwrap().create().unwrap();
+    let root = Anchor::open(&fixture.intent, Side::Target)
+        .unwrap()
+        .create()
+        .unwrap();
     let mut changed = fixture.intent.clone();
     changed.resources[0].access = Access::Write;
     changed.validate().unwrap();
@@ -381,7 +415,10 @@ fn a_valid_target_alias_cannot_rebind_an_existing_root() {
     .unwrap();
     aliased.validate().unwrap();
 
-    let root = Anchor::open(&fixture.intent).unwrap().create().unwrap();
+    let root = Anchor::open(&fixture.intent, Side::Target)
+        .unwrap()
+        .create()
+        .unwrap();
     assert!(root.publish_manifest(&aliased).is_err());
     let manifest = fixture.root.join("manifest.intent");
     assert!(!manifest.exists());
@@ -402,7 +439,10 @@ fn a_valid_target_alias_cannot_rebind_an_existing_root() {
 #[test]
 fn a_reused_parent_alias_identity_does_not_disown_a_fresh_root() {
     let fixture = Fixture::new("reused-alias");
-    Anchor::open(&fixture.intent).unwrap().create().unwrap();
+    Anchor::open(&fixture.intent, Side::Target)
+        .unwrap()
+        .create()
+        .unwrap();
     let identity = of_file(&Directory::open(&fixture.root).unwrap().file).unwrap();
     let target = fixture
         .intent
@@ -421,7 +461,7 @@ fn a_reused_parent_alias_identity_does_not_disown_a_fresh_root() {
     });
     alias.validate().unwrap();
 
-    let root = Anchor::open(&alias)
+    let root = Anchor::open(&alias, Side::Target)
         .unwrap()
         .open_existing(identity)
         .unwrap();
@@ -439,7 +479,7 @@ fn malformed_root_name_is_rejected_without_filesystem_effects() {
     };
     spec.root = NativePath(fixture.base.join("unexpected-root"));
 
-    assert!(Anchor::open(&malformed).is_err());
+    assert!(Anchor::open(&malformed, Side::Target).is_err());
     assert!(!fixture.root.exists());
     assert!(!fixture.base.join("unexpected-root").exists());
     fixture.assert_user_data();

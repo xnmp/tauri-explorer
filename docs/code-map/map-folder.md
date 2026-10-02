@@ -27,13 +27,15 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `DetailsView.svelte` — virtual-scrolled table view (columns, resize, sort headers).
 - `ListView.svelte` — CSS-grid compact list view.
 - `TilesView.svelte` — CSS auto-fill grid tile view with thumbnails; runs `scroll-jank-monitor.ts` during scroll and logs `tiles-scroll-jank` events only when jank occurred (#593).
-- `VirtualList.svelte` — variable-height windowed scroller used by views. Perf-critical.
+- `VirtualList.svelte` — variable-height windowed scroller used by views; publishes scrolled rows after DOM settlement for marquee hit testing. Perf-critical.
 - `MillerColumns.svelte` — column/Miller-columns browsing mode.
 - `FileItem.svelte` — single entry row/tile (icon, name, badges, selection state).
 - `EntryCell.svelte` — shared List/Tiles gridcell with roving focus, selection semantics and drag-drop interactions.
 - `EntryName.svelte` — shared inline rename input/display across all views.
 - `FileIcon.svelte` — file/folder icon resolution (Material/nerd-font theme); also renders the linked-folder and git-repo-folder badge overlays (all themes, all 3 view modes since it's the shared icon renderer).
+- `KeybindingsDialog.svelte` — dedicated lazy-loaded Keyboard Shortcuts configuration surface; reuses KeybindingsSettings and shared modal ownership, with viewport/zoom bounded card sizing (#758).
 - `ThumbnailImage.svelte` — lazy image/video thumbnail loader w/ cache + intersection. `decoding="async"` on both `<img>`s; no loading spinner (a continuous CSS animation on many concurrently-loading tiles cost a doubled long-frame rate on WebKitGTK, #593 — static SVG placeholder instead). Hot.
+- `VideoIndicator.svelte` — passive, contrast-backed video type badge shared by Tiles and Preview Pane; remains present during loading and frame extraction failure (#823).
 - `FolderThumbnail.svelte` — Windows-style folder preview tile (up to 3 nested images, #146).
 - `GitStatusBadge.svelte` — per-entry git status letter/color decoration.
 - `ExplorerPane.svelte` — one pane: navigation bar + FileList + preview; owns pane-scoped context.
@@ -78,6 +80,8 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 
 ## src/lib/state/ — Svelte 5 runes stores + pure pane logic. Business state lives here.
 
+- `clipboard-image-progress.svelte.ts` — independent accepted image-paste lifetimes, retained until clipboard/write/listing settlement; shared by normal and explicit Paste Image.
+
 - `src/lib/state/file-recovery.svelte.ts` — page-created revision-ordered recovery state, explicit inspection/action capabilities and independently retired subscription lifetimes; no module-global active store.
 - `src/lib/state/file-recovery-session.svelte.ts` — lazy page-owned recovery loading/reconnection and awaitable idempotent retirement; late imports cannot attach to a disposed page. Contracts in `tests/state/file-recovery-session.test.ts`; browser behavior in `e2e/file-recovery.spec.ts`.
 
@@ -104,6 +108,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `git-graph-coverage.ts` — repository observation leases shared by pending graph reads and retained snapshots; listener/watch acknowledgement precedes reads, final release drains acquisition, and UNC polling roots stay uncached.
 - `directory-watch.ts` — generic ordered path-lease ownership plus the directory adapter; retains exact release authority across failed teardown and drains late acquisition; reused by Git, thumbnails, Miller columns and drives.
 - `preview-lifetime.ts` — full-revision preview request and object-URL ownership; stale results cannot publish or revoke a replacement.
+- `terminal-key-handler.ts` — xterm key adapter: eligible command ownership precedes clipboard/readline effects, with modifier tracking and chord retirement.
 - `terminal-session.ts` — frontend terminal reservation/listener/spawn lifetime; drains late resources and serializes restart/stop. Owns the session's only input path (`domain/terminal-input-queue.ts`): opened at start/restart so typeahead is kept, attached at reservation, closed on stop/exit; `insert` builds text (path insertions) in the spawned shell's dialect and holds it across an exited shell for the next start (#709, #882).
 - `repo-root-cache.svelte.ts` — bounded reactive repository discovery with positive/negative TTL, shared probes and invalidation-safe publication.
 - `owned-registry.ts` — framework-free contribution registration identity; old disposers cannot remove replacements even when values are reused.
@@ -147,9 +152,8 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `commit-panel.svelte.ts` — per-pane rune store holding the git-graph uncommitted-node commit editor's live state (#466); wraps `domain/commit-panel` transitions so the in-flight commit guard survives close+reopen (`begin()`/`resetIfIdle()`). Disposed with the pane (like `disposeScmStore`).
 - `file-events.ts` — cross-window file-change broadcast (affected dirs → all windows).
 - `src/lib/state/copy-operations.ts` — the copy session over that shared presentation.
-- `file-transfer.ts` — plugin-driven single-entry move core: conflict detect, undo, toast, frecency, broadcast.
 - `src/lib/state/session-operations.ts` — the one presentation shared by both ordered sessions: operation panel, conflict prompts, incremental entries, refresh broadcast and completion reporting.
-- `src/lib/state/move-operations.ts` — the move session over it: deduplicated sources, vacated source directories refreshed, no renderer-owned inverse.
+- `src/lib/state/move-operations.ts` — the move session over it: deduplicated sources, vacated source directories refreshed, no renderer-owned inverse; also the plugin `PluginWorkspace.moveFile` path (#881).
 - `paste-operations.ts` — clipboard-mode dispatch to the copy or move session and cut-clipboard release.
 - `drop-operations.ts` — drop source-path extraction and dispatch to the copy or move session.
 - `conflict-resolver.svelte.ts` — paste conflict resolution state (overwrite/skip/cancel).
@@ -174,6 +178,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `commands/general-commands.ts` — misc app commands (settings, palette, etc).
 - `commands/system-actions.ts` — system actions not touching pane state (open terminal, reveal).
 - `keybindings.svelte.ts` — customizable keybinding store (chords, conflicts, persistence).
+- `shortcut-recorder.ts` — owned shortcut recording timer, cancellation and completion callbacks.
 - `window-tabs.svelte.ts` — tab management (open/close/reorder/active). Central for tabs.
 - `window-tabs-persistence.ts` — persist/migrate window tab tree (PersistedNode).
 - `tab-transfer.ts` — window-local pointer marker identity and acknowledged native tab transfer.
@@ -181,6 +186,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `focused-window.ts` — last-focused window path/viewMode for Ctrl+N inheritance.
 - `warm-activation.ts` — owns parked-window observation, reveal/navigation admission, acknowledged activation and retirement.
 - `warm-window.ts` — native warm-pool adapters and acknowledged reuse; integrates the activation owner.
+- `page-foreground.ts` — `warmMode()` and the page's one foreground gate: a parked or measuring warm window defers drive pushes/poll and file-operation recovery until its activation commits (#931).
 - `window-appearance.ts` — shared window creation options, including exact feature-injected WebView2 environment arguments in Windows E2E.
 - `window-title.svelte.ts` — resolves launch-home context and keeps the native OS title synchronized with the active pane directory.
 - `window-close.ts` — owns synchronous close admission, native close requests, terminal destruction and failure recovery.
@@ -190,7 +196,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `bookmarks.svelte.ts` — sidebar bookmarks store.
 - `recent-files.svelte.ts` — recent files store.
 - `frecency.svelte.ts` — zoxide-style frecency path ranking.
-- `drives.svelte.ts` — discovered volumes and mounted-root reactive store; refreshes on `drives-changed` pushes, polling slowly while the backend pushes and quickly otherwise.
+- `drives.svelte.ts` — discovered volumes and mounted-root reactive store; refreshes on `drives-changed` pushes, polling slowly while the backend pushes and quickly otherwise; feeds start only through the page foreground gate (#931).
 - `drive-opening.ts` — coalesces mount requests; navigates only after mounting succeeds and reports failures.
 - `home.svelte.ts` — cached home directory (sync `.value`).
 - `sidebar-views.svelte.ts` — activity-bar sidebar view registry (#52).
@@ -313,7 +319,10 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `breadcrumb-truncation.ts` — breadcrumb width/truncation math.
 - `content-search-flatten.ts` — flatten/paginate grep results.
 - `keyboard.ts` — keyboard shortcut normalization utils.
-- `keybinding-parser.ts` — parse/format keybinding chords.
+- `keybinding-parser.ts` — parse/format/capture keybinding chords with shared key identity.
+- `shortcut-conflicts.ts` — overlapping complete bindings and single-prefix ambiguity.
+- `shortcut-import.ts` — validate the prospective imported map, permitting swaps and rejecting final-state ambiguity.
+- `shortcut-recording.ts` — pure two-step recording transitions and shared chord deadline.
 - `git.ts` — git status letter/indicator conversion.
 - `git-graph.ts` — commit-graph lane layout (#58/#179).
 - `git-graph-comparison.ts` — pure normal-detail/comparison transitions, chronological pair ordering, and stale-request generation checks (#512).
@@ -445,9 +454,10 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `file_history/execution.rs` — injected native inverse execution with ordered completed/opposite/remaining partitions.
 - `file_history/retention.rs` — complete history-entry budget for forward and inverse recovery; preserves unfinished work and a dependency-safe prefix of the opposite execution with explicit warnings.
 - `src-tauri/src/diagnostics.rs` — bounded, ordered completion diagnostics, independent of batch failures; lazy formatting stops at the output limit; bounded panic descriptions are shared by worker and replacement execution.
-- `renderer_owner.rs` — concrete-window resource identity and acknowledged sessions shared by directory/Git leases; nonblocking lifecycle retirement.
+- `renderer_owner.rs` — concrete-window resource identity and acknowledged sessions shared by directory/Git leases; nonblocking lifecycle retirement; the shared `Renderer(web-content-terminated)` log line (macOS hook, Linux all-webview plugin with reason).
 - `renderer_owner/termination.rs` — lazy acknowledged native renderer termination listeners; weak ownership, cancellation-safe installation and main-renderer-only WebView2 filtering.
 - `renderer_owner/scope.rs` — pure renderer generation and terminal native-window retirement; obsolete session IDs cannot resolve an owner.
+- `renderer_owner/reload.rs` — macOS WebContent-loss recovery (#942): pure per-window reload budget (3 per 60 s) and recovery document URL (`warm` removed, `rendererRecovery=1` added), plus the adapter that reloads the last committed document, retires parked warm windows and logs `Renderer(recovery)`.
 - `git_watch/service.rs` — dedicated worker owns window-scoped leases, shared observers, cancellation/reclamation, coalesced event flags, debounce/recovery deadlines and invalidation delivery retries.
 - `git_watch/target.rs` — repository/private/shared-metadata discovery, non-overlapping watch roots, non-recursive parent coverage and metadata-only temporary-file filtering.
 - `git_actions.rs` — mutating git actions for commit-graph tab (VSCode parity); returns undo snapshots for branch/tag delete, branch rename, merge, and pull, and re-verifies refs/HEAD/clean-tree state before inverses (#513).
@@ -474,7 +484,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `src-tauri/src/clipboard/linux/wayland.rs` — Wayland file-list backend: a held `wl-copy --foreground` owner per write proves Cut while it runs (#877), `wl-paste` reads; simulated-compositor lifecycle tests and an ignored real test for a private `cage` session.
 - `src-tauri/src/clipboard/linux/x11.rs` — X11 file-list backend: `clipboard-rs` multi-target owner with the private Cut token, `x11rb` selection owner; ignored real-Xvfb coordinator test.
 - `src-tauri/src/clipboard/macos.rs` — macOS backend/reader: `NSPasteboard` file writes with a private token type and `changeCount` Cut ownership (#877), `clipboard-rs` file reads, `pbpaste`, `osascript`, and the AppleScript PNG parser; ignored real-pasteboard test run by rust-platforms CI.
-- `src-tauri/src/clipboard/windows.rs` — Windows backend/reader through PowerShell `System.Windows.Forms.Clipboard`, plus native `GetClipboardSequenceNumber` and private-token-format read-back for Cut ownership (#877); ignored real-clipboard test run by rust-platforms CI.
+- `src-tauri/src/clipboard/windows.rs` — Windows backend: native Win32 `CF_HDROP` file-list reads/writes (no process start on the ordered Copy/Cut/Paste path, #912) with `GetClipboardSequenceNumber` and private-token-format read-back for Cut ownership (#877); PowerShell `System.Windows.Forms.Clipboard` text/image reader; ignored real-clipboard test run by rust-platforms CI.
 
 ### src-tauri/src/files/ — file operations module.
 
@@ -557,6 +567,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 
 ## src-tauri/test_support/ — opt-in native recovery acceptance
 
+- `src-tauri/test_support/renderer_reload.rs` — renderer-loss reload budget, parked-window retirement decision and recovery URL contracts (#942).
 - `src-tauri/test_support/renderer_recovery.rs` — Linux controller retaining one GTK WebView across real renderer crashes; bounded ownership/recovery/navigation assertions and native snapshot.
 - `src-tauri/test_support/file_history_gate.rs` — opt-in bounded barrier after real native forward or inverse admission; an external runner releases work independently of its invoking renderer.
 - `src-tauri/test_support/git_observation_probe.rs` — feature-only backend observation timestamps and paths attached to actual Git events for causal recovery acceptance.
@@ -577,7 +588,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `src-tauri/src/files/windows_io.rs` — shared Win32/NT error-code conversion for directory access, recovery identity and locking.
 - `src-tauri/test_support/recovery_object_id.rs` — full-width identity distinction, native/foreign codec contracts and malformed/wire-size bounds.
 - `src-tauri/test_support/recovery_file_identity.rs` — real independent opens/hardlinks, retained-handle identity through path replacement and native leaf/device checks.
-- `src-tauri/src/files/recovery/replacement_transition.rs` — pure root/manifest/stage/displacement/publication and resolution progression; state-only transitions and retry-error contracts in `src-tauri/test_support/recovery_replacement_transition.rs`.
+- `src-tauri/src/files/recovery/checkpoint.rs` — ADR 0026 checkpoint engine shared by every durable kind: the unified `Phase`/`State`/retirement side-car, the `DurableKind` trait and the pure `Checkpoint::next` reducer plus validation, disposal and retention. Parameterized per-kind contracts in `src-tauri/test_support/recovery_checkpoint.rs`.
 - `src-tauri/src/files/recovery/replacement_artifact.rs` — retained parent/root handles bound to the complete durable intent; exclusive root creation and exact framed local manifests. Native substitution and evidence-preservation contracts in `src-tauri/test_support/recovery_replacement_artifact.rs`.
 - `src-tauri/src/files/anchored_copy.rs` — descriptor-relative tree copy with streaming enumeration, shared buffer, source version checks and progress/cancellation; native content, link, permission, substitution and interruption contracts in `src-tauri/test_support/anchored_copy.rs`.
 - `src-tauri/src/files/recovery/rename_outcome.rs` — pure exact-version endpoint classification for ambiguous native rename results; missing/exact/conflicting endpoint contracts in `src-tauri/test_support/recovery_rename_outcome.rs`.
@@ -590,19 +601,18 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `src-tauri/src/files/recovery/replacement_execution.rs` — owned preparation, private copy staging, original displacement, publication and restoration with durable intent before effects; persisted ordering, retry and process-kill outcomes in `src-tauri/test_support/recovery_replacement_execution.rs`. Reopening verifies the persisted root identity and exact manifest after claiming ownership. The explicit recovery service uses reopening and restoration; retirement is owned by `retirement.rs` per ADR 0023.
 - `src-tauri/src/files/recovery/commands.rs` — asynchronous list/inspect/restore/discard, retire-eligible and subscribe/unsubscribe IPC bound to native operation IDs and renderer sessions; generations are canonical decimal strings, and platform enablement remains Linux-only.
 - `src-tauri/src/files/recovery/coordinator/inventory.rs` — bounded catalog/index association without user-volume probes or action authority; missing-checkpoint and malformed-record contracts in `src-tauri/test_support/recovery_inventory.rs`.
-- `src-tauri/src/files/recovery/service.rs` — current-generation inspection, restoration and discard through exclusive native claims, plus the retention accounting published with every snapshot; initial unindexed presentation and native/runtime/large-counter contracts in `src-tauri/test_support/recovery_service.rs`.
+- `src-tauri/src/files/recovery/service.rs` — generic current-generation inspection, restoration, discard and Forget through exclusive native claims, plus the retention accounting published with every snapshot; each kind's executor reconciliation lives in `move_recovery.rs` / `replacement_recovery.rs`. Initial unindexed presentation and native/runtime/large-counter contracts in `src-tauri/test_support/recovery_service.rs`.
+- `src-tauri/src/files/recovery/move_recovery.rs` — move handler for the recovery service: capability-preflight inspection and cleanup, interrupted-move reconciliation and restoration.
+- `src-tauri/src/files/recovery/replacement_recovery.rs` — copy-replacement handler for the recovery service: restoration verification, restore and the ready/retained views.
 - `src-tauri/src/files/recovery/model.rs` — portable recovery IPC/history contracts and lossless decimal counters; platform-tagged native paths remain available to adapter tests.
-- `src-tauri/src/files/recovery/durable_model.rs` — Unix executor authority, catalog-digest checkpoints, typed operation state and replacement phase/manifest validation.
-- `src-tauri/src/files/recovery/move_model.rs` — immutable planned move authority, native volume/resource/artifact validation and typed move state. Contract tests in `src-tauri/test_support/recovery_move_model.rs` and real catalog/reopen/fencing tests in `src-tauri/test_support/recovery_move_intent.rs`.
-- `src-tauri/src/files/recovery/move_capability_model.rs` — pure per-volume probe checkpoints, retained cleanup authority and mandatory version-2 capability validation; also classifies every platform's errno spelling of an unsupported exclusive rename.
+- `src-tauri/src/files/recovery/durable_model.rs` — Unix executor authority, record version 3, catalog-digest checkpoints and the copy-replacement `DurableKind` implementation.
+- `src-tauri/src/files/recovery/move_model.rs` — immutable planned move authority, native volume/resource/artifact validation and the move `DurableKind` implementation. Contract tests in `src-tauri/test_support/recovery_move_model.rs` and real catalog/reopen/fencing tests in `src-tauri/test_support/recovery_move_intent.rs`.
+- `src-tauri/src/files/recovery/move_capability_model.rs` — pure per-volume probe checkpoints, retained cleanup authority and mandatory capability validation; also classifies every platform's errno spelling of an unsupported exclusive rename.
 - `src-tauri/test_support/recovery_move_capability_model.rs` — unsupported-rename errno classification contract (ENOTSUP and EOPNOTSUPP are distinct on Darwin).
 - `src-tauri/src/files/recovery/move_capability.rs` — journaled real exclusive-rename qualification before move effects; exact interrupted-probe inspection and explicit cleanup.
 - `src-tauri/test_support/recovery_move_capability.rs` — real rename/error preservation, legacy byte compatibility, cross-volume process-kill and namespace-substitution contracts.
-- `src-tauri/src/files/recovery/move_cleanup.rs` — bounded native descendant snapshot, validated durable deletion plan and identity-checked resumption that refuses newly added/modified children; removal admits each entry against the plan through `src-tauri/src/files/tree_removal.rs`.
-- `src-tauri/src/files/recovery/move_retention.rs` — pure move disposal authority, explicit Undo retirement, ordered two-root cleanup checkpoints and legacy-safe evidence validation.
-- `src-tauri/src/files/recovery/move_retirement.rs` — move endpoint/root observation, journaled measurement, per-root cleanup and durable record retirement; no public path mutations.
-- `src-tauri/test_support/recovery_move_retirement/` — native filesystem contracts for move retirement, split by concern (#887) and sharing `fixtures.rs`'s `Fixture` helper: `mod.rs` re-exports `move_retirement.rs` for every submodule; `fixtures.rs` builds/claims/retires a completed move; `lifecycle.rs` covers completion, restoration, subprocess-kill crash/resume replay and foreign-descendant preservation; `readonly_umask.rs` covers read-only payload discard refusal, restrictive-umask cleanup (also subprocess-based) and rootless-move forgetting; `planning_budget.rs` covers unplannable trees, decision withdrawal, journal headroom and stranded/forgotten discards; `mount_boundary.rs` covers unmounted endpoints, bind mounts on one device, payloads/mount points crossed by a move and mounts inside retained payloads (all ignored, namespace-only); `undo.rs` covers Undo refusal for a destination grown past its retirement plan and why it names a refused destination; `enforcement_observability.rs` covers enforcement retries for unresumable interruptions and root/parent identity that cannot be opened.
-- `src-tauri/src/files/recovery/move_transition.rs` — pure legal-transition function for durable move recovery checkpoints; encodes the crash ordering where publication precedes parking and parking precedes source removal, so no boundary can leave both endpoints absent. State-only transition contracts in `src-tauri/test_support/recovery_move_transition.rs`.
+- `src-tauri/src/files/recovery/move_cleanup.rs` — every kind's bounded native descendant snapshot: compact parent-index plan encoding charged at its exact size against a per-root share of one decision (`allowance`), admission walks, validated durable deletion plan and identity-checked resumption that refuses newly added/modified children; removal admits each entry against the plan through `src-tauri/src/files/tree_removal.rs`.
+- `src-tauri/test_support/recovery_move_retirement/` — native filesystem contracts for move retirement, split by concern (#887) and sharing `fixtures.rs`'s `Fixture` helper: `mod.rs` (included from `retirement.rs` as `move_tests`) re-exports the generic retirement for every submodule; `fixtures.rs` builds/claims/retires a completed move; `lifecycle.rs` covers completion, restoration, subprocess-kill crash/resume replay and foreign-descendant preservation; `readonly_umask.rs` covers read-only payload discard refusal, restrictive-umask cleanup (also subprocess-based) and rootless-move forgetting; `planning_budget.rs` covers unplannable trees, decision withdrawal, journal headroom and stranded/forgotten discards; `mount_boundary.rs` covers unmounted endpoints, bind mounts on one device, payloads/mount points crossed by a move and mounts inside retained payloads (all ignored, namespace-only); `undo.rs` covers Undo refusal for a destination grown past its retirement plan and why it names a refused destination; `enforcement_observability.rs` covers enforcement retries for unresumable interruptions and root/parent identity that cannot be opened.
 - `src-tauri/src/files/recovery/move_execution.rs` — concrete durable move executor: creates/reopens private artifact roots, stages a cross-filesystem copy, displaces an overwritten destination, publishes, parks the source, removes a parked source and restores as the record's exact inverse. Real process-kill boundary contracts in `src-tauri/test_support/recovery_move_execution.rs`.
 - `src-tauri/src/files/recovery/forward_move.rs` — production durable-move orchestration: admission, binding a `MoveSpec` from admitted paths, promotion and execution; produces the `FileMutationReceipt` carrying a `MoveRecoveryReceipt`. Real-filesystem contracts in `src-tauri/test_support/recovery_forward_move.rs`.
 - `src-tauri/src/files/recovery/native_path.rs` — bounded lossless native entry paths tagged with the operating system; rejects cross-OS records before decoding authority.
@@ -613,9 +623,9 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `src-tauri/src/files/recovery/locks.rs` — Unix exact-file operation ownership with random nonces and OS locks; uncertain missing/replaced locks never imply abandonment.
 - `src-tauri/src/files/recovery/storage.rs` — bounded immutable checksummed catalog, independent of SQLite, using private descriptor-relative files.
 - `src-tauri/src/files/recovery/artifact_layout.rs` — on-disk names of an artifact root's private children (`original`, `publication`, `parked`) plus the shared exact-version child `probe`; part of the durable record format (#867).
-- `src-tauri/src/files/recovery/retention.rs` — pure ADR 0023 retention policy: what a settled record retains, whether disposal needs an explicit user decision, storage budgets read from settings, and record/byte usage that separates unmeasured from unavailable. Contracts in `src-tauri/test_support/recovery_retention.rs`.
-- `src-tauri/src/files/recovery/retirement.rs` — crash-safe retirement orchestration and the enforcement pass: tolerant root reopen, eligibility classification, lazy size measurement and journaled intent-before-effect removal; cleanup failures are recorded and preserve every artifact. Real interruption, capacity, unavailable-volume and legacy-checkpoint contracts in `src-tauri/test_support/recovery_retirement.rs`.
-- `src-tauri/src/files/recovery/replacement_retire.rs` — identity-checked retirement observations on the retained artifact root: which artifact may be removed given the live endpoints, whether the recorded source is still intact, bounded private-root measurement and idempotent removal with directory barriers through `src-tauri/src/files/tree_removal.rs`, which refuses mounts inside the root.
+- `src-tauri/src/files/recovery/retention.rs` — ADR 0023 retention positions and disposal rules (derived per kind by `checkpoint.rs`), storage budgets read from settings, and record/byte usage that separates unmeasured from unavailable. Contracts in `src-tauri/test_support/recovery_retention.rs`.
+- `src-tauri/src/files/recovery/retirement.rs` — the one crash-safe retirement for every kind and the enforcement pass: tolerant root reopen, eligibility, plan capture and preflight, journaled side-car decision, per-root source-then-target removal, withdrawal of untouched decisions, deferral and measurement; failures preserve every artifact. Real interruption, capacity, unavailable-volume and old-version fencing contracts in `src-tauri/test_support/recovery_retirement.rs`; move contracts in `src-tauri/test_support/recovery_move_retirement/`.
+- `src-tauri/src/files/recovery/replacement_retire.rs` — artifact-root observations for retirement: bounded payload measurement (excluding `manifest.intent`), plan capture and read-only preflight, verification against the captured plan, and exact planned removal of payload, manifest and root through `move_cleanup.rs`.
 - `src-tauri/src/files/recovery/coordinator/retirement.rs` — journal-row-then-catalog record retirement under the admission gate, exact owner/generation/digest verification, and catalog-only residue retirement for records with no journal row. Contracts in `src-tauri/test_support/recovery_record_retirement.rs`.
 - `src-tauri/test_support/recovery_retention.rs` — pure budget, usage and disposal-policy contracts, including malformed/out-of-range settings and operation kinds without a retirement plan.
 - `src-tauri/test_support/recovery_retirement.rs` — real-filesystem retirement: explicit discard, refusal to remove a sole original, automatic reclamation of a redundant parked copy, cleanup-failure evidence preservation, subprocess kills at every checkpoint and budget enforcement.
@@ -625,7 +635,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `src-tauri/src/files/recovery/coordinator/claims.rs` — shared effective ownership for reservation admission and recovery: verified idle completed operations protect retained artifacts, while active and incomplete operations retain full claims. Native alias, reacquisition and interprocess gate contracts live in `src-tauri/test_support/recovery_effective_claims.rs`; independent corruption and successive-replacement contracts live in `src-tauri/test_support/recovery_effective_claims_adversarial.rs`.
 - `src-tauri/src/files/recovery/forward_copy.rs` — production Linux overwrite preparation binds native source/target/root resources, then owns durable promotion, staging, displacement and publication. The prepared owner retains physical refresh paths across worker failure; `src-tauri/test_support/recovery_forward_copy.rs` tests real copy dispatch, restore, aliases, competing ownership and interrupted staging.
 - `src-tauri/src/files/recovery/forward_copy/batch.rs` — ordered independent replacement execution with typed retained receipts, contained child panic, explicit suffix retirement, aggregate physical refresh and shared bounded diagnostics. Production singleton delegates this executor; real partial-effect/inverse tests are in `src-tauri/test_support/recovery_copy_batch.rs`.
-- `src-tauri/src/files/recovery/forward_copy/plan.rs` — whole-group exact replacement preparation: immutable native bindings and versions, atomic child reservations, common durable-intent/manifest preflight and exhaustive unstarted-owner cleanup. Single-copy production preparation shares this path. `src-tauri/test_support/recovery_copy_plan.rs` covers independent execution/restoration, stale bindings, cancellation and failed retirement.
+- `src-tauri/src/files/recovery/forward_copy/plan.rs` — whole-group exact replacement preparation: immutable native bindings and versions, atomic child reservations, refusal of an original no cleanup plan could record, common durable-intent/manifest preflight and exhaustive unstarted-owner cleanup. Single-copy production preparation shares this path. `src-tauri/test_support/recovery_copy_plan.rs` covers independent execution/restoration, stale bindings, cancellation and failed retirement.
 - `src-tauri/test_support/recovery_operation_fixture.rs` — shared real-filesystem and coordinator fixture for promotion and abandoned-claim contracts.
 - `src-tauri/src/files/recovery/coordinator/promotion.rs` — catalog-first reservation promotion and compact phase CAS, with both retention budgets checked from decoded evidence inside the same admission-gated transaction so concurrent creation cannot race past them, exact lost-reply retry and distinct durable ownership; interruption, changed authority, bounded manifest and checkpoint-size contracts in `src-tauri/test_support/recovery_promotion.rs`.
 - `src-tauri/src/files/recovery/coordinator.rs` — process-shared admission, exact owner reclamation, validated catalog/index claims and protected storage; bounded catalog-only discovery survives SQLite loss without user-volume probes. Linux simple-entry runtime integrated; other operation roots remain pending.
@@ -650,7 +660,8 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `e2e-tauri/native-qualification/readiness.ts` — the single macOS startup log marker parser used by both the readiness predicate and the report (#696), plus the direct-process readiness wait.
 - `e2e-tauri/native-qualification/attribution.ts` — macOS startup/interactive-evidence report assembly, phase-attribution summaries and half-bounce qualification.
 - `e2e-tauri/native-qualification/startup-progress.ts` — diagnostic summary of streamed `Startup(webview-progress)` lines (last mark, heartbeats after it); never used to qualify readiness (#936).
-- `e2e-tauri/native-qualification/stall-evidence.ts` — bounded macOS capture for a timed-out startup sample: `ps`, `sample`/`spindump`, unified log and new DiagnosticReports into `sample-NN-stall/` (#936).
+- `e2e-tauri/native-qualification/stall-evidence.ts` — bounded macOS capture for a timed-out (`sample-NN-stall/`, profiles live processes) or renderer-loss (`sample-NN-renderer-loss/`, waits for the WebContent crash report) startup sample: `ps`, `sample`/`spindump`, the sample's noise-filtered unified log and new DiagnosticReports (#936, #942).
+- `e2e-tauri/native-qualification/renderer-loss.ts` — pure renderer-loss assessment (none/pending/recovered/failed), the recovered-loss limit, the `MacRendererLossError` message and WebContent crash-report identity (#942).
 - `e2e-tauri/macos-ui-smoke.ts` — standalone Appium Mac2/XCTest pilot: exact bundled binary, unique listing fixture, native accessibility navigation outcome and retained evidence.
 - `e2e-tauri/native-process-group.ts` — bounded Linux cleanup of a native test session's detached driver/application process group, plus the exit-time reaper for a group whose session never started (WDIO skips `afterSession`).
 - `e2e-tauri/gated-suites.ts` — run/skip/fail decision for native suites that need an opt-in build or fixture directory; `TAURI_E2E_REQUIRE_GATED=1` turns a missing prerequisite into a named failure (#774). Contracts in `tests/qualification/gated-suites.test.ts`.
@@ -664,6 +675,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `tests/qualification/warm-claim-process-timeline.test.ts` — contract for native warm-claim failure artifact, bounded late sample and no artifact on success.
 - `tests/qualification/fresh-native-window.test.ts` — fresh-window selection skips pre-existing handles without executing script in them.
 - `e2e-tauri/window-transfer-waits.ts` — renderer-side token and listing observers for a single asynchronous native WebDriver command.
+- `e2e-tauri/owned-windows.ts` — the one handle scan: reads each URL through the driver and scripts only known, non-warm pages (fails closed on empty URLs; #885, #931). `specs/helpers.ts` binds it to the browser (`switchToWindowLabel`, `closeOtherWindows`, `parkedWarmWindow`).
 - `e2e-tauri/diagnostics/window-transfer.ts` — incrementally persisted native runtime and per-window failure evidence (`Retire-when: #710 closed`).
 - `e2e-tauri/specs/window-transfer-diagnostics.spec.ts` — real-native negative control for retained JSON and screenshot artifacts.
 - `e2e-tauri/soak/native-soak.spec.ts` — opt-in native window, plugin, preview, theme, DPI and input scenarios.
@@ -678,7 +690,9 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `tests/qualification/macos-startup-phase-attribution.test.ts` — correlated macOS startup phase decomposition, retained unattributed residual (bound scaled with launch length) and half-bounce verdicts.
 - `tests/qualification/macos-startup-progress.test.ts` — progress lines never change attributed parsing; timeout reports the last parser rejection and last streamed mark (#936).
 - `tests/qualification/macos-startup-stall-evidence.test.ts` — stall evidence selection, bounds, spindump fallback, overall deadline and timeout-first error composition (#936).
+- `tests/qualification/macos-startup-renderer-loss.test.ts` — retained #936 logs: recovered, pending, exhausted and unattributable losses; losses are never measured; the wait's recovery bound; report limit; renderer-loss evidence (#942).
 - `tests/qualification/interactive-mac-startup-evidence.test.ts` — untrusted interactive Mac evidence ingestion: provenance, stated conditions, outcome timings and retained artifact containment.
 - `tests/e2e-tauri/window-transfer-waits.test.ts` — stale-token, delayed-listing and duplicate-name contracts for renderer observers.
+- `tests/e2e-tauri/owned-windows.test.ts` — complete-pass deadlines, closing handles, and never scripting warm or uncommitted pages.
 - `tests/e2e-tauri/window-transfer-diagnostics.test.ts` — native-spec call-site coverage for partial failure artifacts and failing-window capture.
 - `docs/testing/interactive-mac-startup-runbook.md` — operator procedure for producing the interactive Mac startup evidence JSON the qualification report ingests.

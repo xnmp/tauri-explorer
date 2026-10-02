@@ -24,8 +24,8 @@ import { readConfigFile } from "$lib/api/config";
 import { writeConfigQueued } from "$lib/state/persisted";
 import { windowTabsManager } from "$lib/state/window-tabs.svelte";
 import { dialogStore } from "$lib/state/dialogs.svelte";
-import { performFileTransfer } from "$lib/state/file-transfer";
-import type { FileEntry, FileMutationRecovery } from "$lib/domain/file";
+import type { FileEntry } from "$lib/domain/file";
+import { parentDir, sameDirectory } from "$lib/domain/path";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { pluginJobsController, type PluginJobKind } from "$lib/state/plugin-jobs";
 import { extractError, type ApiResult } from "$lib/api/common";
@@ -80,13 +80,12 @@ export interface PluginEvents {
 }
 
 /** Outcome of a workspace file operation (structural subset of the shared
- *  transfer result). `error === "skipped"` means a no-op or user cancel. */
+ *  ordered move session's result). `error === "skipped"` means a no-op,
+ *  conflict skip, or user cancel — the session already toasted and recorded
+ *  undo for everything else. */
 export interface PluginMoveResult {
   ok: boolean;
   error?: string;
-  /** Published destination with incomplete source cleanup; inspect before
-   * treating the requested move as finished or removing its source UI. */
-  recovery?: FileMutationRecovery;
 }
 
 /**
@@ -319,12 +318,28 @@ export function createPluginContext(
           windowTabsManager.getAllExplorers().map((exp) => exp.refresh({ silent: true })),
         );
       },
-      moveFile: (sourcePath, targetDir) =>
-        performFileTransfer(sourcePath, targetDir, {
+      // Shares the ordered move session with cut/paste and drag-drop (#881):
+      // the same conflict prompt, undo recording, ordering, and refresh.
+      moveFile: async (sourcePath, targetDir) => {
+        // The session reports a same-directory relocation as a committed,
+        // "succeeded" item (it legitimately touches nothing, per
+        // move_session.rs), so it toasts "Moved 1 item" and this would
+        // otherwise report `{ok: true}`. That breaks the documented
+        // `PluginMoveResult` no-op contract (`error: "skipped"`), which a
+        // caller like the AI-organize dialog depends on to tell "nothing to
+        // do" apart from "moved". Short-circuit before the session runs.
+        if (sameDirectory(parentDir(sourcePath), targetDir)) {
+          return { ok: false, error: "skipped" };
+        }
+        const { moveFiles } = await import("$lib/state/move-operations");
+        const { error, complete } = await moveFiles([sourcePath], targetDir, {
           onRefresh: () => {
             for (const exp of windowTabsManager.getAllExplorers()) void exp.refresh({ silent: true });
           },
-        }),
+        });
+        if (error) return { ok: false, error };
+        return complete ? { ok: true } : { ok: false, error: "skipped" };
+      },
     },
     openSettings: () => dialogStore.openSettings(),
   };

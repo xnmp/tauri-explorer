@@ -1,4 +1,4 @@
-use super::super::model::{NativePath, OperationSpec, OperationState, ReplacementSpec};
+use super::super::model::{NativePath, OperationSpec, ReplacementSpec};
 use super::super::resources::{Access, Scope};
 use super::*;
 use crate::files::file_identity::from_metadata as object;
@@ -31,7 +31,7 @@ fn replacement_intent(directory: &Path, source: &Path, owner: &OperationLock) ->
     let root = directory.join(".tauri-explorer-recovery-planned");
     let original = fs::symlink_metadata(&target).unwrap();
     DurableIntent {
-        version: 1,
+        version: crate::files::recovery::model::RECORD_VERSION,
         id: owner.identity.name.trim_end_matches(".lock").into(),
         operation: OperationSpec::CopyReplacement(ReplacementSpec {
             artifact_token: "planned".into(),
@@ -280,7 +280,7 @@ fn manifest_authority_requires_the_exact_opened_private_root() {
 
 #[test]
 fn indexed_phase_evidence_is_validated_before_admission() {
-    use super::super::model::Phase;
+    use super::super::checkpoint::Phase;
     for case in [
         "wrong-digest",
         "unknown-state-field",
@@ -324,27 +324,25 @@ fn indexed_phase_evidence_is_validated_before_admission() {
                 let OperationSpec::CopyReplacement(spec) = &record.intent.operation else {
                     panic!("expected copy replacement fixture");
                 };
-                let OperationState::Replacement(state) = &mut record.state else {
-                    panic!("expected copy replacement fixture");
-                };
+                let state = &mut record.state;
                 match case {
                     "missing-root" => state.phase = Phase::Displaced,
                     "missing-publication" => {
                         state.phase = Phase::PublishIntent;
-                        state.root = Some(root_identity);
+                        state.roots.target = Some(root_identity);
                     }
                     "premature-publication" => {
-                        state.published = Some(crate::files::recovery::model::StagedPayload {
+                        state.staged = Some(crate::files::recovery::model::StagedPayload {
                             version: spec.original.clone(),
                             final_mode: None,
                         })
                     }
                     "invalid-publication" => {
                         state.phase = Phase::Published;
-                        state.root = Some(root_identity);
+                        state.roots.target = Some(root_identity);
                         let mut published = published.clone();
                         published.modified_nanos = 1_000_000_000;
-                        state.published = Some(crate::files::recovery::model::StagedPayload {
+                        state.staged = Some(crate::files::recovery::model::StagedPayload {
                             version: published,
                             final_mode: None,
                         });
@@ -352,42 +350,42 @@ fn indexed_phase_evidence_is_validated_before_admission() {
                     "oversized-error" => state.error = Some("x".repeat(16 * 1024 + 1)),
                     "valid-publish-intent" => {
                         state.phase = Phase::PublishIntent;
-                        state.root = Some(root_identity);
-                        state.published = Some(crate::files::recovery::model::StagedPayload {
+                        state.roots.target = Some(root_identity);
+                        state.staged = Some(crate::files::recovery::model::StagedPayload {
                             version: published.clone(),
                             final_mode: None,
                         });
                     }
                     "root-parent-alias" => {
                         state.phase = Phase::Rooted;
-                        state.root = Some(spec.parent);
+                        state.roots.target = Some(spec.parent);
                     }
                     "root-original-alias" => {
                         state.phase = Phase::Rooted;
-                        state.root = Some(spec.original.object);
+                        state.roots.target = Some(spec.original.object);
                     }
                     "published-original-alias" => {
                         state.phase = Phase::PublishIntent;
-                        state.root = Some(root_identity);
-                        state.published = Some(crate::files::recovery::model::StagedPayload {
+                        state.roots.target = Some(root_identity);
+                        state.staged = Some(crate::files::recovery::model::StagedPayload {
                             version: spec.original.clone(),
                             final_mode: None,
                         });
                     }
                     "root-source-alias" => {
                         state.phase = Phase::Rooted;
-                        state.root = Some(spec.source_version.object);
+                        state.roots.target = Some(spec.source_version.object);
                     }
                     "root-other-device" => {
                         state.phase = Phase::Rooted;
-                        state.root = Some(other_volume(root_identity));
+                        state.roots.target = Some(other_volume(root_identity));
                     }
                     "published-root-alias"
                     | "published-source-alias"
                     | "published-parent-alias"
                     | "published-other-device" => {
                         state.phase = Phase::PublishIntent;
-                        state.root = Some(root_identity);
+                        state.roots.target = Some(root_identity);
                         let mut published = published.clone();
                         published.object = match case {
                             "published-root-alias" => root_identity,
@@ -395,7 +393,7 @@ fn indexed_phase_evidence_is_validated_before_admission() {
                             "published-parent-alias" => spec.parent,
                             _ => other_volume(published.object),
                         };
-                        state.published = Some(crate::files::recovery::model::StagedPayload {
+                        state.staged = Some(crate::files::recovery::model::StagedPayload {
                             version: published,
                             final_mode: None,
                         });
@@ -412,7 +410,7 @@ fn indexed_phase_evidence_is_validated_before_admission() {
                         serde_json::json!((checkpoint.intent_digest[0] as u16 + 1) % 256);
                 }
                 if case == "unknown-state-field" {
-                    json["state"]["state"]["futureStateAuthority"] = serde_json::json!(true);
+                    json["state"]["futureStateAuthority"] = serde_json::json!(true);
                 }
                 if case == "unknown-operation-state" {
                     json["state"]["kind"] = serde_json::json!("futureOperation");

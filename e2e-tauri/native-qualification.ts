@@ -16,7 +16,9 @@
  * - `startup-progress.ts` — diagnostic summary of streamed
  *   `Startup(webview-progress)` lines; never used to qualify readiness (#936).
  * - `stall-evidence.ts` — bounded macOS process/profile/log/crash-report capture
- *   for a timed-out startup sample (#936).
+ *   for a timed-out or renderer-loss startup sample (#936, #942).
+ * - `renderer-loss.ts` — classifies a sample's `Renderer(web-content-terminated)`
+ *   losses as recovered (recorded and replaced) or failed (#942).
  *
  * Every existing import of `e2e-tauri/native-qualification` keeps working
  * unchanged; new code may import the sibling modules directly.
@@ -32,3 +34,4 @@ export * from "./native-qualification/readiness";
 export * from "./native-qualification/attribution";
 export * from "./native-qualification/startup-progress";
 export * from "./native-qualification/stall-evidence";
+export * from "./native-qualification/renderer-loss";

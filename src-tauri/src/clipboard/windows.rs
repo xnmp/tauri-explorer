@@ -1,13 +1,19 @@
-//! Windows clipboard via a short PowerShell shell-out per operation
-//! (`System.Windows.Forms.Clipboard`): `CF_HDROP` file drop lists keep file
-//! copy/paste interoperable with Explorer, and bitmaps are re-encoded as PNG.
+//! Windows clipboard.
+//!
+//! File lists use the Win32 clipboard directly: `CF_HDROP` keeps file
+//! copy/paste interoperable with Explorer. They sit on every Copy, Cut and
+//! Paste path, which the ordered worker serializes, so they must not start a
+//! process: a PowerShell shell-out per read and write made Paste wait for
+//! several serial PowerShell starts, which a loaded machine stretched past
+//! 15 s (#912).
+//!
+//! Text and image reads, which are off that path, shell out to PowerShell
+//! (`System.Windows.Forms.Clipboard`); bitmaps are re-encoded as PNG.
 //! WinForms clipboard APIs need STA; `powershell.exe` (Windows PowerShell
-//! 5.1) is always present and runs STA. Data travels in environment
-//! variables, never interpolated into the script, so filenames cannot break
-//! or inject it.
+//! 5.1) is always present and runs STA.
 //!
 //! Cut ownership (#877): each file write also offers a registered private
-//! format carrying the write's token, in the same data object. Right after
+//! format carrying the write's token, in the same clipboard session. Right after
 //! the write, the native `GetClipboardSequenceNumber` is read around a native
 //! read-back of that token (`change_counter.rs`); the write owns the
 //! clipboard while the sequence number is unchanged. Any later clipboard
@@ -64,93 +70,53 @@ fn ps_lines(stdout: &[u8]) -> Vec<String> {
         .collect()
 }
 
-/// Decode `read_files`' base64 UTF-8, newline-separated path list.
-fn decode_path_list(stdout: &[u8]) -> Result<Vec<String>, AppError> {
-    use base64::Engine as _;
-    let encoded = ps_lines(stdout).concat();
-    let bytes = base64::engine::general_purpose::STANDARD
-        .decode(encoded)
-        .map_err(|error| AppError::Other(format!("Invalid clipboard file list: {error}")))?;
-    let text = String::from_utf8(bytes)
-        .map_err(|error| AppError::Other(format!("Invalid clipboard file list: {error}")))?;
-    Ok(text
-        .split('\n')
-        .map(|path| path.trim_end_matches('\r'))
-        .filter(|path| !path.is_empty())
-        .map(str::to_owned)
-        .collect())
+/// The `CF_HDROP` payload for `paths`: a `DROPFILES` header (`pFiles` = 20,
+/// no point, `fWide` set) followed by each path as NUL-terminated UTF-16LE
+/// and a final NUL that ends the list.
+fn drop_files(paths: &[String]) -> Result<Vec<u8>, AppError> {
+    const HEADER_LEN: u32 = 20;
+    if paths.is_empty() {
+        return Err(AppError::InvalidPath("No paths to copy".to_string()));
+    }
+    if let Some(path) = paths
+        .iter()
+        .find(|path| path.is_empty() || path.contains('\0'))
+    {
+        return Err(AppError::InvalidPath(format!(
+            "Cannot put {path:?} on the clipboard"
+        )));
+    }
+    let mut bytes = Vec::new();
+    for field in [HEADER_LEN, 0, 0, 0, 1] {
+        bytes.extend_from_slice(&field.to_le_bytes());
+    }
+    let units = paths
+        .iter()
+        .flat_map(|path| path.encode_utf16().chain([0]))
+        .chain([0]);
+    for unit in units {
+        bytes.extend_from_slice(&unit.to_le_bytes());
+    }
+    Ok(bytes)
 }
 
 impl ClipboardBackend for WindowsFileClipboard {
-    /// A clipboard held open by another process makes `GetFileDropList`
-    /// throw; stop on it so that reads as a failure, not as "no files".
-    /// Paths travel as base64 UTF-8: PowerShell writes redirected stdout in
-    /// the console code page, which turned `é` into `?` (found by #877's
-    /// real-clipboard test).
+    /// A clipboard that another process keeps open is a failed read, not
+    /// "no files"; a clipboard without `CF_HDROP` offers no files.
     fn read_files(&mut self) -> Result<Vec<String>, AppError> {
-        let script = r#"
-$ErrorActionPreference = 'Stop'
-Add-Type -AssemblyName System.Windows.Forms
-$files = [System.Windows.Forms.Clipboard]::GetFileDropList()
-if ($files) { [Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($files -join "`n")) }
-"#;
-        match run_powershell(script, &[]) {
-            Some(o) if o.status.success() => decode_path_list(&o.stdout),
-            Some(o) => Err(AppError::Other(format!(
-                "PowerShell clipboard read exited with {}",
-                o.status
-            ))),
-            None => Err(AppError::Other(
-                "Failed to start PowerShell for clipboard read".to_string(),
-            )),
-        }
+        native::read_file_list()
     }
 
     /// A `CF_HDROP` file drop list with Copy semantics, so Explorer and other
     /// apps can paste it without moving the app's Cut, plus the token in
-    /// `TOKEN_FORMAT`. WinForms stores a `MemoryStream` as its raw bytes, and
-    /// `SetDataObject` with `copy = $true` renders every format onto the
-    /// clipboard before PowerShell exits.
+    /// `TOKEN_FORMAT`, both set in one clipboard session.
     fn write_files(
         &mut self,
         paths: &[String],
         _operation: ClipboardOperation,
         token: &str,
     ) -> Result<(), AppError> {
-        if paths.is_empty() {
-            return Err(AppError::InvalidPath("No paths to copy".to_string()));
-        }
-        let joined = paths.join("\n");
-        let script = r#"
-$ErrorActionPreference = 'Stop'
-Add-Type -AssemblyName System.Windows.Forms
-$col = New-Object System.Collections.Specialized.StringCollection
-foreach ($p in ($env:CLIP_PATHS -split "`n")) { if ($p) { [void]$col.Add($p) } }
-$data = New-Object System.Windows.Forms.DataObject
-$data.SetFileDropList($col)
-$token = [System.IO.MemoryStream]::new([System.Text.Encoding]::ASCII.GetBytes($env:CLIP_TOKEN))
-$data.SetData($env:CLIP_TOKEN_FORMAT, $token)
-[System.Windows.Forms.Clipboard]::SetDataObject($data, $true)
-"#;
-        let envs = [
-            ("CLIP_PATHS", joined.as_str()),
-            ("CLIP_TOKEN", token),
-            ("CLIP_TOKEN_FORMAT", TOKEN_FORMAT),
-        ];
-        match run_powershell(script, &envs) {
-            Some(o) if o.status.success() => {}
-            Some(o) => {
-                return Err(AppError::Other(format!(
-                    "PowerShell clipboard write exited with {}",
-                    o.status
-                )))
-            }
-            None => {
-                return Err(AppError::Other(
-                    "Failed to start PowerShell for clipboard write".to_string(),
-                ))
-            }
-        }
+        native::write_file_list(&drop_files(paths)?, TOKEN_FORMAT, token.as_bytes())?;
         let before = native::sequence_number();
         let read_back = native::read_format(TOKEN_FORMAT);
         let after = native::sequence_number();
@@ -204,52 +170,100 @@ $text = [System.Windows.Forms.Clipboard]::GetText()
     }
 
     fn has_image(&self) -> bool {
+        self.has_image_result().unwrap_or(false)
+    }
+
+    fn has_image_result(&self) -> Result<bool, AppError> {
         let script = r#"
+$ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName System.Windows.Forms
 if ([System.Windows.Forms.Clipboard]::ContainsImage()) { 'yes' } else { 'no' }
 "#;
-        run_powershell(script, &[])
-            .map(|o| String::from_utf8_lossy(&o.stdout).contains("yes"))
-            .unwrap_or(false)
+        let output = run_powershell(script, &[]).ok_or_else(|| {
+            AppError::Other("Could not start PowerShell to inspect clipboard".into())
+        })?;
+        if !output.status.success() {
+            return Err(AppError::Other(format!(
+                "Could not inspect clipboard: {}",
+                String::from_utf8_lossy(&output.stderr).trim()
+            )));
+        }
+        match String::from_utf8_lossy(&output.stdout).trim() {
+            "yes" => Ok(true),
+            "no" => Ok(false),
+            _ => Err(AppError::Other(
+                "Clipboard inspection returned an invalid response".into(),
+            )),
+        }
     }
 
     /// PNG only: the clipboard bitmap is re-encoded as PNG.
     fn read_image(&self, media_type: &str) -> Option<Vec<u8>> {
+        self.read_image_result(media_type).ok().flatten()
+    }
+
+    fn read_image_result(&self, media_type: &str) -> Result<Option<Vec<u8>>, AppError> {
         use base64::Engine as _;
         if media_type != "image/png" {
-            return None;
+            return Ok(None);
         }
         let script = r#"
+$ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
 $img = [System.Windows.Forms.Clipboard]::GetImage()
-if ($null -eq $img) { exit 1 }
+if ($null -eq $img) { exit 2 }
 $ms = New-Object System.IO.MemoryStream
-$img.Save($ms, [System.Drawing.Imaging.ImageFormat]::Png)
-[Convert]::ToBase64String($ms.ToArray())
+try {
+    $img.Save($ms, [System.Drawing.Imaging.ImageFormat]::Png)
+    [Convert]::ToBase64String($ms.ToArray())
+} finally {
+    $ms.Dispose()
+    $img.Dispose()
+}
 "#;
-        let output = run_powershell(script, &[])?;
+        let output = run_powershell(script, &[]).ok_or_else(|| {
+            AppError::Other("Could not start PowerShell to read clipboard image".into())
+        })?;
+        if output.status.code() == Some(2) {
+            return Ok(None);
+        }
         if !output.status.success() {
-            return None;
+            return Err(AppError::Other(format!(
+                "Could not read or encode clipboard image: {}",
+                String::from_utf8_lossy(&output.stderr).trim()
+            )));
         }
         let b64: String = ps_lines(&output.stdout).concat();
         if b64.is_empty() {
-            return None;
+            return Err(AppError::Other(
+                "Clipboard image encoding returned no data".into(),
+            ));
         }
-        base64::engine::general_purpose::STANDARD.decode(b64).ok()
+        base64::engine::general_purpose::STANDARD
+            .decode(b64)
+            .map(Some)
+            .map_err(|error| AppError::Other(format!("Invalid encoded clipboard image: {error}")))
     }
 }
 
-/// The native clipboard calls that PowerShell cannot make cheaply.
+/// The native clipboard calls. They take milliseconds, so the ordered worker
+/// never waits on a process start.
 mod native {
+    use crate::error::AppError;
     use std::time::Duration;
     use windows::core::HSTRING;
-    use windows::Win32::Foundation::HGLOBAL;
+    use windows::Win32::Foundation::{GlobalFree, HANDLE, HGLOBAL};
     use windows::Win32::System::DataExchange::{
-        CloseClipboard, GetClipboardData, GetClipboardSequenceNumber, OpenClipboard,
-        RegisterClipboardFormatW,
+        CloseClipboard, EmptyClipboard, GetClipboardData, GetClipboardSequenceNumber,
+        IsClipboardFormatAvailable, OpenClipboard, RegisterClipboardFormatW, SetClipboardData,
     };
-    use windows::Win32::System::Memory::{GlobalLock, GlobalSize, GlobalUnlock};
+    use windows::Win32::System::Memory::{GlobalAlloc, GlobalLock, GlobalSize, GlobalUnlock, GHND};
+    use windows::Win32::UI::Shell::{DragQueryFileW, HDROP};
+
+    /// `CF_HDROP` (winuser.h). The `windows` crate binds it only behind the
+    /// `Win32_System_Ole` feature, which nothing else here needs.
+    const CF_HDROP: u32 = 15;
 
     /// The window station's clipboard sequence number, or `None` when this
     /// process lacks clipboard access (the API then returns 0).
@@ -261,13 +275,17 @@ mod native {
         }
     }
 
+    fn register_format(name: &str) -> Option<u32> {
+        // SAFETY: a NUL-terminated wide string that outlives the call.
+        match unsafe { RegisterClipboardFormatW(&HSTRING::from(name)) } {
+            0 => None,
+            format => Some(format),
+        }
+    }
+
     /// The bytes of registered format `name` on the clipboard, if offered.
     pub(super) fn read_format(name: &str) -> Option<Vec<u8>> {
-        // SAFETY: a NUL-terminated wide string that outlives the call.
-        let format = unsafe { RegisterClipboardFormatW(&HSTRING::from(name)) };
-        if format == 0 {
-            return None;
-        }
+        let format = register_format(name)?;
         let _open = OpenedClipboard::open()?;
         // SAFETY: the clipboard is open. The clipboard keeps owning the
         // handle, which stays valid until the clipboard closes, after the copy.
@@ -287,13 +305,114 @@ mod native {
         }
     }
 
+    /// The paths of the clipboard's `CF_HDROP` list. Another program's
+    /// delayed rendering (Explorer's Copy) renders the list on request.
+    pub(super) fn read_file_list() -> Result<Vec<String>, AppError> {
+        let _open = OpenedClipboard::open().ok_or_else(clipboard_busy)?;
+        // SAFETY: the clipboard is open on this thread.
+        if unsafe { IsClipboardFormatAvailable(CF_HDROP) }.is_err() {
+            return Ok(Vec::new());
+        }
+        // SAFETY: the clipboard is open. It keeps owning the handle, which
+        // stays valid until the clipboard closes, after the paths are copied.
+        let handle = unsafe { GetClipboardData(CF_HDROP) }.map_err(|error| {
+            AppError::Other(format!("Reading the clipboard file list failed: {error}"))
+        })?;
+        let list = HDROP(handle.0);
+        // SAFETY: `list` is the clipboard's `CF_HDROP` block; index
+        // `u32::MAX` asks for the number of paths.
+        let count = unsafe { DragQueryFileW(list, u32::MAX, None) };
+        (0..count)
+            .map(|index| {
+                // SAFETY: as above; no buffer asks for the length without NUL.
+                let length = unsafe { DragQueryFileW(list, index, None) };
+                let mut path = vec![0u16; length as usize + 1];
+                // SAFETY: `path` holds the name and its terminating NUL.
+                let copied = unsafe { DragQueryFileW(list, index, Some(&mut path)) };
+                if length == 0 || copied != length {
+                    return Err(AppError::Other("Invalid clipboard file list".into()));
+                }
+                Ok(String::from_utf16_lossy(&path[..length as usize]))
+            })
+            .collect()
+    }
+
+    /// Replace the clipboard with `drop_files` as `CF_HDROP` and `token` in
+    /// the registered `token_format`, in one clipboard session. Both blocks
+    /// are fully rendered, so they outlive this process. They are prepared
+    /// before the clipboard is emptied, so an allocation failure leaves the
+    /// previous content in place.
+    pub(super) fn write_file_list(
+        drop_files: &[u8],
+        token_format: &str,
+        token: &[u8],
+    ) -> Result<(), AppError> {
+        let format = register_format(token_format).ok_or_else(|| {
+            AppError::Other("Registering the clipboard token format failed".into())
+        })?;
+        let files = GlobalBlock::copy_of(drop_files)?;
+        let token = GlobalBlock::copy_of(token)?;
+        let _open = OpenedClipboard::open().ok_or_else(clipboard_busy)?;
+        // SAFETY: the clipboard is open on this thread.
+        unsafe { EmptyClipboard() }.map_err(write_failed)?;
+        files.hand_to_clipboard(CF_HDROP)?;
+        token.hand_to_clipboard(format)
+    }
+
+    /// A movable global memory block that this process owns until the
+    /// clipboard takes it; freed on drop otherwise.
+    struct GlobalBlock(HGLOBAL);
+
+    impl GlobalBlock {
+        fn copy_of(bytes: &[u8]) -> Result<Self, AppError> {
+            // SAFETY: allocates a movable block. `GHND` zero-fills it, so a
+            // block larger than requested reads as NUL padding after `bytes`.
+            let block = Self(unsafe { GlobalAlloc(GHND, bytes.len()) }.map_err(write_failed)?);
+            // SAFETY: the block holds at least `bytes.len()` bytes while locked.
+            unsafe {
+                let data = GlobalLock(block.0).cast::<u8>();
+                if data.is_null() {
+                    return Err(AppError::Other("Locking clipboard memory failed".into()));
+                }
+                std::ptr::copy_nonoverlapping(bytes.as_ptr(), data, bytes.len());
+                let _ = GlobalUnlock(block.0);
+            }
+            Ok(block)
+        }
+
+        /// Set the block as `format` on the open clipboard, which then owns it.
+        fn hand_to_clipboard(self, format: u32) -> Result<(), AppError> {
+            // SAFETY: the clipboard is open; on success it owns the block.
+            unsafe { SetClipboardData(format, Some(HANDLE(self.0 .0))) }.map_err(write_failed)?;
+            std::mem::forget(self);
+            Ok(())
+        }
+    }
+
+    impl Drop for GlobalBlock {
+        fn drop(&mut self) {
+            // SAFETY: the clipboard has not taken the block, and nothing else
+            // refers to it.
+            let _ = unsafe { GlobalFree(Some(self.0)) };
+        }
+    }
+
+    fn clipboard_busy() -> AppError {
+        AppError::Other("The clipboard is in use by another program".into())
+    }
+
+    fn write_failed(error: windows::core::Error) -> AppError {
+        AppError::Other(format!("Writing the clipboard failed: {error}"))
+    }
+
     /// The clipboard, open for this thread until dropped.
     struct OpenedClipboard;
 
     impl OpenedClipboard {
-        /// Another process may hold the clipboard open briefly; retry.
+        /// Another process may hold the clipboard open briefly (a clipboard
+        /// history service reads every change); retry for about a second.
         fn open() -> Option<Self> {
-            for _ in 0..10 {
+            for _ in 0..100 {
                 // SAFETY: no owner window; `Drop` closes it on this thread.
                 if unsafe { OpenClipboard(None) }.is_ok() {
                     return Some(Self);
@@ -313,36 +432,38 @@ mod native {
 }
 
 #[cfg(test)]
-mod path_list_tests {
-    use super::decode_path_list;
-    use base64::Engine as _;
+mod drop_files_tests {
+    use super::drop_files;
 
-    fn encoded(text: &str) -> Vec<u8> {
-        let mut stdout = base64::engine::general_purpose::STANDARD
-            .encode(text)
-            .into_bytes();
-        stdout.extend_from_slice(b"\r\n");
-        stdout
+    fn utf16(bytes: &[u8]) -> Vec<u16> {
+        let (units, odd) = bytes.as_chunks::<2>();
+        assert!(odd.is_empty(), "UTF-16 is whole code units");
+        units.iter().map(|unit| u16::from_le_bytes(*unit)).collect()
     }
 
     #[test]
-    fn non_ascii_paths_survive_the_powershell_round_trip() {
-        let paths = decode_path_list(&encoded("C:\\a\\cut me é.txt\nC:\\b\\日本.txt")).unwrap();
-        assert_eq!(paths, vec!["C:\\a\\cut me é.txt", "C:\\b\\日本.txt"]);
+    fn wide_paths_follow_the_dropfiles_header_and_end_with_an_empty_name() {
+        let paths = [
+            "C:\\a\\cut me é.txt".to_string(),
+            "C:\\b\\日本.txt".to_string(),
+        ];
+        let bytes = drop_files(&paths).unwrap();
+        let (fields, _) = bytes[..20].as_chunks::<4>();
+        let header: Vec<u32> = fields
+            .iter()
+            .map(|field| u32::from_le_bytes(*field))
+            .collect();
+        // pFiles, pt.x, pt.y, fNC, fWide
+        assert_eq!(header, vec![20, 0, 0, 0, 1]);
+        let names = String::from_utf16(&utf16(&bytes[20..])).unwrap();
+        assert_eq!(names, "C:\\a\\cut me é.txt\0C:\\b\\日本.txt\0\0");
     }
 
     #[test]
-    fn an_empty_clipboard_is_no_files_and_garbage_is_an_error() {
-        assert!(decode_path_list(b"").unwrap().is_empty());
-        assert!(decode_path_list(b"\r\n").unwrap().is_empty());
-        assert!(decode_path_list(b"not base64!\r\n").is_err());
-        assert!(decode_path_list(&encoded_bytes(&[0xff, 0xfe])).is_err());
-    }
-
-    fn encoded_bytes(bytes: &[u8]) -> Vec<u8> {
-        base64::engine::general_purpose::STANDARD
-            .encode(bytes)
-            .into_bytes()
+    fn an_empty_list_or_unrepresentable_path_is_refused() {
+        assert!(drop_files(&[]).is_err());
+        assert!(drop_files(&[String::new()]).is_err());
+        assert!(drop_files(&["C:\\a\0b.txt".to_string()]).is_err());
     }
 }
 

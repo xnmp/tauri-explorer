@@ -144,6 +144,14 @@ export function directoryKey(path: string): string {
   return isWindowsPath ? norm.toLowerCase() : norm;
 }
 
+/** Native POSIX names may contain literal backslashes; comparison must retain
+ * them while Windows paths still use the shared separator/case rules. */
+export function nativeDirectoryKey(path: string): string {
+  return path.startsWith("/") && !path.startsWith("//")
+    ? stripTrailingSlash(path)
+    : directoryKey(path);
+}
+
 /**
  * True when two paths refer to the same directory. Tolerant of separator style,
  * trailing slash, and Windows drive-letter/casing differences (see

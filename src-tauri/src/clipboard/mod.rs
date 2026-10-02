@@ -14,8 +14,8 @@
 //!   and `x11rb` identifies the selection owner.
 //! - macOS (`macos.rs`): `NSPasteboard` file writes with a private token
 //!   type, `clipboard-rs` file reads, `pbpaste` and `osascript`.
-//! - Windows (`windows.rs`): a PowerShell shell-out per operation, plus the
-//!   native clipboard sequence number and private token format.
+//! - Windows (`windows.rs`): native `CF_HDROP` file lists with the clipboard
+//!   sequence number and a private token format; PowerShell text/image reads.
 //!
 //! Cut needs proof that our write still owns the OS clipboard (#835, #877).
 //! Windows and macOS prove it with a change counter (`change_counter.rs`).
@@ -59,10 +59,10 @@ pub async fn clipboard_read_text() -> Result<String, AppError> {
 
 /// Check if the clipboard contains image data.
 #[tauri::command]
-pub async fn clipboard_has_image() -> bool {
-    tokio::task::spawn_blocking(|| platform::reader().has_image())
+pub async fn clipboard_has_image() -> Result<bool, AppError> {
+    tokio::task::spawn_blocking(|| platform::reader().has_image_result())
         .await
-        .unwrap_or(false)
+        .map_err(|error| AppError::Other(format!("Clipboard task failed: {error}")))?
 }
 
 /// Read a clipboard screenshot for a user report without creating a file in
@@ -101,6 +101,15 @@ pub async fn clipboard_read_report_image(
 /// Returns the path of the created file, or an error.
 #[tauri::command]
 pub async fn clipboard_paste_image(directory: String) -> Result<String, AppError> {
+    // Hook builds can hold accepted work for a native screenshot. Clipboard
+    // reading, encoding and writing below still use the real platform backend.
+    #[cfg(feature = "e2e-hooks")]
+    if let Some(delay) = std::env::var("TAURI_EXPLORER_E2E_CLIPBOARD_IMAGE_DELAY_MS")
+        .ok()
+        .and_then(|value| value.parse::<u64>().ok())
+    {
+        tokio::time::sleep(std::time::Duration::from_millis(delay.min(10_000))).await;
+    }
     tokio::task::spawn_blocking(move || {
         content::paste_image(
             platform::reader().as_ref(),
@@ -142,6 +151,17 @@ enum FileClipboardJob {
 }
 
 impl FileClipboardJob {
+    fn kind(&self) -> &'static str {
+        match self {
+            Self::Publish { .. } => "publish",
+            Self::Snapshot { .. } => "snapshot",
+            Self::Clear { .. } => "clear",
+            Self::Rekey { .. } => "rekey",
+            Self::ClaimCut { .. } => "claim-cut",
+            Self::ReleaseCut { .. } => "release-cut",
+        }
+    }
+
     /// Apply the job. A dropped reply (a cancelled renderer request) does not
     /// undo it: the job was accepted when it was queued.
     fn run(self, coordinator: &mut FileClipboardCoordinator) {
@@ -187,8 +207,17 @@ fn spawn_worker(
         .name("file-clipboard".into())
         .spawn(move || {
             let mut coordinator = FileClipboardCoordinator::new(make_backend());
+            // Queue wait is the gap from the job's `queued` line to its
+            // `started` line; Paste waits behind every earlier job (#912).
             while let Ok(job) = receiver.recv() {
+                let kind = job.kind();
+                let started = std::time::Instant::now();
+                log::debug!("file clipboard job={kind} started");
                 job.run(&mut coordinator);
+                log::debug!(
+                    "file clipboard job={kind} finished elapsed={:?}",
+                    started.elapsed()
+                );
             }
         })
         .expect("clipboard worker must start");
@@ -207,8 +236,10 @@ async fn request<T>(
     job: impl FnOnce(oneshot::Sender<T>) -> FileClipboardJob,
 ) -> Result<T, AppError> {
     let (reply, received) = oneshot::channel();
+    let job = job(reply);
+    log::debug!("file clipboard job={} queued", job.kind());
     queue
-        .send(job(reply))
+        .send(job)
         .map_err(|_| AppError::WorkerFailed("Clipboard worker exited".into()))?;
     received
         .await

@@ -279,10 +279,10 @@
     const scoreMap = frecencyStore.getScoreMap();
     const mounted = drivesStore.mountedRoots;
 
-    return frecencyStore.entries
+    return frecencyStore.recentEntries
       .filter((e) => e.path !== homeDir && e.path !== "/home" && e.path !== "/" && !bookmarkedPaths.has(directoryKey(e.path)) && !systemPaths.has(directoryKey(e.path)))
       .filter((e) => !ejectedDriveHidesPath(e.path, mounted))
-      .map((e) => ({ path: e.path, name: basename(e.path), score: scoreMap.get(e.path) ?? 0 }))
+      .map((e) => ({ path: e.path, name: basename(e.path), score: scoreMap.get(directoryKey(e.path)) ?? 0 }))
       .sort((a, b) => b.score - a.score)
       .slice(0, settingsStore.recentItemsCount);
   });
@@ -628,7 +628,7 @@
               <span data-drag-name>{loc.name}</span>
               <button
                 class="remove-bookmark"
-                onclick={(e) => { e.stopPropagation(); frecencyStore.remove(loc.path); }}
+                onclick={(e) => { e.stopPropagation(); frecencyStore.dismissRecent(loc.path); }}
                 title="Remove from Recent"
                 aria-label="Remove {loc.name} from recent locations"
               >

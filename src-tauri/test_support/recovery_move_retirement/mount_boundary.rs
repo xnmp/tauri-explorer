@@ -67,12 +67,10 @@ fn unmounted_endpoint_preserves_both_roots_until_same_volume_returns() {
             .execute(&mut progress)
             .unwrap();
         let entry = coordinator.inventory().unwrap().entries.remove(0);
-        let roots: Vec<_> = entry
-            .intent
-            .operation
-            .move_spec()
-            .unwrap()
-            .roots()
+        let kind = entry.intent.operation.kind();
+        let roots: Vec<_> = [Side::Source, Side::Target]
+            .into_iter()
+            .filter_map(|side| kind.root(side))
             .map(|p| p.path.0.clone())
             .collect();
         assert_eq!(roots.len(), 2);

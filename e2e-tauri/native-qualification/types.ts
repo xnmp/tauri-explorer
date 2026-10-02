@@ -229,6 +229,11 @@ export interface MacStartupQualificationReportInput {
     hardwareModel: string;
     cpu: string;
     memoryBytes: number;
+    /** `sw_vers`; the Darwin `release` alone does not name the macOS build. */
+    osProductVersion?: string | null;
+    osBuildVersion?: string | null;
+    /** System WebKit.framework CFBundleVersion, which crash reports cite (#942). */
+    webKitVersion?: string | null;
   };
   scenario: MacStartupQualificationConditions & {
     id: string;
@@ -244,6 +249,18 @@ export interface MacStartupQualificationReportInput {
   artifacts: readonly string[];
   errors: readonly string[];
   halfBounceDeadlineMs: number | null;
+  /** Samples that lost a renderer; never measurements (#942). */
+  rendererLosses?: readonly RendererLossRecord[];
+}
+
+export interface RendererLossRecord {
+  /** 1-based launch attempt; a recovered loss is replaced by a later attempt. */
+  sample: number;
+  recovered: boolean;
+  description: string;
+  log: string;
+  /** Evidence directory, when one was captured. */
+  evidence: string | null;
 }
 
 export interface NativeStartupChild {

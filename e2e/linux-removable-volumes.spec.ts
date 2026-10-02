@@ -44,6 +44,6 @@ test("Linux volume sidebar discovers, mounts, reports errors and removes volumes
   });
   await expect(usb).toHaveCount(0);
   await expect(page.locator(".drive-gone-state")).toContainText("Removable drive removed");
-  await expect(page.locator(".drive-item").filter({ hasText: "Google Drive" })).toBeVisible();
+  await expect(page.locator(".drive-item").filter({ hasText: "Google Drive" })).toHaveCount(0);
   await page.screenshot({ animations: "disabled", path: "evidence/ac-3-linux-volume-removal.png" });
 });

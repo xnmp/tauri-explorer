@@ -5,8 +5,8 @@ use super::{
 use crate::files::{
     file_identity::version_from_metadata,
     recovery::{
+        checkpoint::{Effect, Event, Phase},
         coordinator::{Coordinator, HistoryPosition},
-        model::{OperationState, Phase},
     },
 };
 use std::{fs, path::Path};
@@ -74,9 +74,7 @@ fn interrupted_reapplication_can_resume_or_restore_after_reclaiming() {
                     }
                 })
                 .is_err());
-            let OperationState::Replacement(state) = checkpoint(directory.path()).state else {
-                panic!("expected copy replacement fixture");
-            };
+            let state = checkpoint(directory.path()).state;
             assert_eq!(state.phase, Phase::ReapplyIntent);
             assert!(state.error.is_some());
             drop(execution);
@@ -100,9 +98,7 @@ fn interrupted_reapplication_can_resume_or_restore_after_reclaiming() {
                 );
                 assert_eq!(fs::read(root.join("original")).unwrap(), b"original bytes");
             }
-            let OperationState::Replacement(state) = checkpoint(directory.path()).state else {
-                panic!("expected copy replacement fixture");
-            };
+            let state = checkpoint(directory.path()).state;
             assert!(state.error.is_none());
         }
     }
@@ -191,9 +187,7 @@ fn history_revision_survives_inspection_but_rejects_earlier_content_cycles() {
     let (directory, coordinator, operation) = fixture();
     let execution = publish(operation);
     let id = execution.operation.intent().id.clone();
-    let OperationState::Replacement(state) = execution.operation.state() else {
-        panic!("expected copy replacement fixture");
-    };
+    let state = execution.operation.state();
     let initial_revision = state.effect_revision;
     let initial_generation = execution.operation.generation();
     drop(execution);
@@ -207,9 +201,7 @@ fn history_revision_survives_inspection_but_rejects_earlier_content_cycles() {
         .unwrap();
     let mut execution = ReplacementExecution::reopen(claimed).unwrap();
     execution.restore_copy().unwrap();
-    let OperationState::Replacement(state) = execution.operation.state() else {
-        panic!("expected copy replacement fixture");
-    };
+    let state = execution.operation.state();
     assert!(state.effect_revision > initial_revision);
     let restored_revision = state.effect_revision;
     drop(execution);
@@ -241,9 +233,7 @@ fn simultaneous_history_claims_have_one_owner_and_pending_effects_require_recove
     let (directory, coordinator, operation) = fixture();
     let execution = publish(operation);
     let id = execution.operation.intent().id.clone();
-    let OperationState::Replacement(state) = execution.operation.state() else {
-        panic!("expected copy replacement fixture");
-    };
+    let state = execution.operation.state();
     let revision = state.effect_revision;
     drop(execution);
     let peer = Coordinator::open(&directory.path().join("recovery")).unwrap();
@@ -277,7 +267,7 @@ fn simultaneous_history_claims_have_one_owner_and_pending_effects_require_recove
     let mut execution = ReplacementExecution::reopen(claimed).unwrap();
     execution
         .operation
-        .advance(ReplacementTransition::BeginRestoration)
+        .advance(Event::Begin(Effect::Restore))
         .unwrap();
     drop(execution);
     assert!(coordinator

@@ -402,6 +402,72 @@ fn every_committed_item_contributes_both_of_its_directories_to_the_refresh_set()
     }
 }
 
+/// The non-durable (default/release) move path must admit through the same
+/// recovery coordinator seam the single-item move command and the native
+/// history move adapter use, not bypass it by calling the filesystem effect
+/// directly (#881 follow-up; lesson 680, ADR 0024 level 3). A held reservation
+/// on either endpoint must refuse the session item with no effect, and the
+/// same request must succeed once that reservation is released.
+#[cfg(not(feature = "durable-recovery"))]
+#[test]
+fn a_session_item_refuses_while_its_endpoint_is_claimed_and_succeeds_once_released() {
+    use crate::files::recovery::{Access, ResourceRequest, Scope};
+
+    fn writing(path: &Path) -> Vec<ResourceRequest> {
+        vec![ResourceRequest {
+            path: path.to_owned(),
+            access: Access::Write,
+            scope: Scope::Subtree,
+        }]
+    }
+
+    for claim_source in [true, false] {
+        let fixture = Fixture::new();
+        let file = fixture.source("item.txt", b"payload");
+        let target = fixture.to.join("item.txt");
+        let runtime = Runtime::new(fixture.root.path().join("recovery"));
+        let claimed = if claim_source { &file } else { &target };
+        let owner = block(runtime.clone().admit(writing(claimed))).unwrap();
+
+        let (outcome, _events) = drive(
+            request(std::slice::from_ref(&file), &fixture.to),
+            MoveWork {
+                job_id: 1,
+                runtime: runtime.clone(),
+            },
+            Vec::new(),
+        );
+        assert_eq!(
+            statuses(&outcome),
+            vec!["failed"],
+            "a live recovery claim on either endpoint must refuse the relocation"
+        );
+        assert!(
+            file.exists(),
+            "a refused relocation must leave the source untouched"
+        );
+        assert!(
+            !target.exists(),
+            "a refused relocation must not have produced any effect at the target"
+        );
+
+        drop(owner);
+
+        let (outcome, _events) = drive(
+            request(std::slice::from_ref(&file), &fixture.to),
+            MoveWork { job_id: 2, runtime },
+            Vec::new(),
+        );
+        assert_eq!(
+            statuses(&outcome),
+            vec!["succeeded"],
+            "the same request must succeed once the claim is released"
+        );
+        assert!(!file.exists());
+        assert!(target.exists());
+    }
+}
+
 #[cfg(feature = "durable-recovery")]
 #[test]
 fn a_durable_receipt_is_its_own_inverse_and_never_gains_a_path_only_action() {
@@ -424,4 +490,69 @@ fn a_durable_receipt_is_its_own_inverse_and_never_gains_a_path_only_action() {
     let ForwardEffect::Changed(Some(Action::Replacement { .. })) = projected.effect else {
         panic!("a durable move inverse must be the record, never a path");
     };
+}
+
+/// Cancellation after dispatch must still fence the eventual filesystem worker.
+#[cfg(all(target_os = "linux", not(feature = "durable-recovery")))]
+#[test]
+fn cancelling_a_move_while_admission_is_blocked_preserves_the_source() {
+    use crate::files::recovery::{Access, ResourceRequest, Scope};
+    use std::{os::fd::AsRawFd, task::Poll};
+
+    let root = tempfile::tempdir().unwrap();
+    let source_dir = root.path().join("source");
+    let destination = root.path().join("destination");
+    fs::create_dir(&source_dir).unwrap();
+    fs::create_dir(&destination).unwrap();
+    let source = source_dir.join("item.txt");
+    let target = destination.join("item.txt");
+    fs::write(&source, b"payload").unwrap();
+    let native = work(root.path());
+    // Initialize the real coordinator, then hold its cross-process gate so
+    // apply must yield during admission after its initial cancellation check.
+    block(native.runtime.admit(vec![ResourceRequest {
+        path: source.clone(),
+        access: Access::Write,
+        scope: Scope::Subtree,
+    }]))
+    .unwrap()
+    .finish()
+    .unwrap();
+    let gate = fs::File::open(root.path().join("recovery/admission.lock")).unwrap();
+    assert_eq!(unsafe { libc::flock(gate.as_raw_fd(), libc::LOCK_EX) }, 0);
+    let owner = Owner::default();
+    let control = Arc::new(Control::new(owner.clone()));
+    let inspection = Inspection {
+        source: source.to_string_lossy().into_owned(),
+        destination: destination.to_string_lossy().into_owned(),
+        presentation: destination.to_string_lossy().into_owned(),
+        conflict: None,
+        bytes: 7,
+        observation: None,
+    };
+    let completion = block(async {
+        let mut pending =
+            Box::pin(native.apply(inspection, false, control.clone(), Arc::new(|_| {})));
+        let first = std::future::poll_fn(|cx| Poll::Ready(pending.as_mut().poll(cx))).await;
+        assert!(
+            matches!(first, Poll::Pending),
+            "admission must wait for the held gate"
+        );
+        control.cancel(&owner).unwrap();
+        assert_eq!(unsafe { libc::flock(gate.as_raw_fd(), libc::LOCK_UN) }, 0);
+        pending.await
+    });
+
+    assert!(completion.result.is_err(), "cancelled move must not commit");
+    assert_eq!(fs::read(&source).unwrap(), b"payload");
+    assert!(!target.exists(), "cancelled move published its destination");
+    // A refused worker must also retire its ordinary admission.
+    block(native.runtime.admit(vec![ResourceRequest {
+        path: source,
+        access: Access::Write,
+        scope: Scope::Subtree,
+    }]))
+    .unwrap()
+    .finish()
+    .unwrap();
 }

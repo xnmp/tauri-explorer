@@ -19,11 +19,10 @@ const mocks = vi.hoisted(() => ({
   osReadFiles: vi.fn(),
   osWriteFiles: vi.fn(async (_paths: string[]): Promise<{ ok: true; data: null } | { ok: false; error: string }> => ({ ok: true, data: null })),
   native: { revision: 0, entries: null as FileEntry[] | null, operation: null as "copy" | "cut" | null, paths: [] as string[], pending: Promise.resolve() as Promise<unknown>, lease: null as number | null },
-  transfer: vi.fn(),
   copyEntries: vi.fn(),
   moveEntries: vi.fn(),
   estimateSize: vi.fn(async () => ({ ok: true, data: { totalBytes: 1 } })),
-  clipboardHasImage: vi.fn(),
+  clipboardImageStatus: vi.fn(),
   clipboardPasteImage: vi.fn(),
   broadcastFileChange: vi.fn(),
   undo: vi.fn(),
@@ -100,12 +99,8 @@ vi.mock("$lib/api/os-clipboard", () => ({
 }));
 
 vi.mock("$lib/api/clipboard-image", () => ({
-  clipboardHasImage: mocks.clipboardHasImage,
+  clipboardImageStatus: mocks.clipboardImageStatus,
   clipboardPasteImage: mocks.clipboardPasteImage,
-}));
-
-vi.mock("$lib/state/file-transfer", () => ({
-  performFileTransfer: mocks.transfer,
 }));
 
 vi.mock("$lib/api/copy-session", async (importOriginal) => ({
@@ -143,6 +138,7 @@ vi.mock("@tauri-apps/api/event", () => ({
 import { createExplorerState, type ExplorerInstance } from "$lib/state/explorer.svelte";
 import { clipboardStore, CUT_ALREADY_PASTED } from "$lib/state/clipboard.svelte";
 import { toastStore } from "$lib/state/toast.svelte";
+import { clipboardImageProgress } from "$lib/state/clipboard-image-progress.svelte";
 import { operationsManager } from "$lib/state/operations.svelte";
 
 interface Deferred<T> {
@@ -231,7 +227,7 @@ beforeEach(async () => {
   explorers = [];
   mocks.load.current = async () => ({ ok: false, error: "unset" });
   mocks.osReadFiles.mockImplementation(async () => ({ ok: true, data: [...mocks.native.paths] }));
-  mocks.clipboardHasImage.mockResolvedValue(false);
+  mocks.clipboardImageStatus.mockResolvedValue({ ok: true, data: false });
   mocks.undo.mockResolvedValue({ error: "Nothing to undo" });
   mocks.copyEntries.mockImplementation(async (sources: readonly string[], destination: string, options: {
     onEvent?: (event: CopySessionEvent) => void;
@@ -546,22 +542,68 @@ describe("paste and undo publication ownership", () => {
 
   it("keeps clipboard-image destination and completion scoped to A", async () => {
     const explorer = explorerAtA();
-    const imageAvailable = deferred<boolean>();
+    const imageAvailable = deferred<ApiResult<boolean>>();
     const imagePaste = deferred<ApiResult<string>>();
-    mocks.clipboardHasImage.mockReturnValueOnce(imageAvailable.promise);
+    mocks.clipboardImageStatus.mockReturnValueOnce(imageAvailable.promise);
     mocks.clipboardPasteImage.mockReturnValueOnce(imagePaste.promise);
 
     const pending = explorer.paste();
+    await waitForCall(mocks.clipboardImageStatus);
+    expect(clipboardImageProgress.pending.map(({ directory }) => directory)).toEqual(["/a"]);
     const bEntries = await navigateToB(explorer);
-    imageAvailable.resolve(true);
+    imageAvailable.resolve({ ok: true, data: true });
     await waitForCall(mocks.clipboardPasteImage);
     expect.soft(mocks.clipboardPasteImage).toHaveBeenCalledWith("/a");
     imagePaste.resolve({ ok: true, data: "/a/Pasted Image.png" });
     expect(await pending).toBeNull();
+    expect(clipboardImageProgress.pending).toEqual([]);
 
     expect.soft(explorer.displayEntries.map(({ path }) => path)).toEqual(bEntries.map(({ path }) => path));
     expect.soft(selectedPaths(explorer)).toEqual([bEntries[1].path]);
     expect.soft(explorer.focusedEntry?.path).toBe(bEntries[1].path);
+  });
+
+  it("explicit image paste keeps its accepted destination after pane navigation", async () => {
+    const explorer = explorerAtA();
+    const imagePaste = deferred<ApiResult<string>>();
+    mocks.clipboardPasteImage.mockReturnValueOnce(imagePaste.promise);
+    const pending = explorer.pasteImage();
+    expect(clipboardImageProgress.pending.map(({ directory }) => directory)).toEqual(["/a"]);
+    const bEntries = await navigateToB(explorer);
+    imagePaste.resolve({ ok: true, data: "/a/image.png" });
+    expect(await pending).toBeNull();
+    expect(clipboardImageProgress.pending).toEqual([]);
+    expect(explorer.displayEntries).toEqual(bEntries);
+    expect(selectedPaths(explorer)).toEqual([bEntries[1].path]);
+    expect(mocks.broadcastFileChange).toHaveBeenCalledWith(["/a"]);
+  });
+
+  it("overlapping image pastes retain progress independently and expose write failures", async () => {
+    const explorer = explorerAtA();
+    const first = deferred<ApiResult<string>>();
+    const second = deferred<ApiResult<string>>();
+    mocks.clipboardPasteImage.mockReturnValueOnce(first.promise).mockReturnValueOnce(second.promise);
+    const firstPaste = explorer.pasteImage();
+    const secondPaste = explorer.pasteImage();
+    expect(clipboardImageProgress.pending.map(({ directory }) => directory)).toEqual(["/a", "/a"]);
+    toastStore.show("Another task is pending", "progress");
+    second.resolve({ ok: false, error: "permission denied" });
+    expect(await secondPaste).toBe("permission denied");
+    expect(clipboardImageProgress.pending).toHaveLength(1);
+    expect(toastStore.toasts.some(({ type, message }) => type === "error" && message.includes("permission denied"))).toBe(true);
+    serveListing(explorer.displayEntries);
+    first.resolve({ ok: true, data: "/a/image.png" });
+    expect(await firstPaste).toBeNull();
+    expect(clipboardImageProgress.pending).toEqual([]);
+  });
+
+  it("ends image progress and exposes clipboard inspection failures without claiming an empty clipboard", async () => {
+    const explorer = explorerAtA();
+    mocks.clipboardImageStatus.mockResolvedValueOnce({ ok: false, error: "clipboard locked" });
+    expect(await explorer.paste()).toBe("clipboard locked");
+    expect(clipboardImageProgress.pending).toEqual([]);
+    expect(toastStore.toasts.some(({ type, message }) => type === "error" && message.includes("clipboard locked"))).toBe(true);
+    expect(mocks.clipboardPasteImage).not.toHaveBeenCalled();
   });
 
   it("does not refresh, reselect, or duplicate-publish when an A undo finishes late", async () => {

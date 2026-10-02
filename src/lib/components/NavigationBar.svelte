@@ -13,6 +13,7 @@
   import { truncateBreadcrumbs } from "$lib/domain/breadcrumb-truncation";
   import { isWslDistroRoot, isWslHome } from "$lib/domain/wsl";
   import { directoryKey, isDriveRoot } from "$lib/domain/path";
+  import { launchRequest } from "$lib/domain/window-launch-plan";
   import { drivesStore } from "$lib/state/drives.svelte";
   import BreadcrumbAutocomplete from "./BreadcrumbAutocomplete.svelte";
   import CaretPicker from "./CaretPicker.svelte";
@@ -165,7 +166,7 @@
     // activation path asks the existing navigation bar to enter edit mode.
     window.addEventListener("explorer:focus-address-bar", requestAddressBarFocus);
     // Fresh child windows carry this one-shot startup request in their URL.
-    const startupFocus = new URLSearchParams(window.location.search).get("focusAddressBar") === "1"
+    const startupFocus = launchRequest(window.location.search, "focusAddressBar") === "1"
       ? setTimeout(requestAddressBarFocus)
       : undefined;
     return () => {

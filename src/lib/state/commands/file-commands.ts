@@ -4,7 +4,6 @@
 
 import type { Command } from "../commands.svelte";
 import { writeTextFile } from "$lib/api/files";
-import { clipboardPasteImage } from "$lib/api/clipboard-image";
 import { dialogStore } from "../dialogs.svelte";
 import { getActiveExplorer } from "./shared";
 import { windowTabsManager } from "../window-tabs.svelte";
@@ -212,12 +211,7 @@ export const editCommands: Command[] = [
     category: "edit",
     shortcut: "Ctrl+Shift+V",
     handler: async () => {
-      const explorer = getActiveExplorer();
-      if (!explorer) return;
-      const result = await clipboardPasteImage(explorer.currentPath);
-      if (result.ok) {
-        explorer.refresh({ silent: true });
-      }
+      await getActiveExplorer()?.pasteImage();
     },
   },
 ];

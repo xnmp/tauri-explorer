@@ -52,7 +52,7 @@ test("AC 3 shows one mounted row after refresh and mounted fallback during UDisk
   await expect(unavailable).toBeVisible();
   await expect(page.locator(".drive-item").filter({ hasText: "SD Card" })).toHaveCount(0);
   await expect(backup).toHaveCount(1);
-  await expect(page.locator(".drive-item").filter({ hasText: "Google Drive" })).toBeVisible();
+  await expect(page.locator(".drive-item").filter({ hasText: "Google Drive" })).toHaveCount(0);
   const mountCalls = await page.evaluate(() => (window as unknown as VolumeFixture).__mockControl?.invokeCounts?.mount_drive);
   await backup.click();
   await expect(page.locator(".entry-item").filter({ hasText: "photo.jpg" })).toBeVisible();

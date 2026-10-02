@@ -215,25 +215,62 @@ impl ClipboardReader for CliTool {
     }
 
     fn has_image(&self) -> bool {
-        match self.list_types_command().output() {
-            Ok(output) if output.status.success() => {
-                let types = String::from_utf8_lossy(&output.stdout);
-                types.contains("image/png") || types.contains("image/jpeg")
-            }
-            _ => false,
-        }
+        self.has_image_result().unwrap_or(false)
     }
 
     fn read_image(&self, media_type: &str) -> Option<Vec<u8>> {
-        let output = self.run_read(Some(media_type)).ok()?;
+        self.read_image_result(media_type).ok().flatten()
+    }
+
+    fn has_image_result(&self) -> Result<bool, AppError> {
+        let output = self
+            .list_types_command()
+            .output()
+            .map_err(|error| tool_error(self.reader_name(), self.package(), error))?;
+        if !output.status.success() {
+            return Err(AppError::Other(format!(
+                "Could not inspect clipboard: {} exited with {}",
+                self.reader_name(),
+                output.status
+            )));
+        }
+        Ok(String::from_utf8_lossy(&output.stdout)
+            .lines()
+            .any(|kind| matches!(kind.trim(), "image/png" | "image/jpeg")))
+    }
+
+    fn read_image_result(&self, media_type: &str) -> Result<Option<Vec<u8>>, AppError> {
+        let types = self
+            .list_types_command()
+            .output()
+            .map_err(|error| tool_error(self.reader_name(), self.package(), error))?;
+        if !types.status.success() {
+            return Err(AppError::Other(format!(
+                "Could not inspect clipboard: {} exited with {}",
+                self.reader_name(),
+                types.status
+            )));
+        }
+        if !String::from_utf8_lossy(&types.stdout)
+            .lines()
+            .any(|kind| kind.trim() == media_type)
+        {
+            return Ok(None);
+        }
+        let output = self.run_read(Some(media_type))?;
         if !output.status.success() || output.stdout.is_empty() {
-            return None;
+            return Err(AppError::Other(format!(
+                "Could not read clipboard image: {} exited with {}",
+                self.reader_name(),
+                output.status
+            )));
         }
-        // Tools may convert or mislabel; accept only bytes of the asked type.
         if crate::user_report::report_image_media_type(&output.stdout) != Some(media_type) {
-            return None;
+            return Err(AppError::Other(
+                "Clipboard provider returned invalid image data".into(),
+            ));
         }
-        Some(output.stdout)
+        Ok(Some(output.stdout))
     }
 }
 

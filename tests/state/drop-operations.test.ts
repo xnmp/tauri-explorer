@@ -7,12 +7,10 @@
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-const transfer = vi.hoisted(() => vi.fn());
 const copyFiles = vi.hoisted(() => vi.fn(async () => null));
 const moveFiles = vi.hoisted(() => vi.fn(async (): Promise<{ error: string | null; complete: boolean }> => ({ error: null, complete: true })));
 const undo = vi.hoisted(() => ({ push: vi.fn(), pushAndBroadcast: vi.fn(), invalidateRedo: vi.fn() }));
 
-vi.mock("$lib/state/file-transfer", () => ({ performFileTransfer: transfer }));
 vi.mock("$lib/state/copy-operations", () => ({ copyFiles }));
 vi.mock("$lib/state/move-operations", () => ({ moveFiles }));
 vi.mock("$lib/state/undo.svelte", () => ({ undoStore: undo }));
@@ -32,7 +30,6 @@ describe("handleFileDropMany", () => {
     expect(moveFiles).toHaveBeenCalledWith(["/src/a.txt", "/src/b.txt", "/src/c.txt"], "/dest", {
       onRefresh: options.onRefresh, broadcastToOtherWindows: undefined,
     });
-    expect(transfer).not.toHaveBeenCalled();
   });
 
   it("keeps the inverse native-owned instead of pushing a renderer undo action", async () => {
@@ -49,7 +46,6 @@ describe("handleFileDropMany", () => {
     expect(moveFiles).toHaveBeenCalledWith(["/src/a.txt"], "/dest", {
       onRefresh: options.onRefresh, broadcastToOtherWindows: undefined,
     });
-    expect(transfer).not.toHaveBeenCalled();
   });
 
   it("delegates an ordered copy batch once and leaves history to the native session", async () => {
@@ -63,7 +59,6 @@ describe("handleFileDropMany", () => {
       onRefresh, broadcastToOtherWindows: true,
     });
     expect(moveFiles).not.toHaveBeenCalled();
-    expect(transfer).not.toHaveBeenCalled();
   });
 
   it("delegates a single copy through the same native copy session", async () => {
@@ -72,7 +67,6 @@ describe("handleFileDropMany", () => {
     expect(copyFiles).toHaveBeenCalledWith(["/src/a.txt"], "/dest", {
       onRefresh: options.onRefresh, broadcastToOtherWindows: undefined,
     });
-    expect(transfer).not.toHaveBeenCalled();
   });
 
   it("does nothing for an empty path list", async () => {

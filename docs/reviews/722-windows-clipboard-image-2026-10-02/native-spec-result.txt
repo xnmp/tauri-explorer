@@ -1,0 +1,18 @@
+2026-10-01T23:39:21.5014908Z ------------------------------------------------------------------
+2026-10-01T23:39:21.5019199Z [webview2 153.0.4234.48 (unknown) #0-0] Running: webview2 (v153.0.4234.48) on (unknown)
+2026-10-01T23:39:21.5020465Z [webview2 153.0.4234.48 (unknown) #0-0] Session ID: 04c1d911dbfccf4f3da1037d425a3387
+2026-10-01T23:39:21.5021441Z [webview2 153.0.4234.48 (unknown) #0-0]
+2026-10-01T23:39:21.5022747Z [webview2 153.0.4234.48 (unknown) #0-0] » e2e-tauri\specs\clipboard-image-progress.spec.ts
+2026-10-01T23:39:21.5023932Z [webview2 153.0.4234.48 (unknown) #0-0] native clipboard image progress (#722)
+2026-10-01T23:39:21.5025449Z [webview2 153.0.4234.48 (unknown) #0-0]    ✓ Details: Paste reads the actual clipboard and displays usable output
+2026-10-01T23:39:21.5028207Z [webview2 153.0.4234.48 (unknown) #0-0]    ✓ Details: Paste Image reads the actual clipboard and displays usable output
+2026-10-01T23:39:21.5032273Z [webview2 153.0.4234.48 (unknown) #0-0]    ✓ List: Paste reads the actual clipboard and displays usable output
+2026-10-01T23:39:21.5034137Z [webview2 153.0.4234.48 (unknown) #0-0]    ✓ List: Paste Image reads the actual clipboard and displays usable output
+2026-10-01T23:39:21.5035955Z [webview2 153.0.4234.48 (unknown) #0-0]    ✓ Tiles: Paste reads the actual clipboard and displays usable output
+2026-10-01T23:39:21.5037833Z [webview2 153.0.4234.48 (unknown) #0-0]    ✓ Tiles: Paste Image reads the actual clipboard and displays usable output
+2026-10-01T23:39:21.5039786Z [webview2 153.0.4234.48 (unknown) #0-0]    ✓ navigation remains usable while image work completes in the original directory
+2026-10-01T23:39:21.5042497Z [webview2 153.0.4234.48 (unknown) #0-0]    - a real refused write ends progress and reports failure without an image
+2026-10-01T23:39:21.5043825Z [webview2 153.0.4234.48 (unknown) #0-0]
+2026-10-01T23:39:21.5044623Z [webview2 153.0.4234.48 (unknown) #0-0] 7 passing (30s)
+2026-10-01T23:39:21.5045436Z [webview2 153.0.4234.48 (unknown) #0-0] 1 skipped
+2026-10-01T23:39:21.5046281Z ------------------------------------------------------------------

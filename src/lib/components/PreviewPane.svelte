@@ -12,7 +12,8 @@ import { gitDiff } from "$lib/api/git";
 import { listArchiveContents } from "$lib/api/archive";
 import { openFile } from "$lib/api/open";
   import { toastStore } from "$lib/state/toast.svelte";
-  import { isImageFile, isSvgFile, isTextFile, isPdfFile, isVideoFile, isZipFile, getFileType, formatDate } from "$lib/domain/file-types";
+  import { isImageFile, isSvgFile, isTextFile, isPdfFile, isVideoFile, isVideoMediaFile, isZipFile, getFileType, formatDate } from "$lib/domain/file-types";
+  import VideoIndicator from "./VideoIndicator.svelte";
   import { formatSize, isSystemHidden, type FileEntry } from "$lib/domain/file";
   import { isTauri } from "$lib/api/common";
   import { highlightCode, highlightDiffLine } from "$lib/domain/syntax-highlight";
@@ -925,7 +926,10 @@ import { openFile } from "$lib/api/open";
     {/if}
 
     <!-- svelte-ignore a11y_no_noninteractive_tabindex -- a scrollable region must be keyboard-focusable (WCAG 2.1.1, #797). -->
-    <div class="preview-content" role="region" aria-label="Preview of {selectedFile.name}" tabindex="0">
+    <div class="preview-content" role="region" aria-label="Preview of {selectedFile.name}{isVideoMediaFile(selectedFile) ? ' (video)' : ''}" tabindex="0">
+      {#if isVideoMediaFile(selectedFile)}
+        <span class="video-preview-marker"><VideoIndicator /></span>
+      {/if}
       {#if previewLoading}
         {#if showPreviewSpinner}
           <div class="preview-loading">
@@ -1301,11 +1305,26 @@ import { openFile } from "$lib/api/open";
   }
 
   .preview-content {
+    position: relative;
     flex: 1;
     overflow: auto;
     display: flex;
     flex-direction: column;
     min-height: 0;
+  }
+
+  .video-preview-marker {
+    position: absolute;
+    top: 8px;
+    right: 8px;
+    z-index: 1;
+    line-height: 0;
+    pointer-events: none;
+  }
+
+  .preview-pane.fullscreen .video-preview-marker {
+    top: 52px;
+    right: 12px;
   }
 
   /* Fullscreen: image fills the whole screen symmetrically — hide the header

@@ -124,6 +124,13 @@ impl PoolState {
             || self.claimed.contains_key(label)
     }
 
+    /// Not yet a committed user-facing window: ready, booting, retiring, or
+    /// claimed with activation still unacknowledged (#942).
+    #[cfg(any(target_os = "macos", test))]
+    fn parked(&self, label: &str) -> bool {
+        label.starts_with(WARM_LABEL_PREFIX) && !self.activated.contains(label)
+    }
+
     fn forget(&mut self, label: &str) -> bool {
         let was_real = self.is_real(label);
         self.ready.retain(|entry| entry != label);
@@ -297,6 +304,24 @@ pub fn on_window_destroyed(app: &AppHandle, destroyed_label: &str) {
     for label in parked {
         retire_window(app, &label);
     }
+}
+
+/// Whether a window that lost its renderer should be retired, not reloaded.
+#[cfg(target_os = "macos")]
+pub fn is_parked(label: &str) -> bool {
+    POOL.lock().unwrap_or_else(|e| e.into_inner()).parked(label)
+}
+
+/// Withdraw a parked window from claim admission before destroying it, so no
+/// claim can pick a window whose page is gone. A claim already in flight
+/// fails its acknowledgement and falls back to a fresh window.
+#[cfg(target_os = "macos")]
+pub fn retire_parked(app: &AppHandle, label: &str) {
+    POOL.lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .ready
+        .retain(|entry| entry != label);
+    retire_window(app, label);
 }
 
 fn retire_window(app: &AppHandle, label: &str) {
@@ -543,5 +568,31 @@ mod tests {
         assert!(s
             .drain_parked()
             .contains(&"explorer-warm-delayed".to_owned()));
+    }
+    #[test]
+    fn only_committed_activation_makes_a_warm_window_reloadable() {
+        let mut s = state();
+        let now = Instant::now();
+        assert!(!s.parked("main"), "ordinary windows are always recovered");
+        assert!(!s.parked("explorer-child-1"));
+        let mut booting = state();
+        assert!(booting.try_reserve_spawn("explorer-warm-boot".into(), now));
+        assert!(booting.parked("explorer-warm-boot"), "booting");
+        ready(&mut s, "explorer-warm-live");
+        assert!(s.parked("explorer-warm-live"), "ready in the pool");
+        assert_eq!(
+            s.claim(now, |_| true).as_deref(),
+            Some("explorer-warm-live")
+        );
+        assert!(
+            s.parked("explorer-warm-live"),
+            "a claim without acknowledged activation falls back to a fresh window"
+        );
+        assert!(s.activate("explorer-warm-live", now));
+        assert!(
+            !s.parked("explorer-warm-live"),
+            "activated windows are user-facing"
+        );
+        assert!(s.parked("explorer-warm-measure"), "never-registered probe");
     }
 }

@@ -22,7 +22,8 @@ import { SvelteSet } from "svelte/reactivity";
 import { toastStore } from "./toast.svelte";
 import { basename, toNativeSeparators } from "$lib/domain/path";
 import { isWindows } from "$lib/domain/platform";
-import { clipboardHasImage, clipboardPasteImage } from "$lib/api/clipboard-image";
+import { clipboardImageStatus, clipboardPasteImage } from "$lib/api/clipboard-image";
+import { withClipboardImageProgress } from "$lib/state/clipboard-image-progress.svelte";
 import { fetchDirectory } from "$lib/api/files";
 import { sortEntries, filterHidden, type FileEntry, type SortField } from "$lib/domain/file";
 import type { ExplorerCoreState, SelectOptions, ViewMode } from "./types";
@@ -610,6 +611,35 @@ function createExplorerState(seed?: ExplorerSeed) {
     };
   }
 
+  async function pasteImageAt(origin: ReturnType<typeof captureMutation>, probe: boolean): Promise<string | null | undefined> {
+    return withClipboardImageProgress(origin.path, async () => {
+      if (probe) {
+        const status = await clipboardImageStatus();
+        if (!status.ok) {
+          toastStore.error(`Could not read clipboard image: ${status.error}`);
+          return status.error;
+        }
+        if (!status.data) return undefined;
+      }
+      const result = await clipboardPasteImage(origin.path);
+      if (!result.ok) {
+        toastStore.error(`Could not paste clipboard image into ${basename(origin.path) || origin.path}: ${result.error}`);
+        return result.error;
+      }
+      broadcastFileChange([origin.path]);
+      if (origin.current()) await refresh({ silent: true });
+      toastStore.success(`Clipboard image saved to ${basename(origin.path) || origin.path}`);
+      return null;
+    });
+  }
+
+  async function pasteImage(): Promise<string | null> {
+    const origin = captureMutation();
+    if (!origin.current()) return "Pane is closed";
+    if (!origin.path) return "No current directory";
+    return (await pasteImageAt(origin, false)) ?? null;
+  }
+
   async function paste(): Promise<string | null> {
     const origin = captureMutation();
     if (!origin.current()) return "Pane is closed";
@@ -654,23 +684,15 @@ function createExplorerState(seed?: ExplorerSeed) {
     }
 
     // Fall back to clipboard image
-    if (await clipboardHasImage()) {
-      const result = await clipboardPasteImage(origin.path);
-      if (result.ok) {
-        broadcastFileChange([origin.path]);
-        if (origin.current()) await refresh({ silent: true });
-        return null;
-      }
-      return result.error;
-    }
+    const imageError = await pasteImageAt(origin, true);
+    if (imageError !== undefined) return imageError;
 
     // Nothing pasted: only now is a clipboard read failure worth surfacing
     // (#401) — when another source (internal clipboard, image) satisfied the
     // paste, the failed file-list probe was inconsequential noise.
-    if (osReadError) {
-      return `Reading the system clipboard failed: ${osReadError}`;
-    }
-    return "Nothing in clipboard";
+    const error = osReadError ? `Reading the system clipboard failed: ${osReadError}` : "Nothing in clipboard";
+    toastStore.error(error);
+    return error;
   }
 
   // ===================
@@ -842,6 +864,7 @@ function createExplorerState(seed?: ExplorerSeed) {
     copyToClipboard,
     cutToClipboard,
     paste,
+    pasteImage,
     get pasteResult() {
       return pasteResult;
     },

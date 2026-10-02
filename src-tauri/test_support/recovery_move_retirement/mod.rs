@@ -5,8 +5,12 @@
 //! `Fixture` helper. See `docs/code-map/map-folder.md` for the layout.
 use super::*;
 use crate::files::recovery::{
-    coordinator::Coordinator, forward_move::PreparedMove, model::RecoveryChoice, retirement,
-    service,
+    checkpoint::{Event, Side},
+    coordinator::Coordinator,
+    forward_move::PreparedMove,
+    model::RecoveryChoice,
+    move_execution::MoveExecution,
+    retirement, service,
 };
 use std::{fs, path::PathBuf, sync::Arc};
 

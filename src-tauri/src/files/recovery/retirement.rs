@@ -1,19 +1,30 @@
-//! Crash-safe retirement of durable recovery artifacts (ADR 0023).
+//! Crash-safe retirement of durable recovery artifacts (ADR 0023, ADR 0026).
 //!
-//! Intent precedes every effect and completion follows every barrier, so a
-//! process killed at any checkpoint resumes from durable evidence alone. No
-//! step here decides policy: eligibility comes from `retention`, and the only
-//! bytes ever removed live inside an identity-verified private artifact root.
-
+//! One journaled lifecycle serves every kind. Intent precedes every effect and
+//! completion follows every barrier, so a process killed at any checkpoint
+//! resumes from durable evidence alone. Policy comes from the checkpoint
+//! engine; public endpoints are only read, and the only bytes ever removed are
+//! the planned descendants of an identity-verified private artifact root.
 use super::{
+    checkpoint::{Decision, Endpoint, Side, State, Step},
     coordinator::{Coordinator, DurableOperation},
-    model::{OperationState, StagedPayload},
-    replacement_artifact::{Anchor, RetirementStep, Root},
-    replacement_transition::ReplacementTransition,
-    retention::{awaits_retry, measured_bytes, retention, Disposal, Retained, Retention, Usage},
+    model::{DurableIntent, EntryVersion},
+    move_cleanup::Plan,
+    replacement_artifact::{Anchor, Root},
+    retention::{Disposal, Retention, Usage},
 };
-use crate::error::AppError;
-use std::sync::Arc;
+use crate::{
+    error::AppError,
+    files::{
+        file_identity::{of_file, version_at},
+        native_directory::Directory,
+    },
+};
+use std::{io, sync::Arc};
+
+/// Journal bytes a new discard decision must leave free: the most its cleanup
+/// plans can occupy together until it completes (ADR 0023).
+const RETIREMENT_HEADROOM: usize = super::move_cleanup::DECISION_BYTES;
 
 /// What the observed record permits. `Preserved` always carries a reason the
 /// user can read; it is never a silent refusal.
@@ -29,300 +40,485 @@ pub(super) enum Eligibility {
     Preserved(String),
 }
 
-impl Eligibility {
-    fn preserved(reason: &str) -> Self {
-        Self::Preserved(reason.to_owned())
-    }
-}
-
-/// Operation-specific observation and effects behind one retention lifecycle.
-pub(super) enum Retirement {
-    Replacement(ReplacementRetirement),
-    Move(super::move_retirement::MoveRetirement),
-}
-impl Retirement {
-    pub(super) fn open(operation: DurableOperation) -> Result<Self, AppError> {
-        match operation.state() {
-            OperationState::Move(_) => {
-                super::move_retirement::MoveRetirement::open(operation).map(Self::Move)
-            }
-            OperationState::Replacement(_) => {
-                ReplacementRetirement::open(operation).map(Self::Replacement)
-            }
-        }
-    }
-    pub(super) fn eligibility(&self) -> &Eligibility {
-        match self {
-            Self::Replacement(r) => r.eligibility(),
-            Self::Move(r) => r.eligibility(),
-        }
-    }
-    pub(super) fn generation(&self) -> u64 {
-        match self {
-            Self::Replacement(r) => r.generation(),
-            Self::Move(r) => r.operation.generation(),
-        }
-    }
-    pub(super) fn state(&self) -> &OperationState {
-        match self {
-            Self::Replacement(r) => r.state(),
-            Self::Move(r) => r.operation.state(),
-        }
-    }
-    fn position(&self) -> Retention {
-        match self {
-            Self::Replacement(r) => r.retention,
-            Self::Move(r) => retention(&r.operation.intent().operation, r.operation.state()),
-        }
-    }
-    pub(super) fn measure(&mut self) -> Result<Option<u64>, AppError> {
-        match self {
-            Self::Replacement(r) => r.measure(),
-            Self::Move(r) => r.measure(),
-        }
-    }
-    /// Persist why a journaled retirement cannot proceed, so later passes
-    /// leave it for an explicit retry instead of claiming it again.
-    fn report(&mut self, reason: &str) {
-        match self {
-            Self::Replacement(r) => {
-                r.retain_failure(AppError::Other(reason.to_owned()));
-            }
-            Self::Move(r) => r.report(reason),
-        }
-    }
-    pub(super) fn retire(self) -> Result<(), AppError> {
-        self.retire_with(|_| Ok(()))
-    }
-    fn retire_with(
-        self,
-        checkpoint: impl FnMut(&'static str) -> Result<(), AppError>,
-    ) -> Result<(), AppError> {
-        match self {
-            Self::Replacement(r) => r.retire_with(checkpoint),
-            Self::Move(r) => r.retire_with(checkpoint),
-        }
-    }
-}
-
-pub(super) struct ReplacementRetirement {
-    operation: DurableOperation,
-    retention: Retention,
-    root: Option<Root>,
+/// One claimed record's retirement: its observed roots beside each endpoint
+/// and what that evidence permits.
+pub(super) struct Retirement {
+    pub(super) operation: DurableOperation,
+    roots: Vec<(Side, Option<Root>)>,
     eligibility: Eligibility,
+    headroom: usize,
 }
 
-impl ReplacementRetirement {
+impl Retirement {
     /// Reopen an already-claimed record tolerantly: retirement legitimately
-    /// runs after its artifact root is gone, unlike replacement execution.
+    /// runs after an artifact root is gone, unlike execution.
     pub(super) fn open(operation: DurableOperation) -> Result<Self, AppError> {
-        let retention = retention(&operation.intent().operation, operation.state());
-        if !retention.retirable() {
-            return Ok(Self {
+        let intent = operation.intent();
+        let state = operation.state();
+        let Some(policy) = intent.checkpoint(state).disposal() else {
+            return Ok(Self::preserved(
                 operation,
-                retention,
-                root: None,
-                eligibility: Eligibility::preserved(
-                    "This record still needs recovery; nothing is retired while it is unresolved",
-                ),
+                "This record still needs recovery; all evidence is preserved",
+            ));
+        };
+        let mut roots = Vec::new();
+        for side in planned(intent) {
+            let identity = (*state.roots.get(side))
+                .ok_or_else(|| invalid("Recovery artifact identity is missing"))?;
+            roots.push((side, Anchor::open(intent, side)?.open_optional(identity)?));
+        }
+        let eligibility = if state.error.is_some() && state.retirement.is_none() {
+            Eligibility::Preserved(
+                "This record needs recovery; retained bytes are still accounted".into(),
+            )
+        } else if state.retirement.is_some() {
+            Eligibility::Resume
+        } else if policy == Disposal::AutomaticWhenSourceIntact && witnessed(intent) {
+            Eligibility::Automatic
+        } else {
+            // Removing it may destroy the only known copy of some content, so
+            // only an explicit user decision may authorize it.
+            Eligibility::Discardable
+        };
+        let mut result = Self {
+            operation,
+            roots,
+            eligibility,
+            headroom: RETIREMENT_HEADROOM,
+        };
+        if let Err(error) = result.verify() {
+            // An interrupted decision that removed nothing resumes only to
+            // withdraw itself on its post-intent verification (below).
+            if result.untouched() {
+                return Ok(result);
+            }
+            result.eligibility = Eligibility::Preserved(if result.retiring() {
+                format!(
+                    "Discard stopped before finishing; its Undo history is gone and the \
+                     remaining recovery files are preserved: {error}"
+                )
+            } else {
+                error.to_string()
             });
         }
-        let root = match root_identity(operation.state()) {
-            Some(identity) => Anchor::open(operation.intent())?.open_optional(identity)?,
-            None => None,
-        };
-        let eligibility = classify(&operation, &retention, root.as_ref())?;
-        Ok(Self {
+        Ok(result)
+    }
+
+    fn preserved(operation: DurableOperation, reason: &str) -> Self {
+        Self {
             operation,
-            retention,
-            root,
-            eligibility,
-        })
+            roots: vec![],
+            eligibility: Eligibility::Preserved(reason.into()),
+            headroom: RETIREMENT_HEADROOM,
+        }
+    }
+
+    /// Test seam: the journal headroom a new decision must leave free.
+    #[cfg(all(test, target_os = "linux"))]
+    fn leaving(mut self, headroom: usize) -> Self {
+        self.headroom = headroom;
+        self
     }
 
     pub(super) fn eligibility(&self) -> &Eligibility {
         &self.eligibility
     }
 
-    pub(super) fn generation(&self) -> u64 {
-        self.operation.generation()
-    }
-
-    pub(super) fn state(&self) -> &OperationState {
+    pub(super) fn state(&self) -> &State {
         self.operation.state()
     }
 
-    /// Record the measured size of a settled artifact. Accounting only: it
-    /// grants no cleanup authority and never advances the retention phase.
-    pub(super) fn measure(&mut self) -> Result<Option<u64>, AppError> {
-        let Some((retained, _)) = self.retention.settled() else {
-            return Ok(None);
+    pub(super) fn position(&self) -> Retention {
+        self.operation.intent().checkpoint(self.state()).retention()
+    }
+
+    fn retiring(&self) -> bool {
+        self.state().retirement.is_some()
+    }
+
+    fn step(&self, side: Side) -> Option<Step> {
+        self.state()
+            .retirement
+            .as_ref()?
+            .steps
+            .get(side)
+            .as_ref()
+            .copied()
+    }
+
+    fn plan(&self, side: Side) -> Option<&Plan> {
+        self.state().retirement.as_ref()?.plans.get(side).as_ref()
+    }
+
+    fn expected(&self, side: Side) -> Result<Option<(&'static str, Vec<EntryVersion>)>, AppError> {
+        Ok(self
+            .operation
+            .intent()
+            .checkpoint(self.state())
+            .expected_payload(side)?)
+    }
+
+    /// Observation that a journaled decision has removed nothing yet: no root
+    /// is retired and every root still strictly matches its captured plan,
+    /// manifest and exact payload version.
+    fn untouched(&self) -> bool {
+        let Some(retirement) = self.state().retirement.as_ref() else {
+            return false;
         };
-        if measured_bytes(self.operation.state()).is_some() {
-            return Ok(measured_bytes(self.operation.state()));
+        !retirement.completed
+            && self.roots.iter().all(|(side, root)| {
+                self.step(*side) != Some(Step::Removed)
+                    && root.as_ref().is_some_and(|root| {
+                        self.expected(*side).is_ok_and(|expected| {
+                            root.verify_retirement(
+                                self.operation.intent(),
+                                expected.as_ref(),
+                                self.plan(*side),
+                                false,
+                            )
+                            .is_ok()
+                        })
+                    })
+            })
+    }
+
+    /// A verification refusal after the decision is journaled but before any
+    /// unlink withdraws that decision rather than consuming Undo for nothing.
+    fn refuse(&mut self, error: AppError) -> AppError {
+        if !self.untouched() {
+            return error;
         }
-        let Some(root) = &self.root else {
+        match self
+            .operation
+            .advance(super::checkpoint::Event::WithdrawRetirement)
+        {
+            Ok(()) => invalid(&format!(
+                "{error}. Discard was withdrawn before removing anything; Undo and every \
+                 recovery file are kept"
+            )),
+            Err(persistence) => {
+                log::warn!("Could not withdraw recovery retirement: {persistence}");
+                error
+            }
+        }
+    }
+
+    /// Every public endpoint must still show what the settled record left
+    /// there, or retiring its artifacts could destroy the only copy.
+    fn verify_public(&self) -> Result<(), AppError> {
+        let kind = self.operation.intent().operation.kind();
+        for endpoint in kind.endpoints(self.state())? {
+            if !holds(&endpoint)? {
+                return Err(invalid(
+                    "The recorded entries no longer match their locations; retained recovery \
+                     files are preserved",
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    fn verify(&self) -> Result<(), AppError> {
+        self.verify_against(|side| self.plan(side))
+    }
+
+    /// Verify endpoints and roots against the cleanup plan `plan` names for
+    /// each root: the journaled ones, or, before the decision, those just
+    /// captured.
+    fn verify_against<'plan>(
+        &self,
+        plan: impl Fn(Side) -> Option<&'plan Plan>,
+    ) -> Result<(), AppError> {
+        // A rootless record (a same-volume rename) retains nothing, so there is
+        // nothing public-endpoint proof could protect: forgetting it removes no
+        // file. Requiring exact endpoints would pin it forever after any edit.
+        if self.roots.is_empty() {
+            return Ok(());
+        }
+        let retiring = self.state().retirement.as_ref();
+        let artifacts_gone = self.roots.iter().all(|(_, root)| root.is_none());
+        if retiring.is_none() || (!artifacts_gone && !retiring.is_some_and(|state| state.completed))
+        {
+            self.verify_public()?;
+        }
+        for (side, root) in &self.roots {
+            let step = self.step(*side);
+            match (root, step) {
+                (None, Some(Step::Removing | Step::Removed)) => {}
+                (None, _) => {
+                    return Err(invalid(
+                        "Recovery artifact root is missing before its removal intent",
+                    ))
+                }
+                (Some(_), Some(Step::Removed)) => {
+                    return Err(invalid("A retired recovery artifact root reappeared"))
+                }
+                (Some(root), _) => root.verify_retirement(
+                    self.operation.intent(),
+                    self.expected(*side)?.as_ref(),
+                    plan(*side),
+                    step == Some(Step::Removing),
+                )?,
+            }
+        }
+        Ok(())
+    }
+
+    /// Record the measured size of a settled record's artifacts. Accounting
+    /// only: it grants no cleanup authority and never advances the phase.
+    pub(super) fn measure(&mut self) -> Result<Option<u64>, AppError> {
+        if self.state().retained_bytes.is_some() {
+            return Ok(self.state().retained_bytes);
+        }
+        if self
+            .operation
+            .intent()
+            .checkpoint(self.state())
+            .disposal()
+            .is_none()
+        {
             return Ok(None);
-        };
-        let Some(bytes) = root.measure_retained(retained)? else {
-            return Ok(None);
-        };
+        }
+        let mut bytes = 0u64;
+        for (side, root) in &self.roots {
+            if root.is_none() && !matches!(self.step(*side), Some(Step::Removing | Step::Removed)) {
+                return Ok(None);
+            }
+            if let Some(root) = root {
+                root.verify_namespace()?;
+                let Some(size) = root.measure_payload()? else {
+                    return Ok(None);
+                };
+                bytes = bytes.saturating_add(size);
+            }
+        }
         self.operation
-            .advance(ReplacementTransition::RetentionMeasured(bytes))?;
+            .advance(super::checkpoint::Event::RetentionMeasured(bytes))?;
         Ok(Some(bytes))
     }
 
-    /// Run the complete journaled machine. Idempotent at every checkpoint.
-    fn retire_with(
+    pub(super) fn retire(self) -> Result<(), AppError> {
+        self.retire_with(|_| Ok(()))
+    }
+
+    pub(super) fn retire_with(
         mut self,
         mut checkpoint: impl FnMut(&'static str) -> Result<(), AppError>,
     ) -> Result<(), AppError> {
         if let Eligibility::Preserved(reason) = &self.eligibility {
-            return Err(AppError::Other(reason.clone()));
+            return Err(invalid(reason));
         }
-        // Durable intent first: nothing has been removed at this point, so a
-        // failure or crash here leaves every artifact and the record intact.
-        self.operation
-            .advance(ReplacementTransition::BeginDiscard)?;
-        if let Err(error) = checkpoint("intent") {
-            return Err(self.retain_failure(error));
-        }
-        if let Some(root) = self.root.take() {
-            // Journaling the intent took the admission gate, so the live
-            // endpoint could have changed since it was classified. Re-observe
-            // it against the retained artifact immediately before unlinking;
-            // an artifact already gone is a completed step, a changed endpoint
-            // preserves everything.
-            if let Err(error) = self.reconfirm(&root) {
-                self.root = Some(root);
-                return Err(self.retain_failure(error));
+        if let Err(error) = self.remove(&mut checkpoint) {
+            if !self.retiring() {
+                // A read-only preflight failure did not consume the inverse.
+                if self.eligibility == Eligibility::Automatic {
+                    self.defer(&error.to_string());
+                }
+                return Err(error);
             }
-            if let Err(error) = root.retire_artifacts() {
-                return Err(self.retain_failure(error));
-            }
-        }
-        if let Err(error) = checkpoint("removed") {
-            return Err(self.retain_failure(error));
-        }
-        // Completion follows the removal's directory barriers. A disk-full
-        // failure here keeps `DiscardIntent`, which the tolerant reopen
-        // resumes; the record is never lost.
-        self.operation
-            .advance(ReplacementTransition::DiscardCompleted)?;
-        if let Err(error) = checkpoint("completed") {
-            return Err(self.retain_failure(error));
+            self.report(&error.to_string());
+            return Err(error);
         }
         self.operation.retire_record()
     }
 
-    /// The last observation before anything is removed. A settled record must
-    /// still show its live endpoint independently holding the payload; a
-    /// journaled retirement being resumed must show that its artifacts are
-    /// already partly gone, or that removal is still safe.
-    fn reconfirm(&self, root: &Root) -> Result<(), AppError> {
-        let Some(staged) = staged_payload(self.operation.state()) else {
-            return Ok(());
-        };
-        let intent = self.operation.intent();
-        let candidates = match self.retention.settled() {
-            Some((retained, _)) => vec![retained],
-            None => vec![Retained::Original, Retained::Publication],
-        };
-        for retained in candidates {
-            match root.retirement_step(intent, staged, retained)? {
-                RetirementStep::Remove | RetirementStep::Removed => return Ok(()),
-                RetirementStep::Conflict => {}
-            }
+    /// Record why an automatic discard could not be journaled, and its size,
+    /// so enforcement leaves it for an explicit retry instead of claiming it
+    /// again on every pass (ADR 0023). Nothing was removed and Undo is kept.
+    fn defer(&mut self, reason: &str) {
+        if let Err(persistence) = self
+            .operation
+            .advance(super::checkpoint::Event::DeferRetirement(
+                super::model::bounded_error(reason.to_owned()),
+            ))
+        {
+            log::warn!("Could not persist a deferred recovery cleanup: {persistence}");
+            return;
         }
-        // A resumed retirement that has already destroyed its retained artifact
-        // has nothing left to protect; only an untouched one may be refused.
-        if self.retention.settled().is_none() && !root.retained_intact(intent, staged)? {
-            return Ok(());
+        if let Err(error) = self.measure() {
+            log::debug!("Deferred recovery cleanup could not be measured: {error}");
         }
-        Err(AppError::Other(
-            "The published entry no longer matches the recorded operation; all retained files are preserved".into(),
-        ))
     }
 
-    /// A cleanup failure is reportable inventory, never a completed retirement.
-    fn retain_failure(&mut self, error: AppError) -> AppError {
-        if let Err(persistence) = self.operation.advance(ReplacementTransition::ReportError(
-            super::model::bounded_error(error.to_string()),
-        )) {
-            log::warn!("Could not persist recovery retirement failure: {persistence}");
-        }
-        error
+    /// Record why a journaled retirement stopped. A reported failure waits
+    /// for an explicit retry; enforcement never claims it again (ADR 0023).
+    pub(super) fn report(&mut self, reason: &str) {
+        self.operation
+            .retain_failure(AppError::Other(reason.to_owned()));
     }
-}
 
-fn root_identity(state: &OperationState) -> Option<super::model::ObjectId> {
-    match state {
-        OperationState::Replacement(state) => state.root,
-        _ => None,
-    }
-}
-
-fn staged_payload(state: &OperationState) -> Option<&StagedPayload> {
-    match state {
-        OperationState::Replacement(state) => state.published.as_ref(),
-        _ => None,
-    }
-}
-
-fn classify(
-    operation: &DurableOperation,
-    retention: &Retention,
-    root: Option<&Root>,
-) -> Result<Eligibility, AppError> {
-    let Some((retained, disposal)) = retention.settled() else {
-        // Retirement is already journaled. The user's decision is committed,
-        // so a partially removed artifact must not block its own completion —
-        // unless nothing has been removed yet and the live payload is gone.
-        if let (Some(root), Some(staged)) = (root, staged_payload(operation.state())) {
-            let held = matches!(*retention, Retention::Retiring)
-                && root.retirement_step(operation.intent(), staged, Retained::Original)?
-                    == RetirementStep::Conflict
-                && root.retirement_step(operation.intent(), staged, Retained::Publication)?
-                    == RetirementStep::Conflict
-                && root.retained_intact(operation.intent(), staged)?;
-            if held {
-                return Ok(Eligibility::preserved(
-                    "Retirement was interrupted before removing anything and the published entry no longer matches; all evidence is preserved",
-                ));
-            }
-        }
-        return Ok(Eligibility::Resume);
-    };
-    let Some(root) = root else {
-        return Ok(Eligibility::preserved(
-            "The retained recovery files are missing; this record is preserved for inspection",
-        ));
-    };
-    let Some(staged) = staged_payload(operation.state()) else {
-        return Ok(Eligibility::preserved(
-            "This record has no staged evidence; all files are preserved",
-        ));
-    };
-    match root.retirement_step(operation.intent(), staged, retained)? {
-        RetirementStep::Remove => Ok(match disposal {
-            // Removing this destroys the only known copy of the previous
-            // content, so only an explicit user decision may authorize it.
-            Disposal::ExplicitOnly => Eligibility::Discardable,
-            Disposal::AutomaticWhenSourceIntact => {
-                if root.source_intact(operation.intent()) {
-                    Eligibility::Automatic
-                } else {
-                    Eligibility::Discardable
+    /// Capture every root's plan before the global decision and persist them
+    /// together. Restart must not adopt new descendants in a later root;
+    /// neither may it discover an unrepresentable target after removing source.
+    fn plans(&self) -> Result<Vec<Option<Plan>>, AppError> {
+        self.roots
+            .iter()
+            .map(|(side, root)| {
+                if self.step(*side) == Some(Step::Removed) {
+                    return Ok(None);
                 }
-            }
-        }),
-        RetirementStep::Removed => Ok(Eligibility::preserved(
-            "The retained recovery files are missing; this record is preserved for inspection",
-        )),
-        RetirementStep::Conflict => Ok(Eligibility::preserved(
-            "The recorded entries no longer match; all files are preserved for inspection",
-        )),
+                if let Some(plan) = self.plan(*side) {
+                    return Ok(Some(plan.clone()));
+                }
+                let root = root
+                    .as_ref()
+                    .ok_or_else(|| invalid("Recovery root vanished before cleanup planning"))?;
+                root.plan_retirement(self.operation.intent(), self.expected(*side)?.as_ref())
+                    .map(Some)
+            })
+            .collect()
     }
+
+    fn remove(
+        &mut self,
+        checkpoint: &mut impl FnMut(&'static str) -> Result<(), AppError>,
+    ) -> Result<(), AppError> {
+        let fresh = !self.retiring();
+        let decision = match (&self.state().retirement, &self.eligibility) {
+            (Some(retirement), _) => retirement.decision,
+            (None, Eligibility::Automatic) => Decision::Automatic,
+            (None, _) => Decision::Explicit,
+        };
+        let plans = self.plans()?;
+        // Before the decision consumes Undo: a cleanup this user cannot
+        // perform must be refused while nothing is journaled or removed.
+        for ((_, root), plan) in self.roots.iter().zip(&plans) {
+            if let (Some(root), Some(plan)) = (root, plan) {
+                root.preflight_retirement(plan)?;
+            }
+        }
+        checkpoint("planned")?;
+        let planned = |side| {
+            self.roots
+                .iter()
+                .position(|(candidate, _)| *candidate == side)
+                .and_then(|index| plans[index].as_ref())
+        };
+        // The last read-only proof before the decision consumes Undo, of
+        // exactly what verification after it repeats: public endpoints, each
+        // root's namespace and manifest, and every captured plan. Planning a
+        // large tree takes time in which any of them can change. The
+        // post-decision withdrawal cannot cover this: it proves the decision
+        // removed nothing by matching each root against its plan, so a root
+        // that drifted from its plan during planning would keep a decision
+        // that can never finish, and with it consume Undo (#760).
+        if fresh {
+            self.verify_against(planned)?;
+        }
+        // A decision holds its plans in the journal until it completes; one
+        // that could never finish must not starve every later operation.
+        let event = super::checkpoint::Event::BeginRetirement(
+            decision,
+            super::checkpoint::Sides {
+                source: planned(Side::Source).cloned(),
+                target: planned(Side::Target).cloned(),
+            },
+        );
+        if !self.operation.advance_leaving(event, self.headroom)? {
+            return Err(invalid(
+                "File Recovery is holding too many unfinished discards to record another. \
+                 Finish or forget one of them first; nothing was removed and Undo is kept",
+            ));
+        }
+        checkpoint("intent")?;
+        if let Err(error) = self.verify() {
+            return Err(self.refuse(error));
+        }
+        for (index, plan) in plans.iter().enumerate() {
+            let side = self.roots[index].0;
+            if self.step(side) != Some(Step::Removed) {
+                let plan = plan
+                    .as_ref()
+                    .ok_or_else(|| invalid("Recovery root has no preflighted cleanup plan"))?;
+                self.remove_root(index, plan, checkpoint)?;
+            }
+        }
+        self.operation
+            .advance(super::checkpoint::Event::RetirementCompleted)?;
+        checkpoint("completed")
+    }
+
+    /// One root's own intent, removal and completion.
+    fn remove_root(
+        &mut self,
+        index: usize,
+        plan: &Plan,
+        checkpoint: &mut impl FnMut(&'static str) -> Result<(), AppError>,
+    ) -> Result<(), AppError> {
+        use super::checkpoint::Event::{BeginRootRetirement, RootRetired};
+        let side = self.roots[index].0;
+        let label = |source, target| match side {
+            Side::Source => source,
+            Side::Target => target,
+        };
+        self.operation.advance(BeginRootRetirement(side))?;
+        checkpoint(label("source-intent", "target-intent"))?;
+        // Re-observe every public endpoint after journaling, before touching this root.
+        if self.roots[index].1.is_some() {
+            if let Err(error) = self.verify_public() {
+                return Err(self.refuse(error));
+            }
+        }
+        if let Some(root) = self.roots[index].1.take() {
+            root.retire_artifacts(
+                self.operation.intent(),
+                self.expected(side)?.as_ref(),
+                plan,
+                checkpoint,
+            )?;
+        }
+        checkpoint(label("source-removed", "target-removed"))?;
+        self.operation.advance(RootRetired(side))?;
+        checkpoint(label("source-completed", "target-completed"))
+    }
+}
+
+/// The sides whose private roots the immutable intent planned, source first.
+fn planned(intent: &DurableIntent) -> impl Iterator<Item = Side> + '_ {
+    [Side::Source, Side::Target]
+        .into_iter()
+        .filter(|side| intent.operation.kind().root(*side).is_some())
+}
+
+/// A kind's automatic disposal also requires its independent witness to hold.
+/// Any doubt, including an unreadable parent, answers no.
+fn witnessed(intent: &DurableIntent) -> bool {
+    intent
+        .operation
+        .kind()
+        .witness()
+        .is_none_or(|witness| holds(&witness).unwrap_or(false))
+}
+
+/// Does the endpoint hold one of its recorded versions (or stay absent when
+/// it records none)? A recorded parent identity must hold before and after.
+fn holds(endpoint: &Endpoint) -> Result<bool, AppError> {
+    let path = &endpoint.path.0;
+    let parent_path = path
+        .parent()
+        .ok_or_else(|| invalid("Recovery endpoint has no parent"))?;
+    let name = path
+        .file_name()
+        .ok_or_else(|| invalid("Recovery endpoint has no name"))?;
+    let unchanged = |directory: &Directory| -> Result<(), AppError> {
+        match endpoint.parent {
+            Some(parent) if of_file(&directory.file)? != parent => {
+                Err(invalid("Recovery endpoint parent identity changed"))
+            }
+            _ => Ok(()),
+        }
+    };
+    let directory = Directory::open(parent_path)?;
+    unchanged(&directory)?;
+    let entry = match version_at(&directory, name) {
+        Ok(version) => Some(version),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => None,
+        Err(error) => return Err(error.into()),
+    };
+    unchanged(&Directory::open(parent_path)?)?;
+    Ok(entry.map_or(endpoint.versions.is_empty(), |entry| {
+        endpoint.versions.contains(&entry)
+    }))
 }
 
 /// One bounded enforcement pass. Called only from recovery-session activity or
@@ -354,78 +550,77 @@ pub(super) fn enforce(coordinator: &Arc<Coordinator>) -> Result<Usage, AppError>
             usage.add(Retention::Unresolved, None, true);
             continue;
         };
-        let position = retention(&entry.intent.operation, &state);
-        let bytes = measured_bytes(&state);
-        if !position.retirable() {
-            usage.add(position, bytes, true);
-            continue;
-        }
-        // Only a crash-interrupted retirement resumes automatically. A
-        // reported failure waits for the user's explicit retry, whether its
-        // decision was journaled or an automatic one could not start; and one
-        // whose volume is away cannot progress. Claiming either would
-        // accomplish nothing but a new generation for the record the user is
-        // inspecting.
-        if awaits_retry(&state) {
-            usage.add(position, bytes, true);
-            continue;
-        }
-        if position == Retention::Retiring {
-            if let Err(error) = anchors_observable(&entry.intent) {
-                log::debug!(
-                    "Recovery retirement could not observe {}: {error}",
-                    entry.intent.id
-                );
-                usage.add(position, bytes, false);
-                continue;
-            }
-        }
-        // A settled record is claimed only when ownership can actually
-        // accomplish something: journal a first measurement, or reclaim a
-        // redundant artifact. Claiming advances the generation, which
-        // invalidates the generation the user is looking at, so a record with
-        // nothing to do must never be claimed by an enforcement pass.
-        if position.settled().is_some() || matches!(position, Retention::MoveSettled { .. }) {
-            if bytes.is_some() {
-                usage.add(position, bytes, true);
-                continue;
-            }
-            match artifact_present(&entry.intent, &state) {
-                // Nothing to measure and nothing to remove.
-                Ok(false) => {
-                    usage.add(position, None, true);
+        let position = entry.intent.checkpoint(&state).retention();
+        let bytes = state.retained_bytes;
+        let observable = match unclaimed(&entry.intent, &state, position) {
+            Some(observable) => observable,
+            None => match settle(coordinator, &entry.intent.id, generation) {
+                // A reclaimed record holds nothing and is no longer in the catalog.
+                Ok(Settled::Retired) => continue,
+                Ok(Settled::Counted(position, bytes, available)) => {
+                    usage.add(position, bytes, available);
                     continue;
                 }
-                // The volume or artifact parent could not be observed.
+                Ok(Settled::Busy) => true,
+                // A busy or changed record is neither lost nor reclaimable now.
                 Err(error) => {
                     log::debug!(
-                        "Recovery retention could not observe {}: {error}",
+                        "Recovery retention pass skipped {}: {error}",
                         entry.intent.id
                     );
-                    usage.add(position, None, false);
-                    continue;
+                    false
                 }
-                Ok(true) => {}
-            }
-        }
-        match settle(coordinator, &entry.intent.id, generation) {
-            // A reclaimed record holds nothing and is no longer in the catalog.
-            Ok(Settled::Retired) => continue,
-            Ok(Settled::Counted(position, bytes, available)) => {
-                usage.add(position, bytes, available)
-            }
-            Ok(Settled::Busy) => usage.add(position, bytes, true),
-            // A busy or changed record is neither lost nor reclaimable now.
-            Err(error) => {
-                log::debug!(
-                    "Recovery retention pass skipped {}: {error}",
-                    entry.intent.id
-                );
-                usage.add(position, bytes, false);
-            }
-        }
+            },
+        };
+        usage.add(position, bytes, observable);
     }
     Ok(usage)
+}
+
+/// Decide from durable evidence and read-only observation whether claiming
+/// this record could accomplish anything. `Some(available)` leaves it
+/// unclaimed: claiming advances the generation, which invalidates the
+/// generation the user is looking at.
+fn unclaimed(intent: &DurableIntent, state: &State, position: Retention) -> Option<bool> {
+    // Only a crash-interrupted retirement resumes automatically. A reported
+    // failure waits for the user's explicit retry, whether its decision was
+    // journaled or an automatic one could not start.
+    if !position.retirable() || state.awaits_retry() {
+        return Some(true);
+    }
+    if position == Retention::Retiring {
+        // One whose volume is away cannot progress.
+        return anchors_observable(intent)
+            .inspect_err(|error| {
+                log::debug!(
+                    "Recovery retirement could not observe {}: {error}",
+                    intent.id
+                )
+            })
+            .err()
+            .map(|_| false);
+    }
+    // A settled record is claimed only to journal a first measurement or to
+    // reclaim a redundant artifact.
+    if position.settled() {
+        if state.retained_bytes.is_some() {
+            return Some(true);
+        }
+        return match artifact_present(intent, state) {
+            // Nothing to measure and nothing to remove.
+            Ok(false) => Some(true),
+            Ok(true) => None,
+            // The volume or artifact parent could not be observed.
+            Err(error) => {
+                log::debug!(
+                    "Recovery retention could not observe {}: {error}",
+                    intent.id
+                );
+                Some(false)
+            }
+        };
+    }
+    None
 }
 
 /// The outcome of examining one claimed record during an enforcement pass.
@@ -448,7 +643,7 @@ pub(super) fn settle(
     // the enforcement loop. Direct callers that already selected a record may
     // claim it, but must persist an unavailable automatic cleanup as deferred
     // rather than re-claiming it on every later pass (#760).
-    let mut unavailable_move: Option<(Retention, String)> = None;
+    let mut unavailable: Option<(Retention, String)> = None;
     if let Some(entry) = coordinator
         .inventory()?
         .entries
@@ -456,13 +651,15 @@ pub(super) fn settle(
         .find(|entry| entry.intent.id == id && entry.generation == Some(generation))
     {
         if let Some(state) = entry.state {
-            let position = retention(&entry.intent.operation, &state);
-            let bytes = measured_bytes(&state);
-            if matches!(position, Retention::MoveSettled { .. }) && bytes.is_none() {
+            let position = entry.intent.checkpoint(&state).retention();
+            if position.settled() && state.retained_bytes.is_none() {
                 match artifact_present(&entry.intent, &state) {
                     Ok(true) => {}
                     Ok(false) => return Ok(Settled::Counted(position, None, true)),
-                    Err(error) => unavailable_move = Some((position, error.to_string())),
+                    Err(_) if position != automatic() => {
+                        return Ok(Settled::Counted(position, None, false))
+                    }
+                    Err(error) => unavailable = Some((position, error.to_string())),
                 }
             }
         }
@@ -470,8 +667,8 @@ pub(super) fn settle(
     let Some(mut operation) = coordinator.try_claim(id, generation)? else {
         return Ok(Settled::Busy);
     };
-    if let Some((position, reason)) = unavailable_move {
-        operation.advance_move(super::move_transition::MoveTransition::DeferRetirement(
+    if let Some((position, reason)) = unavailable {
+        operation.advance(super::checkpoint::Event::DeferRetirement(
             super::model::bounded_error(reason),
         ))?;
         return Ok(Settled::Counted(position, None, false));
@@ -504,97 +701,78 @@ pub(super) fn settle(
     }
 }
 
-/// Read-only observation outside admission and without ownership: is the
-/// recorded artifact root still there? Used to decide whether claiming a
-/// settled record could accomplish anything at all.
-fn artifact_present(
-    intent: &super::model::DurableIntent,
-    state: &OperationState,
-) -> Result<bool, AppError> {
-    if let OperationState::Move(move_state) = state {
-        let spec = intent.operation.move_spec()?;
-        let mut named_root = false;
-        let mut present = false;
-        for (source, plan) in super::move_execution::MoveExecution::plans(spec) {
-            named_root = true;
-            let identity = if source {
-                move_state.source_root
-            } else {
-                move_state.target_root
-            }
-            .ok_or_else(|| AppError::Other("Move artifact identity is missing".into()))?;
-            present |= Anchor::open_plan(intent, plan)?
-                .open_optional(identity)?
-                .is_some();
-        }
-        // A rootless move still retains Undo authority and needs its first
-        // zero-byte measurement.
-        return Ok(!named_root || present);
+fn automatic() -> Retention {
+    Retention::Settled {
+        disposal: Disposal::AutomaticWhenSourceIntact,
     }
-    let Some(identity) = root_identity(state) else {
-        return Ok(false);
-    };
-    Ok(Anchor::open(intent)?.open_optional(identity)?.is_some())
+}
+
+/// Read-only observation outside admission and without ownership: is any
+/// recorded artifact root still there? Every root is observed, never just the
+/// first present one: claiming cannot measure or remove a record any of whose
+/// roots is unobservable. A rootless record still retains Undo authority and
+/// needs its first zero-byte measurement.
+fn artifact_present(intent: &DurableIntent, state: &State) -> Result<bool, AppError> {
+    let mut named_root = false;
+    let mut present = false;
+    for side in planned(intent) {
+        named_root = true;
+        let identity = (*state.roots.get(side))
+            .ok_or_else(|| invalid("Recovery artifact identity is missing"))?;
+        present |= Anchor::open(intent, side)?
+            .open_optional(identity)?
+            .is_some();
+    }
+    Ok(!named_root || present)
 }
 
 /// Read-only observation outside admission and without ownership: can every
 /// artifact parent this record names be opened with its recorded identity?
-fn anchors_observable(intent: &super::model::DurableIntent) -> Result<(), AppError> {
-    match &intent.operation {
-        super::model::OperationSpec::CopyReplacement(_) => Anchor::open(intent).map(drop),
-        super::model::OperationSpec::Move(spec) => {
-            for (_, plan) in super::move_execution::MoveExecution::plans(spec) {
-                Anchor::open_plan(intent, plan)?;
-            }
-            Ok(())
-        }
+fn anchors_observable(intent: &DurableIntent) -> Result<(), AppError> {
+    for side in planned(intent) {
+        Anchor::open(intent, side)?;
     }
+    Ok(())
 }
 
-/// Read-only observation outside admission: does the recorded artifact root
-/// exist? An unreadable parent answers `Err`, never "absent".
-fn orphan_root_absent(intent: &super::model::DurableIntent) -> Result<bool, AppError> {
-    let identity = match &intent.operation {
-        super::model::OperationSpec::CopyReplacement(spec) => spec,
-        super::model::OperationSpec::Move(spec) => {
-            for plan in super::move_execution::MoveExecution::plans(spec)
-                .into_iter()
-                .map(|(_, plan)| plan)
-                .chain(super::move_capability::plans(intent)?)
-            {
-                let parent = crate::files::native_directory::Directory::open(&plan.parent_path)?;
-                if crate::files::file_identity::of_file(&parent.file)? != plan.parent {
-                    return Err(AppError::Other(
-                        "Move artifact parent identity changed".into(),
-                    ));
-                }
-                if parent.entry_exists(plan.root.file_name().expect("validated root"))? {
-                    return Ok(false);
-                }
-            }
-            return Ok(true);
+/// Read-only observation outside admission: are every planned artifact and
+/// probe root absent? An unreadable parent answers `Err`, never "absent".
+fn orphan_root_absent(intent: &DurableIntent) -> Result<bool, AppError> {
+    let kind = intent.operation.kind();
+    let roots = [Side::Source, Side::Target]
+        .into_iter()
+        .filter_map(|side| kind.root(side))
+        .chain(kind.probes());
+    for root in roots {
+        let parent = Directory::open(
+            root.path
+                .0
+                .parent()
+                .ok_or_else(|| invalid("Recovery artifact root has no parent"))?,
+        )?;
+        if of_file(&parent.file)? != root.parent {
+            return Err(invalid("Recovery artifact parent identity changed"));
         }
-    };
-    let parent = crate::files::native_directory::Directory::open(
-        identity
-            .root
+        let name = root
+            .path
             .0
-            .parent()
-            .ok_or_else(|| AppError::Other("Recovery artifact root has no parent".into()))?,
-    )?;
-    if crate::files::file_identity::of_file(&parent.file)? != identity.parent {
-        return Err(AppError::Other(
-            "Recovery artifact parent identity changed".into(),
-        ));
+            .file_name()
+            .ok_or_else(|| invalid("Recovery artifact root has no name"))?;
+        if parent.entry_exists(name)? {
+            return Ok(false);
+        }
     }
-    let name = identity
-        .root
-        .0
-        .file_name()
-        .ok_or_else(|| AppError::Other("Recovery artifact root has no name".into()))?;
-    Ok(!parent.entry_exists(name)?)
+    Ok(true)
+}
+
+fn invalid(message: &str) -> AppError {
+    io::Error::new(io::ErrorKind::InvalidData, message.to_owned()).into()
 }
 
 #[cfg(all(test, unix))]
 #[path = "../../../test_support/recovery_retirement.rs"]
 mod tests;
+
+#[cfg(all(test, target_os = "linux"))]
+#[path = "../../../test_support/recovery_move_retirement/mod.rs"]
+mod move_tests;

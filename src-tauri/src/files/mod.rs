@@ -43,6 +43,7 @@ pub mod linux_mount_watch;
 pub mod linux_volume_monitor;
 #[cfg(target_os = "linux")]
 pub mod linux_volumes;
+pub mod media_preview;
 #[cfg(all(test, target_os = "linux"))]
 #[path = "../../test_support/mount_namespace.rs"]
 pub(crate) mod mount_namespace;

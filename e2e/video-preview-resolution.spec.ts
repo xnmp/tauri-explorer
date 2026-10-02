@@ -1,64 +1,25 @@
-/**
- * Video previews need a full preview-sized source, independently from the
- * small, cacheable frame rendered in the Tiles view.
- */
 import { test, expect } from "./fixtures";
-import { pressShortcut, waitForEntries } from "./helpers";
+import { waitForEntries } from "./helpers";
 import type { MockControl } from "../src/lib/api/mock-control";
 
-test("video preview uses a 1024px frame while tiles retain their configured frame size", async ({ page }) => {
+test("video playback leaves Tiles' cached thumbnail size independent", async ({ page }) => {
   await page.addInitScript(() => {
-    type VideoRequest = { path: string; size?: number };
-    const mockWindow = window as unknown as {
-      __mockControl?: MockControl;
-      __videoThumbnailRequests?: VideoRequest[];
-    };
-    mockWindow.__videoThumbnailRequests = [];
-    // addInitScript runs before mock-invoke.ts creates window.__mockControl,
-    // so this writer must create it (`??=`) rather than assume it exists.
-    (mockWindow.__mockControl ??= {}).videoThumbnail = (path, size) => {
-      mockWindow.__videoThumbnailRequests?.push({ path, size });
-      const sourceSize = size ?? 128;
-      return `data:image/svg+xml;base64,${btoa(`<svg xmlns="http://www.w3.org/2000/svg" width="${sourceSize}" height="${sourceSize}" viewBox="0 0 1000 1000"><rect width="1000" height="1000" fill="#2563eb"/><text x="500" y="465" fill="white" font-family="sans-serif" font-size="120" font-weight="700" text-anchor="middle">VIDEO FRAME</text><text x="500" y="610" fill="white" font-family="sans-serif" font-size="180" font-weight="700" text-anchor="middle">${sourceSize}px</text><text x="500" y="710" fill="#bfdbfe" font-family="sans-serif" font-size="64" text-anchor="middle">requested source size</text></svg>`)}`;
+    localStorage.setItem("explorer-settings",JSON.stringify({viewMode:"tiles",showPreviewPane:true}));
+    const w = window as unknown as {__mockControl?:MockControl;__videoSizes:number[]}; w.__videoSizes=[];
+    (w.__mockControl ??= {}).videoThumbnail=(_,size) => {
+      w.__videoSizes.push(size ?? 128);
+      return `data:image/svg+xml;base64,${btoa('<svg xmlns="http://www.w3.org/2000/svg" width="96" height="96"><rect width="96" height="96" fill="blue"/></svg>')}`;
     };
   });
-
-  await page.goto("/?path=/home/user/Videos&viewMode=tiles");
-  await waitForEntries(page);
-  const recordingTile = page.locator(".tile-item", { hasText: "recording.mp4" });
-  await expect(recordingTile.locator(".thumbnail-full")).toBeVisible();
-
-  const previewPane = page.locator(".preview-pane");
-  if (!(await previewPane.isVisible())) await pressShortcut(page, " ");
-  await expect(previewPane).toBeVisible();
-  await recordingTile.click();
-
-  const frame = previewPane.locator(".preview-image");
-  await expect(frame).toBeVisible();
-  await expect(frame).toHaveAttribute("alt", "recording.mp4");
-  await page.screenshot({ path: "evidence/ac-1-video-preview-1024px.png" });
-
-  const requestSizes = await page.evaluate(() =>
-    (window as unknown as { __videoThumbnailRequests?: Array<{ path: string; size?: number }> })
-      .__videoThumbnailRequests
-      ?.filter((request) => request.path.endsWith("recording.mp4"))
-      .map((request) => request.size),
-  );
-  expect(requestSizes).toContain(96);
-  expect(requestSizes).toContain(1024);
-
-  const requestsBeforeFullscreen = await page.evaluate(() =>
-    (window as unknown as { __videoThumbnailRequests?: Array<{ path: string; size?: number }> })
-      .__videoThumbnailRequests
-      ?.filter((request) => request.path.endsWith("recording.mp4")),
-  );
-  await frame.click();
-  await expect(previewPane).toHaveClass(/fullscreen/);
-  await page.screenshot({ path: "evidence/ac-2-video-preview-fullscreen-1024px.png" });
-
-  await expect.poll(() => page.evaluate(() =>
-    (window as unknown as { __videoThumbnailRequests?: Array<{ path: string; size?: number }> })
-      .__videoThumbnailRequests
-      ?.filter((request) => request.path.endsWith("recording.mp4")),
-  )).toEqual(requestsBeforeFullscreen);
+  await page.goto("/?path=/home/user/Videos"); await waitForEntries(page);
+  const tile=page.locator('.tile-item[data-path="/home/user/Videos/recording.mp4"]');
+  await expect(tile.locator(".thumbnail-full")).toBeVisible(); await tile.click();
+  const player=page.locator(".video-preview");
+  await expect(player.getByRole("button",{name:"Play video",exact:true})).toBeEnabled();
+  await player.getByRole("button",{name:"Play video",exact:true}).click();
+  await expect.poll(() => player.locator("video").evaluate(v => (v as HTMLVideoElement).currentTime)).toBeGreaterThan(0.15);
+  const sizes=await page.evaluate(() => (window as unknown as {__videoSizes:number[]}).__videoSizes);
+  expect(sizes).toContain(96); expect(sizes).not.toContain(1024);
+  await expect(tile.locator(".thumbnail-full")).toBeVisible();
+  await expect(page.locator(".video-preview-marker")).toBeVisible();
 });

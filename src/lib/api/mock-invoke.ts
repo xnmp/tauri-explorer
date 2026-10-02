@@ -1,4 +1,5 @@
 import pdfFixtureUrl from "./fixtures/preview-landmarks.pdf?url";
+import videoFixtureUrl from "./fixtures/video-preview.webm?url";
 /**
  * Mock Tauri invoke for browser-based E2E testing.
  * Provides realistic fake data when running outside of Tauri webview.
@@ -39,6 +40,7 @@ interface MockCopyControl {
   pending?: { item: number; nonce: string; resolve: (decision: CopyDecision) => void };
 }
 const mockCopyControls = new Map<string, MockCopyControl>();
+const mockVideoCapabilities = new Set<string>();
 
 const mutationReceipt = (entry: FileEntry): FileMutationReceipt => ({ path: entry.path, entry });
 const mockImageCrop = createMockImageCrop(mockFiles, nextTimestamp);
@@ -1490,6 +1492,22 @@ const mockCommands: Record<string, CommandHandler> = {
     const response = await fetch(pdfFixtureUrl);
     if (!response.ok) throw new Error(`PDF fixture transport failed: ${response.status}`);
     return response.arrayBuffer();
+  },
+  begin_video_preview: () => {
+    const token = crypto.randomUUID();
+    mockVideoCapabilities.add(token);
+    return token;
+  },
+  prepare_video_preview: async (args) => {
+    const token = String(args.token);
+    if (!mockVideoCapabilities.has(token)) throw new Error("Video preview was released");
+    const url = await (getMockControl().videoPreview?.(String(args.path)) ?? videoFixtureUrl);
+    if (!mockVideoCapabilities.has(token)) throw new Error("Video preview was released");
+    return url;
+  },
+  release_video_preview: (args) => {
+    const token = String(args.token);
+    if (mockVideoCapabilities.delete(token)) (getMockControl().releasedVideoPreviews ??= []).push(token);
   },
   open_pdf_link: (args) => { getMockControl().openedPdfUrl = String(args.url); },
 

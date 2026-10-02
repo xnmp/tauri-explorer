@@ -12,6 +12,7 @@ import type { ExplorerInstance } from "../lib/state/explorer.svelte";
 import { createDomRpc } from "./dom-rpc";
 import { startDirectoryListingProbe } from "./directory-listing-probe";
 import { startExternalJobProbe } from "./external-job-probe";
+import { startVideoPreviewProbe } from "./video-preview-probe";
 import { startFileHistoryProbe } from "./file-history-probe";
 import { startFileMutationProbe } from "./file-mutation-probe";
 import { startFileRecoveryProbe } from "./file-recovery-probe";
@@ -22,6 +23,7 @@ export const prepareWindowSessionProbe = startDirectoryListingProbe;
 
 export function startWindowSessionProbe(signal: AbortSignal, warmReady?: Promise<boolean>): void {
   if (signal.aborted) return;
+  startVideoPreviewProbe(signal);
   startFileHistoryProbe(signal);
   startFileRecoveryProbe(signal);
   startExternalJobProbe(signal);

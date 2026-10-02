@@ -30,6 +30,7 @@ for (const theme of ["light", "dark"] as const) {
         control.videoThumbnail = (path, size) => path.endsWith("failed.avi")
           ? Promise.reject(new Error("frame unavailable"))
           : mockInvoke("get_thumbnail_data", { path: `${root}/still.jpg`, size });
+        control.videoPreview = (path) => path.endsWith("failed.avi") ? Promise.reject(new Error("Cannot preview video: file unavailable")) : "/src/lib/api/fixtures/video-preview.webm";
         control.previewReadImage = () => mockInvoke("get_thumbnail_data", { path: `${root}/still.jpg`, size: 256 });
       }, { root, names });
       await page.keyboard.press("Control+l");
@@ -53,16 +54,16 @@ for (const theme of ["light", "dark"] as const) {
         await expect(row("frame.mp4").locator(".symlink-badge")).toBeVisible();
         await capture(page, `${theme}-${iconTheme}-${mode}-small`);
       }
-      // Both successful frame and unavailable fallback retain a passive badge.
+      // Playback and unavailable sources retain the same passive badge.
       const preview = page.locator(".preview-pane");
       if (!(await preview.isVisible())) await pressShortcut(page, " ", {});
       await row("frame.mp4").click();
-      await expect(preview.locator(".preview-image")).toBeVisible();
+      await expect(preview.getByRole("button", {name:"Play video",exact:true})).toBeEnabled();
       await expect(preview.locator(".video-indicator")).toBeVisible();
       await expect(preview.getByRole("region")).toHaveAttribute("aria-label", "Preview of frame.mp4 (video)");
-      await expect(preview.getByRole("button", { name: /play/i })).toHaveCount(0);
+      await expect(preview.locator(".video-indicator")).not.toHaveAttribute("role", "button");
       await capture(page, `${theme}-${iconTheme}-video-preview`);
-      await preview.locator(".preview-image").click();
+      await preview.getByRole("button", {name:"View video fullscreen",exact:true}).click();
       await expect(preview).toHaveClass(/fullscreen/);
       const exit = await preview.locator(".fullscreen-exit").boundingBox();
       const marker = await preview.locator(".video-indicator").boundingBox();
@@ -76,7 +77,7 @@ for (const theme of ["light", "dark"] as const) {
       await expect(preview.locator(".video-indicator")).toHaveCount(0);
       await capture(page, `${theme}-${iconTheme}-image-preview`);
       await row("failed.avi").click();
-      await expect(preview.locator(".preview-error-text")).toContainText("Cannot preview video");
+      await expect(preview.locator(".video-message")).toContainText("Cannot preview video");
       await expect(preview.locator(".video-indicator")).toBeVisible();
       await row("cover.mp3").click();
       await expect(preview.locator(".preview-image")).toHaveAttribute("alt", "cover.mp3");
@@ -91,7 +92,8 @@ for (const theme of ["light", "dark"] as const) {
       await expect(row("frame.mp4").locator(".tile-icon")).toHaveCSS("width", "128px");
       await expect(row("frame.mp4").locator(".video-indicator")).toBeVisible();
       await row("frame.mp4").click();
-      await expect(preview.locator(".preview-image")).toHaveAttribute("alt", "frame.mp4");
+      await expect(preview.locator(".video-preview")).toHaveAttribute("aria-label", "Video player for frame.mp4");
+      await expect(preview.getByRole("button", {name:"Play video",exact:true})).toBeEnabled();
       await capture(page, `${theme}-${iconTheme}-tiles-xlarge`);
       // A refreshed path changing type must shed the former video's marker.
       await page.evaluate(async ({ root }) => {
@@ -112,7 +114,7 @@ for (const theme of ["light", "dark"] as const) {
 test("late video response cannot leave a video marker on an image selection", async ({ page }) => {
   await page.addInitScript(() => {
     const control = ((window as unknown as { __mockControl?: MockControl }).__mockControl ??= {});
-    control.videoThumbnail = () => new Promise((resolve) => setTimeout(() => resolve(`data:image/svg+xml,${encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="80" height="60"><rect width="80" height="60" fill="red"/></svg>')}`), 350));
+    control.videoPreview = () => new Promise((resolve) => setTimeout(() => resolve("/src/lib/api/fixtures/video-preview.webm"), 350));
   });
   await page.goto("/?path=/home/user/Videos");
   await waitForEntries(page);

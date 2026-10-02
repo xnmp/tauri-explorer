@@ -737,3 +737,19 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `src-tauri/vendor/explorer-avif/native/bridge.c` — lossless crop/animation/16-bit/gain-map encoding and MIAF orientation mapping.
 - `src-tauri/vendor/explorer-avif/native/CMakeLists.txt` — offline checksum-verified source build with portable AOM and merged libavif static linkage.
 - `src-tauri/vendor/explorer-avif/native/patch-sequences.cmake` — checked libavif writer corrections for one-frame sequences and unspecified repeat policy.
+
+## Video playback — bounded native streaming (#970)
+
+- `src/lib/components/VideoPreview.svelte` — explicit native-decoder playback controls, focused media keys, error fallback and synchronous source detachment.
+- `src/lib/domain/video-preview.ts` — pure time/seek values and keyboard ownership, including held-key and Super handling.
+- `src/lib/state/video-preview-lifetime.ts` — two-phase capability adoption and cancellation; rejects late source URLs and releases once.
+- `src/lib/api/video-preview.ts` — acknowledged native-session acquisition, scoped preparation and release IPC.
+- `src/test-support/video-preview-probe.ts` — hook-build-only DOM RPC observing native streaming counters.
+- `src-tauri/src/files/media_preview.rs` — window/renderer-owned playback capability commands and lazy loopback server.
+- `src-tauri/src/files/media_preview/http.rs` — bounded HTTP/1 byte-range responses, independent connection retirement and backpressure.
+- `src-tauri/src/files/media_preview/range.rs` — exact single-byte-range planning with malformed/unsatisfiable contracts.
+- `src-tauri/src/files/media_preview/service.rs` — scoped no-follow admission, pinned file identity, bounded workers and positioned chunk reads.
+- `src-tauri/src/files/media_preview/metrics.rs` — native qualification-only read/chunk/connection/resource counters.
+- `src-tauri/test_support/media_preview.rs` — real TCP and filesystem contracts for ranges, concurrent seeks, scope, replacement, overload and retirement.
+- `e2e-tauri/video-observations.ts` — read-only native playback/transport observations, owned process RSS and unedited screenshot pixel qualification.
+- `e2e-tauri/specs/video-preview.spec.ts` — actual native decoder/range/lifetime and encoded large-file performance outcomes.

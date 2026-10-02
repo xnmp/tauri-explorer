@@ -1,10 +1,27 @@
 //! Read-only counters compiled exclusively into native qualification builds.
 use serde::Serialize;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::{
+    collections::VecDeque,
+    sync::{
+        atomic::{AtomicU64, Ordering},
+        LazyLock, Mutex,
+    },
+};
 static READ_BYTES: AtomicU64 = AtomicU64::new(0);
 static READ_CALLS: AtomicU64 = AtomicU64::new(0);
 static MAX_CHUNK: AtomicU64 = AtomicU64::new(0);
 static CONNECTIONS: AtomicU64 = AtomicU64::new(0);
+static RESPONSES: LazyLock<Mutex<VecDeque<ResponseObservation>>> =
+    LazyLock::new(|| Mutex::new(VecDeque::new()));
+#[derive(Clone, Serialize)]
+pub(super) struct ResponseObservation {
+    requested_range: Option<String>,
+    head: bool,
+    status: u16,
+    start: u64,
+    length: u64,
+    size: u64,
+}
 #[derive(Serialize)]
 pub(super) struct Snapshot {
     pub read_bytes: u64,
@@ -14,6 +31,28 @@ pub(super) struct Snapshot {
     pub active_leases: usize,
     pub open_workers: usize,
     pub active_streams: usize,
+    pub responses: Vec<ResponseObservation>,
+}
+pub(super) fn record_response(
+    range: Option<&str>,
+    head: bool,
+    status: u16,
+    start: u64,
+    length: u64,
+    size: u64,
+) {
+    let mut rows = RESPONSES.lock().unwrap();
+    if rows.len() == 32 {
+        rows.pop_front();
+    }
+    rows.push_back(ResponseObservation {
+        requested_range: range.map(|value| value.chars().take(128).collect()),
+        head,
+        status,
+        start,
+        length,
+        size,
+    });
 }
 pub(super) fn record_read(count: usize) {
     READ_BYTES.fetch_add(count as u64, Ordering::Relaxed);
@@ -43,5 +82,6 @@ pub(super) fn snapshot(service: Option<&super::service::Service>) -> Snapshot {
         active_leases,
         open_workers,
         active_streams,
+        responses: RESPONSES.lock().unwrap().iter().cloned().collect(),
     }
 }

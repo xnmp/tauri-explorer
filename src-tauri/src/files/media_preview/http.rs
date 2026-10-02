@@ -163,6 +163,8 @@ async fn respond(
         }
     };
     let mut response = empty(status);
+    #[cfg(feature = "e2e-hooks")]
+    super::metrics::record_response(range, head, status.as_u16(), start, length, media.size);
     response.headers_mut().insert(
         header::ACCEPT_RANGES,
         header::HeaderValue::from_static("bytes"),
@@ -202,6 +204,7 @@ async fn respond(
     opened=opened=>match opened {Ok(Ok(file))=>file,_=>return empty(StatusCode::CONFLICT)} };
     let chunks=stream::try_unfold((file,start,length,lease),|(file,offset,remaining,lease)| async move {
         if remaining==0 {return Ok::<_,io::Error>(None);}
+        lease.admit_read(remaining.min(super::service::CHUNK_BYTES as u64)).await?;
         let reading=file.clone();
         let read=tokio::task::spawn_blocking(move || read_chunk(&reading.file,offset,remaining));
         let bytes=tokio::select! {_=lease.retired()=>return Err(io::Error::new(io::ErrorKind::Interrupted,"Video preview was released")),

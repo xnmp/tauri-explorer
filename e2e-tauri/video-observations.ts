@@ -40,6 +40,7 @@ export function videoState() {
     const rect = video.getBoundingClientRect();
     return { paused: video.paused, muted: video.muted, volume: video.volume,
       currentTime: video.currentTime, duration: video.duration, readyState: video.readyState,
+      buffered: Array.from({ length: video.buffered.length }, (_, index) => ({ start: video.buffered.start(index), end: video.buffered.end(index) })),
       seeking: video.seeking, src: video.currentSrc || video.getAttribute("src"),
       width: video.videoWidth, height: video.videoHeight, errorCode: video.error?.code ?? null,
       rect: { x: rect.x, y: rect.y, width: rect.width, height: rect.height },

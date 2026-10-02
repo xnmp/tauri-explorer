@@ -8,11 +8,13 @@ use std::{
     io,
     path::Path,
     sync::{Arc, Mutex},
-    time::SystemTime,
+    time::{Duration, SystemTime},
 };
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 
 pub(super) const CHUNK_BYTES: usize = 64 * 1024;
+const READ_RATE_BYTES: u64 = 16 * 1024 * 1024;
+const READ_BURST_BYTES: u64 = 1024 * 1024;
 const MAX_LEASES: usize = 64;
 const MAX_OWNER_LEASES: usize = 4;
 
@@ -25,6 +27,7 @@ pub(super) struct Lease {
     pub renderer: Owner,
     pub lifetime: Owner,
     phase: Mutex<Phase>,
+    read_budget: Mutex<tokio::time::Instant>,
 }
 enum Phase {
     Provisional,
@@ -81,6 +84,24 @@ impl Lease {
     pub async fn retired(&self) {
         tokio::select! { _ = self.renderer.retired() => {}, _ = self.lifetime.retired() => {} }
     }
+    /// Aggregate across concurrent ranges/restarts: fast initial metadata,
+    /// then bounded localhost read-ahead into the WebView's media buffers.
+    pub async fn admit_read(&self, bytes: u64) -> io::Result<()> {
+        let deadline = {
+            let now = tokio::time::Instant::now();
+            let burst = Duration::from_secs_f64(READ_BURST_BYTES as f64 / READ_RATE_BYTES as f64);
+            let cost = Duration::from_secs_f64(bytes as f64 / READ_RATE_BYTES as f64);
+            let mut budget = self.read_budget.lock().unwrap();
+            *budget = (*budget).max(now - burst) + cost;
+            *budget
+        };
+        tokio::select! {
+            _ = self.retired() => Err(io::Error::new(io::ErrorKind::Interrupted, "Video preview was released")),
+            _ = tokio::time::sleep_until(deadline) => {
+                if self.active() { Ok(()) } else { Err(io::Error::new(io::ErrorKind::Interrupted, "Video preview was released")) }
+            }
+        }
+    }
 }
 impl Service {
     #[cfg(feature = "e2e-hooks")]
@@ -128,6 +149,10 @@ impl Service {
                 renderer: owner,
                 lifetime: Owner::default(),
                 phase: Mutex::new(Phase::Provisional),
+                read_budget: Mutex::new(
+                    tokio::time::Instant::now()
+                        - Duration::from_secs_f64(READ_BURST_BYTES as f64 / READ_RATE_BYTES as f64),
+                ),
             }),
         );
         Ok(token)

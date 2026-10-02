@@ -149,6 +149,44 @@ fn assert_bytes(reply: &Reply, status: u16, bytes: &[u8], content_range: Option<
 }
 
 #[tokio::test]
+async fn concurrent_range_admission_shares_one_burst_and_rate_budget() {
+    let service = Service::default();
+    let owner = Owner::default();
+    let token = service.begin(owner).unwrap();
+    let lease = service.lookup(&token).unwrap();
+    lease.admit_read(1024 * 1024).await.unwrap();
+    let started = std::time::Instant::now();
+    let (first, second) = tokio::join!(
+        lease.admit_read(8 * 1024 * 1024),
+        lease.admit_read(8 * 1024 * 1024)
+    );
+    first.unwrap();
+    second.unwrap();
+    assert!(
+        started.elapsed() >= Duration::from_millis(900),
+        "parallel ranges bypassed the aggregate 16 MiB/s allowance"
+    );
+}
+
+#[tokio::test]
+async fn renderer_retirement_cancels_queued_read_admission_promptly() {
+    use futures_util::FutureExt;
+    let service = Service::default();
+    let owner = Owner::default();
+    let token = service.begin(owner.clone()).unwrap();
+    let lease = service.lookup(&token).unwrap();
+    lease.admit_read(1024 * 1024).await.unwrap();
+    let pending = lease.admit_read(16 * 1024 * 1024);
+    tokio::pin!(pending);
+    assert!(pending.as_mut().now_or_never().is_none());
+    owner.retire();
+    let result = tokio::time::timeout(Duration::from_millis(250), pending)
+        .await
+        .unwrap();
+    assert_eq!(result.unwrap_err().kind(), std::io::ErrorKind::Interrupted);
+}
+
+#[tokio::test]
 async fn exact_full_closed_open_suffix_and_clamped_ranges() {
     let fixture = Fixture::new(b"0123456789").await;
     for (header, status, bytes, range) in [

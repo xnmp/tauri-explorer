@@ -6,8 +6,10 @@ import { createHash } from "node:crypto";
 import { createNativeFixtureDirectory } from "../native-qualification";
 import { domText, navigateTo, entryPathSelector } from "./helpers";
 
-const enabled =
-  process.platform === "linux" && !!process.env.TAURI_NATIVE_SELECTION_PROFILE;
+const isLinux = process.platform === "linux";
+// Windows interactive admission is confined to the disposable hosted runner.
+const isHostedWindows = process.platform === "win32" && process.env.GITHUB_ACTIONS === "true" && process.env.RUNNER_ENVIRONMENT === "github-hosted";
+const enabled = (isLinux && !!process.env.TAURI_NATIVE_SELECTION_PROFILE) || isHostedWindows;
 const swaymsg = process.env.TAURI_NATIVE_SWAYMSG ?? "swaymsg";
 const artifacts = path.resolve(
   process.env.TAURI_NATIVE_SELECTION_ARTIFACT_DIR ??
@@ -227,7 +229,8 @@ async function capture(name: string) {
   await browser.executeAsync((done) =>
     requestAnimationFrame(() => requestAnimationFrame(() => done())),
   );
-  execFileSync("grim", ["-o", "HEADLESS-2", path.join(screenshots, name)]);
+  if (isLinux) execFileSync("grim", ["-o", "HEADLESS-2", path.join(screenshots, name)]);
+  else await browser.saveScreenshot(path.join(screenshots, name.replace("native-125-output", "native-windows")));
 }
 
 (enabled ? describe : describe.skip)(
@@ -252,44 +255,48 @@ async function capture(name: string) {
       linkViewerPid = undefined;
     }
     before(async () => {
-      const profile = process.env.TAURI_NATIVE_SELECTION_PROFILE!;
-      if (
-        process.env.DISPLAY ||
-        process.env.GDK_BACKEND !== "wayland" ||
-        !process.env.WAYLAND_DISPLAY ||
-        !process.env.SWAYSOCK?.startsWith(process.env.XDG_RUNTIME_DIR!) ||
-        !process.env.XDG_CONFIG_HOME?.startsWith(profile)
-      )
-        throw new Error(
-          "PDF native tests require the private headless Wayland/D-Bus/XDG runner",
+      if (isLinux) {
+        const profile = process.env.TAURI_NATIVE_SELECTION_PROFILE!;
+        if (
+          process.env.DISPLAY ||
+          process.env.GDK_BACKEND !== "wayland" ||
+          !process.env.WAYLAND_DISPLAY ||
+          !process.env.SWAYSOCK?.startsWith(process.env.XDG_RUNTIME_DIR!) ||
+          !process.env.XDG_CONFIG_HOME?.startsWith(profile)
+        )
+          throw new Error(
+            "PDF native tests require the private headless Wayland/D-Bus/XDG runner",
+          );
+        fs.mkdirSync(artifacts, { recursive: true });
+        fs.rmSync(linkReceipt, { force: true });
+        process.env.TAURI_NATIVE_PDF_LINK_RECEIPT = linkReceipt;
+        // The app was launched before this hook: the private handler reads its receipt location
+        // from its own desktop entry, while every display/profile alias stays inherited.
+        const applications = path.join(
+          process.env.XDG_DATA_HOME!,
+          "applications",
         );
-      fs.mkdirSync(artifacts, { recursive: true });
-      fs.rmSync(linkReceipt, { force: true });
-      process.env.TAURI_NATIVE_PDF_LINK_RECEIPT = linkReceipt;
-      // The app was launched before this hook: the private handler reads its receipt location
-      // from its own desktop entry, while every display/profile alias stays inherited.
-      const applications = path.join(
-        process.env.XDG_DATA_HOME!,
-        "applications",
-      );
-      fs.mkdirSync(applications, { recursive: true });
-      const desktopQuote = (value: string) =>
-        `"${value.replace(/[\\"`$]/g, "\\$&")}"`;
-      fs.writeFileSync(
-        path.join(applications, "acceptance-pdf-link.desktop"),
-        `[Desktop Entry]\nType=Application\nName=Acceptance PDF Link Viewer\nExec=/usr/bin/env TAURI_NATIVE_PDF_LINK_RECEIPT=${desktopQuote(linkReceipt)} /usr/bin/python3 ${desktopQuote(path.resolve("e2e-tauri/fixtures/pdf-link-viewer.py"))} %u\nTerminal=false\nMimeType=x-scheme-handler/http;x-scheme-handler/https;\n`,
-      );
-      fs.writeFileSync(
-        path.join(process.env.XDG_CONFIG_HOME!, "mimeapps.list"),
-        "[Default Applications]\nx-scheme-handler/http=acceptance-pdf-link.desktop\nx-scheme-handler/https=acceptance-pdf-link.desktop\n",
-      );
-      expect(
-        execFileSync(
-          "xdg-mime",
-          ["query", "default", "x-scheme-handler/https"],
-          { encoding: "utf8" },
-        ).trim(),
-      ).toBe("acceptance-pdf-link.desktop");
+        fs.mkdirSync(applications, { recursive: true });
+        const desktopQuote = (value: string) =>
+          `"${value.replace(/[\\"`$]/g, "\\$&")}"`;
+        fs.writeFileSync(
+          path.join(applications, "acceptance-pdf-link.desktop"),
+          `[Desktop Entry]\nType=Application\nName=Acceptance PDF Link Viewer\nExec=/usr/bin/env TAURI_NATIVE_PDF_LINK_RECEIPT=${desktopQuote(linkReceipt)} /usr/bin/python3 ${desktopQuote(path.resolve("e2e-tauri/fixtures/pdf-link-viewer.py"))} %u\nTerminal=false\nMimeType=x-scheme-handler/http;x-scheme-handler/https;\n`,
+        );
+        fs.writeFileSync(
+          path.join(process.env.XDG_CONFIG_HOME!, "mimeapps.list"),
+          "[Default Applications]\nx-scheme-handler/http=acceptance-pdf-link.desktop\nx-scheme-handler/https=acceptance-pdf-link.desktop\n",
+        );
+        expect(
+          execFileSync(
+            "xdg-mime",
+            ["query", "default", "x-scheme-handler/https"],
+            { encoding: "utf8" },
+          ).trim(),
+        ).toBe("acceptance-pdf-link.desktop");
+      } else if (!isHostedWindows) {
+        throw new Error("Windows PDF native qualification requires a disposable hosted runner");
+      }
       directory = createNativeFixtureDirectory("native-pdf-proof-");
       pdf = path.join(directory, "0-landmarks.pdf");
       fs.copyFileSync(
@@ -308,60 +315,68 @@ async function capture(name: string) {
         '<svg xmlns="http://www.w3.org/2000/svg" width="600" height="800"><rect width="600" height="800" fill="white"/><rect x="20" y="20" width="80" height="80" fill="#00b300"/><rect x="500" y="700" width="80" height="80" fill="blue"/><rect x="265" y="365" width="70" height="70" fill="red"/></svg>',
       );
       await navigateTo(directory);
-      const pids: number[] = [];
-      function collect(node: any) {
-        if (node.app_id === "tauri-explorer" && node.pid) pids.push(node.pid);
-        for (const child of [
-          ...(node.nodes ?? []),
-          ...(node.floating_nodes ?? []),
+      if (isLinux) {
+        const pids: number[] = [];
+        function collect(node: any) {
+          if (node.app_id === "tauri-explorer" && node.pid) pids.push(node.pid);
+          for (const child of [
+            ...(node.nodes ?? []),
+            ...(node.floating_nodes ?? []),
+          ])
+            collect(child);
+        }
+        collect(sway("get_tree"));
+        if (pids.length !== 1)
+          throw new Error("Owned PDF app identity is ambiguous");
+        appPid = pids[0];
+        const env = Object.fromEntries(
+          fs
+            .readFileSync(`/proc/${appPid}/environ`, "utf8")
+            .split("\0")
+            .filter((item) => item.includes("="))
+            .map((item) => {
+              const index = item.indexOf("=");
+              return [item.slice(0, index), item.slice(index + 1)];
+            }),
+        );
+        for (const key of [
+          "GDK_BACKEND",
+          "WAYLAND_DISPLAY",
+          "XDG_RUNTIME_DIR",
+          "XDG_CONFIG_HOME",
+          "DBUS_SESSION_BUS_ADDRESS",
         ])
-          collect(child);
+          if (env[key] !== process.env[key])
+            throw new Error(`Owned PDF app lost private ${key}`);
+        if (env.DISPLAY) throw new Error("PDF app connected to X11");
+        report("isolation.json", {
+          appPid,
+          environment: Object.fromEntries(
+            [
+              "GDK_BACKEND",
+              "WAYLAND_DISPLAY",
+              "XDG_RUNTIME_DIR",
+              "XDG_CONFIG_HOME",
+              "DBUS_SESSION_BUS_ADDRESS",
+            ].map((key) => [key, env[key]]),
+          ),
+        });
+        ipc(`[pid=${appPid}] move container to output HEADLESS-2, focus`);
+      } else {
+        await browser.setWindowSize(1200, 900);
+        report("hosted-admission.json", { platform: process.platform, githubActions: process.env.GITHUB_ACTIONS, sourceCommit: process.env.GITHUB_SHA, runnerEnvironment: process.env.RUNNER_ENVIRONMENT });
       }
-      collect(sway("get_tree"));
-      if (pids.length !== 1)
-        throw new Error("Owned PDF app identity is ambiguous");
-      appPid = pids[0];
-      const env = Object.fromEntries(
-        fs
-          .readFileSync(`/proc/${appPid}/environ`, "utf8")
-          .split("\0")
-          .filter((item) => item.includes("="))
-          .map((item) => {
-            const index = item.indexOf("=");
-            return [item.slice(0, index), item.slice(index + 1)];
-          }),
-      );
-      for (const key of [
-        "GDK_BACKEND",
-        "WAYLAND_DISPLAY",
-        "XDG_RUNTIME_DIR",
-        "XDG_CONFIG_HOME",
-        "DBUS_SESSION_BUS_ADDRESS",
-      ])
-        if (env[key] !== process.env[key])
-          throw new Error(`Owned PDF app lost private ${key}`);
-      if (env.DISPLAY) throw new Error("PDF app connected to X11");
-      report("isolation.json", {
-        appPid,
-        environment: Object.fromEntries(
-          [
-            "GDK_BACKEND",
-            "WAYLAND_DISPLAY",
-            "XDG_RUNTIME_DIR",
-            "XDG_CONFIG_HOME",
-            "DBUS_SESSION_BUS_ADDRESS",
-          ].map((key) => [key, env[key]]),
-        ),
-      });
-      ipc(`[pid=${appPid}] move container to output HEADLESS-2, focus`);
       await browser.waitUntil(async () =>
         browser.execute(() => document.hasFocus()),
       );
       if (await $(".preview-pane").isDisplayed())
         await command("Toggle Preview Pane");
+      await appZoom(100);
       await installPdfDiagnostics();
       await $(entryPathSelector(pdf)).click();
-      await command("Toggle Preview Pane");
+      await command("Dock Preview Pane Right");
+      expect(await browser.execute(() => document.documentElement.style.zoom)).toBe("100%");
+      await expect($(".preview-pane.dock-top, .preview-pane.dock-bottom")).not.toExist();
     });
 
     it("uses a real module worker to render known bytes in the native WebView", async () => {
@@ -369,16 +384,18 @@ async function capture(name: string) {
         await ready();
       } catch (error) {
         report("pdf-startup-failure.json", await pdfDiagnostics());
-        report("pdf-failure-compositor.json", {
-          appPid,
-          outputs: sway("get_outputs"),
-          tree: sway("get_tree"),
-        });
-        execFileSync("grim", [
-          "-o",
-          "HEADLESS-2",
-          path.join(artifacts, "pdf-startup-failure.png"),
-        ]);
+        if (isLinux) {
+          report("pdf-failure-compositor.json", {
+            appPid,
+            outputs: sway("get_outputs"),
+            tree: sway("get_tree"),
+          });
+          execFileSync("grim", [
+            "-o",
+            "HEADLESS-2",
+            path.join(artifacts, "pdf-startup-failure.png"),
+          ]);
+        } else await browser.saveScreenshot(path.join(artifacts, "pdf-startup-failure.png"));
         throw error;
       }
       const receipts = await browser.execute(() =>
@@ -486,7 +503,7 @@ async function capture(name: string) {
           expect(fit.height).toBeLessThan(fit.vh);
           report(`geometry-${zoom}-${fullscreen}.json`, {
             appZoom: zoom,
-            outputScale: 1.25,
+            nativeMetrics: await browser.execute(() => ({ devicePixelRatio: window.devicePixelRatio, outerWidth: window.outerWidth, outerHeight: window.outerHeight, innerWidth: window.innerWidth, innerHeight: window.innerHeight })),
             fullscreen,
             centered,
             before,
@@ -527,7 +544,7 @@ async function capture(name: string) {
         ],
       });
     });
-    it("a link drag launches nothing; an ordinary zoomed click dispatches the intact URL to an owned native handler", async () => {
+    (isLinux ? it : it.skip)("a link drag launches nothing; an ordinary zoomed click dispatches the intact URL to an owned native handler", async () => {
       await ready();
       await zoomTo(400);
       await $(".pdf-controls .fit-button").click();
@@ -666,11 +683,19 @@ async function capture(name: string) {
       });
     });
     it("keeps fit centered when docking and narrowing the native preview at app150", async () => {
-      ipc(
+      await appZoom(150);
+      const initialWindow = await browser.execute(() => ({ width: window.innerWidth, height: window.innerHeight }));
+      if (isLinux) ipc(
         `[pid=${appPid}] floating enable, resize set width 1000px height 750px`,
       );
+      else {
+        await browser.setWindowSize(1000, 750);
+        await browser.waitUntil(async () => browser.execute((initial: { width: number; height: number }) => window.innerWidth < initial.width && window.innerHeight < initial.height, initialWindow));
+      }
       for (const dock of ["Top", "Bottom", "Right"]) {
         await command(`Dock Preview Pane ${dock}`);
+        if (dock === "Right") await expect($(".preview-pane.dock-top, .preview-pane.dock-bottom")).not.toExist();
+        else await expect($(`.preview-pane.dock-${dock.toLowerCase()}`)).toBeDisplayed();
         await $(".pdf-controls .fit-button").click();
         await ready();
         await browser.waitUntil(async () => {
@@ -686,12 +711,38 @@ async function capture(name: string) {
         await capture(
           `pdf-narrow-${dock.toLowerCase()}-native-125-output-150-app.png`,
         );
-        report(`narrow-${dock.toLowerCase()}.json`, fit);
+        const layout = await browser.execute(() => {
+          const pane = document.querySelector(".preview-pane")!.getBoundingClientRect();
+          const viewport = document.querySelector(".pdf-viewport")!.getBoundingClientRect();
+          const controls = Array.from(document.querySelectorAll(".pdf-controls button")).map(button => {
+            const rect = button.getBoundingClientRect();
+            return { label: button.getAttribute("aria-label") ?? button.textContent, x: rect.x, y: rect.y, right: rect.right, bottom: rect.bottom, width: rect.width, height: rect.height };
+          });
+          return { pane: { x: pane.x, y: pane.y, right: pane.right, bottom: pane.bottom }, viewport: { width: viewport.width, height: viewport.height }, window: { width: innerWidth, height: innerHeight }, controls };
+        });
+        if (dock === "Right") expect(layout.pane.x).toBeGreaterThan(layout.window.width / 2);
+        else if (dock === "Top") expect(layout.pane.y).toBeLessThan(layout.window.height / 2);
+        else expect(layout.pane.y).toBeGreaterThan(layout.window.height / 2);
+        expect(layout.viewport.width).toBeLessThan(layout.window.width);
+        expect(layout.viewport.height).toBeLessThan(layout.window.height);
+        expect(layout.controls.length).toBeGreaterThan(0);
+        for (const control of layout.controls) {
+          expect(control.width).toBeGreaterThanOrEqual(20);
+          expect(control.height).toBeGreaterThanOrEqual(20);
+          expect(control.x).toBeGreaterThanOrEqual(layout.pane.x - 1);
+          expect(control.right).toBeLessThanOrEqual(layout.pane.right + 1);
+          expect(control.y).toBeGreaterThanOrEqual(layout.pane.y - 1);
+          expect(control.bottom).toBeLessThanOrEqual(layout.pane.bottom + 1);
+          expect(control.right).toBeLessThanOrEqual(layout.window.width + 1);
+          expect(control.bottom).toBeLessThanOrEqual(layout.window.height + 1);
+        }
+        report(`narrow-${dock.toLowerCase()}.json`, { fit, layout });
       }
-      ipc(`[pid=${appPid}] floating disable`);
+      if (isLinux) ipc(`[pid=${appPid}] floating disable`);
+      else await browser.setWindowSize(1200, 900);
       await ready();
     });
-    it("real native blur ends a held pan and later movement cannot continue it", async () => {
+    (isLinux ? it : it.skip)("real native blur ends a held pan and later movement cannot continue it", async () => {
       await zoomTo(400);
       const initial = await geometry();
       const start = { x: initial.vcx, y: initial.vcy };

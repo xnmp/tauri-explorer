@@ -1639,6 +1639,9 @@ mod tests {
             cfg.set_str("user.name", "Test User").unwrap();
             cfg.set_str("user.email", "test@example.com").unwrap();
             cfg.set_str("commit.gpgsign", "false").unwrap();
+            // Contents are asserted byte for byte; a machine-wide
+            // core.autocrlf=true (the Windows runner default) must not apply.
+            cfg.set_bool("core.autocrlf", false).unwrap();
         }
         dir
     }
@@ -1932,7 +1935,37 @@ mod tests {
             PathBuf::from(String::from_utf16(&short).unwrap())
         }
 
-        let dir = init_repo();
+        // A long component only has an 8.3 alias on a volume that generates
+        // them, which CI's relocated TMP may not. Fall back to the profile's
+        // temporary directory on the system volume.
+        let bases = [
+            Some(std::env::temp_dir()),
+            std::env::var_os("LOCALAPPDATA").map(|local| PathBuf::from(local).join("Temp")),
+        ];
+        let dir = bases
+            .into_iter()
+            .flatten()
+            .find_map(|base| {
+                let dir = tempfile::Builder::new()
+                    .prefix("short-name-alias-contract-")
+                    .tempdir_in(&base)
+                    .ok()?;
+                let canonical = fs::canonicalize(dir.path()).ok()?;
+                let short = short_path(dir.path()).to_str()?.to_ascii_lowercase();
+                (short
+                    != canonical
+                        .to_str()?
+                        .trim_start_matches(r"\\?\")
+                        .to_ascii_lowercase())
+                .then_some(dir)
+            })
+            .expect("no temporary volume generates 8.3 short names");
+        {
+            let repo = Repository::init(dir.path()).unwrap();
+            let mut cfg = repo.config().unwrap();
+            cfg.set_str("user.name", "Test User").unwrap();
+            cfg.set_str("user.email", "test@example.com").unwrap();
+        }
         fs::create_dir_all(dir.path().join("nested")).unwrap();
         let short_root = short_path(dir.path());
         let short_nested = short_path(&dir.path().join("nested"));

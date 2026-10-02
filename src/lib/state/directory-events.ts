@@ -1,4 +1,4 @@
-import { E2E_HOOKS_ENABLED } from "$lib/domain/e2e-hooks";
+import { E2E_HOOKS_ENABLED } from "$lib/api/e2e-hooks";
 import { listen } from "@tauri-apps/api/event";
 
 export type DirectoryChangeOrigin = "watcher" | "mutation";

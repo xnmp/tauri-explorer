@@ -24,11 +24,12 @@ import { readConfigFile } from "$lib/api/config";
 import { writeConfigQueued } from "$lib/state/persisted";
 import { windowTabsManager } from "$lib/state/window-tabs.svelte";
 import { dialogStore } from "$lib/state/dialogs.svelte";
-import { performFileTransfer } from "$lib/state/file-transfer";
-import type { FileEntry, FileMutationRecovery } from "$lib/domain/file";
+import type { FileEntry } from "$lib/domain/file";
+import { parentDir, sameDirectory } from "$lib/domain/path";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { pluginJobsController, type PluginJobKind } from "$lib/state/plugin-jobs";
-import type { ApiResult } from "$lib/api/common";
+import { extractError, type ApiResult } from "$lib/api/common";
+import { logFrontendError } from "$lib/api/crash";
 
 // ----- Settings descriptors -----
 
@@ -73,18 +74,18 @@ export interface PluginToast {
 }
 
 export interface PluginEvents {
-  /** Listen for a backend/window event; auto-disposed on deactivate. */
-  listen<T = unknown>(name: string, handler: (payload: T) => void): void;
+  /** Listen for a backend/window event; auto-disposed on deactivate. A
+   *  handler that throws or rejects is reported under the plugin's name. */
+  listen<T = unknown>(name: string, handler: (payload: T) => void | Promise<void>): void;
 }
 
 /** Outcome of a workspace file operation (structural subset of the shared
- *  transfer result). `error === "skipped"` means a no-op or user cancel. */
+ *  ordered move session's result). `error === "skipped"` means a no-op,
+ *  conflict skip, or user cancel — the session already toasted and recorded
+ *  undo for everything else. */
 export interface PluginMoveResult {
   ok: boolean;
   error?: string;
-  /** Published destination with incomplete source cleanup; inspect before
-   * treating the requested move as finished or removing its source UI. */
-  recovery?: FileMutationRecovery;
 }
 
 /**
@@ -124,6 +125,9 @@ export interface PluginWorkspace {
  * Such cases carry a justification comment at the import site.
  */
 export interface PluginContext {
+  /** Return the handler's work as a promise: a rejection is reported to the
+   *  user under the plugin's name and written to the app log. Work started
+   *  with `void` and never returned is invisible to that reporting. */
   registerCommand(cmd: Command): void;
   registerContextMenuItem(item: ContextMenuItem): void;
   registerSettingsSection(section: SettingsSectionDescriptor): void;
@@ -180,10 +184,28 @@ export function createPluginStorage(pluginId: string): PluginStorage {
 /**
  * Build a plugin context plus a `dispose` that runs every tracked teardown.
  * Disposers run in reverse registration order.
+ *
+ * A plugin's command, menu action, event handler or activation that fails is
+ * reported to the user under `pluginName` and written to the app log (#782,
+ * #890); `reportFailure` is that report for the registry's activation path.
+ * Commands still reject, so `executeCommand` reports the failure to its
+ * caller; menu actions and event handlers resolve, because their callers fire
+ * them without awaiting and a reported failure is not an unhandled rejection.
+ * File-system provider failures are only logged: they still reject to the
+ * listing caller, which already shows the error to the user.
+ *
+ * `order` is the plugin's position in the plugin list. Menu items and settings
+ * sections are placed by it, so their order does not depend on which
+ * activation happened to register first.
  */
-export function createPluginContext(pluginId: string): {
+export function createPluginContext(
+  pluginId: string,
+  pluginName = pluginId,
+  order = Number.MAX_SAFE_INTEGER,
+): {
   ctx: PluginContext;
   dispose: () => void;
+  reportFailure: (error: unknown, contribution: string) => void;
 } {
   const disposers: (() => void)[] = [];
   let disposed = false;
@@ -192,20 +214,54 @@ export function createPluginContext(pluginId: string): {
     else disposers.push(fn);
   };
   const storage = createPluginStorage(pluginId);
-
+  // Tauri rejects with a serialized AppError ({ kind, message }), not an Error.
+  const log = (error: unknown, contribution: string): string => {
+    const message = extractError(error);
+    const stack = error instanceof Error && error.stack ? `\n${error.stack}` : "";
+    console.error(`[plugins] "${pluginId}" ${contribution} failed:`, error);
+    void logFrontendError(`[plugins] "${pluginId}" ${contribution} failed: ${message}${stack}`)
+      .catch(() => {});
+    return message;
+  };
+  const report = (error: unknown, contribution: string) => {
+    toastStore.error(`${pluginName}: ${log(error, contribution)}`);
+  };
 
   const ctx: PluginContext = {
     registerCommand(cmd: Command): void {
-      track(registerCommandContribution(cmd));
+      const handler = async () => {
+        try {
+          await cmd.handler();
+        } catch (error) {
+          report(error, `command ${cmd.id}`);
+          throw error;
+        }
+      };
+      track(registerCommandContribution({ ...cmd, handler }));
     },
     registerContextMenuItem(item: ContextMenuItem): void {
-      track(contextMenuItems.register(item));
+      const handler = async (entries: FileEntry[]) => {
+        try {
+          await item.handler(entries);
+        } catch (error) {
+          report(error, `menu action ${item.id}`);
+        }
+      };
+      track(contextMenuItems.register({ ...item, handler }, order));
     },
     registerSettingsSection(section: SettingsSectionDescriptor): void {
-      track(pluginSettingsSections.register(pluginId, section, storage));
+      track(pluginSettingsSections.register(pluginId, section, storage, order));
     },
     registerFsProvider(scheme: string, provider: FsProvider): void {
-      track(registerFsProvider(scheme, provider, false));
+      const list = async (path: string) => {
+        try {
+          return await provider.list(path);
+        } catch (error) {
+          log(error, `fs provider ${scheme}`);
+          throw error;
+        }
+      };
+      track(registerFsProvider(scheme, { list }, false));
     },
     registerDialog(descriptor: DialogDescriptor): void {
       track(dialogRegistry.register(descriptor));
@@ -222,11 +278,18 @@ export function createPluginContext(pluginId: string): {
       error: (message) => toastStore.error(message),
     },
     events: {
-      listen<T>(name: string, handler: (payload: T) => void): void {
+      listen<T>(name: string, handler: (payload: T) => void | Promise<void>): void {
         let un: UnlistenFn | null = null;
         let listenerDisposed = false;
+        const deliver = async (payload: T) => {
+          try {
+            await handler(payload);
+          } catch (error) {
+            report(error, `event handler ${name}`);
+          }
+        };
         listen<T>(name, (event) => {
-          if (!listenerDisposed && !disposed) handler(event.payload);
+          if (!listenerDisposed && !disposed) void deliver(event.payload);
         })
           .then((fn) => {
             if (listenerDisposed || disposed) fn();
@@ -255,18 +318,35 @@ export function createPluginContext(pluginId: string): {
           windowTabsManager.getAllExplorers().map((exp) => exp.refresh({ silent: true })),
         );
       },
-      moveFile: (sourcePath, targetDir) =>
-        performFileTransfer(sourcePath, targetDir, false, {
+      // Shares the ordered move session with cut/paste and drag-drop (#881):
+      // the same conflict prompt, undo recording, ordering, and refresh.
+      moveFile: async (sourcePath, targetDir) => {
+        // The session reports a same-directory relocation as a committed,
+        // "succeeded" item (it legitimately touches nothing, per
+        // move_session.rs), so it toasts "Moved 1 item" and this would
+        // otherwise report `{ok: true}`. That breaks the documented
+        // `PluginMoveResult` no-op contract (`error: "skipped"`), which a
+        // caller like the AI-organize dialog depends on to tell "nothing to
+        // do" apart from "moved". Short-circuit before the session runs.
+        if (sameDirectory(parentDir(sourcePath), targetDir)) {
+          return { ok: false, error: "skipped" };
+        }
+        const { moveFiles } = await import("$lib/state/move-operations");
+        const { error, complete } = await moveFiles([sourcePath], targetDir, {
           onRefresh: () => {
             for (const exp of windowTabsManager.getAllExplorers()) void exp.refresh({ silent: true });
           },
-        }),
+        });
+        if (error) return { ok: false, error };
+        return complete ? { ok: true } : { ok: false, error: "skipped" };
+      },
     },
     openSettings: () => dialogStore.openSettings(),
   };
 
   return {
     ctx,
+    reportFailure: report,
     dispose: () => {
       disposed = true;
       while (disposers.length) {

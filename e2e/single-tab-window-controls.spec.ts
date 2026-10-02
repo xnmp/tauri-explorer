@@ -12,20 +12,14 @@
  * (5ca49d76) and lost when #140 extracted the rules into domain/titlebar.ts.
  */
 import { test, expect, type Page } from "./fixtures";
-import { HOME_URL, waitForEntries } from "./helpers";
+import { HOME_URL, seedSettings, waitForEntries } from "./helpers";
 
 /** Persist the chrome settings before first paint, so the app renders the
  *  configuration under test on its very first render (no toggle flicker). */
 const setChrome = (page: Page, showWindowControls: boolean) =>
-  page.addInitScript((controls) => {
-    const key = "explorer-settings";
-    const settings = JSON.parse(localStorage.getItem(key) || "{}");
-    settings.showWindowControls = controls;
-    // Keep the macOS integrated title bar out of it: it renders the row for
-    // its own reasons and would mask what this test is checking.
-    settings.integratedTitleBar = false;
-    localStorage.setItem(key, JSON.stringify(settings));
-  }, showWindowControls);
+  // Keep the macOS integrated title bar out of it: it renders the row for
+  // its own reasons and would mask what this test is checking.
+  seedSettings(page, { showWindowControls, integratedTitleBar: false });
 
 /** Tabs are per-pane (#140); Ctrl+T opens a second one. */
 const openSecondTab = async (page: Page) => {

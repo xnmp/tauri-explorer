@@ -1,11 +1,12 @@
 import { test, expect, type Page } from "./fixtures";
+import { seedSettings } from "./helpers";
 
 let pageErrors: string[] = [];
 test.beforeEach(({ page }) => { pageErrors = []; page.on("pageerror", error => pageErrors.push(error.message)); });
 test.afterEach(() => expect(pageErrors).toEqual([]));
 
 async function graph(page: Page, zoom = 100) {
-  await page.addInitScript(value => localStorage.setItem("explorer-settings", JSON.stringify({ zoomLevel: value })), zoom);
+  await seedSettings(page, { zoomLevel: zoom }, { replace: true });
   await page.setViewportSize({ width: 1600, height: 900 });
   await page.goto("/?path=/home/user/Documents/project");
   await expect(page.locator(".file-list .entry-item").first()).toBeVisible();

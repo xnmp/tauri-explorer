@@ -31,24 +31,19 @@ impl Fixture {
             source,
             target,
             storage: base.join("app/recovery"),
-            runtime: Runtime::default(),
+            runtime: Runtime::new(base.join("app/recovery")),
         }
     }
     fn copy(&self, overwrite: bool) -> Result<FileMutationReceipt, AppError> {
-        file_ops::copy_entry_with(
-            None,
+        file_ops::copy_entry_for_test(
             self.source.to_string_lossy().into_owned(),
             self.target.parent().unwrap().to_string_lossy().into_owned(),
             Some(overwrite),
-            None,
-            |source, _, target, progress| {
-                self.runtime
-                    .replace_copy(self.storage.clone(), source, target, progress)
-            },
+            |source, _, target, progress| self.runtime.replace_copy(source, target, progress),
         )
     }
     fn inventory(&self) -> super::super::model::RecoverySnapshot {
-        tauri::async_runtime::block_on(self.runtime.list(self.storage.clone())).unwrap()
+        tauri::async_runtime::block_on(self.runtime.list()).unwrap()
     }
 }
 
@@ -61,21 +56,15 @@ fn production_copy_retains_the_original_and_can_restore_it_through_the_recovery_
     assert_eq!(fs::read(&f.source).unwrap(), b"copied bytes");
     assert_eq!(fs::read(&f.target).unwrap(), b"copied bytes");
     assert_eq!(f.inventory().items[0].id, id);
-    let inspected =
-        tauri::async_runtime::block_on(f.runtime.inspect(f.storage.clone(), id.clone())).unwrap();
+    let inspected = tauri::async_runtime::block_on(f.runtime.inspect(id.clone())).unwrap();
     let generation = inspected
         .items
         .iter()
         .find(|item| item.id == id)
         .unwrap()
         .generation;
-    tauri::async_runtime::block_on(f.runtime.resolve(
-        f.storage.clone(),
-        id,
-        generation,
-        RecoveryChoice::Restore,
-    ))
-    .unwrap();
+    tauri::async_runtime::block_on(f.runtime.resolve(id, generation, RecoveryChoice::Restore))
+        .unwrap();
     assert_eq!(fs::read(&f.target).unwrap(), b"original bytes");
     assert_eq!(fs::read(&f.source).unwrap(), b"copied bytes");
     let root = fs::read_dir(f.target.parent().unwrap())
@@ -185,7 +174,7 @@ fn cancelled_durable_copy_retains_evidence_and_never_reports_ordinary_cleanup() 
     let mut cancel = Cancel { started: false };
     let error = f
         .runtime
-        .replace_copy(f.storage.clone(), &f.source, &f.target, &mut cancel)
+        .replace_copy(&f.source, &f.target, &mut cancel)
         .unwrap_err();
     assert!(cancel.started);
     assert!(matches!(error, AppError::MutationUncertain(_)));
@@ -225,7 +214,7 @@ fn destination_changed_during_staging_is_preserved_and_exposed_for_recovery() {
     };
     let error = f
         .runtime
-        .replace_copy(f.storage.clone(), &f.source, &f.target, &mut progress)
+        .replace_copy(&f.source, &f.target, &mut progress)
         .unwrap_err();
     assert!(matches!(error, AppError::MutationUncertain(_)));
     assert_eq!(fs::read(&f.target).unwrap(), b"external replacement bytes");

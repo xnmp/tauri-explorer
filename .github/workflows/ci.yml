@@ -38,6 +38,11 @@ jobs:
       - name: Install dependencies
         run: bun install --frozen-lockfile
 
+      # Root type checks and relay tests import website/api/report.js, whose
+      # Blob client belongs to the independently deployed website package.
+      - name: Install website dependencies
+        run: bun install --cwd website --frozen-lockfile
+
       - name: Type check
         run: bun run check
 
@@ -100,13 +105,14 @@ jobs:
   # (no WKWebView WebDriver exists). Catches Safari-family CSS/JS breakage.
   webkit-tests:
     runs-on: ubuntu-latest
-    # The full 777-test suite exceeded 40m. Keep one worker on each runner
-    # and preserve the existing per-runner bound while partitioning the work.
+    # The full 777-test suite exceeded 40m, and two shards still ran 24-38m,
+    # so runner contention pushed them past the bound (#932). Keep one worker
+    # on each runner and the per-runner bound; partition four ways for headroom.
     timeout-minutes: 40
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2]
+        shard: [1, 2, 3, 4]
     steps:
       - uses: actions/checkout@v7
 
@@ -123,7 +129,7 @@ jobs:
       - name: E2E tests (WebKit)
         env:
           WEBKIT: "1"
-        run: npx playwright test --project=webkit --shard=${{ matrix.shard }}/2 --reporter=line,html
+        run: npx playwright test --project=webkit --shard=${{ matrix.shard }}/4 --reporter=line,html
 
       - name: Upload Playwright report on failure
         if: failure()
@@ -133,7 +139,7 @@ jobs:
           path: playwright-report/
           if-no-files-found: ignore
 
-  # WebKit is also a protected context: both shards must complete successfully.
+  # WebKit is also a protected context: every shard must complete successfully.
   webkit:
     if: always()
     needs: [webkit-tests]
@@ -185,8 +191,11 @@ jobs:
 
       # Keep the deferred recovery policy verified without enabling it in
       # release artifacts. Default-policy capacity coverage runs above.
+      # durable-recovery is read only on Linux, like this runner (ADR 0020).
+      # e2e-hooks (#884) rides along so the hook-build branches are linted
+      # and unit-tested on Linux too; it is absent from release artifacts.
       - name: Opt-in recovery Clippy
-        run: cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets --features avif,durable-copy-recovery,e2e-renderer-recovery -- -D warnings
+        run: cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets --features avif,durable-recovery,e2e-renderer-recovery,e2e-hooks -- -D warnings
 
       - name: Opt-in recovery tests
-        run: cargo test --manifest-path src-tauri/Cargo.toml --features avif,durable-copy-recovery
+        run: cargo test --manifest-path src-tauri/Cargo.toml --features avif,durable-recovery,e2e-hooks

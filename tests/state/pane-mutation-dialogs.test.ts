@@ -10,13 +10,11 @@ import type {
   UndoAction,
 } from "$lib/domain/file-history";
 import type {
-  DirectoryListingCallbacks,
   DirectoryListingResult,
 } from "$lib/state/directory-listing";
 
 type Load = (
   path: string,
-  callbacks: DirectoryListingCallbacks,
 ) => Promise<DirectoryListingResult>;
 
 function deferred<T>() {
@@ -109,8 +107,8 @@ const history = vi.hoisted(() => {
 
 vi.mock("$lib/state/directory-listing", () => ({
   createDirectoryListing: () => ({
-    load: (path: string, callbacks: DirectoryListingCallbacks) =>
-      mocks.load.current(path, callbacks),
+    load: (path: string) =>
+      mocks.load.current(path),
     cleanup: mocks.cleanup,
   }),
 }));
@@ -165,7 +163,7 @@ function listing(entriesByPath: Record<string, FileEntry[]>): Load {
   return async (path) => {
     const entries = entriesByPath[path];
     return entries
-      ? { ok: true, path, entries, streaming: false }
+      ? { ok: true, path, entries }
       : { ok: false, error: `No listing for ${path}` };
   };
 }

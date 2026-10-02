@@ -6,7 +6,7 @@
  * keyboard events. Handles cross-platform modifier keys and Caps Lock.
  */
 
-import { normalizeKeyForShortcut } from "./keyboard";
+import { isModifierKey, normalizeKeyForShortcut } from "./keyboard";
 import { isMac } from "./platform";
 
 /** Parsed representation of a single keyboard shortcut step */
@@ -200,39 +200,30 @@ export function matchesShortcut(
   if (shortcut.shift !== event.shiftKey) return false;
   if (shortcut.alt !== event.altKey) return false;
 
-  // On macOS, Option/Alt produces special characters in event.key (e.g., Alt+M → "µ").
-  // Use event.code (physical key) when Alt is held to match the intended key.
-  const eventKey = event.altKey && event.code?.startsWith("Key")
-    ? event.code.slice(3).toLowerCase()
-    : event.key;
-
-  const normalizedShortcutKey = normalizeKeyForShortcut(shortcut.key);
-
-  if (normalizeKeyForShortcut(eventKey) === normalizedShortcutKey) return true;
-
-  // Layout fallback: on non-US (and Windows) layouts a shifted digit yields a
-  // symbol in event.key (e.g. Shift+1 → "!"), so "Ctrl+Shift+1" would never
-  // match. Recover the layout-independent letter/digit from the physical
-  // event.code and compare that. Used only as a fallback so logical matching
-  // (the common case) still wins first.
-  const physical = physicalKeyFromCode(event.code);
-  if (physical && normalizeKeyForShortcut(physical) === normalizedShortcutKey) {
-    return true;
-  }
-
-  return false;
+  return shortcutEventKey(event) === shortcutKeyIdentity(shortcut.key, shortcut.shift);
 }
 
-/**
- * Recover the layout-independent character a physical key represents from
- * `event.code`. Letters (`KeyA` → `"a"`) and digits (`Digit1` → `"1"`) only;
- * returns null for other codes so the caller falls back to `event.key`.
+/** Match exactly the identity the recorder has always saved: physical Alt
+ * letters (Option-produced characters) and shifted digits, logical other keys.
+ * Removing the alternate fallback preserves existing recorded shortcuts while
+ * preventing a layout event from also matching a different physical shortcut.
  */
-function physicalKeyFromCode(code: string | undefined): string | null {
-  if (!code) return null;
-  if (code.startsWith("Key")) return code.slice(3).toLowerCase();
-  if (code.startsWith("Digit")) return code.slice(5);
-  return null;
+function shortcutEventKey(event: KeyboardEvent): string {
+  const letter = event.altKey ? /^Key([A-Z])$/.exec(event.code ?? "") : null;
+  const digit = event.shiftKey ? /^Digit([0-9])$/.exec(event.code ?? "") : null;
+  return letter ? letter[1].toLowerCase() : digit ? digit[1] : shortcutKeyIdentity(event.key, event.shiftKey);
+}
+
+function shortcutKeyIdentity(key: string, shift: boolean): string {
+  const normalized = normalizeKeyForShortcut(key);
+  // Retain conventional US shifted-digit aliases in existing imported bindings.
+  const index = shift && normalized.length === 1 ? "!@#$%^&*()".indexOf(normalized) : -1;
+  return index >= 0 ? String((index + 1) % 10) : normalized;
+}
+
+/** Conflict checks use exactly the identity used by runtime matching. */
+export function shortcutKeysOverlap(left: ParsedShortcut, right: ParsedShortcut): boolean {
+  return shortcutKeyIdentity(left.key, left.shift) === shortcutKeyIdentity(right.key, right.shift);
 }
 
 /**
@@ -248,11 +239,9 @@ export function isChordShortcut(shortcutString: string): boolean {
  * @example parseChord("Alt+M T") => { prefix: Alt+M, suffix: T }
  */
 export function parseChord(shortcutString: string): ParsedChord | null {
-  const spaceIndex = shortcutString.indexOf(" ");
-  if (spaceIndex === -1) return null;
-
-  const prefixStr = shortcutString.substring(0, spaceIndex).trim();
-  const suffixStr = shortcutString.substring(spaceIndex + 1).trim();
+  const parts = shortcutString.trim().split(/\s+/);
+  if (parts.length !== 2) return null;
+  const [prefixStr, suffixStr] = parts;
 
   const prefix = parseShortcut(prefixStr);
   const suffix = parseShortcut(suffixStr);
@@ -283,7 +272,7 @@ export function matchesShortcutString(
 function formatParsedShortcut(parsed: ParsedShortcut): string {
   const parts: string[] = [];
 
-  if (parsed.ctrl) parts.push("Ctrl");
+  if (parsed.ctrl) parts.push(isMac && !parsed.meta ? "Cmd" : "Ctrl");
   if (parsed.shift) parts.push("Shift");
   if (parsed.alt) parts.push("Alt");
   if (parsed.meta) parts.push(isMac ? "Cmd" : "Super");
@@ -317,32 +306,24 @@ export function formatShortcut(shortcut: string): string {
   return formatParsedShortcut(parsed);
 }
 
-/** Modifier keys that should be ignored when pressed alone */
-const MODIFIER_KEYS = new Set(["Control", "Shift", "Alt", "Meta"]);
-
 /**
  * Convert a KeyboardEvent to a shortcut string.
  * Useful for recording new keybindings.
  */
-export function eventToShortcutString(event: KeyboardEvent): string | null {
-  if (MODIFIER_KEYS.has(event.key)) {
+export function eventToShortcutString(event: KeyboardEvent, options?: MatchOptions): string | null {
+  if (isModifierKey(event.key)) {
     return null;
   }
 
   const parts: string[] = [];
 
-  if (event.ctrlKey || event.metaKey) parts.push("Ctrl");
+  const metaDown = event.metaKey || options?.metaHeld === true;
+  if (event.ctrlKey || metaDown) parts.push("Ctrl");
+  if (event.ctrlKey && metaDown) parts.push("Meta");
   if (event.shiftKey) parts.push("Shift");
   if (event.altKey) parts.push("Alt");
 
-  // On macOS, Option/Alt produces special characters — use event.code for the real key.
-  // With Shift, non-US/Windows layouts turn digits into symbols (Shift+1 → "!"),
-  // so recover the digit from event.code to record "Ctrl+Shift+1", not "Ctrl+Shift+!".
-  const rawKey = event.altKey && event.code?.startsWith("Key")
-    ? event.code.slice(3).toLowerCase()
-    : event.shiftKey && event.code?.startsWith("Digit")
-      ? event.code.slice(5)
-      : event.key;
+  const rawKey = shortcutEventKey(event);
 
   // Format the key using lookup or uppercase for single chars
   const key = KEY_TO_SHORTCUT[rawKey] ??

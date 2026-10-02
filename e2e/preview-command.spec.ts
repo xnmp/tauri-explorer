@@ -1,11 +1,11 @@
 import { test, expect } from "./fixtures";
-import { VIEW_MODES, switchViewMode } from "./helpers";
+import { VIEW_MODES, seedSettings, switchViewMode } from "./helpers";
 
 for (const mode of VIEW_MODES) {
   test.describe(`File entry commands [${mode}]`, () => {
 
     test.beforeEach(async ({ page }) => {
-      await page.addInitScript(() => localStorage.setItem("explorer-settings", JSON.stringify({ showPreviewPane: false })));
+      await seedSettings(page, { showPreviewPane: false }, { replace: true });
       await page.goto("/?path=/home/user");
       await switchViewMode(page, mode);
       await page.locator('.entry-item[data-path="/home/user/notes.md"]').click();

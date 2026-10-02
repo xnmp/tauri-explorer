@@ -44,6 +44,65 @@ impl Directory {
         Ok(directory)
     }
 
+    /// Walk like [`Self::open`] with search-only handles, so a writable but
+    /// unreadable directory can still anchor `*at` namespace operations.
+    /// The handle cannot enumerate entries.
+    #[cfg(target_os = "linux")]
+    pub(crate) fn open_searchable(path: &Path) -> io::Result<Self> {
+        if !path.is_absolute() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "Directory path must be absolute",
+            ));
+        }
+        let flags = libc::O_PATH | libc::O_DIRECTORY | libc::O_CLOEXEC | libc::O_NOFOLLOW;
+        let mut directory = Self {
+            file: std::fs::OpenOptions::new()
+                .read(true)
+                .custom_flags(flags)
+                .open(Path::new("/"))?,
+        };
+        for component in path.components() {
+            match component {
+                Component::RootDir => {}
+                Component::Normal(name) => directory = directory.open_relative(name, flags)?,
+                _ => {
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidInput,
+                        "Directory path is not normalized",
+                    ));
+                }
+            }
+        }
+        Ok(directory)
+    }
+
+    /// The directory currently containing this one. Callers must verify its
+    /// identity: `..` follows wherever the retained directory now resides.
+    pub(crate) fn open_parent(&self) -> io::Result<Self> {
+        self.open_raw(
+            c"..",
+            libc::O_RDONLY | libc::O_DIRECTORY | libc::O_CLOEXEC | libc::O_NOFOLLOW,
+        )
+    }
+
+    #[cfg(target_os = "linux")]
+    fn open_relative(&self, name: &OsStr, flags: libc::c_int) -> io::Result<Self> {
+        self.open_raw(&native_name(name)?, flags)
+    }
+
+    fn open_raw(&self, name: &CStr, flags: libc::c_int) -> io::Result<Self> {
+        // SAFETY: name is terminated and the returned descriptor is uniquely owned.
+        let descriptor = unsafe { libc::openat(self.file.as_raw_fd(), name.as_ptr(), flags) };
+        if descriptor < 0 {
+            Err(io::Error::last_os_error())
+        } else {
+            Ok(Self {
+                file: unsafe { File::from_raw_fd(descriptor) },
+            })
+        }
+    }
+
     pub(crate) fn open_existing(&self, name: &OsStr) -> io::Result<Self> {
         let name = native_name(name)?;
         // SAFETY: name is terminated and the returned descriptor is uniquely owned.
@@ -75,10 +134,11 @@ impl Directory {
             )
         };
         if descriptor < 0 {
-            Err(io::Error::last_os_error())
-        } else {
-            Ok(unsafe { File::from_raw_fd(descriptor) })
+            return Err(io::Error::last_os_error());
         }
+        let file = unsafe { File::from_raw_fd(descriptor) };
+        restore_owner_access(&file, 0o600)?;
+        Ok(file)
     }
 
     pub(crate) fn open_file(&self, name: &OsStr) -> io::Result<File> {
@@ -102,18 +162,50 @@ impl Directory {
         self.file.metadata()
     }
 
-    /// Distinguish bind mounts that expose the same device/inode. None is
-    /// reserved for kernels without STATX_MNT_ID support.
+    /// Distinguish bind mounts that expose the same device/inode. None means
+    /// STATX_MNT_ID is unavailable here (see [`mount_id_unavailable`]).
     #[cfg(target_os = "linux")]
     pub(crate) fn mount_id(&self) -> io::Result<Option<u64>> {
+        self.statx_mount_id(c"", libc::AT_EMPTY_PATH)
+    }
+
+    /// The mount of one entry, without following a final symlink. A lookup
+    /// crosses into a mount, so a mount point reports the mounted root's id.
+    #[cfg(target_os = "linux")]
+    pub(crate) fn entry_mount_id(&self, name: &OsStr) -> io::Result<Option<u64>> {
+        self.statx_mount_id(
+            &native_name(name)?,
+            libc::AT_SYMLINK_NOFOLLOW | libc::AT_NO_AUTOMOUNT,
+        )
+    }
+
+    /// Whether an entry is the root of a mount other than this directory's.
+    /// `rename(2)` refuses such an entry with EBUSY.
+    #[cfg(target_os = "linux")]
+    pub(crate) fn is_mount_root(&self, name: &OsStr) -> io::Result<bool> {
+        use std::os::unix::fs::MetadataExt;
+        #[allow(clippy::unnecessary_cast)] // st_dev's width differs across libc targets.
+        let entry = MountIdentity {
+            device: self.stat(name)?.st_dev as u64,
+            mount: self.entry_mount_id(name)?,
+        };
+        let parent = MountIdentity {
+            device: self.metadata()?.dev(),
+            mount: self.mount_id()?,
+        };
+        Ok(entry.is_other_mount(parent))
+    }
+
+    #[cfg(target_os = "linux")]
+    fn statx_mount_id(&self, name: &CStr, flags: libc::c_int) -> io::Result<Option<u64>> {
         let mut stat = std::mem::MaybeUninit::<libc::statx>::zeroed();
-        // SAFETY: the owned descriptor and empty terminated path are valid;
-        // AT_EMPTY_PATH addresses the descriptor and stat is writable storage.
+        // SAFETY: the owned descriptor and terminated name are valid for the
+        // call; stat is writable storage for one statx record.
         let result = unsafe {
             libc::statx(
                 self.file.as_raw_fd(),
-                c"".as_ptr(),
-                libc::AT_EMPTY_PATH,
+                name.as_ptr(),
+                flags,
                 libc::STATX_MNT_ID,
                 stat.as_mut_ptr(),
             )
@@ -124,7 +216,7 @@ impl Directory {
             return Ok((stat.stx_mask & libc::STATX_MNT_ID != 0).then_some(stat.stx_mnt_id));
         }
         let error = io::Error::last_os_error();
-        if matches!(error.raw_os_error(), Some(libc::ENOSYS | libc::EINVAL)) {
+        if mount_id_unavailable(&error) {
             Ok(None)
         } else {
             Err(error)
@@ -160,9 +252,46 @@ impl Directory {
 
     /// Exclusive creation only. Existing directories require separate admission.
     pub(crate) fn create_directory(&self, name: &OsStr) -> io::Result<Self> {
+        let directory = self.mkdir(name, 0o700)?;
+        restore_owner_access(&directory.file, 0o700)?;
+        Ok(directory)
+    }
+
+    /// Create ordinary user directories with the requested mode subject to umask.
+    #[cfg(target_os = "linux")]
+    pub(crate) fn create_directory_with_mode(
+        &self,
+        name: &OsStr,
+        mode: libc::mode_t,
+    ) -> io::Result<Self> {
+        self.mkdir(name, mode)
+    }
+
+    /// Exclusive private creation without opening, for callers that must
+    /// distinguish "not created" from "created but not opened". An error
+    /// always means nothing was created.
+    pub(crate) fn make_directory(&self, name: &OsStr) -> io::Result<()> {
         let native = native_name(name)?;
         // SAFETY: the descriptor and terminated name remain valid during mkdirat.
         if unsafe { libc::mkdirat(self.file.as_raw_fd(), native.as_ptr(), 0o700) } != 0 {
+            return Err(io::Error::last_os_error());
+        }
+        // Created: a failure to restore owner access cannot be returned as an
+        // error, which would claim nothing exists. The caller opens and
+        // verifies the directory, and reports it as residue if that fails.
+        if let Err(error) = self
+            .open_existing(name)
+            .and_then(|directory| restore_owner_access(&directory.file, 0o700))
+        {
+            log::debug!("Could not restore owner access to a new private directory: {error}");
+        }
+        Ok(())
+    }
+
+    fn mkdir(&self, name: &OsStr, mode: libc::mode_t) -> io::Result<Self> {
+        let native = native_name(name)?;
+        // SAFETY: the descriptor and terminated name remain valid during mkdirat.
+        if unsafe { libc::mkdirat(self.file.as_raw_fd(), native.as_ptr(), mode) } != 0 {
             return Err(io::Error::last_os_error());
         }
         self.open_existing(name)
@@ -195,6 +324,26 @@ impl Directory {
                 target_directory.file.as_raw_fd(),
                 target.as_ptr(),
                 libc::RENAME_EXCL,
+            )
+        };
+        if result == 0 {
+            Ok(())
+        } else {
+            Err(io::Error::last_os_error())
+        }
+    }
+
+    /// Whether the effective identity may unlink entries here: write and search
+    /// on this retained descriptor, including ACLs and read-only mounts. Advisory
+    /// preflight only; the later unlink still makes the authoritative decision.
+    pub(crate) fn permits_entry_removal(&self) -> io::Result<()> {
+        // SAFETY: the owned descriptor and constant terminated component are valid.
+        let result = unsafe {
+            libc::faccessat(
+                self.file.as_raw_fd(),
+                c".".as_ptr(),
+                libc::W_OK | libc::X_OK,
+                libc::AT_EACCESS,
             )
         };
         if result == 0 {
@@ -376,6 +525,60 @@ impl Drop for Entries {
         // SAFETY: fdopendir transferred this uniquely owned stream to Entries.
         unsafe { libc::closedir(self.stream) };
     }
+}
+
+/// A mount identity observation: its device, and its mount id when the
+/// kernel reports one.
+#[cfg(target_os = "linux")]
+#[derive(Clone, Copy, Debug)]
+struct MountIdentity {
+    device: u64,
+    mount: Option<u64>,
+}
+
+#[cfg(target_os = "linux")]
+impl MountIdentity {
+    /// Mount ids decide when both are known: a bind mount keeps its device.
+    /// Otherwise only a device change reveals a mount, and a bind mount of the
+    /// same filesystem stays undetectable.
+    fn is_other_mount(self, parent: Self) -> bool {
+        match (self.mount, parent.mount) {
+            (Some(entry), Some(parent)) => entry != parent,
+            _ => self.device != parent.device,
+        }
+    }
+}
+
+/// STATX_MNT_ID is unavailable rather than failed: an old kernel rejects
+/// statx (ENOSYS) or its mask (EINVAL), and some seccomp profiles reject
+/// statx itself (EPERM). Callers then fall back to device comparison instead
+/// of refusing every operation that asks.
+#[cfg(target_os = "linux")]
+fn mount_id_unavailable(error: &io::Error) -> bool {
+    matches!(
+        error.raw_os_error(),
+        Some(libc::ENOSYS | libc::EINVAL | libc::EPERM)
+    )
+}
+
+/// Creation modes are filtered by the process umask. Private storage requires
+/// the owner access it requested, so restore only owner bits a umask removed
+/// (for example umask 0277). Filesystems that synthesize modes, such as FAT or
+/// CIFS, already report owner access and are never chmod-ed here.
+#[allow(clippy::unnecessary_cast)] // Darwin mode_t is u16.
+fn restore_owner_access(file: &File, requested: u32) -> io::Result<()> {
+    use std::os::unix::fs::MetadataExt;
+    let owner = requested & 0o700;
+    let mode = file.metadata()?.mode();
+    if mode & owner == owner {
+        return Ok(());
+    }
+    let restored = (mode & 0o7777) | owner;
+    // SAFETY: the descriptor is owned by `file` for the duration of the call.
+    if unsafe { libc::fchmod(file.as_raw_fd(), restored as libc::mode_t) } != 0 {
+        return Err(io::Error::last_os_error());
+    }
+    Ok(())
 }
 
 pub(crate) fn native_name(name: &OsStr) -> io::Result<CString> {

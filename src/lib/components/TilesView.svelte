@@ -13,7 +13,8 @@
   import { useRowGridView } from "$lib/composables/use-row-grid-view.svelte";
   import { windowTabsManager } from "$lib/state/window-tabs.svelte";
   import { autoFillColumns } from "$lib/domain/virtual-layout";
-  import { getFileIconColor, isImageFile, isVideoFile } from "$lib/domain/file-types";
+  import { getFileIconColor, isImageFile, isVideoFile, isVideoMediaFile } from "$lib/domain/file-types";
+  import VideoIndicator from "./VideoIndicator.svelte";
   import { createScrollJankMonitor } from "$lib/domain/scroll-jank-monitor";
   import { logFrontendDiagnostic } from "$lib/api/frontend-log";
 
@@ -39,9 +40,10 @@
     scrollToIndex?: (index: number) => void;
     containsIndex?: (index: number) => boolean;
     fallbackTabStop: boolean;
+    onviewportscroll?: () => void;
   }
 
-  let { explorer, contentWidth, onitemclick, onitemdblclick, scrollToIndex = $bindable(), containsIndex = $bindable(), fallbackTabStop }: Props = $props();
+  let { explorer, contentWidth, onitemclick, onitemdblclick, scrollToIndex = $bindable(), containsIndex = $bindable(), fallbackTabStop, onviewportscroll }: Props = $props();
 
   // Reserved fixed name height: two lines at line-height 1.4 * 13px font.
   const NAME_HEIGHT = 37;
@@ -157,6 +159,7 @@
     itemOverflow="visible"
     viewportPadding="8px"
     getKey={(row) => row.startIndex}
+    {onviewportscroll}
     bind:scrollToIndex={grid.rowScrollToIndex}
   >
     {#snippet children(row, rowIndex)}
@@ -178,6 +181,9 @@
                 </FolderThumbnail>
               {:else}
                 <FileIcon {entry} size="large" />
+              {/if}
+              {#if isVideoMediaFile(entry)}
+                <span class="video-thumbnail-marker"><VideoIndicator /></span>
               {/if}
             </div>
             <span data-drag-name><EntryName {entry} {explorer} variant="tiles" /></span>
@@ -256,20 +262,23 @@
     background: var(--subtle-fill-tertiary);
   }
 
-  .tiles-view :global(.tile-item.hidden-entry) {
+  /* Ghosted entries (hidden, empty folder, cut) dim their icon and quiet
+     their label to --text-secondary. Dimming the whole row pulled the name
+     below WCAG AA contrast in every theme (#785); Windows Explorer ghosts
+     the icon for the same states. */
+  .tiles-view :global(.tile-item:is(.hidden-entry, .empty-folder, .cut)) {
+    color: var(--text-secondary);
+  }
+
+  .tiles-view :global(.tile-item:is(.hidden-entry, .empty-folder) [data-drag-icon]) {
     opacity: 0.55;
   }
 
-  .tiles-view :global(.tile-item.empty-folder) {
-    opacity: 0.55;
-  }
-
-  .tiles-view :global(.tile-item.empty-folder:hover),
-  .tiles-view :global(.tile-item.empty-folder.selected) {
+  .tiles-view :global(.tile-item:is(.hidden-entry, .empty-folder):is(:hover, .selected) [data-drag-icon]) {
     opacity: 0.8;
   }
 
-  .tiles-view :global(.tile-item.cut) {
+  .tiles-view :global(.tile-item.cut [data-drag-icon]) {
     opacity: 0.5;
   }
 
@@ -289,12 +298,21 @@
   }
 
   .tiles-view :global(.tile-icon) {
+    position: relative;
     display: flex;
     align-items: center;
     justify-content: center;
     width: var(--tile-icon-size, 64px);
     height: var(--tile-icon-size, 64px);
     flex-shrink: 0;
+  }
+
+  .video-thumbnail-marker {
+    position: absolute;
+    bottom: 2px;
+    right: 2px;
+    line-height: 0;
+    pointer-events: none;
   }
 
   /* Scale file icons (64px SVGs) to fill the tile at medium/large sizes.

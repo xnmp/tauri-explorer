@@ -110,7 +110,7 @@ impl Fixture {
     }
 
     /// No private artifact root may survive a completed operation's cleanup
-    /// expectations here: the fast path must never create one at all.
+    /// expectations here: the completed move must not retain any.
     fn artifacts(&self, directory: &Path) -> Vec<String> {
         fs::read_dir(directory)
             .unwrap()
@@ -125,7 +125,7 @@ fn history_of(receipt: &FileMutationReceipt) -> ReplacementHistory {
 }
 
 #[test]
-fn a_same_filesystem_move_relocates_the_exact_object_without_private_storage() {
+fn a_same_filesystem_move_relocates_the_exact_object_without_retained_private_storage() {
     let f = Fixture::same_volume();
     fs::write(f.from.join("item.txt"), "payload").unwrap();
     let before = fs::symlink_metadata(f.from.join("item.txt")).unwrap().ino();
@@ -438,4 +438,32 @@ fn restoration_retains_the_published_copy_instead_of_deleting_it() {
         fs::read(f.to.join(&root[0]).join("publication")).unwrap(),
         b"payload"
     );
+}
+
+#[test]
+fn capability_probe_completes_before_any_move_artifact_effect() {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    let f = Fixture::same_volume();
+    fs::write(f.from.join("item.txt"), b"source bytes").unwrap();
+    fs::write(f.to.join("item.txt"), b"original bytes").unwrap();
+    let qualified = Arc::new(AtomicBool::new(false));
+    let observed = qualified.clone();
+    let result = f.prepare("item.txt").execute_with(
+        &mut Uninterrupted,
+        Some(Box::new(move |label| {
+            if label == "probe-removed" {
+                observed.store(true, Ordering::SeqCst);
+            }
+            if label == "root" && !observed.load(Ordering::SeqCst) {
+                return Err(AppError::Other(
+                    "move artifact created before a successful capability probe".into(),
+                ));
+            }
+            Ok(())
+        })),
+    );
+    assert!(result.is_ok(), "{:?}", result.err());
+    assert!(qualified.load(Ordering::SeqCst));
+    assert!(!f.from.join("item.txt").exists());
+    assert_eq!(fs::read(f.to.join("item.txt")).unwrap(), b"source bytes");
 }

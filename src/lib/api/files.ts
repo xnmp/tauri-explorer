@@ -6,9 +6,10 @@
  * dedicated sibling modules and are imported directly by feature consumers.
  */
 
+import { decodeDirectoryListing, type CompactDirectoryListing } from "./directory-wire";
 import { fileBatchError, type FileBatchOutcome } from "$lib/domain/file-batch-outcome";
 import type { DirectoryListing, FileEntry, FileMutationReceipt } from "$lib/domain/file";
-import { E2E_HOOKS_ENABLED } from "$lib/domain/e2e-hooks";
+import { E2E_HOOKS_ENABLED } from "$lib/api/e2e-hooks";
 import {
   invoke,
   isTauri,
@@ -22,24 +23,50 @@ import { logFrontendDiagnostic } from "./frontend-log";
 import { getNativeResourceSession } from "./native-resource-session";
 import { invokeFileMutation } from "./file-mutations";
 
-// Vite must erase this import before extracting dynamic chunks. An imported
-// constant folds too late and leaves an orphan test chunk in release assets.
-const fileMutationProbe = (import.meta.env.DEV || import.meta.env.VITE_E2E_HOOKS === "1")
-  ? import("../../test-support/file-mutation-probe")
-  : null;
+/** Commands whose successful result a native E2E probe may hold before publication. */
+export type HeldFileMutationCommand = "create_directory" | "rename_entry";
 
-interface DirectoryListingE2EProbe {
-  targetPath: string;
-  delays: number[];
-  calls: number;
-  completed: number;
-  starts: number[];
-  finishes: number[];
-  writeOperation?: string;
-  abort: AbortController;
+/**
+ * Observation seam around one native directory listing. `begin` runs before
+ * the backend request; its continuation runs after the reply decodes and
+ * before the listing is returned. Only `src/test-support/` installs one, and
+ * only hook builds consult it (see `api/e2e-hooks.ts`).
+ */
+export interface DirectoryListingInterceptor {
+  begin(path: string): (() => Promise<void>) | null;
 }
 
-let directoryListingE2EProbe: DirectoryListingE2EProbe | null = null;
+/** Observation seam after a successful create/rename, before its publication. */
+export type FileMutationInterceptor = (
+  command: HeldFileMutationCommand,
+  targetPath: string,
+  resultPath: string,
+) => Promise<void>;
+
+let listingInterceptor: DirectoryListingInterceptor | null = null;
+let mutationInterceptor: FileMutationInterceptor | null = null;
+
+/** Install a listing interceptor; the returned function removes it. */
+export function interceptDirectoryListings(interceptor: DirectoryListingInterceptor): () => void {
+  listingInterceptor = interceptor;
+  return () => { if (listingInterceptor === interceptor) listingInterceptor = null; };
+}
+
+/** Install a mutation interceptor; the returned function removes it. */
+export function interceptFileMutations(interceptor: FileMutationInterceptor): () => void {
+  mutationInterceptor = interceptor;
+  return () => { if (mutationInterceptor === interceptor) mutationInterceptor = null; };
+}
+
+async function afterFileMutation(
+  command: HeldFileMutationCommand,
+  targetPath: string,
+  result: ApiResult<FileMutationReceipt>,
+): Promise<void> {
+  if (E2E_HOOKS_ENABLED && result.ok && mutationInterceptor) {
+    await mutationInterceptor(command, targetPath, result.data.path);
+  }
+}
 
 function publishReadyDirectoryWatch(path: string): void {
   if (!E2E_HOOKS_ENABLED || typeof document === "undefined") return;
@@ -47,47 +74,6 @@ function publishReadyDirectoryWatch(path: string): void {
   const readyPaths: string[] = encoded ? JSON.parse(encoded) : [];
   if (!readyPaths.includes(path)) readyPaths.push(path);
   document.documentElement.dataset.e2eReadyDirectoryWatches = JSON.stringify(readyPaths);
-}
-
-function publishDirectoryListingE2EProbe(): void {
-  if (!E2E_HOOKS_ENABLED || typeof document === "undefined") return;
-  if (directoryListingE2EProbe) {
-    document.documentElement.dataset.e2eDirectoryListingProbe = JSON.stringify({
-      calls: directoryListingE2EProbe.calls,
-      completed: directoryListingE2EProbe.completed,
-      starts: directoryListingE2EProbe.starts,
-      finishes: directoryListingE2EProbe.finishes,
-    });
-  } else {
-    delete document.documentElement.dataset.e2eDirectoryListingProbe;
-  }
-}
-
-// WebKitWebDriver evaluates injected scripts in an isolated JavaScript world,
-// so replacing window.__TAURI_INTERNALS__.invoke there cannot instrument the
-// application's Tauri calls. This dev-only DOM event crosses that boundary and
-// configures deterministic timing around the real backend listing invocation.
-if (E2E_HOOKS_ENABLED && typeof window !== "undefined") {
-  window.addEventListener("e2e-directory-listing-probe", ((
-    event: CustomEvent<{ targetPath?: string; delays?: number[]; writeOperation?: string }>,
-  ) => {
-    directoryListingE2EProbe?.abort.abort();
-    delete document.documentElement.dataset.e2eWatcherWriteOperation;
-    const targetPath = event.detail?.targetPath;
-    directoryListingE2EProbe = targetPath
-      ? {
-          targetPath,
-          delays: event.detail.delays ?? [],
-          calls: 0,
-          completed: 0,
-          starts: [],
-          finishes: [],
-          writeOperation: event.detail.writeOperation,
-          abort: new AbortController(),
-        }
-      : null;
-    publishDirectoryListingE2EProbe();
-  }) as EventListener);
 }
 
 /**
@@ -110,8 +96,8 @@ export async function fetchDirectory(
     }
   }
   try {
-    const data = await invoke<DirectoryListing>("list_directory", { path });
-    return { ok: true, data };
+    const data = await invoke<CompactDirectoryListing>("list_directory", { path });
+    return { ok: true, data: decodeDirectoryListing(data) };
   } catch (err) {
     return { ok: false, error: extractError(err) };
   }
@@ -151,7 +137,7 @@ export async function createDirectory(
       parentPath,
       name,
     });
-    if (result.ok && fileMutationProbe) await (await fileMutationProbe).holdFileMutationResult("create_directory", parentPath, result.data.path);
+    await afterFileMutation("create_directory", parentPath, result);
     return result;
   } catch (err) {
     return { ok: false, error: extractError(err) };
@@ -195,7 +181,7 @@ export async function renameEntry(
   if (guard) return guard;
   try {
     const result = await invokeFileMutation<FileMutationReceipt>("rename_entry", { path, newName });
-    if (result.ok && fileMutationProbe) await (await fileMutationProbe).holdFileMutationResult("rename_entry", path, result.data.path);
+    await afterFileMutation("rename_entry", path, result);
     return result;
   } catch (err) {
     return { ok: false, error: extractError(err) };
@@ -222,52 +208,6 @@ export const deleteEntry = (path: string): Promise<ApiResult<void>> => deleteOne
 export const deleteEntryPermanent = (path: string): Promise<ApiResult<void>> => deleteOne(path, true);
 export const deleteMultipleEntries = (paths: string[]): Promise<ApiResult<FileBatchOutcome>> => deleteEntries(paths);
 
-
-/**
- * Copy a file or directory to a destination.
- *
- * @param source - Full path to source file/directory
- * @param destDir - Destination directory path
- * @returns Result with the committed path and optional entry metadata
- */
-export async function copyEntry(
-  source: string,
-  destDir: string,
-  overwrite = false,
-  jobId?: number,
-): Promise<ApiResult<FileMutationReceipt>> {
-  const guard = virtualPathGuard(source, destDir);
-  if (guard) return guard;
-  return invokeFileMutation<FileMutationReceipt>("copy_entry", { source, destDir, overwrite, jobId });
-}
-
-/** Cancel a running copy job. The pending copyEntry call fails with
- *  "Copy cancelled" before durable work starts. Interrupted replacements retain
- *  recovery evidence; accepted publication may finish before cancellation. */
-export async function cancelCopy(jobId: number): Promise<void> {
-  try {
-    await invoke("cancel_copy", { jobId });
-  } catch {
-    // Cancellation is best-effort; the job may already have finished.
-  }
-}
-
-/**
- * Move a file or directory to a destination.
- *
- * @param source - Full path to source file/directory
- * @param destDir - Destination directory path
- * @returns Result with the committed path and optional entry metadata
- */
-export async function moveEntry(
-  source: string,
-  destDir: string,
-  overwrite = false
-): Promise<ApiResult<FileMutationReceipt>> {
-  const guard = virtualPathGuard(source, destDir);
-  if (guard) return guard;
-  return invokeFileMutation<FileMutationReceipt>("move_entry", { source, destDir, overwrite });
-}
 
 /** Resolved target of a Windows `.lnk` shortcut. */
 export interface ShortcutTarget {
@@ -417,37 +357,33 @@ export async function checkPathsExist(paths: string[]): Promise<boolean[]> {
   }
 }
 
-/**
- * Event payload for streaming directory entries.
- */
-export interface DirectoryEntriesEvent {
-  listingId: number;
-  path: string;
-  entries: FileEntry[];
-  done: boolean;
-  totalCount: number;
-}
-
-/**
- * Start streaming directory listing.
- * Returns first batch immediately, remaining entries emitted via 'directory-entries' events.
- * For small directories (<100 files), returns everything in one response.
- *
- * @param path - Absolute path to directory
- * @returns Result with initial DirectoryListing (path may include listing ID for event correlation)
- */
+/** A complete fresh listing, optionally coupled to a native observation lease. */
 export interface ObservedDirectoryListing extends DirectoryListing {
   watch_lease?: DirectoryWatchLease;
 }
 
-export async function startStreamingDirectory(
+/**
+ * A native `start_observed_directory` reply must carry a well-formed lease:
+ * an omitted or malformed one would otherwise decode successfully and be
+ * accepted as the new watch by `directory-listing.ts`, silently releasing the
+ * previous (working) watch and leaving refresh permanently stopped for that
+ * pane, since the garbage lease never matches a later watcher event.
+ */
+function isValidWatchLease(lease: unknown): lease is DirectoryWatchLease {
+  return (
+    !!lease && typeof lease === "object" &&
+    typeof (lease as DirectoryWatchLease).id === "string" &&
+    typeof (lease as DirectoryWatchLease).path === "string"
+  );
+}
+
+export async function loadDirectory(
   path: string,
   observation?: { discard(lease: DirectoryWatchLease): void },
 ): Promise<ApiResult<ObservedDirectoryListing>> {
   const startedAt = Date.now();
-  console.debug("[navigation] start_streaming_directory requested", { path });
-  // Virtual paths never stream: the provider returns the full listing inline
-  // (listing_id null), which the caller treats as a non-streaming result.
+  console.debug("[navigation] list_directory_fresh requested", { path });
+  // Providers and native directories share the same complete-snapshot contract.
   const provider = providerFor(path);
   if (provider) {
     try {
@@ -457,7 +393,7 @@ export async function startStreamingDirectory(
         entries: data.entries.length,
         elapsedMs: Date.now() - startedAt,
       });
-      return { ok: true, data: { ...data, listing_id: null } };
+      return { ok: true, data };
     } catch (err) {
       const error = extractError(err);
       console.warn("[navigation] virtual directory listing failed", {
@@ -474,90 +410,51 @@ export async function startStreamingDirectory(
     }
   }
 
-  const e2eProbe =
-    E2E_HOOKS_ENABLED && directoryListingE2EProbe?.targetPath === path
-      ? directoryListingE2EProbe
-      : null;
-  const e2eCallIndex = e2eProbe?.calls ?? -1;
-  if (e2eProbe) {
-    e2eProbe.calls += 1;
-    e2eProbe.starts.push(Date.now());
-    publishDirectoryListingE2EProbe();
-  }
+  const settleListing = E2E_HOOKS_ENABLED ? listingInterceptor?.begin(path) ?? null : null;
 
-  let acquired: ObservedDirectoryListing | undefined;
+  let acquired: (CompactDirectoryListing & { watch_lease?: DirectoryWatchLease }) | undefined;
   try {
-    const data = observation && isTauri()
-      ? await invoke<ObservedDirectoryListing>("start_observed_directory", {
-          path, sessionId: await getNativeResourceSession(),
+    const native = isTauri();
+    const observed = Boolean(observation && native);
+    const sessionId = observed ? await getNativeResourceSession() : undefined;
+    const payload = observed
+      ? await invoke<CompactDirectoryListing & { watch_lease?: DirectoryWatchLease }>("start_observed_directory", {
+          path, sessionId,
         })
-      : await invoke<ObservedDirectoryListing>("start_streaming_directory", { path });
-    acquired = data;
-    if (data.watch_lease) publishReadyDirectoryWatch(path);
-    if (e2eProbe) {
-      // Keep the literal build flag at this import: the bundler discovers
-      // dynamic chunks before folding imported constants, leaving an orphan
-      // test asset in release builds if this uses E2E_HOOKS_ENABLED alone.
-      if ((import.meta.env.DEV || import.meta.env.VITE_E2E_HOOKS === "1") &&
-          e2eCallIndex === 0 && e2eProbe.writeOperation) {
-        const { holdListingForWatcherWrites } = await import("../../test-support/watcher-listing-probe");
-        await holdListingForWatcherWrites({
-          path,
-          operation: e2eProbe.writeOperation,
-          signal: e2eProbe.abort.signal,
-          write: async (filePath, content) => {
-            const result = await writeTextFile(filePath, content);
-            if (!result.ok) throw new Error(result.error);
-          },
-        });
-      }
-      const delay = e2eProbe.delays[e2eCallIndex] ?? 0;
-      if (delay > 0) {
-        await new Promise((resolve) => setTimeout(resolve, delay));
-      }
-      e2eProbe.completed += 1;
-      e2eProbe.finishes.push(Date.now());
-      publishDirectoryListingE2EProbe();
+      : await invoke<CompactDirectoryListing & { watch_lease?: DirectoryWatchLease }>("list_directory_fresh", { path });
+    acquired = payload;
+    if (observed && !isValidWatchLease(payload.watch_lease)) {
+      throw new Error("Invalid native directory watch lease");
     }
-    console.debug("[navigation] start_streaming_directory completed", {
+    const data: ObservedDirectoryListing = { ...decodeDirectoryListing(payload), watch_lease: payload.watch_lease };
+    if (data.watch_lease) publishReadyDirectoryWatch(data.watch_lease.path);
+    if (settleListing) await settleListing();
+    console.debug("[navigation] list_directory_fresh completed", {
       path,
-      listingId: data.listing_id,
       entries: data.entries.length,
       elapsedMs: Date.now() - startedAt,
     });
     return { ok: true, data };
   } catch (err) {
-    // The optional native probe can fail after acquisition. Keep the same
-    // owner responsible for releasing late leases, including release retries.
-    if (acquired?.watch_lease) observation?.discard(acquired.watch_lease);
-    if (acquired?.listing_id != null) await cancelDirectoryListing(acquired.listing_id);
+    // Decoding and the optional native probe can fail after acquisition. Keep the same
+    // owner responsible for releasing late leases, including release retries. A
+    // malformed lease (the failure this catch is also reached for) has nothing
+    // safely releasable — only a well-formed lease is discarded.
+    if (acquired?.watch_lease && isValidWatchLease(acquired.watch_lease)) {
+      observation?.discard(acquired.watch_lease);
+    }
     const error = extractError(err);
-    console.warn("[navigation] start_streaming_directory failed", {
+    console.warn("[navigation] list_directory_fresh failed", {
       path,
       error,
       elapsedMs: Date.now() - startedAt,
     });
-    logFrontendDiagnostic("navigation start_streaming_directory failed", {
+    logFrontendDiagnostic("navigation list_directory_fresh failed", {
       path,
       error,
       elapsedMs: Date.now() - startedAt,
     });
     return { ok: false, error };
-  }
-}
-
-/**
- * Cancel an active directory listing.
- *
- * @param listingId - ID of the listing to cancel
- * @returns Result indicating success or error message
- */
-export async function cancelDirectoryListing(listingId: number): Promise<ApiResult<void>> {
-  try {
-    await invoke("cancel_directory_listing", { listingId });
-    return { ok: true, data: undefined };
-  } catch (err) {
-    return { ok: false, error: extractError(err) };
   }
 }
 
@@ -574,7 +471,7 @@ export interface DirectoryWatchLease { id: string; path: string }
 export async function watchDirectory(path: string): Promise<DirectoryWatchLease> {
   const sessionId = await getNativeResourceSession();
   const lease = await invoke<DirectoryWatchLease>("watch_directory", { path, sessionId });
-  publishReadyDirectoryWatch(path);
+  publishReadyDirectoryWatch(lease.path);
   return lease;
 }
 

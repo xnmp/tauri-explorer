@@ -1,11 +1,11 @@
 /** Native file-operation results retain their origin across pane navigation. */
 import { browser, expect } from "@wdio/globals";
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import { entryNames, navigateTo } from "./helpers";
+import { createNativeFixtureDirectory } from "../native-qualification";
 
-const scratch = fs.mkdtempSync(path.join(os.tmpdir(), "explorer-mutation-lifetime-"));
+const scratch = createNativeFixtureDirectory("explorer-mutation-lifetime-");
 const originDirectory = path.join(scratch, "origin");
 const destinationDirectory = path.join(scratch, "destination");
 
@@ -153,9 +153,6 @@ describe("local mutation navigation lifetime", () => {
     if (armedToken) await releaseMutation(armedToken);
   });
 
-  after(() => {
-    fs.rmSync(scratch, { recursive: true, force: true });
-  });
 
   it("keeps a completed create with A while B admits a later external write", async () => {
     const token = `create-${crypto.randomUUID()}`;

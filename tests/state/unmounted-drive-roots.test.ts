@@ -4,7 +4,7 @@ vi.mock("$lib/api/drives", () => mocks);
 import { drivesStore } from "$lib/state/drives.svelte";
 it("unmounted volumes remain listed but never count as mounted or remembered roots", async () => {
   mocks.listDrives.mockResolvedValue({ ok: true, data: [
-    { name: "USB Backup", path: "", kind: "removable", device_id: "sdb1" },
+    { name: "USB Backup", path: null, kind: "removable", deviceId: "sdb1" },
     { name: "Other", path: "/media/Other", kind: "removable" },
   ] });
   await drivesStore.refresh();

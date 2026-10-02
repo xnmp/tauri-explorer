@@ -6,7 +6,6 @@ struct Fixture {
     _directory: tempfile::TempDir,
     source: PathBuf,
     target: PathBuf,
-    storage: PathBuf,
     operations: NativeOperations,
     action: Action,
 }
@@ -21,8 +20,7 @@ impl Fixture {
         let target = base.join("target/item.txt");
         fs::write(&source, b"copied bytes").unwrap();
         fs::write(&target, b"original bytes").unwrap();
-        let runtime = Runtime::default();
-        let storage = base.join("app/recovery");
+        let runtime = Runtime::new(base.join("app/recovery"));
         let mut progress = crate::progress::ProgressTracker::new(
             None,
             "copy-progress",
@@ -32,7 +30,7 @@ impl Fixture {
             None,
         );
         let receipt = runtime
-            .replace_copy(storage.clone(), &source, &target, &mut progress)
+            .replace_copy(&source, &target, &mut progress)
             .unwrap();
         let action = Action::Replacement {
             path: receipt.path,
@@ -42,10 +40,7 @@ impl Fixture {
             _directory: directory,
             source,
             target,
-            storage: storage.clone(),
-            operations: NativeOperations {
-                recovery: Some((runtime, storage)),
-            },
+            operations: NativeOperations { runtime },
             action,
         }
     }
@@ -62,7 +57,7 @@ impl Fixture {
     }
 
     fn runtime(&self) -> &Runtime {
-        &self.operations.recovery.as_ref().unwrap().0
+        &self.operations.runtime
     }
 }
 
@@ -81,11 +76,7 @@ fn native_history_cycles_restore_both_versions_and_replace_the_opposite_revision
         fs::remove_file(&fixture.source).unwrap();
         for _ in 0..3 {
             for direction in [Direction::Undo, Direction::Redo] {
-                fixture
-                    .runtime()
-                    .inspect(fixture.storage.clone(), id.clone())
-                    .await
-                    .unwrap();
+                fixture.runtime().inspect(id.clone()).await.unwrap();
                 let summary = histories.summary(1);
                 let entry = match direction {
                     Direction::Undo => summary.undo_id,
@@ -135,11 +126,7 @@ fn explicit_recovery_stales_history_without_repeating_the_effect() {
         let token = fixture.token();
         fixture
             .runtime()
-            .execute_history(
-                fixture.storage.clone(),
-                token,
-                ReplacementDirection::Restore,
-            )
+            .execute_history(token, ReplacementDirection::Restore)
             .await
             .unwrap();
         let result =
@@ -218,19 +205,11 @@ fn history_eviction_and_clear_do_not_retire_recovery_artifacts() {
                         .unwrap();
                 }
             }
-            let inventory = fixture
-                .runtime()
-                .list(fixture.storage.clone())
-                .await
-                .unwrap();
+            let inventory = fixture.runtime().list().await.unwrap();
             assert!(inventory.items.iter().any(|item| item.id == token.id));
             fixture
                 .runtime()
-                .execute_history(
-                    fixture.storage.clone(),
-                    token,
-                    ReplacementDirection::Restore,
-                )
+                .execute_history(token, ReplacementDirection::Restore)
                 .await
                 .unwrap();
             assert_eq!(fs::read(fixture.target).unwrap(), b"original bytes");

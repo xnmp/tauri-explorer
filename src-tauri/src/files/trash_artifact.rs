@@ -59,5 +59,8 @@ pub(crate) struct TrashSuccess {
 #[derive(Clone, Debug)]
 pub(crate) struct RestoreRequest {
     pub path: String,
+    // Only the Linux and Windows restore adapters read the captured artifact;
+    // other platforms reject restore before touching it (#772).
+    #[cfg_attr(not(any(target_os = "linux", target_os = "windows")), allow(dead_code))]
     pub artifact: Arc<TrashArtifact>,
 }

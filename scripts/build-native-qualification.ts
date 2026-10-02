@@ -24,9 +24,12 @@ if (profile !== "debug" && profile !== "release") {
 }
 const buildCommand = ["bun", "run", "tauri", "build", "--no-bundle"];
 if (profile === "debug") buildCommand.push("--debug");
-if (process.platform === "win32") {
-  buildCommand.push("--features", "e2e-webview2-attach");
-}
+// The Rust hook gate follows the frontend one (#884): a hook build enables both.
+const features = [
+  ...(e2eHooks ? ["e2e-hooks"] : []),
+  ...(process.platform === "win32" ? ["e2e-webview2-attach"] : []),
+];
+if (features.length > 0) buildCommand.push("--features", features.join(","));
 const sourceCommit = Bun.spawnSync(["git", "rev-parse", "HEAD"])
   .stdout.toString()
   .trim();

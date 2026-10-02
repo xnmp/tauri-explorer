@@ -50,7 +50,7 @@ describe("plugin registry churn", () => {
       activate(ctx) {
         calls.beta++;
         ctx.registerFsProvider("churn-beta", {
-          list: (path) => ({ path, entries: [], listing_id: null }),
+          list: (path) => ({ path, entries: [] }),
         });
         ctx.registerDialog({ id: "churn-beta.dialog", component: dialogComponent });
       },

@@ -2,6 +2,7 @@ use super::*;
 use crate::files::{
     file_identity::{of_file, version_from_metadata},
     recovery::{
+        checkpoint::Side,
         model::{LockIdentity, NativePath},
         replacement_artifact::Anchor,
         resources::{capture_requests, Access, Request, Scope},
@@ -77,7 +78,7 @@ impl Fixture {
         ])
         .unwrap();
         let intent = DurableIntent {
-            version: 1,
+            version: crate::files::recovery::model::RECORD_VERSION,
             id: "a".repeat(64),
             lock: LockIdentity {
                 name: format!("{}.lock", "a".repeat(64)),
@@ -108,7 +109,10 @@ impl Fixture {
     }
 
     fn staged(&self) -> (Root, StagedPayload) {
-        let root = Anchor::open(&self.intent).unwrap().create().unwrap();
+        let root = Anchor::open(&self.intent, Side::Target)
+            .unwrap()
+            .create()
+            .unwrap();
         root.publish_manifest(&self.intent).unwrap();
         let staged = root.copy_payload(&self.intent, &mut NoProgress).unwrap();
         (root, staged)
@@ -211,7 +215,7 @@ fn finalized_directory_publication_can_complete_after_reopening_its_root() {
         let identity = root.identity();
         drop(root);
 
-        let reopened = Anchor::open(&fixture.intent)
+        let reopened = Anchor::open(&fixture.intent, Side::Target)
             .unwrap()
             .open_existing(identity)
             .unwrap();
@@ -268,7 +272,7 @@ fn interrupted_directory_reopening_preserves_a_recognizable_publication() {
         .is_err());
     drop(root);
 
-    let reopened = Anchor::open(&fixture.intent)
+    let reopened = Anchor::open(&fixture.intent, Side::Target)
         .unwrap()
         .open_existing(identity)
         .unwrap();

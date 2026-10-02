@@ -1,10 +1,11 @@
 <!--
   Keyboard shortcut cheatsheet (#186). Renders the LIVE effective bindings
   (user overrides included) grouped by category. Opened with Ctrl+/ or the
-  "Keyboard Shortcuts" palette command; rebinding lives in Settings.
+  "Keyboard Shortcut Reference" palette command; rebinding has its own dialog.
 -->
 <script lang="ts">
   import Modal from "./Modal.svelte";
+  import { dialogStore } from "$lib/state/dialogs.svelte";
   import {
     getAllCommands,
     getCommandShortcut,
@@ -60,7 +61,7 @@
   <div class="modal-card cheatsheet" data-testid="shortcut-cheatsheet">
     <header>
       <h2>Keyboard Shortcuts</h2>
-      <span class="cheatsheet-hint">Rebind any of these in Settings → Keybindings</span>
+      <button class="cheatsheet-hint" onclick={() => dialogStore.openKeybindings()}>Edit Keyboard Shortcuts</button>
     </header>
     <div class="cheatsheet-columns">
       {#each groups as group (group.label)}

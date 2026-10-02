@@ -1,7 +1,7 @@
 //! Durable record retirement: the commit point of ADR 0023's state machine.
 //! Artifact removal has already completed and been journaled before any of
 //! this runs. Nothing here touches a user volume.
-use super::super::model::{OperationState, Phase};
+use super::super::checkpoint::State;
 use super::*;
 
 impl DurableOperation {
@@ -12,6 +12,32 @@ impl DurableOperation {
     /// catalog record without a journal row stays discoverable and is retired
     /// by `retire_orphan_catalog` once its artifact root is verifiably absent.
     pub(in crate::files::recovery) fn retire_record(self) -> Result<(), AppError> {
+        self.retire_where(
+            State::retirable_record,
+            "Recovery record is not a completed retirement; evidence is preserved",
+        )
+    }
+
+    /// Forget a record whose committed discard stopped before finishing (a
+    /// persistent native error, or a volume that changed identity). Nothing on
+    /// disk is touched: the record and its locks go, and any private folders
+    /// it still names stay where they are, owned by the user from now on.
+    ///
+    /// The same journal-then-catalog order applies. A process killed between
+    /// the two leaves catalog-only evidence that is retired automatically once
+    /// those folders are removed.
+    pub(in crate::files::recovery) fn forget_retirement(self) -> Result<(), AppError> {
+        self.retire_where(
+            State::forgettable,
+            "Only a record whose discard stopped before finishing can be forgotten",
+        )
+    }
+
+    fn retire_where(
+        self,
+        allowed: fn(&State) -> bool,
+        refusal: &'static str,
+    ) -> Result<(), AppError> {
         let Self {
             owner,
             coordinator,
@@ -34,10 +60,8 @@ impl DurableOperation {
                 ));
             }
             let checkpoint = decode_checkpoint(row, &intents)?;
-            if !completed_retirement(&checkpoint.state) {
-                return Err(invalid(
-                    "Recovery record is not a completed retirement; evidence is preserved",
-                ));
+            if !allowed(&checkpoint.state) {
+                return Err(invalid(refusal));
             }
             inner.journal.remove(&record.intent.id, generation)?;
             inner.catalog.retire(&evidence)?;
@@ -101,15 +125,6 @@ impl Coordinator {
             }
             Ok(())
         })
-    }
-}
-
-fn completed_retirement(state: &OperationState) -> bool {
-    match state {
-        OperationState::Replacement(state) => {
-            state.phase == Phase::Discarded && state.error.is_none()
-        }
-        _ => false,
     }
 }
 

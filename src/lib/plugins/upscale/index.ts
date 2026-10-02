@@ -95,7 +95,7 @@ export const upscalePlugin: Plugin = {
       when: (entries) => selectedImage(entries) !== null,
       handler: (entries) => {
         const image = selectedImage(entries);
-        if (image) void openUpscaler(image.path);
+        if (image) return openUpscaler(image.path);
       },
     });
 
@@ -109,7 +109,7 @@ export const upscalePlugin: Plugin = {
       category: "plugins",
       handler: () => {
         const image = selectedImage(ctx.workspace.getSelection());
-        if (image) void openUpscaler(image.path);
+        if (image) return openUpscaler(image.path);
         else ctx.toast.show("Select a JPG, PNG, or WebP image first", "info");
       },
     });

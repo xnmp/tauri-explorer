@@ -15,13 +15,15 @@
  */
 import { browser, expect } from "@wdio/globals";
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import { navigateTo, entryNames } from "./helpers";
+import { createNativeFixtureDirectory } from "../native-qualification";
 
 // Under $HOME (not /tmp) so trashing works on tmpfs-mounted /tmp setups —
 // Freedesktop trash needs a Trash dir on the same mount or the home fallback.
-const scratchDir = fs.mkdtempSync(path.join(os.homedir(), ".tauri-explorer-e2e-"));
+// The shared native cleanup root is itself rooted under the home directory
+// (see wdio.conf.ts), so this fixture can go through the normal helper.
+const scratchDir = createNativeFixtureDirectory("tauri-explorer-e2e-");
 
 async function fileOp(detail: { op: string; name?: string; path?: string }): Promise<void> {
   await browser.execute((d) => {
@@ -30,9 +32,6 @@ async function fileOp(detail: { op: string; name?: string; path?: string }): Pro
 }
 
 describe("file operations against the real backend", () => {
-  after(() => {
-    fs.rmSync(scratchDir, { recursive: true, force: true });
-  });
 
   it("creates a folder on the real filesystem", async () => {
     await navigateTo(scratchDir);

@@ -5,6 +5,7 @@
  * the sidebar renders the files view directly.
  */
 import { test, expect } from "./fixtures";
+import { applySettingsAndReload } from "./helpers";
 
 test.describe("Sidebar views", () => {
   test.beforeEach(async ({ page }) => {
@@ -21,14 +22,7 @@ test.describe("Sidebar views", () => {
     await expect(page.locator(".scm-panel")).toHaveCount(0);
 
     // Enable SCM panel via settings
-    await page.evaluate(() => {
-      const raw = localStorage.getItem("explorer-settings");
-      const s = raw ? JSON.parse(raw) : {};
-      s.showGitStatus = true;
-      s.showScmPanel = true;
-      localStorage.setItem("explorer-settings", JSON.stringify(s));
-    });
-    await page.reload();
+    await applySettingsAndReload(page, { showGitStatus: true, showScmPanel: true });
     await page.waitForLoadState("domcontentloaded");
 
     await expect(page.locator(".scm-panel")).toBeVisible();

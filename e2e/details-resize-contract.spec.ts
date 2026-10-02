@@ -1,7 +1,8 @@
 import { test, expect, type Page } from "./fixtures";
+import { seedSettings } from "./helpers";
 
 async function openDetails(page: Page, zoom = 100) {
-  await page.addInitScript(value => localStorage.setItem("explorer-settings", JSON.stringify({ zoomLevel: value })), zoom);
+  await seedSettings(page, { zoomLevel: zoom }, { replace: true });
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.goto("/?path=/home/user/Documents&viewMode=details");
   await expect(page.locator(".details-view .entry-item").first()).toBeVisible();

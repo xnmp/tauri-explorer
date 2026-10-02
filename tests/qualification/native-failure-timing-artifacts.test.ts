@@ -60,7 +60,7 @@ function replaceProductionCommand(
   const contractCommand =
     /CARGO_LOG=cargo::core::compiler::fingerprint=info \\\n+\s*bun run check:e2e:tauri/;
   const buildCommand =
-    /CARGO_LOG=cargo::core::compiler::fingerprint=info \\\n+\s*bun run tauri build --debug --no-bundle \$\{\{ runner\.os == 'Windows' && '--features e2e-webview2-attach' \|\| '' \}\} \\\n+\s*/;
+    /CARGO_LOG=cargo::core::compiler::fingerprint=info \\\n+\s*bun run tauri build --debug --no-bundle --features e2e-hooks\$\{\{ runner\.os == 'Windows' && ',e2e-webview2-attach' \|\| '' \}\} \\\n+\s*/;
   const command =
     stepName === "Run native contracts" ? contractCommand : buildCommand;
   const rendered = step.replace(command, replacement);

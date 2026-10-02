@@ -4,10 +4,8 @@ use std::{
     fs,
     future::Future,
     path::Path,
-    pin::Pin,
     rc::Rc,
     sync::mpsc::{self, SyncSender},
-    task::{Context, Poll, Waker},
     thread::{self, ThreadId},
     time::Duration,
 };
@@ -75,6 +73,7 @@ fn assert_sta() {
 
 #[test]
 fn setup_failure_returns_an_ordinary_error_before_any_filesystem_effect() {
+    let _serial = super::serialize_dedicated_workers();
     let dir = tempfile::tempdir().unwrap();
     let file = dir.path().join("untouched.txt");
     fs::write(&file, b"exact original bytes").unwrap();
@@ -97,6 +96,7 @@ fn setup_failure_returns_an_ordinary_error_before_any_filesystem_effect() {
 
 #[test]
 fn setup_panic_is_an_ordinary_pre_effect_error() {
+    let _serial = super::serialize_dedicated_workers();
     let dir = tempfile::tempdir().unwrap();
     let file = dir.path().join("untouched.txt");
     fs::write(&file, b"exact original bytes").unwrap();
@@ -142,6 +142,7 @@ impl Drop for LocalContext {
 
 #[test]
 fn non_send_context_is_created_used_and_dropped_on_one_dedicated_thread() {
+    let _serial = super::serialize_dedicated_workers();
     let dir = tempfile::tempdir().unwrap();
     let first = dir.path().join("first.txt");
     let second = dir.path().join("second.txt");
@@ -196,6 +197,7 @@ fn non_send_context_is_created_used_and_dropped_on_one_dedicated_thread() {
 
 #[test]
 fn operation_panic_preserves_prior_success_and_marks_only_active_effect_uncertain() {
+    let _serial = super::serialize_dedicated_workers();
     let dir = tempfile::tempdir().unwrap();
     let first = dir.path().join("first.txt");
     let active = dir.path().join("active.txt");
@@ -231,10 +233,6 @@ fn operation_panic_preserves_prior_success_and_marks_only_active_effect_uncertai
     assert_eq!(fs::read(&unstarted).unwrap(), b"unstarted exact bytes");
 }
 
-fn poll_once<F: Future>(future: Pin<&mut F>) -> Poll<F::Output> {
-    future.poll(&mut Context::from_waker(Waker::noop()))
-}
-
 struct HeldCleanup {
     started: SyncSender<()>,
     release: mpsc::Receiver<()>,
@@ -250,14 +248,18 @@ impl HeldCleanup {
 
 impl Drop for HeldCleanup {
     fn drop(&mut self) {
-        self.started.send(()).unwrap();
-        self.release.recv_timeout(DEADLINE).unwrap();
-        fs::write(&self.path, b"cleanup finished").unwrap();
+        // Never panic in teardown (#743); a missed handshake leaves the
+        // marker unwritten and the owning test reports it.
+        let _ = self.started.send(());
+        if self.release.recv_timeout(DEADLINE).is_ok() {
+            let _ = fs::write(&self.path, b"cleanup finished");
+        }
     }
 }
 
 #[test]
 fn terminal_result_waits_for_operation_capture_cleanup() {
+    let _serial = super::serialize_dedicated_workers();
     let dir = tempfile::tempdir().unwrap();
     let file = dir.path().join("entry");
     let cleanup = dir.path().join("cleanup");
@@ -297,8 +299,120 @@ fn terminal_result_waits_for_operation_capture_cleanup() {
     assert_eq!(fs::read(cleanup).unwrap(), b"cleanup finished");
 }
 
+/// Unblocks and joins every thread a test started, also while unwinding, so a
+/// failed assertion cannot leave workers holding permits after the dedicated
+/// serialization guard is released.
+struct ScopedThreads {
+    unblock: Vec<SyncSender<()>>,
+    handles: Vec<thread::JoinHandle<()>>,
+}
+
+impl ScopedThreads {
+    fn finish(mut self) {
+        self.unblock.clear();
+        for handle in self.handles.drain(..) {
+            handle
+                .join()
+                .expect("test thread completed without panicking");
+        }
+    }
+}
+
+impl Drop for ScopedThreads {
+    fn drop(&mut self) {
+        self.unblock.clear();
+        for handle in self.handles.drain(..) {
+            let _ = handle.join();
+        }
+    }
+}
+
+#[test]
+fn a_caller_queued_behind_every_permit_starts_once_one_is_released() {
+    let _serial = super::serialize_dedicated_workers();
+    let dir = tempfile::tempdir().unwrap();
+    let mut threads = ScopedThreads {
+        unblock: Vec::new(),
+        handles: Vec::new(),
+    };
+    // Hold all four dedicated permits until each holder's sender is dropped.
+    let (held_tx, held_rx) = mpsc::sync_channel(4);
+    for index in 0..4 {
+        let path = dir.path().join(format!("held-{index}"));
+        fs::write(&path, b"held").unwrap();
+        let (release_tx, release_rx) = mpsc::sync_channel::<()>(1);
+        threads.unblock.push(release_tx);
+        let held_tx = held_tx.clone();
+        threads.handles.push(thread::spawn(move || {
+            run(run_dedicated(
+                plan(&[&path]),
+                || Ok(()),
+                move |_, _| {
+                    held_tx.send(()).unwrap();
+                    let _ = release_rx.recv();
+                    Ok(())
+                },
+            ))
+            .unwrap();
+        }));
+    }
+    for _ in 0..4 {
+        held_rx
+            .recv_timeout(DEADLINE)
+            .expect("each holder acquired a permit");
+    }
+
+    let queued = dir.path().join("queued");
+    fs::write(&queued, b"queued").unwrap();
+    let queued_for_caller = queued.clone();
+    let (started_tx, started_rx) = mpsc::sync_channel(1);
+    let (polled_tx, polled_rx) = mpsc::sync_channel(1);
+    let (completed_tx, completed_rx) = mpsc::sync_channel(1);
+    let (stop_tx, stop_rx) = mpsc::sync_channel::<()>(1);
+    threads.unblock.push(stop_tx);
+    threads.handles.push(thread::spawn(move || {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("build polling runtime");
+        let _runtime = runtime.enter();
+        let mut future = Box::pin(run_dedicated(
+            plan(&[&queued_for_caller]),
+            || Ok(()),
+            move |_, _| {
+                started_tx.send(()).unwrap();
+                Ok(())
+            },
+        ));
+        let completed = super::drive_until_stopped(future.as_mut(), &stop_rx, |pending| {
+            let _ = polled_tx.send(pending);
+        });
+        let _ = completed_tx.send(completed.map(|outcome| outcome.unwrap().succeeded));
+    }));
+
+    assert!(
+        polled_rx.recv_timeout(DEADLINE).unwrap(),
+        "with every permit held the caller must queue"
+    );
+    assert!(
+        started_rx.recv_timeout(Duration::from_millis(200)).is_err(),
+        "no permit was free, so the queued worker must not have started"
+    );
+    drop(threads.unblock.remove(0));
+    started_rx
+        .recv_timeout(DEADLINE)
+        .expect("releasing a permit must wake and start the queued caller");
+    assert_eq!(
+        completed_rx.recv_timeout(DEADLINE).unwrap(),
+        Some(vec![path_string(&queued)]),
+        "the woken caller completed its batch"
+    );
+    threads.finish();
+}
+
 #[test]
 fn dropping_a_polled_future_after_acceptance_does_not_cancel_the_worker() {
+    let _serial = super::serialize_dedicated_workers();
     let dir = tempfile::tempdir().unwrap();
     let file = dir.path().join("committed-after-caller-drop.txt");
     fs::write(&file, b"must be removed").unwrap();
@@ -326,15 +440,20 @@ fn dropping_a_polled_future_after_acceptance_does_not_cancel_the_worker() {
                 Ok(())
             },
         ));
-        polled_tx.send(poll_once(future.as_mut())).unwrap();
-        drop_rx.recv().unwrap();
+        let early = super::drive_until_stopped(future.as_mut(), &drop_rx, |pending| {
+            let _ = polled_tx.send(pending);
+        });
+        assert!(
+            early.is_none(),
+            "the caller completed while its worker was held"
+        );
         drop(future);
     });
 
-    let poll = polled_rx
+    let pending = polled_rx
         .recv_timeout(DEADLINE)
         .expect("the async caller must not block while the worker is held");
-    assert!(matches!(poll, Poll::Pending));
+    assert!(pending);
     accepted_rx
         .recv_timeout(DEADLINE)
         .expect("worker accepted its active item");
@@ -351,6 +470,7 @@ fn dropping_a_polled_future_after_acceptance_does_not_cancel_the_worker() {
 #[cfg(target_os = "windows")]
 #[test]
 fn dedicated_sta_does_not_change_a_fresh_mta_caller_apartment() {
+    let _serial = super::serialize_dedicated_workers();
     use crate::files::windows_restore::StaApartment;
 
     thread::Builder::new()
@@ -390,6 +510,7 @@ fn dedicated_sta_does_not_change_a_fresh_mta_caller_apartment() {
 #[cfg(target_os = "windows")]
 #[test]
 fn public_trash_and_restore_batches_preserve_an_mta_caller_and_exact_file_bytes() {
+    let _serial = super::serialize_dedicated_workers();
     use crate::files::{
         trash::{move_multiple_to_trash, restore_entries},
         trash_artifact::RestoreRequest,

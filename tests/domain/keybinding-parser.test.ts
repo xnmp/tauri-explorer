@@ -410,6 +410,10 @@ describe("isChordShortcut", () => {
 });
 
 describe("parseChord", () => {
+  it("rejects three-step or missing-step definitions", () => {
+    expect(parseChord("Alt+M M T")).toBeNull();
+    expect(parseChord("Alt+M ")).toBeNull();
+  });
   it("parses Alt+M T chord", () => {
     const chord = parseChord("Alt+M T");
     expect(chord).not.toBeNull();
@@ -659,4 +663,30 @@ describe("matchesShortcut with metaHeld overlay (#244, WebKitGTK Super)", () => 
     const event = createKeyboardEvent({ key: "p", altKey: true, metaKey: true });
     expect(matchesShortcut(event as unknown as KeyboardEvent, cmdAltP)).toBe(true);
   });
+});
+
+
+describe("one canonical identity per key event", () => {
+  it.each([
+    [{ key: "q", code: "KeyA", ctrlKey: true }, "Ctrl+Q", "Ctrl+A", "Ctrl+Q"],
+    [{ key: "£", code: "Digit3", ctrlKey: true, shiftKey: true }, "Ctrl+Shift+3", "Ctrl+Shift+£", "Ctrl+Shift+3"],
+  ])("preserves recorded key identity without a second alternate match", (event, intended, other, recorded) => {
+    const input = { metaKey: false, shiftKey: false, altKey: false, ...event } as KeyboardEvent;
+    expect(matchesShortcutString(input, intended)).toBe(true);
+    expect(matchesShortcutString(input, other)).toBe(false);
+    expect(eventToShortcutString(input)).toBe(recorded);
+  });
+  it.each(["Super", "OS", "Meta", "Control", "Shift", "Alt"])("does not record modifier-only %s", (key) => {
+    expect(eventToShortcutString({ key } as KeyboardEvent)).toBeNull();
+  });
+  it("records tracked WebKitGTK Super even without metaKey", () => {
+    expect(eventToShortcutString({ key: "c", code: "KeyC", metaKey: false } as KeyboardEvent, { metaHeld: true })).toBe("Ctrl+C");
+  });
+});
+
+it("records both Ctrl and Meta distinctly so exact modifier matching can execute the binding", () => {
+  const event = { key: "c", code: "KeyC", ctrlKey: true, metaKey: true, shiftKey: false, altKey: false } as KeyboardEvent;
+  const recorded = eventToShortcutString(event)!;
+  expect(recorded).toBe("Ctrl+Meta+C");
+  expect(matchesShortcutString(event, recorded)).toBe(true);
 });

@@ -1,15 +1,19 @@
 /** Native directory-listing failures must reach the visible Explorer state. */
 import { browser, $, expect } from "@wdio/globals";
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import { domText, entryNames, navigateTo } from "./helpers";
+import { createNativeFixtureDirectory } from "../native-qualification";
 
-const scratch = fs.mkdtempSync(path.join(os.tmpdir(), "explorer-listing-error-"));
+const scratch = createNativeFixtureDirectory("explorer-listing-error-");
 const restrictedDirectory = path.join(scratch, "permission-denied");
 const marker = "permission-restored-marker.txt";
 const restrictedMode = 0o000;
 const restoredMode = 0o700;
+// Linux-only: simulates listing failure with POSIX permission bits
+// (chmod 0o000). Windows uses ACLs; `fs.chmodSync` there only toggles the
+// read-only attribute and cannot deny directory listing, so it has no
+// equivalent way to trigger this failure (#800).
 const linuxDescribe = process.platform === "linux" ? describe : describe.skip;
 
 async function navigateAndWaitForAcknowledgement(target: string): Promise<void> {
@@ -63,12 +67,13 @@ linuxDescribe("directory listing errors against the real backend", () => {
   });
 
   after(() => {
+    // Restore permissions so a later removal of the shared cleanup root can
+    // traverse this fixture; the fixture directory itself outlives the app.
     try {
       fs.chmodSync(restrictedDirectory, restoredMode);
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
     }
-    fs.rmSync(scratch, { recursive: true, force: true });
   });
 
   it("identifies a missing navigation target while retaining the prior location", async () => {

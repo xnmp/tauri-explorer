@@ -5,17 +5,9 @@ import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { navigateTo, domTexts } from "./helpers";
+import { createNativeFixtureDirectory } from "../native-qualification";
 
-const cleanupRoot = process.env.TAURI_NATIVE_CLEANUP_STATE_DIRECTORY;
-if (
-  !cleanupRoot ||
-  !path.isAbsolute(cleanupRoot) ||
-  !fs.existsSync(cleanupRoot) ||
-  !fs.statSync(cleanupRoot).isDirectory()
-) {
-  throw new Error("native cleanup state directory is unavailable or invalid");
-}
-const scratch = fs.mkdtempSync(path.join(cleanupRoot, "pane-lifetime-"));
+const scratch = createNativeFixtureDirectory("pane-lifetime-");
 const first = path.join(scratch, "first");
 const second = path.join(scratch, "second");
 

@@ -1,4 +1,5 @@
 import { test, expect } from "./fixtures";
+import type { MockControl } from "../src/lib/api/mock-control";
 
 for (const path of ["/home/user", "/home/user/Archive"]) {
   test(`startup reports a usable explorer for ${path}`, async ({ page }) => {
@@ -27,11 +28,15 @@ test("optional window priming follows foreground readiness when configuration is
   await page.addInitScript(() => {
     const timeline: Array<{ command: string; time: number }> = [];
     const host = window as Window & {
-      __mockInvokeCounts?: Record<string, number>;
+      __mockControl?: MockControl;
       __sessionTimeline?: typeof timeline;
     };
     host.__sessionTimeline = timeline;
-    host.__mockInvokeCounts = new Proxy<Record<string, number>>({}, {
+    // addInitScript runs before mock-invoke.ts creates window.__mockControl,
+    // so this writer must create it (`??=`) rather than assume it exists.
+    // mock-invoke.ts only initializes `invokeCounts` when it's still nullish,
+    // so this Proxy (not a plain object) is what every invocation counts against.
+    (host.__mockControl ??= {}).invokeCounts = new Proxy<Record<string, number>>({}, {
       set(target, command, value) {
         if (command === "warm_pool_begin_spawn" || command === "log_startup_timing") {
           timeline.push({ command, time: performance.now() });

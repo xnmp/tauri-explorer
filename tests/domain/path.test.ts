@@ -13,8 +13,22 @@ import {
   toBackslashes,
   toNativeSeparators,
   directoryKey,
+  nativeDirectoryKey,
   splitFlattenedUriList,
 } from "../../src/lib/domain/path";
+
+describe("nativeDirectoryKey", () => {
+  it("keeps distinct POSIX native names separate while ignoring trailing separators", () => {
+    expect(nativeDirectoryKey("/a\\b/")).toBe("/a\\b");
+    expect(nativeDirectoryKey("/a\\b")).not.toBe(nativeDirectoryKey("/a/b"));
+    expect(nativeDirectoryKey("/")).toBe("/");
+  });
+  it("shares the existing Windows and UNC identity rules", () => {
+    expect(nativeDirectoryKey("C:\\Users\\Owner\\Archive")).toBe(nativeDirectoryKey("c:/users/owner/archive/"));
+    expect(nativeDirectoryKey("\\\\HOST\\Share\\Folder")).toBe(nativeDirectoryKey("//host/share/folder/"));
+    expect(nativeDirectoryKey("//wsl.localhost/Ubuntu/Case")).not.toBe(nativeDirectoryKey("//wsl.localhost/Ubuntu/case"));
+  });
+});
 
 describe("normalizePathInput", () => {
   it("appends a slash to a bare drive letter and uppercases it", () => {

@@ -56,7 +56,7 @@ Cross-cutting truth: most features flow **component → store (`src/lib/state`) 
 2. `src/lib/composables/use-drop-target.svelte.ts` / `use-native-drop-target.svelte.ts` / `use-native-drop-handler.ts` — drop zones & hit-testing (native vs synthetic).
 3. `src/lib/composables/use-external-drag.svelte.ts` / `use-external-drop.svelte.ts` — OS-level file drag in/out; `use-sidebar-drag.svelte.ts` for sidebar reorder.
 4. `src/lib/state/drag.svelte.ts` — shared drag state store (payload lives here, NOT in `dataTransfer`).
-5. `src/lib/state/drop-operations.ts` / `file-transfer.ts` — move/copy resolution on drop.
+5. `src/lib/state/drop-operations.ts` / `move-operations.ts` / `copy-operations.ts` — move/copy resolution on drop.
 - Gotchas: Svelte 5 event delegation breaks HTML5 `drop`; use native `addEventListener` + shared store (see `docs/lessons_learnt.md`). Playwright synthetic DnD does NOT validate real browser behavior.
 
 ## 8. Change refresh / file-watcher behavior

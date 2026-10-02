@@ -116,13 +116,17 @@ test.describe("Overlay positioning under zoom", () => {
 
     const row = page.locator(".commit-row").nth(2);
     const box = (await row.boundingBox())!;
-    const clickX = box.x + box.width / 2;
+    // The graph menu is wide. At 130% zoom the row midpoint can be within
+    // its width of the right edge, where the app correctly clamps the menu.
+    // Click the left quarter so this checks cursor conversion, not clamping.
+    const clickX = box.x + box.width / 4;
     const clickY = box.y + box.height / 2;
     await page.mouse.click(clickX, clickY, { button: "right" });
 
     const menu = page.locator('[data-testid="git-graph-menu"]');
     await expect(menu).toBeVisible();
     const rect = (await viewportRect(page, '[data-testid="git-graph-menu"]'))!;
+    expect(clickX + rect.w, "test click must leave room for the unclamped menu").toBeLessThan(page.viewportSize()!.width - 8);
     expect(Math.abs(rect.x - clickX)).toBeLessThan(TOLERANCE);
     expect(Math.abs(rect.y - clickY)).toBeLessThan(TOLERANCE);
   });
@@ -139,9 +143,23 @@ test.describe("Overlay positioning under zoom", () => {
     const zoom = await zoomIn(page, 3);
     expect(zoom).toBeGreaterThan(1);
 
+    const content = page.locator(".file-list .content").first();
+    // Root zoom can update before Chromium recomputes viewport-sized layout.
+    // Reading that transient width chooses a cursor outside the visible pane;
+    // the app then correctly clamps the band instead of reaching that cursor.
+    await expect.poll(() => content.evaluate((element) => {
+      const rect = element.getBoundingClientRect();
+      return rect.width > 80 && rect.height > 52 &&
+        rect.left >= 0 && rect.top >= 0 &&
+        rect.right <= window.innerWidth + 1 &&
+        rect.bottom <= window.innerHeight + 1;
+    }), { message: "zoomed content must fit the current viewport before measuring the drag" }).toBe(true);
+
     const files = page.locator(".entry-item");
     const count = await files.count();
     expect(count).toBeGreaterThanOrEqual(2);
+    const expectedNames = (await files.locator("[data-drag-name]").allTextContents()).sort();
+    expect(expectedNames).toHaveLength(count);
 
     // Start on background below the visually lowest entry (#130).
     let maxBottom = 0;
@@ -149,7 +167,6 @@ test.describe("Overlay positioning under zoom", () => {
       const b = await item.boundingBox();
       if (b) maxBottom = Math.max(maxBottom, b.y + b.height);
     }
-    const content = page.locator(".file-list .content").first();
     const box = (await content.boundingBox())!;
     const startX = box.x + 40;
     const startY = Math.min(maxBottom + 10, box.y + box.height - 5);
@@ -157,6 +174,17 @@ test.describe("Overlay positioning under zoom", () => {
     // Stay below the header clamp (32 CSS px × zoom): the marquee's top edge
     // is clamped there by design, which would read as false drift.
     const endY = box.y + Math.ceil(32 * zoom) + 10;
+    const viewport = page.viewportSize()!;
+    for (const [x, y] of [[startX, startY], [endX, endY]]) {
+      expect(x, "drag endpoint must stay inside the visible pane").toBeGreaterThan(box.x);
+      expect(x).toBeLessThan(box.x + box.width);
+      expect(y).toBeGreaterThan(box.y);
+      expect(y).toBeLessThan(box.y + box.height);
+      expect(x, "drag endpoint must stay inside the viewport").toBeGreaterThan(0);
+      expect(x).toBeLessThan(viewport.width);
+      expect(y).toBeGreaterThan(0);
+      expect(y).toBeLessThan(viewport.height);
+    }
 
     await page.mouse.move(startX, startY);
     await page.mouse.down();
@@ -178,6 +206,9 @@ test.describe("Overlay positioning under zoom", () => {
 
     // Outcome: the sweep covered every entry, so every entry is selected.
     expect(await page.locator(".entry-item.selected").count()).toBe(count);
+    await expect.poll(async () =>
+      (await page.locator(".entry-item.selected [data-drag-name]").allTextContents()).sort(),
+    ).toEqual(expectedNames);
   });
 
   test("context menu is exact at 100% zoom (control case)", async ({ page }) => {

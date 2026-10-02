@@ -45,6 +45,12 @@ fn linked_or_retired_evidence_cannot_pass_private_storage_validation() {
 }
 
 #[test]
+#[cfg_attr(
+    target_os = "macos",
+    ignore = "macOS fstat does not report a removed directory's link count as zero; \
+              recovery storage is Linux-only in production and needs another \
+              retirement check before it is enabled on macOS (#772)"
+)]
 fn retired_directory_is_not_valid_private_storage() {
     let (temporary, directory) = private_directory();
     validate_directory(&directory).unwrap();

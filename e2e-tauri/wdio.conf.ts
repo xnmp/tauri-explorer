@@ -1,11 +1,12 @@
 import { spawn, type ChildProcess } from "node:child_process";
-import { createWriteStream, mkdirSync } from "node:fs";
+import { createWriteStream, mkdirSync, existsSync } from "node:fs";
 import net from "node:net";
 import path from "node:path";
 import os from "node:os";
 import { fileURLToPath } from "node:url";
 import {
   nativeProcessGroup,
+  reapNativeProcessGroupOnExit,
   stopNativeProcessGroup,
   type NativeProcessGroup,
 } from "./native-process-group";
@@ -14,8 +15,13 @@ import {
   resolveNativeApplication,
   stopNativeQualificationProcesses,
 } from "./native-qualification";
+import { installExternalJobFixture } from "./external-job-fixture";
+import { assertNativePortsAvailable, resolveNativeDriverPorts, waitForOwnedNativePorts } from "./native-driver-ports";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
+// Hook-only native hold makes image-paste progress observable before the real
+// clipboard read/encode/write starts, including on a fast CI filesystem.
+process.env.TAURI_EXPLORER_E2E_CLIPBOARD_IMAGE_DELAY_MS ??= "2000";
 const isWindows = process.platform === "win32";
 const binaryName = isWindows ? "tauri-explorer.exe" : "tauri-explorer";
 const application = resolveNativeApplication(
@@ -39,9 +45,13 @@ const nativeDriver =
     ? path.join(process.env.EDGEWEBDRIVER, "msedgedriver.exe")
     : undefined);
 
-const tauriDriverArgs = nativeDriver ? ["--native-driver", nativeDriver] : [];
-
-const driverPort = 4444;
+const driverPorts = resolveNativeDriverPorts(process.env);
+const driverPort = driverPorts.driver;
+const backendPort = driverPorts.backend;
+const tauriDriverArgs = [
+  ...(nativeDriver ? ["--native-driver", nativeDriver] : []),
+  "--port", String(driverPort), "--native-port", String(backendPort),
+];
 const driverLogPath = path.join(here, "logs", "msedgedriver.log");
 // Each worker appends its own session; the file is uploaded with the WDIO logs.
 const webkitDriverLogPath = path.join(here, "logs", "tauri-driver.log");
@@ -118,10 +128,24 @@ const stopProcesses = async (): Promise<void> => {
   }
 };
 
+// The ordinary stop runs from afterSession, which WDIO skips when session
+// creation fails (for example when the application panics during setup).
+reapNativeProcessGroupOnExit(() => driverProcessGroup, "native WebKit session");
+
 const processCleanupHooks = createNativeProcessCleanupHooks({
   environment: process.env,
   stateEnvironmentKey: "TAURI_NATIVE_CLEANUP_STATE_DIRECTORY",
   stop: stopProcesses,
+  // Several specs need their fixtures on the real home-directory filesystem
+  // (e.g. Linux trash requires the source and its Trash directory share a
+  // device; os.tmpdir() is frequently a separate tmpfs). Rooting the shared
+  // cleanup directory under the home directory lets createNativeFixtureDirectory
+  // serve those specs too, instead of forcing them to hand-roll their own
+  // mkdtemp + immediate rmSync (#761).
+  temporaryRoot: os.homedir(),
+  additionalFixtureRoots: process.platform === "linux" && existsSync("/dev/shm")
+    ? [{ stateEnvironmentKey: "TAURI_NATIVE_SHM_CLEANUP_STATE_DIRECTORY", temporaryRoot: "/dev/shm" }]
+    : [],
 });
 
 export const config: WebdriverIO.Config = {
@@ -158,10 +182,17 @@ export const config: WebdriverIO.Config = {
   framework: "mocha",
   reporters: ["spec"],
   mochaOpts: { ui: "bdd", timeout: 60_000 },
-  onPrepare: processCleanupHooks.prepare,
+  onPrepare: () => {
+    processCleanupHooks.prepare();
+    installExternalJobFixture(process.env);
+  },
 
   beforeSession: async (_config, capabilities) => {
+    // WDIO may skip afterSession if creation fails; the pending marker then
+    // keeps fixtures alive even when the exit reaper cannot confirm teardown.
+    processCleanupHooks.begin();
     if (!isWindows) {
+      await assertNativePortsAvailable(driverPorts);
       // WebKitWebDriver inherits tauri-driver's stdio, so its own diagnostics
       // (including "page crash or hang") land here. Retain them as a run
       // artifact as well as on the console: a lost session leaves nothing else
@@ -179,6 +210,7 @@ export const config: WebdriverIO.Config = {
       driverProcess.once("exit", () => driverLog.end());
       if (process.platform === "linux") {
         driverProcessGroup = nativeProcessGroup(driverProcess);
+        await waitForOwnedNativePorts(driverProcess, driverPorts);
       }
       return;
     }

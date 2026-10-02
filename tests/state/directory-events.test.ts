@@ -1,5 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+// The E2E readiness and receipt protocol exists only in hook builds (api/e2e-hooks.ts).
+vi.hoisted(() => { vi.stubEnv("VITE_E2E_HOOKS", "1"); });
+
 const tauri = vi.hoisted(() => ({
   listen: vi.fn(),
 }));

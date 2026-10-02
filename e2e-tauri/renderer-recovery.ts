@@ -160,7 +160,7 @@ try {
     if (spawnError) throw spawnError;
     const state = readState();
     if (!state && Date.now() >= readinessDeadline) {
-      throw new Error("Native harness did not arm; build with VITE_E2E_HOOKS=1 and --features e2e-renderer-recovery");
+      throw new Error("Native harness did not arm; build with VITE_E2E_HOOKS=1 and --features e2e-hooks,e2e-renderer-recovery");
     }
     if (state) {
       if (state.processId !== child.pid) throw new Error("Recovery changed the native application PID");

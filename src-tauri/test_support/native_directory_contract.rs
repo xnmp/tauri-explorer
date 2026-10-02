@@ -1,5 +1,9 @@
 use super::Directory;
-use std::{ffi::OsStr, fs, io::Write};
+use std::{
+    ffi::OsStr,
+    fs,
+    io::{self, Write},
+};
 
 #[test]
 fn creates_are_exclusive_and_existence_does_not_replace_type_validation() {
@@ -54,6 +58,30 @@ fn independent_enumerations_retain_the_anchor_after_its_name_is_replaced() {
 }
 
 #[test]
+fn renames_move_directories_between_parents_and_within_one_parent() {
+    let root = tempfile::tempdir().unwrap();
+    let directory = Directory::open(root.path()).unwrap();
+    let held = directory.create_directory(OsStr::new("held")).unwrap();
+    held.create_directory(OsStr::new("nested"))
+        .unwrap()
+        .create_file(OsStr::new("content"))
+        .unwrap()
+        .write_all(b"nested")
+        .unwrap();
+    held.rename_to(OsStr::new("nested"), &directory, OsStr::new("moved"))
+        .unwrap();
+    directory
+        .rename_to(OsStr::new("moved"), &directory, OsStr::new("renamed"))
+        .unwrap();
+    assert_eq!(
+        fs::read(root.path().join("renamed/content")).unwrap(),
+        b"nested"
+    );
+    assert!(!held.entry_exists(OsStr::new("nested")).unwrap());
+    assert!(!directory.entry_exists(OsStr::new("moved")).unwrap());
+}
+
+#[test]
 fn failed_rename_and_wrong_removal_kind_preserve_entries() {
     let root = tempfile::tempdir().unwrap();
     let directory = Directory::open(root.path()).unwrap();
@@ -66,9 +94,14 @@ fn failed_rename_and_wrong_removal_kind_preserve_entries() {
     }
     let child = directory.create_directory(OsStr::new("child")).unwrap();
     child.create_file(OsStr::new("content")).unwrap();
-    assert!(directory
-        .rename_to(OsStr::new("source"), &directory, OsStr::new("target"))
-        .is_err());
+    // Callers distinguish an occupied destination from every other failure.
+    assert_eq!(
+        directory
+            .rename_to(OsStr::new("source"), &directory, OsStr::new("target"))
+            .unwrap_err()
+            .kind(),
+        io::ErrorKind::AlreadyExists
+    );
     assert!(directory.unlink(OsStr::new("source"), true).is_err());
     assert!(directory.unlink(OsStr::new("child"), false).is_err());
     assert!(directory.unlink(OsStr::new("child"), true).is_err());
@@ -101,6 +134,82 @@ fn relative_operations_reject_non_component_names_without_effects() {
         assert!(directory.unlink(name, false).is_err());
     }
     assert!(directory.names(0).unwrap().is_empty());
+}
+
+/// #798: a case-only rename through a retained parent keeps the object, a
+/// case variant resolves to that object only where the volume folds case, and
+/// a case variant of a different entry is never replaced.
+#[test]
+fn case_only_rename_keeps_the_object_and_never_replaces_another_entry() {
+    use crate::files::{
+        case_only_rename_tests::{folds_case, report},
+        file_identity::of_file,
+    };
+    let root = tempfile::tempdir().unwrap();
+    let folds = folds_case(root.path());
+    let directory = Directory::open(root.path()).unwrap();
+    for (name, bytes) in [("readme.txt", "source"), ("notes.txt", "occupant")] {
+        directory
+            .create_file(OsStr::new(name))
+            .unwrap()
+            .write_all(bytes.as_bytes())
+            .unwrap();
+    }
+    let object = of_file(&directory.open_file(OsStr::new("readme.txt")).unwrap()).unwrap();
+    let names = || {
+        let mut names = directory.names(8).unwrap();
+        names.sort();
+        names
+    };
+
+    assert_eq!(
+        directory.entry_exists(OsStr::new("README.txt")).unwrap(),
+        folds
+    );
+    match directory.open_file(OsStr::new("README.txt")) {
+        Ok(variant) if folds => assert_eq!(of_file(&variant).unwrap(), object),
+        Err(error) if !folds && error.kind() == io::ErrorKind::NotFound => {}
+        other => panic!("case variant lookup observed {other:?}"),
+    }
+
+    directory
+        .rename_to(
+            OsStr::new("readme.txt"),
+            &directory,
+            OsStr::new("README.txt"),
+        )
+        .expect("a case-only rename is not an occupied destination");
+    assert_eq!(names(), [OsStr::new("README.txt"), OsStr::new("notes.txt")]);
+    assert_eq!(
+        of_file(&directory.open_file(OsStr::new("README.txt")).unwrap()).unwrap(),
+        object
+    );
+
+    let collision = directory.rename_to(
+        OsStr::new("notes.txt"),
+        &directory,
+        OsStr::new("readme.TXT"),
+    );
+    if folds {
+        assert_eq!(
+            collision.unwrap_err().kind(),
+            io::ErrorKind::AlreadyExists,
+            "a case variant of another entry is occupied"
+        );
+        assert_eq!(names(), [OsStr::new("README.txt"), OsStr::new("notes.txt")]);
+    } else {
+        collision.unwrap();
+        assert_eq!(
+            names(),
+            [OsStr::new("README.txt"), OsStr::new("readme.TXT")]
+        );
+    }
+    assert_eq!(fs::read(root.path().join("README.txt")).unwrap(), b"source");
+    report(
+        "native_directory_case_only_rename",
+        folds,
+        "renamed in place; a case variant of another entry was not replaced",
+    );
 }
 
 #[cfg(unix)]

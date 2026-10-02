@@ -29,15 +29,19 @@
   import { defaultShellProfile, fromShellCwd, type ShellProfile } from "$lib/domain/terminal-shell";
   import { decideCdSync, createInjectedCdTracker } from "$lib/domain/terminal-cwd-sync";
   import { isWindows, isMac } from "$lib/domain/platform";
-  import { getTerminalCommand, resolveTerminalShortcut, effectiveTerminalShortcuts } from "$lib/domain/terminal-keys";
+  import { resolveTerminalShortcut, effectiveTerminalShortcuts } from "$lib/domain/terminal-keys";
+  import { createTerminalKeyHandler } from "$lib/state/terminal-key-handler";
   import { keybindingsStore } from "$lib/state/keybindings.svelte";
   import { getCommand } from "$lib/state/commands.svelte";
   import { settingsStore } from "$lib/state/settings.svelte";
   import { themeStore } from "$lib/state/theme.svelte";
   import { terminalPanelStore } from "$lib/state/terminal.svelte";
-  import { createTerminalSession } from "$lib/state/terminal-session";
+  import { createTerminalSession, type TerminalSessionSpawnInfo } from "$lib/state/terminal-session";
+  import { encodeTerminalPaste, readTerminalPasteText, type TerminalPastePlatform } from "$lib/domain/terminal-paste";
   import { windowTabsManager } from "$lib/state/window-tabs.svelte";
   import { toastStore } from "$lib/state/toast.svelte";
+  import { logFrontendError } from "$lib/api/crash";
+  import { osClipboardReadText } from "$lib/api/os-clipboard";
 
   let panelEl: HTMLDivElement | undefined = $state();
   let termEl: HTMLDivElement | undefined = $state();
@@ -69,6 +73,28 @@
 
   const visible = $derived(terminalPanelStore.visible);
 
+  const pastePlatform: TerminalPastePlatform = isWindows ? "windows" : isMac ? "mac" : "linux";
+
+  /** The bytes of one Ctrl/Cmd+V, once the clipboard read settles. */
+  async function pasteInput(): Promise<string> {
+    const read = await readTerminalPasteText(pastePlatform, {
+      readBrowser: () => navigator.clipboard.readText(),
+      readNative: osClipboardReadText,
+    });
+    if (!read.ok) {
+      toastStore.error(`Could not paste from clipboard: ${read.error}`);
+      return "";
+    }
+    if (!read.text || !term) return "";
+    // What xterm's own paste() does besides emitting the bytes.
+    term.clearSelection();
+    term.scrollToBottom();
+    return encodeTerminalPaste(
+      read.text,
+      term.modes.bracketedPasteMode && term.options.ignoreBracketedPasteMode !== true,
+    );
+  }
+
   function focusOnRequest(): void {
     if (term && terminalPanelStore.consumeFocus()) term.focus();
   }
@@ -88,21 +114,21 @@
     return raw ? color : "";
   }
 
-  async function spawnShell(): Promise<void> {
-    if (!term || spawning || terminalSession.id !== null) return;
+  async function spawnShell(restart = false): Promise<void> {
+    if (!term || spawning || (!restart && terminalSession.id !== null)) return;
     spawning = true;
     exited = false;
     try {
       const cwd = windowTabsManager.getActiveExplorer()?.currentPath;
-      const info = await terminalSession.start(cwd, term.cols, term.rows);
+      const starting = restart
+        ? terminalSession.restart(cwd, term.cols, term.rows)
+        : terminalSession.start(cwd, term.cols, term.rows);
+      // The old shell's output stops at restart's first step, so the cleared
+      // screen belongs to the replacement.
+      if (restart) term.clear();
+      const info = await starting;
       if (info === null) return;
-      shellProfile = { kind: info.shellKind, wslDistro: info.wslDistro };
-      // Path insertions requested while the shell was still spawning (#265).
-      const id = terminalSession.id;
-      if (id === null) return;
-      for (const data of pendingInsertions.splice(0)) {
-        terminalWrite(id, data);
-      }
+      shellProfile = profileOf(info);
     } catch (err) {
       term.writeln(`\r\nFailed to start shell: ${err}`);
       exited = true;
@@ -114,29 +140,23 @@
   async function restartShell(): Promise<void> {
     // The user's restart action owns focus; PTY completion does not.
     term?.focus();
-    await terminalSession.stop();
     stopQueuePoll();
     pendingCd = null;
     lastShellCwd = null;
-    term?.clear();
-    await spawnShell();
+    // Keys typed from here on are typeahead for the replacement shell.
+    await spawnShell(true);
   }
 
-  /**
-   * Inject a `cd` to `path`, clearing any half-typed prompt input first —
-   * the automatic sync must win regardless of what's on the prompt. The
-   * clear byte is shell-family-specific (see buildCdSyncSequence).
-   */
-  // Insertions typed before the PTY finished spawning; flushed by spawnShell.
-  const pendingInsertions: string[] = [];
+  const profileOf = (info: TerminalSessionSpawnInfo): ShellProfile =>
+    ({ kind: info.shellKind, wslDistro: info.wslDistro });
 
   /** Type paths into the prompt (space-delimited, shell-quoted, no Enter).
-   * Opening focus belongs to the store, including queued cold insertions. */
+   * Opening focus belongs to the store, including queued cold insertions.
+   * The insertion holds its place in the input queue until the shell has
+   * started, so it is quoted in the dialect of the shell actually spawned;
+   * with the shell exited it waits for the restart (#265, #409). */
   function insertPaths(paths: string[]): void {
-    const data = buildPathsInsertion(paths, shellProfile);
-    const id = terminalSession.id;
-    if (id !== null) terminalWrite(id, data);
-    else pendingInsertions.push(data);
+    terminalSession.insert((info) => buildPathsInsertion(paths, profileOf(info)));
   }
 
   // Targets of cds we injected whose OSC 7 echo hasn't arrived yet
@@ -152,6 +172,7 @@
       listenCwd: async (id, handler) => listen<string>(`terminal-cwd-${id}`, (event) => handler(event.payload)),
       spawn: terminalSpawn,
       kill: terminalKill,
+      write: terminalWrite,
     },
     {
       output: (payload) => term?.write(payload),
@@ -167,16 +188,37 @@
         const explorer = windowTabsManager.getActiveExplorer();
         if (explorer && explorer.currentPath !== path) explorer.navigateTo(path);
       },
+      // Mirrored into the backend log: a release build has no console, and
+      // an I/O failure writing to the PTY must leave a trace.
+      writeError: (err) => {
+        console.error("[terminal] input write failed:", err);
+        void logFrontendError(`terminal input write failed: ${String(err)}`).catch(() => {});
+      },
+      // Typeahead is bounded while the shell starts (#882).
+      // Overflow discards ALL pre-start input, so the user must know their
+      // typing was lost rather than find a truncated command on the prompt.
+      inputDropped: (bytes, firstInStream) => {
+        const message = `terminal typeahead buffer full: discarded ${bytes} bytes typed before the shell started`;
+        console.warn(`[terminal] ${message}`);
+        if (!import.meta.env.DEV) void logFrontendError(message).catch(() => {});
+        if (firstInStream) {
+          toastStore.error("Input typed before the terminal started was too large and was discarded");
+        }
+      },
     },
   );
 
+  /**
+   * Inject a `cd` to `path`, clearing any half-typed prompt input first —
+   * the automatic sync must win regardless of what's on the prompt. The
+   * clear byte is shell-family-specific (see buildCdSyncSequence).
+   */
   function writeCd(path: string): void {
     // Defensive: never inject `cd 'null'` if a caller ever passes a nullish
     // target (see the queue-poll re-entrancy guard, #154).
-    const id = terminalSession.id;
-    if (id === null || path == null) return;
+    if (terminalSession.id === null || path == null) return;
     injectedCds.add(path);
-    terminalWrite(id, buildCdSyncSequence(path, shellProfile));
+    terminalSession.write(buildCdSyncSequence(path, shellProfile));
   }
 
   /** Terminal follows explorer: reconcile the shell's cwd with `path`. */
@@ -283,65 +325,24 @@
     // The focused terminal keeps every key except the explicit core-navigation
     // allowlist. Returning false makes xterm ignore one of those keys so the
     // window handler in +page.svelte can run its matching Explorer command.
-    term.attachCustomKeyEventHandler((event) => {
-      if (event.type !== "keydown") return true;
-      // The platform's primary clipboard modifier: Ctrl, but ⌘ on mac (#403)
-      // — Cmd+C/V while the terminal is focused must copy/paste terminal
-      // text, never fall through to the explorer's file clipboard.
-      const primaryOnly = isMac
-        ? event.metaKey && !event.ctrlKey && !event.altKey && !event.shiftKey
-        : event.ctrlKey && !event.altKey && !event.metaKey && !event.shiftKey;
-      // Ctrl/Cmd+C with a selection copies it (VS Code parity, #374): the
-      // user is copying terminal text, not interrupting the shell — and
-      // definitely not copying files in the explorer.
-      if (primaryOnly && event.key.toLowerCase() === "c" && term?.hasSelection()) {
-        const text = term.getSelection();
-        term.clearSelection();
-        void navigator.clipboard.writeText(text).catch(() => {
-          toastStore.error("Could not copy selection");
-        });
-        event.preventDefault();
-        return false;
-      }
-      // Ctrl/Cmd+V pastes explicitly through xterm (bracketed-paste aware):
-      // native paste into xterm's hidden textarea is unreliable in some
-      // WebViews (#374), and the explorer's file-paste must never fire here.
-      if (primaryOnly && event.key.toLowerCase() === "v") {
-        void navigator.clipboard
-          .readText()
-          .then((text) => {
-            if (text) term?.paste(text);
-          })
-          .catch(() => {
-            /* clipboard unavailable — the native paste path may still work */
-          });
-        event.preventDefault();
-        return false;
-      }
-      // Line-editing shortcuts (#375, #404): inject the mapped readline
-      // control byte. Platform defaults (mac Home/End/word-nav) overlaid
-      // with the user's bindings from Settings → Terminal.
-      const sequence = resolveTerminalShortcut(
-        event,
-        effectiveTerminalShortcuts(settingsStore.terminalShortcuts, isMac),
-      );
-      if (sequence !== null) {
-        const id = terminalSession.id;
-        if (id !== null) terminalWrite(id, sequence);
-        event.preventDefault();
-        return false;
-      }
-      // Availability-aware: an unavailable core command does not claim the
-      // key, so the terminal application still receives it.
-      const shellReserved = getTerminalCommand(event, keybindingsStore, (id) => {
+    term.attachCustomKeyEventHandler(createTerminalKeyHandler({
+      bindings: keybindingsStore,
+      isAvailable: (id) => {
         const command = getCommand(id);
         return command !== undefined && (!command.when || command.when());
-      }) === undefined;
-      // xterm keeps terminal-owned keys from reaching the page handler, so
-      // consume a pending Explorer chord here when its suffix did not match.
-      if (shellReserved && keybindingsStore.isChordActive) keybindingsStore.cancelChord();
-      return shellReserved;
-    });
+      },
+      isMac,
+      hasSelection: () => term?.hasSelection() ?? false,
+      getSelection: () => term?.getSelection() ?? "",
+      clearSelection: () => term?.clearSelection(),
+      copySelection: (text) => {
+        void navigator.clipboard.writeText(text).catch(() => toastStore.error("Could not copy selection"));
+      },
+      paste: () => { terminalSession.write(pasteInput()); },
+      write: (sequence) => { terminalSession.write(sequence); },
+      lineEditingSequence: (event) => resolveTerminalShortcut(event,
+        effectiveTerminalShortcuts(settingsStore.terminalShortcuts, isMac)),
+    }));
 
     term.open(termEl!);
     // Initial effects can precede onMount; the plain xterm reference does not
@@ -350,8 +351,7 @@
     fitAddon.fit();
 
     term.onData((data) => {
-      const id = terminalSession.id;
-      if (id !== null) terminalWrite(id, data);
+      terminalSession.write(data);
     });
     term.onResize(({ cols, rows }) => {
       const id = terminalSession.id;
@@ -552,7 +552,7 @@
     z-index: 2;
   }
 
-  .resize-handle:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+  .resize-handle:focus-visible { outline: 2px solid var(--focus-stroke-outer); outline-offset: -2px; }
 
   .resize-handle:hover, .resizing .resize-handle {
     background: color-mix(in srgb, var(--accent) 40%, transparent);

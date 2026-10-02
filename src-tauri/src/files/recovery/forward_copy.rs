@@ -100,8 +100,7 @@ impl PreparedCopy {
             progress.check_cancelled()?;
             execution.displace_copy()?;
             execution.publish_copy()?;
-            let state = execution.operation.state().replacement()?;
-            Ok::<_, AppError>(state.effect_revision)
+            Ok::<_, AppError>(execution.operation.state().effect_revision)
         })();
         let revision = result.map_err(retained)?;
         let mut receipt = FileMutationReceipt::committed(&committed);

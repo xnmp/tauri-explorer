@@ -1,5 +1,6 @@
 import { test, expect } from "./fixtures";
 import { HOME_URL, waitForEntries, switchViewMode } from "./helpers";
+import type { MockControl } from "../src/lib/api/mock-control";
 
 /**
  * Regression coverage for the batch of Windows-branch fixes:
@@ -74,7 +75,7 @@ test.describe("Removable drive removed", () => {
     await waitForEntries(page);
 
     // Simulate unplugging the drive (mock test hook); store re-polls every ~1.5s
-    await page.evaluate(() => (window as unknown as { __mockEjectDrive: (p: string) => void }).__mockEjectDrive("/media/user/USB_DRIVE"));
+    await page.evaluate(() => (window as unknown as { __mockControl?: MockControl }).__mockControl?.ejectDrive?.("/media/user/USB_DRIVE"));
 
     await expect(page.locator(".drive-gone-state")).toBeVisible({ timeout: 5000 });
     await expect(page.locator(".drive-gone-state")).toContainText("Removable drive removed");

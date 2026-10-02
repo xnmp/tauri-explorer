@@ -2,11 +2,24 @@
  * Rust policy/executor tests and binary E2E verify the authoritative behavior. */
 import type { HistoryDirection, HistoryReply, HistorySummary, UndoAction } from "$lib/domain/file-history";
 import { executeUndo, executeRedo, type UndoApiDeps } from "./mock-file-history-execution";
-import type { FileBatchOutcome } from "$lib/domain/file-batch-outcome";
+import { fileBatchError, type FileBatchOutcome } from "$lib/domain/file-batch-outcome";
+import type { FileMutationReceipt } from "$lib/domain/file";
 import { parentDir } from "$lib/domain/path";
 
 type Entry = { id: number; action: UndoAction };
 type Invoke = (command: string, args: Record<string, unknown>) => Promise<unknown>;
+/** Restores trashed entries in place. Mirrors the backend: undo of a delete
+ * is resolved entirely inside `file_history_execute` (Rust), never through a
+ * separate wire command, so the mock does the same restore work directly
+ * rather than dispatching a mock-only IPC command. */
+type RestoreFromTrash = (paths: string[]) => FileBatchOutcome;
+/** Re-executes a "move" UndoAction in place. There is no standalone
+ * `move_entry` Rust command (removed in #881; `move_entries` is the only
+ * native relocation IPC), so undo/redo of a move cannot round-trip through
+ * `invoke()` without reintroducing a mock-only command that
+ * `tests/api/mock-invoke-parity.test.ts` would reject. The mock instead gets
+ * this dependency injected, exactly like `restoreFromTrash` above. */
+type Relocate = (source: string, destDir: string) => FileMutationReceipt;
 
 function recoverable(action: UndoAction): UndoAction | null {
   if (action.type === "copy" && action.restoreSupported === false) return null;
@@ -32,7 +45,12 @@ function affectedDirectories(action: UndoAction): string[] {
   }
 }
 
-export function createMockFileHistory(invoke: Invoke, publishEffects: (directories: string[]) => void) {
+export function createMockFileHistory(
+  invoke: Invoke,
+  publishEffects: (directories: string[]) => void,
+  restoreFromTrash: RestoreFromTrash,
+  relocate: Relocate,
+) {
   let undo: Entry[] = [];
   let redo: Entry[] = [];
   let nextId = 0;
@@ -49,16 +67,32 @@ export function createMockFileHistory(invoke: Invoke, publishEffects: (directori
     try { await invoke(command, args); return { ok: true as const }; }
     catch (error) { return { ok: false as const, error: String(error) }; }
   };
-  const batch = async (command: string, paths: string[]) => {
-    try { return { ok: true as const, data: await invoke(command, { paths }) as FileBatchOutcome }; }
+  const batch = async (command: string, args: Record<string, unknown>) => {
+    try { return { ok: true as const, data: await invoke(command, args) as FileBatchOutcome }; }
     catch (error) { return { ok: false as const, error: String(error) }; }
+  };
+  // Delete/undo-delete route through the same production command
+  // (`delete_entries`, permanent: false) the real backend uses; restoring is
+  // the backend's internal undo step, so it bypasses the invoke() round trip.
+  // deleteEntry goes through `batch`, not `call`: `delete_entries` reports
+  // per-path outcomes in a FileBatchOutcome rather than throwing, so `call`
+  // (which only detects a thrown invoke) would report success even when the
+  // path is in `failed[]` — mirrors `files.ts`'s `deleteOne`.
+  const deleteOne = async (path: string): Promise<{ ok: true } | { ok: false; error: string }> => {
+    const result = await batch("delete_entries", { paths: [path], permanent: false });
+    if (!result.ok) return result;
+    const error = fileBatchError(result.data) ?? (result.data.succeeded.includes(path) ? null : `Path not found: ${path}`);
+    return error ? { ok: false, error } : { ok: true };
   };
   const files: UndoApiDeps = {
     renameEntry: (path, newName) => call("rename_entry", { path, newName }),
-    moveEntry: (source, destDir) => call("move_entry", { source, destDir, overwrite: false }),
-    deleteEntry: (path) => call("move_to_trash", { path }),
-    deleteMultipleEntries: (paths) => batch("move_multiple_to_trash", paths),
-    restoreFromTrash: (paths) => batch("restore_from_trash", paths),
+    moveEntry: async (source, destDir) => {
+      try { relocate(source, destDir); return { ok: true }; }
+      catch (error) { return { ok: false, error: String(error) }; }
+    },
+    deleteEntry: deleteOne,
+    deleteMultipleEntries: (paths) => batch("delete_entries", { paths, permanent: false }),
+    restoreFromTrash: async (paths) => ({ ok: true, data: restoreFromTrash(paths) }),
   };
   return {
     summary,

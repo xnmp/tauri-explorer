@@ -57,9 +57,11 @@ impl MovePlan {
         dirs.dedup();
         dirs
     }
+}
 
+impl super::admission::Plan for MovePlan {
     #[cfg(target_os = "linux")]
-    pub(crate) fn resources(&self) -> Vec<super::recovery::ResourceRequest> {
+    fn resources(&self) -> Vec<super::recovery::ResourceRequest> {
         use super::recovery::{Access, ResourceRequest, Scope};
         [&self.source, &self.target]
             .into_iter()
@@ -72,10 +74,7 @@ impl MovePlan {
     }
 
     #[cfg(target_os = "linux")]
-    pub(crate) fn resolve(
-        mut self,
-        paths: impl Iterator<Item = PathBuf>,
-    ) -> Result<Self, AppError> {
+    fn resolve(mut self, paths: impl Iterator<Item = PathBuf>) -> Result<Self, AppError> {
         let mut paths = paths;
         let invalid =
             || AppError::Other("Move admission returned inconsistent path bindings".into());

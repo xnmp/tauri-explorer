@@ -154,7 +154,8 @@ export function useMarqueeSelection(options: MarqueeOptions = {}) {
     dragCurrent = null;
     cachedItemRects = null;
     cachedItemIndices = null;
-    cachedScroll = null;
+    cachedGeometry = null;
+    cachedItemElements = null;
 
     // The click that follows this mouseup must not clear the selection the
     // marquee just made — mark it consumed-once (with expiry, in case no
@@ -169,13 +170,13 @@ export function useMarqueeSelection(options: MarqueeOptions = {}) {
    * @param totalItems Total number of items in the list
    */
   function getSelectedIndices(scrollTop: number, totalItems: number, headerHeight?: number): number[] {
-    if (!marqueeRect) return [];
+    if (!marqueeRect || marqueeRect.width === 0 || marqueeRect.height === 0) return [];
 
     const marqueeTop = marqueeRect.top + scrollTop - (headerHeight ?? config.headerHeight);
     const marqueeBottom = marqueeTop + marqueeRect.height;
 
     const startIndex = Math.max(0, Math.floor(marqueeTop / config.itemHeight));
-    const endIndex = Math.min(totalItems - 1, Math.floor(marqueeBottom / config.itemHeight));
+    const endIndex = Math.min(totalItems - 1, Math.ceil(marqueeBottom / config.itemHeight) - 1);
 
     if (startIndex > endIndex) return [];
     return Array.from({ length: endIndex - startIndex + 1 }, (_, i) => startIndex + i);
@@ -189,37 +190,44 @@ export function useMarqueeSelection(options: MarqueeOptions = {}) {
    * @param scroller The element that actually scrolls the items (defaults to container).
    *   In list/tiles views the inner `.list-view`/`.tiles-view` scrolls, not the container.
    */
-  // Cached item rects for the current marquee drag session
+  // Reuse rects only while scroll, container geometry and rendered row identities stay unchanged.
   let cachedItemRects: DOMRect[] | null = null;
   // Global entry index for each cached rect. Under virtualization the DOM only
   // holds the visible items, so their NodeList position is NOT the entry index;
   // we read it from data-index (set by EntryCell) instead. Falls back to the
   // NodeList position when the attribute is absent (non-virtualized callers).
   let cachedItemIndices: number[] | null = null;
-  let cachedScroll: { left: number; top: number } | null = null;
+  let cachedItemElements: HTMLElement[] | null = null;
+  let cachedGeometry: { scrollLeft: number; scrollTop: number; left: number; top: number; width: number; height: number } | null = null;
 
   function getSelectedIndicesFromDOM(container: HTMLElement, itemSelector: string, scroller?: HTMLElement | null): number[] {
-    if (!marqueeRect) return [];
+    if (!marqueeRect || marqueeRect.width === 0 || marqueeRect.height === 0) return [];
 
     const containerRect = container.getBoundingClientRect();
     const scrollEl = scroller ?? container;
 
-    // Cache item positions on first call per drag session (items don't move during marquee)
-    if (!cachedItemRects) {
-      const items = container.querySelectorAll<HTMLElement>(itemSelector);
-      cachedItemRects = new Array(items.length);
-      cachedItemIndices = new Array(items.length);
-      for (let i = 0; i < items.length; i++) {
-        cachedItemRects[i] = items[i].getBoundingClientRect();
-        const attr = items[i].dataset.index;
-        cachedItemIndices[i] = attr !== undefined ? Number(attr) : i;
-      }
-      cachedScroll = { left: scrollEl.scrollLeft, top: scrollEl.scrollTop };
+    const items = Array.from(container.querySelectorAll<HTMLElement>(itemSelector));
+    const indices = items.map((item, index) => item.dataset.index !== undefined ? Number(item.dataset.index) : index);
+    const geometry = {
+      scrollLeft: scrollEl.scrollLeft, scrollTop: scrollEl.scrollTop,
+      left: containerRect.left, top: containerRect.top,
+      width: containerRect.width, height: containerRect.height,
+    };
+    const geometryChanged = !cachedGeometry ||
+      geometry.scrollLeft !== cachedGeometry.scrollLeft || geometry.scrollTop !== cachedGeometry.scrollTop ||
+      geometry.left !== cachedGeometry.left || geometry.top !== cachedGeometry.top ||
+      geometry.width !== cachedGeometry.width || geometry.height !== cachedGeometry.height;
+    const rowsChanged = !cachedItemElements || items.length !== cachedItemElements.length ||
+      items.some((item, index) => item !== cachedItemElements![index] || indices[index] !== cachedItemIndices![index]);
+    if (geometryChanged || rowsChanged) {
+      // Read the live viewport-space rects after scrolling. CSS scroll deltas
+      // cannot be subtracted from zoomed rects, and virtualized rows can remount
+      // with different global indices while the pointer remains held.
+      cachedItemRects = items.map(item => item.getBoundingClientRect());
+      cachedItemIndices = indices;
+      cachedItemElements = items;
+      cachedGeometry = geometry;
     }
-
-    // Items shift opposite to the scroll delta accumulated since caching
-    const offsetDx = cachedScroll!.left - scrollEl.scrollLeft;
-    const offsetDy = cachedScroll!.top - scrollEl.scrollTop;
 
     // marqueeRect is in CSS space; item rects from getBoundingClientRect() are
     // in viewport space on macOS. Scale marquee to viewport for comparison.
@@ -228,19 +236,19 @@ export function useMarqueeSelection(options: MarqueeOptions = {}) {
     const mRight = mLeft + cssToRect(marqueeRect.width);
     const mBottom = mTop + cssToRect(marqueeRect.height);
 
-    const indices: number[] = [];
-    for (let i = 0; i < cachedItemRects.length; i++) {
-      const rect = cachedItemRects[i];
-      const rLeft = rect.left + offsetDx;
-      const rRight = rect.right + offsetDx;
-      const rTop = rect.top + offsetDy;
-      const rBottom = rect.bottom + offsetDy;
+    const selected: number[] = [];
+    for (let i = 0; i < cachedItemRects!.length; i++) {
+      const rect = cachedItemRects![i];
+      const rLeft = rect.left;
+      const rRight = rect.right;
+      const rTop = rect.top;
+      const rBottom = rect.bottom;
       if (rRight > mLeft && rLeft < mRight && rBottom > mTop && rTop < mBottom) {
-        indices.push(cachedItemIndices![i]);
+        selected.push(cachedItemIndices![i]);
       }
     }
 
-    return indices;
+    return selected;
   }
 
   return {

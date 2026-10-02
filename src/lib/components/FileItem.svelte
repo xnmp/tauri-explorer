@@ -5,7 +5,7 @@
 <script lang="ts">
   import type { FileEntry } from "$lib/domain/file";
   import { formatSize } from "$lib/domain/file";
-  import { getFileType, getFileIconColor, formatDate, formatAbsoluteDate } from "$lib/domain/file-types";
+  import { getFileType, getFileIconColor, formatDate, formatAbsoluteDate, isVideoMediaFile } from "$lib/domain/file-types";
   import EntryName from "./EntryName.svelte";
   import FileIcon from "./FileIcon.svelte";
   import GitStatusBadge from "./GitStatusBadge.svelte";
@@ -89,6 +89,7 @@
 <!-- svelte-ignore a11y_click_events_have_key_events -- FileList owns cursor navigation; the window command router owns configurable Open/Preview and selection commands. -->
 <div
   role="gridcell"
+  aria-label={isVideoMediaFile(entry) ? `${entry.name}, video` : undefined}
   tabindex={!isRenaming && explorer.focusedEntry?.path === entry.path ? 0 : -1}
   aria-selected={explorer.isSelected(entry)}
   class="file-item entry-item"
@@ -215,25 +216,23 @@
   }
 
   /* Cut items appear faded */
-  .file-item.hidden-entry {
+  /* Ghosted entries (hidden, empty folder, cut) dim their icon and quiet
+     their label to --text-secondary. Dimming the whole row pulled the name
+     below WCAG AA contrast in every theme (#785); Windows Explorer ghosts
+     the icon for the same states. */
+  .file-item:is(.hidden-entry, .empty-folder, .cut) {
+    color: var(--text-secondary);
+  }
+
+  .file-item:is(.hidden-entry, .empty-folder) [data-drag-icon] {
     opacity: 0.55;
   }
 
-  .file-item.hidden-entry:hover,
-  .file-item.hidden-entry.selected {
+  .file-item:is(.hidden-entry, .empty-folder):is(:hover, .selected) [data-drag-icon] {
     opacity: 0.8;
   }
 
-  .file-item.empty-folder {
-    opacity: 0.55;
-  }
-
-  .file-item.empty-folder:hover,
-  .file-item.empty-folder.selected {
-    opacity: 0.8;
-  }
-
-  .file-item.cut {
+  .file-item.cut [data-drag-icon] {
     opacity: 0.5;
   }
 

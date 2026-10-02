@@ -1,10 +1,11 @@
 /** Native forward mutations admit and settle history before renderer-side UI work. */
 import { browser, $, expect } from "@wdio/globals";
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import { exactApplicationPid } from "../native-process";
-import { entryNames, navigateTo } from "./helpers";
+import { gatedDescribe } from "./gated-describe";
+import { closeOtherWindows, entryNames, navigateTo, switchToWindowLabel } from "./helpers";
+import { createNativeFixtureDirectory } from "../native-qualification";
 
 interface HistorySummary {
   revision: number;
@@ -304,21 +305,6 @@ async function freshWindow(target: string): Promise<{ kind: string; label: strin
   return envelope.result;
 }
 
-async function switchToLabel(label: string): Promise<string> {
-  let selected = "";
-  await browser.waitUntil(async () => {
-    for (const handle of await browser.getWindowHandles()) {
-      await browser.switchToWindow(handle);
-      if (await browser.execute(() => document.documentElement.dataset.e2eWindowLabel) === label) {
-        selected = handle;
-        return true;
-      }
-    }
-    return false;
-  }, { timeout: 20_000, timeoutMsg: `native window ${label} did not become ready` });
-  return selected;
-}
-
 async function destroyCurrentWindow(handle: string): Promise<void> {
   await browser.execute((detail) => {
     window.dispatchEvent(new CustomEvent("e2e-window-operation", { detail }));
@@ -329,12 +315,17 @@ async function destroyCurrentWindow(handle: string): Promise<void> {
   });
 }
 
-const gatedDescribe = process.platform === "linux" && gateDirectory ? describe : describe.skip;
-
-gatedDescribe("native forward mutation history ownership", () => {
+// Linux-only: exercises the durable history-recovery gate directories
+// (`durable-recovery`, `cfg(unix)`/`cfg(target_os = "linux")`, ADR 0020,
+// plan decision D2) and `exactApplicationPid`'s `/proc`-based process
+// identity, neither of which exists on Windows (#800).
+gatedDescribe("native forward mutation history ownership", [
+  [process.platform === "linux", "Linux"],
+  [gateDirectory !== "", "TAURI_E2E_HISTORY_GATE_DIR"],
+], () => {
   before(async () => {
     fs.accessSync(gateDirectory, fs.constants.R_OK | fs.constants.W_OK);
-    scratch = fs.mkdtempSync(path.join(os.homedir(), ".tauri-explorer-forward-history-"));
+    scratch = createNativeFixtureDirectory("tauri-explorer-forward-history-");
     await navigateTo(scratch);
     mainHandle = await browser.getWindowHandle();
     applicationPid = exactApplicationPid();
@@ -352,15 +343,7 @@ gatedDescribe("native forward mutation history ownership", () => {
     for (const artifact of gateArtifacts) {
       try { fs.rmSync(artifact, { force: true }); } catch { /* preserve the primary failure */ }
     }
-    if (mainHandle) {
-      for (const handle of await browser.getWindowHandles()) {
-        if (handle === mainHandle) continue;
-        await browser.switchToWindow(handle);
-        await browser.closeWindow();
-      }
-      if ((await browser.getWindowHandles()).includes(mainHandle)) await browser.switchToWindow(mainHandle);
-    }
-    if (scratch) fs.rmSync(scratch, { recursive: true, force: true });
+    if (mainHandle) await closeOtherWindows(mainHandle);
   });
 
   it("exposes one native Undo while renderer publication of the rename is held", async function () {
@@ -482,7 +465,7 @@ gatedDescribe("native forward mutation history ownership", () => {
 
     const opened = await freshWindow(scratch);
     expect(opened.kind).toBe("fresh");
-    childHandle = await switchToLabel(opened.label);
+    childHandle = await switchToWindowLabel(opened.label);
     await $(".file-list").waitForExist({ timeout: 20_000 });
     await waitForHistoryReady();
     await waitForListed(path.basename(first), true);
@@ -562,7 +545,7 @@ gatedDescribe("native forward mutation history ownership", () => {
 
     const opened = await freshWindow(scratch);
     expect(opened.kind).toBe("fresh");
-    childHandle = await switchToLabel(opened.label);
+    childHandle = await switchToWindowLabel(opened.label);
     await $(".file-list").waitForExist({ timeout: 20_000 });
     await waitForHistoryReady();
     await waitForListed(path.basename(original), true);

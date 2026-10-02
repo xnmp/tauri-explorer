@@ -14,8 +14,8 @@ function sameEntries(a: readonly FileEntry[], b: readonly FileEntry[]): boolean 
 }
 
 export function reconcileDirectoryEntries(
-  before: FileEntry[], current: FileEntry[], incoming: FileEntry[],
-): { entries: FileEntry[]; needsRefresh: boolean } {
+  before: readonly FileEntry[], current: readonly FileEntry[], incoming: readonly FileEntry[],
+): { entries: readonly FileEntry[]; needsRefresh: boolean } {
   if (sameEntries(before, current)) {
     return { entries: sameEntries(current, incoming) ? current : incoming, needsRefresh: false };
   }

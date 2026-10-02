@@ -1,63 +1,66 @@
 /**
- * Emit-before-listen race coverage (#299).
- *
- * The backend streams results over Tauri events from a Rust thread that
- * starts the moment the command runs — often BEFORE the command's invoke()
- * promise resolves on the JS side. If the frontend attaches its listener too
- * late (or drops events that arrive before it learns the stream id), the
- * FIRST page of results is silently lost. That exact bug shipped three times
- * independently: QuickOpen results, the dir-listing stream, and content
- * search.
- *
- * Browser-mode Playwright cannot catch this family: the mock returns complete
- * results inline from invoke() and never exercises the event system. These
- * specs drive the real binary and assert the first event of each stream is
- * observed:
- *  - dir-listing: a >batch-size directory must render its FULL entry count
- *    (early chunks stream while invoke is still in flight);
- *  - QuickOpen: a fast-completing search's single results event must render;
- *  - content search: a single-match search's only event must render.
+ * Native delivery contracts: complete directory snapshots and first search
+ * events. Browser mocks return results inline and cannot verify native IPC
+ * delivery or its timing. Search listeners must receive events emitted before
+ * their invocation resolves; directory snapshots must contain every entry.
  */
 import { browser, $, $$, expect } from "@wdio/globals";
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import { navigateTo, domText } from "./helpers";
+import { createNativeFixtureDirectory } from "../native-qualification";
 
-describe("dir-listing stream: no lost early batches", () => {
-  // 250 entries: the backend returns the first 100 inline and streams the
-  // remaining 150 in chunks that start emitting immediately — the earliest
-  // chunks routinely land before start_streaming_directory resolves.
-  const FILE_COUNT = 250;
-  const scratchDir = fs.mkdtempSync(path.join(os.homedir(), ".tauri-explorer-e2e-race-dir-"));
+describe("dir-listing snapshot: complete and keyboard-usable", () => {
+  // Cross the former transport boundary by a non-round count. A snapshot
+  // must publish the exact total and make its final virtualized row usable.
+  const FILE_COUNT = 10_003;
+  const scratchDir = createNativeFixtureDirectory("tauri-explorer-e2e-race-dir-");
 
   before(() => {
     for (let i = 0; i < FILE_COUNT; i++) {
-      fs.writeFileSync(path.join(scratchDir, `entry-${String(i).padStart(3, "0")}.txt`), "x\n");
+      fs.writeFileSync(path.join(scratchDir, `entry-${String(i).padStart(5, "0")}.txt`), "x\n");
     }
   });
 
-  after(() => {
-    fs.rmSync(scratchDir, { recursive: true, force: true });
-  });
-
   it("renders the full entry count of a large directory", async () => {
-    await navigateTo(scratchDir);
+    // Drive the actual navigation UI without requiring a dev-only hook. WebKit
+    // Element Clear blurs this transient editor, so set and submit its input
+    // atomically; the final selection below uses real WebDriver key events.
+    await $(".file-list").waitForExist();
+    await browser.keys(["Control", "l"]);
+    await $(".path-input").waitForDisplayed();
+    await browser.execute((directory: string) => {
+      const input = document.querySelector<HTMLInputElement>(".path-input")!;
+      input.value = directory;
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+      input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
+    }, scratchDir);
 
     // The status bar reports the pane's full (non-virtualized) entry count.
-    // If any streamed batch is dropped the count sticks at a multiple of the
-    // batch size below the total, so this asserts every chunk arrived.
+    // The count must include every entry, including rows outside the viewport.
     await browser.waitUntil(
       async () => (await domText(".status-bar")).includes(`${FILE_COUNT} items`),
       {
-        timeoutMsg: `status bar never reported ${FILE_COUNT} items (streamed batches lost?)`,
+        timeoutMsg: `status bar never reported ${FILE_COUNT} items (snapshot incomplete?)`,
       },
     );
+
+    await browser.keys(["Control", "End"]);
+    await browser.waitUntil(
+      async () => (await browser.execute(() =>
+        document.querySelector(".explorer-pane .entry-item.selected")?.textContent ?? "",
+      )).includes("entry-10002.txt"),
+      { timeoutMsg: "the last entry was not keyboard-selectable" },
+    );
+    await expect($(".explorer-pane .entry-item.selected")).toBeDisplayed();
+    if (process.env.TAURI_DIRECTORY_STREAM_SCREENSHOT) {
+      await browser.saveScreenshot(process.env.TAURI_DIRECTORY_STREAM_SCREENSHOT);
+    }
   });
 });
 
 describe("QuickOpen: first results event of a fast search is not lost", () => {
-  const scratchDir = fs.mkdtempSync(path.join(os.homedir(), ".tauri-explorer-e2e-race-qo-"));
+  const scratchDir = createNativeFixtureDirectory("tauri-explorer-e2e-race-qo-");
 
   before(() => {
     // A tiny corpus makes the backend search complete almost instantly, so
@@ -65,10 +68,6 @@ describe("QuickOpen: first results event of a fast search is not lost", () => {
     // still be in flight — the sharpest form of the race.
     fs.writeFileSync(path.join(scratchDir, "needle-alpha.txt"), "x\n");
     fs.writeFileSync(path.join(scratchDir, "needle-beta.txt"), "x\n");
-  });
-
-  after(() => {
-    fs.rmSync(scratchDir, { recursive: true, force: true });
   });
 
   it("streams the first page of results for an immediate query", async () => {
@@ -101,7 +100,7 @@ describe("QuickOpen: first results event of a fast search is not lost", () => {
 });
 
 describe("content search: single-event search is not lost", () => {
-  const scratchDir = fs.mkdtempSync(path.join(os.homedir(), ".tauri-explorer-e2e-race-cs-"));
+  const scratchDir = createNativeFixtureDirectory("tauri-explorer-e2e-race-cs-");
 
   before(() => {
     // Exactly one match in one file: the whole search fits in ONE
@@ -109,10 +108,6 @@ describe("content search: single-event search is not lost", () => {
     // everything — no later chunk can mask the race.
     fs.writeFileSync(path.join(scratchDir, "only.txt"), "solitary-marker here\n");
     fs.writeFileSync(path.join(scratchDir, "other.txt"), "nothing to see\n");
-  });
-
-  after(() => {
-    fs.rmSync(scratchDir, { recursive: true, force: true });
   });
 
   it("renders the single match from the only streamed event", async () => {

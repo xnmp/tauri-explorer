@@ -28,7 +28,6 @@ export interface FileEntry {
 export interface DirectoryListing {
   readonly path: string;
   readonly entries: readonly FileEntry[];
-  readonly listing_id: number | null;
 }
 
 /** A committed mutation and an optional, subsequent presentation snapshot.
@@ -42,6 +41,9 @@ export interface FileMutationReceipt {
   readonly recovery?: FileMutationRecovery;
   /** Displaced original belongs to durable recovery, not a path-only Copy inverse. */
   readonly replacement?: { readonly id: string };
+  /** A durable move record, already native history's inverse for this move.
+   * A path-only Move action could relocate the last copy of the data. */
+  readonly relocation?: { readonly id: string };
 }
 
 export interface FileMutationRecovery {
@@ -49,13 +51,6 @@ export interface FileMutationRecovery {
   readonly destinationPath: string;
   readonly error: string;
   readonly displacedPath?: string;
-}
-
-export function fileMutationRecoveryMessage(recovery: FileMutationRecovery): string {
-  const retained = recovery.displacedPath
-    ? ` The previous destination is retained at ${recovery.displacedPath}.`
-    : "";
-  return `Files were copied to ${recovery.destinationPath}, but removing ${recovery.sourcePath} did not finish: ${recovery.error}. Inspect both locations before continuing.${retained}`;
 }
 
 export type SortField = "name" | "size" | "modified" | "type";

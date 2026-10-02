@@ -14,12 +14,7 @@ use super::{
 };
 use crate::error::AppError;
 use crate::progress::ProgressTracker;
-use crate::task_registry::TaskRegistry;
 use log;
-
-/// Cancellable copy jobs, keyed by client-generated job id so the frontend can
-/// cancel a large copy mid-file while the `copy_entry` invoke is still pending.
-static COPY_TASKS: TaskRegistry = TaskRegistry::new();
 
 /// Chunk size for streaming file copies. 1 MiB balances syscall overhead
 /// against how promptly a cancellation is observed mid-file.
@@ -31,20 +26,44 @@ fn entry_exists(path: &Path) -> bool {
     fs::symlink_metadata(path).is_ok()
 }
 
-/// True when two paths refer to the same filesystem entry.
-/// Uses canonicalization; falls back to comparing canonicalized parents and
-/// exact file names for paths that can't be canonicalized (e.g. broken symlinks).
+/// True when two paths name the same directory entry. Parents are resolved,
+/// but the final component is never followed. Differing spellings name one
+/// entry only when the parent lists exactly one of them (case-insensitive
+/// aliasing); when both names are listed they are distinct entries even if
+/// they are symlinks to one target or hardlinks to one inode, and treating
+/// them as one would let a case-only rename overwrite (or no-op onto) the other.
 fn is_same_entry(a: &Path, b: &Path) -> bool {
-    if let (Ok(ca), Ok(cb)) = (fs::canonicalize(a), fs::canonicalize(b)) {
-        return ca == cb;
+    let (Some(pa), Some(pb), Some(na), Some(nb)) =
+        (a.parent(), b.parent(), a.file_name(), b.file_name())
+    else {
+        return false;
+    };
+    match (fs::canonicalize(pa), fs::canonicalize(pb)) {
+        (Ok(ca), Ok(cb)) if ca == cb => {}
+        _ => return false,
     }
-    match (a.parent(), b.parent()) {
-        (Some(pa), Some(pb)) => match (fs::canonicalize(pa), fs::canonicalize(pb)) {
-            (Ok(ca), Ok(cb)) => ca == cb && a.file_name() == b.file_name(),
-            _ => false,
-        },
-        _ => false,
+    if na == nb {
+        return true;
     }
+    if fs::symlink_metadata(a).is_err() || fs::symlink_metadata(b).is_err() {
+        return false;
+    }
+    let Ok(entries) = fs::read_dir(pa) else {
+        return false;
+    };
+    let (mut listed_a, mut listed_b) = (false, false);
+    for entry in entries {
+        let Ok(entry) = entry else {
+            return false;
+        };
+        let name = entry.file_name();
+        listed_a |= name == na;
+        listed_b |= name == nb;
+        if listed_a && listed_b {
+            return false;
+        }
+    }
+    listed_a != listed_b
 }
 
 /// Reject copying/moving a directory into itself or one of its descendants.
@@ -228,7 +247,7 @@ pub(crate) async fn execute_entry_owned<O: Send + 'static>(
     super::worker::run_blocking_owned(owner, move || execute_entry_impl(plan)).await
 }
 
-fn execute_entry_impl(plan: EntryPlan) -> Result<FileMutationReceipt, AppError> {
+pub(super) fn execute_entry_impl(plan: EntryPlan) -> Result<FileMutationReceipt, AppError> {
     use super::entry_plan::Request;
     let (target, request, presentation) = plan.into_parts();
     let absent = || {
@@ -383,38 +402,13 @@ fn generate_copy_name(dest_dir: &Path, source_name: &str, is_directory: bool) ->
     unreachable!("exhausted copy name candidates")
 }
 
-/// Cancel a running copy job. The pending `copy_entry` call fails with
-/// "Copy cancelled" before durable work; interrupted replacements retain their
-/// artifacts and report recovery instead of promising a path-based rollback.
-#[tauri::command]
-pub async fn cancel_copy(job_id: u64) {
-    COPY_TASKS.cancel(job_id);
-}
-
-#[cfg(any(test, not(target_os = "linux")))]
-pub(crate) fn copy_entry_impl(
-    app: Option<&tauri::AppHandle>,
+/// Test fixture for copy primitives. Production supplies the ordered session's
+/// tracker and cancellation scope directly to `copy_entry_tracked`.
+#[cfg(test)]
+pub(crate) fn copy_entry_for_test(
     source: String,
     dest_dir: String,
     overwrite: Option<bool>,
-    job_id: Option<u64>,
-) -> Result<FileMutationReceipt, AppError> {
-    copy_entry_with(
-        app,
-        source,
-        dest_dir,
-        overwrite,
-        job_id,
-        copy_entry_overwriting,
-    )
-}
-
-pub(crate) fn copy_entry_with(
-    app: Option<&tauri::AppHandle>,
-    source: String,
-    dest_dir: String,
-    overwrite: Option<bool>,
-    job_id: Option<u64>,
     replace: impl FnOnce(
         &Path,
         &Path,
@@ -422,21 +416,17 @@ pub(crate) fn copy_entry_with(
         &mut ProgressTracker,
     ) -> Result<FileMutationReceipt, AppError>,
 ) -> Result<FileMutationReceipt, AppError> {
-    // A session supplies its own tracker; standalone calls own their task here.
-    // Never walk a tree just to size progress before copying its first byte.
-    let registration = job_id.map(|id| COPY_TASKS.register(id)).transpose()?;
-    let cancelled = registration.as_ref().map(|job| job.cancelled());
     let total_bytes = fs::symlink_metadata(&source)
         .ok()
         .filter(|meta| !meta.is_dir())
         .map_or(0, |meta| meta.len());
     let mut tracker = ProgressTracker::new(
-        if job_id.is_some() { app } else { None },
+        None,
         "copy-progress",
         "Copy cancelled",
-        job_id.unwrap_or(0),
+        0,
         total_bytes,
-        cancelled,
+        None,
     );
     copy_entry_tracked(
         Path::new(&source),
@@ -446,6 +436,15 @@ pub(crate) fn copy_entry_with(
         None,
         replace,
     )
+}
+
+#[cfg(test)]
+pub(crate) fn ordinary_copy_for_test(
+    source: String,
+    dest_dir: String,
+    overwrite: Option<bool>,
+) -> Result<FileMutationReceipt, AppError> {
+    copy_entry_for_test(source, dest_dir, overwrite, copy_entry_overwriting)
 }
 
 /// Execute one child using its session's cancellation/progress identity.
@@ -532,7 +531,6 @@ fn copy_entry_inner(
     dest_dir_path: &Path,
     source_name: &str,
     overwrite: Option<bool>,
-    _source: &str,
     tracker: &mut ProgressTracker,
 ) -> Result<FileMutationReceipt, AppError> {
     copy_entry_inner_with(
@@ -1001,11 +999,23 @@ pub async fn delete_entry_permanent(path: String) -> Result<(), AppError> {
 }
 
 pub(crate) fn delete_path(path: &str) -> Result<(), AppError> {
-    let file_path = Path::new(path);
-    let meta = fs::symlink_metadata(file_path)?;
-    remove_entry_at(file_path).map_err(|error| AppError::MutationUncertain(error.to_string()))?;
-    log::info!("Permanently deleted entry (is_dir={})", meta.is_dir());
+    delete_native_path(Path::new(path))
+}
+
+pub(crate) fn delete_native_path(file_path: &Path) -> Result<(), AppError> {
+    let success = super::permanent_delete::delete(file_path)?;
+    if let Some(warning) = success.warning {
+        log::warn!("{warning}");
+    }
     Ok(())
+}
+
+/// Permanent deletion with its completed-with-warning receipt preserved.
+#[cfg(not(target_os = "linux"))]
+pub(crate) fn delete_path_receipt(
+    path: &str,
+) -> Result<super::trash_artifact::TrashSuccess, AppError> {
+    super::permanent_delete::delete(Path::new(path))
 }
 
 /// Create a symbolic link.
@@ -1084,6 +1094,85 @@ mod tests {
     use super::*;
     use std::fs::File;
     use tempfile::tempdir;
+
+    /// Distinct case-variant symlinks to one target are separate entries: a
+    /// case-only rename must not treat them as one and overwrite the other.
+    #[cfg(unix)]
+    #[test]
+    #[cfg_attr(
+        target_os = "macos",
+        ignore = "default APFS volumes are case-insensitive: case-variant names cannot coexist"
+    )]
+    fn case_variant_symlinks_to_one_target_are_not_the_same_entry() {
+        let dir = tempdir().unwrap();
+        fs::write(dir.path().join("payload"), b"target").unwrap();
+        std::os::unix::fs::symlink("payload", dir.path().join("foo")).unwrap();
+        std::os::unix::fs::symlink("./payload", dir.path().join("FOO")).unwrap();
+        let result = block_on(rename_entry(
+            dir.path().join("foo").to_string_lossy().into_owned(),
+            "FOO".into(),
+        ));
+        assert!(
+            matches!(result, Err(AppError::AlreadyExists(_))),
+            "{result:?}"
+        );
+        assert_eq!(
+            fs::read_link(dir.path().join("FOO")).unwrap(),
+            Path::new("./payload")
+        );
+        assert_eq!(
+            fs::read_link(dir.path().join("foo")).unwrap(),
+            Path::new("payload")
+        );
+        assert!(!is_same_entry(
+            &dir.path().join("foo"),
+            &dir.path().join("FOO")
+        ));
+        assert!(is_same_entry(
+            &dir.path().join("foo"),
+            &dir.path().join("foo")
+        ));
+    }
+
+    /// Two hardlinked names are distinct entries: rename(2) between them is a
+    /// silent no-op, so a case-only rename must report the collision instead.
+    #[cfg(unix)]
+    #[test]
+    #[cfg_attr(
+        target_os = "macos",
+        ignore = "default APFS volumes are case-insensitive: case-variant names cannot coexist"
+    )]
+    fn case_variant_hardlinks_are_not_the_same_entry() {
+        let dir = tempdir().unwrap();
+        fs::write(dir.path().join("foo"), b"shared").unwrap();
+        fs::hard_link(dir.path().join("foo"), dir.path().join("FOO")).unwrap();
+        let result = block_on(rename_entry(
+            dir.path().join("foo").to_string_lossy().into_owned(),
+            "FOO".into(),
+        ));
+        assert!(
+            matches!(result, Err(AppError::AlreadyExists(_))),
+            "{result:?}"
+        );
+        assert!(dir.path().join("foo").exists() && dir.path().join("FOO").exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_real_case_only_rename_of_one_entry_still_succeeds() {
+        let dir = tempdir().unwrap();
+        std::os::unix::fs::symlink("target", dir.path().join("link")).unwrap();
+        block_on(rename_entry(
+            dir.path().join("link").to_string_lossy().into_owned(),
+            "LINK".into(),
+        ))
+        .unwrap();
+        let names: Vec<_> = fs::read_dir(dir.path())
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name())
+            .collect();
+        assert_eq!(names, vec![std::ffi::OsString::from("LINK")]);
+    }
 
     #[test]
     fn test_create_directory() {
@@ -1304,11 +1393,9 @@ mod tests {
         let dest_dir = dir.path().join("dest");
         fs::create_dir(&dest_dir).unwrap();
 
-        let result = copy_entry_impl(
-            None,
+        let result = ordinary_copy_for_test(
             source_dir.to_string_lossy().to_string(),
             dest_dir.to_string_lossy().to_string(),
-            None,
             None,
         );
 
@@ -1336,11 +1423,9 @@ mod tests {
         fs::create_dir(&source_dir).unwrap();
         fs::write(source_dir.join("file1.txt"), "hello").unwrap();
 
-        let result = copy_entry_impl(
-            None,
+        let result = ordinary_copy_for_test(
             source_dir.to_string_lossy().to_string(),
             dir.path().to_string_lossy().to_string(),
-            None,
             None,
         );
 
@@ -1364,12 +1449,10 @@ mod tests {
         fs::write(&file_path, "do not destroy").unwrap();
 
         // Copy into the file's own parent with overwrite=true: target == source.
-        let result = copy_entry_impl(
-            None,
+        let result = ordinary_copy_for_test(
             file_path.to_string_lossy().to_string(),
             dir.path().to_string_lossy().to_string(),
             Some(true),
-            None,
         );
 
         assert!(result.is_err(), "expected same-path copy to error");
@@ -1399,11 +1482,9 @@ mod tests {
         let inner = source_dir.join("inner");
         fs::create_dir_all(&inner).unwrap();
 
-        let result = copy_entry_impl(
-            None,
+        let result = ordinary_copy_for_test(
             source_dir.to_string_lossy().to_string(),
             inner.to_string_lossy().to_string(),
-            None,
             None,
         );
 
@@ -1421,12 +1502,10 @@ mod tests {
         fs::write(src_dir.join("a.txt"), "new content").unwrap();
         fs::write(dst_dir.join("a.txt"), "old content").unwrap();
 
-        let result = copy_entry_impl(
-            None,
+        let result = ordinary_copy_for_test(
             src_dir.join("a.txt").to_string_lossy().to_string(),
             dst_dir.to_string_lossy().to_string(),
             Some(true),
-            None,
         );
 
         assert!(result.is_ok(), "overwrite copy failed: {:?}", result.err());
@@ -1555,7 +1634,7 @@ mod tests {
 
     // ---- Large / streaming copy hardening (issue #174) ----
 
-    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::atomic::AtomicBool;
 
     /// Streaming copy of a multi-chunk file reproduces content byte-for-byte.
     #[test]
@@ -1606,49 +1685,13 @@ mod tests {
         let flag = AtomicBool::new(true);
         let mut tracker =
             ProgressTracker::new(None, "copy-progress", "Copy cancelled", 0, 0, Some(&flag));
-        let err = copy_entry_inner(
-            &src_dir,
-            &dest_dir,
-            "src",
-            None,
-            &src_dir.to_string_lossy(),
-            &mut tracker,
-        )
-        .expect_err("cancelled copy must fail");
+        let err = copy_entry_inner(&src_dir, &dest_dir, "src", None, &mut tracker)
+            .expect_err("cancelled copy must fail");
         assert!(err.to_string().contains("cancelled"));
         assert!(
             !dest_dir.join("src").exists(),
             "partial copy should have been cleaned up"
         );
-    }
-
-    /// cancel_copy through the registry aborts a copy_entry_impl job.
-    #[test]
-    fn test_cancel_copy_registry_aborts_job() {
-        let dir = tempdir().unwrap();
-        let src = dir.path().join("big.bin");
-        fs::write(&src, vec![2u8; 6 * 1024 * 1024]).unwrap();
-        let dest_dir = dir.path().join("dest");
-        fs::create_dir(&dest_dir).unwrap();
-
-        // Pre-register + cancel the job id, then bypass the impl's duplicate
-        // registration by driving copy_recursively with the registry's flag
-        // directly — the same pattern the archive tests use.
-        let job_id = 424_242;
-        let flag = COPY_TASKS.start_with_id(job_id).unwrap();
-        flag.store(true, Ordering::Relaxed);
-        let mut tracker = ProgressTracker::new(
-            None,
-            "copy-progress",
-            "Copy cancelled",
-            job_id,
-            0,
-            Some(&flag),
-        );
-        let err = copy_recursively(&src, &dest_dir.join("big.bin"), &mut tracker)
-            .expect_err("cancelled copy must fail");
-        assert!(err.to_string().contains("cancelled"));
-        COPY_TASKS.cleanup(job_id);
     }
 
     /// A moderately large directory tree copies completely without recursing
@@ -1669,11 +1712,9 @@ mod tests {
         let dest = dir.path().join("dest");
         fs::create_dir(&dest).unwrap();
 
-        copy_entry_impl(
-            None,
+        ordinary_copy_for_test(
             src.to_string_lossy().to_string(),
             dest.to_string_lossy().to_string(),
-            None,
             None,
         )
         .unwrap();
@@ -1699,11 +1740,9 @@ mod tests {
 
         let dest = dir.path().join("dest");
         fs::create_dir(&dest).unwrap();
-        copy_entry_impl(
-            None,
+        ordinary_copy_for_test(
             src.to_string_lossy().to_string(),
             dest.to_string_lossy().to_string(),
-            None,
             None,
         )
         .expect("copy with symlink cycle must terminate");
@@ -1735,11 +1774,9 @@ mod tests {
         fs::create_dir(&dest_dir).unwrap();
 
         let start = std::time::Instant::now();
-        copy_entry_impl(
-            None,
+        ordinary_copy_for_test(
             src.to_string_lossy().to_string(),
             dest_dir.to_string_lossy().to_string(),
-            None,
             None,
         )
         .unwrap();
@@ -1763,11 +1800,9 @@ mod tests {
         let dest = dir.path().join("dest");
         fs::create_dir(&dest).unwrap();
         let start = std::time::Instant::now();
-        copy_entry_impl(
-            None,
+        ordinary_copy_for_test(
             src.to_string_lossy().to_string(),
             dest.to_string_lossy().to_string(),
-            None,
             None,
         )
         .unwrap();

@@ -2,11 +2,20 @@
 import { browser, $ } from "@wdio/globals";
 import { expect } from "expect-webdriverio";
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
-import { domText, domTexts, navigateTo, switchToFreshWindow, waitForFreshWindowElement } from "./helpers";
+import {
+  domText,
+  domTexts,
+  entryPathSelector,
+  navigateTo,
+  switchToFreshWindow,
+  waitForFreshWindowElement,
+  closeOtherWindows,
+} from "./helpers";
+import { monitorFreshWindowOpen } from "../diagnostics/fresh-window";
+import { createNativeFixtureDirectory } from "../native-qualification";
 
-const scratch = fs.mkdtempSync(path.join(os.tmpdir(), "explorer-directory-recovery-"));
+const scratch = createNativeFixtureDirectory("explorer-directory-recovery-");
 const watchedDirectory = path.join(scratch, "watched");
 const displacedDirectory = path.join(scratch, "displaced");
 const independentDirectory = path.join(scratch, "independent");
@@ -15,13 +24,11 @@ const contentFileName = "existing.md";
 const initialContentMarker = "Initial existing-file content.";
 const updatedContentMarker = "Updated existing-file content reached the preview.";
 
-type WindowOperationResult = { kind: string; label: string } | null;
 
 let mainHandle = "";
 let watchedHandle = "";
 
-async function operation(op: string, target?: string): Promise<unknown> {
-  const token = crypto.randomUUID();
+async function operation(op: string, target?: string, token = crypto.randomUUID()): Promise<unknown> {
   await browser.execute((detail) => {
     window.dispatchEvent(new CustomEvent("e2e-window-operation", { detail }));
   }, { token, op, target });
@@ -88,9 +95,17 @@ async function saveEvidence(name: string): Promise<void> {
   await browser.saveScreenshot(path.join(directory, name));
 }
 
-const linuxDescribe = process.platform === "linux" ? describe : describe.skip;
+// Watch-root recovery after a directory is replaced (same path, new file
+// identity) is behavioral: it asserts on the app's own receipts and rendered
+// entries, not on any OS-specific watch introspection. `fs.Stats.ino` is
+// populated on Windows NTFS (via GetFileInformationByHandle) as well as on
+// Linux, so the new-identity assertion holds on both. Runs on Linux
+// (WebKitGTK) and Windows (WebView2).
+const nativeDescribe = process.platform === "linux" || process.platform === "win32"
+  ? describe
+  : describe.skip;
 
-linuxDescribe("directory watch root recovery", () => {
+nativeDescribe("directory watch root recovery", () => {
   before(() => {
     fs.mkdirSync(watchedDirectory);
     fs.mkdirSync(independentDirectory);
@@ -104,17 +119,7 @@ linuxDescribe("directory watch root recovery", () => {
   });
 
   after(async () => {
-    if (mainHandle) {
-      for (const handle of await browser.getWindowHandles()) {
-        if (handle === mainHandle) continue;
-        await browser.switchToWindow(handle);
-        await browser.closeWindow();
-      }
-      await browser.switchToWindow(mainHandle);
-    }
-    // Removing the displaced tree earlier would hide a watch that stayed
-    // attached to the old inode after the original path was recreated.
-    fs.rmSync(scratch, { recursive: true, force: true });
+    if (mainHandle) await closeOtherWindows(mainHandle);
   });
 
   it("reattaches a mounted pane to a recreated directory without ghosting the displaced tree", async () => {
@@ -124,10 +129,11 @@ linuxDescribe("directory watch root recovery", () => {
     await waitForCausalMutation(independentDirectory, "independent-before-recovery.txt");
 
     const existingHandles = await browser.getWindowHandles();
-    const opened = await operation("fresh-open", watchedDirectory) as WindowOperationResult;
-    expect(opened).not.toBeNull();
-    expect(opened?.kind).toBe("fresh");
-    watchedHandle = await switchToFreshWindow(opened!.label, existingHandles);
+    const token = crypto.randomUUID();
+    const label = `explorer-${token}`;
+    const opened = await monitorFreshWindowOpen(label,
+      () => operation("fresh-open", watchedDirectory, token));
+    watchedHandle = await switchToFreshWindow(opened.label, existingHandles);
     await waitForFreshWindowElement(".file-list", 20_000);
     await browser.waitUntil(async () =>
       (await $(".status-path").getAttribute("title")) === watchedDirectory,
@@ -182,7 +188,7 @@ linuxDescribe("directory watch root recovery", () => {
     await waitForDirectoryWatch(contentDirectory);
     await waitForEntries([contentFileName]);
 
-    await $(`.entry-item[data-path$="/${contentFileName}"]`).click();
+    await $(entryPathSelector(path.join(contentDirectory, contentFileName))).click();
     if (!(await $(".preview-pane").isExisting())) await browser.keys(" ");
     await $(".preview-markdown").waitForDisplayed({ timeout: 20_000 });
     await browser.waitUntil(async () =>

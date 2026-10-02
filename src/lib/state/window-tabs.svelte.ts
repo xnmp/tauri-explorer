@@ -41,7 +41,8 @@ import {
   removePersisted,
 } from "./persisted";
 import { parentDir } from "$lib/domain/path";
-import { acknowledgeWindowHandoff } from "./window-handoff";
+import { acknowledgeWindowHandoff, normalizeWindowHandoff } from "./window-handoff";
+import { traceError, traceWindowFailure, traceWindowProgress } from "./window-trace";
 import { isFreshSeed, isRecord, normalizeDirectorySeed, windowSeedFitsBudget, WINDOW_SEED_MAX_CHARS, type ExplorerSeed } from "$lib/domain/window-input";
 import { createTabDisplay } from "./tab-display.svelte";
 import { settingsStore } from "./settings.svelte";
@@ -615,7 +616,7 @@ function createWindowTabsManager(options: {
     if (!normalized || normalized.tabs.length === 0) return;
 
     // Destroy before clearing — otherwise backend watch refcounts and
-    // streaming listeners leak for every replaced explorer.
+    // directory listeners leak for every replaced explorer.
     paneActivation.cancel();
     transfers.clear();
     sessions.clear();
@@ -663,14 +664,36 @@ function createWindowTabsManager(options: {
       WINDOW_SEED_MAX_CHARS,
     );
     removePersisted(tabSeedKey(WINDOW_LABEL));
-    if (isRecord(tabSeed) && isFreshSeed(tabSeed.ts, Date.now(), 10_000)) {
-      const snapshot = normalizeSnapshot(tabSeed.snapshot);
-      if (snapshot) {
-        const adopted = adoptTab(snapshot);
-        void acknowledgeWindowHandoff(tabSeed.handoff, WINDOW_LABEL).catch(() => {});
-        return adopted;
+    const freshTabSeed = isRecord(tabSeed) && isFreshSeed(tabSeed.ts, Date.now(), 10_000);
+    const snapshot = freshTabSeed ? normalizeSnapshot(tabSeed.snapshot) : null;
+    const handoff = isRecord(tabSeed) ? normalizeWindowHandoff(tabSeed.handoff) : null;
+    const traceTabSeed = (phase: string, failed: boolean, error?: unknown) => {
+      const context = {
+        label: WINDOW_LABEL, requestId: handoff?.requestId ?? null, phase,
+        seedPresent: tabSeed !== null, fresh: freshTabSeed,
+        seedAgeMs: isRecord(tabSeed) && typeof tabSeed.ts === "number" ? Date.now() - tabSeed.ts : null,
+        snapshotValid: snapshot !== null, handoffValid: handoff !== null,
+        error: traceError(error),
+      };
+      if (failed) traceWindowFailure("window tab seed failed", context);
+      else traceWindowProgress("window tab seed", context);
+    };
+    traceTabSeed("read", false);
+    if (snapshot) {
+      const adopted = adoptTab(snapshot);
+      traceTabSeed("adopted", false);
+      if (handoff) {
+        void acknowledgeWindowHandoff(handoff, WINDOW_LABEL)
+          .then(() => traceTabSeed("acknowledged", false))
+          .catch((error) => traceTabSeed("acknowledgement-error", true, error));
+      } else {
+        // The sender waits for an acknowledgement this window cannot send.
+        traceTabSeed("acknowledgement-skipped", true);
       }
+      return adopted;
     }
+    // A stale or malformed seed means the sender's tab is not adopted here.
+    if (tabSeed !== null) traceTabSeed("rejected", true);
 
     // Check for parent-window seed (child windows get entries pre-loaded)
     const targetPath = overridePath ?? initialPath;
@@ -1233,6 +1256,7 @@ function createWindowTabsManager(options: {
     get acceptsTransfers() { return !closing && !disposal; },
     requestWindowClose: windowClose.request,
     observeNativeClose: windowClose.observe,
+    whenNativeCloseObserved: windowClose.whenObserved,
     closeActiveTab,
     closeSurface,
     exportTab,

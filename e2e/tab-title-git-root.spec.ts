@@ -7,15 +7,10 @@
  * Issue: feat/tab-title (git repo root in tab title), #471 (default-on fix)
  */
 import { test, expect } from "./fixtures";
-import { waitForEntries } from "./helpers";
+import { seedSettings, waitForEntries } from "./helpers";
 
 const setGitTitles = (page: import("@playwright/test").Page, enabled: boolean) =>
-  page.addInitScript((value) => {
-    const k = "explorer-settings";
-    const s = JSON.parse(localStorage.getItem(k) || "{}");
-    s.tabTitleGitRoot = value;
-    localStorage.setItem(k, JSON.stringify(s));
-  }, enabled);
+  seedSettings(page, { tabTitleGitRoot: enabled });
 
 /** Tabs are per-pane (#140) and the strip only renders with 2+ tabs (or in
  *  dual-pane mode) — open a second tab so the strip is visible. */

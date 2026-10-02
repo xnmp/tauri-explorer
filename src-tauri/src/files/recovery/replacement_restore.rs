@@ -7,17 +7,9 @@ use super::super::{
     replacement_restoration::{restoration_step, RestorationStep},
 };
 use super::Root;
-use crate::{
-    error::AppError,
-    files::{
-        file_identity::{version_at, version_from_metadata},
-        native_directory::Directory,
-    },
-};
+use crate::files::recovery::artifact_layout::{probe, ORIGINAL, PUBLICATION};
+use crate::{error::AppError, files::file_identity::version_from_metadata};
 use std::{ffi::OsStr, io};
-
-const ORIGINAL: &str = "original";
-const PUBLICATION: &str = "publication";
 
 trait RestoreHooks {
     fn after_directory_mode(&mut self) -> Result<(), AppError> {
@@ -289,14 +281,6 @@ impl Root {
         self.parent.sync()?;
         restoration.verify_step(RestorationStep::Complete)?;
         Ok(restoration.spec.original.clone())
-    }
-}
-
-fn probe(directory: &Directory, name: &OsStr) -> Result<Option<EntryVersion>, AppError> {
-    match version_at(directory, name) {
-        Ok(version) => Ok(Some(version)),
-        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
-        Err(error) => Err(error.into()),
     }
 }
 

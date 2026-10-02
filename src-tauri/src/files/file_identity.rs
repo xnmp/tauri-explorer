@@ -46,13 +46,22 @@ pub(super) fn version_from_metadata(
 /// Observe a leaf relative to its retained parent, including dangling symlinks
 /// and unreadable files. No path reopen or content read is required.
 #[cfg(unix)]
-#[allow(clippy::unnecessary_cast)] // Darwin dev_t/mode_t differ from Linux.
 pub(super) fn version_at(
     directory: &super::native_directory::Directory,
     name: &std::ffi::OsStr,
 ) -> io::Result<super::entry_version::EntryVersion> {
-    let stat = directory.stat(name)?;
-    let version = super::entry_version::EntryVersion {
+    let version = version_of_stat(&directory.stat(name)?)?;
+    version.validate()?;
+    Ok(version)
+}
+
+/// The version one `fstatat` observed, without [`EntryVersion::validate`]: a
+/// walk that must act on every object type (a macOS whiteout, say) compares
+/// this against validated evidence instead of refusing the unfamiliar type.
+#[cfg(unix)]
+#[allow(clippy::unnecessary_cast)] // Darwin dev_t/mode_t differ from Linux.
+pub(super) fn version_of_stat(stat: &libc::stat) -> io::Result<super::entry_version::EntryVersion> {
+    Ok(super::entry_version::EntryVersion {
         object: ObjectId::unix(stat.st_dev as u64, stat.st_ino as u64),
         size: stat.st_size.try_into().map_err(io::Error::other)?,
         modified_seconds: stat.st_mtime,
@@ -62,9 +71,7 @@ pub(super) fn version_at(
         mode: stat.st_mode as u32,
         uid: stat.st_uid,
         gid: stat.st_gid,
-    };
-    version.validate()?;
-    Ok(version)
+    })
 }
 
 #[cfg(test)]

@@ -1,5 +1,6 @@
 use super::*;
 use crate::files::recovery::coordinator::{test_fixture::fixture, DurableOperation};
+use crate::files::recovery::replacement_execution::ReplacementExecution;
 use std::{fs, path::Path};
 
 fn published() -> (tempfile::TempDir, Arc<Coordinator>, ReplacementExecution) {
@@ -323,27 +324,21 @@ fn generation_input_is_canonical_bounded_and_lossless() {
 
 #[cfg(target_os = "linux")]
 #[test]
-fn runtime_dispatches_native_recovery_and_rejects_storage_retargeting() {
+fn runtime_dispatches_native_recovery() {
     tauri::async_runtime::block_on(async {
         let (directory, _coordinator, execution) = published();
         let id = execution.operation.intent().id.clone();
         drop(execution);
-        let runtime = super::super::Runtime::default();
-        let path = directory.path().join("recovery");
-        let initial = runtime.list(path.clone()).await.unwrap();
+        let runtime = super::super::Runtime::new(directory.path().join("recovery"));
+        let initial = runtime.list().await.unwrap();
         assert_eq!(initial.items[0].id, id);
-        let inspected = runtime.inspect(path.clone(), id.clone()).await.unwrap();
+        let inspected = runtime.inspect(id.clone()).await.unwrap();
         assert_eq!(
             inspected.items[0].actions,
             vec![RecoveryChoice::Restore, RecoveryChoice::Discard]
         );
         let restored = runtime
-            .resolve(
-                path.clone(),
-                id,
-                inspected.items[0].generation,
-                RecoveryChoice::Restore,
-            )
+            .resolve(id, inspected.items[0].generation, RecoveryChoice::Restore)
             .await
             .unwrap();
         assert!(restored.error.is_none());
@@ -360,9 +355,6 @@ fn runtime_dispatches_native_recovery_and_rejects_storage_retargeting() {
             .unwrap(),
             b"new content"
         );
-        let other = directory.path().join("other-storage");
-        assert!(runtime.list(other.clone()).await.is_err());
-        assert!(!other.exists());
     });
 }
 
@@ -377,8 +369,8 @@ fn first_discovery_keeps_catalog_visible_when_the_index_is_missing() {
         let path = directory.path().join("recovery");
         let before = Coordinator::discover_catalog(&path).unwrap();
         fs::remove_file(path.join("recovery.sqlite3")).unwrap();
-        let runtime = super::super::Runtime::default();
-        let result = runtime.list(path.clone()).await.unwrap();
+        let runtime = super::super::Runtime::new(directory.path().join("recovery"));
+        let result = runtime.list().await.unwrap();
         assert_eq!(result.items[0].id, id);
         assert_eq!(result.items[0].generation, 0);
         assert_eq!(result.items[0].status, "attention");
@@ -400,14 +392,14 @@ fn failed_live_storage_never_becomes_a_revision_zero_fallback() {
         let (directory, _coordinator, execution) = published();
         drop(execution);
         let path = directory.path().join("recovery");
-        let runtime = super::super::Runtime::default();
-        assert!(runtime.list(path.clone()).await.unwrap().revision > 0);
+        let runtime = super::super::Runtime::new(directory.path().join("recovery"));
+        assert!(runtime.list().await.unwrap().revision > 0);
         fs::rename(
             path.join("recovery.sqlite3"),
             directory.path().join("held-index"),
         )
         .unwrap();
-        assert!(runtime.list(path.clone()).await.is_err());
+        assert!(runtime.list().await.is_err());
         assert!(!path.join("recovery.sqlite3").exists());
         assert_eq!(
             bytes(directory.path()),
@@ -423,8 +415,7 @@ fn runtime_publishes_inspection_and_restoration_to_other_renderers_and_stops_aft
         let (directory, _coordinator, execution) = published();
         let id = execution.operation.intent().id.clone();
         drop(execution);
-        let path = directory.path().join("recovery");
-        let runtime = super::super::Runtime::default();
+        let runtime = super::super::Runtime::new(directory.path().join("recovery"));
         let observed = Arc::new(std::sync::Mutex::new(Vec::new()));
         let receiver = observed.clone();
         let channel = tauri::ipc::Channel::new(move |body| {
@@ -439,12 +430,12 @@ fn runtime_publishes_inspection_and_restoration_to_other_renderers_and_stops_aft
         });
         let renderer = crate::renderer_owner::Owner::default();
         runtime
-            .subscribe(path.clone(), renderer.clone(), 1, move |snapshot| {
+            .subscribe(renderer.clone(), 1, move |snapshot| {
                 channel.send(snapshot.clone()).is_ok()
             })
             .await
             .unwrap();
-        let inspected = runtime.inspect(path.clone(), id.clone()).await.unwrap();
+        let inspected = runtime.inspect(id.clone()).await.unwrap();
         let latest = observed.lock().unwrap().last().unwrap().clone();
         assert_eq!(latest["items"][0]["status"], "ready");
         assert_eq!(
@@ -452,12 +443,7 @@ fn runtime_publishes_inspection_and_restoration_to_other_renderers_and_stops_aft
             inspected.items[0].generation.to_string()
         );
         runtime
-            .resolve(
-                path.clone(),
-                id,
-                inspected.items[0].generation,
-                RecoveryChoice::Restore,
-            )
+            .resolve(id, inspected.items[0].generation, RecoveryChoice::Restore)
             .await
             .unwrap();
         let latest = observed.lock().unwrap().last().unwrap().clone();
@@ -468,7 +454,7 @@ fn runtime_publishes_inspection_and_restoration_to_other_renderers_and_stops_aft
         );
         runtime.unsubscribe(&renderer, 1).unwrap();
         let before = observed.lock().unwrap().len();
-        runtime.list(path).await.unwrap();
+        runtime.list().await.unwrap();
         assert_eq!(observed.lock().unwrap().len(), before);
     });
 }
@@ -480,20 +466,21 @@ fn failed_initial_discovery_releases_channel_and_a_new_token_can_retry() {
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("not-a-directory/recovery");
         fs::write(directory.path().join("not-a-directory"), b"occupied").unwrap();
-        let runtime = super::super::Runtime::default();
+        let runtime = super::super::Runtime::new(path);
         let owner = crate::renderer_owner::Owner::default();
         let deliveries = Arc::new(std::sync::atomic::AtomicUsize::new(0));
         let seen = deliveries.clone();
         let result = runtime
-            .subscribe(path, owner.clone(), 1, move |_| {
+            .subscribe(owner.clone(), 1, move |_| {
                 seen.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                 true
             })
             .await;
         assert!(result.is_err());
-        let path = directory.path().join("valid/recovery");
-        runtime.list(path.clone()).await.unwrap();
+        // Storage is fixed for the runtime; the retry succeeds once it is usable.
+        fs::remove_file(directory.path().join("not-a-directory")).unwrap();
+        runtime.list().await.unwrap();
         assert_eq!(deliveries.load(std::sync::atomic::Ordering::Relaxed), 0);
-        runtime.subscribe(path, owner, 2, |_| true).await.unwrap();
+        runtime.subscribe(owner, 2, |_| true).await.unwrap();
     });
 }

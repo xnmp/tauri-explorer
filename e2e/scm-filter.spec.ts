@@ -7,18 +7,12 @@
  * that puts the panel into the state each image claims to show.
  */
 import { test, expect, type Page } from "./fixtures";
+import { applySettingsAndReload } from "./helpers";
+import type { MockControl } from "../src/lib/api/mock-control";
 
 async function openScmOnRepo(page: Page): Promise<void> {
   await page.goto("/");
-  await page.evaluate(() => {
-    const raw = localStorage.getItem("explorer-settings");
-    const s = raw ? JSON.parse(raw) : {};
-    s.showGitStatus = true;
-    s.showScmPanel = true;
-    s.scmTreeView = false;
-    localStorage.setItem("explorer-settings", JSON.stringify(s));
-  });
-  await page.reload();
+  await applySettingsAndReload(page, { showGitStatus: true, showScmPanel: true, scmTreeView: false });
   await page.waitForLoadState("domcontentloaded");
 
   await page.getByText("Documents", { exact: true }).first().dblclick();
@@ -111,7 +105,7 @@ test.describe("SCM sidebar fuzzy filter (#517)", () => {
 
     // Everything committed/discarded elsewhere while the filter is set.
     await page.evaluate(() => {
-      (window as unknown as { __mockGitSetClean: () => void }).__mockGitSetClean();
+      (window as unknown as { __mockControl?: MockControl }).__mockControl?.gitSetClean?.();
     });
 
     await expect(view.locator(".clean-state")).toBeVisible();

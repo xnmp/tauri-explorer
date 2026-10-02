@@ -29,7 +29,7 @@ test.describe("shortcut cheatsheet", () => {
     await page.goto("/");
     await waitForEntries(page);
     await page.keyboard.press("Control+Shift+p");
-    await page.locator("input:focus").fill("Keyboard Shortcuts");
+    await page.locator("input:focus").fill("Keyboard Shortcut Reference");
     await page.keyboard.press("Enter");
     await expect(page.locator('[data-testid="shortcut-cheatsheet"]')).toBeVisible();
   });

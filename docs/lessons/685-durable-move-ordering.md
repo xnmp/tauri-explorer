@@ -199,12 +199,17 @@ sources are two uniquely named copies, but for a move the repeat is a missing
 source that would report the whole request incomplete. And the renderer's
 presentation is now one `runSession` shared by both operations, because a
 second hand-written loop would drift exactly the way a second Rust engine
-would.
+would. The refresh set also names the requested source spelling, so a cut
+reached through a symlinked parent does not publish a change for the physical
+directory.
 
-Still renderer-owned, and still on the old per-item path: plugin-driven moves
-(`src/lib/plugins/api.ts`) go through `performFileTransfer`. The refresh set
-also names the requested source spelling, so a cut reached through a symlinked
-parent does not publish a change for the physical directory.
+Plugin-driven moves (`src/lib/plugins/api.ts::PluginWorkspace.moveFile`) were
+the last caller on the old per-item path (`performFileTransfer` →
+`move_entry`); #881 routed them through `moveFiles`/`moveEntries` like every
+other caller and deleted both. ADR 0024 records the resulting decision: a
+plugin move takes no conflict-policy parameter of its own and prompts exactly
+as a user-initiated move does, because the whole point of sharing
+`runSession` is that there is only one conflict surface to drift.
 
 ## Why it is opt-in
 

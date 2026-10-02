@@ -1148,6 +1148,9 @@ mod tests {
         git(p, &["config", "user.name", "Test"]);
         git(p, &["config", "user.email", "t@x"]);
         git(p, &["config", "commit.gpgsign", "false"]);
+        // Contents are asserted byte for byte; a machine-wide
+        // core.autocrlf=true (the Windows runner default) must not apply.
+        git(p, &["config", "core.autocrlf", "false"]);
         write(p, "a.txt", "1\n");
         git(p, &["add", "."]);
         git(p, &["commit", "-m", "first"]);
@@ -2173,6 +2176,9 @@ mod tests {
         let p = dir.path();
         git(p, &["init", "-b", "main"]);
         git(p, &["config", "commit.gpgsign", "false"]);
+        // Contents are asserted byte for byte; a machine-wide
+        // core.autocrlf=true (the Windows runner default) must not apply.
+        git(p, &["config", "core.autocrlf", "false"]);
         // run_git (production) inherits identity from config; CI runners have
         // no global identity, so set it repo-locally for the cherry-pick.
         git(p, &["config", "user.name", "Test"]);
@@ -2203,6 +2209,9 @@ mod tests {
         let p = dir.path();
         git(p, &["init", "-b", "main"]);
         git(p, &["config", "commit.gpgsign", "false"]);
+        // Contents are asserted byte for byte; a machine-wide
+        // core.autocrlf=true (the Windows runner default) must not apply.
+        git(p, &["config", "core.autocrlf", "false"]);
         git(p, &["config", "user.name", "Test"]);
         git(p, &["config", "user.email", "t@x"]);
         write(p, "a.txt", "root\n");

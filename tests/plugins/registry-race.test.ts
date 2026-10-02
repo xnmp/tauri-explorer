@@ -222,7 +222,7 @@ describe("plugin registry activation race", () => {
         handler: () => {},
       });
       ctx.registerFsProvider("reenable-reentrant", {
-        list: (path) => ({ path, entries: [], listing_id: null }),
+        list: (path) => ({ path, entries: [] }),
       });
     });
     const plugin: Plugin = {

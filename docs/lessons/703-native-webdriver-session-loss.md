@@ -82,3 +82,16 @@ contract without pretending to reproduce WebKitGTK process loss.
 
 Do not respond to a recurrence with focus changes, sleeps, larger timeouts or
 blanket retries: none of them are supported by the sequence above.
+
+## Retirement (#885)
+
+#703 closed with the session-loss cause still open under #781, which reuses
+this mechanism for fresh-window launch/selection and warm-claim expiry. The
+#703 unit suites `fresh-window-capture`, `fresh-window-diagnostics` and
+`fresh-window-process-timeline` were deleted with the original
+`e2e-tauri/fresh-window-diagnostics.ts` module: they tested an investigation
+mechanism, not a product contract. The sampler, record writer and fresh-window hooks now live in
+`e2e-tauri/diagnostics/` tagged `Retire-when: #781 closed`, with unchanged
+native WebDriver behaviour. `tests/qualification/fresh-native-window.test.ts`
+remains as the single regression test: fresh-window selection must not execute
+script in pre-existing (possibly parked, unresponsive) pages.

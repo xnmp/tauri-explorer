@@ -3,7 +3,6 @@ import type { ApiResult } from "$lib/api/common";
 import type { CopySessionEvent, CopySessionOutcome } from "$lib/domain/copy-session";
 import type { FileEntry } from "$lib/domain/file";
 import type {
-  DirectoryListingCallbacks,
   DirectoryListingResult,
   DirectoryObservation,
 } from "$lib/state/directory-listing";
@@ -11,7 +10,6 @@ import type { UndoAction } from "$lib/state/types";
 
 type Load = (
   path: string,
-  callbacks: DirectoryListingCallbacks,
   observation?: DirectoryObservation,
 ) => Promise<DirectoryListingResult>;
 
@@ -19,13 +17,12 @@ const mocks = vi.hoisted(() => ({
   load: { current: (async () => ({ ok: false, error: "unset" })) as Load },
   cleanup: vi.fn(async () => {}),
   osReadFiles: vi.fn(),
-  osWriteFiles: vi.fn(async () => ({ ok: true, data: null })),
-  transfer: vi.fn(),
+  osWriteFiles: vi.fn(async (_paths: string[]): Promise<{ ok: true; data: null } | { ok: false; error: string }> => ({ ok: true, data: null })),
+  native: { revision: 0, entries: null as FileEntry[] | null, operation: null as "copy" | "cut" | null, paths: [] as string[], pending: Promise.resolve() as Promise<unknown>, lease: null as number | null },
   copyEntries: vi.fn(),
   moveEntries: vi.fn(),
   estimateSize: vi.fn(async () => ({ ok: true, data: { totalBytes: 1 } })),
-  cancelCopy: vi.fn(),
-  clipboardHasImage: vi.fn(),
+  clipboardImageStatus: vi.fn(),
   clipboardPasteImage: vi.fn(),
   broadcastFileChange: vi.fn(),
   undo: vi.fn(),
@@ -36,26 +33,74 @@ vi.mock("$lib/state/directory-listing", () => ({
   createDirectoryListing: () => ({
     load: (
       path: string,
-      callbacks: DirectoryListingCallbacks,
-      observation?: DirectoryObservation,
-    ) => mocks.load.current(path, callbacks, observation),
+          observation?: DirectoryObservation,
+    ) => mocks.load.current(path, observation),
     cleanup: mocks.cleanup,
   }),
 }));
 
+async function nativeSnapshot() {
+  await mocks.native.pending;
+  const result = await mocks.osReadFiles();
+  if (!result.ok) throw new Error(result.error);
+  const paths: string[] = result.data;
+  if (paths.length !== mocks.native.paths.length || paths.some((path, index) => path !== mocks.native.paths[index])) {
+    mocks.native.revision++;
+    mocks.native.entries = null;
+    mocks.native.operation = null;
+    mocks.native.paths = paths;
+  }
+  return { ...mocks.native, mirrorError: null };
+}
+
 vi.mock("$lib/api/os-clipboard", () => ({
-  osClipboardHasFiles: vi.fn(async () => false),
-  osClipboardReadFiles: mocks.osReadFiles,
-  osClipboardWriteFiles: mocks.osWriteFiles,
+  osClipboardPublish: (entries: FileEntry[], operation: "copy" | "cut") => {
+    const publish = mocks.native.pending.then(async () => {
+    const written = await mocks.osWriteFiles(entries.map((entry) => entry.path));
+    if (!written.ok) throw new Error(written.error);
+    mocks.native.revision++;
+    mocks.native.entries = entries;
+    mocks.native.operation = operation;
+    mocks.native.paths = entries.map((entry) => entry.path);
+    return { ...mocks.native, mirrorError: null };
+    });
+    mocks.native.pending = publish.catch(() => {});
+    return publish;
+  },
+  osClipboardSnapshot: () => nativeSnapshot(),
+  // Like the native worker, a claim first observes the OS clipboard.
+  osClipboardClaimCut: async (revision: number) => {
+    const current = await nativeSnapshot();
+    if (revision !== current.revision || current.operation !== "cut" || mocks.native.lease === revision) return false;
+    mocks.native.lease = revision;
+    return true;
+  },
+  osClipboardReleaseCut: async (revision: number) => {
+    if (revision !== mocks.native.revision || mocks.native.lease !== revision) return false;
+    mocks.native.lease = null;
+    return true;
+  },
+  osClipboardCompareAndClear: async (revision: number) => {
+    if (revision !== mocks.native.revision || !mocks.native.entries) return false;
+    mocks.native.revision++;
+    mocks.native.entries = null;
+    mocks.native.operation = null;
+    return true;
+  },
+  osClipboardRekey: async (revision: number, oldPath: string, entry: FileEntry) => {
+    if (revision !== mocks.native.revision || !mocks.native.entries) return null;
+    const index = mocks.native.entries.findIndex((candidate) => candidate.path === oldPath);
+    if (index < 0) return null;
+    mocks.native.entries = mocks.native.entries.map((candidate, at) => at === index ? entry : candidate);
+    mocks.native.paths = mocks.native.entries.map((candidate) => candidate.path);
+    mocks.native.revision++;
+    return { ...mocks.native, mirrorError: null };
+  },
 }));
 
 vi.mock("$lib/api/clipboard-image", () => ({
-  clipboardHasImage: mocks.clipboardHasImage,
+  clipboardImageStatus: mocks.clipboardImageStatus,
   clipboardPasteImage: mocks.clipboardPasteImage,
-}));
-
-vi.mock("$lib/state/file-transfer", () => ({
-  performFileTransfer: mocks.transfer,
 }));
 
 vi.mock("$lib/api/copy-session", async (importOriginal) => ({
@@ -70,7 +115,6 @@ vi.mock("$lib/api/move-session", () => ({
 vi.mock("$lib/api/files", async (importOriginal) => ({
   ...(await importOriginal<typeof import("$lib/api/files")>()),
   estimateSize: mocks.estimateSize,
-  cancelCopy: mocks.cancelCopy,
 }));
 
 vi.mock("$lib/state/file-events", async (importOriginal) => ({
@@ -92,7 +136,9 @@ vi.mock("@tauri-apps/api/event", () => ({
 }));
 
 import { createExplorerState, type ExplorerInstance } from "$lib/state/explorer.svelte";
-import { clipboardStore } from "$lib/state/clipboard.svelte";
+import { clipboardStore, CUT_ALREADY_PASTED } from "$lib/state/clipboard.svelte";
+import { toastStore } from "$lib/state/toast.svelte";
+import { clipboardImageProgress } from "$lib/state/clipboard-image-progress.svelte";
 import { operationsManager } from "$lib/state/operations.svelte";
 
 interface Deferred<T> {
@@ -146,9 +192,9 @@ function explorerAtA(): ExplorerInstance {
 }
 
 function serveListing(entries: FileEntry[]): void {
-  mocks.load.current = async (path, _callbacks, observation) => {
+  mocks.load.current = async (path, observation) => {
     observation?.accept(null);
-    return { ok: true, path, entries, streaming: false };
+    return { ok: true, path, entries };
   };
 }
 
@@ -170,14 +216,18 @@ async function waitForCall(mock: ReturnType<typeof vi.fn>): Promise<void> {
 
 let explorers: ExplorerInstance[] = [];
 
-beforeEach(() => {
-  clipboardStore.clear();
+beforeEach(async () => {
+  mocks.native = { revision: mocks.native.revision + 1, entries: null, operation: null, paths: [], pending: Promise.resolve(), lease: null };
+  await clipboardStore.clear();
   vi.clearAllMocks();
+  mocks.osReadFiles.mockReset();
+  mocks.osWriteFiles.mockReset();
+  mocks.osWriteFiles.mockResolvedValue({ ok: true, data: null });
   localStorage.clear();
   explorers = [];
   mocks.load.current = async () => ({ ok: false, error: "unset" });
-  mocks.osReadFiles.mockResolvedValue({ ok: true, data: [] });
-  mocks.clipboardHasImage.mockResolvedValue(false);
+  mocks.osReadFiles.mockImplementation(async () => ({ ok: true, data: [...mocks.native.paths] }));
+  mocks.clipboardImageStatus.mockResolvedValue({ ok: true, data: false });
   mocks.undo.mockResolvedValue({ error: "Nothing to undo" });
   mocks.copyEntries.mockImplementation(async (sources: readonly string[], destination: string, options: {
     onEvent?: (event: CopySessionEvent) => void;
@@ -196,10 +246,101 @@ beforeEach(() => {
 
 afterEach(async () => {
   await Promise.all(explorers.map((explorer) => explorer.destroy()));
-  clipboardStore.clear();
+  await clipboardStore.clear();
 });
 
 describe("paste and undo publication ownership", () => {
+  it("waits for the ordered native snapshot before pasting a pending Copy", async () => {
+    const explorer = explorerAtA();
+    const source = entry("pending.txt", "/source");
+    let finishWrite!: () => void;
+    mocks.osWriteFiles.mockImplementationOnce(() => new Promise((resolve) => {
+      finishWrite = () => resolve({ ok: true, data: null });
+    }));
+    const copying = clipboardStore.copy([source]);
+    const pasting = explorer.paste();
+
+    await waitForCall(mocks.osWriteFiles);
+    expect(mocks.copyEntries).not.toHaveBeenCalled();
+    finishWrite();
+    expect(await pasting).toBeNull();
+    await copying;
+    expect(mocks.copyEntries).toHaveBeenCalledWith([source.path], "/a", expect.anything());
+  });
+
+  it("waits for a Cut mirror before moving its source", async () => {
+    const explorer = explorerAtA();
+    const source = entry("pending-cut.txt", "/source");
+    let finishWrite!: () => void;
+    mocks.osWriteFiles.mockImplementationOnce(() => new Promise((resolve) => {
+      finishWrite = () => resolve({ ok: true, data: null });
+    }));
+    mocks.osReadFiles.mockResolvedValueOnce({ ok: true, data: [source.path] });
+    const cutting = clipboardStore.cut([source]);
+    const pasting = explorer.paste();
+
+    await waitForCall(mocks.osWriteFiles);
+    expect(mocks.moveEntries).not.toHaveBeenCalled();
+    finishWrite();
+    expect(await pasting).toBeNull();
+    await cutting;
+    expect(mocks.moveEntries).toHaveBeenCalledWith([source.path], "/a", expect.anything());
+  });
+
+  it("uses an external OS copy after the local mirror has settled", async () => {
+    const explorer = explorerAtA();
+    await clipboardStore.copy([entry("old.txt", "/source")]);
+    const external = entry("external.txt", "/elsewhere");
+    mocks.osReadFiles.mockResolvedValueOnce({ ok: true, data: [external.path] });
+
+    expect(await explorer.paste()).toBeNull();
+    expect(mocks.copyEntries).toHaveBeenCalledWith([external.path], "/a", expect.anything());
+  });
+
+  it("copies an external selection with identical paths after native Cut ownership changes", async () => {
+    const explorer = explorerAtA();
+    const source = entry("same.txt", "/source");
+    await clipboardStore.cut([source]);
+    // The external owner can advertise the same files but has no private
+    // token. A path comparison must never authorize a move.
+    mocks.native.revision++;
+    mocks.native.entries = null;
+    mocks.native.operation = null;
+    mocks.native.paths = [source.path];
+    mocks.osReadFiles.mockResolvedValueOnce({ ok: true, data: [source.path] });
+
+    expect(await explorer.paste()).toBeNull();
+    expect(mocks.copyEntries).toHaveBeenCalledWith([source.path], "/a", expect.anything());
+    expect(mocks.moveEntries).not.toHaveBeenCalled();
+  });
+
+  it("does not move an old Cut after another app replaces it with an empty file clipboard", async () => {
+    const explorer = explorerAtA();
+    await clipboardStore.cut([entry("old-cut.txt", "/source")]);
+    mocks.osReadFiles.mockResolvedValueOnce({ ok: true, data: [] });
+
+    expect(await explorer.paste()).toBe("Nothing in clipboard");
+    expect(mocks.moveEntries).not.toHaveBeenCalled();
+    expect(mocks.copyEntries).not.toHaveBeenCalled();
+  });
+
+  it("preserves a newer Cut operation when clipboard content changes during the OS read", async () => {
+    const explorer = explorerAtA();
+    await clipboardStore.copy([entry("old.txt", "/source")]);
+    const osRead = deferred<{ ok: true; data: string[] }>();
+    mocks.osReadFiles.mockReturnValueOnce(osRead.promise);
+
+    const pasting = explorer.paste();
+    await waitForCall(mocks.osReadFiles);
+    const cut = entry("new.txt", "/source");
+    await clipboardStore.cut([cut]);
+    osRead.resolve({ ok: true, data: [cut.path] });
+
+    expect(await pasting).toBeNull();
+    expect(mocks.moveEntries).toHaveBeenCalledWith([cut.path], "/a", expect.anything());
+    expect(mocks.copyEntries).not.toHaveBeenCalled();
+  });
+
   it("publishes and selects every file from a healthy same-pane batch paste", async () => {
     const explorer = explorerAtA();
     const sources = [entry("one.txt", "/source"), entry("two.txt", "/source")];
@@ -355,6 +496,27 @@ describe("paste and undo publication ownership", () => {
     expect.soft(mocks.broadcastFileChange).toHaveBeenCalledWith(expect.arrayContaining(["/a", "/source"]));
   });
 
+  it("moves a Cut once when a second pane pastes it while the first paste is running (#871)", async () => {
+    const first = explorerAtA();
+    const second = explorerAtA();
+    const cut = entry("contested.txt", "/source");
+    await clipboardStore.cut([cut]);
+    const session = deferred<ApiResult<CopySessionOutcome>>();
+    mocks.moveEntries.mockReturnValueOnce(session.promise);
+    const shown = vi.spyOn(toastStore, "show");
+
+    const firstPaste = first.paste();
+    await waitForCall(mocks.moveEntries);
+    expect(await second.paste()).toBeNull();
+    session.resolve(copyOutcome([entry(cut.name)]));
+    expect(await firstPaste).toBeNull();
+
+    expect(mocks.moveEntries).toHaveBeenCalledTimes(1);
+    expect(shown).toHaveBeenCalledWith(CUT_ALREADY_PASTED, "info");
+    expect(clipboardStore.content).toBeNull();
+    shown.mockRestore();
+  });
+
   it("keeps the cut clipboard and reconciles the destination after incomplete source cleanup", async () => {
     const explorer = explorerAtA();
     const cut = entry("partial.txt", "/source");
@@ -380,22 +542,68 @@ describe("paste and undo publication ownership", () => {
 
   it("keeps clipboard-image destination and completion scoped to A", async () => {
     const explorer = explorerAtA();
-    const imageAvailable = deferred<boolean>();
+    const imageAvailable = deferred<ApiResult<boolean>>();
     const imagePaste = deferred<ApiResult<string>>();
-    mocks.clipboardHasImage.mockReturnValueOnce(imageAvailable.promise);
+    mocks.clipboardImageStatus.mockReturnValueOnce(imageAvailable.promise);
     mocks.clipboardPasteImage.mockReturnValueOnce(imagePaste.promise);
 
     const pending = explorer.paste();
+    await waitForCall(mocks.clipboardImageStatus);
+    expect(clipboardImageProgress.pending.map(({ directory }) => directory)).toEqual(["/a"]);
     const bEntries = await navigateToB(explorer);
-    imageAvailable.resolve(true);
+    imageAvailable.resolve({ ok: true, data: true });
     await waitForCall(mocks.clipboardPasteImage);
     expect.soft(mocks.clipboardPasteImage).toHaveBeenCalledWith("/a");
     imagePaste.resolve({ ok: true, data: "/a/Pasted Image.png" });
     expect(await pending).toBeNull();
+    expect(clipboardImageProgress.pending).toEqual([]);
 
     expect.soft(explorer.displayEntries.map(({ path }) => path)).toEqual(bEntries.map(({ path }) => path));
     expect.soft(selectedPaths(explorer)).toEqual([bEntries[1].path]);
     expect.soft(explorer.focusedEntry?.path).toBe(bEntries[1].path);
+  });
+
+  it("explicit image paste keeps its accepted destination after pane navigation", async () => {
+    const explorer = explorerAtA();
+    const imagePaste = deferred<ApiResult<string>>();
+    mocks.clipboardPasteImage.mockReturnValueOnce(imagePaste.promise);
+    const pending = explorer.pasteImage();
+    expect(clipboardImageProgress.pending.map(({ directory }) => directory)).toEqual(["/a"]);
+    const bEntries = await navigateToB(explorer);
+    imagePaste.resolve({ ok: true, data: "/a/image.png" });
+    expect(await pending).toBeNull();
+    expect(clipboardImageProgress.pending).toEqual([]);
+    expect(explorer.displayEntries).toEqual(bEntries);
+    expect(selectedPaths(explorer)).toEqual([bEntries[1].path]);
+    expect(mocks.broadcastFileChange).toHaveBeenCalledWith(["/a"]);
+  });
+
+  it("overlapping image pastes retain progress independently and expose write failures", async () => {
+    const explorer = explorerAtA();
+    const first = deferred<ApiResult<string>>();
+    const second = deferred<ApiResult<string>>();
+    mocks.clipboardPasteImage.mockReturnValueOnce(first.promise).mockReturnValueOnce(second.promise);
+    const firstPaste = explorer.pasteImage();
+    const secondPaste = explorer.pasteImage();
+    expect(clipboardImageProgress.pending.map(({ directory }) => directory)).toEqual(["/a", "/a"]);
+    toastStore.show("Another task is pending", "progress");
+    second.resolve({ ok: false, error: "permission denied" });
+    expect(await secondPaste).toBe("permission denied");
+    expect(clipboardImageProgress.pending).toHaveLength(1);
+    expect(toastStore.toasts.some(({ type, message }) => type === "error" && message.includes("permission denied"))).toBe(true);
+    serveListing(explorer.displayEntries);
+    first.resolve({ ok: true, data: "/a/image.png" });
+    expect(await firstPaste).toBeNull();
+    expect(clipboardImageProgress.pending).toEqual([]);
+  });
+
+  it("ends image progress and exposes clipboard inspection failures without claiming an empty clipboard", async () => {
+    const explorer = explorerAtA();
+    mocks.clipboardImageStatus.mockResolvedValueOnce({ ok: false, error: "clipboard locked" });
+    expect(await explorer.paste()).toBe("clipboard locked");
+    expect(clipboardImageProgress.pending).toEqual([]);
+    expect(toastStore.toasts.some(({ type, message }) => type === "error" && message.includes("clipboard locked"))).toBe(true);
+    expect(mocks.clipboardPasteImage).not.toHaveBeenCalled();
   });
 
   it("does not refresh, reselect, or duplicate-publish when an A undo finishes late", async () => {

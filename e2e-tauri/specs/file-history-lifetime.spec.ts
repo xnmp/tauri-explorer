@@ -3,10 +3,11 @@
  * atomic admission of a forward mutation and its subsequent history push. */
 import { browser, $, expect } from "@wdio/globals";
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import { exactApplicationPid } from "../native-process";
-import { entryNames, navigateTo } from "./helpers";
+import { gatedDescribe } from "./gated-describe";
+import { closeOtherWindows, entryNames, navigateTo, switchToWindowLabel } from "./helpers";
+import { createNativeFixtureDirectory } from "../native-qualification";
 
 type Direction = "undo" | "redo";
 type RenameAction = { type: "rename"; path: string; oldName: string; newName: string };
@@ -72,21 +73,6 @@ async function freshWindow(target: string): Promise<{ kind: string; label: strin
   }, { timeout: 25_000, timeoutMsg: "fresh-open did not finish" });
   if (envelope.error || !envelope.result) throw new Error(envelope.error ?? "fresh-open returned no window");
   return envelope.result;
-}
-
-async function switchToLabel(label: string): Promise<string> {
-  let selected = "";
-  await browser.waitUntil(async () => {
-    for (const handle of await browser.getWindowHandles()) {
-      await browser.switchToWindow(handle);
-      if (await browser.execute(() => document.documentElement.dataset.e2eWindowLabel) === label) {
-        selected = handle;
-        return true;
-      }
-    }
-    return false;
-  }, { timeout: 20_000, timeoutMsg: `native window ${label} did not become ready` });
-  return selected;
 }
 
 async function waitForHistoryReady(): Promise<void> {
@@ -201,18 +187,24 @@ async function destroyCurrentWindow(handle: string): Promise<void> {
   });
 }
 
-const gatedDescribe = process.platform === "linux" && gateDirectory ? describe : describe.skip;
-gatedDescribe("native shared file-history lifetime (requires Linux and TAURI_E2E_HISTORY_GATE_DIR)", () => {
+// Linux-only: exercises the durable history-recovery gate directories
+// (`durable-recovery`, `cfg(unix)`/`cfg(target_os = "linux")`, ADR 0020,
+// plan decision D2) and `exactApplicationPid`'s `/proc`-based process
+// identity, neither of which exists on Windows (#800).
+gatedDescribe("native shared file-history lifetime", [
+  [process.platform === "linux", "Linux"],
+  [gateDirectory !== "", "TAURI_E2E_HISTORY_GATE_DIR"],
+], () => {
   before(async () => {
     fs.accessSync(gateDirectory, fs.constants.R_OK | fs.constants.W_OK);
-    scratch = fs.mkdtempSync(path.join(os.homedir(), ".tauri-explorer-history-lifetime-"));
+    scratch = createNativeFixtureDirectory("tauri-explorer-history-lifetime-");
     await navigateTo(scratch);
     mainHandle = await browser.getWindowHandle();
     applicationPid = exactApplicationPid();
     await waitForHistoryReady();
     const opened = await freshWindow(scratch);
     expect(opened.kind).toBe("fresh");
-    childHandle = await switchToLabel(opened.label);
+    childHandle = await switchToWindowLabel(opened.label);
     await $(".file-list").waitForExist({ timeout: 20_000 });
     await waitForHistoryReady();
     await clearBothHistories();
@@ -228,15 +220,7 @@ gatedDescribe("native shared file-history lifetime (requires Linux and TAURI_E2E
     for (const artifact of gateArtifacts) {
       try { fs.rmSync(artifact, { force: true }); } catch { /* preserve test failure */ }
     }
-    if (mainHandle) {
-      for (const handle of await browser.getWindowHandles()) {
-        if (handle === mainHandle) continue;
-        await browser.switchToWindow(handle);
-        await browser.closeWindow();
-      }
-      if ((await browser.getWindowHandles()).includes(mainHandle)) await browser.switchToWindow(mainHandle);
-    }
-    if (scratch) fs.rmSync(scratch, { recursive: true, force: true });
+    if (mainHandle) await closeOtherWindows(mainHandle);
   });
 
   it("admits a shared inverse once and synchronizes both participants", async function () {
@@ -346,11 +330,74 @@ gatedDescribe("native shared file-history lifetime (requires Linux and TAURI_E2E
       await browser.waitUntil(async () => (await entryNames()).includes(path.basename(fixture.renamed)), {
         timeout: 20_000, timeoutMsg: "surviving listing did not show the redone rename",
       });
-      const proofDirectory = path.resolve("screenshots/refactor/repo-health-cleanup");
+      const proofDirectory = path.resolve("screenshots/fix/inverse-rename-admission");
       fs.mkdirSync(proofDirectory, { recursive: true });
-      await browser.saveScreenshot(path.join(proofDirectory, "native-file-history-lifetime.png"));
+      await browser.saveScreenshot(path.join(proofDirectory, "native-rename-inverse-lifetime.png"));
     } finally {
       if (gate) forceRelease(gate);
     }
   });
+
+  it("retains exact copy Undo after child destruction and cycles Redo through real trash", async function () {
+    this.timeout(120_000);
+    await browser.switchToWindow(mainHandle);
+    expect((await historyOperation("clear")).error).toBeUndefined();
+    const input = path.join(scratch, "copy-input");
+    const destination = path.join(scratch, "copy-output");
+    fs.mkdirSync(input); fs.mkdirSync(destination);
+    const source = path.join(input, "native-copy.txt");
+    const target = path.join(destination, "native-copy.txt");
+    const contents = `exact native copy ${crypto.randomUUID()}\n`;
+    fs.writeFileSync(source, contents);
+    await navigateTo(destination);
+    const opened = await freshWindow(destination);
+    childHandle = await switchToWindowLabel(opened.label);
+    await waitForHistoryReady();
+    await browser.waitUntil(async () => browser.execute(() => document.documentElement.dataset.e2eRecoveryReady === "true"));
+    const token = crypto.randomUUID();
+    await browser.execute((detail) => window.dispatchEvent(new CustomEvent("e2e-recovery-operation", { detail })), {
+      token, op: "copy-many", sources: [source], destination, shared: true,
+    });
+    let copy: { token?: string; result?: string | null; error?: string } = {};
+    await browser.waitUntil(async () => {
+      copy = JSON.parse(await browser.execute(() => document.documentElement.dataset.e2eRecoveryResult ?? "{}"));
+      return copy.token === token;
+    }, { timeout: 20_000 });
+    expect(copy.error).toBeUndefined();
+    expect(copy.result).toBeNull();
+    expect(fs.readFileSync(target, "utf8")).toBe(contents);
+    const copied = await waitForSummary((s) => !s.busy && s.undoId !== null, "publish the actual copy inverse");
+    let gate: ArmedGate | undefined;
+    try {
+      gate = armGate(copied.undoId!, "undo");
+      await startHistoryOperation("execute", { direction: "undo", expectedEntryId: copied.undoId! });
+      await waitForAccepted(gate);
+      expect(fs.readFileSync(target, "utf8")).toBe(contents);
+      await destroyCurrentWindow(childHandle);
+      childHandle = "";
+      await browser.switchToWindow(mainHandle);
+      await releaseGate(gate);
+      let summary = await waitForSummary((s) => !s.busy && s.redoId !== null && s.undoId === null, "settle copy Undo after child destruction");
+      expect(fs.existsSync(target)).toBe(false);
+      expect(fs.readFileSync(source, "utf8")).toBe(contents);
+      await browser.waitUntil(async () => !(await entryNames()).includes("native-copy.txt"));
+      for (let cycle = 0; cycle < 2; cycle++) {
+        expect((await historyOperation("execute", { direction: "redo", expectedEntryId: summary.redoId! })).error).toBeUndefined();
+        expect(fs.readFileSync(target, "utf8")).toBe(contents);
+        await browser.waitUntil(async () => (await entryNames()).includes("native-copy.txt"));
+        summary = await waitForSummary((s) => !s.busy && s.undoId !== null && s.redoId === null, "retain exact Copy Undo after Redo");
+        if (cycle === 0) {
+          expect((await historyOperation("execute", { direction: "undo", expectedEntryId: summary.undoId! })).error).toBeUndefined();
+          expect(fs.existsSync(target)).toBe(false);
+          summary = await waitForSummary((s) => !s.busy && s.redoId !== null && s.undoId === null, "settle repeated Copy Undo");
+        }
+      }
+      const proofDirectory = path.resolve("screenshots/refactor/inverse-trash-admission");
+      fs.mkdirSync(proofDirectory, { recursive: true });
+      await browser.saveScreenshot(path.join(proofDirectory, "native-copy-inverse-lifetime.png"));
+    } finally {
+      if (gate) forceRelease(gate);
+    }
+  });
+
 });

@@ -1,4 +1,5 @@
 use super::{affected_dirs, prepare, prepare_renderer, Action};
+use crate::platform::TrashRestore::{self, Supported, Unsupported};
 use crate::{
     file_history::model::{Recovery, RestoreArtifacts},
     files::trash_artifact::TrashArtifact,
@@ -38,7 +39,7 @@ fn restore_artifacts(
     Recovery::Restore(Arc::new(entries.into_iter().collect::<BTreeMap<_, _>>()))
 }
 
-fn prepared(action: Action, trash_restore: bool) -> Action {
+fn prepared(action: Action, trash_restore: TrashRestore) -> Action {
     prepare(action, trash_restore).unwrap().unwrap()
 }
 
@@ -53,12 +54,15 @@ fn host_capability_overwrites_a_forged_copy_restore_flag() {
     let parent = absolute(&["copies"]);
     let caller_denied = copy(path.clone(), parent.clone(), false);
     assert_eq!(
-        prepared(caller_denied, true),
+        prepared(caller_denied, Supported),
         copy(path.clone(), parent.clone(), true)
     );
 
     let caller_claimed = copy(path.clone(), parent.clone(), true);
-    assert_eq!(prepared(caller_claimed, false), copy(path, parent, false));
+    assert_eq!(
+        prepared(caller_claimed, Unsupported),
+        copy(path, parent, false)
+    );
 }
 
 #[test]
@@ -78,7 +82,7 @@ fn renderer_copy_is_accepted_but_cannot_deserialize_a_recovery_identity() {
     });
     let incoming: Action = serde_json::from_value(json).expect("valid public Copy action");
 
-    let prepared = prepare_renderer(incoming, true)
+    let prepared = prepare_renderer(incoming, Supported)
         .expect("renderer Copy remains supported")
         .expect("Copy is retained");
 
@@ -95,12 +99,15 @@ fn replacement_authority_is_native_only_and_never_serialized_to_the_renderer() {
             refresh_dirs: vec![absolute(&[])],
         }),
     };
-    assert_eq!(prepare(action.clone(), true).unwrap(), Some(action.clone()));
+    assert_eq!(
+        prepare(action.clone(), Supported).unwrap(),
+        Some(action.clone())
+    );
     let wire = serde_json::to_value(&action).unwrap();
     assert_eq!(wire.as_object().unwrap().len(), 2);
     assert_eq!(wire["type"], "replacement");
     assert!(wire.get("recovery").is_none());
-    assert!(prepare_renderer(action.clone(), true).is_err());
+    assert!(prepare_renderer(action.clone(), Supported).is_err());
     assert!(prepare_renderer(
         Action::Batch {
             actions: vec![Action::Batch {
@@ -109,7 +116,7 @@ fn replacement_authority_is_native_only_and_never_serialized_to_the_renderer() {
             }],
             label: "outer".into()
         },
-        true
+        Supported
     )
     .is_err());
     let incoming: Action = serde_json::from_value(serde_json::json!({
@@ -121,8 +128,8 @@ fn replacement_authority_is_native_only_and_never_serialized_to_the_renderer() {
         &incoming,
         Action::Replacement { recovery: None, .. }
     ));
-    assert!(prepare(incoming.clone(), true).is_err());
-    assert!(prepare_renderer(incoming, true).is_err());
+    assert!(prepare(incoming.clone(), Supported).is_err());
+    assert!(prepare_renderer(incoming, Supported).is_err());
 }
 
 #[test]
@@ -148,7 +155,7 @@ fn renderer_delete_is_rejected_even_when_nested_beside_safe_actions() {
         ],
     };
 
-    assert!(prepare_renderer(action, true)
+    assert!(prepare_renderer(action, Supported)
         .unwrap_err()
         .contains("native file operation"));
 }
@@ -175,7 +182,7 @@ fn native_delete_restore_requires_exactly_one_artifact_for_every_path() {
     };
 
     for action in [missing, extra] {
-        assert!(prepare(action, true)
+        assert!(prepare(action, Supported)
             .unwrap_err()
             .contains("do not match their recovery artifacts"));
     }
@@ -185,7 +192,7 @@ fn native_delete_restore_requires_exactly_one_artifact_for_every_path() {
         parent_dir: parent,
         recovery: restore_artifacts([(first, artifact("first")), (second, artifact("second"))]),
     };
-    assert_eq!(prepared(exact.clone(), true), exact);
+    assert_eq!(prepared(exact.clone(), Supported), exact);
 }
 
 #[test]
@@ -232,7 +239,7 @@ fn host_prunes_unrecoverable_delete_paths_and_empty_nested_batches() {
     };
 
     assert_eq!(
-        prepared(action, true),
+        prepared(action, Supported),
         Action::Batch {
             label: "mixed".into(),
             actions: vec![Action::Batch {
@@ -257,9 +264,9 @@ fn double_leading_slash_is_a_local_trash_path() {
         parent_dir: parent.clone(),
         recovery: Recovery::Capture,
     };
-    assert_eq!(prepared(action.clone(), true), action);
+    assert_eq!(prepared(action.clone(), Supported), action);
     assert_eq!(
-        prepared(copy(path.clone(), parent.clone(), false), true),
+        prepared(copy(path.clone(), parent.clone(), false), Supported),
         copy(path, parent, true)
     );
 }
@@ -276,7 +283,7 @@ fn unavailable_trash_restore_prunes_delete_actions_completely() {
         recovery: Recovery::Capture,
     };
 
-    assert_eq!(prepare(action, false).unwrap(), None);
+    assert_eq!(prepare(action, Unsupported).unwrap(), None);
 }
 
 #[test]
@@ -298,7 +305,7 @@ fn malformed_or_non_absolute_paths_are_rejected() {
     ];
 
     for action in cases {
-        assert!(prepare(action, true)
+        assert!(prepare(action, Supported)
             .unwrap_err()
             .contains("absolute paths"));
     }
@@ -313,7 +320,7 @@ fn malformed_rename_names_are_rejected() {
             old_name: "old.txt".into(),
             new_name: name.into(),
         };
-        assert!(prepare(action, true)
+        assert!(prepare(action, Supported)
             .unwrap_err()
             .contains("Invalid file history entry name"));
     }
@@ -329,7 +336,9 @@ fn recursive_depth_limit_rejects_an_excessively_nested_batch() {
         };
     }
 
-    assert!(prepare(action, true).unwrap_err().contains("too large"));
+    assert!(prepare(action, Supported)
+        .unwrap_err()
+        .contains("too large"));
 }
 
 #[test]
@@ -341,7 +350,9 @@ fn node_limit_counts_each_path_in_a_delete_action() {
         recovery: Recovery::Capture,
     };
 
-    assert!(prepare(action, true).unwrap_err().contains("too large"));
+    assert!(prepare(action, Supported)
+        .unwrap_err()
+        .contains("too large"));
 }
 
 #[test]
@@ -353,7 +364,9 @@ fn retained_allocation_limit_rejects_one_oversized_action() {
     );
     let action = copy(oversized, absolute(&["large"]), true);
 
-    assert!(prepare(action, true).unwrap_err().contains("memory budget"));
+    assert!(prepare(action, Supported)
+        .unwrap_err()
+        .contains("memory budget"));
 }
 
 #[test]
@@ -424,7 +437,7 @@ fn extended_local_disks_remain_restorable_but_network_shares_do_not() {
             parent_dir: r"C:\folder".into(),
             recovery: Recovery::Capture,
         };
-        assert_eq!(prepared(action.clone(), true), action);
+        assert_eq!(prepared(action.clone(), Supported), action);
     }
     for path in [r"\\?\UNC\server\share\item.txt", r"\\server\share\item.txt"] {
         let action = Action::Delete {
@@ -432,6 +445,6 @@ fn extended_local_disks_remain_restorable_but_network_shares_do_not() {
             parent_dir: r"\\server\share".into(),
             recovery: Recovery::Capture,
         };
-        assert_eq!(prepare(action, true).unwrap(), None);
+        assert_eq!(prepare(action, Supported).unwrap(), None);
     }
 }

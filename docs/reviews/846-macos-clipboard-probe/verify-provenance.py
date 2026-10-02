@@ -47,8 +47,10 @@ for wrapper, expected in bindings.items():
     assert imported == expected, f"Production module bindings changed: {wrapper}: {imported}"
     assert "#[test]" not in text, f"Probe must invoke the existing production fixture: {wrapper}"
 
-inputs = [APP_LOCK, PROBE_LOCK, REPO / "src-tauri/Cargo.toml", PROBE / "Cargo.toml", *bindings, *(path for paths in bindings.values() for path in paths)]
-subprocess.run(["git", "diff", "--exit-code", "HEAD", "--", *(str(path.relative_to(REPO)) for path in inputs)], cwd=REPO, check=True)
+inputs = [Path(__file__).resolve(), PROBE / "run-probe.sh", REPO / ".github/workflows/macos-clipboard-probe.yml", APP_LOCK, PROBE_LOCK, REPO / "src-tauri/Cargo.toml", PROBE / "Cargo.toml", *bindings, *(path for paths in bindings.values() for path in paths)]
+relative_inputs = [str(path.relative_to(REPO)) for path in inputs]
+subprocess.run(["git", "ls-files", "--error-unmatch", "--", *relative_inputs], cwd=REPO, check=True, stdout=subprocess.DEVNULL)
+subprocess.run(["git", "diff", "--exit-code", "HEAD", "--", *relative_inputs], cwd=REPO, check=True)
 print("checkout", subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=REPO, text=True).strip())
 for path in inputs:
     print("sha256", hashlib.sha256(path.read_bytes()).hexdigest(), path.relative_to(REPO))

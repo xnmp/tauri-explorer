@@ -1,0 +1,118 @@
+{
+  "sourceCommit": "fad36f72865253fc5ff177c2d8c33d1aa34d490c",
+  "binarySha256": "77be735fc51b1db3e46d34611a20d81501d077739ec47fdc875e4726438b7334",
+  "binaryBytes": 690203656,
+  "profile": "debug-custom-protocol-e2e-hooks",
+  "nativeResult": "10 passing (20.3s)",
+  "captureCompletedAt": "2026-10-02T08:56:29Z",
+  "capture": "Unedited Linux/WebKitGTK native app on private Xvfb2600x1600/Openbox/D-Bus/XDG",
+  "appZoom": 100,
+  "nativeSpecSha256": "df4dcb37c0604e4fe4f0c6af7f5f5f90864541f9bc84899b69ceb4a3e7b2666f",
+  "files": [
+    {
+      "path": "closed-window-restore-complete-path-selected.png",
+      "sha256": "5dba59c5ea5a059d0f17dc70d733fd962da947a10c25561f1225d794d4e90563",
+      "bytes": 37250
+    },
+    {
+      "path": "closed-window-restore-typed-directory-navigated.png",
+      "sha256": "87f00eb7031da969491696c35845da8a5e8edf6369000367286125abdf9603c7",
+      "bytes": 35253
+    },
+    {
+      "path": "ctrl-n-complete-path-selected.png",
+      "sha256": "0392f7e08759c890378ebc9a407a6d0d13942be3705a297f0d66eb9b0b656b4c",
+      "bytes": 45725
+    },
+    {
+      "path": "ctrl-n-typed-directory-navigated.png",
+      "sha256": "7d410d25cca646740633041cc84eaf97dea37e2792388ec3a2cecb711b3de7b3",
+      "bytes": 41850
+    },
+    {
+      "path": "fresh-complete-path-selected.png",
+      "sha256": "4cdd2366d088efa5bbb06cb023ff78ec36b61bd18c44c93661b838be552bc6b0",
+      "bytes": 40894
+    },
+    {
+      "path": "fresh-first-response-complete-path-selected.png",
+      "sha256": "4cdd2366d088efa5bbb06cb023ff78ec36b61bd18c44c93661b838be552bc6b0",
+      "bytes": 40894
+    },
+    {
+      "path": "fresh-first-response-typed-directory-navigated.png",
+      "sha256": "6b6f83d7d77685c6f7c6074d24b40df1d83f4c40fa00c6b74b066babda02d679",
+      "bytes": 41870
+    },
+    {
+      "path": "fresh-late-validation-complete-path-selected.png",
+      "sha256": "618d483646330b7e7ee435fe4fbd09bc328d4ac0a2054eecc1d34420a65be4be",
+      "bytes": 37821
+    },
+    {
+      "path": "fresh-late-validation-late-reply-preserved-typing.png",
+      "sha256": "05395484812a1cc78f61a9c4c322c25dd40b3063190c02c0cef7c91a7af9a25c",
+      "bytes": 45493
+    },
+    {
+      "path": "fresh-late-validation-typed-directory-navigated.png",
+      "sha256": "0124d144342cb7aa6e97d11b359d001c991223763c86cbaa5e6a751783f74c62",
+      "bytes": 41870
+    },
+    {
+      "path": "fresh-typed-directory-navigated.png",
+      "sha256": "6b6f83d7d77685c6f7c6074d24b40df1d83f4c40fa00c6b74b066babda02d679",
+      "bytes": 41870
+    },
+    {
+      "path": "palette-complete-path-selected.png",
+      "sha256": "0392f7e08759c890378ebc9a407a6d0d13942be3705a297f0d66eb9b0b656b4c",
+      "bytes": 45725
+    },
+    {
+      "path": "palette-typed-directory-navigated.png",
+      "sha256": "7d410d25cca646740633041cc84eaf97dea37e2792388ec3a2cecb711b3de7b3",
+      "bytes": 41850
+    },
+    {
+      "path": "tear-off-desktop-complete-path-selected.png",
+      "sha256": "e8bdcfdaf01ee5340e12f156dee10b7081e675e061202c9ab6cb33e4bf2c0211",
+      "bytes": 37198
+    },
+    {
+      "path": "tear-off-desktop-typed-directory-navigated.png",
+      "sha256": "7e4aeb43dbc8a7dc564ea3f42eb991b3670fd58269b633d895337c7892c0b929",
+      "bytes": 35270
+    },
+    {
+      "path": "tear-off-vertical-complete-path-selected.png",
+      "sha256": "23081a4c47690400aa884c95c3bd0aeb2ad3637ce8310ce9bcaf98910b747502",
+      "bytes": 37332
+    },
+    {
+      "path": "tear-off-vertical-typed-directory-navigated.png",
+      "sha256": "3a877aa04bfdd6ff0a4cb7c24aff38c369e0bce8a3f0eca39d8736fe865ef076",
+      "bytes": 35289
+    },
+    {
+      "path": "warm-complete-path-selected.png",
+      "sha256": "412375f4216f4adcb262c0f3c0a83959bd2c91386b785bdbce47a2a8c3f6e708",
+      "bytes": 40954
+    },
+    {
+      "path": "warm-held-navigation-complete-path-selected.png",
+      "sha256": "412375f4216f4adcb262c0f3c0a83959bd2c91386b785bdbce47a2a8c3f6e708",
+      "bytes": 40954
+    },
+    {
+      "path": "warm-held-navigation-typed-directory-navigated.png",
+      "sha256": "7d410d25cca646740633041cc84eaf97dea37e2792388ec3a2cecb711b3de7b3",
+      "bytes": 41850
+    },
+    {
+      "path": "warm-typed-directory-navigated.png",
+      "sha256": "7d410d25cca646740633041cc84eaf97dea37e2792388ec3a2cecb711b3de7b3",
+      "bytes": 41850
+    }
+  ]
+}

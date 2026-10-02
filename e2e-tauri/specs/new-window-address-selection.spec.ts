@@ -12,6 +12,13 @@ let replacement: string;
 let owner: string;
 let childLabel: string | undefined;
 let childHandle: string | undefined;
+function xdotool(args: string[]): string {
+  try { return execFileSync("xdotool", args, { encoding: "utf8" }); }
+  catch (error) {
+    const failure = error as { message: string; code?: string; stdout?: string; stderr?: string };
+    throw new Error(`xdotool ${args.join(" ")}: ${failure.message}; code=${failure.code}; stdout=${failure.stdout}; stderr=${failure.stderr}`);
+  }
+}
 function nativeActive() {
   const line = execFileSync("xprop", ["-root", "_NET_ACTIVE_WINDOW"], { encoding: "utf8" });
   const id = line.match(/0x[0-9a-f]+/i)?.[0];
@@ -114,6 +121,15 @@ async function launchResult(token: string): Promise<{ kind: string; label: strin
     fs.writeFileSync(path.join(source, "late-validation-proof.txt"), "real listing validation marker");
     fs.writeFileSync(path.join(requested, "requested-proof.txt"), "requested directory");
     fs.writeFileSync(path.join(replacement, "replacement-proof.txt"), "typed directory");
+    // Wait for restored tabs to mount before counting; the initial DOM can be empty.
+    await navigateTo(source);
+    // A preceding native spec or restored private profile may leave several tabs.
+    // Establish the one-tab fixture through normal UI actions before measuring detach.
+    while (await browser.execute(() => document.querySelectorAll(".tab-list > .tab").length > 1)) {
+      const count = await browser.execute(() => document.querySelectorAll(".tab-list > .tab").length);
+      await browser.keys(["Control", "w"]);
+      await browser.waitUntil(async () => browser.execute((previous: number) => document.querySelectorAll(".tab-list > .tab").length < previous, count));
+    }
     await navigateTo(source);
     await $(entryPathSelector(path.join(source, "origin-proof.txt"))).click();
     owner = await browser.getWindowHandle();
@@ -203,21 +219,21 @@ async function launchResult(token: string): Promise<{ kind: string; label: strin
     const existing = await windowOperation("window-states") as Array<{ label: string; visible: boolean }>;
     await browser.setWindowSize(900, 600);
     const previous = nativeActive();
-    execFileSync("xdotool", ["windowmove", previous.id, "100", "100"]);
-    const geometry = execFileSync("xwininfo", ["-id", previous.id], { encoding: "utf8" });
-    const originX = Number(geometry.match(/Absolute upper-left X:\s+(\d+)/)?.[1]);
-    const originY = Number(geometry.match(/Absolute upper-left Y:\s+(\d+)/)?.[1]);
+    xdotool(["windowmove", previous.id, "100", "100"]);
+    const geometry = xdotool(["getwindowgeometry", "--shell", previous.id]);
+    const originX = Number(geometry.match(/^X=(\d+)$/m)?.[1]);
+    const originY = Number(geometry.match(/^Y=(\d+)$/m)?.[1]);
     const tab = await browser.execute(() => {
       const rect = document.querySelector(".tab-list > .tab.active")!.getBoundingClientRect();
       return { x: Math.round(rect.x + rect.width / 2), y: Math.round(rect.y + rect.height / 2) };
     });
     const x = originX + tab.x, y = originY + tab.y;
     if (!Number.isFinite(x) || !Number.isFinite(y)) throw new Error("private test window geometry unavailable");
-    execFileSync("xdotool", ["mousemove", "--sync", String(x), String(y), "mousedown", "1"]);
+    xdotool(["mousemove", "--sync", String(x), String(y), "mousedown", "1"]);
     try {
-      execFileSync("xdotool", ["mousemove", "--sync", String(gesture === "vertical" ? x + 15 : 1500), String(gesture === "vertical" ? y + 100 : y)]);
+      xdotool(["mousemove", "--sync", String(gesture === "vertical" ? x + 15 : 1500), String(gesture === "vertical" ? y + 100 : y)]);
       if (gesture === "vertical") await browser.waitUntil(async () => browser.execute(() => document.querySelectorAll(".tab-list > .tab").length === 1));
-    } finally { execFileSync("xdotool", ["mouseup", "1"]); }
+    } finally { xdotool(["mouseup", "1"]); }
     await browser.waitUntil(async () => browser.execute(() => document.querySelectorAll(".tab-list > .tab").length === 1));
     const current = await windowOperation("window-states") as Array<{ label: string; visible: boolean }>;
     const opened = current.filter(item => item.visible && !existing.some(before => before.label === item.label));
@@ -233,7 +249,9 @@ async function launchResult(token: string): Promise<{ kind: string; label: strin
     await $(".path-input").waitForDisplayed();
     await browser.keys("Escape");
     await $(".path-input").waitForDisplayed({ reverse: true });
-    await browser.keys(["Control", "w"]);
+    // Native input retires this webview before a WebDriver actions reply can finish.
+    // Send the trusted chord outside that retiring driver context, then observe closure.
+    xdotool(["key", "--clearmodifiers", "ctrl+w"]);
     await browser.waitUntil(async () => !(await browser.getWindowHandles()).includes(childHandle!));
     childLabel = undefined; childHandle = undefined;
     await browser.switchToWindow(owner);

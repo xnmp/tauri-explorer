@@ -86,11 +86,11 @@
 <style>
   .crop-view-controls { display: flex; align-items: center; gap: var(--spacing-sm); font-size: var(--font-size-caption); }
   .crop-view-controls span { flex: 1; color: var(--text-secondary); }
-  .crop-scroller { height: min(46vh, 480px); min-height: 150px; overflow: auto; border: 1px solid var(--control-stroke); background: var(--bg-secondary); }
-  .crop-image { position: relative; margin: 24px auto; background: repeating-conic-gradient(var(--control-stroke) 0% 25%, var(--bg-secondary) 0% 50%) 0 0 / 16px 16px; }
+  .crop-scroller { height: min(46vh, 480px); min-height: 150px; overflow: auto; border: 1px solid var(--control-stroke); background: var(--background-solid); }
+  .crop-image { position: relative; margin: 24px auto; background: repeating-conic-gradient(var(--control-stroke) 0% 25%, var(--background-solid) 0% 50%) 0 0 / 16px 16px; }
   img { display: block; width: 100%; height: 100%; max-width: none; user-select: none; }
   .crop-selection { position: absolute; border: 1px solid var(--accent); box-sizing: border-box; box-shadow: 0 0 0 20000px rgb(0 0 0 / 45%); pointer-events: none; }
-  .crop-edge { position: absolute; background: var(--accent); border: 2px solid var(--bg-primary); border-radius: var(--radius-sm); pointer-events: auto; touch-action: none; padding: 0; }
+  .crop-edge { position: absolute; background: var(--accent); border: 2px solid var(--background-solid); border-radius: var(--radius-sm); pointer-events: auto; touch-action: none; padding: 0; }
   .crop-edge.left, .crop-edge.right { width: 12px; height: 40px; top: calc(50% - 20px); cursor: ew-resize; }
   .crop-edge.top, .crop-edge.bottom { height: 12px; width: 40px; left: calc(50% - 20px); cursor: ns-resize; }
   .crop-edge.left { left: -6px; } .crop-edge.right { right: -6px; } .crop-edge.top { top: -6px; } .crop-edge.bottom { bottom: -6px; }

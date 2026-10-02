@@ -2,9 +2,9 @@ import { test, expect, type Page } from "./fixtures";
 import { applySettingsAndReload, waitForEntries, VIEW_MODES } from "./helpers";
 
 const source = "/home/user/Pictures/screenshot.png";
-async function open(page: Page, mode: string, zoom = 1, fullscreen = false) {
+async function open(page: Page, mode: string, zoom = 1, fullscreen = false, dock = "right") {
   await page.goto("/?path=/home/user/Pictures");
-  await applySettingsAndReload(page, { showPreviewPane: true, viewMode: mode, zoomLevel: zoom * 100 });
+  await applySettingsAndReload(page, { showPreviewPane: true, viewMode: mode, zoomLevel: zoom * 100, previewPanePosition: dock });
   await expect.poll(() => page.evaluate(() => {
     const value = document.documentElement.style.zoom;
     return value.endsWith("%") ? parseFloat(value) / 100 : Number(value);
@@ -154,3 +154,31 @@ test("an accepted save keeps modal input ownership through Escape and settles on
   await page.keyboard.press("ControlOrMeta+Shift+P");
   await expect(page.locator(".command-palette-dialog")).toBeVisible();
 });
+
+for (const dock of ["right", "top", "bottom"]) {
+  test(`resizing a zoomed ${dock} preview keeps crop controls keyboard reachable`, async ({ page }) => {
+    await open(page, "details", 1.5, false, dock);
+    await page.setViewportSize({ width: 640, height: 480 });
+    const dialog = page.getByRole("dialog", { name: "Crop image", exact: true });
+    const left = page.getByRole("slider", { name: "Left crop edge" });
+    await left.focus(); await page.keyboard.press("ArrowRight");
+    await expect(left).toHaveAttribute("aria-valuenow", "1");
+    for (let i = 0; i < 20; i++) {
+      await page.keyboard.press("Tab");
+      expect(await dialog.evaluate((element) => element.contains(document.activeElement))).toBe(true);
+    }
+    const save = page.getByRole("button", { name: "Save copy", exact: true });
+    await save.focus();
+    const bounds = await save.boundingBox();
+    expect(bounds).not.toBeNull();
+    expect(bounds!.y).toBeGreaterThanOrEqual(0);
+    expect(bounds!.y + bounds!.height).toBeLessThanOrEqual(481);
+    await page.keyboard.press("Enter");
+    await expect(dialog).toBeHidden();
+    const target = "/home/user/Pictures/screenshot - Cropped.png";
+    expect(await page.evaluate(async (url) => {
+      const image = new Image(); image.src = url; await image.decode();
+      return [image.naturalWidth, image.naturalHeight];
+    }, await imageData(page, target))).toEqual([511, 384]);
+  });
+}

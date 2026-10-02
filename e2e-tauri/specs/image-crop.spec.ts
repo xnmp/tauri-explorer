@@ -4,6 +4,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { domText, entryPathSelector, navigateTo } from "./helpers";
 import { createNativeFixtureDirectory } from "../native-qualification";
+import { formatSize } from "../../src/lib/domain/file";
 
 const fixtures = fileURLToPath(new URL("../fixtures/image-crop/", import.meta.url));
 const scratch = fs.realpathSync(createNativeFixtureDirectory("explorer-image-crop-"));
@@ -46,7 +47,7 @@ async function crop(left = 32, top = 24, right = 480, bottom = 360): Promise<voi
 }
 const dataUrl = (data: Buffer, extension: string) => `data:${({ png: "image/png", jpg: "image/jpeg", gif: "image/gif", webp: "image/webp", bmp: "image/bmp", svg: "image/svg+xml", avif: "image/avif" } as Record<string, string>)[extension]};base64,${data.toString("base64")}`;
 async function compare(original: Buffer, output: Buffer, extension: string, padded = false) {
-  return browser.executeAsync(async (original: string, saved: string, padded: boolean, done: (result: unknown) => void) => {
+  return browser.executeAsync(async (original: string, saved: string, padded: boolean, measureEdges: boolean, done: (result: unknown) => void) => {
     try {
       const load = async (url: string) => { const image = new Image(); image.src = url; await image.decode(); return image; };
       const [source, result] = await Promise.all([load(original), load(saved)]);
@@ -69,24 +70,34 @@ async function compare(original: Buffer, output: Buffer, extension: string, padd
         interiorError = Math.max(interiorError, Math.abs(actual[index] - expected[index]));
       }
       let edgeDisplacement = 0;
-      const darkBounds = (data: Uint8ClampedArray, y: number) => {
-        const positions: number[] = [];
-        for (let x = 0; x < canvas.width; x++) {
-          const i = (y * canvas.width + x) * 4;
-          if (Math.max(data[i], data[i + 1], data[i + 2]) < 40) positions.push(x);
+      if (measureEdges) {
+        // Track the four actual quadrant boundaries, away from the center.
+        // A missing transition is a failed oracle, never a matching sentinel.
+        const transition = (data: Uint8ClampedArray, horizontal: boolean, fixed: number, positive: number, negative: number) => {
+          const length = horizontal ? canvas.width : canvas.height;
+          for (let p = 0; p < length; p++) {
+            const i = (horizontal ? fixed * canvas.width + p : p * canvas.width + fixed) * 4;
+            if (data[i + positive] > data[i + negative]) {
+              if (p === 0 || p === length - 1) throw new Error("JPEG fixture has no interior color transition");
+              return p;
+            }
+          }
+          throw new Error("JPEG fixture has no color transition");
+        };
+        for (const [horizontal, fixed, positive, negative] of [
+          [true, Math.floor(canvas.height / 4), 1, 0],
+          [true, Math.floor(canvas.height * 3 / 4), 0, 2],
+          [false, Math.floor(canvas.width / 4), 2, 0],
+          [false, Math.floor(canvas.width * 3 / 4), 0, 1],
+        ] as const) {
+          edgeDisplacement = Math.max(edgeDisplacement, Math.abs(transition(actual, horizontal, fixed, positive, negative) - transition(expected, horizontal, fixed, positive, negative)));
         }
-        return [positions[0] ?? -1, positions.at(-1) ?? -1];
-      };
-      for (const offset of [-30, 0, 30]) {
-        const y = Math.floor(canvas.height / 2) + offset;
-        const wanted = darkBounds(expected, y); const observed = darkBounds(actual, y);
-        for (let i = 0; i < 2; i++) edgeDisplacement = Math.max(edgeDisplacement, Math.abs(wanted[i] - observed[i]));
       }
       done({ size: [result.naturalWidth, result.naturalHeight], maximumError, interiorError,
         edgeDisplacement,
         cornerAlpha: actual[3], centerAlpha: actual[(Math.floor(canvas.height / 2) * canvas.width + Math.floor(canvas.width / 2)) * 4 + 3] });
     } catch (error) { done({ error: String(error) }); }
-  }, dataUrl(original, extension), dataUrl(output, extension), padded) as Promise<{
+  }, dataUrl(original, extension), dataUrl(output, extension), padded, extension === "jpg") as Promise<{
     size: number[]; maximumError: number; interiorError: number; edgeDisplacement: number; cornerAlpha: number; centerAlpha: number; error?: string;
   }>;
 }
@@ -179,6 +190,9 @@ nativeDescribe("native image cropping", () => {
       const observed = await compare(original, fs.readFileSync(source), "png");
       expect(observed.size).toEqual([448, 336]); expect(observed.maximumError).toBe(0);
       await browser.waitUntil(async () => browser.execute(() => document.querySelector<HTMLImageElement>(".preview-image")?.naturalWidth === 448));
+      const expectedSize = formatSize(fs.statSync(source).size);
+      await browser.waitUntil(async () => (await domText(".preview-info .info-row:first-child .info-value")) === expectedSize,
+        { timeout: 15_000, timeoutMsg: "Replacement preview metadata did not settle to the actual file size" });
       await screenshot(`${mode.toLowerCase()}-replaced-original`);
     });
   }

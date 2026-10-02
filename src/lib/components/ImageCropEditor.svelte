@@ -94,7 +94,7 @@
   :global(.image-crop-overlay) { zoom: calc(1 / var(--app-zoom, 1)); }
   .crop-editor { zoom: var(--app-zoom, 1); width: min(920px, calc(100vw / var(--app-zoom, 1) - 32px)); min-width: 0; max-width: none; max-height: calc(100vh / var(--app-zoom, 1) - 32px); overflow: auto; display: flex; flex-direction: column; gap: var(--spacing-md); }
   .crop-editor .dialog-header { margin-bottom: 0; }
-  .crop-editor { background: var(--background-solid, var(--bg-primary)); backdrop-filter: none; }
+  .crop-editor { background: var(--background-solid); backdrop-filter: none; }
   .dialog-subtitle { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .crop-dimensions { display: flex; align-items: end; flex-wrap: wrap; gap: var(--spacing-md); }
   label { display: flex; flex-direction: column; gap: var(--spacing-xs); font-size: var(--font-size-caption); }

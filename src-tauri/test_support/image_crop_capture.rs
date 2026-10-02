@@ -1,4 +1,148 @@
 use super::*;
+use image::AnimationDecoder;
+use std::io::Cursor;
+
+fn animated_frames(bytes: &[u8], extension: &str) -> Vec<image::Frame> {
+    match extension {
+        "gif" => {
+            let decoder = image::codecs::gif::GifDecoder::new(Cursor::new(bytes)).unwrap();
+            assert!(
+                matches!(decoder.loop_count(), image::metadata::LoopCount::Finite(n) if n.get() == 3)
+            );
+            decoder.into_frames().collect_frames().unwrap()
+        }
+        "webp" => {
+            let decoder = image::codecs::webp::WebPDecoder::new(Cursor::new(bytes)).unwrap();
+            assert!(decoder.has_animation());
+            assert!(
+                matches!(decoder.loop_count(), image::metadata::LoopCount::Finite(n) if n.get() == 3)
+            );
+            decoder.into_frames().collect_frames().unwrap()
+        }
+        "png" => {
+            let metadata = png::Decoder::new(Cursor::new(bytes)).read_info().unwrap();
+            let animation = metadata.info().animation_control.unwrap();
+            assert_eq!((animation.num_frames, animation.num_plays), (3, 3));
+            image::codecs::png::PngDecoder::new(Cursor::new(bytes))
+                .unwrap()
+                .apng()
+                .unwrap()
+                .into_frames()
+                .collect_frames()
+                .unwrap()
+        }
+        _ => unreachable!("fixture format"),
+    }
+}
+
+#[tokio::test]
+async fn real_copy_preserves_saved_animation_frames_timing_and_repetition() {
+    for (extension, original) in [
+        (
+            "gif",
+            include_bytes!("fixtures/image-crop-animation.gif").as_slice(),
+        ),
+        (
+            "webp",
+            include_bytes!("fixtures/image-crop-animation.webp").as_slice(),
+        ),
+        (
+            "png",
+            include_bytes!("fixtures/image-crop-animation.png").as_slice(),
+        ),
+    ] {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join(format!("source.{extension}"));
+        fs::write(&path, original).unwrap();
+        let captured = capture(path.clone()).unwrap();
+        let mut save = request(
+            &path,
+            captured.revision,
+            Destination::Copy {
+                name: format!("copy.{extension}"),
+            },
+        );
+        save.rect.bottom = 4;
+        let runtime = super::super::admission::Runtime::new(root.path().join("recovery"));
+        let receipt = execute(SavePlan::new(save).unwrap(), &runtime)
+            .await
+            .completion
+            .result
+            .unwrap();
+        let output = fs::read(&receipt.path).unwrap();
+        assert_eq!(fs::read(&path).unwrap(), original, "{extension}");
+        let expected = animated_frames(original, extension);
+        let actual = animated_frames(&output, extension);
+        assert_eq!(expected.len(), 3);
+        assert_eq!(actual.len(), expected.len());
+        for (actual, source) in actual.iter().zip(&expected) {
+            assert_eq!(actual.delay(), source.delay());
+            assert_eq!(
+                actual.buffer(),
+                &image::imageops::crop_imm(source.buffer(), 2, 1, 5, 3).to_image()
+            );
+        }
+    }
+}
+
+#[tokio::test]
+async fn real_copy_preserves_saved_avif_animation_pixels_and_timing() {
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().join("source.avif");
+    let original = include_bytes!("fixtures/image-crop-animation.avif");
+    fs::write(&path, original).unwrap();
+    let captured = capture(path.clone()).unwrap();
+    let mut save = request(
+        &path,
+        captured.revision,
+        Destination::Copy {
+            name: "copy.avif".into(),
+        },
+    );
+    save.viewport = image_crop::SvgViewport {
+        width: 16,
+        height: 12,
+    };
+    save.rect = image_crop::CropRect {
+        left: 3,
+        top: 2,
+        right: 13,
+        bottom: 9,
+    };
+    let runtime = super::super::admission::Runtime::new(root.path().join("recovery"));
+    let receipt = execute(SavePlan::new(save).unwrap(), &runtime)
+        .await
+        .completion
+        .result
+        .unwrap();
+    let output = fs::read(&receipt.path).unwrap();
+    assert_eq!(fs::read(&path).unwrap(), original);
+    for (index, duration) in [7, 12, 15].into_iter().enumerate() {
+        let source = explorer_avif::decode_frame(original, index as u32).unwrap();
+        let actual = explorer_avif::decode_frame(&output, index as u32).unwrap();
+        assert_eq!((actual.metadata.width, actual.metadata.height), (10, 7));
+        assert_eq!(
+            (
+                actual.metadata.frame_count,
+                actual.metadata.repetitions,
+                actual.metadata.timescale,
+                actual.metadata.frame_duration
+            ),
+            (3, 2, 100, duration)
+        );
+        for y in 0..7_usize {
+            for x in 0..10_usize {
+                let actual_pixel = (y * 10 + x) * 4;
+                let source_pixel = ((y + 2) * 16 + x + 3) * 4;
+                assert_eq!(
+                    &actual.pixels[actual_pixel..actual_pixel + 4],
+                    &source.pixels[source_pixel..source_pixel + 4]
+                );
+            }
+        }
+    }
+    assert!(explorer_avif::decode_frame(&output, 3).is_err());
+}
 
 #[test]
 fn capture_pins_bytes_and_rejects_changed_contents() {

@@ -961,7 +961,11 @@ fn read_image_data_url_impl(path: String, max_bytes: Option<u64>) -> Result<Stri
 
     // Webviews cannot decode an ICNS container. Use its validated largest
     // representation at native resolution, including cropped transparent padding.
-    let (mime, bytes) = if file_path.extension().and_then(|ext| ext.to_str()).is_some_and(|ext| ext.eq_ignore_ascii_case("icns")) {
+    let (mime, bytes) = if file_path
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .is_some_and(|ext| ext.eq_ignore_ascii_case("icns"))
+    {
         ("image/png", crate::image_crop::icon_preview(&bytes)?)
     } else {
         (mime_for_extension(&file_path), bytes)
@@ -1111,17 +1115,34 @@ mod tests {
         let read = || {
             let data = read_image_data_url_impl(path.to_string_lossy().into_owned(), None).unwrap();
             let payload = data.strip_prefix("data:image/png;base64,").unwrap();
-            image::load_from_memory(&base64::engine::general_purpose::STANDARD.decode(payload).unwrap()).unwrap().to_rgba8()
+            image::load_from_memory(
+                &base64::engine::general_purpose::STANDARD
+                    .decode(payload)
+                    .unwrap(),
+            )
+            .unwrap()
+            .to_rgba8()
         };
         let preview = read();
         assert_eq!(preview.dimensions(), (256, 256));
         assert_eq!(preview.get_pixel(0, 0).0, [231, 76, 60, 255]);
         assert_eq!(preview.get_pixel(128, 128).0[3], 0);
         assert_eq!(fs::read(&path).unwrap(), input);
-        assert!(read_image_data_url_impl(path.to_string_lossy().into_owned(), Some(input.len() as u64 - 1)).is_err());
-        let crop = crate::image_crop::encode(input, crate::image_crop::CropRect {
-            left: 16, top: 16, right: 240, bottom: 240,
-        }).unwrap();
+        assert!(read_image_data_url_impl(
+            path.to_string_lossy().into_owned(),
+            Some(input.len() as u64 - 1)
+        )
+        .is_err());
+        let crop = crate::image_crop::encode(
+            input,
+            crate::image_crop::CropRect {
+                left: 16,
+                top: 16,
+                right: 240,
+                bottom: 240,
+            },
+        )
+        .unwrap();
         fs::write(&path, crop).unwrap();
         let preview = read();
         assert_eq!(preview.dimensions(), (256, 256));

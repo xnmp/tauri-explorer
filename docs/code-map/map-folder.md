@@ -674,6 +674,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `e2e-tauri/macos-display.swift` — measured CoreGraphics display identity and physical-pixel/point calibration for native screenshots.
 - `e2e-tauri/pdf_screenshot.py` — read-only Pillow screenshot oracle; measures solid PDF fixture landmarks inside native AX viewport bounds.
 - `e2e-tauri/test_pdf_screenshot.py` — oracle negative controls for blank/wrong-page/cropped/scattered-color screenshots and Retina coordinates.
+- `e2e-tauri/native-driver-transcript.ts` — owns piped native-driver output through child stdio closure and bounded final log flushing; failed or timed-out evidence fails session cleanup (#965).
 - `e2e-tauri/native-process-group.ts` — bounded Linux cleanup of a native test session's detached driver/application process group, plus the exit-time reaper for a group whose session never started (WDIO skips `afterSession`).
 - `e2e-tauri/gated-suites.ts` — run/skip/fail decision for native suites that need an opt-in build or fixture directory; `TAURI_E2E_REQUIRE_GATED=1` turns a missing prerequisite into a named failure (#774). Contracts in `tests/qualification/gated-suites.test.ts`.
 - `e2e-tauri/specs/gated-describe.ts` — `gatedDescribe`, the Mocha adapter over that decision; separate from `specs/helpers.ts` because qualification tests import the helpers without Mocha types.

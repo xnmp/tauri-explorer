@@ -402,6 +402,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `upscale/index.ts` + `UpscaleDialog.svelte` — image upscale plugin (fal.ai SeedVR2): settings, context-menu item, command, dialog.
 - `plugin-dialog.css` — shared `.plugin-dialog` chrome (header/body/inputs/buttons) reused by the nano-banana / ai-rename / upscale dialogs.
 - `src/lib/api/trace.ts` — typed query for the native Trace graph of the selected image.
+- `src/lib/domain/trace-layout.ts`, `tests/domain/trace-layout.test.ts` — deterministic layered artifact/run layout and fork/merge connection contract for the Trace pane.
 
 ## src/lib/background-animations/ — canvas backgrounds (registry-driven).
 
@@ -725,7 +726,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 
 - `src-tauri/src/image_crop.rs` — bounded full-resolution crop encoding and EXIF orientation normalization (#681; save/UI integration pending).
 - `src-tauri/src/files/image_crop.rs` — bounded immutable crop source capture, identity/content validation, admitted staged copy and confirmed replacement execution.
-- `src-tauri/src/trace.rs` — SQLite image revision and operation DAG; records committed crops and queries ancestry only for the current content digest.
+- `src-tauri/src/trace.rs` — SQLite image revision and operation DAG; records committed crops or native multi-input operations, follows both graph directions for the current content digest, and updates exact revision locators on Explorer rename and history undo/redo.
 - `e2e/trace-inspector.spec.ts` — browser contract for displaying a selected image's source, crop run, and output in the Trace pane.
 - `src/lib/api/image-crop.ts` — typed crop capture/save IPC and native history settlement.
 - `src/lib/api/mock-image-crop.ts` — synthetic PNG/JPEG browser fixtures that save actual cropped pixels into the mock listing; native formats and file safety are verified separately.

@@ -264,7 +264,26 @@ impl execution::Operations for NativeOperations {
                 }
             }
         };
-        let outcome = entry_execution::execute(plan, &self.runtime).await;
+        let mut outcome = entry_execution::execute(plan, &self.runtime).await;
+        if outcome.completion.result.is_ok() {
+            if let Some((old, new)) = &outcome.rename {
+                if old != new {
+                    let source = outcome.target.with_file_name(old);
+                    let target = outcome.target.clone();
+                    if let Err(error) = crate::trace::relocate_after_rename(source, target).await {
+                        let warning = format!(
+                            "Rename completed, but Trace could not update its locator: {error}"
+                        );
+                        log::warn!("{warning}");
+                        outcome.completion.warning =
+                            Some(match outcome.completion.warning.take() {
+                                Some(previous) => format!("{previous}\n{warning}"),
+                                None => warning,
+                            });
+                    }
+                }
+            }
+        }
         let changed = admission::changed(&outcome.completion.result);
         execution::RenameResult {
             result: outcome

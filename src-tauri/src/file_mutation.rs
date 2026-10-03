@@ -412,7 +412,27 @@ async fn entry_outcome(
     plan: EntryPlan,
     runtime: &admission::Runtime,
 ) -> MutationOutcome<FileMutationReceipt> {
-    settle_entry(crate::files::entry_execution::execute(plan, runtime).await)
+    let outcome = crate::files::entry_execution::execute(plan, runtime).await;
+    let relocated = if outcome.completion.result.is_ok() {
+        outcome.rename.as_ref().and_then(|(old, new)| {
+            (old != new).then(|| (outcome.target.with_file_name(old), outcome.target.clone()))
+        })
+    } else {
+        None
+    };
+    let mut settled = settle_entry(outcome);
+    if let Some((source, target)) = relocated {
+        if let Err(error) = crate::trace::relocate_after_rename(source, target).await {
+            let warning =
+                format!("Rename completed, but Trace could not update its locator: {error}");
+            log::warn!("{warning}");
+            settled.warning = Some(match settled.warning.take() {
+                Some(previous) => format!("{previous}\n{warning}"),
+                None => warning,
+            });
+        }
+    }
+    settled
 }
 
 fn settle_entry(

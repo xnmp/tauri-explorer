@@ -1,12 +1,18 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import type { FileEntry } from "$lib/domain/file";
-  import { traceForImage, type TraceGraph } from "$lib/api/trace";
+  import { traceForImage, type TraceArtifact, type TraceGraph } from "$lib/api/trace";
   import { layoutTraceGraph } from "$lib/domain/trace-layout";
   import { parentDir, sameDirectory } from "$lib/domain/path";
   import { subscribeToLocalFileChanges } from "$lib/state/file-events";
   import { traceInvalidation } from "./invalidation.svelte";
   import TraceDetails from "./TraceDetails.svelte";
+
+  function artifactCaption(artifact: TraceArtifact, graph: TraceGraph): string {
+    if (artifact.pathState === "missing") return "Missing";
+    if (artifact.id !== graph.currentArtifactId) return "";
+    return graph.selectedRevisionStatus === "matched" ? "Current" : "Last recorded";
+  }
 
   let { entries }: { entries: FileEntry[] } = $props();
   let graph = $state<TraceGraph | null>(null);
@@ -83,7 +89,7 @@
                   aria-controls="trace-node-details"
                   onclick={() => focusedKey = node.key}>
                   <span class="artifact-icon" aria-hidden="true">▧</span>
-                  <span class="artifact-text"><strong>{artifact.path.split(/[\\/]/).at(-1)}</strong><small>{artifact.id === graph.currentArtifactId ? (graph.selectedRevisionStatus === "matched" ? "Current · " : "Last recorded · ") : ""}{artifact.digest.slice(0, 10)}</small></span>
+                  <span class="artifact-text"><strong>{artifact.path.split(/[\\/]/).at(-1)}</strong><small>{artifactCaption(artifact, graph) ? `${artifactCaption(artifact, graph)} · ` : ""}{artifact.digest.slice(0, 10)}</small></span>
                 </button>
               </div>
             {/if}

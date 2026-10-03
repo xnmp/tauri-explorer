@@ -43,6 +43,15 @@ pub(crate) struct Artifact {
     digest: String,
     created_at: String,
     generating_run: Option<i64>,
+    path_state: ArtifactPathState,
+}
+
+#[derive(Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+enum ArtifactPathState {
+    Present,
+    Missing,
+    Unavailable,
 }
 
 #[derive(Serialize)]
@@ -181,6 +190,15 @@ fn normalize_path(path: &Path) -> Result<String, AppError> {
         Ok::<_, std::io::Error>(fs::canonicalize(parent)?.join(name))
     })?;
     Ok(resolved.to_string_lossy().into_owned())
+}
+
+fn artifact_path_state(path: &Path) -> ArtifactPathState {
+    match fs::metadata(path) {
+        Ok(metadata) if metadata.is_file() => ArtifactPathState::Present,
+        Ok(_) => ArtifactPathState::Unavailable,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => ArtifactPathState::Missing,
+        Err(_) => ArtifactPathState::Unavailable,
+    }
 }
 
 /// Called inside the accepted crop's detached native completion task. A
@@ -392,21 +410,35 @@ fn graph_for_path_at(database: &Path, path: &Path) -> Result<Option<TraceGraph>,
     let mut pending = vec![current_artifact_id];
     let mut scheduled = HashSet::from([current_artifact_id]);
     while let Some(id) = pending.pop() {
-        let artifact = connection
+        let (artifact_id, path, digest, created_at, generating_run): (
+            i64,
+            String,
+            String,
+            String,
+            Option<i64>,
+        ) = connection
             .query_row(
                 "SELECT id,path,digest,created_at,generating_run FROM artifacts WHERE id=?1",
                 [id],
                 |row| {
-                    Ok(Artifact {
-                        id: row.get(0)?,
-                        path: row.get(1)?,
-                        digest: row.get(2)?,
-                        created_at: row.get(3)?,
-                        generating_run: row.get(4)?,
-                    })
+                    Ok((
+                        row.get(0)?,
+                        row.get(1)?,
+                        row.get(2)?,
+                        row.get(3)?,
+                        row.get(4)?,
+                    ))
                 },
             )
             .map_err(sql)?;
+        let artifact = Artifact {
+            id: artifact_id,
+            path_state: artifact_path_state(Path::new(&path)),
+            path,
+            digest,
+            created_at,
+            generating_run,
+        };
         if let Some(run_id) = artifact.generating_run {
             let mut run = connection
                 .query_row(
@@ -548,6 +580,18 @@ mod tests {
             .artifacts
             .iter()
             .any(|artifact| artifact.path == branch.to_string_lossy()));
+
+        fs::remove_file(&source).unwrap();
+        let missing_source_graph = graph_for_path_at(&db, &first).unwrap().unwrap();
+        assert_eq!(
+            missing_source_graph
+                .artifacts
+                .iter()
+                .find(|artifact| artifact.path == source.to_string_lossy())
+                .unwrap()
+                .path_state,
+            ArtifactPathState::Missing
+        );
 
         std::fs::write(&second, b"changed outside the app").unwrap();
         let changed_graph = graph_for_path_at(&db, &second).unwrap().unwrap();

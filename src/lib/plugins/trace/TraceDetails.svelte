@@ -1,5 +1,14 @@
 <script lang="ts">
-  import type { TraceGraph } from "$lib/api/trace";
+  import type { TraceArtifact, TraceGraph } from "$lib/api/trace";
+
+  function describeLocation(artifact: TraceArtifact, graph: TraceGraph): string {
+    if (artifact.pathState === "missing") return "Missing from recorded path";
+    if (artifact.pathState === "unavailable") return "Recorded path cannot be checked";
+    if (artifact.id !== graph.currentArtifactId) return "File present; bytes not checked";
+    if (graph.selectedRevisionStatus === "matched") return "Matches recorded bytes";
+    if (graph.selectedRevisionStatus === "changed") return "Bytes differ from recorded revision";
+    return "File present; bytes not checked";
+  }
 
   let { graph, nodeKey }: { graph: TraceGraph; nodeKey: string } = $props();
   const id = $derived(Number(nodeKey.slice(2)));
@@ -13,6 +22,7 @@
   const outputNames = $derived(run ? graph.artifacts
     .filter((item) => item.generatingRun === run.id)
     .map((item) => name(item.path)) : []);
+  const location = $derived(artifact ? describeLocation(artifact, graph) : "");
 </script>
 
 <section id="trace-node-details" class="details" aria-label="Trace details">
@@ -21,6 +31,7 @@
     <h2 aria-live="polite">{name(artifact.path)}</h2>
     <dl>
       <dt>Origin</dt><dd>{artifact.generatingRun == null ? "Earlier origin unknown" : `Run #${artifact.generatingRun}`}</dd>
+      <dt>Location</dt><dd>{location}</dd>
       <dt>Recorded</dt><dd>{artifact.createdAt}</dd>
       <dt>Path</dt><dd class="wrap">{artifact.path}</dd>
       <dt>SHA-256</dt><dd class="digest">{artifact.digest}</dd>

@@ -6,6 +6,7 @@ export interface TraceArtifact {
   readonly digest: string;
   readonly createdAt: string;
   readonly generatingRun: number | null;
+  readonly pathState: "present" | "missing" | "unavailable";
 }
 
 export interface TraceRun {

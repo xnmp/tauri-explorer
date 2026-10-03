@@ -726,7 +726,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 
 - `src-tauri/src/image_crop.rs` — bounded full-resolution crop encoding and EXIF orientation normalization (#681; save/UI integration pending).
 - `src-tauri/src/files/image_crop.rs` — bounded immutable crop source capture, identity/content validation, admitted staged copy and confirmed replacement execution.
-- `src-tauri/src/trace.rs` — SQLite image revision and operation DAG; records committed crops or native multi-input operations, follows ancestors and descendants, reports selected-file match/changed/unverified status, and updates exact revision locators on Explorer rename and history undo/redo.
+- `src-tauri/src/trace.rs` — SQLite image revision and operation DAG; records committed crops or native multi-input operations, follows ancestors and descendants, reports selected-file match/changed/unverified status and historical path availability, and updates exact revision locators on Explorer rename and history undo/redo.
 - `e2e/trace-inspector.spec.ts` — browser contract for displaying a selected image's source, crop run, and output in the Trace pane.
 - `src/lib/api/image-crop.ts` — typed crop capture/save IPC and native history settlement.
 - `src/lib/api/mock-image-crop.ts` — synthetic PNG/JPEG browser fixtures that save actual cropped pixels into the mock listing; native formats and file safety are verified separately.

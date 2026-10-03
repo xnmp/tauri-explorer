@@ -16,8 +16,8 @@ for (const mode of ALL_VIEW_MODES) test(`${mode}: selected image displays its re
       currentArtifactId: 3,
       selectedRevisionStatus: "matched",
       artifacts: [
-        { id: 3, path: "/home/user/Pictures/screenshot.png", digest: "bbbbbbbbbbbbbbbb", createdAt: "2026-10-03T00:00:01Z", generatingRun: 2 },
-        { id: 1, path: "/home/user/Pictures/source.png", digest: "aaaaaaaaaaaaaaaa", createdAt: "2026-10-03T00:00:00Z", generatingRun: null },
+        { id: 3, path: "/home/user/Pictures/screenshot.png", digest: "bbbbbbbbbbbbbbbb", createdAt: "2026-10-03T00:00:01Z", generatingRun: 2, pathState: "present" },
+        { id: 1, path: "/home/user/Pictures/source.png", digest: "aaaaaaaaaaaaaaaa", createdAt: "2026-10-03T00:00:00Z", generatingRun: null, pathState: "missing" },
       ],
       runs: [{ id: 2, operation: "image.crop", parameters: { rect: { left: 20, top: 10, right: 420, bottom: 310 }, viewport: { width: 512, height: 384 } }, createdAt: "2026-10-03T00:00:01Z", inputIds: [1] }],
     });
@@ -40,6 +40,7 @@ for (const mode of ALL_VIEW_MODES) test(`${mode}: selected image displays its re
   await provenance.getByRole("button", { name: /source.png/ }).focus();
   await page.keyboard.press("Enter");
   await expect(details).toContainText("Earlier origin unknown");
+  await expect(details).toContainText("Missing from recorded path");
 });
 
 test("two source images remain visible when one operation joins them", async ({ page }) => {
@@ -53,9 +54,9 @@ test("two source images remain visible when one operation joins them", async ({ 
       currentArtifactId: path.endsWith("photo2.jpg") ? 2 : 1,
       selectedRevisionStatus: "matched",
       artifacts: [
-        { id: 1, path: "/home/user/Pictures/screenshot.png", digest: "aaaaaaaaaaaaaaaa", createdAt: "2026-10-03T00:00:00Z", generatingRun: null },
-        { id: 2, path: "/home/user/Pictures/photo2.jpg", digest: "bbbbbbbbbbbbbbbb", createdAt: "2026-10-03T00:00:00Z", generatingRun: null },
-        { id: 4, path: "/home/user/Pictures/composite.png", digest: "cccccccccccccccc", createdAt: "2026-10-03T00:00:01Z", generatingRun: 3 },
+        { id: 1, path: "/home/user/Pictures/screenshot.png", digest: "aaaaaaaaaaaaaaaa", createdAt: "2026-10-03T00:00:00Z", generatingRun: null, pathState: "present" },
+        { id: 2, path: "/home/user/Pictures/photo2.jpg", digest: "bbbbbbbbbbbbbbbb", createdAt: "2026-10-03T00:00:00Z", generatingRun: null, pathState: "present" },
+        { id: 4, path: "/home/user/Pictures/composite.png", digest: "cccccccccccccccc", createdAt: "2026-10-03T00:00:01Z", generatingRun: 3, pathState: "present" },
       ],
       runs: [{ id: 3, operation: "image.compose", parameters: {}, createdAt: "2026-10-03T00:00:01Z", inputIds: [1, 2] }],
     });
@@ -86,7 +87,7 @@ test("externally changed bytes show the last recorded revision without claiming 
     getMockControl().traceForImage = () => ({
       currentArtifactId: 1,
       selectedRevisionStatus: "changed",
-      artifacts: [{ id: 1, path: "/home/user/Pictures/screenshot.png", digest: "a".repeat(64), createdAt: "2026-10-03T00:00:00Z", generatingRun: null }],
+      artifacts: [{ id: 1, path: "/home/user/Pictures/screenshot.png", digest: "a".repeat(64), createdAt: "2026-10-03T00:00:00Z", generatingRun: null, pathState: "present" }],
       runs: [],
     });
     traceInvalidation.bump();
@@ -107,7 +108,7 @@ test("a large image reports that its revision was not verified", async ({ page }
     getMockControl().traceForImage = () => ({
       currentArtifactId: 1,
       selectedRevisionStatus: "unverified",
-      artifacts: [{ id: 1, path: "/home/user/Pictures/screenshot.png", digest: "a".repeat(64), createdAt: "2026-10-03T00:00:00Z", generatingRun: null }],
+      artifacts: [{ id: 1, path: "/home/user/Pictures/screenshot.png", digest: "a".repeat(64), createdAt: "2026-10-03T00:00:00Z", generatingRun: null, pathState: "present" }],
       runs: [],
     });
     traceInvalidation.bump();

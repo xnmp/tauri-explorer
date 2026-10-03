@@ -44,6 +44,7 @@ function makeStubCtx() {
     events: { listen: () => {} },
     storage: { get: async () => ({}), set: async () => {} },
     workspace: {
+      onFilesChanged: () => {},
       getSelection: () => [],
       getVisibleEntries: () => [],
       navigate: async (p) => void navigated.push(p),

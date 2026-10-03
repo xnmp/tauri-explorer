@@ -22,21 +22,38 @@ pub(super) fn private_directory(parent: &Path, prefix: &str) -> io::Result<tempf
     builder.tempdir_in(parent)
 }
 
-pub(super) struct StagedEntry {
-    directory: tempfile::TempDir,
+pub(crate) struct StagedEntry {
+    directory: Option<tempfile::TempDir>,
     payload: PathBuf,
+    retain_trace_anchor: bool,
 }
 
 impl StagedEntry {
+    fn directory(&self) -> &tempfile::TempDir {
+        self.directory.as_ref().expect("staged directory is owned")
+    }
+
+    /// Keep a second name for the staged inode until Trace commits a terminal
+    /// state. After a crash, comparing this retained inode to the target avoids
+    /// attributing an unrelated file with identical bytes to our publication.
+    pub(crate) fn trace_anchor(&self) -> io::Result<PathBuf> {
+        let anchor = self.directory().path().join("trace-anchor");
+        std::fs::hard_link(&self.payload, &anchor)?;
+        Ok(anchor)
+    }
+
+    pub(crate) fn retain_trace_anchor(&mut self) {
+        self.retain_trace_anchor = true;
+    }
+
     /// Borrow a generated source while its private directory owner stays live.
-    #[cfg(target_os = "linux")]
     pub(super) fn payload(&self) -> &Path {
         &self.payload
     }
 
     /// Reserve a private namespace on the destination filesystem, then build
     /// an unpublished payload. Errors cannot leave a partial public target.
-    pub(super) fn prepare(
+    pub(crate) fn prepare(
         parent: &Path,
         build: impl FnOnce(&Path) -> Result<(), AppError>,
     ) -> Result<Self, AppError> {
@@ -46,7 +63,8 @@ impl StagedEntry {
         let directory = private_directory(&parent, ".tauri-explorer-stage-")?;
         let staged = Self {
             payload: directory.path().join("payload"),
-            directory,
+            directory: Some(directory),
+            retain_trace_anchor: false,
         };
         match build(&staged.payload) {
             Ok(()) => Ok(staged),
@@ -56,7 +74,7 @@ impl StagedEntry {
 
     /// Commit once. An occupied target is an error even if it appeared after
     /// name selection. Cleanup failure after commit cannot revoke success.
-    pub(super) fn publish(self, target: &Path) -> Result<(), AppError> {
+    pub(crate) fn publish(self, target: &Path) -> Result<(), AppError> {
         self.publish_with(target, rename_noreplace)
     }
 
@@ -80,7 +98,7 @@ impl StagedEntry {
             file_identity::{of_file, version_at},
             native_directory::Directory,
         };
-        let stage = Directory::open(self.directory.path())?;
+        let stage = Directory::open(self.directory().path())?;
         let parent_path =
             std::fs::canonicalize(target.parent().ok_or_else(|| {
                 AppError::InvalidPath("Copy publication requires a parent".into())
@@ -114,7 +132,7 @@ impl StagedEntry {
     }
 
     fn publish_with<T>(
-        self,
+        mut self,
         target: &Path,
         publish: impl FnOnce(&Path, &Path) -> io::Result<T>,
     ) -> Result<T, AppError> {
@@ -141,8 +159,8 @@ impl StagedEntry {
                 );
             }
         }
-        let staging_path = self.directory.path().to_owned();
-        if let Err(error) = self.directory.close() {
+        let staging_path = self.directory().path().to_owned();
+        if let Err(error) = self.close_directory() {
             log::warn!(
                 "Published {} but could not remove empty staging directory {}: {error}",
                 target.display(),
@@ -152,14 +170,34 @@ impl StagedEntry {
         Ok(result)
     }
 
-    fn abort(self, cause: AppError) -> AppError {
-        let staging_path = self.directory.path().to_owned();
-        match self.directory.close() {
+    fn abort(mut self, cause: AppError) -> AppError {
+        let staging_path = self.directory().path().to_owned();
+        match self.close_directory() {
             Ok(()) => cause,
             Err(cleanup) => AppError::Other(format!(
                 "{cause}; unfinished staging data remains at {}: {cleanup}",
                 staging_path.display()
             )),
+        }
+    }
+
+    fn close_directory(&mut self) -> io::Result<()> {
+        let directory = self.directory.take().expect("staged directory is owned");
+        if self.retain_trace_anchor {
+            let _ = directory.keep();
+            Ok(())
+        } else {
+            directory.close()
+        }
+    }
+}
+
+impl Drop for StagedEntry {
+    fn drop(&mut self) {
+        if self.retain_trace_anchor {
+            if let Some(directory) = self.directory.take() {
+                let _ = directory.keep();
+            }
         }
     }
 }

@@ -31,6 +31,7 @@ import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { pluginJobsController, type PluginJobKind } from "$lib/state/plugin-jobs";
 import { extractError, type ApiResult } from "$lib/api/common";
 import { logFrontendError } from "$lib/api/crash";
+import { subscribeToLocalFileChanges } from "$lib/state/file-events";
 
 // ----- Settings descriptors -----
 
@@ -102,6 +103,10 @@ export interface PluginWorkspace {
   /** Entries currently listed in the active pane (after sort/filter). Used to
    *  gather in-context candidates such as sibling folders. */
   getVisibleEntries(): FileEntry[];
+  /** Observe completed workspace mutations, including cross-window broadcasts.
+   * Auto-disposed when the plugin deactivates. External filesystem changes
+   * continue to arrive through the directory watcher/selection updates. */
+  onFilesChanged(handler: (directories: readonly string[]) => void | Promise<void>): void;
   /** Navigate the active pane to a path — e.g. open a plugin's virtual folder. */
   navigate(path: string): Promise<void>;
   /** Refresh every open pane so listings reflect filesystem changes the plugin
@@ -312,6 +317,15 @@ export function createPluginContext(
     },
     storage,
     workspace: {
+      onFilesChanged: (handler) => {
+        track(subscribeToLocalFileChanges((directories) => {
+          if (disposed) return;
+          const changed = [...directories];
+          void Promise.resolve().then(() => {
+            if (!disposed) return handler(changed);
+          }).catch((error) => report(error, "workspace file change handler"));
+        }));
+      },
       getSelection: () => windowTabsManager.getActiveExplorer()?.getSelectedEntries() ?? [],
       getVisibleEntries: () => windowTabsManager.getActiveExplorer()?.displayEntries ?? [],
       navigate: async (path) => {

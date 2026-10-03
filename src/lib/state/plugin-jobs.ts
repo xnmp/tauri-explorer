@@ -4,10 +4,11 @@ import { jobsStore } from "$lib/state/jobs.svelte";
 import { toastStore } from "$lib/state/toast.svelte";
 import { windowTabsManager } from "$lib/state/window-tabs.svelte";
 
-export type PluginJobKind = "upscale" | "nano-banana";
+const JOB_LABELS = { upscale: "Upscale", "nano-banana": "Nano Banana", "openai-image": "OpenAI image" } as const;
+export type PluginJobKind = keyof typeof JOB_LABELS;
 
 type Outcome =
-  | { status: "completed"; outputPath: string }
+  | { status: "completed"; outputPath: string; warning?: string }
   | { status: "error"; error: string };
 
 interface JobRegistration {
@@ -64,12 +65,12 @@ export function createPluginJobsController(deps: Dependencies) {
     retainBounded(settled, 1024);
     if (outcome.status === "completed") {
       deps.complete(id, outcome.outputPath);
-      const action = kind === "upscale" ? "Upscale" : "Nano Banana";
-      deps.success(`${action} complete: ${basename(outcome.outputPath)}`);
+      const action = JOB_LABELS[kind];
+      deps.success(`${action} complete: ${basename(outcome.outputPath)}${outcome.warning ? `. ${outcome.warning}` : ""}`);
       void deps.refresh().catch((error) => console.error("[plugin-jobs] refresh failed:", error));
     } else {
       deps.fail(id, outcome.error);
-      const action = kind === "upscale" ? "Upscale" : "Nano Banana";
+      const action = JOB_LABELS[kind];
       deps.error(`${action} failed: ${outcome.error.slice(0, 100)}`);
     }
   };
@@ -87,6 +88,12 @@ export function createPluginJobsController(deps: Dependencies) {
       ),
       deps.listen<{ jobId: number; error: string }>("nano-banana-error", (payload) =>
         current === session && publish("nano-banana", payload.jobId, { status: "error", error: payload.error }),
+      ),
+      deps.listen<{ jobId: number; outputPath: string; warning?: string }>("openai-image-complete", (payload) =>
+        current === session && publish("openai-image", payload.jobId, { status: "completed", outputPath: payload.outputPath, warning: payload.warning }),
+      ),
+      deps.listen<{ jobId: number; error: string }>("openai-image-error", (payload) =>
+        current === session && publish("openai-image", payload.jobId, { status: "error", error: payload.error }),
       ),
     ]);
     const acquired = results.flatMap((result) => result.status === "fulfilled" ? [result.value] : []);

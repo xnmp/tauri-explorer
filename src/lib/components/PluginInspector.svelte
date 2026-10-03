@@ -20,9 +20,9 @@
 <style>
   .plugin-inspector {
     box-sizing: border-box;
-    flex: 0 0 clamp(240px, 22vw, 340px);
+    flex: 0 0 clamp(300px, 28vw, 380px);
     min-width: 0;
-    max-width: 40vw;
+    max-width: 45vw;
     overflow: auto;
     border-left: 1px solid var(--surface-stroke);
     background: var(--background-card);

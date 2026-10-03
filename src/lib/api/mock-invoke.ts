@@ -1064,6 +1064,7 @@ function mockDirectoryListing(raw: string): CompactDirectoryListing {
 }
 
 const mockCommands: Record<string, CommandHandler> = {
+  trace_for_image: (args) => getMockControl().traceForImage?.(args.path as string) ?? null,
   get_home_directory: () => "/home/user",
   get_launch_cwd: () => "/home/user",
   list_drives: () => {
@@ -2751,6 +2752,8 @@ if (typeof window !== "undefined") {
   },
 
   start_nano_banana_job: () => 1,
+  start_openai_image_job: (args) => getMockControl().openAIImageStart?.(args.request as import("./openai-image").OpenAIImageRequest, args.apiKey as string) ?? 1,
+  recent_openai_image_runs: () => getMockControl().openAIImageHistory ?? [],
 
   start_upscale_job: () => 1,
 

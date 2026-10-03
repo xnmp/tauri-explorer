@@ -257,6 +257,123 @@ async fn real_copy_saves_exact_region_and_preserves_original_bytes() {
 }
 
 #[tokio::test]
+async fn real_copy_records_the_published_revision_in_trace() {
+    let root = tempfile::tempdir().unwrap();
+    let (source, _, revision) = source(root.path());
+    let database = root.path().join("trace.sqlite");
+    let plan = SavePlan::new(request(
+        &source,
+        revision,
+        Destination::Copy {
+            name: "copy.png".into(),
+        },
+    ))
+    .unwrap();
+    let run = crate::trace::begin_crop_for_test(&database, &plan.trace_metadata()).unwrap();
+    let runtime = super::super::admission::Runtime::new(root.path().join("recovery"));
+    let receipt = execute(plan.with_trace_run(Some(run.clone())), &runtime)
+        .await
+        .completion
+        .result
+        .unwrap();
+    crate::trace::complete_crop(&run, &receipt.path).unwrap();
+
+    let graph = crate::trace::graph_for_path_at(&database, Path::new(&receipt.path))
+        .unwrap()
+        .unwrap();
+    let graph = serde_json::to_value(graph).unwrap();
+    assert_eq!(graph["artifacts"].as_array().unwrap().len(), 2);
+    assert_eq!(graph["runs"][0]["status"], "succeeded");
+    assert_eq!(graph["selectedRevisionStatus"], "matched");
+    assert!(!fs::read_dir(root.path())
+        .unwrap()
+        .filter_map(Result::ok)
+        .any(|entry| entry
+            .file_name()
+            .to_string_lossy()
+            .starts_with(".tauri-explorer-stage-")));
+}
+
+#[tokio::test]
+async fn published_copy_is_recovered_after_trace_completion_is_interrupted() {
+    let root = tempfile::tempdir().unwrap();
+    let (source, _, revision) = source(root.path());
+    let database = root.path().join("trace.sqlite");
+    let plan = SavePlan::new(request(
+        &source,
+        revision,
+        Destination::Copy {
+            name: "copy.png".into(),
+        },
+    ))
+    .unwrap();
+    let run = crate::trace::begin_crop_for_test(&database, &plan.trace_metadata()).unwrap();
+    let runtime = super::super::admission::Runtime::new(root.path().join("recovery"));
+    let receipt = execute(plan.with_trace_run(Some(run)), &runtime)
+        .await
+        .completion
+        .result
+        .unwrap();
+    // Simulate a process exit between filesystem publication and Trace commit.
+    crate::trace::reconcile_unfinished_at(&database).unwrap();
+
+    let graph = crate::trace::graph_for_path_at(&database, Path::new(&receipt.path))
+        .unwrap()
+        .unwrap();
+    let graph = serde_json::to_value(graph).unwrap();
+    assert_eq!(graph["artifacts"].as_array().unwrap().len(), 2);
+    assert_eq!(graph["runs"][0]["status"], "succeeded");
+    assert_eq!(graph["runs"][0]["recovered"], true);
+    assert!(!fs::read_dir(root.path())
+        .unwrap()
+        .filter_map(Result::ok)
+        .any(|entry| entry
+            .file_name()
+            .to_string_lossy()
+            .starts_with(".tauri-explorer-stage-")));
+}
+
+#[tokio::test]
+async fn refused_copy_retains_failed_run_without_claiming_the_occupied_target() {
+    let root = tempfile::tempdir().unwrap();
+    let (source, _, revision) = source(root.path());
+    let database = root.path().join("trace.sqlite");
+    let occupied = root.path().join("copy.png");
+    fs::write(&occupied, b"another file").unwrap();
+    let plan = SavePlan::new(request(
+        &source,
+        revision,
+        Destination::Copy {
+            name: "copy.png".into(),
+        },
+    ))
+    .unwrap();
+    let run = crate::trace::begin_crop_for_test(&database, &plan.trace_metadata()).unwrap();
+    let runtime = super::super::admission::Runtime::new(root.path().join("recovery"));
+    assert!(execute(plan.with_trace_run(Some(run.clone())), &runtime)
+        .await
+        .completion
+        .result
+        .is_err());
+    crate::trace::fail_crop(&run).unwrap();
+
+    let graph = crate::trace::graph_for_path_at(&database, &source)
+        .unwrap()
+        .unwrap();
+    let graph = serde_json::to_value(graph).unwrap();
+    assert_eq!(graph["artifacts"].as_array().unwrap().len(), 1);
+    assert_eq!(graph["runs"][0]["status"], "failed");
+    assert_eq!(fs::read(&occupied).unwrap(), b"another file");
+    assert!(!fs::read_dir(root.path())
+        .unwrap()
+        .filter_map(Result::ok)
+        .any(|entry| entry
+            .file_name()
+            .to_string_lossy()
+            .starts_with(".tauri-explorer-stage-")));
+}
+
+#[tokio::test]
 async fn copy_collision_and_changed_source_leave_both_files_unchanged() {
     let root = tempfile::tempdir().unwrap();
     let (path, bytes, revision) = source(root.path());

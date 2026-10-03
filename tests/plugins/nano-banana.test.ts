@@ -61,6 +61,7 @@ function makeFakeCtx(seedStorage: Record<string, unknown> = {}) {
       },
     },
     workspace: {
+      onFilesChanged: () => {},
       getSelection: () => [],
       getVisibleEntries: () => [],
       navigate: async () => {},

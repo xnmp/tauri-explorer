@@ -57,6 +57,31 @@ pub(crate) mod mutation;
 #[cfg_attr(any(target_os = "macos", windows), allow(dead_code, unused_imports))]
 mod native_directory;
 mod object_id;
+
+/// Observe the native identity of a regular file for Trace's publication
+/// journal. Content equality alone cannot prove which process published it.
+#[cfg(any(unix, windows))]
+pub(crate) fn trace_file_identity(
+    path: &std::path::Path,
+) -> Result<String, crate::error::AppError> {
+    let metadata = std::fs::symlink_metadata(path)?;
+    if !metadata.is_file() || metadata.file_type().is_symlink() {
+        return Err(crate::error::AppError::Other(
+            "Trace publication evidence requires a regular file".into(),
+        ));
+    }
+    let file = std::fs::File::open(path)?;
+    trace_file_identity_of(&file)
+}
+
+#[cfg(any(unix, windows))]
+pub(crate) fn trace_file_identity_of(
+    file: &std::fs::File,
+) -> Result<String, crate::error::AppError> {
+    let identity = file_identity::of_file(file)?;
+    serde_json::to_string(&identity)
+        .map_err(|error| crate::error::AppError::Other(error.to_string()))
+}
 pub mod open_with;
 pub mod pdf_preview;
 mod permanent_delete;
@@ -64,7 +89,7 @@ mod permanent_delete;
 // permanent deletion through the same observation and budget.
 #[cfg(unix)]
 mod prepared_selection;
-mod publication;
+pub(crate) mod publication;
 #[cfg_attr(target_os = "macos", allow(dead_code, unused_imports))]
 pub(crate) mod recovery;
 mod replacement;

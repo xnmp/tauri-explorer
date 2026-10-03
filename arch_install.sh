@@ -6,7 +6,10 @@ SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
 echo "Building package..."
 cd "$SCRIPT_DIR"
 export _srcdir="$SCRIPT_DIR"
-makepkg -ef --cleanbuild
+# Keep staging separate from the application source, and run prepare()
+# to install locked JavaScript dependencies before building.
+mkdir -p "$SCRIPT_DIR/.arch-build"
+BUILDDIR="$SCRIPT_DIR/.arch-build" makepkg -f --cleanbuild
 
 # Extract version from PKGBUILD
 PKGVER=$(grep -m1 '^pkgver=' PKGBUILD | cut -d= -f2)

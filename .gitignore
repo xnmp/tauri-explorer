@@ -48,6 +48,7 @@ test-screenshots/
 docs/archive/
 
 # Build artifacts
+/.arch-build/
 pkg/
 *.pkg.tar.zst
 src/tauri-explorer.desktop

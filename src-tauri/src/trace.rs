@@ -59,8 +59,17 @@ pub(crate) struct Run {
 #[serde(rename_all = "camelCase")]
 pub(crate) struct TraceGraph {
     current_artifact_id: i64,
+    selected_revision_status: SelectedRevisionStatus,
     artifacts: Vec<Artifact>,
     runs: Vec<Run>,
+}
+
+#[derive(Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+enum SelectedRevisionStatus {
+    Matched,
+    Changed,
+    Unverified,
 }
 
 fn sql(error: rusqlite::Error) -> AppError {
@@ -343,20 +352,40 @@ fn graph_for_path_at(database: &Path, path: &Path) -> Result<Option<TraceGraph>,
     if !known {
         return Ok(None);
     }
-    let current_digest = digest(path)?;
-    let current: Option<i64> = connection
-        .query_row(
-            "SELECT id FROM artifacts WHERE path=?1 AND digest=?2 ORDER BY id DESC LIMIT 1",
-            params![path_text.as_str(), current_digest],
-            |row| row.get(0),
-        )
-        .optional()
-        .map_err(sql)?;
-    let Some(current_artifact_id) = current else {
-        return Ok(None);
+    let selected_digest = if fs::metadata(path)?.len() > MAX_IMAGE_BYTES {
+        None
+    } else {
+        Some(digest(path)?)
+    };
+    let current: Option<i64> = match selected_digest.as_ref() {
+        Some(digest) => connection
+            .query_row(
+                "SELECT id FROM artifacts WHERE path=?1 AND digest=?2 ORDER BY id DESC LIMIT 1",
+                params![path_text.as_str(), digest],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(sql)?,
+        None => None,
+    };
+    let selected_revision_status = match (&selected_digest, &current) {
+        (None, _) => SelectedRevisionStatus::Unverified,
+        (Some(_), Some(_)) => SelectedRevisionStatus::Matched,
+        (Some(_), None) => SelectedRevisionStatus::Changed,
+    };
+    let current_artifact_id = match current {
+        Some(id) => id,
+        None => connection
+            .query_row(
+                "SELECT id FROM artifacts WHERE path=?1 ORDER BY id DESC LIMIT 1",
+                [path_text.as_str()],
+                |row| row.get(0),
+            )
+            .map_err(sql)?,
     };
     let mut graph = TraceGraph {
         current_artifact_id,
+        selected_revision_status,
         artifacts: Vec::new(),
         runs: Vec::new(),
     };
@@ -521,7 +550,17 @@ mod tests {
             .any(|artifact| artifact.path == branch.to_string_lossy()));
 
         std::fs::write(&second, b"changed outside the app").unwrap();
-        assert!(graph_for_path_at(&db, &second).unwrap().is_none());
+        let changed_graph = graph_for_path_at(&db, &second).unwrap().unwrap();
+        assert_eq!(
+            changed_graph.selected_revision_status,
+            SelectedRevisionStatus::Changed
+        );
+        assert_eq!(changed_graph.artifacts.len(), 4);
+        assert!(changed_graph
+            .artifacts
+            .iter()
+            .any(|artifact| artifact.id == changed_graph.current_artifact_id
+                && artifact.digest != digest(&second).unwrap()));
     }
 
     #[test]
@@ -541,7 +580,41 @@ mod tests {
             &intended_digest,
         )
         .unwrap();
-        assert!(graph_for_path_at(&db, &output).unwrap().is_none());
+        let graph = graph_for_path_at(&db, &output).unwrap().unwrap();
+        assert_eq!(
+            graph.selected_revision_status,
+            SelectedRevisionStatus::Changed
+        );
+        assert_eq!(graph.artifacts.len(), 2);
+    }
+
+    #[test]
+    fn oversized_selected_image_has_unverified_status_without_claiming_a_change() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = dir.path().join("trace.sqlite");
+        let source = dir.path().join("source.png");
+        let output = dir.path().join("output.png");
+        fs::write(&source, b"source pixels").unwrap();
+        fs::write(&output, b"encoded crop").unwrap();
+        record_crop_at(
+            &db,
+            crop(&source),
+            output.to_str().unwrap(),
+            &digest(&output).unwrap(),
+        )
+        .unwrap();
+        OpenOptions::new()
+            .write(true)
+            .open(&output)
+            .unwrap()
+            .set_len(MAX_IMAGE_BYTES + 1)
+            .unwrap();
+        let graph = graph_for_path_at(&db, &output).unwrap().unwrap();
+        assert_eq!(
+            graph.selected_revision_status,
+            SelectedRevisionStatus::Unverified
+        );
+        assert_eq!(graph.artifacts.len(), 2);
     }
 
     #[test]

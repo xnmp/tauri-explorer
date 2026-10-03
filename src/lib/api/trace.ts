@@ -18,6 +18,7 @@ export interface TraceRun {
 
 export interface TraceGraph {
   readonly currentArtifactId: number;
+  readonly selectedRevisionStatus: "matched" | "changed" | "unverified";
   readonly artifacts: TraceArtifact[];
   readonly runs: TraceRun[];
 }

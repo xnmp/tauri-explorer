@@ -1,0 +1,20 @@
+pid=1024453 baseline_shared_fds=1
+cycle=25 shared_fds=1
+cycle=50 shared_fds=1
+cycle=75 shared_fds=1
+cycle=100 shared_fds=1
+cycle=125 shared_fds=1
+cycle=150 shared_fds=1
+cycle=175 shared_fds=1
+cycle=200 shared_fds=1
+cycle=225 shared_fds=1
+cycle=250 shared_fds=1
+cycle=275 shared_fds=1
+cycle=300 shared_fds=1
+cycle=325 shared_fds=1
+cycle=350 shared_fds=1
+cycle=375 shared_fds=1
+cycle=400 shared_fds=1
+cycle=425 shared_fds=1
+cycle=450 shared_fds=1
+PASS cycles=450 live_child_ipcs=450 disposed_child_widgets=450 main_ipcs=2 baseline_shared_fds=1 final_shared_fds=1 maximum_shared_fds=1

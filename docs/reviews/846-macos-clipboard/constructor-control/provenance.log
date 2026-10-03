@@ -1,0 +1,21 @@
+dependency clipboard-rs=0.3.5
+dependency objc2=0.6.4
+dependency objc2-foundation=0.3.2
+dependency objc2-app-kit=0.3.2
+dependency serde=1.0.229
+dependency thiserror=2.0.21
+dependency tempfile=3.27.0
+checkout f7bfad5a4745b4a5cbf9b9cd061ac88ee4e33d2b
+sha256 269d1177c1d8b91496e647996cc4851dd396be58a42e69a0f1bc10392431cea5 docs/reviews/846-macos-clipboard-probe/verify-provenance.py
+sha256 7b67f884d08154d6fff55a0d8213194b6b0d5bb9b068300ce81d38f5f0f2668e docs/reviews/846-macos-clipboard-probe/run-probe.sh
+sha256 04c1b68665e190c2f31f0e323eee4e8067efced13ee56167c318a52376767fb8 .github/workflows/macos-clipboard-probe.yml
+sha256 cf543493aa48b063218d8daa993137092fc464c8cea858f098757d4ddcf7b3f8 src-tauri/Cargo.lock
+sha256 c6b0ca4e38de5040a9f247d440e9ec8812d08b274feea38c46e6ed40d3a2ce52 docs/reviews/846-macos-clipboard-probe/Cargo.lock
+sha256 7139ea06039e175cf78864e49dea6dae2e73407abd437efe849eca2b8a83b04f src-tauri/Cargo.toml
+sha256 8afc3b020d5b064d880bdf87e3873849a98b4327a1925a5e26f962c40c64646a docs/reviews/846-macos-clipboard-probe/Cargo.toml
+sha256 018891c1f3dd5198c3615663ab6a41a2cbd8ed00f1d5af8f8f8bc131983c24e4 docs/reviews/846-macos-clipboard-probe/src/lib.rs
+sha256 b7baf48bd5f5284623ccc39e10ea0b751a60b1d6d7af96655da7476ed0ad1e54 docs/reviews/846-macos-clipboard-probe/src/clipboard/mod.rs
+sha256 7d5b51179b27106d264bad4b2c9cc0ce4d3a438b348742140d06bea5bbaa1865 src-tauri/src/error.rs
+sha256 7351193b7ea5b8015041ba49eb603baaf5183ddbd456f254c7c77fe80ec2274e src-tauri/src/clipboard/backend.rs
+sha256 60e3b228fb048db8b0b6c14af3cbe0f66a76d169ef3c7ebd0ebc3e52edb38d84 src-tauri/src/clipboard/change_counter.rs
+sha256 2e2a776f94508b3121529805958bada0a374c1e3d20dc69d952536fe4b1f9643 src-tauri/src/clipboard/macos.rs

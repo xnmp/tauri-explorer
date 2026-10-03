@@ -84,12 +84,12 @@ list, ends it.
   console code page, so `é` came back as `?`. File lists now travel as
   base64 UTF-8, as `read_text` already did. Any PowerShell output that can
   hold user text needs this.
-- macOS: `clipboard-rs`'s `set([Files, Other])` cannot carry a token. Its
-  `Other` arm calls `declareTypes`, which clears the files written just
-  before. The backend declares `NSFilenamesPboardType` and the token type in
-  one `declareTypes` call through `objc2-app-kit`. The legacy type is
-  deprecated, but it is what `clipboard-rs` wrote and reads, and Finder
-  pastes it.
+- macOS: before the 0.3 upgrade, `clipboard-rs`'s `set([Files, Other])`
+  could not carry a token. Its `Other` arm called `declareTypes`, which
+  cleared the files written just before. The original backend declared `NSFilenamesPboardType` and the token
+  type in one `declareTypes` call through `objc2-app-kit`. That legacy type
+  matched `clipboard-rs` before its 0.3 NSURL migration; #846 replaced the
+  representation with file-URL items, as described below.
   - `changeCount` moves only on an ownership change (`clearContents`,
     `declareTypes`). Another process calling `addTypes` or `setData` on the
     types we declared alters the content without moving the count, so that
@@ -137,3 +137,9 @@ list, ends it.
   with `CC=true AR=true` and `turbojpeg-sys` pointed at empty directories
   (`TURBOJPEG_SOURCE=explicit`, `TURBOJPEG_LIB_DIR`,
   `TURBOJPEG_INCLUDE_DIR`); clippy never links, so stub C tools suffice.
+
+The #846 dependency upgrade replaced the macOS legacy filename representation
+with ordered `public.file-url` items and a private nonce on the first item,
+published together through `writeObjects`, because `clipboard-rs` 0.3 reads
+`NSURL` objects. The stable file/token/change-count proof remains unchanged;
+see [the compatibility lesson](846-tauri-dependency-api-compatibility.md).

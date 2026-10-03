@@ -101,7 +101,7 @@ fn launch(path: &str, application_id: &str) -> Result<(), AppError> {
                 "The selected application is no longer available for this file".into(),
             ));
         }
-        let application = gio::DesktopAppInfo::new(application_id).ok_or_else(|| {
+        let application = gio_unix::DesktopAppInfo::new(application_id).ok_or_else(|| {
             AppError::Other("The selected application is no longer installed".into())
         })?;
         application

@@ -33,6 +33,8 @@ backend for E2E/browser).
 
 ## Selection & marquee
 
+- `plugins/inspector-registry.svelte.ts`, `components/PluginInspector.svelte`, `plugins/api.ts` — plugins can contribute an inspector for the active pane selection; the host disposes it with the plugin and hides the panel when no contribution applies.
+
 - `composables/use-marquee-selection.svelte.ts` — drag-rect candidate set + hit-testing
 - `composables/use-item-interactions.svelte.ts` — click/ctrl/shift selection, focus
 - `domain/file-list-navigation.ts` — pure cursor resolution and keyboard movement/selection intents

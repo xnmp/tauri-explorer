@@ -4,10 +4,11 @@ import { createPluginContext } from "$lib/plugins/api";
 import { getCommand, registerCommand, unregisterCommand } from "$lib/state/commands.svelte";
 import { contextMenuItems } from "$lib/state/context-menu-items.svelte";
 import { dialogRegistry } from "$lib/plugins/dialog-registry.svelte";
+import { inspectorRegistry } from "$lib/plugins/inspector-registry.svelte";
 import { clearFsProviders, providerFor, registerFsProvider } from "$lib/plugins/fs-providers";
 
 const command = { id: "ownership-test", label: "Core", category: "general" as const, handler() {} };
-afterEach(() => { unregisterCommand(command.id); contextMenuItems.clear(); dialogRegistry.clear(); clearFsProviders(); });
+afterEach(() => { unregisterCommand(command.id); contextMenuItems.clear(); dialogRegistry.clear(); inspectorRegistry.clear(); clearFsProviders(); });
 it("rejects a plugin command collision without replacing the core command", () => {
   registerCommand(command);
   const plugin = createPluginContext("ownership");
@@ -44,6 +45,19 @@ it("old dialog disposers cannot close a newly registered instance", () => {
   dialogRegistry.open(descriptor.id);
   dispose();
   expect(dialogRegistry.isOpen(descriptor.id)).toBe(true);
+});
+it("removes a plugin inspector when its owner deactivates", () => {
+  const plugin = createPluginContext("ownership");
+  plugin.ctx.registerInspector({
+    id: "trace",
+    title: "Trace",
+    component: (() => {}) as unknown as Component,
+    when: (entries) => entries.length === 1,
+  });
+  expect(inspectorRegistry.itemsFor([])).toHaveLength(0);
+  expect(inspectorRegistry.itemsFor([{ name: "a.png", path: "/a.png", kind: "file", size: 1, modified: "" }])).toHaveLength(1);
+  plugin.dispose();
+  expect(inspectorRegistry.itemsFor([{ name: "a.png", path: "/a.png", kind: "file", size: 1, modified: "" }])).toHaveLength(0);
 });
 it("provider disposal distinguishes registrations of the same object", () => {
   const provider = { list: (path: string) => ({ path, entries: [] }) };

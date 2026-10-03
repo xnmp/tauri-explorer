@@ -35,6 +35,7 @@ function makeStubCtx() {
     registerContextMenuItem: (i) => void contextMenu.push(i),
     registerSettingsSection: () => {},
     registerFsProvider: (scheme) => void providers.push(scheme),
+    registerInspector: () => {},
     registerDialog: () => {},
     openDialog: () => {},
     closeDialog: () => {},

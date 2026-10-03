@@ -23,7 +23,7 @@ use tauri::{AppHandle, Emitter, Runtime};
 
 use super::dir_listing::invalidate_dir_cache_sync;
 use super::directory_watches::{DirectoryWatches, Lease, Observer};
-use super::watch_observation::{Callback, Mode, Notice, Observation};
+use super::watch_observation::{Callback, Factory, Mode, Notice, Observation};
 use crate::error::AppError;
 use crate::renderer_owner::{self, Owner};
 use crate::search::{invalidate_search_cache_for_change, invalidate_search_cache_root};
@@ -73,13 +73,32 @@ impl PendingChange {
     }
 }
 
-/// Native observation and recursive cache coverage shared by directory leases.
-struct NativeObserver {
-    direct: Observation,
-    search: Observation,
+/// Cache invalidation boundary used by both native observation modes.
+trait CacheInvalidation: Clone + Send + Sync + 'static {
+    fn changed(&self, path: &Path);
+    fn root(&self, path: &Path);
 }
 
-type FsWatcher = DirectoryWatches<NativeObserver>;
+#[derive(Clone, Copy)]
+struct GlobalSearchCache;
+
+impl CacheInvalidation for GlobalSearchCache {
+    fn changed(&self, path: &Path) {
+        invalidate_search_cache_for_change(path);
+    }
+    fn root(&self, path: &Path) {
+        invalidate_search_cache_root(path);
+    }
+}
+
+/// Native observation and recursive cache coverage shared by directory leases.
+struct NativeObserver<C: CacheInvalidation> {
+    direct: Observation,
+    search: Observation,
+    cache: C,
+}
+
+type FsWatcher = DirectoryWatches<NativeObserver<GlobalSearchCache>>;
 
 static RETIRED_OWNERS: AtomicBool = AtomicBool::new(false);
 
@@ -197,18 +216,19 @@ fn native_watcher(callback: Callback) -> notify::Result<Box<dyn Watcher + Send>>
         .map(|watcher| Box::new(watcher) as Box<dyn Watcher + Send>)
 }
 
-fn observation(mode: Mode) -> Observation {
+fn observation<C: CacheInvalidation>(mode: Mode, factory: Factory, cache: C) -> Observation {
     Observation::new(
         mode,
-        Box::new(native_watcher),
+        factory,
         Arc::new(move |notice| match notice {
             Notice::Wake => retire_owners(),
             Notice::Changed { path, names } => {
                 if mode == Mode::Recursive {
-                    invalidate_search_cache_for_change(&path);
+                    cache.changed(&path);
                 } else {
                     if names {
-                        invalidate_directory_caches_for_change(&path);
+                        invalidate_dir_cache_sync(&path.to_string_lossy());
+                        cache.changed(&path);
                     } else {
                         invalidate_dir_cache_sync(&path.to_string_lossy());
                     }
@@ -217,7 +237,7 @@ fn observation(mode: Mode) -> Observation {
             }
             Notice::Lost(roots) => {
                 for root in roots {
-                    invalidate_search_cache_root(&root);
+                    cache.root(&root);
                     if mode == Mode::Direct {
                         invalidate_dir_cache_sync(&root.to_string_lossy());
                         queue_directory_change(&root, ChangeOrigin::Watcher);
@@ -228,7 +248,7 @@ fn observation(mode: Mode) -> Observation {
                 // Advance before the native generation advertises coverage. A walk
                 // from the gap must not publish into the recovered cache.
                 for root in roots {
-                    invalidate_search_cache_root(&root);
+                    cache.root(&root);
                     if mode == Mode::Direct {
                         invalidate_dir_cache_sync(&root.to_string_lossy());
                     }
@@ -245,11 +265,18 @@ fn observation(mode: Mode) -> Observation {
     )
 }
 
-impl NativeObserver {
+impl NativeObserver<GlobalSearchCache> {
     fn new() -> Self {
+        Self::with_cache(GlobalSearchCache, |_| Box::new(native_watcher))
+    }
+}
+
+impl<C: CacheInvalidation> NativeObserver<C> {
+    fn with_cache(cache: C, factory: impl Fn(Mode) -> Factory) -> Self {
         Self {
-            direct: observation(Mode::Direct),
-            search: observation(Mode::Recursive),
+            direct: observation(Mode::Direct, factory(Mode::Direct), cache.clone()),
+            search: observation(Mode::Recursive, factory(Mode::Recursive), cache.clone()),
+            cache,
         }
     }
     fn maintain(&mut self, now: Instant) {
@@ -269,7 +296,7 @@ impl NativeObserver {
     }
 }
 
-impl Observer for NativeObserver {
+impl<C: CacheInvalidation> Observer for NativeObserver<C> {
     fn healthy(&self, path: &str) -> bool {
         self.direct.healthy(Path::new(path))
     }
@@ -287,7 +314,7 @@ impl Observer for NativeObserver {
     }
     fn uncovered(&mut self, path: &str) {
         let _ = self.search.remove(Path::new(path));
-        invalidate_search_cache_root(Path::new(path));
+        self.cache.root(Path::new(path));
     }
 }
 
@@ -477,3 +504,10 @@ pub async fn unwatch_directory(
 #[cfg(test)]
 #[path = "../../test_support/fs_watcher_changes.rs"]
 mod change_tests;
+
+#[cfg(test)]
+pub(crate) fn native_search_change_for_test(
+    path: &Path,
+) -> super::watch_observation::tests::ChangeReceipt {
+    super::watch_observation::tests::subscribe_changes(path, Mode::Recursive)
+}

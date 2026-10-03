@@ -73,6 +73,9 @@ struct Walked {
 static SEARCH_ENTRY_CACHE: SearchEntryCache<Walked> = SearchEntryCache::new();
 
 #[cfg(test)]
+static TEST_CACHE_COMMANDS: Mutex<()> = Mutex::new(());
+
+#[cfg(test)]
 static TEST_WALK_COUNTS: std::sync::OnceLock<Mutex<std::collections::HashMap<PathBuf, usize>>> =
     std::sync::OnceLock::new();
 

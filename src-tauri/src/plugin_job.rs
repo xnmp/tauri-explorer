@@ -81,6 +81,23 @@ impl JobControl {
             Ok(())
         }
     }
+
+    /// Publication and cancellation share one decision point. Once a file is
+    /// published, timeout cancellation cannot describe it as an unpublished job.
+    pub(crate) fn publish<T>(
+        &self,
+        publish: impl FnOnce() -> Result<T, AppError>,
+    ) -> Result<T, AppError> {
+        let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
+        if matches!(*state, JobState::Cancelled) {
+            return Err(AppError::Other("Plugin job cancelled".into()));
+        }
+        let result = publish();
+        if result.is_ok() {
+            *state = JobState::Committed;
+        }
+        result
+    }
 }
 
 /// Allocate a process-unique job id.
@@ -149,17 +166,11 @@ impl StagedOutput {
         final_output: &std::path::Path,
         control: &JobControl,
     ) -> Result<(), AppError> {
-        let mut state = control.state.lock().unwrap_or_else(|e| e.into_inner());
-        if matches!(*state, JobState::Cancelled) {
-            return Err(AppError::Other("Plugin job cancelled".into()));
-        }
-        let result = self.0.persist(final_output).map(|_| ()).map_err(|error| {
-            AppError::Other(format!("Failed to publish plugin output: {}", error.error))
-        });
-        if result.is_ok() {
-            *state = JobState::Committed;
-        }
-        result
+        control.publish(|| {
+            self.0.persist(final_output).map(|_| ()).map_err(|error| {
+                AppError::Other(format!("Failed to publish plugin output: {}", error.error))
+            })
+        })
     }
 }
 
@@ -169,6 +180,13 @@ pub struct PluginJobCompleteEvent {
     pub job_id: u64,
     #[serde(rename = "outputPath")]
     pub output_path: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub warning: Option<String>,
+}
+
+pub(crate) struct JobOutput {
+    pub path: String,
+    pub warning: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -187,27 +205,32 @@ pub async fn run_and_emit(
     control: JobControl,
     job: impl std::future::Future<Output = Result<String, AppError>>,
 ) {
-    run_and_emit_with_timeout(app, event_prefix, job_id, control, job_timeout(), job).await;
+    run_and_emit_detailed(app, event_prefix, job_id, control, async {
+        job.await.map(|path| JobOutput {
+            path,
+            warning: None,
+        })
+    })
+    .await;
 }
 
-async fn run_and_emit_with_timeout(
+pub(crate) async fn run_and_emit_detailed(
     app: &AppHandle,
     event_prefix: &str,
     job_id: u64,
     control: JobControl,
-    timeout: std::time::Duration,
-    job: impl std::future::Future<Output = Result<String, AppError>>,
+    job: impl std::future::Future<Output = Result<JobOutput, AppError>>,
 ) {
-    let result = run_with_timeout(event_prefix, control, timeout, job).await;
+    let result = run_with_timeout(event_prefix, control, job_timeout(), job).await;
     emit_result(app, event_prefix, job_id, result);
 }
 
-async fn run_with_timeout(
+async fn run_with_timeout<T>(
     event_prefix: &str,
     control: JobControl,
     timeout: std::time::Duration,
-    job: impl std::future::Future<Output = Result<String, AppError>>,
-) -> Result<String, AppError> {
+    job: impl std::future::Future<Output = Result<T, AppError>>,
+) -> Result<T, AppError> {
     tokio::pin!(job);
     match tokio::time::timeout(timeout, &mut job).await {
         Ok(result) => result,
@@ -225,14 +248,20 @@ async fn run_with_timeout(
     }
 }
 
-fn emit_result(app: &AppHandle, event_prefix: &str, job_id: u64, result: Result<String, AppError>) {
+fn emit_result(
+    app: &AppHandle,
+    event_prefix: &str,
+    job_id: u64,
+    result: Result<JobOutput, AppError>,
+) {
     match result {
-        Ok(output_path) => {
+        Ok(output) => {
             let _ = app.emit(
                 &format!("{}-complete", event_prefix),
                 PluginJobCompleteEvent {
                     job_id,
-                    output_path,
+                    output_path: output.path,
+                    warning: output.warning,
                 },
             );
         }

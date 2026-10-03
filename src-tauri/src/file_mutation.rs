@@ -494,28 +494,54 @@ pub(crate) async fn save_image_crop(
 ) -> Result<MutationReply<FileMutationReceipt>, AppError> {
     let owner = renderer_owner::acquire_owner(&window, &session_id)?;
     let plan = crate::files::image_crop::SavePlan::new(request)?;
+    let trace_eligible = plan.trace_eligible();
     let trace_metadata = plan.trace_metadata();
     let trace_window = window.clone();
     let runtime = admission::runtime(&window)?;
     let directories = plan.affected_dirs();
     file_history::run_forward(owner, false, directories, async move {
-        let mut outcome = crate::files::image_crop::execute(plan, &runtime).await;
-        if let Ok(receipt) = &outcome.completion.result {
-            let output_path = receipt.path.clone();
-            let output_digest = outcome
-                .output_digest
-                .take()
-                .expect("confirmed crop carries output digest");
-            let recorded = tauri::async_runtime::spawn_blocking(move || {
-                crate::trace::record_crop(trace_metadata, &output_path, &output_digest)
+        let source_path = trace_metadata.source_path.clone();
+        let (run, start_warning) = if trace_eligible {
+            let started = tauri::async_runtime::spawn_blocking(move || {
+                crate::trace::begin_crop(&trace_metadata)
             })
             .await;
-            match recorded {
+            match started {
+                Ok(Ok(run)) => (Some(run), None),
+                Ok(Err(error)) => (None, Some(error.to_string())),
+                Err(error) => (None, Some(error.to_string())),
+            }
+        } else {
+            (None, None)
+        };
+        let mut outcome =
+            crate::files::image_crop::execute(plan.with_trace_run(run.clone()), &runtime).await;
+        if let Some(detail) = start_warning {
+            let warning = format!("Trace could not record this crop: {detail}");
+            log::warn!("{warning}");
+            outcome.completion.warning = Some(match outcome.completion.warning.take() {
+                Some(previous) => format!("{previous}\n{warning}"),
+                None => warning,
+            });
+        }
+        if let Some(run) = run {
+            let conclusion = match &outcome.completion.result {
+                Ok(receipt) => Some(receipt.path.clone()),
+                Err(_) => None,
+            };
+            let uncertain = conclusion.is_none() && admission::changed(&outcome.completion.result);
+            let finalized = tauri::async_runtime::spawn_blocking(move || match conclusion {
+                Some(path) => crate::trace::complete_crop(&run, &path),
+                None if uncertain => crate::trace::mark_crop_uncertain(&run),
+                None => crate::trace::fail_crop(&run),
+            })
+            .await;
+            match finalized {
                 Ok(Ok(())) => {
                     use tauri::Emitter;
                     let _ = trace_window
                         .app_handle()
-                        .emit("trace:changed", &receipt.path);
+                        .emit("trace:changed", &source_path);
                 }
                 failure => {
                     let detail = match failure {
@@ -523,8 +549,7 @@ pub(crate) async fn save_image_crop(
                         Err(error) => error.to_string(),
                         Ok(Ok(())) => unreachable!(),
                     };
-                    let warning =
-                        format!("Image saved, but Trace metadata could not be recorded: {detail}");
+                    let warning = format!("Trace could not finalize this crop: {detail}");
                     log::warn!("{warning}");
                     outcome.completion.warning = Some(match outcome.completion.warning.take() {
                         Some(previous) => format!("{previous}\n{warning}"),

@@ -1,4 +1,11 @@
 /** Small, deterministic layered layout for an artifact/run DAG. */
+export function traceOperationLabel(operation: string): string {
+  if (operation === "image.crop") return "Crop";
+  if (operation === "openai.image.edit") return "OpenAI edit";
+  if (operation === "openai.image.generate") return "OpenAI image";
+  return operation.replace(/^image\./, "");
+}
+
 export interface TraceLayoutInput {
   readonly artifacts: readonly { readonly id: number; readonly generatingRun: number | null }[];
   readonly runs: readonly { readonly id: number; readonly inputIds: readonly number[] }[];
@@ -30,7 +37,7 @@ export interface TraceLayout {
 const ARTIFACT_WIDTH = 146;
 const ARTIFACT_HEIGHT = 58;
 const RUN_WIDTH = 90;
-const RUN_HEIGHT = 28;
+const RUN_HEIGHT = 38;
 const COLUMN_GAP = 14;
 const ROW_GAP = 30;
 const PADDING = 14;

@@ -1,5 +1,6 @@
 <script lang="ts">
   import type { TraceArtifact, TraceGraph } from "$lib/api/trace";
+  import { traceOperationLabel } from "$lib/domain/trace-layout";
 
   function describeLocation(artifact: TraceArtifact, graph: TraceGraph): string {
     if (artifact.pathState === "missing") return "Missing from recorded path";
@@ -38,15 +39,22 @@
     </dl>
   {:else if run}
     <div class="eyebrow">OPERATION</div>
-    <h2 aria-live="polite">{run.operation === "image.crop" ? "Crop" : run.operation}</h2>
+    <h2 aria-live="polite">{traceOperationLabel(run.operation)}</h2>
     <dl>
       <dt>Run</dt><dd>#{run.id}</dd>
+      <dt>Status</dt><dd>{run.status}{run.recovered ? " (recovered from staged file identity and hash)" : ""}</dd>
       <dt>Recorded</dt><dd>{run.createdAt}</dd>
-      <dt>Inputs</dt><dd>{inputNames.join(", ")}</dd>
+      {#if run.finishedAt}<dt>Finished</dt><dd>{run.finishedAt}</dd>{/if}
+      {#if run.error}<dt>Reason</dt><dd>{run.error}</dd>{/if}
+      <dt>Inputs</dt><dd>{inputNames.join(", ") || "None (generated from prompt)"}</dd>
       <dt>Output</dt><dd>{outputNames.join(", ") || "No recorded output"}</dd>
     </dl>
     <div class="parameters-label">Recorded parameters</div>
     <pre>{JSON.stringify(run.parameters, null, 2)}</pre>
+    {#if run.details}
+      <div class="parameters-label">Provider result</div>
+      <pre>{JSON.stringify(run.details, null, 2)}</pre>
+    {/if}
   {/if}
 </section>
 

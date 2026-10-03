@@ -30,6 +30,7 @@ mod git_watch;
 mod github;
 mod image_crop;
 mod nano_banana;
+mod openai_image;
 mod palette;
 mod platform;
 mod plugin_job;
@@ -289,6 +290,7 @@ pub fn run_with_process_entry(launch_dir: Option<String>, t_process_entry: std::
             files::image_crop::capture_image_crop,
             file_mutation::save_image_crop,
             trace::trace_for_image,
+            trace::recent_openai_image_runs,
             files::pdf_preview::read_pdf_bytes,
             files::pdf_preview::open_pdf_link,
             #[cfg(feature = "e2e-hooks")]
@@ -420,6 +422,7 @@ pub fn run_with_process_entry(launch_dir: Option<String>, t_process_entry: std::
             wallpaper::set_as_wallpaper,
             // Nano Banana (AI image editing)
             nano_banana::start_nano_banana_job,
+            openai_image::start_openai_image_job,
             upscale::start_upscale_job,
             // AI rename suggestions
             ai_rename::ai_suggest_filenames,
@@ -446,6 +449,9 @@ pub fn run_with_process_entry(launch_dir: Option<String>, t_process_entry: std::
         ])
         .setup(move |app| {
             let t_setup = std::time::Instant::now();
+            if let Err(error) = trace::reconcile_unfinished() {
+                log::warn!("Trace could not reconcile unfinished image runs: {error}");
+            }
             // Before any window exists, so every mutation command can admit.
             // Without a data directory, mutations fail rather than run unadmitted.
             #[cfg(target_os = "linux")]

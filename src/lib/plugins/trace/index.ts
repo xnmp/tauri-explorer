@@ -18,5 +18,6 @@ export const tracePlugin: Plugin = {
         && (isImageFile(entries[0]) || isSvgFile(entries[0])),
     });
     ctx.events.listen<string>("trace:changed", () => traceInvalidation.bump());
+    ctx.workspace.onFilesChanged(() => traceInvalidation.bump());
   },
 };

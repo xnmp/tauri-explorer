@@ -12,8 +12,13 @@ export interface TraceArtifact {
 export interface TraceRun {
   readonly id: number;
   readonly operation: string;
-  readonly parameters: { rect?: { left: number; top: number; right: number; bottom: number }; viewport?: { width: number; height: number } };
+  readonly parameters: Record<string, unknown> & { rect?: { left: number; top: number; right: number; bottom: number }; viewport?: { width: number; height: number } };
   readonly createdAt: string;
+  readonly status: "running" | "succeeded" | "failed" | "interrupted" | "uncertain" | "untraced" | "cancelled";
+  readonly finishedAt: string | null;
+  readonly error: string | null;
+  readonly recovered: boolean;
+  readonly details?: Record<string, unknown> | null;
   readonly inputIds: number[];
 }
 

@@ -2,9 +2,7 @@
   import { onMount } from "svelte";
   import type { FileEntry } from "$lib/domain/file";
   import { traceForImage, type TraceArtifact, type TraceGraph } from "$lib/api/trace";
-  import { layoutTraceGraph } from "$lib/domain/trace-layout";
-  import { parentDir, sameDirectory } from "$lib/domain/path";
-  import { subscribeToLocalFileChanges } from "$lib/state/file-events";
+  import { layoutTraceGraph, traceOperationLabel } from "$lib/domain/trace-layout";
   import { traceInvalidation } from "./invalidation.svelte";
   import TraceDetails from "./TraceDetails.svelte";
 
@@ -30,12 +28,9 @@
   });
 
   onMount(() => {
-    const unsubscribe = subscribeToLocalFileChanges((directories) => {
-      if (directories.some((directory) => sameDirectory(directory, parentDir(path)))) traceInvalidation.bump();
-    });
     const refresh = () => traceInvalidation.bump();
     window.addEventListener("focus", refresh);
-    return () => { unsubscribe(); window.removeEventListener("focus", refresh); };
+    return () => { window.removeEventListener("focus", refresh); };
   });
 
   $effect(() => {
@@ -65,7 +60,7 @@
   {:else if !graph || !layout}
     <p>No recorded edits for this image.</p>
   {:else}
-    <div class="summary"><span>IMAGE LINEAGE</span><span>{graph.artifacts.length} artifacts · {graph.runs.length} edits</span></div>
+    <div class="summary"><span>IMAGE LINEAGE</span><span>{graph.artifacts.length} artifacts · {graph.runs.length} runs</span></div>
     {#if graph.selectedRevisionStatus === "changed"}
       <p class="changed-notice" role="status">This file changed since it was recorded. Showing its last recorded revision.</p>
     {:else if graph.selectedRevisionStatus === "unverified"}
@@ -98,10 +93,11 @@
             {#if run}
               <div role="listitem" class="node-frame" style={`left:${node.x}px;top:${node.y}px;width:${node.width}px;height:${node.height}px`}>
                 <button type="button" class="operation" aria-pressed={selectedKey === node.key} aria-controls="trace-node-details" onclick={() => focusedKey = node.key}>
-                  <strong>{run.operation === "image.crop" ? "Crop" : run.operation.replace(/^image\./, "")}</strong>
+                  <strong>{traceOperationLabel(run.operation)}</strong>
                   {#if run.parameters.rect}
                     <small>{run.parameters.rect.right - run.parameters.rect.left} × {run.parameters.rect.bottom - run.parameters.rect.top}</small>
                   {/if}
+                  {#if run.status !== "succeeded"}<small class="run-status">{run.status}</small>{/if}
                 </button>
               </div>
             {/if}
@@ -137,4 +133,5 @@
   .operation { flex-direction: column; justify-content: center; border: 1px solid color-mix(in srgb, var(--accent) 45%, var(--surface-stroke)); border-radius: 5px; background: color-mix(in srgb, var(--accent) 12%, var(--background-card)); color: var(--accent-text, var(--text-primary)); font-size: 10px; }
   .operation strong { font-weight: 700; }
   .operation small { margin-top: 2px; font-size: 9px; }
+  .operation .run-status { text-transform: capitalize; }
 </style>

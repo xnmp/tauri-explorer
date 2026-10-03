@@ -19,7 +19,7 @@ for (const mode of ALL_VIEW_MODES) test(`${mode}: selected image displays its re
         { id: 3, path: "/home/user/Pictures/screenshot.png", digest: "bbbbbbbbbbbbbbbb", createdAt: "2026-10-03T00:00:01Z", generatingRun: 2, pathState: "present" },
         { id: 1, path: "/home/user/Pictures/source.png", digest: "aaaaaaaaaaaaaaaa", createdAt: "2026-10-03T00:00:00Z", generatingRun: null, pathState: "missing" },
       ],
-      runs: [{ id: 2, operation: "image.crop", parameters: { rect: { left: 20, top: 10, right: 420, bottom: 310 }, viewport: { width: 512, height: 384 } }, createdAt: "2026-10-03T00:00:01Z", inputIds: [1] }],
+      runs: [{ id: 2, operation: "image.crop", parameters: { rect: { left: 20, top: 10, right: 420, bottom: 310 }, viewport: { width: 512, height: 384 } }, createdAt: "2026-10-03T00:00:01Z", status: "succeeded", finishedAt: "2026-10-03T00:00:02Z", error: null, recovered: false, inputIds: [1] }],
     });
     traceInvalidation.bump();
   });
@@ -58,7 +58,7 @@ test("two source images remain visible when one operation joins them", async ({ 
         { id: 2, path: "/home/user/Pictures/photo2.jpg", digest: "bbbbbbbbbbbbbbbb", createdAt: "2026-10-03T00:00:00Z", generatingRun: null, pathState: "present" },
         { id: 4, path: "/home/user/Pictures/composite.png", digest: "cccccccccccccccc", createdAt: "2026-10-03T00:00:01Z", generatingRun: 3, pathState: "present" },
       ],
-      runs: [{ id: 3, operation: "image.compose", parameters: {}, createdAt: "2026-10-03T00:00:01Z", inputIds: [1, 2] }],
+      runs: [{ id: 3, operation: "image.compose", parameters: {}, createdAt: "2026-10-03T00:00:01Z", status: "succeeded", finishedAt: "2026-10-03T00:00:02Z", error: null, recovered: false, inputIds: [1, 2] }],
     });
     traceInvalidation.bump();
   });
@@ -116,4 +116,29 @@ test("a large image reports that its revision was not verified", async ({ page }
   const trace = page.getByRole("complementary", { name: "File inspector" });
   await expect(trace.getByRole("status")).toContainText("current bytes were not checked");
   await expect(trace.getByRole("status")).not.toContainText("changed");
+});
+
+test("a failed crop remains visible from its source without an invented output", async ({ page }) => {
+  await page.goto("/?path=/home/user/Pictures");
+  await waitForEntries(page);
+  await page.locator(".entry-item", { hasText: "screenshot.png" }).click();
+  await page.evaluate(async () => {
+    const { getMockControl } = await import("/src/lib/api/mock-control.ts");
+    const { traceInvalidation } = await import("/src/lib/plugins/trace/invalidation.svelte.ts");
+    getMockControl().traceForImage = () => ({
+      currentArtifactId: 1,
+      selectedRevisionStatus: "matched",
+      artifacts: [{ id: 1, path: "/home/user/Pictures/screenshot.png", digest: "a".repeat(64), createdAt: "2026-10-03T00:00:00Z", generatingRun: null, pathState: "present" }],
+      runs: [{ id: 2, operation: "image.crop", parameters: {}, createdAt: "2026-10-03T00:00:01Z", status: "failed", finishedAt: "2026-10-03T00:00:02Z", error: "crop_failed", recovered: false, inputIds: [1] }],
+    });
+    traceInvalidation.bump();
+  });
+  const provenance = page.getByRole("list", { name: "Image provenance" });
+  await expect(provenance.getByRole("button", { name: /Crop failed/ })).toBeVisible();
+  await expect(provenance.getByRole("button")).toHaveCount(2);
+  await provenance.getByRole("button", { name: /Crop failed/ }).click();
+  const details = page.getByRole("region", { name: "Trace details" });
+  await expect(details).toContainText("failed");
+  await expect(details).toContainText("No recorded output");
+  await expect(details).toContainText("crop_failed");
 });

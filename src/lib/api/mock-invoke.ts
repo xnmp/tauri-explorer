@@ -2752,6 +2752,8 @@ if (typeof window !== "undefined") {
   },
 
   start_nano_banana_job: () => 1,
+  start_openai_image_job: (args) => getMockControl().openAIImageStart?.(args.request as import("./openai-image").OpenAIImageRequest, args.apiKey as string) ?? 1,
+  recent_openai_image_runs: () => getMockControl().openAIImageHistory ?? [],
 
   start_upscale_job: () => 1,
 

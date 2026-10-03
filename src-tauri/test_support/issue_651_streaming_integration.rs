@@ -89,6 +89,9 @@ fn issue_651_real_streaming_command_reuses_refreshes_and_cancels_listings() {
     let overlap_deep = overlap_child.join("deep");
     fs::create_dir_all(&overlap_deep).expect("overlapping child fixture directory");
 
+    fs::write(overlap_deep.join("before-overlap.txt"), "before")
+        .expect("overlapping nested fixture");
+
     fs::write(watched.path().join("alpha.txt"), "alpha").expect("alpha fixture");
     fs::write(watched.path().join("beta.txt"), "beta").expect("beta fixture");
     let nested = watched.path().join("nested");
@@ -127,8 +130,6 @@ fn issue_651_real_streaming_command_reuses_refreshes_and_cancels_listings() {
         "a nested descendant change must force a fresh recursive walk"
     );
 
-    fs::write(overlap_deep.join("before-overlap.txt"), "before")
-        .expect("overlapping nested fixture");
     let overlap_parent_path = overlap_parent.path().to_string_lossy().into_owned();
     let overlap_child_path = overlap_child.to_string_lossy().into_owned();
     let parent_lease = tauri::async_runtime::block_on(watch_directory(overlap_parent_path.clone()))

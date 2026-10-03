@@ -43,6 +43,7 @@ function makeFakeCtx() {
     registerContextMenuItem: (i) => void contextMenu.push(i),
     registerSettingsSection: (s) => void settingsSections.push(s),
     registerFsProvider: () => {},
+    registerInspector: () => {},
     registerDialog: (d) => void dialogs.push(d),
     openDialog: () => {},
     closeDialog: () => {},

@@ -281,6 +281,9 @@
         {@render paneAndPreview()}
       </div>
     {/if}
+    {#await import("$lib/components/PluginInspector.svelte") then { default: PluginInspector }}
+      <PluginInspector />
+    {/await}
   </div>
   {#if terminalPanelStore.everOpened && settingsStore.enableTerminal}
     <!-- Lazy: xterm.js only loads on first open. Stays mounted afterwards so

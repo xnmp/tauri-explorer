@@ -32,6 +32,59 @@ async function focus(page: Page, id: string) {
   }, id);
 }
 
+for (const viewMode of ["details", "list", "tiles"] as const) {
+  for (const zoomLevel of [110, 130, 175]) {
+    test(`${viewMode} sparse workspace fits without scrollbars at ${zoomLevel}%`, async ({ page }, info) => {
+      await page.setViewportSize({ width: 817, height: 1361 });
+      await page.addInitScript(({ zoomLevel }) => {
+        localStorage.setItem("explorer-settings", JSON.stringify({
+          showWindowControls: false, showSidebar: false, showStatusBar: false,
+          zoomLevel, thumbnailSize: "small",
+        }));
+      }, { zoomLevel });
+      await page.goto(`/?path=/home/user/Documents&viewMode=${viewMode}`);
+      await page.locator(".entry-item").first().waitFor();
+      // Measure the workspace itself: Details can legitimately scroll its columns.
+      // ScrollHeight/clientHeight are integer-rounded and miss fractional overflow.
+      await expect.poll(() => page.locator(".pane-container").evaluate(container => {
+        const tree = container.querySelector<HTMLElement>(".pane-tree")!;
+        const outer = container.getBoundingClientRect(), inner = tree.getBoundingClientRect();
+        const style = getComputedStyle(container);
+        const zoom = Number.parseFloat(getComputedStyle(document.documentElement).zoom);
+        const width = outer.width - (parseFloat(style.borderLeftWidth) + parseFloat(style.borderRightWidth)) * zoom;
+        const height = outer.height - (parseFloat(style.borderTopWidth) + parseFloat(style.borderBottomWidth)) * zoom;
+        return Math.max(Math.abs(inner.width - width), Math.abs(inner.height - height));
+      })).toBeLessThanOrEqual(0.032);
+      if (viewMode === "tiles" && zoomLevel === 130) {
+        await page.screenshot({ path: info.outputPath("spacious-tiles-without-workspace-scrollbars.png") });
+      }
+    });
+  }
+}
+
+for (const viewMode of ["details", "list", "tiles"] as const) {
+  test(`${viewMode} overflowing files still reveal their final entry at fractional zoom`, async ({ page }, info) => {
+    await page.setViewportSize({ width: 817, height: 600 });
+    await page.addInitScript(() => localStorage.setItem("explorer-settings", JSON.stringify({
+      showSidebar: false, showStatusBar: false, zoomLevel: 130, thumbnailSize: "small",
+    })));
+    await page.goto(`/?path=/perf/huge-500&viewMode=${viewMode}`);
+    await page.locator(".entry-item").first().click();
+    const viewport = page.locator(`.${viewMode}-view .virtual-viewport`);
+    await expect.poll(() => viewport.evaluate(element => element.scrollHeight - element.clientHeight)).toBeGreaterThan(100);
+    const box = (await viewport.boundingBox())!;
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+    await page.mouse.wheel(0, 600);
+    await expect.poll(() => viewport.evaluate(element => element.scrollTop)).toBeGreaterThan(100);
+    await page.keyboard.press("Control+End");
+    const selected = page.locator(".entry-item.selected");
+    await expect(selected.locator(".entry-name")).toHaveText("image-00498.png");
+    await expect(selected).toBeInViewport();
+    await expect.poll(() => viewport.evaluate(element => element.scrollTop)).toBeGreaterThan(100);
+    if (viewMode === "tiles") await page.screenshot({ path: info.outputPath("overflow-final-entry.png") });
+  });
+}
+
 test("dense restored layout reveals focused files and preserves saved layout", async ({ page }, info) => {
   await page.setViewportSize({ width: 640, height: 480 });
   const saved = await restore(page);

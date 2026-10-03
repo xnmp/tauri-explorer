@@ -18,10 +18,11 @@ import { aiRenamePlugin } from "./ai-rename";
 import { aiOrganizePlugin } from "./ai-organize";
 import { themeFromImagePlugin } from "./theme-from-image";
 import { upscalePlugin } from "./upscale";
+import { tracePlugin } from "./trace";
 import { pluginJobsController } from "$lib/state/plugin-jobs";
 
 /** Statically-imported built-in plugins (explicit imports — no dynamic load). */
-const BUILT_IN_PLUGINS: Plugin[] = [demoPlugin, nanoBananaPlugin, aiRenamePlugin, aiOrganizePlugin, themeFromImagePlugin, upscalePlugin];
+const BUILT_IN_PLUGINS: Plugin[] = [demoPlugin, nanoBananaPlugin, aiRenamePlugin, aiOrganizePlugin, themeFromImagePlugin, upscalePlugin, tracePlugin];
 
 export interface PluginInfo {
   id: string;

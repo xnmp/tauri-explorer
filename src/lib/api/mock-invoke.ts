@@ -1064,6 +1064,7 @@ function mockDirectoryListing(raw: string): CompactDirectoryListing {
 }
 
 const mockCommands: Record<string, CommandHandler> = {
+  trace_for_image: (args) => getMockControl().traceForImage?.(args.path as string) ?? null,
   get_home_directory: () => "/home/user",
   get_launch_cwd: () => "/home/user",
   list_drives: () => {

@@ -60,6 +60,7 @@ pub mod system;
 pub mod task_registry;
 mod terminal;
 mod thumbnails;
+mod trace;
 mod wallpaper;
 mod warm_pool;
 
@@ -287,6 +288,7 @@ pub fn run_with_process_entry(launch_dir: Option<String>, t_process_entry: std::
             files::file_ops::read_image_data_url,
             files::image_crop::capture_image_crop,
             file_mutation::save_image_crop,
+            trace::trace_for_image,
             files::pdf_preview::read_pdf_bytes,
             files::pdf_preview::open_pdf_link,
             #[cfg(feature = "e2e-hooks")]

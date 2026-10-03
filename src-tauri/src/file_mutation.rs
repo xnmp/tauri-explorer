@@ -474,10 +474,45 @@ pub(crate) async fn save_image_crop(
 ) -> Result<MutationReply<FileMutationReceipt>, AppError> {
     let owner = renderer_owner::acquire_owner(&window, &session_id)?;
     let plan = crate::files::image_crop::SavePlan::new(request)?;
+    let trace_metadata = plan.trace_metadata();
+    let trace_window = window.clone();
     let runtime = admission::runtime(&window)?;
     let directories = plan.affected_dirs();
     file_history::run_forward(owner, false, directories, async move {
-        let outcome = crate::files::image_crop::execute(plan, &runtime).await;
+        let mut outcome = crate::files::image_crop::execute(plan, &runtime).await;
+        if let Ok(receipt) = &outcome.completion.result {
+            let output_path = receipt.path.clone();
+            let output_digest = outcome
+                .output_digest
+                .take()
+                .expect("confirmed crop carries output digest");
+            let recorded = tauri::async_runtime::spawn_blocking(move || {
+                crate::trace::record_crop(trace_metadata, &output_path, &output_digest)
+            })
+            .await;
+            match recorded {
+                Ok(Ok(())) => {
+                    use tauri::Emitter;
+                    let _ = trace_window
+                        .app_handle()
+                        .emit("trace:changed", &receipt.path);
+                }
+                failure => {
+                    let detail = match failure {
+                        Ok(Err(error)) => error.to_string(),
+                        Err(error) => error.to_string(),
+                        Ok(Ok(())) => unreachable!(),
+                    };
+                    let warning =
+                        format!("Image saved, but Trace metadata could not be recorded: {detail}");
+                    log::warn!("{warning}");
+                    outcome.completion.warning = Some(match outcome.completion.warning.take() {
+                        Some(previous) => format!("{previous}\n{warning}"),
+                        None => warning,
+                    });
+                }
+            }
+        }
         let effect = match &outcome.completion.result {
             Ok(receipt) => ForwardEffect::Changed(copy_inverse(receipt)),
             Err(_) if admission::changed(&outcome.completion.result) => {

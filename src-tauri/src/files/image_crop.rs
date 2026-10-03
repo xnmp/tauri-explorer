@@ -247,6 +247,15 @@ pub(crate) struct SavePlan {
 }
 
 impl SavePlan {
+    pub(crate) fn trace_metadata(&self) -> crate::trace::CropMetadata {
+        crate::trace::CropMetadata {
+            source_path: self.source.to_string_lossy().into_owned(),
+            source_digest: self.request.revision.digest.clone(),
+            rect: self.request.rect,
+            viewport: self.request.viewport,
+        }
+    }
+
     pub(crate) fn new(request: SaveRequest) -> Result<Self, AppError> {
         let source = PathBuf::from(&request.path);
         if !source.is_absolute() {
@@ -313,16 +322,14 @@ impl SavePlan {
             .into_iter()
             .collect()
     }
-    fn execute(
-        self,
-        runtime: &super::admission::Runtime,
-    ) -> Result<super::mutation::FileMutationReceipt, AppError> {
+    fn execute(self, runtime: &super::admission::Runtime) -> Result<ExecutedCrop, AppError> {
         let (bytes, permissions) = verify_source(&self.source, &self.request.revision)?;
         let encoded = image_crop::encode_with_viewport(
             &bytes,
             self.request.rect,
             Some(self.request.viewport),
         )?;
+        let output_digest = hex::encode(Sha256::digest(&encoded));
         // Unsupported codecs and invalid crops fail before any filesystem effect.
         drop(bytes);
         verify_source(&self.source, &self.request.revision)?;
@@ -350,11 +357,12 @@ impl SavePlan {
         {
             // Keep the independent generated source and its parent alive through
             // displacement AND publication. Completed Undo owns journal artifacts.
-            return runtime.replace_generated(
-                stage.payload(),
-                &self.target,
-                &self.request.revision,
-            );
+            return runtime
+                .replace_generated(stage.payload(), &self.target, &self.request.revision)
+                .map(|receipt| ExecutedCrop {
+                    receipt,
+                    output_digest,
+                });
         }
         let _ = runtime;
         let publish = || {
@@ -375,7 +383,7 @@ impl SavePlan {
                 ))
             }
         };
-        match self.request.destination {
+        let receipt = match self.request.destination {
             Destination::Copy { .. } => publish(),
             Destination::Replace => {
                 let (mut receipt, displaced) = super::replacement::replace_verified(
@@ -389,7 +397,11 @@ impl SavePlan {
                 displaced.discard();
                 Ok(receipt)
             }
-        }
+        }?;
+        Ok(ExecutedCrop {
+            receipt,
+            output_digest,
+        })
     }
 }
 
@@ -434,6 +446,27 @@ impl super::admission::Plan for SavePlan {
 pub(crate) struct Outcome {
     pub(crate) completion: super::WorkerCompletion<super::mutation::FileMutationReceipt>,
     pub(crate) affected: Vec<String>,
+    pub(crate) output_digest: Option<String>,
+}
+
+struct ExecutedCrop {
+    receipt: super::mutation::FileMutationReceipt,
+    output_digest: String,
+}
+
+fn completed(completion: super::WorkerCompletion<ExecutedCrop>, affected: Vec<String>) -> Outcome {
+    let (result, output_digest) = match completion.result {
+        Ok(executed) => (Ok(executed.receipt), Some(executed.output_digest)),
+        Err(error) => (Err(error), None),
+    };
+    Outcome {
+        completion: super::WorkerCompletion {
+            result,
+            warning: completion.warning,
+        },
+        affected,
+        output_digest,
+    }
 }
 impl super::admission::Settle for Outcome {
     fn refused(error: AppError) -> Self {
@@ -443,6 +476,7 @@ impl super::admission::Settle for Outcome {
                 warning: None,
             },
             affected: Vec::new(),
+            output_digest: None,
         }
     }
     fn unretired(&mut self, error: AppError) {
@@ -465,10 +499,7 @@ pub(crate) async fn execute(plan: SavePlan, runtime: &super::admission::Runtime)
             work.0.take().expect("crop executes once").execute(&work.1)
         })
         .await;
-        return Outcome {
-            completion,
-            affected,
-        };
+        return completed(completion, affected);
     }
     super::admission::admitted_execute(plan, runtime, move |plan, owner| async move {
         let affected = plan.affected_dirs();
@@ -476,10 +507,7 @@ pub(crate) async fn execute(plan: SavePlan, runtime: &super::admission::Runtime)
             work.0.take().expect("crop executes once").execute(&work.1)
         })
         .await;
-        Outcome {
-            completion,
-            affected,
-        }
+        completed(completion, affected)
     })
     .await
 }

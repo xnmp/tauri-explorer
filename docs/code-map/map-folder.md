@@ -20,6 +20,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 ## src/lib/components/ — Svelte 5 UI. Views, dialogs, panels, item chrome.
 
 - `src/lib/components/FileRecoveryDialog.svelte`, `src/lib/components/FileRecoveryNotice.svelte` — page-owned recovery inspection/choices, stable async-action focus and persistent attention notice; deferred mounting uses WindowDialogs and the status-bar snippet or standalone attention row.
+- `src/lib/plugins/trace/TraceInspector.svelte` — read-only image lineage rendered in the plugin inspector host.
 
 - `WindowDialogs.svelte` — typed lazy dialog host, crash boundaries, plugin dialogs and window-level feedback, including portal mode.
 - `OpenWithDialog.svelte` — accessible installed-application choice with captured filename, loading/empty/error feedback and unchanged-default messaging.
@@ -391,6 +392,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `dialog-registry.svelte.ts` — registry for plugin modal dialogs.
 - `settings-registry.svelte.ts` — registry for plugin settings sections.
 - `inspector-registry.svelte.ts` — ordered, owner-disposed registry for selection-aware inspector contributions.
+- `trace/index.ts`, `trace/invalidation.svelte.ts`, `trace/TraceInspector.svelte` — Trace inspector contribution and native-change refresh for image lineage.
 - `fs-providers.ts` — virtual-filesystem provider registry + dispatch.
 - `demo/index.ts` — demo plugin exercising every contribution seam.
 - `ai-organize/index.ts` + `AiOrganizeDialog.svelte` — AI organize plugin (#158).
@@ -399,6 +401,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `theme-from-image/index.ts` — generate theme from an image (#203).
 - `upscale/index.ts` + `UpscaleDialog.svelte` — image upscale plugin (fal.ai SeedVR2): settings, context-menu item, command, dialog.
 - `plugin-dialog.css` — shared `.plugin-dialog` chrome (header/body/inputs/buttons) reused by the nano-banana / ai-rename / upscale dialogs.
+- `src/lib/api/trace.ts` — typed query for the native Trace graph of the selected image.
 
 ## src/lib/background-animations/ — canvas backgrounds (registry-driven).
 
@@ -722,6 +725,8 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 
 - `src-tauri/src/image_crop.rs` — bounded full-resolution crop encoding and EXIF orientation normalization (#681; save/UI integration pending).
 - `src-tauri/src/files/image_crop.rs` — bounded immutable crop source capture, identity/content validation, admitted staged copy and confirmed replacement execution.
+- `src-tauri/src/trace.rs` — SQLite image revision and operation DAG; records committed crops and queries ancestry only for the current content digest.
+- `e2e/trace-inspector.spec.ts` — browser contract for displaying a selected image's source, crop run, and output in the Trace pane.
 - `src/lib/api/image-crop.ts` — typed crop capture/save IPC and native history settlement.
 - `src/lib/api/mock-image-crop.ts` — synthetic PNG/JPEG browser fixtures that save actual cropped pixels into the mock listing; native formats and file safety are verified separately.
 - `src/lib/state/image-crop-session.ts` — editor opening, crop coordinates, blob ownership and accepted-save lifetime.

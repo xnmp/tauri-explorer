@@ -494,37 +494,35 @@ pub(crate) async fn save_image_crop(
 ) -> Result<MutationReply<FileMutationReceipt>, AppError> {
     let owner = renderer_owner::acquire_owner(&window, &session_id)?;
     let plan = crate::files::image_crop::SavePlan::new(request)?;
-    let trace_eligible = plan.trace_eligible();
     let trace_metadata = plan.trace_metadata();
     let trace_window = window.clone();
     let runtime = admission::runtime(&window)?;
     let directories = plan.affected_dirs();
     file_history::run_forward(owner, false, directories, async move {
         let source_path = trace_metadata.source_path.clone();
-        let (run, start_warning) = if trace_eligible {
-            let started = tauri::async_runtime::spawn_blocking(move || {
-                crate::trace::begin_crop(&trace_metadata)
-            })
-            .await;
-            match started {
-                Ok(Ok(run)) => (Some(run), None),
-                Ok(Err(error)) => (None, Some(error.to_string())),
-                Err(error) => (None, Some(error.to_string())),
+        let started =
+            tauri::async_runtime::spawn_blocking(move || crate::trace::begin_crop(&trace_metadata))
+                .await;
+        let run = match started {
+            Ok(Ok(run)) => run,
+            failure => {
+                let error = match failure {
+                    Ok(Err(error)) => error,
+                    Err(error) => AppError::Other(error.to_string()),
+                    Ok(Ok(_)) => unreachable!(),
+                };
+                return MutationOutcome {
+                    result: Err(error),
+                    warning: None,
+                    effect: ForwardEffect::Unchanged,
+                    affected: Vec::new(),
+                };
             }
-        } else {
-            (None, None)
         };
         let mut outcome =
-            crate::files::image_crop::execute(plan.with_trace_run(run.clone()), &runtime).await;
-        if let Some(detail) = start_warning {
-            let warning = format!("Trace could not record this crop: {detail}");
-            log::warn!("{warning}");
-            outcome.completion.warning = Some(match outcome.completion.warning.take() {
-                Some(previous) => format!("{previous}\n{warning}"),
-                None => warning,
-            });
-        }
-        if let Some(run) = run {
+            crate::files::image_crop::execute(plan.with_trace_run(Some(run.clone())), &runtime)
+                .await;
+        {
             let conclusion = match &outcome.completion.result {
                 Ok(receipt) => Some(receipt.path.clone()),
                 Err(_) => None,

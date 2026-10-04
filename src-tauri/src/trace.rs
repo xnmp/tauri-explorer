@@ -609,6 +609,26 @@ pub(crate) fn begin_operation_for_test(
     })
 }
 
+#[cfg(target_os = "linux")]
+pub(crate) fn prepare_linked_output(
+    run: &TraceRunHandle,
+    target: &Path,
+    digest: &str,
+    publisher: &Path,
+) -> Result<(), AppError> {
+    let parent = target
+        .parent()
+        .ok_or_else(|| AppError::InvalidPath("Trace output has no parent".into()))?;
+    let mut evidence = crate::files::publication::StagedEntry::prepare(parent, |path| {
+        fs::hard_link(publisher, path)?;
+        Ok(())
+    })?;
+    let anchor = evidence.trace_anchor()?;
+    prepare_operation_output(run, target, digest, Some(&anchor))?;
+    evidence.retain_trace_anchor();
+    Ok(())
+}
+
 pub(crate) fn prepare_crop_output(
     run: &TraceRunHandle,
     output_path: &Path,
@@ -624,6 +644,11 @@ pub(crate) fn prepare_operation_output(
     output_digest: &str,
     staged_path: Option<&Path>,
 ) -> Result<(), AppError> {
+    if staged_path.is_none() {
+        return Err(AppError::Other(
+            "Trace publication requires retained native evidence".into(),
+        ));
+    }
     prepare_output_at(
         &run.database,
         run.id,
@@ -682,30 +707,51 @@ fn complete_run_at(
     recovered: bool,
 ) -> Result<(), AppError> {
     let path = normalize_path(Path::new(published_path))?;
-    let mut connection = connection_at(database)?;
-    let tx = connection.transaction().map_err(sql)?;
-    let prepared: Option<(String, String)> = tx
-        .query_row(
-            "SELECT prepared_output_path,prepared_output_digest FROM runs
-             WHERE id=?1 AND status IN ('running','uncertain') AND prepared_output_digest IS NOT NULL",
-            [run_id],
-            |row| Ok((row.get(0)?, row.get(1)?)),
-        )
-        .optional()
-        .map_err(sql)?;
-    let Some((prepared_path, prepared_digest)) = prepared else {
-        tx.execute(
-            "UPDATE runs SET status='untraced',error='trace_prepare_failed',finished_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')
-             WHERE id=?1 AND status IN ('running','uncertain') AND prepared_output_digest IS NULL",
-            [run_id],
-        )
-        .map_err(sql)?;
-        tx.commit().map_err(sql)?;
+    let connection = connection_at(database)?;
+    type Evidence = (String, String, Option<String>, Option<String>);
+    let prepared: Option<Evidence> = connection.query_row(
+        "SELECT prepared_output_path,prepared_output_digest,prepared_object_identity,prepared_anchor_path FROM runs
+         WHERE id=?1 AND status IN ('running','uncertain') AND prepared_output_digest IS NOT NULL",
+        [run_id], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+    ).optional().map_err(sql)?;
+    drop(connection);
+    let Some((prepared_path, prepared_digest, identity, anchor)) = prepared else {
         return Err(AppError::Other("Trace run has no prepared output".into()));
     };
     if path != prepared_path {
         return Err(AppError::Other(
             "Trace output path changed before completion".into(),
+        ));
+    }
+    let proven = match (&identity, &anchor) {
+        (Some(identity), Some(anchor)) => matches!(
+            observe_publication(
+                Path::new(&path),
+                Path::new(anchor),
+                &prepared_digest,
+                identity
+            ),
+            PublicationObservation::Published
+        ),
+        _ => false,
+    };
+    let mut connection = connection_at(database)?;
+    let tx = connection.transaction().map_err(sql)?;
+    let current: Option<Evidence> = tx.query_row(
+        "SELECT prepared_output_path,prepared_output_digest,prepared_object_identity,prepared_anchor_path FROM runs
+         WHERE id=?1 AND status IN ('running','uncertain') AND prepared_output_digest IS NOT NULL",
+        [run_id], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+    ).optional().map_err(sql)?;
+    if current != Some((prepared_path, prepared_digest.clone(), identity, anchor)) {
+        return Err(AppError::Other(
+            "Trace run changed while verifying its publication".into(),
+        ));
+    }
+    if !proven {
+        tx.execute("UPDATE runs SET status='uncertain',error='publication_evidence_unverified' WHERE id=?1", [run_id]).map_err(sql)?;
+        tx.commit().map_err(sql)?;
+        return Err(AppError::Other(
+            "Trace could not verify the published image revision; evidence is retained".into(),
         ));
     }
     tx.execute(
@@ -1302,8 +1348,9 @@ mod tests {
         fs::write(&source, b"source").unwrap();
         let run_id = begin_crop_at(&db, &crop(&source)).unwrap();
         let output_digest = hex::encode(Sha256::digest(b"result"));
-        prepare_output_at(&db, run_id, &output, &output_digest, None).unwrap();
-        fs::write(&output, b"result").unwrap();
+        let (stage, anchor) = staged_result(dir.path(), b"result");
+        prepare_output_at(&db, run_id, &output, &output_digest, Some(&anchor)).unwrap();
+        fs::rename(stage, &output).unwrap();
         complete_run_at(&db, run_id, output.to_str().unwrap(), false).unwrap();
 
         let graph = graph_for_path_at(&db, &output).unwrap().unwrap();
@@ -1316,6 +1363,33 @@ mod tests {
             graph.selected_revision_status,
             SelectedRevisionStatus::Matched
         );
+    }
+
+    #[test]
+    fn completion_cannot_attribute_an_external_replacement_even_with_identical_bytes() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = dir.path().join("trace.sqlite");
+        let source = dir.path().join("source.png");
+        let output = dir.path().join("output.png");
+        fs::write(&source, b"source").unwrap();
+        let run = begin_crop_at(&db, &crop(&source)).unwrap();
+        let (stage, anchor) = staged_result(dir.path(), b"result");
+        prepare_output_at(
+            &db,
+            run,
+            &output,
+            &hex::encode(Sha256::digest(b"result")),
+            Some(&anchor),
+        )
+        .unwrap();
+        fs::rename(stage, &output).unwrap();
+        fs::remove_file(&output).unwrap();
+        fs::write(&output, b"result").unwrap();
+        assert!(complete_run_at(&db, run, output.to_str().unwrap(), false).is_err());
+        let graph = graph_for_path_at(&db, &source).unwrap().unwrap();
+        assert_eq!(graph.runs[0].status, "uncertain");
+        assert_eq!(graph.artifacts.len(), 1);
+        assert!(anchor.exists());
     }
 
     #[test]

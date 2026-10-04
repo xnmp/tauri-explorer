@@ -76,6 +76,8 @@ export interface MockControl {
   traceForImage?: (path: string) => TraceGraph | null | Promise<TraceGraph | null>;
   openAIImageStart?: (request: OpenAIImageRequest, apiKey: string) => number | Promise<number>;
   openAIImageHistory?: OpenAIImageRunHistory[];
+  /** Overrides filename collision checks for slow storage responses. */
+  checkPathsExist?: (paths: string[]) => boolean[] | Promise<boolean[]>;
   /** Overrides bounded binary PDF transport for cancellation/revision tests. */
   previewReadPdf?: (path: string) => ArrayBuffer | Promise<ArrayBuffer>;
   /** Most recent PDF annotation URI sent to the mock native opener. */

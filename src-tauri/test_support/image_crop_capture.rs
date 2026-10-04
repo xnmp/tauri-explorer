@@ -1,5 +1,22 @@
 use super::*;
 use image::AnimationDecoder;
+
+async fn execute(mut plan: SavePlan, runtime: &super::super::admission::Runtime) -> Outcome {
+    let automatic = plan.trace_run.is_none();
+    if automatic {
+        let db = plan.source.parent().unwrap().join("crop-test-trace.sqlite");
+        let run = crate::trace::begin_crop_for_test(&db, &plan.trace_metadata()).unwrap();
+        plan = plan.with_trace_run(Some(run));
+    }
+    let run = plan.trace_run.clone();
+    let outcome = super::execute(plan, runtime).await;
+    if automatic {
+        if let (Some(run), Ok(receipt)) = (&run, &outcome.completion.result) {
+            crate::trace::complete_crop(run, &receipt.path).unwrap();
+        }
+    }
+    outcome
+}
 use std::io::Cursor;
 
 fn animated_frames(bytes: &[u8], extension: &str) -> Vec<image::Frame> {
@@ -826,5 +843,79 @@ fn canonical_capture_preserves_oriented_animated_webp_frames_and_timing() {
             assert_eq!(actual.delay(), expected.delay());
         }
         assert_eq!(fs::read(path).unwrap(), original);
+    }
+}
+
+#[tokio::test]
+async fn replacement_records_two_revisions_of_one_path_and_recovers_after_restart() {
+    for restart in [false, true] {
+        let root = tempfile::tempdir().unwrap();
+        let (source, original, revision) = source(root.path());
+        let database = root.path().join("trace.sqlite");
+        let plan = SavePlan::new(request(&source, revision, Destination::Replace)).unwrap();
+        let run = crate::trace::begin_crop_for_test(&database, &plan.trace_metadata()).unwrap();
+        let runtime = super::super::admission::Runtime::new(root.path().join("recovery"));
+        let receipt = execute(plan.with_trace_run(Some(run.clone())), &runtime)
+            .await
+            .completion
+            .result
+            .unwrap();
+        assert_ne!(fs::read(&source).unwrap(), original);
+        if restart {
+            crate::trace::reconcile_unfinished_at(&database).unwrap();
+        } else {
+            crate::trace::complete_crop(&run, &receipt.path).unwrap();
+        }
+        let graph = serde_json::to_value(
+            crate::trace::graph_for_path_at(&database, &source)
+                .unwrap()
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(graph["artifacts"].as_array().unwrap().len(), 2);
+        assert_eq!(graph["runs"][0]["status"], "succeeded");
+        assert_eq!(graph["runs"][0]["recovered"], restart);
+        let artifacts = graph["artifacts"].as_array().unwrap();
+        assert_eq!(artifacts[0]["path"], artifacts[1]["path"]);
+        assert_ne!(artifacts[0]["id"], artifacts[1]["id"]);
+        assert_ne!(artifacts[0]["digest"], artifacts[1]["digest"]);
+    }
+}
+#[tokio::test]
+async fn missing_or_unwritable_trace_refuses_copy_and_replacement_without_changing_the_source() {
+    for replace in [false, true] {
+        for admitted in [false, true] {
+            let root = tempfile::tempdir().unwrap();
+            let (source, original, revision) = source(root.path());
+            let db = root.path().join("trace.sqlite");
+            let plan = SavePlan::new(request(
+                &source,
+                revision,
+                if replace {
+                    Destination::Replace
+                } else {
+                    Destination::Copy {
+                        name: "copy.png".into(),
+                    }
+                },
+            ))
+            .unwrap();
+            let plan = if admitted {
+                let run = crate::trace::begin_crop_for_test(&db, &plan.trace_metadata()).unwrap();
+                fs::remove_file(&db).unwrap();
+                fs::create_dir(&db).unwrap();
+                plan.with_trace_run(Some(run))
+            } else {
+                plan
+            };
+            let runtime = super::super::admission::Runtime::new(root.path().join("recovery"));
+            assert!(super::execute(plan, &runtime)
+                .await
+                .completion
+                .result
+                .is_err());
+            assert_eq!(fs::read(&source).unwrap(), original);
+            assert!(!root.path().join("copy.png").exists());
+        }
     }
 }

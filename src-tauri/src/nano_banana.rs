@@ -15,7 +15,7 @@
 use crate::error::AppError;
 use crate::plugin_job;
 use std::path::{Path, PathBuf};
-use tauri::AppHandle;
+use tauri::{AppHandle, Emitter};
 
 async fn wait_for_child(
     child: &mut tokio::process::Child,
@@ -46,6 +46,7 @@ struct GeminiEdit<'a> {
     final_output_path: &'a Path,
     api_key: &'a str,
     model: &'a str,
+    run: &'a crate::trace::TraceRunHandle,
 }
 
 /// Single-quote a string for embedding in the gemini slash-command string.
@@ -94,12 +95,31 @@ pub async fn start_nano_banana_job(
     let final_output_path = plugin_job::validate_output_target(&output_dir, &output_filename)?;
 
     let api_key = crate::gemini::resolve_api_key(&api_key)?;
+    if prompt.trim().is_empty() || prompt.len() > 16_000 {
+        return Err(AppError::Other(
+            "Enter an edit prompt of 1–16,000 bytes".into(),
+        ));
+    }
+    let (captured, run) = tokio::task::spawn_blocking({
+        let prompt = prompt.clone(); let model = model.clone();
+        move || {
+            let captured = crate::image_operation::CapturedImage::read(&source)?;
+            let run = crate::trace::begin_operation(crate::trace::OperationStart {
+                operation: "image.gemini.edit".into(),
+                parameters: serde_json::json!({ "provider": "gemini-cli", "model": model, "prompt": prompt }),
+                inputs: vec![crate::trace::OperationInput { path: captured.input.path.clone(), digest: captured.input.digest.clone() }],
+            })?;
+            Ok::<_, AppError>((captured, run))
+        }
+    }).await.map_err(|_| AppError::Other("Gemini input capture failed".into()))??;
+    let _ = app.emit("trace:changed", ());
     let job_id = plugin_job::next_job_id();
     let control = plugin_job::JobControl::new();
     let worker_control = control.clone();
 
+    let attempt = crate::image_operation::Attempt::new(run, control.clone()).with_app(app.clone());
     tokio::spawn(async move {
-        let job = async {
+        let job = async move {
             // tempfile: unpredictable name and 0700 on unix. A fixed,
             // sequential name in the shared system temp dir would let another
             // local user pre-plant a symlink and receive the staged source.
@@ -108,20 +128,25 @@ pub async fn start_nano_banana_job(
                 .tempdir()
                 .map_err(|e| AppError::Other(format!("Failed to create work dir: {}", e)))?;
             // TempDir removes itself when this future completes (drop).
-            run_gemini_edit(
+            let result = run_gemini_edit(
                 work_dir.path(),
                 GeminiEdit {
-                    source_path: &source_path,
+                    source_path: &captured.snapshot_path().to_string_lossy(),
                     prompt: &prompt,
                     final_output_path: &final_output_path,
                     api_key: &api_key,
                     model: &model,
+                    run: &attempt.run,
                 },
                 &worker_control,
             )
-            .await
+            .await;
+            tokio::task::spawn_blocking(move || attempt.settle())
+                .await
+                .map_err(|_| AppError::Other("Image attempt settlement worker failed".into()))?;
+            result
         };
-        plugin_job::run_and_emit(&app, "nano-banana", job_id, control, job).await;
+        plugin_job::run_and_emit_detailed(&app, "nano-banana", job_id, control, job).await;
     });
 
     Ok(job_id)
@@ -131,13 +156,14 @@ async fn run_gemini_edit(
     work_dir: &Path,
     request: GeminiEdit<'_>,
     control: &plugin_job::JobControl,
-) -> Result<String, AppError> {
+) -> Result<plugin_job::JobOutput, AppError> {
     let GeminiEdit {
         source_path,
         prompt,
         final_output_path,
         api_key,
         model,
+        run,
     } = request;
     control.check()?;
     // Stage the source under a neutral name: the slash-command string is
@@ -232,9 +258,9 @@ async fn run_gemini_edit(
         .map_err(|e| AppError::Other(format!("Failed to open generated output: {e}")))?;
     std::io::copy(&mut produced_file, staging.file_mut())
         .map_err(|e| AppError::Other(format!("Failed to stage generated output: {e}")))?;
-    staging.commit(final_output_path, control)?;
+    let output = staging.commit_traced(run, final_output_path, control)?;
 
-    Ok(final_output_path.to_string_lossy().to_string())
+    Ok(output)
 }
 
 /// Find the newest file in `dir` that was modified after `newer_than`.

@@ -29,6 +29,7 @@ mod git_observation_probe;
 mod git_watch;
 mod github;
 mod image_crop;
+mod image_operation;
 mod nano_banana;
 mod openai_image;
 mod palette;

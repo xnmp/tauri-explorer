@@ -37,6 +37,23 @@ impl ReplacementExecution {
         self.operation.advance(Event::Staged(payload))
     }
 
+    #[cfg(target_os = "linux")]
+    pub(super) fn prepare_trace(
+        &self,
+        run: &crate::trace::TraceRunHandle,
+        target: &std::path::Path,
+        digest: &str,
+    ) -> Result<(), AppError> {
+        self.root.verify_namespace()?;
+        let publisher = self
+            .root
+            .directory()
+            .path()?
+            .join(super::artifact_layout::PUBLICATION);
+        crate::trace::prepare_linked_output(run, target, digest, &publisher)?;
+        self.root.verify_namespace()
+    }
+
     pub(super) fn displace_copy(&mut self) -> Result<(), AppError> {
         self.displace_with(|| Ok(()))
     }

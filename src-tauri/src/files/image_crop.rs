@@ -248,13 +248,6 @@ pub(crate) struct SavePlan {
 }
 
 impl SavePlan {
-    /// The initial Trace producer covers copy publication. Durable replacement
-    /// uses a different recovery journal whose published identity is not yet
-    /// available to Trace's crash reconciler.
-    pub(crate) fn trace_eligible(&self) -> bool {
-        matches!(self.request.destination, Destination::Copy { .. })
-    }
-
     pub(crate) fn with_trace_run(mut self, run: Option<crate::trace::TraceRunHandle>) -> Self {
         self.trace_run = run;
         self
@@ -340,6 +333,9 @@ impl SavePlan {
         self,
         runtime: &super::admission::Runtime,
     ) -> Result<super::mutation::FileMutationReceipt, AppError> {
+        let run = self.trace_run.as_ref().ok_or_else(|| {
+            AppError::Other("Trace recording is required before saving an image edit".into())
+        })?;
         let (bytes, permissions) = verify_source(&self.source, &self.request.revision)?;
         let encoded = image_crop::encode_with_viewport(
             &bytes,
@@ -371,32 +367,16 @@ impl SavePlan {
         #[cfg(target_os = "linux")]
         let durable_replace = matches!(self.request.destination, Destination::Replace)
             && super::recovery::Runtime::DURABLE;
-        if let Some(run) = &self.trace_run {
-            let anchor = if matches!(&self.request.destination, Destination::Copy { .. }) {
-                match stage.trace_anchor() {
-                    Ok(path) => Some(path),
-                    Err(error) => {
-                        log::warn!("Trace could not retain staged crop evidence: {error}");
-                        None
-                    }
-                }
-            } else {
-                // Linux durable replacement copies into a separate recovery
-                // journal. Its publisher identity is not this staged object.
-                None
-            };
-            match crate::trace::prepare_crop_output(
-                run,
-                &self.target,
-                &output_digest,
-                anchor.as_deref(),
-            ) {
-                Ok(()) if anchor.is_some() => stage.retain_trace_anchor(),
-                Ok(()) => {}
-                Err(error) => {
-                    log::warn!("Trace could not prepare crop publication evidence: {error}");
-                }
-            }
+        // Durable replacement publishes a copied recovery object; prepare its
+        // evidence inside that executor after staging and before displacement.
+        #[cfg(target_os = "linux")]
+        let prepare_here = !durable_replace;
+        #[cfg(not(target_os = "linux"))]
+        let prepare_here = true;
+        if prepare_here {
+            let anchor = stage.trace_anchor()?;
+            crate::trace::prepare_crop_output(run, &self.target, &output_digest, Some(&anchor))?;
+            stage.retain_trace_anchor();
         }
         #[cfg(target_os = "linux")]
         if durable_replace {
@@ -406,6 +386,8 @@ impl SavePlan {
                 stage.payload(),
                 &self.target,
                 &self.request.revision,
+                run,
+                &output_digest,
             );
         }
         let _ = runtime;

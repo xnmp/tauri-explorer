@@ -8,6 +8,7 @@ fn request(dir: &Path, source: Option<&Path>) -> ImageRequest {
     ImageRequest {
         backend: ImageBackend::ApiKey,
         source_path: source.map(|path| path.to_string_lossy().into_owned()),
+        expected_source_digest: None,
         reference_paths: vec![],
         prompt: "Preserve the face; add a warm lantern".into(),
         output_dir: dir.to_string_lossy().into_owned(),
@@ -404,4 +405,20 @@ fn reference_inputs_require_a_target_and_cannot_repeat_or_exceed_limits() {
     request.backend = ImageBackend::Codex;
     request.quality = "high".into();
     assert!(validate_request(&request).is_err());
+}
+
+#[test]
+fn an_editor_revision_change_is_refused_before_provider_submission() {
+    let dir = tempfile::tempdir().unwrap();
+    let source = dir.path().join("source.png");
+    std::fs::write(&source, PNG).unwrap();
+    let mut request = request(dir.path(), Some(&source));
+    request.expected_source_digest = Some(hex::encode(Sha256::digest(PNG)));
+    assert!(capture_inputs(&request).is_ok());
+    request.expected_source_digest = Some("0".repeat(64));
+    assert!(capture_inputs(&request)
+        .err()
+        .unwrap()
+        .to_string()
+        .contains("changed since the editor opened"));
 }

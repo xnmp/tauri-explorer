@@ -77,14 +77,14 @@ export function createPluginJobsController(deps: Dependencies) {
 
   const addListeners = async (session: Session) => {
     const results = await Promise.allSettled([
-      deps.listen<{ jobId: number; outputPath: string }>("upscale-complete", (payload) =>
-        current === session && publish("upscale", payload.jobId, { status: "completed", outputPath: payload.outputPath }),
+      deps.listen<{ jobId: number; outputPath: string; warning?: string }>("upscale-complete", (payload) =>
+        current === session && publish("upscale", payload.jobId, { status: "completed", outputPath: payload.outputPath, warning: payload.warning }),
       ),
       deps.listen<{ jobId: number; error: string }>("upscale-error", (payload) =>
         current === session && publish("upscale", payload.jobId, { status: "error", error: payload.error }),
       ),
-      deps.listen<{ jobId: number; outputPath: string }>("nano-banana-complete", (payload) =>
-        current === session && publish("nano-banana", payload.jobId, { status: "completed", outputPath: payload.outputPath }),
+      deps.listen<{ jobId: number; outputPath: string; warning?: string }>("nano-banana-complete", (payload) =>
+        current === session && publish("nano-banana", payload.jobId, { status: "completed", outputPath: payload.outputPath, warning: payload.warning }),
       ),
       deps.listen<{ jobId: number; error: string }>("nano-banana-error", (payload) =>
         current === session && publish("nano-banana", payload.jobId, { status: "error", error: payload.error }),

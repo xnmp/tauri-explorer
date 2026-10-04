@@ -18,6 +18,8 @@ interface Dependencies {
   createUrl: (dataUrl: string) => string;
   revokeUrl: (url: string) => void;
   changed: (state: ImageCropSessionState) => void;
+  /** Explicit user/successful-save closure; resource disposal never closes a replacement editor. */
+  closed: () => void;
   saved: (receipt: FileMutationReceipt, warning?: string) => void;
 }
 
@@ -71,7 +73,7 @@ export function createImageCropSession(deps: Dependencies) {
     reset(): void {
       if (state.phase === "editing" && state.size) update({ ...state, rect: fullImageCrop(state.size), error: undefined });
     },
-    close(): void { if (state.phase !== "saving") dismiss(); },
+    close(): void { if (state.phase !== "saving" && state.phase !== "closed") { dismiss(); deps.closed(); } },
     dispose(): void { dismiss(); },
     async save(destination: ImageCropDestination): Promise<void> {
       if (state.phase !== "editing" || !state.capture || !state.size || !state.rect || !validImageCrop(state.rect, state.size)) return;
@@ -84,7 +86,7 @@ export function createImageCropSession(deps: Dependencies) {
       const result = await deps.save(request);
       if (result.ok) deps.saved(result.data, result.warning);
       if (generation !== current) return;
-      if (result.ok) dismiss();
+      if (result.ok) { dismiss(); deps.closed(); }
       else update({ ...state, phase: "editing", error: result.error });
     },
   };

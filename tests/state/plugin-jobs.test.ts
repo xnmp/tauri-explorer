@@ -26,14 +26,15 @@ function fixture() {
 }
 
 describe("window-owned plugin jobs", () => {
-  it("reports a published OpenAI image as complete and displays its pending Trace warning", async () => {
+  it.each(["openai-image", "upscale", "nano-banana"] as const)("reports a published %s image with its pending Trace warning", async (kind) => {
     const f = fixture();
     await f.controller.init();
-    f.controller.register({ kind: "openai-image", id: 42, label: "image.png", detail: "lantern" });
-    f.handlers.get("openai-image-complete")!({ jobId: 42, outputPath: "/out/image.png", warning: "Trace completion pending" });
+    f.controller.register({ kind, id: 42, label: "image.png", detail: "lantern" });
+    f.handlers.get(`${kind}-complete`)!({ jobId: 42, outputPath: "/out/image.png", warning: "Trace completion pending" });
     expect(f.completed).toEqual([{ id: 42, outputPath: "/out/image.png" }]);
     expect(f.failed).toEqual([]);
-    expect(f.successes).toEqual(["OpenAI image complete: image.png. Trace completion pending"]);
+    expect(f.successes).toHaveLength(1);
+    expect(f.successes[0]).toContain("Trace completion pending");
     expect(f.refreshes).toBe(1);
   });
   it("reconciles completion before invoke returns the job id", async () => {

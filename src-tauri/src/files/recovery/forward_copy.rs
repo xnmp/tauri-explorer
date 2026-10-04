@@ -81,6 +81,15 @@ impl PreparedCopy {
         progress: &mut impl CopyProgress,
         original: Option<&crate::files::image_crop::SourceRevision>,
     ) -> Result<FileMutationReceipt, AppError> {
+        self.execute_traced(progress, original, None)
+    }
+
+    pub(super) fn execute_traced(
+        self,
+        progress: &mut impl CopyProgress,
+        original: Option<&crate::files::image_crop::SourceRevision>,
+        trace: Option<(&crate::trace::TraceRunHandle, &str)>,
+    ) -> Result<FileMutationReceipt, AppError> {
         if let Some(revision) = original {
             if let Err(error) =
                 crate::files::image_crop::verify_source(&self.spec.target.0, revision)
@@ -111,6 +120,9 @@ impl PreparedCopy {
         let result = (|| {
             let mut execution = ReplacementExecution::prepare(operation)?;
             execution.stage_copy(progress)?;
+            if let Some((run, digest)) = trace {
+                execution.prepare_trace(run, &committed, digest)?;
+            }
             // Cancellation is honored until displacement. Once the original is
             // parked, finish publication without allowing cancellation to strand it.
             progress.check_cancelled()?;

@@ -1192,6 +1192,8 @@ const mockCommands: Record<string, CommandHandler> = {
 
   check_paths_exist: (args) => {
     const paths = args.paths as string[];
+    const override = getMockControl().checkPathsExist;
+    if (override) return override(paths);
     return paths.map((p: string) => p in mockFiles || Object.keys(mockFiles).some((k) => {
       const entries = mockFiles[k];
       return Array.isArray(entries) && entries.some((e: { path: string }) => e.path === p);

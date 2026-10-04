@@ -393,6 +393,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `dialog-registry.svelte.ts` — registry for plugin modal dialogs.
 - `settings-registry.svelte.ts` — registry for plugin settings sections.
 - `inspector-registry.svelte.ts` — ordered, owner-disposed registry for selection-aware inspector contributions.
+- `src/lib/plugins/image-editor-registry.svelte.ts` — ordered, owner-disposed image editing tool contributions with immutable captured source revisions and opaque service ports.
 - `trace/index.ts`, `trace/invalidation.svelte.ts`, `trace/TraceInspector.svelte`, `trace/TraceDetails.svelte` — Trace inspector contribution, native-change refresh, interactive DAG focus, and read-only revision/run details.
 - `fs-providers.ts` — virtual-filesystem provider registry + dispatch.
 - `demo/index.ts` — demo plugin exercising every contribution seam.
@@ -400,6 +401,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `ai-rename/index.ts` + `AiRenameDialog.svelte` — AI rename plugin (#145).
 - `nano-banana/index.ts` + `NanoBananaDialog.svelte` — Nano Banana image-edit plugin.
 - `src/lib/plugins/openai-image/index.ts`, `src/lib/plugins/openai-image/OpenAIImageDialog.svelte`, `src/lib/plugins/openai-image/OpenAIImageHistory.svelte` — OpenAI API key settings, selected-image edits, generation into selected folders, and durable recent-run history including failures with no output.
+- `src/lib/plugins/openai-image/OpenAIImageEditDialog.svelte`, `src/lib/plugins/openai-image/OpenAIImageEditorTool.svelte`, `src/lib/plugins/openai-image/OpenAIImageForm.svelte` — keyed target/reference capture in the shared image editor, provider tool contribution, and common prompt/connection/output form for edits and generation.
 - `theme-from-image/index.ts` — generate theme from an image (#203).
 - `upscale/index.ts` + `UpscaleDialog.svelte` — image upscale plugin (fal.ai SeedVR2): settings, context-menu item, command, dialog.
 - `plugin-dialog.css` — shared `.plugin-dialog` chrome (header/body/inputs/buttons) reused by the nano-banana / ai-rename / upscale dialogs.
@@ -460,6 +462,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `nano_banana.rs` — Nano Banana image editing via Gemini.
 - `src-tauri/src/openai_image/codex.rs` — isolated headless Codex image transport with saved ChatGPT sign-in, ordered captured inputs, bounded JSONL and exact fresh-thread output attribution; contract and opt-in live tests in `src-tauri/test_support/codex_image.rs`.
 - `src-tauri/src/openai_image.rs` — Codex/API backend selection and bounded OpenAI Images API JSON/multipart adapter, captured source bytes, redacted metadata, no-replace publication and durable Trace lifecycle; fixtures in `src-tauri/test_support/openai_image.rs` verify transport, failure, cancellation, conflict and recovery outcomes.
+- `src-tauri/src/image_operation.rs` — immutable provider input snapshots, mandatory traced image publication and worker terminal settlement shared by OpenAI, Gemini and fal upscaling.
 - `fal.rs` — fal.ai REST helpers: API-key resolution, CDN upload, queue submit/poll, result download. Shared by upscale + nano-banana.
 - `upscale.rs` — `start_upscale_job` command: uploads the image, runs the SeedVR2 queue job via `fal.rs`, writes the result.
 - `plugin_job.rs` — shared plugin-job scaffolding: job-id alloc, output-path validation, timeout wrapper, complete/error events.

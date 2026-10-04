@@ -394,7 +394,10 @@ fn normalize_path(path: &Path) -> Result<String, AppError> {
             .ok_or_else(|| std::io::Error::other("Image has no name"))?;
         Ok::<_, std::io::Error>(fs::canonicalize(parent)?.join(name))
     })?;
-    Ok(resolved.to_string_lossy().into_owned())
+    // Canonical Windows drive paths use verbatim prefixes. Use compatible
+    // drive notation for existing records and explorer locators; preserve
+    // UNC and other verbatim syntax that cannot be safely simplified.
+    Ok(dunce::simplified(&resolved).to_string_lossy().into_owned())
 }
 
 fn artifact_path_state(path: &Path) -> ArtifactPathState {

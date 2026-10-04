@@ -142,3 +142,23 @@ test("a failed crop remains visible from its source without an invented output",
   await expect(details).toContainText("No recorded output");
   await expect(details).toContainText("crop_failed");
 });
+
+for (const width of [804, 1280]) test(`${width}px: preview and Trace leave files navigable`, async ({ page }, testInfo) => {
+  await page.setViewportSize({ width, height: 760 });
+  await page.goto("/?path=/home/user/Pictures");
+  await waitForEntries(page);
+  const selected = page.locator(".entry-item", { hasText: "screenshot.png" });
+  await selected.click();
+  await page.keyboard.press("Space");
+  await expect(page.locator(".preview-pane")).toBeVisible();
+  await expect(page.getByRole("complementary", { name: "File inspector" })).toBeVisible();
+  // A real row-center click and keyboard navigation must keep working after
+  // both auxiliary panes mount, including narrow native window dimensions.
+  const files = page.locator(".pane-container");
+  await expect.poll(async () => (await files.boundingBox())?.width ?? 0).toBeGreaterThan(200);
+  await selected.click();
+  await page.keyboard.press("ArrowUp");
+  await expect(page.locator(".entry-item.selected")).toContainText("photo2.jpg");
+  await expect(page.locator(".preview-pane")).toContainText("photo2.jpg");
+  await page.screenshot({ path: testInfo.outputPath("preview-trace-navigation.png") });
+});

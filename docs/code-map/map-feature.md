@@ -15,12 +15,12 @@ backend for E2E/browser).
 
 ## View modes & virtualization
 
-- `components/FileList.svelte` — dispatches to Details/List/Tiles; owns exact deferred cursor focus through each virtualized view
+- `components/FileList.svelte` — dispatches to Details/List/Tiles; owns deferred cursor focus and explicit reveal ownership across settled virtual layout changes; manual scroll intent releases reveal ownership
 - `components/EntryCell.svelte` — shared List/Tiles gridcell interaction and roving focus attributes
 - `components/DetailsView.svelte` — virtual-scrolled table (columns, sort headers); `domain/detail-columns.ts` + `composables/use-column-resize.svelte.ts` project session-local widths through one keyed scalar resize owner
 - `components/ListView.svelte` — CSS-grid columns view
 - `components/TilesView.svelte` — auto-fill tile grid
-- `components/VirtualList.svelte` — windowing engine (visible-range calc, spacers); its settled-scroll callback keeps stationary marquees aligned with current virtual rows
+- `components/VirtualList.svelte` — windowing engine (visible-range calc, persistent extent canvas and positioned rows); settled scroll/layout callbacks keep marquees and explicitly revealed cursors aligned with current virtual rows
 - `domain/virtual-layout.ts` — row/col geometry math for the virtualizer
 - `composables/use-progressive-render.svelte.ts` — chunked reveal of large lists
 - `composables/use-row-grid-view.svelte.ts` — shared virtualization wiring (rows, DnD, new-folder sentinel, scrollToIndex) behind List + Tiles

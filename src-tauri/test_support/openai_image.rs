@@ -224,9 +224,11 @@ fn published_output_is_reported_as_success_when_trace_completion_needs_recovery(
     let history = serde_json::to_value(trace::recent_image_runs_at(&db).unwrap()).unwrap();
     assert_eq!(history[0]["run"]["status"], "uncertain");
     assert_eq!(history[0]["outputPath"], Value::Null);
+    let prepared = Path::new(history[0]["preparedOutputPath"].as_str().unwrap());
+    assert!(prepared.is_absolute());
     assert_eq!(
-        history[0]["preparedOutputPath"],
-        target.to_string_lossy().as_ref()
+        std::fs::canonicalize(prepared).unwrap(),
+        std::fs::canonicalize(&target).unwrap()
     );
     trace::reconcile_unfinished_at(&db).unwrap();
     let recorded = graph(&db, &target);

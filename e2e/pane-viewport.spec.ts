@@ -77,6 +77,7 @@ for (const viewMode of ["details", "list", "tiles"] as const) {
     await page.mouse.wheel(0, 600);
     await expect.poll(() => viewport.evaluate(element => element.scrollTop)).toBeGreaterThan(100);
     await page.keyboard.press("Control+End");
+    await expect(page.getByRole("complementary", { name: "File inspector" })).toBeVisible();
     const selected = page.locator(".entry-item.selected");
     await expect(selected.locator(".entry-name")).toHaveText("image-00498.png");
     await expect(selected).toBeInViewport();
@@ -229,3 +230,28 @@ test("workspace scroll cancels a queued divider frame before it can change a sav
   });
   expect(ratio).toBe(0.5);
 });
+
+for (const viewMode of ["details", "list", "tiles"] as const) {
+  test(`${viewMode} resizing preserves a cursor intentionally scrolled out of view`, async ({ page }) => {
+    await page.setViewportSize({ width: 817, height: 600 });
+    await page.addInitScript(() => localStorage.setItem("explorer-settings", JSON.stringify({
+      showSidebar: false, showStatusBar: false, zoomLevel: 130, thumbnailSize: "small",
+    })));
+    await page.goto(`/?path=/perf/images-500&viewMode=${viewMode}`);
+    await page.locator('.entry-item[data-index="1"]').click();
+    await expect(page.getByRole("complementary", { name: "File inspector" })).toBeVisible();
+    const viewport = page.locator(`.${viewMode}-view .virtual-viewport`);
+    const box = (await viewport.boundingBox())!;
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+    await page.mouse.wheel(0, 1400);
+    await expect.poll(() => viewport.evaluate(element => element.scrollTop)).toBeGreaterThan(500);
+    await expect(page.locator(".entry-item.selected")).toHaveCount(0);
+    const before = await viewport.evaluate(element => ({ top: element.scrollTop, height: element.clientHeight }));
+    await page.setViewportSize({ width: 817, height: 760 });
+    await expect.poll(() => viewport.evaluate(element => element.clientHeight)).not.toBe(before.height);
+    // WebKit can continue wheel momentum during the resize. It must never
+    // jump back to the retained selection at the top of the collection.
+    await expect.poll(() => viewport.evaluate(element => element.scrollTop)).toBeGreaterThanOrEqual(before.top);
+    await expect(page.locator(".entry-item.selected")).toHaveCount(0);
+  });
+}

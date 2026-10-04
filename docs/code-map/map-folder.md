@@ -30,7 +30,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `DetailsView.svelte` — virtual-scrolled table view (columns, resize, sort headers).
 - `ListView.svelte` — CSS-grid compact list view.
 - `TilesView.svelte` — CSS auto-fill grid tile view with thumbnails; runs `scroll-jank-monitor.ts` during scroll and logs `tiles-scroll-jank` events only when jank occurred (#593).
-- `VirtualList.svelte` — variable-height windowed scroller used by views; publishes scrolled rows after DOM settlement for marquee hit testing. Perf-critical.
+- `VirtualList.svelte` — variable-height windowed scroller with persistent extent canvas; publishes scroll/layout settlement for marquee hit testing and cursor reveal. Perf-critical.
 - `MillerColumns.svelte` — column/Miller-columns browsing mode.
 - `FileItem.svelte` — single entry row/tile (icon, name, badges, selection state).
 - `EntryCell.svelte` — shared List/Tiles gridcell with roving focus, selection semantics and drag-drop interactions.

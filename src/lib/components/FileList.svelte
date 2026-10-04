@@ -65,8 +65,24 @@
 
   let viewScrollToIndex = $state<((index: number) => void) | undefined>();
 
-  // Track content width for ListView auto columns
+  // Track content geometry for grid columns and cursor visibility.
   let contentWidth = $state(0);
+  // An explicit navigation/focus reveal owns visibility until the user scrolls.
+  // ResizeObserver delivery order differs between engines, so DOM membership
+  // after a resize cannot establish whether the cursor was visible before it.
+  let cursorReveal = $state<{ path: string; directory: string; mode: string } | null>(null);
+
+  function retainCursorReveal(entry: FileEntry): void {
+    if (cursorReveal?.path !== entry.path || cursorReveal.directory !== explorer.currentPath
+      || cursorReveal.mode !== explorer.viewMode) {
+      cursorReveal = { path: entry.path, directory: explorer.currentPath, mode: explorer.viewMode };
+    }
+  }
+
+  function releaseCursorReveal(): void {
+    cursorReveal = null;
+    pendingFocus?.cancel();
+  }
 
   // Cached container rect for the duration of a marquee drag (avoids forced layout per mousemove)
   let cachedDragRect: DOMRect | null = null;
@@ -76,7 +92,8 @@
   $effect(() => {
     if (!contentRef) return;
     const observer = new ResizeObserver((entries) => {
-      contentWidth = entries[0]?.contentRect.width ?? 0;
+      const width = entries[0]?.contentRect.width ?? 0;
+      contentWidth = width;
       if (cachedDragRect) {
         cachedDragRect = contentRef!.getBoundingClientRect();
       }
@@ -84,6 +101,25 @@
     observer.observe(contentRef);
     return () => observer.disconnect();
   });
+
+  $effect(() => {
+    if (cursorReveal && (cursorReveal.directory !== explorer.currentPath
+      || cursorReveal.mode !== explorer.viewMode)) cursorReveal = null;
+  });
+
+  // The virtual view reports settled geometry, including grid-column changes.
+  // Its clientHeight observer may run after the outer container's observer.
+  function handleViewLayoutChange(): void {
+    const reveal = cursorReveal;
+    const entry = explorer.focusedEntry;
+    if (!reveal || !entry || entry.path !== reveal.path
+      || windowTabsManager.getActiveExplorer() !== explorer
+      || explorer.currentPath !== reveal.directory || explorer.viewMode !== reveal.mode) return;
+    const focus = document.activeElement;
+    if (focus !== document.body && (!fileListRef?.contains(focus)
+      || !focus?.matches('.entry-item, .virtual-viewport[role="grid"]'))) return;
+    scrollToSelected(entry);
+  }
 
   // Marquee selection composable
   const marquee = useMarqueeSelection();
@@ -138,6 +174,7 @@
     const index = entries.indexOf(entry);
     if (index < 0) return;
 
+    retainCursorReveal(entry);
     const request = beginFocusRequest(() => explorer.focusedEntry?.path === entry.path);
     viewScrollToIndex?.(index);
     void tick().then(() => {
@@ -166,10 +203,14 @@
       if (entry?.path === target.dataset.path) explorer.focusEntry(entry);
     } else if (target.matches('.virtual-viewport[role="grid"]') && explorer.focusedEntry) {
       scrollToSelected(explorer.focusedEntry);
+    } else {
+      // Column controls and inline editors own their focus independently.
+      cursorReveal = null;
     }
   }
 
   function handleClick(entry: FileEntry, event: MouseEvent): void {
+    retainCursorReveal(entry);
     explorer.selectEntry(entry, {
       ctrlKey: event.ctrlKey || event.metaKey,
       shiftKey: event.shiftKey,
@@ -367,6 +408,9 @@
     class:drop-target={isDropTarget}
     data-current-path={explorer.currentPath}
     bind:this={contentRef}
+    onwheelcapture={releaseCursorReveal}
+    ontouchstartcapture={releaseCursorReveal}
+    onpointerdowncapture={releaseCursorReveal}
     onmousedown={handleMarqueeStart}
     ondragover={handleListDragOver}
     ondragleave={handleListDragLeave}
@@ -428,6 +472,7 @@
         onitemclick={handleClick}
         onitemdblclick={handleDoubleClick}
         onviewportscroll={updateMarqueeSelection}
+        onlayoutchange={handleViewLayoutChange}
         {fallbackTabStop}
         bind:containsIndex={viewContainsIndex}
         bind:scrollToIndex={viewScrollToIndex}
@@ -439,6 +484,7 @@
         onitemclick={handleClick}
         onitemdblclick={handleDoubleClick}
         onviewportscroll={updateMarqueeSelection}
+        onlayoutchange={handleViewLayoutChange}
         {fallbackTabStop}
         bind:containsIndex={viewContainsIndex}
         bind:scrollToIndex={viewScrollToIndex}
@@ -450,6 +496,7 @@
         onitemclick={handleClick}
         onitemdblclick={handleDoubleClick}
         onviewportscroll={updateMarqueeSelection}
+        onlayoutchange={handleViewLayoutChange}
         {fallbackTabStop}
         bind:containsIndex={viewContainsIndex}
         bind:scrollToIndex={viewScrollToIndex}

@@ -1,5 +1,8 @@
 //! OpenAI image adapters. Captured input bytes and the submitted recipe
 //! enter Trace before a paid request; publication uses a retained native anchor.
+#[cfg(test)]
+use crate::image_operation::execute_with_completion;
+use crate::image_operation::{execute_recorded, GeneratedImage};
 use crate::{error::AppError, plugin_job, trace};
 use base64::{engine::general_purpose::STANDARD, Engine};
 use serde::Deserialize;
@@ -37,6 +40,8 @@ pub(crate) struct ImageRequest {
     pub backend: ImageBackend,
     pub source_path: Option<String>,
     #[serde(default)]
+    pub expected_source_digest: Option<String>,
+    #[serde(default)]
     pub reference_paths: Vec<String>,
     pub prompt: String,
     pub output_dir: String,
@@ -54,16 +59,22 @@ struct CapturedInput {
     mime: &'static str,
 }
 
-struct GeneratedImage {
-    bytes: Vec<u8>,
-    details: Value,
-}
-
 fn invalid(message: &str) -> AppError {
     AppError::Other(message.into())
 }
 
 fn validate_request(request: &ImageRequest) -> Result<PathBuf, AppError> {
+    if request
+        .expected_source_digest
+        .as_ref()
+        .is_some_and(|digest| {
+            request.source_path.is_none()
+                || digest.len() != 64
+                || !digest.bytes().all(|byte| byte.is_ascii_hexdigit())
+        })
+    {
+        return Err(invalid("Invalid expected source revision"));
+    }
     if request.reference_paths.len() >= MAX_INPUTS
         || (request.source_path.is_none() && !request.reference_paths.is_empty())
     {
@@ -199,6 +210,16 @@ fn capture_inputs(request: &ImageRequest) -> Result<Vec<CapturedInput>, AppError
             return Err(invalid("Combined input images exceed the 64 MiB limit"));
         }
         inputs.push(input);
+    }
+    if let Some(expected) = &request.expected_source_digest {
+        if inputs
+            .first()
+            .is_none_or(|input| !input.digest.eq_ignore_ascii_case(expected))
+        {
+            return Err(invalid(
+                "The source image changed since the editor opened. Reopen it before editing.",
+            ));
+        }
     }
     Ok(inputs)
 }
@@ -420,87 +441,6 @@ fn validate_image(bytes: &[u8], format: image::ImageFormat) -> Result<(), AppErr
     Ok(())
 }
 
-fn execute_recorded(
-    run: &trace::TraceRunHandle,
-    target: &Path,
-    control: &plugin_job::JobControl,
-    generate: impl FnOnce() -> Result<GeneratedImage, AppError>,
-) -> Result<plugin_job::JobOutput, AppError> {
-    execute_with_completion(run, target, control, generate, trace::complete_operation)
-}
-
-fn execute_with_completion(
-    run: &trace::TraceRunHandle,
-    target: &Path,
-    control: &plugin_job::JobControl,
-    generate: impl FnOnce() -> Result<GeneratedImage, AppError>,
-    complete: impl FnOnce(&trace::TraceRunHandle, &str) -> Result<(), AppError>,
-) -> Result<plugin_job::JobOutput, AppError> {
-    let mut published = false;
-    let result = (|| {
-        control.check()?;
-        match std::fs::symlink_metadata(target) {
-            Ok(_) => {
-                return Err(invalid(
-                    "Output filename is already occupied; choose another name",
-                ))
-            }
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-            Err(error) => return Err(error.into()),
-        }
-        let image = generate()?;
-        control.check()?;
-        trace::record_operation_details(run, &image.details)?;
-        let digest = hex::encode(Sha256::digest(&image.bytes));
-        let mut stage = crate::files::publication::StagedEntry::prepare(
-            target
-                .parent()
-                .ok_or_else(|| invalid("Output has no parent"))?,
-            |path| {
-                let mut file = std::fs::OpenOptions::new()
-                    .create_new(true)
-                    .write(true)
-                    .open(path)?;
-                file.write_all(&image.bytes)?;
-                file.sync_all()?;
-                Ok(())
-            },
-        )?;
-        let anchor = stage.trace_anchor()?;
-        trace::prepare_operation_output(run, target, &digest, Some(&anchor))?;
-        stage.retain_trace_anchor();
-        control.publish(|| stage.publish(target))?;
-        published = true;
-        let path = target.to_string_lossy().into_owned();
-        let warning = match complete(run, &path) {
-            Ok(()) => None,
-            Err(error) => {
-                log::warn!("OpenAI output published but Trace completion remains pending: {error}");
-                if let Err(error) = trace::mark_operation_uncertain(run, "trace_completion_pending")
-                {
-                    log::warn!("Trace could not mark pending completion: {error}");
-                }
-                Some(
-                    "Image saved; Trace completion is pending and will be recovered on restart."
-                        .into(),
-                )
-            }
-        };
-        Ok(plugin_job::JobOutput { path, warning })
-    })();
-    if result.is_err() && !published {
-        let settled = if control.check().is_err() {
-            trace::cancel_operation(run)
-        } else {
-            trace::fail_operation(run, "openai_image_failed")
-        };
-        if let Err(error) = settled {
-            log::warn!("OpenAI Trace run could not be finalized: {error}");
-        }
-    }
-    result
-}
-
 #[tauri::command]
 pub(crate) async fn start_openai_image_job(
     app: AppHandle,
@@ -513,19 +453,24 @@ pub(crate) async fn start_openai_image_job(
     } else {
         None
     };
+    let (request, inputs, run) = tokio::task::spawn_blocking(move || {
+        let inputs = capture_inputs(&request)?;
+        let run = trace::begin_operation(recipe(&request, &inputs))?;
+        Ok::<_, AppError>((request, inputs, run))
+    })
+    .await
+    .map_err(|_| invalid("Image input capture failed"))??;
+    let _ = app.emit("trace:changed", ());
     let job_id = plugin_job::next_job_id();
     let control = plugin_job::JobControl::new();
     let worker_control = control.clone();
     let worker_app = app.clone();
+    let attempt = crate::image_operation::Attempt::new(run, control.clone()).with_app(app.clone());
     tokio::spawn(async move {
         let job = async {
             tokio::task::spawn_blocking(move || {
-                worker_control.check()?;
-                let inputs = capture_inputs(&request)?;
-                let run = trace::begin_operation(recipe(&request, &inputs))?;
-                let _ = worker_app.emit("trace:changed", ());
-                let result =
-                    execute_recorded(&run, &target, &worker_control, || match request.backend {
+                let result = execute_recorded(&attempt.run, &target, &worker_control, || {
+                    match request.backend {
                         ImageBackend::ApiKey => request_image(
                             API_ROOT,
                             &request,
@@ -533,7 +478,9 @@ pub(crate) async fn start_openai_image_job(
                             key.as_deref().expect("validated API key"),
                         ),
                         ImageBackend::Codex => codex::generate(&request, &inputs, &worker_control),
-                    });
+                    }
+                });
+                attempt.settle();
                 let _ = worker_app.emit("trace:changed", ());
                 result
             })

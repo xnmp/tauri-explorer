@@ -1,11 +1,14 @@
 import { describe, it, expect, vi } from "vitest";
 vi.mock("$lib/plugins/openai-image/OpenAIImageDialog.svelte", () => ({ default: {} }));
+vi.mock("$lib/plugins/openai-image/OpenAIImageEditorTool.svelte", () => ({ default: {} }));
+vi.mock("$lib/plugins/openai-image/OpenAIImageEditDialog.svelte", () => ({ default: {} }));
 vi.mock("$lib/plugins/openai-image/OpenAIImageHistory.svelte", () => ({ default: {} }));
 import { openAIImagePlugin } from "$lib/plugins/openai-image";
 import { createPluginContext } from "$lib/plugins/api";
 import { contextMenuItems } from "$lib/state/context-menu-items.svelte";
 import { dialogRegistry } from "$lib/plugins/dialog-registry.svelte";
 import { getCommand } from "$lib/state/commands.svelte";
+import { imageEditorRegistry } from "$lib/plugins/image-editor-registry.svelte";
 import type { FileEntry } from "$lib/domain/file";
 
 const image: FileEntry = { name: "photo.PNG", path: "/media/photo.PNG", kind: "file", size: 20, modified: "2026-10-03T00:00:00Z" };
@@ -18,13 +21,15 @@ describe("OpenAI image plugin", () => {
     await openAIImagePlugin.activate(ctx);
     const edit = contextMenuItems.itemsFor([image]).find((item) => item.id === "openai-image.edit")!;
     await edit.handler([image]);
-    expect(dialogRegistry.openDialogs.find((dialog) => dialog.id === "openai-image.create")?.props).toMatchObject({
+    expect(dialogRegistry.openDialogs.find((dialog) => dialog.id === "openai-image.edit-window")?.props).toMatchObject({
       sourcePath: "/media/photo.PNG", referencePaths: [], outputDir: "/media", apiKey: "test-openai-key", initialBackend: "codex",
     });
     expect(contextMenuItems.itemsFor([{ ...image, name: "animated.gif" }]).some((item) => item.id === edit.id)).toBe(false);
     expect(contextMenuItems.itemsFor([{ ...image, path: "demo://photo.png" }]).some((item) => item.id === edit.id)).toBe(false);
     expect(contextMenuItems.itemsFor([image, image]).some((item) => item.id === edit.id)).toBe(false);
+    expect(imageEditorRegistry.toolsFor({ path: image.path, name: image.name, digest: "a".repeat(64), format: "PNG", referencePaths: [] }).map((tool) => tool.id)).toContain("openai-image");
     dispose();
+    expect(imageEditorRegistry.toolsFor({ path: image.path, name: image.name, digest: "a".repeat(64), format: "PNG", referencePaths: [] })).toEqual([]);
   });
 
   it("opens several selected images with explicit target/reference roles and preserves API key mode", async () => {
@@ -36,7 +41,7 @@ describe("OpenAI image plugin", () => {
       const selected = [image, reference];
       const edit = contextMenuItems.itemsFor(selected).find((item) => item.id === "openai-image.edit")!;
       await edit.handler(selected);
-      expect(dialogRegistry.openDialogs.find((dialog) => dialog.id === "openai-image.create")?.props).toMatchObject({
+      expect(dialogRegistry.openDialogs.find((dialog) => dialog.id === "openai-image.edit-window")?.props).toMatchObject({
         sourcePath: image.path, referencePaths: [reference.path], initialBackend: "api_key",
       });
       expect(contextMenuItems.itemsFor([image, folder]).some((item) => item.id === edit.id)).toBe(false);

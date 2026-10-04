@@ -11,11 +11,21 @@ function fixture(overrides = {}) {
   const dependencies = {
     capture: vi.fn(async () => ({ ok: true, data: capture() } as const)),
     save: vi.fn(async (_request: ImageCropSave): Promise<ApiResult<FileMutationReceipt>> => ({ ok: true, data: { path: "/copy.png", entry: null } })),
-    createUrl: vi.fn(() => "blob:owned"), revokeUrl: vi.fn(), changed: vi.fn(), saved: vi.fn(), ...overrides,
+    createUrl: vi.fn(() => "blob:owned"), revokeUrl: vi.fn(), changed: vi.fn(), closed: vi.fn(), saved: vi.fn(), ...overrides,
   };
   return { dependencies, session: createImageCropSession(dependencies) };
 }
 describe("image crop editor ownership", () => {
+  it("releases a replaced editor without closing the containing window", async () => {
+    const { session, dependencies } = fixture();
+    await session.open("/image.png", "image.png");
+    session.dispose();
+    expect(dependencies.revokeUrl).toHaveBeenCalledWith("blob:owned");
+    expect(dependencies.closed).not.toHaveBeenCalled();
+    await session.open("/next.png", "next.png");
+    session.close(); session.close();
+    expect(dependencies.closed).toHaveBeenCalledTimes(1);
+  });
   it("closing a delayed capture cannot reopen the editor or create a URL", async () => {
     const pending = deferred<ApiResult<ImageCropCapture>>();
     const { session, dependencies } = fixture({ capture: () => pending.promise });

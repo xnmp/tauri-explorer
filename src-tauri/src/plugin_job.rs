@@ -71,6 +71,13 @@ impl JobControl {
         }
     }
 
+    pub(crate) fn has_published(&self) -> bool {
+        matches!(
+            *self.state.lock().unwrap_or_else(|e| e.into_inner()),
+            JobState::Committed
+        )
+    }
+
     pub fn check(&self) -> Result<(), AppError> {
         if matches!(
             *self.state.lock().unwrap_or_else(|e| e.into_inner()),
@@ -160,7 +167,25 @@ impl StagedOutput {
     pub fn file_mut(&mut self) -> &mut std::fs::File {
         self.0.as_file_mut()
     }
+    pub(crate) fn commit_traced(
+        mut self,
+        run: &crate::trace::TraceRunHandle,
+        target: &std::path::Path,
+        control: &JobControl,
+    ) -> Result<JobOutput, AppError> {
+        use std::io::{Seek, SeekFrom};
+        self.0.as_file_mut().sync_all()?;
+        self.0.as_file_mut().seek(SeekFrom::Start(0))?;
+        crate::image_operation::execute_recorded(run, target, control, || {
+            let bytes = crate::image_operation::bounded_bytes(self.0.as_file_mut())?;
+            Ok(crate::image_operation::GeneratedImage {
+                bytes,
+                details: serde_json::Value::Null,
+            })
+        })
+    }
 
+    #[cfg(test)]
     pub fn commit(
         self,
         final_output: &std::path::Path,
@@ -198,22 +223,6 @@ pub struct PluginJobErrorEvent {
 
 /// Await `job` under [`JOB_TIMEOUT`], then emit `{prefix}-complete` with the
 /// output path or `{prefix}-error` with the failure message.
-pub async fn run_and_emit(
-    app: &AppHandle,
-    event_prefix: &str,
-    job_id: u64,
-    control: JobControl,
-    job: impl std::future::Future<Output = Result<String, AppError>>,
-) {
-    run_and_emit_detailed(app, event_prefix, job_id, control, async {
-        job.await.map(|path| JobOutput {
-            path,
-            warning: None,
-        })
-    })
-    .await;
-}
-
 pub(crate) async fn run_and_emit_detailed(
     app: &AppHandle,
     event_prefix: &str,
@@ -222,6 +231,7 @@ pub(crate) async fn run_and_emit_detailed(
     job: impl std::future::Future<Output = Result<JobOutput, AppError>>,
 ) {
     let result = run_with_timeout(event_prefix, control, job_timeout(), job).await;
+    let _ = app.emit("trace:changed", ());
     emit_result(app, event_prefix, job_id, result);
 }
 

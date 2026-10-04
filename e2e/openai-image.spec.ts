@@ -9,7 +9,7 @@ async function openAction(page: Page, name: string, action: string) {
   const group = menu.locator(":scope > .submenu-wrapper").filter({ hasText: "AI" });
   await group.hover();
   await group.locator(".submenu .menu-item").filter({ hasText: action }).click();
-  return page.getByRole("dialog", { name: action.replace(/…$/, "") });
+  return page.getByRole("dialog", { name: action === "Edit with OpenAI" ? "Edit image" : action.replace(/…$/, "") });
 }
 
 test("an image edit submits the chosen recipe and displays the resulting Trace branch", async ({ page }) => {
@@ -82,6 +82,45 @@ test("generation starts in a selected folder with no source image", async ({ pag
   await expect(page.getByText(/OpenAI image job started:/)).toBeVisible();
 });
 
+for (const enteredName of ["my-chosen-name.png", ""]) test(`a slow filename suggestion preserves an explicit ${enteredName ? "name" : "clear"} and the submitted destination`, async ({ page }) => {
+  let release!: () => void;
+  let started!: () => void;
+  const response = new Promise<void>((resolve) => { release = resolve; });
+  const requested = new Promise<void>((resolve) => { started = resolve; });
+  await page.exposeFunction("awaitFilenameCheck", () => { started(); return response; });
+  await page.goto("/?path=/home/user");
+  await waitForEntries(page);
+  await page.evaluate(async () => {
+    const { getMockControl } = await import("/src/lib/api/mock-control.ts");
+    const { pluginJobsController } = await import("/src/lib/state/plugin-jobs.ts");
+    pluginJobsController.accept = (_registration, start) => start();
+    getMockControl().checkPathsExist = async (paths) => {
+      await (window as Window & { awaitFilenameCheck: () => Promise<void> }).awaitFilenameCheck();
+      return paths.map(() => false);
+    };
+    getMockControl().openAIImageStart = (request) => {
+      if (request.outputFilename !== "my-chosen-name.png") throw new Error("Filename suggestion overwrote the destination");
+      return 5;
+    };
+  });
+  const dialog = await openAction(page, "Pictures", "Generate image with OpenAI…");
+  await requested;
+  await dialog.getByLabel("Image prompt").fill("A green mug");
+  await dialog.getByLabel("Output filename (.png)").fill("my-chosen-name.png");
+  if (!enteredName) await dialog.getByLabel("Output filename (.png)").fill("");
+  release();
+  // A second storage query is a response barrier for the held filename query.
+  await page.evaluate(async () => {
+    const { checkPathsExist } = await import("/src/lib/api/files.ts");
+    await checkPathsExist([]);
+  });
+  await expect(dialog.getByLabel("Output filename (.png)")).toHaveValue(enteredName);
+  if (!enteredName) await dialog.getByLabel("Output filename (.png)").fill("my-chosen-name.png");
+  await dialog.getByRole("button", { name: "Generate image", exact: true }).click();
+  await expect(dialog).toBeHidden();
+  await expect(page.getByText("OpenAI image job started: my-chosen-name.png")).toBeVisible();
+});
+
 test("Codex edits use the chosen target and references without forwarding a configured API key", async ({ page }) => {
   await page.goto("/?path=/home/user/Pictures");
   await waitForEntries(page);
@@ -117,9 +156,10 @@ test("Codex edits use the chosen target and references without forwarding a conf
   const ai = page.locator(".context-menu > .submenu-wrapper").filter({ hasText: "AI" });
   await ai.hover();
   await ai.locator(".submenu .menu-item").filter({ hasText: "Edit with OpenAI" }).click();
-  const dialog = page.getByRole("dialog", { name: "Edit with OpenAI" });
+  const dialog = page.getByRole("dialog", { name: "Edit image", exact: true });
   await expect(dialog.getByLabel("Connection", { exact: true })).toHaveValue("codex");
-  await dialog.getByLabel("Edit target").selectOption("/home/user/Pictures/screenshot.png");
+  await dialog.getByLabel("Edit target", { exact: true }).selectOption("/home/user/Pictures/screenshot.png");
+  await expect(dialog.locator(".dialog-subtitle")).toContainText("screenshot.png");
   await expect(dialog).toContainText("References, in order: photo1.jpg");
   await dialog.getByLabel("Edit prompt").fill("Use image 2's lighting on image 1; preserve composition");
   await dialog.getByLabel("Output filename (.png)").fill("referenced-edit.png");

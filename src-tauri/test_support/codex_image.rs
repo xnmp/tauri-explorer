@@ -7,6 +7,7 @@ fn request(dir: &Path, source: Option<&Path>) -> ImageRequest {
     ImageRequest {
         backend: ImageBackend::Codex,
         source_path: source.map(|path| path.to_string_lossy().into_owned()),
+        expected_source_digest: None,
         reference_paths: vec![],
         prompt: "Preserve the face; add a warm lantern".into(),
         output_dir: dir.to_string_lossy().into_owned(),

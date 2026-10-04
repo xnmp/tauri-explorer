@@ -1,11 +1,11 @@
 <script lang="ts">
   import { cropPixelPoint, setCropEdge, translateImageCrop, type CropEdge, type ImageCropRect, type ImagePixelSize } from "$lib/domain/image-crop";
   interface Props {
-    url: string; name: string; vector?: boolean; size?: ImagePixelSize; rect?: ImageCropRect; disabled: boolean;
+    url: string; name: string; vector?: boolean; size?: ImagePixelSize; rect?: ImageCropRect; disabled: boolean; showCropControls?: boolean;
     onload: (size: ImagePixelSize) => void; onerror: () => void;
     onedge: (edge: CropEdge, value: number) => void; onselect: (rect: ImageCropRect) => void;
   }
-  let { url, name, vector = false, size, rect, disabled, onload, onerror, onedge, onselect }: Props = $props();
+  let { url, name, vector = false, size, rect, disabled, showCropControls = true, onload, onerror, onedge, onselect }: Props = $props();
   let scroller = $state<HTMLDivElement>();
   let image = $state<HTMLImageElement>();
   let available = $state<ImagePixelSize | null>(null);
@@ -127,7 +127,7 @@
     <div class="crop-stage">
       <div class="crop-image" class:dragging class:ready={!!size && !!available} style:width={size && available ? `${size.width * scale}px` : "1px"} style:height={size && available ? `${size.height * scale}px` : "1px"}>
         <img bind:this={image} src={url} alt={name} draggable="false" onload={(event) => measureOriginal(event.currentTarget as HTMLImageElement)} {onerror} />
-        {#if size && rect && selection}
+        {#if showCropControls && size && rect && selection}
           <div class="crop-shade" style:inset={`0 0 ${100 - selection.top}% 0`} aria-hidden="true"></div>
           <div class="crop-shade" style:inset={`${selection.bottom}% 0 0 0`} aria-hidden="true"></div>
           <div class="crop-shade" style:inset={`${selection.top}% ${100 - selection.left}% ${100 - selection.bottom}% 0`} aria-hidden="true"></div>
@@ -159,7 +159,7 @@
     </div>
   </div>
   <div class="crop-view-controls">
-    <span class="crop-hint">Drag edges or corners to crop. Drag inside to move.</span>
+    <span class="crop-hint">{showCropControls ? "Drag edges or corners to crop. Drag inside to move." : "Prompt edits use the full image shown here."}</span>
     <div class="crop-zoom" role="group" aria-label="Crop view zoom">
       <button class="btn secondary" disabled={disabled || zoom <= 1} onclick={() => zoom = Math.max(1, zoom / 2)} aria-label="Zoom out crop" title="Zoom out">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M5 12h14" /></svg>

@@ -15,7 +15,7 @@ let oracleNumber = 0;
 const screenshotRoot = process.env.IMAGE_CROP_SCREENSHOTS;
 const slider = (edge: string) => $(`[role="slider"][aria-label="${edge} crop edge"]`);
 const button = (name: string) => $(`button=${name}`);
-const dialog = '[role="dialog"][aria-label="Crop image"]';
+const dialog = '[role="dialog"][aria-label="Edit image"]';
 
 async function command(label: string): Promise<void> {
   await browser.keys(["Control", "Shift", "p"]);
@@ -37,7 +37,7 @@ async function open(file: string): Promise<void> {
     await browser.keys(" ");
     await $(".preview-pane").waitForDisplayed();
   }
-  await $('button[aria-label="Crop image…"]').click();
+  await $('button[aria-label="Edit image…"]').click();
   await slider("Right").waitForDisplayed();
 }
 async function crop(left = 32, top = 24, right = 480, bottom = 360): Promise<void> {
@@ -286,7 +286,7 @@ nativeDescribe("native image cropping", () => {
       await button("Keep editing").click(); expect(fs.readFileSync(source).equals(original)).toBe(true);
       await button("Cancel").click(); await $(dialog).waitForDisplayed({ reverse: true });
       expect(fs.readFileSync(source).equals(original)).toBe(true);
-      await $('button[aria-label="Crop image…"]').click(); await slider("Right").waitForDisplayed(); await crop();
+      await $('button[aria-label="Edit image…"]').click(); await slider("Right").waitForDisplayed(); await crop();
       await button("Replace original…").click(); await button("Confirm replacement").click();
       await $(dialog).waitForDisplayed({ reverse: true });
       const observed = await compare(original, fs.readFileSync(source), "png");

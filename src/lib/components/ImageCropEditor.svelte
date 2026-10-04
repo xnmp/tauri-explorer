@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount, onDestroy, untrack } from "svelte";
+  import { imageEditorRegistry, type ImageEditorSource } from "$lib/plugins/image-editor-registry.svelte";
   import Modal from "./Modal.svelte";
   import ImageCropCanvas from "./ImageCropCanvas.svelte";
   import { captureImageCrop, saveImageCrop } from "$lib/api/image-crop";
@@ -8,7 +9,7 @@
   import { croppedImageSize, type CropEdge } from "$lib/domain/image-crop";
   import { publishImageCrop } from "$lib/state/image-crop-effects";
 
-  let { path, name, previewUrl, onclose }: { path: string; name: string; previewUrl?: string | null; onclose: () => void } = $props();
+  let { path, name, previewUrl, referencePaths = [], initialTool = "crop", onSelectSource, onclose }: { path: string; name: string; previewUrl?: string | null; referencePaths?: string[]; initialTool?: string; onSelectSource?: (path: string) => void; onclose: () => void } = $props();
   // The component is keyed by the editor opening, never by live selection.
   const sourcePath = untrack(() => path);
   const sourceName = untrack(() => name);
@@ -16,17 +17,29 @@
   let editorState = $state<ImageCropSessionState>({ phase: "loading", name: sourceName });
   let copyName = $state(croppedCopyName(sourceName));
   let confirmReplace = $state(false);
-  const busy = $derived(editorState.phase === "saving" || editorState.phase === "loading");
+  let activeTool = $state(untrack(() => initialTool));
+  let toolBusy = $state(false);
+  const source = $derived<ImageEditorSource | null>(editorState.capture ? {
+    path: editorState.capture.path, name: sourceName, digest: editorState.capture.revision.digest,
+    format: editorState.capture.format, referencePaths,
+  } : null);
+  const tools = $derived(source ? imageEditorRegistry.toolsFor(source) : []);
+  const selectedTool = $derived(tools.find((tool) => tool.id === activeTool));
+  const cropping = $derived(activeTool === "crop");
+  // Disabling a provider removes its panel; accepted jobs remain owned by Jobs.
+  $effect(() => { if (source && activeTool !== "crop" && !selectedTool) { activeTool = "crop"; toolBusy = false; } });
+  const busy = $derived(toolBusy || editorState.phase === "saving" || editorState.phase === "loading");
   const output = $derived(editorState.rect ? croppedImageSize(editorState.rect) : null);
   const session = createImageCropSession({
     capture: captureImageCrop, save: saveImageCrop, createUrl: dataUriToBlobUrl,
     revokeUrl: (url) => URL.revokeObjectURL(url),
-    changed: (next) => { editorState = next; if (next.phase === "closed") onclose(); },
+    changed: (next) => { editorState = next; },
+    closed: () => onclose(),
     saved: publishImageCrop,
   });
   onMount(() => { void session.open(sourcePath, sourceName); });
   onDestroy(() => session.dispose());
-  function close(): void { if (editorState.phase !== "saving") session.close(); }
+  function close(): void { if (!toolBusy && editorState.phase !== "saving") session.close(); }
   function commitPosition(input: HTMLInputElement, edge: CropEdge): void {
     session.edge(edge, input.valueAsNumber);
     // Intermediate text belongs to the native input until blur or Enter.
@@ -36,27 +49,42 @@
   const edges: readonly CropEdge[] = ["left", "top", "right", "bottom"];
 </script>
 
-<Modal open={true} onClose={close} canClose={() => editorState.phase !== "saving"} label="Crop image" overlayClass="image-crop-overlay" closeOnBackdrop={false} closeOnEscape={editorState.phase !== "saving"}>
+<Modal open={true} onClose={close} canClose={() => !toolBusy && editorState.phase !== "saving"} label="Edit image" overlayClass="image-crop-overlay" closeOnBackdrop={false} closeOnEscape={!toolBusy && editorState.phase !== "saving"}>
   <div class="modal-card crop-editor" aria-busy={busy}>
     <div class="dialog-header">
       <div class="crop-title">
-        <h2>Crop image</h2>
+        <h2>Edit image</h2>
         <p class="dialog-subtitle" title={sourcePath}>{sourceName} {editorState.size ? `· ${editorState.size.width} × ${editorState.size.height}` : ""}</p>
       </div>
-      <button class="btn secondary crop-close" aria-label="Close crop editor" title="Close" disabled={editorState.phase === "saving"} onclick={close}>
+      <button class="btn secondary crop-close" aria-label="Close image editor" title="Close" disabled={toolBusy || editorState.phase === "saving"} onclick={close}>
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18" /></svg>
       </button>
     </div>
+    {#if referencePaths.length && onSelectSource}
+      <label class="edit-target">Edit target
+        <select aria-label="Edit target" value={sourcePath} disabled={busy} onchange={(event) => onSelectSource?.(event.currentTarget.value)}>
+          {#each [sourcePath, ...referencePaths] as input}<option value={input}>{input.split(/[\\/]/).pop()}</option>{/each}
+        </select>
+      </label>
+    {/if}
+    <div class="editor-tools" role="group" aria-label="Image editing tools">
+      <button class="btn secondary" aria-pressed={cropping} disabled={busy} onclick={() => { activeTool = "crop"; confirmReplace = false; }}>Crop</button>
+      {#each tools as tool (tool.id)}
+        <button class="btn secondary" aria-pressed={activeTool === tool.id} disabled={busy} onclick={() => { activeTool = tool.id; confirmReplace = false; }}>{tool.title}</button>
+      {/each}
+    </div>
+    <div class:ai-layout={!cropping} class="editor-workspace">
+    <div class="editor-image">
     {#if editorState.phase === "loading"}
       <div class="crop-loading-stage">
         {#if openingPreview}<img class="crop-loading-image" src={openingPreview} alt={sourceName} />{/if}
         <span class="crop-loading-status" role="status">Loading original image…</span>
       </div>
     {:else if editorState.url}
-      <ImageCropCanvas url={editorState.url} name={sourceName} size={editorState.size} rect={editorState.rect} disabled={busy || confirmReplace} vector={editorState.capture?.format === "SVG"}
+      <ImageCropCanvas url={editorState.url} name={sourceName} size={editorState.size} rect={cropping ? editorState.rect : editorState.size ? { left: 0, top: 0, right: editorState.size.width, bottom: editorState.size.height } : undefined} disabled={busy || confirmReplace || !cropping} showCropControls={cropping} vector={editorState.capture?.format === "SVG"}
         onload={session.loaded} onerror={session.failedPreview} onedge={session.edge} onselect={session.select} />
     {/if}
-    {#if editorState.rect && editorState.size}
+    {#if cropping && editorState.rect && editorState.size}
       <div class="crop-dimensions">
         {#each edges as edge}
           <label>{edge[0].toUpperCase()}{edge.slice(1)}
@@ -75,7 +103,18 @@
         <p class="crop-note">First-frame crop preview. Saving retains AVIF format, all frames, timing, color and HDR metadata.</p>
       {/if}
     {/if}
+    </div>
+    {#if selectedTool && source}
+      <section class="editor-ai plugin-dialog" aria-label={selectedTool.title}>
+        {#key selectedTool}
+          {@const Tool = selectedTool.component}
+          <Tool {...selectedTool.props} {source} onClose={() => { toolBusy = false; session.close(); }} onBusyChange={(value: boolean) => { toolBusy = value; }} />
+        {/key}
+      </section>
+    {/if}
+    </div>
     {#if editorState.error}<p class="error-message" role="alert">{editorState.error}</p>{/if}
+    {#if cropping}
     {#if confirmReplace}
       <div class="crop-confirm" role="group" aria-label="Confirm replacement">
         <p>Replace <strong>{sourceName}</strong> with this crop? This changes the original image.</p>
@@ -90,18 +129,31 @@
           <input bind:value={copyName} disabled={busy} spellcheck="false" />
         </label>
         <div class="crop-actions">
-          <button class="btn secondary" disabled={editorState.phase === "saving"} onclick={close}>Cancel</button>
+          <button class="btn secondary" disabled={toolBusy || editorState.phase === "saving"} onclick={close}>Cancel</button>
           <button class="btn secondary" disabled={busy || !editorState.rect || !editorState.capture} onclick={() => confirmReplace = true}>Replace original…</button>
           <button class="btn primary" disabled={busy || !editorState.rect || !editorState.capture || !copyName.trim()}
             onclick={() => { void session.save({ kind: "copy", name: copyName }); }}>Save copy</button>
         </div>
       </div>
     {/if}
+    {/if}
+    <p class="trace-note">Every saved edit records its source revision and operation in Trace, including replacements.</p>
     {#if editorState.phase === "saving"}<p class="crop-note" role="status">Saving crop…</p>{/if}
   </div>
 </Modal>
 
 <style>
+  .edit-target { margin: 0 0 12px; }
+  .edit-target select { color: var(--text-primary); background: var(--control-fill); border: 1px solid var(--control-stroke); padding: 6px; border-radius: var(--radius-sm); }
+  .editor-tools { display: flex; gap: 6px; padding: 0 0 14px; }
+  .editor-tools button[aria-pressed="true"] { border-color: var(--accent-text); color: var(--accent-text); }
+  .editor-workspace { flex-shrink: 0; }
+  .editor-workspace.ai-layout { display: grid; grid-template-columns: minmax(0, 1fr) minmax(300px, 380px); gap: 18px; }
+  .editor-image { min-width: 0; }
+  .editor-ai { min-width: 0; max-height: calc(75vh / var(--app-zoom, 1)); overflow: auto; }
+  .trace-note { margin: 12px 0 0; color: var(--text-muted); font-size: var(--font-size-caption); }
+  @media (max-width: 740px) { .editor-workspace.ai-layout { grid-template-columns: minmax(0, 1fr); } .editor-ai { max-height: none; } }
+
   /* Cancel root zoom on the overlay, restore it on the viewport-bounded card. */
   :global(.image-crop-overlay) { zoom: calc(1 / var(--app-zoom, 1)); }
   .crop-editor { --crop-stage-height: min(calc(50vh / var(--app-zoom, 1)), 460px); zoom: var(--app-zoom, 1); width: min(960px, calc(100vw / var(--app-zoom, 1) - 32px)); min-width: 0; max-width: none; max-height: calc(100vh / var(--app-zoom, 1) - 32px); overflow: auto; display: flex; flex-direction: column; gap: var(--spacing-md); padding: var(--spacing-lg); background: var(--background-solid); backdrop-filter: none; animation: none; }

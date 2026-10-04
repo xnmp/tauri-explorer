@@ -13,6 +13,7 @@
  * providers and event listeners.
  */
 
+import { imageEditorRegistry, type ImageEditorTool } from "./image-editor-registry.svelte";
 import type { Command } from "$lib/state/commands.svelte";
 import { registerCommandContribution } from "$lib/state/commands.svelte";
 import { contextMenuItems, type ContextMenuItem } from "$lib/state/context-menu-items.svelte";
@@ -142,6 +143,8 @@ export interface PluginContext {
   registerDialog(descriptor: DialogDescriptor): void;
   /** Contribute a selection-aware inspector panel; removed on deactivation. */
   registerInspector(descriptor: InspectorContribution): void;
+  /** Add a tool to the host image editor. Receives source, onClose and onBusyChange props. */
+  registerImageEditorTool(tool: ImageEditorTool): void;
   /** Open a registered dialog, passing props to its component. `open` and an
    *  `onClose` (which closes the dialog) are injected by the renderer. */
   openDialog(id: string, props?: Record<string, unknown>): void;
@@ -273,6 +276,9 @@ export function createPluginContext(
     },
     registerDialog(descriptor: DialogDescriptor): void {
       track(dialogRegistry.register(descriptor));
+    },
+    registerImageEditorTool(tool: ImageEditorTool): void {
+      track(imageEditorRegistry.register(tool, order));
     },
     registerInspector(descriptor: InspectorContribution): void {
       track(inspectorRegistry.register(descriptor, order));

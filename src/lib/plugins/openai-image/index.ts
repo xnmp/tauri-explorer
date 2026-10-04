@@ -3,6 +3,8 @@ import type { FileEntry } from "$lib/domain/file";
 import { isVirtualPath } from "$lib/domain/virtual-path";
 import { parentDir } from "$lib/domain/path";
 import OpenAIImageDialog from "./OpenAIImageDialog.svelte";
+import OpenAIImageEditorTool from "./OpenAIImageEditorTool.svelte";
+import OpenAIImageEditDialog from "./OpenAIImageEditDialog.svelte";
 import OpenAIImageHistory from "./OpenAIImageHistory.svelte";
 
 const DIALOG_ID = "openai-image.create";
@@ -13,7 +15,7 @@ const images = (entries: FileEntry[]): FileEntry[] => entries.length > 0 && entr
 
 async function open(ctx: PluginContext, sourcePath: string | null, outputDir: string, referencePaths: string[] = []): Promise<void> {
   const settings = await ctx.storage.get();
-  ctx.openDialog(DIALOG_ID, {
+  ctx.openDialog(sourcePath ? "openai-image.edit-window" : DIALOG_ID, {
     sourcePath, referencePaths, outputDir,
     apiKey: typeof settings.apiKey === "string" ? settings.apiKey : "",
     initialBackend: settings.backend === "api_key" ? "api_key" : "codex",
@@ -36,6 +38,12 @@ export const openAIImagePlugin: Plugin = {
         { id: "apiKey", label: "OpenAI API Key", type: "password",
         description: "Used in API key mode. Leave blank to use OPENAI_API_KEY from the app environment." }],
     });
+    ctx.registerImageEditorTool({
+      id: "openai-image", title: "AI edit", component: OpenAIImageEditorTool,
+      when: (source) => ["PNG", "JPEG", "WebP"].includes(source.format),
+      props: { storage: ctx.storage, jobs: ctx.jobs, toast: ctx.toast, onOpenSettings: () => ctx.openSettings() },
+    });
+    ctx.registerDialog({ id: "openai-image.edit-window", component: OpenAIImageEditDialog });
     ctx.registerDialog({ id: DIALOG_ID, component: OpenAIImageDialog });
     ctx.registerDialog({ id: "openai-image.history", component: OpenAIImageHistory });
     ctx.registerCommand({

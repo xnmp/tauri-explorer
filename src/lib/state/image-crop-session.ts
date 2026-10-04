@@ -59,7 +59,14 @@ export function createImageCropSession(deps: Dependencies) {
     failedPreview(): void { if (state.phase === "editing") update({ ...state, error: "This image could not be displayed for cropping" }); },
     edge(edge: CropEdge, position: number): void {
       if (state.phase !== "editing" || !state.size || !state.rect) return;
-      update({ ...state, rect: setCropEdge(state.rect, edge, position, state.size), error: undefined });
+      const rect = setCropEdge(state.rect, edge, position, state.size);
+      if (rect !== state.rect || state.error) update({ ...state, rect, error: undefined });
+    },
+    select(rect: ImageCropRect): void {
+      if (state.phase !== "editing" || !state.size || !validImageCrop(rect, state.size)) return;
+      const previous = state.rect;
+      if (previous && !state.error && (["left", "top", "right", "bottom"] as const).every((edge) => rect[edge] === previous[edge])) return;
+      update({ ...state, rect: { ...rect }, error: undefined });
     },
     reset(): void {
       if (state.phase === "editing" && state.size) update({ ...state, rect: fullImageCrop(state.size), error: undefined });

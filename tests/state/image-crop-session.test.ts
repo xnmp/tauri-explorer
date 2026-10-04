@@ -46,6 +46,15 @@ describe("image crop editor ownership", () => {
     session.edge("top", NaN); expect(session.state.rect?.top).toBe(0);
     session.reset(); expect(session.state.rect).toEqual({ left: 0, top: 0, right: 100, bottom: 80 });
   });
+  it("saves a moved region atomically and refuses invalid selections", async () => {
+    const { session, dependencies } = fixture(); await session.open("/image.png", "image.png");
+    session.loaded({ width: 100, height: 80 });
+    session.select({ left: 10, top: 20, right: 60, bottom: 70 });
+    session.select({ left: -1, top: 20, right: 60, bottom: 70 });
+    expect(session.state.rect).toEqual({ left: 10, top: 20, right: 60, bottom: 70 });
+    await session.save({ kind: "copy", name: "copy.png" });
+    expect(dependencies.save.mock.calls[0][0]).toMatchObject({ rect: { left: 10, top: 20, right: 60, bottom: 70 }, viewport: { width: 100, height: 80 } });
+  });
   it("a duplicate save or reopening cannot redirect accepted work", async () => {
     const pending = deferred<ApiResult<FileMutationReceipt>>();
     const { session, dependencies } = fixture({ save: vi.fn(() => pending.promise) });

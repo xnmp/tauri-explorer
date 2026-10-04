@@ -71,6 +71,20 @@ export function setCropEdge(
   return next === rect[edge] ? rect : { ...rect, [edge]: next };
 }
 
+/** Translate a crop without changing its size, clamping the entire region to the image. */
+export function translateImageCrop(
+  rect: ImageCropRect,
+  delta: { x: number; y: number },
+  size: ImagePixelSize,
+): ImageCropRect {
+  if (!validImageCrop(rect, size) || !Number.isFinite(delta.x) || !Number.isFinite(delta.y)) return rect;
+  const x = Math.max(-rect.left, Math.min(size.width - rect.right, Math.round(delta.x)));
+  const y = Math.max(-rect.top, Math.min(size.height - rect.bottom, Math.round(delta.y)));
+  return x === 0 && y === 0 ? rect : {
+    left: rect.left + x, top: rect.top + y, right: rect.right + x, bottom: rect.bottom + y,
+  };
+}
+
 /** Measure the image itself, so app zoom, fitted layout and document transforms are applied once. */
 export function cropPixelPoint(
   client: { x: number; y: number },

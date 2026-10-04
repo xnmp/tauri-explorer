@@ -3,6 +3,28 @@ set -euo pipefail
 
 SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
 
+echo "Authenticating sudo..."
+sudo -v
+
+# Keep the timestamp valid while makepkg runs as the current user.
+(
+  KEEPALIVE_CHILD_PID=
+  trap 'kill "$KEEPALIVE_CHILD_PID" 2>/dev/null || true; wait "$KEEPALIVE_CHILD_PID" 2>/dev/null || true' EXIT
+  trap 'exit 0' INT TERM
+  while true; do
+    sleep 60 &
+    KEEPALIVE_CHILD_PID=$!
+    wait "$KEEPALIVE_CHILD_PID"
+    sudo -n -v &
+    KEEPALIVE_CHILD_PID=$!
+    wait "$KEEPALIVE_CHILD_PID" || exit
+  done
+) &
+SUDO_KEEPALIVE_PID=$!
+trap 'kill "$SUDO_KEEPALIVE_PID" 2>/dev/null || true; wait "$SUDO_KEEPALIVE_PID" 2>/dev/null || true' EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+
 echo "Building package..."
 cd "$SCRIPT_DIR"
 export _srcdir="$SCRIPT_DIR"
@@ -18,6 +40,6 @@ ARCH=$(uname -m)
 PKG="tauri-explorer-${PKGVER}-${PKGREL}-${ARCH}.pkg.tar.zst"
 
 echo "Installing ${PKG}..."
-sudo pacman -U "$PKG" --noconfirm
+sudo -n pacman -U "$PKG" --noconfirm
 
 echo "Done. Run 'tauri-explorer' to launch."

@@ -371,8 +371,6 @@ impl SavePlan {
         #[cfg(target_os = "linux")]
         let durable_replace = matches!(self.request.destination, Destination::Replace)
             && super::recovery::Runtime::DURABLE;
-        #[cfg(not(target_os = "linux"))]
-        let durable_replace = false;
         if let Some(run) = &self.trace_run {
             let anchor = if matches!(&self.request.destination, Destination::Copy { .. }) {
                 match stage.trace_anchor() {

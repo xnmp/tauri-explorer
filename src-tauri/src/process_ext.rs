@@ -215,7 +215,9 @@ fn terminate_process_tree(child: &mut std::process::Child, pid: u32) {
 
 #[cfg(test)]
 mod tests {
-    use super::{output_cancellable, output_controlled};
+    use super::output_cancellable;
+    #[cfg(unix)]
+    use super::output_controlled;
     use std::process::Command;
     use std::sync::atomic::AtomicBool;
     use std::sync::Arc;

@@ -47,6 +47,7 @@ impl StagedEntry {
     }
 
     /// Borrow a generated source while its private directory owner stays live.
+    #[cfg(target_os = "linux")]
     pub(super) fn payload(&self) -> &Path {
         &self.payload
     }

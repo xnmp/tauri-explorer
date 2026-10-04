@@ -37,6 +37,7 @@ impl ReplacementExecution {
         self.operation.advance(Event::Staged(payload))
     }
 
+    #[cfg(target_os = "linux")]
     pub(super) fn prepare_trace(
         &self,
         run: &crate::trace::TraceRunHandle,

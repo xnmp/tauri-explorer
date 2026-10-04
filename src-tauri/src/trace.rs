@@ -609,6 +609,7 @@ pub(crate) fn begin_operation_for_test(
     })
 }
 
+#[cfg(target_os = "linux")]
 pub(crate) fn prepare_linked_output(
     run: &TraceRunHandle,
     target: &Path,

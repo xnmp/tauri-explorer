@@ -827,8 +827,12 @@ import { openFile } from "$lib/api/open";
   });
 </script>
 
-{#snippet cropButton(compact: boolean)}
-  <button class="crop-button" aria-label="Crop image…" onclick={openCrop}>{compact ? "Crop" : "Crop image…"}</button>
+{#snippet cropButton()}
+  <button class="crop-button" aria-label="Crop image…" title="Crop image" onclick={openCrop}>
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      <path d="M6 3v15h15M3 6h15v15" />
+    </svg>
+  </button>
 {/snippet}
 
 <!-- svelte-ignore a11y_no_static_element_interactions -->
@@ -958,12 +962,12 @@ import { openFile } from "$lib/api/open";
       <div class="preview-header" class:with-crop={canCrop && isVertical && !fullscreen}>
         <span class="preview-filename" title={selectedFile.path}>{selectedFile.name}</span>
         <span class="preview-type-badge">{getFileType(selectedFile)}</span>
-        {#if canCrop && isVertical && !fullscreen}{@render cropButton(true)}{/if}
+        {#if canCrop && isVertical && !fullscreen}{@render cropButton()}{/if}
       </div>
     {/if}
 
     {#if canCrop && (!isVertical || fullscreen || !settingsStore.showPreviewInfo)}
-      <div class="preview-crop-action">{@render cropButton(false)}</div>
+      <div class="preview-crop-action">{@render cropButton()}</div>
     {/if}
     <!-- svelte-ignore a11y_no_noninteractive_tabindex -- a scrollable region must be keyboard-focusable (WCAG 2.1.1, #797). -->
     <div class="preview-content" role="region" aria-label="Preview of {selectedFile.name}{isVideoMediaFile(selectedFile) ? ' (video)' : ''}" tabindex="0">
@@ -1099,13 +1103,14 @@ import { openFile } from "$lib/api/open";
 </div>
 
 {#if cropTarget}
-  <ImageCropEditor path={cropTarget.path} name={cropTarget.name} onclose={() => cropTarget = null} />
+  <ImageCropEditor path={cropTarget.path} name={cropTarget.name} previewUrl={previewImageUrl} onclose={() => cropTarget = null} />
 {/if}
 
 <style>
   .preview-crop-action { padding: var(--spacing-sm) var(--spacing-md); display: flex; justify-content: flex-end; }
   .crop-button {
-    padding: var(--spacing-xs) var(--spacing-sm); background: var(--control-fill);
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 28px; height: 28px; padding: 0; flex-shrink: 0; background: var(--control-fill);
     border: 1px solid var(--control-stroke); border-radius: var(--radius-sm);
     color: var(--text-primary); font: inherit; cursor: pointer;
   }

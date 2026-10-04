@@ -5,6 +5,7 @@ import {
   croppedImageSize,
   fullImageCrop,
   setCropEdge,
+  translateImageCrop,
   validImageCrop,
   validImageSize,
   type CropEdge,
@@ -175,5 +176,26 @@ describe("ICNS transparent padding policy", () => {
     expect(
       cropForIconCanvas(rect, source, { width: 0, height: 32 }),
     ).toBeNull();
+  });
+});
+
+
+describe("moving a crop region", () => {
+  const rect = { left: 100, top: 200, right: 500, bottom: 800 };
+  it("moves all edges together without resizing or mutating the original", () => {
+    const moved = translateImageCrop(rect, { x: 50.4, y: -100.8 }, size);
+    expect(moved).toEqual({ left: 150, top: 99, right: 550, bottom: 699 });
+    expect(croppedImageSize(moved)).toEqual({ width: 400, height: 600 });
+    expect(rect).toEqual({ left: 100, top: 200, right: 500, bottom: 800 });
+  });
+  it("clamps the entire region at every image boundary", () => {
+    expect(translateImageCrop(rect, { x: -1e100, y: -1e100 }, size)).toEqual({ left: 0, top: 0, right: 400, bottom: 600 });
+    expect(translateImageCrop(rect, { x: 1e100, y: 1e100 }, size)).toEqual({ left: 3600, top: 2400, right: 4000, bottom: 3000 });
+    expect(translateImageCrop(fullImageCrop(size), { x: 123, y: 456 }, size)).toEqual(fullImageCrop(size));
+  });
+  it("rejects invalid deltas and invalid regions", () => {
+    for (const delta of [{ x: NaN, y: 0 }, { x: 0, y: Infinity }]) expect(translateImageCrop(rect, delta, size)).toEqual(rect);
+    const invalid = { ...rect, left: -1 };
+    expect(translateImageCrop(invalid, { x: 10, y: 10 }, size)).toEqual(invalid);
   });
 });

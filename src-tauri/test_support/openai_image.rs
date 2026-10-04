@@ -7,6 +7,7 @@ const TEST_KEY: &str = "test-secret-do-not-record";
 fn request(dir: &Path, source: Option<&Path>) -> ImageRequest {
     ImageRequest {
         backend: ImageBackend::ApiKey,
+        codex_path: String::new(),
         source_path: source.map(|path| path.to_string_lossy().into_owned()),
         expected_source_digest: None,
         reference_paths: vec![],

@@ -460,6 +460,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `ai_organize.rs` — AI destination suggestions via Gemini (#158).
 - `ai_rename.rs` — AI rename suggestions via Gemini (#145).
 - `nano_banana.rs` — Nano Banana image editing via Gemini.
+- `src-tauri/src/openai_image/codex_executable.rs` — resolves Codex from an explicit path, inherited PATH or common desktop install locations including versioned NVM; gives only the child its installation/runtime PATH. Discovery contracts in `src-tauri/test_support/codex_executable.rs`.
 - `src-tauri/src/openai_image/codex.rs` — isolated headless Codex image transport with saved ChatGPT sign-in, ordered captured inputs, bounded JSONL and exact fresh-thread output attribution; contract and opt-in live tests in `src-tauri/test_support/codex_image.rs`.
 - `src-tauri/src/openai_image.rs` — Codex/API backend selection and bounded OpenAI Images API JSON/multipart adapter, captured source bytes, redacted metadata, no-replace publication and durable Trace lifecycle; fixtures in `src-tauri/test_support/openai_image.rs` verify transport, failure, cancellation, conflict and recovery outcomes.
 - `src-tauri/src/image_operation.rs` — immutable provider input snapshots, mandatory traced image publication and worker terminal settlement shared by OpenAI, Gemini and fal upscaling.

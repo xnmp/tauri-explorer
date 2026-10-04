@@ -24,6 +24,7 @@ const MAX_RESPONSE_BYTES: u64 = 70 * 1024 * 1024;
 const HTTP_TIMEOUT: Duration = Duration::from_secs(180);
 
 mod codex;
+mod codex_executable;
 
 #[derive(Clone, Copy, Default, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -38,6 +39,8 @@ pub(crate) enum ImageBackend {
 pub(crate) struct ImageRequest {
     #[serde(default)]
     pub backend: ImageBackend,
+    #[serde(default)]
+    pub codex_path: String,
     pub source_path: Option<String>,
     #[serde(default)]
     pub expected_source_digest: Option<String>,

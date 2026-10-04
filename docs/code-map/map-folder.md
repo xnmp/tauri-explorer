@@ -25,6 +25,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `OpenWithDialog.svelte` — accessible installed-application choice with captured filename, loading/empty/error feedback and unchanged-default messaging.
 
 - `FileList.svelte` — dispatches to Details/List/Tiles by view mode; hosts marquee, drop, empty-state. Central view entry.
+- `PluginInspector.svelte` — selection-aware right-side host for plugin inspector contributions; hidden when none apply.
 - `DetailsView.svelte` — virtual-scrolled table view (columns, resize, sort headers).
 - `ListView.svelte` — CSS-grid compact list view.
 - `TilesView.svelte` — CSS auto-fill grid tile view with thumbnails; runs `scroll-jank-monitor.ts` during scroll and logs `tiles-scroll-jank` events only when jank occurred (#593).
@@ -389,6 +390,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `registry.svelte.ts` — built-in plugin lifecycle; published activation/shutdown drains, terminal admission and context-first reentrant teardown. Startup activations run together so one hung plugin blocks no other; contributions are placed by list position, not completion order (#782).
 - `dialog-registry.svelte.ts` — registry for plugin modal dialogs.
 - `settings-registry.svelte.ts` — registry for plugin settings sections.
+- `inspector-registry.svelte.ts` — ordered, owner-disposed registry for selection-aware inspector contributions.
 - `fs-providers.ts` — virtual-filesystem provider registry + dispatch.
 - `demo/index.ts` — demo plugin exercising every contribution seam.
 - `ai-organize/index.ts` + `AiOrganizeDialog.svelte` — AI organize plugin (#158).

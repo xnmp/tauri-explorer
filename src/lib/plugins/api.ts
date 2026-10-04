@@ -19,6 +19,7 @@ import { contextMenuItems, type ContextMenuItem } from "$lib/state/context-menu-
 import { registerFsProvider, type FsProvider } from "./fs-providers";
 import { pluginSettingsSections } from "./settings-registry.svelte";
 import { dialogRegistry, type DialogDescriptor } from "./dialog-registry.svelte";
+import { inspectorRegistry, type InspectorContribution } from "./inspector-registry.svelte";
 import { toastStore, type ToastType } from "$lib/state/toast.svelte";
 import { readConfigFile } from "$lib/api/config";
 import { writeConfigQueued } from "$lib/state/persisted";
@@ -134,6 +135,8 @@ export interface PluginContext {
   registerFsProvider(scheme: string, provider: FsProvider): void;
   /** Contribute a modal dialog component, addressable by its stable id. */
   registerDialog(descriptor: DialogDescriptor): void;
+  /** Contribute a selection-aware inspector panel; removed on deactivation. */
+  registerInspector(descriptor: InspectorContribution): void;
   /** Open a registered dialog, passing props to its component. `open` and an
    *  `onClose` (which closes the dialog) are injected by the renderer. */
   openDialog(id: string, props?: Record<string, unknown>): void;
@@ -265,6 +268,9 @@ export function createPluginContext(
     },
     registerDialog(descriptor: DialogDescriptor): void {
       track(dialogRegistry.register(descriptor));
+    },
+    registerInspector(descriptor: InspectorContribution): void {
+      track(inspectorRegistry.register(descriptor, order));
     },
     openDialog(id: string, props?: Record<string, unknown>): void {
       dialogRegistry.open(id, props ?? {});

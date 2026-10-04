@@ -2,7 +2,7 @@ import { test, expect, type Page } from "./fixtures";
 import { applySettingsAndReload, waitForEntries, VIEW_MODES } from "./helpers";
 
 const source = "/home/user/Pictures/screenshot.png";
-async function open(page: Page, mode: string, zoom = 1, fullscreen = false, dock = "right") {
+async function preparePreview(page: Page, mode: string, zoom = 1, fullscreen = false, dock = "right") {
   await page.goto("/?path=/home/user/Pictures");
   await applySettingsAndReload(page, { showPreviewPane: true, viewMode: mode, zoomLevel: zoom * 100, previewPanePosition: dock });
   await expect.poll(() => page.evaluate(() => {
@@ -15,8 +15,15 @@ async function open(page: Page, mode: string, zoom = 1, fullscreen = false, dock
     await page.locator(".preview-image").click();
     await expect(page.locator(".preview-pane")).toHaveClass(/fullscreen/);
   }
+}
+async function openCrop(page: Page) {
   await page.getByRole("button", { name: "Crop image…", exact: true }).click();
   await expect(page.getByRole("slider", { name: "Right crop edge" })).toHaveAttribute("aria-valuenow", "512");
+  await expect(page.getByRole("slider", { name: "Right crop edge" })).toBeVisible();
+}
+async function open(page: Page, mode: string, zoom = 1, fullscreen = false, dock = "right") {
+  await preparePreview(page, mode, zoom, fullscreen, dock);
+  await openCrop(page);
 }
 async function imageData(page: Page, path: string) {
   return page.evaluate(async (path) => {
@@ -182,3 +189,141 @@ for (const dock of ["right", "top", "bottom"]) {
     }, await imageData(page, target))).toEqual([511, 384]);
   });
 }
+
+test("crop action is an icon and editor controls use compact themed chrome", async ({ page }) => {
+  await open(page, "details");
+  const action = page.getByRole("button", { name: "Crop image…", exact: true });
+  await expect(action).toHaveText("");
+  await expect(action.locator("svg")).toBeAttached();
+  const zoom = page.getByRole("button", { name: "Zoom in crop" });
+  expect((await zoom.boundingBox())!.width).toBeLessThanOrEqual(36);
+  const cancel = page.getByRole("button", { name: "Cancel", exact: true });
+  expect(await cancel.evaluate(el => getComputedStyle(el).backgroundColor)).toBe(await cancel.evaluate(el => {
+    const probe = document.createElement("div"); probe.style.backgroundColor = "var(--control-fill)";
+    el.append(probe); const color = getComputedStyle(probe).backgroundColor; probe.remove(); return color;
+  }));
+});
+
+for (const zoom of [1, 1.5]) {
+  test(`corner resize and selection movement save the selected pixels at app zoom ${zoom}`, async ({ page }) => {
+    await open(page, "details", zoom);
+    const before = await imageData(page, source);
+    const corner = page.getByRole("button", { name: "Top left crop corner", exact: true });
+    const image = (await page.locator(".crop-image img").boundingBox())!;
+    const handle = (await corner.boundingBox())!;
+    const target = { x: Math.round(image.x + image.width * 64 / 512), y: Math.round(image.y + image.height * 48 / 384) };
+    await page.mouse.move(handle.x + handle.width / 2, handle.y + handle.height / 2);
+    await page.mouse.down(); await page.mouse.move(target.x, target.y, { steps: 4 }); await page.mouse.up();
+    const left = Math.round((target.x - image.x) / image.width * 512);
+    const top = Math.round((target.y - image.y) / image.height * 384);
+    await expect(page.getByRole("slider", { name: "Left crop edge" })).toHaveAttribute("aria-valuenow", String(left));
+    await expect(page.getByRole("slider", { name: "Top crop edge" })).toHaveAttribute("aria-valuenow", String(top));
+    // Make space to move and verify the opposite corner with the keyboard.
+    const bottomRight = page.getByRole("button", { name: "Bottom right crop corner", exact: true });
+    await bottomRight.focus(); await bottomRight.press("Shift+ArrowLeft"); await bottomRight.press("Shift+ArrowUp");
+    const move = page.getByRole("button", { name: "Move crop selection", exact: true });
+    await move.focus(); await move.press("ArrowRight"); await move.press("Shift+ArrowDown");
+    await expect(page.getByRole("slider", { name: "Right crop edge" })).toHaveAttribute("aria-valuenow", "503");
+    await expect(page.getByRole("slider", { name: "Bottom crop edge" })).toHaveAttribute("aria-valuenow", "384");
+    // Pointer translation retains the dimensions, even against the image boundary.
+    const selection = (await move.boundingBox())!;
+    await page.mouse.move(selection.x + selection.width / 2, selection.y + selection.height / 2);
+    await page.mouse.down(); await page.mouse.move(image.x + image.width + 20, image.y + image.height + 20, { steps: 4 }); await page.mouse.up();
+    const width = 502 - left, height = 374 - top;
+    await expect(page.locator(".crop-output")).toHaveText(`Selected: ${width} × ${height} px`);
+    await expect(page.getByRole("slider", { name: "Right crop edge" })).toHaveAttribute("aria-valuenow", "512");
+    await page.getByRole("button", { name: "Save copy", exact: true }).click();
+    await expect(page.getByRole("dialog", { name: "Crop image", exact: true })).toBeHidden();
+    const saved = await imageData(page, "/home/user/Pictures/screenshot - Cropped.png");
+    expect(await page.evaluate(async ({ before, saved, left, top, width, height }) => {
+      const pixels = async (url: string, x: number, y: number) => {
+        const image = new Image(); image.src = url; await image.decode();
+        const canvas = document.createElement("canvas"); canvas.width = width; canvas.height = height;
+        const context = canvas.getContext("2d")!; context.drawImage(image, x, y, width, height, 0, 0, width, height);
+        return Array.from(context.getImageData(0, 0, width, height).data);
+      };
+      const original = await pixels(before, left, top), cropped = await pixels(saved, 0, 0);
+      return cropped.every((value, index) => value === original[index]);
+    }, { before, saved, left: 512 - width, top: 384 - height, width, height })).toBe(true);
+  });
+}
+
+for (const zoom of [1, 1.5]) {
+  test(`fit has no scroll overflow at app zoom ${zoom}`, async ({ page }) => {
+    await open(page, "details", zoom);
+    for (const viewport of [{ width: 1280, height: 900 }, { width: 640, height: 480 }, { width: 320, height: 640 }]) {
+      await page.setViewportSize(viewport);
+      await expect.poll(() => page.locator(".crop-scroller").evaluate(el => {
+        // WebKit rounds scrollWidth/clientWidth differently at fractional
+        // zoom. Test whether the fitted view can actually scroll.
+        el.scrollLeft = el.scrollWidth; el.scrollTop = el.scrollHeight;
+        return [el.scrollLeft, el.scrollTop];
+      })).toEqual([0, 0]);
+      // The save action can be brought fully into view without horizontal scrolling.
+      const save = page.getByRole("button", { name: "Save copy", exact: true });
+      await save.scrollIntoViewIfNeeded();
+      await save.focus();
+      const bounds = (await save.boundingBox())!;
+      expect(bounds.x).toBeGreaterThanOrEqual(0);
+      expect(bounds.x + bounds.width).toBeLessThanOrEqual(viewport.width);
+      expect(bounds.y + bounds.height).toBeLessThanOrEqual(viewport.height + 1);
+    }
+  });
+}
+
+test("dialog scrolling during a held crop drag preserves image coordinates", async ({ page }) => {
+  await open(page, "details", 1.5);
+  await page.setViewportSize({ width: 640, height: 480 });
+  const top = page.getByRole("slider", { name: "Top crop edge" });
+  await top.scrollIntoViewIfNeeded();
+  const handle = (await top.boundingBox())!;
+  await page.mouse.move(handle.x + handle.width / 2, handle.y + handle.height / 2);
+  await page.mouse.down();
+  await page.locator(".crop-editor").evaluate(el => { el.scrollTop = 45; });
+  const image = (await page.locator(".crop-image img").boundingBox())!;
+  const y = Math.round(image.y + image.height * 100 / 384);
+  await page.mouse.move(image.x + image.width / 2, y);
+  await page.mouse.up();
+  await expect(top).toHaveAttribute("aria-valuenow", String(Math.round((y - image.y) / image.height * 384)));
+});
+
+test("opening the editor shows the selected preview while immutable capture is pending", async ({ page }) => {
+  await page.goto("/?path=/home/user/Pictures");
+  await applySettingsAndReload(page, { showPreviewPane: true, viewMode: "details" });
+  await waitForEntries(page);
+  await page.locator(".entry-item", { hasText: "screenshot.png" }).click();
+  await expect.poll(() => page.locator(".preview-image").evaluate(img => (img as HTMLImageElement).naturalWidth)).toBeGreaterThan(0);
+  const preview = await page.locator(".preview-image").getAttribute("src");
+  await page.evaluate(async () => {
+    const control = (await import("/src/lib/api/mock-control.ts")).getMockControl();
+    control.imageCropCapture = () => new Promise((_, reject) => {
+      window.addEventListener("release-crop-capture", () => reject(new Error("Held source capture")), { once: true });
+    });
+  });
+  await page.getByRole("button", { name: "Crop image…", exact: true }).click();
+  await expect(page.getByRole("dialog", { name: "Crop image", exact: true })).toBeVisible();
+  await expect(page.locator(".crop-loading-image")).toHaveAttribute("src", preview!);
+  await expect.poll(() => page.locator(".crop-loading-image").evaluate(img => (img as HTMLImageElement).naturalWidth)).toBeGreaterThan(0);
+  await expect(page.getByRole("button", { name: "Save copy", exact: true })).toBeDisabled();
+  await expect(page.getByRole("slider")).toHaveCount(0);
+  await page.getByRole("button", { name: "Cancel", exact: true }).click();
+  await page.evaluate(() => window.dispatchEvent(new Event("release-crop-capture")));
+  await expect(page.getByRole("dialog", { name: "Crop image", exact: true })).toBeHidden();
+});
+
+
+test("opening, zooming and resizing the crop view does not cause observer loops", async ({ page }) => {
+  await preparePreview(page, "details", 1.5);
+  const errors: string[] = [];
+  page.on("pageerror", error => errors.push(error.message));
+  await openCrop(page);
+  for (const viewport of [{ width: 1280, height: 900 }, { width: 640, height: 480 }]) {
+    await page.setViewportSize(viewport);
+    await page.getByRole("button", { name: "Zoom in crop" }).click();
+    await page.getByRole("button", { name: "Fit", exact: true }).click();
+    await page.getByRole("slider", { name: "Left crop edge" }).focus();
+    await page.keyboard.press("ArrowRight");
+  }
+  await expect(page.getByRole("slider", { name: "Left crop edge" })).toHaveAttribute("aria-valuenow", "2");
+  expect(errors).toEqual([]);
+});

@@ -1,4 +1,4 @@
-//! OpenAI Images API adapter. Captured input bytes and the submitted recipe
+//! OpenAI image adapters. Captured input bytes and the submitted recipe
 //! enter Trace before a paid request; publication uses a retained native anchor.
 use crate::{error::AppError, plugin_job, trace};
 use base64::{engine::general_purpose::STANDARD, Engine};
@@ -14,14 +14,30 @@ use tauri::{AppHandle, Emitter};
 
 const API_ROOT: &str = "https://api.openai.com/v1/images";
 const MAX_INPUT_BYTES: u64 = 20 * 1024 * 1024;
+const MAX_INPUTS: usize = 8;
+const MAX_TOTAL_INPUT_BYTES: usize = 64 * 1024 * 1024;
 const MAX_OUTPUT_BYTES: usize = 50 * 1024 * 1024;
 const MAX_RESPONSE_BYTES: u64 = 70 * 1024 * 1024;
 const HTTP_TIMEOUT: Duration = Duration::from_secs(180);
 
+mod codex;
+
+#[derive(Clone, Copy, Default, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum ImageBackend {
+    #[default]
+    ApiKey,
+    Codex,
+}
+
 #[derive(Clone, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct ImageRequest {
+    #[serde(default)]
+    pub backend: ImageBackend,
     pub source_path: Option<String>,
+    #[serde(default)]
+    pub reference_paths: Vec<String>,
     pub prompt: String,
     pub output_dir: String,
     pub output_filename: String,
@@ -48,6 +64,13 @@ fn invalid(message: &str) -> AppError {
 }
 
 fn validate_request(request: &ImageRequest) -> Result<PathBuf, AppError> {
+    if request.reference_paths.len() >= MAX_INPUTS
+        || (request.source_path.is_none() && !request.reference_paths.is_empty())
+    {
+        return Err(invalid(
+            "Choose an edit target and at most seven reference images",
+        ));
+    }
     if request.prompt.trim().is_empty() || request.prompt.len() > 16_000 {
         return Err(invalid("Enter an image prompt of 1–16,000 bytes"));
     }
@@ -68,6 +91,16 @@ fn validate_request(request: &ImageRequest) -> Result<PathBuf, AppError> {
     }
     if !["auto", "opaque", "transparent"].contains(&request.background.as_str()) {
         return Err(invalid("Unsupported image background"));
+    }
+    if request.backend == ImageBackend::Codex
+        && (request.model != "gpt-image-2"
+            || request.size != "auto"
+            || request.quality != "auto"
+            || request.background != "auto")
+    {
+        return Err(invalid(
+            "Codex image mode uses built-in defaults; describe visual requirements in the prompt",
+        ));
     }
     if !request
         .output_filename
@@ -143,23 +176,63 @@ fn capture_input(path: Option<&str>) -> Result<Option<CapturedInput>, AppError> 
     }))
 }
 
-fn recipe(request: &ImageRequest, input: Option<&CapturedInput>) -> trace::OperationStart {
+fn capture_inputs(request: &ImageRequest) -> Result<Vec<CapturedInput>, AppError> {
+    if request.reference_paths.len() >= MAX_INPUTS {
+        return Err(invalid("At most eight input images are supported"));
+    }
+    let mut inputs = Vec::new();
+    let mut total = 0;
+    for path in request
+        .source_path
+        .iter()
+        .chain(request.reference_paths.iter())
+    {
+        let input = capture_input(Some(path))?.expect("a supplied path is captured");
+        if inputs
+            .iter()
+            .any(|previous: &CapturedInput| previous.path == input.path)
+        {
+            return Err(invalid("The same input image was selected more than once"));
+        }
+        total += input.bytes.len();
+        if total > MAX_TOTAL_INPUT_BYTES {
+            return Err(invalid("Combined input images exceed the 64 MiB limit"));
+        }
+        inputs.push(input);
+    }
+    Ok(inputs)
+}
+
+fn recipe(request: &ImageRequest, inputs: &[CapturedInput]) -> trace::OperationStart {
     trace::OperationStart {
-        operation: if input.is_some() {
+        operation: if !inputs.is_empty() {
             "openai.image.edit"
         } else {
             "openai.image.generate"
         }
         .into(),
-        parameters: json!({
-            "provider": "openai", "model": request.model,
-            "endpoint": if input.is_some() { "images/edits" } else { "images/generations" },
-            "prompt": request.prompt, "size": request.size, "quality": request.quality,
-            "background": request.background, "output_format": "png", "n": 1,
-            "provider_revision": null, "cost": null,
-        }),
-        inputs: input
-            .into_iter()
+        parameters: if request.backend == ImageBackend::Codex {
+            json!({
+                "provider": "codex-cli", "authentication": "saved_chatgpt_sign_in",
+                "prompt": request.prompt, "agent_task": codex::task(request, inputs.len()),
+                "model": null, "documented_image_model": "gpt-image-2",
+                "image_tool_prompt": null, "provider_revision": null, "cost": null,
+                "settings_source": "built_in_defaults",
+                "input_roles": input_roles(inputs),
+            })
+        } else {
+            json!({
+                "provider": "openai", "model": request.model,
+                "endpoint": if !inputs.is_empty() { "images/edits" } else { "images/generations" },
+                "prompt": request.prompt, "size": request.size, "quality": request.quality,
+                "submitted_prompt": api_prompt(request, inputs.len()),
+                "background": request.background, "output_format": "png", "n": 1,
+                "provider_revision": null, "cost": null,
+                "input_roles": input_roles(inputs),
+            })
+        },
+        inputs: inputs
+            .iter()
             .map(|input| trace::OperationInput {
                 path: input.path.clone(),
                 digest: input.digest.clone(),
@@ -168,14 +241,39 @@ fn recipe(request: &ImageRequest, input: Option<&CapturedInput>) -> trace::Opera
     }
 }
 
-fn fields(request: &ImageRequest) -> Value {
-    json!({"model": request.model, "prompt": request.prompt, "size": request.size,
+fn input_roles(inputs: &[CapturedInput]) -> Value {
+    inputs
+        .iter()
+        .enumerate()
+        .map(|(index, input)| {
+            json!({
+                "position": index + 1, "role": if index == 0 { "edit_target" } else { "reference" },
+                "path": input.path, "digest": input.digest,
+            })
+        })
+        .collect()
+}
+
+fn api_prompt(request: &ImageRequest, input_count: usize) -> String {
+    if input_count <= 1 {
+        return request.prompt.clone();
+    }
+    format!("Edit image 1, the primary target. Images 2 through {input_count} are ordered references. \
+        Preserve target details unless the user's request asks to change them; use references as directed. \
+        User's visual request: {}", json!({"prompt": request.prompt}))
+}
+
+fn fields(request: &ImageRequest, input_count: usize) -> Value {
+    json!({"model": request.model, "prompt": api_prompt(request, input_count), "size": request.size,
         "quality": request.quality, "background": request.background, "output_format": "png", "n": 1})
 }
 
-fn multipart(request: &ImageRequest, input: &CapturedInput, boundary: &str) -> Vec<u8> {
+fn multipart(request: &ImageRequest, inputs: &[CapturedInput], boundary: &str) -> Vec<u8> {
     let mut body = Vec::new();
-    for (name, value) in fields(request).as_object().expect("fixed image fields") {
+    for (name, value) in fields(request, inputs.len())
+        .as_object()
+        .expect("fixed image fields")
+    {
         let value = value
             .as_str()
             .map(str::to_owned)
@@ -186,21 +284,25 @@ fn multipart(request: &ImageRequest, input: &CapturedInput, boundary: &str) -> V
         )
         .expect("writing to Vec");
     }
-    let filename = match input.mime {
-        "image/jpeg" => "source.jpg",
-        "image/webp" => "source.webp",
-        _ => "source.png",
-    };
-    write!(body, "--{boundary}\r\nContent-Disposition: form-data; name=\"image[]\"; filename=\"{filename}\"\r\nContent-Type: {}\r\n\r\n", input.mime).expect("writing to Vec");
-    body.extend_from_slice(&input.bytes);
-    write!(body, "\r\n--{boundary}--\r\n").expect("writing to Vec");
+    for (index, input) in inputs.iter().enumerate() {
+        let extension = match input.mime {
+            "image/jpeg" => "jpg",
+            "image/webp" => "webp",
+            _ => "png",
+        };
+        let filename = format!("source-{}.{extension}", index + 1);
+        write!(body, "--{boundary}\r\nContent-Disposition: form-data; name=\"image[]\"; filename=\"{filename}\"\r\nContent-Type: {}\r\n\r\n", input.mime).expect("writing to Vec");
+        body.extend_from_slice(&input.bytes);
+        write!(body, "\r\n").expect("writing to Vec");
+    }
+    write!(body, "--{boundary}--\r\n").expect("writing to Vec");
     body
 }
 
 fn request_image(
     root: &str,
     request: &ImageRequest,
-    input: Option<&CapturedInput>,
+    inputs: &[CapturedInput],
     key: &str,
 ) -> Result<GeneratedImage, AppError> {
     let agent: ureq::Agent = ureq::Agent::config_builder()
@@ -209,7 +311,7 @@ fn request_image(
         .build()
         .into();
     let auth = format!("Bearer {key}");
-    let response = if let Some(input) = input {
+    let response = if !inputs.is_empty() {
         // An unpredictable boundary avoids collisions with prompts/input bytes.
         let mut nonce = [0u8; 16];
         getrandom::fill(&mut nonce).map_err(|_| invalid("Could not prepare OpenAI upload"))?;
@@ -221,12 +323,12 @@ fn request_image(
                 "Content-Type",
                 &format!("multipart/form-data; boundary={boundary}"),
             )
-            .send(multipart(request, input, &boundary).as_slice())
+            .send(multipart(request, inputs, &boundary).as_slice())
     } else {
         agent
             .post(&format!("{root}/generations"))
             .header("Authorization", &auth)
-            .send_json(fields(request))
+            .send_json(fields(request, 0))
     };
     let mut response =
         response.map_err(|error| invalid(&format!("OpenAI image request failed: {error}")))?;
@@ -406,7 +508,11 @@ pub(crate) async fn start_openai_image_job(
     api_key: String,
 ) -> Result<u64, AppError> {
     let target = validate_request(&request)?;
-    let key = resolve_key(&api_key)?;
+    let key = if request.backend == ImageBackend::ApiKey {
+        Some(resolve_key(&api_key)?)
+    } else {
+        None
+    };
     let job_id = plugin_job::next_job_id();
     let control = plugin_job::JobControl::new();
     let worker_control = control.clone();
@@ -415,12 +521,19 @@ pub(crate) async fn start_openai_image_job(
         let job = async {
             tokio::task::spawn_blocking(move || {
                 worker_control.check()?;
-                let input = capture_input(request.source_path.as_deref())?;
-                let run = trace::begin_operation(recipe(&request, input.as_ref()))?;
+                let inputs = capture_inputs(&request)?;
+                let run = trace::begin_operation(recipe(&request, &inputs))?;
                 let _ = worker_app.emit("trace:changed", ());
-                let result = execute_recorded(&run, &target, &worker_control, || {
-                    request_image(API_ROOT, &request, input.as_ref(), &key)
-                });
+                let result =
+                    execute_recorded(&run, &target, &worker_control, || match request.backend {
+                        ImageBackend::ApiKey => request_image(
+                            API_ROOT,
+                            &request,
+                            &inputs,
+                            key.as_deref().expect("validated API key"),
+                        ),
+                        ImageBackend::Codex => codex::generate(&request, &inputs, &worker_control),
+                    });
                 let _ = worker_app.emit("trace:changed", ());
                 result
             })

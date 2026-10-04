@@ -449,7 +449,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `terminal/input.rs` — per-terminal input sequencer: admits `terminal_write` in sequence-number order (early arrivals held, repeats ignored), holds 64 KiB of pre-start typeahead (an overflow discards all of it), and feeds one writer thread per PTY through a channel (#882).
 - `system.rs` — native launch context, Recycle Bin launcher, window theme and log-path commands.
 - `user_report.rs` — typed async report relay command, full-description/environment body assembly without log tails, and ureq transport with uncertain-response handling.
-- `process_ext.rs` — suppress console-window flash for spawned children.
+- `process_ext.rs` — suppress console-window flash and own cancellable process trees; drain both pipes with optional output limits and continue cancellation after launcher exit.
 - `portal.rs` — xdg-desktop-portal FileChooser backend (Linux).
 - `crash_report.rs` — local crash capture (#184).
 - `update_check.rs` — update check via GitHub releases (#185).
@@ -458,7 +458,8 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `ai_organize.rs` — AI destination suggestions via Gemini (#158).
 - `ai_rename.rs` — AI rename suggestions via Gemini (#145).
 - `nano_banana.rs` — Nano Banana image editing via Gemini.
-- `src-tauri/src/openai_image.rs` — bounded OpenAI Images API JSON/multipart adapter, captured source bytes, redacted metadata, no-replace publication and durable Trace lifecycle; fixtures in `src-tauri/test_support/openai_image.rs` verify transport, failure, cancellation, conflict and recovery outcomes.
+- `src-tauri/src/openai_image/codex.rs` — isolated headless Codex image transport with saved ChatGPT sign-in, ordered captured inputs, bounded JSONL and exact fresh-thread output attribution; contract and opt-in live tests in `src-tauri/test_support/codex_image.rs`.
+- `src-tauri/src/openai_image.rs` — Codex/API backend selection and bounded OpenAI Images API JSON/multipart adapter, captured source bytes, redacted metadata, no-replace publication and durable Trace lifecycle; fixtures in `src-tauri/test_support/openai_image.rs` verify transport, failure, cancellation, conflict and recovery outcomes.
 - `fal.rs` — fal.ai REST helpers: API-key resolution, CDN upload, queue submit/poll, result download. Shared by upscale + nano-banana.
 - `upscale.rs` — `start_upscale_job` command: uploads the image, runs the SeedVR2 queue job via `fal.rs`, writes the result.
 - `plugin_job.rs` — shared plugin-job scaffolding: job-id alloc, output-path validation, timeout wrapper, complete/error events.

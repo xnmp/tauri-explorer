@@ -19,12 +19,30 @@ describe("OpenAI image plugin", () => {
     const edit = contextMenuItems.itemsFor([image]).find((item) => item.id === "openai-image.edit")!;
     await edit.handler([image]);
     expect(dialogRegistry.openDialogs.find((dialog) => dialog.id === "openai-image.create")?.props).toMatchObject({
-      sourcePath: "/media/photo.PNG", outputDir: "/media", apiKey: "test-openai-key",
+      sourcePath: "/media/photo.PNG", referencePaths: [], outputDir: "/media", apiKey: "test-openai-key", initialBackend: "codex",
     });
     expect(contextMenuItems.itemsFor([{ ...image, name: "animated.gif" }]).some((item) => item.id === edit.id)).toBe(false);
     expect(contextMenuItems.itemsFor([{ ...image, path: "demo://photo.png" }]).some((item) => item.id === edit.id)).toBe(false);
     expect(contextMenuItems.itemsFor([image, image]).some((item) => item.id === edit.id)).toBe(false);
     dispose();
+  });
+
+  it("opens several selected images with explicit target/reference roles and preserves API key mode", async () => {
+    const { ctx, dispose } = createPluginContext("openai-image");
+    await ctx.storage.set({ backend: "api_key", apiKey: "test-openai-key" });
+    await openAIImagePlugin.activate(ctx);
+    try {
+      const reference = { ...image, name: "reference.png", path: "/media/reference.png" };
+      const selected = [image, reference];
+      const edit = contextMenuItems.itemsFor(selected).find((item) => item.id === "openai-image.edit")!;
+      await edit.handler(selected);
+      expect(dialogRegistry.openDialogs.find((dialog) => dialog.id === "openai-image.create")?.props).toMatchObject({
+        sourcePath: image.path, referencePaths: [reference.path], initialBackend: "api_key",
+      });
+      expect(contextMenuItems.itemsFor([image, folder]).some((item) => item.id === edit.id)).toBe(false);
+      const excessive = Array.from({ length: 9 }, (_, i) => ({ ...image, path: `/media/${i}.png` }));
+      expect(contextMenuItems.itemsFor(excessive).some((item) => item.id === edit.id)).toBe(false);
+    } finally { dispose(); }
   });
 
   it("opens generation in a selected folder without inventing an image input", async () => {

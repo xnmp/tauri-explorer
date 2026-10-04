@@ -6,7 +6,9 @@ const TEST_KEY: &str = "test-secret-do-not-record";
 
 fn request(dir: &Path, source: Option<&Path>) -> ImageRequest {
     ImageRequest {
+        backend: ImageBackend::ApiKey,
         source_path: source.map(|path| path.to_string_lossy().into_owned()),
+        reference_paths: vec![],
         prompt: "Preserve the face; add a warm lantern".into(),
         output_dir: dir.to_string_lossy().into_owned(),
         output_filename: "result.png".into(),
@@ -34,7 +36,7 @@ fn generation_publishes_a_png_and_retains_the_submitted_recipe_and_usage() {
     let db = dir.path().join("trace.sqlite");
     let request = request(dir.path(), None);
     let target = validate_request(&request).unwrap();
-    let run = trace::begin_operation_for_test(&db, recipe(&request, None)).unwrap();
+    let run = trace::begin_operation_for_test(&db, recipe(&request, &[])).unwrap();
     let path = execute_recorded(&run, &target, &plugin_job::JobControl::new(), || {
         Ok(generated())
     })
@@ -68,7 +70,8 @@ fn edit_records_the_exact_captured_input_even_when_the_source_changes() {
         .unwrap()
         .unwrap();
     std::fs::write(&source, b"changed while remote request is running").unwrap();
-    let run = trace::begin_operation_for_test(&db, recipe(&request, Some(&input))).unwrap();
+    let run = trace::begin_operation_for_test(&db, recipe(&request, std::slice::from_ref(&input)))
+        .unwrap();
     let target = validate_request(&request).unwrap();
     execute_recorded(&run, &target, &plugin_job::JobControl::new(), || {
         Ok(generated())
@@ -96,7 +99,7 @@ fn provider_failure_and_cancellation_keep_history_without_inventing_outputs() {
         std::fs::write(&source, PNG).unwrap();
         let request = request(dir.path(), Some(&source));
         let input = capture_input(request.source_path.as_deref()).unwrap();
-        let run = trace::begin_operation_for_test(&db, recipe(&request, input.as_ref())).unwrap();
+        let run = trace::begin_operation_for_test(&db, recipe(&request, input.as_slice())).unwrap();
         let target = validate_request(&request).unwrap();
         let control = plugin_job::JobControl::new();
         if cancelled {
@@ -127,7 +130,7 @@ fn an_occupied_output_is_preserved_and_the_run_fails() {
     let target = validate_request(&request).unwrap();
     std::fs::write(&target, b"user's existing result").unwrap();
     let input = capture_input(request.source_path.as_deref()).unwrap();
-    let run = trace::begin_operation_for_test(&db, recipe(&request, input.as_ref())).unwrap();
+    let run = trace::begin_operation_for_test(&db, recipe(&request, input.as_slice())).unwrap();
     assert!(
         execute_recorded(&run, &target, &plugin_job::JobControl::new(), || panic!(
             "occupied destination contacted provider"
@@ -144,7 +147,7 @@ fn a_target_created_during_the_remote_call_is_never_overwritten() {
     let db = dir.path().join("trace.sqlite");
     let request = request(dir.path(), None);
     let target = validate_request(&request).unwrap();
-    let run = trace::begin_operation_for_test(&db, recipe(&request, None)).unwrap();
+    let run = trace::begin_operation_for_test(&db, recipe(&request, &[])).unwrap();
     assert!(
         execute_recorded(&run, &target, &plugin_job::JobControl::new(), || {
             std::fs::write(&target, b"file created by another process").unwrap();
@@ -167,7 +170,7 @@ fn failed_generation_is_reachable_in_durable_history_without_an_image() {
     let db = dir.path().join("trace.sqlite");
     let request = request(dir.path(), None);
     let target = validate_request(&request).unwrap();
-    let run = trace::begin_operation_for_test(&db, recipe(&request, None)).unwrap();
+    let run = trace::begin_operation_for_test(&db, recipe(&request, &[])).unwrap();
     assert!(
         execute_recorded(&run, &target, &plugin_job::JobControl::new(), || Err(
             invalid("provider failure")
@@ -186,7 +189,7 @@ fn cancellation_while_waiting_for_provider_prevents_output_publication() {
     let db = dir.path().join("trace.sqlite");
     let request = request(dir.path(), None);
     let target = validate_request(&request).unwrap();
-    let run = trace::begin_operation_for_test(&db, recipe(&request, None)).unwrap();
+    let run = trace::begin_operation_for_test(&db, recipe(&request, &[])).unwrap();
     let control = plugin_job::JobControl::new();
     assert!(execute_recorded(&run, &target, &control, || {
         assert!(control.cancel());
@@ -204,7 +207,7 @@ fn published_output_is_reported_as_success_when_trace_completion_needs_recovery(
     let db = dir.path().join("trace.sqlite");
     let request = request(dir.path(), None);
     let target = validate_request(&request).unwrap();
-    let run = trace::begin_operation_for_test(&db, recipe(&request, None)).unwrap();
+    let run = trace::begin_operation_for_test(&db, recipe(&request, &[])).unwrap();
     let control = plugin_job::JobControl::new();
     let outcome = execute_with_completion(
         &run,
@@ -332,7 +335,7 @@ fn http_generation_uses_the_official_json_contract_and_decodes_the_result() {
     let dir = tempfile::tempdir().unwrap();
     let request = request(dir.path(), None);
     let (root, server) = server(response());
-    let image = request_image(&root, &request, None, TEST_KEY).unwrap();
+    let image = request_image(&root, &request, &[], TEST_KEY).unwrap();
     let (headers, bytes) = server.join().unwrap();
     assert!(headers.starts_with("POST /generations HTTP/1.1"));
     assert!(headers
@@ -351,20 +354,52 @@ fn http_edit_uploads_captured_bytes_with_no_original_filename_in_the_wire_format
     let dir = tempfile::tempdir().unwrap();
     let source = dir.path().join("private-name.png");
     std::fs::write(&source, PNG).unwrap();
-    let request = request(dir.path(), Some(&source));
-    let input = capture_input(request.source_path.as_deref())
-        .unwrap()
-        .unwrap();
+    let reference = dir.path().join("private-reference.png");
+    let reference_bytes = include_bytes!("../icons/128x128.png");
+    std::fs::write(&reference, reference_bytes).unwrap();
+    let mut request = request(dir.path(), Some(&source));
+    request.reference_paths = vec![reference.to_string_lossy().into_owned()];
+    let inputs = capture_inputs(&request).unwrap();
     let (root, server) = server(response());
-    request_image(&root, &request, Some(&input), TEST_KEY).unwrap();
+    request_image(&root, &request, &inputs, TEST_KEY).unwrap();
     let (headers, bytes) = server.join().unwrap();
     assert!(headers.starts_with("POST /edits HTTP/1.1"));
     assert!(headers
         .to_ascii_lowercase()
         .contains("content-type: multipart/form-data; boundary="));
     let wire = String::from_utf8_lossy(&bytes);
-    assert!(wire.contains("name=\"image[]\"; filename=\"source.png\""));
+    assert!(wire.contains("name=\"image[]\"; filename=\"source-1.png\""));
+    assert!(wire.contains("name=\"image[]\"; filename=\"source-2.png\""));
+    assert!(!wire.contains("private-reference"));
+    assert!(bytes
+        .windows(reference_bytes.len())
+        .any(|window| window == reference_bytes));
     assert!(!wire.contains("private-name"));
     assert!(bytes.windows(PNG.len()).any(|window| window == PNG));
     assert!(wire.contains(&request.prompt));
+    assert!(wire.contains("Edit image 1, the primary target"));
+    assert!(wire.contains("Images 2 through 2 are ordered references"));
+    assert_eq!(
+        recipe(&request, &inputs).parameters["submitted_prompt"],
+        api_prompt(&request, 2)
+    );
+}
+
+#[test]
+fn reference_inputs_require_a_target_and_cannot_repeat_or_exceed_limits() {
+    let dir = tempfile::tempdir().unwrap();
+    let source = dir.path().join("source.png");
+    std::fs::write(&source, PNG).unwrap();
+    let mut request = request(dir.path(), None);
+    request.reference_paths = vec![source.to_string_lossy().into_owned()];
+    assert!(validate_request(&request).is_err());
+    request.source_path = Some(source.to_string_lossy().into_owned());
+    assert!(capture_inputs(&request).is_err());
+    request.reference_paths = vec!["/unused.png".into(); 8];
+    assert!(validate_request(&request).is_err());
+    assert!(capture_inputs(&request).is_err());
+    request.reference_paths = vec![];
+    request.backend = ImageBackend::Codex;
+    request.quality = "high".into();
+    assert!(validate_request(&request).is_err());
 }

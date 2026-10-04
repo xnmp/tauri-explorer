@@ -11,14 +11,20 @@
   interface Props {
     open: boolean;
     sourcePath: string | null;
+    referencePaths?: string[];
     outputDir: string;
     apiKey: string;
+    initialBackend?: "codex" | "api_key";
     jobs: PluginJobs;
     toast: PluginToast;
     onOpenSettings: () => void;
     onClose: () => void;
   }
-  let { open, sourcePath, outputDir, apiKey, jobs, toast, onOpenSettings, onClose }: Props = $props();
+  let { open, sourcePath, referencePaths = [], outputDir, apiKey, initialBackend = "codex", jobs, toast, onOpenSettings, onClose }: Props = $props();
+  let editTarget = $state<string | null>(null);
+  const inputPaths = $derived(sourcePath ? [sourcePath, ...referencePaths] : []);
+  const references = $derived(inputPaths.filter((path) => path !== editTarget));
+  let backend = $state<"codex" | "api_key">("codex");
   let prompt = $state("");
   let outputFilename = $state("");
   let model = $state<OpenAIImageRequest["model"]>("gpt-image-2");
@@ -35,6 +41,8 @@
     prompt = "";
     outputFilename = "";
     submitting = false;
+    backend = initialBackend;
+    editTarget = sourcePath;
     const name = sourcePath ? basename(sourcePath).replace(/\.[^.]+$/, ".png") : "image.png";
     findAvailableFilename(outputDir, name, sourcePath ? "_edit" : "_generated", checkPathsExist)
       .then((name) => { if (active) outputFilename = name; })
@@ -48,7 +56,11 @@
     submitting = true;
     const result = await jobs.accept(
       { kind: "openai-image", label: outputFilename, detail: prompt.trim() },
-      () => startOpenAIImageJob({ sourcePath, outputDir, prompt: prompt.trim(), outputFilename: outputFilename.trim(), model, size, quality, background }, apiKey),
+      () => startOpenAIImageJob({ sourcePath: editTarget, referencePaths: references, outputDir, prompt: prompt.trim(), outputFilename: outputFilename.trim(), backend,
+        model: backend === "codex" ? "gpt-image-2" : model,
+        size: backend === "codex" ? "auto" : size,
+        quality: backend === "codex" ? "auto" : quality,
+        background: backend === "codex" ? "auto" : background }, backend === "api_key" ? apiKey : ""),
     );
     if (result.ok) {
       toast.show(`OpenAI image job started: ${outputFilename}`, "info");
@@ -75,12 +87,28 @@
     </header>
     <form onsubmit={(event) => { event.preventDefault(); void submit(); }}>
       <div class="dialog-body">
-      <div class="file-info"><span class="file-label">{sourcePath ? "Source:" : "Folder:"}</span><span class="file-name" title={sourcePath ?? outputDir}>{sourcePath ? basename(sourcePath) : outputDir}</span></div>
+      <div class="file-info"><span class="file-label">{editTarget ? "Source:" : "Folder:"}</span><span class="file-name" title={editTarget ?? outputDir}>{editTarget ? basename(editTarget) : outputDir}</span></div>
+      {#if inputPaths.length > 1}
+        <div class="prompt-field">
+          <label for="openai-image-target" class="prompt-label">Edit target</label>
+          <select id="openai-image-target" class="model-select" bind:value={editTarget} disabled={submitting}>
+            {#each inputPaths as path}<option value={path}>{basename(path)}</option>{/each}
+          </select>
+          <p class="note">References, in order: {references.map(basename).join(", ")}. All inputs are recorded as parents in Trace.</p>
+        </div>
+      {/if}
+      <div class="prompt-field">
+        <label for="openai-image-backend" class="prompt-label">Connection</label>
+        <select id="openai-image-backend" class="model-select" bind:value={backend} disabled={submitting}>
+          <option value="codex">Codex · existing ChatGPT sign-in</option>
+          <option value="api_key">OpenAI API key</option>
+        </select>
+      </div>
       <div class="prompt-field">
         <label for="openai-image-prompt" class="prompt-label">{sourcePath ? "Edit prompt" : "Image prompt"}</label>
         <textarea id="openai-image-prompt" class="prompt-input" rows="4" maxlength="16000" bind:value={prompt} bind:this={promptRef} disabled={submitting} required placeholder={sourcePath ? "Describe the changes and what should stay the same…" : "Describe the image you want to create…"}></textarea>
       </div>
-      <div class="prompt-field">
+      {#if backend === "api_key"}<div class="prompt-field">
         <label for="openai-image-model" class="prompt-label">Model</label>
         <select id="openai-image-model" class="model-select" bind:value={model} disabled={submitting}>
           <option value="gpt-image-2">GPT Image 2 · Codex image model</option>
@@ -108,15 +136,16 @@
           <option value="auto">Automatic</option><option value="opaque">Opaque</option><option value="transparent">Transparent</option>
         </select>
       </div>
+      {:else}<p class="note">Uses Codex's built-in image model and defaults. Describe size, composition, and background in your prompt.</p>{/if}
       <div class="prompt-field">
         <label for="openai-image-output" class="prompt-label">Output filename (.png)</label>
         <input id="openai-image-output" class="prompt-input" bind:value={outputFilename} disabled={submitting} required />
       </div>
       </div>
       <footer>
-      <p class="note">Uses your OpenAI API key and incurs API charges. The prompt, settings, and output are recorded in Trace.</p>
+      <p class="note">{backend === "codex" ? "Uses your saved Codex ChatGPT sign-in and counts toward Codex usage limits. Requires the Codex CLI." : "Uses your OpenAI API key and incurs API charges."} The prompt and output are recorded in Trace.</p>
       <div class="dialog-actions">
-        <button class="btn btn-secondary" type="button" onclick={() => { onClose(); onOpenSettings(); }}>API key settings</button>
+        <button class="btn btn-secondary" type="button" onclick={() => { onClose(); onOpenSettings(); }}>Connection settings</button>
         <button class="btn btn-primary" type="submit" disabled={!prompt.trim() || !outputFilename.trim() || submitting}>{submitting ? "Starting…" : sourcePath ? "Generate edit" : "Generate image"}</button>
       </div>
       </footer>

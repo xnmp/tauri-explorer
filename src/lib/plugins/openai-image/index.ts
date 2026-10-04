@@ -7,16 +7,16 @@ import OpenAIImageHistory from "./OpenAIImageHistory.svelte";
 
 const DIALOG_ID = "openai-image.create";
 const singleLocal = (entries: FileEntry[]) => entries.length === 1 && !isVirtualPath(entries[0].path) ? entries[0] : null;
-const image = (entries: FileEntry[]) => {
-  const entry = singleLocal(entries);
-  return entry?.kind === "file" && /\.(png|jpe?g|webp)$/i.test(entry.name) ? entry : null;
-};
+const images = (entries: FileEntry[]): FileEntry[] => entries.length > 0 && entries.length <= 8
+  && new Set(entries.map((entry) => entry.path)).size === entries.length
+  && entries.every((entry) => entry.kind === "file" && !isVirtualPath(entry.path) && /\.(png|jpe?g|webp)$/i.test(entry.name)) ? entries : [];
 
-async function open(ctx: PluginContext, sourcePath: string | null, outputDir: string): Promise<void> {
+async function open(ctx: PluginContext, sourcePath: string | null, outputDir: string, referencePaths: string[] = []): Promise<void> {
   const settings = await ctx.storage.get();
   ctx.openDialog(DIALOG_ID, {
-    sourcePath, outputDir,
+    sourcePath, referencePaths, outputDir,
     apiKey: typeof settings.apiKey === "string" ? settings.apiKey : "",
+    initialBackend: settings.backend === "api_key" ? "api_key" : "codex",
     jobs: ctx.jobs, toast: ctx.toast,
     onOpenSettings: () => ctx.openSettings(),
   });
@@ -30,8 +30,11 @@ export const openAIImagePlugin: Plugin = {
   activate(ctx) {
     ctx.registerSettingsSection({
       id: "openai-image", title: "AI / OpenAI Images",
-      rows: [{ id: "apiKey", label: "OpenAI API Key", type: "password",
-        description: "Used for paid image generation and edits. Leave blank to use OPENAI_API_KEY from the app environment." }],
+      rows: [{ id: "backend", label: "Image connection", type: "select", default: "codex",
+        options: [{ value: "codex", label: "Codex ChatGPT sign-in" }, { value: "api_key", label: "OpenAI API key" }],
+        description: "Codex mode uses the installed Codex CLI and its existing ChatGPT sign-in." },
+        { id: "apiKey", label: "OpenAI API Key", type: "password",
+        description: "Used in API key mode. Leave blank to use OPENAI_API_KEY from the app environment." }],
     });
     ctx.registerDialog({ id: DIALOG_ID, component: OpenAIImageDialog });
     ctx.registerDialog({ id: "openai-image.history", component: OpenAIImageHistory });
@@ -41,10 +44,10 @@ export const openAIImagePlugin: Plugin = {
     });
     ctx.registerContextMenuItem({
       id: "openai-image.edit", label: "Edit with OpenAI", group: "ai",
-      when: (entries) => image(entries) !== null,
+      when: (entries) => images(entries).length > 0,
       handler: (entries) => {
-        const selected = image(entries);
-        if (selected) return open(ctx, selected.path, parentDir(selected.path));
+        const selected = images(entries);
+        if (selected.length) return open(ctx, selected[0].path, parentDir(selected[0].path), selected.slice(1).map((entry) => entry.path));
       },
     });
     ctx.registerContextMenuItem({
@@ -58,9 +61,9 @@ export const openAIImagePlugin: Plugin = {
     ctx.registerCommand({
       id: "plugin.openai-image.edit", label: "OpenAI: Edit Image…", category: "plugins",
       handler: () => {
-        const selected = image(ctx.workspace.getSelection());
-        if (selected) return open(ctx, selected.path, parentDir(selected.path));
-        ctx.toast.show("Select a PNG, JPEG, or WebP image first", "info");
+        const selected = images(ctx.workspace.getSelection());
+        if (selected.length) return open(ctx, selected[0].path, parentDir(selected[0].path), selected.slice(1).map((entry) => entry.path));
+        ctx.toast.show("Select one to eight PNG, JPEG, or WebP images first", "info");
       },
     });
     ctx.registerCommand({

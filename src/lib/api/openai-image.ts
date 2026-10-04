@@ -13,7 +13,9 @@ export async function recentOpenAIImageRuns(): Promise<ApiResult<OpenAIImageRunH
 }
 
 export interface OpenAIImageRequest {
+  backend?: "codex" | "api_key";
   sourcePath: string | null;
+  referencePaths?: string[];
   prompt: string;
   outputDir: string;
   outputFilename: string;

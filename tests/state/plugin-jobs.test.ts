@@ -26,6 +26,16 @@ function fixture() {
 }
 
 describe("window-owned plugin jobs", () => {
+  it("reports a published OpenAI image as complete and displays its pending Trace warning", async () => {
+    const f = fixture();
+    await f.controller.init();
+    f.controller.register({ kind: "openai-image", id: 42, label: "image.png", detail: "lantern" });
+    f.handlers.get("openai-image-complete")!({ jobId: 42, outputPath: "/out/image.png", warning: "Trace completion pending" });
+    expect(f.completed).toEqual([{ id: 42, outputPath: "/out/image.png" }]);
+    expect(f.failed).toEqual([]);
+    expect(f.successes).toEqual(["OpenAI image complete: image.png. Trace completion pending"]);
+    expect(f.refreshes).toBe(1);
+  });
   it("reconciles completion before invoke returns the job id", async () => {
     const f = fixture();
     await f.controller.init();
@@ -86,7 +96,7 @@ describe("window-owned plugin jobs", () => {
     expect(startResult.status).toBe("rejected");
     handlers.forEach((handler) => handler({ jobId: 3, outputPath: "/late.png" }));
 
-    expect(unlisten).toHaveBeenCalledTimes(4);
+    expect(unlisten).toHaveBeenCalledTimes(6);
     expect(complete).not.toHaveBeenCalled();
   });
 
@@ -130,7 +140,7 @@ describe("window-owned plugin jobs", () => {
 
     expect(result).toMatchObject({ ok: false });
     expect(start).not.toHaveBeenCalled();
-    expect(unlisten).toHaveBeenCalledTimes(3);
+    expect(unlisten).toHaveBeenCalledTimes(5);
   });
 
   it("drains an in-flight start before ending listener ownership", async () => {

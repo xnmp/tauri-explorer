@@ -4,7 +4,7 @@
   variable-height lists (offsets become prefix sums, lookup a binary search).
 -->
 <script lang="ts" generics="T">
-  import { onDestroy, tick, type Snippet } from "svelte";
+  import { getAbortSignal, onDestroy, tick, type Snippet } from "svelte";
   import {
     computeOffsets,
     firstVisibleIndex,
@@ -44,6 +44,8 @@
     onnearend?: () => void;
     /** Called after scrolled rows have reached the DOM, for viewport hit testing. */
     onviewportscroll?: () => void;
+    /** Called after viewport/row geometry updates reach the virtual DOM. */
+    onlayoutchange?: () => void;
   }
 
   let {
@@ -65,11 +67,24 @@
     viewportPadding,
     onnearend,
     onviewportscroll,
+    onlayoutchange,
   }: Props = $props();
 
   let viewportRef = $state<HTMLElement | null>(null);
   let viewportHeight = $state(0);
   let scrollTop = $state(0);
+
+  $effect(() => {
+    if (!onlayoutchange || viewportHeight <= 0) return;
+    // Item changes cover grid reflow; height changes cover pane resizing.
+    void items;
+    void itemHeight;
+    void getItemHeight;
+    const signal = getAbortSignal();
+    void tick().then(() => {
+      if (!signal.aborted && viewportRef?.isConnected) onlayoutchange?.();
+    });
+  });
 
   // Buffer: render extra items above/below for smooth scrolling
   const BUFFER = 3;
@@ -165,16 +180,9 @@
     }
   });
 
-  const paddingTop = $derived(
-    layout ? (layout.offsets[startIndex] ?? 0) : startIndex * itemHeight
-  );
-  const paddingBottom = $derived.by(() => {
-    if (layout) {
-      const endOffset = endIndex < items.length ? layout.offsets[endIndex] : layout.totalHeight;
-      return Math.max(0, layout.totalHeight - endOffset);
-    }
-    return Math.max(0, (items.length - endIndex) * itemHeight);
-  });
+  // A persistent extent prevents native scroll clamping while keyed rows
+  // are replaced. Separate spacers can briefly expose a shorter document.
+  const totalHeight = $derived(layout ? layout.totalHeight : items.length * itemHeight);
 </script>
 
 <!-- svelte-ignore a11y_no_noninteractive_tabindex -- Callers provide the composite role and use the viewport as a focus fallback for an unmounted cursor. -->
@@ -188,11 +196,12 @@
   aria-label={ariaLabel} aria-rowcount={ariaRowCount} aria-colcount={ariaColCount}
   aria-multiselectable={ariaMultiselectable}
 >
-  <div class="virtual-spacer-top" style:height="{paddingTop}px" aria-hidden="true"></div>
+  <div class="virtual-canvas" style:height="{totalHeight}px">
 
   {#each visibleItems as { item, index, key } (key)}
     <div
       class="virtual-item"
+      style:top="{layout ? layout.offsets[index] : index * itemHeight}px"
       style:height="{layout ? heightAt(index) : itemHeight}px"
       style:overflow={itemOverflow}
       role={role ? "presentation" : undefined}
@@ -201,7 +210,7 @@
     </div>
   {/each}
 
-  <div class="virtual-spacer-bottom" style:height="{paddingBottom}px" aria-hidden="true"></div>
+  </div>
 </div>
 
 <style>
@@ -211,12 +220,15 @@
     overflow-x: hidden;
   }
 
-  .virtual-item {
-    overflow: hidden;
+  .virtual-canvas {
+    position: relative;
+    flex-shrink: 0;
   }
 
-  .virtual-spacer-top,
-  .virtual-spacer-bottom {
-    pointer-events: none;
+  .virtual-item {
+    position: absolute;
+    left: 0;
+    right: 0;
+    overflow: hidden;
   }
 </style>

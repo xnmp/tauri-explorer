@@ -42,6 +42,7 @@ rusqlite = { version = "0.40.2", features = ["bundled"] }
 trash = "5"
 chrono = { version = "0.4", features = ["serde"] }
 dirs = "7"
+dunce = "1"
 opener = "0.8"
 nucleo-matcher = "0.3"
 jwalk = "0.9"

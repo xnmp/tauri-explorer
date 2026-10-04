@@ -244,9 +244,31 @@ pub(crate) struct SavePlan {
     source: PathBuf,
     target: PathBuf,
     request: SaveRequest,
+    trace_run: Option<crate::trace::TraceRunHandle>,
 }
 
 impl SavePlan {
+    /// The initial Trace producer covers copy publication. Durable replacement
+    /// uses a different recovery journal whose published identity is not yet
+    /// available to Trace's crash reconciler.
+    pub(crate) fn trace_eligible(&self) -> bool {
+        matches!(self.request.destination, Destination::Copy { .. })
+    }
+
+    pub(crate) fn with_trace_run(mut self, run: Option<crate::trace::TraceRunHandle>) -> Self {
+        self.trace_run = run;
+        self
+    }
+
+    pub(crate) fn trace_metadata(&self) -> crate::trace::CropMetadata {
+        crate::trace::CropMetadata {
+            source_path: self.source.to_string_lossy().into_owned(),
+            source_digest: self.request.revision.digest.clone(),
+            rect: self.request.rect,
+            viewport: self.request.viewport,
+        }
+    }
+
     pub(crate) fn new(request: SaveRequest) -> Result<Self, AppError> {
         let source = PathBuf::from(&request.path);
         if !source.is_absolute() {
@@ -304,6 +326,7 @@ impl SavePlan {
             source,
             target,
             request,
+            trace_run: None,
         })
     }
     pub(crate) fn affected_dirs(&self) -> Vec<String> {
@@ -323,6 +346,7 @@ impl SavePlan {
             self.request.rect,
             Some(self.request.viewport),
         )?;
+        let output_digest = hex::encode(Sha256::digest(&encoded));
         // Unsupported codecs and invalid crops fail before any filesystem effect.
         drop(bytes);
         verify_source(&self.source, &self.request.revision)?;
@@ -333,7 +357,7 @@ impl SavePlan {
         #[cfg(target_os = "linux")]
         let parent_identity =
             super::file_identity::of_file(&super::native_directory::Directory::open(parent)?.file)?;
-        let stage = super::publication::StagedEntry::prepare(parent, |path| {
+        let mut stage = super::publication::StagedEntry::prepare(parent, |path| {
             let mut writer = fs::OpenOptions::new()
                 .create_new(true)
                 .write(true)
@@ -345,9 +369,37 @@ impl SavePlan {
         })?;
         verify_source(&self.source, &self.request.revision)?;
         #[cfg(target_os = "linux")]
-        if matches!(self.request.destination, Destination::Replace)
-            && super::recovery::Runtime::DURABLE
-        {
+        let durable_replace = matches!(self.request.destination, Destination::Replace)
+            && super::recovery::Runtime::DURABLE;
+        if let Some(run) = &self.trace_run {
+            let anchor = if matches!(&self.request.destination, Destination::Copy { .. }) {
+                match stage.trace_anchor() {
+                    Ok(path) => Some(path),
+                    Err(error) => {
+                        log::warn!("Trace could not retain staged crop evidence: {error}");
+                        None
+                    }
+                }
+            } else {
+                // Linux durable replacement copies into a separate recovery
+                // journal. Its publisher identity is not this staged object.
+                None
+            };
+            match crate::trace::prepare_crop_output(
+                run,
+                &self.target,
+                &output_digest,
+                anchor.as_deref(),
+            ) {
+                Ok(()) if anchor.is_some() => stage.retain_trace_anchor(),
+                Ok(()) => {}
+                Err(error) => {
+                    log::warn!("Trace could not prepare crop publication evidence: {error}");
+                }
+            }
+        }
+        #[cfg(target_os = "linux")]
+        if durable_replace {
             // Keep the independent generated source and its parent alive through
             // displacement AND publication. Completed Undo owns journal artifacts.
             return runtime.replace_generated(
@@ -375,7 +427,7 @@ impl SavePlan {
                 ))
             }
         };
-        match self.request.destination {
+        let receipt = match self.request.destination {
             Destination::Copy { .. } => publish(),
             Destination::Replace => {
                 let (mut receipt, displaced) = super::replacement::replace_verified(
@@ -389,7 +441,8 @@ impl SavePlan {
                 displaced.discard();
                 Ok(receipt)
             }
-        }
+        }?;
+        Ok(receipt)
     }
 }
 
@@ -435,6 +488,16 @@ pub(crate) struct Outcome {
     pub(crate) completion: super::WorkerCompletion<super::mutation::FileMutationReceipt>,
     pub(crate) affected: Vec<String>,
 }
+
+fn completed(
+    completion: super::WorkerCompletion<super::mutation::FileMutationReceipt>,
+    affected: Vec<String>,
+) -> Outcome {
+    Outcome {
+        completion,
+        affected,
+    }
+}
 impl super::admission::Settle for Outcome {
     fn refused(error: AppError) -> Self {
         Self {
@@ -465,10 +528,7 @@ pub(crate) async fn execute(plan: SavePlan, runtime: &super::admission::Runtime)
             work.0.take().expect("crop executes once").execute(&work.1)
         })
         .await;
-        return Outcome {
-            completion,
-            affected,
-        };
+        return completed(completion, affected);
     }
     super::admission::admitted_execute(plan, runtime, move |plan, owner| async move {
         let affected = plan.affected_dirs();
@@ -476,10 +536,7 @@ pub(crate) async fn execute(plan: SavePlan, runtime: &super::admission::Runtime)
             work.0.take().expect("crop executes once").execute(&work.1)
         })
         .await;
-        Outcome {
-            completion,
-            affected,
-        }
+        completed(completion, affected)
     })
     .await
 }

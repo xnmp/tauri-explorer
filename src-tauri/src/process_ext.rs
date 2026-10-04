@@ -10,7 +10,7 @@
 use std::io::Read;
 use std::process::{Command, Output, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use crate::error::AppError;
 
@@ -44,7 +44,22 @@ pub fn output_cancellable(
     cancelled: &AtomicBool,
     cancel_message: &'static str,
 ) -> Result<Output, AppError> {
-    if cancelled.load(Ordering::Relaxed) {
+    output_controlled(
+        command,
+        || cancelled.load(Ordering::Relaxed),
+        (usize::MAX, usize::MAX),
+        cancel_message,
+    )
+}
+
+/// Bounded subprocess output with the same cancellation/process-tree ownership.
+pub(crate) fn output_controlled(
+    command: &mut Command,
+    cancelled: impl Fn() -> bool,
+    limits: (usize, usize),
+    cancel_message: &'static str,
+) -> Result<Output, AppError> {
+    if cancelled() {
         return Err(AppError::Other(cancel_message.into()));
     }
 
@@ -71,26 +86,44 @@ pub fn output_cancellable(
         .stderr
         .take()
         .ok_or_else(|| AppError::Other("child stderr pipe unavailable".into()))?;
-    let stdout_reader = std::thread::spawn(move || {
-        let mut bytes = Vec::new();
-        stdout.read_to_end(&mut bytes).map(|_| bytes)
-    });
-    let stderr_reader = std::thread::spawn(move || {
-        let mut bytes = Vec::new();
-        stderr.read_to_end(&mut bytes).map(|_| bytes)
-    });
+    let overflow = std::sync::Arc::new(AtomicBool::new(false));
+    let stdout_overflow = overflow.clone();
+    let stderr_overflow = overflow.clone();
+    let stdout_reader =
+        std::thread::spawn(move || read_bounded(&mut stdout, limits.0, &stdout_overflow));
+    let stderr_reader =
+        std::thread::spawn(move || read_bounded(&mut stderr, limits.1, &stderr_overflow));
 
+    let mut exited = None;
     loop {
-        if cancelled.load(Ordering::Relaxed) {
+        if cancelled() || overflow.load(Ordering::Relaxed) {
             terminate_process_tree(&mut child, pid);
             let _ = child.wait();
-            let _ = stdout_reader.join();
-            let _ = stderr_reader.join();
-            return Err(AppError::Other(cancel_message.into()));
+            drain_readers(stdout_reader, stderr_reader);
+            return Err(AppError::Other(
+                if overflow.load(Ordering::Relaxed) {
+                    "Child output exceeded its limit"
+                } else {
+                    cancel_message
+                }
+                .into(),
+            ));
         }
 
-        match child.try_wait() {
-            Ok(Some(status)) => {
+        if exited.is_none() {
+            match child.try_wait() {
+                Ok(Some(status)) => exited = Some((status, Instant::now())),
+                Ok(None) => {}
+                Err(error) => {
+                    terminate_process_tree(&mut child, pid);
+                    let _ = child.wait();
+                    drain_readers(stdout_reader, stderr_reader);
+                    return Err(AppError::from(error));
+                }
+            }
+        }
+        if let Some((status, since)) = exited {
+            if stdout_reader.is_finished() && stderr_reader.is_finished() {
                 let stdout = stdout_reader
                     .join()
                     .map_err(|_| AppError::Other("child stdout reader panicked".into()))?
@@ -99,20 +132,60 @@ pub fn output_cancellable(
                     .join()
                     .map_err(|_| AppError::Other("child stderr reader panicked".into()))?
                     .map_err(AppError::from)?;
+                if overflow.load(Ordering::Relaxed) {
+                    return Err(AppError::Other("Child output exceeded its limit".into()));
+                }
                 return Ok(Output {
                     status,
                     stdout,
                     stderr,
                 });
             }
-            Ok(None) => std::thread::sleep(Duration::from_millis(10)),
-            Err(error) => {
+            // The launcher may exit while a descendant retains its pipes.
+            // Continue observing cancellation until EOF, then bound that drain.
+            if since.elapsed() >= Duration::from_secs(5) {
                 terminate_process_tree(&mut child, pid);
-                let _ = child.wait();
-                let _ = stdout_reader.join();
-                let _ = stderr_reader.join();
-                return Err(AppError::from(error));
+                drain_readers(stdout_reader, stderr_reader);
+                return Err(AppError::Other(
+                    "Child output pipes remained open after exit".into(),
+                ));
             }
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+}
+
+/// Never join a blocked pipe reader after termination: an independently
+/// detached descendant can hold a pipe even after the owned group is killed.
+fn drain_readers<T>(stdout: std::thread::JoinHandle<T>, stderr: std::thread::JoinHandle<T>) {
+    let deadline = Instant::now() + Duration::from_secs(1);
+    while !(stdout.is_finished() && stderr.is_finished()) && Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    if stdout.is_finished() {
+        let _ = stdout.join();
+    }
+    if stderr.is_finished() {
+        let _ = stderr.join();
+    }
+}
+
+fn read_bounded(
+    reader: &mut impl Read,
+    limit: usize,
+    overflow: &AtomicBool,
+) -> std::io::Result<Vec<u8>> {
+    let mut bytes = Vec::new();
+    let mut chunk = [0u8; 8192];
+    loop {
+        let count = reader.read(&mut chunk)?;
+        if count == 0 {
+            return Ok(bytes);
+        }
+        let remaining = limit.saturating_sub(bytes.len());
+        bytes.extend_from_slice(&chunk[..count.min(remaining)]);
+        if count > remaining {
+            overflow.store(true, Ordering::Relaxed);
         }
     }
 }
@@ -143,6 +216,8 @@ fn terminate_process_tree(child: &mut std::process::Child, pid: u32) {
 #[cfg(test)]
 mod tests {
     use super::output_cancellable;
+    #[cfg(unix)]
+    use super::output_controlled;
     use std::process::Command;
     use std::sync::atomic::AtomicBool;
     use std::sync::Arc;
@@ -203,5 +278,33 @@ mod tests {
 
         assert!(output.status.success());
         assert_eq!(String::from_utf8_lossy(&output.stdout), "observable-output");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn cancellation_remains_active_after_launcher_exits() {
+        let start = Instant::now();
+        let mut command = Command::new("sh");
+        command.args(["-c", "sleep 30 &"]);
+        let error = output_controlled(
+            &mut command,
+            || start.elapsed() >= Duration::from_millis(100),
+            (1024, 1024),
+            "cancelled inherited pipes",
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("cancelled inherited pipes"));
+        assert!(start.elapsed() < Duration::from_secs(3));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn excessive_output_terminates_the_owned_process_tree() {
+        let mut command = Command::new("sh");
+        command.args(["-c", "while :; do printf 'xxxxxxxxxxxxxxxx'; done & wait"]);
+        let start = Instant::now();
+        let error = output_controlled(&mut command, || false, (64, 64), "cancelled").unwrap_err();
+        assert!(error.to_string().contains("exceeded its limit"));
+        assert!(start.elapsed() < Duration::from_secs(3));
     }
 }

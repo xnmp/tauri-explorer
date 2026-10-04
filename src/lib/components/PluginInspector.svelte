@@ -20,9 +20,9 @@
 <style>
   .plugin-inspector {
     box-sizing: border-box;
-    flex: 0 0 clamp(240px, 22vw, 340px);
+    flex: 0 0 clamp(300px, 28vw, 380px);
     min-width: 0;
-    max-width: 40vw;
+    max-width: 45vw;
     overflow: auto;
     border-left: 1px solid var(--surface-stroke);
     background: var(--background-card);
@@ -35,7 +35,14 @@
     font-weight: 650;
   }
   section + section { border-top: 1px solid var(--surface-stroke); }
-  @media (max-width: 850px) {
-    .plugin-inspector { flex-basis: 240px; max-width: 42vw; }
+  @container explorer-workspace (max-width: 1000px) {
+    .plugin-inspector {
+      flex: 0 1 38%;
+      min-height: 0;
+      max-height: 38%;
+      max-width: none;
+      border-left: 0;
+      border-top: 1px solid var(--surface-stroke);
+    }
   }
 </style>

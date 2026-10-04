@@ -506,7 +506,8 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `src-tauri/src/clipboard/linux/mod.rs` — `wl-clipboard`/`xclip` CLI adapter shared by the Linux backends, and the Linux text/image reader.
 - `src-tauri/src/clipboard/linux/wayland.rs` — Wayland file-list backend: a held `wl-copy --foreground` owner per write proves Cut while it runs (#877), `wl-paste` reads; simulated-compositor lifecycle tests and an ignored real test for a private `cage` session.
 - `src-tauri/src/clipboard/linux/x11.rs` — X11 file-list backend: `clipboard-rs` multi-target owner with the private Cut token, `x11rb` selection owner; ignored real-Xvfb coordinator test.
-- `src-tauri/src/clipboard/macos.rs` — macOS backend/reader: `NSPasteboard` file writes with a private token type and `changeCount` Cut ownership (#877), `clipboard-rs` file reads, `pbpaste`, `osascript`, and the AppleScript PNG parser; ignored real-pasteboard test run by rust-platforms CI.
+- `src-tauri/src/clipboard/macos.rs` — macOS backend/reader: lossless Foundation file-URL encoding and ordered `NSPasteboard` item writes with a first-item private token and `changeCount` Cut ownership (#877), `clipboard-rs` file reads, `pbpaste`, `osascript`, and the AppleScript PNG parser; ignored real-pasteboard test run by rust-platforms CI.
+- `docs/reviews/846-macos-clipboard/README.md` — retained hosted native clipboard controls and positive ownership proof, including complete logs and source/dependency hashes.
 - `src-tauri/src/clipboard/windows.rs` — Windows backend: native Win32 `CF_HDROP` file-list reads/writes (no process start on the ordered Copy/Cut/Paste path, #912) with `GetClipboardSequenceNumber` and private-token-format read-back for Cut ownership (#877); PowerShell `System.Windows.Forms.Clipboard` text/image reader; ignored real-clipboard test run by rust-platforms CI.
 
 ### src-tauri/src/files/ — file operations module.

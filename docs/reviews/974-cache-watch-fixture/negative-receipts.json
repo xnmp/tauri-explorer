@@ -1,0 +1,812 @@
+{
+  "diagnostic_commit": "2591a52293a0f9c412e2701a377beb6f4cc6eb57",
+  "base_candidate": "e02fc1311f2432923d585a3daddd02c7187abb31",
+  "run": 37079577427,
+  "job": 111076913013,
+  "isolated_control": 10,
+  "exit_code": 101,
+  "failure": "establishing child coverage must not evict the unchanged parent listing; actual parent walks2, expected1",
+  "full_job_log_sha256": "05af41688116b223ec8d8379a77fb08298c26759fb229999809a022001ac25d3",
+  "fixture": {
+    "child": "/Users/runner/work/_temp/.tmpKaPrgv/.tmpyUqSVW/child",
+    "fixture_parent": "/Users/runner/work/_temp/.tmpKaPrgv",
+    "parent": "/Users/runner/work/_temp/.tmpKaPrgv/.tmpyUqSVW",
+    "path": "/Users/runner/work/_temp/.tmpKaPrgv/.tmpyUqSVW/child/deep/before-overlap.txt",
+    "watched": "/Users/runner/work/_temp/.tmpKaPrgv/.tmp8kqrfh"
+  },
+  "parent_lookup_observations": [
+    {
+      "sequence": 74,
+      "root_listing_present_before_ttl": false,
+      "age_ns": null,
+      "revision": 10,
+      "ttl_ms": 5000
+    },
+    {
+      "sequence": 101,
+      "root_listing_present_before_ttl": false,
+      "age_ns": null,
+      "revision": 11,
+      "ttl_ms": 5000
+    }
+  ],
+  "records_from_overlap_setup": [
+    {
+      "detail": {
+        "child": "/Users/runner/work/_temp/.tmpKaPrgv/.tmpyUqSVW/child",
+        "fixture_parent": "/Users/runner/work/_temp/.tmpKaPrgv",
+        "parent": "/Users/runner/work/_temp/.tmpKaPrgv/.tmpyUqSVW",
+        "path": "/Users/runner/work/_temp/.tmpKaPrgv/.tmpyUqSVW/child/deep/before-overlap.txt",
+        "watched": "/Users/runner/work/_temp/.tmpKaPrgv/.tmp8kqrfh"
+      },
+      "elapsed_ns": "35149083",
+      "event": "fixture_overlap_write",
+      "sequence": 62,
+      "thread": "ThreadId(2)"
+    },
+    {
+      "detail": {
+        "mode": "Direct",
+        "notice": {
+          "kind": "Invalidated",
+          "roots": [
+            "/Users/runner/work/_temp/.tmpKaPrgv/.tmpyUqSVW"
+          ]
+        }
+      },
+      "elapsed_ns": "39451250",
+      "event": "observation_notice",
+      "sequence": 63,
+      "thread": "ThreadId(7)"
+    },
+    {
+      "detail": {
+        "cache": "0x1039e1460",
+        "capacity": 4,
+        "listings": [
+          {
+            "age_ns": "4403625",
+            "entries": 5,
+            "root": "/Users/runner/work/_temp/.tmpKaPrgv/.tmp8kqrfh"
+          }
+        ],
+        "revision": null,
+        "root": "/Users/runner/work/_temp/.tmpKaPrgv/.tmpyUqSVW",
+        "ttl_ms": 5000
+      },
+      "elapsed_ns": "39478916",
+      "event": "invalidate_exact_root",
+      "sequence": 64,
+      "thread": "ThreadId(7)"
+    },
+    {
+      "detail": {
+        "mode": "Direct",
+        "notice": {
+          "kind": "Restored",
+          "refresh": false,
+          "roots": [
+            "/Users/runner/work/_temp/.tmpKaPrgv/.tmpyUqSVW"
+          ]
+        }
+      },
+      "elapsed_ns": "39522583",
+      "event": "observation_notice",
+      "sequence": 65,
+      "thread": "ThreadId(7)"
+    },
+    {
+      "detail": {
+        "mode": "Direct",
+        "notice": {
+          "kind": "Invalidated",
+          "roots": [
+            "/Users/runner/work/_temp/.tmpKaPrgv/.tmpyUqSVW/child"
+          ]
+        }
+      },
+      "elapsed_ns": "43196333",
+      "event": "observation_notice",
+      "sequence": 66,
+      "thread": "ThreadId(7)"
+    },
+    {
+      "detail": {
+        "cache": "0x1039e1460",
+        "capacity": 4,
+        "listings": [
+          {
+            "age_ns": "8140916",
+            "entries": 5,
+            "root": "/Users/runner/work/_temp/.tmpKaPrgv/.tmp8kqrfh"
+          }
+        ],
+        "revision": null,
+        "root": "/Users/runner/work/_temp/.tmpKaPrgv/.tmpyUqSVW/child",
+        "ttl_ms": 5000
+      },
+      "elapsed_ns": "43215333",
+      "event": "invalidate_exact_root",
+      "sequence": 67,
+      "thread": "ThreadId(7)"
+    },
+    {
+      "detail": {
+        "mode": "Direct",
+        "notice": {
+          "kind": "Restored",
+          "refresh": false,
+          "roots": [
+            "/Users/runner/work/_temp/.tmpKaPrgv/.tmpyUqSVW/child"
+          ]
+        }
+      },
+      "elapsed_ns": "43262208",
+      "event": "observation_notice",
+      "sequence": 68,
+      "thread": "ThreadId(7)"
+    },
+    {
+      "detail": {
+        "cache": "0x1039e1460",
+        "capacity": 4,
+        "listings": [
+          {
+            "age_ns": "8228833",
+            "entries": 5,
+            "root": "/Users/runner/work/_temp/.tmpKaPrgv/.tmp8kqrfh"
+          }
+        ],
+        "revision": 8,
+        "root": "/Users/runner/work/_temp/.tmpKaPrgv/.tmpyUqSVW",
+        "ttl_ms": 5000
+      },
+      "elapsed_ns": "43304708",
+      "event": "fixture_search_before",
+      "sequence": 69,
+      "thread": "ThreadId(2)"
+    },
+    {
+      "detail": {
+        "query": "before-overlap",
+        "root": "/Users/runner/work/_temp/.tmpKaPrgv/.tmpyUqSVW"
+      },
+      "elapsed_ns": "43320791",
+      "event": "fixture_search_query",
+      "sequence": 70,
+      "thread": "ThreadId(2)"
+    },
+    {
+      "detail": {
+        "mode": "Recursive",
+        "notice": {
+          "kind": "Invalidated",
+          "roots": [
+            "/Users/runner/work/_temp/.tmpKaPrgv/.tmpyUqSVW"
+          ]
+        }
+      },
+      "elapsed_ns": "46905791",
+      "event": "observation_notice",
+      "sequence": 71,
+      "thread": "ThreadId(20)"
+    },
+    {
+      "detail": {
+        "cache": "0x1039e1460",
+        "capacity": 4,
+        "listings": [
+          {
+            "age_ns": "11848333",
+            "entries": 5,
+            "root": "/Users/runner/work/_temp/.tmpKaPrgv/.tmp8kqrfh"
+          }
+        ],
+        "revision": 8,
+        "root": "/Users/runner/work/_temp/.tmpKaPrgv/.tmpyUqSVW",
+        "ttl_ms": 5000
+      },
+      "elapsed_ns": "46922958",
+      "event": "invalidate_exact_root",
+      "sequence": 72,
+      "thread": "ThreadId(20)"
+    },
+    {
+      "detail": {
+        "mode": "Recursive",
+        "notice": {
+          "kind": "Restored",
+          "refresh": false,
+          "roots": [
+            "/Users/runner/work/_temp/.tmpKaPrgv/.tmpyUqSVW"
+          ]
+        }
+      },
+      "elapsed_ns": "46967208",
+      "event": "observation_notice",
+      "sequence": 73,
+      "thread": "ThreadId(20)"
+    },
+    {
+      "detail": {
+        "cache": "0x1039e1460",
+        "capacity": 4,
+        "listings": [
+          {
+            "age_ns": "11914625",
+            "entries": 5,
+            "root": "/Users/runner/work/_temp/.tmpKaPrgv/.tmp8kqrfh"
+          }
+        ],
+        "revision": 10,
+        "root": "/Users/runner/work/_temp/.tmpKaPrgv/.tmpyUqSVW",
+        "ttl_ms": 5000
+      },
+      "elapsed_ns": "46989125",
+      "event": "completed_before_ttl",
+      "sequence": 74,
+      "thread": "ThreadId(20)"
+    },
+    {
+      "detail": {
+        "eligible": true,
+        "hit": false,
+        "load_revision": 10,
+        "root": "/Users/runner/work/_temp/.tmpKaPrgv/.tmpyUqSVW",
+        "search_id": 5
+      },
+      "elapsed_ns": "47005000",
+      "event": "stream_cache_decision",
+      "sequence": 75,
+      "thread": "ThreadId(20)"
+    },
+    {
+      "detail": {
+        "root": "/Users/runner/work/_temp/.tmpKaPrgv/.tmpyUqSVW",
+        "walk_count": 1
+      },
+      "elapsed_ns": "47024708",
+      "event": "stream_walk_started",
+      "sequence": 76,
+      "thread": "ThreadId(20)"
+    },
+    {
+      "detail": {
+        "cancelled": false,
+        "complete_entries": 3,
+        "load_revision": 10,
+        "root": "/Users/runner/work/_temp/.tmpKaPrgv/.tmpyUqSVW",
+        "search_id": 5,
+        "still_covered": true
+      },
+      "elapsed_ns": "47358916",
+      "event": "stream_publication_state",
+      "sequence": 77,
+      "thread": "ThreadId(20)"
+    },
+    {
+      "detail": {
+        "cache": "0x1039e1460",
+        "capacity": 4,
+        "listings": [
+          {
+            "age_ns": "12308958",
+            "entries": 5,
+            "root": "/Users/runner/work/_temp/.tmpKaPrgv/.tmp8kqrfh"
+          }
+        ],
+        "revision": 10,
+        "root": "/Users/runner/work/_temp/.tmpKaPrgv/.tmpyUqSVW",
+        "ttl_ms": 5000
+      },
+      "elapsed_ns": "47383625",
+      "event": "publish_attempt",
+      "sequence": 78,
+      "thread": "ThreadId(20)"
+    },
+    {
+      "detail": {
+        "cache": "0x1039e1460",
+        "entries": 3,
+        "load_revision": 10,
+        "root": "/Users/runner/work/_temp/.tmpKaPrgv/.tmpyUqSVW"
+      },
+      "elapsed_ns": "47397375",
+      "event": "publish_accepted",
+      "sequence": 79,
+      "thread": "ThreadId(20)"
+    },
+    {
+      "detail": {
+        "current_state": 1,
+        "event": "Ok(Event { kind: Create(File), paths: [\"/Users/runner/work/_temp/.tmpKaPrgv/.tmpyUqSVW/child/deep/before-overlap.txt\"], attr:tracker: None, attr:flag: None, attr:info: None, attr:source: None })",
+        "mode": "Recursive",
+        "received_state": 1,
+        "roots": [
+          "/Users/runner/work/_temp/.tmpKaPrgv/.tmpyUqSVW",
+          "/Users/runner/work/_temp/.tmpKaPrgv/.tmp8kqrfh"
+        ],
+        "source": "0x9c2c8c080"
+      },
+      "elapsed_ns": "47531166",
+      "event": "native_event_received",
+      "sequence": 80,
+      "thread": "ThreadId(21)"
+    },
+    {
+      "detail": {
+        "mode": "Recursive",
+        "notice": {
+          "kind": "Changed",
+          "names": true,
+          "path": "/Users/runner/work/_temp/.tmpKaPrgv/.tmpyUqSVW/child/deep/before-overlap.txt"
+        }
+      },
+      "elapsed_ns": "47556791",
+      "event": "observation_notice",
+      "sequence": 81,
+      "thread": "ThreadId(21)"
+    },
+    {
+      "detail": {
+        "affected": [
+          "/Users/runner/work/_temp/.tmpKaPrgv/.tmpyUqSVW",
+          "/Users/runner/work/_temp/.tmpKaPrgv/.tmpyUqSVW/child"
+        ],
+        "cache": "0x1039e1460",
+        "changed_path": "/Users/runner/work/_temp/.tmpKaPrgv/.tmpyUqSVW/child/deep/before-overlap.txt"
+      },
+      "elapsed_ns": "47569500",
+      "event": "invalidate_changed_path",
+      "sequence": 82,
+      "thread": "ThreadId(21)"
+    },
+    {
+      "detail": {
+        "cache": "0x1039e1460",
+        "capacity": 4,
+        "listings": [
+          {
+            "age_ns": "12520583",
+            "entries": 5,
+            "root": "/Users/runner/work/_temp/.tmpKaPrgv/.tmp8kqrfh"
+          },
+          {
+            "age_ns": "189833",
+            "entries": 3,
+            "root": "/Users/runner/work/_temp/.tmpKaPrgv/.tmpyUqSVW"
+          }
+        ],
+        "revision": 10,
+        "root": "/Users/runner/work/_temp/.tmpKaPrgv/.tmpyUqSVW",
+        "ttl_ms": 5000
+      },
+      "elapsed_ns": "47598708",
+      "event": "invalidate_changed_root",
+      "sequence": 83,
+      "thread": "ThreadId(21)"
+    },
+    {
+      "detail": {
+        "cache": "0x1039e1460",
+        "capacity": 4,
+        "listings": [
+          {
+            "age_ns": "12565958",
+            "entries": 5,
+            "root": "/Users/runner/work/_temp/.tmpKaPrgv/.tmp8kqrfh"
+          }
+        ],
+        "revision": 9,
+        "root": "/Users/runner/work/_temp/.tmpKaPrgv/.tmpyUqSVW/child",
+        "ttl_ms": 5000
+      },
+      "elapsed_ns": "47640958",
+      "event": "invalidate_changed_root",
+      "sequence": 84,
+      "thread": "ThreadId(21)"
+    },
+    {
+      "detail": {
+        "current_state": 1,
+        "event": "Ok(Event { kind: Modify(Data(Content)), paths: [\"/Users/runner/work/_temp/.tmpKaPrgv/.tmpyUqSVW/child/deep/before-overlap.txt\"], attr:tracker: None, attr:flag: None, attr:info: None, attr:source: None })",
+        "mode": "Recursive",
+        "received_state": 1,
+        "roots": [
+          "/Users/runner/work/_temp/.tmpKaPrgv/.tmpyUqSVW",
+          "/Users/runner/work/_temp/.tmpKaPrgv/.tmp8kqrfh"
+        ],
+        "source": "0x9c2c8c080"
+      },
+      "elapsed_ns": "47669625",
+      "event": "native_event_received",
+      "sequence": 85,
+      "thread": "ThreadId(21)"
+    },
+    {
+      "detail": {
+        "cache": "0x1039e1460",
+        "capacity": 4,
+        "listings": [
+          {
+            "age_ns": "12612875",
+            "entries": 5,
+            "root": "/Users/runner/work/_temp/.tmpKaPrgv/.tmp8kqrfh"
+          }
+        ],
+        "revision": 12,
+        "root": "/Users/runner/work/_temp/.tmpKaPrgv/.tmpyUqSVW/child",
+        "ttl_ms": 5000
+      },
+      "elapsed_ns": "47689625",
+      "event": "fixture_search_before",
+      "sequence": 86,
+      "thread": "ThreadId(2)"
+    },
+    {
+      "detail": {
+        "query": "before-overlap",
+        "root": "/Users/runner/work/_temp/.tmpKaPrgv/.tmpyUqSVW/child"
+      },
+      "elapsed_ns": "47702916",
+      "event": "fixture_search_query",
+      "sequence": 87,
+      "thread": "ThreadId(2)"
+    },
+    {
+      "detail": {
+        "mode": "Recursive",
+        "notice": {
+          "kind": "Invalidated",
+          "roots": [
+            "/Users/runner/work/_temp/.tmpKaPrgv/.tmpyUqSVW/child"
+          ]
+        }
+      },
+      "elapsed_ns": "51413708",
+      "event": "observation_notice",
+      "sequence": 88,
+      "thread": "ThreadId(22)"
+    },
+    {
+      "detail": {
+        "cache": "0x1039e1460",
+        "capacity": 4,
+        "listings": [
+          {
+            "age_ns": "16361250",
+            "entries": 5,
+            "root": "/Users/runner/work/_temp/.tmpKaPrgv/.tmp8kqrfh"
+          }
+        ],
+        "revision": 12,
+        "root": "/Users/runner/work/_temp/.tmpKaPrgv/.tmpyUqSVW/child",
+        "ttl_ms": 5000
+      },
+      "elapsed_ns": "51436041",
+      "event": "invalidate_exact_root",
+      "sequence": 89,
+      "thread": "ThreadId(22)"
+    },
+    {
+      "detail": {
+        "mode": "Recursive",
+        "notice": {
+          "kind": "Restored",
+          "refresh": false,
+          "roots": [
+            "/Users/runner/work/_temp/.tmpKaPrgv/.tmpyUqSVW/child"
+          ]
+        }
+      },
+      "elapsed_ns": "51463500",
+      "event": "observation_notice",
+      "sequence": 90,
+      "thread": "ThreadId(22)"
+    },
+    {
+      "detail": {
+        "cache": "0x1039e1460",
+        "capacity": 4,
+        "listings": [
+          {
+            "age_ns": "16406541",
+            "entries": 5,
+            "root": "/Users/runner/work/_temp/.tmpKaPrgv/.tmp8kqrfh"
+          }
+        ],
+        "revision": 13,
+        "root": "/Users/runner/work/_temp/.tmpKaPrgv/.tmpyUqSVW/child",
+        "ttl_ms": 5000
+      },
+      "elapsed_ns": "51482791",
+      "event": "completed_before_ttl",
+      "sequence": 91,
+      "thread": "ThreadId(22)"
+    },
+    {
+      "detail": {
+        "eligible": true,
+        "hit": false,
+        "load_revision": 13,
+        "root": "/Users/runner/work/_temp/.tmpKaPrgv/.tmpyUqSVW/child",
+        "search_id": 6
+      },
+      "elapsed_ns": "51507833",
+      "event": "stream_cache_decision",
+      "sequence": 92,
+      "thread": "ThreadId(22)"
+    },
+    {
+      "detail": {
+        "root": "/Users/runner/work/_temp/.tmpKaPrgv/.tmpyUqSVW/child",
+        "walk_count": 1
+      },
+      "elapsed_ns": "51521916",
+      "event": "stream_walk_started",
+      "sequence": 93,
+      "thread": "ThreadId(22)"
+    },
+    {
+      "detail": {
+        "cancelled": false,
+        "complete_entries": 2,
+        "load_revision": 13,
+        "root": "/Users/runner/work/_temp/.tmpKaPrgv/.tmpyUqSVW/child",
+        "search_id": 6,
+        "still_covered": true
+      },
+      "elapsed_ns": "51669625",
+      "event": "stream_publication_state",
+      "sequence": 94,
+      "thread": "ThreadId(22)"
+    },
+    {
+      "detail": {
+        "cache": "0x1039e1460",
+        "capacity": 4,
+        "listings": [
+          {
+            "age_ns": "16618625",
+            "entries": 5,
+            "root": "/Users/runner/work/_temp/.tmpKaPrgv/.tmp8kqrfh"
+          }
+        ],
+        "revision": 13,
+        "root": "/Users/runner/work/_temp/.tmpKaPrgv/.tmpyUqSVW/child",
+        "ttl_ms": 5000
+      },
+      "elapsed_ns": "51698791",
+      "event": "publish_attempt",
+      "sequence": 95,
+      "thread": "ThreadId(22)"
+    },
+    {
+      "detail": {
+        "cache": "0x1039e1460",
+        "entries": 2,
+        "load_revision": 13,
+        "root": "/Users/runner/work/_temp/.tmpKaPrgv/.tmpyUqSVW/child"
+      },
+      "elapsed_ns": "51717666",
+      "event": "publish_accepted",
+      "sequence": 96,
+      "thread": "ThreadId(22)"
+    },
+    {
+      "detail": {
+        "cache": "0x1039e1460",
+        "capacity": 4,
+        "listings": [
+          {
+            "age_ns": "16713125",
+            "entries": 5,
+            "root": "/Users/runner/work/_temp/.tmpKaPrgv/.tmp8kqrfh"
+          },
+          {
+            "age_ns": "61875",
+            "entries": 2,
+            "root": "/Users/runner/work/_temp/.tmpKaPrgv/.tmpyUqSVW/child"
+          }
+        ],
+        "revision": 11,
+        "root": "/Users/runner/work/_temp/.tmpKaPrgv/.tmpyUqSVW",
+        "ttl_ms": 5000
+      },
+      "elapsed_ns": "51790791",
+      "event": "fixture_after_child_parent",
+      "sequence": 97,
+      "thread": "ThreadId(2)"
+    },
+    {
+      "detail": {
+        "cache": "0x1039e1460",
+        "capacity": 4,
+        "listings": [
+          {
+            "age_ns": "16740250",
+            "entries": 5,
+            "root": "/Users/runner/work/_temp/.tmpKaPrgv/.tmp8kqrfh"
+          },
+          {
+            "age_ns": "89000",
+            "entries": 2,
+            "root": "/Users/runner/work/_temp/.tmpKaPrgv/.tmpyUqSVW/child"
+          }
+        ],
+        "revision": 13,
+        "root": "/Users/runner/work/_temp/.tmpKaPrgv/.tmpyUqSVW/child",
+        "ttl_ms": 5000
+      },
+      "elapsed_ns": "51817541",
+      "event": "fixture_after_child_child",
+      "sequence": 98,
+      "thread": "ThreadId(2)"
+    },
+    {
+      "detail": {
+        "cache": "0x1039e1460",
+        "capacity": 4,
+        "listings": [
+          {
+            "age_ns": "16773500",
+            "entries": 5,
+            "root": "/Users/runner/work/_temp/.tmpKaPrgv/.tmp8kqrfh"
+          },
+          {
+            "age_ns": "122125",
+            "entries": 2,
+            "root": "/Users/runner/work/_temp/.tmpKaPrgv/.tmpyUqSVW/child"
+          }
+        ],
+        "revision": 11,
+        "root": "/Users/runner/work/_temp/.tmpKaPrgv/.tmpyUqSVW",
+        "ttl_ms": 5000
+      },
+      "elapsed_ns": "51849916",
+      "event": "fixture_search_before",
+      "sequence": 99,
+      "thread": "ThreadId(2)"
+    },
+    {
+      "detail": {
+        "query": "before-overlap",
+        "root": "/Users/runner/work/_temp/.tmpKaPrgv/.tmpyUqSVW"
+      },
+      "elapsed_ns": "51865500",
+      "event": "fixture_search_query",
+      "sequence": 100,
+      "thread": "ThreadId(2)"
+    },
+    {
+      "detail": {
+        "cache": "0x1039e1460",
+        "capacity": 4,
+        "listings": [
+          {
+            "age_ns": "16894583",
+            "entries": 5,
+            "root": "/Users/runner/work/_temp/.tmpKaPrgv/.tmp8kqrfh"
+          },
+          {
+            "age_ns": "244750",
+            "entries": 2,
+            "root": "/Users/runner/work/_temp/.tmpKaPrgv/.tmpyUqSVW/child"
+          }
+        ],
+        "revision": 11,
+        "root": "/Users/runner/work/_temp/.tmpKaPrgv/.tmpyUqSVW",
+        "ttl_ms": 5000
+      },
+      "elapsed_ns": "51974125",
+      "event": "completed_before_ttl",
+      "sequence": 101,
+      "thread": "ThreadId(24)"
+    },
+    {
+      "detail": {
+        "eligible": true,
+        "hit": false,
+        "load_revision": 11,
+        "root": "/Users/runner/work/_temp/.tmpKaPrgv/.tmpyUqSVW",
+        "search_id": 7
+      },
+      "elapsed_ns": "51994583",
+      "event": "stream_cache_decision",
+      "sequence": 102,
+      "thread": "ThreadId(24)"
+    },
+    {
+      "detail": {
+        "root": "/Users/runner/work/_temp/.tmpKaPrgv/.tmpyUqSVW",
+        "walk_count": 2
+      },
+      "elapsed_ns": "52012000",
+      "event": "stream_walk_started",
+      "sequence": 103,
+      "thread": "ThreadId(24)"
+    },
+    {
+      "detail": {
+        "cancelled": false,
+        "complete_entries": 3,
+        "load_revision": 11,
+        "root": "/Users/runner/work/_temp/.tmpKaPrgv/.tmpyUqSVW",
+        "search_id": 7,
+        "still_covered": true
+      },
+      "elapsed_ns": "52191000",
+      "event": "stream_publication_state",
+      "sequence": 104,
+      "thread": "ThreadId(24)"
+    },
+    {
+      "detail": {
+        "cache": "0x1039e1460",
+        "capacity": 4,
+        "listings": [
+          {
+            "age_ns": "17140458",
+            "entries": 5,
+            "root": "/Users/runner/work/_temp/.tmpKaPrgv/.tmp8kqrfh"
+          },
+          {
+            "age_ns": "489167",
+            "entries": 2,
+            "root": "/Users/runner/work/_temp/.tmpKaPrgv/.tmpyUqSVW/child"
+          }
+        ],
+        "revision": 11,
+        "root": "/Users/runner/work/_temp/.tmpKaPrgv/.tmpyUqSVW",
+        "ttl_ms": 5000
+      },
+      "elapsed_ns": "52217375",
+      "event": "publish_attempt",
+      "sequence": 105,
+      "thread": "ThreadId(24)"
+    },
+    {
+      "detail": {
+        "cache": "0x1039e1460",
+        "entries": 3,
+        "load_revision": 11,
+        "root": "/Users/runner/work/_temp/.tmpKaPrgv/.tmpyUqSVW"
+      },
+      "elapsed_ns": "52236375",
+      "event": "publish_accepted",
+      "sequence": 106,
+      "thread": "ThreadId(24)"
+    },
+    {
+      "detail": {
+        "cache": "0x1039e1460",
+        "capacity": 4,
+        "listings": [
+          {
+            "age_ns": "17223166",
+            "entries": 5,
+            "root": "/Users/runner/work/_temp/.tmpKaPrgv/.tmp8kqrfh"
+          },
+          {
+            "age_ns": "52333",
+            "entries": 3,
+            "root": "/Users/runner/work/_temp/.tmpKaPrgv/.tmpyUqSVW"
+          },
+          {
+            "age_ns": "573333",
+            "entries": 2,
+            "root": "/Users/runner/work/_temp/.tmpKaPrgv/.tmpyUqSVW/child"
+          }
+        ],
+        "revision": 11,
+        "root": "/Users/runner/work/_temp/.tmpKaPrgv/.tmpyUqSVW",
+        "ttl_ms": 5000
+      },
+      "elapsed_ns": "52304750",
+      "event": "fixture_parent_reuse_complete",
+      "sequence": 107,
+      "thread": "ThreadId(2)"
+    }
+  ],
+  "scope": "Exact assertion reproduced with test-only diagnostic receipts. Original uninstrumented e02 native event sequence was not captured."
+}

@@ -1,0 +1,15 @@
+{
+  "mutation": "acknowledge all raw event paths after any actual Changed dispatch",
+  "cargo_exit": 101,
+  "original_sha256": "0667f328cc89748ac58c4f5f6e360e722801c7629af30c8c3aa3048098c3ebe5",
+  "mutated_sha256": "9b93c8697dad05acf154a3ce2c4f01f904c1d76d3b6eaecc4d8f37973823c861",
+  "test_failed_for_assertion": true,
+  "summary": [
+    "test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 1765 filtered out; finished in 0.00s"
+  ],
+  "test": "files::watch_observation::tests::native_receipts_acknowledge_only_paths_whose_invalidation_was_delivered",
+  "positive_cargo_exit": 0,
+  "positive_receipt_tests": 2,
+  "positive_log_sha256": "92a4262ae4cd2df9d76410da9ad1f9b139350f2e3e1dc00e15e1a2a29baa7d07",
+  "restored_source_sha256": "0667f328cc89748ac58c4f5f6e360e722801c7629af30c8c3aa3048098c3ebe5"
+}

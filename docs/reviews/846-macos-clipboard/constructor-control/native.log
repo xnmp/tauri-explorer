@@ -1,0 +1,45 @@
+[1m[92m    Finished[0m `test` profile [unoptimized + debuginfo] target(s) in 0.06s
+[1m[92m     Running[0m unittests src/lib.rs (docs/reviews/846-macos-clipboard-probe/target/debug/deps/native_macos_clipboard_probe-6769b52dd821b41c)
+
+running 1 test
+846-MAC-DIAG prepare input="/Users/runner/work/_temp/.tmp7L195r/cut me é.txt" input_bytes=[47, 85, 115, 101, 114, 115, 47, 114, 117, 110, 110, 101, 114, 47, 119, 111, 114, 107, 47, 95, 116, 101, 109, 112, 47, 46, 116, 109, 112, 55, 76, 49, 57, 53, 114, 47, 99, 117, 116, 32, 109, 101, 32, 195, 169, 46, 116, 120, 116] file_url=Some("file:///Users/runner/work/_temp/.tmp7L195r/cut%20me%20e%CC%81.txt") url_path=Some("/Users/runner/work/_temp/.tmp7L195r/cut me e\u{301}.txt")
+846-MAC-DIAG constructor=explicit_directory input="/Users/runner/work/_temp/.tmp7L195r/cut me é.txt" encoded=Some("file:///Users/runner/work/_temp/.tmp7L195r/cut%20me%20e%CC%81.txt") decoded=Some("/Users/runner/work/_temp/.tmp7L195r/cut me e\u{301}.txt") bytes=Some([47, 85, 115, 101, 114, 115, 47, 114, 117, 110, 110, 101, 114, 47, 119, 111, 114, 107, 47, 95, 116, 101, 109, 112, 47, 46, 116, 109, 112, 55, 76, 49, 57, 53, 114, 47, 99, 117, 116, 32, 109, 101, 32, 101, 204, 129, 46, 116, 120, 116]) exact=false
+846-MAC-DIAG constructor=components input="/Users/runner/work/_temp/.tmp7L195r/cut me é.txt" encoded=Some("file:///Users/runner/work/_temp/.tmp7L195r/cut%20me%20%C3%A9.txt") decoded=Some("/Users/runner/work/_temp/.tmp7L195r/cut me é.txt") bytes=Some([47, 85, 115, 101, 114, 115, 47, 114, 117, 110, 110, 101, 114, 47, 119, 111, 114, 107, 47, 95, 116, 101, 109, 112, 47, 46, 116, 109, 112, 55, 76, 49, 57, 53, 114, 47, 99, 117, 116, 32, 109, 101, 32, 195, 169, 46, 116, 120, 116]) exact=true
+846-MAC-DIAG prepare input="/Users/runner/work/_temp/.tmp7L195r/100% #?.md" input_bytes=[47, 85, 115, 101, 114, 115, 47, 114, 117, 110, 110, 101, 114, 47, 119, 111, 114, 107, 47, 95, 116, 101, 109, 112, 47, 46, 116, 109, 112, 55, 76, 49, 57, 53, 114, 47, 49, 48, 48, 37, 32, 35, 63, 46, 109, 100] file_url=Some("file:///Users/runner/work/_temp/.tmp7L195r/100%25%20%23%3F.md") url_path=Some("/Users/runner/work/_temp/.tmp7L195r/100% #?.md")
+846-MAC-DIAG constructor=explicit_directory input="/Users/runner/work/_temp/.tmp7L195r/100% #?.md" encoded=Some("file:///Users/runner/work/_temp/.tmp7L195r/100%25%20%23%3F.md") decoded=Some("/Users/runner/work/_temp/.tmp7L195r/100% #?.md") bytes=Some([47, 85, 115, 101, 114, 115, 47, 114, 117, 110, 110, 101, 114, 47, 119, 111, 114, 107, 47, 95, 116, 101, 109, 112, 47, 46, 116, 109, 112, 55, 76, 49, 57, 53, 114, 47, 49, 48, 48, 37, 32, 35, 63, 46, 109, 100]) exact=true
+846-MAC-DIAG constructor=components input="/Users/runner/work/_temp/.tmp7L195r/100% #?.md" encoded=Some("file:///Users/runner/work/_temp/.tmp7L195r/100%25%20%23%3F.md") decoded=Some("/Users/runner/work/_temp/.tmp7L195r/100% #?.md") bytes=Some([47, 85, 115, 101, 114, 115, 47, 114, 117, 110, 110, 101, 114, 47, 119, 111, 114, 107, 47, 95, 116, 101, 109, 112, 47, 46, 116, 109, 112, 55, 76, 49, 57, 53, 114, 47, 49, 48, 48, 37, 32, 35, 63, 46, 109, 100]) exact=true
+846-MAC-DIAG writer item=0 writable_type="public.file-url" explicit_options=Some(NSPasteboardWritingOptions(0))
+846-MAC-DIAG writer item=0 writable_type="io.github.xnmp.tauri-explorer.file-clipboard-token" explicit_options=Some(NSPasteboardWritingOptions(0))
+846-MAC-DIAG writer item=1 writable_type="public.file-url" explicit_options=Some(NSPasteboardWritingOptions(0))
+846-MAC-DIAG before_clear count=0
+846-MAC-DIAG publish cleared_count=1 wrote_files=true wrote_token=true after_write_count=1
+846-MAC-DIAG clipboard_rs_get_files=Ok(["/Users/runner/work/_temp/.tmp7L195r/cut me e\u{301}.txt", "/Users/runner/work/_temp/.tmp7L195r/100% #?.md"])
+846-MAC-DIAG verify before=Some(1) expected=["/Users/runner/work/_temp/.tmp7L195r/cut me é.txt", "/Users/runner/work/_temp/.tmp7L195r/100% #?.md"] read_files=Ok(["/Users/runner/work/_temp/.tmp7L195r/cut me e\u{301}.txt", "/Users/runner/work/_temp/.tmp7L195r/100% #?.md"])
+846-MAC-DIAG verify files_match=false raw_token=Some([97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97]) expected_token=[97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97]
+846-MAC-DIAG commit before=Some(1) after=Some(1) accepted_token=None owner_at_commit=None
+846-MAC-DIAG snapshot before=1 item_count=Some(2) board_token=Some([97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97])
+846-MAC-DIAG snapshot item=0 types=["public.file-url", "io.github.xnmp.tauri-explorer.file-clipboard-token"] file_url=Some("file:///Users/runner/work/_temp/.tmp7L195r/cut%20me%20e%CC%81.txt") decoded_path=Some("/Users/runner/work/_temp/.tmp7L195r/cut me e\u{301}.txt") decoded_bytes=Some([47, 85, 115, 101, 114, 115, 47, 114, 117, 110, 110, 101, 114, 47, 119, 111, 114, 107, 47, 95, 116, 101, 109, 112, 47, 46, 116, 109, 112, 55, 76, 49, 57, 53, 114, 47, 99, 117, 116, 32, 109, 101, 32, 101, 204, 129, 46, 116, 120, 116]) token=Some([97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97])
+846-MAC-DIAG snapshot item=1 types=["public.file-url"] file_url=Some("file:///Users/runner/work/_temp/.tmp7L195r/100%25%20%23%3F.md") decoded_path=Some("/Users/runner/work/_temp/.tmp7L195r/100% #?.md") decoded_bytes=Some([47, 85, 115, 101, 114, 115, 47, 114, 117, 110, 110, 101, 114, 47, 119, 111, 114, 107, 47, 95, 116, 101, 109, 112, 47, 46, 116, 109, 112, 55, 76, 49, 57, 53, 114, 47, 49, 48, 48, 37, 32, 35, 63, 46, 109, 100]) token=None
+846-MAC-DIAG native_url_object_count=Some(2)
+846-MAC-DIAG native_object index=0 class="NSURL"
+846-MAC-DIAG native_url index=0 is_file=true absolute=Some("file:///Users/runner/work/_temp/.tmp7L195r/cut%20me%20e%CC%81.txt") path=Some("/Users/runner/work/_temp/.tmp7L195r/cut me e\u{301}.txt")
+846-MAC-DIAG native_object index=1 class="NSURL"
+846-MAC-DIAG native_url index=1 is_file=true absolute=Some("file:///Users/runner/work/_temp/.tmp7L195r/100%25%20%23%3F.md") path=Some("/Users/runner/work/_temp/.tmp7L195r/100% #?.md")
+846-MAC-DIAG snapshot after=1
+846-MAC-DIAG owner_query count=Some(1) token=None
+
+thread 'clipboard::macos::native_clipboard_tests::native_clipboard_ownership_round_trip' (8224) panicked at src/clipboard/../../../../../src-tauri/src/clipboard/macos.rs:474:9:
+assertion `left == right` failed
+  left: None
+ right: Some("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+test clipboard::macos::native_clipboard_tests::native_clipboard_ownership_round_trip ... FAILED
+
+failures:
+
+failures:
+    clipboard::macos::native_clipboard_tests::native_clipboard_ownership_round_trip
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 10 filtered out; finished in 0.04s
+
+[1m[91merror[0m: test failed, to rerun pass `--lib`

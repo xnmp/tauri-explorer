@@ -541,8 +541,7 @@ pub fn run_with_process_entry(launch_dir: Option<String>, t_process_entry: std::
                         builder = builder.effects(WindowEffectsConfig {
                             effects: vec![WindowEffect::UnderWindowBackground],
                             state: Some(WindowEffectState::Active),
-                            radius: None,
-                            color: None,
+                            ..Default::default()
                         });
                     }
                 }
@@ -582,9 +581,7 @@ pub fn run_with_process_entry(launch_dir: Option<String>, t_process_entry: std::
                     use tauri::utils::config::WindowEffectsConfig;
                     builder = builder.transparent(true).effects(WindowEffectsConfig {
                         effects: vec![effect],
-                        state: None,
-                        radius: None,
-                        color: None,
+                        ..Default::default()
                     });
                 }
             }

@@ -1,0 +1,7 @@
+[1m[92m    Updating[0m crates.io index
+[1m[92m   Compiling[0m native-macos-clipboard-probe v0.1.0 (/Users/runner/work/tauri-explorer/tauri-explorer/docs/reviews/846-macos-clipboard-probe)
+[1m[92m    Finished[0m `test` profile [unoptimized + debuginfo] target(s) in 4.71s
+[1m[92m     Running[0m unittests src/lib.rs (docs/reviews/846-macos-clipboard-probe/target/debug/deps/native_macos_clipboard_probe-6769b52dd821b41c)
+clipboard::macos::native_clipboard_tests::native_clipboard_ownership_round_trip: test
+
+1 test, 0 benchmarks

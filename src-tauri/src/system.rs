@@ -195,7 +195,7 @@ fn launch_linux_trash_with_graphical_handler(directory: &std::path::Path) -> Res
         {
             continue;
         }
-        let Ok(desktop) = application.clone().downcast::<gio::DesktopAppInfo>() else {
+        let Ok(desktop) = application.clone().downcast::<gio_unix::DesktopAppInfo>() else {
             continue;
         };
         if desktop.is_hidden()

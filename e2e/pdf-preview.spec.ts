@@ -247,10 +247,19 @@ async function centerColor(page: Page) {
 }
 async function zoomTo(page: Page, percent: number) {
   await page.getByRole("button", { name: "Fit", exact: true }).click();
-  for (let value = 100; value < percent; value += 10)
-    await page
-      .getByRole("button", { name: "Zoom PDF in", exact: true })
-      .click();
+  const zoomIn = page.getByRole("button", { name: "Zoom PDF in", exact: true });
+  // Preserve the pointer hit-test, then use native button activation for pan setup.
+  // Thirty mouse stability checks can consume WebKit's entire test deadline.
+  if (percent === 400) {
+    await zoomIn.click();
+    await expect(page.locator(".pdf-zoom")).toHaveText("110%");
+    await zoomIn.focus();
+    for (let value = 110; value < percent; value += 10)
+      await zoomIn.press("Enter");
+  } else {
+    for (let value = 100; value < percent; value += 10)
+      await zoomIn.click();
+  }
   await expect(page.locator(".pdf-zoom")).toHaveText(`${percent}%`);
   await expect(page.locator(".pdf-page.ready")).toBeVisible();
 }

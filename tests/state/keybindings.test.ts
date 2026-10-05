@@ -68,6 +68,36 @@ describe("keybindingsStore", () => {
     expect(keybindingsStore.findMatchingCommand({ ...event, altKey: shortcut.endsWith("Alt+M") } as KeyboardEvent)).toBe("test");
   });
 
+  describe("command disposal during a chord", () => {
+    const press = (key: string, altKey = false) => keybindingsStore.findMatchingCommand(
+      createKeyboardEvent({ key, altKey }) as KeyboardEvent,
+    );
+
+    it("preserves an unrelated command's pending chord", () => {
+      keybindingsStore.registerDefault("chord", "Alt+M T");
+      keybindingsStore.registerDefault("image-edit", "Ctrl+E");
+      expect(press("m", true)).toBe("chord:waiting");
+      keybindingsStore.unregisterDefault("image-edit");
+      expect(press("t")).toBe("chord");
+    });
+
+    it("retires a chord when its last candidate is removed", () => {
+      keybindingsStore.registerDefault("chord", "Alt+M T");
+      expect(press("m", true)).toBe("chord:waiting");
+      keybindingsStore.unregisterDefault("chord");
+      expect(keybindingsStore.isChordActive).toBe(false);
+      expect(press("t")).toBeUndefined();
+    });
+
+    it("preserves other candidates sharing the same prefix", () => {
+      keybindingsStore.registerDefault("first", "Alt+M T");
+      keybindingsStore.registerDefault("second", "Alt+M G");
+      expect(press("m", true)).toBe("chord:waiting");
+      keybindingsStore.unregisterDefault("first");
+      expect(press("g")).toBe("second");
+    });
+  });
+
   describe("registerDefaults", () => {
     it("registers default shortcuts", () => {
       keybindingsStore.registerDefaults({

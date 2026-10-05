@@ -30,7 +30,9 @@ const keyProbe = process.platform === "win32"
   it("delivers Ctrl+Q to a terminal-hosted application instead of Explorer", async () => {
     // The native WebView keeps its tab layout between test runs. Start from
     // one tab so the two tab-navigation captures have an unambiguous state.
-    await browser.execute(() => {
+    const refreshToken = crypto.randomUUID();
+    await browser.execute((token: string) => {
+      document.documentElement.dataset.e2eRefreshToken = token;
       localStorage.clear();
       // These earlier-registered commands conflict with terminal exceptions.
       // The window must retain the exact identity that xterm relinquished.
@@ -38,9 +40,15 @@ const keyProbe = process.platform === "win32"
         "navigation.goUp": "Ctrl+P",
         "view.focusFilesSidebar": "Alt+M T",
       }));
-    });
+    }, refreshToken);
     await browser.refresh();
-    await $(".file-list").waitForExist({ timeout: 15_000 });
+    // WebKit can acknowledge refresh while the old document is still visible.
+    // Require the replacement document's keyboard/hooks and listing readiness.
+    await browser.waitUntil(() => browser.execute((token: string) =>
+      document.documentElement.dataset.e2eRefreshToken !== token
+        && document.documentElement.dataset.e2eHooksReady === "true"
+        && document.querySelector(".file-list") !== null,
+    refreshToken), { timeout: 15_000, timeoutMsg: "refreshed explorer never became ready" });
     await browser.keys(["Control", "`"]);
     await $(".terminal-panel .xterm").waitForDisplayed({ timeout: 10_000 });
     const input = await $(".terminal-panel textarea.xterm-helper-textarea");

@@ -83,7 +83,10 @@ function createKeybindingsStore() {
   function unregisterDefault(commandId: string): void {
     delete defaultShortcuts[commandId];
     chordCache.delete(commandId);
-    cancelChord();
+    if (activeChordCommandIds?.includes(commandId)) {
+      activeChordCommandIds = activeChordCommandIds.filter((id) => id !== commandId);
+      if (activeChordCommandIds.length === 0) cancelChord();
+    }
   }
 
   /**

@@ -8,10 +8,12 @@
 import { test, expect, type Page } from "./fixtures";
 import type { Locator } from "@playwright/test";
 import { waitForEntries, pressShortcut } from "./helpers";
+import { installLayoutInspector } from "./layout-inspector";
 
 async function openPicturesWithPreview(page: Page): Promise<void> {
   await page.goto("/?path=/home/user/Pictures");
   await waitForEntries(page);
+  await installLayoutInspector(page);
   const previewPane = page.locator(".preview-pane");
   if (!(await previewPane.isVisible())) {
     await pressShortcut(page, " ", {});

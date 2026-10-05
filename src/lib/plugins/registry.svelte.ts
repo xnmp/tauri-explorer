@@ -65,7 +65,7 @@ function createPluginRegistry(
         : inFlight.promise;
     }
 
-    const { ctx, dispose, reportFailure } = createPluginContext(plugin.id, plugin.name, registered.indexOf(plugin));
+    const { ctx, dispose, reportFailure } = createPluginContext(plugin.id, plugin.name, registered.findIndex(item => item.id === plugin.id));
     // Plugin code can synchronously request shutdown or retry. Publish the
     // actual completion before invoking it so those operations join this run.
     let resolve!: () => void;

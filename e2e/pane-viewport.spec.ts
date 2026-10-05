@@ -1,4 +1,5 @@
 import { expect, test, type Page } from "./fixtures";
+import { installLayoutInspector } from "./layout-inspector";
 
 let pageErrors: string[] = [];
 test.beforeEach(({ page }) => { pageErrors = []; page.on("pageerror", error => pageErrors.push(error.message)); });
@@ -69,6 +70,7 @@ for (const viewMode of ["details", "list", "tiles"] as const) {
       showSidebar: false, showStatusBar: false, zoomLevel: 130, thumbnailSize: "small",
     })));
     await page.goto(`/?path=/perf/huge-500&viewMode=${viewMode}`);
+    await installLayoutInspector(page);
     await page.locator(".entry-item").first().click();
     const viewport = page.locator(`.${viewMode}-view .virtual-viewport`);
     await expect.poll(() => viewport.evaluate(element => element.scrollHeight - element.clientHeight)).toBeGreaterThan(100);
@@ -238,6 +240,7 @@ for (const viewMode of ["details", "list", "tiles"] as const) {
       showSidebar: false, showStatusBar: false, zoomLevel: 130, thumbnailSize: "small",
     })));
     await page.goto(`/?path=/perf/images-500&viewMode=${viewMode}`);
+    await installLayoutInspector(page);
     await page.locator('.entry-item[data-index="1"]').click();
     await expect(page.getByRole("complementary", { name: "File inspector" })).toBeVisible();
     const viewport = page.locator(`.${viewMode}-view .virtual-viewport`);

@@ -575,7 +575,9 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `open_with.rs` — Linux suitable GIO application catalogue and revalidated desktop-ID launch for regular files, without association changes.
 - `shortcuts.rs` — Windows `.lnk` shortcut resolution.
 
-## src/test-support/ — opt-in E2E fixtures; loaded only by `loadE2EHooks()` in hook builds (`VITE_E2E_HOOKS=1`).
+## src/test-support/ — opt-in native hook fixtures and browser acceptance components; omitted from production bundles.
+
+- `src/test-support/LayoutInspector.svelte` — optional inspector used by core viewport and fullscreen browser acceptance, registered explicitly without a provider package.
 
 - `e2e-hooks.ts` — entry point: installs every probe for one page session (navigate/reset/file-op hooks, readiness, child-ready receipts); abort retires them all.
 - `dom-rpc.ts` — `createDomRpc`: the shared tokened DOM request/response protocol across WebDriver's isolated world; every request settles, including rejections.

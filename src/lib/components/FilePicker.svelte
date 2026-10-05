@@ -17,6 +17,7 @@ import { pickerRespond } from "$lib/api/system";
   import { basename, joinPath, parentDir } from "$lib/domain/path";
   import { parseBreadcrumbs } from "$lib/state/navigation";
   import type { SearchResult } from "$lib/api/search";
+  import { matchesPickerExtensions } from "$lib/domain/file-picker";
 
   export interface PickerInfo {
     mode: "open" | "save";
@@ -26,6 +27,7 @@ import { pickerRespond } from "$lib/api/system";
     folder: string | null;
     name: string;
     title: string;
+    extensions?: readonly string[];
   }
 
   interface Props {
@@ -58,7 +60,7 @@ import { pickerRespond } from "$lib/api/system";
     info.directory
       ? chain.length > 0
       : info.mode === "save"
-        ? saveName.trim().length > 0
+        ? saveName.trim().length > 0 && matchesPickerExtensions({ name: saveName.trim(), kind: "file" }, info.extensions)
         : selectedFiles.size > 0,
   );
 
@@ -81,6 +83,7 @@ import { pickerRespond } from "$lib/api/system";
     const visible = result.data.entries
       .filter((e) => !e.name.startsWith("."))
       .filter((e) => !info.directory || e.kind === "directory")
+      .filter((e) => matchesPickerExtensions(e, info.extensions))
       .sort((a, b) => {
         if (a.kind !== b.kind) return a.kind === "directory" ? -1 : 1;
         return a.name.localeCompare(b.name);
@@ -140,6 +143,7 @@ import { pickerRespond } from "$lib/api/system";
   }
 
   async function respond(paths: string[]): Promise<void> {
+    if (!info.directory && paths.some((path) => !matchesPickerExtensions({ name: basename(path), kind: "file" }, info.extensions))) return;
     await pickerRespond(info.token, paths, false);
   }
 
@@ -299,6 +303,7 @@ import { pickerRespond } from "$lib/api/system";
   onClose={() => (quickOpenOpen = false)}
   root={searchRoot}
   directoriesOnly={info.directory}
+  extensions={info.extensions}
   onPick={handleQuickOpenPick}
 />
 

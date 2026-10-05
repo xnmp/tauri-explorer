@@ -9,6 +9,7 @@
   import { fuzzySearch, type SearchResult } from "$lib/api/search";
   import FileIcon from "./FileIcon.svelte";
   import Modal from "./Modal.svelte";
+  import { matchesPickerExtensions } from "$lib/domain/file-picker";
 
   interface Props {
     open: boolean;
@@ -17,10 +18,11 @@
     root: string;
     /** Only directories are pickable (folder-select mode). */
     directoriesOnly: boolean;
+    extensions?: readonly string[];
     onPick: (result: SearchResult) => void;
   }
 
-  let { open, onClose, root, directoriesOnly, onPick }: Props = $props();
+  let { open, onClose, root, directoriesOnly, extensions, onPick }: Props = $props();
 
   let query = $state("");
   let results = $state<SearchResult[]>([]);
@@ -45,10 +47,11 @@
       results = [];
       return;
     }
-    void fuzzySearch(q, root, 30).then((r) => {
+    void fuzzySearch(q, root, 30, { extensions, directoriesOnly }).then((r) => {
       if (seq !== searchSeq) return; // stale response
       if (!r.ok) return;
-      results = directoriesOnly ? r.data.filter((e) => e.kind === "directory") : r.data;
+      results = r.data.filter((entry) =>
+        (!directoriesOnly || entry.kind === "directory") && matchesPickerExtensions(entry, extensions));
       activeIndex = 0;
     });
   }

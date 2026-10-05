@@ -23,6 +23,11 @@ interface SearchResponse {
   results: SearchResult[];
 }
 
+export interface SearchFilter {
+  extensions?: readonly string[];
+  directoriesOnly?: boolean;
+}
+
 /**
  * Fuzzy search for files recursively in a directory.
  *
@@ -34,13 +39,15 @@ interface SearchResponse {
 export async function fuzzySearch(
   query: string,
   root: string,
-  limit: number = 20
+  limit: number = 20,
+  filter?: SearchFilter,
 ): Promise<ApiResult<SearchResult[]>> {
   try {
     const response = await invoke<SearchResponse>("fuzzy_search", {
       query,
       root,
       limit,
+      ...(filter ? { filter } : {}),
     });
     return { ok: true, data: response.results };
   } catch (err) {

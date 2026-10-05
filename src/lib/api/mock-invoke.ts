@@ -11,6 +11,8 @@ import { createMockFileHistory } from "./mock-file-history";
 import { createMockImageCrop } from "./mock-image-crop";
 import type { ImageCropSave } from "./image-crop";
 import type { DirectoryListing, FileEntry, FileMutationReceipt } from "$lib/domain/file";
+import { matchesPickerExtensions } from "$lib/domain/file-picker";
+import type { SearchFilter } from "./search";
 import { encodeDirectoryListing, type CompactDirectoryListing } from "./directory-wire";
 import { selectPreviewImages } from "$lib/domain/folder-preview";
 import { parentDir, basename, sameDirectory } from "$lib/domain/path";
@@ -1324,12 +1326,15 @@ const mockCommands: Record<string, CommandHandler> = {
     localStorage.setItem(MOCK_LOCAL_KEYS.streamingSearches, JSON.stringify(calls));
     const root = (args.root as string) || "/home/user";
     const limit = args.limit as number || 20;
+    const filter = args.filter as SearchFilter | undefined;
     const results: Array<{ name: string; path: string; relativePath: string; score: number; kind: "file" | "directory" }> = [];
 
     // Only search within directories that are under root (recursive)
     for (const [dirPath, entries] of Object.entries(mockFiles)) {
       if (!dirPath.startsWith(root)) continue;
       for (const entry of entries) {
+        if (filter?.directoriesOnly && entry.kind !== "directory") continue;
+        if (!matchesPickerExtensions(entry, filter?.extensions)) continue;
         if (entry.name.toLowerCase().includes(query)) {
           const relativePath = entry.path.startsWith(root + "/")
             ? entry.path.slice(root.length + 1)

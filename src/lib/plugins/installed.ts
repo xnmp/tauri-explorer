@@ -49,10 +49,12 @@ export async function refreshInstalledPackages(registry:PackageRegistry):Promise
 }
 
 export async function installPackage(registry:PackageRegistry):Promise<void>{
-  const path=await invoke<string|null>("pick_file",{options:{mode:"open",title:"Install plugin package"}});
+  const path=await invoke<string|null>("pick_file",{options:{mode:"open",title:"Install plugin package",extensions:["teplugin"]}});
   if(!path)return;
-  await invoke("install_plugin",{path});
+  const entry=await invoke<InstalledPackage>("install_plugin",{path});
   await refreshInstalledPackages(registry);
+  const failure=entry.enabled?packageFailure(entry.manifest.id):undefined;
+  if(failure)throw new Error(`${entry.manifest.name} was installed but could not start: ${failure}`);
 }
 export async function uninstallPackage(id:string,registry:PackageRegistry):Promise<void>{
   await invoke("uninstall_plugin",{id});

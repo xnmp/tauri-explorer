@@ -44,6 +44,20 @@ async function openPalette(page: Page) {
   return palette;
 }
 
+test("Install Plugin command runs without an installed plugin and reports picker failures", async ({ page }) => {
+  await page.addInitScript(() => {
+    window.__mockControl ??= {};
+    window.__mockControl.failures = { pick_file: "Could not open plugin package picker" };
+  });
+  await page.goto(HOME_URL);
+  await waitForEntries(page);
+  const palette = await openPalette(page);
+  await palette.locator(".search-input").fill("Install Plugin");
+  await palette.locator(".command-item", { hasText: "Install Plugin…" }).click();
+  await expect(palette).toBeHidden();
+  await expect(page.locator(".toast", { hasText: "Could not open plugin package picker" })).toBeVisible();
+});
+
 test.describe("Plugin system (demo plugin)", () => {
   test("enabling the plugin exposes its command, which runs and shows a toast", async ({ page }) => {
     await page.goto(HOME_URL);

@@ -148,9 +148,21 @@ import { nextRemovableRoot } from "$lib/domain/drives";
     });
   }
 
+  function revealSelectedAfterSelection() {
+    const selected = paneExplorer.focusedEntry;
+    if (!selected) return;
+    // Trace is rebuilt when selection changes, so its clicked button can
+    // unmount before this render. Ownership belongs to the pane and target.
+    void tick().then(() => {
+      if (paneRef?.isConnected && windowTabsManager.getActiveExplorer() === paneExplorer
+        && paneExplorer.focusedEntry?.path === selected.path) fileListScrollToEntry?.(selected);
+    });
+  }
+
   $effect(() => {
     paneExplorer.onNavigate = focusSelectedAfterNav;
-    return () => { paneExplorer.onNavigate = null; };
+    paneExplorer.onReveal = revealSelectedAfterSelection;
+    return () => { paneExplorer.onNavigate = null; paneExplorer.onReveal = null; };
   });
 
   // Track which removable drive (if any) the current path lives on, and flag

@@ -53,6 +53,7 @@ function makeFakeCtx() {
     events: { listen: () => {} },
     storage: { get: async () => ({ ...store }), set: async (v) => void (store = { ...v }) },
     workspace: {
+      selectFile: async () => {},
       onFilesChanged: () => {},
       getSelection: () => [],
       getVisibleEntries: () => [],

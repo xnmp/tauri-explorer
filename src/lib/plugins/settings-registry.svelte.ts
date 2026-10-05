@@ -22,6 +22,8 @@ export interface RegisteredSettingsSection {
   valueOf(row: SettingRowDescriptor): unknown;
   /** Update a row value and persist the whole blob. */
   setValue(rowId: string, value: unknown): void;
+  /** Await persistence for dialogs that must report save failures. */
+  save(patch: Record<string, unknown>): Promise<void>;
 }
 
 function defaultsFrom(rows: SettingRowDescriptor[]): Record<string, unknown> {
@@ -47,7 +49,7 @@ function createSection(
   // the load would silently clobber the user's in-flight edit.
   let loading = true;
   const editedWhileLoading = new Set<string>();
-  void storage
+  const ready = storage
     .get()
     .then((stored) => {
       const preserved: Record<string, unknown> = {};
@@ -77,6 +79,12 @@ function createSection(
       if (loading) editedWhileLoading.add(rowId);
       values = { ...values, [rowId]: value };
       void storage.set(values);
+    },
+    async save(patch: Record<string, unknown>): Promise<void> {
+      await ready;
+      const next = { ...values, ...patch };
+      await (storage.setChecked?.(next) ?? storage.set(next));
+      values = next;
     },
   };
 }

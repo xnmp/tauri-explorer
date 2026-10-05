@@ -397,7 +397,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `settings-registry.svelte.ts` — registry for plugin settings sections.
 - `inspector-registry.svelte.ts` — ordered, owner-disposed registry for selection-aware inspector contributions.
 - `src/lib/plugins/image-editor-registry.svelte.ts` — ordered, owner-disposed image editing tool contributions with immutable captured source revisions and opaque service ports.
-- `trace/index.ts`, `trace/invalidation.svelte.ts`, `trace/TraceInspector.svelte`, `trace/TraceDetails.svelte` — Trace inspector contribution, native-change refresh, interactive DAG focus, and read-only revision/run details.
+- `trace/index.ts`, `trace/invalidation.svelte.ts`, `trace/TraceInspector.svelte`, `trace/TraceDetails.svelte` — Trace inspector contribution, native-change refresh, interactive DAG focus, and output-node prompt details with raw metadata disclosure.
 - `fs-providers.ts` — virtual-filesystem provider registry + dispatch.
 - `demo/index.ts` — demo plugin exercising every contribution seam.
 - `ai-organize/index.ts` + `AiOrganizeDialog.svelte` — AI organize plugin (#158).
@@ -774,3 +774,8 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `e2e-tauri/video-observations.ts` — read-only native playback/transport observations, owned process RSS and unedited screenshot pixel qualification.
 - `e2e-tauri/specs/video-preview.spec.ts` — actual native decoder/range/lifetime and encoded large-file performance outcomes.
 - `e2e-tauri/specs/video-preview-lifecycle.spec.ts` — actual List/Tiles decoded selection, warm-window activation and playing-owner destruction with capability/file-handle retirement.
+
+- `src/lib/domain/image-generation-settings.ts` — provider-compatible image dimensions from resolution and source/explicit aspect ratio.
+- `src/lib/domain/image-output-filename.ts` — unique per-job PNG output names bounded to filesystem byte limits.
+- `src/lib/plugins/trace/TraceThumbnail.svelte` — lifecycle-owned thumbnail URLs and current-file preview labeling.
+- `src/lib/plugins/trace/visibility.svelte.ts` — Trace pane visibility used by its command palette toggle.

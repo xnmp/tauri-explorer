@@ -7,6 +7,7 @@ export interface ImageEditorSource {
   readonly name: string;
   readonly digest: string;
   readonly format: string;
+  readonly size?: { readonly width: number; readonly height: number };
   readonly referencePaths: readonly string[];
 }
 export interface ImageEditorTool {

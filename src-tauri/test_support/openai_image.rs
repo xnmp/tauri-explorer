@@ -16,6 +16,8 @@ fn request(dir: &Path, source: Option<&Path>) -> ImageRequest {
         output_filename: "result.png".into(),
         model: "gpt-image-2".into(),
         size: "1024x1024".into(),
+        resolution: None,
+        aspect_ratio: None,
         quality: "low".into(),
         background: "auto".into(),
     }
@@ -422,4 +424,29 @@ fn an_editor_revision_change_is_refused_before_provider_submission() {
         .unwrap()
         .to_string()
         .contains("changed since the editor opened"));
+}
+
+#[test]
+fn custom_dimensions_are_validated_before_generation() {
+    let directory = tempfile::tempdir().unwrap();
+    for size in ["2048x1536", "2048x2048", "3840x2160", "1024x1024"] {
+        let mut input = request(directory.path(), None);
+        input.size = size.into();
+        assert!(validate_request(&input).is_ok(), "{size}");
+    }
+    for size in [
+        "",
+        "0x0",
+        "2047x1024",
+        "4096x4096",
+        "3840x3840",
+        "2048x512",
+        "128x128",
+        "18446744073709551615x16",
+        "nope",
+    ] {
+        let mut input = request(directory.path(), None);
+        input.size = size.into();
+        assert!(validate_request(&input).is_err(), "{size}");
+    }
 }

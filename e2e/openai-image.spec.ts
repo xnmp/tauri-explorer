@@ -1,202 +1,206 @@
 import { test, expect, type Page } from "./fixtures";
 import { waitForEntries, MULTI_SELECT_MODIFIER } from "./helpers";
 
-async function openAction(page: Page, name: string, action: string) {
-  const entry = page.locator(".entry-item").filter({ hasText: name }).first();
-  await entry.click();
-  await entry.click({ button: "right" });
-  const menu = page.locator(".context-menu");
-  const group = menu.locator(":scope > .submenu-wrapper").filter({ hasText: "AI" });
-  await group.hover();
-  await group.locator(".submenu .menu-item").filter({ hasText: action }).click();
-  return page.getByRole("dialog", { name: action === "Edit with OpenAI" ? "Edit image" : action.replace(/…$/, "") });
+async function captureJobs(page: Page) {
+  await page.evaluate(async () => {
+    const { getMockControl } = await import("/src/lib/api/mock-control.ts");
+    const { pluginJobsController } = await import("/src/lib/state/plugin-jobs.ts");
+    (window as any).__imageSubmissions = [];
+    pluginJobsController.accept = async (registration, start) => {
+      const result = await start();
+      if (result.ok) pluginJobsController.register({ ...registration, id: result.data });
+      return result;
+    };
+    getMockControl().openAIImageStart = (request, apiKey) => {
+      const submissions = (window as any).__imageSubmissions;
+      submissions.push({ request, apiKey });
+      return 40 + submissions.length;
+    };
+  });
+}
+async function openEdit(page: Page) {
+  await page.locator(".entry-item").filter({ hasText: "screenshot.png" }).first().click();
+  await page.keyboard.press("Control+e");
+  const dialog = page.getByRole("dialog", { name: "Edit image", exact: true });
+  await expect(dialog.getByLabel("Edit prompt")).toBeVisible();
+  return dialog;
+}
+async function lastSubmission(page: Page) {
+  return page.evaluate(() => (window as any).__imageSubmissions.at(-1));
 }
 
-test("an image edit submits the chosen recipe and displays the resulting Trace branch", async ({ page }) => {
+test("Ctrl+E opens compact AI edit and Ctrl+Enter starts background generation", async ({ page }, testInfo) => {
   await page.goto("/?path=/home/user/Pictures");
-  await waitForEntries(page);
-  await page.evaluate(async () => {
-    const { createPluginStorage } = await import("/src/lib/plugins/api.ts");
-    const { getMockControl } = await import("/src/lib/api/mock-control.ts");
-    const { pluginJobsController } = await import("/src/lib/state/plugin-jobs.ts");
-    const { traceInvalidation } = await import("/src/lib/plugins/trace/invalidation.svelte.ts");
-    await createPluginStorage("openai-image").set({ apiKey: "browser-fixture-key" });
-    // Browser acceptance exercises the dialog/API/Trace surface. Native event
-    // ownership and the actual HTTP/publication lifecycle have separate tests.
-    pluginJobsController.accept = (_registration, start) => start();
-    getMockControl().openAIImageStart = (request, apiKey) => {
-      if (apiKey !== "browser-fixture-key") throw new Error("Configured key was not supplied");
-      getMockControl().traceForImage = () => ({
-        currentArtifactId: 1, selectedRevisionStatus: "matched",
-        artifacts: [
-          { id: 1, path: request.sourcePath!, digest: "a".repeat(64), createdAt: "2026-10-03T00:00:00Z", generatingRun: null, pathState: "present" },
-          { id: 3, path: `${request.outputDir}/${request.outputFilename}`, digest: "b".repeat(64), createdAt: "2026-10-03T00:00:02Z", generatingRun: 2, pathState: "present" },
-        ],
-        runs: [{ id: 2, operation: "openai.image.edit", parameters: { provider: "openai", prompt: request.prompt, model: request.model, size: request.size, quality: request.quality, background: request.background }, createdAt: "2026-10-03T00:00:01Z", status: "succeeded", finishedAt: "2026-10-03T00:00:02Z", error: null, recovered: false, inputIds: [1], details: { request_id: "req_browser", usage: { total_tokens: 123 }, cost: null } }],
-      });
-      traceInvalidation.bump();
-      return 1;
-    };
-  });
-  const dialog = await openAction(page, "screenshot.png", "Edit with OpenAI");
-  await expect(dialog).toBeVisible();
-  await dialog.getByLabel("Connection", { exact: true }).selectOption("api_key");
-  await dialog.getByLabel("Edit prompt").fill("Preserve the face; add a warm lantern");
-  await dialog.getByLabel("Quality").selectOption("low");
-  await dialog.getByLabel("Size", { exact: true }).selectOption("1536x1024");
-  await dialog.getByLabel("Output filename (.png)").fill("lantern-edit.png");
-  if (process.env.TRACE_SCREENSHOTS) await page.screenshot({ path: "docs/screenshots/openai-image-dialog.png", animations: "disabled" });
-  await dialog.getByRole("button", { name: "Generate edit" }).click();
+  await waitForEntries(page); await captureJobs(page);
+  const dialog = await openEdit(page);
+  await expect(dialog.getByRole("button", { name: "AI edit", exact: true })).toHaveAttribute("aria-pressed", "true");
+  await expect(dialog.getByLabel("Model", { exact: true })).toHaveValue("codex");
+  await expect(dialog.getByLabel("Resolution")).toHaveValue("2k");
+  await expect(dialog.getByLabel("Aspect ratio")).toHaveValue("keep");
+  await expect(dialog.getByLabel("Seed")).toBeDisabled();
+  await expect(dialog.getByLabel("Seed")).toHaveValue("Not supported");
+  await expect(dialog.getByLabel("Output filename (.png)")).toHaveCount(0);
+  await dialog.getByLabel("Edit prompt").fill("Make the sky green");
+  await page.screenshot({ path: testInfo.outputPath("compact-ai-edit.png") });
+  await page.keyboard.press("Control+Enter");
   await expect(dialog).toBeHidden();
-  const provenance = page.getByRole("list", { name: "Image provenance" });
-  await expect(provenance).toContainText("lantern-edit.png");
-  await provenance.getByRole("button", { name: "OpenAI edit", exact: true }).click();
-  const details = page.getByRole("region", { name: "Trace details" });
-  await expect(details).toContainText("Preserve the face; add a warm lantern");
-  await expect(details).toContainText('"model": "gpt-image-2"');
-  await expect(details).toContainText('"quality": "low"');
-  await expect(details).toContainText('"size": "1536x1024"');
-  await expect(details).toContainText("req_browser");
-  await expect(details).not.toContainText("browser-fixture-key");
-  if (process.env.TRACE_SCREENSHOTS) await page.screenshot({ path: "docs/screenshots/trace-openai-image.png", animations: "disabled" });
+  const progress = page.getByRole("region", { name: "Background progress" });
+  await expect(progress).toContainText("screenshot_edit_");
+  await expect(progress).toContainText("Make the sky green");
+  await expect(progress).toContainText("Generating…");
+  const submitted = await lastSubmission(page);
+  expect(submitted.apiKey).toBe("");
+  expect(submitted.request).toMatchObject({ backend: "codex", prompt: "Make the sky green", sourcePath: "/home/user/Pictures/screenshot.png", size: "2048x1536", resolution: "2k", aspectRatio: "keep" });
+  expect(submitted.request.outputFilename).toMatch(/^screenshot_edit_[a-f0-9-]+\.png$/);
+  expect(submitted.request.expectedSourceDigest).toMatch(/^[a-f0-9]{64}$/);
+  await page.evaluate(async () => {
+    const { jobsStore } = await import("/src/lib/state/jobs.svelte.ts");
+    jobsStore.completeJob(41, "/home/user/Pictures/output.png");
+  });
+  await expect(progress).toContainText("Complete");
+  await progress.getByRole("button", { name: /Dismiss screenshot_edit_/ }).click();
+  await expect(progress).toBeHidden();
 });
 
-for (const edit of [false, true]) test(`configured Codex executable reaches ${edit ? "the image editor" : "generation"}`, async ({ page }) => {
-  await page.goto(edit ? "/?path=/home/user/Pictures" : "/?path=/home/user");
-  await waitForEntries(page);
-  await page.evaluate(async () => {
-    const { createPluginStorage } = await import("/src/lib/plugins/api.ts");
-    const { getMockControl } = await import("/src/lib/api/mock-control.ts");
-    const { pluginJobsController } = await import("/src/lib/state/plugin-jobs.ts");
-    await createPluginStorage("openai-image").set({ codexPath: "/opt/custom tools/codex" });
-    pluginJobsController.accept = (_registration, start) => start();
-    getMockControl().openAIImageStart = (request) => {
-      if (request.backend !== "codex" || request.codexPath !== "/opt/custom tools/codex") throw new Error("Configured Codex executable was not supplied");
-      return 12;
-    };
-  });
-  const dialog = await openAction(page, edit ? "screenshot.png" : "Pictures", edit ? "Edit with OpenAI" : "Generate image with OpenAI…");
-  await dialog.getByLabel(edit ? "Edit prompt" : "Image prompt").fill("A green mug on a white background");
-  await dialog.getByLabel("Output filename (.png)").fill("configured-codex.png");
-  await dialog.getByRole("button", { name: edit ? "Generate edit" : "Generate image", exact: true }).click();
-  await expect(dialog).toBeHidden();
-  await expect(page.getByText("OpenAI image job started: configured-codex.png", { exact: true })).toBeVisible();
-});
-
-test("generation starts in a selected folder with no source image", async ({ page }) => {
-  await page.goto("/?path=/home/user");
-  await waitForEntries(page);
-  await page.evaluate(async () => {
-    const { getMockControl } = await import("/src/lib/api/mock-control.ts");
-    const { pluginJobsController } = await import("/src/lib/state/plugin-jobs.ts");
-    pluginJobsController.accept = (_registration, start) => start();
-    getMockControl().openAIImageStart = (request) => {
-      if (request.sourcePath !== null || request.outputDir !== "/home/user/Pictures" || request.backend !== "codex") throw new Error("Wrong generation destination or connection");
-      return 2;
-    };
-  });
-  const dialog = await openAction(page, "Pictures", "Generate image with OpenAI…");
-  await expect(dialog).toBeVisible();
-  await dialog.getByLabel("Image prompt").fill("A lantern in a ruined medieval workshop");
-  await expect(dialog.getByLabel("Output filename (.png)")).not.toHaveValue("");
-  await dialog.getByRole("button", { name: "Generate image", exact: true }).click();
-  await expect(dialog).toBeHidden();
-  await expect(page.getByText(/OpenAI image job started:/)).toBeVisible();
-});
-
-for (const enteredName of ["my-chosen-name.png", ""]) test(`a slow filename suggestion preserves an explicit ${enteredName ? "name" : "clear"} and the submitted destination`, async ({ page }) => {
-  let release!: () => void;
-  let started!: () => void;
-  const response = new Promise<void>((resolve) => { release = resolve; });
-  const requested = new Promise<void>((resolve) => { started = resolve; });
-  await page.exposeFunction("awaitFilenameCheck", () => { started(); return response; });
-  await page.goto("/?path=/home/user");
-  await waitForEntries(page);
-  await page.evaluate(async () => {
-    const { getMockControl } = await import("/src/lib/api/mock-control.ts");
-    const { pluginJobsController } = await import("/src/lib/state/plugin-jobs.ts");
-    pluginJobsController.accept = (_registration, start) => start();
-    getMockControl().checkPathsExist = async (paths) => {
-      await (window as Window & { awaitFilenameCheck: () => Promise<void> }).awaitFilenameCheck();
-      return paths.map(() => false);
-    };
-    getMockControl().openAIImageStart = (request) => {
-      if (request.outputFilename !== "my-chosen-name.png") throw new Error("Filename suggestion overwrote the destination");
-      return 5;
-    };
-  });
-  const dialog = await openAction(page, "Pictures", "Generate image with OpenAI…");
-  await requested;
-  await dialog.getByLabel("Image prompt").fill("A green mug");
-  await dialog.getByLabel("Output filename (.png)").fill("my-chosen-name.png");
-  if (!enteredName) await dialog.getByLabel("Output filename (.png)").fill("");
-  release();
-  // A second storage query is a response barrier for the held filename query.
-  await page.evaluate(async () => {
-    const { checkPathsExist } = await import("/src/lib/api/files.ts");
-    await checkPathsExist([]);
-  });
-  await expect(dialog.getByLabel("Output filename (.png)")).toHaveValue(enteredName);
-  if (!enteredName) await dialog.getByLabel("Output filename (.png)").fill("my-chosen-name.png");
-  await dialog.getByRole("button", { name: "Generate image", exact: true }).click();
-  await expect(dialog).toBeHidden();
-  await expect(page.getByText("OpenAI image job started: my-chosen-name.png")).toBeVisible();
-});
-
-test("Codex edits use the chosen target and references without forwarding a configured API key", async ({ page }) => {
+test("connection settings persist without losing the prompt and reach Codex", async ({ page }) => {
   await page.goto("/?path=/home/user/Pictures");
-  await waitForEntries(page);
+  await waitForEntries(page); await captureJobs(page);
+  const dialog = await openEdit(page);
+  await dialog.getByLabel("Edit prompt").fill("A warmer scene");
+  await dialog.getByRole("button", { name: "Connection settings", exact: true }).click();
+  await dialog.getByLabel("Codex executable path").fill("/opt/custom tools/codex");
+  await dialog.getByLabel("OpenAI API key").fill("fixture-secret");
+  await dialog.getByRole("button", { name: "Save settings" }).click();
+  await expect(dialog.getByLabel("Edit prompt")).toHaveValue("A warmer scene");
+  const stored = await page.evaluate(async () => {
+    const { createPluginStorage } = await import("/src/lib/plugins/api.ts");
+    return createPluginStorage("openai-image").get();
+  });
+  expect(stored).toMatchObject({ codexPath: "/opt/custom tools/codex", apiKey: "fixture-secret" });
+  await dialog.getByRole("button", { name: "Generate", exact: true }).click();
+  await expect(dialog).toBeHidden();
+  expect((await lastSubmission(page)).request.codexPath).toBe("/opt/custom tools/codex");
+  expect((await lastSubmission(page)).apiKey).toBe("");
+});
+
+test("API generation uses chosen dimensions and shows a background error", async ({ page }) => {
+  await page.goto("/?path=/home/user/Pictures");
+  await waitForEntries(page); await captureJobs(page);
   await page.evaluate(async () => {
     const { createPluginStorage } = await import("/src/lib/plugins/api.ts");
-    const { getMockControl } = await import("/src/lib/api/mock-control.ts");
-    const { pluginJobsController } = await import("/src/lib/state/plugin-jobs.ts");
-    await createPluginStorage("openai-image").set({ apiKey: "must-not-be-forwarded" });
-    pluginJobsController.accept = (_registration, start) => start();
-    getMockControl().openAIImageStart = (request, apiKey) => {
-      if (apiKey !== "" || request.backend !== "codex"
-        || request.sourcePath !== "/home/user/Pictures/screenshot.png"
-        || request.referencePaths?.join() !== "/home/user/Pictures/photo1.jpg") {
-        throw new Error("Wrong connection, image roles, or leaked API key");
-      }
-      getMockControl().traceForImage = () => ({
-        currentArtifactId: 1, selectedRevisionStatus: "matched",
-        artifacts: [
-          { id: 1, path: request.sourcePath!, digest: "a".repeat(64), createdAt: "2026-10-04T00:00:00Z", generatingRun: null, pathState: "present" },
-          { id: 2, path: request.referencePaths![0], digest: "b".repeat(64), createdAt: "2026-10-04T00:00:00Z", generatingRun: null, pathState: "present" },
-          { id: 4, path: `${request.outputDir}/${request.outputFilename}`, digest: "c".repeat(64), createdAt: "2026-10-04T00:00:02Z", generatingRun: 3, pathState: "present" },
-        ],
-        runs: [{ id: 3, operation: "openai.image.edit", parameters: { provider: "codex-cli", prompt: request.prompt, model: null, settings_source: "built_in_defaults" }, createdAt: "2026-10-04T00:00:01Z", status: "succeeded", finishedAt: "2026-10-04T00:00:02Z", error: null, recovered: false, inputIds: [1, 2], details: { transport: "codex_exec", thread_id: "01234567-89ab-7cde-8f01-23456789abcd", cost: null } }],
-      });
-      return 3;
-    };
+    await createPluginStorage("openai-image").set({ apiKey: "api-fixture" });
   });
-  const target = page.locator(".entry-item").filter({ hasText: "screenshot.png" }).first();
-  const reference = page.locator(".entry-item").filter({ hasText: "photo1.jpg" }).first();
-  await reference.click();
-  await target.click({ modifiers: [MULTI_SELECT_MODIFIER] });
-  await target.click({ button: "right" });
+  const dialog = await openEdit(page);
+  await dialog.getByLabel("Model", { exact: true }).selectOption("gpt-image-2.5-flare");
+  await dialog.getByLabel("Resolution").selectOption("4k");
+  await dialog.getByLabel("Aspect ratio").selectOption("16:9");
+  await dialog.getByLabel("Edit prompt").fill("A cinematic landscape");
+  await dialog.getByLabel("Aspect ratio").focus();
+  await page.keyboard.press("Control+Enter");
+  await expect(dialog).toBeHidden();
+  const submitted = await lastSubmission(page);
+  expect(submitted.apiKey).toBe("api-fixture");
+  expect(submitted.request).toMatchObject({ backend: "api_key", model: "gpt-image-2.5-flare", size: "3840x2160", resolution: "4k", aspectRatio: "16:9" });
+  await page.evaluate(async () => {
+    const { jobsStore } = await import("/src/lib/state/jobs.svelte.ts");
+    jobsStore.failJob(41, "Provider unavailable");
+  });
+  await expect(page.getByRole("region", { name: "Background progress" })).toContainText("Provider unavailable");
+});
+
+test("failed submission retains its draft for retry", async ({ page }) => {
+  await page.goto("/?path=/home/user/Pictures");
+  await waitForEntries(page); await captureJobs(page);
+  await page.evaluate(async () => {
+    const { getMockControl } = await import("/src/lib/api/mock-control.ts");
+    getMockControl().openAIImageStart = () => { throw new Error("Connection unavailable"); };
+  });
+  const dialog = await openEdit(page);
+  await dialog.getByLabel("Edit prompt").fill("Keep this draft");
+  await page.keyboard.press("Control+Enter");
+  await expect(dialog.getByRole("alert")).toContainText("Connection unavailable");
+  await expect(dialog.getByLabel("Edit prompt")).toHaveValue("Keep this draft");
+  await expect(dialog.getByRole("button", { name: "Generate", exact: true })).toBeEnabled();
+});
+
+test("references survive changing the edit target", async ({ page }) => {
+  await page.goto("/?path=/home/user/Pictures");
+  await waitForEntries(page); await captureJobs(page);
+  await page.locator(".entry-item").filter({ hasText: "photo1.jpg" }).first().click();
+  await page.locator(".entry-item").filter({ hasText: "screenshot.png" }).first().click({ modifiers: [MULTI_SELECT_MODIFIER] });
+  await page.keyboard.press("Control+e");
+  const dialog = page.getByRole("dialog", { name: "Edit image", exact: true });
+  await dialog.getByLabel("Edit target", { exact: true }).selectOption("/home/user/Pictures/screenshot.png");
+  await expect(dialog).toContainText("References: photo1.jpg");
+  await dialog.getByLabel("Edit prompt").fill("Use reference lighting");
+  await page.keyboard.press("Control+Enter");
+  await expect(dialog).toBeHidden();
+  expect((await lastSubmission(page)).request).toMatchObject({ sourcePath: "/home/user/Pictures/screenshot.png", referencePaths: ["/home/user/Pictures/photo1.jpg"] });
+});
+
+test("folder generation has no source and assigns its output name", async ({ page }) => {
+  await page.goto("/?path=/home/user");
+  await waitForEntries(page); await captureJobs(page);
+  const entry = page.locator(".entry-item").filter({ hasText: "Pictures" }).first();
+  await entry.click(); await entry.click({ button: "right" });
   const ai = page.locator(".context-menu > .submenu-wrapper").filter({ hasText: "AI" });
   await ai.hover();
-  await ai.locator(".submenu .menu-item").filter({ hasText: "Edit with OpenAI" }).click();
-  const dialog = page.getByRole("dialog", { name: "Edit image", exact: true });
-  await expect(dialog.getByLabel("Connection", { exact: true })).toHaveValue("codex");
-  await dialog.getByLabel("Edit target", { exact: true }).selectOption("/home/user/Pictures/screenshot.png");
-  await expect(dialog.locator(".dialog-subtitle")).toContainText("screenshot.png");
-  await expect(dialog).toContainText("References, in order: photo1.jpg");
-  await dialog.getByLabel("Edit prompt").fill("Use image 2's lighting on image 1; preserve composition");
-  await dialog.getByLabel("Output filename (.png)").fill("referenced-edit.png");
-  if (process.env.TRACE_SCREENSHOTS) await page.screenshot({ path: "docs/screenshots/codex-image-references.png", animations: "disabled" });
-  await dialog.getByRole("button", { name: "Generate edit" }).click();
+  await ai.locator(".submenu .menu-item").filter({ hasText: "Generate image with OpenAI…" }).click();
+  const dialog = page.getByRole("dialog", { name: "Generate image with OpenAI", exact: true });
+  await dialog.getByLabel("Image prompt").fill("A green mug");
+  await dialog.getByRole("button", { name: "Generate", exact: true }).click();
   await expect(dialog).toBeHidden();
-  await target.click();
-  const provenance = page.getByRole("list", { name: "Image provenance" });
-  await expect(provenance).toContainText("referenced-edit.png");
-  await expect(provenance).toContainText("photo1.jpg");
-  await provenance.getByRole("button", { name: "OpenAI edit", exact: true }).click();
-  const details = page.getByRole("region", { name: "Trace details" });
-  await expect(details).toContainText("codex-cli");
-  await expect(details).toContainText("Use image 2's lighting on image 1");
-  await expect(details).not.toContainText("must-not-be-forwarded");
+  expect((await lastSubmission(page)).request).toMatchObject({ sourcePath: null, outputDir: "/home/user/Pictures", size: "2048x2048" });
+});
+
+test("two in-flight edits have distinct output paths", async ({ page }) => {
+  await page.goto("/?path=/home/user/Pictures");
+  await waitForEntries(page); await captureJobs(page);
+  for (const prompt of ["First edit", "Second edit"]) {
+    const dialog = await openEdit(page);
+    await dialog.getByLabel("Edit prompt").fill(prompt);
+    await page.keyboard.press("Control+Enter");
+    await expect(dialog).toBeHidden();
+  }
+  const outputs = await page.evaluate(() => (window as any).__imageSubmissions.map((submission: any) => submission.request.outputFilename));
+  expect(new Set(outputs).size).toBe(2);
+  await expect(page.getByRole("region", { name: "Background progress" })).toContainText("First edit");
+  await expect(page.getByRole("region", { name: "Background progress" })).toContainText("Second edit");
+});
+
+test("settings write failure preserves the draft and reports the error", async ({ page }) => {
+  await page.goto("/?path=/home/user/Pictures");
+  await waitForEntries(page);
+  await page.evaluate(async () => {
+    const { getMockControl } = await import("/src/lib/api/mock-control.ts");
+    getMockControl().failures = { write_config_file: "Disk unavailable" };
+  });
+  const dialog = await openEdit(page);
+  await dialog.getByLabel("Edit prompt").fill("Preserve this edit");
+  await dialog.getByRole("button", { name: "Connection settings" }).click();
+  await dialog.getByLabel("Codex executable path").fill("/new/codex");
+  await dialog.getByRole("button", { name: "Save settings" }).click();
+  await expect(dialog.getByRole("alert")).toContainText("Disk unavailable");
+  await expect(dialog.getByLabel("Codex executable path")).toHaveValue("/new/codex");
+  await dialog.getByRole("button", { name: "Back", exact: true }).click();
+  await expect(dialog.getByLabel("Edit prompt")).toHaveValue("Preserve this edit");
+});
+
+test("keep ratio cannot become square if source dimensions are unavailable", async ({ page }) => {
+  await page.goto("/?path=/home/user/Pictures");
+  await waitForEntries(page); await captureJobs(page);
+  await page.evaluate(async () => {
+    const { captureImageCrop } = await import("/src/lib/api/image-crop.ts");
+    const { getMockControl } = await import("/src/lib/api/mock-control.ts");
+    const capture = await captureImageCrop("/home/user/Pictures/screenshot.png");
+    if (!capture.ok) throw new Error(capture.error);
+    getMockControl().imageCropCapture = () => ({ ...capture.data, dataUrl: "data:image/png;base64,AAAA" });
+  });
+  const dialog = await openEdit(page);
+  await dialog.getByLabel("Edit prompt").fill("Keep composition");
+  await page.keyboard.press("Control+Enter");
+  await expect(dialog.getByText("Wait for the source image to load, or choose an aspect ratio", { exact: true })).toBeVisible();
+  expect(await page.evaluate(() => (window as any).__imageSubmissions)).toEqual([]);
 });
 
 test("failed generation remains inspectable through image run history", async ({ page }) => {

@@ -77,6 +77,13 @@ function createKeybindingsStore() {
    */
   function registerDefault(commandId: string, shortcut: string): void {
     defaultShortcuts[commandId] = shortcut;
+    chordCache.delete(commandId);
+  }
+
+  function unregisterDefault(commandId: string): void {
+    delete defaultShortcuts[commandId];
+    chordCache.delete(commandId);
+    cancelChord();
   }
 
   /**
@@ -365,6 +372,7 @@ function createKeybindingsStore() {
     /** Same Super overlay used by shortcut matching on WebKitGTK. */
     get trackedMetaHeld() { return superKeyHeld; },
     registerDefault,
+    unregisterDefault,
     registerDefaults,
     getShortcut,
     getDisplayShortcut,

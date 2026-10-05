@@ -61,6 +61,8 @@ export interface SettingsSectionDescriptor {
 export interface PluginStorage {
   get(): Promise<Record<string, unknown>>;
   set(value: Record<string, unknown>): Promise<void>;
+  /** Acknowledged saves reject when native persistence fails. */
+  setChecked?(value: Record<string, unknown>): Promise<void>;
 }
 
 /** Window-owned background jobs survive plugin activation changes. */
@@ -110,6 +112,8 @@ export interface PluginWorkspace {
   onFilesChanged(handler: (directories: readonly string[]) => void | Promise<void>): void;
   /** Navigate the active pane to a path — e.g. open a plugin's virtual folder. */
   navigate(path: string): Promise<void>;
+  /** Reveal and select a present file in the active explorer pane. */
+  selectFile(path: string): Promise<void>;
   /** Refresh every open pane so listings reflect filesystem changes the plugin
    *  caused (a written output file, a moved entry). Silent — no loading flash. */
   refreshPanes(): Promise<void>;
@@ -188,6 +192,9 @@ export function createPluginStorage(pluginId: string): PluginStorage {
     },
     async set(value: Record<string, unknown>): Promise<void> {
       await writeConfigQueued(filename, JSON.stringify(value, null, 2));
+    },
+    async setChecked(value: Record<string, unknown>): Promise<void> {
+      await writeConfigQueued(filename, JSON.stringify(value, null, 2), filename, true);
     },
   };
 }
@@ -336,6 +343,13 @@ export function createPluginContext(
       getVisibleEntries: () => windowTabsManager.getActiveExplorer()?.displayEntries ?? [],
       navigate: async (path) => {
         await windowTabsManager.getActiveExplorer()?.navigateTo(path);
+      },
+      selectFile: async (path) => {
+        const explorer = windowTabsManager.getActiveExplorer();
+        if (!explorer) return;
+        if (!sameDirectory(explorer.state.currentPath, parentDir(path))) await explorer.navigateTo(parentDir(path));
+        if (explorer.revealEntry(path)) return;
+        else toastStore.show("This recorded file is no longer present", "info");
       },
       // Refresh every explorer instance (across tabs), silently — a plugin's
       // background job may have written a file into any pane's directory.

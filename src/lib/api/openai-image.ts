@@ -24,7 +24,9 @@ export interface OpenAIImageRequest {
   outputDir: string;
   outputFilename: string;
   model: "gpt-image-2" | "gpt-image-2.5-sunburst" | "gpt-image-2.5-flare";
-  size: "auto" | "1024x1024" | "1536x1024" | "1024x1536";
+  size: string;
+  resolution?: "1k" | "2k" | "4k";
+  aspectRatio?: string;
   quality: "auto" | "low" | "medium" | "high";
   background: "auto" | "opaque" | "transparent";
 }

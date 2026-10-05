@@ -11,7 +11,7 @@
     {#each contributions as contribution (contribution.id)}
       <section aria-label={contribution.title}>
         <header>{contribution.title}</header>
-        <contribution.component {entries} />
+        <contribution.component {...contribution.props} {entries} />
       </section>
     {/each}
   </aside>

@@ -35,7 +35,7 @@ export interface TraceLayout {
 }
 
 const ARTIFACT_WIDTH = 146;
-const ARTIFACT_HEIGHT = 58;
+const ARTIFACT_HEIGHT = 128;
 const RUN_WIDTH = 90;
 const RUN_HEIGHT = 38;
 const COLUMN_GAP = 14;
@@ -45,6 +45,7 @@ const PADDING = 14;
 export function layoutTraceGraph(graph: TraceLayoutInput): TraceLayout {
   const artifacts = new Map(graph.artifacts.map((artifact) => [artifact.id, artifact]));
   const runs = new Map(graph.runs.map((run) => [run.id, run]));
+  const outputRuns = new Set(graph.artifacts.flatMap((artifact) => artifact.generatingRun == null ? [] : [artifact.generatingRun]));
   const ranks = new Map<string, number>();
   const visiting = new Set<string>();
 
@@ -57,7 +58,7 @@ export function layoutTraceGraph(graph: TraceLayoutInput): TraceLayout {
     if (key.startsWith("a:")) {
       const artifact = artifacts.get(Number(key.slice(2)));
       if (artifact?.generatingRun != null && runs.has(artifact.generatingRun)) {
-        value = rank(`r:${artifact.generatingRun}`) + 1;
+        value = rank(`r:${artifact.generatingRun}`);
       }
     } else {
       const run = runs.get(Number(key.slice(2)));
@@ -77,7 +78,7 @@ export function layoutTraceGraph(graph: TraceLayoutInput): TraceLayout {
     const depth = rank(key);
     levels.set(depth, [...(levels.get(depth) ?? []), { key, kind: "artifact", id: artifact.id }]);
   }
-  for (const run of graph.runs) {
+  for (const run of graph.runs.filter((run) => !outputRuns.has(run.id))) {
     const key = `r:${run.id}`;
     const depth = rank(key);
     levels.set(depth, [...(levels.get(depth) ?? []), { key, kind: "run", id: run.id }]);
@@ -117,7 +118,12 @@ export function layoutTraceGraph(graph: TraceLayoutInput): TraceLayout {
     const middleY = (startY + endY) / 2;
     edges.push({ from, to, path: `M ${startX} ${startY} C ${startX} ${middleY}, ${endX} ${middleY}, ${endX} ${endY}` });
   }
-  for (const run of graph.runs) for (const input of run.inputIds) connect(`a:${input}`, `r:${run.id}`);
-  for (const artifact of graph.artifacts) if (artifact.generatingRun != null) connect(`r:${artifact.generatingRun}`, `a:${artifact.id}`);
+  for (const run of graph.runs) {
+    const outputs = graph.artifacts.filter((artifact) => artifact.generatingRun === run.id);
+    for (const input of run.inputIds) {
+      if (outputs.length) for (const output of outputs) connect(`a:${input}`, `a:${output.id}`);
+      else connect(`a:${input}`, `r:${run.id}`);
+    }
+  }
   return { width, height: Math.max(0, y - ROW_GAP + PADDING), nodes, edges };
 }

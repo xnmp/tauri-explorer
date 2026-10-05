@@ -159,7 +159,7 @@
     </div>
   </div>
   <div class="crop-view-controls">
-    <span class="crop-hint">{showCropControls ? "Drag edges or corners to crop. Drag inside to move." : "Prompt edits use the full image shown here."}</span>
+    {#if showCropControls}<span class="crop-hint">Drag edges or corners to crop. Drag inside to move.</span>{/if}
     <div class="crop-zoom" role="group" aria-label="Crop view zoom">
       <button class="btn secondary" disabled={disabled || zoom <= 1} onclick={() => zoom = Math.max(1, zoom / 2)} aria-label="Zoom out crop" title="Zoom out">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M5 12h14" /></svg>
@@ -176,7 +176,7 @@
   .crop-canvas { min-width: 0; }
   .crop-view-controls { display: flex; align-items: center; gap: var(--spacing-sm); padding-top: var(--spacing-sm); font-size: var(--font-size-caption); }
   .crop-hint { flex: 1; color: var(--text-secondary); }
-  .crop-zoom { display: flex; gap: var(--spacing-xs); flex-shrink: 0; }
+  .crop-zoom { display: flex; gap: var(--spacing-xs); flex-shrink: 0; margin-left: auto; }
   .crop-zoom .btn { min-width: 0; width: 28px; height: 28px; padding: 0; font-size: var(--font-size-caption); }
   .crop-zoom .fit { width: auto; padding-inline: var(--spacing-sm); }
   .crop-scroller { height: var(--crop-stage-height, min(calc(50vh / var(--app-zoom, 1)), 460px)); min-height: 120px; overflow: auto; contain: layout paint; border: 1px solid var(--control-stroke); border-radius: var(--radius-sm); background: color-mix(in srgb, var(--background-solid), #000 8%); }

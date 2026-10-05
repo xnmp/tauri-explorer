@@ -5,7 +5,8 @@ import type { Component } from "svelte";
 export interface InspectorContribution {
   id: string;
   title: string;
-  component: Component<{ entries: FileEntry[] }>;
+  component: Component<any>;
+  props?: Record<string, unknown>;
   when(entries: FileEntry[]): boolean;
 }
 

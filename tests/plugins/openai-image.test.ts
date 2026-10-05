@@ -7,6 +7,7 @@ import { openAIImagePlugin } from "$lib/plugins/openai-image";
 import { createPluginContext } from "$lib/plugins/api";
 import { contextMenuItems } from "$lib/state/context-menu-items.svelte";
 import { dialogRegistry } from "$lib/plugins/dialog-registry.svelte";
+import { keybindingsStore } from "$lib/state/keybindings.svelte";
 import { getCommand } from "$lib/state/commands.svelte";
 import { imageEditorRegistry } from "$lib/plugins/image-editor-registry.svelte";
 import type { FileEntry } from "$lib/domain/file";
@@ -19,6 +20,7 @@ describe("OpenAI image plugin", () => {
     const { ctx, dispose } = createPluginContext("openai-image");
     await ctx.storage.set({ apiKey: "test-openai-key" });
     await openAIImagePlugin.activate(ctx);
+    expect(keybindingsStore.getShortcut("plugin.openai-image.edit")).toBe("Ctrl+E");
     const edit = contextMenuItems.itemsFor([image]).find((item) => item.id === "openai-image.edit")!;
     await edit.handler([image]);
     expect(dialogRegistry.openDialogs.find((dialog) => dialog.id === "openai-image.edit-window")?.props).toMatchObject({
@@ -29,6 +31,7 @@ describe("OpenAI image plugin", () => {
     expect(contextMenuItems.itemsFor([image, image]).some((item) => item.id === edit.id)).toBe(false);
     expect(imageEditorRegistry.toolsFor({ path: image.path, name: image.name, digest: "a".repeat(64), format: "PNG", referencePaths: [] }).map((tool) => tool.id)).toContain("openai-image");
     dispose();
+    expect(keybindingsStore.defaultShortcuts["plugin.openai-image.edit"]).toBeUndefined();
     expect(imageEditorRegistry.toolsFor({ path: image.path, name: image.name, digest: "a".repeat(64), format: "PNG", referencePaths: [] })).toEqual([]);
   });
 

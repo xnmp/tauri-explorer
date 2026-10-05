@@ -50,42 +50,50 @@ async function gotoPictures(page: Page) {
 }
 
 test.describe("File-operation progress dialog", () => {
-  test("a slow multi-file copy shows a progress row that advances and completes", async ({
-    page,
-  }) => {
-    // ~1s per file × 3 files = ~3s, comfortably past the 1.5s dialog gate.
-    await page.goto("/?path=/home/user/Documents&mockLatency=copy_entries:1000");
-    await waitForEntries(page);
+  for (const [width, height] of [[1280, 600], [371, 600], [371, 300]]) {
+    test(`a slow multi-file copy completes with visible progress at ${width}x${height}`, async ({ page }) => {
+      await page.setViewportSize({ width, height });
+      // ~1s per file × 3 files = ~3s, comfortably past the 1.5s dialog gate.
+      await page.goto("/?path=/home/user/Documents&mockLatency=copy_entries:1000");
+      await waitForEntries(page);
 
-    await selectThreeDocs(page);
-    await pressShortcut(page, "c", { ctrlKey: true });
-    await expect(page.locator(".toast.clipboard")).toBeVisible();
+      await selectThreeDocs(page);
+      await pressShortcut(page, "c", { ctrlKey: true });
+      await expect(page.locator(".toast.clipboard")).toBeVisible();
 
-    await gotoPictures(page);
-    await pressShortcut(page, "v", { ctrlKey: true });
+      await gotoPictures(page);
+      await pressShortcut(page, "v", { ctrlKey: true });
 
-    // Progress dialog appears with a running "Copying" operation.
-    const dialog = page.locator(".progress-dialog");
-    await expect(dialog).toBeVisible({ timeout: 4000 });
-    await expect(dialog.locator(".dialog-title")).toHaveText("File Operations");
-    await expect(dialog.locator(".operation-item .operation-type").first()).toHaveText(
-      "Copying",
-    );
-    // A running operation renders its progress bar + percentage.
-    await expect(dialog.locator(".progress-bar").first()).toBeVisible();
+      // Progress dialog appears with a running "Copying" operation.
+      const dialog = page.locator(".progress-dialog");
+      await expect(dialog).toBeVisible({ timeout: 4000 });
+      await expect(dialog.locator(".dialog-title")).toHaveText("File Operations");
+      await expect(dialog.locator(".operation-item .operation-type").first()).toHaveText(
+        "Copying",
+      );
+      // A running operation renders its progress bar + percentage.
+      await expect(dialog.locator(".progress-bar").first()).toBeVisible();
+      await expect.poll(() => dialog.evaluate(element => {
+        const box = element.getBoundingClientRect();
+        return Math.min(box.left, box.top, innerWidth - box.right, innerHeight - box.bottom);
+      })).toBeGreaterThanOrEqual(15);
+      const box = (await dialog.boundingBox())!;
+      expect(Math.abs(width - box.x - box.width - 16)).toBeLessThan(1);
 
-    // The operation transitions to "Complete" (progress reached 100%).
-    await expect(dialog.locator(".status-text.success").first()).toHaveText("Complete", {
-      timeout: 8000,
+      // The operation transitions to "Complete" (progress reached 100%).
+      await expect(dialog.locator(".status-text.success").first()).toHaveText("Complete", {
+        timeout: 8000,
+      });
+
+      // Outcome: all three files were actually copied into Pictures.
+      await expect
+        .poll(() => page.locator(".entry-item .entry-name").allTextContents(), {
+          timeout: 5000,
+        })
+        .toEqual(expect.arrayContaining(["report.pdf", "budget.xlsx", "presentation.pptx"]));
     });
 
-    // Outcome: all three files were actually copied into Pictures.
-    await expect
-      .poll(() => page.locator(".entry-item .entry-name").allTextContents(), {
-        timeout: 5000,
-      })
-      .toEqual(expect.arrayContaining(["report.pdf", "budget.xlsx", "presentation.pptx"]));
-  });
+  }
 
   test("cancelling a running copy stops it before the remaining files are copied", async ({
     page,

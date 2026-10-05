@@ -244,8 +244,8 @@
   }
 
   .progress-dialog {
-    width: 360px;
-    max-height: 400px;
+    width: min(360px, calc(100vw - 32px));
+    max-height: min(400px, calc(100vh - 32px));
     background: var(--background-solid);
     border: 1px solid var(--surface-stroke);
     border-radius: var(--radius-lg);

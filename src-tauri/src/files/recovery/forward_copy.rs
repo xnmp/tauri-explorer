@@ -88,7 +88,7 @@ impl PreparedCopy {
         self,
         progress: &mut impl CopyProgress,
         original: Option<&crate::files::image_crop::SourceRevision>,
-        trace: Option<(&crate::trace::TraceRunHandle, &str)>,
+        trace: Option<(&crate::installed_plugins::provenance::TraceRunHandle, &str)>,
     ) -> Result<FileMutationReceipt, AppError> {
         if let Some(revision) = original {
             if let Err(error) =

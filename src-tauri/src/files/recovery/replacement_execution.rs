@@ -40,7 +40,7 @@ impl ReplacementExecution {
     #[cfg(target_os = "linux")]
     pub(super) fn prepare_trace(
         &self,
-        run: &crate::trace::TraceRunHandle,
+        run: &crate::installed_plugins::provenance::TraceRunHandle,
         target: &std::path::Path,
         digest: &str,
     ) -> Result<(), AppError> {
@@ -50,7 +50,9 @@ impl ReplacementExecution {
             .directory()
             .path()?
             .join(super::artifact_layout::PUBLICATION);
-        crate::trace::prepare_linked_output(run, target, digest, &publisher)?;
+        crate::installed_plugins::provenance::prepare_linked_output(
+            run, target, digest, &publisher,
+        )?;
         self.root.verify_namespace()
     }
 

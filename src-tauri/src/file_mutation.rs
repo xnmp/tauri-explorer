@@ -422,7 +422,9 @@ async fn entry_outcome(
     };
     let mut settled = settle_entry(outcome);
     if let Some((source, target)) = relocated {
-        if let Err(error) = crate::trace::relocate_after_rename(source, target).await {
+        if let Err(error) =
+            crate::installed_plugins::provenance::relocate_after_rename(source, target).await
+        {
             let warning =
                 format!("Rename completed, but Trace could not update its locator: {error}");
             log::warn!("{warning}");
@@ -500,38 +502,41 @@ pub(crate) async fn save_image_crop(
     let directories = plan.affected_dirs();
     file_history::run_forward(owner, false, directories, async move {
         let source_path = trace_metadata.source_path.clone();
-        let started =
-            tauri::async_runtime::spawn_blocking(move || crate::trace::begin_crop(&trace_metadata))
-                .await;
-        let run = match started {
-            Ok(Ok(run)) => run,
+        let started = tauri::async_runtime::spawn_blocking(move || {
+            crate::installed_plugins::provenance::begin_crop(&trace_metadata)
+        })
+        .await;
+        let (run, recording_warning) = match started {
+            Ok(Ok(run)) => (Some(run), None),
             failure => {
-                let error = match failure {
-                    Ok(Err(error)) => error,
-                    Err(error) => AppError::Other(error.to_string()),
+                let detail = match failure {
+                    Ok(Err(error)) => error.to_string(),
+                    Err(error) => error.to_string(),
                     Ok(Ok(_)) => unreachable!(),
                 };
-                return MutationOutcome {
-                    result: Err(error),
-                    warning: None,
-                    effect: ForwardEffect::Unchanged,
-                    affected: Vec::new(),
-                };
+                (
+                    None,
+                    Some(format!("Image saved; recording was unavailable: {detail}")),
+                )
             }
         };
         let mut outcome =
-            crate::files::image_crop::execute(plan.with_trace_run(Some(run.clone())), &runtime)
-                .await;
-        {
+            crate::files::image_crop::execute(plan.with_trace_run(run.clone()), &runtime).await;
+        if outcome.completion.result.is_ok() {
+            outcome.completion.warning = recording_warning;
+        }
+        if let Some(run) = run {
             let conclusion = match &outcome.completion.result {
                 Ok(receipt) => Some(receipt.path.clone()),
                 Err(_) => None,
             };
             let uncertain = conclusion.is_none() && admission::changed(&outcome.completion.result);
             let finalized = tauri::async_runtime::spawn_blocking(move || match conclusion {
-                Some(path) => crate::trace::complete_crop(&run, &path),
-                None if uncertain => crate::trace::mark_crop_uncertain(&run),
-                None => crate::trace::fail_crop(&run),
+                Some(path) => crate::installed_plugins::provenance::complete_crop(&run, &path),
+                None if uncertain => {
+                    crate::installed_plugins::provenance::mark_crop_uncertain(&run)
+                }
+                None => crate::installed_plugins::provenance::fail_crop(&run),
             })
             .await;
             match finalized {

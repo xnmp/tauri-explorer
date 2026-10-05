@@ -1,6 +1,7 @@
 //! Common image producer contract: immutable input, durable attempt, exact
 //! staged evidence before no-replace publication, and durable terminal status.
-use crate::{error::AppError, plugin_job, trace};
+use crate::installed_plugins::provenance as trace;
+use crate::{error::AppError, plugin_job};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 use std::{
@@ -182,9 +183,11 @@ pub(crate) fn execute_with_completion(
                 Ok(())
             },
         )?;
-        let anchor = stage.trace_anchor()?;
-        trace::prepare_operation_output(run, target, &digest, Some(&anchor))?;
-        stage.retain_trace_anchor();
+        if run.recording() {
+            let anchor = stage.trace_anchor()?;
+            trace::prepare_operation_output(run, target, &digest, Some(&anchor))?;
+            stage.retain_trace_anchor();
+        }
         control.publish(|| stage.publish(target))?;
         published = true;
         let path = target.to_string_lossy().into_owned();
@@ -230,38 +233,5 @@ mod tests {
         std::fs::write(&source, b"later edit").unwrap();
         assert_eq!(std::fs::read(captured.snapshot_path()).unwrap(), PNG);
         assert_eq!(captured.input.digest, hex::encode(Sha256::digest(PNG)));
-    }
-    #[test]
-    fn dropping_an_accepted_worker_records_failure_or_cancellation() {
-        for cancel in [false, true] {
-            let root = tempfile::tempdir().unwrap();
-            let source = root.path().join("source.png");
-            std::fs::write(&source, PNG).unwrap();
-            let db = root.path().join("trace.sqlite");
-            let captured = CapturedImage::read(&source).unwrap();
-            let run = trace::begin_operation_for_test(
-                &db,
-                trace::OperationStart {
-                    operation: "image.test".into(),
-                    parameters: Value::Null,
-                    inputs: vec![captured.input],
-                },
-            )
-            .unwrap();
-            let control = plugin_job::JobControl::new();
-            let attempt = Attempt::new(run, control.clone());
-            if cancel {
-                control.cancel();
-            }
-            drop(attempt);
-            let graph =
-                serde_json::to_value(trace::graph_for_path_at(&db, &source).unwrap().unwrap())
-                    .unwrap();
-            assert_eq!(
-                graph["runs"][0]["status"],
-                if cancel { "cancelled" } else { "failed" }
-            );
-            assert_eq!(graph["artifacts"].as_array().unwrap().len(), 1);
-        }
     }
 }

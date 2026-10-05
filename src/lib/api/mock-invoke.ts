@@ -1064,7 +1064,6 @@ function mockDirectoryListing(raw: string): CompactDirectoryListing {
 }
 
 const mockCommands: Record<string, CommandHandler> = {
-  trace_for_image: (args) => getMockControl().traceForImage?.(args.path as string) ?? null,
   get_home_directory: () => "/home/user",
   get_launch_cwd: () => "/home/user",
   list_drives: () => {
@@ -2725,6 +2724,12 @@ if (typeof window !== "undefined") {
   },
 
   open_in_terminal: () => {},
+  list_installed_plugins: () => [],
+  pick_file: () => null,
+  install_plugin: () => { throw new Error("Install plugin packages in the native app"); },
+  uninstall_plugin: () => undefined,
+  set_plugin_package_enabled: () => undefined,
+  plugin_backend_invoke: () => { throw new Error("No native plugin backend in the browser fixture"); },
   list_installed_terminals: () => ["ghostty", "kitty", "alacritty", "gnome-terminal", "xterm"],
   set_ffmpeg_path: () => {},
 
@@ -2762,8 +2767,6 @@ if (typeof window !== "undefined") {
   },
 
   start_nano_banana_job: () => 1,
-  start_openai_image_job: (args) => getMockControl().openAIImageStart?.(args.request as import("./openai-image").OpenAIImageRequest, args.apiKey as string) ?? 1,
-  recent_openai_image_runs: () => getMockControl().openAIImageHistory ?? [],
 
   start_upscale_job: () => 1,
 

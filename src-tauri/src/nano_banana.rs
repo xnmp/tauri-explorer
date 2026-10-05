@@ -46,7 +46,7 @@ struct GeminiEdit<'a> {
     final_output_path: &'a Path,
     api_key: &'a str,
     model: &'a str,
-    run: &'a crate::trace::TraceRunHandle,
+    run: &'a crate::installed_plugins::provenance::TraceRunHandle,
 }
 
 /// Single-quote a string for embedding in the gemini slash-command string.
@@ -104,10 +104,10 @@ pub async fn start_nano_banana_job(
         let prompt = prompt.clone(); let model = model.clone();
         move || {
             let captured = crate::image_operation::CapturedImage::read(&source)?;
-            let run = crate::trace::begin_operation(crate::trace::OperationStart {
+            let run = crate::installed_plugins::provenance::begin_operation(crate::installed_plugins::provenance::OperationStart {
                 operation: "image.gemini.edit".into(),
                 parameters: serde_json::json!({ "provider": "gemini-cli", "model": model, "prompt": prompt }),
-                inputs: vec![crate::trace::OperationInput { path: captured.input.path.clone(), digest: captured.input.digest.clone() }],
+                inputs: vec![crate::installed_plugins::provenance::OperationInput { path: captured.input.path.clone(), digest: captured.input.digest.clone() }],
             })?;
             Ok::<_, AppError>((captured, run))
         }

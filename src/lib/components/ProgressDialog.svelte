@@ -12,7 +12,7 @@
   import { formatSize } from "$lib/domain/file";
 
   const operations = $derived(operationsManager.showProgressDialog ? operationsManager.operations : []);
-  const imageJobs = $derived(jobsStore.jobs.filter((job) => job.source === "openai-image"));
+  const imageJobs = $derived(jobsStore.jobs.filter((job) => job.presentation === "image"));
   const showDialog = $derived(operationsManager.showProgressDialog);
   const hasActive = $derived(operationsManager.hasActiveOperations || imageJobs.some((job) => job.status === "running"));
 
@@ -244,8 +244,8 @@
   }
 
   .progress-dialog {
-    width: 360px;
-    max-height: 400px;
+    width: min(360px, calc(100vw - 32px));
+    max-height: min(400px, calc(100vh - 32px));
     background: var(--background-solid);
     border: 1px solid var(--surface-stroke);
     border-radius: var(--radius-lg);

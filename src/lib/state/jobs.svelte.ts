@@ -14,6 +14,7 @@ export interface Job {
   detail: string;
   /** Origin of the job: "app" for built-in flows, or a plugin id. */
   source: string;
+  presentation?: "image";
   status: JobStatus;
   error?: string;
   startTime: number;
@@ -24,8 +25,8 @@ export interface Job {
 function createJobsStore() {
   let jobs = $state<Job[]>([]);
 
-  function addJob(id: number, label: string, detail: string, source: string = "app"): void {
-    jobs = [...jobs, { id, label, detail, source, status: "running", startTime: Date.now() }];
+  function addJob(id: number, label: string, detail: string, source: string = "app", presentation?: "image"): void {
+    jobs = [...jobs, { id, label, detail, source, presentation, status: "running", startTime: Date.now() }];
   }
 
   function completeJob(id: number, outputPath: string): void {

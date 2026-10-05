@@ -127,3 +127,69 @@ test.describe("Plugin system (demo plugin)", () => {
     await expect(menu.locator('.menu-item:has-text("Demo: Greet Selection")')).toHaveCount(0);
   });
 });
+
+test("installed settings retain list order through activation and re-enabling", async ({ page }) => {
+  await page.goto(HOME_URL);
+  await waitForEntries(page);
+  const dialog = await openSettings(page);
+  const original = await dialog.locator(".section-title").allTextContents();
+  await closeSettings(page);
+  await page.evaluate(async () => {
+    const load = new Function("return import('/src/lib/plugins/registry.svelte.ts')");
+    const { pluginRegistry } = await load();
+    let release!: () => void;
+    const held = new Promise<void>(resolve => { release = resolve; });
+    const plugin = (id: string, title: string, wait?: Promise<void>) => ({
+      id, name: title, description: "Settings ordering acceptance fixture",
+      async activate(ctx: import("../src/lib/plugins/api").PluginContext) {
+        if (wait) await wait;
+        ctx.registerSettingsSection({ id: "settings", title, rows: [] });
+      },
+    });
+    const installing = pluginRegistry.registerInstalled([
+      plugin("installed-alpha", "Installed Alpha", held),
+      plugin("installed-beta", "Installed Beta"),
+      plugin("installed-gamma", "Installed Gamma"),
+    ]);
+    release();
+    await installing;
+  });
+  const expected = original.flatMap(title => title === "Keyboard Shortcuts"
+    ? ["Installed Alpha", "Installed Beta", "Installed Gamma", title] : [title]);
+  await openSettings(page);
+  await expect(dialog.locator(".section-title")).toHaveText(expected);
+  await closeSettings(page);
+  await page.evaluate(async () => {
+    const load = new Function("return import('/src/lib/plugins/registry.svelte.ts')");
+    const { pluginRegistry } = await load();
+    await pluginRegistry.setEnabled("installed-alpha", false);
+    await pluginRegistry.setEnabled("installed-alpha", true);
+  });
+  await openSettings(page);
+  await expect(dialog.locator(".section-title")).toHaveText(expected);
+  await closeSettings(page);
+  await page.evaluate(async () => {
+    const load = new Function("return import('/src/lib/plugins/registry.svelte.ts')");
+    const { pluginRegistry } = await load();
+    await pluginRegistry.removeInstalled(["installed-alpha", "installed-beta"]);
+    await pluginRegistry.registerInstalled([{
+      id: "installed-delta", name: "Installed Delta", description: "Ordering fixture",
+      activate(ctx: import("../src/lib/plugins/api").PluginContext) {
+        ctx.registerSettingsSection({ id: "settings", title: "Installed Delta", rows: [] });
+      },
+    }]);
+  });
+  const remaining = original.flatMap(title => title === "Keyboard Shortcuts"
+    ? ["Installed Gamma", "Installed Delta", title] : [title]);
+  await openSettings(page);
+  await expect(dialog.locator(".section-title")).toHaveText(remaining);
+  await closeSettings(page);
+  await page.evaluate(async () => {
+    const load = new Function("return import('/src/lib/plugins/registry.svelte.ts')");
+    const { pluginRegistry } = await load();
+    await pluginRegistry.setEnabled("installed-gamma", false);
+    await pluginRegistry.setEnabled("installed-gamma", true);
+  });
+  await openSettings(page);
+  await expect(dialog.locator(".section-title")).toHaveText(remaining);
+});

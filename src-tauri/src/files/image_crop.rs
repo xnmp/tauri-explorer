@@ -244,17 +244,20 @@ pub(crate) struct SavePlan {
     source: PathBuf,
     target: PathBuf,
     request: SaveRequest,
-    trace_run: Option<crate::trace::TraceRunHandle>,
+    trace_run: Option<crate::installed_plugins::provenance::TraceRunHandle>,
 }
 
 impl SavePlan {
-    pub(crate) fn with_trace_run(mut self, run: Option<crate::trace::TraceRunHandle>) -> Self {
+    pub(crate) fn with_trace_run(
+        mut self,
+        run: Option<crate::installed_plugins::provenance::TraceRunHandle>,
+    ) -> Self {
         self.trace_run = run;
         self
     }
 
-    pub(crate) fn trace_metadata(&self) -> crate::trace::CropMetadata {
-        crate::trace::CropMetadata {
+    pub(crate) fn trace_metadata(&self) -> crate::installed_plugins::provenance::CropMetadata {
+        crate::installed_plugins::provenance::CropMetadata {
             source_path: self.source.to_string_lossy().into_owned(),
             source_digest: self.request.revision.digest.clone(),
             rect: self.request.rect,
@@ -333,9 +336,7 @@ impl SavePlan {
         self,
         runtime: &super::admission::Runtime,
     ) -> Result<super::mutation::FileMutationReceipt, AppError> {
-        let run = self.trace_run.as_ref().ok_or_else(|| {
-            AppError::Other("Trace recording is required before saving an image edit".into())
-        })?;
+        let run = self.trace_run.as_ref().filter(|run| run.recording());
         let (bytes, permissions) = verify_source(&self.source, &self.request.revision)?;
         let encoded = image_crop::encode_with_viewport(
             &bytes,
@@ -373,10 +374,17 @@ impl SavePlan {
         let prepare_here = !durable_replace;
         #[cfg(not(target_os = "linux"))]
         let prepare_here = true;
-        if prepare_here {
+        if let Some(run) = run.filter(|_| prepare_here) {
             let anchor = stage.trace_anchor()?;
-            crate::trace::prepare_crop_output(run, &self.target, &output_digest, Some(&anchor))?;
-            stage.retain_trace_anchor();
+            crate::installed_plugins::provenance::prepare_crop_output(
+                run,
+                &self.target,
+                &output_digest,
+                Some(&anchor),
+            )?;
+            if run.recording() {
+                stage.retain_trace_anchor();
+            }
         }
         #[cfg(target_os = "linux")]
         if durable_replace {

@@ -14,6 +14,7 @@ pub mod error;
 mod fal;
 mod file_history;
 mod file_mutation;
+mod file_picker;
 // pub: criterion benches (src-tauri/benches/) call into
 // files::dir_listing::{scan_directory_parallel, sort_entries} directly.
 pub mod files;
@@ -30,8 +31,8 @@ mod git_watch;
 mod github;
 mod image_crop;
 mod image_operation;
+mod installed_plugins;
 mod nano_banana;
-mod openai_image;
 mod palette;
 mod platform;
 mod plugin_job;
@@ -49,9 +50,6 @@ mod user_report;
 /// Non-Linux stub so the command registry stays platform-independent.
 #[cfg(not(target_os = "linux"))]
 mod portal {
-    #[tauri::command]
-    pub async fn picker_respond(_token: String, _paths: Vec<String>, _cancelled: bool) {}
-
     pub fn is_portal_mode() -> bool {
         false
     }
@@ -62,7 +60,6 @@ pub mod system;
 pub mod task_registry;
 mod terminal;
 mod thumbnails;
-mod trace;
 mod wallpaper;
 mod warm_pool;
 
@@ -184,7 +181,24 @@ pub fn run_with_process_entry(launch_dir: Option<String>, t_process_entry: std::
         .and_then(|s| s.parse().ok())
         .unwrap_or(log::LevelFilter::Info);
 
-    let builder = tauri::Builder::default();
+    let builder =
+        tauri::Builder::default().register_uri_scheme_protocol("plugin", |_context, request| {
+            let decoded = percent_encoding::percent_decode_str(request.uri().path()).decode_utf8();
+            let response = decoded
+                .map_err(|_| error::AppError::Other("Invalid asset path".into()))
+                .and_then(|path| installed_plugins::serve_asset(&path));
+            match response {
+                Ok((body, mime)) => tauri::http::Response::builder()
+                    .header("Content-Type", mime)
+                    .header("Access-Control-Allow-Origin", "*")
+                    .header("X-Content-Type-Options", "nosniff")
+                    .body(body),
+                Err(_) => tauri::http::Response::builder()
+                    .status(404)
+                    .body(Vec::new()),
+            }
+            .expect("valid plugin asset response")
+        });
     #[cfg(target_os = "macos")]
     let builder = builder.on_web_content_process_terminate(|webview| {
         renderer_owner::on_web_content_terminated(webview);
@@ -290,8 +304,6 @@ pub fn run_with_process_entry(launch_dir: Option<String>, t_process_entry: std::
             files::file_ops::read_image_data_url,
             files::image_crop::capture_image_crop,
             file_mutation::save_image_crop,
-            trace::trace_for_image,
-            trace::recent_openai_image_runs,
             files::pdf_preview::read_pdf_bytes,
             files::pdf_preview::open_pdf_link,
             #[cfg(feature = "e2e-hooks")]
@@ -423,13 +435,18 @@ pub fn run_with_process_entry(launch_dir: Option<String>, t_process_entry: std::
             wallpaper::set_as_wallpaper,
             // Nano Banana (AI image editing)
             nano_banana::start_nano_banana_job,
-            openai_image::start_openai_image_job,
             upscale::start_upscale_job,
             // AI rename suggestions
             ai_rename::ai_suggest_filenames,
             ai_organize::ai_suggest_destination,
             // File-picker portal (xdg-desktop-portal FileChooser backend)
-            portal::picker_respond,
+            file_picker::picker_respond,
+            file_picker::pick_file,
+            installed_plugins::list_installed_plugins,
+            installed_plugins::install_plugin,
+            installed_plugins::uninstall_plugin,
+            installed_plugins::set_plugin_package_enabled,
+            installed_plugins::plugin_backend_invoke,
             // Window appearance
             set_window_theme,
             // Pre-warmed window pool
@@ -450,9 +467,8 @@ pub fn run_with_process_entry(launch_dir: Option<String>, t_process_entry: std::
         ])
         .setup(move |app| {
             let t_setup = std::time::Instant::now();
-            if let Err(error) = trace::reconcile_unfinished() {
-                log::warn!("Trace could not reconcile unfinished image runs: {error}");
-            }
+            installed_plugins::initialize(app.handle().clone())?;
+
             // Before any window exists, so every mutation command can admit.
             // Without a data directory, mutations fail rather than run unadmitted.
             #[cfg(target_os = "linux")]
@@ -630,6 +646,7 @@ pub fn run_with_process_entry(launch_dir: Option<String>, t_process_entry: std::
         .build(tauri::generate_context!())
         .expect("error while running tauri application")
         .run(|app, event| {
+            if matches!(&event,tauri::RunEvent::Exit){installed_plugins::shutdown();}
             // Portal mode has no persistent window: closing a picker window
             // must not exit the service, or the D-Bus name would drop.
             if portal::is_portal_mode() {

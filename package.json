@@ -65,7 +65,7 @@
     "@wdio/mocha-framework": "^9.27.0",
     "@wdio/spec-reporter": "^9.27.0",
     "cheerio": "1.2.0",
-    "svelte": "^5.53.11",
+    "svelte": "5.56.3",
     "svelte-check": "4.7.6",
     "typescript": "~6.0.3",
     "vite": "^8.1.4",

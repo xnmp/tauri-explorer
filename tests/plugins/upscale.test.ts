@@ -58,7 +58,9 @@ function makeFakeCtx() {
       get: async () => ({}),
       set: async () => {},
     },
+    saveSettings: async () => {},
     workspace: {
+      captureSelection: () => () => true,
       selectFile: async () => {},
       onFilesChanged: () => {},
       getSelection: () => [],

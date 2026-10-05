@@ -68,7 +68,7 @@ export interface PluginStorage {
 /** Window-owned background jobs survive plugin activation changes. */
 export interface PluginJobs {
   accept(
-    registration: { kind: PluginJobKind; label: string; detail: string },
+    registration: { kind: PluginJobKind; label: string; detail: string; presentation?: "image" },
     start: () => Promise<ApiResult<number>>,
   ): Promise<ApiResult<number>>;
 }
@@ -100,6 +100,8 @@ export interface PluginMoveResult {
  * do to the file view.
  */
 export interface PluginWorkspace {
+  /** Capture active pane and selection ownership for an asynchronous action. */
+  captureSelection(): () => boolean;
   /** Entries selected in the active pane. Empty when nothing is selected or
    *  there is no active explorer pane. */
   getSelection(): FileEntry[];
@@ -136,6 +138,8 @@ export interface PluginWorkspace {
  * Such cases carry a justification comment at the import site.
  */
 export interface PluginContext {
+  backend?: {invoke<T>(method:string,params?:Record<string,unknown>):Promise<T>};
+  saveSettings(patch:Record<string,unknown>):Promise<void>;
   /** Return the handler's work as a promise: a rejection is reported to the
    *  user under the plugin's name and written to the app log. Work started
    *  with `void` and never returned is invisible to that reporting. */
@@ -329,7 +333,19 @@ export function createPluginContext(
       },
     },
     storage,
+    async saveSettings(patch) {
+      const sections=pluginSettingsSections.sections.filter((section)=>section.pluginId===pluginId);
+      const section=sections[0];
+      if (section) await section.save(patch);
+      else await (storage.setChecked?.({...await storage.get(),...patch}) ?? storage.set({...await storage.get(),...patch}));
+      await Promise.all(sections.slice(1).map((section)=>section.applySaved(patch)));
+    },
     workspace: {
+      captureSelection:()=>{
+        const explorer=windowTabsManager.getActiveExplorer();
+        const lease=explorer?.captureMutation();
+        return ()=>windowTabsManager.getActiveExplorer()===explorer && !!lease?.current() && lease.selectionCurrent();
+      },
       onFilesChanged: (handler) => {
         track(subscribeToLocalFileChanges((directories) => {
           if (disposed) return;

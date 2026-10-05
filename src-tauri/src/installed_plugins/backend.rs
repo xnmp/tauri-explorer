@@ -136,6 +136,12 @@ impl Broker {
             Ok(Ok(value)) => Ok(value),
             Ok(Err(cause)) => Err(error(cause)),
             Err(_) => {
+                // The worker may still be validating an unaccepted operation.
+                // Stop it before status lookup so a late reply cannot launch
+                // work after the caller has already lost acceptance ownership.
+                self.fail(
+                    "Plugin reply deadline reached; backend stopped before accepting late work",
+                );
                 self.pending
                     .lock()
                     .unwrap_or_else(|cause| cause.into_inner())
@@ -446,8 +452,13 @@ impl Broker {
                 };
                 #[cfg(windows)]
                 let status = {
-                    use std::os::windows::process::ExitStatusExt;
-                    output.status.into_raw() as i64
+                    i64::from(
+                        output
+                            .status
+                            .code()
+                            .ok_or_else(|| error("Process exit code is unavailable"))?
+                            as u32,
+                    )
                 };
                 {
                     let spools = owner

@@ -23,7 +23,6 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 ## src/lib/components/ — Svelte 5 UI. Views, dialogs, panels, item chrome.
 
 - `src/lib/components/FileRecoveryDialog.svelte`, `src/lib/components/FileRecoveryNotice.svelte` — page-owned recovery inspection/choices, stable async-action focus and persistent attention notice; deferred mounting uses WindowDialogs and the status-bar snippet or standalone attention row.
-- `src/lib/plugins/trace/TraceInspector.svelte` — read-only image lineage rendered in the plugin inspector host.
 
 - `WindowDialogs.svelte` — typed lazy dialog host, crash boundaries, plugin dialogs and window-level feedback, including portal mode.
 - `OpenWithDialog.svelte` — accessible installed-application choice with captured filename, loading/empty/error feedback and unchanged-default messaging.
@@ -239,7 +238,6 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `drives.ts` — drive enumeration, mount, unmount and eject IPC.
 - `clipboard-image.ts` — clipboard bitmap detection and save IPC.
 - `plugin-jobs.ts` — accepted plugin job result types and image/provider job IPC.
-- `src/lib/api/openai-image.ts` — OpenAI image generation/edit launch and durable run history IPC.
 
 - `common.ts` — mock-aware `invoke`, error extraction, Result types. Base of every api call.
 - `native-resource-session.ts` — one acknowledged renderer generation shared by directory/Git IPC and the ordered history-summary channel; only failed acknowledgement retries.
@@ -397,19 +395,14 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `settings-registry.svelte.ts` — registry for plugin settings sections.
 - `inspector-registry.svelte.ts` — ordered, owner-disposed registry for selection-aware inspector contributions.
 - `src/lib/plugins/image-editor-registry.svelte.ts` — ordered, owner-disposed image editing tool contributions with immutable captured source revisions and opaque service ports.
-- `trace/index.ts`, `trace/invalidation.svelte.ts`, `trace/TraceInspector.svelte`, `trace/TraceDetails.svelte` — Trace inspector contribution, native-change refresh, interactive DAG focus, and output-node prompt details with raw metadata disclosure.
 - `fs-providers.ts` — virtual-filesystem provider registry + dispatch.
 - `demo/index.ts` — demo plugin exercising every contribution seam.
 - `ai-organize/index.ts` + `AiOrganizeDialog.svelte` — AI organize plugin (#158).
 - `ai-rename/index.ts` + `AiRenameDialog.svelte` — AI rename plugin (#145).
 - `nano-banana/index.ts` + `NanoBananaDialog.svelte` — Nano Banana image-edit plugin.
-- `src/lib/plugins/openai-image/index.ts`, `src/lib/plugins/openai-image/OpenAIImageDialog.svelte`, `src/lib/plugins/openai-image/OpenAIImageHistory.svelte` — OpenAI API key settings, selected-image edits, generation into selected folders, and durable recent-run history including failures with no output.
-- `src/lib/plugins/openai-image/OpenAIImageEditDialog.svelte`, `src/lib/plugins/openai-image/OpenAIImageEditorTool.svelte`, `src/lib/plugins/openai-image/OpenAIImageForm.svelte` — keyed target/reference capture in the shared image editor, provider tool contribution, and common prompt/connection/output form for edits and generation.
 - `theme-from-image/index.ts` — generate theme from an image (#203).
 - `upscale/index.ts` + `UpscaleDialog.svelte` — image upscale plugin (fal.ai SeedVR2): settings, context-menu item, command, dialog.
 - `plugin-dialog.css` — shared `.plugin-dialog` chrome (header/body/inputs/buttons) reused by the nano-banana / ai-rename / upscale dialogs.
-- `src/lib/api/trace.ts` — typed query for the native Trace graph of the selected image.
-- `src/lib/domain/trace-layout.ts`, `tests/domain/trace-layout.test.ts` — deterministic layered artifact/run layout and fork/merge connection contract for the Trace pane.
 
 ## src/lib/background-animations/ — canvas backgrounds (registry-driven).
 
@@ -463,9 +456,6 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `ai_organize.rs` — AI destination suggestions via Gemini (#158).
 - `ai_rename.rs` — AI rename suggestions via Gemini (#145).
 - `nano_banana.rs` — Nano Banana image editing via Gemini.
-- `src-tauri/src/openai_image/codex_executable.rs` — resolves Codex from an explicit path, inherited PATH or common desktop install locations including versioned NVM; gives only the child its installation/runtime PATH. Discovery contracts in `src-tauri/test_support/codex_executable.rs`.
-- `src-tauri/src/openai_image/codex.rs` — isolated headless Codex image transport with saved ChatGPT sign-in, ordered captured inputs, bounded JSONL and exact fresh-thread output attribution; contract and opt-in live tests in `src-tauri/test_support/codex_image.rs`.
-- `src-tauri/src/openai_image.rs` — Codex/API backend selection and bounded OpenAI Images API JSON/multipart adapter, captured source bytes, redacted metadata, no-replace publication and durable Trace lifecycle; fixtures in `src-tauri/test_support/openai_image.rs` verify transport, failure, cancellation, conflict and recovery outcomes.
 - `src-tauri/src/image_operation.rs` — immutable provider input snapshots, mandatory traced image publication and worker terminal settlement shared by OpenAI, Gemini and fal upscaling.
 - `fal.rs` — fal.ai REST helpers: API-key resolution, CDN upload, queue submit/poll, result download. Shared by upscale + nano-banana.
 - `upscale.rs` — `start_upscale_job` command: uploads the image, runs the SeedVR2 queue job via `fal.rs`, writes the result.
@@ -738,8 +728,6 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 
 - `src-tauri/src/image_crop.rs` — bounded full-resolution crop encoding and EXIF orientation normalization (#681; save/UI integration pending).
 - `src-tauri/src/files/image_crop.rs` — bounded immutable crop source capture, identity/content validation, admitted staged copy and confirmed replacement execution.
-- `src-tauri/src/trace.rs` — SQLite image revision and operation DAG with durable start/terminal states, provider result details, recent OpenAI run history and retained native publication evidence for crash recovery; follows ancestors and descendants, reports selected-file match/changed/unverified status and historical path availability, and updates exact revision locators on Explorer rename and history undo/redo.
-- `e2e/trace-inspector.spec.ts` — browser contract for displaying a selected image's source, crop run, and output in the Trace pane.
 - `src/lib/api/image-crop.ts` — typed crop capture/save IPC and native history settlement.
 - `src/lib/api/mock-image-crop.ts` — synthetic PNG/JPEG browser fixtures that save actual cropped pixels into the mock listing; native formats and file safety are verified separately.
 - `src/lib/state/image-crop-session.ts` — editor opening, crop coordinates, blob ownership and accepted-save lifetime.
@@ -776,6 +764,18 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `e2e-tauri/specs/video-preview-lifecycle.spec.ts` — actual List/Tiles decoded selection, warm-window activation and playing-owner destruction with capability/file-handle retirement.
 
 - `src/lib/domain/image-generation-settings.ts` — provider-compatible image dimensions from resolution and source/explicit aspect ratio.
-- `src/lib/domain/image-output-filename.ts` — unique per-job PNG output names bounded to filesystem byte limits.
-- `src/lib/plugins/trace/TraceThumbnail.svelte` — lifecycle-owned thumbnail URLs and current-file preview labeling.
-- `src/lib/plugins/trace/visibility.svelte.ts` — Trace pane visibility used by its command palette toggle.
+
+## Installed plugin packages
+
+- `src-tauri/src/installed_plugins/mod.rs` — package commands and lifecycle admission barrier shared by every window.
+- `src-tauri/src/installed_plugins/package.rs` — bounded archive/manifest validation, immutable payloads/index and declared frontend assets.
+- `src-tauri/src/installed_plugins/backend.rs` — shared native RPC broker, durable job recovery, controlled CLI service and owned spools.
+- `src-tauri/src/installed_plugins/lifecycle.rs` — declared state snapshots, preflight/commit/rollback journal and interrupted upgrade recovery.
+- `src-tauri/src/installed_plugins/provenance.rs` — optional recording facade and host-retained publisher leases for core edits/rename.
+- `src-tauri/src/file_picker.rs` — owned native open/save picker requests; replies are scoped to their creating window.
+- `src-tauri/src/process_ext/windows_job.rs` — attach suspended launchers to kill-on-close JobObjects before descendants can start.
+- `src/lib/plugins/installed.ts` — load/remove installed contributions and synchronize package changes between windows.
+- `src/lib/plugins/runtime-sdk.ts`, `src/lib/plugins/svelte-runtime.d.ts` — frozen SDK and exact shared Svelte compiler/runtime bindings.
+- `src/lib/components/InstalledPluginSettings.svelte` — install, enable, remove and activation errors in Settings.
+
+TraceExplorer's image UI, provider adapters and SQLite journal are maintained in https://github.com/xnmp/TraceExplorer rather than compiled into this host. Core crop outcomes remain covered in `e2e/image-crop.spec.ts` and `e2e/image-editor.spec.ts`.

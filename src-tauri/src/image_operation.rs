@@ -1,7 +1,7 @@
 //! Common image producer contract: immutable input, durable attempt, exact
 //! staged evidence before no-replace publication, and durable terminal status.
-use crate::{error::AppError, plugin_job};
 use crate::installed_plugins::provenance as trace;
+use crate::{error::AppError, plugin_job};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 use std::{

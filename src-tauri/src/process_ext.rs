@@ -132,7 +132,11 @@ pub(crate) fn output_controlled(
 
         if exited.is_none() {
             match exited_without_reaping(&mut child) {
-                Ok(true) => exited = Some(Instant::now()),
+                Ok(true) => {
+                    #[cfg(windows)]
+                    owned_job.terminate();
+                    exited = Some(Instant::now());
+                }
                 Ok(false) => {}
                 Err(error) => {
                     terminate(&mut child);

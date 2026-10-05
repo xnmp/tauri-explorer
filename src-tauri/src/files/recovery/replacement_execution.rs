@@ -50,7 +50,9 @@ impl ReplacementExecution {
             .directory()
             .path()?
             .join(super::artifact_layout::PUBLICATION);
-        crate::installed_plugins::provenance::prepare_linked_output(run, target, digest, &publisher)?;
+        crate::installed_plugins::provenance::prepare_linked_output(
+            run, target, digest, &publisher,
+        )?;
         self.root.verify_namespace()
     }
 

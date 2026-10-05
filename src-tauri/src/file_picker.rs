@@ -120,16 +120,18 @@ pub async fn picker_respond(
     if window.label() != token {
         return;
     }
-    if resolve(
+    let handled = resolve(
         &token,
         if cancelled {
             None
         } else {
             paths.first().cloned()
         },
-    ) {
-        return;
-    }
+    );
     #[cfg(target_os = "linux")]
-    crate::portal::picker_respond(token, paths, cancelled).await;
+    if !handled {
+        crate::portal::picker_respond(token, paths, cancelled).await;
+    }
+    #[cfg(not(target_os = "linux"))]
+    let _ = handled;
 }

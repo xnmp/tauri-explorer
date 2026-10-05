@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount } from "svelte";
+  import {isTauri} from "$lib/api/common";
   import { listen } from "@tauri-apps/api/event";
   import { pluginRegistry } from "$lib/plugins/registry.svelte";
   import { installPackage, uninstallPackage, setPackageEnabled, installedPackages, packageFailure, refreshInstalledPackages, packageError, type InstalledPackage } from "$lib/plugins/installed";
@@ -14,7 +15,7 @@
   onMount(()=>{
     let active=true;let unlisten:(()=>void)|undefined;
     void refresh().catch((cause)=>{if(active)error=packageError(cause);});
-    void listen("plugins:changed",()=>{if(active)void refresh().catch((cause)=>{error=packageError(cause);});}).then((dispose)=>{if(active)unlisten=dispose;else dispose();});
+    if(isTauri())void listen("plugins:changed",()=>{if(active)void refresh().catch((cause)=>{error=packageError(cause);});}).then((dispose)=>{if(active)unlisten=dispose;else dispose();});
     return ()=>{active=false;unlisten?.();};
   });
 </script>

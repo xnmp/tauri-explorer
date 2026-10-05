@@ -1,5 +1,5 @@
 import type {Plugin,PluginContext} from "./api";
-import {invoke,extractError} from "$lib/api/common";
+import {invoke,extractError,isTauri} from "$lib/api/common";
 import {convertFileSrc} from "@tauri-apps/api/core";
 const SVELTE_ABI="5.56.3";
 
@@ -66,7 +66,7 @@ export async function setPackageEnabled(id:string,enabled:boolean,registry:Packa
 }
 let watching=false;
 export async function watchInstalledPackages(registry:PackageRegistry):Promise<void>{
-  if(watching)return;watching=true;
+  if(!isTauri()||watching)return;watching=true;
   try { const {listen}=await import("@tauri-apps/api/event");await listen("plugins:changed",()=>{void refreshInstalledPackages(registry).catch((error)=>console.error("Could not refresh installed plugins",error));}); }
   catch(error){watching=false;throw error;}
 }

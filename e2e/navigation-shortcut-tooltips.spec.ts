@@ -52,3 +52,23 @@ test("custom shortcuts are advertised and navigate the visible folder history", 
   await page.keyboard.press("Control+Shift+g");
   await expect(breadcrumbs).toContainText(folderName!);
 });
+
+test("unbound navigation commands do not advertise stale shortcuts", async ({ page }) => {
+  await page.addInitScript(() => {
+    localStorage.setItem("explorer-keybindings", JSON.stringify({
+      "navigation.goBack": null,
+      "navigation.goForward": null,
+    }));
+  });
+  await page.goto(HOME_URL);
+  await waitForEntries(page);
+
+  await expect(page.locator(backButton)).toHaveAttribute(
+    "title",
+    "Back — right-click for history",
+  );
+  await expect(page.locator(forwardButton)).toHaveAttribute(
+    "title",
+    "Forward — right-click for history",
+  );
+});

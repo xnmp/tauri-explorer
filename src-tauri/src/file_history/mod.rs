@@ -270,7 +270,7 @@ impl execution::Operations for NativeOperations {
                 if old != new {
                     let source = outcome.target.with_file_name(old);
                     let target = outcome.target.clone();
-                    if let Err(error) = crate::trace::relocate_after_rename(source, target).await {
+                    if let Err(error) = crate::installed_plugins::provenance::relocate_after_rename(source, target).await {
                         let warning = format!(
                             "Rename completed, but Trace could not update its locator: {error}"
                         );

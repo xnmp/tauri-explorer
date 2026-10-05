@@ -43,8 +43,6 @@
 import type { Drive } from "./drives";
 import type { GitFileEntry, GitOpState } from "./git";
 import type { ImageCropCapture, ImageCropSave } from "./image-crop";
-import type { TraceGraph } from "./trace";
-import type { OpenAIImageRequest, OpenAIImageRunHistory } from "./openai-image";
 import type { FileMutationReceipt } from "$lib/domain/file";
 
 export interface MockGitState {
@@ -72,10 +70,6 @@ export interface MockControl {
   previewReadImage?: (path: string) => string | Promise<string>;
   imageCropCapture?: (path: string) => ImageCropCapture | Promise<ImageCropCapture>;
   imageCropSave?: (request: ImageCropSave) => FileMutationReceipt | Promise<FileMutationReceipt>;
-  /** Override the native Trace query for browser provenance contracts. */
-  traceForImage?: (path: string) => TraceGraph | null | Promise<TraceGraph | null>;
-  openAIImageStart?: (request: OpenAIImageRequest, apiKey: string) => number | Promise<number>;
-  openAIImageHistory?: OpenAIImageRunHistory[];
   /** Overrides filename collision checks for slow storage responses. */
   checkPathsExist?: (paths: string[]) => boolean[] | Promise<boolean[]>;
   /** Overrides bounded binary PDF transport for cancellation/revision tests. */

@@ -206,7 +206,7 @@ impl Runtime {
         generated: &std::path::Path,
         original: &std::path::Path,
         revision: &crate::files::image_crop::SourceRevision,
-        trace: &crate::trace::TraceRunHandle,
+        trace: Option<&crate::installed_plugins::provenance::TraceRunHandle>,
         digest: &str,
     ) -> Result<crate::files::mutation::FileMutationReceipt, AppError> {
         struct Progress;
@@ -227,7 +227,11 @@ impl Runtime {
         let receipt = prepared
             .pop()
             .expect("one generated replacement")
-            .execute_traced(&mut Progress, Some(revision), Some((trace, digest)));
+            .execute_traced(
+                &mut Progress,
+                Some(revision),
+                trace.map(|run| (run, digest)),
+            );
         // Discovery failure never revokes a completed replacement receipt.
         match super::service::enforce(&coordinator) {
             Ok(snapshot) => self.subscriptions.publish(&snapshot),

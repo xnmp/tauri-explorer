@@ -31,6 +31,7 @@ name = "sort_entries"
 harness = false
 
 [dependencies]
+url = "2"
 tauri = { version = "2", features = ["protocol-asset", "macos-private-api"] }
 tauri-plugin-opener = "2"
 tauri-plugin-shell = "2"
@@ -120,11 +121,11 @@ gio-unix = "0.22"
 x11rb = "0.14"
 linux-raw-sys = { version = "0.12.1", default-features = false, features = ["general", "no_std"] }
 zbus = { version = "5", default-features = false, features = ["tokio"] }
-url = "2"
 webkit2gtk = { version = "2.0", features = ["v2_20"] }
 gtk = { version = "0.18", optional = true }
 
 [target.'cfg(target_os = "windows")'.dependencies]
+windows-sys = {version="0.61",features= ["Win32_Foundation", "Win32_Security", "Win32_System_JobObjects", "Win32_System_Threading", "Win32_System_Diagnostics_ToolHelp"] }
 webview2-com = "0.39"
 windows-core = "0.62.2"
 # Win32_System_DataExchange/Memory: the clipboard sequence number and the

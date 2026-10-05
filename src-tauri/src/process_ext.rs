@@ -13,6 +13,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 use crate::error::AppError;
+#[cfg(windows)]
+mod windows_job;
 
 /// Mark a `Command` so it does not pop a console window on Windows.
 pub trait NoConsole {
@@ -71,13 +73,31 @@ pub(crate) fn output_controlled(
         command.process_group(0);
     }
 
+    #[cfg(windows)]
+    let owned_job = {
+        use std::os::windows::process::CommandExt;
+        command.creation_flags(0x0800_0000 | 0x0000_0004); // NO_WINDOW | SUSPENDED
+        windows_job::Job::new()?
+    };
     let mut child = command
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
         .map_err(AppError::from)?;
+    #[cfg(windows)]
+    if let Err(error) = owned_job.attach_and_resume(&mut child) {
+        owned_job.terminate();
+        let _ = child.kill();
+        let _ = child.wait();
+        return Err(error.into());
+    }
     let pid = child.id();
+    let terminate = |child: &mut std::process::Child| {
+        #[cfg(windows)]
+        owned_job.terminate();
+        terminate_process_tree(child, pid);
+    };
     let mut stdout = child
         .stdout
         .take()
@@ -97,7 +117,7 @@ pub(crate) fn output_controlled(
     let mut exited = None;
     loop {
         if cancelled() || overflow.load(Ordering::Relaxed) {
-            terminate_process_tree(&mut child, pid);
+            terminate(&mut child);
             let _ = child.wait();
             drain_readers(stdout_reader, stderr_reader);
             return Err(AppError::Other(
@@ -111,19 +131,23 @@ pub(crate) fn output_controlled(
         }
 
         if exited.is_none() {
-            match child.try_wait() {
-                Ok(Some(status)) => exited = Some((status, Instant::now())),
-                Ok(None) => {}
+            match exited_without_reaping(&mut child) {
+                Ok(true) => exited = Some(Instant::now()),
+                Ok(false) => {}
                 Err(error) => {
-                    terminate_process_tree(&mut child, pid);
+                    terminate(&mut child);
                     let _ = child.wait();
                     drain_readers(stdout_reader, stderr_reader);
                     return Err(AppError::from(error));
                 }
             }
         }
-        if let Some((status, since)) = exited {
+        if let Some(since) = exited {
             if stdout_reader.is_finished() && stderr_reader.is_finished() {
+                // Kill redirected descendants before reaping the launcher.
+                // WNOWAIT keeps its PID/group identity reserved through cleanup.
+                terminate(&mut child);
+                let status = child.wait()?;
                 let stdout = stdout_reader
                     .join()
                     .map_err(|_| AppError::Other("child stdout reader panicked".into()))?
@@ -144,7 +168,8 @@ pub(crate) fn output_controlled(
             // The launcher may exit while a descendant retains its pipes.
             // Continue observing cancellation until EOF, then bound that drain.
             if since.elapsed() >= Duration::from_secs(5) {
-                terminate_process_tree(&mut child, pid);
+                terminate(&mut child);
+                let _ = child.wait();
                 drain_readers(stdout_reader, stderr_reader);
                 return Err(AppError::Other(
                     "Child output pipes remained open after exit".into(),
@@ -153,6 +178,34 @@ pub(crate) fn output_controlled(
         }
         std::thread::sleep(Duration::from_millis(10));
     }
+}
+
+#[cfg(unix)]
+fn exited_without_reaping(child: &mut std::process::Child) -> std::io::Result<bool> {
+    let mut info = std::mem::MaybeUninit::<libc::siginfo_t>::zeroed();
+    // SAFETY: the owned child PID and correctly sized writable siginfo.
+    // WNOWAIT leaves its identity reserved until process-group cleanup.
+    let result = unsafe {
+        libc::waitid(
+            libc::P_PID,
+            child.id() as libc::id_t,
+            info.as_mut_ptr(),
+            libc::WEXITED | libc::WNOHANG | libc::WNOWAIT,
+        )
+    };
+    if result != 0 {
+        let error = std::io::Error::last_os_error();
+        return if error.kind() == std::io::ErrorKind::Interrupted {
+            Ok(false)
+        } else {
+            Err(error)
+        };
+    }
+    Ok(unsafe { info.assume_init().si_pid() } != 0)
+}
+#[cfg(windows)]
+fn exited_without_reaping(child: &mut std::process::Child) -> std::io::Result<bool> {
+    Ok(child.try_wait()?.is_some())
 }
 
 /// Never join a blocked pipe reader after termination: an independently
@@ -202,14 +255,9 @@ fn terminate_process_tree(child: &mut std::process::Child, pid: u32) {
 }
 
 #[cfg(windows)]
-fn terminate_process_tree(child: &mut std::process::Child, pid: u32) {
-    // `/T` includes descendants; this matters for `wsl.exe`, which proxies the
-    // actual Linux Git process. Child::kill remains a fallback if taskkill is
-    // unavailable or races with normal completion.
-    let _ = Command::new("taskkill")
-        .no_console()
-        .args(["/PID", &pid.to_string(), "/T", "/F"])
-        .status();
+fn terminate_process_tree(child: &mut std::process::Child, _pid: u32) {
+    // The scoped JobObject has already terminated every owned descendant.
+    // Retain Child::kill only as a fallback for the launcher's own handle.
     let _ = child.kill();
 }
 
@@ -218,6 +266,101 @@ mod tests {
     use super::output_cancellable;
     #[cfg(unix)]
     use super::output_controlled;
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn successful_launcher_retires_its_redirected_descendants() {
+        let output = output_controlled(
+            std::process::Command::new("sh")
+                .args(["-c", "sleep 30 >/dev/null 2>&1 & printf '%s' \"$!\""]),
+            || false,
+            (1024, 1024),
+            "cancelled",
+        )
+        .unwrap();
+        assert!(output.status.success());
+        let pid = String::from_utf8(output.stdout)
+            .unwrap()
+            .parse::<i32>()
+            .unwrap();
+        let retired = || {
+            std::fs::read_to_string(format!("/proc/{pid}/stat"))
+                .map(|stat| {
+                    stat.rsplit_once(')')
+                        .is_some_and(|(_, tail)| tail.trim_start().starts_with('Z'))
+                })
+                .unwrap_or(true)
+        };
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(1);
+        while !retired() && std::time::Instant::now() < deadline {
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        let stopped = retired();
+        if !stopped {
+            unsafe {
+                libc::kill(pid, libc::SIGKILL);
+            }
+        }
+        assert!(stopped, "Redirected child survived its successful launcher");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn successful_launcher_retires_its_redirected_descendants() {
+        use windows_sys::Win32::{
+            Foundation::CloseHandle,
+            System::Threading::{
+                GetExitCodeProcess, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION,
+            },
+        };
+        let directory = tempfile::tempdir().unwrap();
+        let stdout = directory
+            .path()
+            .join("child.stdout")
+            .to_string_lossy()
+            .replace("'", "''");
+        let stderr = directory
+            .path()
+            .join("child.stderr")
+            .to_string_lossy()
+            .replace("'", "''");
+        let script=format!("$p=Start-Process powershell.exe -ArgumentList '-NoProfile','-NonInteractive','-Command','Start-Sleep -Seconds 30' -RedirectStandardOutput '{stdout}' -RedirectStandardError '{stderr}' -PassThru; $p.Id");
+        let output = super::output_controlled(
+            Command::new("powershell.exe").args([
+                "-NoProfile",
+                "-NonInteractive",
+                "-Command",
+                &script,
+            ]),
+            || false,
+            (1024, 1024),
+            "cancelled",
+        )
+        .unwrap();
+        assert!(output.status.success());
+        let pid = String::from_utf8(output.stdout)
+            .unwrap()
+            .trim()
+            .parse::<u32>()
+            .unwrap();
+        let retired = || unsafe {
+            let process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid);
+            if process.is_null() {
+                return true;
+            }
+            let mut code = 259;
+            let read = GetExitCodeProcess(process, &mut code);
+            CloseHandle(process);
+            read != 0 && code != 259
+        };
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while !retired() && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert!(
+            retired(),
+            "Redirected child survived its successful launcher"
+        );
+    }
     use std::process::Command;
     use std::sync::atomic::AtomicBool;
     use std::sync::Arc;

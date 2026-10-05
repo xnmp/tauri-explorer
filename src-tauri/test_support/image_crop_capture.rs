@@ -1,21 +1,8 @@
 use super::*;
 use image::AnimationDecoder;
 
-async fn execute(mut plan: SavePlan, runtime: &super::super::admission::Runtime) -> Outcome {
-    let automatic = plan.trace_run.is_none();
-    if automatic {
-        let db = plan.source.parent().unwrap().join("crop-test-trace.sqlite");
-        let run = crate::trace::begin_crop_for_test(&db, &plan.trace_metadata()).unwrap();
-        plan = plan.with_trace_run(Some(run));
-    }
-    let run = plan.trace_run.clone();
-    let outcome = super::execute(plan, runtime).await;
-    if automatic {
-        if let (Some(run), Ok(receipt)) = (&run, &outcome.completion.result) {
-            crate::trace::complete_crop(run, &receipt.path).unwrap();
-        }
-    }
-    outcome
+async fn execute(plan: SavePlan, runtime: &super::super::admission::Runtime) -> Outcome {
+    super::execute(plan, runtime).await
 }
 use std::io::Cursor;
 
@@ -271,123 +258,6 @@ async fn real_copy_saves_exact_region_and_preserves_original_bytes() {
         result.entry.unwrap().size,
         fs::metadata(&result.path).unwrap().len()
     );
-}
-
-#[tokio::test]
-async fn real_copy_records_the_published_revision_in_trace() {
-    let root = tempfile::tempdir().unwrap();
-    let (source, _, revision) = source(root.path());
-    let database = root.path().join("trace.sqlite");
-    let plan = SavePlan::new(request(
-        &source,
-        revision,
-        Destination::Copy {
-            name: "copy.png".into(),
-        },
-    ))
-    .unwrap();
-    let run = crate::trace::begin_crop_for_test(&database, &plan.trace_metadata()).unwrap();
-    let runtime = super::super::admission::Runtime::new(root.path().join("recovery"));
-    let receipt = execute(plan.with_trace_run(Some(run.clone())), &runtime)
-        .await
-        .completion
-        .result
-        .unwrap();
-    crate::trace::complete_crop(&run, &receipt.path).unwrap();
-
-    let graph = crate::trace::graph_for_path_at(&database, Path::new(&receipt.path))
-        .unwrap()
-        .unwrap();
-    let graph = serde_json::to_value(graph).unwrap();
-    assert_eq!(graph["artifacts"].as_array().unwrap().len(), 2);
-    assert_eq!(graph["runs"][0]["status"], "succeeded");
-    assert_eq!(graph["selectedRevisionStatus"], "matched");
-    assert!(!fs::read_dir(root.path())
-        .unwrap()
-        .filter_map(Result::ok)
-        .any(|entry| entry
-            .file_name()
-            .to_string_lossy()
-            .starts_with(".tauri-explorer-stage-")));
-}
-
-#[tokio::test]
-async fn published_copy_is_recovered_after_trace_completion_is_interrupted() {
-    let root = tempfile::tempdir().unwrap();
-    let (source, _, revision) = source(root.path());
-    let database = root.path().join("trace.sqlite");
-    let plan = SavePlan::new(request(
-        &source,
-        revision,
-        Destination::Copy {
-            name: "copy.png".into(),
-        },
-    ))
-    .unwrap();
-    let run = crate::trace::begin_crop_for_test(&database, &plan.trace_metadata()).unwrap();
-    let runtime = super::super::admission::Runtime::new(root.path().join("recovery"));
-    let receipt = execute(plan.with_trace_run(Some(run)), &runtime)
-        .await
-        .completion
-        .result
-        .unwrap();
-    // Simulate a process exit between filesystem publication and Trace commit.
-    crate::trace::reconcile_unfinished_at(&database).unwrap();
-
-    let graph = crate::trace::graph_for_path_at(&database, Path::new(&receipt.path))
-        .unwrap()
-        .unwrap();
-    let graph = serde_json::to_value(graph).unwrap();
-    assert_eq!(graph["artifacts"].as_array().unwrap().len(), 2);
-    assert_eq!(graph["runs"][0]["status"], "succeeded");
-    assert_eq!(graph["runs"][0]["recovered"], true);
-    assert!(!fs::read_dir(root.path())
-        .unwrap()
-        .filter_map(Result::ok)
-        .any(|entry| entry
-            .file_name()
-            .to_string_lossy()
-            .starts_with(".tauri-explorer-stage-")));
-}
-
-#[tokio::test]
-async fn refused_copy_retains_failed_run_without_claiming_the_occupied_target() {
-    let root = tempfile::tempdir().unwrap();
-    let (source, _, revision) = source(root.path());
-    let database = root.path().join("trace.sqlite");
-    let occupied = root.path().join("copy.png");
-    fs::write(&occupied, b"another file").unwrap();
-    let plan = SavePlan::new(request(
-        &source,
-        revision,
-        Destination::Copy {
-            name: "copy.png".into(),
-        },
-    ))
-    .unwrap();
-    let run = crate::trace::begin_crop_for_test(&database, &plan.trace_metadata()).unwrap();
-    let runtime = super::super::admission::Runtime::new(root.path().join("recovery"));
-    assert!(execute(plan.with_trace_run(Some(run.clone())), &runtime)
-        .await
-        .completion
-        .result
-        .is_err());
-    crate::trace::fail_crop(&run).unwrap();
-
-    let graph = crate::trace::graph_for_path_at(&database, &source)
-        .unwrap()
-        .unwrap();
-    let graph = serde_json::to_value(graph).unwrap();
-    assert_eq!(graph["artifacts"].as_array().unwrap().len(), 1);
-    assert_eq!(graph["runs"][0]["status"], "failed");
-    assert_eq!(fs::read(&occupied).unwrap(), b"another file");
-    assert!(!fs::read_dir(root.path())
-        .unwrap()
-        .filter_map(Result::ok)
-        .any(|entry| entry
-            .file_name()
-            .to_string_lossy()
-            .starts_with(".tauri-explorer-stage-")));
 }
 
 #[tokio::test]
@@ -847,75 +717,36 @@ fn canonical_capture_preserves_oriented_animated_webp_frames_and_timing() {
 }
 
 #[tokio::test]
-async fn replacement_records_two_revisions_of_one_path_and_recovers_after_restart() {
-    for restart in [false, true] {
+async fn crop_copy_and_replacement_work_without_a_recording_provider() {
+    for replace in [false, true] {
         let root = tempfile::tempdir().unwrap();
         let (source, original, revision) = source(root.path());
-        let database = root.path().join("trace.sqlite");
-        let plan = SavePlan::new(request(&source, revision, Destination::Replace)).unwrap();
-        let run = crate::trace::begin_crop_for_test(&database, &plan.trace_metadata()).unwrap();
-        let runtime = super::super::admission::Runtime::new(root.path().join("recovery"));
-        let receipt = execute(plan.with_trace_run(Some(run.clone())), &runtime)
-            .await
-            .completion
-            .result
-            .unwrap();
-        assert_ne!(fs::read(&source).unwrap(), original);
-        if restart {
-            crate::trace::reconcile_unfinished_at(&database).unwrap();
-        } else {
-            crate::trace::complete_crop(&run, &receipt.path).unwrap();
-        }
-        let graph = serde_json::to_value(
-            crate::trace::graph_for_path_at(&database, &source)
-                .unwrap()
-                .unwrap(),
-        )
-        .unwrap();
-        assert_eq!(graph["artifacts"].as_array().unwrap().len(), 2);
-        assert_eq!(graph["runs"][0]["status"], "succeeded");
-        assert_eq!(graph["runs"][0]["recovered"], restart);
-        let artifacts = graph["artifacts"].as_array().unwrap();
-        assert_eq!(artifacts[0]["path"], artifacts[1]["path"]);
-        assert_ne!(artifacts[0]["id"], artifacts[1]["id"]);
-        assert_ne!(artifacts[0]["digest"], artifacts[1]["digest"]);
-    }
-}
-#[tokio::test]
-async fn missing_or_unwritable_trace_refuses_copy_and_replacement_without_changing_the_source() {
-    for replace in [false, true] {
-        for admitted in [false, true] {
-            let root = tempfile::tempdir().unwrap();
-            let (source, original, revision) = source(root.path());
-            let db = root.path().join("trace.sqlite");
-            let plan = SavePlan::new(request(
-                &source,
-                revision,
-                if replace {
-                    Destination::Replace
-                } else {
-                    Destination::Copy {
-                        name: "copy.png".into(),
-                    }
-                },
-            ))
-            .unwrap();
-            let plan = if admitted {
-                let run = crate::trace::begin_crop_for_test(&db, &plan.trace_metadata()).unwrap();
-                fs::remove_file(&db).unwrap();
-                fs::create_dir(&db).unwrap();
-                plan.with_trace_run(Some(run))
+        let plan = SavePlan::new(request(
+            &source,
+            revision,
+            if replace {
+                Destination::Replace
             } else {
-                plan
-            };
-            let runtime = super::super::admission::Runtime::new(root.path().join("recovery"));
-            assert!(super::execute(plan, &runtime)
-                .await
-                .completion
-                .result
-                .is_err());
+                Destination::Copy {
+                    name: "copy.png".into(),
+                }
+            },
+        ))
+        .unwrap();
+        let runtime = super::super::admission::Runtime::new(root.path().join("recovery"));
+        let receipt = execute(plan, &runtime).await.completion.result.unwrap();
+        let cropped = fs::read(&receipt.path).unwrap();
+        assert_ne!(cropped, original);
+        assert!(image::load_from_memory(&cropped).is_ok());
+        if !replace {
             assert_eq!(fs::read(&source).unwrap(), original);
-            assert!(!root.path().join("copy.png").exists());
         }
+        assert!(!fs::read_dir(root.path())
+            .unwrap()
+            .filter_map(Result::ok)
+            .any(|entry| entry
+                .file_name()
+                .to_string_lossy()
+                .starts_with(".tauri-explorer-stage-")));
     }
 }

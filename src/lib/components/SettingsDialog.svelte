@@ -14,6 +14,7 @@
   import { dialogStore } from "$lib/state/dialogs.svelte";
   import Modal from "./Modal.svelte";
   import { tick } from "svelte";
+  import InstalledPluginSettings from "./InstalledPluginSettings.svelte";
   import { pluginRegistry } from "$lib/plugins/registry.svelte";
   import { pluginSettingsSections } from "$lib/plugins/settings-registry.svelte";
   import type { SettingRowDescriptor } from "$lib/plugins/api";
@@ -983,6 +984,7 @@
         <!-- Plugins Section -->
         <section class="settings-section" class:hidden={!sectionVisible(["Plugins", "enable disable extensions"], ...pluginRegistry.plugins.map((p) => [p.name, p.description]))}>
           <h3 class="section-title">Plugins</h3>
+          <InstalledPluginSettings />
           {#each pluginRegistry.plugins as plugin (plugin.id)}
             <div class="setting-row" class:hidden={!matchesSearch("Plugins", plugin.name, plugin.description)}>
               <div class="setting-info">

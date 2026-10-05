@@ -12,7 +12,7 @@
   import { formatSize } from "$lib/domain/file";
 
   const operations = $derived(operationsManager.showProgressDialog ? operationsManager.operations : []);
-  const imageJobs = $derived(jobsStore.jobs.filter((job) => job.source === "openai-image"));
+  const imageJobs = $derived(jobsStore.jobs.filter((job) => job.presentation === "image"));
   const showDialog = $derived(operationsManager.showProgressDialog);
   const hasActive = $derived(operationsManager.hasActiveOperations || imageJobs.some((job) => job.status === "running"));
 

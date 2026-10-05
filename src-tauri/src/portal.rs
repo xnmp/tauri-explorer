@@ -46,7 +46,6 @@ pub fn is_portal_mode() -> bool {
 }
 
 /// Frontend → backend: the picker window's verdict.
-#[tauri::command]
 pub async fn picker_respond(token: String, paths: Vec<String>, cancelled: bool) {
     resolve(&token, PickerOutcome { cancelled, paths });
 }
@@ -145,7 +144,7 @@ async fn run_picker(app: &AppHandle, req: PickerRequest) -> PickerOutcome {
         req.title.clone()
     };
     let main_thread_result = app.run_on_main_thread(move || {
-        let url = format!("index.html?{}", query);
+        let url = format!("/?{}", query);
         let built = tauri::WebviewWindowBuilder::new(
             &app_for_window,
             window_token.clone(),

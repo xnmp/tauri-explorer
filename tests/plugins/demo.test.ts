@@ -44,7 +44,9 @@ function makeStubCtx() {
     toast: { show: (m) => void toasts.push(m), error: (m) => void toasts.push(m) },
     events: { listen: () => {} },
     storage: { get: async () => ({}), set: async () => {} },
+    saveSettings: async () => {},
     workspace: {
+      captureSelection: () => () => true,
       selectFile: async () => {},
       onFilesChanged: () => {},
       getSelection: () => [],

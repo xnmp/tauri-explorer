@@ -844,6 +844,7 @@ function createExplorerState(seed?: ExplorerSeed) {
     clearSelection,
     isSelected,
     getSelectedEntries,
+    captureMutation,
     selectByIndices,
     selectAll,
     // Dialogs

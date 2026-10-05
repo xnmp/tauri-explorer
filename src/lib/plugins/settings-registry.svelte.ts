@@ -24,6 +24,7 @@ export interface RegisteredSettingsSection {
   setValue(rowId: string, value: unknown): void;
   /** Await persistence for dialogs that must report save failures. */
   save(patch: Record<string, unknown>): Promise<void>;
+  applySaved(patch:Record<string,unknown>):Promise<void>;
 }
 
 function defaultsFrom(rows: SettingRowDescriptor[]): Record<string, unknown> {
@@ -86,6 +87,7 @@ function createSection(
       await (storage.setChecked?.(next) ?? storage.set(next));
       values = next;
     },
+    async applySaved(patch) {await ready;values={...values,...patch};},
   };
 }
 

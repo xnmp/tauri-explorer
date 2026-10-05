@@ -13,7 +13,7 @@
     "macOSPrivateApi": true,
     "windows": [],
     "security": {
-      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self' data:; img-src 'self' asset: http://asset.localhost blob: data:; media-src 'self' asset: http://asset.localhost http://127.0.0.1:*; frame-src 'self' asset: http://asset.localhost; connect-src 'self' ipc: http://ipc.localhost; object-src 'none'; base-uri 'self'; form-action 'none'; worker-src 'self'",
+      "csp": "default-src 'self'; script-src 'self' plugin: http://plugin.localhost https://plugin.localhost; style-src 'self' 'unsafe-inline' plugin: http://plugin.localhost https://plugin.localhost; font-src 'self' data:; img-src 'self' asset: http://asset.localhost blob: data:; media-src 'self' asset: http://asset.localhost http://127.0.0.1:*; frame-src 'self' asset: http://asset.localhost; connect-src 'self' ipc: http://ipc.localhost plugin: http://plugin.localhost https://plugin.localhost; object-src 'none'; base-uri 'self'; form-action 'none'; worker-src 'self'",
       "assetProtocol": {
         "enable": true,
         "scope": {
@@ -41,8 +41,18 @@
     "active": true,
     "targets": "all",
     "linux": {
-      "deb": { "depends": ["xclip", "wl-clipboard"] },
-      "rpm": { "depends": ["xclip", "wl-clipboard"] }
+      "deb": {
+        "depends": [
+          "xclip",
+          "wl-clipboard"
+        ]
+      },
+      "rpm": {
+        "depends": [
+          "xclip",
+          "wl-clipboard"
+        ]
+      }
     },
     "icon": [
       "icons/32x32.png",

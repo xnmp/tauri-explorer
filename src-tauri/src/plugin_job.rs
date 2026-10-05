@@ -169,7 +169,7 @@ impl StagedOutput {
     }
     pub(crate) fn commit_traced(
         mut self,
-        run: &crate::trace::TraceRunHandle,
+        run: &crate::installed_plugins::provenance::TraceRunHandle,
         target: &std::path::Path,
         control: &JobControl,
     ) -> Result<JobOutput, AppError> {

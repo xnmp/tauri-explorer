@@ -1,5 +1,5 @@
 import { test, expect, type Page } from "./fixtures";
-import { applySettingsAndReload, waitForEntries, VIEW_MODES } from "./helpers";
+import { applySettingsAndReload, waitForEntries, runPaletteCommand, VIEW_MODES } from "./helpers";
 
 const source = "/home/user/Pictures/screenshot.png";
 async function preparePreview(page: Page, mode: string, zoom = 1, fullscreen = false, dock = "right") {
@@ -17,7 +17,7 @@ async function preparePreview(page: Page, mode: string, zoom = 1, fullscreen = f
   }
 }
 async function openCrop(page: Page) {
-  await page.getByRole("button", { name: "Edit image…", exact: true }).click();
+  await runPaletteCommand(page, "Crop Image…");
   await expect(page.getByRole("slider", { name: "Right crop edge" })).toHaveAttribute("aria-valuenow", "512");
   await expect(page.getByRole("slider", { name: "Right crop edge" })).toBeVisible();
 }
@@ -31,6 +31,24 @@ async function imageData(page: Page, path: string) {
     return invoke<string>("read_image_data_url", { path });
   }, path);
 }
+
+test("palette crop saves the selected image with preview and AI plugin disabled", async ({ page }) => {
+  await page.goto("/?path=/home/user/Pictures");
+  await applySettingsAndReload(page, { showPreviewPane: false, pluginsEnabled: { "openai-image": false } });
+  await waitForEntries(page);
+  await page.locator(".entry-item", { hasText: "screenshot.png" }).click();
+  await expect(page.locator(".preview-pane")).toHaveCount(0);
+  await openCrop(page);
+  await page.getByRole("spinbutton", { name: "left pixel position" }).fill("32");
+  await page.getByRole("button", { name: "Save copy", exact: true }).click();
+  await expect(page.getByRole("dialog", { name: "Edit image", exact: true })).toBeHidden();
+  const target = "/home/user/Pictures/screenshot - Cropped.png";
+  await expect(page.locator(".entry-item", { hasText: "screenshot - Cropped.png" })).toBeVisible();
+  expect(await page.evaluate(async (url) => {
+    const image = new Image(); image.src = url; await image.decode();
+    return [image.naturalWidth, image.naturalHeight];
+  }, await imageData(page, target))).toEqual([480, 384]);
+});
 async function dragEdge(page: Page, edge: string, position: number) {
   const edges = ["left", "top", "right", "bottom"];
   const values = () => page.locator(".crop-edge").evaluateAll((handles) => Object.fromEntries(handles.map((handle) => [handle.getAttribute("aria-label")!.split(" ")[0].toLowerCase(), Number(handle.getAttribute("aria-valuenow"))])));
@@ -109,7 +127,7 @@ for (const mode of VIEW_MODES) {
     expect(await imageData(page, source)).toBe(before);
     await page.getByRole("button", { name: "Cancel", exact: true }).click();
     expect(await imageData(page, source)).toBe(before);
-    await page.getByRole("button", { name: "Edit image…", exact: true }).click();
+    await runPaletteCommand(page, "Crop Image…");
     await page.getByRole("spinbutton", { name: "left pixel position" }).fill("32");
     await page.getByRole("button", { name: "Replace original…", exact: true }).click();
     await page.getByRole("button", { name: "Confirm replacement", exact: true }).click();
@@ -148,7 +166,9 @@ test("an accepted save keeps modal input ownership through Escape and settles on
   });
   await page.getByRole("button", { name: "Save copy", exact: true }).click();
   await expect.poll(() => page.evaluate(() => document.documentElement.dataset.cropSaveAccepted)).toBe("true");
-  await page.keyboard.press("Escape"); await page.keyboard.press("ControlOrMeta+Shift+P");
+  await page.keyboard.press("Escape");
+  await page.evaluate(async () => (await import("/src/lib/state/dialogs.svelte.ts")).dialogStore.closeAll());
+  await page.keyboard.press("ControlOrMeta+Shift+P");
   await expect(page.locator(".command-palette-dialog")).toBeHidden();
   await expect(page.getByRole("dialog", { name: "Edit image", exact: true })).toBeVisible();
   await expect(page.getByRole("button", { name: "Cancel", exact: true })).toBeDisabled();
@@ -187,11 +207,9 @@ for (const dock of ["right", "top", "bottom"]) {
   });
 }
 
-test("crop action is an icon and editor controls use compact themed chrome", async ({ page }) => {
+test("crop is available through the palette without a preview icon", async ({ page }) => {
   await open(page, "details");
-  const action = page.getByRole("button", { name: "Edit image…", exact: true });
-  await expect(action).toHaveText("");
-  await expect(action.locator("svg")).toBeAttached();
+  await expect(page.locator(".preview-pane .crop-button")).toHaveCount(0);
   const zoom = page.getByRole("button", { name: "Zoom in crop" });
   expect((await zoom.boundingBox())!.width).toBeLessThanOrEqual(36);
   const cancel = page.getByRole("button", { name: "Cancel", exact: true });
@@ -284,23 +302,21 @@ test("dialog scrolling during a held crop drag preserves image coordinates", asy
   await expect(top).toHaveAttribute("aria-valuenow", String(Math.round((y - image.y) / image.height * 384)));
 });
 
-test("opening the editor shows the selected preview while immutable capture is pending", async ({ page }) => {
+test("palette editor owns input and can cancel while immutable capture is pending", async ({ page }) => {
   await page.goto("/?path=/home/user/Pictures");
   await applySettingsAndReload(page, { showPreviewPane: true, viewMode: "details" });
   await waitForEntries(page);
   await page.locator(".entry-item", { hasText: "screenshot.png" }).click();
   await expect.poll(() => page.locator(".preview-image").evaluate(img => (img as HTMLImageElement).naturalWidth)).toBeGreaterThan(0);
-  const preview = await page.locator(".preview-image").getAttribute("src");
   await page.evaluate(async () => {
     const control = (await import("/src/lib/api/mock-control.ts")).getMockControl();
     control.imageCropCapture = () => new Promise((_, reject) => {
       window.addEventListener("release-crop-capture", () => reject(new Error("Held source capture")), { once: true });
     });
   });
-  await page.getByRole("button", { name: "Edit image…", exact: true }).click();
+  await runPaletteCommand(page, "Crop Image…");
   await expect(page.getByRole("dialog", { name: "Edit image", exact: true })).toBeVisible();
-  await expect(page.locator(".crop-loading-image")).toHaveAttribute("src", preview!);
-  await expect.poll(() => page.locator(".crop-loading-image").evaluate(img => (img as HTMLImageElement).naturalWidth)).toBeGreaterThan(0);
+  await expect(page.getByRole("status").filter({ hasText: "Loading original image…" })).toBeVisible();
   await expect(page.getByRole("button", { name: "Save copy", exact: true })).toBeDisabled();
   await expect(page.getByRole("slider")).toHaveCount(0);
   await page.getByRole("button", { name: "Cancel", exact: true }).click();

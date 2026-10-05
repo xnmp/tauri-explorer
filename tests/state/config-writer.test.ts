@@ -10,6 +10,7 @@ interface PendingWrite {
   filename: string;
   data: string;
   resolve: () => void;
+  fail: () => void;
 }
 
 const pendingWrites: PendingWrite[] = [];
@@ -22,6 +23,7 @@ vi.mock("$lib/api/config", () => ({
           filename,
           data,
           resolve: () => resolve({ ok: true, data: undefined }),
+          fail: () => resolve({ ok: false, error: "Disk unavailable" }),
         });
       }),
   ),
@@ -93,4 +95,14 @@ describe("writeConfigQueued", () => {
     pendingWrites[1].resolve();
     await second;
   });
+  it("rejects acknowledged failures while ordinary writes keep their logged-failure behavior", async () => {
+    const checked = writeConfigQueued("checked.json", "v1", "checked.json", true);
+    const rejected = expect(checked).rejects.toThrow("Disk unavailable");
+    pendingWrites[0].fail();
+    await rejected;
+    const ordinary = writeConfigQueued("ordinary.json", "v1");
+    pendingWrites[1].fail();
+    await expect(ordinary).resolves.toBeUndefined();
+  });
+
 });

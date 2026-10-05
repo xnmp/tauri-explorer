@@ -77,6 +77,16 @@ function createKeybindingsStore() {
    */
   function registerDefault(commandId: string, shortcut: string): void {
     defaultShortcuts[commandId] = shortcut;
+    chordCache.delete(commandId);
+  }
+
+  function unregisterDefault(commandId: string): void {
+    delete defaultShortcuts[commandId];
+    chordCache.delete(commandId);
+    if (activeChordCommandIds?.includes(commandId)) {
+      activeChordCommandIds = activeChordCommandIds.filter((id) => id !== commandId);
+      if (activeChordCommandIds.length === 0) cancelChord();
+    }
   }
 
   /**
@@ -365,6 +375,7 @@ function createKeybindingsStore() {
     /** Same Super overlay used by shortcut matching on WebKitGTK. */
     get trackedMetaHeld() { return superKeyHeld; },
     registerDefault,
+    unregisterDefault,
     registerDefaults,
     getShortcut,
     getDisplayShortcut,

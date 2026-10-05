@@ -51,6 +51,10 @@ pub(crate) struct ImageRequest {
     pub output_filename: String,
     pub model: String,
     pub size: String,
+    #[serde(default)]
+    pub resolution: Option<String>,
+    #[serde(default)]
+    pub aspect_ratio: Option<String>,
     pub quality: String,
     pub background: String,
 }
@@ -97,8 +101,18 @@ fn validate_request(request: &ImageRequest) -> Result<PathBuf, AppError> {
     {
         return Err(invalid("Unsupported OpenAI image model"));
     }
-    if !["auto", "1024x1024", "1536x1024", "1024x1536"].contains(&request.size.as_str()) {
+    if !valid_image_size(&request.size) {
         return Err(invalid("Unsupported image size"));
+    }
+    if request
+        .resolution
+        .as_deref()
+        .is_some_and(|value| !["1k", "2k", "4k"].contains(&value))
+        || request.aspect_ratio.as_deref().is_some_and(|value| {
+            !["keep", "1:1", "4:3", "3:4", "3:2", "2:3", "16:9", "9:16"].contains(&value)
+        })
+    {
+        return Err(invalid("Unsupported resolution or aspect ratio"));
     }
     if !["auto", "low", "medium", "high"].contains(&request.quality.as_str()) {
         return Err(invalid("Unsupported image quality"));
@@ -108,7 +122,6 @@ fn validate_request(request: &ImageRequest) -> Result<PathBuf, AppError> {
     }
     if request.backend == ImageBackend::Codex
         && (request.model != "gpt-image-2"
-            || request.size != "auto"
             || request.quality != "auto"
             || request.background != "auto")
     {
@@ -124,6 +137,28 @@ fn validate_request(request: &ImageRequest) -> Result<PathBuf, AppError> {
         return Err(invalid("OpenAI image outputs must use a .png filename"));
     }
     plugin_job::validate_output_target(&request.output_dir, &request.output_filename)
+}
+
+fn valid_image_size(size: &str) -> bool {
+    if size == "auto" {
+        return true;
+    }
+    let Some((width, height)) = size.split_once('x') else {
+        return false;
+    };
+    let (Ok(width), Ok(height)) = (width.parse::<u64>(), height.parse::<u64>()) else {
+        return false;
+    };
+    // Bound edges before multiplication to keep malformed values overflow-safe.
+    width > 0
+        && height > 0
+        && width <= 3840
+        && height <= 3840
+        && width % 16 == 0
+        && height % 16 == 0
+        && width <= height * 3
+        && height <= width * 3
+        && (655_360..=8_294_400).contains(&(width * height))
 }
 
 fn resolve_key(provided: &str) -> Result<String, AppError> {
@@ -241,7 +276,8 @@ fn recipe(request: &ImageRequest, inputs: &[CapturedInput]) -> trace::OperationS
                 "prompt": request.prompt, "agent_task": codex::task(request, inputs.len()),
                 "model": null, "documented_image_model": "gpt-image-2",
                 "image_tool_prompt": null, "provider_revision": null, "cost": null,
-                "settings_source": "built_in_defaults",
+                "settings_source": "requested_via_codex_task",
+                "size": request.size, "resolution": request.resolution, "aspect_ratio": request.aspect_ratio,
                 "input_roles": input_roles(inputs),
             })
         } else {
@@ -249,6 +285,7 @@ fn recipe(request: &ImageRequest, inputs: &[CapturedInput]) -> trace::OperationS
                 "provider": "openai", "model": request.model,
                 "endpoint": if !inputs.is_empty() { "images/edits" } else { "images/generations" },
                 "prompt": request.prompt, "size": request.size, "quality": request.quality,
+                "resolution": request.resolution, "aspect_ratio": request.aspect_ratio,
                 "submitted_prompt": api_prompt(request, inputs.len()),
                 "background": request.background, "output_format": "png", "n": 1,
                 "provider_revision": null, "cost": null,

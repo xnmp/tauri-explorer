@@ -21,7 +21,7 @@ async function open(ctx: PluginContext, sourcePath: string | null, outputDir: st
     codexPath: typeof settings.codexPath === "string" ? settings.codexPath : "",
     initialBackend: settings.backend === "api_key" ? "api_key" : "codex",
     jobs: ctx.jobs, toast: ctx.toast,
-    onOpenSettings: () => ctx.openSettings(),
+    storage: ctx.storage,
   });
 }
 
@@ -44,7 +44,7 @@ export const openAIImagePlugin: Plugin = {
     ctx.registerImageEditorTool({
       id: "openai-image", title: "AI edit", component: OpenAIImageEditorTool,
       when: (source) => ["PNG", "JPEG", "WebP"].includes(source.format),
-      props: { storage: ctx.storage, jobs: ctx.jobs, toast: ctx.toast, onOpenSettings: () => ctx.openSettings() },
+      props: { storage: ctx.storage, jobs: ctx.jobs, toast: ctx.toast },
     });
     ctx.registerDialog({ id: "openai-image.edit-window", component: OpenAIImageEditDialog });
     ctx.registerDialog({ id: DIALOG_ID, component: OpenAIImageDialog });
@@ -70,7 +70,8 @@ export const openAIImagePlugin: Plugin = {
       },
     });
     ctx.registerCommand({
-      id: "plugin.openai-image.edit", label: "OpenAI: Edit Image…", category: "plugins",
+      id: "plugin.openai-image.edit", label: "AI Edit Image…", category: "plugins", shortcut: "Ctrl+E",
+      when: () => images(ctx.workspace.getSelection()).length > 0,
       handler: () => {
         const selected = images(ctx.workspace.getSelection());
         if (selected.length) return open(ctx, selected[0].path, parentDir(selected[0].path), selected.slice(1).map((entry) => entry.path));

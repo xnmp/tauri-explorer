@@ -8,11 +8,13 @@
     getOperationLabel,
     type Operation,
   } from "$lib/state/operations.svelte";
+  import { jobsStore } from "$lib/state/jobs.svelte";
   import { formatSize } from "$lib/domain/file";
 
-  const operations = $derived(operationsManager.operations);
+  const operations = $derived(operationsManager.showProgressDialog ? operationsManager.operations : []);
+  const imageJobs = $derived(jobsStore.jobs.filter((job) => job.source === "openai-image"));
   const showDialog = $derived(operationsManager.showProgressDialog);
-  const hasActive = $derived(operationsManager.hasActiveOperations);
+  const hasActive = $derived(operationsManager.hasActiveOperations || imageJobs.some((job) => job.status === "running"));
 
   function handleRetry(op: Operation): void {
     operationsManager.retryOperation(op.id);
@@ -32,11 +34,13 @@
 
   function handleClearAll(): void {
     operationsManager.cleanupCompletedOperations();
+    imageJobs.filter((job) => job.status !== "running").forEach((job) => jobsStore.removeJob(job.id));
   }
 
   function handleClose(): void {
     if (!hasActive) {
       operationsManager.hideDialog();
+      imageJobs.forEach((job) => jobsStore.removeJob(job.id));
     }
   }
 
@@ -54,19 +58,19 @@
   }
 </script>
 
-{#if showDialog && operations.length > 0}
+{#if (showDialog && operations.length > 0) || imageJobs.length > 0}
   <div class="progress-dialog-container">
-    <div class="progress-dialog">
+    <div class="progress-dialog" role="region" aria-label="Background progress">
       <div class="dialog-header">
-        <h3 class="dialog-title">File Operations</h3>
+        <h3 class="dialog-title">{imageJobs.length ? operations.length ? "Background Operations" : "Image generation" : "File Operations"}</h3>
         <div class="header-actions">
-          {#if hasActive}
+          {#if operationsManager.hasActiveOperations}
             <button
               class="header-btn cancel-all"
               onclick={handleCancelAll}
               title="Cancel All"
             >
-              Cancel All
+              {imageJobs.length ? "Cancel files" : "Cancel All"}
             </button>
           {:else}
             <button
@@ -194,12 +198,32 @@
             </div>
           </div>
         {/each}
+        {#each imageJobs as job (job.id)}
+          <div class="operation-item" class:error={job.status === "error"}>
+            <div class="operation-info">
+              <div class="operation-icon" aria-hidden="true">
+                {#if job.status === "running"}<div class="spinner-small"></div>
+                {:else if job.status === "completed"}✓{:else}!{/if}
+              </div>
+              <div class="operation-details">
+                <div class="operation-name"><span class="file-name">{job.label}</span></div>
+                <p class="job-prompt">{job.detail}</p>
+                <div class="status-text" role="status">{job.status === "running" ? "Generating…" : job.status === "completed" ? "Complete" : job.error}</div>
+              </div>
+            </div>
+            {#if job.status !== "running"}
+              <button class="action-btn" aria-label={`Dismiss ${job.label}`} onclick={() => jobsStore.removeJob(job.id)}>×</button>
+            {/if}
+          </div>
+        {/each}
       </div>
     </div>
   </div>
 {/if}
 
 <style>
+  .job-prompt { font-size: 12px; color: var(--text-secondary); margin: 0 0 6px; overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 2; line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+  @media (prefers-reduced-motion: reduce) { .progress-dialog-container, .spinner-small { animation: none !important; } }
   .progress-dialog-container {
     position: fixed;
     bottom: 16px;

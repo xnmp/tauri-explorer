@@ -37,7 +37,7 @@ async function open(file: string): Promise<void> {
     await browser.keys(" ");
     await $(".preview-pane").waitForDisplayed();
   }
-  await $('button[aria-label="Edit image…"]').click();
+  await command("Crop Image…");
   await slider("Right").waitForDisplayed();
 }
 async function crop(left = 32, top = 24, right = 480, bottom = 360): Promise<void> {
@@ -286,7 +286,7 @@ nativeDescribe("native image cropping", () => {
       await button("Keep editing").click(); expect(fs.readFileSync(source).equals(original)).toBe(true);
       await button("Cancel").click(); await $(dialog).waitForDisplayed({ reverse: true });
       expect(fs.readFileSync(source).equals(original)).toBe(true);
-      await $('button[aria-label="Edit image…"]').click(); await slider("Right").waitForDisplayed(); await crop();
+      await command("Crop Image…"); await slider("Right").waitForDisplayed(); await crop();
       await button("Replace original…").click(); await button("Confirm replacement").click();
       await $(dialog).waitForDisplayed({ reverse: true });
       const observed = await compare(original, fs.readFileSync(source), "png");

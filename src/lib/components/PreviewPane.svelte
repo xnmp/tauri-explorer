@@ -28,7 +28,6 @@ import { openFile } from "$lib/api/open";
   import VirtualList from "./VirtualList.svelte";
   import { parseCsvPreview, type CsvPreview } from "$lib/domain/csv-preview";
   import { createPreviewLifetime, type PreviewRequest } from "$lib/state/preview-lifetime";
-  import ImageCropEditor from "./ImageCropEditor.svelte";
   import { subscribeToLocalFileChanges } from "$lib/state/file-events";
   import { parentDir } from "$lib/domain/path";
   let localPreviewRevision = $state(0);
@@ -36,10 +35,6 @@ import { openFile } from "$lib/api/open";
     if (selectedFile && directories.includes(parentDir(selectedFile.path))) localPreviewRevision++;
   });
   onDestroy(unsubscribePreviewChanges);
-  let cropTarget = $state<{ path: string; name: string } | null>(null);
-  function openCrop(): void {
-    if (selectedFile) cropTarget = { path: selectedFile.path, name: selectedFile.name };
-  }
   import { dialogStore } from "$lib/state/dialogs.svelte";
 
   // Window-global surface: the preview's SCM diff follows the ACTIVE pane's
@@ -222,9 +217,8 @@ import { openFile } from "$lib/api/open";
     if (!fullscreen) return;
     const PAN = 60;
     const onKey = (event: KeyboardEvent) => {
-      if (cropTarget) return;
+      if (dialogStore.hasModalOpen) return;
       const k = event.key;
-      if (selectedFile && (isPdfFile(selectedFile) || isVideoMediaFile(selectedFile)) && dialogStore.hasModalOpen) return;
       if (selectedFile && (isPdfFile(selectedFile) || isVideoMediaFile(selectedFile)) && k !== "Escape") return;
       const stop = () => {
         event.preventDefault();
@@ -283,7 +277,6 @@ import { openFile } from "$lib/api/open";
 
   /** Stable primitive that changes when the selected path OR its mtime changes,
    * so external edits to the same file invalidate the cached preview. */
-  const canCrop = $derived(selectedFile?.kind === "file" && /\.(jpe?g|png|gif|webp|bmp|svg|avif|icns)$/i.test(selectedFile.name));
   const selectedPath = $derived(selectedFile?.path ?? null);
   const previewKey = $derived(
     selectedFile ? `${selectedFile.path}|${selectedFile.modified}|${selectedFile.size}|${localPreviewRevision}` : null,
@@ -827,14 +820,6 @@ import { openFile } from "$lib/api/open";
   });
 </script>
 
-{#snippet cropButton()}
-  <button class="crop-button" aria-label="Edit image…" title="Edit image" onclick={openCrop}>
-    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-      <path d="M6 3v15h15M3 6h15v15" />
-    </svg>
-  </button>
-{/snippet}
-
 <!-- svelte-ignore a11y_no_static_element_interactions -->
 <div
   id={paneId}
@@ -959,16 +944,12 @@ import { openFile } from "$lib/api/open";
     <!-- Auxiliary metadata (name + type badge, and the size/modified footer
          below) is opt-out for a minimal, content-only preview (#494). -->
     {#if settingsStore.showPreviewInfo}
-      <div class="preview-header" class:with-crop={canCrop && isVertical && !fullscreen}>
+      <div class="preview-header">
         <span class="preview-filename" title={selectedFile.path}>{selectedFile.name}</span>
         <span class="preview-type-badge">{getFileType(selectedFile)}</span>
-        {#if canCrop && isVertical && !fullscreen}{@render cropButton()}{/if}
       </div>
     {/if}
 
-    {#if canCrop && (!isVertical || fullscreen || !settingsStore.showPreviewInfo)}
-      <div class="preview-crop-action">{@render cropButton()}</div>
-    {/if}
     <!-- svelte-ignore a11y_no_noninteractive_tabindex -- a scrollable region must be keyboard-focusable (WCAG 2.1.1, #797). -->
     <div class="preview-content" role="region" aria-label="Preview of {selectedFile.name}{isVideoMediaFile(selectedFile) ? ' (video)' : ''}" tabindex="0">
       {#if isVideoMediaFile(selectedFile)}
@@ -1102,24 +1083,7 @@ import { openFile } from "$lib/api/open";
   {/if}
 </div>
 
-{#if cropTarget}
-  <ImageCropEditor path={cropTarget.path} name={cropTarget.name} previewUrl={previewImageUrl} onclose={() => cropTarget = null} />
-{/if}
-
 <style>
-  .preview-crop-action { padding: var(--spacing-sm) var(--spacing-md); display: flex; justify-content: flex-end; }
-  .crop-button {
-    display: inline-flex; align-items: center; justify-content: center;
-    width: 28px; height: 28px; padding: 0; flex-shrink: 0; background: var(--control-fill);
-    border: 1px solid var(--control-stroke); border-radius: var(--radius-sm);
-    color: var(--text-primary); font: inherit; cursor: pointer;
-  }
-  .crop-button:hover { background: var(--control-fill-secondary); }
-  .crop-button:focus-visible { outline: 2px solid var(--focus-stroke-outer); outline-offset: 2px; }
-  .preview-pane.fullscreen > .preview-crop-action {
-    position: absolute; top: 12px; right: 48px; z-index: 1001; padding: 0;
-  }
-  .preview-pane.vertical:not(.fullscreen) > .preview-crop-action { grid-area: actions; }
   .preview-pane {
     display: flex;
     flex-direction: column;
@@ -1173,16 +1137,6 @@ import { openFile } from "$lib/api/open";
     min-width: 0;
     overflow: hidden;
     padding: 8px 12px;
-  }
-
-  .preview-pane.vertical:not(.fullscreen) > .preview-header.with-crop {
-    grid-template-columns: minmax(0, 1fr) auto;
-  }
-
-  /* Crop shares the shallow dock's header. The filename retains its extension;
-     omit the auxiliary badge so both controls remain readable at root zoom. */
-  .preview-pane.vertical:not(.fullscreen) > .preview-header.with-crop .preview-type-badge {
-    display: none;
   }
 
   .preview-pane.vertical:not(.fullscreen) > .preview-header .preview-type-badge {

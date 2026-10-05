@@ -83,4 +83,23 @@ describe("plugin settings seed race", () => {
     expect(section.valueOf(desc.rows[0])).toBe("typed-before-fail");
     expect(section.valueOf(desc.rows[1])).toBe("auto"); // default retained
   });
+  it("awaits initial settings before saving and reports persistence failure", async () => {
+    const load = deferred<Record<string, unknown>>();
+    let written: Record<string, unknown> = {};
+    let fail = false;
+    const storage: PluginStorage = { get: () => load.promise, set: async (next) => {
+      if (fail) throw new Error("write failed");
+      written = next;
+    } };
+    pluginSettingsSections.register("save-demo", desc, storage);
+    const section = pluginSettingsSections.sections[0];
+    const saving = section.save({ apiKey: "new-key" });
+    load.resolve({ apiKey: "old-key", model: "preserved-model" });
+    await saving;
+    expect(written).toEqual({ apiKey: "new-key", model: "preserved-model" });
+    expect(section.valueOf(desc.rows[0])).toBe("new-key");
+    fail = true;
+    await expect(section.save({ apiKey: "unsaved-key" })).rejects.toThrow("write failed");
+    expect(section.valueOf(desc.rows[0])).toBe("new-key");
+  });
 });

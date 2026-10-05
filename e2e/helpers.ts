@@ -46,6 +46,15 @@ export async function waitForEntries(page: Page) {
   await page.locator(".entry-item").first().waitFor({ timeout: 5000 });
 }
 
+/** Execute a selection-aware action through the real command palette. */
+export async function runPaletteCommand(page: Page, label: string) {
+  await page.keyboard.press("ControlOrMeta+Shift+P");
+  const palette = page.locator(".command-palette-dialog");
+  await palette.locator(".search-input").fill(label);
+  await palette.locator(".command-item").filter({ hasText: label }).click();
+  await expect(palette).toBeHidden();
+}
+
 /**
  * Switch view mode via right-click context menu.
  * This is the most reliable method as it uses real UI interactions.
@@ -189,4 +198,3 @@ export async function focusBeforeFileList(page: Page): Promise<void> {
   });
   expect(focused, "the file list must have a preceding sequential focus target").not.toBeNull();
 }
-

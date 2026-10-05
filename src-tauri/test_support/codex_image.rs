@@ -15,6 +15,8 @@ fn request(dir: &Path, source: Option<&Path>) -> ImageRequest {
         output_filename: "result.png".into(),
         model: "gpt-image-2".into(),
         size: "auto".into(),
+        resolution: None,
+        aspect_ratio: None,
         quality: "auto".into(),
         background: "auto".into(),
     }
@@ -199,4 +201,21 @@ fn live_codex_edit_records_a_real_output() {
     if let Ok(output) = std::env::var("TRACE_CODEX_TEST_OUTPUT") {
         std::fs::copy(&target, output).unwrap();
     }
+}
+
+#[test]
+fn requested_image_settings_reach_codex_and_the_recorded_recipe() {
+    let directory = tempfile::tempdir().unwrap();
+    let mut input = request(directory.path(), None);
+    input.size = "2048x1536".into();
+    input.resolution = Some("2k".into());
+    input.aspect_ratio = Some("4:3".into());
+    assert!(validate_request(&input).is_ok());
+    let task = task(&input, 0);
+    assert!(task.contains("2048x1536"));
+    assert!(task.contains("requested pixel dimensions"));
+    let recorded = recipe(&input, &[]);
+    assert_eq!(recorded.parameters["prompt"], input.prompt);
+    assert_eq!(recorded.parameters["resolution"], "2k");
+    assert_eq!(recorded.parameters["aspect_ratio"], "4:3");
 }

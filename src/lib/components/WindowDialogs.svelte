@@ -24,6 +24,11 @@
 
   // Each dialog tracks its own demand. Constructors stay mounted after loading
   // to retain local state and close transitions; imports stay out of startup.
+  const ImageCropEditor = useLazyDialog({
+    label: "Image editor", isOpen: () => !pickerInfo && dialogStore.imageEditorTarget !== null,
+    load: () => import("$lib/components/ImageCropEditor.svelte"),
+    onFailure: () => dialogStore.closeImageEditor(),
+  }, notifyError);
   const ThemePicker = useLazyDialog({
     label: "Theme Picker", isOpen: () => !pickerInfo && dialogStore.isThemePickerOpen,
     load: () => import("$lib/components/ThemePicker.svelte"),
@@ -108,6 +113,14 @@
   {/if}
 {:else}
 <ShortcutCheatsheet open={dialogStore.isShortcutsOpen} onClose={() => dialogStore.closeShortcuts()} />
+{#if ImageCropEditor.component && dialogStore.imageEditorTarget}
+  {@const target = dialogStore.imageEditorTarget}
+  {#key target}
+    <svelte:boundary onerror={dialogCrash("Image editor", () => dialogStore.closeImageEditor(target))}>
+      <ImageCropEditor.component path={target.path} name={target.name} onclose={() => dialogStore.closeImageEditor(target)} />
+    </svelte:boundary>
+  {/key}
+{/if}
 {#if KeybindingsDialog.component}
   <svelte:boundary onerror={dialogCrash("Keyboard Shortcuts", () => dialogStore.closeKeybindings())}>
     <KeybindingsDialog.component open={dialogStore.isKeybindingsOpen} onClose={() => dialogStore.closeKeybindings()} />

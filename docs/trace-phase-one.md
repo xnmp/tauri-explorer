@@ -43,10 +43,10 @@ The first model action is an OpenAI image edit using saved Codex ChatGPT sign-in
 
 ## The first complete workflow
 
-1. Right-click an image and use the OpenAI image edit action. Enter a prompt and output filename.
+1. Right-click an image and use the OpenAI image edit action. Enter a prompt and choose resolution or aspect ratio. Output names are assigned automatically per job.
 2. Before remote work starts, the native backend creates a durable run record with a stable ID and the submitted recipe. It records the exact bytes staged as input, rather than assuming the source path still identifies those bytes later.
 3. When the output is safely published, the backend records its path, content fingerprint, status, and completion details. A failed or cancelled run remains in history without inventing an output artifact.
-4. Select the output image. The Trace pane shows `source image → edit run → output image`, with the prompt, model, provider, timestamps, and any known version/cost information in a details area. Select the source to see edits branching from it. A second edit of an output extends the DAG naturally.
+4. Select the output image. The Trace pane shows `source image → output image`, with the prompt and visual settings on the output node. Expand Raw for technical run and revision records. Select the source to see edits branching from it. A second edit of an output extends the DAG naturally.
 5. Restart the app and select either file again; the same graph and run details appear.
 
 The pane may let the user focus a node, inspect its recorded fields, and reveal a file in the explorer. It does not change prompts, rewire edges, import unrelated files, or regenerate anything in this stage.
@@ -66,7 +66,7 @@ Model outputs can be nondeterministic. The record explains how a result was obta
 - **Publish safely:** never silently overwrite the source or an existing result. Handle file publication and database updates as a recoverable sequence, since the filesystem and SQLite cannot share one atomic transaction.
 - **Identify a selected file:** use recorded location plus content fingerprint and host file-mutation receipts where available. A rename through Tauri Explorer should update the locator. If a file is missing or its bytes differ, retain the historical node and show `missing` or `changed`; do not attach the path's new bytes to the old revision automatically. External moves may require relinking later.
 - **Bound the graph:** center it on the selected artifact, showing its ancestry and nearby branches. The current query rejects connected graphs exceeding 1,024 artifacts or runs; branch collapsing and paged expansion can follow later.
-- **Keep provenance honest:** edits made outside this recorded path have unknown ancestry. The pane should say so rather than infer causation from filenames or timestamps. Disabling the Trace pane does not stop native recording. Crop-as-copy remains usable with a warning if recording fails; OpenAI generation requires a durable start record before a paid request. Its dialog explicitly states that the prompt and settings are recorded.
+- **Keep provenance honest:** edits made outside this recorded path have unknown ancestry. The pane should say so rather than infer causation from filenames or timestamps. Disabling the Trace pane does not stop native recording. Crop-as-copy remains usable with a warning if recording fails; OpenAI generation requires a durable start record before a paid request. The pane presents those records without adding reminders to the generation form.
 
 ## Storage and plugin boundary
 
@@ -89,3 +89,11 @@ The adapter accepts only a completed JSONL thread identity and the single regula
 Images count toward general Codex usage limits, as described in the [official image generation documentation](https://learn.chatgpt.com/docs/image-generation). Saved authentication reuse is documented in [non-interactive mode](https://learn.chatgpt.com/docs/non-interactive-mode); headless image generation/editing and multiple-image inputs were additionally verified here, because the image documentation's CLI examples describe interactive use. The exact built-in image-tool call is not exposed in the CLI JSONL. Its generated-images layout and login-status text are version-sensitive integration points; the native fixture and opt-in live test qualify that contract.
 
 The opt-in native test can be run with `TRACE_CODEX_TEST_SOURCE` and optional `TRACE_CODEX_TEST_REFERENCE` absolute image paths (and `TRACE_CODEX_TEST_OUTPUT` to retain the result), then `cargo test live_codex_edit_records_a_real_output --lib -- --ignored`. It consumes Codex usage and is excluded from ordinary CI.
+
+## Image editor and Trace interaction
+
+Crop Image… appears in the command palette for a single supported local image, without a preview toolbar icon; it opens Crop even with the preview pane hidden. Ctrl+E on selected PNG/JPEG/WebP images opens AI edit; Ctrl+Enter submits the prompt. The compact form offers Codex by default, API models, resolution (2K by default), and aspect ratio (Keep the same by default). The seed field reads Not supported and is disabled because these interfaces expose no seed. The gear opens connection settings inside the editor; acknowledged saves report native write failures and preserve the edit draft.
+
+Resolution presets request a longest edge of 1024, 2048, or 3840 pixels, quantized to provider-compatible multiples of 16 and bounded by its pixel/aspect limits. Codex receives these requested dimensions in its image-tool task; the raw record distinguishes the requested task from provider-reported evidence. Output filenames include a unique job identity, so concurrent edits cannot accidentally share a destination.
+
+Image jobs appear in the existing bottom-right progress panel. Trace shows a spinner for an unfinished run and combines a completed run with its output thumbnail. Clicking an image reveals and selects it in the explorer, including filtered/hidden or virtualized offscreen rows. Toggle Trace Pane in the command palette controls its visibility without disabling recording. Thumbnails show current files at their recorded paths; earlier revisions sharing a replaced path are labeled and omit a misleading thumbnail.

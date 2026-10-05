@@ -21,7 +21,7 @@
   let toolBusy = $state(false);
   const source = $derived<ImageEditorSource | null>(editorState.capture ? {
     path: editorState.capture.path, name: sourceName, digest: editorState.capture.revision.digest,
-    format: editorState.capture.format, referencePaths,
+    format: editorState.capture.format, size: editorState.size, referencePaths,
   } : null);
   const tools = $derived(source ? imageEditorRegistry.toolsFor(source) : []);
   const selectedTool = $derived(tools.find((tool) => tool.id === activeTool));
@@ -137,7 +137,6 @@
       </div>
     {/if}
     {/if}
-    <p class="trace-note">Every saved edit records its source revision and operation in Trace, including replacements.</p>
     {#if editorState.phase === "saving"}<p class="crop-note" role="status">Saving crop…</p>{/if}
   </div>
 </Modal>
@@ -151,7 +150,6 @@
   .editor-workspace.ai-layout { display: grid; grid-template-columns: minmax(0, 1fr) minmax(300px, 380px); gap: 18px; }
   .editor-image { min-width: 0; }
   .editor-ai { min-width: 0; max-height: calc(75vh / var(--app-zoom, 1)); overflow: auto; }
-  .trace-note { margin: 12px 0 0; color: var(--text-muted); font-size: var(--font-size-caption); }
   @media (max-width: 740px) { .editor-workspace.ai-layout { grid-template-columns: minmax(0, 1fr); } .editor-ai { max-height: none; } }
 
   /* Cancel root zoom on the overlay, restore it on the viewport-bounded card. */

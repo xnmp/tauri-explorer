@@ -52,6 +52,9 @@ function createExplorerState(seed?: ExplorerSeed) {
   // Listings are immutable revisions. Deep proxies would create per-entry
   // signals during whole-directory filtering, sorting and status aggregation.
   let entries = $state.raw<readonly FileEntry[]>(seed?.entries ?? []);
+  // Explicit reveal temporarily includes a hidden entry, without changing
+  // global visibility preferences. Ordinary selection/navigation retires it.
+  let revealedPath = $state<string | null>(null);
 
   // Core per-pane state using $state rune
   let coreState = $state<ExplorerCoreState>({
@@ -84,6 +87,7 @@ function createExplorerState(seed?: ExplorerSeed) {
   function setSelection(next: Iterable<string>): void {
     const cur = coreState.selectedPaths;
     const nextSet = next instanceof Set ? (next as ReadonlySet<string>) : new Set(next);
+    if (revealedPath && !nextSet.has(revealedPath)) revealedPath = null;
     for (const path of [...cur]) {
       if (!nextSet.has(path)) cur.delete(path);
     }
@@ -109,6 +113,7 @@ function createExplorerState(seed?: ExplorerSeed) {
 
   // Navigation callback for UI (e.g. focusing the selected item after nav)
   let onNavigateCallback: (() => void) | null = null;
+  let onRevealCallback: (() => void) | null = null;
 
   // Filesystem observation ownership
   const watch = createPaneWatch({ refresh: (options) => refresh(options) });
@@ -132,6 +137,10 @@ function createExplorerState(seed?: ExplorerSeed) {
     if (filterQuery) {
       const q = filterQuery.toLowerCase();
       filtered = filtered.filter((e) => e.name.toLowerCase().includes(q));
+    }
+    if (revealedPath && !filtered.some((entry) => entry.path === revealedPath)) {
+      const revealed = coreState.entries.find((entry) => entry.path === revealedPath);
+      if (revealed) filtered = [...filtered, revealed];
     }
     // Only Details view exposes sortable column headers. List and Tiles have no
     // sort UI, so they always sort by name ascending for a predictable order
@@ -197,6 +206,7 @@ function createExplorerState(seed?: ExplorerSeed) {
       }
       coreState.error = null;
       filterQuery = "";
+      revealedPath = null;
       showFilter = false;
 
       const result = await dirListing.load(path, observation);
@@ -821,6 +831,16 @@ function createExplorerState(seed?: ExplorerSeed) {
     get focusedEntry() { return focusedEntry; },
     focusEntry(entry: FileEntry) { coreState.cursorPath = entry.path; },
     selectEntry,
+    revealEntry(path: string): boolean {
+      const entry = coreState.entries.find((entry) => entry.path === path);
+      if (!entry) return false;
+      revealedPath = path;
+      filterQuery = "";
+      showFilter = false;
+      selectEntry(entry);
+      onRevealCallback?.();
+      return true;
+    },
     clearSelection,
     isSelected,
     getSelectedEntries,
@@ -874,6 +894,9 @@ function createExplorerState(seed?: ExplorerSeed) {
     // Navigation callback
     set onNavigate(cb: (() => void) | null) {
       onNavigateCallback = cb;
+    },
+    set onReveal(cb: (() => void) | null) {
+      onRevealCallback = cb;
     },
     directoryChanged: watch.changed,
     // Cleanup

@@ -52,10 +52,11 @@ describe("OpenAI image plugin", () => {
 
   it("opens generation in a selected folder without inventing an image input", async () => {
     const { ctx, dispose } = createPluginContext("openai-image");
+    await ctx.storage.set({ codexPath: "/opt/custom tools/codex" });
     await openAIImagePlugin.activate(ctx);
     const generate = contextMenuItems.itemsFor([folder]).find((item) => item.id === "openai-image.generate")!;
     await generate.handler([folder]);
-    expect(dialogRegistry.openDialogs.find((dialog) => dialog.id === "openai-image.create")?.props).toMatchObject({ sourcePath: null, outputDir: "/media" });
+    expect(dialogRegistry.openDialogs.find((dialog) => dialog.id === "openai-image.create")?.props).toMatchObject({ sourcePath: null, outputDir: "/media", codexPath: "/opt/custom tools/codex" });
     dispose();
   });
 

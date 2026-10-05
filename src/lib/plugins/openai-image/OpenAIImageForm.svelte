@@ -15,13 +15,14 @@
     referencePaths?: string[];
     outputDir: string;
     apiKey: string;
+    codexPath?: string;
     initialBackend?: "codex" | "api_key";
     jobs: PluginJobs;
     toast: PluginToast;
     onOpenSettings: () => void;
     onClose: () => void;
   }
-  let { open, sourceDigest, onBusyChange = () => {}, sourcePath, referencePaths = [], outputDir, apiKey, initialBackend = "codex", jobs, toast, onOpenSettings, onClose }: Props = $props();
+  let { open, sourceDigest, onBusyChange = () => {}, sourcePath, referencePaths = [], outputDir, apiKey, codexPath = "", initialBackend = "codex", jobs, toast, onOpenSettings, onClose }: Props = $props();
   let editTarget = $state<string | null>(null);
   const inputPaths = $derived(sourcePath ? [sourcePath, ...referencePaths] : []);
   const references = $derived(inputPaths.filter((path) => path !== editTarget));
@@ -59,7 +60,7 @@
     submitting = true;
     const result = await jobs.accept(
       { kind: "openai-image", label: outputFilename, detail: prompt.trim() },
-      () => startOpenAIImageJob({ sourcePath: editTarget, expectedSourceDigest: sourceDigest, referencePaths: references, outputDir, prompt: prompt.trim(), outputFilename: outputFilename.trim(), backend,
+      () => startOpenAIImageJob({ sourcePath: editTarget, expectedSourceDigest: sourceDigest, referencePaths: references, outputDir, prompt: prompt.trim(), outputFilename: outputFilename.trim(), backend, codexPath: backend === "codex" ? codexPath : undefined,
         model: backend === "codex" ? "gpt-image-2" : model,
         size: backend === "codex" ? "auto" : size,
         quality: backend === "codex" ? "auto" : quality,

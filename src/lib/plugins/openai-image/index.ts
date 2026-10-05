@@ -18,6 +18,7 @@ async function open(ctx: PluginContext, sourcePath: string | null, outputDir: st
   ctx.openDialog(sourcePath ? "openai-image.edit-window" : DIALOG_ID, {
     sourcePath, referencePaths, outputDir,
     apiKey: typeof settings.apiKey === "string" ? settings.apiKey : "",
+    codexPath: typeof settings.codexPath === "string" ? settings.codexPath : "",
     initialBackend: settings.backend === "api_key" ? "api_key" : "codex",
     jobs: ctx.jobs, toast: ctx.toast,
     onOpenSettings: () => ctx.openSettings(),
@@ -35,6 +36,8 @@ export const openAIImagePlugin: Plugin = {
       rows: [{ id: "backend", label: "Image connection", type: "select", default: "codex",
         options: [{ value: "codex", label: "Codex ChatGPT sign-in" }, { value: "api_key", label: "OpenAI API key" }],
         description: "Codex mode uses the installed Codex CLI and its existing ChatGPT sign-in." },
+        { id: "codexPath", label: "Codex executable path", type: "text", default: "",
+        description: "Optional full executable path. Leave blank to search PATH and common installations, including NVM. Find it with command -v codex (Windows: where codex)." },
         { id: "apiKey", label: "OpenAI API Key", type: "password",
         description: "Used in API key mode. Leave blank to use OPENAI_API_KEY from the app environment." }],
     });

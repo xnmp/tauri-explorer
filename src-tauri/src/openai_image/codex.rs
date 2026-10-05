@@ -1,5 +1,6 @@
 //! Headless Codex transport. Codex owns authentication and generation; this
 //! adapter reads only the fresh thread's generated image, never credentials.
+use super::codex_executable::CodexExecutable;
 use super::*;
 use crate::process_ext::{output_controlled, NoConsole};
 use std::process::Command;
@@ -22,10 +23,11 @@ pub(super) fn task(request: &ImageRequest, input_count: usize) -> String {
     )
 }
 
-fn command(program: &std::ffi::OsStr) -> Command {
-    let mut command = Command::new(program);
+fn command(executable: &CodexExecutable) -> Command {
+    let mut command = Command::new(&executable.program);
     command
         .no_console()
+        .env("PATH", &executable.search_path)
         .env_remove("OPENAI_API_KEY")
         .env_remove("CODEX_API_KEY")
         .env_remove("CODEX_ACCESS_TOKEN");
@@ -43,9 +45,7 @@ fn run(
         "Codex image job cancelled",
     )
     .map_err(|error| match error {
-        AppError::NotFound(_) => invalid(
-            "Codex CLI was not found on PATH. Install Codex CLI and run codex login with ChatGPT",
-        ),
+        AppError::NotFound(_) => invalid("Codex could not start. Check the Codex executable path and its Node runtime in Settings → AI / OpenAI Images."),
         _ => error,
     })
 }
@@ -59,27 +59,26 @@ pub(super) fn generate(
         .map(PathBuf::from)
         .or_else(|| dirs::home_dir().map(|home| home.join(".codex")))
         .ok_or_else(|| invalid("Codex home directory is unavailable"))?;
-    generate_at(
-        request,
-        inputs,
-        control,
-        std::ffi::OsStr::new("codex"),
-        &home,
-    )
+    let executable = super::codex_executable::resolve(&request.codex_path)?;
+    log::info!(
+        "[openai-image] using Codex executable: {}",
+        executable.program.display()
+    );
+    generate_at(request, inputs, control, &executable, &home)
 }
 
 fn generate_at(
     request: &ImageRequest,
     inputs: &[CapturedInput],
     control: &plugin_job::JobControl,
-    program: &std::ffi::OsStr,
+    executable: &CodexExecutable,
     home: &Path,
 ) -> Result<GeneratedImage, AppError> {
     let work = tempfile::Builder::new()
         .prefix("tauri-explorer-codex-image-")
         .tempdir()?;
     let auth = run(
-        command(program)
+        command(executable)
             .args(["login", "status"])
             .current_dir(work.path()),
         control,
@@ -93,7 +92,7 @@ fn generate_at(
             "Codex needs a saved ChatGPT sign-in. Run codex login and choose ChatGPT",
         ));
     }
-    let mut child = command(program);
+    let mut child = command(executable);
     child
         .args([
             "exec",

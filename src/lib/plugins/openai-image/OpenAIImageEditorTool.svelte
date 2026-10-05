@@ -18,5 +18,6 @@
 {#if settings}
   <OpenAIImageForm open={true} sourcePath={source.path} sourceDigest={source.digest} referencePaths={[...source.referencePaths]} outputDir={parentDir(source.path)}
     apiKey={typeof settings.apiKey === "string" ? settings.apiKey : ""} initialBackend={settings.backend === "api_key" ? "api_key" : "codex"}
+    codexPath={typeof settings.codexPath === "string" ? settings.codexPath : ""}
     {jobs} {toast} {onOpenSettings} {onClose} {onBusyChange} />
 {:else}<p role="status">Loading image connection…</p>{/if}

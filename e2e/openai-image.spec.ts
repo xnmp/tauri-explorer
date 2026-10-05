@@ -61,6 +61,28 @@ test("an image edit submits the chosen recipe and displays the resulting Trace b
   if (process.env.TRACE_SCREENSHOTS) await page.screenshot({ path: "docs/screenshots/trace-openai-image.png", animations: "disabled" });
 });
 
+for (const edit of [false, true]) test(`configured Codex executable reaches ${edit ? "the image editor" : "generation"}`, async ({ page }) => {
+  await page.goto(edit ? "/?path=/home/user/Pictures" : "/?path=/home/user");
+  await waitForEntries(page);
+  await page.evaluate(async () => {
+    const { createPluginStorage } = await import("/src/lib/plugins/api.ts");
+    const { getMockControl } = await import("/src/lib/api/mock-control.ts");
+    const { pluginJobsController } = await import("/src/lib/state/plugin-jobs.ts");
+    await createPluginStorage("openai-image").set({ codexPath: "/opt/custom tools/codex" });
+    pluginJobsController.accept = (_registration, start) => start();
+    getMockControl().openAIImageStart = (request) => {
+      if (request.backend !== "codex" || request.codexPath !== "/opt/custom tools/codex") throw new Error("Configured Codex executable was not supplied");
+      return 12;
+    };
+  });
+  const dialog = await openAction(page, edit ? "screenshot.png" : "Pictures", edit ? "Edit with OpenAI" : "Generate image with OpenAI…");
+  await dialog.getByLabel(edit ? "Edit prompt" : "Image prompt").fill("A green mug on a white background");
+  await dialog.getByLabel("Output filename (.png)").fill("configured-codex.png");
+  await dialog.getByRole("button", { name: edit ? "Generate edit" : "Generate image", exact: true }).click();
+  await expect(dialog).toBeHidden();
+  await expect(page.getByText("OpenAI image job started: configured-codex.png", { exact: true })).toBeVisible();
+});
+
 test("generation starts in a selected folder with no source image", async ({ page }) => {
   await page.goto("/?path=/home/user");
   await waitForEntries(page);

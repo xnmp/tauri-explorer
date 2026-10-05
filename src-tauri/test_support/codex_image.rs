@@ -6,6 +6,7 @@ const PNG: &[u8] = include_bytes!("../icons/32x32.png");
 fn request(dir: &Path, source: Option<&Path>) -> ImageRequest {
     ImageRequest {
         backend: ImageBackend::Codex,
+        codex_path: String::new(),
         source_path: source.map(|path| path.to_string_lossy().into_owned()),
         expected_source_digest: None,
         reference_paths: vec![],
@@ -135,7 +136,7 @@ printf '%s\n' '{}' '{}'
             &request,
             &inputs,
             &control,
-            executable.as_os_str(),
+            &super::super::codex_executable::resolve(executable.to_str().unwrap()).unwrap(),
             home.path(),
         )
     })

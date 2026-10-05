@@ -30,6 +30,10 @@ curl -fsSL https://raw.githubusercontent.com/xnmp/tauri-explorer/main/mac_instal
 
 Binaries aren't code-signed yet. Windows shows a SmartScreen warning on first launch. macOS reports un-notarized downloads as "damaged" and blocks them; after installing the downloaded Apple Silicon DMG, run `xattr -r -d com.apple.quarantine /Applications/tauri-explorer.app` to clear quarantine. The release page is the supported binary install route; the repository-root `PKGBUILD` provides an Arch source build. The older Homebrew cask and `packaging/aur` binary recipe are not current release channels.
 
+On Arch, run `./arch_install.sh` from a checkout to build and install the current source. Repeated runs reuse frontend assets when their inputs and output contents are unchanged, avoiding an unnecessary Rust release relink. Dependencies are still prepared and Cargo checks native changes each time. Use `./arch_install.sh --rebuild` to force fresh frontend assets; source changes and missing or modified outputs rebuild automatically. Cold builds and builds after frontend or native changes still compile the optimized release. After generating new embedded assets, Cargo can require one additional native compile before its cache settles.
+
+The default Arch package build timestamp follows the latest Git commit, or `package.json` modification time for source archives. Set `SOURCE_DATE_EPOCH` explicitly to override it.
+
 File Cut verifies native clipboard ownership before moving the source, on X11, Wayland (with `wl-clipboard`), Windows, and macOS. If another program changes the clipboard between Cut and Paste, Paste copies instead of moving. Where ownership cannot be proven (for example, a remote-desktop session that re-renders every clipboard change), Cut reports it and Copy remains available.
 
 ## Use as system file picker

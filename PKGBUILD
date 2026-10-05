@@ -52,7 +52,11 @@ prepare() {
 
 build() {
   cd "$_srcdir"
-  bun run build
+  if [[ ${_arch_reuse_frontend:-0} == 1 ]]; then
+    bun scripts/build-arch-frontend.mjs
+  else
+    bun run build
+  fi
   # --features avif: Arch ships a current dav1d, so enable AVIF thumbnails
   # (off in the cross-platform release where dav1d is unavailable/too old).
   cargo tauri build --no-bundle --features avif --config '{"build":{"beforeBuildCommand":""}}'

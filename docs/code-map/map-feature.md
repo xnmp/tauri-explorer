@@ -480,9 +480,10 @@ backend for E2E/browser).
 - `src-tauri/src/wallpaper.rs` (setAsWallpaper), `system.rs` (get_app_info, dirs), `portal.rs` (Linux portals)
 - `src-tauri/src/files/shortcuts.rs` — .lnk/.desktop resolution
 
-## Windows source installer
+## Source installers
 
 - `README.md` — documented one-command PowerShell invocation.
+- `arch_install.sh`, `PKGBUILD`, `scripts/build-arch-frontend.mjs` — Arch local source install: serialize installation, authenticate sudo, prepare frozen dependencies, reuse only verified unchanged frontend assets, then always run native release compilation and package installation. Direct makepkg/CI builds retain unconditional frontend compilation. Frontend receipt and failure contracts live in `tests/arch-frontend-build.test.ts`; the PKGBUILD invocation contract is in `tests/arch-install-script.test.ts`.
 - `windows_install.ps1` — trusted Windows source-install entry point: prerequisite checks → existing checkout or temporary HTTPS clone → Tauri MSI build → explicit-UAC `msiexec`; reports `3010` as reboot-required success and removes temporary clones in `finally`.
 - `tests/windows-install-script.test.ts` — Windows-only PowerShell invocation harness; exercises missing tools, existing and cloned checkouts, quoted MSI paths, UAC, cleanup, and reboot-required success without building or installing software.
 - `docs/adr/0003-windows-installer-trust-boundary.md` — governs the installer download/trust, elevation, failure, reboot, and cleanup boundary.

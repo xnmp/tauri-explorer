@@ -511,7 +511,7 @@ Planned move journal authority: `src-tauri/src/files/recovery/move_model.rs` own
 
 ## Installable extensions
 
-- `src/lib/components/InstalledPluginSettings.svelte`, `src/lib/plugins/installed.ts`, `src/lib/plugins/registry.svelte.ts` — install/enable/remove package contributions, retained settings, multiwindow refresh and visible activation failures.
+- `src/lib/components/InstalledPluginSettings.svelte`, `src/lib/plugins/installed.ts`, `src/lib/plugins/registry.svelte.ts` — install/enable/remove package contributions, retained settings, multiwindow refresh and visible activation failures. `src/lib/state/commands/general-commands.ts` also exposes Install Plugin in the palette; `src/lib/domain/file-picker.ts`, `src/lib/components/FilePicker.svelte`, `src/lib/components/PickerQuickOpen.svelte`, and `src-tauri/src/search.rs` apply package filters before search limits.
 - `src/lib/plugins/runtime-sdk.ts`, `src/lib/plugins/svelte-runtime.d.ts` — precompiled external UI binds to SDK v1 and Svelte5.56.3; no private store imports or second runtime.
 - `src-tauri/src/installed_plugins/package.rs`, `src-tauri/src/installed_plugins/mod.rs`, `src-tauri/src/file_picker.rs` — native package picker, bounded validated extraction/index updates, restricted frontend asset service and lifecycle admission.
 - `src-tauri/src/installed_plugins/backend.rs`, `src-tauri/src/process_ext/windows_job.rs` — correlated bounded RPC, owned processes/spools, durable status recovery and no generation replay after lost replies.

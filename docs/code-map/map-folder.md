@@ -312,6 +312,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 
 - `directory-reconciliation.ts` — complete-listing three-way merge and selection identity reconciliation after concurrent mutations.
 - `file.ts` — file entry types (incl. `is_git_repo`) + pure ops (sort, filter, format). Hot.
+- `file-picker.ts` — case-insensitive extension matching for picker listings and quick search, preserving folder navigation.
 - `file-types.ts` — extension→type/category detection + display; `isGitRepoFolder` (git-repo folder icon selection, #463).
 - `open-with.ts` — single-file selection eligibility and explicit Linux-only application-choice availability.
 - `relative-time.ts` — shared compact elapsed-time labels for file metadata, today's git commits, and PR comments.

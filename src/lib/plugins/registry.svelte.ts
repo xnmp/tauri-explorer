@@ -36,6 +36,9 @@ function createPluginRegistry(
   jobLifecycle: Pick<typeof pluginJobsController, "dispose"> = pluginJobsController,
 ) {
   let registered = $state<Plugin[]>([...plugins]);
+  // Contribution ranks survive removal of earlier plugins and async activation.
+  const registrationOrders = new Map(plugins.map((plugin, index) => [plugin.id, index]));
+  let nextRegistrationOrder = plugins.length;
   const active = new Map<string, { plugin: Plugin; dispose: () => void }>();
   // In-flight activations, so a disable arriving mid-activate can't be lost
   // (deactivate would find nothing in `active` and no-op, leaving a
@@ -65,7 +68,9 @@ function createPluginRegistry(
         : inFlight.promise;
     }
 
-    const { ctx, dispose, reportFailure } = createPluginContext(plugin.id, plugin.name, registered.findIndex(item => item.id === plugin.id));
+    const order = registrationOrders.get(plugin.id);
+    if (order === undefined) return Promise.reject(new Error("Plugin is not registered"));
+    const { ctx, dispose, reportFailure } = createPluginContext(plugin.id, plugin.name, order);
     // Plugin code can synchronously request shutdown or retry. Publish the
     // actual completion before invoking it so those operations join this run.
     let resolve!: () => void;
@@ -143,7 +148,11 @@ function createPluginRegistry(
 
   const registry = {
     async registerInstalled(additions:Plugin[]):Promise<void> {
-      if(additions.some((plugin)=>registered.some((old)=>old.id===plugin.id))) throw new Error("Plugin ID is already registered");
+      if (new Set(additions.map(plugin => plugin.id)).size !== additions.length ||
+          additions.some(plugin => registrationOrders.has(plugin.id))) {
+        throw new Error("Plugin ID is already registered");
+      }
+      for (const plugin of additions) registrationOrders.set(plugin.id, nextRegistrationOrder++);
       registered=[...registered,...additions];
       await Promise.all(additions.map((plugin)=>isEnabled(plugin)?activate(plugin):undefined));
     },
@@ -154,6 +163,7 @@ function createPluginRegistry(
         if(pending) await pending.promise;
       }
       registered=registered.filter((plugin)=>!ids.includes(plugin.id));
+      for (const id of ids) registrationOrders.delete(id);
     },
     /** Activate all currently-enabled built-in plugins. Call once at startup. */
     async initPlugins(): Promise<void> {

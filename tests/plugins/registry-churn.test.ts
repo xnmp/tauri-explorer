@@ -60,6 +60,30 @@ describe("plugin registry churn", () => {
     }
   });
 
+  it("keeps surviving contribution order when earlier packages are removed", async () => {
+    const plugin = (id: string): Plugin => ({
+      id, name: id, description: "ordering contract",
+      activate(ctx) { ctx.registerSettingsSection({ id: "settings", title: id, rows: [] }); },
+    });
+    const registry = createPluginRegistry([plugin("builtin")]);
+    try {
+      await registry.initPlugins();
+      await registry.registerInstalled([plugin("a"), plugin("b"), plugin("c")]);
+      await registry.removeInstalled(["a", "b"]);
+      await registry.registerInstalled([plugin("d")]);
+      const titles = () => pluginSettingsSections.sections.map(section => section.title);
+      expect(titles()).toEqual(["builtin", "c", "d"]);
+      await registry.setEnabled("c", false);
+      await registry.setEnabled("c", true);
+      expect(titles()).toEqual(["builtin", "c", "d"]);
+      await expect(registry.registerInstalled([plugin("duplicate"), plugin("duplicate")]))
+        .rejects.toThrow("Plugin ID is already registered");
+      expect(titles()).toEqual(["builtin", "c", "d"]);
+    } finally {
+      await registry.dispose();
+    }
+  });
+
   it("leaves no duplicate or retained effects across 5,001 mixed activations", async () => {
     const calls = { alpha: 0, beta: 0, failing: 0 };
     const alpha: Plugin = {

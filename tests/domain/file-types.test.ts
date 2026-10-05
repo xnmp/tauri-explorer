@@ -15,6 +15,7 @@ import {
   isGitRepoFolder,
   isVideoMediaFile,
   isVideoFile,
+  isCroppableImage,
 } from "$lib/domain/file-types";
 import type { FileEntry } from "$lib/domain/file";
 
@@ -29,6 +30,20 @@ const entry = (
   size: 0,
   modified: "",
   ...extra,
+});
+
+describe("native crop eligibility", () => {
+  it.each(["jpg", "jpeg", "png", "gif", "webp", "bmp", "svg", "avif", "icns"])("accepts local %s images case-insensitively", (extension) => {
+    expect(isCroppableImage(entry(`image.${extension.toUpperCase()}`))).toBe(true);
+  });
+  it.each(["", "image", "image.txt", "image.ico", "image.png.bak"])("rejects unsupported name %s", (name) => {
+    expect(isCroppableImage(entry(name))).toBe(false);
+  });
+  it("rejects folders and provider paths while supporting Windows drives", () => {
+    expect(isCroppableImage(entry("folder.png", "directory"))).toBe(false);
+    expect(isCroppableImage(entry("image.png", "file", { path: "demo://image.png" }))).toBe(false);
+    expect(isCroppableImage(entry("image.png", "file", { path: "C:\\Pictures\\image.png" }))).toBe(true);
+  });
 });
 
 describe("video identity", () => {

@@ -49,6 +49,7 @@ function createDialogStore() {
   let pickerConfig = $state<PickerConfig | null>(null);
   let userReportOpen = $state(false);
   let fileRecoveryOpen = $state(false);
+  let imageEditorTarget = $state.raw<{ path: string; name: string } | null>(null);
 
   function closeIfActive(dialogType: DialogType, session = fileOperationSession): void {
     if (activeDialog === dialogType && session === fileOperationSession) {
@@ -136,6 +137,16 @@ function createDialogStore() {
     },
 
     get isFileRecoveryOpen() { return fileRecoveryOpen; },
+    get imageEditorTarget() { return imageEditorTarget; },
+
+    openImageEditor(entry: FileEntry): void {
+      commandPaletteOpen = false;
+      imageEditorTarget = { path: entry.path, name: entry.name };
+    },
+
+    closeImageEditor(target = imageEditorTarget): void {
+      if (target === imageEditorTarget) imageEditorTarget = null;
+    },
 
     // File operation actions
     startRename(entry: FileEntry): void {
@@ -162,7 +173,7 @@ function createDialogStore() {
 
     /** True when any modal dialog is open (file ops or overlays). */
     get hasModalOpen(): boolean {
-      return openWithStore.isOpen || modalOwnership.hasOpen || shortcutsOpen || keybindingsOpen || activeDialog !== null || quickOpenOpen || commandPaletteOpen || settingsOpen || contentSearchOpen || workspaceOpen || bulkRenameOpen || jobsPanelOpen || themePickerOpen || pickerConfig !== null || userReportOpen || fileRecoveryOpen;
+      return openWithStore.isOpen || modalOwnership.hasOpen || imageEditorTarget !== null || shortcutsOpen || keybindingsOpen || activeDialog !== null || quickOpenOpen || commandPaletteOpen || settingsOpen || contentSearchOpen || workspaceOpen || bulkRenameOpen || jobsPanelOpen || themePickerOpen || pickerConfig !== null || userReportOpen || fileRecoveryOpen;
     },
 
     // Overlay dialog actions
@@ -278,6 +289,9 @@ function createDialogStore() {
 
     closeAll(): void {
       modalOwnership.closeAll();
+      // Rendered editors close through their modal's canClose contract. Clear
+      // an opening that has not mounted yet, while retaining an accepted save.
+      if (!modalOwnership.hasOpen) imageEditorTarget = null;
       openWithStore.close();
       shortcutsOpen = false;
       activeDialog = null;

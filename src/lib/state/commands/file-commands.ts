@@ -9,9 +9,25 @@ import { getActiveExplorer } from "./shared";
 import { windowTabsManager } from "../window-tabs.svelte";
 import { requestGraphUndo } from "../git-graph-undo";
 import { activePaneIsGraph } from "./active-pane";
+import { isCroppableImage } from "$lib/domain/file-types";
+
+function selectedCropImage() {
+  const selected = getActiveExplorer()?.getSelectedEntries() ?? [];
+  return selected.length === 1 && isCroppableImage(selected[0]) ? selected[0] : null;
+}
 
 /** File operation commands */
 export const fileCommands: Command[] = [
+  {
+    id: "file.cropImage",
+    label: "Crop Image…",
+    category: "file",
+    when: () => selectedCropImage() !== null,
+    handler: () => {
+      const image = selectedCropImage();
+      if (image) dialogStore.openImageEditor(image);
+    },
+  },
   {
     id: "file.newFolder",
     label: "New Folder",

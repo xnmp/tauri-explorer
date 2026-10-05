@@ -92,7 +92,7 @@ The opt-in native test can be run with `TRACE_CODEX_TEST_SOURCE` and optional `T
 
 ## Image editor and Trace interaction
 
-Ctrl+E on selected PNG/JPEG/WebP images opens AI edit; Ctrl+Enter submits the prompt. The compact form offers Codex by default, API models, resolution (2K by default), and aspect ratio (Keep the same by default). The seed field reads Not supported and is disabled because these interfaces expose no seed. The gear opens connection settings inside the editor; acknowledged saves report native write failures and preserve the edit draft.
+Crop Image… appears in the command palette for a single supported local image, without a preview toolbar icon; it opens Crop even with the preview pane hidden. Ctrl+E on selected PNG/JPEG/WebP images opens AI edit; Ctrl+Enter submits the prompt. The compact form offers Codex by default, API models, resolution (2K by default), and aspect ratio (Keep the same by default). The seed field reads Not supported and is disabled because these interfaces expose no seed. The gear opens connection settings inside the editor; acknowledged saves report native write failures and preserve the edit draft.
 
 Resolution presets request a longest edge of 1024, 2048, or 3840 pixels, quantized to provider-compatible multiples of 16 and bounded by its pixel/aspect limits. Codex receives these requested dimensions in its image-tool task; the raw record distinguishes the requested task from provider-reported evidence. Output filenames include a unique job identity, so concurrent edits cannot accidentally share a destination.
 

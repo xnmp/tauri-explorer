@@ -34,6 +34,11 @@
     load: () => import("$lib/components/ThemePicker.svelte"),
     onFailure: () => dialogStore.closeThemePicker(),
   }, notifyError);
+  const AboutDialog = useLazyDialog({
+    label: "About", isOpen: () => !pickerInfo && dialogStore.isAboutOpen,
+    load: () => import("$lib/components/AboutDialog.svelte"),
+    onFailure: () => dialogStore.closeAbout(),
+  }, notifyError);
   const SettingsDialog = useLazyDialog({
     label: "Settings", isOpen: () => !pickerInfo && dialogStore.isSettingsOpen,
     load: () => import("$lib/components/SettingsDialog.svelte"),
@@ -167,6 +172,11 @@
 {#if ContentSearchDialog.component}
   <svelte:boundary onerror={dialogCrash("Content Search", () => dialogStore.closeContentSearch())}>
     <ContentSearchDialog.component open={dialogStore.isContentSearchOpen} onClose={() => dialogStore.closeContentSearch()} />
+  </svelte:boundary>
+{/if}
+{#if AboutDialog.component}
+  <svelte:boundary onerror={dialogCrash("About", () => dialogStore.closeAbout())}>
+    <AboutDialog.component open={dialogStore.isAboutOpen} onClose={() => dialogStore.closeAbout()} />
   </svelte:boundary>
 {/if}
 {#if SettingsDialog.component}

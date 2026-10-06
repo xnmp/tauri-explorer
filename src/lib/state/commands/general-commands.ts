@@ -303,6 +303,12 @@ export const terminalCommands: Command[] = [
 /** General dialog commands */
 export const generalDialogCommands: Command[] = [
   {
+    id: "help.about",
+    label: "About",
+    category: "general",
+    handler: () => dialogStore.openAbout(),
+  },
+  {
     id: "general.openSettings",
     label: "Settings",
     category: "general",

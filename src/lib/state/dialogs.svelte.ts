@@ -38,6 +38,7 @@ function createDialogStore() {
   let quickOpenOpen = $state(false);
   let commandPaletteOpen = $state(false);
   let settingsOpen = $state(false);
+  let aboutOpen = $state(false);
   let contentSearchOpen = $state(false);
   let workspaceOpen = $state(false);
   let bulkRenameOpen = $state(false);
@@ -104,6 +105,9 @@ function createDialogStore() {
     },
     get isShortcutsOpen() {
       return shortcutsOpen;
+    },
+    get isAboutOpen() {
+      return aboutOpen;
     },
     get isSettingsOpen() {
       return settingsOpen;
@@ -173,7 +177,7 @@ function createDialogStore() {
 
     /** True when any modal dialog is open (file ops or overlays). */
     get hasModalOpen(): boolean {
-      return openWithStore.isOpen || modalOwnership.hasOpen || imageEditorTarget !== null || shortcutsOpen || keybindingsOpen || activeDialog !== null || quickOpenOpen || commandPaletteOpen || settingsOpen || contentSearchOpen || workspaceOpen || bulkRenameOpen || jobsPanelOpen || themePickerOpen || pickerConfig !== null || userReportOpen || fileRecoveryOpen;
+      return openWithStore.isOpen || modalOwnership.hasOpen || imageEditorTarget !== null || shortcutsOpen || keybindingsOpen || activeDialog !== null || quickOpenOpen || commandPaletteOpen || settingsOpen || aboutOpen || contentSearchOpen || workspaceOpen || bulkRenameOpen || jobsPanelOpen || themePickerOpen || pickerConfig !== null || userReportOpen || fileRecoveryOpen;
     },
 
     // Overlay dialog actions
@@ -191,6 +195,15 @@ function createDialogStore() {
 
     closeCommandPalette(): void {
       commandPaletteOpen = false;
+    },
+
+    openAbout(): void {
+      commandPaletteOpen = false;
+      aboutOpen = true;
+    },
+
+    closeAbout(): void {
+      aboutOpen = false;
     },
 
     openSettings(): void {
@@ -303,6 +316,7 @@ function createDialogStore() {
       quickOpenOpen = false;
       commandPaletteOpen = false;
       settingsOpen = false;
+      aboutOpen = false;
       contentSearchOpen = false;
       workspaceOpen = false;
       bulkRenameOpen = false;

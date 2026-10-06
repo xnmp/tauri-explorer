@@ -241,3 +241,10 @@ Keep the avatar decoration out of Git Graph's table minimum width: at narrow
 sizes it should borrow from the message cell, not widen inline commit details.
 Native graph fixtures must wait for the reset view's `.file-list` before their
 repository is deleted, because reset navigation completes asynchronously.
+
+### About command (#755)
+
+The About surface uses the existing `AppInfo` contract and `getAppInfo()` bridge
+(`get_app_info` returns the packaged Rust version). Keep this optional dialog
+lazy-loaded through `WindowDialogs.svelte`, with modal ownership provided by
+`Modal.svelte`; do not read package.json for the running application version.

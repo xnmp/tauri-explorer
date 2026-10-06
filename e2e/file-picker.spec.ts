@@ -20,6 +20,15 @@ async function readResponse(page: Page): Promise<{ token: string; paths: string[
 }
 
 test.describe("File picker mode", () => {
+  test("extension filter hides unrelated files while folders remain navigable", async ({ page }) => {
+    await page.goto("/?picker=open&token=filtered&folder=%2Fhome%2Fuser&extension=MD");
+    const home = page.locator('.column[data-path="/home/user"]');
+    await expect(home.locator(".entry", { hasText: "notes.md" })).toBeVisible();
+    await expect(home.locator(".entry", { hasText: "readme.txt" })).toHaveCount(0);
+    await home.locator(".entry", { hasText: "Documents" }).click();
+    await page.locator('.column[data-path="/home/user/Documents"] .entry', { hasText: "notes.md" }).dblclick();
+    expect(await readResponse(page)).toMatchObject({ token: "filtered", cancelled: false, paths: ["/home/user/Documents/notes.md"] });
+  });
   test("reports a failed picker import in the portal window", async ({ page }) => {
     await page.route("**/FilePicker.svelte*", (route) => route.abort());
     await page.goto("/?picker=open&token=failed&folder=%2Fhome%2Fuser");
@@ -186,6 +195,37 @@ test.describe("File picker mode", () => {
 });
 
 test.describe("Picker quick open (#190)", () => {
+  test("package matches survive more unrelated hits than the search limit", async ({ page }) => {
+    await page.goto("/?picker=open&token=package-search&folder=%2Fhome%2Fuser&extension=teplugin");
+    await expect(page.locator(".picker")).toBeVisible();
+    await page.evaluate(async () => {
+      const load = new Function("return import('/src/lib/api/mock-fixtures.ts')");
+      const { mockFiles } = await load();
+      const file = (name: string, folder: string) => ({ name, path: `${folder}/${name}`, kind: "file", size: 1, modified: "2026-01-01T00:00:00Z" });
+      mockFiles["/home/user"].push(...Array.from({ length: 150 }, (_, i) => file(`plugin-${i}.txt`, "/home/user")));
+      mockFiles["/home/user/Documents"].push(file("TraceExplorer.TEPLUGIN", "/home/user/Documents"));
+    });
+    await page.keyboard.press("Control+p");
+    const overlay = page.locator('[data-testid="picker-quick-open"]');
+    await overlay.locator("input").fill("plugin");
+    await expect(overlay.locator(".pqo-result", { hasText: "TraceExplorer.TEPLUGIN" })).toBeVisible();
+    await expect(overlay.locator(".pqo-result", { hasText: ".txt" })).toHaveCount(0);
+    await overlay.locator(".pqo-result", { hasText: "TraceExplorer.TEPLUGIN" }).click();
+    expect(await readResponse(page)).toMatchObject({ token: "package-search", cancelled: false, paths: ["/home/user/Documents/TraceExplorer.TEPLUGIN"] });
+  });
+  test("quick open respects the same extension filter before confirming a result", async ({ page }) => {
+    await page.goto("/?picker=open&token=filtered-search&folder=%2Fhome%2Fuser&extension=md");
+    await expect(page.locator(".picker")).toBeVisible();
+    await page.keyboard.press("Control+p");
+    const overlay = page.locator('[data-testid="picker-quick-open"]');
+    await overlay.locator("input").fill("readme");
+    await expect(overlay.locator(".pqo-result", { hasText: "README.md" }).first()).toBeVisible();
+    await expect(overlay.locator(".pqo-result", { hasText: "readme.txt" })).toHaveCount(0);
+    await overlay.locator("input").fill("notes");
+    await overlay.locator(".pqo-result", { hasText: "notes.md" }).first().click();
+    expect(await readResponse(page)).toMatchObject({ token: "filtered-search", cancelled: false });
+    expect((await readResponse(page)).paths[0]).toMatch(/notes\.md$/);
+  });
   test("Ctrl+P fuzzy-finds a file and picking it responds immediately", async ({ page }) => {
     await page.goto("/?picker=open&token=qo1&multiple=0&directory=0&folder=%2Fhome%2Fuser");
     await expect(page.locator(".picker")).toBeVisible();

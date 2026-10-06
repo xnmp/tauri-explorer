@@ -157,6 +157,7 @@
       folder: params.get("folder"),
       name: params.get("name") ?? "",
       title: params.get("title") ?? "",
+      extensions: params.getAll("extension"),
     };
   })();
 

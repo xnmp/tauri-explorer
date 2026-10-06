@@ -19,6 +19,8 @@ pub struct PickerOptions {
     directory: Option<String>,
     #[serde(default)]
     filename: Option<String>,
+    #[serde(default)]
+    extensions: Vec<String>,
 }
 type Pending = HashMap<String, tokio::sync::oneshot::Sender<Option<String>>>;
 static PENDING: OnceLock<Mutex<Pending>> = OnceLock::new();
@@ -39,17 +41,52 @@ fn resolve(token: &str, path: Option<String>) -> bool {
     }
 }
 
+impl PickerOptions {
+    fn validate(&self) -> Result<(), AppError> {
+        if !matches!(self.mode.as_str(), "open" | "save")
+            || self.title.len() > 200
+            || self.extensions.len() > 32
+            || self.extensions.iter().any(|extension| {
+                extension.is_empty()
+                    || extension.len() > 32
+                    || !extension
+                        .bytes()
+                        .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
+            })
+            || self
+                .filename
+                .as_ref()
+                .is_some_and(|name| name.contains(['\\', '/', '\0']))
+        {
+            return Err(AppError::Other("Invalid picker options".into()));
+        }
+        Ok(())
+    }
+
+    fn url(&self, token: &str) -> String {
+        let mut parameters = url::form_urlencoded::Serializer::new(String::new());
+        parameters
+            .append_pair("picker", &self.mode)
+            .append_pair("token", token)
+            .append_pair("multiple", "0")
+            .append_pair("directory", "0")
+            .append_pair("title", &self.title);
+        if let Some(directory) = &self.directory {
+            parameters.append_pair("folder", directory);
+        }
+        if let Some(filename) = &self.filename {
+            parameters.append_pair("name", filename);
+        }
+        for extension in &self.extensions {
+            parameters.append_pair("extension", extension);
+        }
+        format!("/?{}", parameters.finish())
+    }
+}
+
 #[tauri::command]
 pub async fn pick_file(app: AppHandle, options: PickerOptions) -> Result<Option<String>, AppError> {
-    if !matches!(options.mode.as_str(), "open" | "save")
-        || options.title.len() > 200
-        || options
-            .filename
-            .as_ref()
-            .is_some_and(|name| name.contains(['\\', '/', '\0']))
-    {
-        return Err(AppError::Other("Invalid picker options".into()));
-    }
+    options.validate()?;
     let token = format!("picker-native-{}", SEQUENCE.fetch_add(1, Ordering::Relaxed));
     let (sender, receiver) = tokio::sync::oneshot::channel();
     {
@@ -59,22 +96,7 @@ pub async fn pick_file(app: AppHandle, options: PickerOptions) -> Result<Option<
         }
         pending.insert(token.clone(), sender);
     }
-    let url = {
-        let mut parameters = url::form_urlencoded::Serializer::new(String::new());
-        parameters
-            .append_pair("picker", &options.mode)
-            .append_pair("token", &token)
-            .append_pair("multiple", "0")
-            .append_pair("directory", "0")
-            .append_pair("title", &options.title);
-        if let Some(directory) = &options.directory {
-            parameters.append_pair("folder", directory);
-        }
-        if let Some(filename) = &options.filename {
-            parameters.append_pair("name", filename);
-        }
-        format!("/?{}", parameters.finish())
-    };
+    let url = options.url(&token);
     let owner = app.clone();
     let label = token.clone();
     if let Err(error) = app.run_on_main_thread(move || {
@@ -134,4 +156,72 @@ pub async fn picker_respond(
     }
     #[cfg(not(target_os = "linux"))]
     let _ = handled;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn package_filter_reaches_picker_url_without_losing_folder_or_title() {
+        let options: PickerOptions = serde_json::from_value(json!({
+            "mode": "open", "title": "Install plugin package", "directory": "/Downloads/a & b",
+            "extensions": ["teplugin", "TEPLUGIN"]
+        }))
+        .unwrap();
+        options.validate().unwrap();
+        let url = url::Url::parse(&format!(
+            "https://app.local{}",
+            options.url("picker-native-1")
+        ))
+        .unwrap();
+        let pairs: Vec<_> = url.query_pairs().collect();
+        assert_eq!(
+            pairs
+                .iter()
+                .filter(|(key, _)| key == "extension")
+                .map(|(_, value)| value.as_ref())
+                .collect::<Vec<_>>(),
+            ["teplugin", "TEPLUGIN"]
+        );
+        assert!(pairs
+            .iter()
+            .any(|(key, value)| key == "folder" && value == "/Downloads/a & b"));
+        assert!(pairs
+            .iter()
+            .any(|(key, value)| key == "title" && value == "Install plugin package"));
+    }
+
+    #[test]
+    fn existing_open_and_save_options_remain_unfiltered() {
+        for mode in ["open", "save"] {
+            let options: PickerOptions =
+                serde_json::from_value(json!({"mode": mode, "title": "Choose file"})).unwrap();
+            options.validate().unwrap();
+            assert!(!options.url("test").contains("extension="));
+        }
+    }
+
+    #[test]
+    fn rejects_malformed_or_unbounded_extension_filters() {
+        for extensions in [
+            json!([""]),
+            json!([".teplugin"]),
+            json!(["../teplugin"]),
+            json!(["*"]),
+            json!(["x".repeat(33)]),
+            json!(vec!["teplugin"; 33]),
+        ] {
+            let options: PickerOptions = serde_json::from_value(
+                json!({"mode": "open", "title": "Install", "extensions": extensions}),
+            )
+            .unwrap();
+            assert!(options.validate().is_err());
+        }
+        assert!(serde_json::from_value::<PickerOptions>(
+            json!({"mode":"open", "title":"Install", "extensions":null})
+        )
+        .is_err());
+    }
 }

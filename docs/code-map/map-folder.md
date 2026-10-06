@@ -312,6 +312,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 
 - `directory-reconciliation.ts` — complete-listing three-way merge and selection identity reconciliation after concurrent mutations.
 - `file.ts` — file entry types (incl. `is_git_repo`) + pure ops (sort, filter, format). Hot.
+- `file-picker.ts` — case-insensitive extension matching for picker listings and quick search, preserving folder navigation.
 - `file-types.ts` — extension→type/category detection + display; `isGitRepoFolder` (git-repo folder icon selection, #463).
 - `open-with.ts` — single-file selection eligibility and explicit Linux-only application-choice availability.
 - `relative-time.ts` — shared compact elapsed-time labels for file metadata, today's git commits, and PR comments.
@@ -766,6 +767,9 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `e2e-tauri/specs/video-preview-lifecycle.spec.ts` — actual List/Tiles decoded selection, warm-window activation and playing-owner destruction with capability/file-handle retirement.
 
 - `src/lib/domain/image-generation-settings.ts` — provider-compatible image dimensions from resolution and source/explicit aspect ratio.
+- `src-tauri/src/installed_plugins/queue.rs` — bounded startup requests staged by the Arch installer; uses the transactional package installer and quarantines failed requests to prevent stale downgrades.
+- `src-tauri/src/installed_plugins/ownership.rs` — Linux profile lifetime lease acquired before recovery and released after brokers, the queue worker and lifecycle mutations settle.
+- `src-tauri/src/window_launch.rs`, `src/lib/state/native-launch.ts` — profile-scoped Linux secondary-process routing; preserves early requests and uses the existing frontend window launcher.
 
 ## Installed plugin packages
 

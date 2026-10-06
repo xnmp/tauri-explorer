@@ -1,5 +1,6 @@
 import { execFile, spawn } from 'node:child_process';
 import { once } from 'node:events';
+import { createHash } from 'node:crypto';
 import { copyFile, mkdir, mkdtemp, readFile, rm, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -109,6 +110,50 @@ exit 2
     expect(await calls()).toEqual([]);
   }));
 
+  it.each([{ args: ['--plugin-path'] }, { args: ['--plugin-path', '--rebuild'] }])('rejects a missing plugin path before authentication: %j', async ({ args }) => withInstaller(async ({ invoke, calls }) => {
+    await expect(invoke(args)).rejects.toThrow('--plugin-path requires a file or directory');
+    expect(await calls()).toEqual([]);
+  }));
+
+  it('queues the newest matching package from the default repo location, as the invoking user', async () => withInstaller(async ({ sandbox, invoke }) => {
+    const directory = join(sandbox, 'home/Repos/TraceExplorer/package');
+    const architecture = process.arch === 'arm64' ? 'aarch64' : 'x86_64';
+    const other = architecture === 'x86_64' ? 'aarch64' : 'x86_64';
+    await mkdir(directory, { recursive: true });
+    await writeFile(join(directory, `TraceExplorer-0.9.0-${architecture}-unknown-linux-gnu.teplugin`), 'old');
+    await writeFile(join(directory, `TraceExplorer-0.10.0-${architecture}-unknown-linux-gnu.teplugin`), 'latest');
+    await writeFile(join(directory, `TraceExplorer-9.0.0-${other}-unknown-linux-gnu.teplugin`), 'wrong architecture');
+    await invoke();
+    const digest = createHash('sha256').update('latest').digest('hex');
+    expect(await readFile(join(sandbox, `config/tauri-explorer/pending-plugins/${digest}.teplugin`), 'utf8')).toBe('latest');
+    // Repeating the script publishes the same content request rather than another copy.
+    await invoke();
+    const { readdir } = await import('node:fs/promises');
+    expect(await readdir(join(sandbox, 'config/tauri-explorer/pending-plugins'))).toEqual([`${digest}.teplugin`]);
+  }));
+
+  it('supports environment and command-line locations, including spaces and a relative file', async () => withInstaller(async ({ root, sandbox, invoke }) => {
+    const configured = join(root, 'configured plugin.teplugin');
+    const selected = join(root, 'selected plugin.TEPLUGIN');
+    await writeFile(configured, 'configured'); await writeFile(selected, 'selected');
+    await invoke([], { TRACE_EXPLORER_PLUGIN_PATH: configured });
+    await invoke(['--plugin-path', selected.slice(tmpdir().length + 1)], { TRACE_EXPLORER_PLUGIN_PATH: configured });
+    for (const content of ['configured', 'selected']) {
+      const digest = createHash('sha256').update(content).digest('hex');
+      expect(await readFile(join(sandbox, `config/tauri-explorer/pending-plugins/${digest}.teplugin`), 'utf8')).toBe(content);
+    }
+  }));
+
+  it('skips an absent optional plugin and never queues after a failed host install', async () => withInstaller(async ({ root, sandbox, invoke }) => {
+    const missing = join(root, 'missing.teplugin');
+    const result = await invoke(['--plugin-path', missing]) as { stdout: string };
+    expect(result.stdout).toContain('skipping plugin installation');
+    const plugin = join(root, 'plugin.teplugin'); await writeFile(plugin, 'fixture');
+    await expect(invoke(['--plugin-path', plugin], { INSTALL_FAIL: '1' })).rejects.toThrow();
+    const { access } = await import('node:fs/promises');
+    await expect(access(join(sandbox, 'config/tauri-explorer/pending-plugins'))).rejects.toThrow();
+  }));
+
   it('uses a stable source epoch and preserves an explicit caller epoch', async () => withInstaller(async ({ invoke, epochs }) => {
     await invoke();
     await invoke();
@@ -150,6 +195,7 @@ set -eu
 echo "sudo $*" >> "$INSTALL_CALLS"
 if [[ "$*" == '-v' && "$AUTH_FAIL" == 1 ]]; then exit 1; fi
 if [[ "$*" == '-n pacman -U '* ]]; then [[ -f "$4" ]]; fi
+if [[ "$*" == '-n pacman -U '* && "\${INSTALL_FAIL:-0}" == 1 ]]; then exit 1; fi
 `, { mode: 0o755 });
     await writeFile(join(root, 'bin/makepkg'), `#!/usr/bin/env bash
 set -eu
@@ -159,7 +205,7 @@ touch "tauri-explorer-1.0.0-1-$(uname -m).pkg.tar.zst"
 `, { mode: 0o755 });
     const invoke = (args: string[] = [], environment: NodeJS.ProcessEnv = {}) => execFileAsync('bash', [join(root, 'arch_install.sh'), ...args], {
       cwd: tmpdir(),
-      env: { ...process.env, SOURCE_DATE_EPOCH: undefined, PATH: `${join(root, 'bin')}:${process.env.PATH}`, AUTH_FAIL: '0', INSTALL_CALLS: join(root, 'calls'), INSTALL_EPOCHS: join(root, 'epochs'), ...environment },
+      env: { ...process.env, HOME: join(sandbox, 'home'), XDG_CONFIG_HOME: join(sandbox, 'config'), TRACE_EXPLORER_PLUGIN_PATH: undefined, SOURCE_DATE_EPOCH: undefined, PATH: `${join(root, 'bin')}:${process.env.PATH}`, AUTH_FAIL: '0', INSTALL_CALLS: join(root, 'calls'), INSTALL_EPOCHS: join(root, 'epochs'), ...environment },
     });
     const calls = () => readFile(join(root, 'calls'), 'utf8').then(
       (contents) => contents.trim().split('\n'),

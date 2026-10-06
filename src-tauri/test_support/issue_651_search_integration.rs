@@ -6,12 +6,17 @@ use std::fs;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 fn result_names(query: &str, root: &std::path::Path) -> Vec<String> {
-    fuzzy_search_sync(query.to_string(), root.to_string_lossy().into_owned(), 20)
-        .expect("Quick Open query")
-        .results
-        .into_iter()
-        .map(|result| result.name)
-        .collect()
+    fuzzy_search_sync(
+        query.to_string(),
+        root.to_string_lossy().into_owned(),
+        20,
+        None,
+    )
+    .expect("Quick Open query")
+    .results
+    .into_iter()
+    .map(|result| result.name)
+    .collect()
 }
 
 #[test]

@@ -2730,6 +2730,8 @@ if (typeof window !== "undefined") {
 
   open_in_terminal: () => {},
   list_installed_plugins: () => [],
+  take_pending_plugin_install_errors: () => [],
+  take_window_launch_requests: () => [],
   pick_file: () => null,
   install_plugin: () => { throw new Error("Install plugin packages in the native app"); },
   uninstall_plugin: () => undefined,

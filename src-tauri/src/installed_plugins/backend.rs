@@ -43,6 +43,7 @@ impl Drop for RecoveryLease {
     }
 }
 static BROKERS: OnceLock<Mutex<HashMap<String, Arc<Broker>>>> = OnceLock::new();
+static STARTING: Mutex<()> = Mutex::new(());
 fn brokers() -> &'static Mutex<HashMap<String, Arc<Broker>>> {
     BROKERS.get_or_init(|| Mutex::new(HashMap::new()))
 }
@@ -540,6 +541,9 @@ pub(super) fn preflight(id: &str) -> Result<Arc<Broker>, AppError> {
     ensure_mode(id, true)
 }
 fn ensure_mode(id: &str, defer_recovery: bool) -> Result<Arc<Broker>, AppError> {
+    let _starting = STARTING
+        .lock()
+        .map_err(|_| error("Plugin startup lock is unavailable"))?;
     if CLOSING.load(Ordering::Acquire) {
         return Err(error("Plugin host is shutting down"));
     }
@@ -550,6 +554,11 @@ fn ensure_mode(id: &str, defer_recovery: bool) -> Result<Arc<Broker>, AppError> 
     let mut registry = brokers()
         .lock()
         .map_err(|_| error("Plugin runtime lock is unavailable"))?;
+    // Shutdown drains this same registry. Rechecking while holding it prevents
+    // publishing a child after that drain has completed.
+    if CLOSING.load(Ordering::Acquire) {
+        return Err(error("Plugin host is shutting down"));
+    }
     if let Some(broker) = registry
         .get(id)
         .filter(|broker| broker.alive.load(Ordering::Acquire))
@@ -608,6 +617,10 @@ fn ensure_mode(id: &str, defer_recovery: bool) -> Result<Arc<Broker>, AppError> 
         controls: Mutex::new(HashMap::new()),
         spools: Mutex::new(HashMap::new()),
     });
+    // Publish the owned process before waiting on its handshake. Shutdown can
+    // then stop a nonresponsive candidate without waiting on the registry lock.
+    registry.insert(id.to_owned(), broker.clone());
+    drop(registry);
     let writer_owner = Arc::downgrade(&broker);
     std::thread::spawn(move || {
         for frame in frames {
@@ -664,8 +677,11 @@ fn ensure_mode(id: &str, defer_recovery: bool) -> Result<Arc<Broker>, AppError> 
             return Err(cause);
         }
     }
-    registry.insert(id.to_owned(), broker.clone());
     Ok(broker)
+}
+
+pub(super) fn is_closing() -> bool {
+    CLOSING.load(Ordering::Acquire)
 }
 
 pub(super) fn call(id: &str, method: &str, mut params: Value) -> Result<Value, AppError> {

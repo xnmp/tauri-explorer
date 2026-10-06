@@ -767,6 +767,9 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `e2e-tauri/specs/video-preview-lifecycle.spec.ts` — actual List/Tiles decoded selection, warm-window activation and playing-owner destruction with capability/file-handle retirement.
 
 - `src/lib/domain/image-generation-settings.ts` — provider-compatible image dimensions from resolution and source/explicit aspect ratio.
+- `src-tauri/src/installed_plugins/queue.rs` — bounded startup requests staged by the Arch installer; uses the transactional package installer and quarantines failed requests to prevent stale downgrades.
+- `src-tauri/src/installed_plugins/ownership.rs` — Linux profile lifetime lease acquired before recovery and released after brokers, the queue worker and lifecycle mutations settle.
+- `src-tauri/src/window_launch.rs`, `src/lib/state/native-launch.ts` — profile-scoped Linux secondary-process routing; preserves early requests and uses the existing frontend window launcher.
 
 ## Installed plugin packages
 

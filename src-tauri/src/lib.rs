@@ -47,6 +47,7 @@ mod renderer_recovery;
 mod update_check;
 mod upscale;
 mod user_report;
+mod window_launch;
 /// Non-Linux stub so the command registry stays platform-independent.
 #[cfg(not(target_os = "linux"))]
 mod portal {
@@ -199,6 +200,15 @@ pub fn run_with_process_entry(launch_dir: Option<String>, t_process_entry: std::
             }
             .expect("valid plugin asset response")
         });
+    // Route secondary processes before recovery can touch shared plugin state.
+    #[cfg(target_os = "linux")]
+    let builder = if portal::is_portal_mode() {
+        builder
+    } else {
+        builder.plugin(
+            window_launch::routing_plugin().expect("Could not initialize profile launch routing"),
+        )
+    };
     #[cfg(target_os = "macos")]
     let builder = builder.on_web_content_process_terminate(|webview| {
         renderer_owner::on_web_content_terminated(webview);
@@ -220,6 +230,7 @@ pub fn run_with_process_entry(launch_dir: Option<String>, t_process_entry: std::
 
     builder
         .manage(LaunchCwd(launch_cwd_for_state))
+        .manage(window_launch::Requests::default())
         .manage(system::StartupClock {
             started: t_start,
             epoch_ms: t_start_epoch_ms,
@@ -250,6 +261,9 @@ pub fn run_with_process_entry(launch_dir: Option<String>, t_process_entry: std::
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_drag::init())
         .on_window_event(|window, event| {
+            if matches!(event, tauri::WindowEvent::Focused(true)) {
+                installed_plugins::notify_pending_errors(window);
+            }
             if matches!(event, tauri::WindowEvent::Destroyed) {
                 renderer_owner::on_window_destroyed(window);
             }
@@ -444,6 +458,8 @@ pub fn run_with_process_entry(launch_dir: Option<String>, t_process_entry: std::
             file_picker::pick_file,
             installed_plugins::list_installed_plugins,
             installed_plugins::install_plugin,
+            installed_plugins::take_pending_plugin_install_errors,
+            window_launch::take_window_launch_requests,
             installed_plugins::uninstall_plugin,
             installed_plugins::set_plugin_package_enabled,
             installed_plugins::plugin_backend_invoke,

@@ -67,8 +67,21 @@ export async function setPackageEnabled(id:string,enabled:boolean,registry:Packa
   await invoke("set_plugin_package_enabled",{id,enabled});await refreshInstalledPackages(registry);
 }
 let watching=false;
+async function reportQueuedInstallErrors():Promise<void>{
+  try {
+    const errors=await invoke<string[]>("take_pending_plugin_install_errors");
+    if(errors.length){const {toastStore}=await import("$lib/state/toast.svelte");toastStore.error(errors.join("; "));}
+  } catch(error){console.error("Could not read queued plugin installation errors",error);}
+}
 export async function watchInstalledPackages(registry:PackageRegistry):Promise<void>{
   if(!isTauri()||watching)return;watching=true;
-  try { const {listen}=await import("@tauri-apps/api/event");await listen("plugins:changed",()=>{void refreshInstalledPackages(registry).catch((error)=>console.error("Could not refresh installed plugins",error));}); }
+  try {
+    const {listen}=await import("@tauri-apps/api/event");
+    await listen("plugins:changed",()=>{
+      void refreshInstalledPackages(registry).catch((error)=>console.error("Could not refresh installed plugins",error));
+      void reportQueuedInstallErrors();
+    });
+  }
   catch(error){watching=false;throw error;}
+  await reportQueuedInstallErrors();
 }

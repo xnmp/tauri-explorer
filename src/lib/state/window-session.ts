@@ -30,6 +30,7 @@ import { terminalPanelStore } from "./terminal.svelte";
 import { windowSizeStore } from "./window-size.svelte";
 import { createFileRecoverySession } from "./file-recovery-session.svelte";
 import { markStartup } from "./startup-timing";
+import { startNativeLaunchReceiver } from "./native-launch";
 
 export interface WindowSessionOptions {
   picker: boolean;
@@ -100,6 +101,7 @@ export function startWindowSession(options: WindowSessionOptions) {
     void manualHiddenStore.init().catch(reportError);
     void gitStatusStore.initWatcherListener().catch(reportError);
     stops.push(initTabTransferListener());
+    stops.push(startNativeLaunchReceiver());
     stops.push(startConfigWatch());
 
     // Null in builds without hooks. A retired session cannot install late hooks.

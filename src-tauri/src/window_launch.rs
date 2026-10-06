@@ -1,4 +1,5 @@
 //! Secondary Linux processes hand launches to the profile's owning runtime.
+#[cfg(any(target_os = "linux", test))]
 use crate::error::AppError;
 use std::{collections::VecDeque, sync::Mutex};
 use tauri::Manager;
@@ -81,7 +82,7 @@ pub(super) fn routing_plugin() -> Result<tauri::plugin::TauriPlugin<tauri::Wry>,
                 .values()
                 .filter(eligible)
                 .find(|window| window.is_focused().unwrap_or(false))
-                .or_else(|| windows.values().filter(eligible).next());
+                .or_else(|| windows.values().find(eligible));
             let label = window.map_or("main", |window| window.label());
             if let Err(cause) = app
                 .state::<Requests>()

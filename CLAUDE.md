@@ -330,3 +330,9 @@ Compiler regression probes resolve TypeScript's CLI through Node package
 resolution from the test module. Review checkouts may inherit dependencies from
 an ancestor; a checkout-relative node_modules/typescript path is not portable.
 Keep the real compiler and every cold/warm/error/recovery assertion intact.
+### About command (#755)
+
+The About surface uses the existing `AppInfo` contract and `getAppInfo()` bridge
+(`get_app_info` returns the packaged Rust version). Keep this optional dialog
+lazy-loaded through `WindowDialogs.svelte`, with modal ownership provided by
+`Modal.svelte`; do not read package.json for the running application version.

@@ -26,6 +26,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `src/lib/plugins/trace/TraceInspector.svelte` — read-only image lineage rendered in the plugin inspector host.
 
 - `WindowDialogs.svelte` — typed lazy dialog host, crash boundaries, plugin dialogs and window-level feedback, including portal mode.
+- `AboutDialog.svelte` — lazy About modal showing the running application's version through the existing app-info IPC bridge; shared modal dismissal and focus ownership.
 - `OpenWithDialog.svelte` — accessible installed-application choice with captured filename, loading/empty/error feedback and unchanged-default messaging.
 
 - `FileList.svelte` — dispatches to Details/List/Tiles by view mode; hosts marquee, drop, empty-state. Central view entry.

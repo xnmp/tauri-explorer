@@ -353,6 +353,8 @@ backend for E2E/browser).
 
 ## Command palette
 
+- About: `state/commands/general-commands.ts` → `state/dialogs.svelte.ts` → `components/WindowDialogs.svelte` → `components/AboutDialog.svelte` → `api/crash.ts::getAppInfo`. Shows the packaged running version from existing `get_app_info`; browser interaction coverage is in `e2e/about-command.spec.ts`.
+
 - `components/CommandPalette.svelte` — searchable command list
 - `state/commands.svelte.ts` — registry (`registerCommand`, `executeCommand`, frecency)
 - `state/command-definitions.ts` — command type/category defs

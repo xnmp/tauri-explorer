@@ -18,12 +18,12 @@ test("About shows the running app version and supports dismissal/reopening @smok
   }
 
   await searchAbout();
-  await page.screenshot({ path: "evidence/ac-1-about-command.png" });
+  await page.screenshot({ path: "evidence/ac-1-about-command.png", animations: "disabled" });
   await page.keyboard.press("Enter");
   await expect(palette).toBeHidden();
   await expect(about).toBeVisible();
   await expect(about.getByText("Version 0.0.0-mock", { exact: true })).toBeVisible();
-  await page.screenshot({ path: "evidence/ac-2-about-version.png" });
+  await page.screenshot({ path: "evidence/ac-2-about-version.png", animations: "disabled" });
   await page.keyboard.press("Escape");
   await expect(about).toBeHidden();
 

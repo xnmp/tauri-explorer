@@ -248,3 +248,7 @@ The About surface uses the existing `AppInfo` contract and `getAppInfo()` bridge
 (`get_app_info` returns the packaged Rust version). Keep this optional dialog
 lazy-loaded through `WindowDialogs.svelte`, with modal ownership provided by
 `Modal.svelte`; do not read package.json for the running application version.
+The store must include About in `hasModalOpen` and `closeAll`, including while
+its lazy import is pending. Browser evidence for this surface must finish CSS
+animations (`page.screenshot({ animations: "disabled", ... })`): a visible DOM
+assertion can succeed on the first transparent frame of the shared modal fade.

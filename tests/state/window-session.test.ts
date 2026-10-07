@@ -12,6 +12,7 @@ const f = vi.hoisted(() => ({
   syncSize: vi.fn(), nativeSession: vi.fn(async () => "session"),
   recoveryStart: vi.fn(async () => {}), recoveryDispose: vi.fn(async () => {}),
   gate: null as unknown as ForegroundGate,
+  activeExplorer: null as unknown as { currentPath: string; setViewMode: (mode: string) => void },
   mode: "off", warmEnabled: true,
 }));
 vi.mock("$lib/state/file-recovery-session.svelte", () => ({ createFileRecoverySession: () => ({ start: f.recoveryStart, dispose: f.recoveryDispose }) }));
@@ -24,7 +25,7 @@ vi.mock("$lib/state/theme.svelte", () => ({ themeStore: { initTheme: async () =>
 vi.mock("$lib/state/settings.svelte", () => ({ settingsStore: { init: f.settings, get warmWindow() { return f.warmEnabled; } } }));
 vi.mock("$lib/plugins/registry.svelte", () => ({ pluginRegistry: { initPlugins: f.plugins, dispose: f.disposePlugins } }));
 vi.mock("$lib/state/window-tabs.svelte", () => ({ windowTabsManager: { init: f.initTabs, observeNativeClose: f.nativeClose,
-  getActiveExplorer: () => ({ currentPath: "/work", setViewMode: f.view }) } }));
+  getActiveExplorer: () => f.activeExplorer } }));
 vi.mock("$lib/state/window-title.svelte", () => ({ startWindowTitleSync: f.title }));
 vi.mock("$lib/state/warm-window", () => ({ warmMode: () => f.mode, spawnWarmWindow: f.spawn,
   runWarmWindow: () => ({ ready: Promise.resolve(true), dispose() {} }) }));
@@ -56,6 +57,7 @@ const options = () => ({ picker: false, homePath: "/home/me", settingsReady: vi.
 beforeEach(() => {
   vi.useFakeTimers(); vi.clearAllMocks();
   f.mode = "off"; f.warmEnabled = true; f.gate = createForegroundGate(true);
+  f.activeExplorer = { currentPath: "/work", setViewMode: f.view };
   f.settings.mockImplementation(() => new Promise(resolve => { resolveSettings = resolve; }));
   f.title.mockReturnValue(f.stopTitle); f.nativeClose.mockReturnValue(f.stopNativeClose);
   f.config.mockReturnValue(f.stopConfig); f.transfer.mockReturnValue(f.stopTransfer);
@@ -67,6 +69,71 @@ beforeEach(() => {
 afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); });
 
 describe("page session ownership", () => {
+  it("retains the new-window address request until readiness, then delivers it once", async () => {
+    Object.assign(host, { location: { search: "?path=/child&focusAddressBar=1" } });
+    const focus = vi.fn();
+    const session = startWindowSession(options());
+    await vi.advanceTimersByTimeAsync(5000);
+    // Settings may remount the navigation bar before initial loading finishes.
+    host.addEventListener("explorer:focus-address-bar", focus);
+    expect(focus).not.toHaveBeenCalled();
+    session.markCoreReady();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(focus).toHaveBeenCalledOnce();
+    session.markCoreReady();
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(focus).toHaveBeenCalledOnce();
+    session.dispose();
+  });
+
+  it.each(["?path=/child", "?path=/child&focusAddressBar=1&rendererRecovery=1"])(
+    "does not request launch focus for %s", async (search) => {
+      Object.assign(host, { location: { search } });
+      const focus = vi.fn();
+      host.addEventListener("explorer:focus-address-bar", focus);
+      const session = startWindowSession(options());
+      session.markCoreReady();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(focus).not.toHaveBeenCalled();
+      session.dispose();
+    },
+  );
+
+  it("retires an undelivered address request with the page session", async () => {
+    Object.assign(host, { location: { search: "?path=/child&focusAddressBar=1" } });
+    const focus = vi.fn();
+    host.addEventListener("explorer:focus-address-bar", focus);
+    const session = startWindowSession(options());
+    session.markCoreReady();
+    session.dispose();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(focus).not.toHaveBeenCalled();
+  });
+
+  it.each(["keydown", "pointerdown", "blur"])("cancels launch focus after a newer %s interaction", async (event) => {
+    Object.assign(host, { location: { search: "?path=/child&focusAddressBar=1" } });
+    const focus = vi.fn();
+    host.addEventListener("explorer:focus-address-bar", focus);
+    const session = startWindowSession(options());
+    host.dispatchEvent(new Event(event));
+    session.markCoreReady();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(focus).not.toHaveBeenCalled();
+    session.dispose();
+  });
+
+  it("does not redirect launch focus to another explorer before delivery", async () => {
+    Object.assign(host, { location: { search: "?path=/child&focusAddressBar=1" } });
+    const focus = vi.fn();
+    host.addEventListener("explorer:focus-address-bar", focus);
+    const session = startWindowSession(options());
+    session.markCoreReady();
+    f.activeExplorer = { currentPath: "/other", setViewMode: f.view };
+    await vi.advanceTimersByTimeAsync(0);
+    expect(focus).not.toHaveBeenCalled();
+    session.dispose();
+  });
+
   it("starts requested navigation synchronously without waiting for settings or plugins", async () => {
     const callbacks = options();
     const session = startWindowSession(callbacks);

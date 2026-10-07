@@ -13,7 +13,6 @@
   import { truncateBreadcrumbs } from "$lib/domain/breadcrumb-truncation";
   import { isWslDistroRoot, isWslHome } from "$lib/domain/wsl";
   import { directoryKey, isDriveRoot } from "$lib/domain/path";
-  import { launchRequest } from "$lib/domain/window-launch-plan";
   import { drivesStore } from "$lib/state/drives.svelte";
   import BreadcrumbAutocomplete from "./BreadcrumbAutocomplete.svelte";
   import CaretPicker from "./CaretPicker.svelte";
@@ -165,13 +164,8 @@
     // Warm windows are already mounted before they are revealed, so their
     // activation path asks the existing navigation bar to enter edit mode.
     window.addEventListener("explorer:focus-address-bar", requestAddressBarFocus);
-    // Fresh child windows carry this one-shot startup request in their URL.
-    const startupFocus = launchRequest(window.location.search, "focusAddressBar") === "1"
-      ? setTimeout(requestAddressBarFocus)
-      : undefined;
     return () => {
       window.removeEventListener("explorer:focus-address-bar", requestAddressBarFocus);
-      clearTimeout(startupFocus);
     };
   });
 

@@ -57,8 +57,19 @@ describe("pane workspace geometry", () => {
   it("normalizes unavailable viewport measurements without invalid rectangles", () => {
     for (const value of [0, -1, NaN, Infinity]) {
       const geometry = paneGeometry(leaf("only"), { width: value, height: value });
-      expect(geometry.panes.get("only")).toEqual({ x: 0, y: 0, w: 240, h: 200 });
+      expect(geometry.panes.get("only")).toEqual({ x: 0, y: 0, w: 240, h: 0 });
     }
+  });
+
+  it("never forces a lone pane taller than a short viewport", () => {
+    const geometry = paneGeometry(leaf("only"), { width: 800, height: 120 });
+    expect(geometry.height).toBe(120);
+    expect(geometry.panes.get("only")?.h).toBe(120);
+  });
+
+  it("still enforces the minimum height for split panes", () => {
+    const root = { type: "split", id: "s", direction: "column", ratio: 0.5, first: leaf("a"), second: leaf("b") } as never;
+    expect(paneGeometry(root, { width: 800, height: 120 }).height).toBeGreaterThanOrEqual(400);
   });
 });
 

@@ -1,9 +1,10 @@
 /** Page-session composition. Window stores retain their own data lifetimes;
  * this owner acquires and retires the page's subscriptions and delayed work. */
 import { isTauri } from "$lib/api/common";
+import { tick } from "svelte";
 import { getNativeResourceSession } from "$lib/api/native-resource-session";
 import { E2E_WARM_WINDOW_PRIMING_DISABLED, loadE2EHooks } from "$lib/api/e2e-hooks";
-import { planWindowLaunch } from "$lib/domain/window-launch-plan";
+import { launchRequest, planWindowLaunch } from "$lib/domain/window-launch-plan";
 import { useNativeDropHandler } from "$lib/composables/use-native-drop-handler";
 import { useFileWatchers } from "$lib/composables/use-file-watchers";
 import { useWindowLifecycle } from "$lib/composables/use-window-lifecycle";
@@ -31,6 +32,7 @@ import { windowSizeStore } from "./window-size.svelte";
 import { createFileRecoverySession } from "./file-recovery-session.svelte";
 import { markStartup } from "./startup-timing";
 import { startNativeLaunchReceiver } from "./native-launch";
+import { createDeferredFocusRequest } from "./deferred-focus";
 
 export interface WindowSessionOptions {
   picker: boolean;
@@ -93,6 +95,12 @@ export function startWindowSession(options: WindowSessionOptions) {
     watchers.setup();
     options.beforeInitialListing?.(lifetime.signal);
     const tab = windowTabsManager.init(plan.initialPath, plan.skipRestore, plan.overridePath);
+    const initialExplorer = windowTabsManager.getActiveExplorer();
+    const launchFocus = launchRequest(window.location.search, "focusAddressBar") === "1"
+      ? createDeferredFocusRequest(window, () => !dialogStore.hasModalOpen
+        && windowTabsManager.getActiveExplorer() === initialExplorer)
+      : null;
+    if (launchFocus) stops.push(launchFocus.cancel);
     stops.push(startWindowTitleSync(() => windowTabsManager.getActiveExplorer()?.currentPath, plan.homePath));
     if (plan.viewMode && tab) windowTabsManager.getActiveExplorer()?.setViewMode(plan.viewMode);
 
@@ -120,6 +128,16 @@ export function startWindowSession(options: WindowSessionOptions) {
       if (coreReady || lifetime.signal.aborted) return;
       coreReady = true;
       markBackgroundReady();
+      // Settings can remount the pane while initial navigation is loading.
+      // Retain the launch request here until the page reports both ready;
+      // tab remounts never read or replay the window's launch URL.
+      if (launchFocus) {
+        void tick().then(() => {
+          if (!lifetime.signal.aborted && launchFocus.consume()) {
+            window.dispatchEvent(new Event("explorer:focus-address-bar"));
+          }
+        });
+      }
       // Ordinary directory panes already acknowledged this session. Virtual-
       // only windows also participate in shared history, without adding work
       // to the configured foreground-readiness path or acquiring a watcher.

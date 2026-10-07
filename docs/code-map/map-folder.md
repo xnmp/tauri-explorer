@@ -105,7 +105,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `git-graph-branches.svelte.ts` — lazy branch/author metadata owner; known-coverage fallback and query/popover request coordination.
 
 - `window-startup.ts` — window-owned settings/theme/plugin startup; disposal prevents late settings from activating plugins.
-- `window-session.ts` — composes page subscriptions, startup, command readiness and post-readiness warm priming with rollback/teardown.
+- `window-session.ts` — composes page subscriptions, startup, one-shot launch address-bar focus, command readiness and post-readiness warm priming with rollback/teardown.
 - `window-launch.ts` — destination-keyed seed lifetime and native created/error ownership; labelled failure-phase diagnostics; tear-offs require adoption ACK before source retirement.
 - `window-handoff.ts` — correlated native request/acknowledgement transport for tab adoption and warm activation; owns timeout and listener retirement.
 - `window-trace.ts` — launch/hand-off/tab-seed tracing: failures and timeouts to the native log in every build, progress phases only in hook builds (#884).

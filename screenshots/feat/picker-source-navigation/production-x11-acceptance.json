@@ -1,0 +1,28 @@
+{
+  "screen": [
+    1920,
+    1080
+  ],
+  "source": {
+    "xid": "400004",
+    "bounds": [
+      20,
+      40,
+      950,
+      650
+    ],
+    "mapped": 2,
+    "transientFor": "0"
+  },
+  "picker": {
+    "xid": "600004",
+    "bounds": [
+      45,
+      85,
+      900,
+      560
+    ],
+    "mapped": 2,
+    "transientFor": "400004"
+  }
+}

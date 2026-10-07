@@ -10,7 +10,7 @@
  * contribute ~0.5, from a day ago ~0.04, etc.
  */
 
-import { sanitizeFrecencyHistory, type HistoryFrecencyEntry } from "$lib/domain/history";
+import { reconcileHistory, sanitizeFrecencyHistory, type HistoryFrecencyEntry } from "$lib/domain/history";
 import { enqueueHistory, registerFrecencyHistory } from "./shared-history";
 import { checkPathsExist } from "$lib/api/files";
 import { directoryKey, parentDir } from "$lib/domain/path";
@@ -64,7 +64,7 @@ function createFrecencyStore() {
 
   /** Read shared persisted history before opening a picker or adding an access. */
   function refresh(): void {
-    data = sanitizeFrecencyHistory(loadPersisted(STORAGE_KEY, data, 1_000_000));
+    data = reconcileHistory(data, sanitizeFrecencyHistory(loadPersisted(STORAGE_KEY, data, 1_000_000)));
   }
 
   /** Record an access to a path. */
@@ -182,12 +182,12 @@ function createFrecencyStore() {
     const missing = new Set(paths.filter((_, i) => !exists[i]));
     if (missing.size === 0) return;
     enqueueHistory({ type: "prune", collection: "frecency", entries: inspected.filter(entry => missing.has(entry.path)).map(entry => ({ key: directoryKey(entry.path), revision: entry.revision ?? 0 })) });
-    const observed = new Map(inspected.map(entry => [directoryKey(entry.path), entry]));
-    data = data.filter(entry => !missing.has(entry.path) || entry !== observed.get(directoryKey(entry.path)));
+    const observed = new Set(inspected.filter(entry => missing.has(entry.path)));
+    data = data.filter(entry => !observed.has(entry));
     save();
   }
 
-  registerFrecencyHistory({ get: () => data, set: value => { data = value; save(); } });
+  registerFrecencyHistory({ get: () => data, set: value => { data = reconcileHistory(data, value); save(); } });
 
   return {
     get entries() { return data; },

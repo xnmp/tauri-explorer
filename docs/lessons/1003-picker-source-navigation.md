@@ -19,7 +19,10 @@ localStorage imported once and maintained as an optimistic browser mirror.
 Publish canonical reads synchronously inside the mutation-epoch guard; returning
 an accepted snapshot across another await lets newer optimistic work race its
 publication. Prune only the observed backend revision and the unchanged local
-entry identity, because same-path/same-time reuse can produce equal values.
+entry identity, because same-path/same-time reuse can produce equal values. Preserve
+unchanged identities when rehydrating storage; compare semantic field tuples, not
+JSON property insertion order. Track every inspected missing object in a Set so
+duplicate legacy records are pruned together.
 File picks validate current metadata kind, following valid symlinks, and delayed
 validation must yield to newer selection/navigation intentions or cancellation.
 

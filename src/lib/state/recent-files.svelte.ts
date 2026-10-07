@@ -6,7 +6,7 @@
  * Persisted to localStorage with a max capacity.
  */
 
-import { sanitizeRecentHistory, type HistoryRecentEntry } from "$lib/domain/history";
+import { reconcileHistory, sanitizeRecentHistory, type HistoryRecentEntry } from "$lib/domain/history";
 import { enqueueHistory, registerRecentHistory } from "./shared-history";
 import { checkPathsExist } from "$lib/api/files";
 import { directoryKey } from "$lib/domain/path";
@@ -25,7 +25,7 @@ function createRecentFilesState() {
   }
 
   function refresh(): void {
-    entries = sanitizeRecentHistory(loadPersisted(STORAGE_KEY, entries, 1_000_000));
+    entries = reconcileHistory(entries, sanitizeRecentHistory(loadPersisted(STORAGE_KEY, entries, 1_000_000)));
   }
 
   function add(path: string, name: string, kind: "file" | "directory") {
@@ -67,12 +67,12 @@ function createRecentFilesState() {
     const missing = new Set(paths.filter((_, i) => !exists[i]));
     if (missing.size === 0) return;
     enqueueHistory({ type: "prune", collection: "recent", entries: inspected.filter(entry => missing.has(entry.path)).map(entry => ({ key: directoryKey(entry.path), revision: entry.revision ?? 0 })) });
-    const observed = new Map(inspected.map(entry => [directoryKey(entry.path), entry]));
-    entries = entries.filter(entry => !missing.has(entry.path) || entry !== observed.get(directoryKey(entry.path)));
+    const observed = new Set(inspected.filter(entry => missing.has(entry.path)));
+    entries = entries.filter(entry => !observed.has(entry));
     save();
   }
 
-  registerRecentHistory({ get: () => entries, set: value => { entries = value; save(); } });
+  registerRecentHistory({ get: () => entries, set: value => { entries = reconcileHistory(entries, value); save(); } });
 
   return {
     get list() { return entries; },

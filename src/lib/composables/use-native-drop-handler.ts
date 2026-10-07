@@ -10,10 +10,11 @@ import { useExternalDrop } from "$lib/composables/use-external-drop.svelte";
 import { resolveDropTarget, highlightTarget, clearHighlights } from "$lib/composables/use-native-drop-target.svelte";
 import { dragState } from "$lib/state/drag.svelte";
 import { handleFileDropMany } from "$lib/state/drop-operations";
-import { isCopyModifier as isCopyMod } from "$lib/domain/platform";
+import { isCopyModifier as isCopyMod, isWindows } from "$lib/domain/platform";
 import { bookmarksStore } from "$lib/state/bookmarks.svelte";
 import { terminalPanelStore } from "$lib/state/terminal.svelte";
-import { parentDir, isInsideDir, samePath, splitFlattenedUriList } from "$lib/domain/path";
+import { parentDir, isInsideDir, samePath } from "$lib/domain/path";
+import { nativeDropPaths } from "$lib/domain/native-drop-paths";
 
 export interface NativeDropDeps {
   getActiveExplorer: () => ExplorerInstance | undefined;
@@ -33,7 +34,8 @@ export function useNativeDropHandler(deps: NativeDropDeps) {
 
     // WebKitGTK flattens a multi-file in-app drag into ONE concatenated
     // uri-list string (#253) — recover the individual paths first.
-    const paths = rawPaths.flatMap(splitFlattenedUriList);
+    const paths = nativeDropPaths(rawPaths, isWindows);
+    if (!paths.length) { dragState.clear(); return; }
 
     // Check both in-memory (same-window) and localStorage (cross-window) drag state
     const dragData = dragState.current ?? dragState.readCrossWindow();
@@ -49,10 +51,10 @@ export function useNativeDropHandler(deps: NativeDropDeps) {
     // Internal drags always move; only external drops respect the copy modifier
     // (keyboard focus is lost during native drag, making copyModifierHeld unreliable)
     const isCopy = !isInternalDrag && copyModifierHeld;
+    const sourcePaths = isInternalDrag ? nativeDropPaths(internalPaths!, isWindows) : paths;
 
     // Terminal drop: type the paths into the shell prompt (#265).
     if (target?.type === "terminal") {
-      const sourcePaths = isInternalDrag ? internalPaths! : paths;
       terminalPanelStore.insertPaths(sourcePaths);
       dragState.clear();
       return;
@@ -60,7 +62,6 @@ export function useNativeDropHandler(deps: NativeDropDeps) {
 
     // Sidebar bookmark drop
     if (target?.type === "sidebar") {
-      const sourcePaths = isInternalDrag ? internalPaths! : paths;
       // Empty Bookmarks space is a pinning surface for Explorer folders only.
       // Files require a specific bookmark destination, resolved as a folder above.
       if (dragData?.kind === "directory") {
@@ -73,8 +74,6 @@ export function useNativeDropHandler(deps: NativeDropDeps) {
     }
 
     // Determine source paths (validated internal drag state or external paths)
-    const sourcePaths = isInternalDrag ? internalPaths! : paths;
-
     const dropOptions = {
       onRefresh: deps.refreshAllPanes,
       broadcastToOtherWindows: isInternalDrag,

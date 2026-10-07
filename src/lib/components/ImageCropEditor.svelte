@@ -17,7 +17,7 @@
   let editorState = $state<ImageCropSessionState>({ phase: "loading", name: sourceName });
   let copyName = $state(croppedCopyName(sourceName));
   let confirmReplace = $state(false);
-  let activeTool = $state(untrack(() => initialTool));
+  const activeTool = untrack(() => initialTool);
   let toolBusy = $state(false);
   const source = $derived<ImageEditorSource | null>(editorState.capture ? {
     path: editorState.capture.path, name: sourceName, digest: editorState.capture.revision.digest,
@@ -25,9 +25,10 @@
   } : null);
   const tools = $derived(source ? imageEditorRegistry.toolsFor(source) : []);
   const selectedTool = $derived(tools.find((tool) => tool.id === activeTool));
-  const cropping = $derived(activeTool === "crop");
+  const cropping = activeTool === "crop";
+  const editorTitle = $derived(cropping ? "Edit image" : selectedTool?.title || "AI edit");
   // Disabling a provider removes its panel; accepted jobs remain owned by Jobs.
-  $effect(() => { if (source && activeTool !== "crop" && !selectedTool) { activeTool = "crop"; toolBusy = false; } });
+  $effect(() => { if (source && activeTool !== "crop" && !selectedTool) toolBusy = false; });
   const busy = $derived(toolBusy || editorState.phase === "saving" || editorState.phase === "loading");
   const output = $derived(editorState.rect ? croppedImageSize(editorState.rect) : null);
   const session = createImageCropSession({
@@ -49,11 +50,11 @@
   const edges: readonly CropEdge[] = ["left", "top", "right", "bottom"];
 </script>
 
-<Modal open={true} onClose={close} canClose={() => !toolBusy && editorState.phase !== "saving"} label="Edit image" overlayClass="image-crop-overlay" closeOnBackdrop={false} closeOnEscape={!toolBusy && editorState.phase !== "saving"}>
+<Modal open={true} onClose={close} canClose={() => !toolBusy && editorState.phase !== "saving"} label={editorTitle} overlayClass="image-crop-overlay" closeOnBackdrop={false} closeOnEscape={!toolBusy && editorState.phase !== "saving"}>
   <div class="modal-card crop-editor" aria-busy={busy}>
     <div class="dialog-header">
       <div class="crop-title">
-        <h2>Edit image</h2>
+        <h2>{editorTitle}</h2>
         <p class="dialog-subtitle" title={sourcePath}>{sourceName} {editorState.size ? `· ${editorState.size.width} × ${editorState.size.height}` : ""}</p>
       </div>
       <button class="btn secondary crop-close" aria-label="Close image editor" title="Close" disabled={toolBusy || editorState.phase === "saving"} onclick={close}>
@@ -67,12 +68,6 @@
         </select>
       </label>
     {/if}
-    <div class="editor-tools" role="group" aria-label="Image editing tools">
-      <button class="btn secondary" aria-pressed={cropping} disabled={busy} onclick={() => { activeTool = "crop"; confirmReplace = false; }}>Crop</button>
-      {#each tools as tool (tool.id)}
-        <button class="btn secondary" aria-pressed={activeTool === tool.id} disabled={busy} onclick={() => { activeTool = tool.id; confirmReplace = false; }}>{tool.title}</button>
-      {/each}
-    </div>
     <div class:ai-layout={!cropping} class="editor-workspace">
     <div class="editor-image">
     {#if editorState.phase === "loading"}
@@ -111,6 +106,8 @@
           <Tool {...selectedTool.props} {source} onClose={() => { toolBusy = false; session.close(); }} onBusyChange={(value: boolean) => { toolBusy = value; }} />
         {/key}
       </section>
+    {:else if source && !cropping}
+      <p class="crop-note" role="status">This image editor is unavailable.</p>
     {/if}
     </div>
     {#if editorState.error}<p class="error-message" role="alert">{editorState.error}</p>{/if}
@@ -144,8 +141,6 @@
 <style>
   .edit-target { margin: 0 0 12px; }
   .edit-target select { color: var(--text-primary); background: var(--control-fill); border: 1px solid var(--control-stroke); padding: 6px; border-radius: var(--radius-sm); }
-  .editor-tools { display: flex; gap: 6px; padding: 0 0 14px; }
-  .editor-tools button[aria-pressed="true"] { border-color: var(--accent-text); color: var(--accent-text); }
   .editor-workspace { flex-shrink: 0; }
   .editor-workspace.ai-layout { display: grid; grid-template-columns: minmax(0, 1fr) minmax(300px, 380px); gap: 18px; }
   .editor-image { min-width: 0; }

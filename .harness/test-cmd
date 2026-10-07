@@ -1,1 +1,1 @@
-cd src-tauri && cargo test --lib config_watch -- --nocapture
+cd src-tauri && cargo test --lib config_watch -- --nocapture && cargo test --test config_watch_nested_root_test -- --nocapture

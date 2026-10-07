@@ -20,5 +20,12 @@ writing canonical targets: a write made earlier can still be observed by the old
 ancestor and incorrectly make a broken retarget look successful. Assertions
 check config-relative names and the canonical event source, preventing delayed
 symlink-entry events from standing in for target writes. Backend contracts in
-`src-tauri/test_support/config_watch_registration_contracts.rs` additionally model
+`src-tauri/test_support/config_watch_registration_contracts_test.rs` additionally model
 exact-root callback ownership and partial native cleanup. See ADR 0004.
+
+`src-tauri/tests/config_watch_nested_root_test.rs` exercises the public watcher
+and real refresh worker, including when the entire implementation file is
+reverted. It waits for the ancestor inode to leave `/proc/self/fdinfo`, then
+receives a first-ever bookmarks event as a barrier for the native removal's
+callback thread before probing the canonical nested target. No fixed refresh
+sleep or symlink-entry callback can substitute for completed ancestor retirement.

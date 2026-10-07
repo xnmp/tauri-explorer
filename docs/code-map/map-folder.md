@@ -437,7 +437,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `lib.rs` — app entry: builder, command registration, plugin setup. Grep here to find where a command is wired.
 - `error.rs` — unified command error type.
 - `config.rs` — JSON config file persistence.
-- `config_watch.rs` — watches the config dir and emits `config-file-changed` for reloadable JSON / `themes/*.css` so external edits apply live (#599); `watched_config_name` is the allowlist. Symlink handover restores surviving descendant coverage after recursive ancestor retirement (#938, ADR 0004); Linux contracts live in `src-tauri/test_support/config_watch_nested_roots.rs`.
+- `config_watch.rs` — watches the config dir and emits `config-file-changed` for reloadable JSON / `themes/*.css` so external edits apply live (#599); `watched_config_name` is the allowlist. Symlink handover restores surviving descendant coverage after recursive ancestor retirement (#938, ADR 0004); Linux contracts live in `src-tauri/test_support/config_watch_nested_roots_test.rs`.
 - `search.rs` — fuzzy search (nucleo). Two-pass walk: fast pass, then build-output trees (`target`, `node_modules`, …) deferred + score-penalized (#393); WSL UNC roots delegate the walk to the distro's `find` (#414); complete walks feed the shared listing cache (#651).
 - `search_cache.rs` — bounded five-second cache of completed recursive Quick Open listings for watched roots; per-root invalidation revisions prevent an in-flight cold walk from republishing stale entries without discarding unrelated roots, and incomplete/cancelled walks are never published (#651).
 - `wsl.rs` — WSL UNC path parsing (`\\wsl.localhost\<distro>\…` → distro + Linux path), shared by terminal/search/git delegation.

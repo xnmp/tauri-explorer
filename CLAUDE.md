@@ -152,10 +152,17 @@ can leak native callback owners. Keep obsolete descendant cleanup obligations
 until each removal succeeds, including after partial ancestor failures.
 Include the permanent config-directory
 watch when it is nested under that ancestor, and retain failed restorations for
-retry. The Linux contracts in `src-tauri/test_support/config_watch_nested_roots.rs`
+retry. The Linux contracts in `src-tauri/test_support/config_watch_nested_roots_test.rs`
 drive the production handover synchronously before writing canonical targets;
 a receipt before ancestor removal can otherwise hide lost coverage (#938,
 ADR 0004).
+The public integration regression in `src-tauri/tests/config_watch_nested_root_test.rs`
+also runs against the real refresh worker. It waits for native ancestor retirement
+through `/proc/self/fdinfo`, then uses a first-ever bookmarks callback as an
+inotify event-loop barrier before probing the canonical nested settings target.
+Keep source-included Rust test filenames ending in `_test.rs` so the publication
+gate recognizes them, and retain the public integration test when testing with
+the entire implementation file reverted.
 
 The public report relay under `website/api/` uses `GITHUB_ISSUE_TOKEN` only for issue creation. Production spam counters must use the shared REST KV variables `KV_REST_API_URL` and `KV_REST_API_TOKEN`; when Vercel is detected without them the endpoint fails closed. The in-memory counter is intentionally limited to local development and unit tests.
 

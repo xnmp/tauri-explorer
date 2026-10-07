@@ -706,11 +706,11 @@ fn settings_path(config_dir: &Path) -> std::path::PathBuf {
 }
 
 #[cfg(test)]
-#[path = "../test_support/config_watch_nested_roots.rs"]
+#[path = "../test_support/config_watch_nested_roots_test.rs"]
 mod nested_root_tests;
 
 #[cfg(test)]
-#[path = "../test_support/config_watch_registration_contracts.rs"]
+#[path = "../test_support/config_watch_registration_contracts_test.rs"]
 mod registration_contract_tests;
 
 #[cfg(test)]

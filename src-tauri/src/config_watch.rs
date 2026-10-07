@@ -629,6 +629,10 @@ fn settings_path(config_dir: &Path) -> std::path::PathBuf {
 }
 
 #[cfg(test)]
+#[path = "../test_support/config_watch_nested_roots.rs"]
+mod nested_root_tests;
+
+#[cfg(test)]
 mod tests {
     #[cfg(unix)]
     use super::THEMES_DIR;

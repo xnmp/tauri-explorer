@@ -11,14 +11,16 @@ import { HOME_URL, waitForEntries, pressShortcut } from "./helpers";
 
 async function openSettings(page: Page) {
   await pressShortcut(page, ",", { ctrlKey: true });
-  const dialog = page.locator(".settings-dialog");
+  await expect(page.locator(".settings-dialog")).toBeVisible({ timeout: 2000 });
+  await page.getByRole("button", { name: "Open Plugins", exact: true }).click();
+  const dialog = page.locator(".plugins-dialog");
   await expect(dialog).toBeVisible({ timeout: 2000 });
   return dialog;
 }
 
 async function closeSettings(page: Page) {
-  await page.locator(".settings-dialog .close-btn").click();
-  await expect(page.locator(".settings-dialog")).toBeHidden();
+  await page.locator(".plugins-dialog .close-btn").click();
+  await expect(page.locator(".plugins-dialog")).toBeHidden();
 }
 
 async function setNanoBananaEnabled(page: Page, enabled: boolean) {
@@ -114,7 +116,7 @@ test.describe("Nano Banana plugin", () => {
 
     const settingsDialog = await openSettings(page);
 
-    const search = page.locator(".settings-search");
+    const search = page.locator(".plugins-search");
     await search.fill("Gemini");
 
     // Scope to the Nano Banana section — other plugins (e.g. AI Rename) also

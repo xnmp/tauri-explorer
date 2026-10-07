@@ -397,7 +397,7 @@ export function createPluginContext(
         return complete ? { ok: true } : { ok: false, error: "skipped" };
       },
     },
-    openSettings: () => dialogStore.openSettings(),
+    openSettings: () => dialogStore.openPlugins(),
   };
 
   return {

@@ -65,10 +65,12 @@ test.describe("Upscale plugin", () => {
     await waitForEntries(page);
 
     await pressShortcut(page, ",", { ctrlKey: true });
-    const settingsDialog = page.locator(".settings-dialog");
+    await expect(page.locator(".settings-dialog")).toBeVisible();
+    await page.getByRole("button", { name: "Open Plugins", exact: true }).click();
+    const settingsDialog = page.locator(".plugins-dialog");
     await expect(settingsDialog).toBeVisible({ timeout: 2000 });
 
-    const search = page.locator(".settings-search");
+    const search = page.locator(".plugins-search");
     await search.fill("fal");
 
     const section = settingsDialog.locator('.settings-section:has(h3:has-text("Upscale"))');

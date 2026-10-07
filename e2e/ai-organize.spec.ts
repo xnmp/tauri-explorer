@@ -12,7 +12,9 @@ import { waitForEntries, pressShortcut } from "./helpers";
 
 async function setApiKey(page: Page, key: string) {
   await pressShortcut(page, ",", { ctrlKey: true });
-  const dialog = page.locator(".settings-dialog");
+  await expect(page.locator(".settings-dialog")).toBeVisible({ timeout: 2000 });
+  await page.getByRole("button", { name: "Open Plugins", exact: true }).click();
+  const dialog = page.locator(".plugins-dialog");
   await expect(dialog).toBeVisible({ timeout: 2000 });
   const section = dialog.locator(
     '.settings-section:has(h3:has-text("AI / Destination Suggestions"))',

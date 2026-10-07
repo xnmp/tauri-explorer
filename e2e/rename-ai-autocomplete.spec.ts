@@ -12,13 +12,15 @@ import { HOME_URL, waitForEntries, pressShortcut } from "./helpers";
 
 async function setApiKey(page: Page, key: string) {
   await pressShortcut(page, ",", { ctrlKey: true });
-  const dialog = page.locator(".settings-dialog");
+  await expect(page.locator(".settings-dialog")).toBeVisible({ timeout: 2000 });
+  await page.getByRole("button", { name: "Open Plugins", exact: true }).click();
+  const dialog = page.locator(".plugins-dialog");
   await expect(dialog).toBeVisible({ timeout: 2000 });
   const section = dialog.locator('.settings-section:has(h3:has-text("AI / Rename Suggestions"))');
   const input = section.locator('.setting-row:has-text("Gemini API Key") input[type="password"]');
   await input.fill(key);
   await input.press("Tab"); // fire onchange (persist)
-  await page.locator(".settings-dialog .close-btn").click();
+  await page.locator(".plugins-dialog .close-btn").click();
   await expect(dialog).toBeHidden();
 }
 

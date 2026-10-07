@@ -13,14 +13,16 @@ import { HOME_URL, waitForEntries } from "./helpers";
 
 async function openSettings(page: Page) {
   await page.keyboard.press("Control+,");
-  const dialog = page.locator(".settings-dialog");
+  await expect(page.locator(".settings-dialog")).toBeVisible({ timeout: 2000 });
+  await page.getByRole("button", { name: "Open Plugins", exact: true }).click();
+  const dialog = page.locator(".plugins-dialog");
   await expect(dialog).toBeVisible({ timeout: 2000 });
   return dialog;
 }
 
 async function closeSettings(page: Page) {
-  await page.locator(".settings-dialog .close-btn").click();
-  await expect(page.locator(".settings-dialog")).toBeHidden();
+  await page.locator(".plugins-dialog .close-btn").click();
+  await expect(page.locator(".plugins-dialog")).toBeHidden();
 }
 
 async function setDemoPluginEnabled(page: Page, enabled: boolean) {
@@ -168,8 +170,7 @@ test("installed settings retain list order through activation and re-enabling", 
     release();
     await installing;
   });
-  const expected = original.flatMap(title => title === "Keyboard Shortcuts"
-    ? ["Installed Alpha", "Installed Beta", "Installed Gamma", title] : [title]);
+  const expected = [...original, "Installed Alpha", "Installed Beta", "Installed Gamma"];
   await openSettings(page);
   await expect(dialog.locator(".section-title")).toHaveText(expected);
   await closeSettings(page);
@@ -193,8 +194,7 @@ test("installed settings retain list order through activation and re-enabling", 
       },
     }]);
   });
-  const remaining = original.flatMap(title => title === "Keyboard Shortcuts"
-    ? ["Installed Gamma", "Installed Delta", title] : [title]);
+  const remaining = [...original, "Installed Gamma", "Installed Delta"];
   await openSettings(page);
   await expect(dialog.locator(".section-title")).toHaveText(remaining);
   await closeSettings(page);

@@ -100,7 +100,12 @@ impl WatchRegistration for RecommendedWatcher {
     }
 
     fn unregister(&mut self, path: &Path) -> Result<(), Self::Error> {
-        self.unwatch(path)
+        match self.unwatch(path) {
+            // A previous partial removal or ancestor removal may have already
+            // retired this root. Treat its absence as completed cleanup.
+            Err(error) if matches!(error.kind, notify::ErrorKind::WatchNotFound) => Ok(()),
+            result => result,
+        }
     }
 }
 
@@ -565,12 +570,18 @@ fn spawn_flush_thread(app: AppHandle) {
 /// delivers is already mapped and an event from a retired root is already
 /// filtered. If a registration fails, the previous plan is restored and its
 /// roots stay watched; successful additions are retained for the next retry.
+/// Removing a recursive ancestor can also remove surviving descendants on
+/// inotify. Invalidate their registration records and restore that coverage
+/// after all retirements, including the permanent config-directory watch.
 fn reconcile_watch_plan<W: WatchRegistration>(
     replacement: WatchPlan,
     plan: &Mutex<WatchPlan>,
     registrations: &mut Registrations<W>,
     phase: &PhaseRecorder,
 ) {
+    let config_dir = replacement.config_dir.clone();
+    let required_roots = replacement.external_roots.clone();
+    restore_config_root(&config_dir, registrations, phase);
     let additions: Vec<(PathBuf, RecursiveMode)> = replacement
         .external_roots
         .iter()
@@ -609,8 +620,21 @@ fn reconcile_watch_plan<W: WatchRegistration>(
     }
 
     for root in stale {
+        // An earlier ancestor removal may already have retired this root.
+        if !registrations.external_roots.contains_key(&root) {
+            continue;
+        }
         phase.enter(WorkerPhase::Unregistering(root.clone()));
-        match registrations.watcher.unregister(&root) {
+        let result = registrations.watcher.unregister(&root);
+        // Even a failed removal can have partially changed native coverage.
+        // Keep the failed root for cleanup retry, but never trust descendants.
+        registrations
+            .external_roots
+            .retain(|current, _| current == &root || !current.starts_with(&root));
+        if config_dir.starts_with(&root) {
+            registrations.config_root_needs_restore = true;
+        }
+        match result {
             Ok(()) => {
                 registrations.external_roots.remove(&root);
             }
@@ -619,6 +643,46 @@ fn reconcile_watch_plan<W: WatchRegistration>(
                 root.display()
             ),
         }
+    }
+
+    restore_config_root(&config_dir, registrations, phase);
+    for (root, mode) in required_roots {
+        if registrations.external_roots.get(&root) == Some(&mode) {
+            continue;
+        }
+        phase.enter(WorkerPhase::Registering(root.clone()));
+        match registrations.watcher.register(&root, mode) {
+            Ok(()) => {
+                registrations.external_roots.insert(root, mode);
+            }
+            Err(error) => log::warn!(
+                "Config autoreload cannot restore surviving symlink target {}: {error}",
+                root.display()
+            ),
+        }
+        // Failed restorations remain absent from external_roots, so the next
+        // refresh retries them as additions rather than assuming coverage.
+    }
+}
+
+fn restore_config_root<W: WatchRegistration>(
+    config_dir: &Path,
+    registrations: &mut Registrations<W>,
+    phase: &PhaseRecorder,
+) {
+    if !registrations.config_root_needs_restore {
+        return;
+    }
+    phase.enter(WorkerPhase::Registering(config_dir.to_path_buf()));
+    match registrations
+        .watcher
+        .register(config_dir, RecursiveMode::Recursive)
+    {
+        Ok(()) => registrations.config_root_needs_restore = false,
+        Err(error) => log::warn!(
+            "Config autoreload cannot restore config directory {}: {error}",
+            config_dir.display()
+        ),
     }
 }
 

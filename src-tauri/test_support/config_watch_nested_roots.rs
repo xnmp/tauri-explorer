@@ -30,7 +30,7 @@ impl WatchRegistration for FaultWatcher {
     }
 
     fn unregister(&mut self, path: &Path) -> notify::Result<()> {
-        let result = self.native.unwatch(path);
+        let result = WatchRegistration::unregister(&mut self.native, path);
         if self.fail_removal_after_native.as_deref() == Some(path) {
             self.fail_removal_after_native = None;
             return Err(notify::Error::generic("injected partial removal failure"));

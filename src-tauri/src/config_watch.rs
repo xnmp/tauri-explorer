@@ -630,19 +630,22 @@ fn reconcile_watch_plan<W: WatchRegistration>(
     }
 
     for root in stale {
-        // An earlier ancestor removal may already have retired this root.
-        if !registrations.external_roots.contains_key(&root) {
-            continue;
-        }
         phase.enter(WorkerPhase::Unregistering(root.clone()));
         let result = registrations.watcher.unregister(&root);
-        // Even a failed removal can have partially changed native coverage.
-        // Keep the failed root for cleanup retry, but never trust descendants.
-        registrations
-            .external_roots
-            .retain(|current, _| current == &root || !current.starts_with(&root));
-        if config_dir.starts_with(&root) {
-            registrations.config_root_needs_restore = true;
+        if registrations.watcher.unregister_removes_descendants() {
+            // Even a failed removal can partially change native coverage.
+            // Invalidate surviving descendants, but retain every obsolete root
+            // until its own cleanup succeeds: a partial ancestor removal may
+            // have left its native descendant watches running.
+            registrations.external_roots.retain(|current, _| {
+                !current.starts_with(&root)
+                    || !required_roots
+                        .iter()
+                        .any(|(required, _)| required == current)
+            });
+            if config_dir.starts_with(&root) {
+                registrations.config_root_needs_restore = true;
+            }
         }
         match result {
             Ok(()) => {

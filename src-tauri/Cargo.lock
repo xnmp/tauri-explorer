@@ -4932,6 +4932,8 @@ dependencies = [
  "dunce",
  "explorer-avif",
  "futures-util",
+ "gdkwayland-sys",
+ "gdkx11-sys",
  "getrandom 0.4.3",
  "gif",
  "gio 0.22.10",

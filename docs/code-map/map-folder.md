@@ -206,6 +206,8 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `workspaces.svelte.ts` — save/restore named workspaces.
 - `bookmarks.svelte.ts` — sidebar bookmarks store.
 - `recent-files.svelte.ts` — recent files store.
+- `shared-history.ts` — native history IPC FIFO, accepted-write flush, epoch-guarded refresh and store registration; browser fallback keeps local history.
+- `picker-search.ts` (state) — revision-owned delayed picker search; new input/close revoke stale results before the debounce.
 - `frecency.svelte.ts` — zoxide-style frecency path ranking.
 - `drives.svelte.ts` — discovered volumes and mounted-root reactive store; refreshes on `drives-changed` pushes, polling slowly while the backend pushes and quickly otherwise; feeds start only through the page foreground gate (#931).
 - `drive-opening.ts` — coalesces mount requests; navigates only after mounting succeeds and reports failures.
@@ -255,6 +257,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `mock-fixtures.ts` — static fixture data for mock-invoke.ts: the seeded fake filesystem tree (`mockFiles`), fake file contents, the fake drives list, and the fake commit graph shape/refs (#869).
 - `mock-file-history.ts` — browser-only fixture history for UI tests; native policy lives in Rust.
 - `mock-file-history-execution.ts` — browser-only fixture inverse execution against mock filesystem commands.
+- `history.ts` (api) — shared history IPC adapter and canonical directory-key migration.
 - `search.ts` — fuzzy file search + content search IPC + streaming. Hot.
 - `git.ts` — git status decoration + SCM (stage/commit/diff) IPC.
 - `git-log.ts` — git history / commit-graph IPC (#57), including mutation snapshots and authoritative graph undo (#513).
@@ -313,6 +316,9 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 
 - `directory-reconciliation.ts` — complete-listing three-way merge and selection identity reconciliation after concurrent mutations.
 - `file.ts` — file entry types (incl. `is_git_repo`) + pure ops (sort, filter, format). Hot.
+- `history.ts` (domain) — bounded validation of optional history and shared mutation/snapshot contracts.
+- `search.ts` (domain) — framework-free fuzzy-search result contract, re-exported through api/search.
+- `picker-search.ts` — ranks picker recents/frequent folders and backend matches with extension filtering and a 20-row cap.
 - `file-picker.ts` — case-insensitive extension matching for picker listings and quick search, preserving folder navigation.
 - `file-types.ts` — extension→type/category detection + display; `isGitRepoFolder` (git-repo folder icon selection, #463).
 - `open-with.ts` — single-file selection eligibility and explicit Linux-only application-choice availability.
@@ -450,6 +456,9 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `system.rs` — native launch context, Recycle Bin launcher, window theme and log-path commands.
 - `user_report.rs` — typed async report relay command, full-description/environment body assembly without log tails, and ureq transport with uncertain-response handling.
 - `process_ext.rs` — suppress console-window flash and own cancellable process trees; drain both pipes with optional output limits and continue cancellation after launcher exit.
+- `portal/parent_identifier.rs` — pure, bounded validation of X11 XIDs and Wayland exported handles.
+- `portal/parent.rs` — validates portal window identifiers and attaches GTK picker surfaces to native Wayland/X11 parents before mapping.
+- `shared_history/mod.rs`, `shared_history/model.rs`, `shared_history/store.rs` — async IPC, pure bounded history policy and cross-process SQLite transactions.
 - `portal.rs` — xdg-desktop-portal FileChooser backend (Linux).
 - `crash_report.rs` — local crash capture (#184).
 - `update_check.rs` — update check via GitHub releases (#185).

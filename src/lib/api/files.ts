@@ -348,6 +348,17 @@ export async function estimateSize(paths: string[]): Promise<ApiResult<SizeEstim
   }
 }
 
+/** Selection validation fails closed; optional history pruning keeps its existing fallback. */
+export async function verifyPathsExist(paths: readonly string[], kind: "file" | "directory"): Promise<ApiResult<boolean>> {
+  try {
+    const exists = await invoke<unknown>("check_paths_exist", { paths, directory: kind === "directory" });
+    if (!Array.isArray(exists) || exists.length !== paths.length || exists.some(value => typeof value !== "boolean")) {
+      return { ok: false, error: "Invalid filesystem validation response" };
+    }
+    return { ok: true, data: exists.every(Boolean) };
+  } catch (error) { return { ok: false, error: extractError(error) }; }
+}
+
 /** Batch-check which paths exist on the filesystem. */
 export async function checkPathsExist(paths: string[]): Promise<boolean[]> {
   try {

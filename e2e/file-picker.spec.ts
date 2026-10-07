@@ -20,6 +20,172 @@ async function readResponse(page: Page): Promise<{ token: string; paths: string[
 }
 
 test.describe("File picker mode", () => {
+  for (const key of ["explorer-recent-files", "explorer-frecency"]) {
+    test(`malformed ${key} does not prevent selecting a file`, async ({ page }) => {
+      await page.addInitScript(key => localStorage.setItem(key, "null"), key);
+      await page.goto("/?picker=open&token=malformed&folder=%2Fhome%2Fuser");
+      await page.locator('.column[data-path="/home/user"] .entry', { hasText: "notes.md" }).dblclick();
+      expect(await readResponse(page)).toMatchObject({ cancelled: false, paths: ["/home/user/notes.md"] });
+    });
+  }
+
+  test("a history file deleted after Quick Open appears is not confirmed", async ({ page }) => {
+    await page.addInitScript(() => {
+      localStorage.setItem("explorer-recent-files", JSON.stringify([{ name: "notes.md", path: "/home/user/notes.md", kind: "file", timestamp: Date.now() }]));
+      let observations = 0;
+      (globalThis as unknown as { __mockControl: { checkPathsExist: (paths: string[]) => boolean[] } }).__mockControl = {
+        checkPathsExist: paths => {
+          if (paths.includes("/home/user/notes.md")) {
+            observations++;
+            document.documentElement.dataset.historyObservation = String(observations);
+          }
+          return paths.map(path => path !== "/home/user/notes.md" || observations === 1);
+        },
+      };
+    });
+    await page.goto("/?picker=open&token=deleted&folder=%2Fhome%2Fuser");
+    await expect(page.locator('.picker')).toBeVisible();
+    await page.keyboard.press("Control+p");
+    await expect(page.locator('html')).toHaveAttribute('data-history-observation', '1');
+    const result = page.locator('[data-testid="picker-quick-open"] .pqo-result', { hasText: "notes.md" });
+    await result.click();
+    await expect(page.locator('.toast.error')).toContainText("no longer exists");
+    expect(await page.evaluate(key => localStorage.getItem(key), MOCK_LOCAL_KEYS.pickerResponse)).toBeNull();
+  });
+
+  test("a remembered file replaced by a directory is not uploaded", async ({ page }) => {
+    await page.addInitScript(() => localStorage.setItem("explorer-recent-files", JSON.stringify([
+      { name: "Documents", path: "/home/user/Documents", kind: "file", timestamp: Date.now() },
+    ])));
+    await page.goto("/?picker=open&token=changed-kind&folder=%2Fhome%2Fuser");
+    await expect(page.locator(".picker")).toBeVisible();
+    await page.keyboard.press("Control+p");
+    await page.locator(".pqo-result", { hasText: "Documents" }).click();
+    await expect(page.locator(".toast.error")).toContainText("changed type");
+    expect(await page.evaluate(key => localStorage.getItem(key), MOCK_LOCAL_KEYS.pickerResponse)).toBeNull();
+  });
+
+  test("a delayed history folder pick cannot undo newer navigation", async ({ page }) => {
+    await page.addInitScript(() => {
+      localStorage.setItem("explorer-recent-files", JSON.stringify([
+        { name: "Documents", path: "/home/user/Documents", kind: "directory", timestamp: Date.now() },
+      ]));
+      let observations = 0;
+      const control = globalThis as unknown as { __mockControl: { checkPathsExist: (paths: string[]) => boolean[] | Promise<boolean[]> }; releasePickerValidation: () => void };
+      control.__mockControl = { checkPathsExist: paths => {
+        if (paths.includes("/home/user/Documents") && ++observations > 1) {
+          document.documentElement.dataset.validationPending = "true";
+          return new Promise(resolve => { control.releasePickerValidation = () => {
+            document.documentElement.dataset.validationPending = "false";
+            resolve(paths.map(() => true));
+          }; });
+        }
+        return paths.map(() => true);
+      } };
+    });
+    await page.goto("/?picker=open&token=stale-navigation&folder=%2Fhome%2Fuser");
+    await expect(page.locator(".picker")).toBeVisible();
+    await page.keyboard.press("Control+p");
+    await page.locator(".pqo-result", { hasText: "Documents" }).click();
+    await expect(page.locator("html")).toHaveAttribute("data-validation-pending", "true");
+    await page.locator('.column[data-path="/home/user"] .entry', { hasText: "Downloads" }).click();
+    await page.evaluate(() => (globalThis as unknown as { releasePickerValidation: () => void }).releasePickerValidation());
+    await expect(page.locator("html")).toHaveAttribute("data-validation-pending", "false");
+    await expect(page.locator(".address-input")).toHaveValue("/home/user/Downloads");
+  });
+
+  test("Ctrl+P refreshes history written by another window and preserves it on pick", async ({ page }) => {
+    await page.goto("/?picker=open&token=history-reader&folder=%2Fhome%2Fuser");
+    await expect(page.locator('.picker')).toBeVisible();
+    const writer = await page.context().newPage();
+    await writer.goto("/?picker=open&token=history-writer&folder=%2Fhome%2Fuser");
+    await writer.locator('.column[data-path="/home/user"] .entry', { hasText: 'notes.md' }).dblclick();
+    await readResponse(writer);
+    await writer.close();
+    await page.keyboard.press("Control+p");
+    const overlay = page.locator('[data-testid="picker-quick-open"]');
+    await expect(overlay.locator('.pqo-result', { hasText: 'notes.md' })).toBeVisible();
+    await page.keyboard.press('Escape');
+    await expect(overlay).not.toBeVisible();
+    await page.evaluate(key => localStorage.removeItem(key), MOCK_LOCAL_KEYS.pickerResponse);
+    await page.locator('.column[data-path="/home/user"] .entry', { hasText: 'readme.txt' }).dblclick();
+    expect(await readResponse(page)).toMatchObject({ token: 'history-reader', paths: ['/home/user/readme.txt'] });
+    const history = await page.evaluate(() => JSON.parse(localStorage.getItem('explorer-recent-files')!));
+    expect(history.map((entry: {path: string}) => entry.path)).toEqual(expect.arrayContaining(['/home/user/notes.md', '/home/user/readme.txt']));
+  });
+  test("Ctrl+F filters the active column and Escape clears it without cancelling", async ({ page }) => {
+    await page.goto("/?picker=open&token=filter&folder=%2Fhome%2Fuser");
+    const home = page.locator('.column[data-path="/home/user"]');
+    await expect(home.locator('.entry', { hasText: "notes.md" })).toBeVisible();
+    await page.keyboard.press("Control+f");
+    const filter = page.getByRole("textbox", { name: "Filter current folder" });
+    await expect(filter).toBeFocused();
+    await filter.fill("NOTES");
+    await expect(home.locator('.entry')).toHaveCount(1);
+    await filter.press("Escape");
+    await expect(filter).toHaveCount(0);
+    await expect(home.locator('.entry', { hasText: "Documents" })).toBeVisible();
+    expect(await page.evaluate(key => localStorage.getItem(key), MOCK_LOCAL_KEYS.pickerResponse)).toBeNull();
+    await page.keyboard.press("Control+f");
+    await filter.fill("notes");
+    await filter.press("Enter");
+    await page.keyboard.press("Enter");
+    expect(await readResponse(page)).toMatchObject({ cancelled: false, paths: ["/home/user/notes.md"] });
+  });
+
+  test("Ctrl+P shows recent files and frequent folders without typing", async ({ page }) => {
+    await page.addInitScript(() => {
+      localStorage.setItem("explorer-recent-files", JSON.stringify([{ name: "notes.md", path: "/home/user/Documents/notes.md", kind: "file", timestamp: Date.now() }]));
+      localStorage.setItem("explorer-frecency", JSON.stringify([{ path: "/home/user/Documents", accesses: [Date.now(), Date.now()] }]));
+    });
+    await page.goto("/?picker=open&token=history&folder=%2Fhome%2Fuser");
+    await expect(page.locator('.picker')).toBeVisible();
+    await page.keyboard.press("n");
+    await expect(page.locator('.column[data-path="/home/user"] .entry', { hasText: 'notes.md' })).toBeFocused();
+    await page.keyboard.press("Control+p");
+    const overlay = page.locator('[data-testid="picker-quick-open"]');
+    await expect(overlay.locator('.pqo-result', { hasText: 'notes.md' })).toBeVisible();
+    await overlay.locator('.pqo-result').filter({ has: page.locator('.pqo-name', { hasText: /^Documents$/ }) }).click();
+    await expect(overlay).not.toBeVisible();
+    await expect(page.locator('.address-input')).toHaveValue('/home/user/Documents');
+    await expect(page.locator('.column[data-path="/home/user/Documents"]')).toBeFocused();
+    await page.keyboard.press('n');
+    await expect(page.locator('.column[data-path="/home/user/Documents"] .entry', { hasText: 'notes.md' })).toBeFocused();
+    await page.keyboard.press("Control+p");
+    await overlay.locator('.pqo-result', { hasText: 'notes.md' }).click();
+    expect(await readResponse(page)).toMatchObject({ cancelled: false, paths: ["/home/user/Documents/notes.md"] });
+  });
+
+  test("typing selects a folder and Enter navigates before picking a file", async ({ page }) => {
+    await page.goto("/?picker=open&token=typing&folder=%2Fhome%2Fuser");
+    await expect(page.locator('.column[data-path="/home/user"] .entry', { hasText: "Documents" })).toBeVisible();
+    await page.keyboard.press("d");
+    await page.keyboard.press("Enter");
+    await expect(page.locator(".address-input")).toHaveValue("/home/user/Documents");
+    await expect(page.locator('.column[data-path="/home/user/Documents"] .entry', { hasText: "notes.md" })).toBeVisible();
+    await page.keyboard.press("n");
+    await page.keyboard.press("Enter");
+    expect(await readResponse(page)).toMatchObject({ token: "typing", cancelled: false, paths: ["/home/user/Documents/notes.md"] });
+  });
+
+  test("typing a longer prefix scrolls its matching file into view", async ({ page }) => {
+    await page.goto("/?picker=open&token=prefix&folder=%2Fperf%2Fhuge-500");
+    const column = page.locator('.column[data-path="/perf/huge-500"]');
+    await expect(column.locator(".entry").first()).toBeVisible();
+    const name = await column.locator(".entry").last().getAttribute("title");
+    await page.keyboard.type(name!);
+    const match = column.locator(".entry", { has: page.locator('.entry-label', { hasText: name! }) }).last();
+    await expect(match).toBeFocused();
+    await expect.poll(() => match.evaluate(el => {
+      const row = el.getBoundingClientRect();
+      const parent = el.closest('.column')!.getBoundingClientRect();
+      return row.top >= parent.top && row.bottom <= parent.bottom;
+    })).toBe(true);
+    await page.keyboard.press("Enter");
+    const response = await readResponse(page);
+    expect(response.paths).toEqual([`/perf/huge-500/${name}`]);
+  });
+
   test("extension filter hides unrelated files while folders remain navigable", async ({ page }) => {
     await page.goto("/?picker=open&token=filtered&folder=%2Fhome%2Fuser&extension=MD");
     const home = page.locator('.column[data-path="/home/user"]');
@@ -158,6 +324,12 @@ test.describe("File picker mode", () => {
       `/?picker=open&token=windows-paths&multiple=0&directory=1&folder=${encodeURIComponent(driveFolder)}`,
     );
 
+    await page.evaluate(async folder => {
+      const load = new Function("return import('/src/lib/api/mock-fixtures.ts')");
+      const { mockFiles } = await load();
+      mockFiles[folder] = [];
+      mockFiles["\\\\server\\share\\folder"] = [];
+    }, driveFolder);
     const columns = page.locator(".column");
     await expect(columns).toHaveCount(4);
     expect(await columns.evaluateAll((items) =>

@@ -77,6 +77,15 @@ backend for E2E/browser).
 - FLOW: `start_observed_directory` establishes renderer-owned demand before scanning; the pane stages its returned lease before publishing entries. `directory-changed` (fs_watcher.rs → directory-events.ts → pane-watch.ts) and cross-window `broadcastFileChange` both funnel through `requestRefresh` → pane `refresh()`. Refresh policy split across 3 layers — read header of `refresh-manager.ts` before touching.
 - Native mutation events bypass the watcher quiet period and retain priority through coalescing. The refresh manager fixes their 150ms deadline at the first mutation request, waits for any active scan, then reconciles without the watcher storm interval. Later watcher traffic cannot move that deadline. Contracts: `tests/state/refresh-manager.test.ts`, `tests/state/pane-watch.test.ts`, `src-tauri/test_support/fs_watcher_changes.rs`.
 
+## System file picker
+
+- `components/FilePicker.svelte`, `composables/use-type-ahead.svelte.ts` — lightweight Miller-column selection, type-to-select and Enter folder navigation, Ctrl+F active-column filtering; text fields and Quick Open retain keyboard ownership.
+- `domain/search.ts` — pure fuzzy-search result contract shared by API and ranking.
+- `components/PickerQuickOpen.svelte`, `domain/picker-search.ts`, `state/picker-search.ts` — Ctrl+P starts with refreshed recents/frequent folders, merges debounced recursive results and limits rendering to 20; input/closure revoke stale responses.
+- `domain/history.ts`, `api/history.ts`, `state/shared-history.ts`, `state/recent-files.svelte.ts`, `state/frecency.svelte.ts` — bounded validated local mirrors and native granular IPC writes; refresh canonical shared history before Quick Open and flush accepted writes before picker response.
+- `src-tauri/src/shared_history/mod.rs`, `src-tauri/src/shared_history/model.rs`, `src-tauri/src/shared_history/store.rs`, `src-tauri/test_support/shared_history.rs` — async commands, pure policy, one-time legacy import and SQLite IMMEDIATE read-modify-write transactions; separate process contracts verify coherence and concurrent additions.
+- `src-tauri/src/portal.rs`, `src-tauri/src/portal/parent.rs` — OpenFile/SaveFile carry the exported parent-window identifier into GTK main-thread parenting before show. Wayland imports xdg_foreign handles; X11 uses a foreign window and source-relative geometry. Invalid or backend-mismatched identifiers fall back to ordinary placement.
+
 ## Navigation, address bar, breadcrumb, autocomplete
 
 - `components/NavigationBar.svelte` — back/fwd/up/refresh + breadcrumbs per pane

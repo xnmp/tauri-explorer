@@ -53,6 +53,14 @@ org.freedesktop.impl.portal.FileChooser=tauri-explorer
 ```
 
 Restart `xdg-desktop-portal` or sign out and back in after changing the file.
+The picker uses the requesting application's exported parent window when available.
+On Hyprland, floating rules may be used, but omit monitor `center` rules for the
+picker to let the compositor place it over its parent.
+
+Inside the picker, type a name prefix to select an entry and press Enter to open
+a folder or confirm a file. Ctrl+F filters the active column; Escape clears the
+filter before cancelling the dialog. Ctrl+P opens recent files and frequently
+used folders, with fuzzy search as you type.
 
 ### Windows: build and install from source
 

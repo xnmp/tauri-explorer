@@ -37,6 +37,10 @@ impl WatchRegistration for FaultWatcher {
         }
         result
     }
+
+    fn unregister_removes_descendants(&self) -> bool {
+        self.native.unregister_removes_descendants()
+    }
 }
 
 struct Fixture {

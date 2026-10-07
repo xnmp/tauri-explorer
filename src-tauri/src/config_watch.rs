@@ -90,6 +90,11 @@ trait WatchRegistration {
     type Error: Display;
     fn register(&mut self, path: &Path, mode: RecursiveMode) -> Result<(), Self::Error>;
     fn unregister(&mut self, path: &Path) -> Result<(), Self::Error>;
+    /// inotify recursively removes separately registered descendant roots;
+    /// exact-root backends must retain those registrations without re-watching.
+    fn unregister_removes_descendants(&self) -> bool {
+        false
+    }
 }
 
 impl WatchRegistration for RecommendedWatcher {
@@ -106,6 +111,11 @@ impl WatchRegistration for RecommendedWatcher {
             Err(error) if matches!(error.kind, notify::ErrorKind::WatchNotFound) => Ok(()),
             result => result,
         }
+    }
+
+    fn unregister_removes_descendants(&self) -> bool {
+        // These are the platforms where notify uses INotifyWatcher.
+        cfg!(any(target_os = "linux", target_os = "android"))
     }
 }
 
@@ -695,6 +705,10 @@ fn settings_path(config_dir: &Path) -> std::path::PathBuf {
 #[cfg(test)]
 #[path = "../test_support/config_watch_nested_roots.rs"]
 mod nested_root_tests;
+
+#[cfg(test)]
+#[path = "../test_support/config_watch_registration_contracts.rs"]
+mod registration_contract_tests;
 
 #[cfg(test)]
 mod tests {

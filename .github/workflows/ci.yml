@@ -57,13 +57,14 @@ jobs:
 
   # Keep one browser worker per runner; split the growing suite across runners
   # so contention-sensitive tests retain their existing execution conditions.
+  # Two shards of 561 tests ran 19-20m and began hitting the timeout.
   chromium:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2]
+        shard: [1, 2, 3]
     steps:
       - uses: actions/checkout@v7
 
@@ -78,7 +79,7 @@ jobs:
         run: npx playwright install --with-deps chromium
 
       - name: E2E tests
-        run: npx playwright test --shard=${{ matrix.shard }}/2 --reporter=line,html
+        run: npx playwright test --shard=${{ matrix.shard }}/3 --reporter=line,html
 
       - name: Upload Playwright report on failure
         if: failure()

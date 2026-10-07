@@ -99,16 +99,15 @@ fn exact_root_backend_keeps_one_callback_owner_per_surviving_root() {
     let theme = create_file(&themes, "custom.css");
     let bookmarks = create_file(&config, "bookmarks.json");
     let initial = plan(&config, &old_file, &themes);
-    let mut registrations = Registrations {
-        external_roots: initial.external_roots.iter().cloned().collect(),
-        watcher: Backend {
+    let mut registrations = Registrations::new(
+        Backend {
             roots: vec![config.clone(), dots, themes.clone()],
             cascades: false,
             fail_once: HashSet::new(),
             partial_parent: None,
         },
-        config_root_needs_restore: false,
-    };
+        initial.external_roots.iter().cloned().collect(),
+    );
     let current = Mutex::new(initial);
     reconcile_watch_plan(
         plan(&config, &new_file, &themes),
@@ -143,9 +142,8 @@ fn partial_ancestor_removal_keeps_obsolete_child_cleanup_obligations() {
     let old_theme = create_file(&stale, "custom.css");
     let new_file = create_file(&new, "settings.json");
     let initial = plan(&config, &old_file, &stale);
-    let mut registrations = Registrations {
-        external_roots: initial.external_roots.iter().cloned().collect(),
-        watcher: Backend {
+    let mut registrations = Registrations::new(
+        Backend {
             roots: vec![config.clone(), dots.clone(), stale.clone()],
             cascades: true,
             // Both roots fail once, so the partial-removal result is the same
@@ -153,8 +151,8 @@ fn partial_ancestor_removal_keeps_obsolete_child_cleanup_obligations() {
             fail_once: HashSet::from([dots.clone(), stale]),
             partial_parent: Some(dots.clone()),
         },
-        config_root_needs_restore: false,
-    };
+        initial.external_roots.iter().cloned().collect(),
+    );
     let current = Mutex::new(initial);
     for _ in 0..2 {
         reconcile_watch_plan(

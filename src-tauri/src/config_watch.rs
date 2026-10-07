@@ -21,7 +21,7 @@
 
 use notify::{Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 use serde::Serialize;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fmt::Display;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Condvar, Mutex, OnceLock};
@@ -72,10 +72,23 @@ struct WatchPlan {
 /// refresh worker touches it after setup; the event callback never does.
 struct Registrations<W> {
     watcher: W,
+    /// Confirmed active native coverage only; failed removals are not coverage.
     external_roots: HashMap<PathBuf, RecursiveMode>,
+    pending_removals: HashSet<PathBuf>,
     /// An ancestor unwatch can remove the config directory's native coverage.
     /// Keep that obligation separate from the external-root plan for retries.
     config_root_needs_restore: bool,
+}
+
+impl<W> Registrations<W> {
+    fn new(watcher: W, external_roots: HashMap<PathBuf, RecursiveMode>) -> Self {
+        Self {
+            watcher,
+            external_roots,
+            pending_removals: HashSet::new(),
+            config_root_needs_restore: false,
+        }
+    }
 }
 
 /// Registration operations of a filesystem watcher.
@@ -399,11 +412,7 @@ where
     for (root, mode) in &external_roots {
         watcher.watch(root, *mode)?;
     }
-    let registrations = Registrations {
-        watcher,
-        external_roots: external_roots.into_iter().collect(),
-        config_root_needs_restore: false,
-    };
+    let registrations = Registrations::new(watcher, external_roots.into_iter().collect());
 
     let stop = Arc::new(StopSignal::default());
     let phase = Arc::new(PhaseRecorder::default());
@@ -777,11 +786,8 @@ mod tests {
         initial: WatchPlan,
         watcher: W,
     ) -> (Arc<Mutex<WatchPlan>>, Registrations<W>) {
-        let registrations = Registrations {
-            watcher,
-            external_roots: initial.external_roots.iter().cloned().collect(),
-            config_root_needs_restore: false,
-        };
+        let registrations =
+            Registrations::new(watcher, initial.external_roots.iter().cloned().collect());
         (Arc::new(Mutex::new(initial)), registrations)
     }
 
@@ -971,15 +977,14 @@ mod tests {
         std::fs::write(old.join(SETTINGS_FILE), "{}").expect("old settings");
         std::fs::write(new.join(SETTINGS_FILE), "{}").expect("new settings");
         let current = Arc::new(Mutex::new(plan(&config, Some(&old))));
-        let mut registrations = Registrations {
-            watcher: CallbackCoupledWatcher {
+        let mut registrations = Registrations::new(
+            CallbackCoupledWatcher {
                 plan: Arc::clone(&current),
                 delivered: Vec::new(),
                 blocked: Vec::new(),
             },
-            external_roots: HashMap::from([(old.clone(), RecursiveMode::NonRecursive)]),
-            config_root_needs_restore: false,
-        };
+            HashMap::from([(old.clone(), RecursiveMode::NonRecursive)]),
+        );
 
         reconcile_watch_plan(
             plan(&config, Some(&new)),
@@ -1038,11 +1043,10 @@ mod tests {
         watcher
             .watch(&first, RecursiveMode::NonRecursive)
             .expect("initial watch");
-        let mut registrations = Registrations {
+        let mut registrations = Registrations::new(
             watcher,
-            external_roots: HashMap::from([(first.clone(), RecursiveMode::NonRecursive)]),
-            config_root_needs_restore: false,
-        };
+            HashMap::from([(first.clone(), RecursiveMode::NonRecursive)]),
+        );
 
         let writing = Arc::new(AtomicBool::new(true));
         let writer = {
@@ -1128,11 +1132,7 @@ mod tests {
             let gate = Arc::clone(&gate);
             std::thread::spawn(move || {
                 let current = Mutex::new(plan(config, None));
-                let mut registrations = Registrations {
-                    watcher: StuckWatcher(gate),
-                    external_roots: HashMap::new(),
-                    config_root_needs_restore: false,
-                };
+                let mut registrations = Registrations::new(StuckWatcher(gate), HashMap::new());
                 let _ = entered.send(());
                 reconcile_watch_plan(
                     plan(config, Some(target)),

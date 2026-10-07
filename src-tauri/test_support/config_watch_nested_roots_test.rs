@@ -95,15 +95,14 @@ impl Fixture {
             native.watch(root, *mode).expect("external watch");
         }
         Self {
-            registrations: Registrations {
-                watcher: FaultWatcher {
+            registrations: Registrations::new(
+                FaultWatcher {
                     native,
                     fail_registration: None,
                     fail_removal_after_native: None,
                 },
                 external_roots,
-                config_root_needs_restore: false,
-            },
+            ),
             plan,
             received,
             config,

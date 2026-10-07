@@ -1,7 +1,7 @@
 /**
  * Contribution registry for plugin-provided settings sections.
  *
- * SettingsDialog renders each registered section descriptor-driven
+ * PluginSettings renders each registered section descriptor-driven
  * (text/password/toggle/select rows). Each section owns a reactive `values`
  * map seeded from the plugin's storage blob and written back through it, so the
  * settings UI stays synchronous while persistence rides the existing config

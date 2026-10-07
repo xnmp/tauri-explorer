@@ -39,6 +39,11 @@
     load: () => import("$lib/components/SettingsDialog.svelte"),
     onFailure: () => dialogStore.closeSettings(),
   }, notifyError);
+  const PluginsDialog = useLazyDialog({
+    label: "Plugins", isOpen: () => !pickerInfo && dialogStore.isPluginsOpen,
+    load: () => import("$lib/components/PluginsDialog.svelte"),
+    onFailure: () => dialogStore.closePlugins(),
+  }, notifyError);
   const KeybindingsDialog = useLazyDialog({
     label: "Keyboard Shortcuts", isOpen: () => !pickerInfo && dialogStore.isKeybindingsOpen,
     load: () => import("$lib/components/KeybindingsDialog.svelte"),
@@ -120,6 +125,11 @@
       <ImageCropEditor.component path={target.path} name={target.name} onclose={() => dialogStore.closeImageEditor(target)} />
     </svelte:boundary>
   {/key}
+{/if}
+{#if PluginsDialog.component}
+  <svelte:boundary onerror={dialogCrash("Plugins", () => dialogStore.closePlugins())}>
+    <PluginsDialog.component open={dialogStore.isPluginsOpen} onClose={() => dialogStore.closePlugins()} />
+  </svelte:boundary>
 {/if}
 {#if KeybindingsDialog.component}
   <svelte:boundary onerror={dialogCrash("Keyboard Shortcuts", () => dialogStore.closeKeybindings())}>

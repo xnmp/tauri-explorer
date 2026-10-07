@@ -13,11 +13,10 @@
   import { spawnWarmWindow } from "$lib/state/warm-window";
   import { dialogStore } from "$lib/state/dialogs.svelte";
   import Modal from "./Modal.svelte";
+  import { matchesSettingsQuery } from "$lib/domain/settings-search";
   import { tick } from "svelte";
-  import InstalledPluginSettings from "./InstalledPluginSettings.svelte";
   import { pluginRegistry } from "$lib/plugins/registry.svelte";
   import { pluginSettingsSections } from "$lib/plugins/settings-registry.svelte";
-  import type { SettingRowDescriptor } from "$lib/plugins/api";
 
   interface Props {
     open: boolean;
@@ -106,27 +105,8 @@
 
   const queryLower = $derived(searchQuery.toLowerCase().trim());
 
-  /** Fuzzy subsequence test: are all chars of `needle` found in order in `haystack`? */
-  function isSubsequence(needle: string, haystack: string): boolean {
-    let i = 0;
-    for (let j = 0; j < haystack.length && i < needle.length; j++) {
-      if (haystack[j] === needle[i]) i++;
-    }
-    return i === needle.length;
-  }
-
-  /** Check if a setting row matches the search query.
-   *  Multi-token + fuzzy: the query is split on whitespace and every token must
-   *  match (as a substring or an in-order subsequence) the row's combined
-   *  label+description text. This makes "font size", "fontsize" and "fnt" all
-   *  match the "Font Size" row. */
   function matchesSearch(...terms: string[]): boolean {
-    if (!queryLower) return true;
-    const haystack = terms.join(" ").toLowerCase();
-    return queryLower
-      .split(/\s+/)
-      .filter(Boolean)
-      .every((token) => haystack.includes(token) || isSubsequence(token, haystack));
+    return matchesSettingsQuery(queryLower, ...terms);
   }
 
   /** Check if a section has any visible settings */
@@ -981,71 +961,10 @@
           </div>
         </section>
 
-        <!-- Plugins Section -->
-        <section class="settings-section" class:hidden={!sectionVisible(["Plugins", "enable disable extensions"], ...pluginRegistry.plugins.map((p) => [p.name, p.description]))}>
+        <section class="settings-section" class:hidden={!sectionVisible(["Plugins", "install enable disable extensions packages"], ...pluginRegistry.plugins.map((p) => [p.name, p.description]), ...pluginSettingsSections.sections.map((section) => [section.title, ...section.rows.flatMap((row) => [row.label, row.description ?? ""])]))}>
           <h3 class="section-title">Plugins</h3>
-          <InstalledPluginSettings />
-          {#each pluginRegistry.plugins as plugin (plugin.id)}
-            <div class="setting-row" class:hidden={!matchesSearch("Plugins", plugin.name, plugin.description)}>
-              <div class="setting-info">
-                <span class="setting-label">{plugin.name}</span>
-                <span class="setting-description">{plugin.description}</span>
-              </div>
-              <label class="toggle">
-                <input
-                  type="checkbox"
-                  checked={plugin.enabled}
-                  onchange={(e) => pluginRegistry.setEnabled(plugin.id, e.currentTarget.checked)}
-                />
-                <span class="toggle-slider"></span>
-              </label>
-            </div>
-          {/each}
+          <button class="shortcuts-link" onclick={() => dialogStore.openPlugins()}>Open Plugins</button>
         </section>
-
-        <!-- Plugin-contributed settings sections (descriptor-driven) -->
-        {#each pluginSettingsSections.sections as section (section.pluginId + ":" + section.id)}
-          <section class="settings-section" class:hidden={!sectionVisible([section.title, ...section.rows.flatMap((r: SettingRowDescriptor) => [r.label, r.description ?? ""])])}>
-            <h3 class="section-title">{section.title}</h3>
-            {#each section.rows as row (row.id)}
-              <div class="setting-row" class:hidden={!matchesSearch(section.title, row.label, row.description ?? "")}>
-                <div class="setting-info">
-                  <span class="setting-label">{row.label}</span>
-                  {#if row.description}
-                    <span class="setting-description">{row.description}</span>
-                  {/if}
-                </div>
-                {#if row.type === "toggle"}
-                  <label class="toggle">
-                    <input
-                      type="checkbox"
-                      checked={!!section.valueOf(row)}
-                      onchange={(e) => section.setValue(row.id, e.currentTarget.checked)}
-                    />
-                    <span class="toggle-slider"></span>
-                  </label>
-                {:else if row.type === "select"}
-                  <select
-                    class="theme-select"
-                    value={String(section.valueOf(row) ?? "")}
-                    onchange={(e) => section.setValue(row.id, e.currentTarget.value)}
-                  >
-                    {#each row.options ?? [] as opt (opt.value)}
-                      <option value={opt.value}>{opt.label}</option>
-                    {/each}
-                  </select>
-                {:else}
-                  <input
-                    class="text-input"
-                    type={row.type === "password" ? "password" : "text"}
-                    value={String(section.valueOf(row) ?? "")}
-                    onchange={(e) => section.setValue(row.id, e.currentTarget.value)}
-                  />
-                {/if}
-              </div>
-            {/each}
-          </section>
-        {/each}
 
         <!-- Navigation to the dedicated keyboard configuration surface. -->
         <section class="settings-section" class:hidden={!sectionVisible(rows.keyboardShortcuts)}>

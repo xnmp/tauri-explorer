@@ -1486,6 +1486,10 @@ import { openFile } from "$lib/api/open";
     flex: 1;
   }
 
+  .preview-code code {
+    font-family: inherit;
+  }
+
   .preview-csv {
     display: flex;
     flex: 1;

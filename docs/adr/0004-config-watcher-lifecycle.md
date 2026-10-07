@@ -23,9 +23,12 @@ Retargeting publishes the replacement mapping before registering new roots so
 their first callbacks use the new plan, without holding the mapping lock during
 native watcher calls. A failed registration restores the previous plan for
 retry. New roots are registered before obsolete watches are removed. Recursive
-ancestor removal can also remove surviving descendant watches (Linux inotify),
-so those registrations, including a nested config directory, are invalidated
-and restored after all removals. Failed restorations remain missing coverage
+ancestor removal can also remove surviving descendant watches (Linux/Android
+inotify), so only those backends invalidate and restore surviving registrations,
+including a nested config directory, after all removals. Exact-root backends
+retain surviving native registrations without duplicating them. Every obsolete
+descendant keeps its own cleanup obligation until its removal succeeds, even if
+an ancestor removal partially failed. Failed restorations remain missing coverage
 and are retried on later refreshes. Failed removals remain tracked separately
 from the current plan and are retried; an already-absent watch completes cleanup.
 Successful retargets do not retain historical roots.

@@ -146,7 +146,11 @@ Config autoreload tests must write through the canonical target of any symlinked
 
 Config-watch retargets must restore every surviving descendant after retiring a
 recursive ancestor: notify's inotify backend removes descendant native watches
-even if they were separately registered. Include the permanent config-directory
+even if they were separately registered. Apply this restoration only to inotify;
+exact-root backends such as Windows retain descendants and re-registering them
+can leak native callback owners. Keep obsolete descendant cleanup obligations
+until each removal succeeds, including after partial ancestor failures.
+Include the permanent config-directory
 watch when it is nested under that ancestor, and retain failed restorations for
 retry. The Linux contracts in `src-tauri/test_support/config_watch_nested_roots.rs`
 drive the production handover synchronously before writing canonical targets;

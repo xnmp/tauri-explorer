@@ -110,6 +110,7 @@ Rules that bite:
 - Keep `evidence/` available for committed image-only PR acceptance proof: the automated review gate renders those files directly from the PR. It is distinct from issue screenshots, so do not add a blanket `evidence/` ignore rule.
 - The merge hook does **not** close issues — close them yourself (`gh issue close N --comment`) when the work lands on dev.
 - Before ending a session that merged UI work: `ALL_VIEW_MODES=1 npx playwright test`.
+- Make sure to clean up the worktree after merging. 
 
 ## Verification
 

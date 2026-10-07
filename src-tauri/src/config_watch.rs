@@ -607,9 +607,10 @@ fn reconcile_watch_plan<W: WatchRegistration>(
         .filter(|(root, mode)| registrations.external_roots.get(root) != Some(mode))
         .cloned()
         .collect();
-    let stale: Vec<PathBuf> = registrations
+    let stale: HashSet<PathBuf> = registrations
         .external_roots
         .keys()
+        .chain(registrations.pending_removals.iter())
         .filter(|root| {
             !replacement
                 .external_roots
@@ -624,66 +625,134 @@ fn reconcile_watch_plan<W: WatchRegistration>(
     };
 
     for (root, mode) in additions {
-        phase.enter(WorkerPhase::Registering(root.clone()));
-        if let Err(error) = registrations.watcher.register(&root, mode) {
-            log::warn!(
-                "Config autoreload cannot watch updated symlink target {}: {error}",
-                root.display()
-            );
+        if !ensure_external_root(
+            &root,
+            mode,
+            &required_roots,
+            &config_dir,
+            registrations,
+            phase,
+        ) {
+            let previous_roots = previous.external_roots.clone();
             if let Ok(mut current) = plan.lock() {
                 *current = previous;
             }
+            // Cleaning an uncertain returning ancestor can invalidate the
+            // previous plan's descendants before its new registration fails.
+            // Restore that coverage as well as the previous callback mapping.
+            restore_external_roots(&previous_roots, &config_dir, registrations, phase);
+            restore_config_root(&config_dir, registrations, phase);
             return;
         }
-        registrations.external_roots.insert(root, mode);
     }
 
     for root in stale {
-        phase.enter(WorkerPhase::Unregistering(root.clone()));
-        let result = registrations.watcher.unregister(&root);
-        if registrations.watcher.unregister_removes_descendants() {
-            // Even a failed removal can partially change native coverage.
-            // Invalidate surviving descendants, but retain every obsolete root
-            // until its own cleanup succeeds: a partial ancestor removal may
-            // have left its native descendant watches running.
-            registrations.external_roots.retain(|current, _| {
-                !current.starts_with(&root)
-                    || !required_roots
-                        .iter()
-                        .any(|(required, _)| required == current)
-            });
-            if config_dir.starts_with(&root) {
-                registrations.config_root_needs_restore = true;
-            }
-        }
-        match result {
-            Ok(()) => {
-                registrations.external_roots.remove(&root);
-            }
-            Err(error) => log::warn!(
-                "Config autoreload cannot retire old symlink target {}: {error}",
-                root.display()
-            ),
-        }
+        retire_external_root(&root, &required_roots, &config_dir, registrations, phase);
     }
 
     restore_config_root(&config_dir, registrations, phase);
-    for (root, mode) in required_roots {
-        if registrations.external_roots.get(&root) == Some(&mode) {
-            continue;
-        }
-        phase.enter(WorkerPhase::Registering(root.clone()));
-        match registrations.watcher.register(&root, mode) {
-            Ok(()) => {
-                registrations.external_roots.insert(root, mode);
+    restore_external_roots(&required_roots, &config_dir, registrations, phase);
+}
+
+fn retire_external_root<W: WatchRegistration>(
+    root: &Path,
+    required_roots: &[(PathBuf, RecursiveMode)],
+    config_dir: &Path,
+    registrations: &mut Registrations<W>,
+    phase: &PhaseRecorder,
+) -> bool {
+    // Unregister errors are ambiguous: coverage may be gone, or a native
+    // callback owner may remain. Track cleanup separately from active coverage.
+    registrations.external_roots.remove(root);
+    registrations.pending_removals.insert(root.to_path_buf());
+    phase.enter(WorkerPhase::Unregistering(root.to_path_buf()));
+    let result = registrations.watcher.unregister(root);
+    if registrations.watcher.unregister_removes_descendants() {
+        let invalidated: Vec<PathBuf> = registrations
+            .external_roots
+            .keys()
+            .filter(|current| current.starts_with(root))
+            .cloned()
+            .collect();
+        for descendant in invalidated {
+            registrations.external_roots.remove(&descendant);
+            if !required_roots
+                .iter()
+                .any(|(required, _)| required == &descendant)
+            {
+                registrations.pending_removals.insert(descendant);
             }
-            Err(error) => log::warn!(
-                "Config autoreload cannot restore surviving symlink target {}: {error}",
-                root.display()
-            ),
         }
-        // Failed restorations remain absent from external_roots, so the next
-        // refresh retries them as additions rather than assuming coverage.
+        if config_dir.starts_with(root) {
+            registrations.config_root_needs_restore = true;
+        }
+    }
+    match result {
+        Ok(()) => {
+            registrations.pending_removals.remove(root);
+            true
+        }
+        Err(error) => {
+            log::warn!(
+                "Config autoreload cannot retire old symlink target {}: {error}",
+                root.display()
+            );
+            false
+        }
+    }
+}
+
+fn ensure_external_root<W: WatchRegistration>(
+    root: &Path,
+    mode: RecursiveMode,
+    required_roots: &[(PathBuf, RecursiveMode)],
+    config_dir: &Path,
+    registrations: &mut Registrations<W>,
+    phase: &PhaseRecorder,
+) -> bool {
+    if registrations.pending_removals.contains(root)
+        && !retire_external_root(root, required_roots, config_dir, registrations, phase)
+    {
+        return false;
+    }
+    if registrations.external_roots.get(root) == Some(&mode) {
+        return true;
+    }
+    phase.enter(WorkerPhase::Registering(root.to_path_buf()));
+    match registrations.watcher.register(root, mode) {
+        Ok(()) => {
+            registrations
+                .external_roots
+                .insert(root.to_path_buf(), mode);
+            true
+        }
+        Err(error) => {
+            log::warn!(
+                "Config autoreload cannot establish symlink target {}: {error}",
+                root.display()
+            );
+            false
+        }
+    }
+}
+
+fn restore_external_roots<W: WatchRegistration>(
+    required_roots: &[(PathBuf, RecursiveMode)],
+    config_dir: &Path,
+    registrations: &mut Registrations<W>,
+    phase: &PhaseRecorder,
+) {
+    for (root, mode) in required_roots {
+        ensure_external_root(
+            root,
+            *mode,
+            required_roots,
+            config_dir,
+            registrations,
+            phase,
+        );
+        // Failed cleanup or registration remains separately tracked/missing,
+        // so future refreshes retry it instead of assuming active coverage.
     }
 }
 

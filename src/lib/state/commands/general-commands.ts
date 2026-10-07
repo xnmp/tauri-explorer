@@ -324,6 +324,12 @@ export const generalDialogCommands: Command[] = [
     handler: () => dialogStore.openSettings(),
   },
   {
+    id: "plugins.openSettings",
+    label: "Plugins",
+    category: "plugins",
+    handler: () => dialogStore.openPlugins(),
+  },
+  {
     id: "general.openKeybindings",
     label: "Keyboard Shortcuts",
     category: "general",

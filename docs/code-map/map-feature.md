@@ -383,7 +383,8 @@ backend for E2E/browser).
 
 ## Settings
 
-- `components/SettingsDialog.svelte` — all settings sections (largest UI file)
+- `components/SettingsDialog.svelte` — general settings and links to Keyboard Shortcuts and Plugins.
+- `components/PluginsDialog.svelte`, `components/PluginSettings.svelte` — dedicated lazy Plugins menu; package installation, contribution toggles and descriptor settings. Plugin settings actions and the Plugins palette command open this surface.
 - `state/settings.svelte.ts` — `settingsStore` (persisted flags/values)
 - `state/persisted.ts` — localStorage load/save helpers
 - `domain/settings-migration.ts` — versioned migrations for the persisted blob; add an entry here whenever a DEFAULT flips, or existing installs keep the old value (#471/#506)
@@ -526,3 +527,5 @@ Planned move journal authority: `src-tauri/src/files/recovery/move_model.rs` own
 - `src-tauri/src/installed_plugins/backend.rs`, `src-tauri/src/process_ext/windows_job.rs` — correlated bounded RPC, owned processes/spools, durable status recovery and no generation replay after lost replies.
 - `src-tauri/src/installed_plugins/lifecycle.rs` — state snapshot and preflight; durable terminal journal phase precedes cleanup, and external publication recovery begins only after commit.
 - `src-tauri/src/installed_plugins/provenance.rs`, `src-tauri/src/image_operation.rs` — optional recording for built-in producers and core crop/rename; live publisher leases survive backend replacement. TraceExplorer's provider implementation lives in https://github.com/xnmp/TraceExplorer.
+
+- `components/PreviewPane.svelte` — highlighted code inherits the configured preview font, avoiding a user-agent monospace override.

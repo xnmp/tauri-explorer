@@ -46,6 +46,7 @@ function createDialogStore() {
   let themePickerOpen = $state(false);
   let shortcutsOpen = $state(false);
   let keybindingsOpen = $state(false);
+  let pluginsOpen = $state(false);
   let pickerConfig = $state<PickerConfig | null>(null);
   let userReportOpen = $state(false);
   let fileRecoveryOpen = $state(false);
@@ -107,6 +108,9 @@ function createDialogStore() {
     },
     get isSettingsOpen() {
       return settingsOpen;
+    },
+    get isPluginsOpen() {
+      return pluginsOpen;
     },
     get isKeybindingsOpen() {
       return keybindingsOpen;
@@ -173,7 +177,7 @@ function createDialogStore() {
 
     /** True when any modal dialog is open (file ops or overlays). */
     get hasModalOpen(): boolean {
-      return openWithStore.isOpen || modalOwnership.hasOpen || imageEditorTarget !== null || shortcutsOpen || keybindingsOpen || activeDialog !== null || quickOpenOpen || commandPaletteOpen || settingsOpen || contentSearchOpen || workspaceOpen || bulkRenameOpen || jobsPanelOpen || themePickerOpen || pickerConfig !== null || userReportOpen || fileRecoveryOpen;
+      return openWithStore.isOpen || modalOwnership.hasOpen || imageEditorTarget !== null || shortcutsOpen || keybindingsOpen || pluginsOpen || activeDialog !== null || quickOpenOpen || commandPaletteOpen || settingsOpen || contentSearchOpen || workspaceOpen || bulkRenameOpen || jobsPanelOpen || themePickerOpen || pickerConfig !== null || userReportOpen || fileRecoveryOpen;
     },
 
     // Overlay dialog actions
@@ -194,15 +198,29 @@ function createDialogStore() {
     },
 
     openSettings(): void {
+      pluginsOpen = false;
       keybindingsOpen = false;
       settingsOpen = true;
     },
 
     openKeybindings(): void {
+      pluginsOpen = false;
       commandPaletteOpen = false;
       shortcutsOpen = false;
       settingsOpen = false;
       keybindingsOpen = true;
+    },
+
+    openPlugins(): void {
+      commandPaletteOpen = false;
+      shortcutsOpen = false;
+      settingsOpen = false;
+      keybindingsOpen = false;
+      pluginsOpen = true;
+    },
+
+    closePlugins(): void {
+      pluginsOpen = false;
     },
 
     closeKeybindings(): void {
@@ -295,6 +313,7 @@ function createDialogStore() {
       openWithStore.close();
       shortcutsOpen = false;
       activeDialog = null;
+      pluginsOpen = false;
       keybindingsOpen = false;
       fileOperationSession = null;
       permanentDelete = false;

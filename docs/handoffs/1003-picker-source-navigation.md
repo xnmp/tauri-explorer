@@ -65,3 +65,29 @@ The explicit screen matters: this host's default was640x480, constraining both
 windows and producing a vacuous equal-center result that was rejected.
 Private probe/compositor sessions were bounded and cleaned up. Throwaway Vite
 and Playwright configs on1442 are not part of the implementation.
+
+## Pre-merge review correction
+
+PR #1008 initially used localStorage refresh for native history. Independent
+private WebKit processes reproduced stale reads, so that design was replaced
+with shared SQLite at the platform data directory/tauri-explorer/history.sqlite.
+Granular IMMEDIATE transactions preserve concurrent recent/access mutations;
+seed import occurs once. Native process tests pass, including concurrent writers
+and conditional pruning of reused paths. Optional history failures cannot block
+a picker response. Current-kind validation rejects removed or replaced items.
+Frontend causal identity and mutation epochs protect pruning/refresh publication;
+selection-intent revisions reject delayed validation after newer navigation.
+
+The original installed binary has not yet been refreshed with these corrections.
+Normal app processes need the new binary to write canonical shared history.
+User replied “Not tried yet”; no physical desktop acceptance is assumed.
+Branch integrated dev00fe2165; latest origin/dev3122da50 still to integrate at this
+checkpoint. Full1387 all-view browser run is active, log
+/tmp/picker-full-view-tests2.log; initial sweep exhausted disk and is not a pass.
+All349 Vitest files passed before final race regressions; affected regression
+files now pass. Native portal6 contracts, SQLite5 contracts (plus process child)
+and current-kind1 filesystem contract pass. Production frontend build passes.
+Fresh reviewer /root/premerge_review is independently rechecking final changes.
+Temporary playwright.picker.config.ts and vite.picker.config.ts must stay
+uncommitted; broader tests rewrite tracked evidence/screenshots, restore those
+outside screenshots/feat/picker-source-navigation before committing.

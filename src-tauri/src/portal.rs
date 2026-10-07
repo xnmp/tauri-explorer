@@ -171,7 +171,13 @@ async fn run_picker(app: &AppHandle, req: PickerRequest) -> PickerOutcome {
                 }
                 if let Err(error) = window.show() {
                     log::error!("portal: could not show picker: {error}");
-                    resolve(&window_token, PickerOutcome { cancelled: true, paths: vec![] });
+                    resolve(
+                        &window_token,
+                        PickerOutcome {
+                            cancelled: true,
+                            paths: vec![],
+                        },
+                    );
                     let _ = window.close();
                     return;
                 }

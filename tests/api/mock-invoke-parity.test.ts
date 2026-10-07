@@ -68,6 +68,11 @@ function mockHandledCommands(): string[] {
  * because they are never reachable from the browser/mock build. Each entry
  * must say why — this is not a place to silence real drift. */
 const BROWSER_UNREACHABLE_ALLOWLIST = new Set([
+  // state/shared-history gates these on usesNativeHistory (isTauri).
+  // Browser history deliberately remains localStorage; a mock cannot prove
+  // native cross-process SQLite coherence (covered by Rust process tests).
+  "shared_history_read",
+  "shared_history_mutate",
   // `loadDirectory` in src/lib/api/files.ts only takes the observed-watch
   // path when `isTauri()` is true; the mock/browser build always calls
   // `list_directory_fresh` instead, so `start_observed_directory` is never

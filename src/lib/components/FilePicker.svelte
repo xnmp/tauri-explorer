@@ -8,7 +8,9 @@
 -->
 <script lang="ts">
   import { onMount, onDestroy, tick } from "svelte";
-  import { fetchDirectory } from "$lib/api/files";
+  import { flushSharedHistory } from "$lib/state/shared-history";
+  import { toastStore } from "$lib/state/toast.svelte";
+  import { fetchDirectory, verifyPathsExist } from "$lib/api/files";
   import { getHomeDirectory } from "$lib/api/environment";
   import { pickerRespond } from "$lib/api/system";
   import type { FileEntry } from "$lib/domain/file";
@@ -49,6 +51,7 @@
   let addressInput = $state("");
   let columnsRef = $state<HTMLElement | null>(null);
   let quickOpenOpen = $state(false);
+  let intentRevision = 0;
   /** Root the quick-open searches under: the picker's starting folder. */
   let searchRoot = $state("/");
 
@@ -76,6 +79,7 @@
   }
 
   async function selectCursor(entry: FileEntry): Promise<void> {
+    intentRevision++;
     const column = activeColumn;
     cursorPath = entry.path;
     if (entry.kind !== "directory") {
@@ -90,7 +94,7 @@
   }
 
   const typeAhead = useTypeAhead(() => activeEntries, entry => { void selectCursor(entry); });
-  onDestroy(typeAhead.reset);
+  onDestroy(() => { intentRevision++; typeAhead.reset(); });
 
   const currentDir = $derived(chain[chain.length - 1] ?? "/");
 
@@ -135,6 +139,7 @@
   }
 
   async function setChain(dirs: string[]): Promise<void> {
+    intentRevision++;
     chain = dirs;
     activeColumn = dirs.at(-1) ?? "/";
     cursorPath = "";
@@ -151,6 +156,7 @@
   }
 
   function handleEntryClick(columnIndex: number, entry: FileEntry): void {
+    intentRevision++;
     activateColumn(chain[columnIndex]);
     cursorPath = entry.path;
     typeAhead.reset();
@@ -167,6 +173,7 @@
   }
 
   function handleEntryCtrlClick(columnIndex: number, entry: FileEntry, event: MouseEvent): void {
+    intentRevision++;
     if (info.multiple && entry.kind !== "directory" && (event.ctrlKey || event.metaKey)) {
       const next = new Set(selectedFiles);
       if (next.has(entry.path)) {
@@ -194,13 +201,24 @@
   }
 
   async function respond(paths: string[]): Promise<void> {
+    const revision = ++intentRevision;
     if (!info.directory && paths.some((path) => !matchesPickerExtensions({ name: basename(path), kind: "file" }, info.extensions))) return;
+    if (info.mode === "open") {
+      const validation = await verifyPathsExist(paths, info.directory ? "directory" : "file");
+      if (revision !== intentRevision) return;
+      if (!validation.ok || !validation.data) {
+        toastStore.error(validation.ok ? "The selected file or folder no longer exists or has changed type." : "Could not verify the selected file or folder.");
+        return;
+      }
+    }
     // Persist before the terminal IPC reply: the native backend closes this window.
     for (const path of paths) {
       recentFilesStore.add(path, basename(path), info.directory ? "directory" : "file");
       if (info.directory) frecencyStore.recordAccess(path);
       else frecencyStore.recordFileAction(path);
     }
+    await flushSharedHistory();
+    if (revision !== intentRevision) return;
     await pickerRespond(info.token, paths, false);
   }
 
@@ -216,6 +234,7 @@
   }
 
   async function cancel(): Promise<void> {
+    intentRevision++;
     await pickerRespond(info.token, [], true);
   }
 
@@ -224,6 +243,7 @@
     const target = event.target as HTMLElement;
     const modifier = (event.ctrlKey || event.metaKey) && !event.altKey;
     if (modifier && event.key.toLowerCase() === "p") {
+      intentRevision++;
       event.preventDefault();
       typeAhead.reset();
       quickOpenOpen = true;
@@ -282,7 +302,11 @@
 
   /** Quick-open pick: files confirm (open) or prefill (save); dirs navigate. */
   async function handleQuickOpenPick(result: SearchResult): Promise<void> {
+    const revision = ++intentRevision;
     if (result.kind === "directory") {
+      const validation = await verifyPathsExist([result.path], "directory");
+      if (revision !== intentRevision) return;
+      if (!validation.ok || !validation.data) { toastStore.error(validation.ok ? "This folder no longer exists or has changed type." : "Could not verify this folder."); return; }
       await setChain(ancestors(result.path));
       await tick();
       if (currentDir === result.path && !quickOpenOpen) {
@@ -347,7 +371,7 @@
   </header>
 
   {#if filterOpen}
-    <input class="filter-input" aria-label="Filter current folder" placeholder="Filter current folder…" bind:this={filterRef} bind:value={filterQuery} oninput={() => { cursorPath = ""; selectedFiles = new Set(); typeAhead.reset(); }} />
+    <input class="filter-input" aria-label="Filter current folder" placeholder="Filter current folder…" bind:this={filterRef} bind:value={filterQuery} oninput={() => { intentRevision++; cursorPath = ""; selectedFiles = new Set(); typeAhead.reset(); }} />
   {/if}
   <div class="columns" bind:this={columnsRef}>
     {#each chain as dirPath, columnIndex (dirPath)}

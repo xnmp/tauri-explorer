@@ -7,6 +7,7 @@
   import { filenameMatchScore, fuzzyScorePath } from "$lib/domain/fuzzy-score";
   import { startStreamingSearch, cancelSearch, fuzzySearch, type SearchResult, type SearchResultsEvent } from "$lib/api/search";
 import { openFile } from "$lib/api/open";
+  import { refreshSharedHistory } from "$lib/state/shared-history";
   import { recentFilesStore } from "$lib/state/recent-files.svelte";
   import { homeDirectory } from "$lib/state/home.svelte";
   import { listen, type UnlistenFn } from "@tauri-apps/api/event";
@@ -511,8 +512,7 @@ import { openFile } from "$lib/api/open";
       pointer.arm();
       tick().then(() => inputRef?.focus());
       untrack(() => {
-        recentFilesStore.pruneNonExistent();
-        frecencyStore.pruneNonExistent();
+        void refreshSharedHistory().then(() => { recentFilesStore.pruneNonExistent(); frecencyStore.pruneNonExistent(); });
       });
     }
   });

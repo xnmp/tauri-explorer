@@ -1195,7 +1195,12 @@ const mockCommands: Record<string, CommandHandler> = {
     const paths = args.paths as string[];
     const override = getMockControl().checkPathsExist;
     if (override) return override(paths);
-    return paths.map((p: string) => p in mockFiles || Object.keys(mockFiles).some((k) => {
+    if (typeof args.directory === "boolean") return paths.map(path => {
+      const isDirectory = path in mockFiles || perfHugeCache.has(path);
+      const entry = [...Object.values(mockFiles), ...perfHugeCache.values()].flat().find(entry => entry.path === path);
+      return args.directory ? isDirectory || entry?.kind === "directory" : !isDirectory && entry?.kind === "file";
+    });
+    return paths.map((p: string) => perfHugeCache.has(p) || [...perfHugeCache.values()].some(entries => entries.some(entry => entry.path === p)) || p in mockFiles || Object.keys(mockFiles).some((k) => {
       const entries = mockFiles[k];
       return Array.isArray(entries) && entries.some((e: { path: string }) => e.path === p);
     }));

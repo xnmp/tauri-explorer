@@ -8,16 +8,8 @@ import type { ContentMatch, ContentSearchResult } from "$lib/domain/content-sear
 
 export type { ContentMatch, ContentSearchResult };
 
-/**
- * Search result from fuzzy file search.
- */
-export interface SearchResult {
-  name: string;
-  path: string;
-  relativePath: string;
-  score: number;
-  kind: "file" | "directory";
-}
+import type { SearchResult } from "$lib/domain/search";
+export type { SearchResult } from "$lib/domain/search";
 
 interface SearchResponse {
   results: SearchResult[];

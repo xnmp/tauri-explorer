@@ -9,6 +9,7 @@
   import FileIcon from "./FileIcon.svelte";
   import Modal from "./Modal.svelte";
   import { onDestroy, untrack, tick } from "svelte";
+  import { refreshSharedHistory } from "$lib/state/shared-history";
   import { rankPickerResults } from "$lib/domain/picker-search";
   import { createPickerSearch } from "$lib/state/picker-search";
   import { recentFilesStore } from "$lib/state/recent-files.svelte";
@@ -44,7 +45,16 @@
   $effect(() => {
     if (open) {
       query = "";
-      untrack(() => { recentFilesStore.refresh(); frecencyStore.refresh(); search.update(""); });
+      return untrack(() => {
+        recentFilesStore.refresh(); frecencyStore.refresh(); search.update("");
+        let active = true;
+        void refreshSharedHistory().then(async () => {
+          if (!active) return;
+          await Promise.all([recentFilesStore.pruneNonExistent(), frecencyStore.pruneNonExistent()]);
+          if (active) search.update(query);
+        });
+        return () => { active = false; };
+      });
     } else search.cancel();
   });
 

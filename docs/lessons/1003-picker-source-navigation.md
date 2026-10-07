@@ -11,10 +11,17 @@ before Quick Open changes the column, or the retained ancestor row can reactivat
 old column. Filter inputs and the Quick Open modal own their keyboard events.
 
 Persist picker history before terminal picker_respond IPC: native completion closes
-the webview, so code after await may never run. Rehydrate shared storage before Ctrl+P
-ranking and before adding history so stale window snapshots do not overwrite newer
-entries. Browser tests cover the same-origin cross-window contract; separate-process
-WebKit storage coherence still requires native verification.
+its webview. WebKit localStorage is cached per process, even when processes use
+one WebsiteDataManager directory; refreshing localStorage cannot make history
+coherent. Use granular SQLite transactions as the native authority, with legacy
+localStorage imported once and maintained as an optimistic browser mirror.
+
+Publish canonical reads synchronously inside the mutation-epoch guard; returning
+an accepted snapshot across another await lets newer optimistic work race its
+publication. Prune only the observed backend revision and the unchanged local
+entry identity, because same-path/same-time reuse can produce equal values.
+File picks validate current metadata kind, following valid symlinks, and delayed
+validation must yield to newer selection/navigation intentions or cancellation.
 
 Native X11 acceptance used the production helper imported by separate GTK fixture
 processes on a private 1920×1080 Xvfb/Openbox display. Source bounds were

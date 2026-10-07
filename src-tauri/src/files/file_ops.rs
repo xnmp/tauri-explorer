@@ -1070,15 +1070,33 @@ pub async fn estimate_size(paths: Vec<String>) -> Result<SizeEstimate, AppError>
     .await
 }
 
+fn path_matches_kind(path: &Path, directory: Option<bool>) -> bool {
+    match directory {
+        None => entry_exists(path),
+        Some(want_directory) => fs::metadata(path).is_ok_and(|metadata| {
+            if want_directory {
+                metadata.is_dir()
+            } else {
+                metadata.is_file()
+            }
+        }),
+    }
+}
+
 /// Batch-check which paths exist on the filesystem.
 /// Uses lstat so broken symlinks still count as existing entries.
 #[tauri::command]
-pub async fn check_paths_exist(paths: Vec<String>) -> Vec<bool> {
+pub async fn check_paths_exist(paths: Vec<String>, directory: Option<bool>) -> Vec<bool> {
     // lstat per path can stall on slow mounts; keep it off the async executor.
     let count = paths.len();
-    run_blocking(move || Ok(paths.iter().map(|p| entry_exists(Path::new(p))).collect()))
-        .await
-        .unwrap_or_else(|_| vec![false; count])
+    run_blocking(move || {
+        Ok(paths
+            .iter()
+            .map(|p| path_matches_kind(Path::new(p), directory))
+            .collect())
+    })
+    .await
+    .unwrap_or_else(|_| vec![false; count])
 }
 
 /// Walk a path accumulating file count and byte size. Never follows
@@ -1115,6 +1133,28 @@ mod tests {
     use super::*;
     use std::fs::File;
     use tempfile::tempdir;
+
+    #[test]
+    fn selection_checks_current_kind_and_follows_valid_symlinks() {
+        let root = tempdir().unwrap();
+        let path = root.path().join("reused");
+        fs::write(&path, b"file").unwrap();
+        assert!(path_matches_kind(&path, Some(false)));
+        assert!(!path_matches_kind(&path, Some(true)));
+        fs::remove_file(&path).unwrap();
+        fs::create_dir(&path).unwrap();
+        assert!(!path_matches_kind(&path, Some(false)));
+        assert!(path_matches_kind(&path, Some(true)));
+        #[cfg(unix)]
+        {
+            let link = root.path().join("link");
+            std::os::unix::fs::symlink(&path, &link).unwrap();
+            assert!(path_matches_kind(&link, Some(true)));
+            fs::remove_dir(&path).unwrap();
+            assert!(!path_matches_kind(&link, Some(true)));
+            assert!(path_matches_kind(&link, None));
+        }
+    }
 
     #[test]
     fn avif_backend_preview_is_png_and_does_not_modify_the_actual_avif() {

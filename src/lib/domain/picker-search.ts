@@ -1,4 +1,4 @@
-import type { SearchResult } from "../api/search";
+import type { SearchResult } from "./search";
 import { basename, directoryKey, parentDir } from "./path";
 import { fuzzyScorePath } from "./fuzzy-score";
 import { matchesPickerExtensions } from "./file-picker";

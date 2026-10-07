@@ -20,6 +20,80 @@ async function readResponse(page: Page): Promise<{ token: string; paths: string[
 }
 
 test.describe("File picker mode", () => {
+  for (const key of ["explorer-recent-files", "explorer-frecency"]) {
+    test(`malformed ${key} does not prevent selecting a file`, async ({ page }) => {
+      await page.addInitScript(key => localStorage.setItem(key, "null"), key);
+      await page.goto("/?picker=open&token=malformed&folder=%2Fhome%2Fuser");
+      await page.locator('.column[data-path="/home/user"] .entry', { hasText: "notes.md" }).dblclick();
+      expect(await readResponse(page)).toMatchObject({ cancelled: false, paths: ["/home/user/notes.md"] });
+    });
+  }
+
+  test("a history file deleted after Quick Open appears is not confirmed", async ({ page }) => {
+    await page.addInitScript(() => {
+      localStorage.setItem("explorer-recent-files", JSON.stringify([{ name: "notes.md", path: "/home/user/notes.md", kind: "file", timestamp: Date.now() }]));
+      let observations = 0;
+      (globalThis as unknown as { __mockControl: { checkPathsExist: (paths: string[]) => boolean[] } }).__mockControl = {
+        checkPathsExist: paths => {
+          if (paths.includes("/home/user/notes.md")) {
+            observations++;
+            document.documentElement.dataset.historyObservation = String(observations);
+          }
+          return paths.map(path => path !== "/home/user/notes.md" || observations === 1);
+        },
+      };
+    });
+    await page.goto("/?picker=open&token=deleted&folder=%2Fhome%2Fuser");
+    await expect(page.locator('.picker')).toBeVisible();
+    await page.keyboard.press("Control+p");
+    await expect(page.locator('html')).toHaveAttribute('data-history-observation', '1');
+    const result = page.locator('[data-testid="picker-quick-open"] .pqo-result', { hasText: "notes.md" });
+    await result.click();
+    await expect(page.locator('.toast.error')).toContainText("no longer exists");
+    expect(await page.evaluate(key => localStorage.getItem(key), MOCK_LOCAL_KEYS.pickerResponse)).toBeNull();
+  });
+
+  test("a remembered file replaced by a directory is not uploaded", async ({ page }) => {
+    await page.addInitScript(() => localStorage.setItem("explorer-recent-files", JSON.stringify([
+      { name: "Documents", path: "/home/user/Documents", kind: "file", timestamp: Date.now() },
+    ])));
+    await page.goto("/?picker=open&token=changed-kind&folder=%2Fhome%2Fuser");
+    await expect(page.locator(".picker")).toBeVisible();
+    await page.keyboard.press("Control+p");
+    await page.locator(".pqo-result", { hasText: "Documents" }).click();
+    await expect(page.locator(".toast.error")).toContainText("changed type");
+    expect(await page.evaluate(key => localStorage.getItem(key), MOCK_LOCAL_KEYS.pickerResponse)).toBeNull();
+  });
+
+  test("a delayed history folder pick cannot undo newer navigation", async ({ page }) => {
+    await page.addInitScript(() => {
+      localStorage.setItem("explorer-recent-files", JSON.stringify([
+        { name: "Documents", path: "/home/user/Documents", kind: "directory", timestamp: Date.now() },
+      ]));
+      let observations = 0;
+      const control = globalThis as unknown as { __mockControl: { checkPathsExist: (paths: string[]) => boolean[] | Promise<boolean[]> }; releasePickerValidation: () => void };
+      control.__mockControl = { checkPathsExist: paths => {
+        if (paths.includes("/home/user/Documents") && ++observations > 1) {
+          document.documentElement.dataset.validationPending = "true";
+          return new Promise(resolve => { control.releasePickerValidation = () => {
+            document.documentElement.dataset.validationPending = "false";
+            resolve(paths.map(() => true));
+          }; });
+        }
+        return paths.map(() => true);
+      } };
+    });
+    await page.goto("/?picker=open&token=stale-navigation&folder=%2Fhome%2Fuser");
+    await expect(page.locator(".picker")).toBeVisible();
+    await page.keyboard.press("Control+p");
+    await page.locator(".pqo-result", { hasText: "Documents" }).click();
+    await expect(page.locator("html")).toHaveAttribute("data-validation-pending", "true");
+    await page.locator('.column[data-path="/home/user"] .entry', { hasText: "Downloads" }).click();
+    await page.evaluate(() => (globalThis as unknown as { releasePickerValidation: () => void }).releasePickerValidation());
+    await expect(page.locator("html")).toHaveAttribute("data-validation-pending", "false");
+    await expect(page.locator(".address-input")).toHaveValue("/home/user/Downloads");
+  });
+
   test("Ctrl+P refreshes history written by another window and preserves it on pick", async ({ page }) => {
     await page.goto("/?picker=open&token=history-reader&folder=%2Fhome%2Fuser");
     await expect(page.locator('.picker')).toBeVisible();
@@ -33,7 +107,9 @@ test.describe("File picker mode", () => {
     await expect(overlay.locator('.pqo-result', { hasText: 'notes.md' })).toBeVisible();
     await page.keyboard.press('Escape');
     await expect(overlay).not.toBeVisible();
+    await page.evaluate(key => localStorage.removeItem(key), MOCK_LOCAL_KEYS.pickerResponse);
     await page.locator('.column[data-path="/home/user"] .entry', { hasText: 'readme.txt' }).dblclick();
+    expect(await readResponse(page)).toMatchObject({ token: 'history-reader', paths: ['/home/user/readme.txt'] });
     const history = await page.evaluate(() => JSON.parse(localStorage.getItem('explorer-recent-files')!));
     expect(history.map((entry: {path: string}) => entry.path)).toEqual(expect.arrayContaining(['/home/user/notes.md', '/home/user/readme.txt']));
   });
@@ -248,6 +324,12 @@ test.describe("File picker mode", () => {
       `/?picker=open&token=windows-paths&multiple=0&directory=1&folder=${encodeURIComponent(driveFolder)}`,
     );
 
+    await page.evaluate(async folder => {
+      const load = new Function("return import('/src/lib/api/mock-fixtures.ts')");
+      const { mockFiles } = await load();
+      mockFiles[folder] = [];
+      mockFiles["\\\\server\\share\\folder"] = [];
+    }, driveFolder);
     const columns = page.locator(".column");
     await expect(columns).toHaveCount(4);
     expect(await columns.evaluateAll((items) =>

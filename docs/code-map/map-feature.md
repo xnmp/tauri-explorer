@@ -80,8 +80,10 @@ backend for E2E/browser).
 ## System file picker
 
 - `components/FilePicker.svelte`, `composables/use-type-ahead.svelte.ts` — lightweight Miller-column selection, type-to-select and Enter folder navigation, Ctrl+F active-column filtering; text fields and Quick Open retain keyboard ownership.
+- `domain/search.ts` — pure fuzzy-search result contract shared by API and ranking.
 - `components/PickerQuickOpen.svelte`, `domain/picker-search.ts`, `state/picker-search.ts` — Ctrl+P starts with refreshed recents/frequent folders, merges debounced recursive results and limits rendering to 20; input/closure revoke stale responses.
-- `state/recent-files.svelte.ts`, `state/frecency.svelte.ts` — refresh shared persisted history before picker ranking and history additions; picker confirmation persists before the response IPC closes its window.
+- `domain/history.ts`, `api/history.ts`, `state/shared-history.ts`, `state/recent-files.svelte.ts`, `state/frecency.svelte.ts` — bounded validated local mirrors and native granular IPC writes; refresh canonical shared history before Quick Open and flush accepted writes before picker response.
+- `src-tauri/src/shared_history/mod.rs`, `src-tauri/src/shared_history/model.rs`, `src-tauri/src/shared_history/store.rs`, `src-tauri/test_support/shared_history.rs` — async commands, pure policy, one-time legacy import and SQLite IMMEDIATE read-modify-write transactions; separate process contracts verify coherence and concurrent additions.
 - `src-tauri/src/portal.rs`, `src-tauri/src/portal/parent.rs` — OpenFile/SaveFile carry the exported parent-window identifier into GTK main-thread parenting before show. Wayland imports xdg_foreign handles; X11 uses a foreign window and source-relative geometry. Invalid or backend-mismatched identifiers fall back to ordinary placement.
 
 ## Navigation, address bar, breadcrumb, autocomplete

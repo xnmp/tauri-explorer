@@ -205,6 +205,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `workspaces.svelte.ts` — save/restore named workspaces.
 - `bookmarks.svelte.ts` — sidebar bookmarks store.
 - `recent-files.svelte.ts` — recent files store.
+- `picker-search.ts` (state) — revision-owned delayed picker search; new input/close revoke stale results before the debounce.
 - `frecency.svelte.ts` — zoxide-style frecency path ranking.
 - `drives.svelte.ts` — discovered volumes and mounted-root reactive store; refreshes on `drives-changed` pushes, polling slowly while the backend pushes and quickly otherwise; feeds start only through the page foreground gate (#931).
 - `drive-opening.ts` — coalesces mount requests; navigates only after mounting succeeds and reports failures.
@@ -312,6 +313,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 
 - `directory-reconciliation.ts` — complete-listing three-way merge and selection identity reconciliation after concurrent mutations.
 - `file.ts` — file entry types (incl. `is_git_repo`) + pure ops (sort, filter, format). Hot.
+- `picker-search.ts` — ranks picker recents/frequent folders and backend matches with extension filtering and a 20-row cap.
 - `file-picker.ts` — case-insensitive extension matching for picker listings and quick search, preserving folder navigation.
 - `file-types.ts` — extension→type/category detection + display; `isGitRepoFolder` (git-repo folder icon selection, #463).
 - `open-with.ts` — single-file selection eligibility and explicit Linux-only application-choice availability.
@@ -449,6 +451,8 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `system.rs` — native launch context, Recycle Bin launcher, window theme and log-path commands.
 - `user_report.rs` — typed async report relay command, full-description/environment body assembly without log tails, and ureq transport with uncertain-response handling.
 - `process_ext.rs` — suppress console-window flash and own cancellable process trees; drain both pipes with optional output limits and continue cancellation after launcher exit.
+- `portal/parent_identifier.rs` — pure, bounded validation of X11 XIDs and Wayland exported handles.
+- `portal/parent.rs` — validates portal window identifiers and attaches GTK picker surfaces to native Wayland/X11 parents before mapping.
 - `portal.rs` — xdg-desktop-portal FileChooser backend (Linux).
 - `crash_report.rs` — local crash capture (#184).
 - `update_check.rs` — update check via GitHub releases (#185).

@@ -15,6 +15,9 @@ use std::path::Path;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Mutex, OnceLock};
 use tauri::AppHandle;
+
+mod parent;
+mod parent_identifier;
 use zbus::zvariant::{ObjectPath, OwnedValue, Value};
 
 const PORTAL_BUS_NAME: &str = "org.freedesktop.impl.portal.desktop.tauri_explorer";
@@ -101,6 +104,7 @@ pub fn paths_to_uris(paths: &[String]) -> Vec<String> {
 // ─── Picker window ──────────────────────────────────────────────────────────
 
 struct PickerRequest {
+    parent_window: String,
     mode: &'static str, // "open" | "save"
     title: String,
     multiple: bool,
@@ -151,6 +155,7 @@ async fn run_picker(app: &AppHandle, req: PickerRequest) -> PickerOutcome {
             tauri::WebviewUrl::App(url.into()),
         )
         .title(title)
+        .visible(false)
         .inner_size(900.0, 560.0)
         .center()
         .decorations(false)
@@ -159,6 +164,17 @@ async fn run_picker(app: &AppHandle, req: PickerRequest) -> PickerOutcome {
 
         match built {
             Ok(window) => {
+                if let Ok(native) = window.gtk_window() {
+                    if let Err(error) = parent::attach(&native, &req.parent_window) {
+                        log::warn!("portal: could not attach picker to source window: {error}");
+                    }
+                }
+                if let Err(error) = window.show() {
+                    log::error!("portal: could not show picker: {error}");
+                    resolve(&window_token, PickerOutcome { cancelled: true, paths: vec![] });
+                    let _ = window.close();
+                    return;
+                }
                 // Closing the window without choosing = cancel.
                 let close_token = window_token.clone();
                 window.on_window_event(move |event| {
@@ -247,11 +263,12 @@ impl FileChooserBackend {
         &self,
         _handle: ObjectPath<'_>,
         _app_id: String,
-        _parent_window: String,
+        parent_window: String,
         title: String,
         options: HashMap<String, OwnedValue>,
     ) -> (u32, HashMap<String, OwnedValue>) {
         let req = PickerRequest {
+            parent_window,
             mode: "open",
             title,
             multiple: opt_bool(&options, "multiple"),
@@ -266,11 +283,12 @@ impl FileChooserBackend {
         &self,
         _handle: ObjectPath<'_>,
         _app_id: String,
-        _parent_window: String,
+        parent_window: String,
         title: String,
         options: HashMap<String, OwnedValue>,
     ) -> (u32, HashMap<String, OwnedValue>) {
         let req = PickerRequest {
+            parent_window,
             mode: "save",
             title,
             multiple: false,

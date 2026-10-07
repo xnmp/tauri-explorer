@@ -19,6 +19,12 @@ export function useTypeAhead(
   let buffer = "";
   let timer: ReturnType<typeof setTimeout> | null = null;
 
+  function reset(): void {
+    if (timer) clearTimeout(timer);
+    timer = null;
+    buffer = "";
+  }
+
   function handleKey(key: string): void {
     if (timer) clearTimeout(timer);
     buffer += key.toLowerCase();
@@ -34,7 +40,10 @@ export function useTypeAhead(
 
   /** Returns true if the key was handled as type-ahead */
   function handleKeydown(event: KeyboardEvent): boolean {
-    const tag = (event.target as HTMLElement)?.tagName;
+    if (event.defaultPrevented || event.isComposing) return false;
+    const target = event.target as HTMLElement;
+    if (target?.isContentEditable) return false;
+    const tag = target?.tagName;
     if (tag === "INPUT" || tag === "TEXTAREA") return false;
 
     if (
@@ -56,5 +65,5 @@ export function useTypeAhead(
     return false;
   }
 
-  return { handleKeydown };
+  return { handleKeydown, reset };
 }

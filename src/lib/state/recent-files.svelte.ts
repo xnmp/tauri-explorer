@@ -27,7 +27,13 @@ function createRecentFilesState() {
     savePersisted(STORAGE_KEY, entries);
   }
 
+  function refresh(): void {
+    const latest = loadPersisted<RecentEntry[]>(STORAGE_KEY, entries);
+    if (Array.isArray(latest)) entries = latest.filter(entry => entry && typeof entry.path === "string" && typeof entry.name === "string" && (entry.kind === "file" || entry.kind === "directory"));
+  }
+
   function add(path: string, name: string, kind: "file" | "directory") {
+    refresh();
     // Remove existing entry for this path (will be re-added at top). Compare by
     // canonical key so separator/case variants of the same path don't duplicate.
     const key = directoryKey(path);
@@ -67,6 +73,7 @@ function createRecentFilesState() {
     get list() { return entries; },
     get count() { return entries.length; },
     add,
+    refresh,
     remove,
     clear,
     pruneNonExistent,

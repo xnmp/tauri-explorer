@@ -1,15 +1,18 @@
 <!--
   Quick open for the portal file picker (#190).
 
-  A deliberately small cousin of QuickOpen: debounced fuzzy search under the
-  picker's current root, arrow-key navigation, Enter to pick. No frecency,
-  recent files, tabs or window state — the picker window has none of that.
+  Recent and frequently used files/folders appear immediately; typed queries
+  merge local history with debounced recursive search under the starting root.
 -->
 <script lang="ts">
   import { fuzzySearch, type SearchResult } from "$lib/api/search";
   import FileIcon from "./FileIcon.svelte";
   import Modal from "./Modal.svelte";
-  import { matchesPickerExtensions } from "$lib/domain/file-picker";
+  import { onDestroy, untrack, tick } from "svelte";
+  import { rankPickerResults } from "$lib/domain/picker-search";
+  import { createPickerSearch } from "$lib/state/picker-search";
+  import { recentFilesStore } from "$lib/state/recent-files.svelte";
+  import { frecencyStore } from "$lib/state/frecency.svelte";
 
   interface Props {
     open: boolean;
@@ -27,49 +30,45 @@
   let query = $state("");
   let results = $state<SearchResult[]>([]);
   let activeIndex = $state(0);
-  let searchSeq = 0;
-  let debounceTimer: ReturnType<typeof setTimeout> | null = null;
+  const search = createPickerSearch({
+    local: (query, remote = []) => rankPickerResults({ query, remote,
+      recent: recentFilesStore.list, directories: frecencyStore.entries,
+      scores: frecencyStore.getScoreMap(), directoriesOnly, extensions }),
+    search: async query => {
+      const response = await fuzzySearch(query, root, 30, { extensions, directoriesOnly });
+      return response.ok ? response.data : [];
+    },
+    publish: next => { results = next; activeIndex = 0; },
+  });
+  onDestroy(search.cancel);
+  $effect(() => {
+    if (open) {
+      query = "";
+      untrack(() => { recentFilesStore.refresh(); frecencyStore.refresh(); search.update(""); });
+    } else search.cancel();
+  });
 
-  function reset(): void {
+  function close(): void {
+    search.cancel();
     query = "";
     results = [];
     activeIndex = 0;
-  }
-
-  function close(): void {
-    reset();
     onClose();
   }
 
-  function runSearch(q: string): void {
-    const seq = ++searchSeq;
-    if (!q.trim()) {
-      results = [];
-      return;
-    }
-    void fuzzySearch(q, root, 30, { extensions, directoriesOnly }).then((r) => {
-      if (seq !== searchSeq) return; // stale response
-      if (!r.ok) return;
-      results = r.data.filter((entry) =>
-        (!directoriesOnly || entry.kind === "directory") && matchesPickerExtensions(entry, extensions));
-      activeIndex = 0;
-    });
-  }
+  function handleInput(): void { search.update(query); }
 
-  function handleInput(): void {
-    if (debounceTimer) clearTimeout(debounceTimer);
-    debounceTimer = setTimeout(() => runSearch(query), 120);
-  }
-
-  function pick(result: SearchResult): void {
-    onPick(result);
+  async function pick(result: SearchResult): Promise<void> {
     close();
+    // Finish Modal's focus restoration before navigation changes the active column.
+    await tick();
+    onPick(result);
   }
 
   function handleKeydown(event: KeyboardEvent): void {
     if (event.key === "ArrowDown") {
       event.preventDefault();
-      activeIndex = Math.min(activeIndex + 1, results.length - 1);
+      activeIndex = Math.max(0, Math.min(activeIndex + 1, results.length - 1));
     } else if (event.key === "ArrowUp") {
       event.preventDefault();
       activeIndex = Math.max(activeIndex - 1, 0);
@@ -85,7 +84,8 @@
   <div class="modal-card picker-quick-open" data-testid="picker-quick-open">
     <input
       type="text"
-      placeholder={directoriesOnly ? "Search folders…" : "Search files…"}
+      placeholder={directoriesOnly ? "Find recent folders…" : "Find recent files and folders…"}
+      aria-label="Quick Open"
       bind:value={query}
       oninput={handleInput}
       data-autofocus

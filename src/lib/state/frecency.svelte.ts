@@ -64,8 +64,15 @@ function createFrecencyStore() {
     savePersisted(STORAGE_KEY, data);
   }
 
+  /** Read shared persisted history before opening a picker or adding an access. */
+  function refresh(): void {
+    const latest = loadPersisted<FrecencyData>(STORAGE_KEY, data);
+    if (Array.isArray(latest)) data = latest.filter(entry => entry && typeof entry.path === "string" && Array.isArray(entry.accesses) && entry.accesses.every(timestamp => typeof timestamp === "number" && Number.isFinite(timestamp)));
+  }
+
   /** Record an access to a path. */
   function recordAccess(path: string): void {
+    refresh();
     const now = Date.now();
     const key = directoryKey(path);
     const existing = data.find((e) => directoryKey(e.path) === key);
@@ -180,6 +187,7 @@ function createFrecencyStore() {
     get entries() { return data; },
     get recentEntries() { return data.filter((entry) => !entry.dismissedFromRecent); },
     recordAccess,
+    refresh,
     recordFileAction,
     getScore,
     getScoreMap,

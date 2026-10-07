@@ -154,6 +154,47 @@ exit 2
     await expect(access(join(sandbox, 'config/tauri-explorer/pending-plugins'))).rejects.toThrow();
   }));
 
+  it('moves per-user copies that shadow the package aside after installing it', async () => withInstaller(async ({ sandbox, invoke }) => {
+    const { access, readdir, symlink } = await import('node:fs/promises');
+    const launcher = join(sandbox, 'home/.local/bin/tauri-explorer');
+    const desktop = join(sandbox, 'data/applications/tauri-explorer.desktop');
+    const portal = join(sandbox, 'data/dbus-1/services/org.freedesktop.impl.portal.desktop.tauri_explorer.service');
+    const unrelated = join(sandbox, 'data/applications/other.desktop');
+    for (const file of [desktop, portal, unrelated]) await mkdir(join(file, '..'), { recursive: true });
+    await mkdir(join(launcher, '..'), { recursive: true });
+    await symlink('/nonexistent/old-build/tauri-explorer', launcher);
+    await writeFile(desktop, 'Exec=/old/tauri-explorer');
+    await writeFile(portal, 'Exec=/old/tauri-explorer --file-chooser-portal');
+    await writeFile(unrelated, 'kept');
+
+    const { stdout } = await invoke() as { stdout: string };
+
+    for (const file of [launcher, desktop, portal]) {
+      await expect(access(file)).rejects.toThrow();
+      expect(stdout).toContain(`Moved per-user override ${file}`);
+    }
+    expect(await readFile(unrelated, 'utf8')).toBe('kept');
+    const [batch] = await readdir(join(sandbox, 'state/tauri-explorer/retired-overrides'));
+    const retired = join(sandbox, 'state/tauri-explorer/retired-overrides', batch);
+    expect((await readdir(retired)).sort()).toEqual(['org.freedesktop.impl.portal.desktop.tauri_explorer.service', 'tauri-explorer', 'tauri-explorer.desktop']);
+    expect(await readFile(join(retired, 'tauri-explorer.desktop'), 'utf8')).toBe('Exec=/old/tauri-explorer');
+  }));
+
+  it('keeps per-user copies when the package fails to install', async () => withInstaller(async ({ sandbox, invoke }) => {
+    const desktop = join(sandbox, 'data/applications/tauri-explorer.desktop');
+    await mkdir(join(desktop, '..'), { recursive: true });
+    await writeFile(desktop, 'Exec=/old/tauri-explorer');
+    await expect(invoke([], { INSTALL_FAIL: '1' })).rejects.toThrow();
+    expect(await readFile(desktop, 'utf8')).toBe('Exec=/old/tauri-explorer');
+  }));
+
+  it('says when a running instance still holds the previous build', async () => withInstaller(async ({ invoke }) => {
+    const running = await invoke([], { RUNNING_PIDS: '101 202' }) as { stdout: string };
+    expect(running.stdout).toContain('still running the previous build (PID 101 202)');
+    const idle = await invoke() as { stdout: string };
+    expect(idle.stdout).not.toContain('still running');
+  }));
+
   it('uses a stable source epoch and preserves an explicit caller epoch', async () => withInstaller(async ({ invoke, epochs }) => {
     await invoke();
     await invoke();
@@ -203,9 +244,13 @@ printf 'makepkg reuse=%s rebuild=%s\\n' "$_arch_reuse_frontend" "$_arch_rebuild_
 echo "$SOURCE_DATE_EPOCH" >> "$INSTALL_EPOCHS"
 touch "tauri-explorer-1.0.0-1-$(uname -m).pkg.tar.zst"
 `, { mode: 0o755 });
+    await writeFile(join(root, 'bin/pgrep'), `#!/usr/bin/env bash
+[[ -n "\${RUNNING_PIDS:-}" ]] || exit 1
+printf '%s\\n' $RUNNING_PIDS
+`, { mode: 0o755 });
     const invoke = (args: string[] = [], environment: NodeJS.ProcessEnv = {}) => execFileAsync('bash', [join(root, 'arch_install.sh'), ...args], {
       cwd: tmpdir(),
-      env: { ...process.env, HOME: join(sandbox, 'home'), XDG_CONFIG_HOME: join(sandbox, 'config'), TRACE_EXPLORER_PLUGIN_PATH: undefined, SOURCE_DATE_EPOCH: undefined, PATH: `${join(root, 'bin')}:${process.env.PATH}`, AUTH_FAIL: '0', INSTALL_CALLS: join(root, 'calls'), INSTALL_EPOCHS: join(root, 'epochs'), ...environment },
+      env: { ...process.env, HOME: join(sandbox, 'home'), XDG_CONFIG_HOME: join(sandbox, 'config'), XDG_DATA_HOME: join(sandbox, 'data'), XDG_STATE_HOME: join(sandbox, 'state'), RUNNING_PIDS: undefined, TRACE_EXPLORER_PLUGIN_PATH: undefined, SOURCE_DATE_EPOCH: undefined, PATH: `${join(root, 'bin')}:${process.env.PATH}`, AUTH_FAIL: '0', INSTALL_CALLS: join(root, 'calls'), INSTALL_EPOCHS: join(root, 'epochs'), ...environment },
     });
     const calls = () => readFile(join(root, 'calls'), 'utf8').then(
       (contents) => contents.trim().split('\n'),

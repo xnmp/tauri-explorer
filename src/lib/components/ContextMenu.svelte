@@ -20,6 +20,9 @@
   import { isImageFile } from "$lib/domain/file-types";
   import { getZoomFactor, clientToFixed } from "$lib/domain/zoom";
   import type { ViewMode } from "$lib/state/types";
+  import { fileViewRegistry } from "$lib/plugins/file-view-registry.svelte";
+  import { getPaneIdContext } from "$lib/state/pane-context";
+  import { windowTabsManager } from "$lib/state/window-tabs.svelte";
   import { contextMenuItems } from "$lib/state/context-menu-items.svelte";
   import { openWithStore } from "$lib/state/open-with.svelte";
   import { openWithUnavailableReason } from "$lib/domain/open-with";
@@ -165,8 +168,25 @@
     contextMenuStore.close();
   }
 
+  const paneId = getPaneIdContext();
+  // The plugin view currently displayed; built-in modes are checked only when none is.
+  const shownFileView = $derived(fileViewRegistry.resolve(explorer.fileView, explorer.currentPath));
+  const offeredFileViews = $derived(fileViewRegistry.items.filter((view) => fileViewRegistry.resolve(view.id, explorer.currentPath)));
+  const builtInShown = (mode: ViewMode) => !shownFileView && explorer.viewMode === mode;
+
+  function setPaneFileView(id: string | null): void {
+    if (paneId) windowTabsManager.setPaneFileView(paneId, id);
+    else explorer.setFileView(id);
+  }
+
   function handleSetViewMode(mode: ViewMode): void {
     explorer.setViewMode(mode);
+    setPaneFileView(null);
+    contextMenuStore.close();
+  }
+
+  function handleSetFileView(id: string): void {
+    setPaneFileView(id);
     contextMenuStore.close();
   }
 
@@ -471,6 +491,7 @@
 
       <div class="menu-divider"></div>
 
+      {#if !shownFileView}
       <button class="menu-item" onclick={handleRename} role="menuitem">
         <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
           <path d="M3 11.5V13H4.5L11.5 6L10 4.5L3 11.5Z" stroke="currentColor" stroke-width="1.25" stroke-linejoin="round"/>
@@ -479,6 +500,7 @@
         <span>Rename</span>
         <span class="shortcut">F2</span>
       </button>
+      {/if}
 
       <button class="menu-item danger" onclick={handleDelete} role="menuitem">
         <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
@@ -577,6 +599,7 @@
       </button>
       <div class="menu-divider"></div>
 
+      {#if !shownFileView}
       <button class="menu-item" onclick={handleNewFolder} role="menuitem">
         <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
           <path d="M2 5C2 4.44772 2.44772 4 3 4H5.58579C5.851 4 6.10536 4.10536 6.29289 4.29289L7 5H13C13.5523 5 14 5.44772 14 6V12C14 12.5523 13.5523 13 13 13H3C2.44772 13 2 12.5523 2 12V5Z" stroke="currentColor" stroke-width="1.25"/>
@@ -592,6 +615,7 @@
         </svg>
         <span>New file</span>
       </button>
+      {/if}
 
       <button class="menu-item" onclick={handleOpenInTerminal} role="menuitem">
         <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
@@ -612,16 +636,16 @@
           <div class="submenu-wrapper" class:flip-left={submenuFlip.flipLeft} class:flip-up={submenuFlip.flipUp} onmouseenter={() => listSubmenuOpen = true} onmouseleave={() => listSubmenuOpen = false}>
             <button
               class="menu-item"
-              class:selected={explorer.viewMode === mode.id}
+              class:selected={builtInShown(mode.id)}
               onclick={() => handleSetViewMode(mode.id)}
               role="menuitemradio"
-              aria-checked={explorer.viewMode === mode.id}
+              aria-checked={builtInShown(mode.id)}
             >
               <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
                 <path d="M3 4H4M6 4H13M3 8H4M6 8H13M3 12H4M6 12H13" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
               </svg>
               <span>{mode.label}</span>
-              {#if explorer.viewMode === mode.id}
+              {#if builtInShown(mode.id)}
                 <svg class="check-icon" width="12" height="12" viewBox="0 0 12 12" fill="none">
                   <path d="M2.5 6L5 8.5L9.5 3.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
                 </svg>
@@ -671,10 +695,10 @@
           <div class="submenu-wrapper" class:flip-left={submenuFlip.flipLeft} class:flip-up={submenuFlip.flipUp} onmouseenter={() => tilesSubmenuOpen = true} onmouseleave={() => tilesSubmenuOpen = false}>
             <button
               class="menu-item"
-              class:selected={explorer.viewMode === mode.id}
+              class:selected={builtInShown(mode.id)}
               onclick={() => handleSetViewMode(mode.id)}
               role="menuitemradio"
-              aria-checked={explorer.viewMode === mode.id}
+              aria-checked={builtInShown(mode.id)}
             >
               <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
                 <rect x="2" y="2" width="5" height="5" rx="0.5" stroke="currentColor" stroke-width="1.25"/>
@@ -683,7 +707,7 @@
                 <rect x="9" y="9" width="5" height="5" rx="0.5" stroke="currentColor" stroke-width="1.25"/>
               </svg>
               <span>{mode.label}</span>
-              {#if explorer.viewMode === mode.id}
+              {#if builtInShown(mode.id)}
                 <svg class="check-icon" width="12" height="12" viewBox="0 0 12 12" fill="none">
                   <path d="M2.5 6L5 8.5L9.5 3.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
                 </svg>
@@ -717,22 +741,44 @@
         {:else}
           <button
             class="menu-item"
-            class:selected={explorer.viewMode === mode.id}
+            class:selected={builtInShown(mode.id)}
             onclick={() => handleSetViewMode(mode.id)}
             role="menuitemradio"
-            aria-checked={explorer.viewMode === mode.id}
+            aria-checked={builtInShown(mode.id)}
           >
             <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
               <path d="M2 4H14M2 8H14M2 12H14" stroke="currentColor" stroke-width="1.25" stroke-linecap="round"/>
             </svg>
             <span>{mode.label}</span>
-            {#if explorer.viewMode === mode.id}
+            {#if builtInShown(mode.id)}
               <svg class="check-icon" width="12" height="12" viewBox="0 0 12 12" fill="none">
                 <path d="M2.5 6L5 8.5L9.5 3.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
               </svg>
             {/if}
           </button>
         {/if}
+      {/each}
+      {#each offeredFileViews as view (view.id)}
+        <button
+          class="menu-item"
+          class:selected={shownFileView?.id === view.id}
+          onclick={() => handleSetFileView(view.id)}
+          role="menuitemradio"
+          aria-checked={shownFileView?.id === view.id}
+        >
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+            <circle cx="4" cy="4" r="2" stroke="currentColor" stroke-width="1.25"/>
+            <circle cx="12" cy="4" r="2" stroke="currentColor" stroke-width="1.25"/>
+            <circle cx="8" cy="12" r="2" stroke="currentColor" stroke-width="1.25"/>
+            <path d="M4 6L8 10M12 6L8 10" stroke="currentColor" stroke-width="1.25" stroke-linecap="round"/>
+          </svg>
+          <span>{view.title}</span>
+          {#if shownFileView?.id === view.id}
+            <svg class="check-icon" width="12" height="12" viewBox="0 0 12 12" fill="none">
+              <path d="M2.5 6L5 8.5L9.5 3.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+          {/if}
+        </button>
       {/each}
     {/if}
 

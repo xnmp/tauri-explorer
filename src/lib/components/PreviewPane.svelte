@@ -52,6 +52,8 @@ import { openFile } from "$lib/api/open";
   });
   import { parseUnifiedDiff, type ParsedDiff, type DiffLine } from "$lib/domain/diff";
   import FileIcon from "./FileIcon.svelte";
+  import PluginPreviewTarget from "./PluginPreviewTarget.svelte";
+  import { previewInfoRegistry, type PreviewSubject } from "$lib/plugins/preview-registry.svelte";
   /** Detect if the current theme uses a light color scheme.
    * Recomputed via a MutationObserver on the documentElement's `data-theme`
    * attribute (set by theme.svelte.ts) — getComputedStyle only reflects the
@@ -274,6 +276,19 @@ import { openFile } from "$lib/api/open";
     const selected = explorer.getSelectedEntries();
     return selected.length === 1 ? selected[0] : null;
   });
+
+  // SDK 2: a plugin's non-file Preview subject for the active pane. A file
+  // selection always takes precedence (the pane clears targets on selection).
+  const pluginTarget = $derived.by(() => {
+    if (selectedFile) return null;
+    return windowTabsManager.getActiveExplorer()?.previewTarget ?? null;
+  });
+  const previewSubject = $derived.by((): PreviewSubject | null => {
+    const paneId = windowTabsManager.activePaneId || null;
+    if (pluginTarget) return { kind: "target", target: pluginTarget.target, pluginId: pluginTarget.owner, paneId };
+    return selectedFile ? { kind: "file", entry: selectedFile, paneId } : null;
+  });
+  const infoSections = $derived(previewSubject && settingsStore.showPreviewInfo ? previewInfoRegistry.itemsFor(previewSubject) : []);
 
   /** Stable primitive that changes when the selected path OR its mtime changes,
    * so external edits to the same file invalidate the cached preview. */
@@ -932,6 +947,12 @@ import { openFile } from "$lib/api/open";
         <span class="info-value" title={diffPath}>{diffPath}</span>
       </div>
     </div>
+  {:else if pluginTarget}
+    {#key pluginTarget.target.id}
+      <PluginPreviewTarget target={pluginTarget.target} showInfo={settingsStore.showPreviewInfo}>
+        {#snippet sections()}{@render previewSections()}{/snippet}
+      </PluginPreviewTarget>
+    {/key}
   {:else if !selectedFile}
     <div class="preview-empty">
       <svg width="40" height="40" viewBox="0 0 24 24" fill="none">
@@ -1079,9 +1100,23 @@ import { openFile } from "$lib/api/open";
           <span class="info-value">{formatDate(selectedFile.modified)}</span>
         </div>
       </div>
+      {@render previewSections()}
     {/if}
   {/if}
 </div>
+
+{#snippet previewSections()}
+  {#if infoSections.length && previewSubject}
+    <div class="preview-sections">
+      {#each infoSections as section (`${section.pluginId}:${section.id}`)}
+        <svelte:boundary onerror={(error) => console.error(`[plugins] preview info ${section.id} failed:`, error)}>
+          <section.component {...section.props} subject={previewSubject} />
+          {#snippet failed()}<p class="preview-section-error">This section could not be displayed.</p>{/snippet}
+        </svelte:boundary>
+      {/each}
+    </div>
+  {/if}
+{/snippet}
 
 <style>
   .preview-pane {
@@ -1751,6 +1786,19 @@ import { openFile } from "$lib/api/open";
   .preview-error-text {
     color: var(--system-critical-text, var(--system-critical));
     font-size: var(--font-size-caption);
+  }
+
+  .preview-sections {
+    flex: 0 1 auto;
+    max-height: 55%;
+    overflow: auto;
+    border-top: 1px solid var(--divider);
+  }
+
+  .preview-section-error {
+    margin: 8px 16px;
+    font-size: var(--font-size-caption);
+    color: var(--text-tertiary);
   }
 
   .preview-info {

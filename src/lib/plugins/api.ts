@@ -21,6 +21,8 @@ import { registerFsProvider, type FsProvider } from "./fs-providers";
 import { pluginSettingsSections } from "./settings-registry.svelte";
 import { dialogRegistry, type DialogDescriptor } from "./dialog-registry.svelte";
 import { inspectorRegistry, type InspectorContribution } from "./inspector-registry.svelte";
+import { fileViewRegistry, type FileViewContribution } from "./file-view-registry.svelte";
+import { previewInfoRegistry, type PreviewInfoContribution } from "./preview-registry.svelte";
 import { toastStore, type ToastType } from "$lib/state/toast.svelte";
 import { readConfigFile } from "$lib/api/config";
 import { writeConfigQueued } from "$lib/state/persisted";
@@ -126,6 +128,11 @@ export interface PluginWorkspace {
   /** Move a file into a destination directory through the shared transfer flow
    *  (conflict prompt, undo, toast, cross-window broadcast, pane refresh). */
   moveFile(sourcePath: string, targetDir: string): Promise<PluginMoveResult>;
+  /** SDK 2: the plugin file view chosen for the active pane, or null. */
+  getFileView?(): string | null;
+  /** SDK 2: show one of this plugin's file views in the active pane, or
+   *  return it to its built-in view mode when the view is already chosen. */
+  toggleFileView?(viewId: string): void;
 }
 
 /**
@@ -157,6 +164,12 @@ export interface PluginContext {
   registerInspector(descriptor: InspectorContribution): void;
   /** Add a tool to the host image editor. Receives source, onClose and onBusyChange props. */
   registerImageEditorTool(tool: ImageEditorTool): void;
+  /** SDK 2: contribute a main file view. Its component receives a pane-scoped
+   *  `pane` handle. Disposal returns panes to their built-in view and clears
+   *  the plugin's Preview targets. */
+  registerFileView?(view: FileViewContribution): void;
+  /** SDK 2: contribute a Preview-info section for files or this plugin's targets. */
+  registerPreviewInfo?(section: PreviewInfoContribution): void;
   /** Open a registered dialog, passing props to its component. `open` and an
    *  `onClose` (which closes the dialog) are injected by the renderer. */
   openDialog(id: string, props?: Record<string, unknown>): void;
@@ -250,6 +263,10 @@ export function createPluginContext(
     else disposers.push(fn);
   };
   const storage = createPluginStorage(pluginId);
+  // Preview targets are pane state owned by this plugin; drop them with it.
+  disposers.push(() => {
+    for (const explorer of windowTabsManager.getAllExplorers()) explorer.clearPreviewTargetsOwnedBy(pluginId);
+  });
   // Tauri rejects with a serialized AppError ({ kind, message }), not an Error.
   const log = (error: unknown, contribution: string): string => {
     const message = extractError(error);
@@ -307,6 +324,16 @@ export function createPluginContext(
     },
     registerInspector(descriptor: InspectorContribution): void {
       track(inspectorRegistry.register(descriptor, order));
+    },
+    registerFileView(view: FileViewContribution): void {
+      // `<pluginId>.<name>` with a dot-free name: plugin ids may contain dots,
+      // so a prefix check alone would let "acme" claim "acme.trace"'s views.
+      const name = view.id.startsWith(`${pluginId}.`) ? view.id.slice(pluginId.length + 1) : null;
+      if (view.id !== pluginId && (!name || name.includes("."))) throw new Error(`File view ${view.id} must be named ${pluginId}.<name>`);
+      track(fileViewRegistry.register(pluginId, view, order));
+    },
+    registerPreviewInfo(section: PreviewInfoContribution): void {
+      track(previewInfoRegistry.register(pluginId, section, order));
     },
     openDialog(id: string, props?: Record<string, unknown>): void {
       dialogRegistry.open(id, props ?? {});
@@ -416,6 +443,16 @@ export function createPluginContext(
         });
         if (error) return { ok: false, error };
         return complete ? { ok: true } : { ok: false, error: "skipped" };
+      },
+      getFileView: () => windowTabsManager.getActiveExplorer()?.fileView ?? null,
+      toggleFileView: (viewId) => {
+        if (fileViewRegistry.get(viewId)?.pluginId !== pluginId) throw new Error(`File view ${viewId} is not registered by ${pluginId}`);
+        const explorer = windowTabsManager.getActiveExplorer();
+        if (!explorer) return;
+        const shown = fileViewRegistry.resolve(explorer.fileView, explorer.currentPath)?.id === viewId;
+        // A retained-but-unavailable preference toggles off too, so the
+        // command never appears to do nothing.
+        windowTabsManager.setPaneFileView(windowTabsManager.activePaneId, shown || explorer.fileView === viewId ? null : viewId);
       },
     },
     openSettings: () => dialogStore.openPlugins(),

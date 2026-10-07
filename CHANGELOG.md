@@ -2,6 +2,17 @@
 
 All notable changes to Tauri Explorer.
 
+## Unreleased
+
+### Added
+
+- Plugin SDK 2: plugins can contribute a main file view that replaces a pane's
+  listing (chosen from the view options or a plugin command, remembered per
+  pane, and falling back to the built-in view where it does not apply),
+  Preview-info sections, and pane-scoped Preview targets for non-file
+  subjects such as unsaved images. SDK 1 plugins keep working unchanged.
+- Plugin workers created from blob URLs are permitted (`worker-src blob:`).
+
 ## v1.11.2 — 2026-09-30
 
 ### Fixed

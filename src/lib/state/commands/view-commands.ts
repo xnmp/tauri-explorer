@@ -13,6 +13,16 @@ import { windowTabsManager } from "../window-tabs.svelte";
 import { getActiveExplorer } from "./shared";
 import { windowSizeStore } from "../window-size.svelte";
 import { resolveAutoDockPosition } from "$lib/domain/preview-pane-position";
+import type { ViewMode } from "$lib/domain/file";
+import { fileViewRegistry } from "$lib/plugins/file-view-registry.svelte";
+
+/** Choosing a built-in mode also leaves any plugin file view (SDK 2). */
+function setBuiltInView(mode: ViewMode): void {
+  const explorer = getActiveExplorer();
+  if (!explorer) return;
+  explorer.setViewMode(mode);
+  windowTabsManager.setPaneFileView(windowTabsManager.activePaneId, null);
+}
 
 /** View commands */
 export const viewCommands: Command[] = [
@@ -20,27 +30,30 @@ export const viewCommands: Command[] = [
     id: "view.details",
     label: "Details View",
     category: "view",
-    handler: () => getActiveExplorer()?.setViewMode("details"),
+    handler: () => setBuiltInView("details"),
   },
   {
     id: "view.list",
     label: "List View",
     category: "view",
-    handler: () => getActiveExplorer()?.setViewMode("list"),
+    handler: () => setBuiltInView("list"),
   },
   {
     id: "view.tiles",
     label: "Tiles View",
     category: "view",
-    handler: () => getActiveExplorer()?.setViewMode("tiles"),
+    handler: () => setBuiltInView("tiles"),
   },
   {
     id: "view.setDefaultViewMode",
     label: "Set Current View Mode as Default",
     category: "view",
     handler: () => {
-      const mode = getActiveExplorer()?.state.viewMode;
-      if (mode) settingsStore.setViewMode(mode);
+      const explorer = getActiveExplorer();
+      if (!explorer) return;
+      settingsStore.setViewMode(explorer.state.viewMode);
+      // Save what the pane shows, not a retained preference it cannot show here.
+      settingsStore.setDefaultFileView(fileViewRegistry.resolve(explorer.fileView, explorer.currentPath)?.id ?? null);
     },
   },
   // Miller columns act on the focused pane only (#229); the global setting
@@ -209,7 +222,7 @@ export const viewCommands: Command[] = [
         onSelect: (id) => {
           const explorer = getActiveExplorer();
           if (explorer) {
-            explorer.setViewMode("tiles");
+            setBuiltInView("tiles");
             folderViewsStore.set(explorer.currentPath, { thumbnailSize: id as "small" | "medium" | "large" | "xlarge" });
           }
         },

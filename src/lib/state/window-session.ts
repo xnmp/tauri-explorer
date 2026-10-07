@@ -102,7 +102,12 @@ export function startWindowSession(options: WindowSessionOptions) {
       : null;
     if (launchFocus) stops.push(launchFocus.cancel);
     stops.push(startWindowTitleSync(() => windowTabsManager.getActiveExplorer()?.currentPath, plan.homePath));
-    if (plan.viewMode && tab) windowTabsManager.getActiveExplorer()?.setViewMode(plan.viewMode);
+    if (plan.viewMode && tab) {
+      // A requested built-in mode also leaves any plugin file view.
+      const explorer = windowTabsManager.getActiveExplorer();
+      explorer?.setViewMode(plan.viewMode);
+      explorer?.setFileView?.(null);
+    }
 
     void bookmarksStore.init().catch(reportError);
     void folderViewsStore.init().catch(reportError);

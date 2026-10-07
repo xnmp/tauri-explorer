@@ -23,6 +23,9 @@
   import ListView from "./ListView.svelte";
   import TilesView from "./TilesView.svelte";
   import InlineNewFolder from "./InlineNewFolder.svelte";
+  import PluginFileView from "./PluginFileView.svelte";
+  import { fileViewRegistry } from "$lib/plugins/file-view-registry.svelte";
+  import { getPaneIdContext } from "$lib/state/pane-context";
 
   import type { FileEntry } from "$lib/domain/file";
 
@@ -33,6 +36,11 @@
   }
 
   let { explorer, scrollToEntry = $bindable() }: Props = $props();
+
+  const paneId = getPaneIdContext();
+  // A plugin view replaces the listing only where it applies; elsewhere the
+  // pane shows its built-in view while retaining the preference.
+  const pluginView = $derived(paneId ? fileViewRegistry.resolve(explorer.fileView, explorer.currentPath) : null);
 
 
   // Drop target state for dropping files into current directory
@@ -246,6 +254,7 @@
   // ===================
 
   function handleBackgroundClick(event: MouseEvent): void {
+    if (pluginView) return;
     if (
       marquee.isBackgroundClick(event.target as HTMLElement) &&
       !marquee.isDragging &&
@@ -268,6 +277,7 @@
   }
 
   function handleKeydown(event: KeyboardEvent): void {
+    if (pluginView) return;
     typeAhead.handleKeydown(event);
   }
 
@@ -284,6 +294,7 @@
   }
 
   function handleMarqueeStart(event: MouseEvent): void {
+    if (pluginView) return;
     const rect = contentRef?.getBoundingClientRect();
     if (!rect) return;
     cachedDragRect = rect;
@@ -336,6 +347,7 @@
   // ===================
 
   function handleListDragOver(event: DragEvent): void {
+    if (pluginView) return;
     const types = event.dataTransfer?.types;
     const crossWindow = dragState.readCrossWindow();
     if (!types?.includes("application/x-explorer-path") && !types?.includes("Files") && !crossWindow) return;
@@ -363,6 +375,8 @@
 
   async function handleListDrop(event: DragEvent): Promise<void> {
     isDropTarget = false;
+    // A plugin view owns its surface; the host never turns a drop on it into a move.
+    if (pluginView) return;
 
     const target = event.target as HTMLElement;
     if (target.closest(".entry-item")) return;
@@ -432,6 +446,10 @@
           Go back
         </button>
       </div>
+    {:else if pluginView && paneId && !explorer.error}
+      {#key pluginView.id}
+        <PluginFileView {explorer} {paneId} view={pluginView} onopen={handleDoubleClick} />
+      {/key}
     {:else if explorer.loading}
       {#if showLoadingSpinner}
         <div class="status">
@@ -448,6 +466,7 @@
         <span class="error-title">Unable to access folder</span>
         <span class="error-message">{explorer.error}</span>
       </div>
+
     {:else if explorer.displayEntries.length === 0 && !explorer.isCreatingFolder}
       <div class="status empty-state">
         <svg width="48" height="48" viewBox="0 0 48 48" fill="none">

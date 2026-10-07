@@ -34,6 +34,8 @@ backend for E2E/browser).
 ## Selection & marquee
 
 - `plugins/inspector-registry.svelte.ts`, `components/PluginInspector.svelte`, `plugins/api.ts` — plugins can contribute an inspector for the active pane selection; the host disposes it with the plugin and hides the panel when no contribution applies.
+- SDK 2 file views: `plugins/file-view-registry.svelte.ts`, `components/PluginFileView.svelte`, `components/FileList.svelte` — a plugin view replaces a pane's listing; it gets a pane-scoped handle (directory, entries, selection, focus, select/open/context menu, Preview targets). `explorer.fileView` is per pane (persisted in window tabs, default from `settingsStore.defaultFileView`); `resolve()` falls back to the built-in view for virtual paths or when `available(dir)` is false, keeping the preference. Built-in view commands and the context menu clear it; `workspace.toggleFileView` returns to the previous built-in mode.
+- SDK 2 Preview: `plugins/preview-registry.svelte.ts`, `components/PluginPreviewTarget.svelte`, `components/PreviewPane.svelte` — Preview-info sections for files or the owning plugin's targets; pane-scoped Preview targets (`explorer.setPreviewTarget(owner, target)`) are non-file subjects with explicit actions, cleared on file selection, folder change and plugin disposal. Runtime SDK keeps `sdkVersion: 1` and adds `apiVersion: 2` + capabilities; manifests declare SDK 1 or 2 (`plugins/installed.ts`, `src-tauri/src/installed_plugins/package.rs`). The demo plugin exercises both (`e2e/plugin-file-views.spec.ts`).
 
 - `composables/use-marquee-selection.svelte.ts` — drag-rect candidate set + hit-testing
 - `composables/use-item-interactions.svelte.ts` — click/ctrl/shift selection, focus

@@ -11,7 +11,9 @@ export function exposePluginSDK():void {
   const target=globalThis as typeof globalThis & {__TAURI_EXPLORER_PLUGIN_SDK__?:unknown};
   if (target.__TAURI_EXPLORER_PLUGIN_SDK__) return;
   Object.defineProperty(target,"__TAURI_EXPLORER_PLUGIN_SDK__",{value:Object.freeze({
-    sdkVersion:1,svelteVersion:SVELTE_ABI,
+    // sdkVersion stays 1: SDK 1 packages require exactly that value. Newer
+    // capabilities are announced through apiVersion and the capability list.
+    sdkVersion:1,apiVersion:2,capabilities:Object.freeze(["fileViews","previewInfo","previewTargets","blobWorkers"]),svelteVersion:SVELTE_ABI,
     modules:Object.freeze({"svelte":svelte,"svelte/internal/client":client,"ui/modal":{default:Modal},"ui/image-editor":{default:ImageEditor}}),
     thumbnailData:getThumbnailData,
     pickSaveFile:(options:{directory:string;filename:string;title:string})=>invoke<string|null>("pick_file",{options:{mode:"save",...options}}),

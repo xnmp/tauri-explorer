@@ -9,7 +9,9 @@ use std::{
     path::{Component, Path, PathBuf},
 };
 
-pub(super) const SDK_VERSION: u32 = 1;
+/// SDK versions this host can run. SDK 2 adds file views, Preview-info
+/// sections and Preview targets; SDK 1 packages keep working unchanged.
+pub(super) const SDK_VERSIONS: std::ops::RangeInclusive<u32> = 1..=2;
 pub(super) const SVELTE_VERSION: &str = "5.56.3";
 const MAX_ARCHIVE: u64 = 256 * 1024 * 1024;
 const MAX_PAYLOAD: u64 = 512 * 1024 * 1024;
@@ -142,7 +144,7 @@ fn target() -> String {
 impl Manifest {
     pub(super) fn validate(&self) -> Result<(), AppError> {
         if self.format_version != 1
-            || self.sdk_version != SDK_VERSION
+            || !SDK_VERSIONS.contains(&self.sdk_version)
             || self.svelte_version != SVELTE_VERSION
         {
             return Err(invalid("Incompatible plugin SDK or Svelte runtime"));

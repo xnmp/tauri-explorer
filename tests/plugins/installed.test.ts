@@ -36,7 +36,7 @@ describe("package installation", () => {
   });
 
   it("reports a package that installed successfully but cannot activate", async () => {
-    const incompatible = { ...entry, enabled: true, manifest: { ...entry.manifest, sdkVersion: 2 } };
+    const incompatible = { ...entry, enabled: true, manifest: { ...entry.manifest, sdkVersion: 3 } };
     invoke.mockImplementation(async (command: string) => command === "pick_file" ? "/downloads/Fixture.teplugin" : command === "list_installed_plugins" ? [incompatible] : incompatible);
     await expect(installPackage(registry)).rejects.toThrow("Fixture was installed but could not start");
     expect(invoke).toHaveBeenCalledWith("install_plugin", { path: "/downloads/Fixture.teplugin" });

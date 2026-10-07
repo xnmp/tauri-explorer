@@ -1,0 +1,41 @@
+<!--
+  Demo file view (SDK 2): a card listing of the pane's entries plus one
+  plugin-owned "virtual card" shown through a Preview target. It exercises
+  the pane-scoped handle: selection, open, context menu and Preview targets.
+-->
+<script lang="ts">
+  import type { FileViewPane } from "$lib/plugins/file-view-registry.svelte";
+
+  let { pane, onGreet }: { pane: FileViewPane; onGreet: () => void } = $props();
+  const selected = $derived(new Set(pane.selection.map((entry) => entry.path)));
+  const target = $derived(pane.previewTarget);
+
+  function showVirtual(): void {
+    pane.setPreviewTarget({
+      id: "demo:virtual",
+      title: "Virtual card",
+      typeLabel: "DEMO",
+      badge: "Unsaved",
+      details: [{ label: "Source", value: "Demo plugin" }],
+      actions: [{ id: "greet", label: "Greet", title: "Show a greeting", run: onGreet }],
+      data: { demo: true },
+    });
+  }
+</script>
+
+<div class="demo-cards" data-testid="demo-file-view">
+  <button type="button" class="card virtual" class:selected={target?.id === "demo:virtual"} onclick={showVirtual}>Virtual card</button>
+  {#each pane.entries as entry (entry.path)}
+    <button type="button" class="card" class:selected={selected.has(entry.path)} data-path={entry.path}
+      onclick={(event) => pane.select(entry, { ctrlKey: event.ctrlKey || event.metaKey, shiftKey: event.shiftKey })}
+      ondblclick={() => void pane.open(entry)}
+      oncontextmenu={(event) => pane.contextMenu(event, entry)}>{entry.name}</button>
+  {/each}
+</div>
+
+<style>
+  .demo-cards { display: flex; flex-wrap: wrap; gap: 8px; padding: 12px; overflow: auto; }
+  .card { min-width: 120px; padding: 12px; font: inherit; color: var(--text-primary); background: var(--control-fill); border: 1px solid var(--control-stroke); border-radius: var(--radius-sm); cursor: pointer; }
+  .card.selected { border-color: var(--accent-text); }
+  .virtual { border-style: dashed; }
+</style>

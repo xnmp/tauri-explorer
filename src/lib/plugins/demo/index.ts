@@ -8,10 +8,16 @@
  *   - a context-menu item (when any entry is selected → toast with its name)
  *   - a settings section (one text row)
  *   - a virtual-fs provider for `demo://`
+ *   - a file view ("Demo Cards") with a Preview target, a Preview-info section,
+ *     and a command toggling the view (SDK 2)
  */
 
 import type { Plugin } from "../api";
 import type { DirectoryListing, FileEntry } from "$lib/domain/file";
+import DemoFileView from "./DemoFileView.svelte";
+import DemoPreviewInfo from "./DemoPreviewInfo.svelte";
+
+export const DEMO_FILE_VIEW = "demo.cards";
 
 const DEMO_ROOT = "demo://";
 
@@ -80,6 +86,26 @@ export const demoPlugin: Plugin = {
 
     ctx.registerFsProvider("demo", {
       list: (path) => listDemo(path),
+    });
+
+    ctx.registerFileView?.({
+      id: DEMO_FILE_VIEW,
+      title: "Demo Cards",
+      component: DemoFileView,
+      props: { onGreet: () => ctx.toast.show("Greetings from the virtual card", "success") },
+    });
+
+    ctx.registerPreviewInfo?.({
+      id: "demo.info",
+      component: DemoPreviewInfo,
+      when: (subject) => subject.kind === "target" || subject.entry.kind === "file",
+    });
+
+    ctx.registerCommand({
+      id: "plugin.demo.toggle-cards",
+      label: "Demo: Toggle Cards View",
+      category: "plugins",
+      handler: () => ctx.workspace.toggleFileView?.(DEMO_FILE_VIEW),
     });
   },
 };

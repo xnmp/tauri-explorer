@@ -16,6 +16,8 @@
  * - Undo (undo.svelte.ts) - global undo stack
  */
 
+import { isFileViewId } from "$lib/domain/file-view-id";
+import { fileViewRegistry } from "$lib/plugins/file-view-registry.svelte";
 import { resolveFileCursor } from "$lib/domain/file-list-navigation";
 import { clampNumericSetting } from "$lib/domain/settings-numbers";
 import { SvelteSet } from "svelte/reactivity";
@@ -47,6 +49,7 @@ import { undoActionLabel } from "./undo-helpers";
 import { broadcastFileChange } from "./file-events";
 
 import type { ExplorerSeed } from "$lib/domain/window-input";
+import type { PreviewTarget } from "$lib/plugins/preview-registry.svelte";
 
 function createExplorerState(seed?: ExplorerSeed) {
   // Listings are immutable revisions. Deep proxies would create per-entry
@@ -82,18 +85,32 @@ function createExplorerState(seed?: ExplorerSeed) {
     cursorPath: null,
   });
 
+  // Plugin file view preference (SDK 2). The built-in viewMode is kept while
+  // a plugin view is chosen, so leaving the plugin view restores it.
+  // The pane's explicit view choice: a plugin view id, null for the built-in
+  // view, or undefined while it follows the default view setting.
+  let fileViewChoice = $state<string | null | undefined>(undefined);
+  const fileView = $derived(fileViewChoice !== undefined ? fileViewChoice
+    : isFileViewId(settingsStore.defaultFileView) ? settingsStore.defaultFileView : null);
+
+  // A plugin's non-file Preview subject. It belongs to the folder it was set
+  // in and yields to any later file selection.
+  let previewTarget = $state.raw<{ owner: string; target: PreviewTarget; directory: string } | null>(null);
+
   /** Replace the selection contents, mutating the reactive Set in place.
    *  Only added/removed keys fire; untouched rows never re-render. */
   function setSelection(next: Iterable<string>): void {
     const cur = coreState.selectedPaths;
     const nextSet = next instanceof Set ? (next as ReadonlySet<string>) : new Set(next);
     if (revealedPath && !nextSet.has(revealedPath)) revealedPath = null;
+    let changed = false;
     for (const path of [...cur]) {
-      if (!nextSet.has(path)) cur.delete(path);
+      if (!nextSet.has(path)) { cur.delete(path); changed = true; }
     }
     for (const path of nextSet) {
-      if (!cur.has(path)) cur.add(path);
+      if (!cur.has(path)) { cur.add(path); changed = true; }
     }
+    if (changed && nextSet.size > 0 && previewTarget) previewTarget = null;
   }
 
   // Inline new-entry creation state (folder or file share the same inline row)
@@ -499,6 +516,17 @@ function createExplorerState(seed?: ExplorerSeed) {
     setSelection(nextSet);
   }
 
+  /** Replace the selection with listed paths; `focus` becomes the primary
+   *  entry (cursor and range anchor). Unknown paths are ignored. */
+  function selectPaths(paths: readonly string[], focus: string | null = null) {
+    const listed = new Set(coreState.entries.map((entry) => entry.path));
+    const next = [...new Set(paths)].filter((path) => listed.has(path));
+    const primary = focus !== null && next.includes(focus) ? focus : next.at(-1) ?? null;
+    setSelection(next);
+    coreState.selectionAnchorPath = primary;
+    if (primary) coreState.cursorPath = primary;
+  }
+
   function selectAll() {
     setSelection(displayEntries.map((e) => e.path));
     coreState.selectionAnchorPath = displayEntries[0]?.path ?? null;
@@ -564,12 +592,18 @@ function createExplorerState(seed?: ExplorerSeed) {
 
   /** Start inline folder creation (shows editable placeholder in file list) */
   function startInlineNewFolder(): void {
-    if (!destroyed) creationSession = { kind: "folder" };
+    if (!destroyed && !showsPluginView()) creationSession = { kind: "folder" };
   }
 
   /** Start inline file creation (touch — shows editable placeholder in file list) */
   function startInlineNewFile(): void {
-    if (!destroyed) creationSession = { kind: "file" };
+    if (!destroyed && !showsPluginView()) creationSession = { kind: "file" };
+  }
+
+  /** Inline rename/creation editors live in the built-in rows; a plugin file
+   *  view (SDK 2) has none, so those flows are unavailable while it shows. */
+  function showsPluginView(): boolean {
+    return fileViewRegistry.resolve(fileView, coreState.currentPath) !== null;
   }
 
   /** Cancel inline new-entry creation */
@@ -792,6 +826,32 @@ function createExplorerState(seed?: ExplorerSeed) {
     // View
     setSorting,
     setViewMode,
+    /** Plugin file view chosen for this pane (null = built-in view mode). */
+    get fileView() { return fileView; },
+    /** The explicit choice to persist (undefined: follows the default). */
+    get fileViewChoice() { return fileViewChoice; },
+    /** A malformed id is treated as the built-in view rather than stored. */
+    setFileView(id: string | null) {
+      const next = id !== null && isFileViewId(id) ? id : null;
+      if (next !== fileView) previewTarget = null;
+      fileViewChoice = next;
+    },
+    /** The plugin preview target for the current folder, if any. */
+    get previewTarget(): { owner: string; target: PreviewTarget } | null {
+      return previewTarget && previewTarget.directory === coreState.currentPath ? previewTarget : null;
+    },
+    setPreviewTarget(owner: string, target: PreviewTarget | null) {
+      if (!target) {
+        if (previewTarget?.owner === owner) previewTarget = null;
+        return;
+      }
+      setSelection([]);
+      coreState.selectionAnchorPath = null;
+      previewTarget = { owner, target, directory: coreState.currentPath };
+    },
+    clearPreviewTargetsOwnedBy(owner: string) {
+      if (previewTarget?.owner === owner) previewTarget = null;
+    },
     // Miller columns (per-pane, #229)
     get millerLayers() {
       return millerLayersOverride ?? settingsStore.millerLayers;
@@ -846,9 +906,11 @@ function createExplorerState(seed?: ExplorerSeed) {
     getSelectedEntries,
     captureMutation,
     selectByIndices,
+    selectPaths,
     selectAll,
     // Dialogs
-    startRename: (entry: FileEntry) => dialogStore.startRename(entry),
+    startRename: (entry: FileEntry) => { if (!showsPluginView()) dialogStore.startRename(entry); },
+    get showsPluginView() { return showsPluginView(); },
     startDelete,
     startPermanentDelete,
     // Context menu

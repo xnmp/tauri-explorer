@@ -2,6 +2,8 @@ import type {Plugin,PluginContext} from "./api";
 import {invoke,extractError,isTauri} from "$lib/api/common";
 import {convertFileSrc} from "@tauri-apps/api/core";
 const SVELTE_ABI="5.56.3";
+/** SDK versions this host runs; must match SDK_VERSIONS in installed_plugins/package.rs. */
+export const SUPPORTED_SDK_VERSIONS:readonly number[]=[1,2];
 
 export interface InstalledPackage {
   digest:string;
@@ -18,7 +20,7 @@ let transition=Promise.resolve();
 function serial(work:()=>Promise<void>):Promise<void>{const next=transition.catch(()=>{}).then(work);transition=next;return next;}
 async function load(entry:InstalledPackage,registry:PackageRegistry):Promise<void> {
   const {manifest}=entry;
-  if(manifest.sdkVersion!==1||manifest.svelteVersion!==SVELTE_ABI)throw new Error(`${manifest.name} requires a different plugin host`);
+  if(!SUPPORTED_SDK_VERSIONS.includes(manifest.sdkVersion)||manifest.svelteVersion!==SVELTE_ABI)throw new Error(`${manifest.name} requires a different plugin host`);
   (await import("./runtime-sdk")).exposePluginSDK();
   const base=`/${manifest.id}/${entry.digest}/`;
   const url=convertFileSrc(base+manifest.frontend,"plugin");

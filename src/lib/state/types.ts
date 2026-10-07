@@ -65,6 +65,10 @@ export interface TabPane {
   /** When set, the pane shows the commit graph for this repo root instead
    *  of the file listing (#272). Toggled by `git.showGraph`. */
   gitGraph?: string;
+  /** Restored plugin file view preference (SDK 2) for a pane whose explorer
+   *  has not been opened yet: a view id, `null` for an explicit built-in
+   *  view, absent when never chosen. Once open, the explorer owns the value. */
+  fileView?: string | null;
   /** Per-pane SCM panel visibility override (#434). `undefined` = follow the
    *  global `showScmPanel` setting; `true`/`false` = an explicit per-pane
    *  choice made via the toggle command. In-memory only (not persisted). */

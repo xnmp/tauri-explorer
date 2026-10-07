@@ -7,6 +7,7 @@
  * localStorage as synchronous fallback for immediate state.
  */
 
+import { isFileViewId } from "$lib/domain/file-view-id";
 import {
   configWriteActivity,
   configWriteRaced,
@@ -88,6 +89,7 @@ export interface Settings {
   listViewColumns: number; // 0 = auto (based on window width), 1-6 = fixed
   listColumnMaxWidth: number; // max width per column in px (used when listViewColumns=0)
   viewMode: ViewMode; // default view mode for new panes
+  defaultFileView: string; // plugin file view id for new panes, "" = built-in view mode
   previewPaneWidth: number; // width in px when docked right, 0 = default (280px)
   previewPaneHeight: number; // height in px when docked top/bottom, 0 = default (240px)
   previewPanePosition: PreviewPanePositionMode; // preview pane dock edge: right (default), bottom, top, or auto (#467, picks the edge from window size)
@@ -164,6 +166,7 @@ const DEFAULT_SETTINGS: Settings = {
   listViewColumns: 0,
   listColumnMaxWidth: 250,
   viewMode: "details",
+  defaultFileView: "",
   previewPaneWidth: 0,
   previewPaneHeight: 0,
   previewPanePosition: "right",
@@ -282,6 +285,7 @@ export function normalizeSettingsInput(value: unknown): Partial<Settings> {
       continue;
     }
     if (typeof candidate !== typeof fallback) continue;
+    if (key === "defaultFileView" && candidate !== "" && !isFileViewId(candidate as string)) continue;
     const allowed = SETTING_ENUMS[key];
     if (allowed && !allowed.includes(candidate as string)) continue;
     (normalized as Record<string, unknown>)[key] = candidate;
@@ -522,6 +526,9 @@ function createSettingsStore() {
     get viewMode() {
       return settings.viewMode;
     },
+    get defaultFileView() {
+      return settings.defaultFileView;
+    },
     get previewPaneWidth() {
       return settings.previewPaneWidth;
     },
@@ -755,6 +762,9 @@ function createSettingsStore() {
     },
     setViewMode(mode: ViewMode): void {
       update({ viewMode: mode });
+    },
+    setDefaultFileView(id: string | null): void {
+      update({ defaultFileView: id !== null && isFileViewId(id) ? id : "" });
     },
     setListViewColumns(n: number): void {
       updateNumber("listViewColumns", n);

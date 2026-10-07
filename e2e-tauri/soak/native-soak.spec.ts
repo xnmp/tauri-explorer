@@ -186,11 +186,15 @@ async function openPalette(query: string): Promise<void> {
 }
 
 async function setDemoPluginEnabled(enabled: boolean): Promise<void> {
-  await browser.keys(["Control", ","]);
-  const dialog = $(".settings-dialog");
+  // Plugin toggles live in the dedicated Plugins dialog, not in Settings.
+  await openPalette("Plugins");
+  await $(
+    "//li[contains(@class, 'command-item')][.//*[contains(@class, 'command-label')][normalize-space()='Plugins']]",
+  ).click();
+  const dialog = $(".plugins-dialog");
   await dialog.waitForDisplayed({ timeout: 5_000 });
-  const row = $(
-    "//div[contains(@class, 'setting-row')][.//*[contains(text(), 'Demo Plugin')]][1]",
+  const row = dialog.$(
+    ".//div[contains(@class, 'setting-row')][.//*[contains(text(), 'Demo Plugin')]][1]",
   );
   await row.waitForExist();
   const checkbox = row.$('input[type="checkbox"]');

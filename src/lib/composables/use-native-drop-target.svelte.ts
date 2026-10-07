@@ -93,6 +93,9 @@ function resolveFromElement(el: Element | null): DropTargetResult {
     return { type: "background", path };
   }
 
+  // Plugin file views own their surface: no implicit move into the folder.
+  if ((el as HTMLElement).closest?.(".plugin-file-view")) return null;
+
   const fileList = (el as HTMLElement).closest?.(".content");
   if (fileList) {
     const path = fileList.getAttribute("data-current-path") || undefined;

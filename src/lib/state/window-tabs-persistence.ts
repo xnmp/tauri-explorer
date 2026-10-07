@@ -16,6 +16,7 @@
 
 import { clampSplitRatio, type PaneNode, type SplitDirection } from "$lib/domain/pane-layout";
 import { isRecord, isWindowPath } from "$lib/domain/window-input";
+import { isFileViewId } from "$lib/domain/file-view-id";
 
 const MAX_PERSISTED_TABS = 4096;
 export const MAX_TOTAL_LAYOUT_NODES = 8192;
@@ -60,7 +61,8 @@ export function persistedStateAllocation(state: unknown, remaining = MAX_TOTAL_L
 /** A pane layout tree with each leaf carrying its directory path.
  *  `gitGraph` marks a pane showing the commit graph for that repo (#272). */
 export type PersistedNode =
-  | { type: "leaf"; id: string; path: string; gitGraph?: string }
+  /** `fileView`: a plugin view id, `null` for an explicit built-in view, absent when never chosen. */
+  | { type: "leaf"; id: string; path: string; gitGraph?: string; fileView?: string | null }
   | {
       type: "split";
       id: string;
@@ -118,6 +120,13 @@ export function toLayoutTree(node: PersistedNode): PaneNode {
   };
 }
 
+/** Keeps a valid view id or an explicit built-in choice; an unknown value is
+ *  dropped (the pane falls back to the default) rather than invalidating its tab. */
+function persistedFileView(value: unknown): { fileView?: string | null } {
+  if (value === null) return { fileView: null };
+  return typeof value === "string" && isFileViewId(value) ? { fileView: value } : {};
+}
+
 function isPersistedNode(node: unknown): node is PersistedNode {
   // Saved workspaces are untrusted input. Bound depth before any recursive
   // layout operation and reject duplicate IDs (including cyclic objects).
@@ -157,7 +166,7 @@ function normalizePersistedTab(tab: unknown): PersistedWindowTab | null {
   // Copy only validated fields; live state must not retain unknown payload
   // objects, and restored geometry follows the same policy as resizing.
   const copyNode = (node: PersistedNode): PersistedNode => node.type === "leaf"
-    ? { type: "leaf", id: node.id, path: node.path, ...(node.gitGraph ? { gitGraph: node.gitGraph } : {}) }
+    ? { type: "leaf", id: node.id, path: node.path, ...(node.gitGraph ? { gitGraph: node.gitGraph } : {}), ...persistedFileView(node.fileView) }
     : { type: "split", id: node.id, direction: node.direction, ratio: clampSplitRatio(node.ratio), first: copyNode(node.first), second: copyNode(node.second) };
   const normalized: PersistedWindowTab = {
     id: source.id, kind: "explorer", layout: copyNode(source.layout), activePaneId: source.activePaneId,

@@ -723,6 +723,10 @@ mod nested_root_tests;
 mod registration_contract_tests;
 
 #[cfg(test)]
+#[path = "../test_support/config_watch_cleanup_return_test.rs"]
+mod cleanup_return_tests;
+
+#[cfg(test)]
 mod tests {
     #[cfg(unix)]
     use super::THEMES_DIR;

@@ -101,7 +101,7 @@ backend for E2E/browser).
 - `state/window-handoff.ts` — correlated destination acknowledgement before source tab removal; late listener/timeout cleanup.
 - `state/window-trace.ts` — production log of launch/hand-off/tab-seed failures and timeouts (phase, elapsed ms, window label); success phases only in hook builds (#884).
 - `domain/window-launch-plan.ts` — pure query/cwd/home precedence and restoration policy.
-- `state/window-session.ts` — page subscription/delayed-work ownership, rollback, and post-readiness warm priming; borrows window-scoped stores.
+- `state/window-session.ts` — page subscription/delayed-work ownership, one-shot launch address-bar focus, rollback, and post-readiness warm priming; borrows window-scoped stores.
 - `src/test-support/e2e-hooks.ts` (+ `window-operations.ts`, `dom-rpc.ts`) — opt-in page-owned native E2E dispatch and readiness with teardown-safe lazy imports/publication; per-op target, picker, unready and in-flight close fixtures cover rejected handoffs and duplicate-label creation ownership. Loaded only via `api/e2e-hooks.ts` `loadE2EHooks()`.
 - `e2e-tauri/owned-windows.ts` — every native handle scan; parked warm pages are found by URL and a `warm-ready` operation, never scripted (#931).
 - `e2e-tauri/window-transfer-waits.ts`, `e2e-tauri/specs/window-transfer-lifetime.spec.ts` — renderer-side correlated observation for native window-operation results and listing entries. `e2e-tauri/diagnostics/window-transfer.ts` retains window/runtime evidence for transfer and clipboard failures (#710).

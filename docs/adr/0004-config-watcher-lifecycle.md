@@ -30,7 +30,13 @@ retain surviving native registrations without duplicating them. Every obsolete
 descendant keeps its own cleanup obligation until its removal succeeds, even if
 an ancestor removal partially failed. Failed restorations remain missing coverage
 and are retried on later refreshes. Failed removals remain tracked separately
-from the current plan and are retried; an already-absent watch completes cleanup.
+from confirmed active registrations and are retried; an already-absent watch
+completes cleanup. Returning to a root with pending cleanup first resolves that
+cleanup, then registers fresh coverage, preventing both lost coverage after a
+partial removal and duplicate native callback owners after a failed removal.
+If cleaning a returning ancestor invalidates the previous plan's descendants
+and the return registration fails, rollback restores their native coverage as
+well as the previous callback mapping.
 Successful retargets do not retain historical roots.
 Shared file parents and theme directories use stable recursive coverage so one
 role cannot downgrade another role's watch. The current plan filters delayed

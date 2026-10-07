@@ -163,6 +163,13 @@ inotify event-loop barrier before probing the canonical nested settings target.
 Keep source-included Rust test filenames ending in `_test.rs` so the publication
 gate recognizes them, and retain the public integration test when testing with
 the entire implementation file reverted.
+Pending config-watch removals are cleanup obligations, not confirmed coverage.
+On a return retarget, complete uncertain cleanup before registering the root
+again; otherwise an unregister error after native removal can leave that root
+permanently unwatched, or an error before removal can duplicate native owners.
+If cleaning the returning root removes the previous plan's descendants, restore
+their coverage on registration rollback. The return/failure contracts live in
+`src-tauri/test_support/config_watch_cleanup_return_test.rs` (#938, ADR 0004).
 
 The public report relay under `website/api/` uses `GITHUB_ISSUE_TOKEN` only for issue creation. Production spam counters must use the shared REST KV variables `KV_REST_API_URL` and `KV_REST_API_TOKEN`; when Vercel is detected without them the endpoint fails closed. The in-memory counter is intentionally limited to local development and unit tests.
 

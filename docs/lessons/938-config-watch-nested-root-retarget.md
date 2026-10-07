@@ -29,3 +29,12 @@ reverted. It waits for the ancestor inode to leave `/proc/self/fdinfo`, then
 receives a first-ever bookmarks event as a barrier for the native removal's
 callback thread before probing the canonical nested target. No fixed refresh
 sleep or symlink-entry callback can substitute for completed ancestor retirement.
+
+A failed unregister is ambiguous: it can leave a native watch active or report
+an error after removing it. Keep pending removals separate from confirmed active
+coverage. If the symlink returns to that root before cleanup succeeds, resolve
+the cleanup and establish fresh coverage rather than trusting the old map entry.
+When returning-ancestor cleanup invalidates the previous plan's descendants,
+restore their native coverage if registration fails and the plan rolls back.
+`src-tauri/test_support/config_watch_cleanup_return_test.rs` checks one callback
+after returning under both failure models, cleanup retry, and rollback coverage.

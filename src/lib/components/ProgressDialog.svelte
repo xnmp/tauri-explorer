@@ -10,11 +10,21 @@
   } from "$lib/state/operations.svelte";
   import { jobsStore } from "$lib/state/jobs.svelte";
   import { formatSize } from "$lib/domain/file";
+  import { imageJobProgress, formatJobDuration } from "$lib/domain/image-job-progress";
+
+  let now = $state(Date.now());
 
   const operations = $derived(operationsManager.showProgressDialog ? operationsManager.operations : []);
   const imageJobs = $derived(jobsStore.jobs.filter((job) => job.presentation === "image"));
   const showDialog = $derived(operationsManager.showProgressDialog);
   const hasActive = $derived(operationsManager.hasActiveOperations || imageJobs.some((job) => job.status === "running"));
+
+  $effect(() => {
+    if (!imageJobs.some(job => job.status === "running")) return;
+    now = Date.now();
+    const timer = setInterval(() => { now = Date.now(); }, 1000);
+    return () => clearInterval(timer);
+  });
 
   function handleRetry(op: Operation): void {
     operationsManager.retryOperation(op.id);
@@ -199,6 +209,7 @@
           </div>
         {/each}
         {#each imageJobs as job (job.id)}
+          {@const timing = imageJobProgress(job, jobsStore.jobs, now)}
           <div class="operation-item" class:error={job.status === "error"}>
             <div class="operation-info">
               <div class="operation-icon" aria-hidden="true">
@@ -208,7 +219,15 @@
               <div class="operation-details">
                 <div class="operation-name"><span class="file-name">{job.label}</span></div>
                 <p class="job-prompt">{job.detail}</p>
-                <div class="status-text" role="status">{job.status === "running" ? "Generating…" : job.status === "completed" ? "Complete" : job.error}</div>
+                {#if job.status === "running"}
+                  <div class="progress-bar-container" role="progressbar" aria-label="Estimated image generation progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow={timing.percent} aria-valuetext={`${timing.percent}% estimated`}>
+                    <div class="progress-bar" style:width={`${timing.percent}%`}></div>
+                  </div>
+                  <div class="progress-text">~{timing.percent}% estimated · {timing.overdue ? "Taking longer than estimated" : `~${formatJobDuration(timing.remainingMs)} remaining`}</div>
+                {:else}
+                  <div class="status-text" role="status">{job.status === "completed" ? "Complete" : job.error}</div>
+                {/if}
+                <div class="status-text">{formatJobDuration(timing.elapsedMs)} elapsed</div>
               </div>
             </div>
             {#if job.status !== "running"}

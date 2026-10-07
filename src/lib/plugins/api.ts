@@ -30,6 +30,7 @@ import type { FileEntry } from "$lib/domain/file";
 import { parentDir, sameDirectory } from "$lib/domain/path";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { pluginJobsController, type PluginJobKind } from "$lib/state/plugin-jobs";
+import { observeActiveDirectory } from "$lib/composables/observe-active-directory.svelte";
 import { extractError, type ApiResult } from "$lib/api/common";
 import { logFrontendError } from "$lib/api/crash";
 import { subscribeToLocalFileChanges } from "$lib/state/file-events";
@@ -63,6 +64,7 @@ export interface PluginStorage {
   set(value: Record<string, unknown>): Promise<void>;
   /** Acknowledged saves reject when native persistence fails. */
   setChecked?(value: Record<string, unknown>): Promise<void>;
+  subscribe?(listener: (value: Record<string,unknown>)=>void): ()=>void;
 }
 
 /** Window-owned background jobs survive plugin activation changes. */
@@ -100,6 +102,8 @@ export interface PluginMoveResult {
  * do to the file view.
  */
 export interface PluginWorkspace {
+  getCurrentDirectory?(): string | null;
+  onDirectoryChanged?(handler: (path:string|null)=>void): void;
   /** Capture active pane and selection ownership for an asynchronous action. */
   captureSelection(): () => boolean;
   /** Entries selected in the active pane. Empty when nothing is selected or
@@ -181,6 +185,9 @@ export interface Plugin {
 /** Plugin-scoped storage backed by `plugin.<id>.json` via the config commands. */
 export function createPluginStorage(pluginId: string): PluginStorage {
   const filename = `plugin.${pluginId}.json`;
+  const listeners = new Set<(value:Record<string,unknown>)=>void>();
+  let revision = 0;
+  function notify(value: Record<string,unknown>) { for(const listener of listeners) { try { listener(structuredClone(value)); } catch(error) { console.error("[plugins] storage subscriber failed",error); } } }
   return {
     async get(): Promise<Record<string, unknown>> {
       const result = await readConfigFile(filename);
@@ -195,11 +202,18 @@ export function createPluginStorage(pluginId: string): PluginStorage {
       return {};
     },
     async set(value: Record<string, unknown>): Promise<void> {
-      await writeConfigQueued(filename, JSON.stringify(value, null, 2));
+      const current = ++revision;
+      const snapshot = JSON.stringify(value, null, 2);
+      await writeConfigQueued(filename, snapshot);
+      if (current === revision) notify(JSON.parse(snapshot));
     },
     async setChecked(value: Record<string, unknown>): Promise<void> {
-      await writeConfigQueued(filename, JSON.stringify(value, null, 2), filename, true);
+      const current = ++revision;
+      const snapshot = JSON.stringify(value, null, 2);
+      await writeConfigQueued(filename, snapshot, filename, true);
+      if (current === revision) notify(JSON.parse(snapshot));
     },
+    subscribe(listener) { listeners.add(listener); return ()=>listeners.delete(listener); },
   };
 }
 
@@ -341,6 +355,8 @@ export function createPluginContext(
       await Promise.all(sections.slice(1).map((section)=>section.applySaved(patch)));
     },
     workspace: {
+      getCurrentDirectory:()=>windowTabsManager.getActiveExplorer()?.currentPath ?? null,
+      onDirectoryChanged:handler=>track(observeActiveDirectory(handler)),
       captureSelection:()=>{
         const explorer=windowTabsManager.getActiveExplorer();
         const lease=explorer?.captureMutation();

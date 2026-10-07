@@ -289,6 +289,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `use-drop-target.svelte.ts` — directory-entry drop-target behavior.
 - `use-native-drop-target.svelte.ts` — position-based drop target detection.
 - `use-native-drop-handler.ts` — handle native (external) OS file drops.
+- `src/lib/composables/observe-active-directory.svelte.ts` — lifecycle-owned plugin observation of the active workspace directory without polling or cloning its listing.
 - `use-external-drop.svelte.ts` — external file drops into the app.
 - `use-external-drag.svelte.ts` — native OS drag out to other apps (VSCode/Finder).
 - `use-pointer-drag.svelte.ts` — pointer-event drag for macOS (in-app DnD). [modified on branch]
@@ -305,6 +306,9 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `use-row-grid-view.svelte.ts` — shared virtualization wiring (rows, DnD, new-folder sentinel, scrollToIndex) for List + Tiles views.
 
 ## src/lib/domain/ — pure logic, no framework deps. Test + reuse here.
+
+- `src/lib/domain/image-job-progress.ts` — elapsed image-job timing and explicitly estimated progress from bounded successful-job history.
+- `src/lib/domain/native-drop-paths.ts` — filesystem-only path admission for native drops; excludes blob URLs, relative paths and traversal before any transfer, bookmark or terminal action.
 
 - `src/lib/domain/file-recovery.ts` — recovery snapshot, choice and native-port contracts with bounded lossless decimal-counter validation/ordering; inspection returns an ordered snapshot. Also formats retained sizes and summarizes storage against both retention budgets (`tests/domain/file-recovery-retention.test.ts`), and owns the confirmation copy for irreversible choices, including Forget for a stranded move discard (`tests/file-recovery-confirmation.test.ts`).
 

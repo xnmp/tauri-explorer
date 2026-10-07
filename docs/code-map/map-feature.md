@@ -177,7 +177,7 @@ backend for E2E/browser).
 - Native history lifetime acceptance: `src/test-support/file-history-probe.ts` observes the production summary channel and dispatches real IPC; `src-tauri/test_support/file_history_gate.rs` holds accepted native work before filesystem execution only in opt-in recovery builds. `e2e-tauri/specs/file-history-lifetime.spec.ts` verifies actual shared inverse outcomes across windows; `e2e-tauri/specs/file-forward-history.spec.ts` verifies native rename history before renderer completion and accepted forward work after native window destruction.
 - `src/test-support/file-mutation-probe.ts` — opt-in native hold between successful file IPC and renderer publication, with tokened release and teardown.
 - `state/operations.svelte.ts` — `operationsManager`: tracked long ops, `formatBytes`
-- `components/ProgressDialog.svelte`, `components/JobsPanel.svelte`, `state/jobs.svelte.ts` — progress UI
+- `components/ProgressDialog.svelte`, `components/JobsPanel.svelte`, `state/jobs.svelte.ts` — progress UI; `src/lib/domain/image-job-progress.ts` supplies elapsed image-generation timing and clearly labeled estimates, capped below completion until a successful result.
 - `components/ConflictDialog.svelte`, `state/conflict-resolver.svelte.ts` — overwrite/rename prompts
 - `api/files.ts` (estimateSize, checkPathsExist), `api/copy-session.ts`, `api/os-clipboard.ts`
 - `domain/file.ts` (`FileMutationReceipt`) + `src-tauri/src/files/mutation.rs` — committed path separate from optional entry metadata; missing snapshots reconcile through the existing pane refresh.

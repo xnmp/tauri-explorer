@@ -65,3 +65,108 @@ test('title-generator settings notify subscribers after persisting reactive sect
   await expect.poll(()=>page.evaluate(()=>(window as any).titleStorageContract.notifications)).toEqual([{titleGenerator:'disabled'}]);
   await expect.poll(()=>page.evaluate(async()=>(await (window as any).titleStorageContract.storage.get()).titleGenerator)).toBe('disabled');
 });
+
+test("plugin directory observers follow navigation and stop when their context retires", async ({ page }) => {
+  await page.goto(HOME_URL);
+  await waitForEntries(page);
+  await page.evaluate(async () => {
+    const { createPluginContext } = await import("/src/lib/plugins/api.ts");
+    const { ctx, dispose } = createPluginContext("directory-observer-contract");
+    const paths: Array<string | null> = [];
+    (window as any).directoryObserverContract = { ctx, dispose, paths };
+    ctx.workspace.onDirectoryChanged?.(path => paths.push(path));
+  });
+  await expect.poll(() => page.evaluate(() => (window as any).directoryObserverContract.paths)).toEqual(["/home/user"]);
+  await page.evaluate(() => (window as any).directoryObserverContract.ctx.workspace.navigate("/home/user/Documents"));
+  await expect.poll(() => page.evaluate(() => (window as any).directoryObserverContract.paths)).toEqual(["/home/user", "/home/user/Documents"]);
+  const before = await page.evaluate(() => {
+    const contract = (window as any).directoryObserverContract;
+    contract.dispose();
+    return [...contract.paths];
+  });
+  await page.evaluate(() => (window as any).directoryObserverContract.ctx.workspace.navigate("/home/user/Downloads"));
+  await expect.poll(() => page.evaluate(async () => {
+    const { windowTabsManager } = await import("/src/lib/state/window-tabs.svelte.ts");
+    return windowTabsManager.getActiveExplorer()?.currentPath;
+  })).toBe("/home/user/Downloads");
+  await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
+  expect(await page.evaluate(() => (window as any).directoryObserverContract.paths)).toEqual(before);
+});
+
+async function publishUnlistedImage(page: import("@playwright/test").Page) {
+  await page.goto(HOME_URL);
+  await waitForEntries(page);
+  await page.locator(".entry-item").filter({ hasText: "readme.txt" }).click();
+  await page.evaluate(async () => {
+    const { createPluginContext } = await import("/src/lib/plugins/api.ts");
+    const { windowTabsManager } = await import("/src/lib/state/window-tabs.svelte.ts");
+    const { mockInvoke } = await import("/src/lib/api/mock-invoke.ts");
+    const { ctx, dispose } = createPluginContext("published-image-selection-contract");
+    const explorer = windowTabsManager.getActiveExplorer()!;
+    await mockInvoke("create_empty_file", { parentPath: "/home/user", name: "published.png" });
+    (window as any).publishedImageContract = { ctx, dispose, explorer, target: "/home/user/published.png" };
+  });
+  await expect(page.locator(".entry-item").filter({ hasText: "published.png" })).toHaveCount(0);
+}
+
+test("plugin file selection refreshes before revealing a newly published image", async ({ page }) => {
+  await publishUnlistedImage(page);
+  await page.evaluate(async () => {
+    const contract = (window as any).publishedImageContract;
+    await contract.ctx.workspace.selectFile(contract.target);
+    contract.dispose();
+  });
+  await expect(page.locator(".entry-item.selected")).toContainText("published.png");
+  await expect(page.getByText("This recorded file is no longer present", { exact: true })).toHaveCount(0);
+});
+
+test("plugin file selection follows a superseding refresh of the same folder", async ({ page }) => {
+  await publishUnlistedImage(page);
+  await page.evaluate(async () => {
+    const contract = (window as any).publishedImageContract;
+    const selecting = contract.ctx.workspace.selectFile(contract.target);
+    const refreshing = contract.explorer.refresh({ silent: true });
+    await Promise.all([selecting, refreshing]);
+    contract.dispose();
+  });
+  await expect(page.locator(".entry-item.selected")).toContainText("published.png");
+  await expect(page.getByText("This recorded file is no longer present", { exact: true })).toHaveCount(0);
+});
+
+test("plugin file selection preserves a newer selection made during its refresh", async ({ page }) => {
+  await publishUnlistedImage(page);
+  await page.evaluate(async () => {
+    const contract = (window as any).publishedImageContract;
+    const selecting = contract.ctx.workspace.selectFile(contract.target);
+    contract.explorer.selectEntry(contract.explorer.state.entries.find((entry: { path: string }) => entry.path === "/home/user/notes.md"));
+    await selecting;
+    contract.dispose();
+  });
+  await expect(page.locator(".entry-item.selected")).toContainText("notes.md");
+  await expect(page.locator(".entry-item").filter({ hasText: "published.png" })).toBeVisible();
+  await expect(page.getByText("This recorded file is no longer present", { exact: true })).toHaveCount(0);
+});
+
+test('plugin chord defaults appear in Keyboard Shortcuts and user overrides execute',async({page})=>{
+  await page.goto(HOME_URL);await waitForEntries(page);
+  await page.evaluate(async()=>{
+    const {createPluginContext}=await import('/src/lib/plugins/api.ts');
+    const context=createPluginContext('trace-shortcut-contract');
+    (window as any).traceShortcutCalls=0;(window as any).traceShortcutContext=context;
+    context.ctx.registerCommand({id:'fixture.trace-toggle',label:'Toggle Trace Pane',category:'view',shortcut:'Alt+M P',handler:()=>{(window as any).traceShortcutCalls+=1;}});
+  });
+  await page.keyboard.press('Alt+m');await page.keyboard.press('p');
+  await expect.poll(()=>page.evaluate(()=>(window as any).traceShortcutCalls)).toBe(1);
+  await page.keyboard.press('Control+,');await page.getByRole('button',{name:'Open Keyboard Shortcuts',exact:true}).click();
+  await page.getByLabel('Search shortcuts').fill('Toggle Trace Pane');
+  const row=page.locator('.shortcut-row').filter({hasText:'Toggle Trace Pane'});
+  await expect(row.locator('.shortcut-btn')).toContainText('then');
+  await row.locator('.shortcut-btn').click();await page.keyboard.press('Control+Alt+y');
+  await expect(row.locator('.shortcut-btn')).toContainText('Y');
+  await page.getByRole('button',{name:'Close keyboard shortcuts',exact:true}).click();
+  await page.keyboard.press('Escape');await page.keyboard.press('Control+Alt+y');
+  await expect.poll(()=>page.evaluate(()=>(window as any).traceShortcutCalls)).toBe(2);
+  await page.evaluate(()=>(window as any).traceShortcutContext.dispose());
+  await page.keyboard.press('Control+Alt+y');
+  expect(await page.evaluate(()=>(window as any).traceShortcutCalls)).toBe(2);
+});

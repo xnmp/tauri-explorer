@@ -423,3 +423,23 @@ describe("createPaneRefresh", () => {
     expect(navigateToParent).not.toHaveBeenCalled();
   });
 });
+
+describe('refresh completion for listing consumers',()=>{
+  it('a superseded refresh completes only after the newer same-folder snapshot is published',async()=>{
+    const state=coreState([]);
+    let firstResult!: (value:Awaited<ReturnType<DirListing['load']>>)=>void;
+    let secondResult!: (value:Awaited<ReturnType<DirListing['load']>>)=>void;
+    let calls=0;
+    const listing:DirListing={load:()=>new Promise(resolve=>{if(calls++===0)firstResult=resolve;else secondResult=resolve;}),cleanup:async()=>{}};
+    const {refresh}=makeRefresh(state,listing);
+    let consumerNames:string[]|undefined;
+    const first=refresh({silent:true}).then(()=>{consumerNames=state.entries.map(item=>item.name);});
+    const second=refresh({silent:true});
+    firstResult({ok:false,cancelled:true,error:'superseded'});
+    await Promise.resolve();await Promise.resolve();
+    expect(consumerNames).toBeUndefined();
+    secondResult({ok:true,path:'/d',entries:[entry('published.png')]});
+    await Promise.all([first,second]);
+    expect(consumerNames).toEqual(['published.png']);
+  });
+});

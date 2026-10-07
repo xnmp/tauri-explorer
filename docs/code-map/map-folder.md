@@ -749,7 +749,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `src/lib/api/mock-image-crop.ts` — synthetic PNG/JPEG browser fixtures that save actual cropped pixels into the mock listing; native formats and file safety are verified separately.
 - `src/lib/state/image-crop-session.ts` — editor opening, crop coordinates, blob ownership and accepted-save lifetime.
 - `src/lib/state/image-crop-effects.ts` — crop receipt publication through shared pane refresh and thumbnail invalidation.
-- `src/lib/components/ImageCropEditor.svelte` — original image crop dialog with pixel controls and explicit copy/replacement choices.
+- `src/lib/components/ImageCropEditor.svelte` — image editor surface fixed to its opening tool: core crop uses pixel/copy/replacement controls, while plugin AI openings show only their editor.
 - `src/lib/components/ImageCropCanvas.svelte` — measured-image pointer/keyboard crop edges with fit/zoom and scroll panning.
 - `src-tauri/src/image_crop/gif_crop.rs` — indexed GIF crop preserving frame regions, palettes, disposal, timing and looping.
 - `src-tauri/src/image_crop/icon_crop.rs` — validates ICNS/embedded PNG/JP2 bounds and preserves original canvas sizes with transparent crop padding.

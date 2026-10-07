@@ -380,8 +380,13 @@ export function createPluginContext(
         const explorer = windowTabsManager.getActiveExplorer();
         if (!explorer) return;
         if (!sameDirectory(explorer.state.currentPath, parentDir(path))) await explorer.navigateTo(parentDir(path));
+        if (windowTabsManager.getActiveExplorer() !== explorer || !sameDirectory(explorer.state.currentPath, parentDir(path))) return;
         if (explorer.revealEntry(path)) return;
-        else toastStore.show("This recorded file is no longer present", "info");
+        // Newly published files can precede the filesystem watcher's listing refresh.
+        const lease = explorer.captureMutation();
+        await explorer.refresh({ silent: true });
+        if (windowTabsManager.getActiveExplorer() !== explorer || !lease.current() || !lease.selectionCurrent()) return;
+        if (!explorer.revealEntry(path)) toastStore.show("This recorded file is no longer present", "info");
       },
       // Refresh every explorer instance (across tabs), silently — a plugin's
       // background job may have written a file into any pane's directory.

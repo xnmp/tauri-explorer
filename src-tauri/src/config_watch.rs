@@ -73,6 +73,9 @@ struct WatchPlan {
 struct Registrations<W> {
     watcher: W,
     external_roots: HashMap<PathBuf, RecursiveMode>,
+    /// An ancestor unwatch can remove the config directory's native coverage.
+    /// Keep that obligation separate from the external-root plan for retries.
+    config_root_needs_restore: bool,
 }
 
 /// Registration operations of a filesystem watcher.
@@ -384,6 +387,7 @@ where
     let registrations = Registrations {
         watcher,
         external_roots: external_roots.into_iter().collect(),
+        config_root_needs_restore: false,
     };
 
     let stop = Arc::new(StopSignal::default());
@@ -691,6 +695,7 @@ mod tests {
         let registrations = Registrations {
             watcher,
             external_roots: initial.external_roots.iter().cloned().collect(),
+            config_root_needs_restore: false,
         };
         (Arc::new(Mutex::new(initial)), registrations)
     }
@@ -888,6 +893,7 @@ mod tests {
                 blocked: Vec::new(),
             },
             external_roots: HashMap::from([(old.clone(), RecursiveMode::NonRecursive)]),
+            config_root_needs_restore: false,
         };
 
         reconcile_watch_plan(
@@ -950,6 +956,7 @@ mod tests {
         let mut registrations = Registrations {
             watcher,
             external_roots: HashMap::from([(first.clone(), RecursiveMode::NonRecursive)]),
+            config_root_needs_restore: false,
         };
 
         let writing = Arc::new(AtomicBool::new(true));
@@ -1039,6 +1046,7 @@ mod tests {
                 let mut registrations = Registrations {
                     watcher: StuckWatcher(gate),
                     external_roots: HashMap::new(),
+                    config_root_needs_restore: false,
                 };
                 let _ = entered.send(());
                 reconcile_watch_plan(

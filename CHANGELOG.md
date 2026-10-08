@@ -2,6 +2,16 @@
 
 All notable changes to Tauri Explorer.
 
+## Unreleased
+
+### Fixed
+
+- Preview no longer blanks the image for a frame or more when the selection
+  moves from one image to another: the previous image stays until the next
+  one is decoded (with a spinner over it if that takes a while), so the pane
+  does not flash or re-lay out. Plugin Preview-info sections can now line up
+  with the host's info rows in every dock through `--preview-info-inset`.
+
 ## v1.11.3 — 2026-10-08
 
 This update adds installable plugins with a revamped plugin SDK, AI image

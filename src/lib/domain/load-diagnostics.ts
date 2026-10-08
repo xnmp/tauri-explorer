@@ -12,8 +12,9 @@ export const SLOW_LOAD_THRESHOLD_MS = 5000;
 /** Bounds keep a pathological workload from growing a record. */
 export const MAX_TRACE_SPANS = 32;
 export const MAX_OTHERS_IN_FLIGHT = 5;
-/** Report-dialog defaults: recent records only, and only a few of them. */
-export const REPORTABLE_SLOW_LOAD_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
+/** Report-dialog defaults: records from the last day only (older ones are
+ *  unlikely to be the bug being reported), and only a few of them. */
+export const REPORTABLE_SLOW_LOAD_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 export const MAX_REPORTED_SLOW_LOADS = 3;
 /** Must not exceed the native `MAX_DIAGNOSTICS_UNITS` in `user_report.rs`. */
 export const MAX_SLOW_LOAD_REPORT_UNITS = 6000;
@@ -189,7 +190,8 @@ export interface FrontendSlowLoadRecord {
   capturedAt: number;
   elapsedMs: number;
   thresholdMs: number;
-  outcome: "pending" | LoadOutcome;
+  /** `cancelled` comes only from native-only records (a dropped command). */
+  outcome: "pending" | LoadOutcome | "cancelled";
   pendingPhase: string | null;
   phases: RecordedPhase[];
   queuedBehind: { path: string; reason: string; elapsedMs: number; traceId: string | null } | null;
@@ -317,7 +319,9 @@ const PHASE_LABELS: Record<string, string> = {
   "read-dir": "reading directory entries (readdir)",
   "entry-metadata": "per-entry metadata (stat, symlink targets, git-repo probe)",
   sort: "sorting entries",
-  respond: "returning the listing",
+  respond: "handing the reply to Tauri",
+  serialize: "encoding the reply for the webview",
+  "ipc-reply": "waiting on the IPC reply / webview",
 };
 
 export function describePhase(phase: string): string {
@@ -336,13 +340,30 @@ function slowest<T extends { durationMs: number }>(spans: readonly T[]): T | und
   return spans.reduce<T | undefined>((best, span) => (!best || span.durationMs > best.durationMs ? span : best), undefined);
 }
 
+/** Mirrors `IPC_GAP_MIN_MS` in `src-tauri/src/load_diagnostics/mod.rs`. */
+const IPC_GAP_MIN_MS = 1000;
+
 /**
  * The phase that explains the delay: the pending phase while the load is
  * stuck, else the slowest one. When that is the native command, descend into
- * the native breakdown.
+ * the native breakdown — unless the native command had already finished and
+ * most of the frontend's wait came after it (the reply's transfer and decode
+ * in the webview), which is then reported as the IPC reply.
  */
 export function diagnoseSlowLoad(record: Pick<SlowLoadRecord, "phases" | "native">): SlowLoadCulprit | null {
   const frontend = record.phases.find((phase) => phase.pending) ?? slowest(record.phases);
+  if (frontend?.phase === "native" && record.native && record.native.outcome !== "pending") {
+    const commandMs = record.native.elapsedMs;
+    const gap = frontend.durationMs - commandMs;
+    if (gap >= IPC_GAP_MIN_MS && gap >= commandMs) {
+      return {
+        phase: "ipc-reply",
+        label: `native command finished in ${formatSeconds(commandMs)}; ${describePhase("ipc-reply")}`,
+        durationMs: gap,
+        pending: frontend.pending,
+      };
+    }
+  }
   const native = record.native
     ? record.native.phases.find((phase) => phase.pending) ?? slowest(record.native.phases)
     : undefined;
@@ -376,11 +397,14 @@ function formatNative(native: NativeLoadSnapshot): string[] {
   lines.push(
     `   entries: ${native.entriesListed} listed · ${native.entriesStatted} statted${native.statFailures ? ` (${native.statFailures} failed)` : ""} · ${native.entriesDone} done · stat ${formatSeconds(native.statMs)} · symlink/git probes ${formatSeconds(native.resolveMs)} · ${native.symlinks} symlinks · git probe ${native.gitRepoProbe ? "on" : "off"}`,
   );
+  // Counts and timings only: file names stay in the local record and are
+  // never part of the public report text.
   if (native.stalledEntries.length > 0) {
-    lines.push(`   stalled entries: ${native.stalledEntries.map((entry) => `${entry.name} (${formatSeconds(entry.elapsedMs)})`).join(", ")}`);
+    const longest = Math.max(...native.stalledEntries.map((entry) => entry.elapsedMs));
+    lines.push(`   stalled entries: ${native.stalledEntries.length} (longest ${formatSeconds(longest)})`);
   }
   if (native.slowestEntry) {
-    lines.push(`   slowest entry: ${native.slowestEntry.name} (${formatSeconds(native.slowestEntry.elapsedMs)})`);
+    lines.push(`   slowest single entry: ${formatSeconds(native.slowestEntry.elapsedMs)}`);
   }
   return lines;
 }
@@ -425,8 +449,8 @@ const units = (value: string) => value.length; // UTF-16 code units, as the rela
 
 /**
  * Format as many whole records as fit `maxUnits`, newest first, and say how
- * many were included. A single record larger than the budget is cut at a
- * line boundary.
+ * many were included. A first record larger than the budget is cut at a
+ * line boundary; a first line larger than the budget is itself shortened.
  */
 export function fitSlowLoadsForReport(
   records: readonly SlowLoadRecord[],
@@ -447,6 +471,10 @@ export function fitSlowLoadsForReport(
       for (const line of block.split("\n")) {
         if (units([...kept, line].join("\n")) > maxUnits) break;
         kept.push(line);
+      }
+      if (kept.length === 0 && maxUnits > 1) {
+        // Never split a surrogate pair at the cut.
+        kept.push(`${block.slice(0, maxUnits - 1).replace(/[\uD800-\uDBFF]$/, "")}…`);
       }
       if (kept.length > 0) blocks.push(kept.join("\n"));
     }

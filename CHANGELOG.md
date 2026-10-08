@@ -10,11 +10,13 @@ All notable changes to Tauri Explorer.
   why while the load is still stuck: which step was waiting (queued behind
   another listing, file-watcher setup, reading the directory, per-entry
   metadata, sorting, and so on), entries read so far, any entry whose
-  metadata read is hanging, and the folder's filesystem type (for example an
-  sshfs, rclone or NFS mount). Records are kept in the `slow-loads` folder
-  inside the logs folder, and Report Issue offers to attach recent ones to a
-  bug report, showing exactly what will be sent; they include folder paths
-  and can be excluded (#1022).
+  metadata read is hanging, time spent encoding or delivering a very large
+  listing, and the folder's filesystem type (for example an sshfs, rclone or
+  NFS mount, also when reached through a symlink). Records are kept in the
+  `slow-loads` folder inside the logs folder, and Report Issue offers to
+  attach those from the last 24 hours to a bug report, showing exactly what
+  will be sent; they include folder paths but no file names, and can be
+  excluded (#1022).
 
 ### Fixed
 

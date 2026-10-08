@@ -129,6 +129,7 @@ describe("slow-load tracing (#1022)", () => {
     const blockers: unknown[] = [];
     return {
       id,
+      watched: true as const,
       phases,
       blockers,
       phase: (phase: string) => { phases.push(phase); },
@@ -153,7 +154,9 @@ describe("slow-load tracing (#1022)", () => {
       { path: "/slow", reason: "refresh", startedMono: 100, traceId: "1791000000000-refresh" },
     ]);
     expect(loadDirectory).toHaveBeenCalledTimes(1);
-    expect(loadDirectory.mock.calls[0][2]).toMatchObject({ id: "1791000000000-refresh" });
+    // Traced so a navigation behind it can be explained, but not watched:
+    // nothing records a background refresh on its own.
+    expect(loadDirectory.mock.calls[0][2]).toMatchObject({ id: "1791000000000-refresh", watched: false });
 
     stuck.resolve(snapshot());
     await expect(refresh).resolves.toMatchObject({ ok: false, cancelled: true });

@@ -479,11 +479,13 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `shared_history/mod.rs`, `shared_history/model.rs`, `shared_history/store.rs` — async IPC, pure bounded history policy and cross-process SQLite transactions.
 - `portal.rs` — xdg-desktop-portal FileChooser backend (Linux).
 - `crash_report.rs` — local crash capture (#184).
-- `load_diagnostics/mod.rs` — slow directory-load records (#1022): merges the frontend record with the native trace, blocker and filesystem and hands it to `persist.rs`; native fallback record for a listing still in flight after 7 s.
+- `load_diagnostics/mod.rs` — slow directory-load records (#1022): merges the frontend record with the native trace and blocker and hands it to `persist.rs`; culprit naming (including an IPC-reply gap after a settled native command); `begin_listing` arms the fallback for watched listings.
+- `load_diagnostics/fallback.rs` — native-only record for a watched listing still in flight after 7 s, settled with its outcome when the listing finishes; background refreshes are never armed.
+- `load_diagnostics/reply.rs` — `TracedReply`: keeps a listing's trace open until Tauri serializes the reply, timing the encoding as the `serialize` phase.
 - `load_diagnostics/trace.rs` — in-flight native listing traces: phase timeline, per-entry progress and stalled-entry slots, finished ring; untraced listings are no-ops.
-- `load_diagnostics/filesystem.rs` — mount-table-only filesystem type/category for a path (Linux mountinfo, macOS `getfsstat(MNT_NOWAIT)`, Windows UNC/`GetDriveTypeW`); never stats the possibly hung directory.
+- `load_diagnostics/filesystem.rs` — filesystem type/category for a path from the mount table (Linux mountinfo, macOS `getfsstat(MNT_NOWAIT)`, Windows UNC/`GetDriveTypeW`), after resolving symlinks that live on local mounts only; never stats the possibly hung directory.
 - `load_diagnostics/store.rs` — bounded rotating JSON records under `<app log dir>/slow-loads/` (newest 20, replace by trace ID).
-- `load_diagnostics/persist.rs` — record precedence (settled beats late pending, frontend beats native fallback), bounded in-memory session records, and one dedicated writer thread; `recent_slow_loads` reads disk on its own thread with a timeout.
+- `load_diagnostics/persist.rs` — record precedence (frontend beats native fallback; within a source settled beats late pending; re-checked against the file on disk), bounded in-memory session records, and one dedicated writer thread that also fills in the filesystem (time-bounded probe); `recent_slow_loads` reads disk on one reusable reader thread with a timeout.
 - `update_check.rs` — update check via GitHub releases (#185).
 - `warm_pool.rs` — native warm registry with label-scoped spawn reservations, bounded claims and committed activation.
 - `gemini.rs` — shared helpers for shelling out to `gemini` CLI.

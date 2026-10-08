@@ -239,7 +239,9 @@ function createExplorerState(seed?: ExplorerSeed) {
     }
     creationSession = null;
     const gen = ++navGeneration;
-    const load = trace ?? traceLoad(path, reason);
+    // A caller's trace is used only while it is still the pane's newest;
+    // anything else starts this navigation's own trace.
+    const load = trace && trace === activeLoad ? trace : traceLoad(path, reason);
     const observation = watch.begin(path);
     try {
       // If we already have entries for this path (e.g. seeded from another tab),
@@ -353,7 +355,11 @@ function createExplorerState(seed?: ExplorerSeed) {
         // The listing that follows is of the descended folder.
         trace.retarget(target);
       }
-      success = await applyNavigation(target, "navigate", trace);
+      // A navigation that started during the descent supersedes this one:
+      // its result must not land after the newer folder.
+      success = trace && (trace !== activeLoad || destroyed)
+        ? false
+        : await applyNavigation(target, "navigate", trace);
     } finally {
       // Idempotent: settles the trace if the descent threw.
       trace?.finish("error");

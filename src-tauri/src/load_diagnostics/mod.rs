@@ -10,13 +10,17 @@
 //! with the final outcome; a late pending capture never replaces it.
 //!
 //! If the renderer cannot deliver its record (its event loop is blocked),
-//! a native fallback writes a native-only record for any traced listing
-//! still in flight after [`NATIVE_FALLBACK_AFTER`].
+//! `fallback.rs` writes a native-only record for any watched listing still
+//! in flight after [`NATIVE_FALLBACK_AFTER`], and settles it when the
+//! listing finishes. `reply.rs` keeps a listing's trace open while Tauri
+//! encodes the reply, so a slow encoding is not blamed on the scan.
 //!
 //! Records leave the machine only through the Report Issue dialog, which shows
 //! them and lets the reporter exclude them before submitting.
+mod fallback;
 mod filesystem;
 mod persist;
+mod reply;
 mod store;
 pub(crate) mod trace;
 
@@ -25,8 +29,9 @@ use filesystem::FilesystemInfo;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::time::Duration;
-use trace::{NativeSnapshot, TraceScope};
+use trace::{NativeSnapshot, Outcome, TraceScope};
 
+pub(crate) use reply::TracedReply;
 pub(crate) use trace::{Phase, TraceHandle};
 
 /// Later than the frontend's 5 s threshold so the richer frontend record wins.
@@ -37,6 +42,10 @@ const MAX_LABEL_CHARS: usize = 48;
 const MAX_PHASES: usize = 32;
 const MAX_OTHERS: usize = 8;
 const SCHEMA: u32 = 1;
+/// A settled native command this much shorter than the frontend's `native`
+/// phase (and at least half of it) means the time went to the IPC round
+/// trip: the reply's transfer and decode in the webview, or the request.
+const IPC_GAP_MIN_MS: f64 = 1000.0;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -166,7 +175,9 @@ impl FrontendRecord {
     }
 }
 
-/// Merge the frontend view with everything only the native side can see.
+/// Merge the frontend view with the in-memory native traces. The filesystem
+/// is filled in later by the persistence thread: identifying it may read
+/// the mount table and symlinks, which never belongs on the executor.
 fn merge(record: FrontendRecord, source: Source) -> StoredRecord {
     let native = trace::snapshot(&record.id);
     let blocker = record
@@ -174,17 +185,35 @@ fn merge(record: FrontendRecord, source: Source) -> StoredRecord {
         .as_ref()
         .and_then(|queued| queued.trace_id.as_deref())
         .and_then(trace::snapshot);
-    let filesystem = filesystem::filesystem_info(&record.path);
     StoredRecord {
         schema: SCHEMA,
         source,
         record,
         native,
         blocker,
-        filesystem,
+        filesystem: None,
         app_version: env!("CARGO_PKG_VERSION").to_string(),
         os: std::env::consts::OS.to_string(),
     }
+}
+
+fn phase_name(phase: Phase) -> String {
+    serde_json::to_value(phase)
+        .ok()
+        .and_then(|value| value.as_str().map(str::to_owned))
+        .unwrap_or_default()
+}
+
+/// The time the frontend's `native` phase spent outside a settled native
+/// command, when that is most of it.
+fn ipc_gap_ms(record: &StoredRecord, frontend_native_ms: f64) -> Option<f64> {
+    let native = record.native.as_ref()?;
+    if native.outcome == Outcome::Pending {
+        return None;
+    }
+    let command_ms = native.elapsed_ms as f64;
+    let gap = frontend_native_ms - command_ms;
+    (gap >= IPC_GAP_MIN_MS && gap >= command_ms).then_some(gap)
 }
 
 /// The phase that best explains the delay: the deepest pending phase, else
@@ -200,17 +229,34 @@ fn culprit(record: &StoredRecord) -> String {
                     .max_by_key(|phase| phase.duration_ms)
                     .map(|phase| phase.phase)
             })
-            .and_then(|phase| serde_json::to_value(phase).ok())
-            .and_then(|value| value.as_str().map(|phase| format!("native {phase}")))
+            .map(|phase| format!("native {}", phase_name(phase)))
     });
-    let frontend = record.record.pending_phase.clone().or_else(|| {
-        record
-            .record
-            .phases
-            .iter()
-            .max_by(|a, b| a.duration_ms.total_cmp(&b.duration_ms))
-            .map(|phase| phase.phase.clone())
-    });
+    let frontend_phase = record
+        .record
+        .phases
+        .iter()
+        .find(|phase| phase.pending)
+        .or_else(|| {
+            record
+                .record
+                .phases
+                .iter()
+                .max_by(|a, b| a.duration_ms.total_cmp(&b.duration_ms))
+        });
+    if let Some(phase) = frontend_phase.filter(|phase| phase.phase == "native") {
+        if let Some(gap) = ipc_gap_ms(record, phase.duration_ms) {
+            let command_ms = record.native.as_ref().map_or(0, |native| native.elapsed_ms);
+            return format!(
+                "ipc reply (native command finished in {command_ms}ms; {}ms waiting on the IPC reply / webview)",
+                gap.round()
+            );
+        }
+    }
+    let frontend = record
+        .record
+        .pending_phase
+        .clone()
+        .or_else(|| frontend_phase.map(|phase| phase.phase.clone()));
     match (frontend.as_deref(), native) {
         (Some("native") | None, Some(native)) => native,
         (Some(frontend), _) => frontend.to_owned(),
@@ -278,30 +324,6 @@ pub async fn recent_slow_loads(
     Ok(persist::recent(dir, limit).await)
 }
 
-fn native_only_record(id: &str, snapshot: &NativeSnapshot, now_epoch_ms: f64) -> FrontendRecord {
-    let elapsed = snapshot.elapsed_ms as f64;
-    FrontendRecord {
-        id: id.to_owned(),
-        path: snapshot.path.clone(),
-        requested_path: None,
-        pane: None,
-        reason: "unknown".into(),
-        spinner_visible: false,
-        started_at: now_epoch_ms - elapsed,
-        captured_at: now_epoch_ms,
-        elapsed_ms: elapsed,
-        threshold_ms: NATIVE_FALLBACK_AFTER.as_millis() as f64,
-        outcome: "pending".into(),
-        pending_phase: Some("native".into()),
-        phases: Vec::new(),
-        queued_behind: None,
-        entries: None,
-        drive_kind: None,
-        since_boot_ms: None,
-        others_in_flight: Vec::new(),
-    }
-}
-
 fn now_epoch_ms() -> f64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -309,38 +331,45 @@ fn now_epoch_ms() -> f64 {
         .unwrap_or(0.0)
 }
 
-fn schedule_native_fallback(app: tauri::AppHandle, id: String) {
-    tauri::async_runtime::spawn(async move {
-        tokio::time::sleep(NATIVE_FALLBACK_AFTER).await;
-        if !trace::is_in_flight(&id) {
-            return;
-        }
-        let Ok(dir) = records_dir(&app) else { return };
-        let Some(snapshot) = trace::snapshot(&id) else {
-            return;
-        };
-        // Precedence in `persist` drops this if the frontend already recorded.
-        persist::submit(
-            dir,
-            merge(
-                native_only_record(&id, &snapshot, now_epoch_ms()),
-                Source::NativeWatchdog,
-            ),
-        );
-    });
+fn fallback_threshold_ms() -> f64 {
+    NATIVE_FALLBACK_AFTER.as_millis() as f64
 }
 
 /// Begin a traced native listing. Only frontend-supplied, well-formed trace
-/// IDs are traced; everything else runs untraced at no extra cost.
+/// IDs are traced; everything else runs untraced at no extra cost. A
+/// `watched` listing (one a pane is waiting on, as opposed to a background
+/// refresh) is also armed for the native fallback.
 pub(crate) fn begin_listing(
     app: Option<&tauri::AppHandle>,
     trace_id: Option<String>,
     path: &str,
+    watched: bool,
+) -> TraceScope {
+    let dir = app.and_then(|app| records_dir(app).ok());
+    begin_listing_in(dir, trace_id, path, watched, |id, dir| {
+        tauri::async_runtime::spawn(async move {
+            tokio::time::sleep(NATIVE_FALLBACK_AFTER).await;
+            fallback::capture(&id, dir, now_epoch_ms(), fallback_threshold_ms());
+        });
+    })
+}
+
+/// [`begin_listing`] with the records directory and the delayed capture
+/// injected, so arming is testable without a runtime or app handle.
+fn begin_listing_in(
+    dir: Option<PathBuf>,
+    trace_id: Option<String>,
+    path: &str,
+    watched: bool,
+    schedule: impl FnOnce(String, PathBuf),
 ) -> TraceScope {
     let scope = TraceScope::begin(trace_id, path);
-    if let (Some(app), Some(id)) = (app, scope.handle().id()) {
-        schedule_native_fallback(app.clone(), id.to_owned());
-    }
+    let (Some(id), Some(dir), true) = (scope.handle().id().map(str::to_owned), dir, watched) else {
+        return scope;
+    };
+    fallback::arm(&id);
+    let scope = scope.on_settle(fallback::settled);
+    schedule(id, dir);
     scope
 }
 
@@ -473,7 +502,7 @@ mod tests {
         let scope = TraceScope::begin(Some(id.into()), "/mnt/stuck");
         scope.handle().enter(Phase::RootMetadata);
         let snapshot = trace::snapshot(id).unwrap();
-        let record = native_only_record(id, &snapshot, 10_000.0);
+        let record = fallback::native_only_record(id, &snapshot, 10_000.0, 7_000.0);
         assert_eq!(record.path, "/mnt/stuck");
         assert_eq!(record.outcome, "pending");
         let stored = merge(record, Source::NativeWatchdog);
@@ -508,6 +537,15 @@ mod tests {
             should_replace(Some(&native), &pending),
             "frontend after fallback"
         );
+        // The native command finishing does not mean the pane received its
+        // reply: a later frontend capture still replaces the fallback.
+        let native_settled = stored(id, "ok", Source::NativeWatchdog);
+        assert!(
+            should_replace(Some(&native_settled), &pending),
+            "frontend pending after settled fallback"
+        );
+        assert!(!should_replace(Some(&finished), &native_settled));
+        assert!(!should_replace(Some(&native_settled), &native));
         assert!(should_replace(
             Some(&finished),
             &stored(id, "error", Source::Frontend)
@@ -550,5 +588,236 @@ mod tests {
         );
         assert_eq!(merged, vec![newest, fresh, older]);
         assert_eq!(persist::merge_recent(Vec::new(), Vec::new(), 3), Vec::new());
+    }
+
+    /// The exact record `buildFrontendRecord` produces, shared with
+    /// `tests/domain/load-diagnostics.test.ts`. `persist()` on the frontend
+    /// swallows IPC rejections, so a renamed or retyped field would otherwise
+    /// silently disable recording.
+    const FRONTEND_FIXTURE: &str =
+        include_str!("../../test_support/fixtures/slow-load-frontend-record.json");
+
+    /// JSON numbers compared by value: the record keeps millisecond fields
+    /// as `f64`, so `5000` round-trips as `5000.0`.
+    fn numbers_as_f64(value: serde_json::Value) -> serde_json::Value {
+        use serde_json::Value;
+        match value {
+            Value::Number(number) => number
+                .as_f64()
+                .and_then(serde_json::Number::from_f64)
+                .map_or(Value::Null, Value::Number),
+            Value::Array(items) => Value::Array(items.into_iter().map(numbers_as_f64).collect()),
+            Value::Object(fields) => Value::Object(
+                fields
+                    .into_iter()
+                    .map(|(key, value)| (key, numbers_as_f64(value)))
+                    .collect(),
+            ),
+            other => other,
+        }
+    }
+
+    #[test]
+    fn the_frontend_record_shape_deserializes_losslessly() {
+        let record: FrontendRecord = serde_json::from_str(FRONTEND_FIXTURE).unwrap();
+        assert!(trace::valid_trace_id(&record.id));
+        assert_eq!(record.requested_path.as_deref(), Some("/mnt/nas"));
+        assert_eq!(
+            record.queued_behind.as_ref().unwrap().trace_id.as_deref(),
+            Some("1791000000000-blocker1")
+        );
+        assert_eq!(record.others_in_flight.len(), 1);
+        let fixture = numbers_as_f64(serde_json::from_str(FRONTEND_FIXTURE).unwrap());
+        assert_eq!(
+            numbers_as_f64(serde_json::to_value(&record).unwrap()),
+            fixture,
+            "no field dropped or renamed"
+        );
+        // A stored record flattens the same fields at its top level.
+        let stored = numbers_as_f64(serde_json::to_value(merge(record, Source::Frontend)).unwrap());
+        for (key, value) in fixture.as_object().unwrap() {
+            assert_eq!(&stored[key], value, "{key}");
+        }
+    }
+
+    fn native_snapshot(outcome: Outcome, elapsed_ms: u64) -> NativeSnapshot {
+        NativeSnapshot {
+            path: "/huge".into(),
+            elapsed_ms,
+            outcome,
+            pending_phase: None,
+            phases: vec![trace::PhaseSnapshot {
+                phase: Phase::EntryMetadata,
+                start_ms: 0,
+                duration_ms: 300,
+                pending: false,
+            }],
+            entries_listed: 300_000,
+            entries_statted: 300_000,
+            stat_failures: 0,
+            entries_done: 300_000,
+            stat_ms: 0,
+            resolve_ms: 0,
+            symlinks: 0,
+            git_repo_probe: true,
+            stalled_entries: Vec::new(),
+            slowest_entry: None,
+        }
+    }
+
+    #[test]
+    fn time_after_a_settled_native_command_is_blamed_on_the_ipc_reply() {
+        let mut stuck = stored("1700000000000-ipc1", "pending", Source::Frontend);
+        stuck.native = Some(native_snapshot(Outcome::Ok, 420));
+        // The frontend's native phase has been pending 5 s; the command took 420 ms.
+        assert_eq!(
+            culprit(&stuck),
+            "ipc reply (native command finished in 420ms; 4577ms waiting on the IPC reply / webview)"
+        );
+        // A native command still running is not an IPC delay.
+        stuck.native = Some(native_snapshot(Outcome::Pending, 4997));
+        assert_eq!(culprit(&stuck), "native entry-metadata");
+        // Nor is a short gap after a command that took most of the time.
+        stuck.native = Some(native_snapshot(Outcome::Ok, 4600));
+        assert_eq!(culprit(&stuck), "native entry-metadata");
+    }
+
+    #[test]
+    fn only_watched_listings_arm_the_native_fallback() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut scheduled = Vec::new();
+        let refresh = begin_listing_in(
+            Some(dir.path().to_path_buf()),
+            Some("1700000000000-refresh1".into()),
+            "/mnt/nfs",
+            false,
+            |id, _| scheduled.push(id),
+        );
+        assert!(scheduled.is_empty());
+        assert!(!fallback::is_armed("1700000000000-refresh1"));
+        assert!(!fallback::capture(
+            "1700000000000-refresh1",
+            dir.path().to_path_buf(),
+            1.0,
+            7_000.0
+        ));
+        drop(refresh);
+        persist::flush();
+        assert!(store::read_recent::<StoredRecord>(dir.path(), 5).is_empty());
+
+        let untraced =
+            begin_listing_in(Some(dir.path().to_path_buf()), None, "/a", true, |id, _| {
+                scheduled.push(id)
+            });
+        assert!(scheduled.is_empty());
+        drop(untraced);
+
+        let watched = begin_listing_in(
+            Some(dir.path().to_path_buf()),
+            Some("1700000000000-watched1".into()),
+            "/mnt/nfs",
+            true,
+            |id, _| scheduled.push(id),
+        );
+        assert_eq!(scheduled, vec!["1700000000000-watched1".to_string()]);
+        assert!(fallback::is_armed("1700000000000-watched1"));
+        // Settling before the delay disarms it; the delayed capture is a no-op.
+        watched.finish(&Ok::<(), ()>(()));
+        assert!(!fallback::is_armed("1700000000000-watched1"));
+        assert!(!fallback::capture(
+            "1700000000000-watched1",
+            dir.path().to_path_buf(),
+            1.0,
+            7_000.0
+        ));
+        persist::flush();
+        assert!(store::read_recent::<StoredRecord>(dir.path(), 5).is_empty());
+    }
+
+    #[test]
+    fn a_fallback_record_is_settled_when_its_listing_finishes() {
+        let dir = tempfile::tempdir().unwrap();
+        let id = "1700000000000-fallback1";
+        let scope = begin_listing_in(
+            Some(dir.path().to_path_buf()),
+            Some(id.into()),
+            "/mnt/stuck",
+            true,
+            |_, _| {},
+        );
+        scope.handle().enter(Phase::RootMetadata);
+        assert!(fallback::capture(
+            id,
+            dir.path().to_path_buf(),
+            10_000.0,
+            7_000.0
+        ));
+        persist::flush();
+        let pending: Vec<StoredRecord> = store::read_recent(dir.path(), 5);
+        assert_eq!(pending.len(), 1);
+        assert_eq!(pending[0].record.outcome, "pending");
+        assert_eq!(pending[0].source, Source::NativeWatchdog);
+        assert_eq!(culprit(&pending[0]), "native root-metadata");
+        // Windows has no mount for a drive-less path.
+        if cfg!(unix) {
+            assert!(
+                pending[0].filesystem.is_some(),
+                "filled in by the writer thread"
+            );
+        }
+
+        scope.finish(&Err::<(), ()>(()));
+        persist::flush();
+        let settled: Vec<StoredRecord> = store::read_recent(dir.path(), 5);
+        assert_eq!(settled.len(), 1);
+        assert_eq!(settled[0].record.outcome, "error");
+        assert_eq!(settled[0].record.pending_phase, None);
+        assert_eq!(settled[0].native.as_ref().unwrap().outcome, Outcome::Error);
+
+        // A cancelled (dropped) command settles as cancelled.
+        let dropped = "1700000000000-fallback2";
+        let scope = begin_listing_in(
+            Some(dir.path().to_path_buf()),
+            Some(dropped.into()),
+            "/mnt/stuck",
+            true,
+            |_, _| {},
+        );
+        assert!(fallback::capture(
+            dropped,
+            dir.path().to_path_buf(),
+            10_000.0,
+            7_000.0
+        ));
+        drop(scope);
+        persist::flush();
+        let outcome = store::read_one::<StoredRecord>(dir.path(), dropped).unwrap();
+        assert_eq!(outcome.record.outcome, "cancelled");
+    }
+
+    #[test]
+    fn a_settled_record_on_disk_outranks_a_late_capture_after_eviction() {
+        let dir = tempfile::tempdir().unwrap();
+        let id = "1600000000000-evict1";
+        assert!(persist::submit(
+            dir.path().to_path_buf(),
+            stored(id, "ok", Source::Frontend)
+        ));
+        // Newer records (written elsewhere) push it out of the in-memory map.
+        let elsewhere = tempfile::tempdir().unwrap();
+        for n in 0..persist::MAX_MEMORY {
+            persist::submit(
+                elsewhere.path().to_path_buf(),
+                stored(&format!("17000000{n:05}-evict"), "ok", Source::Frontend),
+            );
+        }
+        // The late pending capture is accepted in memory, but not on disk.
+        assert!(persist::submit(
+            dir.path().to_path_buf(),
+            stored(id, "pending", Source::Frontend)
+        ));
+        persist::flush();
+        let on_disk = store::read_one::<StoredRecord>(dir.path(), id).unwrap();
+        assert_eq!(on_disk.record.outcome, "ok");
     }
 }

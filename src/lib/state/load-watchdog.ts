@@ -33,6 +33,8 @@ import { recordSlowLoad } from "$lib/api/load-diagnostics";
 /** The narrow surface the listing pipeline sees. */
 export interface LoadTraceHandle {
   readonly id: string;
+  /** Always true: the watchdog only watches loads a pane is waiting on. */
+  readonly watched: true;
   /** Monotonic start, for loads queued behind this one. */
   readonly startedMono: number;
   phase(phase: FrontendLoadPhase): void;
@@ -124,6 +126,7 @@ export function createLoadWatchdog(deps: LoadWatchdogDeps) {
 
     return {
       id: trace.id,
+      watched: true,
       startedMono: trace.startedMono,
       phase: (phase) => update(trace.id, (current) => enterPhase(current, phase, deps.nowMono())),
       retarget: (path) => update(trace.id, (current) => retarget(current, path)),

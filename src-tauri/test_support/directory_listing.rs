@@ -256,7 +256,7 @@ fn fresh_listing_returns_the_complete_sorted_snapshot_and_bypasses_cache() {
         fs::write(directory.path().join(format!("file-{index:05}.txt")), "x").unwrap();
     }
     let listing = runtime
-        .block_on(fresh_listing(None, path.clone(), None))
+        .block_on(fresh_listing(path.clone(), TraceHandle::none()))
         .unwrap();
     assert_eq!(listing.path, path);
     assert_eq!(
@@ -266,14 +266,16 @@ fn fresh_listing_returns_the_complete_sorted_snapshot_and_bypasses_cache() {
             .collect::<Vec<_>>()
     );
     fs::remove_dir_all(directory.path()).unwrap();
-    assert!(runtime.block_on(fresh_listing(None, path, None)).is_err());
+    assert!(runtime
+        .block_on(fresh_listing(path, TraceHandle::none()))
+        .is_err());
 }
 
 /// #1022: a traced fresh listing records every native scan phase in order,
 /// with its entry counts, so a slow-load record can name the slow phase.
 #[test]
 fn traced_fresh_listing_records_each_native_phase() {
-    use crate::load_diagnostics::trace::{snapshot, Outcome, Phase};
+    use crate::load_diagnostics::trace::{snapshot, Outcome, Phase, TraceScope};
     let runtime = tokio::runtime::Runtime::new().unwrap();
     let directory = tempdir().unwrap();
     for index in 0..25 {
@@ -281,12 +283,22 @@ fn traced_fresh_listing_records_each_native_phase() {
     }
     fs::create_dir(directory.path().join("sub")).unwrap();
     let path = directory.path().to_string_lossy().into_owned();
-    let id = "1700000000000-fresh1".to_string();
-    let listing = runtime
-        .block_on(fresh_listing(None, path.clone(), Some(id.clone())))
-        .unwrap();
-    assert_eq!(listing.entries.len(), 26);
-    let trace = snapshot(&id).expect("finished trace is retained");
+    // The command's own composition: scope, listing, then a traced reply.
+    let traced = |id: &str, path: String| {
+        let scope = TraceScope::begin(Some(id.to_owned()), &path);
+        let trace = scope.handle();
+        TracedReply::wrap(scope, runtime.block_on(fresh_listing(path, trace)))
+    };
+    let id = "1700000000000-fresh1";
+    let reply = traced(id, path.clone()).unwrap();
+    assert_eq!(
+        snapshot(id).unwrap().outcome,
+        Outcome::Pending,
+        "open until encoded"
+    );
+    let wire = serde_json::to_value(&reply).unwrap();
+    assert_eq!(wire["columns"]["names"].as_array().unwrap().len(), 26);
+    let trace = snapshot(id).expect("finished trace is retained");
     assert_eq!(trace.outcome, Outcome::Ok);
     assert_eq!(trace.pending_phase, None);
     assert_eq!(trace.entries_listed, 26);
@@ -298,6 +310,8 @@ fn traced_fresh_listing_records_each_native_phase() {
     assert_eq!(
         phases,
         vec![
+            // Waiting for a pool thread, then resolving on it.
+            Phase::BlockingQueue,
             Phase::ResolvePath,
             Phase::BlockingQueue,
             Phase::RootMetadata,
@@ -305,15 +319,85 @@ fn traced_fresh_listing_records_each_native_phase() {
             Phase::EntryMetadata,
             Phase::Sort,
             Phase::Respond,
+            Phase::Serialize,
         ]
     );
 
-    let missing = "1700000000000-fresh2".to_string();
+    let missing = "1700000000000-fresh2";
     fs::remove_dir_all(directory.path()).unwrap();
-    assert!(runtime
-        .block_on(fresh_listing(None, path, Some(missing.clone())))
-        .is_err());
-    let failed = snapshot(&missing).unwrap();
+    assert!(traced(missing, path).is_err());
+    let failed = snapshot(missing).unwrap();
     assert_eq!(failed.outcome, Outcome::Error);
     assert_eq!(failed.phases.last().unwrap().phase, Phase::RootMetadata);
+}
+
+/// Stands in for the watcher's pending lease in `observed_listing`.
+struct AdmittedForTest(super::super::directory_watches::Lease);
+
+impl AdmittedLease for AdmittedForTest {
+    fn path(&self) -> &str {
+        &self.0.path
+    }
+    fn take(self) -> super::super::directory_watches::Lease {
+        self.0
+    }
+}
+
+#[test]
+fn observed_listing_traces_ownership_watch_and_scan_in_production_order() {
+    use crate::load_diagnostics::trace::{snapshot, Outcome, Phase, TraceScope};
+    let runtime = tokio::runtime::Runtime::new().unwrap();
+    let directory = tempdir().unwrap();
+    fs::write(directory.path().join("a.txt"), "a").unwrap();
+    let path = directory.path().to_string_lossy().into_owned();
+    let run = |id: &str, owner: Owner| {
+        let scope = TraceScope::begin(Some(id.to_owned()), &path);
+        let trace = scope.handle();
+        let observed_path = path.clone();
+        let result = runtime.block_on(observed_listing(
+            trace,
+            || Ok(owner),
+            |owner, trace| async move {
+                // The watcher's own phases, as `acquire_pending_directory` marks them.
+                trace.enter(Phase::WatchLock);
+                trace.enter(Phase::WatchRegister);
+                let _ = owner;
+                Ok(AdmittedForTest(super::super::directory_watches::Lease {
+                    id: "lease".into(),
+                    path: observed_path,
+                }))
+            },
+        ));
+        TracedReply::wrap(scope, result)
+    };
+
+    let id = "1700000000000-observed1";
+    let reply = run(id, Owner::default()).unwrap();
+    let wire = serde_json::to_value(&reply).unwrap();
+    assert_eq!(wire["watch_lease"]["id"], "lease");
+    let trace = snapshot(id).unwrap();
+    assert_eq!(trace.outcome, Outcome::Ok);
+    let phases: Vec<Phase> = trace.phases.iter().map(|phase| phase.phase).collect();
+    assert_eq!(
+        phases,
+        vec![
+            Phase::OwnerAcquire,
+            Phase::WatchLock,
+            Phase::WatchRegister,
+            Phase::BlockingQueue,
+            Phase::RootMetadata,
+            Phase::ReadDir,
+            Phase::EntryMetadata,
+            Phase::Sort,
+            Phase::Respond,
+            Phase::Serialize,
+        ]
+    );
+
+    // A renderer replaced mid-scan fails the listing and settles the trace.
+    let replaced = Owner::default();
+    replaced.retire();
+    let id = "1700000000000-observed2";
+    assert!(run(id, replaced).is_err());
+    assert_eq!(snapshot(id).unwrap().outcome, Outcome::Error);
 }

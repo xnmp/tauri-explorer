@@ -48,8 +48,12 @@ pub(crate) enum Phase {
     EntryMetadata,
     /// Sorting the listing.
     Sort,
-    /// Returning the complete listing to the webview.
+    /// The command has its reply and is waiting for Tauri to encode it.
     Respond,
+    /// Encoding the reply for the webview (JSON serialization). Transfer to
+    /// the webview and its decode happen after the native trace settles; the
+    /// frontend's `native` phase spans them.
+    Serialize,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -244,7 +248,7 @@ impl TraceState {
             .slots
             .iter()
             .filter_map(|slot| {
-                let started = slot.started.load(Ordering::Relaxed);
+                let started = slot.started.load(Ordering::Acquire);
                 if started == 0 {
                     return None;
                 }
@@ -356,8 +360,10 @@ impl TraceHandle {
         let slot = &state.slots[slot];
         slot.index.store(index, Ordering::Relaxed);
         let offset = nanos(started.saturating_duration_since(state.started));
+        // Release pairs with the snapshot's Acquire load: a reader that sees
+        // this start also sees the index stored before it.
         slot.started
-            .store(offset.saturating_add(1), Ordering::Relaxed);
+            .store(offset.saturating_add(1), Ordering::Release);
         EntryProbe {
             state: Some(state),
             slot: Some(slot),
@@ -434,11 +440,15 @@ impl Drop for EntryProbe<'_> {
     }
 }
 
+/// Called once with the final snapshot when a traced load settles.
+pub(crate) type SettleHook = fn(&str, &NativeSnapshot);
+
 /// Owns one traced load's registry entry and settles its outcome. Dropping an
 /// unsettled scope (a dropped command future) records `Cancelled`.
 pub(crate) struct TraceScope {
     handle: TraceHandle,
     settled: bool,
+    on_settle: Option<SettleHook>,
 }
 
 impl TraceScope {
@@ -448,6 +458,7 @@ impl TraceScope {
         let untraced = Self {
             handle: TraceHandle::none(),
             settled: true,
+            on_settle: None,
         };
         let Some(id) = id.filter(|id| valid_trace_id(id)) else {
             return untraced;
@@ -461,7 +472,15 @@ impl TraceScope {
         Self {
             handle: TraceHandle(Some((Arc::from(id), state))),
             settled: false,
+            on_settle: None,
         }
+    }
+
+    /// Run `hook` with the final snapshot once this load settles, after the
+    /// trace has left the in-flight registry.
+    pub fn on_settle(mut self, hook: SettleHook) -> Self {
+        self.on_settle = Some(hook);
+        self
     }
 
     pub fn handle(&self) -> TraceHandle {
@@ -487,12 +506,19 @@ impl TraceScope {
         lock(&state.timeline).close(state.started.elapsed());
         *lock(&state.outcome) = outcome;
         let snapshot = state.snapshot();
-        let mut registry = lock(&REGISTRY);
-        registry.in_flight.remove(id.as_ref());
-        if registry.finished.len() >= MAX_FINISHED {
-            registry.finished.pop_front();
+        {
+            let mut registry = lock(&REGISTRY);
+            registry.in_flight.remove(id.as_ref());
+            if registry.finished.len() >= MAX_FINISHED {
+                registry.finished.pop_front();
+            }
+            registry
+                .finished
+                .push_back((id.to_string(), snapshot.clone()));
         }
-        registry.finished.push_back((id.to_string(), snapshot));
+        if let Some(hook) = self.on_settle {
+            hook(id, &snapshot);
+        }
     }
 }
 
@@ -520,6 +546,7 @@ pub(crate) fn snapshot(id: &str) -> Option<NativeSnapshot> {
     state.map(|state| state.snapshot())
 }
 
+#[cfg(test)]
 pub(crate) fn is_in_flight(id: &str) -> bool {
     lock(&REGISTRY).in_flight.contains_key(id)
 }

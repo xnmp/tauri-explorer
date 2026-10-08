@@ -332,9 +332,10 @@
           </span>
         </label>
         <p class="attachment-hint">
-          Recorded on this computer when a folder took more than 5 seconds to load: which step was
-          slow, timings, entry counts and filesystem type. They include full folder paths, which
-          will be public in the issue.
+          Recorded on this computer in the last 24 hours when a folder took more than 5 seconds to
+          load: which step was slow, timings, entry counts and filesystem type. They include full
+          folder paths (the slow folder, folders loading alongside or ahead of it, and mount
+          points), which will be public in the issue. File names are not included.
         </p>
         <details>
           <summary>Show what will be sent</summary>

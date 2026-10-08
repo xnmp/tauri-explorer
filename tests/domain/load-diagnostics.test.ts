@@ -1,6 +1,10 @@
 /** Slow directory-load diagnostics: pure trace, record and report contracts (#1022). */
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import {
+  REPORTABLE_SLOW_LOAD_MAX_AGE_MS,
+  fitSlowLoadsForReport,
+  retarget,
   MAX_TRACE_SPANS,
   SLOW_LOAD_THRESHOLD_MS,
   buildFrontendRecord,
@@ -194,6 +198,28 @@ describe("diagnosis", () => {
     expect(diagnoseSlowLoad(record)).toMatchObject({ phase: "publish", pending: false, durationMs: 6000 });
   });
 
+  it("blames the IPC reply when the native command finished long before the frontend got it", () => {
+    const t = enterPhase(enterPhase(trace(), "watch-ready", T0), "native", T0 + 4);
+    const settledNative = native({
+      outcome: "ok",
+      elapsedMs: 420,
+      pendingPhase: null,
+      phases: [{ phase: "entry-metadata", startMs: 0, durationMs: 300, pending: false }],
+    });
+    const record = stored(buildFrontendRecord(t, { nowMono: T0 + 5004, nowEpoch: EPOCH }), { native: settledNative });
+    expect(diagnoseSlowLoad(record)).toEqual({
+      phase: "ipc-reply",
+      label: "native command finished in 420 ms; waiting on the IPC reply / webview",
+      durationMs: 4580,
+      pending: true,
+    });
+    expect(formatSlowLoadsForReport([record])).toContain("stuck in: ipc-reply — native command finished in 420 ms");
+    // A native command still running, or one that took most of the time, is
+    // diagnosed from its own phases.
+    expect(diagnoseSlowLoad({ ...record, native: native() })?.phase).toBe("native read-dir");
+    expect(diagnoseSlowLoad({ ...record, native: { ...settledNative, elapsedMs: 4600 } })?.phase).toBe("native entry-metadata");
+  });
+
   it("explains a native-only record without frontend phases", () => {
     const record = stored(buildFrontendRecord(trace(), { nowMono: T0 + 7000, nowEpoch: EPOCH }), {
       source: "native-watchdog",
@@ -208,7 +234,10 @@ describe("report text", () => {
   const stuck = () => {
     const t = enterPhase(enterPhase(trace(), "watch-ready", T0), "native", T0 + 4);
     return stored(buildFrontendRecord(t, { nowMono: T0 + 7000, nowEpoch: EPOCH + 7000 }), {
-      native: native({ stalledEntries: [{ name: "hung-link", elapsedMs: 6000 }] }),
+      native: native({
+        stalledEntries: [{ name: "hung-link", elapsedMs: 6000 }, { name: "tax-2025.pdf", elapsedMs: 1500 }],
+        slowestEntry: { name: "secret-plans.docx", elapsedMs: 900 },
+      }),
       filesystem: { fsType: "fuse.sshfs", mountPoint: "/mnt/nas", category: "network-fuse" },
     });
   };
@@ -218,8 +247,14 @@ describe("report text", () => {
     expect(text).toContain("1. /mnt/nas/photos");
     expect(text).toContain("2026-10-09T12:00:00.000Z · 7.0 s · still pending when captured · navigate");
     expect(text).toContain("stuck in: native read-dir — reading directory entries (readdir) (6.9 s)");
-    expect(text).toContain("stalled entries: hung-link (6.0 s)");
+    expect(text).toContain("stalled entries: 2 (longest 6.0 s)");
+    expect(text).toContain("slowest single entry: 900 ms");
     expect(text).toContain("filesystem: fuse.sshfs, network-fuse, mounted at /mnt/nas");
+  });
+
+  it("never puts individual file names in the public text", () => {
+    const text = formatSlowLoadsForReport([stuck()]);
+    for (const name of ["hung-link", "tax-2025.pdf", "secret-plans.docx"]) expect(text).not.toContain(name);
   });
 
   it("includes only whole records that fit the budget, newest first", () => {
@@ -232,9 +267,26 @@ describe("report text", () => {
 
   it("cuts a single oversized record at a line boundary, and handles nothing to report", () => {
     const record = stuck();
-    record.path = `/${"deep/".repeat(2000)}`;
-    const text = formatSlowLoadsForReport([record], 400);
+    record.requestedPath = null;
+    const whole = formatSlowLoadsForReport([record]);
+    const firstLines = whole.split("\n").slice(0, 2).join("\n");
+    const cut = fitSlowLoadsForReport([record], firstLines.length + 1);
+    expect(cut).toEqual({ text: firstLines, included: 1 });
+    expect(formatSlowLoadsForReport([])).toBe("");
+    expect(formatSlowLoadsForReport([stuck()], 0)).toBe("");
+  });
+
+  it("shortens a first line longer than the budget instead of dropping every record", () => {
+    const record = stuck();
+    // "1. /" then 394 letters puts the emoji's high surrogate at the cut.
+    record.path = `/${"a".repeat(394)}😀${"b".repeat(1000)}`;
+    const { text, included } = fitSlowLoadsForReport([record, stuck()], 400);
+    expect(included).toBe(1);
     expect(text.length).toBeLessThanOrEqual(400);
+    expect(text.startsWith("1. /aaa")).toBe(true);
+    expect(text.endsWith("a…")).toBe(true);
+    expect(text).not.toMatch(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])/);
+    expect(text).not.toContain("\n");
     expect(formatSlowLoadsForReport([])).toBe("");
     expect(formatSlowLoadsForReport([stuck()], 0)).toBe("");
   });
@@ -247,6 +299,10 @@ describe("report text", () => {
       now,
     );
     expect(chosen.map((record) => now - record.capturedAt)).toEqual([10, 500, 1000]);
+    // By default only the last day: older records are unlikely to be this bug.
+    expect(REPORTABLE_SLOW_LOAD_MAX_AGE_MS).toBe(86_400_000);
+    const day = selectReportableSlowLoads([at(now - 86_400_000), at(now - 86_400_001), at(now - 3 * 86_400_000)], now);
+    expect(day.map((record) => now - record.capturedAt)).toEqual([86_400_000]);
   });
 });
 
@@ -293,5 +349,37 @@ describe("auto-enter and report budget", () => {
     expect(slowLoadReportBudget("")).toBe(MAX_SLOW_LOAD_REPORT_UNITS);
     expect(slowLoadReportBudget("d".repeat(4000), "@me")).toBe(8500 - 600 - 4000 - 3);
     expect(slowLoadReportBudget("d".repeat(8000), "c".repeat(100))).toBe(0);
+  });
+});
+
+describe("record wire contract", () => {
+  it("produces exactly the record the native side deserializes", () => {
+    // Shared with `the_frontend_record_shape_deserializes_losslessly` in
+    // src-tauri/src/load_diagnostics/mod.rs.
+    const fixture = JSON.parse(
+      readFileSync(new URL("../../src-tauri/test_support/fixtures/slow-load-frontend-record.json", import.meta.url), "utf8"),
+    );
+    let t = startLoadTrace({ id: "1791000000000-fixture1", path: "/mnt/nas", pane: 2, reason: "navigate", spinnerVisible: true }, T0, EPOCH);
+    t = enterPhase(t, "auto-enter", T0);
+    t = retarget(t, "/mnt/nas/photos");
+    t = enterPhase(t, "queued", T0 + 10);
+    t = noteQueuedBehind(t, { path: "/mnt/nas/photos", reason: "refresh", startedMono: T0 - 2000, traceId: "1791000000000-blocker1" });
+    t = enterPhase(t, "watch-ready", T0 + 20);
+    t = enterPhase(t, "native", T0 + 30);
+    t = noteEntries(t, 42);
+    const other = enterPhase(
+      startLoadTrace({ id: "1791000000001-other1", path: "/home/u", reason: "initial", spinnerVisible: false }, T0 + 100, EPOCH),
+      "native",
+      T0 + 100,
+    );
+    const record = buildFrontendRecord(t, {
+      nowMono: T0 + 5000,
+      nowEpoch: EPOCH + 5000,
+      driveKind: "network",
+      sinceBootMs: 1234.4,
+      others: [t, other],
+    });
+    expect(Object.keys(record).sort()).toEqual(Object.keys(fixture).sort());
+    expect(record).toEqual(fixture);
   });
 });

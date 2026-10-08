@@ -83,7 +83,7 @@ export function createDirectoryListing(deps: {
   return {
     load: (path: string, observation?: DirectoryObservation, trace?: DirectoryListingTrace) => {
       const request = ++generation;
-      const listingTrace: ListingTrace = trace ?? { id: mintTraceId(), phase: () => {} };
+      const listingTrace: ListingTrace = trace ?? { id: mintTraceId(), watched: false, phase: () => {} };
       trace?.phase("queued");
       trace?.queuedBehind?.(running);
       return enqueue(async () => {

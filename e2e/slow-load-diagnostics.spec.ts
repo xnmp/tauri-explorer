@@ -35,7 +35,8 @@ test("a folder load stuck past 5 s produces a diagnostic naming the slow phase",
   const dialog = page.getByRole("dialog", { name: "Report Issue" });
   const diagnostics = dialog.getByRole("region", { name: "Slow folder-load diagnostics" });
   await expect(diagnostics.getByLabel("Include 1 recent slow folder load")).toBeChecked();
-  await expect(diagnostics).toContainText("include full folder paths, which will be public");
+  await expect(diagnostics).toContainText("which will be public in the issue");
+  await expect(diagnostics).toContainText("File names are not included");
   await diagnostics.getByText("Show what will be sent").click();
   const preview = diagnostics.locator(".diagnostics-preview");
   await expect(preview).toContainText("1. /home/user/Documents");

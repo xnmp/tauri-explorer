@@ -72,18 +72,24 @@ fn prune(dir: &Path) {
     }
 }
 
+fn read_path<T: DeserializeOwned>(path: &Path) -> Option<T> {
+    let metadata = std::fs::metadata(path).ok()?;
+    if metadata.len() > MAX_RECORD_BYTES as u64 {
+        return None;
+    }
+    serde_json::from_slice(&std::fs::read(path).ok()?).ok()
+}
+
+/// The stored record for `id`, if present and well formed.
+pub(crate) fn read_one<T: DeserializeOwned>(dir: &Path, id: &str) -> Option<T> {
+    read_path(&record_path(dir, id).ok()?)
+}
+
 /// Newest-first records that still parse; corrupt or foreign files are skipped.
 pub(crate) fn read_recent<T: DeserializeOwned>(dir: &Path, limit: usize) -> Vec<T> {
     record_ids(dir)
         .into_iter()
-        .filter_map(|id| {
-            let path = record_path(dir, &id).ok()?;
-            let metadata = std::fs::metadata(&path).ok()?;
-            if metadata.len() > MAX_RECORD_BYTES as u64 {
-                return None;
-            }
-            serde_json::from_slice(&std::fs::read(path).ok()?).ok()
-        })
+        .filter_map(|id| read_one(dir, &id))
         .take(limit)
         .collect()
 }

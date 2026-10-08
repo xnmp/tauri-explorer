@@ -10,7 +10,8 @@ use std::time::Instant;
 use super::directory_cache::{DirectoryCache, Lookup, PreparedSnapshot};
 use super::{metadata_to_entry_with_git_repo_probe, DirectoryListing, FileEntry, FileKind};
 use crate::error::AppError;
-use crate::load_diagnostics::{self, Phase, TraceHandle};
+use crate::load_diagnostics::{self, Phase, TraceHandle, TracedReply};
+use crate::renderer_owner::Owner;
 
 // ===================
 // Directory Listing Cache
@@ -326,26 +327,28 @@ pub async fn list_directory_fresh(
     app: tauri::AppHandle,
     path: String,
     trace_id: Option<String>,
-) -> Result<DirectoryListing, AppError> {
-    fresh_listing(Some(&app), path, trace_id).await
+    trace_watched: Option<bool>,
+) -> Result<TracedReply<DirectoryListing>, AppError> {
+    let scope = load_diagnostics::begin_listing(
+        Some(&app),
+        trace_id,
+        &path,
+        trace_watched.unwrap_or(false),
+    );
+    let trace = scope.handle();
+    TracedReply::wrap(scope, fresh_listing(path, trace).await)
 }
 
-async fn fresh_listing(
-    app: Option<&tauri::AppHandle>,
-    path: String,
-    trace_id: Option<String>,
-) -> Result<DirectoryListing, AppError> {
-    let scope = load_diagnostics::begin_listing(app, trace_id, &path);
-    let trace = scope.handle();
-    let result = async {
-        trace.enter(Phase::ResolvePath);
-        let path =
-            super::run_blocking(move || Ok(super::directory_identity::resolve(&path))).await?;
-        list_directory_for_lease(path, trace).await
-    }
-    .await;
-    scope.finish(&result);
-    result
+async fn fresh_listing(path: String, trace: TraceHandle) -> Result<DirectoryListing, AppError> {
+    // Waiting for a blocking-pool thread is distinct from resolving itself.
+    trace.enter(Phase::BlockingQueue);
+    let resolve_trace = trace.clone();
+    let path = super::run_blocking(move || {
+        resolve_trace.enter(Phase::ResolvePath);
+        Ok(super::directory_identity::resolve(&path))
+    })
+    .await?;
+    list_directory_for_lease(path, trace).await
 }
 
 // Scan the identity admitted by a watch without resolving filesystem spelling
@@ -397,7 +400,6 @@ async fn list_directory_for_lease(
         "navigation list_directory_fresh completed: path={path:?}, entries={total_count}, elapsed={:?}",
         started_at.elapsed()
     );
-    trace.enter(Phase::Respond);
     Ok(DirectoryListing {
         path,
         entries: Arc::new(all_entries),
@@ -411,6 +413,21 @@ pub struct ObservedDirectoryListing {
     watch_lease: super::directory_watches::Lease,
 }
 
+/// A watch lease admitted for a directory but not yet handed to the webview.
+trait AdmittedLease {
+    fn path(&self) -> &str;
+    fn take(self) -> super::directory_watches::Lease;
+}
+
+impl AdmittedLease for super::fs_watcher::PendingLease {
+    fn path(&self) -> &str {
+        super::fs_watcher::PendingLease::path(self)
+    }
+    fn take(self) -> super::directory_watches::Lease {
+        super::fs_watcher::PendingLease::take(self)
+    }
+}
+
 /// Establish owned observation before scanning. The pending lease remains
 /// guarded across the scan, so failed or canceled reads cannot leak demand.
 /// The frontend retains its old directory lease until it accepts this result.
@@ -420,29 +437,49 @@ pub async fn start_observed_directory(
     path: String,
     session_id: String,
     trace_id: Option<String>,
-) -> Result<ObservedDirectoryListing, AppError> {
+    trace_watched: Option<bool>,
+) -> Result<TracedReply<ObservedDirectoryListing>, AppError> {
     use tauri::Manager;
-    let scope = load_diagnostics::begin_listing(Some(window.app_handle()), trace_id, &path);
+    let scope = load_diagnostics::begin_listing(
+        Some(window.app_handle()),
+        trace_id,
+        &path,
+        trace_watched.unwrap_or(false),
+    );
     let trace = scope.handle();
-    let result = async {
-        trace.enter(Phase::OwnerAcquire);
-        let owner = crate::renderer_owner::acquire_owner(&window, &session_id)?;
-        let pending =
-            super::fs_watcher::observe_directory(owner.clone(), path, trace.clone()).await?;
-        let listing = list_directory_for_lease(pending.path().to_owned(), trace).await?;
-        if !owner.active() {
-            return Err(AppError::Other(
-                "Native resource renderer was replaced".into(),
-            ));
-        }
-        Ok(ObservedDirectoryListing {
-            listing,
-            watch_lease: pending.take(),
-        })
-    }
+    let result = observed_listing(
+        trace,
+        || crate::renderer_owner::acquire_owner(&window, &session_id),
+        |owner, trace| super::fs_watcher::observe_directory(owner, path, trace),
+    )
     .await;
-    scope.finish(&result);
-    result
+    TracedReply::wrap(scope, result)
+}
+
+/// The observed-listing sequence, with ownership and watch registration
+/// injected so its phase order is testable without a window or watcher.
+async fn observed_listing<L, F>(
+    trace: TraceHandle,
+    acquire: impl FnOnce() -> Result<Owner, AppError>,
+    observe: impl FnOnce(Owner, TraceHandle) -> F,
+) -> Result<ObservedDirectoryListing, AppError>
+where
+    L: AdmittedLease,
+    F: std::future::Future<Output = Result<L, AppError>>,
+{
+    trace.enter(Phase::OwnerAcquire);
+    let owner = acquire()?;
+    let pending = observe(owner.clone(), trace.clone()).await?;
+    let listing = list_directory_for_lease(pending.path().to_owned(), trace).await?;
+    if !owner.active() {
+        return Err(AppError::Other(
+            "Native resource renderer was replaced".into(),
+        ));
+    }
+    Ok(ObservedDirectoryListing {
+        listing,
+        watch_lease: pending.take(),
+    })
 }
 
 #[cfg(test)]

@@ -28,6 +28,10 @@ import type { FrontendLoadPhase } from "$lib/domain/load-diagnostics";
  *  the native command so its own phases join the same trace. */
 export interface ListingTrace {
   readonly id: string;
+  /** A pane is waiting on this listing (a navigation), so the native side
+   *  may record it on its own if the frontend cannot. Background refreshes
+   *  are traced only to explain navigations queued behind them. */
+  readonly watched: boolean;
   phase(phase: FrontendLoadPhase): void;
 }
 
@@ -439,7 +443,7 @@ export async function loadDirectory(
     const observed = Boolean(observation && native);
     trace?.phase("native");
     const sessionId = observed ? await getNativeResourceSession() : undefined;
-    const traced = trace ? { traceId: trace.id } : {};
+    const traced = trace ? { traceId: trace.id, traceWatched: trace.watched } : {};
     const payload = observed
       ? await invoke<CompactDirectoryListing & { watch_lease?: DirectoryWatchLease }>("start_observed_directory", {
           path, sessionId, ...traced,

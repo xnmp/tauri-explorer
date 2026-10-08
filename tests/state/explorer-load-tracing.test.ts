@@ -91,4 +91,31 @@ describe("explorer slow-load traces", () => {
     });
     void explorer.destroy();
   });
+  it("drops an auto-enter descent that a newer navigation superseded", async () => {
+    settingsStore.update({ autoEnterSingleSubdir: true });
+    let releasePeek!: () => void;
+    const peekGate = new Promise<void>((resolve) => { releasePeek = resolve; });
+    fetchImpl.current = async (path) => {
+      if (path === "/a") {
+        await peekGate;
+        return { ok: true, data: { path, entries: [dir("only", "/a")] } };
+      }
+      return { ok: true, data: { path, entries: [dir("x", path), dir("y", path)] } };
+    };
+    const listed: string[] = [];
+    loadImpl.current = async (path) => {
+      listed.push(path);
+      return { ok: true, path, entries: [] };
+    };
+    const explorer = createExplorerState();
+    const first = explorer.navigateTo("/a");
+    await flush();
+    await expect(explorer.navigateTo("/b", { autoEnterSingleSubdir: false })).resolves.toBe(true);
+    releasePeek();
+    await expect(first).resolves.toBe(false);
+    expect(listed).toEqual(["/b"]);
+    expect(explorer.state.currentPath).toBe("/b");
+    expect(tracedPaths()).toEqual([]);
+    void explorer.destroy();
+  });
 });

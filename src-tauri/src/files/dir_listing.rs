@@ -1,4 +1,4 @@
-//! Directory listing with caching and streaming support.
+//! Directory listing with caching; each listing is one complete snapshot (#738).
 //! Issue: tauri-explorer-jag7, tauri-explorer-3b5s
 
 use serde::Serialize;

@@ -2,6 +2,115 @@
 
 All notable changes to Tauri Explorer.
 
+## v1.11.3 — 2026-10-08
+
+This update adds installable plugins with a revamped plugin SDK, AI image
+editing with provenance tracking, video playback in Preview, and a new app
+icon. It also adds Open With on Linux, native Cut on every platform, and a
+Linux install that no longer leaves older per-user copies shadowing the
+package.
+
+### Added
+
+- Plugin SDK 2: plugins can contribute a main file view that replaces a pane's
+  listing (chosen from the view options or a plugin command, remembered per
+  pane, and falling back to the built-in view where it does not apply),
+  Preview-info sections, and pane-scoped Preview targets for non-file
+  subjects such as unsaved images. SDK 1 plugins keep working unchanged.
+- Plugin workers created from blob URLs are permitted (`worker-src blob:`).
+- Plugins can show files as Tiles-view tiles in their own sections through
+  the SDK module `ui/file-tiles` (capability `fileTiles`): the same tile
+  look, thumbnails, names and tile-size setting as the built-in Tiles view,
+  with selection, opening and the context menu left to the plugin (#1018).
+- Plugins can be installed as `.teplugin` packages from the Plugins dialog
+  and the command palette (Install Plugin…), then disabled or removed without
+  deleting their outputs or history. Plugins can add inspectors beside the
+  active pane, and inspectors can be resized horizontally or vertically
+  with sizes remembered and keyboard controls (#978, #996, #998, #1013).
+- TraceExplorer now ships as a separate installable plugin rather than being
+  built into the app. It records image provenance (crops, replacements and
+  AI edits) and shows it as a read-only graph of images and the operations
+  between them, with details for each node (#979, #986, #996).
+- AI image editing through the TraceExplorer plugin: generate images into a
+  folder or edit up to eight selected images using a Codex sign-in or an
+  OpenAI API key. Ctrl+E opens AI edit and Ctrl+Enter submits; Codex, 2K
+  resolution and keeping the aspect ratio are the defaults. AI editing opens
+  directly in its tool, separate from Crop Image…, and generation shows
+  elapsed time and estimated progress in Background Operations (#979, #986,
+  #991, #1013).
+- A Codex executable path setting, and Codex is found when Explorer is
+  launched from the desktop with a different PATH than your terminal (#990).
+- Crop Image… in the command palette and the Preview, with format-preserving
+  saves (#681, #963, #991).
+- Local videos play in the Preview pane with play/pause, seeking, volume and
+  fullscreen, and video thumbnails carry a play badge so they are not
+  mistaken for images (#823, #953, #971).
+- Open With on Linux: a context-menu action opens the selected file with an
+  installed application without changing the default association (#822,
+  #958).
+- Keyboard Shortcuts has its own dialog, separate from Settings, and the
+  palette offers both. Plugins likewise has its own searchable dialog
+  (#758, #954, #1002).
+- PDF preview has centered zoom, hand-tool navigation and a more compact
+  layout (#728, #729, #730).
+- Git graph shows author avatars, with Gravatar lookup available as an
+  opt-in setting (#725).
+- Cut works on Wayland, Windows and macOS as well as X11, verifying native
+  clipboard ownership before moving a file (#877, #923).
+- New jade tau-aperture app icon (#1012).
+
+### Changed
+
+- Linux file pickers opened through portals are parented to the requesting
+  window and stay above it. You can type to select matching entries, press
+  Enter to open folders, use Ctrl+F to filter the current column, and use
+  Ctrl+P to search recent files and frequent folders (#1008).
+- On Arch, setup can install the latest TraceExplorer plugin package, with
+  `--plugin-path` or `TRACE_EXPLORER_PLUGIN_PATH` to choose another (#998).
+- The Arch install script skips frontend rebuilds when nothing changed,
+  authenticates before building, and builds in isolated staging (#981, #988,
+  #989).
+- Updated Rust, Tauri and frontend dependencies (#720, #846).
+
+### Fixed
+
+- With Preview docked at the bottom or top, a plugin's Preview-info section
+  takes the height it needs instead of scrolling inside a clipped box, and
+  the image follows it directly without a gap. Plugin Preview targets (such
+  as unsaved images) get the same docked layout as files (#1018).
+- The Arch package is now the only install. After installing it, the setup
+  script moves aside per-user launcher, desktop-entry and portal overrides
+  that shadowed the package (kept under
+  `~/.local/state/tauri-explorer/retired-overrides/`), warns if
+  `tauri-explorer` still resolves outside `/usr/bin`, and reports any running
+  old instance that would keep launching the previous build (#1016).
+- Opening or switching tabs no longer puts the address bar back into editing
+  (#1006, #1009).
+- The address bar stays visible when a single pane is shorter than the
+  minimum pane height (#1004, #1005).
+- Highlighted code in Preview uses the configured preview font (#1002).
+- Minimum-size video docks and their error messages stay usable (#973).
+- Workspaces no longer show needless scrollbars at fractional zoom (#977).
+- The crop editor is more polished and opens faster (#982, #984).
+- Pasting clipboard images shows progress immediately (#722, #961).
+- Marquee selection stays aligned with scaled and virtualized lists
+  (#756, #853, #959).
+- Dismissed Recent locations are down-ranked without erasing history (#754,
+  #956).
+- Custom shortcuts record and run complete key chords (#759, #955).
+- HTML files use a web-document icon instead of the HTML5 shield (#821,
+  #950).
+- The Google Drive sidebar shortcut no longer reappears on every refresh
+  (#731, #952).
+- Empty-folder markers are cleared after moves (#678).
+- A Cut is claimed before moving, so only one paste moves it (#871, #908).
+- On Windows, Paste no longer waits behind PowerShell (#912, #945).
+- A terminated macOS web view is reloaded (#942, #944).
+- Settings no longer deadlock when the configuration watcher hands over
+  (#913, #935).
+- Plugin event, provider and activation failures name the plugin that caused
+  them (#890, #906).
+
 ## v1.11.2 — 2026-09-30
 
 ### Fixed

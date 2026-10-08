@@ -1,7 +1,7 @@
 /**
  * Contribution registry for plugin-provided settings sections.
  *
- * SettingsDialog renders each registered section descriptor-driven
+ * PluginSettings renders each registered section descriptor-driven
  * (text/password/toggle/select rows). Each section owns a reactive `values`
  * map seeded from the plugin's storage blob and written back through it, so the
  * settings UI stays synchronous while persistence rides the existing config
@@ -9,12 +9,11 @@
  */
 
 import type { SettingRowDescriptor, SettingsSectionDescriptor, PluginStorage } from "./api";
+import { createOrderedRegistry } from "$lib/state/ordered-registry";
 
 export interface RegisteredSettingsSection {
   pluginId: string;
   id: string;
-  /** The contributing plugin's list position; sections are shown in it. */
-  order: number;
   title: string;
   rows: SettingRowDescriptor[];
   /** Current values keyed by row id (reactive). */
@@ -23,6 +22,9 @@ export interface RegisteredSettingsSection {
   valueOf(row: SettingRowDescriptor): unknown;
   /** Update a row value and persist the whole blob. */
   setValue(rowId: string, value: unknown): void;
+  /** Await persistence for dialogs that must report save failures. */
+  save(patch: Record<string, unknown>): Promise<void>;
+  applySaved(patch:Record<string,unknown>):Promise<void>;
 }
 
 function defaultsFrom(rows: SettingRowDescriptor[]): Record<string, unknown> {
@@ -37,7 +39,6 @@ function createSection(
   pluginId: string,
   desc: SettingsSectionDescriptor,
   storage: PluginStorage,
-  order: number,
 ): RegisteredSettingsSection {
   const defaults = defaultsFrom(desc.rows);
   let values = $state<Record<string, unknown>>({ ...defaults });
@@ -49,7 +50,7 @@ function createSection(
   // the load would silently clobber the user's in-flight edit.
   let loading = true;
   const editedWhileLoading = new Set<string>();
-  void storage
+  const ready = storage
     .get()
     .then((stored) => {
       const preserved: Record<string, unknown> = {};
@@ -66,7 +67,6 @@ function createSection(
   return {
     pluginId,
     id: desc.id,
-    order,
     title: desc.title,
     rows: desc.rows,
     get values() {
@@ -81,36 +81,43 @@ function createSection(
       values = { ...values, [rowId]: value };
       void storage.set(values);
     },
+    async save(patch: Record<string, unknown>): Promise<void> {
+      await ready;
+      const next = { ...values, ...patch };
+      await (storage.setChecked?.(next) ?? storage.set(next));
+      values = next;
+    },
+    async applySaved(patch) {await ready;values={...values,...patch};},
   };
 }
 
 function createSettingsRegistry() {
   let sections = $state<RegisteredSettingsSection[]>([]);
+  const registrations = createOrderedRegistry<RegisteredSettingsSection>();
 
   return {
     get sections() {
       return sections;
     },
-    /** Register a section; returns a disposer that removes it. */
+    /** Register a section; returns a disposer that removes it. Sections appear
+     *  by `order` (the plugin's list position), then registration; a plugin
+     *  registering the same section id twice throws. */
     register(
       pluginId: string,
       desc: SettingsSectionDescriptor,
       storage: PluginStorage,
       order = Number.MAX_SAFE_INTEGER,
     ): () => void {
-      const section = createSection(pluginId, desc, storage, order);
-      // Stable sort: sections with the same order keep registration order.
-      sections = [...sections, section].sort((a, b) => a.order - b.order);
-      // Remove by (pluginId, id), not object reference: Svelte's `$state` array
-      // deep-proxies elements, so the stored section never `===` this `section`.
+      const section = createSection(pluginId, desc, storage);
+      const dispose = registrations.register(`${pluginId}\u0000${desc.id}`, section, order);
+      sections = registrations.values();
       return () => {
-        sections = sections.filter(
-          (s) => !(s.pluginId === section.pluginId && s.id === section.id)
-        );
+        if (dispose()) sections = registrations.values();
       };
     },
     /** Remove all sections. Test helper. */
     clear(): void {
+      registrations.clear();
       sections = [];
     },
   };

@@ -1,10 +1,5 @@
 //! Tauri Explorer app entry point.
 //! Issue: tauri-explorer-nv2y, tauri-explorer-hgt6, tauri-explorer-im3m, tauri-explorer-bo8l, tauri-explorer-yclf
-// The Unix recovery, anchored-copy and handle-permission implementations
-// compile and run their unit tests on macOS, but only Linux production paths
-// call them until a macOS adapter is connected (#772). Dead-code lints stay
-// enforced on Linux, where every Unix module has production callers.
-#![cfg_attr(target_os = "macos", allow(dead_code, unused_imports))]
 
 mod ai_organize;
 mod ai_rename;
@@ -19,12 +14,15 @@ pub mod error;
 mod fal;
 mod file_history;
 mod file_mutation;
+mod file_picker;
+mod shared_history;
 // pub: criterion benches (src-tauri/benches/) call into
 // files::dir_listing::{scan_directory_parallel, sort_entries} directly.
 pub mod files;
 mod gemini;
 pub mod git;
 pub mod git_actions;
+mod git_avatar;
 mod git_common;
 pub mod git_log;
 #[cfg(all(target_os = "linux", feature = "e2e-renderer-recovery"))]
@@ -32,8 +30,12 @@ pub mod git_log;
 mod git_observation_probe;
 mod git_watch;
 mod github;
+mod image_crop;
+mod image_operation;
+mod installed_plugins;
 mod nano_banana;
 mod palette;
+mod platform;
 mod plugin_job;
 #[cfg(target_os = "linux")]
 mod portal;
@@ -46,12 +48,10 @@ mod renderer_recovery;
 mod update_check;
 mod upscale;
 mod user_report;
+mod window_launch;
 /// Non-Linux stub so the command registry stays platform-independent.
 #[cfg(not(target_os = "linux"))]
 mod portal {
-    #[tauri::command]
-    pub async fn picker_respond(_token: String, _paths: Vec<String>, _cancelled: bool) {}
-
     pub fn is_portal_mode() -> bool {
         false
     }
@@ -84,7 +84,8 @@ fn e2e_webview2_browser_args() -> String {
 mod wsl;
 
 use system::{
-    get_launch_cwd, get_log_dir, log_startup_timing, open_recycle_bin, set_window_theme, LaunchCwd,
+    get_launch_cwd, get_log_dir, log_startup_progress, log_startup_timing, open_recycle_bin,
+    set_window_theme, LaunchCwd,
 };
 use tauri_plugin_log::{RotationStrategy, Target, TargetKind, TimezoneStrategy};
 
@@ -182,11 +183,39 @@ pub fn run_with_process_entry(launch_dir: Option<String>, t_process_entry: std::
         .and_then(|s| s.parse().ok())
         .unwrap_or(log::LevelFilter::Info);
 
-    let builder = tauri::Builder::default();
-    #[cfg(any(target_os = "macos", target_os = "ios"))]
+    let builder =
+        tauri::Builder::default().register_uri_scheme_protocol("plugin", |_context, request| {
+            let decoded = percent_encoding::percent_decode_str(request.uri().path()).decode_utf8();
+            let response = decoded
+                .map_err(|_| error::AppError::Other("Invalid asset path".into()))
+                .and_then(|path| installed_plugins::serve_asset(&path));
+            match response {
+                Ok((body, mime)) => tauri::http::Response::builder()
+                    .header("Content-Type", mime)
+                    .header("Access-Control-Allow-Origin", "*")
+                    .header("X-Content-Type-Options", "nosniff")
+                    .body(body),
+                Err(_) => tauri::http::Response::builder()
+                    .status(404)
+                    .body(Vec::new()),
+            }
+            .expect("valid plugin asset response")
+        });
+    // Route secondary processes before recovery can touch shared plugin state.
+    #[cfg(target_os = "linux")]
+    let builder = if portal::is_portal_mode() {
+        builder
+    } else {
+        builder.plugin(
+            window_launch::routing_plugin().expect("Could not initialize profile launch routing"),
+        )
+    };
+    #[cfg(target_os = "macos")]
     let builder = builder.on_web_content_process_terminate(|webview| {
-        renderer_owner::on_page_started(&webview.window());
+        renderer_owner::on_web_content_terminated(webview);
     });
+    #[cfg(target_os = "linux")]
+    let builder = builder.plugin(renderer_owner::termination_log());
     // Every WebView sharing Windows' data directory must use the exact same
     // environment options. Inject the main window's attach-build arguments
     // into every spawning page so fresh and warm descendants preserve them.
@@ -200,11 +229,9 @@ pub fn run_with_process_entry(launch_dir: Option<String>, t_process_entry: std::
             .build(),
     );
 
-    #[cfg(target_os = "linux")]
-    let builder = builder.manage(files::recovery::Runtime::default());
-
     builder
         .manage(LaunchCwd(launch_cwd_for_state))
+        .manage(window_launch::Requests::default())
         .manage(system::StartupClock {
             started: t_start,
             epoch_ms: t_start_epoch_ms,
@@ -234,8 +261,10 @@ pub fn run_with_process_entry(launch_dir: Option<String>, t_process_entry: std::
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_drag::init())
-        .plugin(tauri_plugin_clipboard_x::init())
         .on_window_event(|window, event| {
+            if matches!(event, tauri::WindowEvent::Focused(true)) {
+                installed_plugins::notify_pending_errors(window);
+            }
             if matches!(event, tauri::WindowEvent::Destroyed) {
                 renderer_owner::on_window_destroyed(window);
             }
@@ -243,6 +272,8 @@ pub fn run_with_process_entry(launch_dir: Option<String>, t_process_entry: std::
         .on_page_load(|webview, payload| {
             if payload.event() == tauri::webview::PageLoadEvent::Started {
                 renderer_owner::on_page_started(&webview.window());
+                #[cfg(target_os = "macos")]
+                renderer_owner::on_document_committed(&webview.window(), payload.url());
             }
         })
         .invoke_handler(tauri::generate_handler![
@@ -259,6 +290,7 @@ pub fn run_with_process_entry(launch_dir: Option<String>, t_process_entry: std::
             config::write_theme_file,
             update_check::check_for_update,
             log_startup_timing,
+            log_startup_progress,
             // Trash operations
             file_mutation::delete_entries,
             files::recovery::commands::file_recovery_list,
@@ -283,9 +315,17 @@ pub fn run_with_process_entry(launch_dir: Option<String>, t_process_entry: std::
             file_mutation::move_entries,
             file_mutation::resolve_copy_conflict,
             file_mutation::cancel_copy_session,
-            file_mutation::move_entry,
             files::file_ops::read_text_file,
             files::file_ops::read_image_data_url,
+            files::image_crop::capture_image_crop,
+            file_mutation::save_image_crop,
+            files::pdf_preview::read_pdf_bytes,
+            files::pdf_preview::open_pdf_link,
+            #[cfg(feature = "e2e-hooks")]
+            files::media_preview::e2e_video_preview_stats,
+            files::media_preview::begin_video_preview,
+            files::media_preview::prepare_video_preview,
+            files::media_preview::release_video_preview,
             file_mutation::write_text_file,
             file_mutation::create_symlink,
             files::file_ops::estimate_size,
@@ -297,6 +337,8 @@ pub fn run_with_process_entry(launch_dir: Option<String>, t_process_entry: std::
             files::external_apps::open_file,
             files::external_apps::open_file_at_line,
             files::external_apps::open_file_with,
+            files::open_with::list_open_with_applications,
+            files::open_with::open_file_with_application,
             files::external_apps::open_image_with_siblings,
             files::external_apps::open_in_terminal,
             files::external_apps::list_installed_terminals,
@@ -309,14 +351,13 @@ pub fn run_with_process_entry(launch_dir: Option<String>, t_process_entry: std::
             content_search::start_content_search,
             content_search::cancel_content_search,
             // Clipboard (Linux native)
-            clipboard::clipboard_has_files,
-            clipboard::clipboard_read_files,
             clipboard::clipboard_read_text,
-            clipboard::clipboard_write_files,
             clipboard::clipboard_publish,
             clipboard::clipboard_snapshot,
             clipboard::clipboard_compare_and_clear,
             clipboard::clipboard_rekey,
+            clipboard::clipboard_claim_cut,
+            clipboard::clipboard_release_cut,
             clipboard::clipboard_has_image,
             clipboard::clipboard_read_report_image,
             clipboard::clipboard_paste_image,
@@ -337,6 +378,8 @@ pub fn run_with_process_entry(launch_dir: Option<String>, t_process_entry: std::
             archive::list_archive_contents,
             // Config file persistence
             config::read_config_file,
+            shared_history::shared_history_read,
+            shared_history::shared_history_mutate,
             config::write_config_file,
             config::get_config_dir,
             config::list_user_themes,
@@ -364,6 +407,7 @@ pub fn run_with_process_entry(launch_dir: Option<String>, t_process_entry: std::
             file_history::file_history_execute,
             git_watch::git_watch_repo,
             git_watch::git_unwatch_repo,
+            git_avatar::git_author_avatar,
             git_log::git_log,
             git_log::git_refs,
             git_log::git_commit_files,
@@ -403,6 +447,7 @@ pub fn run_with_process_entry(launch_dir: Option<String>, t_process_entry: std::
             // Drives / volumes
             files::drives::list_drives,
             files::drives::mount_drive,
+            files::drives::drive_updates_live,
             // Wallpaper
             wallpaper::set_as_wallpaper,
             // Nano Banana (AI image editing)
@@ -412,7 +457,15 @@ pub fn run_with_process_entry(launch_dir: Option<String>, t_process_entry: std::
             ai_rename::ai_suggest_filenames,
             ai_organize::ai_suggest_destination,
             // File-picker portal (xdg-desktop-portal FileChooser backend)
-            portal::picker_respond,
+            file_picker::picker_respond,
+            file_picker::pick_file,
+            installed_plugins::list_installed_plugins,
+            installed_plugins::install_plugin,
+            installed_plugins::take_pending_plugin_install_errors,
+            window_launch::take_window_launch_requests,
+            installed_plugins::uninstall_plugin,
+            installed_plugins::set_plugin_package_enabled,
+            installed_plugins::plugin_backend_invoke,
             // Window appearance
             set_window_theme,
             // Pre-warmed window pool
@@ -433,6 +486,17 @@ pub fn run_with_process_entry(launch_dir: Option<String>, t_process_entry: std::
         ])
         .setup(move |app| {
             let t_setup = std::time::Instant::now();
+            installed_plugins::initialize(app.handle().clone())?;
+
+            // Before any window exists, so every mutation command can admit.
+            // Without a data directory, mutations fail rather than run unadmitted.
+            #[cfg(target_os = "linux")]
+            match tauri::Manager::path(app).app_local_data_dir() {
+                Ok(data) => {
+                    tauri::Manager::manage(app, files::recovery::Runtime::new(data.join("file-recovery")));
+                }
+                Err(error) => log::error!("File recovery storage is unavailable: {error}"),
+            }
             #[cfg(all(target_os = "linux", feature = "e2e-renderer-recovery"))]
             files::recovery::native_probe::seed(app.handle())?;
 
@@ -444,6 +508,11 @@ pub fn run_with_process_entry(launch_dir: Option<String>, t_process_entry: std::
 
             // Initialize filesystem watcher for auto-refresh
             files::fs_watcher::init_watcher(app.handle());
+
+            // Removable-volume discovery: one UDisks2 subscription per process,
+            // connected lazily on the first `list_drives` (#888).
+            #[cfg(target_os = "linux")]
+            files::linux_volumes::init_monitor(app.handle());
 
             // Portal-backend mode: no main window — serve the FileChooser
             // D-Bus interface and open picker windows on demand.
@@ -508,8 +577,7 @@ pub fn run_with_process_entry(launch_dir: Option<String>, t_process_entry: std::
                         builder = builder.effects(WindowEffectsConfig {
                             effects: vec![WindowEffect::UnderWindowBackground],
                             state: Some(WindowEffectState::Active),
-                            radius: None,
-                            color: None,
+                            ..Default::default()
                         });
                     }
                 }
@@ -549,9 +617,7 @@ pub fn run_with_process_entry(launch_dir: Option<String>, t_process_entry: std::
                     use tauri::utils::config::WindowEffectsConfig;
                     builder = builder.transparent(true).effects(WindowEffectsConfig {
                         effects: vec![effect],
-                        state: None,
-                        radius: None,
-                        color: None,
+                        ..Default::default()
                     });
                 }
             }
@@ -599,6 +665,7 @@ pub fn run_with_process_entry(launch_dir: Option<String>, t_process_entry: std::
         .build(tauri::generate_context!())
         .expect("error while running tauri application")
         .run(|app, event| {
+            if matches!(&event,tauri::RunEvent::Exit){installed_plugins::shutdown();}
             // Portal mode has no persistent window: closing a picker window
             // must not exit the service, or the D-Bus name would drop.
             if portal::is_portal_mode() {

@@ -4,7 +4,7 @@ pkgname=tauri-explorer
 # package never drifts from the app (it sat at 0.2.7 while the app was
 # 0.3.0). pkgver() updates it automatically during makepkg; the literal
 # below is just a fallback for tooling that reads it without running pkgver.
-pkgver=1.11.1
+pkgver=1.11.3
 pkgrel=1
 pkgdesc="A minimalistic, high-performance file explorer"
 arch=('x86_64' 'aarch64')
@@ -52,7 +52,11 @@ prepare() {
 
 build() {
   cd "$_srcdir"
-  bun run build
+  if [[ ${_arch_reuse_frontend:-0} == 1 ]]; then
+    bun scripts/build-arch-frontend.mjs
+  else
+    bun run build
+  fi
   # --features avif: Arch ships a current dav1d, so enable AVIF thumbnails
   # (off in the cross-platform release where dav1d is unavailable/too old).
   cargo tauri build --no-bundle --features avif --config '{"build":{"beforeBuildCommand":""}}'

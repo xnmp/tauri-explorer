@@ -303,6 +303,39 @@ export const terminalCommands: Command[] = [
 /** General dialog commands */
 export const generalDialogCommands: Command[] = [
   {
+    id: "plugins.installPackage",
+    label: "Install Plugin…",
+    category: "plugins",
+    handler: async () => {
+      try {
+        const { installPackage } = await import("$lib/plugins/installed");
+        const { pluginRegistry } = await import("$lib/plugins/registry.svelte");
+        await installPackage(pluginRegistry);
+      } catch (error) {
+        const { extractError } = await import("$lib/api/common");
+        toastStore.error(extractError(error));
+      }
+    },
+  },
+  {
+    id: "general.openSettings",
+    label: "Settings",
+    category: "general",
+    handler: () => dialogStore.openSettings(),
+  },
+  {
+    id: "plugins.openSettings",
+    label: "Plugins",
+    category: "plugins",
+    handler: () => dialogStore.openPlugins(),
+  },
+  {
+    id: "general.openKeybindings",
+    label: "Keyboard Shortcuts",
+    category: "general",
+    handler: () => dialogStore.openKeybindings(),
+  },
+  {
     id: "general.fileRecovery",
     label: "File Recovery",
     category: "general",
@@ -328,7 +361,7 @@ export const generalDialogCommands: Command[] = [
   },
   {
     id: "help.shortcuts",
-    label: "Keyboard Shortcuts",
+    label: "Keyboard Shortcut Reference",
     category: "general",
     shortcut: "Ctrl+/",
     handler: () => {

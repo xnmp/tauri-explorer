@@ -8,19 +8,16 @@ import type { ContentMatch, ContentSearchResult } from "$lib/domain/content-sear
 
 export type { ContentMatch, ContentSearchResult };
 
-/**
- * Search result from fuzzy file search.
- */
-export interface SearchResult {
-  name: string;
-  path: string;
-  relativePath: string;
-  score: number;
-  kind: "file" | "directory";
-}
+import type { SearchResult } from "$lib/domain/search";
+export type { SearchResult } from "$lib/domain/search";
 
 interface SearchResponse {
   results: SearchResult[];
+}
+
+export interface SearchFilter {
+  extensions?: readonly string[];
+  directoriesOnly?: boolean;
 }
 
 /**
@@ -34,13 +31,15 @@ interface SearchResponse {
 export async function fuzzySearch(
   query: string,
   root: string,
-  limit: number = 20
+  limit: number = 20,
+  filter?: SearchFilter,
 ): Promise<ApiResult<SearchResult[]>> {
   try {
     const response = await invoke<SearchResponse>("fuzzy_search", {
       query,
       root,
       limit,
+      ...(filter ? { filter } : {}),
     });
     return { ok: true, data: response.results };
   } catch (err) {
@@ -121,8 +120,7 @@ export interface ContentSearchEvent {
  * Result of starting a content search. With the real backend, results stream
  * via 'content-search-results' events and `searchId` identifies the stream.
  * Outside Tauri (browser/mock mode) the event system is unavailable, so the
- * mock returns the complete result set inline (`searchId` null) — same
- * fallback shape as the streaming directory listing.
+ * mock returns the complete result set inline (`searchId` null).
  */
 export interface ContentSearchStart {
   searchId: number | null;

@@ -5,11 +5,23 @@
 # Windows contract loop because it gates that job's native smoke.
 name: Rust platforms
 
+# Only Rust inputs can change these results. The nightly run catches drift that
+# path filters hide: `dtolnay/rust-toolchain@stable` advances independently of
+# this repository (#872).
 on:
   push:
     branches: [main, dev]
+    paths:
+      - "src-tauri/**"
+      - ".github/workflows/rust-platforms.yml"
   pull_request:
     branches: [main, dev]
+    paths:
+      - "src-tauri/**"
+      - ".github/workflows/rust-platforms.yml"
+  schedule:
+    - cron: "17 3 * * *"
+  workflow_dispatch:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.ref_name }}
@@ -25,6 +37,9 @@ jobs:
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v7
+        with:
+          # Scheduled runs start from the default branch (main); qualify dev.
+          ref: ${{ github.event_name == 'schedule' && 'dev' || '' }}
 
       - uses: dtolnay/rust-toolchain@stable
         with:
@@ -59,6 +74,16 @@ jobs:
       - name: Rust tests
         run: cargo test --manifest-path src-tauri/Cargo.toml
 
+      # Cut ownership against the real clipboard (#877): Windows' sequence
+      # number and macOS' change count. Ignored by default because it replaces
+      # the clipboard; the runner's is disposable. Require exactly one test so
+      # a renamed test cannot pass by matching nothing.
+      - name: Native clipboard Cut ownership
+        shell: bash
+        run: |
+          cargo test --manifest-path src-tauri/Cargo.toml --lib native_clipboard_ownership -- --ignored --nocapture 2>&1 | tee clipboard-ownership.log
+          grep -q 'test result: ok\. 1 passed; 0 failed;' clipboard-ownership.log
+
       # GitHub-hosted Windows jobs own a fresh administrator VM. Temporarily
       # enable 8.3 creation only for this dedicated test; restore the runner's
       # original setting even when the assertion or Cargo fails (#799).
@@ -91,13 +116,3 @@ jobs:
             & fsutil.exe 8dot3name set $policy
             if ($LASTEXITCODE -ne 0) { throw "Could not restore original NTFS 8.3 policy $policy" }
           }
-
-      # The opt-in durable policies are `cfg(unix)` code; macOS is the only
-      # non-Linux platform where they compile to anything.
-      - name: Opt-in recovery Clippy
-        if: runner.os == 'macOS'
-        run: cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets --features durable-copy-recovery,durable-move-recovery -- -D warnings
-
-      - name: Opt-in recovery tests
-        if: runner.os == 'macOS'
-        run: cargo test --manifest-path src-tauri/Cargo.toml --features durable-copy-recovery,durable-move-recovery

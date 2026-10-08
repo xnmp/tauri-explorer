@@ -25,9 +25,25 @@ Before opening a PR, please make sure `bun run check`, `bun run test`, and `carg
 ## Pull requests
 
 - Development happens on the `dev` branch; `main` tracks releases. Target PRs at `dev`.
-- Keep diffs small and focused; one concern per PR.
+- Keep diffs small and focused; one concern per PR. This applies to release preparation too: a release-prep PR bumps versions and the changelog, and nothing else — do not bundle it with unrelated fixes or features.
 - New business logic should come with unit tests; user-visible changes should update or add a Playwright spec asserting the actual outcome (not just that a component renders).
 - The frontend has three view modes (Details, List, Tiles) — UI changes to file display need to work in all three (`ALL_VIEW_MODES=1 npx playwright test`).
+
+## Diagnostic scaffolding: `Retire-when`
+
+Code and tests added only to investigate an open issue — an extra sampler, a failure artifact, a negative-control spec — are temporary. Tag every such file (or block, if it lives inside a longer-lived file) with a line naming the issue that justifies it:
+
+```ts
+/**
+ * Process-only evidence for native WebDriver session loss.
+ *
+ * Retire-when: #781 closed
+ */
+```
+
+- Put native-suite scaffolding in `e2e-tauri/diagnostics/` and persist artifacts through its shared writer (`diagnostics/artifact.ts`), which names files without trusting caller strings and never lets a failed write replace the error being documented.
+- When you close an issue, run `grep -rn "Retire-when: #NNN closed" .` for its number. Delete what it tags, or promote it: if a piece now guards a real product or harness contract, remove the tag and keep at most one regression test for that contract. Record what the investigation learnt in `docs/lessons/<issue>-<slug>.md`.
+- If the scaffolding still serves another open issue, retag it with that issue rather than leaving the closed one.
 
 ## Architecture
 

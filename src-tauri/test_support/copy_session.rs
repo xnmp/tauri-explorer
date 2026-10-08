@@ -14,14 +14,14 @@ fn block<T>(future: impl Future<Output = T>) -> T {
 }
 
 fn native(root: &Path) -> NativeWork {
-    native_with_runtime(root, Runtime::default())
+    native_with_runtime(Runtime::new(root.join("recovery")))
 }
 
-fn native_with_runtime(root: &Path, runtime: Runtime) -> NativeWork {
+fn native_with_runtime(runtime: Runtime) -> NativeWork {
     NativeWork {
         app: None,
         job_id: 9_001,
-        recovery: (runtime, root.join("recovery")),
+        runtime,
     }
 }
 
@@ -112,9 +112,9 @@ fn real_ordinary_prefix_and_replacement_commit_in_order() {
     };
     assert_eq!(
         receipt.replacement.is_some(),
-        cfg!(feature = "durable-copy-recovery")
+        cfg!(feature = "durable-recovery")
     );
-    if !cfg!(feature = "durable-copy-recovery") {
+    if !cfg!(feature = "durable-recovery") {
         assert!(
             receipt.publication.is_some(),
             "staged overwrite retains exact ordinary-copy Undo authority"
@@ -130,7 +130,7 @@ fn real_ordinary_prefix_and_replacement_commit_in_order() {
     assert_eq!(order, [0, 1]);
 }
 
-#[cfg(not(feature = "durable-copy-recovery"))]
+#[cfg(not(feature = "durable-recovery"))]
 #[test]
 fn repeated_native_overwrites_retire_transient_recovery_records_and_keep_one_inverse() {
     use crate::file_history::{Action, ForwardEffect};
@@ -143,7 +143,7 @@ fn repeated_native_overwrites_retire_transient_recovery_records_and_keep_one_inv
     let source = sources.join("item.txt");
     let target = destination.join("item.txt");
     fs::write(&target, b"initial target").unwrap();
-    let runtime = Runtime::default();
+    let runtime = Runtime::new(root.path().join("recovery"));
 
     // One more operation than the bounded journal permits proves completed
     // transient reservations are retired instead of accumulating forever.
@@ -152,7 +152,7 @@ fn repeated_native_overwrites_retire_transient_recovery_records_and_keep_one_inv
         fs::write(&source, bytes).unwrap();
         let (outcome, _) = run_with(
             request(std::slice::from_ref(&source), &destination),
-            native_with_runtime(root.path(), runtime.clone()),
+            native_with_runtime(runtime.clone()),
             vec![overwrite(false)],
         );
         assert!(
@@ -174,11 +174,11 @@ fn repeated_native_overwrites_retire_transient_recovery_records_and_keep_one_inv
         assert_eq!(fs::read(&target).unwrap(), bytes);
     }
 
-    let inventory = block(runtime.list(root.path().join("recovery"))).unwrap();
+    let inventory = block(runtime.list()).unwrap();
     assert!(inventory.items.is_empty());
 }
 
-#[cfg(not(feature = "durable-copy-recovery"))]
+#[cfg(not(feature = "durable-recovery"))]
 #[test]
 fn native_overwrite_obeys_a_competing_runtime_admission() {
     use crate::files::recovery::{Access, ResourceRequest, Scope};
@@ -193,26 +193,23 @@ fn native_overwrite_obeys_a_competing_runtime_admission() {
         let target = destination.join("item.txt");
         fs::write(&source, b"new bytes").unwrap();
         fs::write(&target, b"original bytes").unwrap();
-        let runtime = Runtime::default();
         let storage = root.path().join("recovery");
+        let runtime = Runtime::new(storage.clone());
         let claimed_path = if claimed == "source" {
             &source
         } else {
             &target
         };
-        let _competing = block(runtime.admit(
-            storage.clone(),
-            vec![ResourceRequest {
-                path: claimed_path.clone(),
-                access: Access::Write,
-                scope: Scope::Subtree,
-            }],
-        ))
+        let _competing = block(runtime.admit(vec![ResourceRequest {
+            path: claimed_path.clone(),
+            access: Access::Write,
+            scope: Scope::Subtree,
+        }]))
         .unwrap();
 
         let (outcome, _) = run_with(
             request(std::slice::from_ref(&source), &destination),
-            native_with_runtime(root.path(), runtime.clone()),
+            native_with_runtime(runtime.clone()),
             vec![overwrite(false)],
         );
         assert!(
@@ -221,7 +218,7 @@ fn native_overwrite_obeys_a_competing_runtime_admission() {
         );
         assert_eq!(fs::read(source).unwrap(), b"new bytes");
         assert_eq!(fs::read(target).unwrap(), b"original bytes");
-        assert!(block(runtime.list(storage)).unwrap().items.is_empty());
+        assert!(block(runtime.list()).unwrap().items.is_empty());
     }
 }
 

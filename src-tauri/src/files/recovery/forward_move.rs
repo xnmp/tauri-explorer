@@ -5,6 +5,7 @@
 //! `Published` checkpoint, so an error or crash while preparing leaves the
 //! user's source exactly where it was.
 use super::{
+    checkpoint::DurableKind,
     coordinator::{Coordinator, Reservation},
     model::{NativePath, OperationSpec},
     move_execution::MoveExecution,
@@ -174,7 +175,7 @@ impl PendingMove {
             return Err(invalid());
         }
         let spec = MoveSpec {
-            rename_probes: Some(rename_probes),
+            rename_probes,
             source_version: version_from_metadata(&fs::symlink_metadata(&source)?)?,
             source: NativePath(source),
             source_parent: source_identity,
@@ -203,7 +204,7 @@ fn admit_retirement(
     source_parent: &Directory,
     target_parent: &Directory,
 ) -> Result<(), AppError> {
-    use super::move_execution::{ORIGINAL, PARKED, PUBLICATION};
+    use super::artifact_layout::{ORIGINAL, PARKED, PUBLICATION};
     let inside =
         |root: &Option<ArtifactPlan>, name: &str| root.as_ref().map(|root| root.path.0.join(name));
     let refuse = |what: &str, path: &Path, error: AppError| {
@@ -227,13 +228,23 @@ fn admit_retirement(
         .into_iter()
         .flatten()
         .collect();
-        super::move_cleanup::Plan::admit(source_parent, &name(&spec.source.0)?, &destinations)
-            .map_err(|error| refuse("the moved entry", &spec.source.0, error))?;
+        super::move_cleanup::Plan::admit(
+            source_parent,
+            &name(&spec.source.0)?,
+            &destinations,
+            spec.plan_allowance(),
+        )
+        .map_err(|error| refuse("the moved entry", &spec.source.0, error))?;
     }
     if spec.target_original.is_some() {
         let destinations: Vec<_> = inside(&spec.target_root, ORIGINAL).into_iter().collect();
-        super::move_cleanup::Plan::admit(target_parent, &name(&spec.target.0)?, &destinations)
-            .map_err(|error| refuse("the replaced destination", &spec.target.0, error))?;
+        super::move_cleanup::Plan::admit(
+            target_parent,
+            &name(&spec.target.0)?,
+            &destinations,
+            spec.plan_allowance(),
+        )
+        .map_err(|error| refuse("the replaced destination", &spec.target.0, error))?;
     }
     Ok(())
 }
@@ -364,7 +375,7 @@ impl PreparedMove {
                 // Only now may the source stop being reachable at its name.
                 execution.park_source()?;
             }
-            Ok::<_, AppError>(execution.operation.state().move_state()?.effect_revision)
+            Ok::<_, AppError>(execution.operation.state().effect_revision)
         })();
         let revision = result.map_err(retained)?;
         let mut receipt = FileMutationReceipt::committed(&committed);

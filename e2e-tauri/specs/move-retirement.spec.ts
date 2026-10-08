@@ -9,7 +9,7 @@ import { navigateTo } from "./helpers";
 
 const sourceBase = process.env.TAURI_E2E_MOVE_SOURCE_DIR;
 const targetBase = process.env.TAURI_E2E_MOVE_TARGET_DIR;
-// Linux-only: exercises `durable-move-recovery`, a `cfg(unix)`/`cfg(target_os
+// Linux-only: exercises `durable-recovery`, a `cfg(unix)`/`cfg(target_os
 // = "linux")` production feature with no Windows/macOS admission adapter
 // (ADR 0020, plan decision D2) (#800).
 const proof = "screenshots/feat/durable-move-retirement";

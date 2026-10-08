@@ -8,10 +8,11 @@ import {
   domTexts,
   entryPathSelector,
   navigateTo,
-  monitorFreshWindowOpen,
   switchToFreshWindow,
   waitForFreshWindowElement,
+  closeOtherWindows,
 } from "./helpers";
+import { monitorFreshWindowOpen } from "../diagnostics/fresh-window";
 import { createNativeFixtureDirectory } from "../native-qualification";
 
 const scratch = createNativeFixtureDirectory("explorer-directory-recovery-");
@@ -118,14 +119,7 @@ nativeDescribe("directory watch root recovery", () => {
   });
 
   after(async () => {
-    if (mainHandle) {
-      for (const handle of await browser.getWindowHandles()) {
-        if (handle === mainHandle) continue;
-        await browser.switchToWindow(handle);
-        await browser.closeWindow();
-      }
-      await browser.switchToWindow(mainHandle);
-    }
+    if (mainHandle) await closeOtherWindows(mainHandle);
   });
 
   it("reattaches a mounted pane to a recreated directory without ghosting the displaced tree", async () => {

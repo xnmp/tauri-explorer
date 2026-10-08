@@ -8,7 +8,7 @@
 use crate::error::AppError;
 use crate::plugin_job;
 use std::path::{Path, PathBuf};
-use tauri::AppHandle;
+use tauri::{AppHandle, Emitter};
 
 const POLL_SECS: u64 = 3;
 
@@ -38,25 +38,39 @@ pub async fn start_upscale_job(
     }
 
     let api_key = crate::fal::resolve_fal_key(&api_key)?;
+    let (captured, run) = tokio::task::spawn_blocking(move || {
+        let captured = crate::image_operation::CapturedImage::read(&source)?;
+        let run = crate::installed_plugins::provenance::begin_operation(crate::installed_plugins::provenance::OperationStart {
+            operation: "image.upscale".into(),
+            parameters: serde_json::json!({ "provider": "fal", "model": "fal-ai/seedvr/upscale/image", "upscale_factor": upscale_factor }),
+            inputs: vec![crate::installed_plugins::provenance::OperationInput { path: captured.input.path.clone(), digest: captured.input.digest.clone() }],
+        })?;
+        Ok::<_, AppError>((captured, run))
+    }).await.map_err(|_| AppError::Other("Upscale input capture failed".into()))??;
+    let _ = app.emit("trace:changed", ());
     let job_id = plugin_job::next_job_id();
     let control = plugin_job::JobControl::new();
     let worker_control = control.clone();
 
+    let attempt = crate::image_operation::Attempt::new(run, control.clone()).with_app(app.clone());
     tokio::spawn(async move {
         let job = async {
             tokio::task::spawn_blocking(move || {
-                run_seedvr_upscale(
-                    &source,
+                let result = run_seedvr_upscale(
+                    captured.snapshot_path(),
                     &final_output,
                     &api_key,
                     upscale_factor,
                     &worker_control,
-                )
+                    &attempt.run,
+                );
+                attempt.settle();
+                result
             })
             .await
             .map_err(|e| AppError::Other(format!("Upscale task failed: {}", e)))?
         };
-        plugin_job::run_and_emit(&app, "upscale", job_id, control, job).await;
+        plugin_job::run_and_emit_detailed(&app, "upscale", job_id, control, job).await;
     });
 
     Ok(job_id)
@@ -69,7 +83,8 @@ fn run_seedvr_upscale(
     api_key: &str,
     upscale_factor: f64,
     control: &plugin_job::JobControl,
-) -> Result<String, AppError> {
+    run: &crate::installed_plugins::provenance::TraceRunHandle,
+) -> Result<plugin_job::JobOutput, AppError> {
     control.check()?;
     let image_url = crate::fal::upload_file(source, api_key, control)?;
 
@@ -103,7 +118,5 @@ fn run_seedvr_upscale(
         .ok_or_else(|| AppError::Other(format!("fal returned no image url: {}", result)))?;
     let mut staging = plugin_job::StagedOutput::new(final_output)?;
     crate::fal::download_to(url, staging.file_mut(), control)?;
-    staging.commit(final_output, control)?;
-
-    Ok(final_output.to_string_lossy().to_string())
+    staging.commit_traced(run, final_output, control)
 }

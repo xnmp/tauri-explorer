@@ -57,13 +57,14 @@ jobs:
 
   # Keep one browser worker per runner; split the growing suite across runners
   # so contention-sensitive tests retain their existing execution conditions.
+  # Two shards of 561 tests ran 19-20m and began hitting the timeout.
   chromium:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2]
+        shard: [1, 2, 3]
     steps:
       - uses: actions/checkout@v7
 
@@ -78,7 +79,7 @@ jobs:
         run: npx playwright install --with-deps chromium
 
       - name: E2E tests
-        run: npx playwright test --shard=${{ matrix.shard }}/2 --reporter=line,html
+        run: npx playwright test --shard=${{ matrix.shard }}/3 --reporter=line,html
 
       - name: Upload Playwright report on failure
         if: failure()
@@ -105,13 +106,14 @@ jobs:
   # (no WKWebView WebDriver exists). Catches Safari-family CSS/JS breakage.
   webkit-tests:
     runs-on: ubuntu-latest
-    # The full 777-test suite exceeded 40m. Keep one worker on each runner
-    # and preserve the existing per-runner bound while partitioning the work.
+    # The full 777-test suite exceeded 40m, and two shards still ran 24-38m,
+    # so runner contention pushed them past the bound (#932). Keep one worker
+    # on each runner and the per-runner bound; partition four ways for headroom.
     timeout-minutes: 40
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2]
+        shard: [1, 2, 3, 4]
     steps:
       - uses: actions/checkout@v7
 
@@ -128,7 +130,10 @@ jobs:
       - name: E2E tests (WebKit)
         env:
           WEBKIT: "1"
-        run: npx playwright test --project=webkit --shard=${{ matrix.shard }}/2 --reporter=line,html
+          PW_VIDEO_HEADED: "1"
+        # Only video decoder specs opt into GTK; other specs retain headless WPE.
+        # The display belongs to this hosted runner and is destroyed after testing.
+        run: xvfb-run -a --server-args="-screen 0 1920x1080x24 -nolisten tcp" npx playwright test --project=webkit --shard=${{ matrix.shard }}/4 --reporter=line,html
 
       - name: Upload Playwright report on failure
         if: failure()
@@ -138,7 +143,7 @@ jobs:
           path: playwright-report/
           if-no-files-found: ignore
 
-  # WebKit is also a protected context: both shards must complete successfully.
+  # WebKit is also a protected context: every shard must complete successfully.
   webkit:
     if: always()
     needs: [webkit-tests]
@@ -188,11 +193,13 @@ jobs:
       - name: Rust tests
         run: cargo test --manifest-path src-tauri/Cargo.toml --features avif
 
-      # Keep the deferred recovery policies verified without enabling them in
+      # Keep the deferred recovery policy verified without enabling it in
       # release artifacts. Default-policy capacity coverage runs above.
-      # durable-move-recovery is Linux-only, like this runner (#760).
+      # durable-recovery is read only on Linux, like this runner (ADR 0020).
+      # e2e-hooks (#884) rides along so the hook-build branches are linted
+      # and unit-tested on Linux too; it is absent from release artifacts.
       - name: Opt-in recovery Clippy
-        run: cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets --features avif,durable-copy-recovery,durable-move-recovery,e2e-renderer-recovery -- -D warnings
+        run: cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets --features avif,durable-recovery,e2e-renderer-recovery,e2e-hooks -- -D warnings
 
       - name: Opt-in recovery tests
-        run: cargo test --manifest-path src-tauri/Cargo.toml --features avif,durable-copy-recovery,durable-move-recovery
+        run: cargo test --manifest-path src-tauri/Cargo.toml --features avif,durable-recovery,e2e-hooks

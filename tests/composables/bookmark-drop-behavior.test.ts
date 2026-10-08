@@ -29,7 +29,7 @@ vi.mock("$lib/state/drag.svelte", () => ({
 vi.mock("$lib/state/drop-operations", () => ({ handleFileDropMany: transfer }));
 vi.mock("$lib/state/bookmarks.svelte", () => ({ bookmarksStore: bookmarks }));
 vi.mock("$lib/state/terminal.svelte", () => ({ terminalPanelStore: { insertPaths: vi.fn() } }));
-vi.mock("$lib/domain/platform", () => ({ isCopyModifier: () => false }));
+vi.mock("$lib/domain/platform", () => ({ isCopyModifier: () => false, isWindows: false }));
 vi.mock("$lib/domain/zoom", () => ({ getZoomFactor: () => 1 }));
 vi.mock("$lib/composables/use-external-drag.svelte", () => ({ startExternalDrag: vi.fn() }));
 vi.mock("$lib/domain/path", () => ({
@@ -57,6 +57,14 @@ describe("native bookmark drops", () => {
 
     expect(bookmarks.addBookmark).not.toHaveBeenCalled();
     expect(transfer).not.toHaveBeenCalled();
+  });
+
+  it("ignores thumbnail blob URLs instead of creating a failed file move", async () => {
+    state.target = {type:"folder",path:"/home/user/Images"};
+    state.dragData = null;
+    await state.nativeDrop!(["blob:tauri://localhost/2aaf901a-d9f5-41e1-b2b6-2b9e"], {x:10,y:10});
+    expect(transfer).not.toHaveBeenCalled();
+    expect(bookmarks.addBookmark).not.toHaveBeenCalled();
   });
 
   it("uses the existing transfer operation when a file is dropped on a specific bookmark", async () => {

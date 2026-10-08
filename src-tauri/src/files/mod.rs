@@ -1,7 +1,14 @@
 //! File operations module for Tauri commands.
 //! Issue: tauri-explorer-nv2y, tauri-explorer-hgt6, tauri-explorer-3b5s, tauri-explorer-9djf.6
 
+// The Unix recovery, anchored-copy, file-identity and handle-relative directory
+// modules compile and run their unit tests on macOS, but only Linux production
+// paths call them until a macOS adapter is connected (#772). Their dead-code
+// allowance is scoped to these modules so macOS still reports dead code
+// everywhere else (#870).
+pub(crate) mod admission;
 #[cfg(unix)]
+#[cfg_attr(target_os = "macos", allow(dead_code, unused_imports))]
 mod anchored_copy;
 pub(crate) mod archive_plan;
 pub mod batch;
@@ -19,24 +26,47 @@ pub(crate) mod entry_execution;
 pub(crate) mod entry_plan;
 mod entry_version;
 pub mod external_apps;
-#[cfg(any(unix, test))]
+#[cfg(any(unix, windows, test))]
+#[cfg_attr(any(target_os = "macos", windows), allow(dead_code, unused_imports))]
 mod file_identity;
 pub mod file_ops;
 #[cfg(target_os = "linux")]
 mod freedesktop_trash;
 pub mod fs_watcher;
 pub mod git_status;
+pub(crate) mod image_crop;
+#[cfg(target_os = "linux")]
+pub mod linux_gvfs_watch;
+#[cfg(target_os = "linux")]
+pub mod linux_mount_watch;
+#[cfg(target_os = "linux")]
+pub mod linux_volume_monitor;
 #[cfg(target_os = "linux")]
 pub mod linux_volumes;
+pub mod media_preview;
+#[cfg(all(test, target_os = "linux"))]
+#[path = "../../test_support/mount_namespace.rs"]
+pub(crate) mod mount_namespace;
 pub(crate) mod move_execution;
 pub(crate) mod move_plan;
 pub(crate) mod move_session;
 pub(crate) mod mutation;
-#[cfg(any(unix, test))]
+#[cfg(any(unix, windows, test))]
+// Recovery-only operations are currently exercised by tests on these platforms;
+// native media also uses their handle-relative read/identity subset (#970).
+#[cfg_attr(any(target_os = "macos", windows), allow(dead_code, unused_imports))]
 mod native_directory;
 mod object_id;
+
+pub mod open_with;
+pub mod pdf_preview;
 mod permanent_delete;
-mod publication;
+// Selections are admitted on Linux; other Unix platforms prepare one native
+// permanent deletion through the same observation and budget.
+#[cfg(unix)]
+mod prepared_selection;
+pub(crate) mod publication;
+#[cfg_attr(target_os = "macos", allow(dead_code, unused_imports))]
 pub(crate) mod recovery;
 mod replacement;
 #[cfg(any(target_os = "windows", test))]
@@ -48,8 +78,10 @@ pub(crate) mod trash_artifact;
 mod trash_mounts;
 #[cfg(any(target_os = "windows", test))]
 mod trash_outcome;
+#[cfg(unix)]
+mod tree_removal;
 mod watch_observation;
-#[cfg(all(windows, test))]
+#[cfg(windows)]
 mod windows_io;
 #[cfg(target_os = "windows")]
 mod windows_paths;
@@ -112,8 +144,8 @@ pub enum FileKind {
 /// Directory listing response.
 ///
 /// `entries` is an `Arc` so cache hits in `dir_listing` share the cached
-/// allocation instead of deep-cloning thousands of `FileEntry`s per call
-/// (serde's `rc` feature serializes through the Arc transparently).
+/// allocation instead of deep-cloning thousands of `FileEntry`s per call.
+/// Its IPC form is the compact column format in `directory_wire.rs`.
 #[derive(Debug)]
 pub struct DirectoryListing {
     pub path: String,

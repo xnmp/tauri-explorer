@@ -70,7 +70,7 @@
     const crumbs = explorer.breadcrumbs;
     for (let i = 0; i < crumbs.length; i++) {
       const key = directoryKey(crumbs[i].path);
-      const drive = drivesStore.list.find((d) => directoryKey(d.path) === key);
+      const drive = drivesStore.list.find((d) => d.path !== null && directoryKey(d.path) === key);
       if (!drive) continue;
       if (drive.provider === "googledrive") {
         // Google Drive File Stream always nests personal files under a top-level
@@ -164,13 +164,8 @@
     // Warm windows are already mounted before they are revealed, so their
     // activation path asks the existing navigation bar to enter edit mode.
     window.addEventListener("explorer:focus-address-bar", requestAddressBarFocus);
-    // Fresh child windows carry this one-shot startup request in their URL.
-    const startupFocus = new URLSearchParams(window.location.search).get("focusAddressBar") === "1"
-      ? setTimeout(requestAddressBarFocus)
-      : undefined;
     return () => {
       window.removeEventListener("explorer:focus-address-bar", requestAddressBarFocus);
-      clearTimeout(startupFocus);
     };
   });
 

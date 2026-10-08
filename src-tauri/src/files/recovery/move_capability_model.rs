@@ -6,8 +6,8 @@ use super::{
 use serde::{Deserialize, Serialize};
 use std::io;
 
-/// Absence identifies legacy intents. New intents always contain a source plan
-/// and contain a target plan exactly when the endpoints use different volumes.
+/// Every move intent contains a source plan, and a target plan exactly when
+/// the endpoints use different volumes.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct Plans {
@@ -162,97 +162,6 @@ pub(super) fn unsupported_exclusive_rename(errno: i32) -> bool {
 
 fn invalid(message: &str) -> io::Error {
     io::Error::new(io::ErrorKind::InvalidData, message)
-}
-
-pub(super) fn validate(
-    spec: &super::move_model::MoveSpec,
-    state: &super::move_model::MoveState,
-) -> io::Result<()> {
-    use super::move_model::MovePhase;
-    if state.phase == MovePhase::Aborted && spec.rename_probes.is_none() {
-        return Err(invalid(
-            "Legacy move cannot infer aborted preflight authority",
-        ));
-    }
-    let Some(progress) = &state.rename_probe else {
-        if spec.rename_probes.is_some() && state.phase != MovePhase::Planned {
-            return Err(invalid("Move has no completed rename capability evidence"));
-        }
-        return Ok(());
-    };
-    if spec.rename_probes.is_none() || progress.steps.len() != spec.probe_plans().count() {
-        return Err(invalid(
-            "Rename probe progress differs from its immutable plans",
-        ));
-    }
-    if state.phase == MovePhase::Aborted {
-        if !progress.removed()
-            || state.effect_revision != 0
-            || state.retirement.is_some()
-            || state.error.is_some()
-        {
-            return Err(invalid(
-                "Aborted preflight still owns probe effects or user history",
-            ));
-        }
-    } else if state.phase != MovePhase::Planned && !progress.supported() {
-        return Err(invalid(
-            "Move effects require completed rename capability probes",
-        ));
-    }
-    let mut objects = std::collections::HashSet::new();
-    objects.insert(spec.source_parent);
-    objects.insert(spec.target_parent);
-    objects.insert(spec.source_version.object);
-    if let Some(original) = &spec.target_original {
-        objects.insert(original.object);
-    }
-    // Removed probe identities may be reused by later artifact creation; they
-    // cannot be compared against newly created move-root identities.
-    let mut prior_removed = true;
-    for ((_, _, parent), step) in spec.probe_plans().zip(&progress.steps) {
-        if !prior_removed && !matches!(step, Step::Planned) {
-            return Err(invalid("Rename probes must execute in order"));
-        }
-        prior_removed &= matches!(step, Step::Absent | Step::Removed { .. });
-        let (root, file) = match step {
-            Step::Planned | Step::RootIntent | Step::Absent => continue,
-            Step::FileIntent { root } => (*root, None),
-            Step::RenameIntent { root, file } => (*root, Some(file)),
-            Step::CleanupIntent {
-                root,
-                file,
-                renamed,
-                supported,
-            }
-            | Step::Removed {
-                root,
-                file,
-                renamed,
-                supported,
-            } => {
-                if (*supported && !*renamed) || (file.is_none() && (*renamed || *supported)) {
-                    return Err(invalid("Probe cleanup cannot infer rename support"));
-                }
-                (*root, file.as_ref())
-            }
-        };
-        spec.validate_root(parent, root)?;
-        if !objects.insert(root) {
-            return Err(invalid("Probe root aliases other evidence"));
-        }
-        if let Some(file) = file {
-            file.validate()?;
-            if file.size != 0
-                || file.mode != 0o100600
-                || !file.object.same_volume(root)
-                || !objects.insert(file.object)
-            {
-                return Err(invalid("Probe file is not its own empty private file"));
-            }
-        }
-    }
-    Ok(())
 }
 
 #[cfg(all(test, unix))]

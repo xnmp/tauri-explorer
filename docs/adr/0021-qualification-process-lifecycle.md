@@ -51,7 +51,14 @@ and signal to `runErrors`, and retains the scenarios and process log.
 The runner tees child stdout and stderr into a run-specific log and references
 that log from every failed report, including failures before a WebDriver session
 exists. Scenario failures additionally retain their screenshot and available
-driver artifacts.
+driver artifacts. A piped WebDriver transcript ends only on the child
+`close` event, after stdout/stderr drain (also following spawn failure), rather
+than on `exit`. Successful session cleanup awaits the transcript's final write
+before releasing its evidence ownership, with a separate five-second bound.
+A stalled drain/final write destroys the owned stdio/log, detaches its pipes/listeners
+and fails cleanup instead of hanging or accepting incomplete evidence. Log-write
+errors also fail an otherwise successful cleanup; an existing process cleanup
+failure stays authoritative (#965).
 
 Raw replay seeds remain in report configuration and scenario ordering. Any seed
 used in a filename is converted to a bounded readable prefix plus a SHA-256
@@ -67,6 +74,24 @@ Unmeasured warm durations are null. Release logs can be streamed through the
 explicit `TAURI_EXPLORER_LOG_STDOUT=1` diagnostic option. Every sample still
 requires foreground readiness and the survival interval. A fresh process does
 not imply cold operating-system caches, a presented frame or successful input.
+A sample that reaches its readiness bound is still owned while the runner
+captures bounded stall evidence (process table, profiles, unified log, new
+crash reports) into the sample's artifact directory; cleanup then proceeds as
+usual. The timeout, with the parser's last rejection, always leads the failure,
+and a capture that fails or overruns its deadline only adds to it (#936).
+A `Renderer(web-content-terminated)` line ends a sample's measurement whenever
+it appears, survival interval included; the sample is never a timing sample.
+It is a recovered loss when every recovery decision is a reload or
+parked-window retirement and exactly one main document booted after the last
+loss (by boot epoch, not log order) reaches `native-ready` once, within one
+sample timeout of the loss: the runner records it in
+`rendererLosses`, warns, and launches a replacement. An exhausted or failed
+reload, no recovery within the bound, an application exit first,
+unattributable second-boot markers, or more than 3 recovered losses fail the
+run. Either way the runner captures renderer-loss evidence (process table,
+unified log, the WebContent crash report's pid and build) before cleanup,
+with the process still alive unless it already exited, and the loss message
+leads (#942).
 
 ## Consequences
 

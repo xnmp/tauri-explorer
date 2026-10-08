@@ -1,6 +1,25 @@
 use super::*;
-use crate::files::recovery::{coordinator::Coordinator, forward_move::PreparedMove};
+use crate::files::recovery::{
+    checkpoint::Effect, coordinator::Coordinator, forward_move::PreparedMove, model::DurableIntent,
+};
 use std::{fs, path::PathBuf, sync::Arc};
+
+struct ProbeRoot {
+    root: PathBuf,
+}
+
+/// The planned probe roots, in execution order.
+fn plans(intent: &DurableIntent) -> Result<Vec<ProbeRoot>, AppError> {
+    Ok(intent
+        .operation
+        .kind()
+        .probes()
+        .iter()
+        .map(|probe| ProbeRoot {
+            root: probe.path.0.clone(),
+        })
+        .collect())
+}
 
 struct Fixture {
     _directory: tempfile::TempDir,
@@ -38,7 +57,7 @@ impl Fixture {
 fn real_rename_is_required_before_move_roots_and_leaves_no_probe_artifact() {
     let f = Fixture::new();
     let mut operation = f.operation();
-    assert!(operation.advance_move(MoveTransition::BeginRoots).is_err());
+    assert!(operation.advance(Transition::Begin(Effect::Root)).is_err());
     let probe_paths: Vec<_> = plans(operation.intent())
         .unwrap()
         .into_iter()
@@ -92,32 +111,12 @@ fn unsupported_filesystem_cleans_probe_and_retires_record_before_any_move_effect
 }
 
 #[test]
-fn old_catalog_bytes_round_trip_without_changing_the_manifest_digest() {
-    // Captured from the real native acceptance binary at eb82ab6c, before the
-    // probe fields existed. Do not regenerate with the new serializer.
-    let bytes = include_bytes!("fixtures/pre-probe-move.intent");
-    assert_eq!(&bytes[..8], b"TERCV001");
-    let payload = &bytes[40..];
-    use sha2::{Digest, Sha256};
-    assert_eq!(Sha256::digest(payload).as_slice(), &bytes[8..40]);
-    let intent: DurableIntent = serde_json::from_slice(payload).unwrap();
-    intent.validate().unwrap();
-    assert!(intent
-        .operation
-        .move_spec()
-        .unwrap()
-        .rename_probes
-        .is_none());
-    assert_eq!(serde_json::to_vec(&intent).unwrap(), payload);
-}
-
-#[test]
 fn rootless_publication_also_requires_a_real_probe() {
     let f = Fixture::new();
     fs::remove_file(&f.target).unwrap();
     let mut operation = f.operation();
     assert!(operation
-        .advance_move(MoveTransition::BeginPublication)
+        .advance(Transition::Begin(Effect::Publish))
         .is_err());
     let operation = qualify(operation, None).unwrap();
     let mut execution =
@@ -384,11 +383,11 @@ fn process_death_at_every_probe_boundary_preserves_user_bytes_and_exact_cleanup_
             assert_eq!(inventory.entries.len(), 1, "{boundary}");
             let entry = &inventory.entries[0];
             assert_eq!(
-                entry.state.as_ref().unwrap().move_state().unwrap().phase,
+                entry.state.as_ref().unwrap().phase,
                 if boundary == "probe-aborted" {
-                    MovePhase::Aborted
+                    Phase::Aborted
                 } else {
-                    MovePhase::Planned
+                    Phase::Planned
                 }
             );
             let roots: Vec<_> = plans(&entry.intent)
@@ -430,45 +429,32 @@ fn process_death_at_every_probe_boundary_preserves_user_bytes_and_exact_cleanup_
 }
 
 #[test]
-fn old_native_manifest_bytes_still_match_the_reencoded_intent_and_root() {
-    use sha2::{Digest, Sha256};
-    let bytes = include_bytes!("fixtures/pre-probe-move-manifest.intent");
-    assert_eq!(&bytes[..8], b"TERCV001");
-    assert_eq!(Sha256::digest(&bytes[40..]).as_slice(), &bytes[8..40]);
-    let manifest: super::super::model::LocalManifest =
-        serde_json::from_slice(&bytes[40..]).unwrap();
-    manifest.intent.validate().unwrap();
-    assert_eq!(serde_json::to_vec(&manifest).unwrap(), &bytes[40..]);
-    // The manifest contains exactly the old catalog bytes, with no new null
-    // probe field introduced while decoding and re-encoding either authority.
-    assert_eq!(
-        serde_json::to_vec(&manifest.intent).unwrap(),
-        &include_bytes!("fixtures/pre-probe-move.intent")[40..]
-    );
-}
-
-#[test]
-fn version_two_cannot_omit_probes_or_supply_duplicate_volume_coverage() {
+fn move_intents_must_be_version_two_and_carry_probe_plans() {
     let f = Fixture::new();
     let operation = f.operation();
-    assert_eq!(operation.intent().version, 2);
+    assert_eq!(operation.intent().version, 3);
+    // A move record without probe plans (never written by a shipped build)
+    // does not decode at all.
+    let mut value = serde_json::to_value(operation.intent()).unwrap();
+    value["operation"]["spec"]
+        .as_object_mut()
+        .unwrap()
+        .remove("rename_probes")
+        .unwrap();
+    assert!(serde_json::from_value::<DurableIntent>(value).is_err());
     let mut intent = operation.intent().clone();
     if let super::super::model::OperationSpec::Move(spec) = &mut intent.operation {
-        spec.rename_probes = None;
+        spec.rename_probes.target = Some(spec.rename_probes.source.clone());
     }
     assert!(intent.validate().is_err());
-    let mut intent = operation.intent().clone();
-    if let super::super::model::OperationSpec::Move(spec) = &mut intent.operation {
-        let probes = spec.rename_probes.as_mut().unwrap();
-        probes.target = Some(probes.source.clone());
+    for version in [0, 1, 2, 4, u32::MAX] {
+        let mut other = operation.intent().clone();
+        other.version = version;
+        assert!(
+            other.validate().is_err(),
+            "move intent version {version} must be rejected"
+        );
     }
-    assert!(intent.validate().is_err());
-    let mut old = operation.intent().clone();
-    old.version = 1;
-    assert!(
-        old.validate().is_err(),
-        "v1 cannot silently acquire a v2 capability policy"
-    );
 }
 
 #[test]
@@ -476,24 +462,14 @@ fn cleaned_checkpoint_requires_the_actual_probe_identity_and_file_evidence() {
     let f = Fixture::new();
     let operation = qualify(f.operation(), None).unwrap();
     let mut state = operation.state().clone();
-    let progress = state
-        .move_state_mut()
-        .unwrap()
-        .rename_probe
-        .as_mut()
-        .unwrap();
+    let progress = state.preflight.as_mut().unwrap();
     let Step::Removed { file, .. } = &mut progress.steps[0] else {
         panic!("not cleaned");
     };
     *file = None;
-    assert!(state.validate(operation.intent()).is_err());
+    assert!(operation.intent().checkpoint(&state).validate().is_err());
     let mut state = operation.state().clone();
-    let progress = state
-        .move_state_mut()
-        .unwrap()
-        .rename_probe
-        .as_mut()
-        .unwrap();
+    let progress = state.preflight.as_mut().unwrap();
     let Step::Removed { root, .. } = &mut progress.steps[0] else {
         panic!("not cleaned");
     };
@@ -504,7 +480,7 @@ fn cleaned_checkpoint_requires_the_actual_probe_identity_and_file_evidence() {
         .unwrap()
         .source_version
         .object;
-    assert!(state.validate(operation.intent()).is_err());
+    assert!(operation.intent().checkpoint(&state).validate().is_err());
 }
 
 #[test]

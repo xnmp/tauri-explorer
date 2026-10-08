@@ -1,7 +1,8 @@
 //! Effective durable ownership used by ordinary admission and recovery claims.
 use super::*;
-use crate::files::recovery::model::{NativePath, OperationState, Phase, ReplacementState};
-use crate::files::recovery::move_model::MovePhase;
+use crate::files::recovery::artifact_layout::{ORIGINAL, PARKED, PUBLICATION};
+use crate::files::recovery::checkpoint::{Side, State};
+use crate::files::recovery::model::NativePath;
 
 pub(super) struct OperationClaims {
     pub(super) index: ConflictIndex,
@@ -33,11 +34,11 @@ impl Inner {
             if exclude == Some(id.as_str()) {
                 continue;
             }
-            let checkpoint = checkpoints.get(id.as_str());
-            let artifacts =
-                checkpoint.and_then(|checkpoint| known_artifacts(&entry.intent, &checkpoint.state));
-            let idle_completed = match checkpoint {
-                Some(checkpoint) if completed(&entry.intent, &checkpoint.state) => {
+            let state = checkpoints
+                .get(id.as_str())
+                .map(|checkpoint| &checkpoint.state);
+            let idle_completed = match state {
+                Some(state) if entry.intent.checkpoint(state).completed() => {
                     match OperationLock::acquire(&self.locks, &entry.intent.lock)? {
                         LockAttempt::Busy => false,
                         LockAttempt::Acquired(owner) => {
@@ -49,148 +50,80 @@ impl Inner {
                 }
                 _ => false,
             };
-            if idle_completed {
-                match &checkpoint.expect("validated completed checkpoint").state {
-                    OperationState::Replacement(state) => {
-                        // Completed copying leaves the original private; completed
-                        // restoration leaves the copied publication private instead.
-                        let artifacts = artifacts.as_ref().expect("validated completed artifacts");
-                        let retained = if state.phase == Phase::Published {
-                            &artifacts.original
-                        } else {
-                            artifacts
-                                .publication
-                                .as_ref()
-                                .expect("validated restored publication")
-                        };
-                        claims.index.insert(&artifacts.root);
-                        claims.index.insert(retained);
-                    }
-                    // A completed move released its user endpoints: the source
-                    // name is free again and the destination belongs to the
-                    // user. Only its private artifact roots remain claimed, so
-                    // a later operation may reuse either public path.
-                    OperationState::Move(_) => {
-                        for root in move_roots(&entry.intent) {
-                            claims.index.insert(root);
-                        }
-                    }
-                }
-            } else {
-                for resource in entry
-                    .intent
-                    .resources
-                    .iter()
-                    .chain(artifacts.iter().flat_map(ArtifactClaims::iter))
-                {
-                    claims.index.insert(resource);
-                }
+            let artifacts = state.map_or_else(Vec::new, |state| {
+                known_artifacts(&entry.intent, state, idle_completed)
+            });
+            // A completed record released its user endpoints: the source name is
+            // free again and the destination belongs to the user. Only its
+            // private roots and their retained payloads stay claimed.
+            let public = (!idle_completed).then_some(&entry.intent.resources);
+            for resource in public.into_iter().flatten().chain(&artifacts) {
+                claims.index.insert(resource);
             }
         }
         Ok(claims)
     }
 }
 
-fn completed(intent: &DurableIntent, state: &OperationState) -> bool {
-    match state {
-        OperationState::Replacement(state) => {
-            matches!(state.phase, Phase::Published | Phase::Restored) && state.error.is_none()
-        }
-        OperationState::Move(state) => {
-            if state.error.is_some() || state.retirement.is_some() {
-                return false;
-            }
-            // A cross-filesystem move still owns its source at `Published`:
-            // parking has not run yet, so releasing the user endpoints here
-            // would let a concurrent operation mutate the entry we are about
-            // to hide. Only a rename is finished at `Published`.
-            let published_is_terminal = intent
-                .operation
-                .move_spec()
-                .is_ok_and(|spec| spec.strategy == super::super::move_model::Strategy::Rename);
-            match state.phase {
-                MovePhase::Published => published_is_terminal,
-                MovePhase::Parked | MovePhase::Removed | MovePhase::Restored => true,
-                _ => false,
-            }
-        }
-    }
-}
-
-/// The private artifact roots a completed move still retains. Their subtree
-/// scope already covers the parked source, displaced original and publication.
-fn move_roots(intent: &DurableIntent) -> impl Iterator<Item = &Resource> {
-    let planned: Vec<_> = intent
-        .operation
-        .move_spec()
-        .map(|spec| spec.roots().map(|root| root.path.0.clone()).collect())
-        .unwrap_or_default();
-    intent
-        .resources
-        .iter()
-        .filter(move |resource| planned.contains(&resource.path.0))
-}
-
 /// Validated checkpoints add identities unavailable to the immutable plan,
-/// whose artifact root was necessarily absent. These are exclusion claims,
+/// whose artifact roots were necessarily absent. These are exclusion claims,
 /// never assertions that a named entry currently exists or effect capabilities.
-pub(super) struct ArtifactClaims {
-    root: Resource,
-    original: Resource,
-    publication: Option<Resource>,
-}
-
-impl ArtifactClaims {
-    pub(super) fn iter(&self) -> impl Iterator<Item = &Resource> {
-        [
-            Some(&self.root),
-            Some(&self.original),
-            self.publication.as_ref(),
-        ]
-        .into_iter()
-        .flatten()
-    }
-}
-
+/// A settled record claims only the payload it retains; any other position
+/// claims every payload its roots can hold.
 pub(super) fn known_artifacts(
     intent: &DurableIntent,
-    state: &OperationState,
-) -> Option<ArtifactClaims> {
-    let OperationState::Replacement(ReplacementState {
-        root, published, ..
-    }) = state
-    else {
-        return None;
-    };
-    let Some(root_object) = root else {
-        return None;
-    };
-    let spec = intent.operation.replacement().ok()?;
-    let mut root = intent
-        .resources
-        .iter()
-        .find(|resource| resource.path == spec.root)
-        .expect("validated replacement root claim")
-        .clone();
-    root.object = Some(*root_object);
-    let child = |name: &str, object: ObjectId| Resource {
-        path: NativePath(spec.root.0.join(name)),
-        object: Some(object),
-        ancestors: std::iter::once(*root_object)
-            .chain(root.ancestors.iter().copied())
-            .collect(),
-        access: resources::Access::Write,
-        scope: resources::Scope::Subtree,
-    };
-    let original = child("original", spec.original.object);
-    let publication = published
-        .as_ref()
-        .map(|payload| child("publication", payload.version.object));
-    Some(ArtifactClaims {
-        root,
-        original,
-        publication,
-    })
+    state: &State,
+    settled: bool,
+) -> Vec<Resource> {
+    let kind = intent.operation.kind();
+    let checkpoint = intent.checkpoint(state);
+    let mut claims = Vec::new();
+    for (side, observed) in state.roots.iter() {
+        let (Some(object), Some(planned)) = (observed, kind.root(side)) else {
+            continue;
+        };
+        let Some(mut root) = intent
+            .resources
+            .iter()
+            .find(|resource| &resource.path == planned.path)
+            .cloned()
+        else {
+            continue;
+        };
+        root.object = Some(*object);
+        let children: Vec<(&str, ObjectId)> = if settled {
+            checkpoint
+                .expected_payload(side)
+                .ok()
+                .flatten()
+                .map(|(name, versions)| (name, versions[0].object))
+                .into_iter()
+                .collect()
+        } else if side == Side::Source {
+            let parked = kind.shape().parks.then(|| kind.source_version().object);
+            parked.map(|object| (PARKED, object)).into_iter().collect()
+        } else {
+            let original = kind.displaced().map(|version| (ORIGINAL, version.object));
+            let staged = state.staged.as_ref();
+            original
+                .into_iter()
+                .chain(staged.map(|payload| (PUBLICATION, payload.version.object)))
+                .collect()
+        };
+        for (name, object) in children {
+            claims.push(Resource {
+                path: NativePath(planned.path.0.join(name)),
+                object: Some(object),
+                ancestors: std::iter::once(root.object.expect("observed root"))
+                    .chain(root.ancestors.iter().copied())
+                    .collect(),
+                access: resources::Access::Write,
+                scope: resources::Scope::Subtree,
+            });
+        }
+        claims.push(root);
+    }
+    claims
 }
 
 #[cfg(test)]

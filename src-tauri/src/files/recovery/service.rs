@@ -1,20 +1,24 @@
 //! Recovery application service. Inventory is private-storage-only; explicit
 //! inspection, resolution and retirement hold native operation ownership
-//! outside admission.
+//! outside admission. Retention, discard and forget are one lifecycle for
+//! every kind; only restoration is presented by a per-kind handler.
 use super::{
-    coordinator::{Coordinator, InventoryEntry},
+    checkpoint::{Effect, Event, Side, State, Step},
+    coordinator::{Coordinator, DurableOperation, InventoryEntry},
     model::{
-        DurableIntent, OperationSpec, OperationState, Phase, RecoveryChoice, RecoveryItem,
+        bounded_error, DurableIntent, OperationSpec, RecoveryChoice, RecoveryItem,
         RecoverySnapshot, RecoveryStorage,
     },
-    replacement_execution::ReplacementExecution,
-    replacement_restoration::RestorationStep,
-    replacement_transition::{transition, ReplacementTransition},
-    retention::{self, Budget, Retention, Usage},
+    retention::{Budget, Retention, Usage},
     retirement::{Eligibility, Retirement},
 };
 use crate::error::AppError;
 use std::sync::Arc;
+
+#[path = "move_recovery.rs"]
+mod relocation;
+#[path = "replacement_recovery.rs"]
+mod replacement;
 
 /// Bounded listing from durable evidence alone: no ownership claims, no
 /// measurement and no user-volume probes. Safe to call from any worker.
@@ -68,8 +72,8 @@ fn storage(usage: &Usage, budget: &Budget) -> RecoveryStorage {
 fn position(entry: &InventoryEntry) -> (Retention, Option<u64>) {
     match &entry.state {
         Some(state) => (
-            retention::retention(&entry.intent.operation, state),
-            retention::measured_bytes(state),
+            entry.intent.checkpoint(state).retention(),
+            state.retained_bytes,
         ),
         None => (Retention::Unresolved, None),
     }
@@ -184,229 +188,58 @@ fn operate(
         }
         Err(error) => return reply(coordinator, None, Some(diagnostic(error))),
     };
-    let claimed_generation = operation.generation();
-    if operation.intent().operation.move_spec().is_ok() {
-        return relocation(coordinator, operation, request);
+    if in_preflight(&operation) {
+        return relocation::preflight(coordinator, operation, request);
     }
-    if let Request::Release(_) = request {
-        return reply(
-            coordinator,
-            None,
-            Some("Only a move whose discard stopped before finishing can be forgotten".into()),
-        );
-    }
-    if let Request::Discard(_) = request {
-        return discard(coordinator, operation, &entry.intent, claimed_generation);
-    }
-    // A journaled retirement is presented as retention even though restoration
-    // remains a legal transition out of it: retention reporting carries the
-    // exact reason a refused retirement preserved its evidence, which the
-    // restoration path would flatten into a generic message.
-    let retiring = operation
-        .state()
-        .replacement()
-        .is_ok_and(|state| matches!(state.phase, Phase::DiscardIntent | Phase::Discarded));
-    // A phase with no supported restoration needs no user-volume probes, but
-    // its retained artifacts may still be explicitly discardable.
-    if retiring
-        || transition(
-            operation.intent(),
-            operation.state(),
-            ReplacementTransition::BeginRestoration,
-        )
-        .is_err()
-    {
-        return retention_only(coordinator, operation, &entry.intent, claimed_generation);
-    }
-    let mut execution = match ReplacementExecution::reopen(operation) {
-        Ok(execution) => execution,
-        Err(error) => {
-            return reply(
-                coordinator,
-                Some(item(
-                    &entry.intent,
-                    None,
-                    claimed_generation,
-                    None,
-                    "attention",
-                    "Recovery files could not be verified; evidence is preserved",
-                    vec![],
-                )),
-                Some(diagnostic(error)),
-            )
-        }
-    };
-    let result = (|| {
-        let state = execution.operation.state().replacement()?;
-        let staged = state
-            .published
-            .as_ref()
-            .expect("restoration transition validated staged evidence");
-        if execution
-            .root
-            .inspect_restoration(execution.operation.intent(), staged)?
-            == RestorationStep::Conflict
-        {
-            return Err(AppError::MutationUncertain(
-                "Recovery files differ from the recorded operation; all entries are preserved"
-                    .into(),
-            ));
-        }
-        match request {
-            Request::Inspect => {
-                let mut actions = vec![RecoveryChoice::Restore];
-                if discardable(&execution) {
-                    actions.push(RecoveryChoice::Discard);
+    match request {
+        Request::Discard(_) => discard(coordinator, operation),
+        // Decided from durable evidence alone: a stranded record's volume may
+        // be the very thing that can no longer be observed.
+        Request::Release(_) => match operation.forget_retirement() {
+            Ok(()) => reply(coordinator, None, None),
+            Err(error) => reply(coordinator, None, Some(diagnostic(error))),
+        },
+        Request::Inspect | Request::Restore(_) => {
+            let restorable = operation
+                .intent()
+                .transition(operation.state(), Event::Begin(Effect::Restore))
+                .is_ok();
+            match &operation.intent().operation {
+                OperationSpec::CopyReplacement(_) => {
+                    replacement::reconcile(coordinator, operation, request, restorable)
                 }
-                Ok(item(
-                    execution.operation.intent(),
-                    Some(execution.operation.state()),
-                    execution.operation.generation(),
-                    retention::measured_bytes(execution.operation.state()),
-                    "ready",
-                    "The recorded original can be restored; any published copy will be retained",
-                    actions,
-                ))
-            }
-            Request::Restore(_) => {
-                execution.restore_copy()?;
-                Ok(item(
-                    execution.operation.intent(),
-                    Some(execution.operation.state()),
-                    execution.operation.generation(),
-                    None,
-                    "retained",
-                    "The original has been restored; the retained copy can be discarded",
-                    vec![],
-                ))
-            }
-            Request::Discard(_) | Request::Release(_) => {
-                unreachable!("discard and release are dispatched before reopening")
+                OperationSpec::Move(_) => {
+                    relocation::reconcile(coordinator, operation, request, restorable)
+                }
             }
         }
-    })();
-    let (view, error) = match result {
-        Ok(view) => (view, None),
-        Err(error) => (
-            item(
-                execution.operation.intent(),
-                Some(execution.operation.state()),
-                execution.operation.generation(),
-                None,
-                "attention",
-                "Recovery could not complete; all remaining evidence is preserved",
-                vec![],
-            ),
-            Some(diagnostic(error)),
-        ),
-    };
-    // Keep the native owner through the final inventory read. Other processes
-    // cannot start effects between our observation and this snapshot assembly.
-    reply(coordinator, Some(view), error)
+    }
 }
 
-/// Only an inspected `Remove` step offers discard: the live public entry must
-/// independently hold the payload that survives the retained artifact.
-fn discardable(execution: &ReplacementExecution) -> bool {
-    let Ok(state) = execution.operation.state().replacement() else {
-        return false;
-    };
-    let Some(staged) = state.published.as_ref() else {
-        return false;
-    };
-    let Some((retained, _)) = retention::retention(
-        &execution.operation.intent().operation,
-        execution.operation.state(),
-    )
-    .settled() else {
-        return false;
-    };
-    matches!(
-        execution
-            .root
-            .retirement_step(execution.operation.intent(), staged, retained),
-        Ok(super::replacement_artifact::RetirementStep::Remove)
-    )
-}
-
-/// Present a record whose only remaining action is retention: a completed
-/// restoration, or an interrupted retirement to resume.
-fn retention_only(
-    coordinator: &Arc<Coordinator>,
-    operation: super::coordinator::DurableOperation,
-    intent: &DurableIntent,
-    generation: u64,
-) -> Result<RecoverySnapshot, AppError> {
-    let restored = operation
-        .state()
-        .replacement()
-        .is_ok_and(|state| state.phase == Phase::Restored);
-    let retirement = match Retirement::open(operation) {
-        Ok(retirement) => retirement,
-        Err(error) => {
-            return reply(
-                coordinator,
-                Some(item(
-                    intent,
-                    None,
-                    generation,
-                    None,
-                    "attention",
-                    "Retained recovery files could not be observed; all evidence is preserved",
-                    vec![],
-                )),
-                Some(diagnostic(error)),
-            )
-        }
-    };
-    let (status, message, actions) = match retirement.eligibility() {
-        Eligibility::Preserved(reason) => ("attention", reason.clone(), vec![]),
-        Eligibility::Discardable | Eligibility::Automatic | Eligibility::Resume if restored => (
-            "retained",
-            "The original has been restored; the retained copy can be discarded".to_owned(),
-            vec![RecoveryChoice::Discard],
-        ),
-        _ => (
-            "retained",
-            "Retained recovery files can be discarded".to_owned(),
-            vec![RecoveryChoice::Discard],
-        ),
-    };
-    let bytes = retention::measured_bytes(retirement_state(&retirement));
-    let generation = retirement.generation();
-    reply(
-        coordinator,
-        Some(item(
-            intent,
-            Some(retirement.state()),
-            generation,
-            bytes,
-            status,
-            &message,
-            actions,
-        )),
-        None,
-    )
-}
-
-fn retirement_state(retirement: &Retirement) -> &super::model::OperationState {
-    retirement.state()
+/// A record whose capability probes have not all been proven or removed has
+/// no user effect yet; only its probe evidence can be inspected or discarded.
+fn in_preflight(operation: &DurableOperation) -> bool {
+    !operation.intent().operation.kind().probes().is_empty()
+        && matches!(
+            operation.state().phase,
+            super::checkpoint::Phase::Planned | super::checkpoint::Phase::Aborted
+        )
 }
 
 fn discard(
     coordinator: &Arc<Coordinator>,
-    operation: super::coordinator::DurableOperation,
-    intent: &DurableIntent,
-    generation: u64,
+    operation: DurableOperation,
 ) -> Result<RecoverySnapshot, AppError> {
-    let folders = retained_folders(intent, Some(operation.state()));
+    let intent = operation.intent().clone();
+    let generation = operation.generation();
+    let folders = retained_folders(&intent, Some(operation.state()));
     let retirement = match Retirement::open(operation) {
         Ok(retirement) => retirement,
         Err(error) => {
             return reply(
                 coordinator,
                 Some(item_in(
-                    intent,
+                    &intent,
                     folders,
                     generation,
                     None,
@@ -420,13 +253,12 @@ fn discard(
     };
     if let Eligibility::Preserved(reason) = retirement.eligibility() {
         let reason = reason.clone();
-        let generation = retirement.generation();
         return reply(
             coordinator,
             Some(item(
-                intent,
+                &intent,
                 Some(retirement.state()),
-                generation,
+                retirement.operation.generation(),
                 None,
                 "attention",
                 &reason,
@@ -442,307 +274,102 @@ fn discard(
     }
 }
 
-/// Durable moves reconcile through their own executor. Restoration is offered
-/// only while the record still names an exact original: a removed parked source
-/// leaves nothing to return, and this service never deletes to "finish" a move.
-fn relocation(
+/// The retention view of a settled or retiring record, identical for every
+/// kind except the message `describe` gives an ordinary retained record.
+fn retained(
     coordinator: &Arc<Coordinator>,
-    operation: crate::files::recovery::coordinator::DurableOperation,
-    request: Request,
+    operation: DurableOperation,
+    restorable: bool,
+    describe: fn(&State, bool) -> &'static str,
 ) -> Result<RecoverySnapshot, AppError> {
-    use super::move_model::MovePhase;
-    use super::move_transition::{transition as move_transition, MoveTransition};
+    let intent = operation.intent().clone();
     let generation = operation.generation();
-    if operation
-        .intent()
-        .operation
-        .move_spec()?
-        .rename_probes
-        .is_some()
-        && matches!(
-            operation.state().move_state()?.phase,
-            MovePhase::Planned | MovePhase::Aborted
-        )
-    {
-        let intent = operation.intent().clone();
-        let observation = super::move_capability::inspect(&operation);
-        if matches!(request, Request::Discard(_)) && observation.is_ok() {
-            return match super::move_capability::discard(operation, None) {
-                Ok(()) => reply(coordinator, None, None),
-                Err(error) => reply(coordinator, None, Some(diagnostic(error))),
-            };
-        }
-        let error = match (&request, &observation) {
-            (Request::Restore(_), _) => {
-                Some("This move never started and has no restoration to apply".to_owned())
-            }
-            (Request::Release(_), _) => {
-                Some("This move never started; discard its capability data instead".to_owned())
-            }
-            (Request::Discard(_), Err(error)) => {
-                Some(diagnostic(AppError::Other(error.to_string())))
-            }
-            _ => None,
-        };
-        let (message, actions) = match observation {
-            Ok(()) => ("The move never started. Its verified capability-check data can be discarded.".to_owned(), vec![RecoveryChoice::Discard]),
-            Err(error) => (format!("The move never started; unverified capability-check evidence is preserved: {error}"), vec![]),
-        };
-        let mut view = item(
-            &intent,
-            Some(operation.state()),
-            generation,
-            None,
-            "attention",
-            &message,
-            actions,
-        );
-        // Probe evidence is separate from the not-yet-created move artifacts.
-        view.retained_path = operation
-            .state()
-            .move_state()?
-            .rename_probe
-            .as_ref()
-            .and_then(|progress| {
-                progress.steps.iter().position(|step| {
-                    !matches!(
-                        step,
-                        super::move_capability_model::Step::Planned
-                            | super::move_capability_model::Step::Absent
-                            | super::move_capability_model::Step::Removed { .. }
-                    )
-                })
-            })
-            .and_then(|index| intent.operation.move_spec().ok()?.probe_plans().nth(index))
-            .map(|(plan, _, _)| plan.path.0.to_string_lossy().into_owned());
-        view.retained_paths = view.retained_path.iter().cloned().collect();
-        return reply(coordinator, Some(view), error);
-    }
-    if let Request::Discard(_) = request {
-        let intent = operation.intent().clone();
-        return discard(coordinator, operation, &intent, generation);
-    }
-    if let Request::Release(_) = request {
-        // Decided from durable evidence alone: a stranded record's volume may
-        // be the very thing that can no longer be observed.
-        return match operation.forget_retirement() {
-            Ok(()) => reply(coordinator, None, None),
-            Err(error) => reply(coordinator, None, Some(diagnostic(error))),
-        };
-    }
-    let restorable = move_transition(
-        operation.intent(),
-        operation.state(),
-        MoveTransition::BeginRestoration,
-    )
-    .is_ok();
-    if matches!(request, Request::Inspect)
-        && retention::retention(&operation.intent().operation, operation.state()).retirable()
-    {
-        let intent = operation.intent().clone();
-        let forgettable = operation
-            .state()
-            .move_state()
-            .is_ok_and(super::move_retention::forgettable);
-        let folders = retained_folders(&intent, Some(operation.state()));
-        let hint = forget_hint(&folders);
-        let retirement = match Retirement::open(operation) {
-            Ok(retirement) => retirement,
-            Err(error) if forgettable => {
-                return reply(
-                    coordinator,
-                    Some(item_in(
-                        &intent,
-                        folders,
-                        generation,
-                        None,
-                        "attention",
-                        &format!(
-                            "Discard stopped before finishing and its recovery files can no \
-                             longer be verified: {error}. {hint}"
-                        ),
-                        vec![RecoveryChoice::Release],
-                    )),
+    let forgettable = operation.state().forgettable();
+    let folders = retained_folders(&intent, Some(operation.state()));
+    let hint = forget_hint(&folders);
+    let retirement = match Retirement::open(operation) {
+        Ok(retirement) => retirement,
+        Err(error) => {
+            let (message, actions, error) = if forgettable {
+                (
+                    format!(
+                        "Discard stopped before finishing and its recovery files can no \
+                         longer be verified: {error}. {hint}"
+                    ),
+                    vec![RecoveryChoice::Release],
                     None,
                 )
-            }
-            Err(error) => {
-                return reply(
-                    coordinator,
-                    Some(item_in(
-                        &intent,
-                        folders,
-                        generation,
-                        None,
-                        "attention",
-                        "Move recovery files could not be verified; all evidence is preserved",
-                        vec![],
-                    )),
+            } else {
+                (
+                    "Retained recovery files could not be verified; all evidence is preserved"
+                        .to_owned(),
+                    vec![],
                     Some(diagnostic(error)),
                 )
-            }
-        };
-        // A committed discard that failed has already consumed Undo; it is
-        // not an ordinary retained record, so say so and offer only a retry.
-        let interrupted = retirement
-            .state()
-            .move_state()
-            .ok()
-            .filter(|state| state.retirement.is_some())
-            .and_then(|state| state.error.clone());
-        let deferred = retirement
-            .state()
-            .move_state()
-            .ok()
-            .and_then(|state| state.deferred.clone());
-        let (status, message, actions) = match (retirement.eligibility(), interrupted) {
-            (Eligibility::Preserved(reason), _) if forgettable => (
-                "attention",
-                format!("{reason}. {hint}"),
-                vec![RecoveryChoice::Release],
-            ),
-            (Eligibility::Preserved(reason), _) => ("attention", reason.clone(), vec![]),
-            (_, Some(error)) => (
-                "attention",
-                format!(
-                    "Discard stopped before finishing; its Undo history is gone and the \
-                     remaining recovery files are preserved. Retry Discard once this is \
-                     resolved: {error}. {hint}"
-                ),
-                vec![RecoveryChoice::Discard, RecoveryChoice::Release],
-            ),
-            _ => {
-                let mut actions = Vec::new();
-                if restorable {
-                    actions.push(RecoveryChoice::Restore);
-                }
-                actions.push(RecoveryChoice::Discard);
-                let message = match deferred {
-                    // Nothing was removed; only the automatic attempt stopped.
-                    Some(reason) => format!(
-                        "Automatic cleanup of this move's retained recovery data could not \
-                         start and will not be retried automatically: {reason}. Discard \
-                         retries it."
-                    ),
-                    None if restorable => "Restore this move or discard its recovery data. \
-                         Discard permanently removes its Undo history and any retained originals."
-                        .to_owned(),
-                    None => "The move no longer needs restoration; its retained recovery data \
-                         can be discarded."
-                        .to_owned(),
-                };
-                ("retained", message, actions)
-            }
-        };
-        return reply(
-            coordinator,
-            Some(item(
+            };
+            let view = item_in(
                 &intent,
-                Some(retirement.state()),
-                retirement.generation(),
-                retention::measured_bytes(retirement.state()),
-                status,
-                &message,
-                actions,
-            )),
-            None,
-        );
-    }
-    if !restorable {
-        let message = match operation.state().move_state().map(|state| state.phase) {
-            Ok(MovePhase::Staged) => {
-                "A copy was staged but never published; both original locations are unchanged"
-            }
-            Ok(MovePhase::Removed) => {
-                "This move completed and its source was discarded; nothing remains to restore"
-            }
-            Ok(MovePhase::Restored) => {
-                "The moved entry has been returned to its source; retained artifacts still require cleanup"
-            }
-            _ => "This move has not reached a restorable position; all evidence is preserved",
-        };
-        return reply(
-            coordinator,
-            Some(item(
-                operation.intent(),
-                Some(operation.state()),
+                folders,
                 generation,
                 None,
                 "attention",
-                message,
-                vec![],
-            )),
-            None,
-        );
-    }
-    let phase = operation.state().move_state()?.phase;
-    let intent = operation.intent().clone();
-    let folders = retained_folders(&intent, Some(operation.state()));
-    let mut execution = match super::move_execution::MoveExecution::reopen(operation) {
-        Ok(execution) => execution,
-        Err(error) => {
-            return reply(
-                coordinator,
-                Some(item_in(
-                    &intent,
-                    folders,
-                    generation,
-                    None,
-                    "attention",
-                    "Move recovery files could not be verified; evidence is preserved",
-                    vec![],
-                )),
-                Some(diagnostic(error)),
-            )
+                &message,
+                actions,
+            );
+            return reply(coordinator, Some(view), error);
         }
     };
-    let ready = match phase {
-        MovePhase::Parked => "The moved entry can be returned to its source; its destination copy will be removed only after the source is back",
-        MovePhase::Published => "The moved entry can be returned to its source",
-        _ => "This interrupted move can be returned to its source",
-    };
-    let result = match request {
-        Request::Inspect => Ok(item(
-            execution.operation.intent(),
-            Some(execution.operation.state()),
-            execution.operation.generation(),
-            None,
-            "ready",
-            ready,
-            vec![RecoveryChoice::Restore],
-        )),
-        Request::Restore(_) => execution.restore_move().map(|()| {
-            item(
-                execution.operation.intent(),
-                Some(execution.operation.state()),
-                execution.operation.generation(),
-                None,
-                "attention",
-                "The moved entry has been returned to its source; retained artifacts still require cleanup",
-                vec![],
-            )
-        }),
-        // Discard is dispatched to the move retirement observer before reopening.
-        Request::Discard(_) | Request::Release(_) => {
-            unreachable!("discard and release never reach move reconciliation")
-        }
-    };
-    let (view, error) = match result {
-        Ok(view) => (view, None),
-        Err(error) => (
-            item(
-                execution.operation.intent(),
-                Some(execution.operation.state()),
-                execution.operation.generation(),
-                None,
-                "attention",
-                "Move recovery could not complete; all remaining evidence is preserved",
-                vec![],
-            ),
-            Some(diagnostic(error)),
+    let state = retirement.state();
+    // A committed discard that failed has already consumed Undo; it is not
+    // an ordinary retained record, so say so and offer only a retry.
+    let interrupted = state.retirement.as_ref().and(state.error.as_ref());
+    let (status, message, actions) = match (retirement.eligibility(), interrupted) {
+        (Eligibility::Preserved(reason), _) if forgettable => (
+            "attention",
+            format!("{reason}. {hint}"),
+            vec![RecoveryChoice::Release],
         ),
+        (Eligibility::Preserved(reason), _) => ("attention", reason.clone(), vec![]),
+        (_, Some(error)) => (
+            "attention",
+            format!(
+                "Discard stopped before finishing; its Undo history is gone and the \
+                 remaining recovery files are preserved. Retry Discard once this is \
+                 resolved: {error}. {hint}"
+            ),
+            vec![RecoveryChoice::Discard, RecoveryChoice::Release],
+        ),
+        _ => {
+            let restorable = restorable && state.retirement.is_none();
+            let mut actions = Vec::new();
+            if restorable {
+                actions.push(RecoveryChoice::Restore);
+            }
+            actions.push(RecoveryChoice::Discard);
+            let message = match &state.deferred {
+                // Nothing was removed; only the automatic attempt stopped.
+                Some(reason) => format!(
+                    "Automatic cleanup of its retained recovery data could not start and \
+                     will not be retried automatically: {reason}. Discard retries it."
+                ),
+                None => describe(state, restorable).to_owned(),
+            };
+            ("retained", message, actions)
+        }
     };
-    reply(coordinator, Some(view), error)
+    reply(
+        coordinator,
+        Some(item(
+            &intent,
+            Some(state),
+            retirement.operation.generation(),
+            state.retained_bytes,
+            status,
+            &message,
+            actions,
+        )),
+        None,
+    )
 }
 
 /// Shown wherever a stopped discard can be forgotten instead of retried. It
@@ -779,6 +406,30 @@ fn reply(
     Ok(snapshot)
 }
 
+/// Reply with the claimed record's current view. Keeping the native owner
+/// through the final inventory read means no other process starts effects
+/// between our observation and this snapshot assembly.
+fn answer(
+    coordinator: &Coordinator,
+    operation: &DurableOperation,
+    retained_bytes: Option<u64>,
+    status: &'static str,
+    message: &str,
+    actions: Vec<RecoveryChoice>,
+    error: Option<AppError>,
+) -> Result<RecoverySnapshot, AppError> {
+    let view = item(
+        operation.intent(),
+        Some(operation.state()),
+        operation.generation(),
+        retained_bytes,
+        status,
+        message,
+        actions,
+    );
+    reply(coordinator, Some(view), error.map(diagnostic))
+}
+
 fn pending(entry: &InventoryEntry) -> RecoveryItem {
     // Listing stays a bounded evidence read: it reports the retained size it
     // already knows but never claims an inspected status of its own.
@@ -807,7 +458,7 @@ fn pending(entry: &InventoryEntry) -> RecoveryItem {
 
 fn item(
     intent: &DurableIntent,
-    state: Option<&OperationState>,
+    state: Option<&State>,
     generation: u64,
     retained_bytes: Option<u64>,
     status: &'static str,
@@ -827,34 +478,23 @@ fn item(
 }
 
 /// The artifact folders a record may still hold, from durable evidence alone:
-/// inventory never probes them or grants renderer-owned authority. A move lists
-/// its source root first; a root its journaled discard already removed is
-/// omitted, so a stopped discard names exactly the folders it left behind.
-fn retained_folders(intent: &DurableIntent, state: Option<&OperationState>) -> Vec<String> {
-    use super::move_retention::{RootSide, Step};
-    let shown = |path: &super::model::NativePath| path.0.to_string_lossy().into_owned();
-    match &intent.operation {
-        OperationSpec::CopyReplacement(spec) => vec![shown(&spec.root)],
-        OperationSpec::Move(spec) => {
-            let retirement = state
-                .and_then(|state| state.move_state().ok())
-                .and_then(|state| state.retirement.as_ref());
-            [
-                (RootSide::Source, &spec.source_root),
-                (RootSide::Target, &spec.target_root),
-            ]
-            .into_iter()
-            .filter_map(|(side, root)| Some((side, root.as_ref()?)))
-            .filter(|(side, _)| {
-                !matches!(
-                    retirement.and_then(|retirement| retirement.step(*side)),
-                    Some(Step::Removing | Step::Removed)
-                )
-            })
-            .map(|(_, root)| shown(&root.path))
-            .collect()
-        }
-    }
+/// inventory never probes them or grants renderer-owned authority. The source
+/// root is listed first. Only a root whose removal completed is omitted: a
+/// stopped discard may have left any of a root it started removing, so it
+/// still names every folder that can hold retained files.
+fn retained_folders(intent: &DurableIntent, state: Option<&State>) -> Vec<String> {
+    let kind = intent.operation.kind();
+    let retirement = state.and_then(|state| state.retirement.as_ref());
+    [Side::Source, Side::Target]
+        .into_iter()
+        .filter(|side| {
+            retirement
+                .and_then(|retirement| *retirement.steps.get(*side))
+                .is_none_or(|step| step != Step::Removed)
+        })
+        .filter_map(|side| kind.root(side))
+        .map(|root| root.path.0.to_string_lossy().into_owned())
+        .collect()
 }
 
 fn item_in(
@@ -866,14 +506,16 @@ fn item_in(
     message: &str,
     actions: Vec<RecoveryChoice>,
 ) -> RecoveryItem {
-    let original = match &intent.operation {
-        OperationSpec::CopyReplacement(spec) => &spec.target,
-        OperationSpec::Move(spec) => &spec.source,
-    };
     RecoveryItem {
         id: intent.id.clone(),
         generation,
-        original_path: original.0.to_string_lossy().into_owned(),
+        original_path: intent
+            .operation
+            .kind()
+            .listed_path()
+            .0
+            .to_string_lossy()
+            .into_owned(),
         // The artifact container stays meaningful after restoration moves the
         // original home and retains the copy as `publication`.
         retained_path: folders.first().cloned(),
@@ -886,13 +528,7 @@ fn item_in(
 }
 
 fn diagnostic(error: AppError) -> String {
-    let mut message = error.to_string();
-    let mut end = message.len().min(super::model::MAX_ERROR_BYTES);
-    while !message.is_char_boundary(end) {
-        end -= 1;
-    }
-    message.truncate(end);
-    message
+    bounded_error(error.to_string())
 }
 
 #[cfg(test)]

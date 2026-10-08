@@ -5,7 +5,7 @@
 <script lang="ts">
   import type { FileEntry } from "$lib/domain/file";
   import { formatSize } from "$lib/domain/file";
-  import { getFileType, getFileIconColor, formatDate, formatAbsoluteDate } from "$lib/domain/file-types";
+  import { getFileType, getFileIconColor, formatDate, formatAbsoluteDate, isVideoMediaFile } from "$lib/domain/file-types";
   import EntryName from "./EntryName.svelte";
   import FileIcon from "./FileIcon.svelte";
   import GitStatusBadge from "./GitStatusBadge.svelte";
@@ -89,6 +89,7 @@
 <!-- svelte-ignore a11y_click_events_have_key_events -- FileList owns cursor navigation; the window command router owns configurable Open/Preview and selection commands. -->
 <div
   role="gridcell"
+  aria-label={isVideoMediaFile(entry) ? `${entry.name}, video` : undefined}
   tabindex={!isRenaming && explorer.focusedEntry?.path === entry.path ? 0 : -1}
   aria-selected={explorer.isSelected(entry)}
   class="file-item entry-item"

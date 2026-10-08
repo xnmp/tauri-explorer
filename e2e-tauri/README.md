@@ -27,7 +27,7 @@ sudo apt-get install -y webkit2gtk-driver
 
 ```bash
 # 1. Build the Tauri debug binary with the frontend + e2e hooks embedded
-VITE_E2E_HOOKS=1 bun run tauri build --debug --no-bundle
+VITE_E2E_HOOKS=1 bun run tauri build --debug --no-bundle --features e2e-hooks
 
 # 2. Run the smoke suite
 bun run test:e2e:tauri
@@ -58,9 +58,22 @@ Build through the Tauri CLI, **not** `cargo build`. A bare cargo debug build
 omits the `tauri/custom-protocol` feature, so the binary serves `build.devUrl`
 (localhost:1420) and the suite silently depends on a Vite dev server running
 alongside it. `--debug` embeds the frontend, so the suite exercises the shipped
-asset path with no dev server in the loop. The suite's test hooks are compiled
-in with `VITE_E2E_HOOKS=1` at build time (see `src/lib/domain/e2e-hooks.ts`);
-without it every spec fails with "dev e2e hooks never became ready".
+asset path with no dev server in the loop. The suite's test hooks have one
+gate per layer, and a hook build sets both (#884):
+
+- Frontend: `VITE_E2E_HOOKS=1` at build time (`src/lib/api/e2e-hooks.ts`).
+  Without it every spec fails with "dev e2e hooks never became ready". A Vite
+  dev server does not enable hooks either; `import.meta.env.DEV` is not a gate.
+  Probes live in `src/test-support/` and load only through `loadE2EHooks()`;
+  a build without the flag fails if it bundles `src/test-support/`, and
+  `bun run check:bundle` also fails on hook markers in the emitted scripts.
+- Rust: the `e2e-hooks` Cargo feature. It honours test-only environment
+  overrides such as `TAURI_EXPLORER_E2E_PLUGIN_JOB_TIMEOUT_MS`; without it
+  `external-job-timeout.spec.ts` waits for the ten-minute production timeout.
+
+`TAURI_EXPLORER_REPORT_URL` is not a test hook: release builds honour it for
+the alpha smoke's controlled relay, but only for `https://` or loopback
+`http://` URLs (see SECURITY.md).
 
 Windows additionally builds with `--features e2e-webview2-attach`, sets
 `VITE_E2E_NO_WARM_PRIME=1`, and runs with `TAURI_NATIVE_DRIVER` pointing to a
@@ -74,6 +87,17 @@ filesystem-root trash directory, which may be unwritable. Use a disposable
 profile under the home filesystem; never repurpose `HOME` to redirect tests.
 The suites currently share persisted settings when they share one profile, so
 use a fresh profile when qualifying a scenario that requires default settings.
+
+`clipboard-image-progress.spec.ts` copies a three-megapixel PNG through an
+external X11 `xclip` owner or Windows PowerShell/WinForms helper, then uses both
+Explorer Paste paths and previews the actual output in all three views. Linux
+runs require the private display/session/profile above; Windows automation is
+restricted to a disposable hosted CI desktop. The WDIO runner defaults
+`TAURI_EXPLORER_E2E_CLIPBOARD_IMAGE_DELAY_MS` to 2000 so a hook build can retain
+accepted image work for its progress screenshot. Only hook builds honor that
+bounded delay; the subsequent clipboard read, encoding and filesystem write
+use the real platform backend. This proves pending presentation and final
+output, not a measured percentage or encoding throughput.
 
 ## CI
 
@@ -90,13 +114,34 @@ Up control, and verifies the parent listing replaces it. It retains source
 snapshots, a screenshot and a provenance report in
 `qualification-results/macos-native-ui/`. This route requires Xcode Helper
 Accessibility permission; CI grants it only on its disposable runner. To run
-locally, grant that permission in System Settings, install Appium 3 with the
-Mac2 4.2 driver, build with `bun run tauri build --bundles app`, start Appium
-on port 4723, then run `bun run e2e-tauri/macos-ui-smoke.ts`. The pilot remains
-unqualified until the hosted test demonstrates the app outcome.
+the qualifier, dispatch that workflow on the branch to qualify. Interactive
+input is admitted only on a disposable GitHub-hosted runner, never a developer's
+active desktop. Appium 3.8.0 and Mac2 4.2.0 are pinned and recorded in the report.
 
-## Fresh-window failure evidence
+The same production bundle also runs `macos-pdf-preview.ts`: real PDF page
+pixels, centered magnification, trusted native panning, fullscreen, narrow
+right/top/bottom docks at application zoom 150%, corrupt-file handling and an
+image/PDF replacement. `macos-display.swift` measures the display's points and
+physical pixels; `pdf_screenshot.py` uses Pillow 12.3.0 to measure the fixture's
+solid color landmarks inside the native accessibility viewport. These checks
+use no DOM evaluation or synthetic acceptance screenshots. The uploaded report
+retains the source/binary identity, geometry, fixture hash and each actual image.
+Production worker cleanup is not independently measured by this AX-only route.
 
+## Session-loss failure evidence (`diagnostics/`)
+
+Investigation-only scaffolding lives in `e2e-tauri/diagnostics/`; each module
+names the open issue that justifies it with a `Retire-when: #NNN closed` line
+(see CONTRIBUTING.md). `artifact.ts` is the shared best-effort writer: it
+digests untrusted labels into file names (ADR 0021) and never lets a failed
+write replace the error being documented. `process-timeline.ts` is the
+process-only `/proc` sampler shared by the fresh-window and warm-claim records
+(#781); `window-transfer.ts` retains per-window evidence for transfer and
+clipboard failures (#710).
+
+Launch, selection and first lookup of a fresh child are all sampled:
+`monitorFreshWindowOpen` and a failed `switchToFreshWindow` keep the requested
+label and a process timeline even when no page was ever selected. On success,
 `switchToFreshWindow` records one atomic renderer sample (label, hook readiness,
 `.file-list` count, status path, URL, ready/visibility state) plus a `/proc` scan
 of the application, its WebKit auxiliary processes and the drivers, every time a
@@ -169,7 +214,7 @@ handles instead of reusable numeric PIDs. Build
 the debug binary with the test feature and embedded hooks:
 
 ```bash
-VITE_E2E_HOOKS=1 bun run tauri build --debug --no-bundle --features e2e-renderer-recovery
+VITE_E2E_HOOKS=1 bun run tauri build --debug --no-bundle --features e2e-hooks,e2e-renderer-recovery
 ```
 
 Run it under the existing isolated Xvfb/openbox wrapper:
@@ -238,7 +283,7 @@ show that exact listing transition. It retains the local-owner retirement
 policy; this is not evidence of process durability or transferable child Undo.
 
 `file-recovery.spec.ts` requires both the `e2e-renderer-recovery` and
-`durable-copy-recovery` build features and
+`durable-recovery` build features and
 `VITE_E2E_HOOKS=1`. Run it with an isolated XDG profile and a fresh, existing
 `TAURI_E2E_FILE_RECOVERY_DIR` directory, then select it using
 `bun run test:e2e:tauri --spec e2e-tauri/specs/file-recovery.spec.ts` under the
@@ -319,21 +364,20 @@ failure. `native-admitted-move-redone.png` records the successful final Redo. Th
 Xvfb run may report an unavailable host clipboard provider; these operations use
 the application's clipboard and do not qualify platform clipboard integration.
 
-### Durable copy release policy
+### Durable recovery release policy
 
-Ordinary release builds leave `durable-copy-recovery` disabled until native
-artifact retirement is implemented (#687). Staged overwrite copies retain their
-previous replacement behavior and exact Linux publication receipts; they do not
-retain the displaced original for durable Undo. Existing journal discovery and
-explicit recovery stay available.
+Ordinary release builds leave `durable-recovery` disabled (ADR 0020). Staged
+overwrite copies retain their previous replacement behavior and exact Linux
+publication receipts; they do not retain the displaced original for durable
+Undo. Existing journal discovery and explicit recovery stay available.
 
 The recovery-copy acceptance build must explicitly opt in:
 
 ```sh
-VITE_E2E_HOOKS=1 bun run tauri build --debug --no-bundle --features e2e-renderer-recovery,durable-copy-recovery
+VITE_E2E_HOOKS=1 bun run tauri build --debug --no-bundle --features e2e-hooks,e2e-renderer-recovery,durable-recovery
 ```
 
-Keep ordinary native smoke builds without `durable-copy-recovery` so the default
+Keep ordinary native smoke builds without `durable-recovery` so the default
 shipping path is also exercised. `e2e-renderer-recovery` does not imply the feature.
 ## Extended native qualification soak
 
@@ -417,7 +461,7 @@ Dock half-bounce target.
 recovery dialog to discard retained files/directories. It verifies both private
 roots disappear, destination bytes survive, storage counters decrease, and an
 externally changed destination preserves both recovery copies after Reclaim space.
-It requires `VITE_E2E_HOOKS=1` frontend assets and `durable-move-recovery` in a
+It requires `VITE_E2E_HOOKS=1` frontend assets and `durable-recovery` in a
 custom-protocol native build. `e2e-renderer-recovery` is not needed unless also
 running the seeded replacement/channel tests.
 
@@ -445,7 +489,7 @@ Linux user/mount namespaces and `mount`/`umount`. Run it from the repository roo
 EXPLORER_MOUNT_TEST_PARENT_NS="$(readlink /proc/self/ns/mnt)" \
   unshare --user --map-root-user --mount --propagation private \
   cargo test --manifest-path src-tauri/Cargo.toml --lib \
-    --features durable-copy-recovery,durable-move-recovery \
+    --features durable-recovery \
     unmounted_endpoint_preserves_both_roots_until_same_volume_returns \
     -- --ignored --nocapture
 ```
@@ -468,3 +512,75 @@ that the move is refused before any record instead of meeting `EBUSY` after
 journaling. `a_payload_that_crosses_into_another_mount_is_refused_before_any_record`
 mounts a tmpfs inside a payload the move would retain, whose discard could never
 traverse it, and checks the same refusal.
+
+The shared tree removal (#875) has one bind-mount test per caller, all named
+for what they never do: `a_bind_mount_inside_the_tree_is_never_entered`
+(the primitive, under both mount-evidence policies and for a mounted file),
+`deletion_never_descends_into_a_mount_inside_the_selection` (permanent delete),
+`replacement_retirement_never_descends_into_a_mount_inside_its_root` and
+`move_cleanup_never_descends_into_a_mount_inside_its_payload`. Each bind-mounts
+a directory of the same filesystem, so only mount identity reveals it, and
+checks the refusal plus every byte the mount exposes.
+`a_mount_appearing_between_admission_and_entry_is_never_entered` bind-mounts a
+directory onto itself after the walk observed it, which keeps its device and
+inode, and checks that the walk never enters it. Run them with the command
+above, replacing the test name with the filter `mount_inside` (which also
+selects the two older move-retirement mount tests) and then `never_entered`.
+
+
+## Native video playback (#970)
+
+`specs/video-preview.spec.ts` covers six actual Linux decoder/transport outcomes:
+play/pause and decoded red-to-blue seeking, focused controls/fullscreen, three
+docks at 150% app zoom, selection/hide/revision retirement, invalid-container
+failure, and an encoded file above 1 GiB. The large-file case measures startup,
+distant seeking, over ten seconds of playback, a thirty-second paused soak,
+transport reads and combined application/WebKit RSS against a 256 MiB growth
+budget. `specs/video-preview-lifecycle.spec.ts` adds three outcomes: invalid
+container cleanup, List/Tiles decoded selection and seeking, and actual Ctrl+N
+activation followed by destruction of a playing native window. Retirement checks
+include HTTP 404 for old capabilities, native counters and actual source handles.
+
+Both specs opt in only on Linux with `TAURI_NATIVE_VIDEO_PROFILE`. Build with:
+
+```sh
+VITE_E2E_HOOKS=1 bun run tauri build --debug --no-bundle --features e2e-hooks
+```
+
+Generate silent VP8 WebM fixtures on the same filesystem as the qualification
+fixtures, outside a live Vite watch root. The generator requires FFmpeg with
+`libvpx`, writes fully allocated encoded packets above 1 GiB, and records hashes
+and metadata; sparse padding does not qualify decoder performance.
+
+```sh
+python3 e2e-tauri/fixtures/video/generate-native-video.py "$TAURI_NATIVE_VIDEO_FIXTURES"
+```
+
+Use a fresh profile outside the watched worktree and a private Xvfb display with
+Openbox, isolated D-Bus, `GDK_BACKEND=x11`, and no `WAYLAND_DISPLAY`. Set:
+
+- `TAURI_NATIVE_VIDEO_PROFILE`: absolute private profile directory.
+- `TAURI_NATIVE_VIDEO_FIXTURES`: absolute generated fixture directory.
+- `TAURI_NATIVE_VIDEO_ARTIFACT_DIR`: absolute directory for JSON measurements.
+- `XDG_CONFIG_HOME`: `$TAURI_NATIVE_VIDEO_PROFILE/config`; also isolate the XDG
+  data, cache, state and runtime directories, plus `TMPDIR`.
+- `TAURI_NATIVE_DRIVER_PORT` and `TAURI_NATIVE_BACKEND_PORT`: distinct owned ports.
+
+The normal native driver dependencies plus `ffmpeg`, `ffprobe` and `xprop` are
+required for decoded-pixel and process/resource checks. Verify the actual app,
+WebKit helpers and driver inherited the private environment before qualification.
+Run each spec in that private session with a fresh profile:
+
+```sh
+bunx wdio run e2e-tauri/wdio.conf.ts --spec e2e-tauri/specs/video-preview.spec.ts
+bunx wdio run e2e-tauri/wdio.conf.ts --spec e2e-tauri/specs/video-preview-lifecycle.spec.ts
+```
+
+Keep warming enabled: the lifecycle test checks that a parked owner admits no
+video lease before real activation. Captures, raw counters, buffered intervals
+and owned-process RSS samples accompany outcomes. The lifecycle captures go to
+`screenshots/feat/970-ability-to-watch-videos-in-the-preview-pane/`; preserve
+existing proof before a rerun. Confirm the private processes and ports are gone
+afterwards. Never run these interactions against the active desktop. These
+fixtures qualify Linux VP8 WebM decoding; other codecs and platforms need their
+own native qualification.

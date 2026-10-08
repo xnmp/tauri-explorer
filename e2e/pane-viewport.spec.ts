@@ -1,4 +1,5 @@
 import { expect, test, type Page } from "./fixtures";
+import { installLayoutInspector } from "./layout-inspector";
 
 let pageErrors: string[] = [];
 test.beforeEach(({ page }) => { pageErrors = []; page.on("pageerror", error => pageErrors.push(error.message)); });
@@ -30,6 +31,61 @@ async function focus(page: Page, id: string) {
     const load = new Function("return import('/src/lib/state/window-tabs.svelte.ts')");
     (await load()).windowTabsManager.setActivePane(paneId);
   }, id);
+}
+
+for (const viewMode of ["details", "list", "tiles"] as const) {
+  for (const zoomLevel of [110, 130, 175]) {
+    test(`${viewMode} sparse workspace fits without scrollbars at ${zoomLevel}%`, async ({ page }, info) => {
+      await page.setViewportSize({ width: 817, height: 1361 });
+      await page.addInitScript(({ zoomLevel }) => {
+        localStorage.setItem("explorer-settings", JSON.stringify({
+          showWindowControls: false, showSidebar: false, showStatusBar: false,
+          zoomLevel, thumbnailSize: "small",
+        }));
+      }, { zoomLevel });
+      await page.goto(`/?path=/home/user/Documents&viewMode=${viewMode}`);
+      await page.locator(".entry-item").first().waitFor();
+      // Measure the workspace itself: Details can legitimately scroll its columns.
+      // ScrollHeight/clientHeight are integer-rounded and miss fractional overflow.
+      await expect.poll(() => page.locator(".pane-container").evaluate(container => {
+        const tree = container.querySelector<HTMLElement>(".pane-tree")!;
+        const outer = container.getBoundingClientRect(), inner = tree.getBoundingClientRect();
+        const style = getComputedStyle(container);
+        const zoom = Number.parseFloat(getComputedStyle(document.documentElement).zoom);
+        const width = outer.width - (parseFloat(style.borderLeftWidth) + parseFloat(style.borderRightWidth)) * zoom;
+        const height = outer.height - (parseFloat(style.borderTopWidth) + parseFloat(style.borderBottomWidth)) * zoom;
+        return Math.max(Math.abs(inner.width - width), Math.abs(inner.height - height));
+      })).toBeLessThanOrEqual(0.032);
+      if (viewMode === "tiles" && zoomLevel === 130) {
+        await page.screenshot({ path: info.outputPath("spacious-tiles-without-workspace-scrollbars.png") });
+      }
+    });
+  }
+}
+
+for (const viewMode of ["details", "list", "tiles"] as const) {
+  test(`${viewMode} overflowing files still reveal their final entry at fractional zoom`, async ({ page }, info) => {
+    await page.setViewportSize({ width: 817, height: 600 });
+    await page.addInitScript(() => localStorage.setItem("explorer-settings", JSON.stringify({
+      showSidebar: false, showStatusBar: false, zoomLevel: 130, thumbnailSize: "small",
+    })));
+    await page.goto(`/?path=/perf/huge-500&viewMode=${viewMode}`);
+    await installLayoutInspector(page);
+    await page.locator(".entry-item").first().click();
+    const viewport = page.locator(`.${viewMode}-view .virtual-viewport`);
+    await expect.poll(() => viewport.evaluate(element => element.scrollHeight - element.clientHeight)).toBeGreaterThan(100);
+    const box = (await viewport.boundingBox())!;
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+    await page.mouse.wheel(0, 600);
+    await expect.poll(() => viewport.evaluate(element => element.scrollTop)).toBeGreaterThan(100);
+    await page.keyboard.press("Control+End");
+    await expect(page.getByRole("complementary", { name: "File inspector" })).toBeVisible();
+    const selected = page.locator(".entry-item.selected");
+    await expect(selected.locator(".entry-name")).toHaveText("image-00498.png");
+    await expect(selected).toBeInViewport();
+    await expect.poll(() => viewport.evaluate(element => element.scrollTop)).toBeGreaterThan(100);
+    if (viewMode === "tiles") await page.screenshot({ path: info.outputPath("overflow-final-entry.png") });
+  });
 }
 
 test("dense restored layout reveals focused files and preserves saved layout", async ({ page }, info) => {
@@ -176,3 +232,29 @@ test("workspace scroll cancels a queued divider frame before it can change a sav
   });
   expect(ratio).toBe(0.5);
 });
+
+for (const viewMode of ["details", "list", "tiles"] as const) {
+  test(`${viewMode} resizing preserves a cursor intentionally scrolled out of view`, async ({ page }) => {
+    await page.setViewportSize({ width: 817, height: 600 });
+    await page.addInitScript(() => localStorage.setItem("explorer-settings", JSON.stringify({
+      showSidebar: false, showStatusBar: false, zoomLevel: 130, thumbnailSize: "small",
+    })));
+    await page.goto(`/?path=/perf/images-500&viewMode=${viewMode}`);
+    await installLayoutInspector(page);
+    await page.locator('.entry-item[data-index="1"]').click();
+    await expect(page.getByRole("complementary", { name: "File inspector" })).toBeVisible();
+    const viewport = page.locator(`.${viewMode}-view .virtual-viewport`);
+    const box = (await viewport.boundingBox())!;
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+    await page.mouse.wheel(0, 1400);
+    await expect.poll(() => viewport.evaluate(element => element.scrollTop)).toBeGreaterThan(500);
+    await expect(page.locator(".entry-item.selected")).toHaveCount(0);
+    const before = await viewport.evaluate(element => ({ top: element.scrollTop, height: element.clientHeight }));
+    await page.setViewportSize({ width: 817, height: 760 });
+    await expect.poll(() => viewport.evaluate(element => element.clientHeight)).not.toBe(before.height);
+    // WebKit can continue wheel momentum during the resize. It must never
+    // jump back to the retained selection at the top of the collection.
+    await expect.poll(() => viewport.evaluate(element => element.scrollTop)).toBeGreaterThanOrEqual(before.top);
+    await expect(page.locator(".entry-item.selected")).toHaveCount(0);
+  });
+}

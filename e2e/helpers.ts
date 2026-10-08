@@ -2,7 +2,7 @@
  * Shared helpers for e2e tests.
  */
 
-import type { Page } from "@playwright/test";
+import { expect, type Page } from "@playwright/test";
 
 /** The three view modes */
 export const ALL_VIEW_MODES = ["details", "list", "tiles"] as const;
@@ -44,6 +44,15 @@ export const BUILT_IN_THEMES = [
 export async function waitForEntries(page: Page) {
   await page.waitForSelector(".file-list");
   await page.locator(".entry-item").first().waitFor({ timeout: 5000 });
+}
+
+/** Execute a selection-aware action through the real command palette. */
+export async function runPaletteCommand(page: Page, label: string) {
+  await page.keyboard.press("ControlOrMeta+Shift+P");
+  const palette = page.locator(".command-palette-dialog");
+  await palette.locator(".search-input").fill(label);
+  await palette.locator(".command-item").filter({ hasText: label }).click();
+  await expect(palette).toBeHidden();
 }
 
 /**
@@ -124,4 +133,68 @@ export async function pressShortcut(
     },
     { key, ...modifiers },
   );
+}
+
+/**
+ * Seed `explorer-settings` via an init script, so it is re-applied on EVERY
+ * navigation/reload of `page` (not just the next one). Do not use this at a
+ * site where a test changes a setting in-app and then reloads to check that
+ * the change persisted — the init script would clobber the in-app change.
+ *
+ * By default `patch` is merged into whatever `explorer-settings` already
+ * holds at each load. Pass `{ replace: true }` to write `patch` as the
+ * entire settings object instead (for sites that don't need to preserve any
+ * existing value).
+ */
+export async function seedSettings(
+  page: Page,
+  patch: Record<string, unknown>,
+  options?: { replace?: boolean },
+): Promise<void> {
+  await page.addInitScript(
+    ({ patch, replace }) => {
+      const merged = replace
+        ? patch
+        : { ...JSON.parse(localStorage.getItem("explorer-settings") || "{}"), ...patch };
+      localStorage.setItem("explorer-settings", JSON.stringify(merged));
+    },
+    { patch, replace: options?.replace ?? false },
+  );
+}
+
+/**
+ * Merge `patch` into the currently stored `explorer-settings` once, then
+ * reload `page` so the app picks it up. Unlike `seedSettings`, this does not
+ * re-apply on subsequent reloads. Callers keep any post-reload wait (e.g.
+ * `waitForEntries`) at the call site — this helper does not add one.
+ */
+export async function applySettingsAndReload(
+  page: Page,
+  patch: Record<string, unknown>,
+): Promise<void> {
+  await page.evaluate((patch) => {
+    const merged = { ...JSON.parse(localStorage.getItem("explorer-settings") || "{}"), ...patch };
+    localStorage.setItem("explorer-settings", JSON.stringify(merged));
+  }, patch);
+  await page.reload();
+}
+
+/** Focus the last sequential focus target before the rows in DOM order. */
+export async function focusBeforeFileList(page: Page): Promise<void> {
+  const focused = await page.evaluate(() => {
+    const rowViewport = document.querySelector(".file-list .file-rows");
+    if (!rowViewport) return null;
+    const candidates = [...document.querySelectorAll<HTMLElement>(
+      'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+    )].filter((element) => {
+      const style = getComputedStyle(element);
+      return element.tabIndex >= 0 && style.display !== "none" && style.visibility !== "hidden"
+        && !!(element.offsetWidth || element.offsetHeight || element.getClientRects().length)
+        && !!(element.compareDocumentPosition(rowViewport) & Node.DOCUMENT_POSITION_FOLLOWING);
+    });
+    const previous = candidates.at(-1);
+    previous?.focus();
+    return previous ? { tag: previous.tagName, className: previous.className } : null;
+  });
+  expect(focused, "the file list must have a preceding sequential focus target").not.toBeNull();
 }

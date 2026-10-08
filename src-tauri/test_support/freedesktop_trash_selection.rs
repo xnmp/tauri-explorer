@@ -1,5 +1,7 @@
 use super::*;
-use crate::files::native_directory::Directory;
+use crate::files::{
+    file_identity::version_from_metadata, native_directory::Directory, recovery::resources::Scope,
+};
 use std::{fs, path::PathBuf};
 
 fn publication(path: &Path) -> Arc<PublishedEntry> {
@@ -149,6 +151,50 @@ fn published_copy_identity_trashes_and_restores_the_exact_entry() {
 }
 
 #[test]
+fn admission_claims_the_trash_layout_directories_the_deletion_will_use() {
+    let (root, context, source) = fixture();
+    let path = source.join("entry");
+    fs::write(&path, b"retain bytes").unwrap();
+    let (_, claims) = context
+        .prepare_selection(Arc::new(vec![path.to_str().unwrap().to_owned()]))
+        .unwrap()
+        .into_admission();
+    let trash = fs::canonicalize(root.path()).unwrap().join("data/Trash");
+    for directory in [trash.join("info"), trash.join("files")] {
+        assert!(
+            claims
+                .iter()
+                .any(|claim| claim.path.0 == directory && claim.scope == Scope::Entry),
+            "missing layout claim for {directory:?}"
+        );
+    }
+    // The trash root only excludes selected sources; it is not admitted as a
+    // broad lock that would serialize independent deletions.
+    assert!(claims
+        .iter()
+        .all(|claim| !(claim.path.0 == trash && claim.scope == Scope::Subtree)));
+    assert!(!context.data_home.exists());
+}
+
+#[test]
+fn trash_and_permanent_deletion_refuse_the_same_oversized_selection() {
+    let (_root, context, source) = fixture();
+    let path = source.join("entry");
+    fs::write(&path, b"retain bytes").unwrap();
+    let oversized = || {
+        let mut keys = Vec::with_capacity(MAX_PLAN_BYTES / std::mem::size_of::<String>() + 1);
+        keys.push(path.to_str().unwrap().to_owned());
+        Arc::new(keys)
+    };
+    let trash = context.prepare_selection(oversized());
+    let deletion = crate::files::permanent_delete::prepare_selection(oversized());
+    assert!(matches!(trash, Err(AppError::InvalidPath(_))));
+    assert!(matches!(deletion, Err(AppError::InvalidPath(_))));
+    assert_eq!(fs::read(path).unwrap(), b"retain bytes");
+    assert!(!context.data_home.exists());
+}
+
+#[test]
 fn preparation_budget_rejects_before_layout_or_source_effects() {
     let (_root, context, source) = fixture();
     let path = source.join("entry");
@@ -244,7 +290,7 @@ fn shared_layout_cost_is_bounded_for_a_large_selection() {
     let selection = context
         .prepare_selection_with(paths.clone(), &mut random_bytes, 256 * 1024, None)
         .unwrap();
-    assert_eq!(selection.items.len(), paths.len());
+    assert_eq!(selection.pending().count(), paths.len());
     assert!(!context.data_home.exists());
     for path in paths {
         assert_eq!(fs::read(path).unwrap(), b"retain");
@@ -299,19 +345,15 @@ fn deletion_is_refused_while_a_managed_copy_owns_its_source() {
     let (root, context, source) = fixture();
     let file = source.join("held.txt");
     fs::write(&file, b"must remain while a copy reads it").unwrap();
-    let runtime = Runtime::default();
-    let storage = root.path().join("recovery");
-    let held = tauri::async_runtime::block_on(runtime.admit(
-        storage.clone(),
-        vec![ResourceRequest {
-            path: file.clone(),
-            access: Access::Read,
-            scope: Scope::Subtree,
-        }],
-    ))
+    let runtime = Runtime::new(root.path().join("recovery"));
+    let held = tauri::async_runtime::block_on(runtime.admit(vec![ResourceRequest {
+        path: file.clone(),
+        access: Access::Read,
+        scope: Scope::Subtree,
+    }]))
     .unwrap();
     let key = file.to_string_lossy().into_owned();
-    let result = tauri::async_runtime::block_on(runtime.admit_prepared(storage, move || {
+    let result = tauri::async_runtime::block_on(runtime.admit_prepared(move || {
         context
             .prepare_selection(Arc::new(vec![key.clone()]))
             .map(PreparedSelection::into_admission)
@@ -329,12 +371,11 @@ fn deletion_is_refused_while_a_managed_copy_owns_its_source() {
 
 fn admit(
     runtime: &crate::files::recovery::Runtime,
-    storage: &Path,
     context: Context,
     paths: Vec<String>,
 ) -> Result<(PreparedSelection, crate::files::recovery::MutationAdmission), AppError> {
     let paths = Arc::new(paths);
-    tauri::async_runtime::block_on(runtime.admit_prepared(storage.to_owned(), move || {
+    tauri::async_runtime::block_on(runtime.admit_prepared(move || {
         context
             .prepare_selection(Arc::clone(&paths))
             .map(PreparedSelection::into_admission)
@@ -343,25 +384,20 @@ fn admit(
 
 fn claim(
     runtime: &crate::files::recovery::Runtime,
-    storage: &Path,
     path: &Path,
     access: Access,
 ) -> Result<crate::files::recovery::MutationAdmission, AppError> {
-    tauri::async_runtime::block_on(runtime.admit(
-        storage.to_owned(),
-        vec![resources::Request {
-            path: path.to_owned(),
-            access,
-            scope: Scope::Subtree,
-        }],
-    ))
+    tauri::async_runtime::block_on(runtime.admit(vec![resources::Request {
+        path: path.to_owned(),
+        access,
+        scope: Scope::Subtree,
+    }]))
 }
 
 #[test]
 fn disjoint_deletions_share_first_use_layouts_and_retain_exact_artifact_claims() {
     let (root, context, source) = fixture();
-    let runtime = crate::files::recovery::Runtime::default();
-    let storage = root.path().join("recovery");
+    let runtime = crate::files::recovery::Runtime::new(root.path().join("recovery"));
     let data = context.data_home.clone();
     let other_context = Context {
         mounts: crate::files::trash_mounts::MountSnapshot::read().unwrap(),
@@ -373,12 +409,11 @@ fn disjoint_deletions_share_first_use_layouts_and_retain_exact_artifact_claims()
     fs::write(&second, b"two").unwrap();
     let first_key = first.to_string_lossy().into_owned();
     let second_key = second.to_string_lossy().into_owned();
-    let (mut a, a_owner) = admit(&runtime, &storage, context, vec![first_key.clone()]).unwrap();
-    let (mut b, b_owner) =
-        admit(&runtime, &storage, other_context, vec![second_key.clone()]).unwrap();
+    let (mut a, a_owner) = admit(&runtime, context, vec![first_key.clone()]).unwrap();
+    let (mut b, b_owner) = admit(&runtime, other_context, vec![second_key.clone()]).unwrap();
     assert!(!data.exists(), "both preparations must be read-only");
-    assert!(claim(&runtime, &storage, &first, Access::Read).is_err());
-    assert!(claim(&runtime, &storage, &data.join("Trash"), Access::Write).is_err());
+    assert!(claim(&runtime, &first, Access::Read).is_err());
+    assert!(claim(&runtime, &data.join("Trash"), Access::Write).is_err());
     let a_receipt = a.execute_next(&first_key).unwrap();
     let b_receipt = b.execute_next(&second_key).unwrap();
     assert!(a_receipt.artifact.is_some() && b_receipt.artifact.is_some());
@@ -386,7 +421,7 @@ fn disjoint_deletions_share_first_use_layouts_and_retain_exact_artifact_claims()
     assert_eq!(fs::read_dir(data.join("Trash/files")).unwrap().count(), 2);
     a_owner.finish().unwrap();
     b_owner.finish().unwrap();
-    claim(&runtime, &storage, &data.join("Trash"), Access::Write)
+    claim(&runtime, &data.join("Trash"), Access::Write)
         .unwrap()
         .finish()
         .unwrap();
@@ -395,16 +430,15 @@ fn disjoint_deletions_share_first_use_layouts_and_retain_exact_artifact_claims()
 #[test]
 fn admitted_selection_keeps_alias_dependencies_and_requested_receipt_keys() {
     let (root, context, source) = fixture();
-    let runtime = crate::files::recovery::Runtime::default();
-    let storage = root.path().join("recovery");
+    let runtime = crate::files::recovery::Runtime::new(root.path().join("recovery"));
     let alias = root.path().join("alias");
     std::os::unix::fs::symlink(&source, &alias).unwrap();
     let file = source.join("entry");
     fs::write(&file, b"owned").unwrap();
     let key = alias.join("entry").to_string_lossy().into_owned();
-    let (mut selection, owner) = admit(&runtime, &storage, context, vec![key.clone()]).unwrap();
-    assert!(claim(&runtime, &storage, &alias, Access::Write).is_err());
-    assert!(claim(&runtime, &storage, &file, Access::Read).is_err());
+    let (mut selection, owner) = admit(&runtime, context, vec![key.clone()]).unwrap();
+    assert!(claim(&runtime, &alias, Access::Write).is_err());
+    assert!(claim(&runtime, &file, Access::Read).is_err());
     assert!(selection.execute_next(&key).unwrap().artifact.is_some());
     assert!(!file.exists());
     owner.finish().unwrap();
@@ -413,8 +447,7 @@ fn admitted_selection_keeps_alias_dependencies_and_requested_receipt_keys() {
 #[test]
 fn an_unmanaged_candidate_collision_never_reallocates_unclaimed_trash_names() {
     let (root, context, source) = fixture();
-    let runtime = crate::files::recovery::Runtime::default();
-    let storage = root.path().join("recovery");
+    let runtime = crate::files::recovery::Runtime::new(root.path().join("recovery"));
     // Establish the layout without moving any selected object.
     let dirs = context
         .open_trash(&super::super::TrashLayout::Home)
@@ -422,8 +455,8 @@ fn an_unmanaged_candidate_collision_never_reallocates_unclaimed_trash_names() {
     let file = source.join("entry");
     fs::write(&file, b"source").unwrap();
     let key = file.to_string_lossy().into_owned();
-    let (mut selection, owner) = admit(&runtime, &storage, context, vec![key.clone()]).unwrap();
-    let prepared = selection.items.front().unwrap().as_ref().unwrap();
+    let (mut selection, owner) = admit(&runtime, context, vec![key.clone()]).unwrap();
+    let prepared = selection.pending().next().unwrap().as_ref().unwrap();
     let candidate = dirs.root_path.join("files").join(&prepared.name);
     fs::write(&candidate, b"external occupant").unwrap();
     assert!(selection.execute_next(&key).is_err());

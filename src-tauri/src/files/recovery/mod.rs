@@ -1,4 +1,8 @@
 //! Durable recovery infrastructure; Linux simple-entry admission is connected.
+#[cfg(unix)]
+mod artifact_layout;
+#[cfg(unix)]
+mod checkpoint;
 pub(crate) mod commands;
 #[cfg(unix)]
 mod context;
@@ -27,12 +31,6 @@ mod move_cleanup;
 mod move_execution;
 #[cfg(unix)]
 mod move_model;
-#[cfg(unix)]
-mod move_retention;
-#[cfg(unix)]
-mod move_retirement;
-#[cfg(unix)]
-mod move_transition;
 pub(crate) use model::{ReplacementDirection, ReplacementHistory, ReplacementOutcome};
 #[cfg(target_os = "linux")]
 mod history;
@@ -51,8 +49,6 @@ mod replacement_execution;
 mod replacement_reapplication;
 #[cfg(unix)]
 mod replacement_restoration;
-#[cfg(unix)]
-mod replacement_transition;
 #[cfg(unix)]
 pub(super) mod resources;
 #[cfg(unix)]
@@ -74,7 +70,7 @@ mod private_storage;
 #[cfg(target_os = "linux")]
 mod runtime;
 #[cfg(target_os = "linux")]
-pub(crate) use context::MutationAdmission;
+pub(crate) use context::{MutationAdmission, MutationContext};
 #[cfg(target_os = "linux")]
 pub(crate) use resources::{Access, Request as ResourceRequest, Scope};
 #[cfg(target_os = "linux")]

@@ -2,16 +2,49 @@
 # requires-python = ">=3.10"
 # dependencies = ["Pillow"]
 # ///
-"""Generate .ico and .icns from icon.png"""
+"""Regenerate platform icons and browser favicons from canonical icon.png."""
 
 import io
+import shutil
 import struct
+import subprocess
+import tempfile
 from pathlib import Path
 
 from PIL import Image
 
-icons_dir = Path(__file__).parent
+icons_dir = Path(__file__).resolve().parent
+repo_dir = icons_dir.parent.parent
+
+# Tauri owns the platform-specific PNG sizes and mobile icon conventions.
+# Generate into a temporary directory: its icon.png is a resized derivative,
+# and must not overwrite our approved, full-resolution source artwork.
+with tempfile.TemporaryDirectory(prefix="tauri-explorer-icons-") as output:
+    subprocess.run(
+        ["bun", "run", "tauri", "icon", str(icons_dir / "icon.png"), "--output", output],
+        cwd=repo_dir,
+        check=True,
+    )
+    for source in Path(output).rglob("*"):
+        relative = source.relative_to(output)
+        if not source.is_file() or relative == Path("icon.png"):
+            continue
+        destination = icons_dir / relative
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        if relative.parts[0] == "ios" and source.suffix == ".png":
+            # Tauri has already applied the iOS background, but may leave
+            # alpha=254 rounding residues. Legacy AppIcon PNGs must be opaque.
+            with Image.open(source) as mobile_icon:
+                mobile_icon.convert("RGB").save(destination)
+        else:
+            shutil.copyfile(source, destination)
+
 png = Image.open(icons_dir / "icon.png").convert("RGBA")
+
+favicon = png.resize((64, 64), Image.LANCZOS)
+for destination in [repo_dir / "static/favicon.png", repo_dir / "website/favicon.png"]:
+    favicon.save(destination)
+print("Generated application and website favicons")
 
 # Generate .ico (Windows). Each sub-image is stored as PNG so the full
 # alpha channel survives — Pillow's default BMP encoding for ICO sub-frames
@@ -68,7 +101,7 @@ cx, cy = (alpha_bbox[0] + alpha_bbox[2]) // 2, (alpha_bbox[1] + alpha_bbox[3]) /
 canvas = Image.new("RGBA", (side, side), (0, 0, 0, 0))
 canvas.paste(png, (side // 2 - cx, side // 2 - cy), png)
 
-icns_sizes = [16, 32, 64, 128, 256, 512]
+icns_sizes = [16, 32, 64, 128, 256, 512, 1024]
 icns_images = [canvas.resize((s, s), Image.LANCZOS) for s in icns_sizes]
 icns_images[0].save(icons_dir / "icon.icns", format="ICNS", append_images=icns_images[1:])
 canvas.resize((512, 512), Image.LANCZOS).save(icons_dir / "icns-preview.png")

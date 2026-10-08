@@ -12,9 +12,10 @@ import { gitDiff } from "$lib/api/git";
 import { listArchiveContents } from "$lib/api/archive";
 import { openFile } from "$lib/api/open";
   import { toastStore } from "$lib/state/toast.svelte";
-  import { isImageFile, isSvgFile, isTextFile, isPdfFile, isVideoFile, isZipFile, getFileType, formatDate } from "$lib/domain/file-types";
+  import { isImageFile, isSvgFile, isTextFile, isPdfFile, isVideoFile, isVideoMediaFile, isZipFile, getFileType, formatDate } from "$lib/domain/file-types";
+  import VideoIndicator from "./VideoIndicator.svelte";
   import { formatSize, isSystemHidden, type FileEntry } from "$lib/domain/file";
-  import { isTauri } from "$lib/api/common";
+  import { isTauri, extractError } from "$lib/api/common";
   import { highlightCode, highlightDiffLine } from "$lib/domain/syntax-highlight";
   import { renderMarkdown } from "$lib/domain/markdown";
   import { settingsStore } from "$lib/state/settings.svelte";
@@ -27,6 +28,14 @@ import { openFile } from "$lib/api/open";
   import VirtualList from "./VirtualList.svelte";
   import { parseCsvPreview, type CsvPreview } from "$lib/domain/csv-preview";
   import { createPreviewLifetime, type PreviewRequest } from "$lib/state/preview-lifetime";
+  import { subscribeToLocalFileChanges } from "$lib/state/file-events";
+  import { parentDir } from "$lib/domain/path";
+  let localPreviewRevision = $state(0);
+  const unsubscribePreviewChanges = subscribeToLocalFileChanges((directories) => {
+    if (selectedFile && directories.includes(parentDir(selectedFile.path))) localPreviewRevision++;
+  });
+  onDestroy(unsubscribePreviewChanges);
+  import { dialogStore } from "$lib/state/dialogs.svelte";
 
   // Window-global surface: the preview's SCM diff follows the ACTIVE pane's
   // store (#334) — reactive through windowTabsManager.activePaneId.
@@ -43,6 +52,8 @@ import { openFile } from "$lib/api/open";
   });
   import { parseUnifiedDiff, type ParsedDiff, type DiffLine } from "$lib/domain/diff";
   import FileIcon from "./FileIcon.svelte";
+  import PluginPreviewTarget from "./PluginPreviewTarget.svelte";
+  import { previewInfoRegistry, type PreviewSubject } from "$lib/plugins/preview-registry.svelte";
   /** Detect if the current theme uses a light color scheme.
    * Recomputed via a MutationObserver on the documentElement's `data-theme`
    * attribute (set by theme.svelte.ts) — getComputedStyle only reflects the
@@ -112,7 +123,7 @@ import { openFile } from "$lib/api/open";
   function handlePaneDoubleClick(event: MouseEvent): void {
     const target = event.target;
     if (!(target instanceof Element) || target.closest(
-      'button, a, input, textarea, select, [contenteditable], [role="separator"], .preview-image-container, video, audio, iframe',
+      'button, a, input, textarea, select, [contenteditable], [role="separator"], .preview-image-container, .pdf-preview, .video-preview, video, audio, iframe',
     )) return;
     toggleFullscreen();
   }
@@ -208,7 +219,9 @@ import { openFile } from "$lib/api/open";
     if (!fullscreen) return;
     const PAN = 60;
     const onKey = (event: KeyboardEvent) => {
+      if (dialogStore.hasModalOpen) return;
       const k = event.key;
+      if (selectedFile && (isPdfFile(selectedFile) || isVideoMediaFile(selectedFile)) && k !== "Escape") return;
       const stop = () => {
         event.preventDefault();
         event.stopImmediatePropagation();
@@ -264,20 +277,37 @@ import { openFile } from "$lib/api/open";
     return selected.length === 1 ? selected[0] : null;
   });
 
+  // SDK 2: a plugin's non-file Preview subject for the active pane. A file
+  // selection always takes precedence (the pane clears targets on selection).
+  const pluginTarget = $derived.by(() => {
+    if (selectedFile) return null;
+    return windowTabsManager.getActiveExplorer()?.previewTarget ?? null;
+  });
+  const previewSubject = $derived.by((): PreviewSubject | null => {
+    const paneId = windowTabsManager.activePaneId || null;
+    if (pluginTarget) return { kind: "target", target: pluginTarget.target, pluginId: pluginTarget.owner, paneId };
+    return selectedFile ? { kind: "file", entry: selectedFile, paneId } : null;
+  });
+  const infoSections = $derived(previewSubject && settingsStore.showPreviewInfo ? previewInfoRegistry.itemsFor(previewSubject) : []);
+
   /** Stable primitive that changes when the selected path OR its mtime changes,
    * so external edits to the same file invalidate the cached preview. */
   const selectedPath = $derived(selectedFile?.path ?? null);
   const previewKey = $derived(
-    selectedFile ? `${selectedFile.path}|${selectedFile.modified}|${selectedFile.size}` : null,
+    selectedFile ? `${selectedFile.path}|${selectedFile.modified}|${selectedFile.size}|${localPreviewRevision}` : null,
   );
 
   // Preview content state
   let previewImageUrl = $state<string | null>(null);
+  let previewImageNote = $state<string | null>(null);
   let previewText = $state<string | null>(null);
   let previewHighlightedHtml = $state<string | null>(null);
   let previewMarkdownHtml = $state<string | null>(null);
   let previewCsv = $state<CsvPreview | null>(null);
-  let previewPdfUrl = $state<string | null>(null);
+  let previewPdf = $state<{ path: string; key: string } | null>(null);
+  let PdfPreview = $state<typeof import("./PdfPreview.svelte").default | null>(null);
+  let previewVideo = $state<{ path: string; name: string; key: string } | null>(null);
+  let VideoPreview = $state<typeof import("./VideoPreview.svelte").default | null>(null);
   let previewFolderChildrenRaw = $state<readonly FileEntry[]>([]);
   // Set when a folder/ZIP preview descended through one or more single-child
   // folders: the collapsed path (e.g. "a/b") and a short note describing it.
@@ -517,11 +547,13 @@ import { openFile } from "$lib/api/open";
       previewLifetime.clearBlob();
       lastPreviewKey = null;
       previewImageUrl = null;
+      previewImageNote = null;
       previewText = null;
       previewHighlightedHtml = null;
       previewMarkdownHtml = null;
       previewCsv = null;
-      previewPdfUrl = null;
+      previewPdf = null;
+      previewVideo = null;
       previewFolderChildrenRaw = [];
       previewCollapsedRoot = null;
       previewCollapsedNote = null;
@@ -548,11 +580,13 @@ import { openFile } from "$lib/api/open";
     // bytes aren't pinned in memory across navigations.
     previewLifetime.clearBlob();
     previewImageUrl = null;
+    previewImageNote = null;
     previewText = null;
     previewHighlightedHtml = null;
     previewMarkdownHtml = null;
     previewCsv = null;
-    previewPdfUrl = null;
+    previewPdf = null;
+    previewVideo = null;
     previewFolderChildrenRaw = [];
     previewCollapsedRoot = null;
     previewCollapsedNote = null;
@@ -620,25 +654,32 @@ import { openFile } from "$lib/api/open";
 
     // Cache-busting suffix derived from mtime+size — same value as previewKey,
     // ensures the webview re-fetches when the on-disk file changes.
-    const bust = encodeURIComponent(`${file.modified}-${file.size}`);
+    const bust = encodeURIComponent(`${file.modified}-${file.size}-${localPreviewRevision}`);
 
     if (isPdfFile(file)) {
-      if (isTauri()) {
-        try {
-          const { convertFileSrc } = await import("@tauri-apps/api/core");
-          if (!previewLifetime.isCurrent(request)) return;
-          previewPdfUrl = `${convertFileSrc(file.path)}?v=${bust}`;
-        } catch (error) {
-          if (!previewLifetime.isCurrent(request)) return;
-          console.warn("[preview] PDF asset URL creation failed", { path: file.path, error });
-          logFrontendDiagnostic("preview PDF asset URL creation failed", {
-            path: file.path,
-            error: error instanceof Error ? error.message : String(error),
-          });
-          previewError = "Cannot preview PDF";
-        }
-      } else {
-        previewError = "PDF preview requires Tauri runtime";
+      try {
+        const component = await import("./PdfPreview.svelte");
+        if (!previewLifetime.isCurrent(request)) return;
+        PdfPreview = component.default;
+        previewPdf = { path: file.path, key: request.key };
+      } catch (error) {
+        if (!previewLifetime.isCurrent(request)) return;
+        previewError = `Cannot preview PDF: ${error instanceof Error ? error.message : String(error)}`;
+      }
+      previewLoading = false;
+      return;
+    }
+
+    if (isVideoMediaFile(file)) {
+      const key = `${file.path}|${file.modified}|${file.size}|${localPreviewRevision}`;
+      try {
+        const component = await import("./VideoPreview.svelte");
+        if (!previewLifetime.isCurrent(request)) return;
+        VideoPreview = component.default;
+        previewVideo = { path: file.path, name: file.name, key };
+      } catch (error) {
+        if (!previewLifetime.isCurrent(request)) return;
+        previewError = `Cannot preview video: ${extractError(error)}`;
       }
       previewLoading = false;
       return;
@@ -662,6 +703,7 @@ import { openFile } from "$lib/api/open";
             await decodeImage(fallback.data);
             if (!previewLifetime.isCurrent(request)) return;
             previewImageUrl = fallback.data;
+            previewImageNote = /\.avif$/i.test(file.name) ? "AVIF fallback preview shows the first frame." : null;
           } catch (error) {
             if (!previewLifetime.isCurrent(request)) return;
             previewLifetime.releaseBlob(request, fallback.data);
@@ -707,8 +749,7 @@ import { openFile } from "$lib/api/open";
         await loadViaBackend();
       }
     } else if (isVideoFile(file)) {
-      // Reuse the ffmpeg-backed thumbnail seam from TilesView. The pane shows
-      // its extracted still frame rather than attempting inline playback.
+      // Audio cover art retains the independent ffmpeg-backed preview seam.
       const result = await getVideoThumbnailData(file.path, VIDEO_PREVIEW_SIZE);
       if (!previewLifetime.isCurrent(request)) {
         if (result.ok) previewLifetime.adoptBlob(request, result.data);
@@ -906,6 +947,12 @@ import { openFile } from "$lib/api/open";
         <span class="info-value" title={diffPath}>{diffPath}</span>
       </div>
     </div>
+  {:else if pluginTarget}
+    {#key pluginTarget.target.id}
+      <PluginPreviewTarget target={pluginTarget.target} showInfo={settingsStore.showPreviewInfo}>
+        {#snippet sections()}{@render previewSections()}{/snippet}
+      </PluginPreviewTarget>
+    {/key}
   {:else if !selectedFile}
     <div class="preview-empty">
       <svg width="40" height="40" viewBox="0 0 24 24" fill="none">
@@ -925,17 +972,25 @@ import { openFile } from "$lib/api/open";
     {/if}
 
     <!-- svelte-ignore a11y_no_noninteractive_tabindex -- a scrollable region must be keyboard-focusable (WCAG 2.1.1, #797). -->
-    <div class="preview-content" role="region" aria-label="Preview of {selectedFile.name}" tabindex="0">
+    <div class="preview-content" role="region" aria-label="Preview of {selectedFile.name}{isVideoMediaFile(selectedFile) ? ' (video)' : ''}" tabindex="0">
+      {#if isVideoMediaFile(selectedFile)}
+        <span class="video-preview-marker"><VideoIndicator /></span>
+      {/if}
       {#if previewLoading}
         {#if showPreviewSpinner}
           <div class="preview-loading">
             <div class="spinner"></div>
           </div>
         {/if}
-      {:else if previewPdfUrl}
-        <div class="preview-pdf-container">
-          <iframe src={previewPdfUrl} title={selectedFile.name} class="preview-pdf"></iframe>
-        </div>
+      {:else if previewPdf && PdfPreview}
+        {#key previewPdf.key}
+          <PdfPreview path={previewPdf.path} name={selectedFile.name} {fullscreen}
+            ontogglefullscreen={toggleFullscreen} onnavigate={navigateSibling} />
+        {/key}
+      {:else if previewVideo && VideoPreview}
+        {#key previewVideo.key}
+          <VideoPreview path={previewVideo.path} name={previewVideo.name} {fullscreen} ontogglefullscreen={toggleFullscreen} />
+        {/key}
       {:else if previewImageUrl}
         <!-- This surface owns click/pan/zoom; the pane's double-click policy
              leaves it alone. Clicking at fit zoom toggles fullscreen (#219). -->
@@ -959,6 +1014,7 @@ import { openFile } from "$lib/api/open";
             style:transform={imageTransform}
             draggable="false"
           />
+          {#if previewImageNote}<p class="image-preview-note">{previewImageNote}</p>{/if}
           {#if fullscreen}
             <div class="fs-zoom-indicator">{Math.round(zoom * 100)}%</div>
           {/if}
@@ -1044,9 +1100,23 @@ import { openFile } from "$lib/api/open";
           <span class="info-value">{formatDate(selectedFile.modified)}</span>
         </div>
       </div>
+      {@render previewSections()}
     {/if}
   {/if}
 </div>
+
+{#snippet previewSections()}
+  {#if infoSections.length && previewSubject}
+    <div class="preview-sections">
+      {#each infoSections as section (`${section.pluginId}:${section.id}`)}
+        <svelte:boundary onerror={(error) => console.error(`[plugins] preview info ${section.id} failed:`, error)}>
+          <section.component {...section.props} subject={previewSubject} />
+          {#snippet failed()}<p class="preview-section-error">This section could not be displayed.</p>{/snippet}
+        </svelte:boundary>
+      {/each}
+    </div>
+  {/if}
+{/snippet}
 
 <style>
   .preview-pane {
@@ -1080,20 +1150,32 @@ import { openFile } from "$lib/api/open";
      The header column takes what the name and badge need, capped at 65% of
      the pane or everything but 16rem, whichever is larger. The metadata
      column takes the rest and ellipsizes. Neither can squeeze the other to
-     nothing, however long the name or a diff's path. */
+     nothing, however long the name or a diff's path.
+     Plugin Preview-info sections get their own full-width row above the
+     content, as tall as their content. The content row keeps a floor (96px,
+     or 40% of a very short dock) and the sections row yields first: only
+     when the dock cannot fit both does the section scroll. The sizing lives
+     on the tracks, not on the item: a percentage max-height on an item in an
+     auto row resolves against that row after it was sized to the item's full
+     height, which clipped the section behind a scrollbar and left the
+     clipped-off height as dead space above the image.
+     PluginPreviewTarget renders the same chrome classes as direct children of
+     this pane, so the placement rules below match them with :global — this
+     component owns the dock layout for both kinds of subject. */
   .preview-pane.vertical:not(.fullscreen) {
     display: grid;
     grid-template-columns: fit-content(max(65%, 100% - 16rem)) minmax(0, 1fr);
-    grid-template-rows: auto auto minmax(0, 1fr);
+    grid-template-rows: auto auto minmax(0, max-content) minmax(min(96px, 40%), 1fr);
     grid-template-areas:
       "header info"
       "actions actions"
+      "sections sections"
       "content content";
   }
 
   /* The name has priority over the type badge: the badge gives up width
      first, down to its first few letters, before the name truncates. */
-  .preview-pane.vertical:not(.fullscreen) > .preview-header {
+  .preview-pane.vertical:not(.fullscreen) > :global(.preview-header) {
     grid-area: header;
     display: grid;
     grid-template-columns: minmax(0, max-content) minmax(3.5rem, 1fr);
@@ -1104,7 +1186,7 @@ import { openFile } from "$lib/api/open";
     padding: 8px 12px;
   }
 
-  .preview-pane.vertical:not(.fullscreen) > .preview-header .preview-type-badge {
+  .preview-pane.vertical:not(.fullscreen) > :global(.preview-header) :global(.preview-type-badge) {
     display: block;
     align-self: center;
     justify-self: start;
@@ -1114,17 +1196,23 @@ import { openFile } from "$lib/api/open";
     white-space: nowrap;
   }
 
-  .preview-pane.vertical:not(.fullscreen) > .diff-actions {
+  .preview-pane.vertical:not(.fullscreen) > :global(:is(.diff-actions, .target-actions-area)) {
     grid-area: actions;
   }
 
-  .preview-pane.vertical:not(.fullscreen) > .preview-content {
+  .preview-pane.vertical:not(.fullscreen) > .preview-sections {
+    grid-area: sections;
+    max-height: none;
+    min-height: 0;
+  }
+
+  .preview-pane.vertical:not(.fullscreen) > :global(.preview-content) {
     grid-area: content;
   }
 
   /* Each metadata field keeps its own row beside the header. A shared
      ellipsis can hide the entire Modified field in a narrow window. */
-  .preview-pane.vertical:not(.fullscreen) > .preview-info {
+  .preview-pane.vertical:not(.fullscreen) > :global(.preview-info) {
     grid-area: info;
     display: flex;
     flex-direction: column;
@@ -1139,7 +1227,7 @@ import { openFile } from "$lib/api/open";
     border-bottom: 1px solid var(--divider);
   }
 
-  .preview-pane.vertical:not(.fullscreen) > .preview-info .info-row {
+  .preview-pane.vertical:not(.fullscreen) > :global(.preview-info) :global(.info-row) {
     display: flex;
     gap: 8px;
     min-width: 0;
@@ -1147,11 +1235,11 @@ import { openFile } from "$lib/api/open";
     border-bottom: none;
   }
 
-  .preview-pane.vertical:not(.fullscreen) > .preview-info .info-label {
+  .preview-pane.vertical:not(.fullscreen) > :global(.preview-info) :global(.info-label) {
     flex-shrink: 0;
   }
 
-  .preview-pane.vertical:not(.fullscreen) > .preview-info .info-value {
+  .preview-pane.vertical:not(.fullscreen) > :global(.preview-info) :global(.info-value) {
     min-width: 0;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -1301,11 +1389,26 @@ import { openFile } from "$lib/api/open";
   }
 
   .preview-content {
+    position: relative;
     flex: 1;
     overflow: auto;
     display: flex;
     flex-direction: column;
     min-height: 0;
+  }
+
+  .video-preview-marker {
+    position: absolute;
+    top: 8px;
+    right: 8px;
+    z-index: 1;
+    line-height: 0;
+    pointer-events: none;
+  }
+
+  .preview-pane.fullscreen .video-preview-marker {
+    top: 52px;
+    right: 12px;
   }
 
   /* Fullscreen: image fills the whole screen symmetrically — hide the header
@@ -1391,16 +1494,8 @@ import { openFile } from "$lib/api/open";
     to { transform: rotate(360deg); }
   }
 
-  .preview-pdf-container {
-    flex: 1;
-    display: flex;
-  }
 
-  .preview-pdf {
-    width: 100%;
-    height: 100%;
-    border: none;
-  }
+  .image-preview-note { position: absolute; bottom: 8px; left: 8px; right: 8px; margin: 0; padding: 4px 8px; background: var(--background-solid); color: var(--text-secondary); font-size: var(--font-size-caption); pointer-events: none; }
 
   .preview-image-container {
     display: flex;
@@ -1442,6 +1537,10 @@ import { openFile } from "$lib/api/open";
     word-break: break-all;
     margin: 0;
     flex: 1;
+  }
+
+  .preview-code code {
+    font-family: inherit;
   }
 
   .preview-csv {
@@ -1705,6 +1804,19 @@ import { openFile } from "$lib/api/open";
   .preview-error-text {
     color: var(--system-critical-text, var(--system-critical));
     font-size: var(--font-size-caption);
+  }
+
+  .preview-sections {
+    flex: 0 1 auto;
+    max-height: 55%;
+    overflow: auto;
+    border-top: 1px solid var(--divider);
+  }
+
+  .preview-section-error {
+    margin: 8px 16px;
+    font-size: var(--font-size-caption);
+    color: var(--text-tertiary);
   }
 
   .preview-info {

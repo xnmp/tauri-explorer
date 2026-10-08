@@ -28,7 +28,9 @@ export interface PaneRefreshContext {
 export function createPaneRefresh(ctx: PaneRefreshContext) {
   const { coreState, dirListing } = ctx;
 
-  return async function refresh(options?: { silent?: boolean }): Promise<void> {
+  let pending: { path: string; promise: Promise<void> } | null = null;
+
+  async function refreshOnce(options?: { silent?: boolean }): Promise<void> {
     const silent = options?.silent ?? false;
     const refreshPath = coreState.currentPath;
     if (!ctx.allowRefresh(refreshPath)) return;
@@ -71,6 +73,19 @@ export function createPaneRefresh(ctx: PaneRefreshContext) {
 
     if (!silent) {
       toastStore.show(listing.entries === current ? "Already up to date" : "Refreshed", "info", { duration: 1500 });
+    }
+  }
+
+  return async function refresh(options?: { silent?: boolean }): Promise<void> {
+    const request = { path: coreState.currentPath, promise: refreshOnce(options) };
+    pending = request;
+    let observed = request;
+    await observed.promise;
+    // A newer same-folder scan can cancel ours. Await its publication before
+    // callers act on the listing; navigation remains owned by their pane lease.
+    while (pending !== observed && pending.path === request.path && coreState.currentPath === request.path) {
+      observed = pending;
+      await observed.promise;
     }
   };
 }

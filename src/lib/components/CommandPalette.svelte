@@ -203,10 +203,13 @@
                   </span>
                 {/if}
                 {#if displayShortcut}
-                  <span class="command-shortcut">
-                    {#each displayShortcut.split("+") as key, keyIndex}
-                      {#if keyIndex > 0}+{/if}
-                      <kbd>{key}</kbd>
+                  <span class="command-shortcut" aria-label={displayShortcut}>
+                    {#each displayShortcut.split(" ") as step, stepIndex}
+                      {#if stepIndex > 0}<span>then</span>{/if}
+                      {#each step.split("+") as key, keyIndex}
+                        {#if keyIndex > 0}+{/if}
+                        <kbd>{key}</kbd>
+                      {/each}
                     {/each}
                   </span>
                 {/if}

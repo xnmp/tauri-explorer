@@ -9,6 +9,7 @@
  */
 
 import { modalOwnership } from "./modal-ownership.svelte";
+import { openWithStore } from "./open-with.svelte";
 import type { FileEntry } from "$lib/domain/file";
 
 export type DialogType = "rename" | "delete" | null;
@@ -44,9 +45,12 @@ function createDialogStore() {
   let jobsPanelOpen = $state(false);
   let themePickerOpen = $state(false);
   let shortcutsOpen = $state(false);
+  let keybindingsOpen = $state(false);
+  let pluginsOpen = $state(false);
   let pickerConfig = $state<PickerConfig | null>(null);
   let userReportOpen = $state(false);
   let fileRecoveryOpen = $state(false);
+  let imageEditorTarget = $state.raw<{ path: string; name: string } | null>(null);
 
   function closeIfActive(dialogType: DialogType, session = fileOperationSession): void {
     if (activeDialog === dialogType && session === fileOperationSession) {
@@ -105,6 +109,12 @@ function createDialogStore() {
     get isSettingsOpen() {
       return settingsOpen;
     },
+    get isPluginsOpen() {
+      return pluginsOpen;
+    },
+    get isKeybindingsOpen() {
+      return keybindingsOpen;
+    },
     get isContentSearchOpen() {
       return contentSearchOpen;
     },
@@ -131,6 +141,16 @@ function createDialogStore() {
     },
 
     get isFileRecoveryOpen() { return fileRecoveryOpen; },
+    get imageEditorTarget() { return imageEditorTarget; },
+
+    openImageEditor(entry: FileEntry): void {
+      commandPaletteOpen = false;
+      imageEditorTarget = { path: entry.path, name: entry.name };
+    },
+
+    closeImageEditor(target = imageEditorTarget): void {
+      if (target === imageEditorTarget) imageEditorTarget = null;
+    },
 
     // File operation actions
     startRename(entry: FileEntry): void {
@@ -157,7 +177,7 @@ function createDialogStore() {
 
     /** True when any modal dialog is open (file ops or overlays). */
     get hasModalOpen(): boolean {
-      return modalOwnership.hasOpen || shortcutsOpen || activeDialog !== null || quickOpenOpen || commandPaletteOpen || settingsOpen || contentSearchOpen || workspaceOpen || bulkRenameOpen || jobsPanelOpen || themePickerOpen || pickerConfig !== null || userReportOpen || fileRecoveryOpen;
+      return openWithStore.isOpen || modalOwnership.hasOpen || imageEditorTarget !== null || shortcutsOpen || keybindingsOpen || pluginsOpen || activeDialog !== null || quickOpenOpen || commandPaletteOpen || settingsOpen || contentSearchOpen || workspaceOpen || bulkRenameOpen || jobsPanelOpen || themePickerOpen || pickerConfig !== null || userReportOpen || fileRecoveryOpen;
     },
 
     // Overlay dialog actions
@@ -178,7 +198,33 @@ function createDialogStore() {
     },
 
     openSettings(): void {
+      pluginsOpen = false;
+      keybindingsOpen = false;
       settingsOpen = true;
+    },
+
+    openKeybindings(): void {
+      pluginsOpen = false;
+      commandPaletteOpen = false;
+      shortcutsOpen = false;
+      settingsOpen = false;
+      keybindingsOpen = true;
+    },
+
+    openPlugins(): void {
+      commandPaletteOpen = false;
+      shortcutsOpen = false;
+      settingsOpen = false;
+      keybindingsOpen = false;
+      pluginsOpen = true;
+    },
+
+    closePlugins(): void {
+      pluginsOpen = false;
+    },
+
+    closeKeybindings(): void {
+      keybindingsOpen = false;
     },
 
     openShortcuts(): void {
@@ -261,8 +307,14 @@ function createDialogStore() {
 
     closeAll(): void {
       modalOwnership.closeAll();
+      // Rendered editors close through their modal's canClose contract. Clear
+      // an opening that has not mounted yet, while retaining an accepted save.
+      if (!modalOwnership.hasOpen) imageEditorTarget = null;
+      openWithStore.close();
       shortcutsOpen = false;
       activeDialog = null;
+      pluginsOpen = false;
+      keybindingsOpen = false;
       fileOperationSession = null;
       permanentDelete = false;
       targetEntry = null;

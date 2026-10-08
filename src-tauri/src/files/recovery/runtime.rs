@@ -11,41 +11,47 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-#[derive(Clone, Default)]
+#[derive(Clone)]
 pub(crate) struct Runtime {
-    initialized: Arc<Mutex<Option<Initialized>>>,
+    /// Application-local recovery storage, fixed for the runtime's lifetime.
+    storage: Arc<PathBuf>,
+    initialized: Arc<Mutex<Option<Arc<Coordinator>>>>,
     subscriptions: super::subscriptions::Subscriptions,
 }
 
-struct Initialized {
-    path: PathBuf,
-    coordinator: Arc<Coordinator>,
-}
-
 impl Runtime {
-    /// Production replacement policy. Retention is deliberately opt-in until
-    /// durable retirement exists. Discovery/history for existing records stays
-    /// available in either build, and transient copies still obey their claims.
+    /// Whether this build creates durable copy and move records: the one
+    /// reading of the opt-in `durable-recovery` feature (ADR 0020, #880). Call
+    /// sites branch on this; discovery, restore and history of existing
+    /// records stay available either way.
+    pub(crate) const DURABLE: bool = cfg!(feature = "durable-recovery");
+
+    /// Construction performs no filesystem work; the coordinator opens on
+    /// first use inside a blocking worker.
+    pub(crate) fn new(storage: PathBuf) -> Self {
+        Self {
+            storage: Arc::new(storage),
+            initialized: Arc::default(),
+            subscriptions: Default::default(),
+        }
+    }
+
+    /// Production replacement policy. Transient copies obey their claims.
     pub(crate) fn copy_overwriting(
         &self,
-        path: PathBuf,
         source: &std::path::Path,
         target: &std::path::Path,
         expected: Option<&crate::files::mutation::CopyObservation>,
         progress: &mut crate::progress::ProgressTracker,
     ) -> Result<crate::files::mutation::FileMutationReceipt, AppError> {
-        // Both policies compile against the same recovery contracts. This
-        // constant removes the opt-in branch from ordinary optimized builds.
-        if cfg!(feature = "durable-copy-recovery") {
+        if Self::DURABLE {
             match expected {
-                Some(expected) => {
-                    self.replace_copy_observed(path, source, target, expected, progress)
-                }
-                None => self.replace_copy(path, source, target, progress),
+                Some(expected) => self.replace_copy_observed(source, target, expected, progress),
+                None => self.replace_copy(source, target, progress),
             }
         } else {
             use super::resources::{Access, Scope};
-            let coordinator = self.coordinator(path)?;
+            let coordinator = self.coordinator()?;
             let reservation = coordinator.reserve(vec![
                 Request {
                     path: source.to_owned(),
@@ -101,25 +107,22 @@ impl Runtime {
         }
     }
 
-    /// Production move policy. Durable records park cross-filesystem sources
-    /// and retain displaced originals indefinitely until retirement exists
-    /// (#687), so creating them is opt-in. Discovery, restoration and history
-    /// for existing records stay available in either build.
+    /// Durable move: parks a cross-filesystem source and retains a displaced
+    /// original until explicit retirement. Callers dispatch here only when
+    /// [`Self::DURABLE`]; this refusal keeps a misrouted default build from
+    /// creating records.
     pub(crate) fn move_entry(
         &self,
-        path: PathBuf,
         source: &std::path::Path,
         target: &std::path::Path,
         progress: &mut impl crate::files::anchored_copy::CopyProgress,
     ) -> Result<crate::files::mutation::FileMutationReceipt, AppError> {
-        // Both policies compile against the same recovery contracts. This
-        // constant removes the opt-in branch from ordinary optimized builds.
-        if !cfg!(feature = "durable-move-recovery") {
+        if !Self::DURABLE {
             return Err(AppError::Other(
                 "Durable move recovery is not enabled in this build".into(),
             ));
         }
-        let coordinator = self.coordinator(path)?;
+        let coordinator = self.coordinator()?;
         let prepared = super::forward_move::PreparedMove::prepare(&coordinator, source, target)?;
         let result = prepared.execute(progress);
         let refresh: Vec<String> = result
@@ -146,13 +149,12 @@ impl Runtime {
 
     pub(crate) async fn execute_history(
         &self,
-        path: PathBuf,
         history: super::ReplacementHistory,
         direction: super::ReplacementDirection,
     ) -> Result<super::ReplacementOutcome, AppError> {
         let runtime = self.clone();
         super::super::run_blocking(move || {
-            let coordinator = runtime.coordinator(path)?;
+            let coordinator = runtime.coordinator()?;
             let mut result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                 super::history::execute(&coordinator, history, direction)
             }));
@@ -176,24 +178,21 @@ impl Runtime {
     /// executor releases its native owner, even if the IPC waiter disappeared.
     pub(crate) fn replace_copy(
         &self,
-        path: PathBuf,
         source: &std::path::Path,
         target: &std::path::Path,
         progress: &mut impl crate::files::anchored_copy::CopyProgress,
     ) -> Result<crate::files::mutation::FileMutationReceipt, AppError> {
-        self.replace_copy_with(path, source, target, progress, super::service::enforce)
+        self.replace_copy_with(source, target, progress, super::service::enforce)
     }
 
     pub(crate) fn replace_copy_observed(
         &self,
-        path: PathBuf,
         source: &std::path::Path,
         target: &std::path::Path,
         expected: &crate::files::mutation::CopyObservation,
         progress: &mut impl crate::files::anchored_copy::CopyProgress,
     ) -> Result<crate::files::mutation::FileMutationReceipt, AppError> {
         self.replace_copies_observed(
-            path,
             &[(source, target)],
             Some(expected),
             progress,
@@ -202,37 +201,73 @@ impl Runtime {
         .map(super::forward_copy::BatchExecution::into_single)?
     }
 
+    pub(crate) fn replace_generated(
+        &self,
+        generated: &std::path::Path,
+        original: &std::path::Path,
+        revision: &crate::files::image_crop::SourceRevision,
+        trace: Option<&crate::installed_plugins::provenance::TraceRunHandle>,
+        digest: &str,
+    ) -> Result<crate::files::mutation::FileMutationReceipt, AppError> {
+        struct Progress;
+        impl crate::files::anchored_copy::CopyProgress for Progress {
+            fn check_cancelled(&mut self) -> Result<(), AppError> {
+                Ok(())
+            }
+            fn advance(&mut self, _: u64, _: &std::path::Path) -> Result<(), AppError> {
+                Ok(())
+            }
+        }
+        let coordinator = self.coordinator()?;
+        let mut prepared = super::forward_copy::prepare_batch(
+            &coordinator,
+            &[(generated, original)],
+            &mut Progress,
+        )?;
+        let receipt = prepared
+            .pop()
+            .expect("one generated replacement")
+            .execute_traced(
+                &mut Progress,
+                Some(revision),
+                trace.map(|run| (run, digest)),
+            );
+        // Discovery failure never revokes a completed replacement receipt.
+        match super::service::enforce(&coordinator) {
+            Ok(snapshot) => self.subscriptions.publish(&snapshot),
+            Err(error) => log::warn!("Could not refresh generated replacement inventory: {error}"),
+        }
+        receipt
+    }
+
     fn replace_copy_with(
         &self,
-        path: PathBuf,
         source: &std::path::Path,
         target: &std::path::Path,
         progress: &mut impl crate::files::anchored_copy::CopyProgress,
         inventory: impl FnOnce(&Arc<Coordinator>) -> Result<super::model::RecoverySnapshot, AppError>,
     ) -> Result<crate::files::mutation::FileMutationReceipt, AppError> {
-        self.replace_copies_with(path, &[(source, target)], progress, inventory)
+        self.replace_copies_with(&[(source, target)], progress, inventory)
             .map(super::forward_copy::BatchExecution::into_single)?
     }
 
     fn replace_copies_with(
         &self,
-        path: PathBuf,
         copies: &[(&std::path::Path, &std::path::Path)],
         progress: &mut impl crate::files::anchored_copy::CopyProgress,
         inventory: impl FnOnce(&Arc<Coordinator>) -> Result<super::model::RecoverySnapshot, AppError>,
     ) -> Result<super::forward_copy::BatchExecution, AppError> {
-        self.replace_copies_observed(path, copies, None, progress, inventory)
+        self.replace_copies_observed(copies, None, progress, inventory)
     }
 
     fn replace_copies_observed(
         &self,
-        path: PathBuf,
         copies: &[(&std::path::Path, &std::path::Path)],
         expected: Option<&crate::files::mutation::CopyObservation>,
         progress: &mut impl crate::files::anchored_copy::CopyProgress,
         inventory: impl FnOnce(&Arc<Coordinator>) -> Result<super::model::RecoverySnapshot, AppError>,
     ) -> Result<super::forward_copy::BatchExecution, AppError> {
-        let coordinator = self.coordinator(path)?;
+        let coordinator = self.coordinator()?;
         let prepared = super::forward_copy::prepare_batch(&coordinator, copies, progress)?;
         if expected.is_some_and(|expected| {
             prepared.len() != 1 || !prepared[0].matches_observation(expected)
@@ -267,31 +302,21 @@ impl Runtime {
         Ok(result)
     }
 
-    fn coordinator(&self, path: PathBuf) -> Result<Arc<Coordinator>, AppError> {
+    fn coordinator(&self) -> Result<Arc<Coordinator>, AppError> {
         let mut initialized = self
             .initialized
             .lock()
             .map_err(|_| AppError::Other("Recovery initialization was interrupted".into()))?;
-        match initialized.as_ref() {
-            Some(state) if state.path != path => Err(AppError::Other(
-                "Recovery storage changed during this application session".into(),
-            )),
-            Some(state) => Ok(Arc::clone(&state.coordinator)),
-            None => {
-                let parent = path.parent().ok_or_else(|| {
-                    AppError::InvalidPath(
-                        "Recovery storage requires an application directory".into(),
-                    )
-                })?;
-                std::fs::create_dir_all(parent)?;
-                let coordinator = Coordinator::open(&path)?;
-                *initialized = Some(Initialized {
-                    path,
-                    coordinator: Arc::clone(&coordinator),
-                });
-                Ok(coordinator)
-            }
+        if let Some(coordinator) = initialized.as_ref() {
+            return Ok(Arc::clone(coordinator));
         }
+        let parent = self.storage.parent().ok_or_else(|| {
+            AppError::InvalidPath("Recovery storage requires an application directory".into())
+        })?;
+        std::fs::create_dir_all(parent)?;
+        let coordinator = Coordinator::open(&self.storage)?;
+        *initialized = Some(Arc::clone(&coordinator));
+        Ok(coordinator)
     }
 
     /// Register before dispatching discovery so concurrent completed operations
@@ -299,7 +324,6 @@ impl Runtime {
     /// or cancelled acknowledgement; committed channels follow renderer lifetime.
     pub(crate) async fn subscribe(
         &self,
-        path: PathBuf,
         owner: crate::renderer_owner::Owner,
         token: u64,
         receive: impl Fn(&super::model::RecoverySnapshot) -> bool + Send + Sync + 'static,
@@ -307,7 +331,7 @@ impl Runtime {
         let registration = self
             .subscriptions
             .subscribe(owner, token, Arc::new(receive))?;
-        let snapshot = self.list(path).await?;
+        let snapshot = self.list().await?;
         registration.commit()?;
         Ok(snapshot)
     }
@@ -320,8 +344,8 @@ impl Runtime {
         self.subscriptions.unsubscribe(owner, token)
     }
 
-    fn inventory(&self, path: PathBuf) -> Result<super::model::RecoverySnapshot, AppError> {
-        let coordinator = match self.coordinator(path.clone()) {
+    fn inventory(&self) -> Result<super::model::RecoverySnapshot, AppError> {
+        let coordinator = match self.coordinator() {
             Ok(coordinator) => coordinator,
             Err(error) => {
                 // Never replace a live indexed view with revision-zero fallback.
@@ -333,7 +357,7 @@ impl Runtime {
                 {
                     return Err(error);
                 }
-                let intents = Coordinator::discover_catalog(&path)?;
+                let intents = Coordinator::discover_catalog(&self.storage)?;
                 if intents.is_empty() {
                     return Err(error);
                 }
@@ -348,13 +372,10 @@ impl Runtime {
         super::service::list(&coordinator)
     }
 
-    pub(crate) async fn list(
-        &self,
-        path: PathBuf,
-    ) -> Result<super::model::RecoverySnapshot, AppError> {
+    pub(crate) async fn list(&self) -> Result<super::model::RecoverySnapshot, AppError> {
         let runtime = self.clone();
         super::super::run_blocking(move || {
-            let result = runtime.inventory(path);
+            let result = runtime.inventory();
             if let Ok(snapshot) = &result {
                 runtime.subscriptions.publish(snapshot);
             }
@@ -369,14 +390,13 @@ impl Runtime {
     /// preserving the original operation error and never retrying its effects.
     async fn operate(
         &self,
-        path: PathBuf,
         operation: impl FnOnce(&Arc<Coordinator>) -> Result<super::model::RecoverySnapshot, AppError>
             + Send
             + 'static,
     ) -> Result<super::model::RecoverySnapshot, AppError> {
         let runtime = self.clone();
         super::super::run_blocking(move || {
-            let coordinator = runtime.coordinator(path)?;
+            let coordinator = runtime.coordinator()?;
             let result = operation(&coordinator);
             match &result {
                 Ok(snapshot) => runtime.subscriptions.publish(snapshot),
@@ -392,32 +412,25 @@ impl Runtime {
     }
 
     /// Explicit retention enforcement from recovery-session activity.
-    pub(crate) async fn retire_eligible(
-        &self,
-        path: PathBuf,
-    ) -> Result<super::model::RecoverySnapshot, AppError> {
-        self.operate(path, super::service::enforce).await
+    pub(crate) async fn retire_eligible(&self) -> Result<super::model::RecoverySnapshot, AppError> {
+        self.operate(super::service::enforce).await
     }
 
     pub(crate) async fn inspect(
         &self,
-        path: PathBuf,
         id: String,
     ) -> Result<super::model::RecoverySnapshot, AppError> {
-        self.operate(path, move |coordinator| {
-            super::service::inspect(coordinator, &id)
-        })
-        .await
+        self.operate(move |coordinator| super::service::inspect(coordinator, &id))
+            .await
     }
 
     pub(crate) async fn resolve(
         &self,
-        path: PathBuf,
         id: String,
         generation: u64,
         choice: super::model::RecoveryChoice,
     ) -> Result<super::model::RecoverySnapshot, AppError> {
-        self.operate(path, move |coordinator| {
+        self.operate(move |coordinator| {
             super::service::resolve(coordinator, &id, generation, choice)
         })
         .await
@@ -428,13 +441,12 @@ impl Runtime {
     /// admission intentionally exposes no replacement execution paths.
     pub(crate) async fn admit_prepared<T: Send + 'static>(
         &self,
-        path: PathBuf,
         prepare: impl FnMut() -> Result<(T, Vec<resources::Resource>), AppError> + Send + 'static,
     ) -> Result<(T, MutationAdmission), AppError> {
         let runtime = self.clone();
         super::super::run_blocking(move || {
             runtime
-                .coordinator(path)?
+                .coordinator()?
                 .reserve_prepared(prepare)
                 .map(|(prepared, reservation)| (prepared, MutationAdmission::new(reservation)))
         })
@@ -448,13 +460,12 @@ impl Runtime {
 
     pub(crate) async fn admit(
         &self,
-        path: PathBuf,
         requests: Vec<Request>,
     ) -> Result<MutationAdmission, AppError> {
         let runtime = self.clone();
         super::super::run_blocking(move || {
             resources::validate_requests(&requests)?;
-            let coordinator = runtime.coordinator(path)?;
+            let coordinator = runtime.coordinator()?;
             coordinator.reserve(requests).map(MutationAdmission::new)
         })
         .await

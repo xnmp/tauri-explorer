@@ -76,7 +76,7 @@ impl DisplacedEntry {
     fn restore(self, cause: AppError) -> AppError {
         match rename_noreplace(&self.payload, &self.original) {
             Ok(()) => { self.remove_record(); cause },
-            Err(error) => AppError::Other(format!(
+            Err(error) => AppError::MutationUncertain(format!(
                 "{cause}; could not restore the previous destination to {}: {error}. It is retained at {}",
                 self.original.display(), self.payload.display()
             )),
@@ -91,8 +91,18 @@ pub(super) fn replace<T>(
     target: &Path,
     publish: impl FnOnce() -> Result<T, AppError>,
 ) -> Result<(T, DisplacedEntry), AppError> {
+    replace_verified(target, |_| Ok(()), publish)
+}
+
+/// Verify the captured displaced object before publishing generated content.
+/// Validation failure restores it through the same no-overwrite rollback.
+pub(super) fn replace_verified<T>(
+    target: &Path,
+    verify: impl FnOnce(&Path) -> Result<(), AppError>,
+    publish: impl FnOnce() -> Result<T, AppError>,
+) -> Result<(T, DisplacedEntry), AppError> {
     let held = DisplacedEntry::capture(target)?;
-    match publish() {
+    match verify(&held.payload).and_then(|()| publish()) {
         Ok(result) => Ok((result, held)),
         Err(error) => Err(held.restore(error)),
     }

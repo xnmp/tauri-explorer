@@ -18,17 +18,24 @@
   const activeTab = $derived(windowTabsManager.activeTab);
   const multiPane = $derived(windowTabsManager.dualPaneEnabled);
   let viewport = $state<HTMLElement>();
-  let width = $state(0), height = $state(0);
+  // Preserve fractional CSS pixels under root zoom. Integer client dimensions
+  // can round the canvas past its scrollport and keep needless gutters alive.
+  let contentRect = $state<DOMRectReadOnly>();
+  const width = $derived(contentRect?.width ?? 0);
+  const height = $derived(contentRect?.height ?? 0);
   const instance = $derived(windowTabsManager.activeTabInstance);
   const geometry = $derived(windowTabsManager.paneViewport.geometry);
   const dividers = usePaneDividers({ geometry: () => geometry, begin: windowTabsManager.beginSplitResize });
   $effect(() => {
     const gap = settingsStore.islandMode ? 8 : 6;
     const measuredWidth = width, measuredHeight = height;
-    untrack(() => {
-      dividers.cancel();
+    untrack(dividers.cancel);
+    // Geometry resizes descendants (and can change workspace gutters). Commit
+    // outside ResizeObserver delivery so WebKit can finish the current layout.
+    const frame = requestAnimationFrame(() => {
       windowTabsManager.paneViewport.measure(measuredWidth, measuredHeight, gap);
     });
+    return () => cancelAnimationFrame(frame);
   });
   $effect(() => {
     instance;
@@ -57,7 +64,7 @@
 <svelte:window onblur={dividers.cancel} />
 
 <div class="pane-container" class:multi-pane={multiPane}
-  bind:this={viewport} bind:clientWidth={width} bind:clientHeight={height}
+  bind:this={viewport} bind:contentRect
   onscroll={dividers.cancel}
   style:--pane-divider-size={`${geometry?.divider ?? 6}px`}>
   {#if activeTab}

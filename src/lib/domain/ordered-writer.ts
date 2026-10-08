@@ -1,13 +1,12 @@
 /**
  * An ordered byte stream over a transport that does not preserve call order.
  *
- * Separate Tauri invocations can complete in any order: `terminal_write` runs
- * each call on the blocking pool, so two adjacent keystrokes sent as two
- * concurrent invocations could reach the PTY transposed (#709). The writer
- * keeps at most one send in flight and coalesces everything written meanwhile
- * into the next send, so a later chunk can never overtake an earlier one.
- * A stalled sink applies backpressure to this buffer instead of occupying one
- * backend thread per keystroke.
+ * Separate Tauri invocations can run in any order: every async command is
+ * spawned onto a multi-threaded runtime (#709). The writer keeps at most one
+ * send in flight and coalesces everything written meanwhile into the next
+ * send, so a later chunk can never overtake an earlier one and a burst of
+ * keystrokes costs one invocation per round trip rather than one each. The
+ * terminal's input queue builds on it (`terminal-input-queue.ts`, #882).
  */
 export interface OrderedWriter {
   /** Queue `data` after everything written before it. Ignored once closed. */

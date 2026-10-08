@@ -19,18 +19,28 @@ static NEXT_JOB_ID: AtomicU64 = AtomicU64::new(1);
 pub const JOB_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10 * 60);
 const CANCEL_DRAIN_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
 
+/// Native acceptance shortens the timeout through the environment. Builds
+/// without the `e2e-hooks` feature never read the variable at all.
+#[cfg(feature = "e2e-hooks")]
 fn job_timeout() -> std::time::Duration {
-    #[cfg(debug_assertions)]
-    if option_env!("VITE_E2E_HOOKS") == Some("1") {
-        if let Some(milliseconds) = std::env::var("TAURI_EXPLORER_E2E_PLUGIN_JOB_TIMEOUT_MS")
+    job_timeout_with_override(
+        std::env::var("TAURI_EXPLORER_E2E_PLUGIN_JOB_TIMEOUT_MS")
             .ok()
-            .and_then(|value| value.parse::<u64>().ok())
-            .filter(|value| *value > 0)
-        {
-            return std::time::Duration::from_millis(milliseconds);
-        }
-    }
+            .as_deref(),
+    )
+}
+
+#[cfg(not(feature = "e2e-hooks"))]
+fn job_timeout() -> std::time::Duration {
     JOB_TIMEOUT
+}
+
+#[cfg(feature = "e2e-hooks")]
+fn job_timeout_with_override(override_ms: Option<&str>) -> std::time::Duration {
+    override_ms
+        .and_then(|value| value.parse::<u64>().ok())
+        .filter(|value| *value > 0)
+        .map_or(JOB_TIMEOUT, std::time::Duration::from_millis)
 }
 
 #[derive(Clone)]
@@ -61,6 +71,13 @@ impl JobControl {
         }
     }
 
+    pub(crate) fn has_published(&self) -> bool {
+        matches!(
+            *self.state.lock().unwrap_or_else(|e| e.into_inner()),
+            JobState::Committed
+        )
+    }
+
     pub fn check(&self) -> Result<(), AppError> {
         if matches!(
             *self.state.lock().unwrap_or_else(|e| e.into_inner()),
@@ -70,6 +87,23 @@ impl JobControl {
         } else {
             Ok(())
         }
+    }
+
+    /// Publication and cancellation share one decision point. Once a file is
+    /// published, timeout cancellation cannot describe it as an unpublished job.
+    pub(crate) fn publish<T>(
+        &self,
+        publish: impl FnOnce() -> Result<T, AppError>,
+    ) -> Result<T, AppError> {
+        let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
+        if matches!(*state, JobState::Cancelled) {
+            return Err(AppError::Other("Plugin job cancelled".into()));
+        }
+        let result = publish();
+        if result.is_ok() {
+            *state = JobState::Committed;
+        }
+        result
     }
 }
 
@@ -133,23 +167,35 @@ impl StagedOutput {
     pub fn file_mut(&mut self) -> &mut std::fs::File {
         self.0.as_file_mut()
     }
+    pub(crate) fn commit_traced(
+        mut self,
+        run: &crate::installed_plugins::provenance::TraceRunHandle,
+        target: &std::path::Path,
+        control: &JobControl,
+    ) -> Result<JobOutput, AppError> {
+        use std::io::{Seek, SeekFrom};
+        self.0.as_file_mut().sync_all()?;
+        self.0.as_file_mut().seek(SeekFrom::Start(0))?;
+        crate::image_operation::execute_recorded(run, target, control, || {
+            let bytes = crate::image_operation::bounded_bytes(self.0.as_file_mut())?;
+            Ok(crate::image_operation::GeneratedImage {
+                bytes,
+                details: serde_json::Value::Null,
+            })
+        })
+    }
 
+    #[cfg(test)]
     pub fn commit(
         self,
         final_output: &std::path::Path,
         control: &JobControl,
     ) -> Result<(), AppError> {
-        let mut state = control.state.lock().unwrap_or_else(|e| e.into_inner());
-        if matches!(*state, JobState::Cancelled) {
-            return Err(AppError::Other("Plugin job cancelled".into()));
-        }
-        let result = self.0.persist(final_output).map(|_| ()).map_err(|error| {
-            AppError::Other(format!("Failed to publish plugin output: {}", error.error))
-        });
-        if result.is_ok() {
-            *state = JobState::Committed;
-        }
-        result
+        control.publish(|| {
+            self.0.persist(final_output).map(|_| ()).map_err(|error| {
+                AppError::Other(format!("Failed to publish plugin output: {}", error.error))
+            })
+        })
     }
 }
 
@@ -159,6 +205,13 @@ pub struct PluginJobCompleteEvent {
     pub job_id: u64,
     #[serde(rename = "outputPath")]
     pub output_path: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub warning: Option<String>,
+}
+
+pub(crate) struct JobOutput {
+    pub path: String,
+    pub warning: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -170,34 +223,24 @@ pub struct PluginJobErrorEvent {
 
 /// Await `job` under [`JOB_TIMEOUT`], then emit `{prefix}-complete` with the
 /// output path or `{prefix}-error` with the failure message.
-pub async fn run_and_emit(
+pub(crate) async fn run_and_emit_detailed(
     app: &AppHandle,
     event_prefix: &str,
     job_id: u64,
     control: JobControl,
-    job: impl std::future::Future<Output = Result<String, AppError>>,
+    job: impl std::future::Future<Output = Result<JobOutput, AppError>>,
 ) {
-    run_and_emit_with_timeout(app, event_prefix, job_id, control, job_timeout(), job).await;
-}
-
-async fn run_and_emit_with_timeout(
-    app: &AppHandle,
-    event_prefix: &str,
-    job_id: u64,
-    control: JobControl,
-    timeout: std::time::Duration,
-    job: impl std::future::Future<Output = Result<String, AppError>>,
-) {
-    let result = run_with_timeout(event_prefix, control, timeout, job).await;
+    let result = run_with_timeout(event_prefix, control, job_timeout(), job).await;
+    let _ = app.emit("trace:changed", ());
     emit_result(app, event_prefix, job_id, result);
 }
 
-async fn run_with_timeout(
+async fn run_with_timeout<T>(
     event_prefix: &str,
     control: JobControl,
     timeout: std::time::Duration,
-    job: impl std::future::Future<Output = Result<String, AppError>>,
-) -> Result<String, AppError> {
+    job: impl std::future::Future<Output = Result<T, AppError>>,
+) -> Result<T, AppError> {
     tokio::pin!(job);
     match tokio::time::timeout(timeout, &mut job).await {
         Ok(result) => result,
@@ -215,14 +258,20 @@ async fn run_with_timeout(
     }
 }
 
-fn emit_result(app: &AppHandle, event_prefix: &str, job_id: u64, result: Result<String, AppError>) {
+fn emit_result(
+    app: &AppHandle,
+    event_prefix: &str,
+    job_id: u64,
+    result: Result<JobOutput, AppError>,
+) {
     match result {
-        Ok(output_path) => {
+        Ok(output) => {
             let _ = app.emit(
                 &format!("{}-complete", event_prefix),
                 PluginJobCompleteEvent {
                     job_id,
-                    output_path,
+                    output_path: output.path,
+                    warning: output.warning,
                 },
             );
         }
@@ -241,6 +290,45 @@ fn emit_result(app: &AppHandle, event_prefix: &str, job_id: u64, result: Result<
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(feature = "e2e-hooks")]
+    #[test]
+    fn hook_builds_honour_a_positive_timeout_override() {
+        assert_eq!(
+            job_timeout_with_override(Some("100")),
+            std::time::Duration::from_millis(100)
+        );
+    }
+
+    #[cfg(not(feature = "e2e-hooks"))]
+    #[test]
+    fn builds_without_hooks_ignore_the_timeout_override() {
+        // The variable is never read (it is absent from release binaries), so
+        // the production timeout is fixed even when the override is set. No
+        // other code in a build without the feature reads this variable, so
+        // setting it cannot race a concurrently running test.
+        const OVERRIDE: &str = "TAURI_EXPLORER_E2E_PLUGIN_JOB_TIMEOUT_MS";
+        std::env::set_var(OVERRIDE, "100");
+        let timeout = job_timeout();
+        std::env::remove_var(OVERRIDE);
+        assert_eq!(timeout, JOB_TIMEOUT);
+        assert_ne!(timeout, std::time::Duration::from_millis(100));
+    }
+
+    #[cfg(feature = "e2e-hooks")]
+    #[test]
+    fn malformed_or_zero_e2e_timeout_overrides_keep_the_default() {
+        for value in [
+            None,
+            Some(""),
+            Some("0"),
+            Some("-5"),
+            Some("ten"),
+            Some("99999999999999999999999"),
+        ] {
+            assert_eq!(job_timeout_with_override(value), JOB_TIMEOUT, "{value:?}");
+        }
+    }
 
     #[test]
     fn cancellation_of_a_held_staging_file_removes_it_without_publication() {

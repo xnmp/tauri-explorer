@@ -20,13 +20,11 @@ import {
   type NativeQualificationReport,
   type NativePlatform,
   type NativeWindowState,
-  type NativeWindowVisibility,
   type ResourceMeasurement,
   type ScenarioMeasurement,
   type SoakScenario,
 } from "../native-qualification";
-import { domText, entryNames, navigateTo } from "../specs/helpers";
-import { waitForWindowOperation, type WindowOperationResponse, type WindowOperationWaitRequest, type RendererWaitResult } from "../window-transfer-waits";
+import { domText, entryNames, navigateTo, parkedWarmWindow, windowOperation } from "../specs/helpers";
 
 const configuration = resolveSoakConfiguration(process.env);
 const { durationMs, maxCycles, seed } = configuration;
@@ -188,11 +186,15 @@ async function openPalette(query: string): Promise<void> {
 }
 
 async function setDemoPluginEnabled(enabled: boolean): Promise<void> {
-  await browser.keys(["Control", ","]);
-  const dialog = $(".settings-dialog");
+  // Plugin toggles live in the dedicated Plugins dialog, not in Settings.
+  await openPalette("Plugins");
+  await $(
+    "//li[contains(@class, 'command-item')][.//*[contains(@class, 'command-label')][normalize-space()='Plugins']]",
+  ).click();
+  const dialog = $(".plugins-dialog");
   await dialog.waitForDisplayed({ timeout: 5_000 });
-  const row = $(
-    "//div[contains(@class, 'setting-row')][.//*[contains(text(), 'Demo Plugin')]][1]",
+  const row = dialog.$(
+    ".//div[contains(@class, 'setting-row')][.//*[contains(text(), 'Demo Plugin')]][1]",
   );
   await row.waitForExist();
   const checkbox = row.$('input[type="checkbox"]');
@@ -215,42 +217,6 @@ async function interruptSurface(cycle: number): Promise<void> {
     await browser.keys("Escape");
     await $(".command-palette-dialog").waitForDisplayed({ reverse: true });
   }
-}
-
-async function windowOperation(op: string, target?: string): Promise<unknown> {
-  const observed = await browser.executeAsync<
-    RendererWaitResult<WindowOperationResponse>, [WindowOperationWaitRequest]
-  >(waitForWindowOperation, {
-    token: crypto.randomUUID(), op, target, timeoutMs: 20_000,
-  });
-  if (!observed.ok) throw new Error(observed.reason);
-  if (observed.value.error) throw new Error(observed.value.error);
-  return observed.value.result;
-}
-
-type LabelledWindowVisibility = NativeWindowVisibility & { label: string; warmReady: boolean };
-
-async function visibleWindowHandles(original: string): Promise<LabelledWindowVisibility[]> {
-  const states: LabelledWindowVisibility[] = [];
-  try {
-    for (const handle of await browser.getWindowHandles()) {
-      await browser.switchToWindow(handle);
-      const identity = await browser.execute(() => ({
-        label: document.documentElement.dataset.e2eWindowLabel ?? "",
-        warmReady: document.documentElement.dataset.e2eWarmReady === "1",
-      }));
-      if (!identity.label) continue;
-      await browser.switchToWindow(original);
-      const state = await windowOperation("target-state", identity.label) as { exists?: boolean; visible?: boolean };
-      states.push({
-        handle, label: identity.label, warmReady: identity.warmReady,
-        visible: state.exists === true && state.visible === true,
-      });
-    }
-  } finally {
-    await browser.switchToWindow(original);
-  }
-  return states;
 }
 
 async function runWindowWorkspace(cycle: number): Promise<"warm" | "fresh"> {
@@ -284,17 +250,10 @@ async function runWindowWorkspace(cycle: number): Promise<"warm" | "fresh"> {
   const fresh = configuration.diagnosticWindowMode
     ? configuration.diagnosticWindowMode === "fresh"
     : cycle % 2 === 0;
-  let parked: LabelledWindowVisibility | undefined;
+  let parked: { label: string; handle: string } | undefined;
   if (!fresh) {
     await windowOperation("warm-prime");
-    await browser.waitUntil(async () => {
-      parked = (await visibleWindowHandles(original)).find(({ label, visible, warmReady }) =>
-        label.startsWith("explorer-warm-") && !visible && warmReady);
-      return parked !== undefined;
-    }, {
-      timeout: 20_000,
-      timeoutMsg: "no ready parked warm window before Ctrl+N churn",
-    });
+    parked = await parkedWarmWindow();
   }
   const beforeHandles = await browser.getWindowHandles();
   let created: string | null = null;

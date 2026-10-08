@@ -1,9 +1,9 @@
 //! Concrete replacement execution owns its durable operation and native root.
 //! Filesystem effects occur only after the corresponding intent checkpoint.
 use super::{
+    checkpoint::{Effect, Event, Side, Sides},
     coordinator::DurableOperation,
     replacement_artifact::{Anchor, Root},
-    replacement_transition::ReplacementTransition,
 };
 use crate::error::AppError;
 
@@ -17,11 +17,10 @@ impl ReplacementExecution {
     /// Claiming a native owner does not justify replaying an interrupted effect;
     /// each execution method must still reconcile its own recorded phase.
     pub(super) fn reopen(operation: DurableOperation) -> Result<Self, AppError> {
-        let state = operation.state().replacement()?;
-        let identity = state.root.ok_or_else(|| {
+        let identity = operation.state().roots.target.ok_or_else(|| {
             AppError::MutationUncertain("Recovery has no recorded artifact root identity".into())
         })?;
-        let root = Anchor::open(operation.intent())?.open_existing(identity)?;
+        let root = Anchor::open(operation.intent(), Side::Target)?.open_existing(identity)?;
         root.verify_manifest(operation.intent())?;
         Ok(Self { operation, root })
     }
@@ -30,14 +29,31 @@ impl ReplacementExecution {
         &mut self,
         progress: &mut impl crate::files::anchored_copy::CopyProgress,
     ) -> Result<(), AppError> {
-        self.operation
-            .advance(ReplacementTransition::BeginStaging)?;
+        self.operation.advance(Event::Begin(Effect::Stage))?;
         let payload = match self.root.copy_payload(self.operation.intent(), progress) {
             Ok(payload) => payload,
             Err(error) => return Err(self.retain_failure(error)),
         };
-        self.operation
-            .advance(ReplacementTransition::StagingCompleted(payload))
+        self.operation.advance(Event::Staged(payload))
+    }
+
+    #[cfg(target_os = "linux")]
+    pub(super) fn prepare_trace(
+        &self,
+        run: &crate::installed_plugins::provenance::TraceRunHandle,
+        target: &std::path::Path,
+        digest: &str,
+    ) -> Result<(), AppError> {
+        self.root.verify_namespace()?;
+        let publisher = self
+            .root
+            .directory()
+            .path()?
+            .join(super::artifact_layout::PUBLICATION);
+        crate::installed_plugins::provenance::prepare_linked_output(
+            run, target, digest, &publisher,
+        )?;
+        self.root.verify_namespace()
     }
 
     pub(super) fn displace_copy(&mut self) -> Result<(), AppError> {
@@ -48,28 +64,45 @@ impl ReplacementExecution {
         &mut self,
         after_native: impl FnOnce() -> Result<(), AppError>,
     ) -> Result<(), AppError> {
-        self.operation
-            .advance(ReplacementTransition::BeginDisplacement)?;
+        self.operation.advance(Event::Begin(Effect::Displace))?;
         let result = self
             .root
             .displace_copy(self.operation.intent(), self.payload()?);
         if let Err(error) = result.and_then(|()| after_native()) {
             return Err(self.retain_failure(error));
         }
-        self.operation
-            .advance(ReplacementTransition::DisplacementCompleted)
+        self.operation.advance(Event::Complete(Effect::Displace))
     }
 
     pub(super) fn publish_copy(&mut self) -> Result<super::model::EntryVersion, AppError> {
         self.publish_with(|_| Ok(()))
     }
 
+    /// Generated replacements also verify the full captured content after
+    /// displacement. Timestamp restoration cannot conceal an intervening edit.
+    #[cfg(target_os = "linux")]
+    pub(super) fn verify_original_revision(
+        &mut self,
+        revision: &crate::files::image_crop::SourceRevision,
+    ) -> Result<(), AppError> {
+        let result = (|| {
+            self.root.verify_namespace()?;
+            let held = self
+                .root
+                .directory()
+                .path()?
+                .join(super::artifact_layout::ORIGINAL);
+            crate::files::image_crop::verify_source(&held, revision)?;
+            self.root.verify_namespace()
+        })();
+        result.map_err(|error| self.retain_failure(error))
+    }
+
     fn publish_with(
         &mut self,
         after_native: impl FnOnce(&super::model::EntryVersion) -> Result<(), AppError>,
     ) -> Result<super::model::EntryVersion, AppError> {
-        self.operation
-            .advance(ReplacementTransition::BeginPublication)?;
+        self.operation.advance(Event::Begin(Effect::Publish))?;
         let result = self
             .root
             .publish_copy(self.operation.intent(), self.payload()?);
@@ -80,14 +113,12 @@ impl ReplacementExecution {
         if let Err(error) = after_native(&published) {
             return Err(self.retain_failure(error));
         }
-        self.operation
-            .advance(ReplacementTransition::PublicationCompleted)?;
+        self.operation.advance(Event::Complete(Effect::Publish))?;
         Ok(published)
     }
 
     fn payload(&self) -> Result<&super::model::StagedPayload, AppError> {
-        let state = self.operation.state().replacement()?;
-        state.published.as_ref().ok_or_else(|| {
+        self.operation.state().staged.as_ref().ok_or_else(|| {
             AppError::MutationUncertain("Replacement operation lacks its staged payload".into())
         })
     }
@@ -100,8 +131,7 @@ impl ReplacementExecution {
         &mut self,
         after_native: impl FnOnce(&super::model::EntryVersion) -> Result<(), AppError>,
     ) -> Result<super::model::EntryVersion, AppError> {
-        self.operation
-            .advance(ReplacementTransition::BeginRestoration)?;
+        self.operation.advance(Event::Begin(Effect::Restore))?;
         let restored = match self
             .root
             .restore_copy(self.operation.intent(), self.payload()?)
@@ -112,27 +142,12 @@ impl ReplacementExecution {
         if let Err(error) = after_native(&restored) {
             return Err(self.retain_failure(error));
         }
-        self.operation
-            .advance(ReplacementTransition::RestorationCompleted)?;
+        self.operation.advance(Event::Complete(Effect::Restore))?;
         Ok(restored)
     }
 
     fn retain_failure(&mut self, error: AppError) -> AppError {
-        let mut message = error.to_string();
-        if message.len() > super::model::MAX_ERROR_BYTES {
-            let mut end = super::model::MAX_ERROR_BYTES;
-            while !message.is_char_boundary(end) {
-                end -= 1;
-            }
-            message.truncate(end);
-        }
-        if let Err(persistence) = self
-            .operation
-            .advance(ReplacementTransition::ReportError(message))
-        {
-            log::warn!("Could not persist replacement failure: {persistence}");
-        }
-        error
+        self.operation.retain_failure(error)
     }
 
     pub(super) fn reapply_copy(&mut self) -> Result<super::model::EntryVersion, AppError> {
@@ -143,8 +158,7 @@ impl ReplacementExecution {
         &mut self,
         after_effect: impl FnMut(&'static str) -> Result<(), AppError>,
     ) -> Result<super::model::EntryVersion, AppError> {
-        self.operation
-            .advance(ReplacementTransition::BeginReapplication)?;
+        self.operation.advance(Event::Begin(Effect::Reapply))?;
         let result =
             self.root
                 .reapply_copy_with(self.operation.intent(), self.payload()?, after_effect);
@@ -152,8 +166,7 @@ impl ReplacementExecution {
             Ok(published) => published,
             Err(error) => return Err(self.retain_failure(error)),
         };
-        self.operation
-            .advance(ReplacementTransition::ReapplicationCompleted)?;
+        self.operation.advance(Event::Complete(Effect::Reapply))?;
         Ok(published)
     }
 
@@ -168,16 +181,19 @@ impl ReplacementExecution {
         after_root: impl FnOnce() -> Result<(), AppError>,
         after_manifest: impl FnOnce() -> Result<(), AppError>,
     ) -> Result<Self, AppError> {
-        let anchor = Anchor::open(operation.intent())?;
-        operation.advance(ReplacementTransition::BeginRoot)?;
+        let anchor = Anchor::open(operation.intent(), Side::Target)?;
+        operation.advance(Event::Begin(Effect::Root))?;
         let root = anchor.create()?;
         after_root()?;
-        operation.advance(ReplacementTransition::RootObserved(root.identity()))?;
-        operation.advance(ReplacementTransition::BeginManifest)?;
+        operation.advance(Event::Rooted(Sides {
+            source: None,
+            target: Some(root.identity()),
+        }))?;
+        operation.advance(Event::Begin(Effect::Manifest))?;
         root.publish_manifest(operation.intent())?;
         after_manifest()?;
         root.verify_namespace()?;
-        operation.advance(ReplacementTransition::ManifestCompleted)?;
+        operation.advance(Event::Complete(Effect::Manifest))?;
         Ok(Self { operation, root })
     }
 }

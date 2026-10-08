@@ -127,11 +127,15 @@ export function getRecentCommands(): Command[] {
 /** Register a command */
 export function registerCommand(command: Command): void {
   commands.register(command.id, command, true);
+  if (command.shortcut) keybindingsStore.registerDefault(command.id, command.shortcut);
+  else keybindingsStore.unregisterDefault(command.id);
 }
 
 /** Plugin contributions cannot replace an existing command. */
 export function registerCommandContribution(command: Command): () => void {
-  return commands.register(command.id, command);
+  const dispose = commands.register(command.id, command);
+  if (command.shortcut) keybindingsStore.registerDefault(command.id, command.shortcut);
+  return () => { if (dispose()) keybindingsStore.unregisterDefault(command.id); };
 }
 
 /** Register multiple commands */
@@ -144,6 +148,7 @@ export function registerCommands(cmds: Command[]): void {
 /** Unregister a command */
 export function unregisterCommand(id: string): void {
   commands.delete(id);
+  keybindingsStore.unregisterDefault(id);
 }
 
 /** Get a command by ID */

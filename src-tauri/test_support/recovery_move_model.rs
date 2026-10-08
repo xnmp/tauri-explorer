@@ -4,6 +4,7 @@ use crate::files::{
     native_directory::Directory,
     recovery::{
         model::{EntryVersion, NativePath, ObjectId},
+        move_capability_model::Plans,
         resources::{capture_requests, Access, Request, Resource, Scope},
     },
 };
@@ -11,6 +12,10 @@ use std::{fs, path::Path};
 
 const SOURCE_TOKEN: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 const TARGET_TOKEN: &str = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+const PROBE_TOKENS: [&str; 2] = [
+    "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+    "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+];
 
 fn object(device: u64, inode: u64) -> ObjectId {
     ObjectId::unix(device, inode)
@@ -50,11 +55,36 @@ fn root(path: &str, token: &str) -> ArtifactPlan {
     }
 }
 
+fn probe_beside(user: &Path, token: &str) -> ArtifactPlan {
+    let path = user
+        .parent()
+        .unwrap()
+        .join(format!(".tauri-explorer-recovery-{token}"));
+    root(&path.to_string_lossy(), token)
+}
+
+/// Rename probes beside each endpoint: a target probe exactly when the move
+/// crosses volumes.
+fn probes(source: &str, target: Option<&str>) -> Plans {
+    Plans {
+        source: probe_beside(Path::new(source), PROBE_TOKENS[0]),
+        target: target.map(|target| probe_beside(Path::new(target), PROBE_TOKENS[1])),
+    }
+}
+
+/// Probe roots are claimed like any other private artifact. Appended last so
+/// the fixtures' positional resources keep their indices.
+fn claim_probes(spec: &MoveSpec, resources: &mut Vec<Resource>) {
+    resources.extend(spec.probe_plans().map(|(plan, _, parent)| {
+        resource(&plan.path.0.to_string_lossy(), None, parent, Access::Write)
+    }));
+}
+
 fn rootless() -> (MoveSpec, Vec<Resource>) {
     let parent = object(7, 10);
     let source_version = version(7, 11);
     let spec = MoveSpec {
-        rename_probes: None,
+        rename_probes: probes("/volume/source", None),
         source: NativePath("/volume/source".into()),
         source_parent: parent,
         source_version: source_version.clone(),
@@ -65,7 +95,7 @@ fn rootless() -> (MoveSpec, Vec<Resource>) {
         source_root: None,
         target_root: None,
     };
-    let resources = vec![
+    let mut resources = vec![
         resource(
             "/volume/source",
             Some(source_version.object),
@@ -74,6 +104,7 @@ fn rootless() -> (MoveSpec, Vec<Resource>) {
         ),
         resource("/volume/target", None, parent, Access::Write),
     ];
+    claim_probes(&spec, &mut resources);
     (spec, resources)
 }
 
@@ -103,7 +134,7 @@ fn cross_volume() -> (MoveSpec, Vec<Resource>) {
     let source_root_path = format!("/source-volume/.tauri-explorer-recovery-{SOURCE_TOKEN}");
     let target_root_path = format!("/target-volume/.tauri-explorer-recovery-{TARGET_TOKEN}");
     let spec = MoveSpec {
-        rename_probes: None,
+        rename_probes: probes("/source-volume/source", Some("/target-volume/target")),
         source: NativePath("/source-volume/source".into()),
         source_parent,
         source_version: source_version.clone(),
@@ -114,7 +145,7 @@ fn cross_volume() -> (MoveSpec, Vec<Resource>) {
         source_root: Some(root(&source_root_path, SOURCE_TOKEN)),
         target_root: Some(root(&target_root_path, TARGET_TOKEN)),
     };
-    let resources = vec![
+    let mut resources = vec![
         resource(
             "/source-volume/source",
             Some(source_version.object),
@@ -130,6 +161,7 @@ fn cross_volume() -> (MoveSpec, Vec<Resource>) {
         resource(&source_root_path, None, source_parent, Access::Write),
         resource(&target_root_path, None, target_parent, Access::Write),
     ];
+    claim_probes(&spec, &mut resources);
     (spec, resources)
 }
 
@@ -233,7 +265,10 @@ fn source_target_overlap_and_real_hardlink_alias_are_rejected() {
     .unwrap();
     let parent = of_file(&Directory::open(&base).unwrap().file).unwrap();
     let spec = MoveSpec {
-        rename_probes: None,
+        rename_probes: Plans {
+            source: probe_beside(&source, PROBE_TOKENS[0]),
+            target: None,
+        },
         source: NativePath(source.clone()),
         source_parent: parent,
         source_version: version_from_metadata(&fs::symlink_metadata(&source).unwrap()).unwrap(),
@@ -252,12 +287,16 @@ fn source_target_overlap_and_real_hardlink_alias_are_rejected() {
         )),
     };
     let mut resources = resources;
+    let artifacts = [
+        &spec.target_root.as_ref().unwrap().path.0,
+        &spec.rename_probes.source.path.0,
+    ];
     resources.extend(
-        capture_requests(&[Request {
-            path: spec.target_root.as_ref().unwrap().path.0.clone(),
+        capture_requests(&artifacts.map(|path| Request {
+            path: path.clone(),
             access: Access::Write,
             scope: Scope::Subtree,
-        }])
+        }))
         .unwrap(),
     );
     assert!(spec.validate(&resources).is_err());
@@ -302,63 +341,4 @@ fn unknown_serialized_fields_are_rejected() {
         .unwrap()
         .insert("futureAuthority".into(), true.into());
     assert!(serde_json::from_value::<MoveSpec>(value).is_err());
-}
-
-/// The strict checkpoint decoder of durable-move builds that predate retention
-/// accounting and retirement (#744). Those builds cannot be changed, so a newer
-/// build must not emit fields they reject unless the record really needs them.
-#[derive(Debug, serde::Deserialize)]
-#[serde(deny_unknown_fields)]
-#[allow(dead_code)]
-struct PreRetirementMoveState {
-    #[serde(default)]
-    effect_revision: u64,
-    source_root: Option<ObjectId>,
-    target_root: Option<ObjectId>,
-    phase: MovePhase,
-    staged: Option<crate::files::recovery::model::StagedPayload>,
-    error: Option<String>,
-}
-
-#[test]
-fn records_without_new_move_state_stay_readable_by_pre_retirement_builds() {
-    // A checkpoint exactly as a pre-retirement build wrote it.
-    let legacy = r#"{"effect_revision":2,"source_root":null,"target_root":null,"phase":"published","staged":null,"error":null}"#;
-    let decoded: MoveState = serde_json::from_str(legacy).unwrap();
-    assert_eq!(decoded.retained_bytes, None);
-    assert!(decoded.retirement.is_none());
-    // Rewriting it without measuring or discarding keeps the legacy bytes.
-    assert_eq!(serde_json::to_string(&decoded).unwrap(), legacy);
-    for phase in [
-        MovePhase::Planned,
-        MovePhase::PublishIntent,
-        MovePhase::Published,
-        MovePhase::Restored,
-    ] {
-        let state = MoveState {
-            phase,
-            error: Some("interrupted".into()),
-            ..MoveState::default()
-        };
-        let encoded = serde_json::to_value(&state).unwrap();
-        serde_json::from_value::<PreRetirementMoveState>(encoded.clone())
-            .unwrap_or_else(|error| panic!("{phase:?}: {error}: {encoded}"));
-    }
-    // Genuinely new state is not representable there and still fails closed.
-    let measured = MoveState {
-        phase: MovePhase::Published,
-        retained_bytes: Some(0),
-        ..MoveState::default()
-    };
-    let deferred = MoveState {
-        phase: MovePhase::Restored,
-        deferred: Some("automatic cleanup could not start".into()),
-        ..MoveState::default()
-    };
-    for state in [measured, deferred] {
-        assert!(serde_json::from_value::<PreRetirementMoveState>(
-            serde_json::to_value(state).unwrap()
-        )
-        .is_err());
-    }
 }

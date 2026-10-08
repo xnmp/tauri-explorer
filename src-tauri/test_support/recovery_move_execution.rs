@@ -58,7 +58,7 @@ fn shared_filesystem() -> Option<tempfile::TempDir> {
 /// Boundaries reached by a same-filesystem overwriting move, then by a
 /// cross-filesystem move, then by the record's own inverse.
 fn cross_filesystem(boundary: &str) -> bool {
-    matches!(boundary, "stage" | "park" | "remove")
+    matches!(boundary, "stage" | "park")
 }
 
 fn overwriting(boundary: &str) -> bool {
@@ -96,15 +96,6 @@ fn subprocess_mover() {
     };
     let prepared =
         PreparedMove::prepare(&coordinator, &from.join("item.txt"), &to.join("item.txt")).unwrap();
-    if boundary == "remove" {
-        let receipt = prepared.execute(&mut Uninterrupted).unwrap();
-        let history = receipt.relocation.unwrap().history;
-        reopen(&coordinator, &history)
-            .with_boundary(Box::new(stop))
-            .remove_source()
-            .unwrap();
-        panic!("removal must stop before its completion checkpoint");
-    }
     if boundary == "restore" {
         let receipt = prepared.execute(&mut Uninterrupted).unwrap();
         let history = receipt.relocation.unwrap().history;
@@ -231,7 +222,7 @@ fn no_crash_boundary_can_leave_both_endpoints_absent() {
 
 #[test]
 fn cross_filesystem_crash_boundaries_never_strand_the_only_copy() {
-    for boundary in ["stage", "park", "remove"] {
+    for boundary in ["stage", "park"] {
         let Some((fixture, shared)) = run_to(boundary) else {
             continue;
         };

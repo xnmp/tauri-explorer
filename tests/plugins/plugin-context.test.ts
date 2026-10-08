@@ -9,6 +9,7 @@ import { getAllCommands, getCommand } from "$lib/state/commands.svelte";
 import { contextMenuItems } from "$lib/state/context-menu-items.svelte";
 import { providerFor } from "$lib/plugins/fs-providers";
 import type { FileEntry } from "$lib/domain/file";
+import { broadcastFileChange } from "$lib/state/file-events";
 
 const fileEntry: FileEntry = {
   name: "x.txt",
@@ -37,6 +38,28 @@ function activate(ctx: PluginContext): void {
 }
 
 describe("plugin lifecycle", () => {
+  it("delivers completed file changes and stops delivery after deactivation", async () => {
+    const changes: (readonly string[])[] = [];
+    const { ctx, dispose } = createPluginContext("file-observer");
+    ctx.workspace.onFilesChanged((directories) => { changes.push(directories); });
+    broadcastFileChange(["/images"]);
+    await Promise.resolve();
+    expect(changes).toEqual([["/images"]]);
+    dispose();
+    broadcastFileChange(["/later"]);
+    await Promise.resolve();
+    expect(changes).toEqual([["/images"]]);
+  });
+
+  it("does not deliver a queued mutation after the plugin is deactivated", async () => {
+    const changes: (readonly string[])[] = [];
+    const { ctx, dispose } = createPluginContext("queued-observer");
+    ctx.workspace.onFilesChanged((directories) => { changes.push(directories); });
+    broadcastFileChange(["/images"]);
+    dispose();
+    await Promise.resolve();
+    expect(changes).toEqual([]);
+  });
   it("registers all contributions on activate and removes them on dispose", () => {
     const { ctx, dispose } = createPluginContext("testplugin");
     activate(ctx);

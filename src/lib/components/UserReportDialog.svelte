@@ -1,5 +1,4 @@
 <script lang="ts">
-  import { untrack } from "svelte";
   import {
     readClipboardReportImage,
     submitUserReport,
@@ -7,14 +6,15 @@
   import { openExternalUrl } from "$lib/api/crash";
   import { clipboardHasImage } from "$lib/api/clipboard-image";
   import {
-    userReportAttachmentBytes,
+    MAX_USER_REPORT_CONTACT_UNITS,
+    MAX_USER_REPORT_DESCRIPTION_UNITS,
+    MAX_USER_REPORT_TITLE_UNITS,
     userReportAttachmentFailureMessage,
+    userReportFallbackNotice,
     userReportFallbackUrl,
-    validateUserReportAttachmentFiles,
     type UserReportAttachment,
     type UserReportDraft,
     type UserReportError,
-    type UserReportKind,
   } from "$lib/domain/user-report";
   import { userReportDraftStore } from "$lib/state/user-report-draft.svelte";
   import { toastStore } from "$lib/state/toast.svelte";
@@ -27,66 +27,27 @@
 
 
   let { open, onClose }: Props = $props();
-  let kind = $state<UserReportKind>("bug");
-  let title = $state("");
-  let body = $state("");
-  let contact = $state("");
-  let attachments = $state<UserReportAttachment[]>([]);
   let attachmentError = $state("");
   let clipboardImageAvailable = $state(false);
-  let clipboardAttachmentData = $state<string | null>(null);
+  const textDraft = $derived(userReportDraftStore.value);
+  const attachments = $derived(userReportDraftStore.attachments);
   const readingClipboard = $derived(userReportDraftStore.readingClipboard);
   const readingAttachments = $derived(userReportDraftStore.readingAttachments);
   const submitting = $derived(userReportDraftStore.submitting);
   const canSubmit = $derived(
-    title.trim().length > 0 && !submitting && !readingAttachments,
+    textDraft.title.trim().length > 0 && !submitting && !readingAttachments,
   );
   const clipboardImageAttached = $derived(
-    clipboardAttachmentData !== null
-      && attachments.some((attachment) => attachment.data === clipboardAttachmentData),
+    userReportDraftStore.clipboardAttachmentData !== null
+      && attachments.some((attachment) => attachment.data === userReportDraftStore.clipboardAttachmentData),
   );
 
   $effect(() => {
     if (!open) return;
-    // Persisting the restored text updates the store below; do not let that
-    // write rerun this one-shot opening reset and discard the current selection.
-    const persistedDraft = untrack(() => userReportDraftStore.value);
-    kind = persistedDraft.kind;
-    title = persistedDraft.title;
-    body = persistedDraft.body;
-    contact = persistedDraft.contact;
-    attachments = untrack(() => [...userReportDraftStore.attachments]);
     attachmentError = "";
     clipboardImageAvailable = false;
-    clipboardAttachmentData = untrack(() => userReportDraftStore.clipboardAttachmentData);
     void probeClipboardImage();
   });
-
-  // Save text between launches and keep the current image selection in memory.
-  // One draft owns both, so reopening cannot resurrect an older retry snapshot.
-  $effect(() => {
-    if (!open) return;
-    const textDraft = { kind, title, body, contact };
-    // The store reads and replaces its own reactive value while saving; keep
-    // that internal state out of this effect's dependency set.
-    const imageDraft = attachments;
-    const clipboardData = clipboardAttachmentData;
-    untrack(() => {
-      userReportDraftStore.update(textDraft);
-      userReportDraftStore.updateAttachments(imageDraft, clipboardData);
-    });
-  });
-
-  function attachmentUsage() {
-    const current = userReportDraftStore.attachments;
-    return {
-      count: current.length,
-      bytes: current.reduce(
-        (total, attachment) => total + userReportAttachmentBytes(attachment.data),
-        0,
-      ),
-    };
-  }
 
   async function probeClipboardImage(): Promise<void> {
     clipboardImageAvailable = await clipboardHasImage();
@@ -102,86 +63,37 @@
 
   async function addFiles(files: FileList | File[]): Promise<void> {
     const selected = Array.from(files);
-    const error = validateUserReportAttachmentFiles(selected, attachmentUsage());
-    if (error) {
-      attachmentError = error;
-      return;
-    }
-    const read = userReportDraftStore.beginAttachmentRead("files");
-    if (!read) return;
-    try {
-      const next = await Promise.all(selected.map(async (file): Promise<UserReportAttachment> => ({
+    const error = await userReportDraftStore.attachFiles(
+      selected,
+      () => Promise.all(selected.map(async (file): Promise<UserReportAttachment> => ({
         name: file.name,
         mediaType: file.type as UserReportAttachment["mediaType"],
         data: bytesToBase64(new Uint8Array(await file.arrayBuffer())),
-      })));
-      if (!userReportDraftStore.hasAttachmentRead(read)) return;
-      // Concurrent reads validate against the latest shared selection.
-      const currentError = validateUserReportAttachmentFiles(selected, attachmentUsage());
-      if (currentError) {
-        attachmentError = currentError;
-        return;
-      }
-      attachments = [...userReportDraftStore.attachments, ...next];
-      userReportDraftStore.updateAttachments(attachments, clipboardAttachmentData);
-      attachmentError = "";
-    } catch {
-      if (userReportDraftStore.hasAttachmentRead(read)) {
-        attachmentError = "Could not read the selected images. Try selecting them again.";
-      }
-    } finally {
-      userReportDraftStore.finishAttachmentRead(read);
-    }
+      }))),
+    );
+    attachmentError = error ?? "";
   }
 
   async function attachClipboardImage(): Promise<void> {
     if (readingClipboard) return;
-    const read = userReportDraftStore.beginAttachmentRead("clipboard");
-    if (!read) return;
-    try {
-      const image = await readClipboardReportImage();
-      if (!userReportDraftStore.hasAttachmentRead(read)) return;
-      const error = validateUserReportAttachmentFiles(
-        [{
-          name: image.name,
-          type: image.mediaType,
-          size: userReportAttachmentBytes(image.data),
-        }],
-        attachmentUsage(),
-      );
-      if (error) {
-        attachmentError = error;
-        return;
-      }
-      attachments = [...userReportDraftStore.attachments, image];
-      clipboardAttachmentData = image.data;
-      userReportDraftStore.updateAttachments(attachments, clipboardAttachmentData);
-      attachmentError = "";
-    } catch {
-      if (userReportDraftStore.hasAttachmentRead(read)) {
-        attachmentError = "Could not read the clipboard image. Try saving it and selecting the file.";
-      }
-    } finally {
-      userReportDraftStore.finishAttachmentRead(read);
-    }
+    const error = await userReportDraftStore.attachClipboard(readClipboardReportImage);
+    attachmentError = error ?? "";
   }
 
   function removeAttachment(index: number): void {
-    attachments = attachments.filter((_, attachmentIndex) => attachmentIndex !== index);
+    userReportDraftStore.removeAttachment(index);
     attachmentError = "";
   }
 
   async function submit(): Promise<void> {
     if (!canSubmit) return;
     const draft: UserReportDraft = {
-      title,
-      body,
-      kind,
-      contact,
+      title: textDraft.title,
+      body: textDraft.body,
+      kind: textDraft.kind,
+      contact: textDraft.contact,
       attachments: [...attachments],
     };
-    userReportDraftStore.update({ kind, title, body, contact });
-    userReportDraftStore.updateAttachments(attachments, clipboardAttachmentData);
     const submission = userReportDraftStore.beginSubmission();
     if (!submission) return;
     onClose();
@@ -198,14 +110,7 @@
     const retirePendingToast = () => toastStore.dismiss(pendingToastId);
     try {
       const issue = await submitUserReport(draft);
-      if (userReportDraftStore.finishSubmission(submission, true) && open) {
-        kind = "bug";
-        title = "";
-        body = "";
-        contact = "";
-        attachments = [];
-        clipboardAttachmentData = null;
-      }
+      userReportDraftStore.finishSubmission(submission, true);
       retirePendingToast();
       toastStore.show("Report submitted", "success", {
         duration: 6000,
@@ -242,11 +147,8 @@
         }
         return;
       }
-      const dailyCap = error.kind === "daily_cap";
       toastStore.show(
-        dailyCap
-          ? "Reports are temporarily unavailable — opening GitHub instead"
-          : "Could not submit in-app — opening GitHub instead",
+        userReportFallbackNotice(error.kind),
         "error",
         { duration: 6000 },
       );
@@ -298,30 +200,42 @@
     <div class="kind-toggle" role="group" aria-label="Report type">
       <button
         type="button"
-        class:active={kind === "bug"}
-        aria-pressed={kind === "bug"}
-        onclick={() => (kind = "bug")}
+        class:active={textDraft.kind === "bug"}
+        aria-pressed={textDraft.kind === "bug"}
+        onclick={() => userReportDraftStore.update({ kind: "bug" })}
       >Bug</button>
       <button
         type="button"
-        class:active={kind === "feature"}
-        aria-pressed={kind === "feature"}
-        onclick={() => (kind = "feature")}
+        class:active={textDraft.kind === "feature"}
+        aria-pressed={textDraft.kind === "feature"}
+        onclick={() => userReportDraftStore.update({ kind: "feature" })}
       >Feature</button>
     </div>
 
     <label>
       <span>Title</span>
       <!-- svelte-ignore a11y_autofocus -- Modal traps and restores focus; the title is the deliberate first step in this short report flow. -->
-      <input bind:value={title} maxlength="120" required autofocus />
+      <input
+        bind:value={() => textDraft.title, (title) => userReportDraftStore.update({ title })}
+        maxlength={MAX_USER_REPORT_TITLE_UNITS}
+        required
+        autofocus
+      />
     </label>
     <label>
       <span>Description (optional)</span>
-      <textarea bind:value={body} maxlength="8000" rows="8"></textarea>
+      <textarea
+        bind:value={() => textDraft.body, (body) => userReportDraftStore.update({ body })}
+        maxlength={MAX_USER_REPORT_DESCRIPTION_UNITS}
+        rows="8"
+      ></textarea>
     </label>
     <label>
       <span>How can we reach you? (GitHub handle, email — optional)</span>
-      <input bind:value={contact} maxlength="100" />
+      <input
+        bind:value={() => textDraft.contact, (contact) => userReportDraftStore.update({ contact })}
+        maxlength={MAX_USER_REPORT_CONTACT_UNITS}
+      />
     </label>
 
     <section class="attachments" aria-label="Image attachments">

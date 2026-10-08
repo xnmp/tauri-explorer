@@ -26,6 +26,7 @@ import ScmPanel from "./ScmPanel.svelte";
   import { gitRepoRoot } from "$lib/api/git";
 import { nextRemovableRoot } from "$lib/domain/drives";
   import { isVirtualPath } from "$lib/domain/virtual-path";
+  import { fileViewRegistry } from "$lib/plugins/file-view-registry.svelte";
 
   interface Props {
     paneId: PaneId;
@@ -60,6 +61,8 @@ import { nextRemovableRoot } from "$lib/domain/drives";
   // Per-pane SCM panel visibility (#434): explicit per-pane override, else the
   // global `showScmPanel` default.
   const paneScmVisible = $derived(windowTabsManager.getPaneScmVisible(paneId));
+
+  const pluginViewActive = $derived(!!fileViewRegistry.resolve(paneExplorer.fileView, paneExplorer.currentPath));
 
   let paneRef = $state<HTMLElement | null>(null);
   let fileListScrollToEntry = $state<((entry: import("$lib/domain/file").FileEntry) => void) | undefined>();
@@ -148,9 +151,21 @@ import { nextRemovableRoot } from "$lib/domain/drives";
     });
   }
 
+  function revealSelectedAfterSelection() {
+    const selected = paneExplorer.focusedEntry;
+    if (!selected) return;
+    // Trace is rebuilt when selection changes, so its clicked button can
+    // unmount before this render. Ownership belongs to the pane and target.
+    void tick().then(() => {
+      if (paneRef?.isConnected && windowTabsManager.getActiveExplorer() === paneExplorer
+        && paneExplorer.focusedEntry?.path === selected.path) fileListScrollToEntry?.(selected);
+    });
+  }
+
   $effect(() => {
     paneExplorer.onNavigate = focusSelectedAfterNav;
-    return () => { paneExplorer.onNavigate = null; };
+    paneExplorer.onReveal = revealSelectedAfterSelection;
+    return () => { paneExplorer.onNavigate = null; paneExplorer.onReveal = null; };
   });
 
   // Track which removable drive (if any) the current path lives on, and flag
@@ -207,7 +222,8 @@ import { nextRemovableRoot } from "$lib/domain/drives";
   }
 
   function handleKeydown(event: KeyboardEvent): void {
-    if (event.defaultPrevented || dialogStore.hasModalOpen || paneGitGraph) return;
+    // A plugin file view owns keyboard navigation within its own content.
+    if (event.defaultPrevented || dialogStore.hasModalOpen || paneGitGraph || pluginViewActive) return;
     const target = event.target as HTMLElement | null;
     if (!target || target.isContentEditable || target.closest('input, textarea, select, [contenteditable="true"]')) return;
     // File navigation belongs to the collection. Ordinary controls, Miller

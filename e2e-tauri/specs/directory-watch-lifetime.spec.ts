@@ -10,7 +10,8 @@ import {
   type InotifyWatch,
   type NativeProcessIdentity,
 } from "../native-resources";
-import { domTexts, monitorFreshWindowOpen, navigateTo, switchToFreshWindow, waitForFreshWindowElement } from "./helpers";
+import { closeOtherWindows, domTexts, navigateTo, switchToFreshWindow, waitForFreshWindowElement } from "./helpers";
+import { monitorFreshWindowOpen } from "../diagnostics/fresh-window";
 import { createNativeFixtureDirectory } from "../native-qualification";
 
 const scratch = createNativeFixtureDirectory("tauri-explorer-e2e-directory-owner-");
@@ -117,14 +118,7 @@ linuxDescribe("pane directory native window ownership", () => {
   });
 
   after(async () => {
-    if (mainHandle) {
-      for (const handle of await browser.getWindowHandles()) {
-        if (handle === mainHandle) continue;
-        await browser.switchToWindow(handle);
-        await browser.closeWindow();
-      }
-      await browser.switchToWindow(mainHandle);
-    }
+    if (mainHandle) await closeOtherWindows(mainHandle);
     // The fixture directory outlives this process (createNativeFixtureDirectory);
     // removing it earlier would let the kernel discard leaked watches and mask
     // the defect this suite exists to catch.

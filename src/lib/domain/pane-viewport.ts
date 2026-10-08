@@ -21,7 +21,10 @@ export function paneGeometry(root: PaneNode, viewport: PaneSize, divider = 6, in
   const minima = new Map<PaneNode, PaneSize>();
   function measure(node: PaneNode): PaneSize {
     if (node.type === "leaf") {
-      const minimum = { ...MIN_PANE_SIZE, width: MIN_PANE_SIZE.width + nonnegative(inlineWidths.get(node.id) ?? 0) };
+      // A lone pane always fills the viewport height, so its address bar never
+      // scrolls out of view in a short window; the minimum only guards splits.
+      const height = root.type === "leaf" ? 0 : MIN_PANE_SIZE.height;
+      const minimum = { width: MIN_PANE_SIZE.width + nonnegative(inlineWidths.get(node.id) ?? 0), height };
       minima.set(node, minimum);
       return minimum;
     }

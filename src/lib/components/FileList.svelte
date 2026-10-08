@@ -23,6 +23,9 @@
   import ListView from "./ListView.svelte";
   import TilesView from "./TilesView.svelte";
   import InlineNewFolder from "./InlineNewFolder.svelte";
+  import PluginFileView from "./PluginFileView.svelte";
+  import { fileViewRegistry } from "$lib/plugins/file-view-registry.svelte";
+  import { getPaneIdContext } from "$lib/state/pane-context";
 
   import type { FileEntry } from "$lib/domain/file";
 
@@ -33,6 +36,11 @@
   }
 
   let { explorer, scrollToEntry = $bindable() }: Props = $props();
+
+  const paneId = getPaneIdContext();
+  // A plugin view replaces the listing only where it applies; elsewhere the
+  // pane shows its built-in view while retaining the preference.
+  const pluginView = $derived(paneId ? fileViewRegistry.resolve(explorer.fileView, explorer.currentPath) : null);
 
 
   // Drop target state for dropping files into current directory
@@ -65,8 +73,24 @@
 
   let viewScrollToIndex = $state<((index: number) => void) | undefined>();
 
-  // Track content width for ListView auto columns
+  // Track content geometry for grid columns and cursor visibility.
   let contentWidth = $state(0);
+  // An explicit navigation/focus reveal owns visibility until the user scrolls.
+  // ResizeObserver delivery order differs between engines, so DOM membership
+  // after a resize cannot establish whether the cursor was visible before it.
+  let cursorReveal = $state<{ path: string; directory: string; mode: string } | null>(null);
+
+  function retainCursorReveal(entry: FileEntry): void {
+    if (cursorReveal?.path !== entry.path || cursorReveal.directory !== explorer.currentPath
+      || cursorReveal.mode !== explorer.viewMode) {
+      cursorReveal = { path: entry.path, directory: explorer.currentPath, mode: explorer.viewMode };
+    }
+  }
+
+  function releaseCursorReveal(): void {
+    cursorReveal = null;
+    pendingFocus?.cancel();
+  }
 
   // Cached container rect for the duration of a marquee drag (avoids forced layout per mousemove)
   let cachedDragRect: DOMRect | null = null;
@@ -76,7 +100,8 @@
   $effect(() => {
     if (!contentRef) return;
     const observer = new ResizeObserver((entries) => {
-      contentWidth = entries[0]?.contentRect.width ?? 0;
+      const width = entries[0]?.contentRect.width ?? 0;
+      contentWidth = width;
       if (cachedDragRect) {
         cachedDragRect = contentRef!.getBoundingClientRect();
       }
@@ -84,6 +109,25 @@
     observer.observe(contentRef);
     return () => observer.disconnect();
   });
+
+  $effect(() => {
+    if (cursorReveal && (cursorReveal.directory !== explorer.currentPath
+      || cursorReveal.mode !== explorer.viewMode)) cursorReveal = null;
+  });
+
+  // The virtual view reports settled geometry, including grid-column changes.
+  // Its clientHeight observer may run after the outer container's observer.
+  function handleViewLayoutChange(): void {
+    const reveal = cursorReveal;
+    const entry = explorer.focusedEntry;
+    if (!reveal || !entry || entry.path !== reveal.path
+      || windowTabsManager.getActiveExplorer() !== explorer
+      || explorer.currentPath !== reveal.directory || explorer.viewMode !== reveal.mode) return;
+    const focus = document.activeElement;
+    if (focus !== document.body && (!fileListRef?.contains(focus)
+      || !focus?.matches('.entry-item, .virtual-viewport[role="grid"]'))) return;
+    scrollToSelected(entry);
+  }
 
   // Marquee selection composable
   const marquee = useMarqueeSelection();
@@ -138,6 +182,7 @@
     const index = entries.indexOf(entry);
     if (index < 0) return;
 
+    retainCursorReveal(entry);
     const request = beginFocusRequest(() => explorer.focusedEntry?.path === entry.path);
     viewScrollToIndex?.(index);
     void tick().then(() => {
@@ -166,10 +211,14 @@
       if (entry?.path === target.dataset.path) explorer.focusEntry(entry);
     } else if (target.matches('.virtual-viewport[role="grid"]') && explorer.focusedEntry) {
       scrollToSelected(explorer.focusedEntry);
+    } else {
+      // Column controls and inline editors own their focus independently.
+      cursorReveal = null;
     }
   }
 
   function handleClick(entry: FileEntry, event: MouseEvent): void {
+    retainCursorReveal(entry);
     explorer.selectEntry(entry, {
       ctrlKey: event.ctrlKey || event.metaKey,
       shiftKey: event.shiftKey,
@@ -205,6 +254,7 @@
   // ===================
 
   function handleBackgroundClick(event: MouseEvent): void {
+    if (pluginView) return;
     if (
       marquee.isBackgroundClick(event.target as HTMLElement) &&
       !marquee.isDragging &&
@@ -227,6 +277,7 @@
   }
 
   function handleKeydown(event: KeyboardEvent): void {
+    if (pluginView) return;
     typeAhead.handleKeydown(event);
   }
 
@@ -243,6 +294,7 @@
   }
 
   function handleMarqueeStart(event: MouseEvent): void {
+    if (pluginView) return;
     const rect = contentRef?.getBoundingClientRect();
     if (!rect) return;
     cachedDragRect = rect;
@@ -295,6 +347,7 @@
   // ===================
 
   function handleListDragOver(event: DragEvent): void {
+    if (pluginView) return;
     const types = event.dataTransfer?.types;
     const crossWindow = dragState.readCrossWindow();
     if (!types?.includes("application/x-explorer-path") && !types?.includes("Files") && !crossWindow) return;
@@ -322,6 +375,8 @@
 
   async function handleListDrop(event: DragEvent): Promise<void> {
     isDropTarget = false;
+    // A plugin view owns its surface; the host never turns a drop on it into a move.
+    if (pluginView) return;
 
     const target = event.target as HTMLElement;
     if (target.closest(".entry-item")) return;
@@ -367,6 +422,9 @@
     class:drop-target={isDropTarget}
     data-current-path={explorer.currentPath}
     bind:this={contentRef}
+    onwheelcapture={releaseCursorReveal}
+    ontouchstartcapture={releaseCursorReveal}
+    onpointerdowncapture={releaseCursorReveal}
     onmousedown={handleMarqueeStart}
     ondragover={handleListDragOver}
     ondragleave={handleListDragLeave}
@@ -388,6 +446,10 @@
           Go back
         </button>
       </div>
+    {:else if pluginView && paneId && !explorer.error}
+      {#key pluginView.id}
+        <PluginFileView {explorer} {paneId} view={pluginView} onopen={handleDoubleClick} />
+      {/key}
     {:else if explorer.loading}
       {#if showLoadingSpinner}
         <div class="status">
@@ -404,6 +466,7 @@
         <span class="error-title">Unable to access folder</span>
         <span class="error-message">{explorer.error}</span>
       </div>
+
     {:else if explorer.displayEntries.length === 0 && !explorer.isCreatingFolder}
       <div class="status empty-state">
         <svg width="48" height="48" viewBox="0 0 48 48" fill="none">
@@ -427,6 +490,8 @@
         {explorer}
         onitemclick={handleClick}
         onitemdblclick={handleDoubleClick}
+        onviewportscroll={updateMarqueeSelection}
+        onlayoutchange={handleViewLayoutChange}
         {fallbackTabStop}
         bind:containsIndex={viewContainsIndex}
         bind:scrollToIndex={viewScrollToIndex}
@@ -437,6 +502,8 @@
         {contentWidth}
         onitemclick={handleClick}
         onitemdblclick={handleDoubleClick}
+        onviewportscroll={updateMarqueeSelection}
+        onlayoutchange={handleViewLayoutChange}
         {fallbackTabStop}
         bind:containsIndex={viewContainsIndex}
         bind:scrollToIndex={viewScrollToIndex}
@@ -447,6 +514,8 @@
         {contentWidth}
         onitemclick={handleClick}
         onitemdblclick={handleDoubleClick}
+        onviewportscroll={updateMarqueeSelection}
+        onlayoutchange={handleViewLayoutChange}
         {fallbackTabStop}
         bind:containsIndex={viewContainsIndex}
         bind:scrollToIndex={viewScrollToIndex}

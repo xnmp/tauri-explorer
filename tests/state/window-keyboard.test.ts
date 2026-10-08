@@ -14,10 +14,11 @@ function matchesAny(...matchedSelectors: string[]): (selectorList: string) => bo
     .some((selector) => matched.has(selector.trim()));
 }
 
-function fixture(terminalFocus = false) {
+function fixture(terminalFocus = false, ancestors: readonly string[] = []) {
   const target = new EventTarget();
   // Exercise real EventTarget dispatch and the production binding matcher.
-  Object.assign(target, { tagName: terminalFocus ? "TEXTAREA" : "DIV", closest: () => terminalFocus ? target : null });
+  const closest = (selector: string) => terminalFocus || ancestors.includes(selector) ? target : null;
+  Object.assign(target, { tagName: terminalFocus ? "TEXTAREA" : "DIV", closest });
   const executeCommand = vi.fn(async (_id: string) => {});
   const available = new Set<string>();
   const dialogs = { hasModalOpen: false, closeAll: vi.fn(), openJobsPanel: vi.fn(), openSettings: vi.fn() };
@@ -37,9 +38,11 @@ function fixture(terminalFocus = false) {
   });
   stops.push(stop);
   const bind = (id: string, shortcut: string) => { available.add(id); keybindingsStore.registerDefault(id, shortcut); };
-  const press = (key: string, modifiers: Partial<KeyboardEvent> = {}) => {
+  const press = (key: string, modifiers: Partial<KeyboardEvent> = {}, handledLocally = false) => {
     const event = new Event("keydown", { cancelable: true });
     Object.assign(event, { key, code: "", ctrlKey: false, metaKey: false, altKey: false, shiftKey: false, ...modifiers });
+    // The focused control's own handler runs before the window listener sees it.
+    if (handledLocally) event.preventDefault();
     target.dispatchEvent(event);
     return event;
   };
@@ -47,6 +50,81 @@ function fixture(terminalFocus = false) {
 }
 
 describe("window keyboard ownership", () => {
+  it.each([
+    ["Ctrl+J M", [["j", { ctrlKey: true }], ["m", {}]]],
+    ["Alt+M Ctrl+J", [["m", { altKey: true }], ["j", { ctrlKey: true }]]],
+    ["Ctrl+, M", [[",", { ctrlKey: true }], ["m", {}]]],
+    ["Alt+M Ctrl+F", [["m", { altKey: true }], ["f", { ctrlKey: true }]]],
+    ["Ctrl+` M", [["`", { ctrlKey: true }], ["m", {}]]],
+  ] as const)("configured %s dispatches without a hardcoded surface action", (shortcut, keys) => {
+    const f = fixture();
+    f.bind("navigation.goUp", shortcut);
+    for (const [key, modifiers] of keys) f.press(key, modifiers);
+    expect(f.executeCommand).toHaveBeenCalledExactlyOnceWith("navigation.goUp");
+    expect(f.dialogs.openJobsPanel).not.toHaveBeenCalled();
+    expect(f.dialogs.openSettings).not.toHaveBeenCalled();
+    expect(f.explorer.openFilter).not.toHaveBeenCalled();
+    expect(f.terminal.toggle).not.toHaveBeenCalled();
+  });
+
+  it("a grid widget that handled an arrow key keeps it from window commands", () => {
+    const f = fixture(false, ['[role="grid"]']);
+    f.bind("navigation.goUp", "ArrowRight");
+    f.press("ArrowRight", {}, true);
+    expect(f.executeCommand).not.toHaveBeenCalled();
+    // Keys the grid leaves alone still reach window commands.
+    f.press("ArrowRight");
+    expect(f.executeCommand).toHaveBeenCalledExactlyOnceWith("navigation.goUp");
+  });
+
+  it("consumes an unmatched Explorer suffix without opening native Find or a surface", () => {
+    const f = fixture();
+    f.bind("navigation.goUp", "Alt+M M");
+    f.press("m", { altKey: true });
+    expect(f.press("f", { ctrlKey: true }).defaultPrevented).toBe(true);
+    expect(f.explorer.openFilter).not.toHaveBeenCalled();
+    expect(f.executeCommand).not.toHaveBeenCalled();
+    expect(keybindingsStore.isChordActive).toBe(false);
+  });
+
+  it("an Explorer-owned chord cannot suppress the terminal's default toggle", () => {
+    const f = fixture(true);
+    f.bind("navigation.goUp", "Ctrl+` M");
+    f.press("`", { ctrlKey: true, code: "Backquote" });
+    expect(f.terminal.toggle).toHaveBeenCalledOnce();
+    expect(f.executeCommand).not.toHaveBeenCalled();
+  });
+
+  it("custom Quick Open chords remain terminal-owned while configured terminal-toggle chords work", () => {
+    const f = fixture(true);
+    f.bind("edit.copy", "Ctrl+C");
+    f.bind("general.openQuickOpen", "Ctrl+P");
+    keybindingsStore.setShortcut("edit.copy", "Alt+M M");
+    keybindingsStore.setShortcut("general.openQuickOpen", "Alt+M P");
+    expect(f.press("m", { altKey: true }).defaultPrevented).toBe(false);
+    expect(f.press("p").defaultPrevented).toBe(false);
+    expect(f.executeCommand).not.toHaveBeenCalled();
+    f.bind("general.openTerminal", "Ctrl+`");
+    keybindingsStore.setShortcut("general.openTerminal", "Alt+M Ctrl+T");
+    expect(f.press("m", { altKey: true }).defaultPrevented).toBe(true);
+    f.press("Control", { ctrlKey: true });
+    f.press("t", { ctrlKey: true });
+    expect(f.executeCommand).toHaveBeenCalledExactlyOnceWith("general.openTerminal");
+  });
+
+  it("input focus retires a custom chord before its suffix can execute", () => {
+    const f = fixture();
+    f.bind("navigation.goUp", "Ctrl+Alt+Up");
+    keybindingsStore.setShortcut("navigation.goUp", "Alt+M M");
+    f.press("m", { altKey: true });
+    Object.assign(f.target, { tagName: "INPUT" });
+    f.target.dispatchEvent(new Event("focusin"));
+    expect(f.press("m").defaultPrevented).toBe(false);
+    expect(f.executeCommand).not.toHaveBeenCalled();
+    Object.assign(f.target, { tagName: "DIV" });
+    f.press("m");
+    expect(f.executeCommand).not.toHaveBeenCalled();
+  });
   it("a terminal core shortcut dispatches its eligible command despite an earlier conflicting binding", () => {
     const f = fixture(true);
     f.bind("plugin.other", "Ctrl+P");
@@ -398,4 +476,22 @@ it("keeps a file-entry Space accepted by type-ahead local", () => {
   event.preventDefault();
   f.target.dispatchEvent(event);
   expect(f.executeCommand).not.toHaveBeenCalled();
+});
+
+
+it.each([false, true])("accepted media keys retire Explorer chords (pending: %s)", (pending) => {
+  const f = fixture();
+  Object.assign(f.target, { closest: (selector: string) => selector === ".video-preview" ? f.target : null });
+  f.bind("file.openSelected", "Enter");
+  f.bind("general.openQuickOpen", "Ctrl+P");
+  f.bind("plugin.chord", "Alt+M T");
+  if (pending) f.press("m", { altKey: true });
+  const event = new Event("keydown", { cancelable: true });
+  Object.assign(event, { key: "Enter", code: "Enter", ctrlKey: false, metaKey: false, altKey: false, shiftKey: false });
+  event.preventDefault();
+  f.target.dispatchEvent(event);
+  f.press("t");
+  expect(f.executeCommand).not.toHaveBeenCalled();
+  f.press("p", { ctrlKey: true });
+  expect(f.executeCommand).toHaveBeenCalledExactlyOnceWith("general.openQuickOpen");
 });

@@ -14,6 +14,13 @@ vi.mock("$lib/api/crash", async (original) => ({
   ...(await original<typeof import("$lib/api/crash")>()),
   logFrontendError: vi.fn(async () => {}),
 }));
+const tauriEvents = vi.hoisted(() => new Map<string, (event: { payload: unknown }) => void>());
+vi.mock("@tauri-apps/api/event", () => ({
+  listen: vi.fn(async (name: string, handler: (event: { payload: unknown }) => void) => {
+    tauriEvents.set(name, handler);
+    return () => tauriEvents.delete(name);
+  }),
+}));
 vi.mock("$lib/api/config", async (original) => {
   const actual = await original<typeof import("$lib/api/config")>();
   return { ...actual, readConfigFile: vi.fn(actual.readConfigFile) };
@@ -29,6 +36,7 @@ import { pluginSettingsSections } from "$lib/plugins/settings-registry.svelte";
 import { logFrontendError } from "$lib/api/crash";
 import { readConfigFile } from "$lib/api/config";
 import { upscalePlugin } from "$lib/plugins/upscale";
+import { providerFor, clearFsProviders } from "$lib/plugins/fs-providers";
 import type { FileEntry } from "$lib/domain/file";
 
 const jobs = { dispose: vi.fn(async () => {}) };
@@ -57,6 +65,8 @@ beforeEach(() => {
 
 afterEach(() => {
   toastStore.clear();
+  tauriEvents.clear();
+  clearFsProviders();
   contextMenuItems.clear();
   pluginSettingsSections.clear();
 });
@@ -161,6 +171,88 @@ describe("plugin failure isolation", () => {
       expect(await executeCommand("plugin.bystander.cmd")).toBe(true);
       expect(healthy.runs).toEqual(["bystander"]);
       expect(registry.isActive("quota")).toBe(true);
+    } finally {
+      await registry.dispose();
+    }
+  });
+
+  it("reports an activation failure under the plugin's name and in the app log", async () => {
+    const failing: Plugin = {
+      id: "broken-start",
+      name: "Broken Start",
+      description: "cannot read its configuration",
+      activate: async () => { throw backendError("config unreadable"); },
+    };
+    const registry = createPluginRegistry([failing], jobs);
+    try {
+      await registry.initPlugins();
+
+      expect(registry.isActive("broken-start")).toBe(false);
+      expect(errorToasts()).toEqual(["Broken Start: config unreadable"]);
+      expect(vi.mocked(logFrontendError).mock.calls.map(([message]) => message)).toEqual([
+        expect.stringContaining('"broken-start" activation failed: config unreadable'),
+      ]);
+    } finally {
+      await registry.dispose();
+    }
+  });
+
+  it("contains a throwing or rejecting event handler and reports it under the plugin's name", async () => {
+    const failing: Plugin = {
+      id: "listener",
+      name: "Listener",
+      description: "its event handlers fail",
+      activate: (ctx) => {
+        ctx.events.listen("sync-throw", () => { throw new Error("bad payload"); });
+        ctx.events.listen("async-reject", async () => { throw backendError("remote refused"); });
+      },
+    };
+    const registry = createPluginRegistry([failing], jobs);
+    try {
+      await registry.initPlugins();
+      await vi.waitFor(() => {
+        expect(tauriEvents.has("sync-throw")).toBe(true);
+        expect(tauriEvents.has("async-reject")).toBe(true);
+      });
+
+      // The Tauri event loop invokes handlers directly; a failure must not
+      // escape into it (the global crash capture).
+      // Error toasts replace one another, so check each as it arrives.
+      expect(() => tauriEvents.get("sync-throw")!({ payload: {} })).not.toThrow();
+      await vi.waitFor(() => expect(errorToasts()).toEqual(["Listener: bad payload"]));
+      await Promise.resolve(tauriEvents.get("async-reject")!({ payload: {} }));
+      await vi.waitFor(() => expect(errorToasts()).toEqual(["Listener: remote refused"]));
+
+      expect(vi.mocked(logFrontendError).mock.calls.map(([message]) => message)).toEqual([
+        expect.stringContaining('"listener" event handler sync-throw failed: bad payload'),
+        expect.stringContaining('"listener" event handler async-reject failed: remote refused'),
+      ]);
+      expect(registry.isActive("listener")).toBe(true);
+    } finally {
+      await registry.dispose();
+    }
+  });
+
+  it("attributes a failing file-system provider in the app log while its caller still sees the error", async () => {
+    const failing: Plugin = {
+      id: "cloud",
+      name: "Cloud Drive",
+      description: "its listing service is down",
+      activate: (ctx) => {
+        ctx.registerFsProvider("cloud", { list: async () => { throw backendError("listing unavailable"); } });
+      },
+    };
+    const registry = createPluginRegistry([failing], jobs);
+    try {
+      await registry.initPlugins();
+
+      await expect(Promise.resolve(providerFor("cloud://root")!.list("cloud://root")))
+        .rejects.toEqual(backendError("listing unavailable"));
+      // Navigation shows the listing error itself; a toast would say it twice.
+      expect(errorToasts()).toEqual([]);
+      expect(vi.mocked(logFrontendError).mock.calls.map(([message]) => message)).toEqual([
+        expect.stringContaining('"cloud" fs provider cloud failed: listing unavailable'),
+      ]);
     } finally {
       await registry.dispose();
     }

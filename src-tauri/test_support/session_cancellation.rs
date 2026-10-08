@@ -70,14 +70,9 @@ fn boundaries(item: usize) -> [SessionBoundary; 6] {
 }
 
 fn native_move_work(root: &std::path::Path) -> crate::files::move_session::MoveWork {
-    let _ = root;
     crate::files::move_session::MoveWork {
         job_id: 802,
-        #[cfg(target_os = "linux")]
-        recovery: (
-            crate::files::recovery::Runtime::default(),
-            root.join("recovery"),
-        ),
+        runtime: crate::files::admission::Runtime::new(root.join("recovery")),
     }
 }
 
@@ -87,10 +82,7 @@ fn native_copy_work(root: &std::path::Path) -> NativeWork {
         app: None,
         job_id: 802,
         #[cfg(target_os = "linux")]
-        recovery: (
-            crate::files::recovery::Runtime::default(),
-            root.join("recovery"),
-        ),
+        runtime: crate::files::recovery::Runtime::new(root.join("recovery")),
     }
 }
 

@@ -76,7 +76,9 @@ fn publication_history_fixture() {
     let root = std::path::PathBuf::from(std::env::var_os("TAURI_TEST_PUBLICATION_ROOT").unwrap());
     fs::create_dir(root.join("data")).unwrap();
     tauri::async_runtime::block_on(async {
-        let operations = NativeOperations::default();
+        let operations = NativeOperations {
+            runtime: crate::files::admission::Runtime::new(root.join("recovery")),
+        };
         let original = copied(&root, "cycle");
         let copied_path = path(&original).to_owned();
         let mut action = original;
@@ -202,10 +204,10 @@ fn mixed_copy_session_history_fixture() {
     fs::write(&ordinary_source, b"ordinary copied bytes").unwrap();
     fs::write(&replacement_source, b"replacement copied bytes").unwrap();
     fs::write(&replacement_target, b"replacement original bytes").unwrap();
-    let runtime = crate::files::recovery::Runtime::default();
     let storage = root.join("recovery");
+    let runtime = crate::files::recovery::Runtime::new(storage.clone());
     let operations = NativeOperations {
-        recovery: Some((runtime.clone(), storage.clone())),
+        runtime: runtime.clone(),
     };
     let owner = Owner::default();
     let registration =
@@ -224,7 +226,7 @@ fn mixed_copy_session_history_fixture() {
     let work = copy_session::NativeWork {
         app: None,
         job_id: 41,
-        recovery: (runtime, storage),
+        runtime,
     };
 
     tauri::async_runtime::block_on(async move {
@@ -264,7 +266,7 @@ fn mixed_copy_session_history_fixture() {
             let undo = execute(action, &operations, Direction::Undo).await;
             assert!(undo.error.is_none(), "{:?}", undo.error);
             assert!(!ordinary_target.exists());
-            if cfg!(feature = "durable-copy-recovery") {
+            if cfg!(feature = "durable-recovery") {
                 assert_eq!(
                     fs::read(&replacement_target).unwrap(),
                     b"replacement original bytes"

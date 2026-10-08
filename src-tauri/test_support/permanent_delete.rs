@@ -288,6 +288,35 @@ fn a_tree_is_removed_without_following_inner_links_or_special_files() {
     assert!(staging(root.path()).is_empty());
 }
 
+/// A same-device bind mount inside a selected folder is someone else's
+/// filesystem: deletion refuses it and every byte it exposes survives (#875).
+#[cfg(target_os = "linux")]
+#[test]
+#[ignore = "requires an isolated user/mount namespace; see e2e-tauri/README.md"]
+fn deletion_never_descends_into_a_mount_inside_the_selection() {
+    use crate::files::mount_namespace::{require_private_namespace, BindMount};
+    require_private_namespace();
+    let root = tempfile::tempdir().unwrap();
+    let outside = root.path().join("outside");
+    fs::create_dir(&outside).unwrap();
+    fs::write(outside.join("foreign"), b"foreign bytes").unwrap();
+    let tree = root.path().join("tree");
+    fs::create_dir_all(tree.join("mounted")).unwrap();
+    fs::write(tree.join("sibling"), b"sibling").unwrap();
+    let mount = BindMount::new(&outside, &tree.join("mounted"));
+
+    let result = delete(&tree);
+
+    assert!(result.is_err(), "deletion crossed a mount: {result:?}");
+    assert_eq!(fs::read(outside.join("foreign")).unwrap(), b"foreign bytes");
+    assert_eq!(
+        fs::read(tree.join("mounted/foreign")).unwrap(),
+        b"foreign bytes"
+    );
+    drop(mount);
+    assert!(staging(root.path()).is_empty());
+}
+
 #[test]
 #[cfg_attr(
     target_os = "macos",
@@ -788,4 +817,141 @@ fn a_restrictive_umask_cannot_break_permanent_deletion() {
     assert!(fs::symlink_metadata(root.path().join("file")).is_err());
     assert!(fs::symlink_metadata(root.path().join("tree")).is_err());
     assert!(staging(root.path()).is_empty());
+}
+
+/// Permanent deletion retains its prepared selection under the same memory
+/// budget as trash: a selection whose retained keys alone exceed it is refused
+/// before any staging exists.
+#[test]
+fn an_oversized_selection_is_refused_at_the_shared_budget_before_effects() {
+    let root = tempfile::tempdir().unwrap();
+    let source = root.path().join("selected");
+    fs::write(&source, b"selected").unwrap();
+    let budget = crate::files::prepared_selection::MAX_PLAN_BYTES;
+    let mut keys = Vec::with_capacity(budget / std::mem::size_of::<String>() + 1);
+    keys.push(source.to_str().unwrap().to_owned());
+    let result = unix::prepare_selection(Arc::new(keys));
+    assert!(
+        matches!(result, Err(AppError::InvalidPath(_))),
+        "{:?}",
+        result.err()
+    );
+    assert_eq!(fs::read(&source).unwrap(), b"selected");
+    assert!(staging(root.path()).is_empty());
+}
+
+fn fixed_nonce(bytes: &mut [u8]) -> io::Result<()> {
+    bytes.fill(0x5a);
+    Ok(())
+}
+
+/// The budget covers what a prepared deletion actually retains, not only its
+/// receipt key: the observed physical source and its staging plan (parent,
+/// name and staging name). The smallest budget a one-entry selection fits
+/// under must therefore include all of them, and one byte less is refused
+/// before any effect.
+#[test]
+fn the_budget_covers_the_observed_source_and_its_staging_plan() {
+    let root = tempfile::tempdir().unwrap();
+    // A long physical path makes each retained component clearly measurable.
+    let mut parent = fs::canonicalize(root.path()).unwrap();
+    for _ in 0..8 {
+        parent.push("d".repeat(100));
+    }
+    fs::create_dir_all(&parent).unwrap();
+    let source = parent.join("selected");
+    fs::write(&source, b"selected").unwrap();
+    let key = source.to_str().unwrap().to_owned();
+    let prepare = |maximum| {
+        unix::prepare_observed(
+            Arc::new(vec![key.clone()]),
+            &mut fixed_nonce,
+            maximum,
+            &mut |_: &Path| Ok(None),
+        )
+    };
+    let (mut refused, mut accepted) = (0usize, 1usize << 20);
+    assert!(prepare(accepted).is_ok());
+    while accepted - refused > 1 {
+        let middle = refused + (accepted - refused) / 2;
+        if prepare(middle).is_ok() {
+            accepted = middle;
+        } else {
+            refused = middle;
+        }
+    }
+    let path = source.as_os_str().len();
+    let key_and_slot = key.len()
+        + std::mem::size_of::<String>()
+        + std::mem::size_of::<Result<unix::Item, String>>();
+    let staging_name = ".tauri-delete-".len() + 32;
+    // The observed source, then the item's parent + name and staging name.
+    let retained = path + (path - 1) + staging_name;
+    assert!(
+        accepted >= key_and_slot + retained,
+        "a {path}-byte deletion fit under {accepted} bytes"
+    );
+    assert!(matches!(prepare(refused), Err(AppError::InvalidPath(_))));
+    assert_eq!(fs::read(&source).unwrap(), b"selected");
+    assert!(staging(&parent).is_empty());
+}
+
+/// Birth time observed at preparation binds execution: a captured payload
+/// whose birth differs from the prepared one is returned, never deleted.
+#[test]
+fn the_birth_time_captured_at_preparation_is_enforced_at_capture() {
+    let root = tempfile::tempdir().unwrap();
+    let source = root.path().join("selected");
+    fs::write(&source, b"selected").unwrap();
+    let mut selection = unix::prepare_observed(
+        Arc::new(vec![source.to_str().unwrap().to_owned()]),
+        &mut fixed_nonce,
+        crate::files::prepared_selection::MAX_PLAN_BYTES,
+        // No real entry was born at this instant.
+        &mut |_: &Path| Ok(Some((1, 2))),
+    )
+    .unwrap();
+    let result = execute(&mut selection, &source, no_hook);
+    assert!(result.is_err() && !is_uncertain(&result), "{result:?}");
+    assert_eq!(fs::read(&source).unwrap(), b"selected");
+    assert!(staging(root.path()).is_empty());
+}
+
+/// Each source's birth time is read immediately after its version and
+/// before its claims: a physical duplicate is still read, and a birth-time
+/// failure takes precedence over the duplicate's claim conflict.
+#[test]
+fn birth_is_read_for_each_source_before_its_claims_are_recorded() {
+    let root = tempfile::tempdir().unwrap();
+    let real = root.path().join("real");
+    fs::create_dir(&real).unwrap();
+    let source = real.join("selected");
+    fs::write(&source, b"selected").unwrap();
+    let alias = root.path().join("alias");
+    std::os::unix::fs::symlink(&real, &alias).unwrap();
+    let mut reads = Vec::new();
+    let result = unix::prepare_observed(
+        Arc::new(vec![
+            source.to_str().unwrap().to_owned(),
+            alias.join("selected").to_str().unwrap().to_owned(),
+        ]),
+        &mut fixed_nonce,
+        crate::files::prepared_selection::MAX_PLAN_BYTES,
+        &mut |path: &Path| {
+            reads.push(path.to_owned());
+            if reads.len() == 2 {
+                Err(io::Error::other("birth time unavailable"))
+            } else {
+                Ok(None)
+            }
+        },
+    );
+    let physical = fs::canonicalize(&source).unwrap();
+    assert_eq!(reads, [physical.clone(), physical]);
+    assert!(
+        matches!(&result, Err(error) if error.to_string().contains("birth time unavailable")),
+        "{:?}",
+        result.err()
+    );
+    assert_eq!(fs::read(&source).unwrap(), b"selected");
 }

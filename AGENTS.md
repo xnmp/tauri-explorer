@@ -1,221 +1,196 @@
-# Agent Instructions
+# CLAUDE.md
 
-This project uses **bd** (beads) for issue tracking. Run `bd onboard` to get started.
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-## Quick Reference
+## Build & Dev Commands
 
-```bash
-bd ready              # Find available work
-bd show <id>          # View issue details
-bd update <id> --status in_progress  # Claim work
-bd close <id>         # Complete work
-bd sync               # Sync with git
-```
+| Task                                  | Command                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| ------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Dev server (frontend only)            | `bun run dev`                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| Dev server (full Tauri app)           | `bun run start`                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| Clean rebuild                         | `bun run clean` (full) or `bun run clean:fast` (skip Rust)                                                                                                                                                                                                                                                                                                                                                                       |
+| Type check                            | `bun run check`                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| Unit tests                            | `bun run test`                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| Single unit test file                 | `bunx vitest run tests/path/to/file.test.ts`                                                                                                                                                                                                                                                                                                                                                                                     |
+| E2E tests (default view)              | `bun run test:e2e`                                                                                                                                                                                                                                                                                                                                                                                                               |
+| E2E tests (all view modes)            | `ALL_VIEW_MODES=1 npx playwright test`                                                                                                                                                                                                                                                                                                                                                                                           |
+| E2E tests (WebKit ≈ WKWebView proxy)  | `WEBKIT=1 npx playwright test --project=webkit` (on Arch: prepend `PLAYWRIGHT_SKIP_VALIDATE_HOST_REQUIREMENTS=true`; Ubuntu-only libs live in the webkit bundle's `sys/lib`)                                                                                                                                                                                                                                                     |
+| Single E2E test                       | `npx playwright test e2e/specific.spec.ts`                                                                                                                                                                                                                                                                                                                                                                                       |
+| Tauri-binary E2E (Linux/Windows only) | `bun run test:e2e:tauri` (needs `cargo install tauri-driver`, `webkit2gtk-driver` on Linux, and a binary built via `VITE_E2E_HOOKS=1 bun run tauri build --debug --no-bundle` — the Tauri CLI, not `cargo build` (which serves `devUrl` and silently needs a dev server on :1420), and the hooks flag, without which every spec fails at "dev e2e hooks never became ready"; see `docs/lessons/457-windows-tauri-smoke-hang.md`) |
+| Performance tests                     | `bun run test:perf`                                                                                                                                                                                                                                                                                                                                                                                                              |
+| High-load stress tests                | `bun run test:load` (own Playwright config on :1430; many git-graph tabs, leak churn, CPU throttle, 256MB heap cap; `LOAD_CYCLES=N` scales churn)                                                                                                                                                                                                                                                                                |
+| Rust criterion benches                | `bun run bench:rust` (baselines recorded in `src-tauri/benches/*.rs` header comments)                                                                                                                                                                                                                                                                                                                                            |
+| Bundle-size budget check              | `bun run check:bundle` (builds frontend, fails if main chunk gzip exceeds budget in `scripts/check-bundle-size.mjs`)                                                                                                                                                                                                                                                                                                             |
+| Rust build only                       | `cd src-tauri && cargo build`                                                                                                                                                                                                                                                                                                                                                                                                    |
+| Runnable release binary               | `bun run build && cd src-tauri && cargo build --release --features tauri/custom-protocol` — a bare `cargo build --release` yields a DEV-mode binary that dials localhost:1420 (Tauri gates prod on the `custom-protocol` feature, which only the Tauri CLI passes)                                                                                                                                                               |
+| Rust tests only                       | `cd src-tauri && cargo test`                                                                                                                                                                                                                                                                                                                                                                                                     |
 
-<!-- bv-agent-instructions-v2 -->
+### WSL ↔ Windows: always `git push` after committing
 
----
+When developing in WSL (e.g. on the `windows` branch), the Windows side builds/tests by pulling from the remote — it does **not** see your WSL working tree. A commit that isn't pushed never reaches the Windows build, so the fix appears to "not work" when it simply never arrived.
 
-## Beads Workflow Integration
+## Architecture Overview
 
-This project uses [beads_rust](https://github.com/Dicklesworthstone/beads_rust) (`br`) for issue tracking and [beads_viewer](https://github.com/Dicklesworthstone/beads_viewer) (`bv`) for graph-aware triage. Issues are stored in `.beads/` and tracked in git.
+**Stack:** Tauri v2 (Rust backend) + Svelte 5 (runes) + TypeScript + Vite 6. Package manager: `bun`.
 
-### Using bv as an AI sidecar
+Frontend layers (`src/lib/`): `domain/` (pure logic, no framework deps — put business logic here), `state/` (rune stores), `api/` (IPC wrappers; `mock-invoke.ts` fakes the backend outside Tauri, detected via `__TAURI_INTERNALS__`), `composables/`, `components/`, `themes/`. Backend (`src-tauri/src/`): all Tauri commands must be `async fn` (sync blocks the main thread). Entry point `src/routes/+page.svelte` composes the layout and owns global shortcuts.
 
-bv is a graph-aware triage engine for Beads projects (.beads/beads.jsonl). Instead of parsing JSONL or hallucinating graph traversal, use robot flags for deterministic, dependency-aware outputs with precomputed metrics (PageRank, betweenness, critical path, cycles, HITS, eigenvector, k-core).
+Rules that bite:
+- Repository-folder Git badges read `--icon-git-badge` from each active theme;
+  keep it distinct from `--icon-folder` (the Hacker theme deliberately uses its
+  darker terminal green) and cover every file-list view mode when changing it.
+- Three view modes (Details/List/Tiles) dispatched by `FileList.svelte` — display features must land in all three.
+- Keep high-frequency hover feedback on file entries, sidebar navigation, and tabs immediate. Preserve motion for one-shot structural events (such as tab enter/close), but do not add CSS transition settling to pointer highlights; it reads as input latency even when the main thread is idle (#503).
+- Refresh policy is split deliberately: WHEN=`refresh-manager`, WHETHER=`pane-watch`, HOW=`pane-refresh`. Don't add a fourth gate, and don't build private refresh stacks inside components — the git graph did, and it produced #431/#432.
+- Watcher callbacks are delayed work: capture the explorer path when queuing a refresh and drop the callback if that explorer navigates before it runs. Preserve the backend observation time too: notify delivery can lag behind a trailing listing, and treating an already-covered change as new work creates a third refresh. Otherwise an event attributed to the old directory refreshes the new one and corrupts both directories' cadence.
+- Pane focus is **state, not DOM focus**: `ExplorerPane` gates its window-level keydown listener on `windowTabsManager.activePaneId === paneId`, so moving focus between panes is `setActivePane` alone — calling `.focus()` on the pane element is neither necessary nor sufficient. Assert on `.explorer-pane.active`, not on `document.activeElement`.
+- ExplorerPane owns window-level file-list shortcuts, but FileList owns each virtualized view's scroller. Selection jumps that can target an unmounted row must use FileList's bound `scrollToEntry` seam so the selected entry is rendered and visible before focus moves to it.
+- Native window titles have two phases: every creation path (Rust main, fresh child, parked warm window) must seed the requested title before visibility, then the page's reactive `window-title` sync follows the active explorer path across navigation/tab/pane changes.
+- New-window address-bar focus likewise has fresh and warm paths: fresh children request it through their launch URL, while activated warm windows dispatch the request only after the requested navigation and native focus. Wait for the explorer's initial path before mounting `BreadcrumbAutocomplete`, because it captures that path only on mount.
+- Recycle Bin is a native shell surface, not a portable directory path: launch it through `system::open_recycle_bin` (Windows uses `shell:RecycleBinFolder`, Linux uses `trash:///`, macOS opens `~/.Trash`) instead of sending it through directory listing.
+- Linux desktop environments can reject the `trash:///` URI after `gio` starts successfully. Wait for that probe result and fall back to `xdg-open` on the Freedesktop `Trash/files` directory so the sidebar action still reaches deleted files (#660).
+- Keep state machines and caches out of component-local scope (`<script module>` in a `.svelte` file is not a state layer). If it can't be unit-tested through an import, it will eventually be wrong unobserved (#444).
+- Rust test modules included with `#[path]` from production modules belong in `src-tauri/test_support/`, not Cargo's auto-discovered `src-tauri/tests/`. Keeping source-included modules under `tests/` makes `cargo clippy --all-targets` compile them again as standalone integration crates, where their `super`/`crate` imports are invalid.
+- Progress toasts must bypass the generic opacity entrance animation so accepted long-running work is visible immediately. Under load, WebKit can strand an entrance animation on its zero-opacity first frame; keep motion on the progress spinner instead.
+- Plugin context-menu actions that invoke an AI service carry `group: "ai"`; `ContextMenu.svelte` renders those applicable actions in its shared AI submenu while leaving non-AI plugin actions top-level.
+- Miller columns cache ancestor listings independently of the active pane. Publish the affected parent directory after local mutations so their visible source column refreshes immediately (#598).
+- Quick Open keeps local active-pane/recent/frecency matches immediate and caps the merged rendered list at 20 rows; rendering thousands of active-directory matches blocks the input even when matching itself is cheap. Its recursive backend walk goes through `domain/quick-open-search.ts`; retain its trailing debounce and invalidate an active stream on new input so large deferred trees do not compete with typing. Completed walks are cached briefly in `search_cache.rs` only while the root has an active filesystem watcher and a separate recursive cache-invalidation watch was established successfully; pane/thumbnail refresh watches stay non-recursive to avoid overlapping subtree fan-out. Because recursive cache roots can overlap, removing one registration must rebuild all surviving registrations and advance their cache epochs; notify's Linux backend can otherwise silently remove descendant OS watches. Coverage transitions advance only the exact root's epoch before advertising cache coverage—filesystem-change invalidation remains ancestor/descendant-aware—so an in-flight walk from an uncovered gap cannot publish after coverage returns without evicting unchanged overlapping listings. All epoch allocation goes through the same bounded revision tracker, including first-time coverage transitions. Ending the final pane watch must remove the recursive coverage and advance that root's cache epoch because files can change before it is watched again. Unwatched or recursively-uncovered roots always walk fresh, cancelled walks are never published, and publication must retain the pre-walk per-root invalidation revision so a watcher event racing a cold walk cannot resurrect stale entries or an unrelated root's event discard valid work. Detach the captured stream listener before awaiting cancellation IPC, or a late cancellation can remove its replacement (#600, #651).
+- Terminal focus gives terminal-hosted applications ownership of every key except the small, availability-aware core-navigation allowlist in `domain/terminal-keys.ts` (Quick Open, Command Palette, previous/next tab, and the configured terminal-toggle chord). Keep the ownership decision shared by `+page.svelte` and `TerminalPanel.svelte`; chord prefixes and suffixes must be checked against the eligible command ID so other chords sharing a prefix stay terminal-owned, and a terminal-owned mismatching suffix must cancel the pending Explorer chord before another key can complete it.
+- Fixed overlays under root CSS zoom are engine-specific: `fixedFromClient` and `fixedFromRect` divide once only on Chromium; WKWebView uses two divisions, while WebKitGTK's CSS-space rect offsets its second scale. Keep the live Chromium check wired through the context-menu conversion (#493).
+- Zoomed image previews update their `transform` for every pointer move. Keep the compositor hint scoped to `.preview-image.zoomed`, so active panning stays smooth without retaining layers for every ordinary image preview (#635).
+- Repository-folder Git badges are rendered directly by `FileIcon.svelte` in every directory view. Keep their compact corner geometry and their `--icon-git-badge` / `--icon-git-badge-glyph` theme overrides together when polishing the SVG (#601).
+- Git graph lineage is first-parent topology plus the branch paths from
+  `assignLayout`, never a lane number or color: paths can curve between lanes
+  and color slots are recycled. Compute trace/jump semantics in the domain
+  layer, then pass the classified rows and path segments to the renderer.
+- Base-update merge muting follows an open PR's first-parent chain and checks
+  each non-first parent against the configured base ref's reachable history.
+  Keep both the base ref and selected GitHub remote in the PR IPC shape so a
+  current remote-tracking base wins over a stale local base; a merge merely
+  adjacent to a PR ref is not enough to classify it as housekeeping (#527).
+- Git-graph commit comparison is a tree-to-tree operation, not a first-parent
+  diff: normalize the chosen commits to older → newer before requesting both
+  the changed-file list and every per-file patch, including preview-pane routes.
+- Git-graph undo snapshots come from the Rust mutation command, stay session/repository-scoped in `state/git-graph-undo.ts`, and are re-verified by `git_undo` before the inverse. Merge/pull undo requires unchanged HEAD + a clean tree; tag deletion records the raw tag-object OID so annotated tags restore exactly (#513).
+- Git-graph tabs remount on activation; their snapshot cache must retain the supported 12-tab load fan-out so switching back can paint cached history instead of starting a new git-log request. External watcher changes evict the snapshot; valid cached remounts skip the redundant graph reload (#505).
+- Git-graph fetch, pull, and remote-branch push share one client-ID network-operation lifecycle in `git-graph-refresh.ts`. Per ADR 0006, fetch enumerates `fetch --all`-eligible remotes (respecting `skipFetchAll`/`skipDefaultUpdate`) and updates each one atomically; ordinary remote errors are aggregated after later remotes run, while cancellation stops immediately between remotes. Only the unbounded network phase is killable: pull receives a per-invocation IPC phase channel before starting, then must deliver the transition from atomic fetch to local fast-forward (or fail closed before moving HEAD) so the banner switches to “Finishing Git pull…” and removes the now-ineffective Cancel control while preserving completed-pull undo; remote-delete cancellation reports that the remote may already have applied it (#528).
+- User-report images are hosted as public Vercel Blobs before the relay creates
+  the GitHub issue. Production therefore needs `BLOB_READ_WRITE_TOKEN` as well
+  as `GITHUB_ISSUE_TOKEN`. Keep the raw attachment total at or below 3 MiB so
+  its base64 JSON request stays below Vercel's 4.5 MB function-body limit.
 
-**Scope boundary:** bv handles *what to work on* (triage, priority, planning). `br` handles creating, modifying, and closing beads.
+## Documentation
 
-**CRITICAL: Use ONLY --robot-* flags. Bare bv launches an interactive TUI that blocks your session.**
+- **Start at [docs/code-map/](docs/code-map/)**: [map-feature.md](docs/code-map/map-feature.md) for cross-layer work and bug hunts, [map-playbook.md](docs/code-map/map-playbook.md) recipes for task-shaped changes (new palette command / context-menu action / Tauri command / setting), [map-folder.md](docs/code-map/map-folder.md) as the exhaustive per-file index. For a small localized change you can already name, skip the maps and grep (measured net loss on cheap tasks; prose architecture docs were deleted for the same reason — see [STUDY.md](docs/code-map/STUDY.md)).
+- **Keep the maps current or they turn harmful.** New/moved source file → update `map-folder.md` (+ the `map-feature.md` cluster), then `python3 docs/code-map/validate.py --coverage`. CI runs the same check.
+- [docs/lessons/](docs/lessons/) — gotchas from closed issues, **one file per issue**: write `docs/lessons/<issue>-<slug>.md` when you fix a bug (never append to the frozen [docs/lessons_learnt.md](docs/lessons_learnt.md) archive — shared-file appends conflicted every open PR, #544). When hunting a bug, search both: `grep -ri <term> docs/lessons/ docs/lessons_learnt.md`.
 
-#### The Workflow: Start With Triage
+## Issues, Branches, Screenshots
 
-**`bv --robot-triage` is your single entry point.** It returns everything you need in one call:
-- `quick_ref`: at-a-glance counts + top 3 picks
-- `recommendations`: ranked actionable items with scores, reasons, unblock info
-- `quick_wins`: low-effort high-impact items
-- `blockers_to_clear`: items that unblock the most downstream work
-- `project_health`: status/type/priority distributions, graph metrics
-- `commands`: copy-paste shell commands for next steps
+- All development happens off `dev`; feature branches merge back to `dev` with a descriptive squash commit. Don't modify files directly on `dev`. At session start, convert tasks in [@new_todo.md](@new_todo.md) into GitHub issues (plan first; the plan can live in the issue body).
+- Branch ↔ issue convention: branch `feat/my-feature` must match an **open GitHub issue** whose title contains `my-feature`; a hook validates this at branch creation. Prefixes: `feat/`, `fix/`, `refactor/`, `docs/`, `test/`, `chore/`.
+- Relationship tooling (blocking, sub-issues) is the `jwilger/gh-issue-ext` extension (`gh issue-ext …`).
+- Issue bodies need a `## Screenshots` section with checkboxes; files go in `screenshots/<branch>/` and the merge hook verifies they exist. "None required" is only for changes with no user-visible effect; behavioral fixes still need one showing the corrected behavior. Verify a screenshot actually demonstrates the feature before counting it.
+- Keep `evidence/` available for committed image-only PR acceptance proof: the automated review gate renders those files directly from the PR. It is distinct from issue screenshots, so do not add a blanket `evidence/` ignore rule.
+- The merge hook does **not** close issues — close them yourself (`gh issue close N --comment`) when the work lands on dev.
+- Before ending a session that merged UI work: `ALL_VIEW_MODES=1 npx playwright test`.
 
-```bash
-bv --robot-triage        # THE MEGA-COMMAND: start here
-bv --robot-next          # Minimal: just the single top pick + claim command
+## Verification
 
-# Token-optimized output (TOON) for lower LLM context usage:
-bv --robot-triage --format toon
-```
+The three test tiers see different things; pick by what could actually break:
 
-#### Other bv Commands
+1. **Vitest (`tests/`)** — domain logic and store behavior. The default home for every fix's regression test.
+2. **Browser Playwright (`e2e/`)** — UI behavior against `mock-invoke.ts` on :1420. Good for interaction/focus/layout. **Structurally blind to backend timing** (watchers, git, IPC latency), and **circular for new backend features**: if you wrote the mock, the test proves the UI agrees with your own assumption, not with the backend.
+3. **Tauri-binary E2E (`e2e-tauri/`)** — WebdriverIO + tauri-driver against the real binary: real Rust, real fs watchers, real git (see `e2e-tauri/README.md`; keep this suite small and reserve it for what genuinely needs the real backend).
 
-| Command | Returns |
-|---------|---------|
-| `--robot-plan` | Parallel execution tracks with unblocks lists |
-| `--robot-priority` | Priority misalignment detection with confidence |
-| `--robot-insights` | Full metrics: PageRank, betweenness, HITS, eigenvector, critical path, cycles, k-core |
-| `--robot-alerts` | Stale issues, blocking cascades, priority mismatches |
-| `--robot-suggest` | Hygiene: duplicates, missing deps, label suggestions, cycle breaks |
-| `--robot-diff --diff-since <ref>` | Changes since ref: new/closed/modified issues |
-| `--robot-graph [--graph-format=json\|dot\|mermaid]` | Dependency graph export |
+Run local native GUI tests and soak probes on a private virtual display, never
+the user's active desktop. On Linux, start Xvfb with a window manager such as
+Openbox, give the runner its own `DISPLAY`, driver port and XDG profile, and
+verify that the driver and app processes inherited that `DISPLAY` before a long
+run. A normal desktop workspace can still show or focus test windows; use a
+separate display server. Never switch the user's workspace, activate or move
+windows, inject input, or change the host clipboard during automated tests.
+For Xvfb, force `GDK_BACKEND=x11`, unset `WAYLAND_DISPLAY`, and isolate the
+D-Bus session as well as the XDG profile so helpers cannot connect to the user's
+compositor, clipboard, or existing file-manager instance. Check the app and
+helper processes, not just the runner's environment.
 
-#### Scoping & Filtering
+Broad task approval does not authorize desktop interference. Physical-desktop
+admission that needs visible interaction must be a separate user-controlled
+check; do not automate it on the active session. If a private display is
+unavailable, use hosted CI or defer the interactive check.
 
-```bash
-bv --robot-plan --label backend              # Scope to label's subgraph
-bv --robot-insights --as-of HEAD~30          # Historical point-in-time
-bv --recipe actionable --robot-plan          # Pre-filter: ready to work (no blockers)
-bv --recipe high-impact --robot-triage       # Pre-filter: top PageRank scores
-```
+If the user explicitly authorizes a bounded physical-desktop check, record the
+cutoff and stop its scoped processes when it ends. Before moving any test
+window, inspect its compositor group: Hyprland moves the whole group, including
+unrelated user windows. Refuse the move if any group member is outside the test
+profile. Verify actual active-window/workspace visibility before and after a
+screenshot; window geometry alone can capture an unrelated desktop. Preserve
+baseline window placements and verify them after cleanup.
 
-### br Commands for Issue Management
+WebKitWebDriver may evaluate `browser.execute` in an isolated JavaScript world.
+Use DOM events/state to communicate with dev-only application probes; mutating
+application globals such as `window.__TAURI_INTERNALS__` from the injected
+script can remain invisible to the app even when later injected scripts read
+the mutation back. Publish hook readiness and acknowledge each operation with a
+unique DOM token before polling its result; repeatedly dispatching an operation
+while waiting can queue duplicate real backend work that outlives the poll.
+Multi-step WebKit interaction tests must also wait for an opened modal to become
+hidden after Escape before focusing the next surface; otherwise the following
+shortcut can correctly be rejected while `hasModalOpen` is still true. Keep
+clock-exact debounce coverage in fake-timer domain tests: an E2E runner may stall
+between synthetic keystrokes for longer than the debounce and legitimately
+start an intermediate query, so contract-level final-query tests should update
+the input atomically.
+Real-watcher timing tests must also wait for the backend watch and frontend
+listener to be ready, then acknowledge every filesystem write at the
+application-side watcher callback before attributing listing counts to it. A
+receipt-count increase alone is insufficient: require its backend observation
+time to be at or after that specific write began so an older delayed event
+cannot advance the protocol.
 
-```bash
-br ready              # Show issues ready to work (no blockers)
-br list --status=open # All open issues
-br show <id>          # Full issue details with dependencies
-br create --title="..." --type=task --priority=2
-br update <id> --status=in_progress
-br close <id> --reason="Completed"
-br close <id1> <id2>  # Close multiple issues at once
-br sync --flush-only  # Export DB to JSONL
-```
+Anything whose failure mode involves races, watcher timing, git state, or cache staleness needs tier 3 or a Rust temp-repo test in `src-tauri` — a green mock E2E is not evidence for those.
 
-### Workflow Pattern
+Config autoreload tests must write through the canonical target of any symlinked config file or theme directory; watching the link itself does not prove inotify observes the target.
 
-1. **Triage**: Run `bv --robot-triage` to find the highest-impact actionable work
-2. **Claim**: Use `br update <id> --status=in_progress`
-3. **Work**: Implement the task
-4. **Complete**: Use `br close <id>`
-5. **Sync**: Always run `br sync --flush-only` at session end
+The public report relay under `website/api/` uses `GITHUB_ISSUE_TOKEN` only for issue creation. Production spam counters must use the shared REST KV variables `KV_REST_API_URL` and `KV_REST_API_TOKEN`; when Vercel is detected without them the endpoint fails closed. The in-memory counter is intentionally limited to local development and unit tests.
 
-### Key Concepts
+**Repro-first for bug fixes.** Before changing logic, write the test that fails for the reported reason (or demonstrate the failure at the pre-fix commit). Gold standard: the test passes on your branch and fails with the fix reverted. If the buggy logic has no importable seam, extracting the seam is part of the fix — don't settle for verifying a transcribed copy.
 
-- **Dependencies**: Issues can block other issues. `br ready` shows only unblocked work.
-- **Priority**: P0=critical, P1=high, P2=medium, P3=low, P4=backlog (use numbers 0-4, not words)
-- **Types**: task, bug, feature, epic, chore, docs, question
-- **Blocking**: `br dep add <issue> <depends-on>` to add dependencies
+**Adversarial verification for high-risk changes.** Concurrency, caching, perf claims, and anything self-graded by its implementer gets a separate verifier (a subagent with no stake in the claims) that tries to _falsify_ each claim — staleness attacks on caches, interleaving attacks on async flows, measured numbers for perf claims — and reports CONFIRMED / PLAUSIBLE / REFUTED per claim. This found real bugs both times it was run; budget for it on any structural change.
 
-### Session Protocol
+**E2E tests assert outcomes**, not existence — a QuickOpen test verifies results appear for a query, not that the modal opened.
 
-```bash
-git status              # Check what changed
-git add <files>         # Stage code changes
-br sync --flush-only    # Export beads changes to JSONL
-git commit -m "..."     # Commit everything
-git push                # Push to remote
-```
+Markdown preview content is inserted with `{@html}` in `PreviewPane.svelte`, so its element styles require `:global(...)`; keep heading and link colours on the existing theme variables and verify their computed colours in the browser.
 
-<!-- end-bv-agent-instructions -->
+The Linux FileChooser portal is selected through the user's
+`~/.config/xdg-desktop-portal/portals.conf`; do not add deprecated `UseIn`
+desktop matching to `packaging/tauri-explorer.portal`.
 
-<!-- BEGIN BEADS INTEGRATION -->
-## Issue Tracking with bd (beads)
+SCM archive actions preserve each repo-relative path under `.archive/` and add
+`.archive` to `.gitignore`; this keeps archived files out of the Untracked list.
 
-**IMPORTANT**: This project uses **bd (beads)** for ALL issue tracking. Do NOT use markdown TODOs, task lists, or other tracking methods.
+## Delegation & Subagent Worktrees
 
-### Why bd?
+- If the main model is Fable, tokens are very expensive, so whenever possible delegate work to Opus and Sonnet subagents. Use Fable only for high level synthesis and understanding. Do NOT use Fable subagents unless explicitly instructed to.
+- Agent-tool worktrees are created from **main**, not `dev`: a delegated agent must start by branching from `origin/dev` (or the coordinator's integration branch), and the coordinator verifies `git merge-base` before merging.
+- Agents work **only inside their worktree cwd with relative paths**. Absolute paths leak edits into the main checkout — it has happened; coordinators should spot-check `git -C <main-repo> status` while agents run.
+- Port :1420 belongs to the main session. Agents needing a dev server or E2E run use their own port with a throwaway config.
+- Squash-merge conflicts in `map-feature.md` are usually both-append — resolve as a union, checking for line-level supersedes. (`lessons_learnt.md` is frozen; lessons are per-issue files now, which cannot conflict.)
+- Make sure to clean up worktrees when done, otherwise they take up a lot of space. 
 
-- Dependency-aware: Track blockers and relationships between issues
-- Git-friendly: Dolt-powered version control with native sync
-- Agent-optimized: JSON output, ready work detection, discovered-from links
-- Prevents duplicate tracking systems and confusion
+## Debugging
 
-### Quick Start
+When a bug resists quick diagnosis: search `docs/lessons/` + the frozen `lessons_learnt.md` archive and commit history first, then add targeted logging/instrumentation before another fix attempt. Suite-wide test timeouts (~5 s) under parallel/CPU load are a known flake mode — rerun the failing files in isolation before treating them as regressions.
 
-**Check for ready work:**
+`createWindowTabsManager().dispose()` is asynchronous: await it in test teardown so
+explorer directory-listener cleanup settles before Vitest closes the worker (#611).
 
-```bash
-bd ready --json
-```
+Video frames in `PreviewPane.svelte` come from `getVideoThumbnailData`, not the
+tile component. Keep its asynchronous results guarded by the full preview
+revision (path, mtime, and size), because a watcher can update a selected video
+without changing its path (#607).
 
-**Create new issues:**
-
-```bash
-bd create "Issue title" --description="Detailed context" -t bug|feature|task -p 0-4 --json
-bd create "Issue title" --description="What this issue is about" -p 1 --deps discovered-from:bd-123 --json
-```
-
-**Claim and update:**
-
-```bash
-bd update <id> --claim --json
-bd update bd-42 --priority 1 --json
-```
-
-**Complete work:**
-
-```bash
-bd close bd-42 --reason "Completed" --json
-```
-
-### Issue Types
-
-- `bug` - Something broken
-- `feature` - New functionality
-- `task` - Work item (tests, docs, refactoring)
-- `epic` - Large feature with subtasks
-- `chore` - Maintenance (dependencies, tooling)
-
-### Priorities
-
-- `0` - Critical (security, data loss, broken builds)
-- `1` - High (major features, important bugs)
-- `2` - Medium (default, nice-to-have)
-- `3` - Low (polish, optimization)
-- `4` - Backlog (future ideas)
-
-### Workflow for AI Agents
-
-1. **Check ready work**: `bd ready` shows unblocked issues
-2. **Claim your task atomically**: `bd update <id> --claim`
-3. **Work on it**: Implement, test, document
-4. **Discover new work?** Create linked issue:
-   - `bd create "Found bug" --description="Details about what was found" -p 1 --deps discovered-from:<parent-id>`
-5. **Complete**: `bd close <id> --reason "Done"`
-
-### Auto-Sync
-
-bd automatically syncs via Dolt:
-
-- Each write auto-commits to Dolt history
-- Use `bd dolt push`/`bd dolt pull` for remote sync
-- No manual export/import needed!
-
-### Important Rules
-
-- ✅ Use bd for ALL task tracking
-- ✅ Always use `--json` flag for programmatic use
-- ✅ Link discovered work with `discovered-from` dependencies
-- ✅ Check `bd ready` before asking "what should I work on?"
-- ❌ Do NOT create markdown TODO lists
-- ❌ Do NOT use external issue trackers
-- ❌ Do NOT duplicate tracking systems
-
-For more details, see README.md and docs/QUICKSTART.md.
-
-## Landing the Plane (Session Completion)
-
-**When ending a work session**, you MUST complete ALL steps below. Work is NOT complete until `git push` succeeds.
-
-**MANDATORY WORKFLOW:**
-
-1. **File issues for remaining work** - Create issues for anything that needs follow-up
-2. **Run quality gates** (if code changed) - Tests, linters, builds
-3. **Update issue status** - Close finished work, update in-progress items
-4. **PUSH TO REMOTE** - This is MANDATORY:
-   ```bash
-   git pull --rebase
-   bd sync
-   git push
-   git status  # MUST show "up to date with origin"
-   ```
-5. **Clean up** - Clear stashes, prune remote branches
-6. **Verify** - All changes committed AND pushed
-7. **Hand off** - Provide context for next session
-
-**CRITICAL RULES:**
-- Work is NOT complete until `git push` succeeds
-- NEVER stop before pushing - that leaves work stranded locally
-- NEVER say "ready to push when you are" - YOU must push
-- If push fails, resolve and retry until it succeeds
-
-<!-- END BEADS INTEGRATION -->
+The floating update notice uses the shared `modal-card` and `btn` control chrome;
+import `components/modal.css` in `UpdateNotice.svelte` so the globally scoped
+dialog styles accompany the otherwise standalone notice.

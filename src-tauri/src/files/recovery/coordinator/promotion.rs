@@ -1,8 +1,9 @@
 //! Catalog-first conversion of a live reservation into durable ownership.
 //! Publication is bounded private-storage IO; no user-file effects run here.
 use super::*;
-use crate::files::recovery::model::OperationSpec;
-use crate::files::recovery::retention::{self, Budget, Usage};
+use crate::files::recovery::checkpoint::{Event, State};
+use crate::files::recovery::model::{OperationSpec, RECORD_VERSION};
+use crate::files::recovery::retention::{Budget, Usage};
 use sha2::{Digest, Sha256};
 
 pub(in crate::files::recovery) struct PromotionFailure {
@@ -13,11 +14,7 @@ pub(in crate::files::recovery) struct PromotionFailure {
 impl Reservation {
     fn planned(&self, operation: OperationSpec) -> OperationRecord {
         OperationRecord::planned(DurableIntent {
-            version: if matches!(&operation, OperationSpec::Move(_)) {
-                2
-            } else {
-                1
-            },
+            version: RECORD_VERSION,
             id: self.id.clone(),
             lock: self.owner.identity.clone(),
             resources: self.resources.clone(),
@@ -196,8 +193,8 @@ fn retained_usage(
         };
         let checkpoint = decode_checkpoint(row, intents)?;
         usage.add(
-            retention::retention(&entry.intent.operation, &checkpoint.state),
-            retention::measured_bytes(&checkpoint.state),
+            entry.intent.checkpoint(&checkpoint.state).retention(),
+            checkpoint.state.retained_bytes,
             true,
         );
     }
@@ -225,67 +222,51 @@ impl DurableOperation {
         &self.record.intent
     }
 
-    pub(crate) fn state(&self) -> &super::super::model::OperationState {
+    pub(crate) fn state(&self) -> &State {
         &self.record.state
     }
 
     /// Persist a legal transition after the executor has established its native
     /// evidence. No user-volume effects run under the coordinator's admission.
-    pub(in crate::files::recovery) fn advance(
-        &mut self,
-        event: super::super::replacement_transition::ReplacementTransition,
-    ) -> Result<(), AppError> {
+    pub(in crate::files::recovery) fn advance(&mut self, event: Event) -> Result<(), AppError> {
         self.advance_with(event, || Ok(()))
-    }
-
-    /// Moves have their own legal-transition contract. Both kinds share this
-    /// compare-and-swap protocol; only the pure state function differs.
-    pub(in crate::files::recovery) fn advance_move(
-        &mut self,
-        event: super::super::move_transition::MoveTransition,
-    ) -> Result<(), AppError> {
-        self.commit(
-            super::super::move_transition::transition(
-                &self.record.intent,
-                &self.record.state,
-                event,
-            )?,
-            || Ok(()),
-        )
-    }
-
-    /// `advance_move` for a transition that may be declined: `false` means
-    /// the journal could not grow this record while keeping `headroom` bytes
-    /// free for other operations, and nothing was committed.
-    pub(in crate::files::recovery) fn advance_move_leaving(
-        &mut self,
-        event: super::super::move_transition::MoveTransition,
-        headroom: usize,
-    ) -> Result<bool, AppError> {
-        let state = super::super::move_transition::transition(
-            &self.record.intent,
-            &self.record.state,
-            event,
-        )?;
-        self.commit_leaving(state, || Ok(()), headroom)
     }
 
     fn advance_with(
         &mut self,
-        event: super::super::replacement_transition::ReplacementTransition,
+        event: Event,
         after_commit: impl FnOnce() -> Result<(), AppError>,
     ) -> Result<(), AppError> {
-        let state = super::super::replacement_transition::transition(
-            &self.record.intent,
-            &self.record.state,
-            event,
-        )?;
+        let state = self.record.intent.transition(&self.record.state, event)?;
         self.commit(state, after_commit)
+    }
+
+    /// `advance` for a transition that may be declined: `false` means the
+    /// journal could not grow this record while keeping `headroom` bytes free
+    /// for other operations, and nothing was committed.
+    pub(in crate::files::recovery) fn advance_leaving(
+        &mut self,
+        event: Event,
+        headroom: usize,
+    ) -> Result<bool, AppError> {
+        let state = self.record.intent.transition(&self.record.state, event)?;
+        self.commit_leaving(state, || Ok(()), headroom)
+    }
+
+    /// Journal a failed effect's message, bounded to the checkpoint's error
+    /// budget, and hand the original error back. A failure to persist it is
+    /// only logged: the effect's own error is the caller's outcome.
+    pub(in crate::files::recovery) fn retain_failure(&mut self, error: AppError) -> AppError {
+        let message = super::super::model::bounded_error(error.to_string());
+        if let Err(persistence) = self.advance(Event::ReportError(message)) {
+            log::warn!("Could not persist recovery failure: {persistence}");
+        }
+        error
     }
 
     fn commit(
         &mut self,
-        state: super::super::model::OperationState,
+        state: State,
         after_commit: impl FnOnce() -> Result<(), AppError>,
     ) -> Result<(), AppError> {
         if self.commit_leaving(state, after_commit, 0)? {
@@ -297,7 +278,7 @@ impl DurableOperation {
 
     fn commit_leaving(
         &mut self,
-        state: super::super::model::OperationState,
+        state: State,
         after_commit: impl FnOnce() -> Result<(), AppError>,
         headroom: usize,
     ) -> Result<bool, AppError> {

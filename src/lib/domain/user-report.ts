@@ -7,9 +7,14 @@ export const USER_REPORT_IMAGE_TYPES = [
 ] as const;
 export type UserReportImageType = (typeof USER_REPORT_IMAGE_TYPES)[number];
 
+// Mirrors the native boundary and the relay; all three assert these against
+// tests/contract/fixtures/report_relay.json.
 export const MAX_USER_REPORT_ATTACHMENTS = 3;
 export const MAX_USER_REPORT_ATTACHMENT_BYTES = 2 * 1024 * 1024;
 export const MAX_USER_REPORT_ATTACHMENTS_BYTES = 3 * 1024 * 1024;
+export const MAX_USER_REPORT_TITLE_UNITS = 120;
+export const MAX_USER_REPORT_DESCRIPTION_UNITS = 8000;
+export const MAX_USER_REPORT_CONTACT_UNITS = 100;
 
 export interface UserReportAttachment {
   name: string;
@@ -32,6 +37,19 @@ export interface UserReportAttachmentUsage {
 export function userReportAttachmentBytes(data: string): number {
   const padding = data.endsWith("==") ? 2 : data.endsWith("=") ? 1 : 0;
   return Math.max(0, Math.floor(data.length * 3 / 4) - padding);
+}
+
+/** Current count/byte usage of an attachment list, for validating an addition against it. */
+export function userReportAttachmentUsage(
+  attachments: readonly UserReportAttachment[],
+): UserReportAttachmentUsage {
+  return {
+    count: attachments.length,
+    bytes: attachments.reduce(
+      (total, attachment) => total + userReportAttachmentBytes(attachment.data),
+      0,
+    ),
+  };
 }
 
 export function validateUserReportAttachmentFiles(
@@ -87,6 +105,16 @@ export interface UserReportError {
   message: string;
 }
 
+const NOTHING_SENT = "Couldn't reach the report server — nothing was sent";
+
+/** Toast for a definite in-app failure that falls back to GitHub's form.
+ *  `submission_uncertain` never reaches here: it must not invite a retry. */
+export function userReportFallbackNotice(kind: UserReportErrorKind | undefined): string {
+  if (kind === "network_unreachable") return `${NOTHING_SENT}. Opening GitHub instead`;
+  if (kind === "daily_cap") return "Reports are temporarily unavailable — opening GitHub instead";
+  return "Could not submit in-app — opening GitHub instead";
+}
+
 export function userReportAttachmentFailureMessage(
   kind: UserReportErrorKind | undefined,
 ): string {
@@ -102,6 +130,9 @@ export function userReportAttachmentFailureMessage(
   }
   if (kind === "daily_cap") {
     return `Reports are temporarily unavailable. ${retry}`;
+  }
+  if (kind === "network_unreachable") {
+    return `${NOTHING_SENT}. ${retry}`;
   }
   if (kind === "rate_limited") {
     return `Too many reports were submitted. ${retry} Try again later.`;

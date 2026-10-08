@@ -24,8 +24,7 @@ fn grouped_receipts_survive_inventory_error_and_panic_with_usable_independent_in
             .zip(&targets)
             .map(|(s, t)| (s.as_path(), t.as_path()))
             .collect();
-        let storage = directory.path().join("recovery");
-        let runtime = Runtime::default();
+        let runtime = Runtime::new(directory.path().join("recovery"));
         let mut progress = crate::progress::ProgressTracker::new(
             None,
             "copy-progress",
@@ -35,7 +34,7 @@ fn grouped_receipts_survive_inventory_error_and_panic_with_usable_independent_in
             None,
         );
         let outcome = runtime
-            .replace_copies_with(storage.clone(), &copies, &mut progress, |_| {
+            .replace_copies_with(&copies, &mut progress, |_| {
                 if panics {
                     panic!("inventory publisher interrupted");
                 }
@@ -44,7 +43,7 @@ fn grouped_receipts_survive_inventory_error_and_panic_with_usable_independent_in
             .unwrap();
         assert!(outcome.warnings.into_vec().join("\n").contains("inventory"));
         assert_eq!(outcome.items.len(), 2);
-        let coordinator = runtime.coordinator(storage).unwrap();
+        let coordinator = runtime.coordinator().unwrap();
         assert_eq!(
             super::super::service::list(&coordinator)
                 .unwrap()
@@ -83,15 +82,11 @@ fn an_oversized_inventory_diagnostic_does_not_overgrow_or_replace_the_committed_
     std::fs::write(&target, "old").unwrap();
     let mut progress =
         crate::progress::ProgressTracker::new(None, "copy-progress", "Copy cancelled", 0, 0, None);
-    let runtime = Runtime::default();
+    let runtime = Runtime::new(directory.path().join("recovery"));
     let receipt = runtime
-        .replace_copy_with(
-            directory.path().join("recovery"),
-            &source,
-            &target,
-            &mut progress,
-            |_| Err(AppError::Other("界".repeat(32_768))),
-        )
+        .replace_copy_with(&source, &target, &mut progress, |_| {
+            Err(AppError::Other("界".repeat(32_768)))
+        })
         .unwrap();
     let replacement = receipt.replacement.unwrap();
     let warning = replacement.warning.unwrap();
@@ -105,12 +100,11 @@ fn an_oversized_inventory_diagnostic_does_not_overgrow_or_replace_the_committed_
 fn losing_the_ipc_waiter_does_not_cancel_publication_of_completed_owned_work() {
     tauri::async_runtime::block_on(async {
         let directory = tempfile::tempdir().unwrap();
-        let path = directory.path().join("recovery");
-        let runtime = Runtime::default();
+        let runtime = Runtime::new(directory.path().join("recovery"));
         let (published, mut received) = tokio::sync::mpsc::unbounded_channel();
         let receive = move |snapshot: &RecoverySnapshot| published.send(snapshot.clone()).is_ok();
         runtime
-            .subscribe(path.clone(), Owner::default(), 1, receive)
+            .subscribe(Owner::default(), 1, receive)
             .await
             .unwrap();
         received.recv().await.unwrap(); // initial inventory
@@ -119,7 +113,7 @@ fn losing_the_ipc_waiter_does_not_cancel_publication_of_completed_owned_work() {
         let worker = runtime.clone();
         let request = tokio::spawn(async move {
             worker
-                .operate(path, move |_| {
+                .operate(move |_| {
                     started.send(()).unwrap();
                     resumed
                         .recv_timeout(std::time::Duration::from_secs(5))
@@ -149,18 +143,17 @@ fn losing_the_ipc_waiter_does_not_cancel_publication_of_completed_owned_work() {
 fn failed_operation_publishes_fresh_inventory_without_replacing_its_error() {
     tauri::async_runtime::block_on(async {
         let directory = tempfile::tempdir().unwrap();
-        let path = directory.path().join("recovery");
-        let runtime = Runtime::default();
+        let runtime = Runtime::new(directory.path().join("recovery"));
         let (published, mut received) = tokio::sync::mpsc::unbounded_channel();
         runtime
-            .subscribe(path.clone(), Owner::default(), 1, move |snapshot| {
+            .subscribe(Owner::default(), 1, move |snapshot| {
                 published.send(snapshot.clone()).is_ok()
             })
             .await
             .unwrap();
         received.recv().await.unwrap();
         let error = runtime
-            .operate(path, |_| Err(AppError::Other("operation failed".into())))
+            .operate(|_| Err(AppError::Other("operation failed".into())))
             .await
             .unwrap_err();
         assert_eq!(error.to_string(), "operation failed");
@@ -175,14 +168,11 @@ fn failed_operation_publishes_fresh_inventory_without_replacing_its_error() {
 fn failed_delivery_does_not_fail_the_native_operation_or_acknowledge_a_dead_channel() {
     tauri::async_runtime::block_on(async {
         let directory = tempfile::tempdir().unwrap();
-        let path = directory.path().join("recovery");
-        let runtime = Runtime::default();
-        let result = runtime
-            .subscribe(path.clone(), Owner::default(), 1, |_| false)
-            .await;
+        let runtime = Runtime::new(directory.path().join("recovery"));
+        let result = runtime.subscribe(Owner::default(), 1, |_| false).await;
         assert!(result.is_err());
         let result = runtime
-            .operate(path, |_| {
+            .operate(|_| {
                 Ok(RecoverySnapshot {
                     storage: Default::default(),
                     revision: 17,
@@ -210,17 +200,16 @@ fn cancelled_discovery_releases_its_channel_while_newer_discovery_can_finish() {
             }
         }
         let directory = tempfile::tempdir().unwrap();
-        let path = directory.path().join("recovery");
-        let runtime = Runtime::default();
+        let runtime = Runtime::new(directory.path().join("recovery"));
         let owner = Owner::default();
         let (released, retired) = tokio::sync::oneshot::channel();
         let retained = Dropped(Some(released));
-        let mut old = Box::pin(runtime.subscribe(path.clone(), owner.clone(), 1, move |_| {
+        let mut old = Box::pin(runtime.subscribe(owner.clone(), 1, move |_| {
             let _ = &retained;
             panic!("cancelled discovery must not deliver");
         }));
         let (delivered, mut received) = tokio::sync::mpsc::unbounded_channel();
-        let mut new = Box::pin(runtime.subscribe(path.clone(), owner, 2, move |_| {
+        let mut new = Box::pin(runtime.subscribe(owner, 2, move |_| {
             delivered.send(()).unwrap();
             true
         }));
@@ -254,12 +243,11 @@ fn committed_replacement_survives_failed_inventory_refresh_with_a_warning_and_no
     let target = directory.path().join("target");
     std::fs::write(&source, "new bytes").unwrap();
     std::fs::write(&target, "original bytes").unwrap();
-    let runtime = Runtime::default();
-    let storage = directory.path().join("recovery");
+    let runtime = Runtime::new(directory.path().join("recovery"));
     let mut progress =
         crate::progress::ProgressTracker::new(None, "copy-progress", "Copy cancelled", 0, 0, None);
     let receipt = runtime
-        .replace_copy_with(storage.clone(), &source, &target, &mut progress, |_| {
+        .replace_copy_with(&source, &target, &mut progress, |_| {
             Err(AppError::Other("inventory connection interrupted".into()))
         })
         .unwrap();
@@ -269,7 +257,7 @@ fn committed_replacement_survives_failed_inventory_refresh_with_a_warning_and_no
         Some("File Recovery inventory could not refresh: inventory connection interrupted")
     );
     assert_eq!(std::fs::read(&target).unwrap(), b"new bytes");
-    let recovered = tauri::async_runtime::block_on(runtime.list(storage)).unwrap();
+    let recovered = tauri::async_runtime::block_on(runtime.list()).unwrap();
     assert_eq!(recovered.items.len(), 1);
     assert_eq!(recovered.items[0].id, replacement.id);
     let roots: Vec<_> = std::fs::read_dir(directory.path())
@@ -309,18 +297,14 @@ fn panicking_copy_worker_publishes_its_retained_operation_before_reporting_failu
     let target = directory.path().join("target");
     std::fs::write(&source, "new bytes").unwrap();
     std::fs::write(&target, "original bytes").unwrap();
-    let runtime = Runtime::default();
-    let storage = directory.path().join("recovery");
+    let runtime = Runtime::new(directory.path().join("recovery"));
     let (sender, receiver) = std::sync::mpsc::channel();
-    tauri::async_runtime::block_on(runtime.subscribe(
-        storage.clone(),
-        Owner::default(),
-        1,
-        move |snapshot| sender.send(snapshot.clone()).is_ok(),
-    ))
+    tauri::async_runtime::block_on(runtime.subscribe(Owner::default(), 1, move |snapshot| {
+        sender.send(snapshot.clone()).is_ok()
+    }))
     .unwrap();
     receiver.recv().unwrap();
-    let result = runtime.replace_copy(storage, &source, &target, &mut PanicProgress);
+    let result = runtime.replace_copy(&source, &target, &mut PanicProgress);
     assert!(matches!(result, Err(AppError::WorkerFailed(_))));
     let updated = receiver
         .try_recv()
@@ -356,11 +340,10 @@ fn dropping_a_copy_reply_waiter_keeps_the_real_replacement_and_inventory_publica
         let target = directory.path().join("target");
         std::fs::write(&source, "new bytes").unwrap();
         std::fs::write(&target, "original bytes").unwrap();
-        let storage = directory.path().join("recovery");
-        let runtime = Runtime::default();
+        let runtime = Runtime::new(directory.path().join("recovery"));
         let (published, mut received) = tokio::sync::mpsc::unbounded_channel();
         runtime
-            .subscribe(storage.clone(), Owner::default(), 1, move |snapshot| {
+            .subscribe(Owner::default(), 1, move |snapshot| {
                 published.send(snapshot.clone()).is_ok()
             })
             .await
@@ -372,7 +355,6 @@ fn dropping_a_copy_reply_waiter_keeps_the_real_replacement_and_inventory_publica
         let request = tokio::spawn(async move {
             crate::files::run_blocking(move || {
                 runtime.replace_copy(
-                    storage,
                     &source,
                     &destination,
                     &mut PausedCopy {

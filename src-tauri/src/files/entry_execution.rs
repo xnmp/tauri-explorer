@@ -1,5 +1,5 @@
 //! Entry admission and execution shared by commands and native history inverses.
-use super::{entry_plan::EntryPlan, mutation::FileMutationReceipt, WorkerCompletion};
+use super::{admission, entry_plan::EntryPlan, mutation::FileMutationReceipt, WorkerCompletion};
 use crate::error::AppError;
 use std::path::PathBuf;
 
@@ -42,51 +42,13 @@ pub(crate) async fn execute_owned<O: Send + 'static>(plan: EntryPlan, owner: O) 
     }
 }
 
-#[cfg(target_os = "linux")]
-pub(crate) async fn admit(
-    plan: EntryPlan,
-    runtime: super::recovery::Runtime,
-    storage: PathBuf,
-) -> Result<(EntryPlan, super::recovery::MutationAdmission), AppError> {
-    let admission = runtime.admit(storage, plan.resources()).await?;
-    match plan.resolve(admission.paths().map(std::path::Path::to_path_buf)) {
-        Ok(plan) => Ok((plan, admission)),
-        Err(error) => {
-            // No worker started; release the reservation on this error path too.
-            let _ = super::run_blocking(move || admission.finish()).await;
-            Err(error)
-        }
-    }
+pub(crate) async fn execute(plan: EntryPlan, runtime: &admission::Runtime) -> Outcome {
+    admission::admitted_execute(plan, runtime, execute_owned).await
 }
 
-#[cfg(target_os = "linux")]
-pub(crate) async fn finish(
-    mut outcome: Outcome,
-    admission: super::recovery::MutationAdmission,
-) -> Outcome {
-    if let Err(error) = super::run_blocking(move || admission.finish()).await {
-        let mut warnings: crate::diagnostics::Warnings =
-            outcome.completion.warning.take().into_iter().collect();
-        warnings.push(format!(
-            "File operation finished, but its ownership record could not be retired: {error}"
-        ));
-        outcome.completion.warning = Some(warnings.into_vec().join("\n"));
-    }
-    outcome
-}
-
-#[cfg(target_os = "linux")]
-pub(crate) async fn execute(
-    plan: EntryPlan,
-    runtime: super::recovery::Runtime,
-    storage: PathBuf,
-) -> Outcome {
-    match admit(plan, runtime, storage).await {
-        Ok((plan, admission)) => {
-            let outcome = execute_owned(plan, admission.context()).await;
-            finish(outcome, admission).await
-        }
-        Err(error) => Outcome {
+impl admission::Settle for Outcome {
+    fn refused(error: AppError) -> Self {
+        Outcome {
             completion: WorkerCompletion {
                 result: Err(error),
                 warning: None,
@@ -94,7 +56,14 @@ pub(crate) async fn execute(
             affected: Vec::new(),
             target: PathBuf::new(),
             rename: None,
-        },
+        }
+    }
+
+    fn unretired(&mut self, error: AppError) {
+        let mut warnings: crate::diagnostics::Warnings =
+            self.completion.warning.take().into_iter().collect();
+        warnings.push(admission::unretired_warning("File operation", &error));
+        self.completion.warning = Some(warnings.into_vec().join("\n"));
     }
 }
 

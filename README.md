@@ -30,7 +30,13 @@ curl -fsSL https://raw.githubusercontent.com/xnmp/tauri-explorer/main/mac_instal
 
 Binaries aren't code-signed yet. Windows shows a SmartScreen warning on first launch. macOS reports un-notarized downloads as "damaged" and blocks them; after installing the downloaded Apple Silicon DMG, run `xattr -r -d com.apple.quarantine /Applications/tauri-explorer.app` to clear quarantine. The release page is the supported binary install route; the repository-root `PKGBUILD` provides an Arch source build. The older Homebrew cask and `packaging/aur` binary recipe are not current release channels.
 
-File Cut is available on X11, where the app can verify native clipboard ownership before moving the source. On Wayland, Windows, and macOS, file Copy remains available but Cut reports that ownership cannot yet be verified.
+On Arch, run `./arch_install.sh` from a checkout to build and install the current source. Repeated runs reuse frontend assets when their inputs and output contents are unchanged, avoiding an unnecessary Rust release relink. Dependencies are still prepared and Cargo checks native changes each time. Use `./arch_install.sh --rebuild` to force fresh frontend assets; source changes and missing or modified outputs rebuild automatically. Cold builds and builds after frontend or native changes still compile the optimized release. After generating new embedded assets, Cargo can require one additional native compile before its cache settles. The package under `/usr` is the only install: per-user copies of the launcher (`~/.local/bin/tauri-explorer`), desktop entry, or file-chooser portal files would shadow it, so the script moves them to `~/.local/state/tauri-explorer/retired-overrides/` and reports any still-running instance that needs to quit.
+
+If a matching TraceExplorer `.teplugin` exists in `$HOME/Repos/TraceExplorer/package`, the Arch script queues the latest version for validated installation on the next app launch. Override its file or directory with `--plugin-path PATH` or `TRACE_EXPLORER_PLUGIN_PATH`. Missing packages are optional; plugin installation runs as the invoking user, after the host package succeeds. Startup uses the ordinary package validator and rollback flow. Failed requests move to `pending-plugins/failed` under the user config directory and surface as an error; rerun the script to retry a corrected package.
+
+The default Arch package build timestamp follows the latest Git commit, or `package.json` modification time for source archives. Set `SOURCE_DATE_EPOCH` explicitly to override it.
+
+File Cut verifies native clipboard ownership before moving the source, on X11, Wayland (with `wl-clipboard`), Windows, and macOS. If another program changes the clipboard between Cut and Paste, Paste copies instead of moving. Where ownership cannot be proven (for example, a remote-desktop session that re-renders every clipboard change), Cut reports it and Copy remains available.
 
 ## Use as system file picker
 
@@ -47,6 +53,14 @@ org.freedesktop.impl.portal.FileChooser=tauri-explorer
 ```
 
 Restart `xdg-desktop-portal` or sign out and back in after changing the file.
+The picker uses the requesting application's exported parent window when available.
+On Hyprland, floating rules may be used, but omit monitor `center` rules for the
+picker to let the compositor place it over its parent.
+
+Inside the picker, type a name prefix to select an entry and press Enter to open
+a folder or confirm a file. Ctrl+F filters the active column; Escape clears the
+filter before cancelling the dialog. Ctrl+P opens recent files and frequently
+used folders, with fuzzy search as you type.
 
 ### Windows: build and install from source
 

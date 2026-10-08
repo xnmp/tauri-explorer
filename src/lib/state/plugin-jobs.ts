@@ -4,10 +4,11 @@ import { jobsStore } from "$lib/state/jobs.svelte";
 import { toastStore } from "$lib/state/toast.svelte";
 import { windowTabsManager } from "$lib/state/window-tabs.svelte";
 
-export type PluginJobKind = "upscale" | "nano-banana";
+const JOB_LABELS = { upscale: "Upscale", "nano-banana": "Nano Banana" } as const;
+export type PluginJobKind = string;
 
 type Outcome =
-  | { status: "completed"; outputPath: string }
+  | { status: "completed"; outputPath: string; warning?: string }
   | { status: "error"; error: string };
 
 interface JobRegistration {
@@ -15,6 +16,7 @@ interface JobRegistration {
   id: number;
   label: string;
   detail: string;
+  presentation?: "image";
 }
 
 type StartResult = { ok: true; data: number } | { ok: false; error: string };
@@ -35,7 +37,7 @@ export function createPluginJobsController(deps: Dependencies) {
   const owned = new Map<string, JobRegistration>();
   const pending = new Map<string, Outcome>();
   const settled = new Set<string>();
-  type Session = { starting: Promise<void>; unlisteners: UnlistenFn[] };
+  type Session = { starting: Promise<void>; kinds: Map<string,Promise<void>>; unlisteners: UnlistenFn[] };
   let current: Session | null = null;
   let closing: Session | null = null;
   let disposing: Promise<void> | null = null;
@@ -64,44 +66,43 @@ export function createPluginJobsController(deps: Dependencies) {
     retainBounded(settled, 1024);
     if (outcome.status === "completed") {
       deps.complete(id, outcome.outputPath);
-      const action = kind === "upscale" ? "Upscale" : "Nano Banana";
-      deps.success(`${action} complete: ${basename(outcome.outputPath)}`);
+      const action = JOB_LABELS[kind as keyof typeof JOB_LABELS] ?? registration.label;
+      deps.success(`${action} complete: ${basename(outcome.outputPath)}${outcome.warning ? `. ${outcome.warning}` : ""}`);
       void deps.refresh().catch((error) => console.error("[plugin-jobs] refresh failed:", error));
     } else {
       deps.fail(id, outcome.error);
-      const action = kind === "upscale" ? "Upscale" : "Nano Banana";
+      const action = JOB_LABELS[kind as keyof typeof JOB_LABELS] ?? registration.label;
       deps.error(`${action} failed: ${outcome.error.slice(0, 100)}`);
     }
   };
 
-  const addListeners = async (session: Session) => {
-    const results = await Promise.allSettled([
-      deps.listen<{ jobId: number; outputPath: string }>("upscale-complete", (payload) =>
-        current === session && publish("upscale", payload.jobId, { status: "completed", outputPath: payload.outputPath }),
-      ),
-      deps.listen<{ jobId: number; error: string }>("upscale-error", (payload) =>
-        current === session && publish("upscale", payload.jobId, { status: "error", error: payload.error }),
-      ),
-      deps.listen<{ jobId: number; outputPath: string }>("nano-banana-complete", (payload) =>
-        current === session && publish("nano-banana", payload.jobId, { status: "completed", outputPath: payload.outputPath }),
-      ),
-      deps.listen<{ jobId: number; error: string }>("nano-banana-error", (payload) =>
-        current === session && publish("nano-banana", payload.jobId, { status: "error", error: payload.error }),
-      ),
-    ]);
-    const acquired = results.flatMap((result) => result.status === "fulfilled" ? [result.value] : []);
-    const rejected = results.find((result) => result.status === "rejected");
-    if (current !== session || rejected) acquired.forEach((unlisten) => unlisten());
-    else session.unlisteners = acquired;
-    if (current !== session) throw new Error("Plugin jobs controller disposed");
-    if (rejected?.status === "rejected") throw rejected.reason;
+  const addListeners = (session: Session, kind: string): Promise<void> => {
+    const existing=session.kinds.get(kind);
+    if(existing)return existing;
+    if(!/^[a-z0-9-]{1,99}$/.test(kind))return Promise.reject(new Error("Invalid plugin job kind"));
+    const acquisition=(async()=>{
+      const results=await Promise.allSettled([
+        deps.listen<{jobId:number;outputPath:string;warning?:string}>(`${kind}-complete`,(payload)=>current===session&&publish(kind,payload.jobId,{status:"completed",outputPath:payload.outputPath,warning:payload.warning})),
+        deps.listen<{jobId:number;error:string}>(`${kind}-error`,(payload)=>current===session&&publish(kind,payload.jobId,{status:"error",error:payload.error})),
+      ]);
+      const acquired=results.flatMap((result)=>result.status==="fulfilled"?[result.value]:[]);
+      const rejected=results.find((result)=>result.status==="rejected");
+      if(current!==session||rejected)acquired.forEach((unlisten)=>unlisten());else session.unlisteners.push(...acquired);
+      if(current!==session)throw new Error("Plugin jobs controller disposed");
+      if(rejected?.status==="rejected"){session.kinds.delete(kind);throw rejected.reason;}
+    })();
+    session.kinds.set(kind,acquisition);return acquisition;
   };
 
   const ensureSession = (): Session => {
     if (current) return current;
-    const session: Session = { starting: Promise.resolve(), unlisteners: [] };
+    const session: Session = { starting: Promise.resolve(), kinds: new Map(), unlisteners: [] };
     current = session;
-    session.starting = addListeners(session).catch((error) => {
+    session.starting = Promise.allSettled(Object.keys(JOB_LABELS).map((kind)=>addListeners(session,kind))).then((results)=>{
+      const failure=results.find((result)=>result.status==="rejected");
+      if(failure?.status==="rejected")throw failure.reason;
+    }).catch((error) => {
+      session.unlisteners.splice(0).forEach((unlisten)=>unlisten());
       if (current === session) current = null;
       console.error("[plugin-jobs] failed to listen:", error);
       throw error;
@@ -139,6 +140,8 @@ export function createPluginJobsController(deps: Dependencies) {
         await init();
         const session = current;
         if (!session || closing === session) throw new Error("Plugin jobs controller disposed");
+        await addListeners(session,registration.kind);
+        if(current!==session || closing===session)throw new Error("Plugin jobs controller disposed");
         let release!: () => void;
         const pendingStart = new Promise<void>((resolve) => { release = resolve; });
         accepting.add(pendingStart);
@@ -166,6 +169,7 @@ export function createPluginJobsController(deps: Dependencies) {
         if (current === session) current = null;
         try {
           await session.starting;
+          await Promise.allSettled(session.kinds.values());
         } catch {
           // Acquisition failure/staleness already released every listener.
         }
@@ -187,7 +191,7 @@ export function createPluginJobsController(deps: Dependencies) {
 export const pluginJobsController = createPluginJobsController({
   listen: <T>(name: string, handler: (payload: T) => void) =>
     listen<T>(name, (event) => handler(event.payload)),
-  add: ({ id, label, detail, kind }) => jobsStore.addJob(id, label, detail, kind),
+  add: ({ id, label, detail, kind, presentation }) => jobsStore.addJob(id, label, detail, kind, presentation),
   complete: (id, outputPath) => jobsStore.completeJob(id, outputPath),
   fail: (id, error) => jobsStore.failJob(id, error),
   success: (message) => toastStore.show(message, "success"),

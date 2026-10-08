@@ -1,6 +1,6 @@
 /** Main file-list rows form one keyboard focus/selection composite. */
 import { test, expect, type Page } from "./fixtures";
-import { ALL_VIEW_MODES, MULTI_SELECT_MODIFIER, waitForEntries, type ViewMode } from "./helpers";
+import { ALL_VIEW_MODES, MULTI_SELECT_MODIFIER, focusBeforeFileList, waitForEntries, type ViewMode } from "./helpers";
 
 const HOME_PATH = "/home/user";
 const TARGET_PATH = `${HOME_PATH}/Downloads`;
@@ -13,26 +13,6 @@ async function openPath(page: Page, path: string, viewMode: ViewMode): Promise<v
   await page.goto(`/?path=${encodeURIComponent(path)}&viewMode=${viewMode}`);
   await waitForEntries(page);
   await expect(page.locator(`.${viewMode}-view`)).toBeVisible();
-}
-
-/** Focus the last sequential focus target before the rows in DOM order. */
-async function focusBeforeFileList(page: Page): Promise<void> {
-  const focused = await page.evaluate(() => {
-    const rowViewport = document.querySelector(".file-list .file-rows");
-    if (!rowViewport) return null;
-    const candidates = [...document.querySelectorAll<HTMLElement>(
-      'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
-    )].filter((element) => {
-      const style = getComputedStyle(element);
-      return element.tabIndex >= 0 && style.display !== "none" && style.visibility !== "hidden"
-        && !!(element.offsetWidth || element.offsetHeight || element.getClientRects().length)
-        && !!(element.compareDocumentPosition(rowViewport) & Node.DOCUMENT_POSITION_FOLLOWING);
-    });
-    const previous = candidates.at(-1);
-    previous?.focus();
-    return previous ? { tag: previous.tagName, className: previous.className } : null;
-  });
-  expect(focused, "the file list must have a preceding sequential focus target").not.toBeNull();
 }
 
 async function rowState(page: Page) {

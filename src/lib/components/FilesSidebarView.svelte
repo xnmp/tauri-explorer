@@ -279,10 +279,10 @@
     const scoreMap = frecencyStore.getScoreMap();
     const mounted = drivesStore.mountedRoots;
 
-    return frecencyStore.entries
+    return frecencyStore.recentEntries
       .filter((e) => e.path !== homeDir && e.path !== "/home" && e.path !== "/" && !bookmarkedPaths.has(directoryKey(e.path)) && !systemPaths.has(directoryKey(e.path)))
       .filter((e) => !ejectedDriveHidesPath(e.path, mounted))
-      .map((e) => ({ path: e.path, name: basename(e.path), score: scoreMap.get(e.path) ?? 0 }))
+      .map((e) => ({ path: e.path, name: basename(e.path), score: scoreMap.get(directoryKey(e.path)) ?? 0 }))
       .sort((a, b) => b.score - a.score)
       .slice(0, settingsStore.recentItemsCount);
   });
@@ -528,16 +528,16 @@
 
       {#if drivesExpanded}
         <div class="section-content">
-          {#each drivesStore.removable as drive (drive.device_id ?? drive.path)}
-            <button class="nav-item drive-item" onclick={() => openDrive(drive)} title={drive.path || `Mount ${drive.name}`}>
+          {#each drivesStore.removable as drive (drive.deviceId ?? drive.path)}
+            <button class="nav-item drive-item" onclick={() => openDrive(drive)} title={drive.path ?? `Mount ${drive.name}`}>
               <svg width="16" height="16" viewBox="0 0 16 16" fill="none" class="nav-icon" style="color: #10b981">
                 <rect x="2" y="4" width="12" height="8" rx="1.5" stroke="currentColor" stroke-width="1.25"/>
                 <circle cx="11" cy="8" r="0.9" fill="currentColor"/>
                 <path d="M4 4V3M6 4V3" stroke="currentColor" stroke-width="1.25" stroke-linecap="round"/>
               </svg>
               <span class="drive-name">{drive.name}</span>
-              {#if !drive.path || drive.detail}
-                <span class="drive-detail">{drive.path ? drive.detail : "Not mounted"}</span>
+              {#if drive.path === null || drive.detail}
+                <span class="drive-detail">{drive.path === null ? "Not mounted" : drive.detail}</span>
               {/if}
             </button>
           {/each}
@@ -563,8 +563,8 @@
 
       {#if cloudExpanded}
         <div class="section-content">
-          {#each drivesStore.cloud as drive (drive.path)}
-            <button class="nav-item drive-item" onclick={() => openDrive(drive)} title={drive.path || `Mount ${drive.name}`}>
+          {#each drivesStore.cloud as drive (drive.deviceId ?? drive.path)}
+            <button class="nav-item drive-item" onclick={() => openDrive(drive)} title={drive.path ?? `Mount ${drive.name}`}>
               {#if drive.provider === "googledrive"}
                 <!-- Google "G" multi-colour mark -->
                 <svg width="16" height="16" viewBox="0 0 48 48" class="nav-icon">
@@ -628,7 +628,7 @@
               <span data-drag-name>{loc.name}</span>
               <button
                 class="remove-bookmark"
-                onclick={(e) => { e.stopPropagation(); frecencyStore.remove(loc.path); }}
+                onclick={(e) => { e.stopPropagation(); frecencyStore.dismissRecent(loc.path); }}
                 title="Remove from Recent"
                 aria-label="Remove {loc.name} from recent locations"
               >

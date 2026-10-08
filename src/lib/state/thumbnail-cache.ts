@@ -69,3 +69,11 @@ export function renameThumbnailCache(oldPath: string, newPath: string): void {
     }
   }
 }
+
+/** A generated replacement can retain its path, byte count and timestamp
+ * precision. Drop every cached resolution instead of reusing its old pixels. */
+export function invalidateThumbnailCache(path: string): void {
+  for (const [key, value] of [...cache]) {
+    if (key.startsWith(path + ":")) { cache.delete(key); revokeEntry(value); }
+  }
+}

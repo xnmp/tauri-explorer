@@ -26,6 +26,27 @@ function fixture() {
 }
 
 describe("window-owned plugin jobs", () => {
+  it.each(["openai-image", "upscale", "nano-banana"] as const)("reports a published %s image with its pending Trace warning", async (kind) => {
+    const f = fixture();
+    await f.controller.init();
+    await f.controller.accept({ kind, label: "image.png", detail: "lantern" },async()=>({ok:true,data:42}));
+    f.handlers.get(`${kind}-complete`)!({ jobId: 42, outputPath: "/out/image.png", warning: "Trace completion pending" });
+    expect(f.completed).toEqual([{ id: 42, outputPath: "/out/image.png" }]);
+    expect(f.failed).toEqual([]);
+    expect(f.successes).toHaveLength(1);
+    expect(f.successes[0]).toContain("Trace completion pending");
+    expect(f.refreshes).toBe(1);
+  });
+  it("monitors a newly installed job kind before invoking its provider",async()=>{
+    const f=fixture();
+    const result=await f.controller.accept({kind:"external-edit",label:"Image edit",detail:"paint"},async()=>{
+      f.handlers.get("external-edit-complete")!({jobId:77,outputPath:"/temp/edit.png"});
+      return {ok:true,data:77};
+    });
+    expect(result).toEqual({ok:true,data:77});
+    expect(f.completed).toEqual([{id:77,outputPath:"/temp/edit.png"}]);
+    expect(f.successes).toEqual(["Image edit complete: edit.png"]);
+  });
   it("reconciles completion before invoke returns the job id", async () => {
     const f = fixture();
     await f.controller.init();
@@ -86,7 +107,7 @@ describe("window-owned plugin jobs", () => {
     expect(startResult.status).toBe("rejected");
     handlers.forEach((handler) => handler({ jobId: 3, outputPath: "/late.png" }));
 
-    expect(unlisten).toHaveBeenCalledTimes(4);
+    expect(unlisten).toHaveBeenCalledTimes(handlers.length);
     expect(complete).not.toHaveBeenCalled();
   });
 
@@ -130,7 +151,7 @@ describe("window-owned plugin jobs", () => {
 
     expect(result).toMatchObject({ ok: false });
     expect(start).not.toHaveBeenCalled();
-    expect(unlisten).toHaveBeenCalledTimes(3);
+    expect(unlisten).toHaveBeenCalledTimes(call - 1);
   });
 
   it("drains an in-flight start before ending listener ownership", async () => {

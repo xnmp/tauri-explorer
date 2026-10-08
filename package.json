@@ -1,11 +1,11 @@
 {
   "name": "tauri-explorer",
-  "version": "1.11.2",
+  "version": "1.11.3",
   "description": "A minimalistic, high-performance file explorer",
   "type": "module",
   "scripts": {
-    "dev": "vite dev",
-    "build": "vite build",
+    "dev": "bun run prepare:pdf && vite dev",
+    "build": "bun run prepare:pdf && vite build",
     "preview": "vite preview",
     "check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
     "check:watch": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json --watch",
@@ -36,18 +36,20 @@
     "start": "bash scripts/dev.sh",
     "start:clean": "bash scripts/dev.sh --clean",
     "tauri": "tauri",
-    "install-app": "tauri build && sudo rm -rf /Applications/tauri-explorer.app && cp -R src-tauri/target/release/bundle/macos/tauri-explorer.app /Applications/ && fileicon set /Applications/tauri-explorer.app src-tauri/icons/icon.png && killall Dock"
+    "install-app": "tauri build && sudo rm -rf /Applications/tauri-explorer.app && cp -R src-tauri/target/release/bundle/macos/tauri-explorer.app /Applications/ && fileicon set /Applications/tauri-explorer.app src-tauri/icons/icon.png && killall Dock",
+    "prepare:pdf": "node scripts/prepare-pdf-assets.mjs"
   },
   "license": "MIT",
   "dependencies": {
-    "@chenglou/pretext": "^0.0.8",
+    "@chenglou/pretext": "^0.0.9",
     "@crabnebula/tauri-plugin-drag": "^2.1.0",
     "@fontsource-variable/inter": "^5.2.8",
-    "@tauri-apps/api": "^2.10.1",
+    "@tauri-apps/api": "^2.12.0",
     "@xterm/addon-fit": "^0.11.0",
     "@xterm/xterm": "^6.0.0",
     "highlight.js": "^11.11.1",
     "marked": "^18.0.5",
+    "pdfjs-dist": "^6.3.289",
     "yaml": "^2.9.0"
   },
   "devDependencies": {
@@ -63,11 +65,11 @@
     "@wdio/mocha-framework": "^9.27.0",
     "@wdio/spec-reporter": "^9.27.0",
     "cheerio": "1.2.0",
-    "svelte": "^5.53.11",
-    "svelte-check": "4.7.4",
+    "svelte": "5.56.3",
+    "svelte-check": "4.7.6",
     "typescript": "~6.0.3",
     "vite": "^8.1.4",
-    "vitest": "^4.1.10",
+    "vitest": "^5.0.1",
     "webdriverio": "^9.27.0"
   },
   "overrides": {

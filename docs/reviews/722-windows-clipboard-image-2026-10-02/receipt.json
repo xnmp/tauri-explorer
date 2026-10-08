@@ -1,0 +1,66 @@
+{
+  "run_url": "https://github.com/xnmp/tauri-explorer/actions/runs/36940530617",
+  "job_url": "https://github.com/xnmp/tauri-explorer/actions/runs/36940530617/job/110630942870",
+  "head_commit": "c576d2eaee150e7268e73ac7b251a62cda8b2801",
+  "tested_merge_commit": "8d80ab955197516cf7724a1e22a62e2c376dc663",
+  "base_commit": "b9b1da0952e6d4a4a60556c66803509a5bcc7194",
+  "platform": "windows-latest hosted CI",
+  "webview2": "153.0.4234.48",
+  "passing": 7,
+  "skipped": 1,
+  "skip_reason": "Linux permission-refused-write case",
+  "screenshots": [
+    {
+      "path": "screenshots/fix/722-progress-bar-when-copying-images/details-explicit-completed-win32.png",
+      "sha256": "1299890bd9c72a36976cbbe5d43a9b73a9777898bc97695546935b3b41cb3e09"
+    },
+    {
+      "path": "screenshots/fix/722-progress-bar-when-copying-images/details-explicit-pending-win32.png",
+      "sha256": "c87915dd315c9833a27ce4788b30000a8ac976c89d0553da36810deee51c4d51"
+    },
+    {
+      "path": "screenshots/fix/722-progress-bar-when-copying-images/details-normal-completed-win32.png",
+      "sha256": "73ada03dd6e43a173a8776c589f811b3994166974cdbc7bbd8dbcdc81c272ffb"
+    },
+    {
+      "path": "screenshots/fix/722-progress-bar-when-copying-images/details-normal-pending-win32.png",
+      "sha256": "f8a44fd3dc45bd45680d63af2b8b990298ac580bc9feb24127657d3608c3b5a0"
+    },
+    {
+      "path": "screenshots/fix/722-progress-bar-when-copying-images/list-explicit-completed-win32.png",
+      "sha256": "17a78ad5c925eee6c019fba4bf82dea7aa7ffc31595adc29a84cc3b04a460ce1"
+    },
+    {
+      "path": "screenshots/fix/722-progress-bar-when-copying-images/list-explicit-pending-win32.png",
+      "sha256": "6de0eb0831c255131cdcdcf43c7b90e1e3de71a7cc8b403266cb5b3723da7f2c"
+    },
+    {
+      "path": "screenshots/fix/722-progress-bar-when-copying-images/list-normal-completed-win32.png",
+      "sha256": "34f89001daca8f702bc6f48baa974163becdb9c5001f044d8179a67c8f8056f9"
+    },
+    {
+      "path": "screenshots/fix/722-progress-bar-when-copying-images/list-normal-pending-win32.png",
+      "sha256": "4c5447d9704dbfb19a544e3ba239fe3a619cf071bb789f20787e25bdb1ef695f"
+    },
+    {
+      "path": "screenshots/fix/722-progress-bar-when-copying-images/navigation-during-paste-win32.png",
+      "sha256": "8baa910db8097ba4cca71083bbbd5fd983f8ca0bfd4e1c0294d177d226ea6983"
+    },
+    {
+      "path": "screenshots/fix/722-progress-bar-when-copying-images/tiles-explicit-completed-win32.png",
+      "sha256": "60930a139672838f5267b3a1da7e6adb3796dd41e0999f3540bb8f3cff7dda2a"
+    },
+    {
+      "path": "screenshots/fix/722-progress-bar-when-copying-images/tiles-explicit-pending-win32.png",
+      "sha256": "f22c9567300d620fc185f836b6976baa37d0f1193901cf7a33c46bf994942276"
+    },
+    {
+      "path": "screenshots/fix/722-progress-bar-when-copying-images/tiles-normal-completed-win32.png",
+      "sha256": "cf7e7c7f8d78c888206065708cdf71647451843fd0ba9a6476cc63902dba716f"
+    },
+    {
+      "path": "screenshots/fix/722-progress-bar-when-copying-images/tiles-normal-pending-win32.png",
+      "sha256": "e8086d093a5151ee18a1582e578148b7bc8faa9f8346e7388fbb15e32eb85bf9"
+    }
+  ]
+}

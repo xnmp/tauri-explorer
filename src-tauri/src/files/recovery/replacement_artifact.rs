@@ -2,6 +2,7 @@
 //! Phase ownership and user-file effects remain with the replacement executor.
 
 use super::{
+    checkpoint::{DurableKind, Phase, PlannedRoot, Side, Sides, State},
     model::{DurableIntent, ObjectId, StagedPayload},
     private_storage::validate_directory,
     storage::Catalog,
@@ -21,18 +22,34 @@ mod restore;
 
 #[path = "replacement_retire.rs"]
 mod retire;
-pub(super) use retire::RetirementStep;
 
 /// One planned private artifact namespace. Operation kinds differ in how many
 /// roots they plan and which user objects the root must never alias; the
 /// namespace, manifest and durability discipline below are shared.
-pub(super) struct RootPlan {
-    pub(super) parent_path: PathBuf,
-    pub(super) parent: ObjectId,
-    pub(super) root: PathBuf,
-    pub(super) token: String,
+struct RootPlan {
+    parent_path: PathBuf,
+    parent: ObjectId,
+    root: PathBuf,
+    token: String,
     /// User objects an artifact root may never turn out to be.
-    pub(super) excluded: Vec<ObjectId>,
+    excluded: Vec<ObjectId>,
+}
+
+impl RootPlan {
+    fn of(kind: &dyn DurableKind, planned: &PlannedRoot) -> Result<Self, AppError> {
+        Ok(Self {
+            parent_path: planned
+                .user
+                .0
+                .parent()
+                .ok_or_else(|| invalid("Recovery endpoint has no parent"))?
+                .to_owned(),
+            parent: planned.parent,
+            root: planned.path.0.clone(),
+            token: planned.token.to_owned(),
+            excluded: kind.subjects(),
+        })
+    }
 }
 
 /// A verified target parent and the exact absent root name planned by the
@@ -68,29 +85,28 @@ struct BorrowedManifest<'a> {
 }
 
 impl Anchor {
-    pub(super) fn open(intent: &DurableIntent) -> Result<Self, AppError> {
-        intent.validate()?;
-        let spec = intent.operation.replacement()?;
-        Self::open_plan(
-            intent,
-            RootPlan {
-                parent_path: spec
-                    .target
-                    .0
-                    .parent()
-                    .ok_or_else(|| invalid("Recovery replacement target has no parent"))?
-                    .to_owned(),
-                parent: spec.parent,
-                root: spec.root.0.clone(),
-                token: spec.artifact_token.clone(),
-                excluded: vec![spec.original.object, spec.source_version.object],
-            },
-        )
+    /// Open the artifact namespace the intent plans beside one endpoint.
+    pub(super) fn open(intent: &DurableIntent, side: Side) -> Result<Self, AppError> {
+        let kind = intent.operation.kind();
+        let planned = kind
+            .root(side)
+            .ok_or_else(|| invalid("Recovery operation plans no artifact root there"))?;
+        Self::open_plan(intent, RootPlan::of(kind, &planned)?)
     }
 
-    /// Open the exact planned namespace for any operation kind. The plan is
-    /// derived from the immutable intent whose digest binds this anchor.
-    pub(super) fn open_plan(intent: &DurableIntent, plan: RootPlan) -> Result<Self, AppError> {
+    /// Open one planned capability-probe namespace.
+    pub(super) fn open_probe(intent: &DurableIntent, index: usize) -> Result<Self, AppError> {
+        let kind = intent.operation.kind();
+        let probes = kind.probes();
+        let planned = probes
+            .get(index)
+            .ok_or_else(|| invalid("Capability probe index exceeds its immutable plan"))?;
+        Self::open_plan(intent, RootPlan::of(kind, planned)?)
+    }
+
+    /// The plan is derived from the immutable intent whose digest binds this
+    /// anchor.
+    fn open_plan(intent: &DurableIntent, plan: RootPlan) -> Result<Self, AppError> {
         intent.validate()?;
         let intent_digest = digest(intent)?;
         let RootPlan {
@@ -232,17 +248,17 @@ impl Root {
         intent: &DurableIntent,
         staged: &StagedPayload,
     ) -> Result<(), AppError> {
-        use super::model::{OperationState, Phase, ReplacementState};
-        intent.validate()?;
-        OperationState::Replacement(ReplacementState {
-            effect_revision: 0,
-            retained_bytes: None,
-            root: Some(self.identity),
+        let state = State {
             phase: Phase::Staged,
-            published: Some(staged.clone()),
-            error: None,
-        })
-        .validate(intent)?;
+            roots: Sides {
+                source: None,
+                target: Some(self.identity),
+            },
+            staged: Some(staged.clone()),
+            ..State::default()
+        };
+        intent.validate()?;
+        intent.checkpoint(&state).validate()?;
         self.verify_manifest(intent)
     }
 
@@ -317,7 +333,7 @@ impl Root {
             &source_parent,
             source_name,
             &self.directory,
-            std::ffi::OsStr::new("publication"),
+            std::ffi::OsStr::new(super::artifact_layout::PUBLICATION),
             &spec.source.0,
             expected,
             progress,
@@ -405,10 +421,11 @@ impl Root {
         // through a caller. Re-derive the artifact roots the intent itself
         // names and require this one to be exactly among them, so a mismatched
         // path with a coincidentally valid identity is still rejected here.
-        let planned = match &intent.operation {
-            OperationSpec::CopyReplacement(spec) => vec![spec.root.0.clone()],
-            OperationSpec::Move(spec) => spec.roots().map(|root| root.path.0.clone()).collect(),
-        };
+        let kind = intent.operation.kind();
+        let planned: Vec<PathBuf> = [Side::Source, Side::Target]
+            .into_iter()
+            .filter_map(|side| kind.root(side).map(|root| root.path.0.clone()))
+            .collect();
         // Re-derive the operation's subjects directly from the persisted
         // intent, independent of the caller-supplied `excluded` set that
         // `finish` already checks: source and displaced-original identities,
@@ -416,18 +433,7 @@ impl Root {
         // traversed symlinks are not kept alive, so a fresh root can reuse a
         // freed inode number from any of them; comparing against those would
         // reintroduce the #788 false positive.
-        let subjects: Vec<ObjectId> = match &intent.operation {
-            OperationSpec::CopyReplacement(spec) => {
-                vec![spec.source_version.object, spec.original.object]
-            }
-            OperationSpec::Move(spec) => std::iter::once(spec.source_version.object)
-                .chain(
-                    spec.target_original
-                        .as_ref()
-                        .map(|original| original.object),
-                )
-                .collect(),
-        };
+        let subjects = kind.subjects();
         if !planned.contains(&self.path)
             || self.path.parent() != Some(self.parent_path.as_path())
             || !self.identity.same_volume(self.parent_identity)
@@ -474,5 +480,3 @@ fn invalid(message: &str) -> AppError {
 #[cfg(test)]
 #[path = "../../../test_support/recovery_replacement_artifact.rs"]
 mod tests;
-
-use super::model::OperationSpec;

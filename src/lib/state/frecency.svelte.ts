@@ -10,6 +10,8 @@
  * contribute ~0.5, from a day ago ~0.04, etc.
  */
 
+import { reconcileHistory, sanitizeFrecencyHistory, type HistoryFrecencyEntry } from "$lib/domain/history";
+import { enqueueHistory, registerFrecencyHistory } from "./shared-history";
 import { checkPathsExist } from "$lib/api/files";
 import { directoryKey, parentDir } from "$lib/domain/path";
 import { loadPersisted, savePersisted } from "./persisted";
@@ -19,10 +21,7 @@ const MAX_ENTRIES = 200;
 const MAX_ACCESSES_PER_ENTRY = 10;
 const MS_PER_HOUR = 3_600_000;
 
-export interface FrecencyEntry {
-  path: string;
-  accesses: number[]; // timestamps of recent accesses
-}
+export type FrecencyEntry = HistoryFrecencyEntry;
 
 export type FrecencyData = FrecencyEntry[];
 
@@ -57,20 +56,29 @@ export function penalizeAccesses(accesses: number[]): number[] {
 }
 
 function createFrecencyStore() {
-  let data = $state<FrecencyData>(loadPersisted(STORAGE_KEY, []));
+  let data = $state<FrecencyData>(sanitizeFrecencyHistory(loadPersisted(STORAGE_KEY, [], 1_000_000)));
 
   function save(): void {
     savePersisted(STORAGE_KEY, data);
   }
 
+  /** Read shared persisted history before opening a picker or adding an access. */
+  function refresh(): void {
+    data = reconcileHistory(data, sanitizeFrecencyHistory(loadPersisted(STORAGE_KEY, data, 1_000_000)));
+  }
+
   /** Record an access to a path. */
   function recordAccess(path: string): void {
+    refresh();
     const now = Date.now();
+    enqueueHistory({ type: "access", key: directoryKey(path), path, timestamp: now });
     const key = directoryKey(path);
     const existing = data.find((e) => directoryKey(e.path) === key);
 
     if (existing) {
-      existing.accesses = [...existing.accesses.slice(-(MAX_ACCESSES_PER_ENTRY - 1)), now];
+      data = data.map((entry) => entry === existing
+        ? { path: entry.path, accesses: [...entry.accesses.slice(-(MAX_ACCESSES_PER_ENTRY - 1)), now] }
+        : entry);
     } else {
       data = [...data, { path, accesses: [now] }];
     }
@@ -126,7 +134,8 @@ function createFrecencyStore() {
    * but recovers when the path is accessed again — this is not a blacklist. If
    * the entry has no accesses left afterwards it is removed entirely.
    */
-  function penalize(path: string): void {
+  function downvote(path: string, dismissFromRecent: boolean): void {
+    enqueueHistory({ type: "downvote", key: directoryKey(path), dismiss: dismissFromRecent });
     const key = directoryKey(path);
     const idx = data.findIndex((e) => directoryKey(e.path) === key);
     if (idx === -1) return;
@@ -134,19 +143,30 @@ function createFrecencyStore() {
     if (reduced.length === 0) {
       data = data.filter((_, i) => i !== idx);
     } else {
-      data = data.map((e, i) => (i === idx ? { ...e, accesses: reduced } : e));
+      data = data.map((e, i) => (i === idx ? { ...e, accesses: reduced, ...(dismissFromRecent ? { dismissedFromRecent: true } : {}) } : e));
     }
     save();
   }
 
+  function penalize(path: string): void {
+    downvote(path, false);
+  }
+
+  /** Hide a Recent row until new qualifying use, retaining its reduced ranking history. */
+  function dismissRecent(path: string): void {
+    downvote(path, true);
+  }
+
   /** Remove a path from tracking. */
   function remove(path: string): void {
+    enqueueHistory({ type: "remove", collection: "frecency", keys: [directoryKey(path)] });
     const key = directoryKey(path);
     data = data.filter((e) => directoryKey(e.path) !== key);
     save();
   }
 
   function clear(): void {
+    enqueueHistory({ type: "clear", collection: "frecency" });
     data = [];
     save();
   }
@@ -154,23 +174,31 @@ function createFrecencyStore() {
   /** Remove entries whose paths no longer exist on disk. */
   async function pruneNonExistent(): Promise<void> {
     if (data.length === 0) return;
-    const paths = data.map((e) => e.path);
+    const inspected = data;
+    const paths = inspected.map((e) => e.path);
     const exists = await checkPathsExist(paths);
     // `data` may have changed while awaiting (e.g. recordAccess) — filter by
     // path membership against the snapshot, not by index into a stale array.
     const missing = new Set(paths.filter((_, i) => !exists[i]));
     if (missing.size === 0) return;
-    data = data.filter((e) => !missing.has(e.path));
+    enqueueHistory({ type: "prune", collection: "frecency", entries: inspected.filter(entry => missing.has(entry.path)).map(entry => ({ key: directoryKey(entry.path), revision: entry.revision ?? 0 })) });
+    const observed = new Set(inspected.filter(entry => missing.has(entry.path)));
+    data = data.filter(entry => !observed.has(entry));
     save();
   }
 
+  registerFrecencyHistory({ get: () => data, set: value => { data = reconcileHistory(data, value); save(); } });
+
   return {
     get entries() { return data; },
+    get recentEntries() { return data.filter((entry) => !entry.dismissedFromRecent); },
     recordAccess,
+    refresh,
     recordFileAction,
     getScore,
     getScoreMap,
     penalize,
+    dismissRecent,
     remove,
     clear,
     pruneNonExistent,

@@ -7,6 +7,7 @@
 //! does not (Linux ext4, btrfs, tmpfs) it is an unrelated name. The OS alone
 //! does not decide this: APFS and NTFS volumes can be case-sensitive too.
 use super::{
+    admission,
     copy_session::{self, Choice, Conflict, Control, Decision, Event, ItemOutcome, Request},
     entry_execution,
     entry_plan::EntryPlan,
@@ -101,26 +102,18 @@ fn block<T>(future: impl std::future::Future<Output = T>) -> T {
     tauri::async_runtime::block_on(future)
 }
 
-/// The executor `rename_entry` and native rename inverses dispatch to on this
-/// host: admitted through the recovery runtime on Linux, direct elsewhere.
+fn runtime(root: &Path) -> admission::Runtime {
+    admission::Runtime::new(root.join("recovery"))
+}
+
+/// The executor `rename_entry` and native rename inverses dispatch to.
 fn rename(root: &Path, path: &Path, name: &str) -> entry_execution::Outcome {
     let plan = EntryPlan::rename(native(path), name.to_owned()).unwrap();
-    #[cfg(target_os = "linux")]
-    let work = entry_execution::execute(
-        plan,
-        crate::files::recovery::Runtime::default(),
-        root.join("recovery"),
-    );
-    #[cfg(not(target_os = "linux"))]
-    let work = {
-        let _ = root;
-        entry_execution::execute_owned(plan, ())
-    };
-    block(work)
+    block(entry_execution::execute(plan, &runtime(root)))
 }
 
 /// The executor `move_entry` dispatches to on this host. With
-/// `durable-move-recovery`, Linux journals the move instead.
+/// `durable-recovery`, Linux journals the move instead.
 fn move_entry(
     root: &Path,
     source: &Path,
@@ -128,18 +121,7 @@ fn move_entry(
     overwrite: bool,
 ) -> move_execution::Outcome {
     let plan = MovePlan::new(native(source), native(destination), overwrite).unwrap();
-    #[cfg(target_os = "linux")]
-    let work = move_execution::execute(
-        plan,
-        crate::files::recovery::Runtime::default(),
-        root.join("recovery"),
-    );
-    #[cfg(not(target_os = "linux"))]
-    let work = {
-        let _ = root;
-        move_execution::execute_owned(plan, ())
-    };
-    block(work)
+    block(move_execution::execute(plan, &runtime(root)))
 }
 
 /// One ordered session as `move_entries` runs it (paste and drop). Every
@@ -155,15 +137,9 @@ fn move_session(
     let prompts = Arc::new(Mutex::new(Vec::new()));
     let seen = Arc::clone(&prompts);
     let session = Arc::clone(&control);
-    #[cfg(not(target_os = "linux"))]
-    let _ = root;
     let work = MoveWork {
         job_id: 798,
-        #[cfg(target_os = "linux")]
-        recovery: (
-            crate::files::recovery::Runtime::default(),
-            root.join("recovery"),
-        ),
+        runtime: runtime(root),
     };
     let request = Request::new(vec![native(source)], native(destination)).unwrap();
     let outcome = block(copy_session::run(request, control, work, move |event| {

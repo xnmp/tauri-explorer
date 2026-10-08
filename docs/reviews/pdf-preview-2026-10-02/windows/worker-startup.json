@@ -1,0 +1,30 @@
+{
+  "receipts": [
+    {
+      "at": 2579.899999999907,
+      "id": "5f932404-a023-44ea-a2cb-7065dd63ffe6",
+      "origin": "http://tauri.localhost",
+      "path": "C:\\Users\\runneradmin\\tauri-native-cleanup-B2ev7K\\native-pdf-proof-8DYQfF\\0-landmarks.pdf",
+      "phase": "created",
+      "url": "http://tauri.localhost/_app/immutable/assets/pdf.worker.min.BmVo14Nb.mjs"
+    },
+    {
+      "at": 2684.5,
+      "id": "5f932404-a023-44ea-a2cb-7065dd63ffe6",
+      "origin": "http://tauri.localhost",
+      "path": "C:\\Users\\runneradmin\\tauri-native-cleanup-B2ev7K\\native-pdf-proof-8DYQfF\\0-landmarks.pdf",
+      "phase": "ready",
+      "url": "http://tauri.localhost/_app/immutable/assets/pdf.worker.min.BmVo14Nb.mjs"
+    }
+  ],
+  "location": {
+    "href": "http://tauri.localhost/",
+    "origin": "http://tauri.localhost"
+  },
+  "color": [
+    255,
+    0,
+    0,
+    255
+  ]
+}

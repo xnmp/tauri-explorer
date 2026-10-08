@@ -1,7 +1,7 @@
 //! Durable record retirement: the commit point of ADR 0023's state machine.
 //! Artifact removal has already completed and been journaled before any of
 //! this runs. Nothing here touches a user volume.
-use super::super::model::{OperationState, Phase};
+use super::super::checkpoint::State;
 use super::*;
 
 impl DurableOperation {
@@ -13,12 +13,12 @@ impl DurableOperation {
     /// by `retire_orphan_catalog` once its artifact root is verifiably absent.
     pub(in crate::files::recovery) fn retire_record(self) -> Result<(), AppError> {
         self.retire_where(
-            completed_retirement,
+            State::retirable_record,
             "Recovery record is not a completed retirement; evidence is preserved",
         )
     }
 
-    /// Forget a move whose committed discard stopped before finishing (a
+    /// Forget a record whose committed discard stopped before finishing (a
     /// persistent native error, or a volume that changed identity). Nothing on
     /// disk is touched: the record and its locks go, and any private folders
     /// it still names stay where they are, owned by the user from now on.
@@ -28,18 +28,14 @@ impl DurableOperation {
     /// those folders are removed.
     pub(in crate::files::recovery) fn forget_retirement(self) -> Result<(), AppError> {
         self.retire_where(
-            |state| {
-                state
-                    .move_state()
-                    .is_ok_and(super::super::move_retention::forgettable)
-            },
-            "Only a move whose discard stopped before finishing can be forgotten",
+            State::forgettable,
+            "Only a record whose discard stopped before finishing can be forgotten",
         )
     }
 
     fn retire_where(
         self,
-        allowed: fn(&OperationState) -> bool,
+        allowed: fn(&State) -> bool,
         refusal: &'static str,
     ) -> Result<(), AppError> {
         let Self {
@@ -129,28 +125,6 @@ impl Coordinator {
             }
             Ok(())
         })
-    }
-}
-
-fn completed_retirement(state: &OperationState) -> bool {
-    match state {
-        OperationState::Replacement(state) => {
-            state.phase == Phase::Discarded && state.error.is_none()
-        }
-        OperationState::Move(state) => {
-            if state.phase == super::super::move_model::MovePhase::Aborted {
-                return state
-                    .rename_probe
-                    .as_ref()
-                    .is_some_and(|progress| progress.removed())
-                    && state.error.is_none();
-            }
-            state
-                .retirement
-                .as_ref()
-                .is_some_and(|retirement| retirement.completed)
-                && state.error.is_none()
-        }
     }
 }
 

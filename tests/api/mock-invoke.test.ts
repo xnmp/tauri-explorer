@@ -1,31 +1,23 @@
 import { describe, it, expect } from "vitest";
 import { mockInvoke } from "../../src/lib/api/mock-invoke";
+import { decodeDirectoryListing, type CompactDirectoryListing } from "$lib/api/directory-wire";
+import { MOCK_LOCAL_KEYS } from "../../src/lib/api/mock-control";
 
 describe("mockInvoke — clipboard file round-trip", () => {
-  it("writes then reads back the same file list", async () => {
-    const paths = ["/home/user/notes.md", "/home/user/readme.txt"];
+  type Snapshot = { revision: number; paths: string[]; operation: string | null };
 
-    const wrote = await mockInvoke<boolean>("clipboard_write_files", { paths });
-    expect(wrote).toBe(true);
-
-    expect(await mockInvoke<boolean>("clipboard_has_files")).toBe(true);
-    expect(await mockInvoke<string[]>("clipboard_read_files")).toEqual(paths);
-  });
-
-  it("reports no files after writing an empty list", async () => {
-    await mockInvoke<boolean>("clipboard_write_files", { paths: [] });
-
-    expect(await mockInvoke<boolean>("clipboard_has_files")).toBe(false);
-    expect(await mockInvoke<string[]>("clipboard_read_files")).toEqual([]);
+  it("publishes entries that a later snapshot reads back", async () => {
+    const entries = [{ name: "notes.md", path: "/home/user/notes.md" }, { name: "readme.txt", path: "/home/user/readme.txt" }];
+    const published = await mockInvoke<Snapshot>("clipboard_publish", { entries, operation: "copy" });
+    const snapshot = await mockInvoke<Snapshot>("clipboard_snapshot");
+    expect(snapshot).toMatchObject({ revision: published.revision, operation: "copy", paths: entries.map((e) => e.path) });
   });
 
   it("returns an independent copy so callers cannot mutate the clipboard", async () => {
-    await mockInvoke<boolean>("clipboard_write_files", { paths: ["/a", "/b"] });
-
-    const read = await mockInvoke<string[]>("clipboard_read_files");
-    read.push("/hacked");
-
-    expect(await mockInvoke<string[]>("clipboard_read_files")).toEqual(["/a", "/b"]);
+    await mockInvoke("clipboard_publish", { entries: [{ name: "a", path: "/a" }, { name: "b", path: "/b" }], operation: "copy" });
+    const read = await mockInvoke<Snapshot>("clipboard_snapshot");
+    read.paths.push("/hacked");
+    expect((await mockInvoke<Snapshot>("clipboard_snapshot")).paths).toEqual(["/a", "/b"]);
   });
 });
 
@@ -36,9 +28,9 @@ describe("mockInvoke — clipboard image paste", () => {
 
     expect(path).toBe(`${directory}/clipboard-image.png`);
 
-    const listing = await mockInvoke<{ entries: { path: string }[] }>("list_directory", {
+    const listing = decodeDirectoryListing(await mockInvoke<CompactDirectoryListing>("list_directory", {
       path: directory,
-    });
+    }));
     expect(listing.entries.some((e) => e.path === path)).toBe(true);
   });
 });
@@ -63,11 +55,11 @@ describe("mockInvoke — revisioned clipboard", () => {
     });
     expect(renamed.paths).toEqual(["/new.txt"]);
     expect(await mockInvoke<boolean>("clipboard_compare_and_clear", { revision: initial.revision })).toBe(false);
-    expect(await mockInvoke<string[]>("clipboard_read_files")).toEqual(["/new.txt"]);
+    expect((await mockInvoke<{ paths: string[] }>("clipboard_snapshot")).paths).toEqual(["/new.txt"]);
   });
 
   it("can simulate a platform without native Cut ownership", async () => {
-    localStorage.setItem("mock-cut-ownership-unavailable", "1");
+    localStorage.setItem(MOCK_LOCAL_KEYS.cutOwnershipUnavailable, "1");
     try {
       await expect(mockInvoke("clipboard_publish", {
         entries: [{ name: "a.txt", path: "/a.txt" }], operation: "cut",
@@ -76,7 +68,33 @@ describe("mockInvoke — revisioned clipboard", () => {
         entries: [{ name: "a.txt", path: "/a.txt" }], operation: "copy",
       })).resolves.toMatchObject({ paths: ["/a.txt"], operation: "copy" });
     } finally {
-      localStorage.removeItem("mock-cut-ownership-unavailable");
+      localStorage.removeItem(MOCK_LOCAL_KEYS.cutOwnershipUnavailable);
     }
+  });
+});
+
+describe("mockInvoke — file history undo of a copy whose file is gone (PR #917 review)", () => {
+  it("reports an error and does not create a redo entry, matching the real backend's settled_copy rejection", async () => {
+    const copiedPath = "/home/user/does-not-exist.txt";
+    const pushed = await mockInvoke<{ summary: { undoId: number | null } }>("file_history_push", {
+      action: { type: "copy", copiedPath, parentDir: "/home/user" },
+    });
+    const undoId = pushed.summary.undoId;
+    expect(undoId).not.toBeNull();
+
+    const result = await mockInvoke<{ summary: { undoId: number | null; redoId: number | null }; error?: string }>(
+      "file_history_execute",
+      { direction: "undo", expectedEntryId: undoId },
+    );
+
+    // The real backend's file_history/execution.rs settled_copy rejects an
+    // undo whose copied_path isn't in `succeeded`; the mock must agree
+    // instead of silently treating a per-path delete_entries failure as
+    // success (#869 review finding).
+    expect(result.error).toBeTruthy();
+    expect(result.summary.redoId).toBeNull();
+    // The failed undo stays on the undo stack (as a fresh "remaining" entry)
+    // so it can be retried, rather than being dropped or turned into a redo.
+    expect(result.summary.undoId).not.toBeNull();
   });
 });

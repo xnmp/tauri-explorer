@@ -8,6 +8,7 @@
  */
 import { test, expect } from "./fixtures";
 import { waitForEntries } from "./helpers";
+import type { MockControl } from "../src/lib/api/mock-control";
 
 async function openGraphViaPalette(page: import("@playwright/test").Page, expectGraph = true) {
   await page.keyboard.press("Control+Shift+p");
@@ -64,7 +65,7 @@ test.describe("git graph detached-HEAD indicator", () => {
     // from the cached snapshot — otherwise this passes on the refetch and says
     // nothing about the blink-out the snapshot field exists to prevent.
     await page.evaluate(() => {
-      (window as unknown as { __MOCK_LATENCY__: Record<string, number> }).__MOCK_LATENCY__ = {
+      ((window as unknown as { __mockControl?: MockControl }).__mockControl ??= {}).latency = {
         git_log: 4000,
       };
     });
@@ -78,7 +79,7 @@ test.describe("git graph detached-HEAD indicator", () => {
 
     // Let the graph settle again before driving the next checkout.
     await page.evaluate(() => {
-      (window as unknown as { __MOCK_LATENCY__: Record<string, number> }).__MOCK_LATENCY__ = {};
+      ((window as unknown as { __mockControl?: MockControl }).__mockControl ??= {}).latency = {};
     });
     await expect(view.locator(".commit-row").first()).toContainText("Uncommitted Changes");
     await expect(badge).toBeVisible();

@@ -3,14 +3,52 @@ use crate::files::{
     file_identity::{of_file, version_from_metadata},
     native_directory::Directory,
     recovery::{
+        checkpoint::{Effect, Event, Phase},
         coordinator::Coordinator,
-        model::{
-            NativePath, OperationCheckpoint, OperationSpec, OperationState, Phase, ReplacementSpec,
-        },
+        model::{NativePath, OperationCheckpoint, OperationSpec, ReplacementSpec},
         resources::{Access, Request, Scope},
     },
 };
 use std::{fs, path::Path, sync::Arc};
+
+#[cfg(target_os = "linux")]
+#[test]
+fn generated_crop_detects_edit_of_displaced_original_with_restored_timestamp() {
+    struct Progress;
+    impl crate::files::anchored_copy::CopyProgress for Progress {
+        fn check_cancelled(&mut self) -> Result<(), AppError> {
+            Ok(())
+        }
+        fn advance(&mut self, _: u64, _: &Path) -> Result<(), AppError> {
+            Ok(())
+        }
+    }
+    let (directory, _coordinator, operation) = fixture();
+    let target = directory.path().join("target");
+    let (_, captured, _) = crate::files::image_crop::read_source(&target).unwrap();
+    let mut execution = ReplacementExecution::prepare(operation).unwrap();
+    execution.stage_copy(&mut Progress).unwrap();
+    execution.displace_copy().unwrap();
+    let held = execution
+        .root
+        .directory()
+        .path()
+        .unwrap()
+        .join(super::super::artifact_layout::ORIGINAL);
+    let modified = fs::metadata(&held).unwrap().modified().unwrap();
+    let mut edited = fs::read(&held).unwrap();
+    edited[0] ^= 1;
+    fs::write(&held, &edited).unwrap();
+    fs::File::options()
+        .write(true)
+        .open(&held)
+        .unwrap()
+        .set_times(fs::FileTimes::new().set_modified(modified))
+        .unwrap();
+    assert!(execution.verify_original_revision(&captured).is_err());
+    assert!(!target.exists());
+    assert_eq!(fs::read(&held).unwrap(), edited);
+}
 
 fn writing(path: &Path) -> Vec<Request> {
     vec![Request {
@@ -96,9 +134,7 @@ pub(super) fn checkpoint(directory: &Path) -> OperationCheckpoint {
 }
 
 pub(super) fn phase(directory: &Path) -> Phase {
-    let OperationState::Replacement(state) = checkpoint(directory).state else {
-        panic!("expected copy replacement fixture");
-    };
+    let state = checkpoint(directory).state;
     state.phase
 }
 
@@ -277,7 +313,7 @@ fn native_process_death_retains_preparation_evidence_and_fences_its_paths() {
         let before = fs::read(&manifest).ok();
         assert_eq!(before.is_some(), boundary != "root");
         if boundary != "root" {
-            Anchor::open(&intents[0])
+            Anchor::open(&intents[0], Side::Target)
                 .unwrap()
                 .open_existing(identity)
                 .unwrap()
@@ -337,15 +373,13 @@ fn native_process_death_retains_preparation_evidence_and_fences_its_paths() {
                     b"new bytes"
                 );
                 assert!(!root_path.join("publication").exists());
-                let OperationState::Replacement(state) = checkpoint(directory.path()).state else {
-                    panic!("expected copy replacement fixture");
-                };
+                let state = checkpoint(directory.path()).state;
                 assert_eq!(
                     version_from_metadata(
                         &fs::symlink_metadata(directory.path().join("target")).unwrap()
                     )
                     .unwrap(),
-                    state.published.unwrap().published_version().unwrap()
+                    state.staged.unwrap().published_version().unwrap()
                 );
             }
         } else if matches!(boundary, "restore-park" | "restore-original") {
@@ -493,7 +527,7 @@ fn subprocess_preparer() {
             execution.publish_copy().unwrap();
             execution
                 .operation
-                .advance(ReplacementTransition::BeginRestoration)
+                .advance(Event::Begin(Effect::Restore))
                 .unwrap();
             execution
                 .root
@@ -540,14 +574,12 @@ fn staging_records_the_native_payload_without_touching_the_public_destination() 
         .path()
         .join(".tauri-explorer-recovery-artifacts/publication");
     assert_eq!(fs::read(&publication).unwrap(), b"new bytes");
-    let OperationState::Replacement(state) = prepared.operation.state() else {
-        panic!("expected copy replacement fixture");
-    };
+    let state = prepared.operation.state();
     assert_eq!(
-        state.published.as_ref().unwrap().version,
+        state.staged.as_ref().unwrap().version,
         version_from_metadata(&fs::symlink_metadata(&publication).unwrap()).unwrap()
     );
-    assert!(state.published.as_ref().unwrap().final_mode.is_none());
+    assert!(state.staged.as_ref().unwrap().final_mode.is_none());
     assert_user_files_untouched(directory.path());
     drop(prepared);
     assert!(coordinator
@@ -571,7 +603,7 @@ fn reclaimed_publication_intent_finalizes_an_owner_unreadable_directory() {
         let mut execution = ReplacementExecution::prepare(operation).unwrap();
         execution
             .operation
-            .advance(ReplacementTransition::BeginStaging)
+            .advance(Event::Begin(Effect::Stage))
             .unwrap();
         let mut tracker = crate::progress::ProgressTracker::new(
             None,
@@ -589,10 +621,7 @@ fn reclaimed_publication_intent_finalizes_an_owner_unreadable_directory() {
         // Access granted to a source by its ownership/ACL may not transfer.
         staged.final_mode = Some(mode);
         let expected = staged.published_version().unwrap();
-        execution
-            .operation
-            .advance(ReplacementTransition::StagingCompleted(staged))
-            .unwrap();
+        execution.operation.advance(Event::Staged(staged)).unwrap();
         execution.displace_copy().unwrap();
         assert!(execution
             .publish_with(|_| Err(AppError::Other("lost publication reply".into())))
@@ -617,9 +646,7 @@ fn reclaimed_publication_intent_finalizes_an_owner_unreadable_directory() {
         let mut reopened = ReplacementExecution::reopen(claimed).unwrap();
         assert_eq!(reopened.publish_copy().unwrap(), expected);
         assert_eq!(phase(directory.path()), Phase::Published);
-        let OperationState::Replacement(state) = checkpoint(directory.path()).state else {
-            panic!("expected copy replacement fixture");
-        };
+        let state = checkpoint(directory.path()).state;
         assert!(state.error.is_none());
         assert_eq!(
             version_from_metadata(&fs::symlink_metadata(&target).unwrap()).unwrap(),
@@ -664,9 +691,7 @@ fn stage_intent_is_durable_before_copy_callbacks_and_cancellation_creates_no_pay
     let mut prepared = ReplacementExecution::prepare(operation).unwrap();
     assert!(prepared.stage_copy(&mut Cancel(directory.path())).is_err());
     assert_eq!(phase(directory.path()), Phase::StageIntent);
-    let OperationState::Replacement(stored) = checkpoint(directory.path()).state else {
-        panic!("expected copy replacement fixture");
-    };
+    let stored = checkpoint(directory.path()).state;
     assert!(stored.error.unwrap().contains("injected cancellation"));
     assert!(!directory
         .path()
@@ -816,9 +841,7 @@ fn failed_stage_retains_bounded_diagnostics_without_masking_the_original_error()
             })
             .unwrap_err();
         assert_eq!(returned.to_string(), expected);
-        let OperationState::Replacement(state) = checkpoint(directory.path()).state else {
-            panic!("expected copy replacement fixture");
-        };
+        let state = checkpoint(directory.path()).state;
         assert_eq!(state.phase, Phase::StageIntent);
         if corrupt_catalog {
             assert!(state.error.is_none());
@@ -982,9 +1005,7 @@ fn interruptions_between_native_transfer_and_checkpoint_keep_intent_and_evidence
             .unwrap(),
             b"original bytes"
         );
-        let OperationState::Replacement(state) = checkpoint(directory.path()).state else {
-            panic!("expected copy replacement fixture");
-        };
+        let state = checkpoint(directory.path()).state;
         assert!(state.error.unwrap().contains("interrupted"));
         if publishing {
             execution.publish_copy().unwrap();
@@ -993,9 +1014,7 @@ fn interruptions_between_native_transfer_and_checkpoint_keep_intent_and_evidence
             execution.displace_copy().unwrap();
             assert_eq!(phase(directory.path()), Phase::Displaced);
         }
-        let OperationState::Replacement(state) = checkpoint(directory.path()).state else {
-            panic!("expected copy replacement fixture");
-        };
+        let state = checkpoint(directory.path()).state;
         assert!(state.error.is_none());
         assert_eq!(
             fs::read(directory.path().join("source")).unwrap(),
@@ -1011,7 +1030,7 @@ fn restoration_recovers_original_across_forward_boundaries_without_needing_the_s
         if boundary == "displace-intent" {
             execution
                 .operation
-                .advance(ReplacementTransition::BeginDisplacement)
+                .advance(Event::Begin(Effect::Displace))
                 .unwrap();
         } else {
             execution.displace_copy().unwrap();
@@ -1068,9 +1087,7 @@ fn changed_publication_is_preserved_when_restoration_is_requested() {
     let root = directory.path().join(".tauri-explorer-recovery-artifacts");
     assert_eq!(fs::read(root.join("original")).unwrap(), b"original bytes");
     assert!(!root.join("publication").exists());
-    let OperationState::Replacement(state) = checkpoint(directory.path()).state else {
-        panic!("expected copy replacement fixture");
-    };
+    let state = checkpoint(directory.path()).state;
     assert!(state.error.is_some());
 }
 
@@ -1089,9 +1106,7 @@ fn restoration_completion_retry_retains_both_versions_and_clears_the_error() {
             Err(AppError::Other("interrupted restoration checkpoint".into()))
         })
         .is_err());
-    let OperationState::Replacement(state) = checkpoint(directory.path()).state else {
-        panic!("expected copy replacement fixture");
-    };
+    let state = checkpoint(directory.path()).state;
     assert!(state.error.unwrap().contains("interrupted restoration"));
     execution.restore_copy().unwrap();
     assert_eq!(phase(directory.path()), Phase::Restored);
@@ -1108,8 +1123,6 @@ fn restoration_completion_retry_retains_both_versions_and_clears_the_error() {
         .unwrap(),
         b"new bytes"
     );
-    let OperationState::Replacement(state) = checkpoint(directory.path()).state else {
-        panic!("expected copy replacement fixture");
-    };
+    let state = checkpoint(directory.path()).state;
     assert!(state.error.is_none());
 }

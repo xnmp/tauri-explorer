@@ -7,16 +7,22 @@
   Select/Cancel — no tabs, sidebar, watchers or heavy state.
 -->
 <script lang="ts">
-  import { onMount } from "svelte";
-  import { fetchDirectory } from "$lib/api/files";
-import { getHomeDirectory } from "$lib/api/environment";
-import { pickerRespond } from "$lib/api/system";
+  import { onMount, onDestroy, tick } from "svelte";
+  import { flushSharedHistory } from "$lib/state/shared-history";
+  import { toastStore } from "$lib/state/toast.svelte";
+  import { fetchDirectory, verifyPathsExist } from "$lib/api/files";
+  import { getHomeDirectory } from "$lib/api/environment";
+  import { pickerRespond } from "$lib/api/system";
   import type { FileEntry } from "$lib/domain/file";
   import FileIcon from "./FileIcon.svelte";
   import PickerQuickOpen from "./PickerQuickOpen.svelte";
   import { basename, joinPath, parentDir } from "$lib/domain/path";
   import { parseBreadcrumbs } from "$lib/state/navigation";
   import type { SearchResult } from "$lib/api/search";
+  import { useTypeAhead } from "$lib/composables/use-type-ahead.svelte";
+  import { recentFilesStore } from "$lib/state/recent-files.svelte";
+  import { frecencyStore } from "$lib/state/frecency.svelte";
+  import { matchesPickerExtensions } from "$lib/domain/file-picker";
 
   export interface PickerInfo {
     mode: "open" | "save";
@@ -26,6 +32,7 @@ import { pickerRespond } from "$lib/api/system";
     folder: string | null;
     name: string;
     title: string;
+    extensions?: readonly string[];
   }
 
   interface Props {
@@ -35,7 +42,7 @@ import { pickerRespond } from "$lib/api/system";
   let { info }: Props = $props();
 
   /** Directory chain rendered as miller columns: chain[0] is the shallowest. */
-  let chain = $state<string[]>([]);
+  let chain = $state.raw<string[]>([]);
   let entriesByPath = $state<Record<string, FileEntry[]>>({});
   let selectedFiles = $state<Set<string>>(new Set());
   // info comes from the window URL and never changes — initial capture is fine.
@@ -44,8 +51,50 @@ import { pickerRespond } from "$lib/api/system";
   let addressInput = $state("");
   let columnsRef = $state<HTMLElement | null>(null);
   let quickOpenOpen = $state(false);
+  let intentRevision = 0;
   /** Root the quick-open searches under: the picker's starting folder. */
   let searchRoot = $state("/");
+
+  let activeColumn = $state("");
+  let cursorPath = $state("");
+  let filterOpen = $state(false);
+  let filterQuery = $state("");
+  let filterRef = $state<HTMLInputElement | null>(null);
+  const activeEntries = $derived(visibleEntries(activeColumn));
+
+  function visibleEntries(path: string): FileEntry[] {
+    const entries = entriesByPath[path] ?? [];
+    const query = filterQuery.trim().toLowerCase();
+    return path === activeColumn && query
+      ? entries.filter(entry => entry.name.toLowerCase().includes(query))
+      : entries;
+  }
+
+  function activateColumn(path: string): void {
+    if (path === activeColumn) return;
+    activeColumn = path;
+    cursorPath = "";
+    filterQuery = "";
+    typeAhead.reset();
+  }
+
+  async function selectCursor(entry: FileEntry): Promise<void> {
+    intentRevision++;
+    const column = activeColumn;
+    cursorPath = entry.path;
+    if (entry.kind !== "directory") {
+      if (info.mode === "save") saveName = entry.name;
+      else selectedFiles = new Set([entry.path]);
+    } else selectedFiles = new Set();
+    await tick();
+    if (column !== activeColumn || cursorPath !== entry.path || quickOpenOpen) return;
+    const row = columnsRef?.querySelector<HTMLElement>(`[data-entry-path="${CSS.escape(entry.path)}"]`);
+    row?.focus({ preventScroll: true });
+    row?.scrollIntoView({ block: "nearest", inline: "nearest" });
+  }
+
+  const typeAhead = useTypeAhead(() => activeEntries, entry => { void selectCursor(entry); });
+  onDestroy(() => { intentRevision++; typeAhead.reset(); });
 
   const currentDir = $derived(chain[chain.length - 1] ?? "/");
 
@@ -58,7 +107,7 @@ import { pickerRespond } from "$lib/api/system";
     info.directory
       ? chain.length > 0
       : info.mode === "save"
-        ? saveName.trim().length > 0
+        ? saveName.trim().length > 0 && matchesPickerExtensions({ name: saveName.trim(), kind: "file" }, info.extensions)
         : selectedFiles.size > 0,
   );
 
@@ -81,6 +130,7 @@ import { pickerRespond } from "$lib/api/system";
     const visible = result.data.entries
       .filter((e) => !e.name.startsWith("."))
       .filter((e) => !info.directory || e.kind === "directory")
+      .filter((e) => matchesPickerExtensions(e, info.extensions))
       .sort((a, b) => {
         if (a.kind !== b.kind) return a.kind === "directory" ? -1 : 1;
         return a.name.localeCompare(b.name);
@@ -89,17 +139,27 @@ import { pickerRespond } from "$lib/api/system";
   }
 
   async function setChain(dirs: string[]): Promise<void> {
+    intentRevision++;
     chain = dirs;
+    activeColumn = dirs.at(-1) ?? "/";
+    cursorPath = "";
+    filterQuery = "";
+    typeAhead.reset();
     addressInput = dirs[dirs.length - 1] ?? "/";
     selectedFiles = new Set();
     await Promise.all(dirs.map(loadDir));
     // Newest column should be visible.
     requestAnimationFrame(() => {
+      if (chain !== dirs) return;
       columnsRef?.scrollTo({ left: columnsRef.scrollWidth, behavior: "smooth" });
     });
   }
 
   function handleEntryClick(columnIndex: number, entry: FileEntry): void {
+    intentRevision++;
+    activateColumn(chain[columnIndex]);
+    cursorPath = entry.path;
+    typeAhead.reset();
     if (entry.kind === "directory") {
       void setChain([...chain.slice(0, columnIndex + 1), entry.path]);
       return;
@@ -113,6 +173,7 @@ import { pickerRespond } from "$lib/api/system";
   }
 
   function handleEntryCtrlClick(columnIndex: number, entry: FileEntry, event: MouseEvent): void {
+    intentRevision++;
     if (info.multiple && entry.kind !== "directory" && (event.ctrlKey || event.metaKey)) {
       const next = new Set(selectedFiles);
       if (next.has(entry.path)) {
@@ -140,6 +201,24 @@ import { pickerRespond } from "$lib/api/system";
   }
 
   async function respond(paths: string[]): Promise<void> {
+    const revision = ++intentRevision;
+    if (!info.directory && paths.some((path) => !matchesPickerExtensions({ name: basename(path), kind: "file" }, info.extensions))) return;
+    if (info.mode === "open") {
+      const validation = await verifyPathsExist(paths, info.directory ? "directory" : "file");
+      if (revision !== intentRevision) return;
+      if (!validation.ok || !validation.data) {
+        toastStore.error(validation.ok ? "The selected file or folder no longer exists or has changed type." : "Could not verify the selected file or folder.");
+        return;
+      }
+    }
+    // Persist before the terminal IPC reply: the native backend closes this window.
+    for (const path of paths) {
+      recentFilesStore.add(path, basename(path), info.directory ? "directory" : "file");
+      if (info.directory) frecencyStore.recordAccess(path);
+      else frecencyStore.recordFileAction(path);
+    }
+    await flushSharedHistory();
+    if (revision !== intentRevision) return;
     await pickerRespond(info.token, paths, false);
   }
 
@@ -155,21 +234,66 @@ import { pickerRespond } from "$lib/api/system";
   }
 
   async function cancel(): Promise<void> {
+    intentRevision++;
     await pickerRespond(info.token, [], true);
   }
 
   function handleKeydown(event: KeyboardEvent): void {
-    if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "p") {
+    if (event.defaultPrevented || event.isComposing || quickOpenOpen) return;
+    const target = event.target as HTMLElement;
+    const modifier = (event.ctrlKey || event.metaKey) && !event.altKey;
+    if (modifier && event.key.toLowerCase() === "p") {
+      intentRevision++;
       event.preventDefault();
+      typeAhead.reset();
       quickOpenOpen = true;
       return;
     }
-    if (event.key === "Escape") {
-      if (quickOpenOpen) return; // the overlay's Modal handles its own Escape
+    if (modifier && event.key.toLowerCase() === "f") {
       event.preventDefault();
-      void cancel();
-    } else if (event.key === "Enter" && !(event.target as HTMLElement)?.closest(".address-input")) {
-      if (canConfirm) {
+      filterOpen = true;
+      typeAhead.reset();
+      void tick().then(() => { filterRef?.focus(); filterRef?.select(); });
+      return;
+    }
+    if (event.key === "Escape") {
+      event.preventDefault();
+      if (filterOpen) {
+        filterOpen = false;
+        filterQuery = "";
+        columnsRef?.querySelector<HTMLElement>(`[data-path="${CSS.escape(activeColumn)}"]`)?.focus();
+      } else void cancel();
+      return;
+    }
+    if (target?.closest("input, textarea, select, [contenteditable=true]")) {
+      if (event.key === "Enter" && target.matches(".name-input") && canConfirm) { event.preventDefault(); void confirm(); }
+      if (event.key === "Enter" && target === filterRef) {
+        event.preventDefault();
+        if (activeEntries[0]) void selectCursor(activeEntries[0]);
+      }
+      return;
+    }
+    // Footer buttons retain their native Enter/Space activation.
+    if (target?.closest(".actions")) return;
+    if (typeAhead.handleKeydown(event)) { event.preventDefault(); return; }
+    if (event.ctrlKey || event.metaKey || event.altKey) return;
+    if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+      event.preventDefault();
+      typeAhead.reset();
+      const index = activeEntries.findIndex(entry => entry.path === cursorPath);
+      const next = index < 0 ? 0 : Math.max(0, Math.min(activeEntries.length - 1, index + (event.key === "ArrowDown" ? 1 : -1)));
+      if (activeEntries[next]) void selectCursor(activeEntries[next]);
+    } else if (event.key === "Enter" || event.key === "ArrowRight") {
+      const entry = activeEntries.find(entry => entry.path === cursorPath);
+      if (entry?.kind === "directory") {
+        event.preventDefault();
+        const index = chain.indexOf(activeColumn);
+        void setChain([...chain.slice(0, index + 1), entry.path]).then(async () => {
+          await tick();
+          if (activeColumn !== entry.path || cursorPath !== "" || quickOpenOpen) return;
+          columnsRef?.querySelector<HTMLElement>(`[data-path="${CSS.escape(activeColumn)}"]`)?.focus();
+        });
+      } else if (event.key === "Enter" && canConfirm) {
         event.preventDefault();
         void confirm();
       }
@@ -178,8 +302,16 @@ import { pickerRespond } from "$lib/api/system";
 
   /** Quick-open pick: files confirm (open) or prefill (save); dirs navigate. */
   async function handleQuickOpenPick(result: SearchResult): Promise<void> {
+    const revision = ++intentRevision;
     if (result.kind === "directory") {
+      const validation = await verifyPathsExist([result.path], "directory");
+      if (revision !== intentRevision) return;
+      if (!validation.ok || !validation.data) { toastStore.error(validation.ok ? "This folder no longer exists or has changed type." : "Could not verify this folder."); return; }
       await setChain(ancestors(result.path));
+      await tick();
+      if (currentDir === result.path && !quickOpenOpen) {
+        columnsRef?.querySelector<HTMLElement>(`[data-path="${CSS.escape(result.path)}"]`)?.focus();
+      }
       return;
     }
     if (info.mode === "save") {
@@ -238,14 +370,21 @@ import { pickerRespond } from "$lib/api/system";
     />
   </header>
 
+  {#if filterOpen}
+    <input class="filter-input" aria-label="Filter current folder" placeholder="Filter current folder…" bind:this={filterRef} bind:value={filterQuery} oninput={() => { intentRevision++; cursorPath = ""; selectedFiles = new Set(); typeAhead.reset(); }} />
+  {/if}
   <div class="columns" bind:this={columnsRef}>
     {#each chain as dirPath, columnIndex (dirPath)}
-      <div class="column" data-path={dirPath}>
-        {#each entriesByPath[dirPath] ?? [] as entry (entry.path)}
-          <!-- svelte-ignore a11y_click_events_have_key_events -->
-          <!-- svelte-ignore a11y_no_static_element_interactions -->
-          <div
+      <div class="column" data-path={dirPath} role="listbox" aria-label={dirPath} aria-multiselectable={info.multiple} tabindex="0" onfocusin={() => activateColumn(dirPath)}>
+        {#each visibleEntries(dirPath) as entry (entry.path)}
+          <button
+            type="button"
+            role="option"
+            aria-selected={cursorPath === entry.path || selectedFiles.has(entry.path)}
             class="entry"
+            data-entry-path={entry.path}
+            tabindex={cursorPath === entry.path ? 0 : -1}
+            class:cursor={cursorPath === entry.path}
             class:on-path={chain.includes(entry.path)}
             class:selected={selectedFiles.has(entry.path)}
             onclick={(e) => handleEntryCtrlClick(columnIndex, entry, e)}
@@ -257,10 +396,10 @@ import { pickerRespond } from "$lib/api/system";
             {#if entry.kind === "directory"}
               <span class="chevron">›</span>
             {/if}
-          </div>
+          </button>
         {/each}
-        {#if (entriesByPath[dirPath] ?? []).length === 0}
-          <div class="empty-column">Empty</div>
+        {#if visibleEntries(dirPath).length === 0}
+          <div class="empty-column">{filterQuery && dirPath === activeColumn ? "No matches" : "Empty"}</div>
         {/if}
       </div>
     {/each}
@@ -299,6 +438,7 @@ import { pickerRespond } from "$lib/api/system";
   onClose={() => (quickOpenOpen = false)}
   root={searchRoot}
   directoriesOnly={info.directory}
+  extensions={info.extensions}
   onPick={handleQuickOpenPick}
 />
 
@@ -361,7 +501,22 @@ import { pickerRespond } from "$lib/api/system";
     padding: 4px;
   }
 
+  .filter-input {
+    margin: 8px 12px;
+    padding: 6px 10px;
+    border: 1px solid var(--control-stroke);
+    background: var(--control-fill);
+    color: var(--text-primary);
+    border-radius: var(--radius-sm, 4px);
+  }
+
   .entry {
+    width: 100%;
+    border: none;
+    background: transparent;
+    color: inherit;
+    font: inherit;
+    text-align: left;
     display: flex;
     align-items: center;
     gap: 8px;
@@ -379,7 +534,7 @@ import { pickerRespond } from "$lib/api/system";
     background: var(--subtle-fill-tertiary, rgba(128, 128, 128, 0.25));
   }
 
-  .entry.selected {
+  .entry.selected, .entry.cursor {
     background: var(--accent, #0078d4);
     color: var(--text-on-accent, #fff);
   }

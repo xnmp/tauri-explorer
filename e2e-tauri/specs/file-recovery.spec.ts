@@ -6,10 +6,10 @@ import path from "node:path";
 import { exactApplicationPid } from "../native-process";
 import { requireGatedFromEnvironment } from "../gated-suites";
 import { gatedDescribe } from "./gated-describe";
-import { navigateTo, domTexts, entryNames } from "./helpers";
+import { closeOtherWindows, navigateTo, domTexts, entryNames, switchToWindowLabel } from "./helpers";
 
 const directory = process.env.TAURI_E2E_FILE_RECOVERY_DIR;
-// Linux-only: exercises `durable-copy-recovery` (`cfg(unix)`/`cfg(target_os =
+// Linux-only: exercises `durable-recovery` (`cfg(unix)`/`cfg(target_os =
 // "linux")`, ADR 0020, plan decision D2) and uses `exactApplicationPid`'s
 // `/proc`-based process identity, neither of which exists on Windows (#800).
 interface Snapshot { revision: string; items: Array<{ id: string; generation: string; actions: string[] }> }
@@ -135,12 +135,7 @@ gatedDescribe("File recovery native acceptance", [
   });
 
   after(async () => {
-    for (const handle of await browser.getWindowHandles()) {
-      if (handle === main) continue;
-      await browser.switchToWindow(handle);
-      await browser.closeWindow();
-    }
-    await browser.switchToWindow(main);
+    await closeOtherWindows(main);
   });
 
   it("restores the original through real IPC and retains the independent copied payload", async () => {
@@ -196,18 +191,7 @@ gatedDescribe("File recovery native acceptance", [
     await navigateTo(path.dirname(fixture.target));
     const mainLease = await rawLease();
     const child = await operation<{ label: string }>("window", "fresh-open", { target: path.dirname(fixture.target) });
-    let childHandle = "";
-    await browser.waitUntil(async () => {
-      for (const handle of await browser.getWindowHandles()) {
-        if (handle === main) continue;
-        await browser.switchToWindow(handle);
-        if (await browser.execute(() => document.documentElement.dataset.e2eWindowLabel) === child.label) {
-          childHandle = handle;
-          return true;
-        }
-      }
-      return false;
-    });
+    const childHandle = await switchToWindowLabel(child.label);
     const childLease = await rawLease();
     await browser.execute(() => window.dispatchEvent(new CustomEvent("e2e-window-operation", {
       detail: { token: "destroy-recovery-owner", op: "native-destroy" },
@@ -308,18 +292,7 @@ gatedDescribe("File recovery native acceptance", [
     const summary = async (): Promise<Summary> => JSON.parse(await browser.execute(() => document.documentElement.dataset.e2eHistorySummary ?? "{}"));
     const before = await summary();
     const child = await operation<{ label: string }>("window", "fresh-open", { target: destination });
-    let childHandle = "";
-    await browser.waitUntil(async () => {
-      for (const handle of await browser.getWindowHandles()) {
-        if (handle === main) continue;
-        await browser.switchToWindow(handle);
-        if (await browser.execute(() => document.documentElement.dataset.e2eWindowLabel) === child.label) {
-          childHandle = handle;
-          return true;
-        }
-      }
-      return false;
-    });
+    const childHandle = await switchToWindowLabel(child.label);
     const childLease = await rawLease();
     const copied = await operation<{ ok: boolean; replacement?: { id: string }; error?: string }>("recovery", "copy", { source, destination });
     assert.ok(copied.ok, copied.error);

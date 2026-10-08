@@ -60,6 +60,10 @@ struct Fixture {
 }
 
 fn fixture() -> Fixture {
+    fixture_with_registration_gate(None)
+}
+
+fn fixture_with_registration_gate(registration_gate: Option<mpsc::Receiver<()>>) -> Fixture {
     let (observers_tx, observers) = mpsc::channel();
     let (events_tx, emitted) = mpsc::channel();
     let registration_failures = Arc::new(AtomicUsize::new(0));
@@ -69,10 +73,13 @@ fn fixture() -> Fixture {
     let service = Service::spawn(
         Box::new(move |_target, callback| {
             if failing_registration
-                .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |n| n.checked_sub(1))
+                .try_update(Ordering::SeqCst, Ordering::SeqCst, |n| n.checked_sub(1))
                 .is_ok()
             {
                 return Err(AppError::Other("registration denied".into()));
+            }
+            if let Some(gate) = &registration_gate {
+                gate.recv_timeout(Duration::from_secs(20)).unwrap();
             }
             let (dropped_tx, dropped) = mpsc::channel();
             observers_tx
@@ -85,7 +92,7 @@ fn fixture() -> Fixture {
         }),
         Box::new(move |key| {
             if failing_delivery
-                .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |n| n.checked_sub(1))
+                .try_update(Ordering::SeqCst, Ordering::SeqCst, |n| n.checked_sub(1))
                 .is_ok()
             {
                 return Err("delivery denied".into());
@@ -339,14 +346,18 @@ fn cancellation_after_successful_reply_reclaims_the_unreceived_lease() {
     use std::task::{Context, Poll, Waker};
 
     let dir = repo();
-    let f = fixture();
+    let (continue_tx, resume) = mpsc::channel();
+    let f = fixture_with_registration_gate(Some(resume));
     let mut pending = Box::pin(
         f.service
             .acquire(&f.owner, dir.path().to_string_lossy().into_owned()),
     );
     let mut context = Context::from_waker(Waker::noop());
 
+    // The worker may otherwise reply before the first poll ends, missing the
+    // cancellation window this test exercises. Hold registration until Pending.
     assert!(matches!(pending.as_mut().poll(&mut context), Poll::Pending));
+    continue_tx.send(()).unwrap();
     let observer = receive(&f.observers);
     // This command is queued after acquisition. Its reply proves the worker
     // successfully sent the lease while the acquisition receiver was live.

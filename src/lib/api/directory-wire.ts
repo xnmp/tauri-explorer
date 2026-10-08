@@ -18,44 +18,38 @@ export interface CompactDirectoryListing {
   };
 }
 
-export type DirectoryListingPayload = DirectoryListing | CompactDirectoryListing;
-
 function invalid(): never { throw new Error("Invalid native directory snapshot"); }
 
 /**
- * Same field checks the compact (columns-v1) decoder applies per-index,
- * applied to a single reconstructed-shape entry. Required so a malformed
- * legacy-shaped row (missing/wrong-typed fields, or a non-object entry like
- * `null`) is rejected up front instead of publishing and crashing a later
- * consumer (e.g. hidden-file filtering) that assumes valid `FileEntry` shape.
+ * The inverse of `decodeDirectoryListing`, mirroring the Rust serializer in
+ * `src-tauri/src/files/directory_wire.rs`: a prefix is shared only when it
+ * reproduces every path exactly, and optional columns appear only when some
+ * row differs from the default. The browser mock replies through this so the
+ * mock-backed tiers exercise the same decoder as native listings (#868).
  */
-function isValidLegacyEntry(value: unknown): value is FileEntry {
-  if (!value || typeof value !== "object") return false;
-  const e = value as Record<string, unknown>;
-  return (
-    typeof e.name === "string" &&
-    typeof e.path === "string" &&
-    (e.kind === "file" || e.kind === "directory") &&
-    Number.isInteger(e.size) && (e.size as number) >= 0 &&
-    typeof e.modified === "string" &&
-    (e.is_symlink === undefined || typeof e.is_symlink === "boolean") &&
-    (e.symlink_target === undefined || typeof e.symlink_target === "string") &&
-    (e.is_empty === undefined || typeof e.is_empty === "boolean") &&
-    (e.is_git_repo === undefined || typeof e.is_git_repo === "boolean")
-  );
+export function encodeDirectoryListing(listing: DirectoryListing): CompactDirectoryListing {
+  const { entries } = listing;
+  const first = entries[0];
+  const candidate = first && first.path.endsWith(first.name)
+    ? first.path.slice(0, first.path.length - first.name.length)
+    : null;
+  const prefix = candidate !== null && entries.every((e) => e.path === candidate + e.name) ? candidate : null;
+  const columns: CompactDirectoryListing["columns"] = {
+    names: entries.map((e) => e.name),
+    ...(prefix === null ? { paths: entries.map((e) => e.path) } : {}),
+    kinds: entries.map((e) => e.kind),
+    sizes: entries.map((e) => e.size),
+    modified: entries.map((e) => e.modified),
+  };
+  if (entries.some((e) => e.is_symlink)) columns.is_symlink = entries.map((e) => e.is_symlink ?? false);
+  if (entries.some((e) => e.symlink_target !== undefined)) columns.symlink_target = entries.map((e) => e.symlink_target ?? null);
+  if (entries.some((e) => e.is_empty !== undefined)) columns.is_empty = entries.map((e) => e.is_empty ?? null);
+  if (entries.some((e) => e.is_git_repo)) columns.is_git_repo = entries.map((e) => e.is_git_repo ?? false);
+  return { format: "columns-v1", path: listing.path, path_prefix: prefix, columns };
 }
 
-export function decodeDirectoryListing(payload: DirectoryListingPayload): DirectoryListing {
-  if (!payload || typeof payload.path !== "string") return invalid();
-  // Trusted browser fixtures retain the legacy domain shape without
-  // reconstructing entries, but each row is still validated: a malformed
-  // legacy-shaped reply (e.g. a null entry) must be rejected here, not
-  // published and left to crash a later consumer.
-  if (!("format" in payload) && "entries" in payload && Array.isArray(payload.entries)) {
-    if (!payload.entries.every(isValidLegacyEntry)) return invalid();
-    return payload;
-  }
-  if (!("format" in payload) || payload.format !== "columns-v1") return invalid();
+export function decodeDirectoryListing(payload: CompactDirectoryListing): DirectoryListing {
+  if (!payload || typeof payload.path !== "string" || payload.format !== "columns-v1") return invalid();
   const { columns: c, path_prefix: prefix } = payload;
   if (!c || !Array.isArray(c.names) || (prefix !== null && typeof prefix !== "string")) return invalid();
   if (prefix !== null && c.paths !== undefined) return invalid();

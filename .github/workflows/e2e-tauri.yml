@@ -102,7 +102,25 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y \
             libwebkit2gtk-4.1-dev libgtk-3-dev libsoup-3.0-dev \
-            libjavascriptcoregtk-4.1-dev webkit2gtk-driver xvfb openbox x11-utils xclip dbus-daemon nasm
+            libjavascriptcoregtk-4.1-dev webkit2gtk-driver xvfb openbox x11-utils xclip xdotool dbus-daemon nasm libavif-bin
+
+      - name: Install independent Windows AVIF decoder
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $archive = Join-Path $env:RUNNER_TEMP 'libavif-1.4.2.zip'
+          $destination = Join-Path $env:RUNNER_TEMP 'libavif-1.4.2'
+          Invoke-WebRequest 'https://github.com/AOMediaCodec/libavif/releases/download/v1.4.2/windows-artifacts.zip' -OutFile $archive
+          $expected = 'cb2d9fea43dcbab1d0707e3b37eb7b08070ad2fb60a2c188c39ec12382c0484a'
+          if ((Get-FileHash $archive -Algorithm SHA256).Hash.ToLowerInvariant() -ne $expected) {
+            throw 'Official libavif decoder archive checksum mismatch'
+          }
+          Expand-Archive $archive -DestinationPath $destination -Force
+          if (-not (Test-Path (Join-Path $destination 'avifdec.exe'))) {
+            throw 'Official libavif decoder is missing'
+          }
+          $destination >> $env:GITHUB_PATH
+          & (Join-Path $destination 'avifdec.exe') --version
 
       # Linux uses tauri-driver as its WebDriver proxy. Windows attaches
       # msedgedriver directly to the WebView2 CDP endpoint below.
@@ -149,10 +167,12 @@ jobs:
       # gone — but it removes a real timing dependency and a whole toolchain
       # from the test environment.)
       # VITE_E2E_HOOKS compiles in the `e2e-navigate` / `e2e-reset-view` hooks
-      # and the listing/watcher probes the specs drive. They used to ride on
-      # `import.meta.env.DEV`, which is what tied the suite to a dev-mode
-      # binary — and therefore to a dev server — in the first place. Release
-      # builds never set it, so the hooks tree-shake out of shipped binaries.
+      # and the listing/watcher probes the specs drive; the `e2e-hooks` Cargo
+      # feature is the matching Rust gate (#884), so a hook build enables both.
+      # They used to ride on `import.meta.env.DEV`, which is what tied the
+      # suite to a dev-mode binary — and therefore to a dev server — in the
+      # first place. Release builds set neither, so the hooks are absent from
+      # shipped binaries.
       - name: Build Tauri binary (debug, embedded frontend, no bundle)
         id: build-tauri-binary
         shell: bash
@@ -168,7 +188,7 @@ jobs:
           started_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
           set +e
           CARGO_LOG=cargo::core::compiler::fingerprint=info \
-            bun run tauri build --debug --no-bundle ${{ runner.os == 'Windows' && '--features e2e-webview2-attach' || '' }} \
+            bun run tauri build --debug --no-bundle --features e2e-hooks${{ runner.os == 'Windows' && ',e2e-webview2-attach' || '' }} \
             2>&1 | tee native-contract-diagnostics/tauri-build.log
           status="${PIPESTATUS[0]}"
           set -e
@@ -251,7 +271,7 @@ jobs:
       # Test failures remain fatal, but do not hide independent lint/UI results.
       - name: Windows Rust lint
         if: ${{ !cancelled() && runner.os == 'Windows' && steps.build-tauri-binary.outcome == 'success' }}
-        run: cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets --features e2e-webview2-attach -- -D warnings
+        run: cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets --features e2e-hooks,e2e-webview2-attach -- -D warnings
 
       - name: Run smoke suite (Linux, isolated display and window manager)
         if: runner.os == 'Linux'
@@ -260,7 +280,7 @@ jobs:
         timeout-minutes: 30
         # Own the session bus as well as the display and WM; do not inherit
         # hosted-runner desktop services or rely on D-Bus autolaunch.
-        run: env -u WAYLAND_DISPLAY GDK_BACKEND=x11 xvfb-run -a --server-args="-screen 0 1280x1024x24" dbus-run-session -- bash e2e-tauri/with-window-manager.sh bun run test:e2e:tauri
+        run: env -u WAYLAND_DISPLAY GDK_BACKEND=x11 xvfb-run -a --server-args="-screen 0 2600x1600x24" dbus-run-session -- bash e2e-tauri/with-window-manager.sh bun run test:e2e:tauri
 
       # The runner's EDGEWEBDRIVER matches the Edge *browser*, but tauri apps
       # run on the WebView2 *runtime*, whose version can differ — msedgedriver
@@ -382,4 +402,20 @@ jobs:
           path: |
             logs/
             e2e-tauri/logs/
+          if-no-files-found: ignore
+
+      - name: Upload native clipboard image acceptance
+        if: ${{ always() && runner.os == 'Windows' }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: clipboard-image-acceptance-windows
+          path: screenshots/fix/722-progress-bar-when-copying-images/*-win32.png
+          if-no-files-found: ignore
+
+      - name: Upload native PDF acceptance
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: native-pdf-${{ matrix.os }}
+          path: screenshots/fix/728-zooming-in-pdf-in-preview-isnt-centred/*native-windows*.png
           if-no-files-found: ignore

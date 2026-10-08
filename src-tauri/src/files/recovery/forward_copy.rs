@@ -72,6 +72,31 @@ impl PreparedCopy {
         self,
         progress: &mut impl CopyProgress,
     ) -> Result<FileMutationReceipt, AppError> {
+        self.execute_verified(progress, None)
+    }
+
+    /// Validate the original independently of the generated copy source.
+    pub(super) fn execute_verified(
+        self,
+        progress: &mut impl CopyProgress,
+        original: Option<&crate::files::image_crop::SourceRevision>,
+    ) -> Result<FileMutationReceipt, AppError> {
+        self.execute_traced(progress, original, None)
+    }
+
+    pub(super) fn execute_traced(
+        self,
+        progress: &mut impl CopyProgress,
+        original: Option<&crate::files::image_crop::SourceRevision>,
+        trace: Option<(&crate::installed_plugins::provenance::TraceRunHandle, &str)>,
+    ) -> Result<FileMutationReceipt, AppError> {
+        if let Some(revision) = original {
+            if let Err(error) =
+                crate::files::image_crop::verify_source(&self.spec.target.0, revision)
+            {
+                return Err(Self::retire(vec![self], error));
+            }
+        }
         let Self {
             reservation,
             spec,
@@ -95,13 +120,21 @@ impl PreparedCopy {
         let result = (|| {
             let mut execution = ReplacementExecution::prepare(operation)?;
             execution.stage_copy(progress)?;
+            if let Some((run, digest)) = trace {
+                execution.prepare_trace(run, &committed, digest)?;
+            }
             // Cancellation is honored until displacement. Once the original is
             // parked, finish publication without allowing cancellation to strand it.
             progress.check_cancelled()?;
+            if let Some(revision) = original {
+                crate::files::image_crop::verify_source(&committed, revision)?;
+            }
             execution.displace_copy()?;
+            if let Some(revision) = original {
+                execution.verify_original_revision(revision)?;
+            }
             execution.publish_copy()?;
-            let state = execution.operation.state().replacement()?;
-            Ok::<_, AppError>(state.effect_revision)
+            Ok::<_, AppError>(execution.operation.state().effect_revision)
         })();
         let revision = result.map_err(retained)?;
         let mut receipt = FileMutationReceipt::committed(&committed);

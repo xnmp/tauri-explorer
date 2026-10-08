@@ -4,7 +4,7 @@ import { expect } from "expect-webdriverio";
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
-import { navigateTo, domTexts } from "./helpers";
+import { closeOtherWindows, navigateTo, domTexts, parkedWarmWindow } from "./helpers";
 import { createNativeFixtureDirectory } from "../native-qualification";
 
 const scratch = createNativeFixtureDirectory("explorer-watch-owner-");
@@ -32,29 +32,8 @@ function readLogs(directory: string): string {
 }
 
 async function primeParkedWindow(): Promise<{ label: string; handle: string }> {
-  const original = await browser.getWindowHandle();
   await operation("warm-prime");
-  let parked!: { label: string; handle: string };
-  try {
-    await browser.waitUntil(async () => {
-      for (const handle of await browser.getWindowHandles()) {
-        if (handle === original) continue;
-        await browser.switchToWindow(handle);
-        const candidate = await browser.execute(() => ({
-          label: document.documentElement.dataset.e2eWindowLabel,
-          ready: document.documentElement.dataset.e2eWarmReady,
-        }));
-        if (candidate.label && candidate.ready === "1") {
-          parked = { label: candidate.label, handle };
-          return true;
-        }
-      }
-      return false;
-    }, { timeout: 20_000, timeoutMsg: "warm observer window did not become ready" });
-  } finally {
-    await browser.switchToWindow(original);
-  }
-  return parked;
+  return parkedWarmWindow();
 }
 
 describe("Git observation native window ownership", () => {
@@ -64,14 +43,7 @@ describe("Git observation native window ownership", () => {
     fs.writeFileSync(path.join(scratch, "survivor.txt"), "main window stays usable");
   });
   after(async () => {
-    if (mainHandle) {
-      for (const handle of await browser.getWindowHandles()) {
-        if (handle === mainHandle) continue;
-        await browser.switchToWindow(handle);
-        await browser.closeWindow();
-      }
-      await browser.switchToWindow(mainHandle);
-    }
+    if (mainHandle) await closeOtherWindows(mainHandle);
   });
 
   it("drops a leaked native observation when its source window is destroyed", async () => {

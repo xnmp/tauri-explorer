@@ -531,7 +531,6 @@ fn copy_entry_inner(
     dest_dir_path: &Path,
     source_name: &str,
     overwrite: Option<bool>,
-    _source: &str,
     tracker: &mut ProgressTracker,
 ) -> Result<FileMutationReceipt, AppError> {
     copy_entry_inner_with(
@@ -960,7 +959,28 @@ fn read_image_data_url_impl(path: String, max_bytes: Option<u64>) -> Result<Stri
         .take(limit.saturating_add(1))
         .read_to_end(&mut bytes)?;
 
-    let mime = mime_for_extension(&file_path);
+    // Webviews cannot decode an ICNS container. Use its validated largest
+    // representation at native resolution, including cropped transparent padding.
+    let (mime, bytes) = if file_path
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .is_some_and(|ext| ext.eq_ignore_ascii_case("icns"))
+    {
+        ("image/png", crate::image_crop::icon_preview(&bytes)?)
+    } else if file_path
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .is_some_and(|ext| ext.eq_ignore_ascii_case("avif"))
+    {
+        ("image/png", crate::image_crop::avif_preview(&bytes)?)
+    } else {
+        (mime_for_extension(&file_path), bytes)
+    };
+    if bytes.len() as u64 > limit {
+        return Err(AppError::Other(
+            "Normalized image exceeds the preview size limit".into(),
+        ));
+    }
     let encoded = base64::engine::general_purpose::STANDARD.encode(&bytes);
     Ok(format!("data:{};base64,{}", mime, encoded))
 }
@@ -1050,15 +1070,33 @@ pub async fn estimate_size(paths: Vec<String>) -> Result<SizeEstimate, AppError>
     .await
 }
 
+fn path_matches_kind(path: &Path, directory: Option<bool>) -> bool {
+    match directory {
+        None => entry_exists(path),
+        Some(want_directory) => fs::metadata(path).is_ok_and(|metadata| {
+            if want_directory {
+                metadata.is_dir()
+            } else {
+                metadata.is_file()
+            }
+        }),
+    }
+}
+
 /// Batch-check which paths exist on the filesystem.
 /// Uses lstat so broken symlinks still count as existing entries.
 #[tauri::command]
-pub async fn check_paths_exist(paths: Vec<String>) -> Vec<bool> {
+pub async fn check_paths_exist(paths: Vec<String>, directory: Option<bool>) -> Vec<bool> {
     // lstat per path can stall on slow mounts; keep it off the async executor.
     let count = paths.len();
-    run_blocking(move || Ok(paths.iter().map(|p| entry_exists(Path::new(p))).collect()))
-        .await
-        .unwrap_or_else(|_| vec![false; count])
+    run_blocking(move || {
+        Ok(paths
+            .iter()
+            .map(|p| path_matches_kind(Path::new(p), directory))
+            .collect())
+    })
+    .await
+    .unwrap_or_else(|_| vec![false; count])
 }
 
 /// Walk a path accumulating file count and byte size. Never follows
@@ -1095,6 +1133,95 @@ mod tests {
     use super::*;
     use std::fs::File;
     use tempfile::tempdir;
+
+    #[test]
+    fn selection_checks_current_kind_and_follows_valid_symlinks() {
+        let root = tempdir().unwrap();
+        let path = root.path().join("reused");
+        fs::write(&path, b"file").unwrap();
+        assert!(path_matches_kind(&path, Some(false)));
+        assert!(!path_matches_kind(&path, Some(true)));
+        fs::remove_file(&path).unwrap();
+        fs::create_dir(&path).unwrap();
+        assert!(!path_matches_kind(&path, Some(false)));
+        assert!(path_matches_kind(&path, Some(true)));
+        #[cfg(unix)]
+        {
+            let link = root.path().join("link");
+            std::os::unix::fs::symlink(&path, &link).unwrap();
+            assert!(path_matches_kind(&link, Some(true)));
+            fs::remove_dir(&path).unwrap();
+            assert!(!path_matches_kind(&link, Some(true)));
+            assert!(path_matches_kind(&link, None));
+        }
+    }
+
+    #[test]
+    fn avif_backend_preview_is_png_and_does_not_modify_the_actual_avif() {
+        use base64::Engine;
+        let root = tempdir().unwrap();
+        let path = root.path().join("oriented.AVIF");
+        let input = include_bytes!("../../test_support/fixtures/image-crop-oriented.avif");
+        fs::write(&path, input).unwrap();
+        let data = read_image_data_url_impl(path.to_string_lossy().into_owned(), None).unwrap();
+        let payload = data.strip_prefix("data:image/png;base64,").unwrap();
+        let image = image::load_from_memory(
+            &base64::engine::general_purpose::STANDARD
+                .decode(payload)
+                .unwrap(),
+        )
+        .unwrap()
+        .to_rgba8();
+        let expected = explorer_avif::decode_frame(input, 0).unwrap();
+        assert_eq!(image.dimensions(), (8, 12));
+        assert_eq!(image.as_raw(), &expected.pixels);
+        assert_eq!(fs::read(path).unwrap(), input);
+    }
+
+    #[test]
+    fn icns_preview_uses_largest_original_canvas_and_keeps_cropped_padding() {
+        use base64::Engine;
+        let root = tempdir().unwrap();
+        let path = root.path().join("icon.ICNS");
+        let input = include_bytes!("../../../e2e-tauri/fixtures/image-crop/quadrants.icns");
+        fs::write(&path, input).unwrap();
+        let read = || {
+            let data = read_image_data_url_impl(path.to_string_lossy().into_owned(), None).unwrap();
+            let payload = data.strip_prefix("data:image/png;base64,").unwrap();
+            image::load_from_memory(
+                &base64::engine::general_purpose::STANDARD
+                    .decode(payload)
+                    .unwrap(),
+            )
+            .unwrap()
+            .to_rgba8()
+        };
+        let preview = read();
+        assert_eq!(preview.dimensions(), (256, 256));
+        assert_eq!(preview.get_pixel(0, 0).0, [231, 76, 60, 255]);
+        assert_eq!(preview.get_pixel(128, 128).0[3], 0);
+        assert_eq!(fs::read(&path).unwrap(), input);
+        assert!(read_image_data_url_impl(
+            path.to_string_lossy().into_owned(),
+            Some(input.len() as u64 - 1)
+        )
+        .is_err());
+        let crop = crate::image_crop::encode(
+            input,
+            crate::image_crop::CropRect {
+                left: 16,
+                top: 16,
+                right: 240,
+                bottom: 240,
+            },
+        )
+        .unwrap();
+        fs::write(&path, crop).unwrap();
+        let preview = read();
+        assert_eq!(preview.dimensions(), (256, 256));
+        assert_eq!(preview.get_pixel(0, 0).0, [0, 0, 0, 0]);
+        assert_eq!(preview.get_pixel(16, 16).0, [231, 76, 60, 255]);
+    }
 
     /// Distinct case-variant symlinks to one target are separate entries: a
     /// case-only rename must not treat them as one and overwrite the other.
@@ -1686,15 +1813,8 @@ mod tests {
         let flag = AtomicBool::new(true);
         let mut tracker =
             ProgressTracker::new(None, "copy-progress", "Copy cancelled", 0, 0, Some(&flag));
-        let err = copy_entry_inner(
-            &src_dir,
-            &dest_dir,
-            "src",
-            None,
-            &src_dir.to_string_lossy(),
-            &mut tracker,
-        )
-        .expect_err("cancelled copy must fail");
+        let err = copy_entry_inner(&src_dir, &dest_dir, "src", None, &mut tracker)
+            .expect_err("cancelled copy must fail");
         assert!(err.to_string().contains("cancelled"));
         assert!(
             !dest_dir.join("src").exists(),

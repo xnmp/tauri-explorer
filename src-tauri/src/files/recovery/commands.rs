@@ -3,19 +3,7 @@ use super::model::{parse_generation, RecoveryChoice, RecoverySnapshot};
 use crate::error::AppError;
 
 #[cfg(target_os = "linux")]
-pub(crate) fn owner(
-    window: &tauri::Window,
-) -> Result<(super::Runtime, std::path::PathBuf), AppError> {
-    use tauri::Manager;
-    Ok((
-        window.state::<super::Runtime>().inner().clone(),
-        window
-            .path()
-            .app_local_data_dir()
-            .map_err(|error| AppError::Other(error.to_string()))?
-            .join("file-recovery"),
-    ))
-}
+use crate::files::admission::runtime;
 
 fn validate_id(id: &str) -> Result<(), AppError> {
     if id.len() != 64
@@ -36,8 +24,8 @@ pub(crate) async fn file_recovery_list(
     let _renderer = crate::renderer_owner::acquire_owner(&window, &session_id)?;
     #[cfg(target_os = "linux")]
     {
-        let (runtime, path) = owner(&window)?;
-        runtime.list(path).await
+        let runtime = runtime(&window)?;
+        runtime.list().await
     }
     #[cfg(not(target_os = "linux"))]
     {
@@ -61,8 +49,8 @@ pub(crate) async fn file_recovery_retire_eligible(
     let _renderer = crate::renderer_owner::acquire_owner(&window, &session_id)?;
     #[cfg(target_os = "linux")]
     {
-        let (runtime, path) = owner(&window)?;
-        runtime.retire_eligible(path).await
+        let runtime = runtime(&window)?;
+        runtime.retire_eligible().await
     }
     #[cfg(not(target_os = "linux"))]
     {
@@ -86,8 +74,8 @@ pub(crate) async fn file_recovery_inspect(
     let _renderer = crate::renderer_owner::acquire_owner(&window, &session_id)?;
     #[cfg(target_os = "linux")]
     {
-        let (runtime, path) = owner(&window)?;
-        runtime.inspect(path, id).await
+        let runtime = runtime(&window)?;
+        runtime.inspect(id).await
     }
     #[cfg(not(target_os = "linux"))]
     Err(AppError::Other(
@@ -108,8 +96,8 @@ pub(crate) async fn file_recovery_resolve(
     let _renderer = crate::renderer_owner::acquire_owner(&window, &session_id)?;
     #[cfg(target_os = "linux")]
     {
-        let (runtime, path) = owner(&window)?;
-        runtime.resolve(path, id, generation, choice).await
+        let runtime = runtime(&window)?;
+        runtime.resolve(id, generation, choice).await
     }
     #[cfg(not(target_os = "linux"))]
     {
@@ -144,9 +132,9 @@ pub(crate) async fn file_recovery_subscribe(
         super::native_probe::ObservedChannel::new(updates, window.label(), &session_id, token);
     #[cfg(target_os = "linux")]
     {
-        let (runtime, path) = owner(&window)?;
+        let runtime = runtime(&window)?;
         runtime
-            .subscribe(path, renderer, token, move |snapshot| {
+            .subscribe(renderer, token, move |snapshot| {
                 updates.send(snapshot.clone()).is_ok()
             })
             .await
@@ -174,11 +162,8 @@ pub(crate) async fn file_recovery_unsubscribe(
     super::native_probe::released(window.label(), &session_id, token);
     if let Some(renderer) = crate::renderer_owner::release_owner(&window, &session_id) {
         #[cfg(target_os = "linux")]
-        {
-            use tauri::Manager;
-            window
-                .state::<super::Runtime>()
-                .unsubscribe(&renderer, token)?;
+        if let Ok(runtime) = runtime(&window) {
+            runtime.unsubscribe(&renderer, token)?;
         }
         #[cfg(not(target_os = "linux"))]
         let _ = (renderer, token);

@@ -17,16 +17,18 @@
 //! (terminal follows explorer) needs to know whether a foreground command is
 //! running before injecting a `cd`; `terminal_status` answers that.
 
+mod input;
+
 use crate::error::AppError;
+use input::{run_input_writer, InputReceipt, TerminalInput};
 use portable_pty::{native_pty_system, Child, CommandBuilder, MasterPty, PtySize};
 use std::collections::HashMap;
-use std::io::{Read, Write};
+use std::io::Read;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use tauri::Emitter;
 
 struct TerminalHandle {
-    writer: Arc<Mutex<Box<dyn Write + Send>>>,
     master: SharedMaster,
     child: SharedChild,
     /// The spawned shell's pid; used for foreground-process-group busy
@@ -42,6 +44,9 @@ struct TerminalSlot {
     window_label: String,
     token: Arc<AtomicBool>,
     phase: TerminalPhase,
+    /// The terminal's one input stream (#882). It exists from reservation, so
+    /// typeahead written while the shell starts is held and delivered first.
+    input: TerminalInput,
 }
 
 enum TerminalPhase {
@@ -56,6 +61,7 @@ impl TerminalSlot {
             window_label,
             token: Arc::new(AtomicBool::new(false)),
             phase: TerminalPhase::Reserved,
+            input: TerminalInput::new(),
         }
     }
 
@@ -421,6 +427,25 @@ fn default_shell() -> String {
     }
 }
 
+/// Which shell a PTY runs, and where its Unix startup shims are cached. Tests
+/// pass their own so they never read the developer's `$SHELL` or write the
+/// real cache directory (#883).
+struct ShellLaunch {
+    program: String,
+    #[cfg(unix)]
+    cache_root: Option<std::path::PathBuf>,
+}
+
+impl ShellLaunch {
+    fn user() -> Self {
+        Self {
+            program: default_shell(),
+            #[cfg(unix)]
+            cache_root: dirs::cache_dir(),
+        }
+    }
+}
+
 /// Drain the longest valid UTF-8 prefix from `pending`, leaving any
 /// incomplete trailing multibyte sequence for the next read (so chunk
 /// boundaries never corrupt characters). Genuinely invalid bytes are
@@ -514,6 +539,7 @@ fn zsh_shim_files() -> [(&'static str, String); 4] {
 #[cfg(unix)]
 fn ensure_zsh_shim(cache_root: &std::path::Path) -> std::io::Result<std::path::PathBuf> {
     use sha2::{Digest, Sha256};
+    use std::io::Write;
 
     let files = zsh_shim_files();
     let mut hasher = Sha256::new();
@@ -542,17 +568,53 @@ fn ensure_zsh_shim(cache_root: &std::path::Path) -> std::io::Result<std::path::P
         staged.write_all(body.as_bytes())?;
         staged.persist(&target).map_err(|error| error.error)?;
     }
+    prune_stale_zsh_shims(&shim, ZSH_SHIM_RETENTION);
     Ok(shim)
+}
+
+/// Superseded shims stay long enough for shells an older build started to
+/// finish with them; after that each release's shim would otherwise remain in
+/// the cache forever (#883).
+#[cfg(unix)]
+const ZSH_SHIM_RETENTION: std::time::Duration = std::time::Duration::from_secs(30 * 24 * 60 * 60);
+
+/// Best-effort removal of sibling `zsh-shim-*` directories that have not been
+/// modified within `retention`. The current shim is never removed.
+#[cfg(unix)]
+fn prune_stale_zsh_shims(current: &std::path::Path, retention: std::time::Duration) {
+    let (Some(parent), Some(current_name)) = (current.parent(), current.file_name()) else {
+        return;
+    };
+    let Ok(entries) = std::fs::read_dir(parent) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        if name == current_name || !name.to_string_lossy().starts_with("zsh-shim-") {
+            continue;
+        }
+        let stale = entry
+            .metadata()
+            .and_then(|meta| meta.modified())
+            .ok()
+            .and_then(|modified| modified.elapsed().ok())
+            .is_some_and(|age| age > retention);
+        if stale {
+            if let Err(error) = std::fs::remove_dir_all(entry.path()) {
+                log::debug!("zsh OSC 7 shim: could not prune {name:?}: {error}");
+            }
+        }
+    }
 }
 
 /// Best-effort: install the zsh OSC 7 shim and point the shell at it. Any
 /// failure degrades gracefully to spawning without cwd reporting.
 #[cfg(unix)]
-fn install_zsh_shim(cmd: &mut CommandBuilder) {
-    let Some(cache) = dirs::cache_dir() else {
+fn install_zsh_shim(cmd: &mut CommandBuilder, cache_root: Option<&std::path::Path>) {
+    let Some(cache) = cache_root else {
         return;
     };
-    let shim = match ensure_zsh_shim(&cache) {
+    let shim = match ensure_zsh_shim(cache) {
         Ok(shim) => shim,
         Err(e) => {
             log::warn!("zsh OSC 7 shim: install failed: {e}");
@@ -602,6 +664,33 @@ fn spawn_shell(
     on_exit: impl FnOnce(Option<u32>) + Send + 'static,
     on_cwd: impl Fn(String) + Send + 'static,
 ) -> Result<TerminalSpawnInfo, AppError> {
+    spawn_shell_with(
+        &ShellLaunch::user(),
+        id,
+        window_label,
+        token,
+        cwd,
+        cols,
+        rows,
+        on_output,
+        on_exit,
+        on_cwd,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn spawn_shell_with(
+    launch: &ShellLaunch,
+    id: u64,
+    window_label: String,
+    token: Arc<AtomicBool>,
+    cwd: Option<String>,
+    cols: u16,
+    rows: u16,
+    on_output: impl Fn(String) + Send + 'static,
+    on_exit: impl FnOnce(Option<u32>) + Send + 'static,
+    on_cwd: impl Fn(String) + Send + 'static,
+) -> Result<TerminalSpawnInfo, AppError> {
     let pty_system = native_pty_system();
     let pair = pty_system
         .openpty(PtySize {
@@ -612,7 +701,7 @@ fn spawn_shell(
         })
         .map_err(|e| AppError::Other(format!("openpty failed: {e}")))?;
 
-    let shell = default_shell();
+    let shell = launch.program.clone();
     #[cfg(unix)]
     let shell_basename = std::path::Path::new(&shell)
         .file_name()
@@ -645,7 +734,7 @@ fn spawn_shell(
     // it), so it's skipped for now; fish emits OSC 7 natively.
     #[cfg(unix)]
     if shell_basename == "zsh" {
-        install_zsh_shim(&mut cmd);
+        install_zsh_shim(&mut cmd, launch.cache_root.as_deref());
     }
 
     let mut child = pair
@@ -674,6 +763,7 @@ fn spawn_shell(
             return Err(AppError::Other(format!("pty writer failed: {error}")));
         }
     };
+    let (input_sender, input_receiver) = std::sync::mpsc::channel();
 
     let child = {
         let mut map = terminals()
@@ -694,8 +784,11 @@ fn spawn_shell(
         }
         let child = Arc::new(Mutex::new(child));
         let master = Arc::new(Mutex::new(pair.master));
-        publish.expect("checked above").phase = TerminalPhase::Running(TerminalHandle {
-            writer: Arc::new(Mutex::new(writer)),
+        let slot = publish.expect("checked above");
+        // Attach under the registry lock: held typeahead enters the channel
+        // before any write admitted after publication can.
+        slot.input.attach(input_sender);
+        slot.phase = TerminalPhase::Running(TerminalHandle {
             master: master.clone(),
             child: child.clone(),
             pid,
@@ -704,6 +797,9 @@ fn spawn_shell(
         (child, master)
     };
     let (child, _reader_master) = child;
+
+    let writer_token = token.clone();
+    std::thread::spawn(move || run_input_writer(writer, input_receiver, &writer_token));
 
     let reader_token = token.clone();
     std::thread::spawn(move || {
@@ -890,13 +986,26 @@ fn running<T>(
     Ok(pick(handle))
 }
 
-/// `terminal_write`'s blocking half: user input reaches the PTY unchanged.
-fn write_terminal(id: u64, window_label: &str, data: &[u8]) -> Result<(), AppError> {
-    let writer = running(id, window_label, |handle| handle.writer.clone())?;
-    let mut writer = writer.lock().unwrap_or_else(|error| error.into_inner());
-    writer
-        .write_all(data)
-        .map_err(|e| AppError::Other(format!("pty write failed: {e}")))
+/// `terminal_write`'s body: admit write `seq` to the terminal's ordered input
+/// stream. Only enqueues, so it never waits on the PTY; a reserved or starting
+/// terminal holds the input as typeahead (#882).
+fn write_terminal(
+    id: u64,
+    window_label: &str,
+    seq: u64,
+    data: Vec<u8>,
+) -> Result<InputReceipt, AppError> {
+    let mut map = terminals()
+        .lock()
+        .map_err(|e| AppError::Other(format!("terminals registry lock poisoned: {e}")))?;
+    let slot = map
+        .get_mut(&id)
+        .ok_or_else(|| AppError::NotFound(format!("terminal {id}")))?;
+    slot.check_owner(window_label)?;
+    if slot.token.load(Ordering::Relaxed) {
+        return Err(AppError::Other(format!("terminal {id} is closing")));
+    }
+    Ok(slot.input.submit(seq, data))
 }
 
 /// `terminal_resize`'s blocking half. The kernel signals the new size to the
@@ -914,12 +1023,20 @@ fn resize_terminal(id: u64, window_label: &str, cols: u16, rows: u16) -> Result<
         .map_err(|e| AppError::Other(format!("pty resize failed: {e}")))
 }
 
-/// Write user input (keystrokes) to the terminal.
+/// Write user input to the terminal as write number `seq` of its input
+/// stream (0, 1, 2, … per terminal). Bytes reach the shell in `seq` order
+/// whatever order the invocations run in, and a repeated `seq` is ignored.
+/// Input written before the shell starts is held (bounded) and delivered once
+/// it does; the receipt reports any typeahead that had to be discarded.
 #[tauri::command]
-pub async fn terminal_write(window: tauri::Window, id: u64, data: String) -> Result<(), AppError> {
-    tokio::task::spawn_blocking(move || write_terminal(id, window.label(), data.as_bytes()))
-        .await
-        .map_err(|e| AppError::Other(format!("Task join error: {e}")))?
+pub async fn terminal_write(
+    window: tauri::Window,
+    id: u64,
+    seq: u64,
+    data: String,
+) -> Result<InputReceipt, AppError> {
+    // Enqueue-only under a briefly held registry lock: no blocking-pool hop.
+    write_terminal(id, window.label(), seq, data.into_bytes())
 }
 
 /// Resize the PTY to match the xterm.js grid.
@@ -983,6 +1100,14 @@ pub async fn terminal_status(window: tauri::Window, id: u64) -> Result<TerminalS
 
 #[cfg(test)]
 mod tests {
+    /// A shell that reads no user startup files and caches nothing (#883).
+    #[cfg(unix)]
+    fn hermetic_shell() -> super::ShellLaunch {
+        super::ShellLaunch {
+            program: "/bin/sh".into(),
+            cache_root: None,
+        }
+    }
     use super::*;
     #[cfg(unix)]
     use std::sync::mpsc;
@@ -1032,7 +1157,8 @@ mod tests {
             .unwrap_or_else(|error| error.into_inner())
             .remove(&id);
 
-        let result = spawn_shell(
+        let result = spawn_shell_with(
+            &hermetic_shell(),
             id,
             "owner".into(),
             token,
@@ -1150,7 +1276,8 @@ mod tests {
     #[cfg(unix)]
     fn window_teardown_releases_pty_while_foreground_job_ignores_hangup() {
         let (id, token) = reserve_started("job-control-owner");
-        spawn_shell(
+        spawn_shell_with(
+            &hermetic_shell(),
             id,
             "job-control-owner".into(),
             token,
@@ -1162,24 +1289,17 @@ mod tests {
             |_| {},
         )
         .unwrap();
-        let (writer, master, shell_pid) = {
-            let map = terminals()
-                .lock()
-                .unwrap_or_else(|error| error.into_inner());
-            let TerminalPhase::Running(handle) = &map.get(&id).unwrap().phase else {
-                panic!("terminal not running")
-            };
-            (
-                handle.writer.clone(),
-                handle.master.clone(),
-                handle.pid.unwrap(),
-            )
-        };
-        writer
-            .lock()
-            .unwrap()
-            .write_all(b"sh -c 'trap \"\" HUP; while :; do sleep 1; done'\n")
-            .unwrap();
+        let (master, shell_pid) = running(id, "job-control-owner", |handle| {
+            (handle.master.clone(), handle.pid.unwrap())
+        })
+        .unwrap();
+        write_terminal(
+            id,
+            "job-control-owner",
+            0,
+            b"sh -c 'trap \"\" HUP; while :; do sleep 1; done'\n".to_vec(),
+        )
+        .unwrap();
 
         let deadline = std::time::Instant::now() + Duration::from_secs(5);
         let foreground_group = loop {
@@ -1211,37 +1331,194 @@ mod tests {
         unsafe { libc::kill(-foreground_group, libc::SIGKILL) };
     }
 
-    #[test]
+    /// Collects one hermetic shell's output until a marker appears.
     #[cfg(unix)]
-    fn blocked_terminal_writer_does_not_hold_registry_lock() {
-        let (id, token) = reserve_started("blocked-writer");
-        spawn_shell(
+    struct Transcript {
+        output: mpsc::Receiver<String>,
+        text: String,
+    }
+
+    #[cfg(unix)]
+    impl Transcript {
+        fn expect(&mut self, marker: &str) {
+            let deadline = std::time::Instant::now() + Duration::from_secs(15);
+            while !self.text.contains(marker) {
+                let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+                assert!(
+                    !remaining.is_zero(),
+                    "the shell never printed {marker:?}; output so far: {:?}",
+                    self.text
+                );
+                if let Ok(chunk) = self
+                    .output
+                    .recv_timeout(remaining.min(Duration::from_millis(100)))
+                {
+                    self.text.push_str(&chunk);
+                }
+            }
+        }
+    }
+
+    /// Spawn the hermetic shell for an already-begun terminal.
+    #[cfg(unix)]
+    fn spawn_hermetic(id: u64, owner: &str, token: Arc<AtomicBool>) -> Transcript {
+        let (output_tx, output) = mpsc::channel::<String>();
+        spawn_shell_with(
+            &hermetic_shell(),
             id,
-            "blocked-writer".into(),
+            owner.into(),
             token,
             None,
-            80,
+            200,
             24,
-            |_| {},
+            move |chunk| {
+                let _ = output_tx.send(chunk);
+            },
             |_| {},
             |_| {},
         )
-        .unwrap();
-        let writer = {
-            let map = terminals()
-                .lock()
-                .unwrap_or_else(|error| error.into_inner());
-            let TerminalPhase::Running(handle) = &map.get(&id).unwrap().phase else {
-                panic!("terminal not running")
-            };
-            handle.writer.clone()
-        };
-        let _blocked_writer = writer.lock().unwrap();
+        .expect("spawn the hermetic shell");
+        Transcript {
+            output,
+            text: String::new(),
+        }
+    }
 
-        let unrelated = reserve_terminal("unrelated").unwrap();
-        assert!(terminals().lock().unwrap().contains_key(&unrelated));
-        on_window_destroyed("unrelated");
-        kill_test_terminal(id);
+    #[cfg(unix)]
+    struct DestroyOnDrop(&'static str);
+
+    #[cfg(unix)]
+    impl Drop for DestroyOnDrop {
+        fn drop(&mut self) {
+            on_window_destroyed(self.0);
+        }
+    }
+
+    /// #882: keystrokes typed while the shell is still starting are queued,
+    /// then run by the shell ahead of anything written after it started.
+    /// Each marker is printed only when the shell evaluates the command, never
+    /// by the terminal echoing the typed line.
+    #[test]
+    #[cfg(unix)]
+    fn typeahead_before_the_shell_starts_runs_first_once_it_does() {
+        const OWNER: &str = "typeahead";
+        let _cleanup = DestroyOnDrop(OWNER);
+        let id = reserve_terminal(OWNER).unwrap();
+        // Reserved: the frontend has an id but has not asked for a shell yet.
+        write_terminal(id, OWNER, 0, b"printf 'TA:%s:' ".to_vec()).unwrap();
+        let token = begin_terminal(id, OWNER).unwrap();
+        // Starting: the PTY is being prepared.
+        write_terminal(id, OWNER, 1, b"ahead; printf 'first\\n'\n".to_vec()).unwrap();
+        let mut transcript = spawn_hermetic(id, OWNER, token);
+        write_terminal(id, OWNER, 2, b"printf 'AFTER:%s\\n' start\n".to_vec()).unwrap();
+        transcript.expect("AFTER:start");
+        let typeahead = transcript
+            .text
+            .find("TA:ahead:first")
+            .expect("the typeahead ran");
+        assert!(typeahead < transcript.text.find("AFTER:start").unwrap());
+    }
+
+    /// #882: typeahead that overflows the bound is discarded whole, so the
+    /// user's first Enter after the start cannot run a partial command that
+    /// was held before the overflow.
+    #[test]
+    #[cfg(unix)]
+    fn overflowed_typeahead_leaves_nothing_for_the_first_enter_to_run() {
+        const OWNER: &str = "typeahead-overflow";
+        let _cleanup = DestroyOnDrop(OWNER);
+        let (id, token) = reserve_started(OWNER);
+        write_terminal(id, OWNER, 0, b"printf 'HELD:%s' ran".to_vec()).unwrap();
+        let receipt = write_terminal(id, OWNER, 1, vec![b'x'; input::TYPEAHEAD_LIMIT]).unwrap();
+        assert!(receipt.dropped_bytes() > input::TYPEAHEAD_LIMIT);
+        let mut transcript = spawn_hermetic(id, OWNER, token);
+        write_terminal(id, OWNER, 2, b"\n".to_vec()).unwrap();
+        write_terminal(id, OWNER, 3, b"printf 'END:%s\\n' marker\n".to_vec()).unwrap();
+        transcript.expect("END:marker");
+        assert!(
+            !transcript.text.contains("HELD"),
+            "pre-start input reached the shell: {:?}",
+            transcript.text
+        );
+    }
+
+    /// #882: ordering is the backend's guarantee, not the caller's. Every
+    /// character is its own write from its own thread, released together, and
+    /// the shell still receives the sequence-number order.
+    #[test]
+    #[cfg(unix)]
+    fn concurrent_writes_reach_the_shell_in_sequence_order() {
+        const OWNER: &str = "concurrent-writes";
+        let _cleanup = DestroyOnDrop(OWNER);
+        let (id, token) = reserve_started(OWNER);
+        let mut transcript = spawn_hermetic(id, OWNER, token);
+        let alphabet = "abcdefghijklmnopqrstuvwxyz0123456789";
+        let mut chunks = vec!["printf 'ORD:%s\\n' ".to_string()];
+        chunks.extend(alphabet.chars().map(String::from));
+        chunks.push("\n".into());
+        let barrier = Arc::new(std::sync::Barrier::new(chunks.len()));
+        let writers: Vec<_> = chunks
+            .into_iter()
+            .enumerate()
+            .rev()
+            .map(|(seq, chunk)| {
+                let barrier = barrier.clone();
+                std::thread::spawn(move || {
+                    barrier.wait();
+                    write_terminal(id, OWNER, seq as u64, chunk.into_bytes()).unwrap();
+                })
+            })
+            .collect();
+        for writer in writers {
+            writer.join().unwrap();
+        }
+        transcript.expect(&format!("ORD:{alphabet}"));
+    }
+
+    /// #882: a caller may retry a write whose reply it lost; the shell runs
+    /// it once.
+    #[test]
+    #[cfg(unix)]
+    fn a_retried_write_runs_once() {
+        const OWNER: &str = "retried-write";
+        let _cleanup = DestroyOnDrop(OWNER);
+        let (id, token) = reserve_started(OWNER);
+        let mut transcript = spawn_hermetic(id, OWNER, token);
+        let command = b"printf 'DUP:%s\\n' once\n".to_vec();
+        write_terminal(id, OWNER, 0, command.clone()).unwrap();
+        assert!(write_terminal(id, OWNER, 0, command).unwrap().duplicate());
+        write_terminal(id, OWNER, 1, b"printf 'END:%s\\n' marker\n".to_vec()).unwrap();
+        transcript.expect("END:marker");
+        assert_eq!(transcript.text.matches("DUP:once").count(), 1);
+    }
+
+    /// #882: closing a terminal ends its input stream. Input addressed to it
+    /// is refused rather than delivered to whatever shell replaces it, and a
+    /// replacement starts its own stream at write 0.
+    #[test]
+    #[cfg(unix)]
+    fn a_closed_terminal_refuses_input_and_its_successor_starts_clean() {
+        const OWNER: &str = "restart";
+        let _cleanup = DestroyOnDrop(OWNER);
+        let (first, token) = reserve_started(OWNER);
+        let mut transcript = spawn_hermetic(first, OWNER, token);
+        write_terminal(first, OWNER, 0, b"printf 'ONE:%s\\n' up\n".to_vec()).unwrap();
+        transcript.expect("ONE:up");
+        // A still-pending reservation holding typeahead dies with it too.
+        let pending = reserve_terminal(OWNER).unwrap();
+        write_terminal(pending, OWNER, 0, b"printf 'STALE\\n'\n".to_vec()).unwrap();
+
+        on_window_destroyed(OWNER);
+        assert!(
+            write_terminal(first, OWNER, 1, b"printf 'LATE\\n'\n".to_vec()).is_err(),
+            "a closing terminal refuses input"
+        );
+        assert!(write_terminal(pending, OWNER, 1, b"x".to_vec()).is_err());
+
+        let (second, token) = reserve_started(OWNER);
+        let mut successor = spawn_hermetic(second, OWNER, token);
+        write_terminal(second, OWNER, 0, b"printf 'TWO:%s\\n' fresh\n".to_vec()).unwrap();
+        successor.expect("TWO:fresh");
     }
 
     #[test]
@@ -1305,7 +1582,8 @@ mod tests {
         let (exit_tx, exit_rx) = mpsc::channel::<Option<u32>>();
 
         let (id, token) = reserve_started("test-window");
-        let id = spawn_shell(
+        let id = spawn_shell_with(
+            &hermetic_shell(),
             id,
             "test-window".into(),
             token,
@@ -1323,19 +1601,7 @@ mod tests {
         .expect("spawn failed")
         .id;
 
-        {
-            let mut map = terminals().lock().unwrap_or_else(|e| e.into_inner());
-            let slot = map.get_mut(&id).expect("terminal registered");
-            let TerminalPhase::Running(handle) = &mut slot.phase else {
-                panic!("not running")
-            };
-            handle
-                .writer
-                .lock()
-                .unwrap()
-                .write_all(b"pwd && exit\n")
-                .unwrap();
-        }
+        write_terminal(id, "test-window", 0, b"pwd && exit\n".to_vec()).unwrap();
 
         let mut output = String::new();
         let deadline = std::time::Instant::now() + Duration::from_secs(10);
@@ -1388,7 +1654,8 @@ mod tests {
         let (output_tx, output_rx) = mpsc::channel::<String>();
         let (exit_tx, exit_rx) = mpsc::channel::<Option<u32>>();
         let (id, token) = reserve_started(OWNER);
-        spawn_shell(
+        spawn_shell_with(
+            &hermetic_shell(),
             id,
             OWNER.into(),
             token,
@@ -1409,9 +1676,15 @@ mod tests {
             .expect("the PTY reports its shell's pid") as libc::pid_t;
 
         let mut transcript = String::new();
+        // Markers match in order: each search starts after the previous match.
+        let mut seen = 0;
         let mut expect_output = |marker: &str| {
             let deadline = std::time::Instant::now() + Duration::from_secs(15);
-            while !transcript.contains(marker) {
+            loop {
+                if let Some(at) = transcript[seen..].find(marker) {
+                    seen += at + marker.len();
+                    break;
+                }
                 let remaining = deadline.saturating_duration_since(std::time::Instant::now());
                 assert!(
                     !remaining.is_zero(),
@@ -1424,20 +1697,27 @@ mod tests {
             }
         };
 
-        write_terminal(id, OWNER, b"printf 'RT:%s:%s\\n' round trip\n").unwrap();
+        let command = b"PS1='READY> '; printf 'RT:%s:%s\\n' round trip\n";
+        write_terminal(id, OWNER, 0, command.to_vec()).unwrap();
         expect_output("RT:round:trip");
 
-        write_terminal(id, OWNER, b"stty size | sed 's/^/SIZE=/'\n").unwrap();
-        expect_output("SIZE=24 80");
+        // Each write prints its own marker, so a repeated or lost write cannot
+        // pass for a stale size (#929).
+        write_terminal(id, OWNER, 1, b"stty size | sed 's/^/SIZE1=/'\n".to_vec()).unwrap();
+        expect_output("SIZE1=24 80");
+        // Resize at the next prompt. Readline writes back the size it read
+        // while preparing each line (TIOCGWINSZ, then TIOCSWINSZ), so a resize
+        // between the two is lost to the stale size, in any terminal (#929).
+        expect_output("READY> ");
         assert!(
             resize_terminal(id, "another-window", 100, 30).is_err(),
             "only the owning window may resize its terminal"
         );
         resize_terminal(id, OWNER, 132, 40).unwrap();
-        write_terminal(id, OWNER, b"stty size | sed 's/^/SIZE=/'\n").unwrap();
-        expect_output("SIZE=40 132");
+        write_terminal(id, OWNER, 2, b"stty size | sed 's/^/SIZE2=/'\n".to_vec()).unwrap();
+        expect_output("SIZE2=40 132");
 
-        write_terminal(id, OWNER, b"exit 7\n").unwrap();
+        write_terminal(id, OWNER, 3, b"exit 7\n".to_vec()).unwrap();
         let status = exit_rx
             .recv_timeout(Duration::from_secs(15))
             .expect("the shell's exit is observed");
@@ -1465,7 +1745,8 @@ mod tests {
         let (exit_tx_b, exit_rx_b) = mpsc::channel::<Option<u32>>();
 
         let (a_id, a_token) = reserve_started("win-a");
-        let _a = spawn_shell(
+        let _a = spawn_shell_with(
+            &hermetic_shell(),
             a_id,
             "win-a".into(),
             a_token,
@@ -1480,7 +1761,8 @@ mod tests {
         )
         .unwrap();
         let (b_id, b_token) = reserve_started("win-b");
-        let b = spawn_shell(
+        let b = spawn_shell_with(
+            &hermetic_shell(),
             b_id,
             "win-b".into(),
             b_token,
@@ -1649,6 +1931,49 @@ mod tests {
     /// during another spawn's install must still find every startup file
     /// whole (#779). An editor keeps replacing `.zshrc` so the installers
     /// also repair it concurrently.
+    #[test]
+    #[cfg(unix)]
+    fn stale_zsh_shims_are_pruned_but_current_and_recent_ones_stay() {
+        use std::time::SystemTime;
+        let root = tempfile::tempdir().unwrap();
+        let parent = root.path().join("tauri-explorer");
+        let stale = parent.join("zsh-shim-0000000000000000");
+        let recent = parent.join("zsh-shim-1111111111111111");
+        let unrelated = parent.join("thumbnails");
+        for dir in [&stale, &recent, &unrelated] {
+            std::fs::create_dir_all(dir.join("child")).unwrap();
+        }
+        let age = |dir: &std::path::Path, by: Duration| {
+            std::fs::File::open(dir)
+                .unwrap()
+                .set_modified(SystemTime::now() - by)
+                .unwrap();
+        };
+        age(&stale, ZSH_SHIM_RETENTION + Duration::from_secs(60));
+        age(&unrelated, ZSH_SHIM_RETENTION * 2);
+
+        let current = ensure_zsh_shim(root.path()).unwrap();
+
+        assert!(
+            current.join(".zshrc").is_file(),
+            "the current shim is installed"
+        );
+        assert!(
+            !stale.exists(),
+            "a superseded shim past retention is removed"
+        );
+        assert!(
+            recent.exists(),
+            "a recently used shim may still serve a running shell"
+        );
+        assert!(unrelated.exists(), "only zsh-shim-* siblings are pruned");
+
+        // An old current shim is never pruned by its own installation.
+        age(&current, ZSH_SHIM_RETENTION * 2);
+        assert_eq!(ensure_zsh_shim(root.path()).unwrap(), current);
+        assert!(current.join(".zshrc").is_file());
+    }
+
     #[test]
     #[cfg(unix)]
     fn concurrent_shim_installs_never_hide_a_startup_file() {
@@ -1880,7 +2205,8 @@ mod tests {
     fn busy_detection_tracks_foreground_command() {
         let (exit_tx, _exit_rx) = mpsc::channel::<Option<u32>>();
         let (id, token) = reserve_started("busy-test");
-        let id = spawn_shell(
+        let id = spawn_shell_with(
+            &hermetic_shell(),
             id,
             "busy-test".into(),
             token,
@@ -1917,19 +2243,7 @@ mod tests {
         }
 
         // Start a foreground command.
-        {
-            let mut map = terminals().lock().unwrap_or_else(|e| e.into_inner());
-            let slot = map.get_mut(&id).unwrap();
-            let TerminalPhase::Running(handle) = &mut slot.phase else {
-                panic!("not running")
-            };
-            handle
-                .writer
-                .lock()
-                .unwrap()
-                .write_all(b"sleep 2\n")
-                .unwrap();
-        }
+        write_terminal(id, "busy-test", 0, b"sleep 2\n".to_vec()).unwrap();
 
         // Poll until busy is observed.
         let busy_deadline = std::time::Instant::now() + Duration::from_secs(5);
@@ -1973,16 +2287,20 @@ mod tests {
             return;
         }
 
-        // Force the shell to zsh for this spawn regardless of $SHELL.
-        let prev_shell = std::env::var("SHELL").ok();
-        std::env::set_var("SHELL", "zsh");
+        // Spawn zsh explicitly with a private shim cache: no process-wide
+        // $SHELL mutation and no writes to the developer's cache (#883).
+        let cache = tempfile::tempdir().unwrap();
 
         let dir = tempfile::tempdir().unwrap();
         let canonical = dir.path().canonicalize().unwrap();
         let (tx, rx) = mpsc::channel::<String>();
         let (cwd_tx, cwd_rx) = mpsc::channel::<String>();
         let (id, token) = reserve_started("zsh-osc7");
-        let info = spawn_shell(
+        let info = spawn_shell_with(
+            &ShellLaunch {
+                program: "zsh".into(),
+                cache_root: Some(cache.path().to_path_buf()),
+            },
             id,
             "zsh-osc7".into(),
             token,
@@ -1998,12 +2316,6 @@ mod tests {
             },
         )
         .expect("spawn failed");
-
-        // Restore SHELL so we don't leak state to other tests.
-        match prev_shell {
-            Some(v) => std::env::set_var("SHELL", v),
-            None => std::env::remove_var("SHELL"),
-        }
 
         let got_cwd = cwd_rx.recv_timeout(Duration::from_secs(8));
         // Drain any output for diagnostics.

@@ -343,3 +343,23 @@ describe("immutable listing revisions", () => {
     }
   });
 });
+
+describe("explicit file reveal", () => {
+  it("reveals a filtered or hidden file without changing visibility preferences", async () => {
+    const hidden = { ...entry(".hidden.png"), hidden: true };
+    loadImpl.current = staticLoad({ "/root": [entry("source.png"), hidden] });
+    settingsStore.update({ showHidden: false });
+    const explorer = createExplorerState();
+    await explorer.navigateTo("/root");
+    explorer.setFilter("source");
+    expect(explorer.displayEntries.map((item) => item.name)).toEqual(["source.png"]);
+    expect(explorer.revealEntry(hidden.path)).toBe(true);
+    expect(explorer.getSelectedEntries().map((item) => item.path)).toEqual([hidden.path]);
+    expect(explorer.displayEntries.map((item) => item.name)).toContain(".hidden.png");
+    expect(settingsStore.showHidden).toBe(false);
+    explorer.selectEntry(entry("source.png"));
+    expect(explorer.displayEntries.map((item) => item.name)).not.toContain(".hidden.png");
+    expect(explorer.revealEntry("/root/missing.png")).toBe(false);
+    await explorer.destroy();
+  });
+});

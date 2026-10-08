@@ -1,0 +1,113 @@
+    0.01s Authenticating sudo...
+    0.01s Building package...
+    0.88s ==> Making package: tauri-explorer 1.11.2-1 (Mon Oct  5 11:11:54 2026)
+    0.89s ==> Checking runtime dependencies...
+    0.89s warning: database file for 'openai-chatgpt' does not exist (use '-Sy' to download)
+    0.90s ==> Checking buildtime dependencies...
+    0.90s warning: database file for 'openai-chatgpt' does not exist (use '-Sy' to download)
+    0.91s ==> Retrieving sources...
+    0.91s ==> Removing existing $srcdir/ directory...
+    0.92s ==> Extracting sources...
+    0.92s ==> Starting prepare()...
+    0.92s bun install v1.3.8 (b64edcb4)
+    0.93s
+    0.93s Checked 546 installs across 585 packages (no changes) [8.00ms]
+    0.93s ==> Starting pkgver()...
+    0.94s ==> Removing existing $pkgdir/ directory...
+    0.95s ==> Starting build()...
+    5.37s Frontend unchanged; reusing verified build (Cargo still checks native sources).
+    5.43s         Info Looking up installed tauri packages to check mismatched versions...
+    6.12s warning: unexpected `cfg` condition value: `v2_42`
+    6.12s    --> vendor/wry/src/webkitgtk/mod.rs:592:17
+    6.12s     |
+    6.12s 592 |           #[cfg(feature = "v2_42")]
+    6.12s     |                 ^^^^^^^^^^^^^^^^^
+    6.12s     |
+    6.12s     = note: expected values for `feature` are: `default`, `devtools`, `gdkx11`, `javascriptcore-rs`, `linux-body`, `mac-proxy`, `os-webview`, `serde`, `soup3`, `tracing`, `webkit2gtk`, `webkit2gtk-sys`, `x11`, and `x11-dl`
+    6.12s     = help: consider adding `v2_42` as a feature in `Cargo.toml`
+    6.12s     = note: see <https://doc.rust-lang.org/nightly/rustc/check-cfg/cargo-specifics.html> for more information about checking conditional configuration
+    6.12s     = note: requested on the command line with `-W unexpected-cfgs`
+    6.12s
+    6.12s warning: unexpected `cfg` condition value: `v2_42`
+    6.12s    --> vendor/wry/src/webkitgtk/mod.rs:594:21
+    6.12s     |
+    6.12s 594 |           #[cfg(not(feature = "v2_42"))]
+    6.12s     |                     ^^^^^^^^^^^^^^^^^
+    6.12s     |
+    6.12s     = note: expected values for `feature` are: `default`, `devtools`, `gdkx11`, `javascriptcore-rs`, `linux-body`, `mac-proxy`, `os-webview`, `serde`, `soup3`, `tracing`, `webkit2gtk`, `webkit2gtk-sys`, `x11`, and `x11-dl`
+    6.12s     = help: consider adding `v2_42` as a feature in `Cargo.toml`
+    6.12s     = note: see <https://doc.rust-lang.org/nightly/rustc/check-cfg/cargo-specifics.html> for more information about checking conditional configuration
+    6.12s
+    6.12s warning: use of deprecated method `webkit2gtk::WebViewExt::run_javascript`: Since 2.40
+    6.12s   --> vendor/wry/src/webkitgtk/synthetic_mouse_events.rs:22:17
+    6.12s    |
+    6.12s 22 |         webview.run_javascript(
+    6.12s    |                 ^^^^^^^^^^^^^^
+    6.12s    |
+    6.12s    = note: `#[warn(deprecated)]` on by default
+    6.12s
+    6.12s warning: use of deprecated method `webkit2gtk::WebViewExt::run_javascript`: Since 2.40
+    6.12s   --> vendor/wry/src/webkitgtk/synthetic_mouse_events.rs:32:17
+    6.12s    |
+    6.12s 32 |         webview.run_javascript(
+    6.12s    |                 ^^^^^^^^^^^^^^
+    6.12s
+    6.12s warning: use of deprecated method `webkit2gtk::WebViewExt::run_javascript`: Since 2.40
+    6.12s   --> vendor/wry/src/webkitgtk/synthetic_mouse_events.rs:56:17
+    6.12s    |
+    6.12s 56 |         webview.run_javascript(
+    6.12s    |                 ^^^^^^^^^^^^^^
+    6.12s
+    6.12s warning: use of deprecated method `webkit2gtk::WebViewExt::run_javascript`: Since 2.40
+    6.12s   --> vendor/wry/src/webkitgtk/synthetic_mouse_events.rs:66:17
+    6.12s    |
+    6.12s 66 |         webview.run_javascript(
+    6.12s    |                 ^^^^^^^^^^^^^^
+    6.12s
+    6.12s warning: use of deprecated method `webkit2gtk::WebViewExt::run_javascript`: Since 2.40
+    6.12s    --> vendor/wry/src/webkitgtk/mod.rs:365:21
+    6.12s     |
+    6.12s 365 |             webview.run_javascript(&script, cancellable, |_| ());
+    6.12s     |                     ^^^^^^^^^^^^^^
+    6.12s
+    6.12s warning: use of deprecated method `webkit2gtk::WebViewExt::run_javascript`: Since 2.40
+    6.12s    --> vendor/wry/src/webkitgtk/mod.rs:798:20
+    6.12s     |
+    6.12s 798 |       self.webview.run_javascript(js, cancellable, |result| {
+    6.12s     |                    ^^^^^^^^^^^^^^
+    6.12s
+    6.12s warning: `wry` (lib) generated 8 warnings
+    6.12s warning: tauri-explorer@1.11.2: STATIC_VCRUNTIME is deprecated; use build.windows.staticVCRuntime in tauri.conf.json or tauri_build::WindowsAttributes::static_vc_runtime instead.
+    6.12s     Finished `release` profile [optimized] target(s) in 0.21s
+    6.14s        Built application at: /home/chong/Repos/tauri-explorer/src-tauri/target/release/tauri-explorer
+    6.15s ==> Entering fakeroot environment...
+    7.10s ==> Starting package()...
+    7.12s ==> Tidying install...
+    7.12s   -> Removing libtool files...
+    7.13s   -> Purging unreproducible ruby files...
+    7.18s   -> Removing static library files...
+    7.18s   -> Purging unwanted files...
+    7.19s   -> Stripping unneeded symbols from binaries and libraries...
+    7.30s Error while writing index for `/home/chong/Repos/tauri-explorer/.arch-build/tauri-explorer/pkg/tauri-explorer/usr/bin/tauri-explorer': No debugging symbols
+    7.30s gdb-add-index: No index was created for ./usr/bin/tauri-explorer
+    7.30s gdb-add-index: [Was there no debuginfo? Was there already an index?]
+    7.62s   -> Compressing man and info pages...
+    7.63s ==> Checking for packaging issues...
+    7.68s ==> Creating package "tauri-explorer"...
+    7.68s   -> Generating .PKGINFO file...
+    7.70s   -> Generating .BUILDINFO file...
+    7.71s warning: database file for 'openai-chatgpt' does not exist (use '-Sy' to download)
+    7.85s   -> Generating .MTREE file...
+    7.87s   -> Compressing package...
+    7.94s ==> Creating package "tauri-explorer-debug"...
+    7.94s   -> Generating .PKGINFO file...
+    7.96s   -> Generating .BUILDINFO file...
+    7.97s warning: database file for 'openai-chatgpt' does not exist (use '-Sy' to download)
+    8.10s   -> Generating .MTREE file...
+    8.11s   -> Compressing package...
+    8.13s ==> Leaving fakeroot environment.
+    8.13s ==> Finished making: tauri-explorer 1.11.2-1 (Mon Oct  5 11:12:01 2026)
+    8.14s Installing tauri-explorer-1.11.2-1-x86_64.pkg.tar.zst...
+    8.14s PROFILE: intercepted installation of tauri-explorer-1.11.2-1-x86_64.pkg.tar.zst (no system changes)
+    8.14s Done. Run 'tauri-explorer' to launch.
+TOTAL 8.14s EXIT 0

@@ -24,9 +24,11 @@
     scrollToIndex?: (index: number) => void;
     containsIndex?: (index: number) => boolean;
     fallbackTabStop: boolean;
+    onviewportscroll?: () => void;
+    onlayoutchange?: () => void;
   }
 
-  let { explorer, onitemclick, onitemdblclick, scrollToIndex = $bindable(), containsIndex = $bindable(), fallbackTabStop }: Props = $props();
+  let { explorer, onitemclick, onitemdblclick, scrollToIndex = $bindable(), containsIndex = $bindable(), fallbackTabStop, onviewportscroll, onlayoutchange }: Props = $props();
 
   let rowScrollToIndex = $state<((index: number) => void) | undefined>();
   scrollToIndex = (index) => rowScrollToIndex?.(index + (explorer.isCreatingFolder ? 1 : 0));
@@ -173,6 +175,8 @@
     items={listItems}
     itemHeight={32}
     getKey={(entry) => entry.path}
+    {onviewportscroll}
+    {onlayoutchange}
     bind:scrollToIndex={rowScrollToIndex}
   >
     {#snippet children(entry, index)}

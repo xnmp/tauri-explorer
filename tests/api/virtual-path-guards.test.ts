@@ -5,8 +5,8 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { renameEntry, deleteEntry, deleteEntryPermanent, moveEntry, readTextFile, createDirectory, createSymlink } from "$lib/api/files";
-import { openFile, openFileWith } from "$lib/api/open";
+import { renameEntry, deleteEntry, deleteEntryPermanent, readTextFile, createDirectory, createSymlink } from "$lib/api/files";
+import { openFile, openFileWith, listOpenWithApplications, openFileWithApplication } from "$lib/api/open";
 import { compressToZip, extractArchive } from "$lib/api/archive";
 import { getThumbnailData } from "$lib/api/thumbnails";
 
@@ -30,14 +30,16 @@ describe("virtual path guards", () => {
     await expectRejected(extractArchive("demo://a.zip"));
   });
 
-  it("rejects transfers when either side is virtual", async () => {
-    await expectRejected(moveEntry(V, "/tmp"));
-    await expectRejected(moveEntry("/tmp/a.txt", "demo://"));
-  });
+  // Ordered move/copy sessions share one virtual-path guard in
+  // `runOrderedSession` (`$lib/api/copy-session.ts`), covered by
+  // `tests/api/copy-session.test.ts`; there is no separate single-item
+  // transfer wrapper to guard here anymore (#881).
 
   it("rejects opening/reading virtual paths via the OS backend", async () => {
     await expectRejected(openFile(V));
     await expectRejected(openFileWith(V, "gimp"));
+    await expectRejected(listOpenWithApplications(V));
+    await expectRejected(openFileWithApplication(V, "editor.desktop"));
     await expectRejected(readTextFile(V));
     await expectRejected(getThumbnailData(V, 64) as never);
   });

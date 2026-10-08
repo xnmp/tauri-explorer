@@ -1,13 +1,12 @@
 //! Real per-volume rename capability checks before any move root/user effect.
 //! Probe effects are owned by the existing durable move, never by Drop cleanup.
 use super::{
+    checkpoint::{Event as Transition, Phase},
     coordinator::DurableOperation,
-    model::{DurableIntent, EntryVersion},
+    model::EntryVersion,
     move_capability_model::{Event, Step},
     move_execution::Boundary,
-    move_model::MovePhase,
-    move_transition::MoveTransition,
-    replacement_artifact::{Anchor, Root, RootPlan},
+    replacement_artifact::{Anchor, Root},
 };
 use crate::{
     error::AppError,
@@ -21,45 +20,23 @@ use std::{ffi::OsStr, io};
 const BEFORE: &str = "probe-before";
 const AFTER: &str = "probe-after";
 
-pub(super) fn plans(intent: &DurableIntent) -> Result<Vec<RootPlan>, AppError> {
-    let spec = intent.operation.move_spec()?;
-    Ok(spec
-        .probe_plans()
-        .map(|(plan, endpoint, parent)| RootPlan {
-            parent_path: endpoint
-                .0
-                .parent()
-                .expect("validated endpoint parent")
-                .to_owned(),
-            parent,
-            root: plan.path.0.clone(),
-            token: plan.token.clone(),
-            excluded: std::iter::once(spec.source_version.object)
-                .chain(spec.target_original.iter().map(|original| original.object))
-                .collect(),
-        })
-        .collect())
+fn probes(operation: &DurableOperation) -> usize {
+    operation.intent().operation.kind().probes().len()
 }
-
 fn anchor(operation: &DurableOperation, index: usize) -> Result<Anchor, AppError> {
-    let plan = plans(operation.intent())?
-        .into_iter()
-        .nth(index)
-        .ok_or_else(|| invalid("Rename probe index exceeds its immutable plan"))?;
-    Anchor::open_plan(operation.intent(), plan)
+    Anchor::open_probe(operation.intent(), index)
 }
 fn step(operation: &DurableOperation, index: usize) -> Result<Step, AppError> {
     operation
         .state()
-        .move_state()?
-        .rename_probe
+        .preflight
         .as_ref()
         .and_then(|progress| progress.steps.get(index))
         .cloned()
         .ok_or_else(|| invalid("Rename probe has no recorded progress"))
 }
 fn advance(operation: &mut DurableOperation, index: usize, event: Event) -> Result<(), AppError> {
-    operation.advance_move(MoveTransition::Probe(index, event))
+    operation.advance(Transition::Probe(index, event))
 }
 fn at(hook: Option<&Boundary>, label: &'static str) -> Result<(), AppError> {
     hook.map_or(Ok(()), |hook| hook(label))
@@ -132,20 +109,11 @@ fn qualify_with(
     hook: Option<&Boundary>,
     mut rename: impl FnMut(&Directory, &OsStr, &Directory, &OsStr) -> io::Result<()>,
 ) -> Result<DurableOperation, Failure> {
-    if operation
-        .intent()
-        .operation
-        .move_spec()?
-        .rename_probes
-        .is_none()
-    {
-        return Ok(operation);
-    }
-    let state = operation.state().move_state()?;
-    if state.phase != MovePhase::Planned || state.rename_probe.is_some() {
+    let state = operation.state();
+    if state.phase != Phase::Planned || state.preflight.is_some() {
         return Err(invalid("Interrupted capability checks require explicit recovery").into());
     }
-    for index in 0..plans(operation.intent())?.len() {
+    for index in 0..probes(&operation) {
         advance(&mut operation, index, Event::BeginRoot)?;
         at(hook, "probe-root-intent")?;
         let root = anchor(&operation, index)?.create()?;
@@ -222,20 +190,13 @@ fn unsupported(error: &io::Error) -> bool {
 /// Read-only evidence check for explicit preflight cleanup. Unknown creation
 /// windows are intentionally preserved; private names alone never prove ownership.
 pub(super) fn inspect(operation: &DurableOperation) -> Result<(), AppError> {
-    let state = operation.state().move_state()?;
-    if !matches!(state.phase, MovePhase::Planned | MovePhase::Aborted)
-        || operation
-            .intent()
-            .operation
-            .move_spec()?
-            .rename_probes
-            .is_none()
-    {
+    let state = operation.state();
+    if !matches!(state.phase, Phase::Planned | Phase::Aborted) {
         return Err(invalid("Move is not in capability preflight"));
     }
-    for index in 0..plans(operation.intent())?.len() {
+    for index in 0..probes(operation) {
         let step = state
-            .rename_probe
+            .preflight
             .as_ref()
             .map_or(Step::Planned, |p| p.steps[index].clone());
         match step {
@@ -281,13 +242,13 @@ pub(super) fn discard(
     hook: Option<&Boundary>,
 ) -> Result<(), AppError> {
     inspect(&operation)?;
-    if operation.state().move_state()?.phase == MovePhase::Aborted {
+    if operation.state().phase == Phase::Aborted {
         return operation.retire_record();
     }
-    let count = plans(operation.intent())?.len();
+    let count = probes(&operation);
     // Initialize progress through the ordinary first transition when the move
     // was dropped after promotion but before its first capability checkpoint.
-    if operation.state().move_state()?.rename_probe.is_none() {
+    if operation.state().preflight.is_none() {
         advance(&mut operation, 0, Event::Absent)?;
     }
     for index in 0..count {
@@ -326,13 +287,13 @@ pub(super) fn discard(
         cleanup_one(&mut operation, index, hook)?;
     }
     verify_absent(&operation)?;
-    operation.advance_move(MoveTransition::AbortPreflight)?;
+    operation.advance(Transition::AbortPreflight)?;
     at(hook, "probe-aborted")?;
     operation.retire_record()
 }
 
 fn verify_absent(operation: &DurableOperation) -> Result<(), AppError> {
-    for index in 0..plans(operation.intent())?.len() {
+    for index in 0..probes(operation) {
         anchor(operation, index)?.verify_absent()?;
     }
     Ok(())

@@ -46,10 +46,10 @@ struct NativeState {
 }
 
 #[derive(Clone, Default)]
-struct NativeHarness(Arc<Mutex<NativeState>>);
+pub(crate) struct NativeHarness(Arc<Mutex<NativeState>>);
 
 impl NativeHarness {
-    fn factory(&self) -> Factory {
+    pub(crate) fn factory(&self) -> Factory {
         let shared = Arc::clone(&self.0);
         Box::new(move |callback| {
             let mut state = shared.lock().unwrap();
@@ -106,12 +106,12 @@ impl NativeHarness {
             .push_back(DuringWatch::Event(event));
     }
 
-    fn emit(&self, generation: usize, event: notify::Result<Event>) {
+    pub(crate) fn emit(&self, generation: usize, event: notify::Result<Event>) {
         let callback = self.0.lock().unwrap().callbacks[&generation].clone();
         (callback.lock().unwrap())(event);
     }
 
-    fn latest_generation(&self) -> usize {
+    pub(crate) fn latest_generation(&self) -> usize {
         self.0.lock().unwrap().next_generation - 1
     }
 
@@ -906,4 +906,129 @@ fn callbacks_complete_while_the_outer_observation_lock_is_held() {
     );
     thread.join().unwrap();
     drop(guard);
+}
+
+struct ChangeSubscription {
+    id: u64,
+    path: PathBuf,
+    mode: Mode,
+    sender: mpsc::Sender<Instant>,
+}
+
+static CHANGE_SUBSCRIPTIONS: Mutex<Vec<ChangeSubscription>> = Mutex::new(Vec::new());
+static NEXT_SUBSCRIPTION: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+
+/// An exact-path receipt after the native callback has invalidated the cache.
+/// This acknowledges a particular write; it is not a native-stream drain fence.
+pub(crate) struct ChangeReceipt {
+    id: u64,
+    receiver: mpsc::Receiver<Instant>,
+}
+
+impl ChangeReceipt {
+    pub(crate) fn wait_after(&self, write_started: Instant) {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            let observed_at = self
+                .receiver
+                .recv_timeout(deadline.saturating_duration_since(Instant::now()))
+                .expect("specific filesystem write was not acknowledged by recursive observation");
+            if observed_at >= write_started {
+                return;
+            }
+        }
+    }
+}
+
+impl Drop for ChangeReceipt {
+    fn drop(&mut self) {
+        CHANGE_SUBSCRIPTIONS
+            .lock()
+            .unwrap()
+            .retain(|subscription| subscription.id != self.id);
+    }
+}
+
+pub(crate) fn subscribe_changes(path: &Path, mode: Mode) -> ChangeReceipt {
+    let (sender, receiver) = mpsc::channel();
+    let id = NEXT_SUBSCRIPTION.fetch_add(1, Ordering::Relaxed);
+    CHANGE_SUBSCRIPTIONS
+        .lock()
+        .unwrap()
+        .push(ChangeSubscription {
+            id,
+            path: path.to_path_buf(),
+            mode,
+            sender,
+        });
+    ChangeReceipt { id, receiver }
+}
+
+pub(super) fn record_change(mode: Mode, paths: &[PathBuf], observed_at: Instant) {
+    for subscription in CHANGE_SUBSCRIPTIONS.lock().unwrap().iter() {
+        if subscription.mode == mode && paths.contains(&subscription.path) {
+            let _ = subscription.sender.send(observed_at);
+        }
+    }
+}
+
+#[test]
+fn native_receipts_acknowledge_only_paths_whose_invalidation_was_delivered() {
+    let root = PathBuf::from("/receipt-multi-path");
+    let a = root.join("a");
+    let b = root.join("b");
+    let receipt_a = subscribe_changes(&a, Mode::Recursive);
+    let receipt_b = subscribe_changes(&b, Mode::Recursive);
+    let delivered = Arc::new(Mutex::new(Vec::new()));
+    let output = delivered.clone();
+    let source_slot = Arc::new(Mutex::new(std::sync::Weak::<Source>::new()));
+    let slot = source_slot.clone();
+    let source = Source::new(
+        HashSet::from([root]),
+        Mode::Recursive,
+        Arc::new(move |notice| {
+            if let Notice::Changed { path, .. } = notice {
+                output.lock().unwrap().push(path);
+                // Another native callback can fault this source between deliveries.
+                slot.lock().unwrap().upgrade().unwrap().fault();
+            }
+        }),
+    );
+    *source_slot.lock().unwrap() = Arc::downgrade(&source);
+    source.activate().unwrap();
+    source.event(Ok(Event::new(EventKind::Create(CreateKind::File))
+        .add_path(a.clone())
+        .add_path(b.clone())));
+    let delivered = delivered.lock().unwrap();
+    assert_eq!(delivered.len(), 1);
+    assert_eq!(
+        receipt_a.receiver.try_recv().is_ok(),
+        delivered.contains(&a)
+    );
+    assert_eq!(
+        receipt_b.receiver.try_recv().is_ok(),
+        delivered.contains(&b)
+    );
+}
+
+#[test]
+fn native_receipts_reject_unrelated_paths_modes_and_pre_write_observations() {
+    let path = PathBuf::from("/receipt-specific-write/file");
+    let receipt = subscribe_changes(&path, Mode::Recursive);
+    let earlier = Instant::now();
+    record_change(Mode::Direct, std::slice::from_ref(&path), earlier);
+    record_change(
+        Mode::Recursive,
+        &[path.with_file_name("unrelated")],
+        earlier,
+    );
+    assert!(receipt.receiver.try_recv().is_err());
+    record_change(Mode::Recursive, std::slice::from_ref(&path), earlier);
+    let write_started = Instant::now();
+    record_change(Mode::Recursive, std::slice::from_ref(&path), write_started);
+    receipt.wait_after(write_started);
+    assert!(
+        receipt.receiver.try_recv().is_err(),
+        "the stale receipt must have been discarded before accepting the specific write"
+    );
 }

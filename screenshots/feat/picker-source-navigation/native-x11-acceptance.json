@@ -1,0 +1,30 @@
+{
+  "status": "CONFIRMED",
+  "private_screen": [
+    1920,
+    1080
+  ],
+  "source": [
+    20,
+    40,
+    950,
+    650
+  ],
+  "picker": [
+    45,
+    85,
+    900,
+    560
+  ],
+  "source_center": [
+    495,
+    365
+  ],
+  "picker_center": [
+    495,
+    365
+  ],
+  "native_helper": "production portal/parent.rs",
+  "server_geometry_evidence": "/tmp/pkx/server-windows.log",
+  "run_command": "xvfb-run -a -s '-screen 0 1920x1080x24 -nolisten tcp' /tmp/picker-x11-review.sh"
+}

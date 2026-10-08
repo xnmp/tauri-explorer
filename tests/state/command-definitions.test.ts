@@ -108,6 +108,7 @@ import {
   type Command,
 } from "$lib/state/commands.svelte";
 import { keybindingsStore } from "$lib/state/keybindings.svelte";
+import { dialogStore } from "$lib/state/dialogs.svelte";
 
 beforeEach(() => {
   // Reset the controllable world to a neutral baseline.
@@ -122,8 +123,30 @@ beforeEach(() => {
   h.recent.count = 0;
   h.workspaces.count = 0;
   vi.clearAllMocks();
+  h.explorer.getSelectedEntries.mockReturnValue([]);
+  dialogStore.closeAll();
   h.getActiveExplorer.mockReturnValue(h.explorer as unknown);
   registerAllCommands();
+});
+
+describe("crop command", () => {
+  const image = { path: "/Pictures/image.png", name: "image.png", kind: "file", size: 1, modified: "" };
+  it("opens a captured selection without requiring a preview pane", async () => {
+    h.explorer.getSelectedEntries.mockReturnValue([image]);
+    expect(getAvailableCommands().map(({ id }) => id)).toContain("file.cropImage");
+    await executeCommand("file.cropImage");
+    image.name = "changed.png";
+    expect(dialogStore.imageEditorTarget).toEqual({ path: "/Pictures/image.png", name: "image.png" });
+    image.name = "image.png";
+    dialogStore.closeAll();
+    expect(dialogStore.imageEditorTarget).toBeNull();
+  });
+  it.each([[], [image, image], [{ ...image, kind: "directory" }], [{ ...image, name: "document.txt" }], [{ ...image, path: "demo://image.png" }]].map(selection => ({ selection })))("hides and rejects an ineligible selection %#", async ({ selection }) => {
+    h.explorer.getSelectedEntries.mockReturnValue(selection);
+    expect(getAvailableCommands().map(({ id }) => id)).not.toContain("file.cropImage");
+    await executeCommand("file.cropImage");
+    expect(dialogStore.imageEditorTarget).toBeNull();
+  });
 });
 
 describe("registerAllCommands", () => {

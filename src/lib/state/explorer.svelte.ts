@@ -16,19 +16,22 @@
  * - Undo (undo.svelte.ts) - global undo stack
  */
 
+import { isFileViewId } from "$lib/domain/file-view-id";
+import { fileViewRegistry } from "$lib/plugins/file-view-registry.svelte";
 import { resolveFileCursor } from "$lib/domain/file-list-navigation";
 import { clampNumericSetting } from "$lib/domain/settings-numbers";
 import { SvelteSet } from "svelte/reactivity";
 import { toastStore } from "./toast.svelte";
 import { basename, toNativeSeparators } from "$lib/domain/path";
 import { isWindows } from "$lib/domain/platform";
-import { clipboardHasImage, clipboardPasteImage } from "$lib/api/clipboard-image";
+import { clipboardImageStatus, clipboardPasteImage } from "$lib/api/clipboard-image";
+import { withClipboardImageProgress } from "$lib/state/clipboard-image-progress.svelte";
 import { fetchDirectory } from "$lib/api/files";
 import { sortEntries, filterHidden, type FileEntry, type SortField } from "$lib/domain/file";
 import type { ExplorerCoreState, SelectOptions, ViewMode } from "./types";
 import * as selection from "./selection";
 import * as navigation from "./navigation";
-import { clipboardStore } from "./clipboard.svelte";
+import { clipboardStore, CUT_ALREADY_PASTED } from "./clipboard.svelte";
 import { dialogStore } from "./dialogs.svelte";
 import { recentFilesStore } from "./recent-files.svelte";
 import { contextMenuStore } from "./context-menu.svelte";
@@ -37,6 +40,7 @@ import { settingsStore } from "./settings.svelte";
 import { manualHiddenStore } from "./manual-hidden.svelte";
 import { getSortPref, saveSortPref } from "./sort-prefs";
 import { pasteEntries, type PasteResult } from "./paste-operations";
+import { selectPasteSource } from "$lib/domain/paste-source";
 import { createDirectoryListing } from "./directory-listing";
 import { createPaneWatch } from "./pane-watch";
 import { createPaneRefresh } from "./pane-refresh";
@@ -45,11 +49,15 @@ import { undoActionLabel } from "./undo-helpers";
 import { broadcastFileChange } from "./file-events";
 
 import type { ExplorerSeed } from "$lib/domain/window-input";
+import type { PreviewTarget } from "$lib/plugins/preview-registry.svelte";
 
 function createExplorerState(seed?: ExplorerSeed) {
   // Listings are immutable revisions. Deep proxies would create per-entry
   // signals during whole-directory filtering, sorting and status aggregation.
   let entries = $state.raw<readonly FileEntry[]>(seed?.entries ?? []);
+  // Explicit reveal temporarily includes a hidden entry, without changing
+  // global visibility preferences. Ordinary selection/navigation retires it.
+  let revealedPath = $state<string | null>(null);
 
   // Core per-pane state using $state rune
   let coreState = $state<ExplorerCoreState>({
@@ -77,17 +85,32 @@ function createExplorerState(seed?: ExplorerSeed) {
     cursorPath: null,
   });
 
+  // Plugin file view preference (SDK 2). The built-in viewMode is kept while
+  // a plugin view is chosen, so leaving the plugin view restores it.
+  // The pane's explicit view choice: a plugin view id, null for the built-in
+  // view, or undefined while it follows the default view setting.
+  let fileViewChoice = $state<string | null | undefined>(undefined);
+  const fileView = $derived(fileViewChoice !== undefined ? fileViewChoice
+    : isFileViewId(settingsStore.defaultFileView) ? settingsStore.defaultFileView : null);
+
+  // A plugin's non-file Preview subject. It belongs to the folder it was set
+  // in and yields to any later file selection.
+  let previewTarget = $state.raw<{ owner: string; target: PreviewTarget; directory: string } | null>(null);
+
   /** Replace the selection contents, mutating the reactive Set in place.
    *  Only added/removed keys fire; untouched rows never re-render. */
   function setSelection(next: Iterable<string>): void {
     const cur = coreState.selectedPaths;
     const nextSet = next instanceof Set ? (next as ReadonlySet<string>) : new Set(next);
+    if (revealedPath && !nextSet.has(revealedPath)) revealedPath = null;
+    let changed = false;
     for (const path of [...cur]) {
-      if (!nextSet.has(path)) cur.delete(path);
+      if (!nextSet.has(path)) { cur.delete(path); changed = true; }
     }
     for (const path of nextSet) {
-      if (!cur.has(path)) cur.add(path);
+      if (!cur.has(path)) { cur.add(path); changed = true; }
     }
+    if (changed && nextSet.size > 0 && previewTarget) previewTarget = null;
   }
 
   // Inline new-entry creation state (folder or file share the same inline row)
@@ -107,6 +130,7 @@ function createExplorerState(seed?: ExplorerSeed) {
 
   // Navigation callback for UI (e.g. focusing the selected item after nav)
   let onNavigateCallback: (() => void) | null = null;
+  let onRevealCallback: (() => void) | null = null;
 
   // Filesystem observation ownership
   const watch = createPaneWatch({ refresh: (options) => refresh(options) });
@@ -130,6 +154,10 @@ function createExplorerState(seed?: ExplorerSeed) {
     if (filterQuery) {
       const q = filterQuery.toLowerCase();
       filtered = filtered.filter((e) => e.name.toLowerCase().includes(q));
+    }
+    if (revealedPath && !filtered.some((entry) => entry.path === revealedPath)) {
+      const revealed = coreState.entries.find((entry) => entry.path === revealedPath);
+      if (revealed) filtered = [...filtered, revealed];
     }
     // Only Details view exposes sortable column headers. List and Tiles have no
     // sort UI, so they always sort by name ascending for a predictable order
@@ -195,6 +223,7 @@ function createExplorerState(seed?: ExplorerSeed) {
       }
       coreState.error = null;
       filterQuery = "";
+      revealedPath = null;
       showFilter = false;
 
       const result = await dirListing.load(path, observation);
@@ -487,6 +516,17 @@ function createExplorerState(seed?: ExplorerSeed) {
     setSelection(nextSet);
   }
 
+  /** Replace the selection with listed paths; `focus` becomes the primary
+   *  entry (cursor and range anchor). Unknown paths are ignored. */
+  function selectPaths(paths: readonly string[], focus: string | null = null) {
+    const listed = new Set(coreState.entries.map((entry) => entry.path));
+    const next = [...new Set(paths)].filter((path) => listed.has(path));
+    const primary = focus !== null && next.includes(focus) ? focus : next.at(-1) ?? null;
+    setSelection(next);
+    coreState.selectionAnchorPath = primary;
+    if (primary) coreState.cursorPath = primary;
+  }
+
   function selectAll() {
     setSelection(displayEntries.map((e) => e.path));
     coreState.selectionAnchorPath = displayEntries[0]?.path ?? null;
@@ -552,12 +592,18 @@ function createExplorerState(seed?: ExplorerSeed) {
 
   /** Start inline folder creation (shows editable placeholder in file list) */
   function startInlineNewFolder(): void {
-    if (!destroyed) creationSession = { kind: "folder" };
+    if (!destroyed && !showsPluginView()) creationSession = { kind: "folder" };
   }
 
   /** Start inline file creation (touch — shows editable placeholder in file list) */
   function startInlineNewFile(): void {
-    if (!destroyed) creationSession = { kind: "file" };
+    if (!destroyed && !showsPluginView()) creationSession = { kind: "file" };
+  }
+
+  /** Inline rename/creation editors live in the built-in rows; a plugin file
+   *  view (SDK 2) has none, so those flows are unavailable while it shows. */
+  function showsPluginView(): boolean {
+    return fileViewRegistry.resolve(fileView, coreState.currentPath) !== null;
   }
 
   /** Cancel inline new-entry creation */
@@ -609,6 +655,35 @@ function createExplorerState(seed?: ExplorerSeed) {
     };
   }
 
+  async function pasteImageAt(origin: ReturnType<typeof captureMutation>, probe: boolean): Promise<string | null | undefined> {
+    return withClipboardImageProgress(origin.path, async () => {
+      if (probe) {
+        const status = await clipboardImageStatus();
+        if (!status.ok) {
+          toastStore.error(`Could not read clipboard image: ${status.error}`);
+          return status.error;
+        }
+        if (!status.data) return undefined;
+      }
+      const result = await clipboardPasteImage(origin.path);
+      if (!result.ok) {
+        toastStore.error(`Could not paste clipboard image into ${basename(origin.path) || origin.path}: ${result.error}`);
+        return result.error;
+      }
+      broadcastFileChange([origin.path]);
+      if (origin.current()) await refresh({ silent: true });
+      toastStore.success(`Clipboard image saved to ${basename(origin.path) || origin.path}`);
+      return null;
+    });
+  }
+
+  async function pasteImage(): Promise<string | null> {
+    const origin = captureMutation();
+    if (!origin.current()) return "Pane is closed";
+    if (!origin.path) return "No current directory";
+    return (await pasteImageAt(origin, false)) ?? null;
+  }
+
   async function paste(): Promise<string | null> {
     const origin = captureMutation();
     if (!origin.current()) return "Pane is closed";
@@ -617,32 +692,34 @@ function createExplorerState(seed?: ExplorerSeed) {
 
     // The native snapshot waits behind every accepted file clipboard job,
     // including jobs from other windows. Paste never bypasses this order.
-    const { content: osContent, error: osReadError, snapshot } = await clipboardStore.readOsFiles();
-    const internal = snapshot?.entries && snapshot.operation
-      ? { entries: snapshot.entries, operation: snapshot.operation }
-      : null;
-    const useInternal = internal !== null &&
-      ((snapshot !== null && snapshot.paths.length > 0) ||
-        (osReadError !== null && internal.operation === "copy"));
+    const { error: osReadError, snapshot } = await clipboardStore.readOsFiles();
+    const source = selectPasteSource(snapshot, osReadError);
 
-    if (useInternal) {
-      const { entries, operation } = internal!;
-      const isCut = operation === "cut";
-      const cutRevision = snapshot?.revision;
-      const error = await pasteEntries(
-        entries.map((e) => ({ path: e.path, name: e.name, size: e.size, modified: e.modified })),
-        isCut,
-        context,
-        () => { if (isCut && cutRevision !== undefined) void clipboardStore.clearIfRevision(cutRevision); },
-      );
+    if (source.kind === "internal") {
+      const sources = source.entries.map((e) => ({ path: e.path, name: e.name, size: e.size, modified: e.modified }));
+      let error: string | null;
+      if (source.operation === "cut") {
+        const outcome = await clipboardStore.withCutClaim(source.revision, async () => {
+          let complete = false;
+          const result = await pasteEntries(sources, true, context, () => { complete = true; });
+          return { result, complete };
+        });
+        if (!outcome.claimed) {
+          toastStore.show(CUT_ALREADY_PASTED, "info");
+          return null;
+        }
+        error = outcome.result;
+      } else {
+        error = await pasteEntries(sources, false, context);
+      }
       if (origin.current()) pasteResult = { error, timestamp: Date.now() };
       return error;
     }
 
     // OS clipboard (files copied from external apps like Explorer/Finder)
-    if (osContent && osContent.paths.length > 0) {
+    if (source.kind === "external") {
       const error = await pasteEntries(
-        osContent.paths.map((p) => ({ path: p, name: p.split(/[/\\]/).pop() || p })),
+        source.paths.map((p) => ({ path: p, name: basename(p) })),
         false,
         context,
       );
@@ -651,23 +728,15 @@ function createExplorerState(seed?: ExplorerSeed) {
     }
 
     // Fall back to clipboard image
-    if (await clipboardHasImage()) {
-      const result = await clipboardPasteImage(origin.path);
-      if (result.ok) {
-        broadcastFileChange([origin.path]);
-        if (origin.current()) await refresh({ silent: true });
-        return null;
-      }
-      return result.error;
-    }
+    const imageError = await pasteImageAt(origin, true);
+    if (imageError !== undefined) return imageError;
 
     // Nothing pasted: only now is a clipboard read failure worth surfacing
     // (#401) — when another source (internal clipboard, image) satisfied the
     // paste, the failed file-list probe was inconsequential noise.
-    if (osReadError) {
-      return `Reading the system clipboard failed: ${osReadError}`;
-    }
-    return "Nothing in clipboard";
+    const error = osReadError ? `Reading the system clipboard failed: ${osReadError}` : "Nothing in clipboard";
+    toastStore.error(error);
+    return error;
   }
 
   // ===================
@@ -757,6 +826,32 @@ function createExplorerState(seed?: ExplorerSeed) {
     // View
     setSorting,
     setViewMode,
+    /** Plugin file view chosen for this pane (null = built-in view mode). */
+    get fileView() { return fileView; },
+    /** The explicit choice to persist (undefined: follows the default). */
+    get fileViewChoice() { return fileViewChoice; },
+    /** A malformed id is treated as the built-in view rather than stored. */
+    setFileView(id: string | null) {
+      const next = id !== null && isFileViewId(id) ? id : null;
+      if (next !== fileView) previewTarget = null;
+      fileViewChoice = next;
+    },
+    /** The plugin preview target for the current folder, if any. */
+    get previewTarget(): { owner: string; target: PreviewTarget } | null {
+      return previewTarget && previewTarget.directory === coreState.currentPath ? previewTarget : null;
+    },
+    setPreviewTarget(owner: string, target: PreviewTarget | null) {
+      if (!target) {
+        if (previewTarget?.owner === owner) previewTarget = null;
+        return;
+      }
+      setSelection([]);
+      coreState.selectionAnchorPath = null;
+      previewTarget = { owner, target, directory: coreState.currentPath };
+    },
+    clearPreviewTargetsOwnedBy(owner: string) {
+      if (previewTarget?.owner === owner) previewTarget = null;
+    },
     // Miller columns (per-pane, #229)
     get millerLayers() {
       return millerLayersOverride ?? settingsStore.millerLayers;
@@ -796,13 +891,26 @@ function createExplorerState(seed?: ExplorerSeed) {
     get focusedEntry() { return focusedEntry; },
     focusEntry(entry: FileEntry) { coreState.cursorPath = entry.path; },
     selectEntry,
+    revealEntry(path: string): boolean {
+      const entry = coreState.entries.find((entry) => entry.path === path);
+      if (!entry) return false;
+      revealedPath = path;
+      filterQuery = "";
+      showFilter = false;
+      selectEntry(entry);
+      onRevealCallback?.();
+      return true;
+    },
     clearSelection,
     isSelected,
     getSelectedEntries,
+    captureMutation,
     selectByIndices,
+    selectPaths,
     selectAll,
     // Dialogs
-    startRename: (entry: FileEntry) => dialogStore.startRename(entry),
+    startRename: (entry: FileEntry) => { if (!showsPluginView()) dialogStore.startRename(entry); },
+    get showsPluginView() { return showsPluginView(); },
     startDelete,
     startPermanentDelete,
     // Context menu
@@ -839,6 +947,7 @@ function createExplorerState(seed?: ExplorerSeed) {
     copyToClipboard,
     cutToClipboard,
     paste,
+    pasteImage,
     get pasteResult() {
       return pasteResult;
     },
@@ -848,6 +957,9 @@ function createExplorerState(seed?: ExplorerSeed) {
     // Navigation callback
     set onNavigate(cb: (() => void) | null) {
       onNavigateCallback = cb;
+    },
+    set onReveal(cb: (() => void) | null) {
+      onRevealCallback = cb;
     },
     directoryChanged: watch.changed,
     // Cleanup

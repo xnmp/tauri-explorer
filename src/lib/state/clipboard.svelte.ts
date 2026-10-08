@@ -3,20 +3,23 @@ import type { FileEntry } from "$lib/domain/file";
 import { basename } from "$lib/domain/path";
 import { emit, listen, type UnlistenFn } from "@tauri-apps/api/event";
 import {
+  osClipboardClaimCut,
   osClipboardCompareAndClear,
-  osClipboardHasFiles,
   osClipboardPublish,
+  osClipboardReleaseCut,
   osClipboardRekey,
   osClipboardSnapshot,
   type NativeClipboardSnapshot,
-  errorMessage,
 } from "$lib/api/os-clipboard";
+import { extractError } from "$lib/api/common";
 import { toastStore } from "./toast.svelte";
 
 export type ClipboardOperation = "copy" | "cut";
 export interface ClipboardContent { entries: FileEntry[]; operation: ClipboardOperation }
 export interface OsClipboardContent { paths: string[]; operation: "copy" }
 const CLIPBOARD_EVENT = "app://clipboard-sync";
+/** Shown when another window or pane holds or already consumed the Cut. */
+export const CUT_ALREADY_PASTED = "Those cut items were already pasted elsewhere.";
 
 function createClipboardStore() {
   let content = $state<ClipboardContent | null>(null);
@@ -76,9 +79,9 @@ function createClipboardStore() {
       return true;
     } catch (error) {
       if (operation === "cut") {
-        toastStore.error(`Cut failed: ${errorMessage(error)}`);
+        toastStore.error(`Cut failed: ${extractError(error)}`);
       } else {
-        toastStore.error(`System clipboard failed: ${errorMessage(error)}`);
+        toastStore.error(`System clipboard failed: ${extractError(error)}`);
       }
       if (job === latestLocalJob) {
         pendingCopy = null;
@@ -93,7 +96,6 @@ function createClipboardStore() {
     get revision() { return revision; },
     get isCut() { return content?.operation === "cut"; },
     get count() { return content?.entries.length ?? 0; },
-    get hasPendingLocalCopy() { return pendingCopy !== null && content === pendingCopy; },
     get pathSet() { return pathSet; },
     copy(entries: FileEntry[]): Promise<boolean> { return publish(entries, "copy"); },
     cut(entries: FileEntry[]): Promise<boolean> { return publish(entries, "cut"); },
@@ -105,20 +107,37 @@ function createClipboardStore() {
         else await reconcile();
       } catch { await reconcile(); }
     },
-    async take(): Promise<ClipboardContent | null> {
-      const snapshot = await reconcile();
-      if (!snapshot?.entries || !snapshot.operation) return null;
-      const selected = { entries: snapshot.entries, operation: snapshot.operation };
-      if (selected.operation === "cut") await this.clearIfRevision(snapshot.revision);
-      return selected;
-    },
-    async clearIfRevision(expected: number): Promise<void> {
+    /**
+     * Move the Cut at `expected` only if this paste wins it (#871). Every
+     * window claims through the one native worker, so exactly one paste moves
+     * a given Cut. A complete move consumes the Cut; an unfinished or failed
+     * one returns it so it can be pasted again.
+     */
+    async withCutClaim<T>(
+      expected: number,
+      move: () => Promise<{ result: T; complete: boolean }>,
+    ): Promise<{ claimed: false } | { claimed: true; result: T }> {
+      if (!(await osClipboardClaimCut(expected))) {
+        await reconcile();
+        return { claimed: false };
+      }
+      let complete = false;
       try {
-        if (await osClipboardCompareAndClear(expected)) {
-          await reconcile();
-          await notify();
-        }
-      } catch { await reconcile(); }
+        const outcome = await move();
+        complete = outcome.complete;
+        return { claimed: true, result: outcome.result };
+      } finally {
+        try {
+          if (complete) {
+            if (await osClipboardCompareAndClear(expected)) {
+              await reconcile();
+              await notify();
+            }
+          } else {
+            await osClipboardReleaseCut(expected);
+          }
+        } catch { await reconcile(); }
+      }
     },
     async rekeyPath(oldPath: string, newPath: string, snapshot: FileEntry | null = null): Promise<void> {
       const current = content;
@@ -131,12 +150,12 @@ function createClipboardStore() {
         else await reconcile();
       } catch { await reconcile(); }
     },
-    hasOsFiles(): Promise<boolean> { return osClipboardHasFiles(); },
     async readOsFiles(): Promise<{ content: OsClipboardContent | null; error: string | null; snapshot: NativeClipboardSnapshot | null }> {
-      // The native snapshot waits for every accepted job across renderers.
+      // The native snapshot waits for every accepted job across renderers, and
+      // the worker's revision only increases, so it is never older than any
+      // revision this renderer has applied.
       try {
-        let snapshot = await osClipboardSnapshot();
-        while (snapshot.revision < revision) snapshot = await osClipboardSnapshot();
+        const snapshot = await osClipboardSnapshot();
         apply(snapshot);
         return {
           content: snapshot.paths.length ? { paths: snapshot.paths, operation: "copy" } : null,

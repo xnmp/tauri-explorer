@@ -4,21 +4,38 @@
 
 import type { Command } from "../commands.svelte";
 import { writeTextFile } from "$lib/api/files";
-import { clipboardPasteImage } from "$lib/api/clipboard-image";
 import { dialogStore } from "../dialogs.svelte";
 import { getActiveExplorer } from "./shared";
 import { windowTabsManager } from "../window-tabs.svelte";
 import { requestGraphUndo } from "../git-graph-undo";
 import { activePaneIsGraph } from "./active-pane";
+import { isCroppableImage } from "$lib/domain/file-types";
+
+function selectedCropImage() {
+  const selected = getActiveExplorer()?.getSelectedEntries() ?? [];
+  return selected.length === 1 && isCroppableImage(selected[0]) ? selected[0] : null;
+}
 
 /** File operation commands */
 export const fileCommands: Command[] = [
+  {
+    id: "file.cropImage",
+    label: "Crop Image…",
+    category: "file",
+    when: () => selectedCropImage() !== null,
+    handler: () => {
+      const image = selectedCropImage();
+      if (image) dialogStore.openImageEditor(image);
+    },
+  },
   {
     id: "file.newFolder",
     label: "New Folder",
     category: "file",
     shortcut: "Ctrl+Shift+N",
     handler: () => getActiveExplorer()?.startInlineNewFolder(),
+    // Inline editors live in the built-in listing, not in plugin file views.
+    when: () => !getActiveExplorer()?.showsPluginView,
   },
   {
     id: "file.newFile",
@@ -26,6 +43,7 @@ export const fileCommands: Command[] = [
     category: "file",
     shortcut: "Ctrl+Alt+N",
     handler: () => getActiveExplorer()?.startInlineNewFile(),
+    when: () => !getActiveExplorer()?.showsPluginView,
   },
   {
     id: "file.rename",
@@ -39,7 +57,7 @@ export const fileCommands: Command[] = [
         explorer?.startRename(selected);
       }
     },
-    when: () => (getActiveExplorer()?.getSelectedEntries().length ?? 0) > 0,
+    when: () => !getActiveExplorer()?.showsPluginView && (getActiveExplorer()?.getSelectedEntries().length ?? 0) > 0,
   },
   {
     id: "file.bulkRename",
@@ -212,12 +230,7 @@ export const editCommands: Command[] = [
     category: "edit",
     shortcut: "Ctrl+Shift+V",
     handler: async () => {
-      const explorer = getActiveExplorer();
-      if (!explorer) return;
-      const result = await clipboardPasteImage(explorer.currentPath);
-      if (result.ok) {
-        explorer.refresh({ silent: true });
-      }
+      await getActiveExplorer()?.pasteImage();
     },
   },
 ];

@@ -40,12 +40,24 @@ impl ObjectId {
         Self(identity)
     }
 
-    #[cfg(all(windows, test))]
+    #[cfg(windows)]
     pub(super) fn windows(volume_serial: u64, file_id: [u8; 16]) -> Self {
         Self(Identity::Windows {
             volume_serial,
             file_id,
         })
+    }
+
+    /// This platform's device and inode, for compact same-platform encodings;
+    /// `None` for an identity another platform recorded.
+    #[cfg(unix)]
+    pub(super) fn unix_parts(self) -> Option<(u64, u64)> {
+        match self.0 {
+            Identity::Linux { device, inode } | Identity::Macos { device, inode } => {
+                (Self::unix(device, inode) == self).then_some((device, inode))
+            }
+            Identity::Windows { .. } => None,
+        }
     }
 
     /// Volume equality is weaker than object equality and never crosses an OS

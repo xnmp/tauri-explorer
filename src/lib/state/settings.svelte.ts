@@ -7,6 +7,8 @@
  * localStorage as synchronous fallback for immediate state.
  */
 
+import { isFileViewId } from "$lib/domain/file-view-id";
+import { THUMBNAIL_SIZE_CONFIG, type ThumbnailSize, type ThumbnailSizeConfig } from "$lib/domain/tile-layout";
 import {
   configWriteActivity,
   configWriteRaced,
@@ -43,24 +45,12 @@ export interface NavBarButtons {
 
 export type IconTheme = "default" | "material" | "minimal";
 
-export type ThumbnailSize = "small" | "medium" | "large" | "xlarge";
+// Tile sizes are pure layout data shared by every tile grid; re-exported here
+// for existing importers.
+export { THUMBNAIL_SIZE_CONFIG, type ThumbnailSize, type ThumbnailSizeConfig };
 
 /** Windows translucent system backdrop (Mica/Acrylic). "off" = opaque window. */
 export type WindowsBackdrop = "off" | "mica" | "acrylic";
-
-export interface ThumbnailSizeConfig {
-  displaySize: number;
-  genSize: number;
-  quality: number;
-  gridMinWidth: number;
-}
-
-export const THUMBNAIL_SIZE_CONFIG: Record<ThumbnailSize, ThumbnailSizeConfig> = {
-  small:  { displaySize: 48,  genSize: 96,  quality: 75, gridMinWidth: 84  },
-  medium: { displaySize: 64,  genSize: 128, quality: 80, gridMinWidth: 108 },
-  large:  { displaySize: 96,  genSize: 192, quality: 85, gridMinWidth: 140 },
-  xlarge: { displaySize: 128, genSize: 256, quality: 90, gridMinWidth: 172 },
-};
 
 /** Which columns are visible in details view (name is always shown) */
 export interface ColumnVisibility {
@@ -88,6 +78,7 @@ export interface Settings {
   listViewColumns: number; // 0 = auto (based on window width), 1-6 = fixed
   listColumnMaxWidth: number; // max width per column in px (used when listViewColumns=0)
   viewMode: ViewMode; // default view mode for new panes
+  defaultFileView: string; // plugin file view id for new panes, "" = built-in view mode
   previewPaneWidth: number; // width in px when docked right, 0 = default (280px)
   previewPaneHeight: number; // height in px when docked top/bottom, 0 = default (240px)
   previewPanePosition: PreviewPanePositionMode; // preview pane dock edge: right (default), bottom, top, or auto (#467, picks the edge from window size)
@@ -164,6 +155,7 @@ const DEFAULT_SETTINGS: Settings = {
   listViewColumns: 0,
   listColumnMaxWidth: 250,
   viewMode: "details",
+  defaultFileView: "",
   previewPaneWidth: 0,
   previewPaneHeight: 0,
   previewPanePosition: "right",
@@ -282,6 +274,7 @@ export function normalizeSettingsInput(value: unknown): Partial<Settings> {
       continue;
     }
     if (typeof candidate !== typeof fallback) continue;
+    if (key === "defaultFileView" && candidate !== "" && !isFileViewId(candidate as string)) continue;
     const allowed = SETTING_ENUMS[key];
     if (allowed && !allowed.includes(candidate as string)) continue;
     (normalized as Record<string, unknown>)[key] = candidate;
@@ -522,6 +515,9 @@ function createSettingsStore() {
     get viewMode() {
       return settings.viewMode;
     },
+    get defaultFileView() {
+      return settings.defaultFileView;
+    },
     get previewPaneWidth() {
       return settings.previewPaneWidth;
     },
@@ -755,6 +751,9 @@ function createSettingsStore() {
     },
     setViewMode(mode: ViewMode): void {
       update({ viewMode: mode });
+    },
+    setDefaultFileView(id: string | null): void {
+      update({ defaultFileView: id !== null && isFileViewId(id) ? id : "" });
     },
     setListViewColumns(n: number): void {
       updateNumber("listViewColumns", n);

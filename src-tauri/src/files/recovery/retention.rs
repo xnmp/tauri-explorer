@@ -5,13 +5,7 @@
 //! whether that artifact may be removed automatically or only by an explicit
 //! user decision, and whether retention is within its storage budget.
 
-use super::model::{OperationSpec, OperationState, Phase};
 use serde::Serialize;
-
-/// Names of the private children an artifact root may hold. Both are removed
-/// by retirement; only one of them exists in a settled retention phase.
-pub(super) const ORIGINAL: &str = "original";
-pub(super) const PUBLICATION: &str = "publication";
 
 /// Kept at or below the catalog's 1,024-record cap so retention policy fails
 /// before catalog exhaustion and can explain itself to the user.
@@ -60,26 +54,6 @@ impl Budget {
     }
 }
 
-/// Which private child a settled record is currently holding.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(super) enum Retained {
-    /// The displaced original of a completed overwrite: the only known copy of
-    /// the previous content. Explicit user discard only.
-    Original,
-    /// The independent copy parked by a completed restoration. Automatically
-    /// retirable only while its recorded source is verifiably intact.
-    Publication,
-}
-
-impl Retained {
-    pub(super) fn name(self) -> &'static str {
-        match self {
-            Self::Original => ORIGINAL,
-            Self::Publication => PUBLICATION,
-        }
-    }
-}
-
 /// How a retained artifact may be disposed of.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -90,18 +64,14 @@ pub(super) enum Disposal {
     AutomaticWhenSourceIntact,
 }
 
-/// The retention position of one durable record, derived from evidence only.
+/// The retention position of one durable record, derived from evidence only
+/// by `Checkpoint::retention`.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) enum Retention {
-    /// A settled record holding user bytes.
-    Settled {
-        retained: Retained,
-        disposal: Disposal,
-    },
+    /// A settled record holding its own inverse and any retained bytes.
+    Settled { disposal: Disposal },
     /// Retirement was journaled but has not completed. Resumable.
     Retiring,
-    /// A move retains its own inverse, possibly across two artifact roots.
-    MoveSettled { disposal: Disposal },
     /// Removal completed; only the record itself remains.
     Residue,
     /// An interrupted or errored record. Never retired.
@@ -109,94 +79,13 @@ pub(super) enum Retention {
 }
 
 impl Retention {
-    pub(super) fn settled(self) -> Option<(Retained, Disposal)> {
-        match self {
-            Self::Settled { retained, disposal } => Some((retained, disposal)),
-            _ => None,
-        }
+    pub(super) fn settled(self) -> bool {
+        matches!(self, Self::Settled { .. })
     }
 
     /// Only a settled or interrupted retirement has artifacts to remove.
     pub(super) fn retirable(self) -> bool {
-        matches!(
-            self,
-            Self::Settled { .. } | Self::MoveSettled { .. } | Self::Retiring | Self::Residue
-        )
-    }
-}
-
-/// Retention dispatches on operation kind. A kind without a plan is listed,
-/// measured and counted, but never retired, so a new kind is safe by default.
-///
-pub(super) fn retention(operation: &OperationSpec, state: &OperationState) -> Retention {
-    match (operation, state) {
-        (OperationSpec::CopyReplacement(_), OperationState::Replacement(state)) => {
-            if state.error.is_some() {
-                // Unverified evidence: an error is a reason to preserve, never
-                // a reason to remove. A retirement already under way still
-                // reports its error while remaining resumable.
-                return match state.phase {
-                    Phase::DiscardIntent => Retention::Retiring,
-                    Phase::Discarded => Retention::Residue,
-                    _ => Retention::Unresolved,
-                };
-            }
-            match state.phase {
-                Phase::Published => Retention::Settled {
-                    retained: Retained::Original,
-                    disposal: Disposal::ExplicitOnly,
-                },
-                Phase::Restored => Retention::Settled {
-                    retained: Retained::Publication,
-                    disposal: Disposal::AutomaticWhenSourceIntact,
-                },
-                Phase::DiscardIntent => Retention::Retiring,
-                Phase::Discarded => Retention::Residue,
-                _ => Retention::Unresolved,
-            }
-        }
-        (OperationSpec::Move(spec), OperationState::Move(state)) => {
-            if let Some(retirement) = &state.retirement {
-                return if retirement.completed {
-                    Retention::Residue
-                } else {
-                    Retention::Retiring
-                };
-            }
-            if state.error.is_some() {
-                return Retention::Unresolved;
-            }
-            super::move_retention::disposal(spec, state.phase)
-                .map_or(Retention::Unresolved, |disposal| Retention::MoveSettled {
-                    disposal,
-                })
-        }
-        _ => Retention::Unresolved,
-    }
-}
-
-/// A retirement that reported a failure waits for an explicit retry (ADR
-/// 0023): a journaled one that stopped, or an automatic move discard that
-/// could not be journaled at all. Only a crash-interrupted retirement resumes
-/// automatically.
-pub(super) fn awaits_retry(state: &OperationState) -> bool {
-    match state {
-        OperationState::Replacement(state) => {
-            state.phase == Phase::DiscardIntent && state.error.is_some()
-        }
-        OperationState::Move(state) => match &state.retirement {
-            Some(retirement) => state.error.is_some() && !retirement.completed,
-            None => state.deferred.is_some(),
-        },
-    }
-}
-
-/// The measured size a record contributes, or `None` when it has not been
-/// measured yet. An unmeasured record is never reported as empty.
-pub(super) fn measured_bytes(state: &OperationState) -> Option<u64> {
-    match state {
-        OperationState::Replacement(state) => state.retained_bytes,
-        OperationState::Move(state) => state.retained_bytes,
+        !matches!(self, Self::Unresolved)
     }
 }
 
@@ -229,18 +118,12 @@ impl Usage {
             self.unavailable += 1;
             return;
         }
-        if retention.settled().is_some() || matches!(retention, Retention::MoveSettled { .. }) {
+        if retention.settled() {
             self.discardable += 1;
         }
         match bytes {
             Some(bytes) => self.bytes = self.bytes.saturating_add(bytes),
-            None if matches!(
-                retention,
-                Retention::MoveSettled { .. } | Retention::Retiring
-            ) || retention.settled().is_some() =>
-            {
-                self.unmeasured += 1
-            }
+            None if retention.settled() || retention == Retention::Retiring => self.unmeasured += 1,
             None => {}
         }
     }

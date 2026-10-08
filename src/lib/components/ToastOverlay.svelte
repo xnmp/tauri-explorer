@@ -4,6 +4,8 @@
 -->
 <script lang="ts">
   import { toastStore } from "$lib/state/toast.svelte";
+  import { clipboardImageProgress } from "$lib/state/clipboard-image-progress.svelte";
+  import { basename } from "$lib/domain/path";
   import { openExternalUrl } from "$lib/api/crash";
 
   function openLink(event: MouseEvent, url: string): void {
@@ -12,8 +14,15 @@
   }
 </script>
 
-{#if toastStore.toasts.length > 0}
+{#if toastStore.toasts.length > 0 || clipboardImageProgress.pending.length > 0}
   <div class="toast-container">
+    {#each clipboardImageProgress.pending as operation (operation.id)}
+      <div class="toast progress image-paste" role="status">
+        <span>Pasting clipboard image into {basename(operation.directory) || operation.directory}…</span>
+        <span class="destination" title={operation.directory}>{operation.directory}</span>
+        <div class="image-paste-bar" role="progressbar" aria-label="Pasting clipboard image" aria-valuemin="0" aria-valuemax="100"></div>
+      </div>
+    {/each}
     {#each toastStore.toasts as toast (toast.id)}
       <div class="toast {toast.type}" class:cut={toast.isCut} role={toast.type === "error" ? "alert" : "status"}>
         <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
@@ -100,6 +109,33 @@
     animation: toastSpin 900ms linear infinite;
   }
 
+  .image-paste {
+    align-items: stretch;
+    flex-direction: column;
+    gap: 6px;
+    width: min(320px, calc(100vw - 64px));
+    border-radius: var(--radius-md);
+  }
+
+  .destination {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: var(--font-size-caption);
+  }
+
+  .image-paste-bar {
+    height: 5px;
+    border-radius: var(--radius-pill);
+    background: repeating-linear-gradient(110deg, var(--accent) 0 14px, var(--surface-stroke) 14px 28px);
+    background-size: 30px 100%;
+    animation: imagePasteProgress 1s linear infinite;
+  }
+
+  @keyframes imagePasteProgress {
+    to { background-position: 30px 0; }
+  }
+
   @keyframes toastSpin {
     to { transform: rotate(360deg); }
   }
@@ -108,6 +144,7 @@
      against the faint full circle without rotating. */
   @media (prefers-reduced-motion: reduce) {
     .spinner-arc { animation: none; }
+    .image-paste-bar { animation: none; }
   }
 
   .toast.clipboard.cut {

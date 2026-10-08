@@ -1,11 +1,15 @@
 /// <reference types="mocha" />
+/** #710: native transfer failures retain partial JSON and the failing window screenshot.
+ *
+ * Retire-when: #710 closed
+ */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 let waits: typeof import("../../e2e-tauri/window-transfer-waits");
 
 const driver = vi.hoisted(() => ({
   execute: vi.fn(), executeAsync: vi.fn(), getWindowHandle: vi.fn(),
   getWindowHandles: vi.fn(), switchToWindow: vi.fn(), saveScreenshot: vi.fn(),
-  waitUntil: vi.fn(),
+  getUrl: vi.fn(), waitUntil: vi.fn(),
 }));
 const files = vi.hoisted(() => ({
   mkdtempSync: vi.fn(() => "transfer-fixture"), mkdirSync: vi.fn(), writeFileSync: vi.fn(),
@@ -13,7 +17,11 @@ const files = vi.hoisted(() => ({
 vi.mock("@wdio/globals", () => ({ browser: driver, $: vi.fn() }));
 vi.mock("expect-webdriverio", async () => ({ expect: (await import("vitest")).expect }));
 vi.mock("node:fs", () => ({ default: files }));
-vi.mock("../../e2e-tauri/specs/helpers", () => ({ navigateTo: vi.fn(), domTexts: vi.fn() }));
+vi.mock("../../e2e-tauri/specs/helpers", () => ({
+  navigateTo: vi.fn(), domTexts: vi.fn(), closeOtherWindows: vi.fn(),
+  // Fixture handles are named after their labels.
+  switchToWindowLabel: async (label: string) => { await driver.switchToWindow(label); return label; },
+}));
 
 const cases = new Map<string, () => Promise<void>>();
 let currentWindow: string;
@@ -30,6 +38,8 @@ beforeEach(async () => {
   driver.getWindowHandle.mockImplementation(async () => currentWindow);
   driver.getWindowHandles.mockResolvedValue(["main", "child1", "child2"]);
   driver.switchToWindow.mockImplementation(async (handle: string) => { currentWindow = handle; });
+  driver.getUrl.mockImplementation(async () => currentWindow === "warm"
+    ? "tauri://localhost/?warm=1&path=%2Fhome" : "tauri://localhost/");
   driver.execute.mockImplementation(async (_script, ...args) => args.length === 2
     ? { handle: currentWindow, reason: args[1] } : currentWindow);
   driver.saveScreenshot.mockImplementation(async () => { screenshots.push(currentWindow); });
@@ -85,6 +95,26 @@ describe("native transfer failure artifacts at the spec call sites", () => {
       expect.stringContaining("window-transfer-listing-source-txt.json"), expect.any(String));
     expect(screenshots).toEqual(["child1"]);
     expect(currentWindow).toBe("child1");
+  });
+
+  it("records a warm window by URL without running script in it (#931)", async () => {
+    driver.executeAsync.mockResolvedValue({ ok: false, reason: "native open-pair did not finish" });
+    driver.getWindowHandles.mockResolvedValue(["main", "warm", "child1"]);
+    const scripted: string[] = [];
+    driver.execute.mockImplementation(async (_script, ...args) => {
+      scripted.push(currentWindow);
+      if (currentWindow === "warm") throw new Error("session deleted because of page crash or hang");
+      return args.length === 2 ? { handle: currentWindow, reason: args[1] } : currentWindow;
+    });
+
+    await expect(firstNativeCase()).rejects.toThrow("native open-pair did not finish");
+    expect(scripted).not.toContain("warm");
+    const artifact = JSON.parse(files.writeFileSync.mock.calls.at(-1)![1]);
+    expect(artifact.windows).toEqual([
+      expect.objectContaining({ handle: "main" }),
+      expect.objectContaining({ handle: "warm", url: expect.stringContaining("warm=1"), skipped: expect.any(String) }),
+      expect.objectContaining({ handle: "child1" }),
+    ]);
   });
 
   it("retains the original failure and partial diagnostics when the driver loses its session", async () => {

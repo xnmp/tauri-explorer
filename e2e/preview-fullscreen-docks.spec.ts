@@ -8,10 +8,12 @@
 import { test, expect, type Page } from "./fixtures";
 import type { Locator } from "@playwright/test";
 import { waitForEntries, pressShortcut } from "./helpers";
+import { installLayoutInspector } from "./layout-inspector";
 
 async function openPicturesWithPreview(page: Page): Promise<void> {
   await page.goto("/?path=/home/user/Pictures");
   await waitForEntries(page);
+  await installLayoutInspector(page);
   const previewPane = page.locator(".preview-pane");
   if (!(await previewPane.isVisible())) {
     await pressShortcut(page, " ", {});
@@ -49,10 +51,10 @@ test.describe("Fullscreen preview dock geometry", () => {
   test("right dock covers the viewport and restores its original geometry", async ({ page }, testInfo) => {
     await openPicturesWithPreview(page);
     const pane = page.locator(".preview-pane");
+    const image = await selectImage(page);
+    await expect(page.getByRole("complementary", { name: "File inspector" })).toBeVisible();
     const dockedBox = await pane.boundingBox();
     expect(dockedBox).not.toBeNull();
-
-    const image = await selectImage(page);
     await image.click();
     await expect(pane).toHaveClass(/fullscreen/);
     await expectFullscreenViewport(page, pane);
@@ -71,11 +73,12 @@ test.describe("Fullscreen preview dock geometry", () => {
       await openPicturesWithPreview(page);
       await dockPreview(page, command);
       const pane = page.locator(".preview-pane");
+      const image = await selectImage(page);
+      await expect(page.getByRole("complementary", { name: "File inspector" })).toBeVisible();
       const dockedBox = await pane.boundingBox();
       expect(dockedBox).not.toBeNull();
       expect(dockedBox!.height).toBeLessThan(page.viewportSize()!.height);
 
-      const image = await selectImage(page);
       await image.click();
       await expect(pane).toHaveClass(/fullscreen/);
       await expectFullscreenViewport(page, pane);

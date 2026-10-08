@@ -4,14 +4,15 @@
  */
 
 import { test, expect } from "./fixtures";
+import { MOCK_LOCAL_KEYS } from "../src/lib/api/mock-control";
 
 test("update notice uses themed dialog chrome and preserves its actions", async ({ page }) => {
   const releaseUrl = "https://github.com/xnmp/tauri-explorer/releases/tag/v1.8.0";
-  await page.addInitScript(() => {
-    localStorage.setItem("mockUpdateAvailable", "1");
+  await page.addInitScript(({ updateAvailable, updateUrl }) => {
+    localStorage.setItem(updateAvailable, "1");
     localStorage.setItem("theme", JSON.stringify("dark"));
-    localStorage.setItem("mock-update-url", "https://github.com/xnmp/tauri-explorer/releases/tag/v1.8.0");
-  });
+    localStorage.setItem(updateUrl, "https://github.com/xnmp/tauri-explorer/releases/tag/v1.8.0");
+  }, { updateAvailable: MOCK_LOCAL_KEYS.updateAvailable, updateUrl: MOCK_LOCAL_KEYS.updateUrl });
   await page.goto("/");
 
   const notice = page.getByTestId("update-notice");
@@ -29,16 +30,16 @@ test("update notice uses themed dialog chrome and preserves its actions", async 
 
   await viewRelease.click();
   await expect
-    .poll(() => page.evaluate(() => localStorage.getItem("mock-opened-url")))
+    .poll(() => page.evaluate((key) => localStorage.getItem(key), MOCK_LOCAL_KEYS.openedUrl))
     .toBe(releaseUrl);
   await expect(notice).not.toBeVisible();
 });
 
 test("light-themed update notice uses dialog chrome and can be dismissed", async ({ page }) => {
-  await page.addInitScript(() => {
-    localStorage.setItem("mockUpdateAvailable", "1");
+  await page.addInitScript((key) => {
+    localStorage.setItem(key, "1");
     localStorage.setItem("theme", JSON.stringify("light"));
-  });
+  }, MOCK_LOCAL_KEYS.updateAvailable);
   await page.goto("/");
 
   const notice = page.getByTestId("update-notice");

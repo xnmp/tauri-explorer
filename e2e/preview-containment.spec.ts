@@ -14,7 +14,8 @@
  * explorer pane a usable file-list region.
  */
 import { test, expect, type Page } from "./fixtures";
-import { VIEW_MODES, waitForEntries, type ViewMode } from "./helpers";
+import { VIEW_MODES, applySettingsAndReload, waitForEntries, type ViewMode } from "./helpers";
+import type { MockControl } from "../src/lib/api/mock-control";
 
 const DIR = "/home/preview-containment";
 const LONG_NAME =
@@ -104,14 +105,20 @@ const FORMATS: readonly Format[] = [
   },
   {
     name: "clip.mp4",
-    rendered: (page) =>
-      expect
-        .poll(() =>
-          pane(page)
-            .locator(".preview-image")
-            .evaluate((image: HTMLImageElement) => image.naturalWidth),
-        )
-        .toBeGreaterThan(0),
+    rendered: async (page) => {
+      const player = pane(page).getByRole("group", { name: "Video player for clip.mp4", exact: true });
+      await expect(player.locator("video")).toBeVisible();
+      await expect.poll(() => player.locator("video").evaluate((video: HTMLVideoElement) => ({
+        width: video.videoWidth,
+        height: video.videoHeight,
+        duration: video.duration,
+        paused: video.paused,
+        decoded: video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA,
+        error: video.error,
+      }))).toEqual({ width: 320, height: 180, duration: 6, paused: true, decoded: true, error: null });
+      await expect(player.getByRole("button", { name: "Play video", exact: true })).toBeEnabled();
+      await expect(player.getByRole("slider", { name: "Seek video", exact: true })).toBeEnabled();
+    },
   },
   {
     name: "archive.zip",
@@ -173,7 +180,9 @@ async function installImageFixtures(page: Page): Promise<void> {
       context.fillRect(0, 0, width, height);
       return canvas.toDataURL("image/png");
     };
-    (globalThis as { __mockPreviewReadImage?: (path: string) => string }).__mockPreviewReadImage = (path) =>
+    // addInitScript runs before mock-invoke.ts creates window.__mockControl,
+    // so this writer must create it (`??=`) rather than assume it exists.
+    ((globalThis as { __mockControl?: MockControl }).__mockControl ??= {}).previewReadImage = (path) =>
       path.endsWith("tall.png") ? png(300, 4000) : png(4000, 300);
   });
 }
@@ -190,7 +199,7 @@ interface Layout {
 async function openWithPreview(page: Page, path: string, layout: Layout, settings: object = {}): Promise<void> {
   await page.setViewportSize(VIEWPORTS[layout.viewport]);
   await page.goto(`/?path=${path}`);
-  await page.evaluate((stored) => localStorage.setItem("explorer-settings", JSON.stringify(stored)), {
+  await applySettingsAndReload(page, {
     showPreviewPane: true,
     showPreviewInfo: layout.showPreviewInfo ?? true,
     previewPanePosition: layout.dock,
@@ -198,7 +207,6 @@ async function openWithPreview(page: Page, path: string, layout: Layout, setting
     ...SIZES[layout.size],
     ...settings,
   });
-  await page.reload();
   await waitForEntries(page);
 }
 
@@ -590,7 +598,7 @@ for (const dock of DOCKS) {
 
         await test.step("unstaged diff with a long path", async () => {
           await page.evaluate((path) => {
-            (window as unknown as { __mockGitExternalModify: (path: string) => void }).__mockGitExternalModify(path);
+            (window as unknown as { __mockControl?: MockControl }).__mockControl?.gitExternalModify?.(path);
           }, LONG_DIFF_PATH);
           await page.locator('[data-section="changes"] .row', { hasText: "UserAccountServiceImplementation" }).click();
           await expectDiffRendered(page, "UserAccountServiceImplementation.java");

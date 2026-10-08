@@ -1,6 +1,6 @@
 [package]
 name = "tauri-explorer"
-version = "1.11.2"
+version = "1.11.3"
 description = "A keyboard-first file manager: fuzzy quick-open, ripgrep content search, a command palette for every action"
 authors = ["xnmp"]
 license = "MIT"
@@ -31,18 +31,19 @@ name = "sort_entries"
 harness = false
 
 [dependencies]
+url = "2"
 tauri = { version = "2", features = ["protocol-asset", "macos-private-api"] }
 tauri-plugin-opener = "2"
 tauri-plugin-shell = "2"
 tauri-plugin-drag = "2"
-tauri-plugin-clipboard-x = "2"
-clipboard-rs = "0.2.4"
+clipboard-rs = "0.3.5"
 serde = { version = "1", features = ["derive", "rc"] }
 serde_json = "1"
 rusqlite = { version = "0.40.2", features = ["bundled"] }
 trash = "5"
 chrono = { version = "0.4", features = ["serde"] }
-dirs = "6"
+dirs = "7"
+dunce = "1"
 opener = "0.8"
 nucleo-matcher = "0.3"
 jwalk = "0.9"
@@ -55,15 +56,27 @@ regex = "1"
 num_cpus = "1"
 thiserror = "2"
 image = { version = "0.25", default-features = false, features = ["jpeg", "png", "gif", "webp", "bmp"] }
-icns = "0.4"
+icns = "0.5"
+explorer-avif = { path = "vendor/explorer-avif" }
+quick-xml = "0.42"
+percent-encoding = "2.3"
+gif = "0.14"
+png = "0.18"
 turbojpeg = { version = "1", features = ["image"] }
 lru = "0.18"
 sha2 = "0.11"
 base64 = "0.23"
 hex = "0.4"
+md5 = "0.8"
 getrandom = "0.4"
+bytes = "1"
+futures-util = "0.3"
+http-body-util = "0.1"
+hyper = { version = "1", features = ["server", "http1"] }
+hyper-util = { version = "0.1", features = ["tokio"] }
 zip = { version = "2", default-features = false, features = ["deflate", "deflate64", "bzip2", "zstd", "lzma"] }
-tokio = { version = "1", features = ["rt", "time", "sync", "process", "macros"] }
+# net: AsyncFd, which the Linux mount-table watch polls for POLLPRI (#888).
+tokio = { version = "1", features = ["rt", "time", "sync", "process", "macros", "net"] }
 notify = "8"
 tempfile = "3"
 portable-pty = "0.9"
@@ -74,15 +87,15 @@ tauri-plugin-log = "2"
 ureq = { version = "3.3.0", default-features = false, features = ["rustls", "json"] }
 
 [features]
-# Durable copy retirement exists on Linux; native crash acceptance and other
-# platform adapters remain required before ordinary release enablement.
-durable-copy-recovery = []
+# Creates durable copy and move recovery records (Linux only). Opt-in until the
+# ADR 0020 decision is revisited; read only through `recovery::Runtime::DURABLE`.
+durable-recovery = []
 
-# Durable moves retain exact Undo authority until explicit discard. Keep opt-in
-# until platform qualification permits default enablement. Linux retirement and
-# per-volume exclusive-rename preflight are covered by #736 native contracts.
-# Independent of durable-copy-recovery: either policy may ship first.
-durable-move-recovery = []
+# The single Rust gate for native E2E test hooks (#884); the frontend's is
+# VITE_E2E_HOOKS=1 (src/lib/api/e2e-hooks.ts). Hook builds enable both. It adds
+# no dependencies and opens no ports: it only lets the harness shorten
+# timeouts through environment overrides. Release builds never enable it.
+e2e-hooks = []
 
 # Enables the programmatic WebView2 debug port used by the Windows binary-E2E
 # harness. This must stay opt-in: release builds must not expose a CDP port.
@@ -90,7 +103,7 @@ e2e-webview2-attach = []
 
 # Linux native crash/reload acceptance without WebDriver, whose automation
 # session dies with the renderer. No harness is included in ordinary builds.
-e2e-renderer-recovery = ["dep:gtk"]
+e2e-renderer-recovery = []
 
 # AVIF thumbnails/previews, via image's avif-native decoder (system dav1d).
 # Off by default so the cross-platform release build needs no dav1d (Ubuntu
@@ -102,18 +115,32 @@ avif = ["image/avif-native"]
 # zbus/url: xdg-desktop-portal FileChooser backend (system file picker).
 # Pure-Rust (zbus) + no system deps, so safe to build everywhere Linux.
 [target.'cfg(target_os = "linux")'.dependencies]
-gio = "0.18"
-x11rb = "0.13"
+gio = "0.22"
+# GDesktopAppInfo moved out of gio in gtk-rs 0.22.
+gio-unix = "0.22"
+x11rb = "0.14"
 linux-raw-sys = { version = "0.12.1", default-features = false, features = ["general", "no_std"] }
 zbus = { version = "5", default-features = false, features = ["tokio"] }
-url = "2"
 webkit2gtk = { version = "2.0", features = ["v2_20"] }
-gtk = { version = "0.18", optional = true }
+gtk = "0.18"
+gdkwayland-sys = "0.18"
+gdkx11-sys = "0.18"
+tauri-plugin-single-instance = "2.5.2"
 
 [target.'cfg(target_os = "windows")'.dependencies]
-webview2-com = "0.38"
-windows-core = "0.61.2"
-windows = { version = "0.61.3", features = ["Wdk_Foundation", "Wdk_Storage_FileSystem", "Win32_Security_Authorization", "Win32_Foundation", "Win32_Globalization", "Win32_Security", "Win32_Storage_FileSystem", "Win32_System_Com", "Win32_System_IO", "Win32_System_Threading", "Win32_UI_Shell", "Win32_UI_Shell_PropertiesSystem"] }
+windows-sys = {version="0.61",features= ["Win32_Foundation", "Win32_Security", "Win32_System_JobObjects", "Win32_System_Threading", "Win32_System_Diagnostics_ToolHelp"] }
+webview2-com = "0.39"
+windows-core = "0.62.2"
+# Win32_System_DataExchange/Memory: the clipboard sequence number and the
+# Cut token read-back (clipboard/windows.rs, #877).
+windows = { version = "0.62.2", features = ["Wdk_Foundation", "Wdk_Storage_FileSystem", "Win32_Security_Authorization", "Win32_Foundation", "Win32_Globalization", "Win32_Security", "Win32_Storage_FileSystem", "Win32_System_Com", "Win32_System_DataExchange", "Win32_System_IO", "Win32_System_Memory", "Win32_System_Threading", "Win32_UI_Shell", "Win32_UI_Shell_PropertiesSystem"] }
+
+# NSPasteboard change count and a private token type prove Cut ownership
+# (clipboard/macos.rs, #877). clipboard-rs already builds these versions.
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.6"
+objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSArray", "NSData", "NSString", "NSURL"] }
+objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "NSPasteboard", "NSPasteboardItem"] }
 
 # Thin LTO + single codegen unit: measurable wins for the CPU-bound stacks
 # (image decode, ripgrep, fuzzy matching, zip) at an acceptable release build

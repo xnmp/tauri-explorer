@@ -1,6 +1,6 @@
 /**
  * Keyboard Shortcuts Settings UI E2E Tests
- * Tests the keybindings customization UI in the Settings dialog.
+ * Tests keybindings customization in the dedicated Keyboard Shortcuts dialog.
  */
 
 import { test, expect } from "./fixtures";
@@ -11,8 +11,10 @@ async function waitForFileList(page: import("@playwright/test").Page) {
 }
 
 async function openSettings(page: import("@playwright/test").Page) {
-  await page.keyboard.press("Control+,");
-  const dialog = page.locator(".settings-dialog");
+  await page.keyboard.press("Control+Shift+p");
+  await page.locator(".command-palette-dialog .search-input").fill("Keyboard Shortcuts");
+  await page.locator(".command-palette-dialog .command-item").filter({ has: page.locator(".command-label", { hasText: /^Keyboard Shortcuts$/ }) }).click();
+  const dialog = page.locator(".keybindings-dialog");
   await expect(dialog).toBeVisible({ timeout: 2000 });
   return dialog;
 }
@@ -20,9 +22,9 @@ async function openSettings(page: import("@playwright/test").Page) {
 async function closeSettings(page: import("@playwright/test").Page) {
   // Click the close button instead of pressing Escape
   // (Escape might be captured by the keybindings recording handler)
-  const closeBtn = page.locator(".settings-dialog .close-btn");
+  const closeBtn = page.locator(".keybindings-dialog .close-btn");
   await closeBtn.click();
-  const dialog = page.locator(".settings-dialog");
+  const dialog = page.locator(".keybindings-dialog");
   await expect(dialog).not.toBeVisible();
 }
 
@@ -35,12 +37,12 @@ test.describe("Keyboard Shortcuts Settings UI", () => {
     await waitForFileList(page);
   });
 
-  test("Settings dialog opens with Ctrl+,", async ({ page }) => {
+  test("Keyboard Shortcuts palette command opens the dedicated editor", async ({ page }) => {
     await openSettings(page);
 
     // Verify dialog has the title
-    const title = page.locator("#settings-title");
-    await expect(title).toHaveText("Settings");
+    const title = page.locator("#keybindings-title");
+    await expect(title).toHaveText("Keyboard Shortcuts");
 
   });
 
@@ -48,7 +50,7 @@ test.describe("Keyboard Shortcuts Settings UI", () => {
     await openSettings(page);
 
     // Find the Keyboard Shortcuts section
-    const sectionTitle = page.locator(".section-title", { hasText: "Keyboard Shortcuts" });
+    const sectionTitle = page.locator("#keybindings-title");
     await expect(sectionTitle).toBeVisible();
 
     // Check for category groups

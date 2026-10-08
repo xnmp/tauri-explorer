@@ -1,0 +1,102 @@
+{
+  "schemaVersion": 1,
+  "platform": "Windows WebView2",
+  "runnerEnvironment": "github-hosted",
+  "prHead": "f47050901d7095a5e17b31f589bae93e11c073a1",
+  "checkoutCommit": "c18bb30932015a4737745cc480351bcee0957c84",
+  "runId": 36994174992,
+  "jobId": 110796973638,
+  "runUrl": "https://github.com/xnmp/tauri-explorer/actions/runs/36994174992",
+  "pdfCasesPassed": 9,
+  "pdfCasesExpected": 9,
+  "suiteCleanupCompleted": true,
+  "nativeBuildOutcome": "success",
+  "fullNativeSmokeOutcome": "failure",
+  "fullNativeSmokeError": "native preview resizing: root zoom did not reach 150% from a fresh profile",
+  "binarySha256": null,
+  "binarySha256Note": "The hosted build did not record a binary hash; workflow build provenance and per-case checkout identity are retained.",
+  "screenshotCount": 15,
+  "screenshotsInspected": 15,
+  "screenshots": [
+    {
+      "file": "screenshots/fix/728-zooming-in-pdf-in-preview-isnt-centred/image-comparison-native-windows-150-app.png",
+      "sha256": "9714b58c106d896de8da9469db45f3b9be9db7c9c9771cf79e55aca71db2b8c6",
+      "bytes": 89783
+    },
+    {
+      "file": "screenshots/fix/728-zooming-in-pdf-in-preview-isnt-centred/pdf-130-native-windows-150-app.png",
+      "sha256": "6ee4d7e4fde19641748b18e07c99ef226db24ea661c547d66e6bf7de8e356f76",
+      "bytes": 101182
+    },
+    {
+      "file": "screenshots/fix/728-zooming-in-pdf-in-preview-isnt-centred/pdf-active-pan-native-windows-150-app.png",
+      "sha256": "74d47326ab20616adecddec373531e8ee2137a3e2ee436ed82044710b4dd2895",
+      "bytes": 97206
+    },
+    {
+      "file": "screenshots/fix/728-zooming-in-pdf-in-preview-isnt-centred/pdf-corner-before-native-windows-150-app.png",
+      "sha256": "0b3d66b0a0929214c9a55007f268450cde7f0311aba344f3b3dc5c401c3d45ad",
+      "bytes": 97243
+    },
+    {
+      "file": "screenshots/fix/728-zooming-in-pdf-in-preview-isnt-centred/pdf-corner-bottom-right-native-windows-150-app.png",
+      "sha256": "4d9c27dfa02d115adada881af9b3c0c6e082c251b5566079291455cea63bded3",
+      "bytes": 97589
+    },
+    {
+      "file": "screenshots/fix/728-zooming-in-pdf-in-preview-isnt-centred/pdf-corner-top-left-native-windows-150-app.png",
+      "sha256": "3b6c2896de6b5d502f10f7568ec2724429e135b7a2b1c3fc9ba12e1239586fe1",
+      "bytes": 100376
+    },
+    {
+      "file": "screenshots/fix/728-zooming-in-pdf-in-preview-isnt-centred/pdf-error-native-windows-150-app.png",
+      "sha256": "e5ed4a40e6883274696eaceba4f2199307d58021a623d600fe07d6d7bd4e778e",
+      "bytes": 101260
+    },
+    {
+      "file": "screenshots/fix/728-zooming-in-pdf-in-preview-isnt-centred/pdf-fit-native-windows-100-app.png",
+      "sha256": "eb986051c89a056fa34037293b0f77f8b37c8e756ce353ef014a71873d97df5f",
+      "bytes": 74494
+    },
+    {
+      "file": "screenshots/fix/728-zooming-in-pdf-in-preview-isnt-centred/pdf-narrow-bottom-native-windows-150-app.png",
+      "sha256": "0450f0043df86dd1a28d8e0dad7f0ebefe6e2ea2ba282ef294b9173d6e39aacd",
+      "bytes": 97682
+    },
+    {
+      "file": "screenshots/fix/728-zooming-in-pdf-in-preview-isnt-centred/pdf-narrow-right-native-windows-150-app.png",
+      "sha256": "de767cde94742c691f57aa52479a4272dcb55c88693c8efa0ef6661c6c07c18e",
+      "bytes": 91362
+    },
+    {
+      "file": "screenshots/fix/728-zooming-in-pdf-in-preview-isnt-centred/pdf-narrow-top-native-windows-150-app.png",
+      "sha256": "1622af8b22b527b41b2529f63ac744ff3a0c84d224ef827fe41417a46fcf2de4",
+      "bytes": 96928
+    },
+    {
+      "file": "screenshots/fix/728-zooming-in-pdf-in-preview-isnt-centred/pdf-page-2-native-windows-150-app.png",
+      "sha256": "4762bc46157cbc93327d244877edda5fffa70b2d1e1f536b5f12c1e16a5190fe",
+      "bytes": 102514
+    },
+    {
+      "file": "screenshots/fix/728-zooming-in-pdf-in-preview-isnt-centred/pdf-panned-fullscreen-native-windows-150-app.png",
+      "sha256": "fd2bb456f6918990dbd71b01e2cf4fa0e31f67a4f11a8d9f03ba3839b480c310",
+      "bytes": 21522
+    },
+    {
+      "file": "screenshots/fix/728-zooming-in-pdf-in-preview-isnt-centred/pdf-panned-pane-native-windows-150-app.png",
+      "sha256": "d3d06672b7ef1bdd75865545b8f8e70d3ebca56c1c6701052b471de6a29a613b",
+      "bytes": 97303
+    },
+    {
+      "file": "screenshots/fix/728-zooming-in-pdf-in-preview-isnt-centred/pdf-reset-after-pan-native-windows-150-app.png",
+      "sha256": "580b965e38cf76fedb33ecefe96aa0e6cb913f959f671140c4488dabf8f3875c",
+      "bytes": 104397
+    }
+  ],
+  "limits": [
+    "Native wheel dispatch is a DOM WheelEvent, supplemented by device wheel input in browser tests.",
+    "Linux-only external-handler and focus-loss cases are skipped on Windows.",
+    "Full native smoke gate still failed outside the PDF suite; macOS PDF qualification remains pending."
+  ]
+}

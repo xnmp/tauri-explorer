@@ -264,6 +264,22 @@ describe("interactive Mac startup evidence ingestion", () => {
     expect(report.phaseAttribution.unattributedMs.p50).toBe(10);
   });
 
+  it("fails, rather than aborts, a report whose recorded launch lost its renderer (#942)", () => {
+    write(wellFormedEvidence());
+    fs.appendFileSync(path.join(root, "sample-01.log"),
+      "\nRenderer(web-content-terminated): window=main webview=main epoch-ms=1900.0 app-run-ms=900.0\n");
+    const report = buildInteractiveMacStartupQualificationReport({
+      evidencePath, qualificationRoot: root, build, platform, requestedSamples: 1, timeoutMs: 30_000,
+      startedAt: "2026-09-09T01:00:00.000Z", finishedAt: "2026-09-09T01:01:00.000Z",
+    });
+    expect(report).toMatchObject({
+      passed: false,
+      samples: [],
+      rendererLosses: [{ sample: 1, recovered: false }],
+      errors: [expect.stringMatching(/^sample 1: renderer lost: window=main .*; no recovery recorded;/)],
+    });
+  });
+
   it("never reports a half-bounce pass when the measured outcome misses the deadline", () => {
     write({ ...wellFormedEvidence(), halfBounceDeadlineMs: 700 });
     const report = buildInteractiveMacStartupQualificationReport({

@@ -10,6 +10,7 @@
   import ShortcutCheatsheet from "./ShortcutCheatsheet.svelte";
   import ProgressDialog from "./ProgressDialog.svelte";
   import ToastOverlay from "./ToastOverlay.svelte";
+  import { openWithStore } from "$lib/state/open-with.svelte";
 
   let { pickerInfo = null, recovery = null, onFilesChanged }: {
     pickerInfo?: PickerInfo | null;
@@ -23,6 +24,11 @@
 
   // Each dialog tracks its own demand. Constructors stay mounted after loading
   // to retain local state and close transitions; imports stay out of startup.
+  const ImageCropEditor = useLazyDialog({
+    label: "Image editor", isOpen: () => !pickerInfo && dialogStore.imageEditorTarget !== null,
+    load: () => import("$lib/components/ImageCropEditor.svelte"),
+    onFailure: () => dialogStore.closeImageEditor(),
+  }, notifyError);
   const ThemePicker = useLazyDialog({
     label: "Theme Picker", isOpen: () => !pickerInfo && dialogStore.isThemePickerOpen,
     load: () => import("$lib/components/ThemePicker.svelte"),
@@ -32,6 +38,21 @@
     label: "Settings", isOpen: () => !pickerInfo && dialogStore.isSettingsOpen,
     load: () => import("$lib/components/SettingsDialog.svelte"),
     onFailure: () => dialogStore.closeSettings(),
+  }, notifyError);
+  const PluginsDialog = useLazyDialog({
+    label: "Plugins", isOpen: () => !pickerInfo && dialogStore.isPluginsOpen,
+    load: () => import("$lib/components/PluginsDialog.svelte"),
+    onFailure: () => dialogStore.closePlugins(),
+  }, notifyError);
+  const KeybindingsDialog = useLazyDialog({
+    label: "Keyboard Shortcuts", isOpen: () => !pickerInfo && dialogStore.isKeybindingsOpen,
+    load: () => import("$lib/components/KeybindingsDialog.svelte"),
+    onFailure: () => dialogStore.closeKeybindings(),
+  }, notifyError);
+  const OpenWithDialog = useLazyDialog({
+    label: "Open with", isOpen: () => !pickerInfo && openWithStore.isOpen,
+    load: () => import("$lib/components/OpenWithDialog.svelte"),
+    onFailure: () => openWithStore.close(),
   }, notifyError);
   const WorkspaceDialog = useLazyDialog({
     label: "Workspaces", isOpen: () => !pickerInfo && dialogStore.isWorkspaceOpen,
@@ -97,6 +118,29 @@
   {/if}
 {:else}
 <ShortcutCheatsheet open={dialogStore.isShortcutsOpen} onClose={() => dialogStore.closeShortcuts()} />
+{#if ImageCropEditor.component && dialogStore.imageEditorTarget}
+  {@const target = dialogStore.imageEditorTarget}
+  {#key target}
+    <svelte:boundary onerror={dialogCrash("Image editor", () => dialogStore.closeImageEditor(target))}>
+      <ImageCropEditor.component path={target.path} name={target.name} onclose={() => dialogStore.closeImageEditor(target)} />
+    </svelte:boundary>
+  {/key}
+{/if}
+{#if PluginsDialog.component}
+  <svelte:boundary onerror={dialogCrash("Plugins", () => dialogStore.closePlugins())}>
+    <PluginsDialog.component open={dialogStore.isPluginsOpen} onClose={() => dialogStore.closePlugins()} />
+  </svelte:boundary>
+{/if}
+{#if KeybindingsDialog.component}
+  <svelte:boundary onerror={dialogCrash("Keyboard Shortcuts", () => dialogStore.closeKeybindings())}>
+    <KeybindingsDialog.component open={dialogStore.isKeybindingsOpen} onClose={() => dialogStore.closeKeybindings()} />
+  </svelte:boundary>
+{/if}
+{#if OpenWithDialog.component}
+  <svelte:boundary onerror={dialogCrash("Open with", openWithStore.close)}>
+    <OpenWithDialog.component />
+  </svelte:boundary>
+{/if}
 {#if QuickOpen.component}
   <svelte:boundary onerror={dialogCrash("Quick Open", () => dialogStore.closeQuickOpen())}>
     <QuickOpen.component open={dialogStore.isQuickOpenOpen} onClose={() => dialogStore.closeQuickOpen()} />

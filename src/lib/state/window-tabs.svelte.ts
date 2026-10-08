@@ -42,7 +42,7 @@ import {
 } from "./persisted";
 import { parentDir } from "$lib/domain/path";
 import { acknowledgeWindowHandoff, normalizeWindowHandoff } from "./window-handoff";
-import { logFrontendDiagnostic } from "$lib/api/frontend-log";
+import { traceError, traceWindowFailure, traceWindowProgress } from "./window-trace";
 import { isFreshSeed, isRecord, normalizeDirectorySeed, windowSeedFitsBudget, WINDOW_SEED_MAX_CHARS, type ExplorerSeed } from "$lib/domain/window-input";
 import { createTabDisplay } from "./tab-display.svelte";
 import { settingsStore } from "./settings.svelte";
@@ -212,6 +212,8 @@ function createWindowTabsManager(options: {
     siblingId: string;
     placement: SplitPlacement;
     ratio: number;
+    /** The pane's view choice (plugin view id, or null for built-in). */
+    fileView: string | null | undefined;
     ts: number;
   }
   const MAX_CLOSED_PANES = 20;
@@ -258,6 +260,21 @@ function createWindowTabsManager(options: {
     return panePath(tab, tab.activePaneId);
   }
 
+  /** A pane's plugin-view preference: live when its explorer exists, else
+   *  the restored value of a pane that has not been opened yet. */
+  function paneFileView(tab: WindowTab, paneId: PaneId): string | null | undefined {
+    const live = sessions.get(paneId);
+    return live ? live.fileViewChoice : tab.panes[paneId]?.fileView;
+  }
+
+  /** Choose a pane's plugin file view (null returns to its built-in view). */
+  function setPaneFileView(paneId: PaneId, id: string | null): void {
+    const explorer = sessions.get(paneId);
+    if (!explorer || explorer.fileViewChoice === id) return;
+    explorer.setFileView(id);
+    saveState();
+  }
+
   /** Serialize one live tab (paths read from the live explorers). */
   function persistTab(tab: WindowTab): PersistedWindowTab {
     const toPersisted = (node: PaneNode): PersistedNode =>
@@ -267,6 +284,7 @@ function createWindowTabsManager(options: {
             id: node.id,
             path: panePath(tab, node.id),
             ...(tab.panes[node.id]?.gitGraph ? { gitGraph: tab.panes[node.id].gitGraph } : {}),
+            ...(paneFileView(tab, node.id) !== undefined ? { fileView: paneFileView(tab, node.id) } : {}),
           }
         : {
             type: "split",
@@ -377,7 +395,11 @@ function createWindowTabsManager(options: {
         ? externalSeed
         : undefined;
     // Seeded/restored panes must not record duplicate visits.
-    sessions.create(paneId, () => createExplorerState(seed), async (explorer) => {
+    sessions.create(paneId, () => {
+      const explorer = createExplorerState(seed);
+      if (sourceExplorer?.fileViewChoice !== undefined) explorer.setFileView(sourceExplorer.fileViewChoice);
+      return explorer;
+    }, async (explorer) => {
       await (seed || !track ? explorer.initialLoad(path) : explorer.navigateTo(path));
     });
   }
@@ -524,8 +546,16 @@ function createWindowTabsManager(options: {
         const paneId = mapId(node.id);
         const isActiveTarget = node.id === persisted.activePaneId && !!opts.overridePath;
         const path = isActiveTarget ? opts.overridePath! : node.path;
-        sessions.reserve(paneId, () => createExplorerState(), (explorer) => explorer.initialLoad(path));
-        panes[paneId] = { path, ...(node.gitGraph ? { gitGraph: node.gitGraph } : {}) };
+        const fileView = node.fileView;
+        sessions.reserve(paneId, () => {
+          const explorer = createExplorerState();
+          // Restore the pane's plugin-view choice even before its plugin loads
+          // (it shows the built-in view until the view registers). An explicit
+          // built-in choice (null) overrides the default view for new panes.
+          if (fileView !== undefined) explorer.setFileView(fileView);
+          return explorer;
+        }, (explorer) => explorer.initialLoad(path));
+        panes[paneId] = { path, ...(node.gitGraph ? { gitGraph: node.gitGraph } : {}), ...(fileView !== undefined ? { fileView } : {}) };
         return leaf(paneId);
       }
       return {
@@ -616,7 +646,7 @@ function createWindowTabsManager(options: {
     if (!normalized || normalized.tabs.length === 0) return;
 
     // Destroy before clearing — otherwise backend watch refcounts and
-    // streaming listeners leak for every replaced explorer.
+    // directory listeners leak for every replaced explorer.
     paneActivation.cancel();
     transfers.clear();
     sessions.clear();
@@ -667,28 +697,33 @@ function createWindowTabsManager(options: {
     const freshTabSeed = isRecord(tabSeed) && isFreshSeed(tabSeed.ts, Date.now(), 10_000);
     const snapshot = freshTabSeed ? normalizeSnapshot(tabSeed.snapshot) : null;
     const handoff = isRecord(tabSeed) ? normalizeWindowHandoff(tabSeed.handoff) : null;
-    const traceTabSeed = (phase: string, error?: unknown) => {
-      if (import.meta.env.VITE_E2E_HOOKS !== "1") return;
-      logFrontendDiagnostic("window tab seed", {
+    const traceTabSeed = (phase: string, failed: boolean, error?: unknown) => {
+      const context = {
         label: WINDOW_LABEL, requestId: handoff?.requestId ?? null, phase,
         seedPresent: tabSeed !== null, fresh: freshTabSeed,
+        seedAgeMs: isRecord(tabSeed) && typeof tabSeed.ts === "number" ? Date.now() - tabSeed.ts : null,
         snapshotValid: snapshot !== null, handoffValid: handoff !== null,
-        error: error === undefined ? null : String(error).slice(0, 240),
-      });
+        error: traceError(error),
+      };
+      if (failed) traceWindowFailure("window tab seed failed", context);
+      else traceWindowProgress("window tab seed", context);
     };
-    traceTabSeed("read");
+    traceTabSeed("read", false);
     if (snapshot) {
       const adopted = adoptTab(snapshot);
-      traceTabSeed("adopted");
+      traceTabSeed("adopted", false);
       if (handoff) {
         void acknowledgeWindowHandoff(handoff, WINDOW_LABEL)
-          .then(() => traceTabSeed("acknowledged"))
-          .catch((error) => traceTabSeed("acknowledgement-error", error));
+          .then(() => traceTabSeed("acknowledged", false))
+          .catch((error) => traceTabSeed("acknowledgement-error", true, error));
       } else {
-        traceTabSeed("acknowledgement-skipped");
+        // The sender waits for an acknowledgement this window cannot send.
+        traceTabSeed("acknowledgement-skipped", true);
       }
       return adopted;
     }
+    // A stale or malformed seed means the sender's tab is not adopted here.
+    if (tabSeed !== null) traceTabSeed("rejected", true);
 
     // Check for parent-window seed (child windows get entries pre-loaded)
     const targetPath = overridePath ?? initialPath;
@@ -855,6 +890,7 @@ function createWindowTabsManager(options: {
     setActiveTab(tab.id);
     const paneId = generateId("pane");
     createAndRegisterExplorer(paneId, snapshot.path, undefined, undefined, false);
+    if (snapshot.fileView !== undefined) sessions.get(paneId)?.setFileView(snapshot.fileView);
     const splitId = generateId("split");
     updateActiveExplorerTab((t) => {
       const layout = hasNode(t.layout, snapshot.siblingId)
@@ -1096,6 +1132,7 @@ function createWindowTabsManager(options: {
         siblingId: context.siblingId,
         placement: context.placement,
         ratio: context.ratio,
+        fileView: paneFileView(tab, target),
         ts: Date.now(),
       });
       if (closedPanes.length > MAX_CLOSED_PANES) closedPanes.shift();
@@ -1243,6 +1280,7 @@ function createWindowTabsManager(options: {
     createTab,
     getPaneGitGraph,
     setPaneGitGraph,
+    setPaneFileView,
     showGitGraphInPane,
     toggleGitGraphInActivePane,
     getPaneScmVisible,

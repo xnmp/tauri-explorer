@@ -5,6 +5,13 @@
 
 import type { FileEntry } from "./file";
 import { compactRelativeTime } from "./relative-time";
+import { isVirtualPath } from "./virtual-path";
+
+/** Formats supported by the native crop encoder; requires a local file. */
+export function isCroppableImage(entry: FileEntry): boolean {
+  return entry.kind === "file" && !isVirtualPath(entry.path)
+    && /\.(jpe?g|png|gif|webp|bmp|svg|avif|icns)$/i.test(entry.name);
+}
 
 // Constructing Intl state per visible row costs ~100µs of ICU setup. Keep one
 // formatter for the absolute-date tooltip that accompanies relative labels.
@@ -317,6 +324,11 @@ export function isVideoFile(entry: FileEntry): boolean {
   if (entry.kind === "directory") return false;
   const ext = getExtension(entry.name);
   return VIDEO_THUMBNAIL_EXTENSIONS.has(ext) || AUDIO_THUMBNAIL_EXTENSIONS.has(ext);
+}
+
+/** Video identity, excluding audio cover art that shares the thumbnail API. */
+export function isVideoMediaFile(entry: FileEntry): boolean {
+  return entry.kind === "file" && VIDEO_THUMBNAIL_EXTENSIONS.has(getExtension(entry.name));
 }
 
 /** Labels for well-known extensionless files */

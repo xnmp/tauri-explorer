@@ -1,11 +1,15 @@
-/** Negative control: retain real-native evidence for a missing listing entry. */
+/**
+ * Negative control: retain real-native evidence for a missing listing entry.
+ *
+ * Retire-when: #710 closed
+ */
 import { browser } from "@wdio/globals";
 import { expect } from "expect-webdriverio";
 import fs from "node:fs";
 import path from "node:path";
 import { createNativeFixtureDirectory } from "../native-qualification";
 import { navigateTo } from "./helpers";
-import { captureDiagnostics } from "../window-transfer-diagnostics";
+import { captureDiagnostics } from "../diagnostics/window-transfer";
 import { waitForListingEntry, type ListingWaitRequest, type RendererWaitResult } from "../window-transfer-waits";
 
 describe("native transfer diagnostic negative control", () => {

@@ -1,5 +1,5 @@
 import { spawn, type ChildProcess } from "node:child_process";
-import { createWriteStream, mkdirSync, existsSync } from "node:fs";
+import { appendFileSync, createWriteStream, mkdirSync, existsSync } from "node:fs";
 import net from "node:net";
 import path from "node:path";
 import os from "node:os";
@@ -16,8 +16,13 @@ import {
   stopNativeQualificationProcesses,
 } from "./native-qualification";
 import { installExternalJobFixture } from "./external-job-fixture";
+import { captureNativeDriverTranscript, type NativeDriverTranscript } from "./native-driver-transcript";
+import { assertNativePortsAvailable, resolveNativeDriverPorts, waitForOwnedNativePorts } from "./native-driver-ports";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
+// Hook-only native hold makes image-paste progress observable before the real
+// clipboard read/encode/write starts, including on a fast CI filesystem.
+process.env.TAURI_EXPLORER_E2E_CLIPBOARD_IMAGE_DELAY_MS ??= "2000";
 const isWindows = process.platform === "win32";
 const binaryName = isWindows ? "tauri-explorer.exe" : "tauri-explorer";
 const application = resolveNativeApplication(
@@ -41,9 +46,13 @@ const nativeDriver =
     ? path.join(process.env.EDGEWEBDRIVER, "msedgedriver.exe")
     : undefined);
 
-const tauriDriverArgs = nativeDriver ? ["--native-driver", nativeDriver] : [];
-
-const driverPort = 4444;
+const driverPorts = resolveNativeDriverPorts(process.env);
+const driverPort = driverPorts.driver;
+const backendPort = driverPorts.backend;
+const tauriDriverArgs = [
+  ...(nativeDriver ? ["--native-driver", nativeDriver] : []),
+  "--port", String(driverPort), "--native-port", String(backendPort),
+];
 const driverLogPath = path.join(here, "logs", "msedgedriver.log");
 // Each worker appends its own session; the file is uploaded with the WDIO logs.
 const webkitDriverLogPath = path.join(here, "logs", "tauri-driver.log");
@@ -51,6 +60,7 @@ const webkitDriverLogPath = path.join(here, "logs", "tauri-driver.log");
 let driverProcess: ChildProcess | undefined;
 let applicationProcess: ChildProcess | undefined;
 let driverProcessGroup: NativeProcessGroup | undefined;
+let driverTranscript: NativeDriverTranscript | undefined;
 
 const waitForPort = async (
   port: number,
@@ -91,6 +101,7 @@ const stopProcesses = async (): Promise<void> => {
   const ownedDriver = driverProcess;
   const ownedApplication = applicationProcess;
   const ownedGroup = driverProcessGroup;
+  const ownedTranscript = driverTranscript;
   try {
     if (ownedGroup) {
       // WebKitWebDriver launches the application below tauri-driver. The group
@@ -102,6 +113,12 @@ const stopProcesses = async (): Promise<void> => {
         { label: "WebDriver", child: ownedDriver },
         { label: "native application", child: ownedApplication },
       ]);
+    }
+    // Process termination can precede stdio drain and the log's final write.
+    // ADR 0021: finish evidence before declaring this session cleaned up.
+    await ownedTranscript?.finish();
+    if (driverTranscript === ownedTranscript) {
+      driverTranscript = undefined;
     }
   } finally {
     if (
@@ -174,6 +191,17 @@ export const config: WebdriverIO.Config = {
   framework: "mocha",
   reporters: ["spec"],
   mochaOpts: { ui: "bdd", timeout: 60_000 },
+  afterTest: (test, _context, outcome) => {
+    // Persist runner outcomes even when native process output obscures the
+    // console reporter. Separate worker files avoid concurrent append races.
+    mkdirSync(path.join(here, "logs"), { recursive: true });
+    appendFileSync(path.join(here, "logs", `case-outcomes-${process.pid}.jsonl`), `${JSON.stringify({
+      sourceCommit: process.env.GITHUB_SHA ?? null, suite: test.parent, title: test.title,
+      passed: outcome.passed, skipped: outcome.skipped ?? test.pending,
+      duration: outcome.duration, retries: outcome.retries,
+      error: outcome.error?.stack ?? outcome.error?.message ?? null,
+    })}\n`);
+  },
   onPrepare: () => {
     processCleanupHooks.prepare();
     installExternalJobFixture(process.env);
@@ -184,6 +212,7 @@ export const config: WebdriverIO.Config = {
     // keeps fixtures alive even when the exit reaper cannot confirm teardown.
     processCleanupHooks.begin();
     if (!isWindows) {
+      await assertNativePortsAvailable(driverPorts);
       // WebKitWebDriver inherits tauri-driver's stdio, so its own diagnostics
       // (including "page crash or hang") land here. Retain them as a run
       // artifact as well as on the console: a lost session leaves nothing else
@@ -194,13 +223,10 @@ export const config: WebdriverIO.Config = {
       });
       mkdirSync(path.dirname(webkitDriverLogPath), { recursive: true });
       const driverLog = createWriteStream(webkitDriverLogPath, { flags: "a" });
-      driverProcess.stdout?.pipe(process.stdout, { end: false });
-      driverProcess.stdout?.pipe(driverLog, { end: false });
-      driverProcess.stderr?.pipe(process.stderr, { end: false });
-      driverProcess.stderr?.pipe(driverLog, { end: false });
-      driverProcess.once("exit", () => driverLog.end());
+      driverTranscript = captureNativeDriverTranscript(driverProcess, driverLog);
       if (process.platform === "linux") {
         driverProcessGroup = nativeProcessGroup(driverProcess);
+        await waitForOwnedNativePorts(driverProcess, driverPorts);
       }
       return;
     }

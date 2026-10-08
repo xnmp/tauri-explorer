@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
 import fixtures from "../fixtures/directory-wire.json";
-import { decodeDirectoryListing, type DirectoryListingPayload } from "$lib/api/directory-wire";
+import { decodeDirectoryListing, encodeDirectoryListing, type CompactDirectoryListing } from "$lib/api/directory-wire";
 
-const decode = (value: unknown) => decodeDirectoryListing(value as DirectoryListingPayload);
+const decode = (value: unknown) => decodeDirectoryListing(value as CompactDirectoryListing);
 const example = () => structuredClone(fixtures[0].wire);
 
 describe("native directory transport", () => {
@@ -10,40 +10,19 @@ describe("native directory transport", () => {
     for (const { wire, listing } of fixtures) expect(decode(wire)).toEqual(listing);
   });
 
-  it("keeps legacy immutable snapshots unchanged", () => {
-    const listing = fixtures[0].listing;
-    expect(decode(listing)).toBe(listing);
-  });
-
-  it("rejects a legacy-shaped listing with a malformed row instead of publishing it", () => {
-    const base = fixtures[0].listing;
-    const validEntry = base.entries[0];
-    const badRows: unknown[] = [
-      null,
-      undefined,
-      "not-an-entry",
-      {}, // missing every field
-      { ...validEntry, name: undefined },
-      { ...validEntry, path: 42 },
-      { ...validEntry, kind: "device" },
-      { ...validEntry, size: -1 },
-      { ...validEntry, size: 0.5 },
-      { ...validEntry, modified: 12345 },
-      { ...validEntry, is_symlink: "false" },
-      { ...validEntry, symlink_target: 7 },
-      { ...validEntry, is_empty: "false" },
-      { ...validEntry, is_git_repo: "true" },
-    ];
-    for (const bad of badRows) {
-      expect(() => decode({ path: base.path, entries: [validEntry, bad] })).toThrow(
-        "Invalid native directory snapshot"
-      );
+  it("encodes each listing exactly as the Rust serializer does", () => {
+    // The fixture's wire side is produced by the Rust serializer, so the mock's
+    // encoder cannot drift from the native format unnoticed (#868).
+    for (const { wire, listing } of fixtures) {
+      expect(encodeDirectoryListing(listing as never)).toEqual(wire);
+      expect(decode(encodeDirectoryListing(listing as never))).toEqual(listing);
     }
   });
 
-  it("accepts a legacy-shaped listing whose rows are all valid", () => {
-    const base = fixtures[0].listing;
-    expect(decode({ path: base.path, entries: base.entries })).toEqual(base);
+  it("rejects the pre-columns listing shape instead of trusting its rows", () => {
+    const listing = fixtures[0].listing;
+    expect(() => decode(listing)).toThrow("Invalid native directory snapshot");
+    expect(() => decode({ path: listing.path, entries: [null] })).toThrow("Invalid native directory snapshot");
   });
 
   it("rejects malformed versions and columns instead of publishing partial entries", () => {

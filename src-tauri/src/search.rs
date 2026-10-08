@@ -6,7 +6,7 @@ use crate::search_cache::{SearchEntryCache, MAX_CACHED_LISTING_ENTRIES};
 use jwalk::WalkDir;
 use nucleo_matcher::pattern::{CaseMatching, Normalization, Pattern};
 use nucleo_matcher::{Config, Matcher, Utf32Str};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex};
@@ -70,7 +70,37 @@ struct Walked {
     deferred: bool,
 }
 
+/// Restrict picker search candidates before ranking and truncation.
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct SearchFilter {
+    #[serde(default)]
+    extensions: Vec<String>,
+    #[serde(default)]
+    directories_only: bool,
+}
+
+impl SearchFilter {
+    fn matches(&self, entry: &Walked) -> bool {
+        if entry.is_dir {
+            return true;
+        }
+        if self.directories_only {
+            return false;
+        }
+        self.extensions.is_empty()
+            || entry.name.rsplit_once('.').is_some_and(|(_, extension)| {
+                self.extensions
+                    .iter()
+                    .any(|candidate| extension.eq_ignore_ascii_case(candidate))
+            })
+    }
+}
+
 static SEARCH_ENTRY_CACHE: SearchEntryCache<Walked> = SearchEntryCache::new();
+
+#[cfg(test)]
+static TEST_CACHE_COMMANDS: Mutex<()> = Mutex::new(());
 
 #[cfg(test)]
 static TEST_WALK_COUNTS: std::sync::OnceLock<Mutex<std::collections::HashMap<PathBuf, usize>>> =
@@ -734,8 +764,9 @@ pub async fn fuzzy_search(
     query: String,
     root: String,
     limit: usize,
+    filter: Option<SearchFilter>,
 ) -> Result<SearchResponse, AppError> {
-    tokio::task::spawn_blocking(move || fuzzy_search_sync(query, root, limit))
+    tokio::task::spawn_blocking(move || fuzzy_search_sync(query, root, limit, filter))
         .await
         .map_err(|e| AppError::Other(format!("Task join error: {}", e)))?
 }
@@ -744,6 +775,7 @@ fn fuzzy_search_sync(
     query: String,
     root: String,
     limit: usize,
+    filter: Option<SearchFilter>,
 ) -> Result<SearchResponse, AppError> {
     let root_path = PathBuf::from(&root);
 
@@ -770,6 +802,7 @@ fn fuzzy_search_sync(
     let mut scored: Vec<(u32, usize)> = entries
         .iter()
         .enumerate()
+        .filter(|(_, entry)| filter.as_ref().is_none_or(|filter| filter.matches(entry)))
         .filter_map(|(idx, entry)| {
             score_entry(entry, &query_lower, &pattern, &mut matcher).map(|score| (score, idx))
         })
@@ -1312,6 +1345,59 @@ mod tests {
     // ── Search tests ────────────────────────────────────────────────────
 
     #[test]
+    fn picker_extensions_are_filtered_before_result_limit() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = visible_root(&temp);
+        for index in 0..150 {
+            std::fs::write(root.join(format!("plugin-{index}.txt")), b"fixture").unwrap();
+        }
+        std::fs::create_dir(root.join("packages")).unwrap();
+        std::fs::write(root.join("packages/TraceExplorer.TEPLUGIN"), b"fixture").unwrap();
+        let result = fuzzy_search_sync(
+            "plugin".into(),
+            root.to_string_lossy().into(),
+            30,
+            Some(SearchFilter {
+                extensions: vec!["teplugin".into()],
+                directories_only: false,
+            }),
+        )
+        .unwrap();
+        assert!(result
+            .results
+            .iter()
+            .any(|entry| entry.name == "TraceExplorer.TEPLUGIN"));
+        assert!(result
+            .results
+            .iter()
+            .all(|entry| entry.kind == "directory" || entry.name.ends_with(".TEPLUGIN")));
+    }
+
+    #[test]
+    fn picker_directory_filter_is_applied_before_result_limit() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = visible_root(&temp);
+        for index in 0..150 {
+            std::fs::write(root.join(format!("folder-{index}.txt")), b"fixture").unwrap();
+        }
+        std::fs::create_dir(root.join("nested")).unwrap();
+        std::fs::create_dir(root.join("nested/target-folder")).unwrap();
+        let result = fuzzy_search_sync(
+            "folder".into(),
+            root.to_string_lossy().into(),
+            1,
+            Some(SearchFilter {
+                extensions: vec![],
+                directories_only: true,
+            }),
+        )
+        .unwrap();
+        assert_eq!(result.results.len(), 1);
+        assert_eq!(result.results[0].name, "target-folder");
+        assert_eq!(result.results[0].kind, "directory");
+    }
+
+    #[test]
     fn test_fuzzy_search_basic() {
         let dir = tempdir().unwrap();
         let root = visible_root(&dir);
@@ -1319,7 +1405,8 @@ mod tests {
         File::create(root.join("goodbye.txt")).unwrap();
         fs::create_dir(root.join("hello_folder")).unwrap();
 
-        let result = fuzzy_search_sync("hello".into(), root.to_string_lossy().into(), 10).unwrap();
+        let result =
+            fuzzy_search_sync("hello".into(), root.to_string_lossy().into(), 10, None).unwrap();
 
         assert!(
             result.results.iter().any(|r| r.name.contains("hello")),
@@ -1334,8 +1421,13 @@ mod tests {
         let root = visible_root(&dir);
         File::create(root.join("test.txt")).unwrap();
 
-        let result =
-            fuzzy_search_sync("zzzzzznotfound".into(), root.to_string_lossy().into(), 10).unwrap();
+        let result = fuzzy_search_sync(
+            "zzzzzznotfound".into(),
+            root.to_string_lossy().into(),
+            10,
+            None,
+        )
+        .unwrap();
         assert!(result.results.is_empty());
     }
 
@@ -1347,7 +1439,8 @@ mod tests {
         File::create(root.join(".git").join("config")).unwrap();
         File::create(root.join("visible.txt")).unwrap();
 
-        let result = fuzzy_search_sync("config".into(), root.to_string_lossy().into(), 10).unwrap();
+        let result =
+            fuzzy_search_sync("config".into(), root.to_string_lossy().into(), 10, None).unwrap();
         assert!(result.results.iter().all(|r| !r.path.contains(".git")));
     }
 
@@ -1361,7 +1454,7 @@ mod tests {
         File::create(root.join("src").join("utils.ts")).unwrap();
 
         let result =
-            fuzzy_search_sync("component".into(), root.to_string_lossy().into(), 10).unwrap();
+            fuzzy_search_sync("component".into(), root.to_string_lossy().into(), 10, None).unwrap();
         assert!(
             result
                 .results
@@ -1371,7 +1464,8 @@ mod tests {
             fmt_results(&result.results)
         );
 
-        let result = fuzzy_search_sync("readme".into(), root.to_string_lossy().into(), 10).unwrap();
+        let result =
+            fuzzy_search_sync("readme".into(), root.to_string_lossy().into(), 10, None).unwrap();
         assert!(
             result.results.iter().any(|r| r.name == "README.md"),
             "Case-insensitive substring match should work"
@@ -1450,7 +1544,8 @@ mod tests {
         build_project_tree(&root);
 
         // Deeply nested folder
-        let result = fuzzy_search_sync("Button".into(), root.to_string_lossy().into(), 20).unwrap();
+        let result =
+            fuzzy_search_sync("Button".into(), root.to_string_lossy().into(), 20, None).unwrap();
         assert!(
             result
                 .results
@@ -1461,7 +1556,8 @@ mod tests {
         );
 
         // Another nested folder
-        let result = fuzzy_search_sync("core".into(), root.to_string_lossy().into(), 20).unwrap();
+        let result =
+            fuzzy_search_sync("core".into(), root.to_string_lossy().into(), 20, None).unwrap();
         assert!(
             result
                 .results
@@ -1472,8 +1568,13 @@ mod tests {
         );
 
         // Nested folder + file that share the name
-        let result =
-            fuzzy_search_sync("integration".into(), root.to_string_lossy().into(), 20).unwrap();
+        let result = fuzzy_search_sync(
+            "integration".into(),
+            root.to_string_lossy().into(),
+            20,
+            None,
+        )
+        .unwrap();
         assert!(
             result
                 .results
@@ -1502,7 +1603,8 @@ mod tests {
         fs::create_dir(root.join("folder2")).unwrap();
         File::create(root.join("folder2/abc.txt")).unwrap();
 
-        let result = fuzzy_search_sync("abc".into(), root.to_string_lossy().into(), 20).unwrap();
+        let result =
+            fuzzy_search_sync("abc".into(), root.to_string_lossy().into(), 20, None).unwrap();
 
         // Should find ALL instances of "abc"
         let abc_dirs: Vec<&SearchResult> = result
@@ -1560,8 +1662,13 @@ mod tests {
         fs::create_dir(root.join("a/target_folder")).unwrap();
         File::create(root.join("a/target_folder/other.txt")).unwrap();
 
-        let result =
-            fuzzy_search_sync("target_folder".into(), root.to_string_lossy().into(), 20).unwrap();
+        let result = fuzzy_search_sync(
+            "target_folder".into(),
+            root.to_string_lossy().into(),
+            20,
+            None,
+        )
+        .unwrap();
 
         let target_dirs: Vec<&SearchResult> = result
             .results
@@ -1583,8 +1690,13 @@ mod tests {
         build_project_tree(&root);
 
         // Search for a file that only exists deep in the tree
-        let result =
-            fuzzy_search_sync("api.test.ts".into(), root.to_string_lossy().into(), 20).unwrap();
+        let result = fuzzy_search_sync(
+            "api.test.ts".into(),
+            root.to_string_lossy().into(),
+            20,
+            None,
+        )
+        .unwrap();
         assert!(
             result.results.iter().any(|r| r.name == "api.test.ts"),
             "Should find deeply nested file, got: {:?}",
@@ -1592,7 +1704,8 @@ mod tests {
         );
 
         // Search for "deploy" — only scripts/deploy.sh matches
-        let result = fuzzy_search_sync("deploy".into(), root.to_string_lossy().into(), 20).unwrap();
+        let result =
+            fuzzy_search_sync("deploy".into(), root.to_string_lossy().into(), 20, None).unwrap();
         assert!(
             result.results.iter().any(|r| r.name == "deploy.sh"),
             "Should find file in subdirectory, got: {:?}",
@@ -1612,7 +1725,8 @@ mod tests {
         File::create(root.join("src-tauri/target/release/bundle/nsis/setup.exe")).unwrap();
         fs::create_dir_all(root.join("node_modules/lodash")).unwrap();
 
-        let result = fuzzy_search_sync("nsis".into(), root.to_string_lossy().into(), 20).unwrap();
+        let result =
+            fuzzy_search_sync("nsis".into(), root.to_string_lossy().into(), 20, None).unwrap();
         let nsis = result
             .results
             .iter()
@@ -1627,7 +1741,8 @@ mod tests {
             "src-tauri/target/release/bundle/nsis"
         );
 
-        let result = fuzzy_search_sync("lodash".into(), root.to_string_lossy().into(), 20).unwrap();
+        let result =
+            fuzzy_search_sync("lodash".into(), root.to_string_lossy().into(), 20, None).unwrap();
         assert!(
             result.results.iter().any(|r| r.name == "lodash"),
             "node_modules contents must be reachable too, got: {:?}",
@@ -1652,7 +1767,8 @@ mod tests {
             File::create(root.join(format!("debug-{}.md", c as char))).unwrap();
         }
 
-        let result = fuzzy_search_sync("deb".into(), root.to_string_lossy().into(), 20).unwrap();
+        let result =
+            fuzzy_search_sync("deb".into(), root.to_string_lossy().into(), 20, None).unwrap();
         let deb = result
             .results
             .iter()
@@ -1675,7 +1791,8 @@ mod tests {
         fs::create_dir_all(root.join("dist/assets")).unwrap();
         File::create(root.join("dist/assets/widget.ts")).unwrap();
 
-        let result = fuzzy_search_sync("widget".into(), root.to_string_lossy().into(), 20).unwrap();
+        let result =
+            fuzzy_search_sync("widget".into(), root.to_string_lossy().into(), 20, None).unwrap();
         let widgets: Vec<&SearchResult> = result
             .results
             .iter()
@@ -1713,7 +1830,7 @@ mod tests {
         File::create(root.join("deadbeef.txt")).unwrap();
 
         let result =
-            fuzzy_search_sync("deadbeef".into(), root.to_string_lossy().into(), 20).unwrap();
+            fuzzy_search_sync("deadbeef".into(), root.to_string_lossy().into(), 20, None).unwrap();
         assert!(
             result.results.iter().all(|r| !r.path.contains(".git")),
             "'.git' contents must stay unreachable, got: {:?}",
@@ -1752,7 +1869,8 @@ mod tests {
         fs::create_dir_all(root.join("a/b/config")).unwrap();
         fs::create_dir_all(root.join("a/b/c/d/config")).unwrap();
 
-        let result = fuzzy_search_sync("config".into(), root.to_string_lossy().into(), 20).unwrap();
+        let result =
+            fuzzy_search_sync("config".into(), root.to_string_lossy().into(), 20, None).unwrap();
 
         let configs: Vec<&SearchResult> = result
             .results

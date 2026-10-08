@@ -208,7 +208,7 @@ export function createCoalescedPersister<T>(key: string, delayMs: number): Coale
 
 // --- Serialized config-file writer (latest wins) ---
 
-const inFlightWrites = new Map<string, Promise<void>>();
+const inFlightWrites = new Map<string, Promise<string | null>>();
 const pendingWrites = new Map<string, { data: string; writer: string }>();
 const lastWrittenContent = new Map<string, string>();
 const writeGenerations = new Map<string, number>();
@@ -300,7 +300,11 @@ export function writeConfigQueued(
   filename: string,
   data: string,
   writer = configStoreWriter[filename] ?? filename,
+  rejectOnFailure = false,
 ): Promise<void> {
+  const observe = (write: Promise<string | null>): Promise<void> => write.then((error) => {
+    if (rejectOnFailure && error) throw new Error(error);
+  });
   const writerKey = configWriterKey(filename, writer);
   activeConfigWriters.add(writerKey);
   if (inFlightWrites.has(filename)) {
@@ -313,10 +317,10 @@ export function writeConfigQueued(
       activeConfigWriters.delete(configWriterKey(filename, replaced.writer));
     }
     pendingWrites.set(filename, { data, writer });
-    return inFlightWrites.get(filename)!;
+    return observe(inFlightWrites.get(filename)!);
   }
 
-  const flush = async (content: string, contentWriter: string): Promise<void> => {
+  const flush = async (content: string, contentWriter: string): Promise<string | null> => {
     // Both recorded before the await, not after: the watcher can report the
     // change before `writeConfigFile` resolves, and an echo that arrives early
     // must still be recognisable as ours.
@@ -337,9 +341,10 @@ export function writeConfigQueued(
       return flush(next.data, next.writer);
     }
     activeConfigWriters.delete(contentWriterKey);
+    return result.ok ? null : result.error;
   };
 
   const chain = flush(data, writer).finally(() => inFlightWrites.delete(filename));
   inFlightWrites.set(filename, chain);
-  return chain;
+  return observe(chain);
 }

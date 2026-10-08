@@ -6,7 +6,7 @@
  * impossible to select (#699).
  */
 import { test, expect, type Page } from "./fixtures";
-import { HOME_URL, waitForEntries, type ViewMode } from "./helpers";
+import { HOME_URL, applySettingsAndReload, waitForEntries, type ViewMode } from "./helpers";
 
 const DOCKS = ["bottom", "top"] as const;
 const VIEW_MODES: readonly ViewMode[] = ["details", "list", "tiles"];
@@ -14,18 +14,12 @@ const VIEW_MODES: readonly ViewMode[] = ["details", "list", "tiles"];
 async function restoreConstrainedPreview(page: Page, dock: (typeof DOCKS)[number]): Promise<void> {
   await page.setViewportSize({ width: 1280, height: 900 });
   await page.goto(HOME_URL);
-  await page.evaluate(({ dock }) => {
-    localStorage.setItem(
-      "explorer-settings",
-      JSON.stringify({
-        showPreviewPane: true,
-        previewPanePosition: dock,
-        previewPaneHeight: 600,
-        zoomLevel: 150,
-      }),
-    );
-  }, { dock });
-  await page.reload();
+  await applySettingsAndReload(page, {
+    showPreviewPane: true,
+    previewPanePosition: dock,
+    previewPaneHeight: 600,
+    zoomLevel: 150,
+  });
   await waitForEntries(page);
   await expect(page.locator(".preview-pane")).toBeVisible();
 }

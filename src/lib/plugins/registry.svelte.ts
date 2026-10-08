@@ -1,7 +1,7 @@
 /**
  * Built-in plugin registry + lifecycle.
  *
- * Plugins are statically imported (CSP forbids runtime JS loading) and toggled
+ * Core plugins and manifest-validated installed packages are toggled
  * on/off at runtime. Enable state persists in settings (`pluginsEnabled`);
  * absent ids fall back to each plugin's `enabledByDefault` (default true).
  *
@@ -18,6 +18,7 @@ import { aiRenamePlugin } from "./ai-rename";
 import { aiOrganizePlugin } from "./ai-organize";
 import { themeFromImagePlugin } from "./theme-from-image";
 import { upscalePlugin } from "./upscale";
+import { refreshInstalledPackages, watchInstalledPackages } from "./installed";
 import { pluginJobsController } from "$lib/state/plugin-jobs";
 
 /** Statically-imported built-in plugins (explicit imports — no dynamic load). */
@@ -34,6 +35,10 @@ function createPluginRegistry(
   plugins: Plugin[] = BUILT_IN_PLUGINS,
   jobLifecycle: Pick<typeof pluginJobsController, "dispose"> = pluginJobsController,
 ) {
+  let registered = $state<Plugin[]>([...plugins]);
+  // Contribution ranks survive removal of earlier plugins and async activation.
+  const registrationOrders = new Map(plugins.map((plugin, index) => [plugin.id, index]));
+  let nextRegistrationOrder = plugins.length;
   const active = new Map<string, { plugin: Plugin; dispose: () => void }>();
   // In-flight activations, so a disable arriving mid-activate can't be lost
   // (deactivate would find nothing in `active` and no-op, leaving a
@@ -63,7 +68,9 @@ function createPluginRegistry(
         : inFlight.promise;
     }
 
-    const { ctx, dispose } = createPluginContext(plugin.id, plugin.name, plugins.indexOf(plugin));
+    const order = registrationOrders.get(plugin.id);
+    if (order === undefined) return Promise.reject(new Error("Plugin is not registered"));
+    const { ctx, dispose, reportFailure } = createPluginContext(plugin.id, plugin.name, order);
     // Plugin code can synchronously request shutdown or retry. Publish the
     // actual completion before invoking it so those operations join this run.
     let resolve!: () => void;
@@ -106,7 +113,7 @@ function createPluginRegistry(
         // failed. Give its hook one chance to release them as well as the
         // context-owned contributions.
         deactivateActivation();
-        console.error(`[plugins] failed to activate "${plugin.id}":`, err);
+        reportFailure(err, "activation");
       } finally {
         if (activating.get(plugin.id) === activation) activating.delete(plugin.id);
       }
@@ -139,7 +146,25 @@ function createPluginRegistry(
     }
   }
 
-  return {
+  const registry = {
+    async registerInstalled(additions:Plugin[]):Promise<void> {
+      if (new Set(additions.map(plugin => plugin.id)).size !== additions.length ||
+          additions.some(plugin => registrationOrders.has(plugin.id))) {
+        throw new Error("Plugin ID is already registered");
+      }
+      for (const plugin of additions) registrationOrders.set(plugin.id, nextRegistrationOrder++);
+      registered=[...registered,...additions];
+      await Promise.all(additions.map((plugin)=>isEnabled(plugin)?activate(plugin):undefined));
+    },
+    async removeInstalled(ids:readonly string[]):Promise<void> {
+      for(const id of ids) {
+        deactivate(id);
+        const pending=activating.get(id);
+        if(pending) await pending.promise;
+      }
+      registered=registered.filter((plugin)=>!ids.includes(plugin.id));
+      for (const id of ids) registrationOrders.delete(id);
+    },
     /** Activate all currently-enabled built-in plugins. Call once at startup. */
     async initPlugins(): Promise<void> {
       if (closed) return;
@@ -150,7 +175,8 @@ function createPluginRegistry(
       // contributions are placed by list position, not completion order.
       // Enablement is read as each one starts: an earlier plugin's activation
       // may have disabled a later one.
-      await Promise.all(plugins.map((plugin) => (isEnabled(plugin) ? activate(plugin) : undefined)));
+      await Promise.all(registered.map((plugin) => (isEnabled(plugin) ? activate(plugin) : undefined)));
+      if (plugins === BUILT_IN_PLUGINS) { await watchInstalledPackages(registry); await refreshInstalledPackages(registry); }
     },
 
     dispose(): Promise<void> {
@@ -173,7 +199,7 @@ function createPluginRegistry(
     async setEnabled(id: string, enabled: boolean): Promise<void> {
       settingsStore.setPluginEnabled(id, enabled);
       if (closed) return;
-      const plugin = plugins.find((p) => p.id === id);
+      const plugin = registered.find((p) => p.id === id);
       if (!plugin) return;
       if (enabled) await activate(plugin);
       else deactivate(id);
@@ -186,7 +212,7 @@ function createPluginRegistry(
 
     /** Reactive list for the settings UI (enabled state tracks settings). */
     get plugins(): PluginInfo[] {
-      return plugins.map((p) => ({
+      return registered.map((p) => ({
         id: p.id,
         name: p.name,
         description: p.description,
@@ -194,6 +220,7 @@ function createPluginRegistry(
       }));
     },
   };
+  return registry;
 }
 
 /** Factory export for tests (injectable plugin list). */

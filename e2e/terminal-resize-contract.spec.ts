@@ -1,11 +1,12 @@
 import { test, expect, type Page } from "./fixtures";
+import { seedSettings } from "./helpers";
 
 let errors: string[] = [];
 test.beforeEach(({ page }) => { errors = []; page.on("pageerror", error => errors.push(error.message)); });
 test.afterEach(() => expect(errors).toEqual([]));
 
 async function openTerminal(page: Page, zoom = 100) {
-  await page.addInitScript(value => localStorage.setItem("explorer-settings", JSON.stringify({ zoomLevel: value })), zoom);
+  await seedSettings(page, { zoomLevel: zoom }, { replace: true });
   await page.setViewportSize({ width: 1280, height: 900 });
   await page.goto("/?path=/home/user/Documents");
   await expect(page.locator(".file-list .entry-item").first()).toBeVisible();

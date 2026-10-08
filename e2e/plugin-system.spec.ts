@@ -13,14 +13,16 @@ import { HOME_URL, waitForEntries } from "./helpers";
 
 async function openSettings(page: Page) {
   await page.keyboard.press("Control+,");
-  const dialog = page.locator(".settings-dialog");
+  await expect(page.locator(".settings-dialog")).toBeVisible({ timeout: 2000 });
+  await page.getByRole("button", { name: "Open Plugins", exact: true }).click();
+  const dialog = page.locator(".plugins-dialog");
   await expect(dialog).toBeVisible({ timeout: 2000 });
   return dialog;
 }
 
 async function closeSettings(page: Page) {
-  await page.locator(".settings-dialog .close-btn").click();
-  await expect(page.locator(".settings-dialog")).toBeHidden();
+  await page.locator(".plugins-dialog .close-btn").click();
+  await expect(page.locator(".plugins-dialog")).toBeHidden();
 }
 
 async function setDemoPluginEnabled(page: Page, enabled: boolean) {
@@ -43,6 +45,20 @@ async function openPalette(page: Page) {
   await palette.waitFor({ state: "visible", timeout: 2000 });
   return palette;
 }
+
+test("Install Plugin command runs without an installed plugin and reports picker failures", async ({ page }) => {
+  await page.addInitScript(() => {
+    window.__mockControl ??= {};
+    window.__mockControl.failures = { pick_file: "Could not open plugin package picker" };
+  });
+  await page.goto(HOME_URL);
+  await waitForEntries(page);
+  const palette = await openPalette(page);
+  await palette.locator(".search-input").fill("Install Plugin");
+  await palette.locator(".command-item", { hasText: "Install Plugin…" }).click();
+  await expect(palette).toBeHidden();
+  await expect(page.locator(".toast", { hasText: "Could not open plugin package picker" })).toBeVisible();
+});
 
 test.describe("Plugin system (demo plugin)", () => {
   test("enabling the plugin exposes its command, which runs and shows a toast", async ({ page }) => {
@@ -126,4 +142,68 @@ test.describe("Plugin system (demo plugin)", () => {
     await menu.waitFor({ state: "visible", timeout: 2000 });
     await expect(menu.locator('.menu-item:has-text("Demo: Greet Selection")')).toHaveCount(0);
   });
+});
+
+test("installed settings retain list order through activation and re-enabling", async ({ page }) => {
+  await page.goto(HOME_URL);
+  await waitForEntries(page);
+  const dialog = await openSettings(page);
+  const original = await dialog.locator(".section-title").allTextContents();
+  await closeSettings(page);
+  await page.evaluate(async () => {
+    const load = new Function("return import('/src/lib/plugins/registry.svelte.ts')");
+    const { pluginRegistry } = await load();
+    let release!: () => void;
+    const held = new Promise<void>(resolve => { release = resolve; });
+    const plugin = (id: string, title: string, wait?: Promise<void>) => ({
+      id, name: title, description: "Settings ordering acceptance fixture",
+      async activate(ctx: import("../src/lib/plugins/api").PluginContext) {
+        if (wait) await wait;
+        ctx.registerSettingsSection({ id: "settings", title, rows: [] });
+      },
+    });
+    const installing = pluginRegistry.registerInstalled([
+      plugin("installed-alpha", "Installed Alpha", held),
+      plugin("installed-beta", "Installed Beta"),
+      plugin("installed-gamma", "Installed Gamma"),
+    ]);
+    release();
+    await installing;
+  });
+  const expected = [...original, "Installed Alpha", "Installed Beta", "Installed Gamma"];
+  await openSettings(page);
+  await expect(dialog.locator(".section-title")).toHaveText(expected);
+  await closeSettings(page);
+  await page.evaluate(async () => {
+    const load = new Function("return import('/src/lib/plugins/registry.svelte.ts')");
+    const { pluginRegistry } = await load();
+    await pluginRegistry.setEnabled("installed-alpha", false);
+    await pluginRegistry.setEnabled("installed-alpha", true);
+  });
+  await openSettings(page);
+  await expect(dialog.locator(".section-title")).toHaveText(expected);
+  await closeSettings(page);
+  await page.evaluate(async () => {
+    const load = new Function("return import('/src/lib/plugins/registry.svelte.ts')");
+    const { pluginRegistry } = await load();
+    await pluginRegistry.removeInstalled(["installed-alpha", "installed-beta"]);
+    await pluginRegistry.registerInstalled([{
+      id: "installed-delta", name: "Installed Delta", description: "Ordering fixture",
+      activate(ctx: import("../src/lib/plugins/api").PluginContext) {
+        ctx.registerSettingsSection({ id: "settings", title: "Installed Delta", rows: [] });
+      },
+    }]);
+  });
+  const remaining = [...original, "Installed Gamma", "Installed Delta"];
+  await openSettings(page);
+  await expect(dialog.locator(".section-title")).toHaveText(remaining);
+  await closeSettings(page);
+  await page.evaluate(async () => {
+    const load = new Function("return import('/src/lib/plugins/registry.svelte.ts')");
+    const { pluginRegistry } = await load();
+    await pluginRegistry.setEnabled("installed-gamma", false);
+    await pluginRegistry.setEnabled("installed-gamma", true);
+  });
+  await openSettings(page);
+  await expect(dialog.locator(".section-title")).toHaveText(remaining);
 });

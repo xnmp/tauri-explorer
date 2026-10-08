@@ -6,6 +6,7 @@
   import "@fontsource-variable/inter/index.css";
   import { onMount } from "svelte";
   import { startWindowSession } from "$lib/state/window-session";
+  import { loadE2EHooks } from "$lib/api/e2e-hooks";
   import { settingsStore } from "$lib/state/settings.svelte";
   import { applyWindowsBackdrop } from "$lib/state/window-backdrop";
   import { windowTabsManager } from "$lib/state/window-tabs.svelte";
@@ -156,6 +157,7 @@
       folder: params.get("folder"),
       name: params.get("name") ?? "",
       title: params.get("title") ?? "",
+      extensions: params.getAll("extension"),
     };
   })();
 
@@ -218,13 +220,24 @@
     if (dialogStore.isFileRecoveryOpen) void session?.recovery?.start();
   });
   onMount(() => {
-    session = startWindowSession({
-      picker: pickerInfo !== null,
-      homePath: launchHomePath,
-      settingsReady: () => { settingsReady = true; },
-      commandsReady: () => { commandsReady = true; },
-    });
-    return () => { session?.dispose(); session = undefined; };
+    const lifetime = new AbortController();
+    const start = (beforeInitialListing?: (signal: AbortSignal) => void) => {
+      if (lifetime.signal.aborted) return;
+      session = startWindowSession({
+        picker: pickerInfo !== null,
+        homePath: launchHomePath,
+        settingsReady: () => { settingsReady = true; },
+        commandsReady: () => { commandsReady = true; },
+        beforeInitialListing,
+      });
+    };
+    // Release builds start synchronously. Hook builds install the real-listing
+    // observer before initialization, including newly created webviews.
+    const hooks = pickerInfo ? null : loadE2EHooks();
+    if (hooks) void hooks.then(({ prepareWindowSessionProbe }) => start(prepareWindowSessionProbe))
+      .catch((error) => console.error("Window probe initialization failed:", error));
+    else start();
+    return () => { lifetime.abort(); session?.dispose(); session = undefined; };
   });
 </script>
 
@@ -259,16 +272,23 @@
         {/await}
       {/if}
     {/snippet}
-    {#if settingsStore.resolvedPreviewPanePosition === "right"}
-      {@render paneAndPreview()}
-    {:else}
-      <!-- Bottom/top dock: PaneContainer + preview island stack in a column
-           (column-reverse puts the island on top). Sidebar/miller stay left
-           siblings; the stack owns the center column. -->
-      <div class="pane-preview-stack" class:preview-top={settingsStore.resolvedPreviewPanePosition === "top"}>
-        {@render paneAndPreview()}
+    <div class="workspace-container">
+      <div class="workspace-layout">
+        <div class="workspace-panes">
+          {#if settingsStore.resolvedPreviewPanePosition === "right"}
+            {@render paneAndPreview()}
+          {:else}
+            <!-- Bottom/top dock: panes and preview share the center column. -->
+            <div class="pane-preview-stack" class:preview-top={settingsStore.resolvedPreviewPanePosition === "top"}>
+              {@render paneAndPreview()}
+            </div>
+          {/if}
+        </div>
+        {#await import("$lib/components/PluginInspector.svelte") then { default: PluginInspector }}
+          <PluginInspector />
+        {/await}
       </div>
-    {/if}
+    </div>
   </div>
   {#if terminalPanelStore.everOpened && settingsStore.enableTerminal}
     <!-- Lazy: xterm.js only loads on first open. Stays mounted afterwards so
@@ -515,6 +535,12 @@
     overflow: visible;
   }
 
+  /* Fullscreen is inside this stacking context. It must cover the later
+     status bar (1) and terminal resize handle (2), below root dialogs (#970). */
+  :global([data-preview-fullscreen]) .main-content {
+    z-index: 3;
+  }
+
   /* Mica effect gradient overlay — disabled due to gradient banding artifacts */
 
 
@@ -524,6 +550,33 @@
     overflow: hidden;
     position: relative;
     z-index: 1;
+  }
+
+  /* Size the inspector against the space left after sidebar/Miller islands.
+     A narrow workspace stacks it below the panes instead of shrinking Files. */
+  .workspace-container {
+    container: explorer-workspace / inline-size;
+    display: flex;
+    flex: 1;
+    min-width: 0;
+    min-height: 0;
+  }
+
+  .workspace-layout,
+  .workspace-panes {
+    display: flex;
+    flex: 1;
+    min-width: 0;
+    min-height: 0;
+  }
+
+  @container explorer-workspace (max-width: 1000px) {
+    .workspace-layout { flex-direction: column; }
+  }
+
+  :global([data-vibrancy]) .workspace-layout,
+  :global([data-vibrancy]) .workspace-panes {
+    gap: 8px;
   }
 
   /* Floating-island mode: macOS vibrancy, Windows Mica/Acrylic, or the

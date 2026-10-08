@@ -122,6 +122,8 @@ impl Source {
         self.event_received(result, self.state.load(Ordering::Acquire));
     }
     fn event_received(&self, result: notify::Result<Event>, received_state: u8) {
+        #[cfg(test)]
+        let observed_at = Instant::now();
         if received_state & RETIRED != 0 {
             return;
         }
@@ -212,7 +214,22 @@ impl Source {
             if !self.healthy() {
                 break;
             }
+            #[cfg(test)]
+            let delivered_path = path.clone();
             (self.notify)(Notice::Changed { path, names });
+            #[cfg(test)]
+            if names {
+                let paths = match self.mode {
+                    Mode::Recursive => vec![delivered_path],
+                    Mode::Direct => event
+                        .paths
+                        .iter()
+                        .filter(|path| path.parent() == Some(delivered_path.as_path()))
+                        .cloned()
+                        .collect(),
+                };
+                tests::record_change(self.mode, &paths, observed_at);
+            }
         }
     }
 }
@@ -576,4 +593,4 @@ fn unavailable(path: &Path) -> notify::Error {
 
 #[cfg(test)]
 #[path = "../../test_support/watch_observation.rs"]
-mod tests;
+pub(super) mod tests;

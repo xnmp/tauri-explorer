@@ -86,6 +86,10 @@ test.describe("Large pane materialization", () => {
   test("restores the focused pane before paint, bounds initial DOM, then preserves all 64 panes", async ({
     page,
   }, testInfo) => {
+    // This checks complete restoration, while the assertions below enforce
+    // immediate focus and bounded initial DOM. Allow loaded hosted WebKit
+    // runners enough paint opportunities to finish every activation batch.
+    test.setTimeout(45_000);
     await loadManager(page);
     const state = largeState();
 
@@ -148,7 +152,7 @@ test.describe("Large pane materialization", () => {
       path: testInfo.outputPath("pane-materialization.png"),
     });
 
-    await expect(page.locator(".explorer-pane")).toHaveCount(64, { timeout: 20_000 });
+    await expect(page.locator(".explorer-pane")).toHaveCount(64, { timeout: 35_000 });
     await expect(page.locator(".pane-restoring")).toHaveCount(0);
     const finalState = await page.evaluate(async () => {
       const load = new Function("return import('/src/lib/state/window-tabs.svelte.ts')");

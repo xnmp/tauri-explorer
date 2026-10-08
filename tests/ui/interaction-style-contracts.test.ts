@@ -29,7 +29,7 @@ describe("interaction styling contracts", () => {
   });
 
   it("uses active-theme semantics for move and copy drop feedback", () => {
-    for (const name of ["ListView.svelte", "TilesView.svelte"]) {
+    for (const name of ["ListView.svelte", "TileSurface.svelte"]) {
       const source = component(name);
       expect(source).toContain("color-mix(in srgb, var(--accent) 15%, transparent)");
       expect(source).toContain("color-mix(in srgb, var(--system-success) 15%, transparent)");

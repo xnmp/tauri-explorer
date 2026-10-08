@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { startWindowSession } from "$lib/state/window-session";
+import { createForegroundGate, type ForegroundGate } from "$lib/state/page-foreground";
 
 const f = vi.hoisted(() => ({
   settings: vi.fn<() => Promise<void>>(), initTabs: vi.fn(() => ({})), view: vi.fn(),
@@ -8,9 +9,10 @@ const f = vi.hoisted(() => ({
   setupDrop: vi.fn(), cleanupDrop: vi.fn(), setupWatch: vi.fn(), cleanupWatch: vi.fn(),
   setupLifecycle: vi.fn(), cleanupLifecycle: vi.fn(), stopKeyboard: vi.fn(),
   config: vi.fn(), stopConfig: vi.fn(), transfer: vi.fn(), stopTransfer: vi.fn(),
-  syncSize: vi.fn(), probe: vi.fn(), nativeSession: vi.fn(async () => "session"),
+  syncSize: vi.fn(), nativeSession: vi.fn(async () => "session"),
   recoveryStart: vi.fn(async () => {}), recoveryDispose: vi.fn(async () => {}),
-  activate: null as (() => void) | null,
+  gate: null as unknown as ForegroundGate,
+  activeExplorer: null as unknown as { currentPath: string; setViewMode: (mode: string) => void },
   mode: "off", warmEnabled: true,
 }));
 vi.mock("$lib/state/file-recovery-session.svelte", () => ({ createFileRecoverySession: () => ({ start: f.recoveryStart, dispose: f.recoveryDispose }) }));
@@ -18,15 +20,19 @@ vi.mock("$lib/api/common", () => ({ isTauri: () => true }));
 vi.mock("$lib/api/native-resource-session", () => ({
   getNativeResourceSession: f.nativeSession,
 }));
-vi.mock("$lib/domain/e2e-hooks", () => ({ E2E_WARM_WINDOW_PRIMING_DISABLED: false }));
+vi.mock("$lib/api/e2e-hooks", () => ({ E2E_WARM_WINDOW_PRIMING_DISABLED: false, loadE2EHooks: () => null }));
 vi.mock("$lib/state/theme.svelte", () => ({ themeStore: { initTheme: async () => {}, syncFromSettings() {} } }));
 vi.mock("$lib/state/settings.svelte", () => ({ settingsStore: { init: f.settings, get warmWindow() { return f.warmEnabled; } } }));
 vi.mock("$lib/plugins/registry.svelte", () => ({ pluginRegistry: { initPlugins: f.plugins, dispose: f.disposePlugins } }));
 vi.mock("$lib/state/window-tabs.svelte", () => ({ windowTabsManager: { init: f.initTabs, observeNativeClose: f.nativeClose,
-  getActiveExplorer: () => ({ currentPath: "/work", setViewMode: f.view }) } }));
+  getActiveExplorer: () => f.activeExplorer } }));
 vi.mock("$lib/state/window-title.svelte", () => ({ startWindowTitleSync: f.title }));
 vi.mock("$lib/state/warm-window", () => ({ warmMode: () => f.mode, spawnWarmWindow: f.spawn,
-  runWarmWindow: (_measure: boolean, activate: () => void) => { f.activate = activate; return { ready: Promise.resolve(true), dispose() {} }; } }));
+  runWarmWindow: () => ({ ready: Promise.resolve(true), dispose() {} }) }));
+// The page's one foreground notion; each test decides whether it starts open.
+vi.mock("$lib/state/page-foreground", async (actual) => ({
+  ...await actual<typeof import("$lib/state/page-foreground")>(), get pageForeground() { return f.gate; },
+}));
 vi.mock("$lib/state/bookmarks.svelte", () => ({ bookmarksStore: { init: async () => {} } }));
 vi.mock("$lib/state/folder-views.svelte", () => ({ folderViewsStore: { init: async () => {} } }));
 vi.mock("$lib/state/manual-hidden.svelte", () => ({ manualHiddenStore: { init: async () => {} } }));
@@ -44,14 +50,14 @@ vi.mock("$lib/state/startup-timing", () => ({ markStartup() {} }));
 vi.mock("$lib/composables/use-native-drop-handler", () => ({ useNativeDropHandler: () => ({ setup: f.setupDrop, cleanup: f.cleanupDrop }) }));
 vi.mock("$lib/composables/use-file-watchers", () => ({ useFileWatchers: () => ({ setup: f.setupWatch, cleanup: f.cleanupWatch }) }));
 vi.mock("$lib/composables/use-window-lifecycle", () => ({ useWindowLifecycle: () => ({ setup: f.setupLifecycle, cleanup: f.cleanupLifecycle }) }));
-vi.mock("../../src/test-support/window-session-probe", () => ({ startWindowSessionProbe: f.probe }));
 
 let resolveSettings: () => void;
 let host: EventTarget;
 const options = () => ({ picker: false, homePath: "/home/me", settingsReady: vi.fn(), commandsReady: vi.fn() });
 beforeEach(() => {
   vi.useFakeTimers(); vi.clearAllMocks();
-  f.mode = "off"; f.warmEnabled = true; f.activate = null;
+  f.mode = "off"; f.warmEnabled = true; f.gate = createForegroundGate(true);
+  f.activeExplorer = { currentPath: "/work", setViewMode: f.view };
   f.settings.mockImplementation(() => new Promise(resolve => { resolveSettings = resolve; }));
   f.title.mockReturnValue(f.stopTitle); f.nativeClose.mockReturnValue(f.stopNativeClose);
   f.config.mockReturnValue(f.stopConfig); f.transfer.mockReturnValue(f.stopTransfer);
@@ -63,6 +69,71 @@ beforeEach(() => {
 afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); });
 
 describe("page session ownership", () => {
+  it("retains the new-window address request until readiness, then delivers it once", async () => {
+    Object.assign(host, { location: { search: "?path=/child&focusAddressBar=1" } });
+    const focus = vi.fn();
+    const session = startWindowSession(options());
+    await vi.advanceTimersByTimeAsync(5000);
+    // Settings may remount the navigation bar before initial loading finishes.
+    host.addEventListener("explorer:focus-address-bar", focus);
+    expect(focus).not.toHaveBeenCalled();
+    session.markCoreReady();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(focus).toHaveBeenCalledOnce();
+    session.markCoreReady();
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(focus).toHaveBeenCalledOnce();
+    session.dispose();
+  });
+
+  it.each(["?path=/child", "?path=/child&focusAddressBar=1&rendererRecovery=1"])(
+    "does not request launch focus for %s", async (search) => {
+      Object.assign(host, { location: { search } });
+      const focus = vi.fn();
+      host.addEventListener("explorer:focus-address-bar", focus);
+      const session = startWindowSession(options());
+      session.markCoreReady();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(focus).not.toHaveBeenCalled();
+      session.dispose();
+    },
+  );
+
+  it("retires an undelivered address request with the page session", async () => {
+    Object.assign(host, { location: { search: "?path=/child&focusAddressBar=1" } });
+    const focus = vi.fn();
+    host.addEventListener("explorer:focus-address-bar", focus);
+    const session = startWindowSession(options());
+    session.markCoreReady();
+    session.dispose();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(focus).not.toHaveBeenCalled();
+  });
+
+  it.each(["keydown", "pointerdown", "blur"])("cancels launch focus after a newer %s interaction", async (event) => {
+    Object.assign(host, { location: { search: "?path=/child&focusAddressBar=1" } });
+    const focus = vi.fn();
+    host.addEventListener("explorer:focus-address-bar", focus);
+    const session = startWindowSession(options());
+    host.dispatchEvent(new Event(event));
+    session.markCoreReady();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(focus).not.toHaveBeenCalled();
+    session.dispose();
+  });
+
+  it("does not redirect launch focus to another explorer before delivery", async () => {
+    Object.assign(host, { location: { search: "?path=/child&focusAddressBar=1" } });
+    const focus = vi.fn();
+    host.addEventListener("explorer:focus-address-bar", focus);
+    const session = startWindowSession(options());
+    session.markCoreReady();
+    f.activeExplorer = { currentPath: "/other", setViewMode: f.view };
+    await vi.advanceTimersByTimeAsync(0);
+    expect(focus).not.toHaveBeenCalled();
+    session.dispose();
+  });
+
   it("starts requested navigation synchronously without waiting for settings or plugins", async () => {
     const callbacks = options();
     const session = startWindowSession(callbacks);
@@ -88,6 +159,20 @@ describe("page session ownership", () => {
     await Promise.resolve();
     expect(f.commands).not.toHaveBeenCalled();
     expect(callbacks.commandsReady).not.toHaveBeenCalled();
+  });
+
+  it("observes the initial listing and retires that observer with the session", () => {
+    const observed: string[] = [];
+    let receiveListing: ((path: string) => void) | undefined;
+    f.initTabs.mockImplementationOnce(() => { receiveListing?.("/requested"); return {}; });
+    const session = startWindowSession({ ...options(), beforeInitialListing(signal) {
+      receiveListing = (path) => observed.push(path);
+      signal.addEventListener("abort", () => { receiveListing = undefined; }, { once: true });
+    } });
+    expect(observed).toEqual(["/requested"]);
+    session.dispose();
+    receiveListing?.("/retired");
+    expect(observed).toEqual(["/requested"]);
   });
 
   it("does not prime optional windows before the foreground reports core readiness", async () => {
@@ -183,14 +268,23 @@ it("permits recovery after an initial listing error without priming a warm windo
   session.dispose();
 });
 
-it.each(["park", "measure"])("waits for successful %s activation and foreground readiness before recovery", async (mode) => {
+it.each(["park", "measure"])("waits for the %s page to enter the foreground before recovery", async (mode) => {
   f.mode = mode;
+  f.gate = createForegroundGate(false);
   const session = startWindowSession(options());
   session.markCoreReady();
   expect(f.recoveryStart).not.toHaveBeenCalled();
-  f.activate!();
+  await f.gate.enterForeground();
   expect(f.recoveryStart).toHaveBeenCalledOnce();
   session.dispose();
-  f.activate!();
-  expect(f.recoveryStart).toHaveBeenCalledOnce();
+});
+
+it("never starts recovery for a parked session disposed before activation", async () => {
+  f.mode = "park";
+  f.gate = createForegroundGate(false);
+  const session = startWindowSession(options());
+  session.markCoreReady();
+  session.dispose();
+  await f.gate.enterForeground();
+  expect(f.recoveryStart).not.toHaveBeenCalled();
 });

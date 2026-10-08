@@ -1,7 +1,15 @@
-//! Native journal authority and checkpoints for the Unix recovery executor.
+//! Native journal authority and record formats for the Unix recovery executor.
+use super::checkpoint::{
+    Checkpoint, DurableKind, Endpoint, Event, PlannedRoot, Shape, Side, State,
+};
 use super::model::NativePath;
+use super::retention::Disposal;
 pub(crate) use crate::files::{entry_version::EntryVersion, object_id::ObjectId};
 use serde::{Deserialize, Serialize};
+
+/// Every kind's intent and checkpoint format (ADR 0026). Versions 1 (copy) and
+/// 2 (move) predate the unified checkpoint and are rejected, never migrated.
+pub(super) const RECORD_VERSION: u32 = 3;
 
 pub(super) const MAX_ERROR_BYTES: usize = 16 * 1024;
 
@@ -78,32 +86,11 @@ impl LocalManifest {
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub(crate) enum Phase {
-    Planned,
-    RootIntent,
-    Rooted,
-    ManifestIntent,
-    Prepared,
-    StageIntent,
-    Staged,
-    DisplaceIntent,
-    Displaced,
-    PublishIntent,
-    Published,
-    RestoreIntent,
-    Restored,
-    ReapplyIntent,
-    DiscardIntent,
-    Discarded,
-}
-
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct OperationRecord {
     pub intent: DurableIntent,
-    pub state: OperationState,
+    pub state: State,
 }
 
 /// Mutable journal data binds to exact immutable catalog bytes. It deliberately
@@ -112,27 +99,23 @@ pub(crate) struct OperationRecord {
 #[serde(deny_unknown_fields)]
 pub(crate) struct OperationCheckpoint {
     pub intent_digest: [u8; 32],
-    pub state: OperationState,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
-#[serde(
-    tag = "kind",
-    content = "state",
-    rename_all = "camelCase",
-    deny_unknown_fields
-)]
-pub(crate) enum OperationState {
-    Replacement(ReplacementState),
-    Move(super::move_model::MoveState),
+    pub state: State,
 }
 
 impl OperationSpec {
+    /// The single dispatch point from catalog evidence to its kind (ADR 0026).
+    pub(super) fn kind(&self) -> &dyn DurableKind {
+        match self {
+            Self::CopyReplacement(spec) => spec,
+            Self::Move(spec) => spec,
+        }
+    }
+
     pub(super) fn replacement(&self) -> std::io::Result<&ReplacementSpec> {
         match self {
             Self::CopyReplacement(spec) => Ok(spec),
-            Self::Move(_) => Err(invalid(
-                "Move authority cannot execute as a copy replacement",
+            _ => Err(invalid(
+                "This authority cannot execute as a copy replacement",
             )),
         }
     }
@@ -140,71 +123,9 @@ impl OperationSpec {
     pub(super) fn move_spec(&self) -> std::io::Result<&super::move_model::MoveSpec> {
         match self {
             Self::Move(spec) => Ok(spec),
-            Self::CopyReplacement(_) => Err(invalid(
-                "Copy replacement authority cannot execute as a move",
-            )),
+            _ => Err(invalid("This authority cannot execute as a move")),
         }
     }
-}
-
-impl OperationState {
-    pub(super) fn replacement(&self) -> std::io::Result<&ReplacementState> {
-        match self {
-            Self::Replacement(state) => Ok(state),
-            Self::Move(_) => Err(invalid(
-                "Move checkpoint cannot execute as a copy replacement",
-            )),
-        }
-    }
-
-    pub(super) fn replacement_mut(&mut self) -> std::io::Result<&mut ReplacementState> {
-        match self {
-            Self::Replacement(state) => Ok(state),
-            Self::Move(_) => Err(invalid(
-                "Move checkpoint cannot execute as a copy replacement",
-            )),
-        }
-    }
-
-    pub(super) fn move_state(&self) -> std::io::Result<&super::move_model::MoveState> {
-        match self {
-            Self::Move(state) => Ok(state),
-            Self::Replacement(_) => Err(invalid(
-                "Copy replacement checkpoint cannot execute as a move",
-            )),
-        }
-    }
-
-    pub(super) fn move_state_mut(&mut self) -> std::io::Result<&mut super::move_model::MoveState> {
-        match self {
-            Self::Move(state) => Ok(state),
-            Self::Replacement(_) => Err(invalid(
-                "Copy replacement checkpoint cannot execute as a move",
-            )),
-        }
-    }
-}
-
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub(crate) struct ReplacementState {
-    /// Confirmed public-content transitions, independent of ownership claims.
-    /// Legacy checkpoints have no history token and begin at revision zero.
-    #[serde(default)]
-    pub effect_revision: u64,
-    /// Measured size of the currently retained private artifact, in bytes.
-    /// Legacy checkpoints and every confirmed content transition are
-    /// unmeasured: the retained artifact changes identity, so a previous
-    /// measurement is evidence about a different payload (ADR 0023). Omitted
-    /// while absent so builds that predate the field can still decode it.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub retained_bytes: Option<u64>,
-    pub root: Option<ObjectId>,
-    pub phase: Phase,
-    /// Captured when staging completes, before displacement. Identity alone
-    /// does not prove that a later publication syscall completed.
-    pub published: Option<StagedPayload>,
-    pub error: Option<String>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -250,18 +171,10 @@ impl StagedPayload {
 
 impl OperationRecord {
     pub(super) fn planned(intent: DurableIntent) -> Self {
-        let state = match &intent.operation {
-            OperationSpec::CopyReplacement(_) => OperationState::Replacement(ReplacementState {
-                effect_revision: 0,
-                retained_bytes: None,
-                root: None,
-                phase: Phase::Planned,
-                published: None,
-                error: None,
-            }),
-            OperationSpec::Move(_) => OperationState::Move(super::move_model::MoveState::default()),
-        };
-        Self { intent, state }
+        Self {
+            intent,
+            state: State::default(),
+        }
     }
 }
 
@@ -284,32 +197,79 @@ impl LockIdentity {
 impl DurableIntent {
     /// Validate durable data without probing a possibly missing user volume.
     pub(super) fn validate(&self) -> std::io::Result<()> {
-        if !matches!(self.version, 1 | 2)
-            || !valid_token(&self.id)
-            || self.lock.name != format!("{}.lock", self.id)
-        {
+        if !valid_token(&self.id) || self.lock.name != format!("{}.lock", self.id) {
             return Err(invalid(
-                "Recovery intent has an unsupported version, ID or owner binding",
+                "Recovery intent has an invalid ID or owner binding",
             ));
         }
         self.lock.validate()?;
         super::resources::validate(&self.resources)?;
-        match &self.operation {
-            OperationSpec::CopyReplacement(spec) if self.version == 1 => {
-                spec.validate(&self.resources)
-            }
-            OperationSpec::Move(spec) if (self.version == 2) == spec.rename_probes.is_some() => {
-                spec.validate(&self.resources)
-            }
-            _ => Err(invalid(
-                "Recovery intent version disagrees with its required capability policy",
-            )),
+        // One format serves every kind; any other version, including a future
+        // one, is rejected rather than guessed at.
+        if self.version != RECORD_VERSION {
+            return Err(invalid("Recovery intent has an unsupported record version"));
         }
+        self.operation.kind().validate(&self.resources)
+    }
+
+    pub(super) fn checkpoint<'a>(
+        &'a self,
+        state: &'a State,
+    ) -> Checkpoint<'a, dyn DurableKind + 'a> {
+        Checkpoint {
+            spec: self.operation.kind(),
+            state,
+        }
+    }
+
+    /// The one legal transition for every kind, from validated authority.
+    pub(super) fn transition(&self, state: &State, event: Event) -> std::io::Result<State> {
+        self.validate()?;
+        self.checkpoint(state).next(event)
     }
 }
 
-#[cfg(unix)]
-impl ReplacementSpec {
+/// A copy replacement: one private root beside its target holds the displaced
+/// original, then the parked copy after restoration.
+impl DurableKind for ReplacementSpec {
+    fn shape(&self) -> Shape {
+        Shape {
+            stages: true,
+            overwrites: true,
+            parks: false,
+            reapplies: true,
+        }
+    }
+
+    fn root(&self, side: Side) -> Option<PlannedRoot<'_>> {
+        (side == Side::Target).then_some(PlannedRoot {
+            path: &self.root,
+            token: &self.artifact_token,
+            user: &self.target,
+            parent: self.parent,
+        })
+    }
+
+    fn probes(&self) -> Vec<PlannedRoot<'_>> {
+        Vec::new()
+    }
+
+    fn subjects(&self) -> Vec<ObjectId> {
+        vec![self.source_version.object, self.original.object]
+    }
+
+    fn parents(&self) -> Vec<ObjectId> {
+        vec![self.parent]
+    }
+
+    fn source_version(&self) -> &EntryVersion {
+        &self.source_version
+    }
+
+    fn displaced(&self) -> Option<&EntryVersion> {
+        Some(&self.original)
+    }
+
     fn validate(&self, resources: &[super::resources::Resource]) -> std::io::Result<()> {
         use super::resources::{Access, ConflictIndex, Scope};
         use std::ffi::OsStr;
@@ -383,29 +343,54 @@ impl ReplacementSpec {
         Ok(())
     }
 
-    fn validate_root(&self, root: ObjectId) -> std::io::Result<()> {
-        if !root.same_volume(self.parent)
-            || root == self.parent
-            || root == self.original.object
-            || root == self.source_version.object
-        {
-            return Err(invalid(
-                "Recovery artifact root aliases a user object or lies on another device",
-            ));
+    /// `EntryVersion` is not a recursive snapshot, so an unchanged directory
+    /// source cannot prove the parked copy redundant (ADR 0023).
+    fn restored_disposal(&self) -> Disposal {
+        if self.source_version.directory {
+            Disposal::ExplicitOnly
+        } else {
+            Disposal::AutomaticWhenSourceIntact
         }
-        Ok(())
+    }
+
+    /// Only the destination proves a discard safe: the copy while it is
+    /// published, the original once restored. The source may change freely.
+    fn endpoints(&self, state: &State) -> std::io::Result<Vec<Endpoint<'_>>> {
+        let versions = match (state.phase, &state.staged) {
+            (super::checkpoint::Phase::Published, Some(staged)) => {
+                vec![staged.version.clone(), staged.published_version()?]
+            }
+            (super::checkpoint::Phase::Restored, _) => vec![self.original.clone()],
+            _ => return Err(invalid("Unsettled replacement has no retirement endpoints")),
+        };
+        Ok(vec![Endpoint {
+            path: &self.target,
+            parent: Some(self.parent),
+            versions,
+        }])
+    }
+
+    /// A parked copy is redundant only while its recorded source survives.
+    fn witness(&self) -> Option<Endpoint<'_>> {
+        Some(Endpoint {
+            path: &self.source,
+            parent: None,
+            versions: vec![self.source_version.clone()],
+        })
+    }
+
+    fn listed_path(&self) -> &NativePath {
+        &self.target
     }
 }
 
-#[cfg(unix)]
 impl OperationRecord {
     pub(super) fn validate(&self) -> std::io::Result<()> {
         self.intent.validate()?;
-        self.state.validate(&self.intent)
+        self.intent.checkpoint(&self.state).validate()
     }
 }
 
-#[cfg(unix)]
 impl OperationCheckpoint {
     pub(super) fn validate(&self, intent: &DurableIntent, digest: [u8; 32]) -> std::io::Result<()> {
         if self.intent_digest != digest {
@@ -414,94 +399,24 @@ impl OperationCheckpoint {
             ));
         }
         intent.validate()?;
-        self.state.validate(intent)
+        intent.checkpoint(&self.state).validate()
     }
 }
 
-#[cfg(unix)]
-impl OperationState {
-    pub(super) fn validate(&self, intent: &DurableIntent) -> std::io::Result<()> {
-        match (&intent.operation, self) {
-            (OperationSpec::CopyReplacement(spec), Self::Replacement(state)) => {
-                state.validate(spec)
-            }
-            (OperationSpec::Move(spec), Self::Move(state)) => state.validate(spec),
-            _ => Err(invalid(
-                "Recovery checkpoint kind disagrees with its immutable intent",
-            )),
-        }
-    }
-}
-
-#[cfg(unix)]
-impl ReplacementState {
-    fn validate(&self, spec: &ReplacementSpec) -> std::io::Result<()> {
-        let root_required = !matches!(self.phase, Phase::Planned | Phase::RootIntent);
-        let publication_required = matches!(
-            self.phase,
-            Phase::Staged
-                | Phase::DisplaceIntent
-                | Phase::Displaced
-                | Phase::PublishIntent
-                | Phase::Published
-                | Phase::RestoreIntent
-                | Phase::Restored
-                | Phase::ReapplyIntent
-                | Phase::DiscardIntent
-                | Phase::Discarded
-        );
-        // Only a settled retention phase holds a measurable private artifact.
-        // `Discarded` has removed it, so a retained size there is contradictory.
-        let measurable = matches!(
-            self.phase,
-            Phase::Published | Phase::Restored | Phase::DiscardIntent
-        );
-        if self.root.is_some() != root_required
-            || publication_required && self.published.is_none()
-            || !publication_required && self.published.is_some()
-            || self.retained_bytes.is_some() && !measurable
-            || self
-                .error
-                .as_ref()
-                .is_some_and(|error| error.len() > MAX_ERROR_BYTES)
-        {
-            return Err(invalid(
-                "Recovery phase lacks its required evidence or exceeds the error budget",
-            ));
-        }
-        if let Some(root) = self.root {
-            spec.validate_root(root)?;
-        }
-        if let Some(published) = &self.published {
-            published.validate()?;
-            let published = &published.version;
-            if !published.object.same_volume(spec.parent)
-                || published.object == spec.original.object
-                || published.object == spec.source_version.object
-                || published.object == spec.parent
-                || Some(published.object) == self.root
-            {
-                return Err(invalid(
-                    "Recovery publication aliases retained evidence or lies on another device",
-                ));
-            }
-        }
-        Ok(())
-    }
-}
-
-#[cfg(unix)]
 impl LocalManifest {
     #[cfg(test)]
     pub(super) fn validate(&self, opened_root: ObjectId) -> std::io::Result<()> {
         self.intent.validate()?;
-        match &self.intent.operation {
-            OperationSpec::CopyReplacement(spec) => spec.validate_root(self.root)?,
-            OperationSpec::Move(_) => {
-                return Err(invalid(
-                    "Move artifact manifests require their root-specific native owner",
-                ))
-            }
+        let state = State::default();
+        let checkpoint = self.intent.checkpoint(&state);
+        let kind = self.intent.operation.kind();
+        if ![Side::Source, Side::Target].into_iter().any(|side| {
+            kind.root(side)
+                .is_some_and(|root| checkpoint.validate_root(root.parent, self.root).is_ok())
+        }) {
+            return Err(invalid(
+                "Recovery artifact root aliases a user object or lies on another device",
+            ));
         }
         if self.root != opened_root {
             return Err(invalid(

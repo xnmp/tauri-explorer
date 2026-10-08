@@ -15,6 +15,7 @@
   import { emptyFolderResolver } from "$lib/state/empty-folders.svelte";
   import { dialogStore } from "$lib/state/dialogs.svelte";
   import { usesPointerDrag, usesHtml5Drag } from "$lib/domain/platform";
+  import { isVideoMediaFile } from "$lib/domain/file-types";
 
   type ItemInteractions = ReturnType<typeof useItemInteractions>;
   type PointerDrag = ReturnType<typeof usePointerDrag>;
@@ -63,6 +64,7 @@
 <!-- svelte-ignore a11y_click_events_have_key_events -- FileList owns cursor navigation; the window command router owns configurable Open/Preview and selection commands. -->
 <div
   role="gridcell"
+  aria-label={isVideoMediaFile(entry) ? `${entry.name}, video` : undefined}
   tabindex={!isRenaming && explorer.focusedEntry?.path === entry.path ? 0 : -1}
   aria-selected={explorer.isSelected(entry)}
   class="{className} entry-item"

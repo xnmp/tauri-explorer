@@ -1,7 +1,9 @@
 use super::*;
 use crate::files::{
-    file_identity::{of_file, version_from_metadata},
+    file_identity::{of_file, version_at, version_from_metadata},
+    native_directory::Directory,
     recovery::{
+        checkpoint::Side,
         model::{LockIdentity, NativePath},
         replacement_artifact::Anchor,
         resources::{capture_requests, Access, Request, Scope},
@@ -91,7 +93,7 @@ impl Fixture {
         ])
         .unwrap();
         let intent = DurableIntent {
-            version: 1,
+            version: crate::files::recovery::model::RECORD_VERSION,
             id: "a".repeat(64),
             lock: LockIdentity {
                 name: format!("{}.lock", "a".repeat(64)),
@@ -122,7 +124,10 @@ impl Fixture {
     }
 
     fn staged(&self) -> (Root, StagedPayload) {
-        let root = Anchor::open(&self.intent).unwrap().create().unwrap();
+        let root = Anchor::open(&self.intent, Side::Target)
+            .unwrap()
+            .create()
+            .unwrap();
         root.publish_manifest(&self.intent).unwrap();
         let staged = root.copy_payload(&self.intent, &mut NoProgress).unwrap();
         (root, staged)
@@ -183,7 +188,7 @@ fn owner_unreadable_publication_can_be_restored_after_reopening_its_root() {
     root.publish_copy(&fixture.intent, &staged).unwrap();
     let identity = root.identity();
     drop(root);
-    let reopened = Anchor::open(&fixture.intent)
+    let reopened = Anchor::open(&fixture.intent, Side::Target)
         .unwrap()
         .open_existing(identity)
         .unwrap();

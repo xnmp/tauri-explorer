@@ -100,6 +100,10 @@
                   {/if}
                 </div>
                 <div class="job-time">{formatElapsed(job)}</div>
+                {#if job.status === "error" && job.retry}
+                  <button class="clear-btn retry-btn" aria-label={`Retry ${job.label}`} disabled={job.retrying}
+                    aria-busy={job.retrying} onclick={() => void jobsStore.retryJob(job.id)}>Retry</button>
+                {/if}
               </div>
             {/each}
           </div>
@@ -162,6 +166,17 @@
   .clear-btn:hover {
     background: var(--control-fill-secondary);
     color: var(--text-primary);
+  }
+
+  .clear-btn:disabled {
+    opacity: 0.5;
+    cursor: default;
+    background: var(--control-fill);
+    color: var(--text-secondary);
+  }
+
+  .retry-btn {
+    flex-shrink: 0;
   }
 
   .close-btn {

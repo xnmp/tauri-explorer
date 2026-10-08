@@ -72,7 +72,18 @@ export interface PluginStorage {
 /** Window-owned background jobs survive plugin activation changes. */
 export interface PluginJobs {
   accept(
-    registration: { kind: PluginJobKind; label: string; detail: string; presentation?: "image" },
+    registration: {
+      kind: PluginJobKind; label: string; detail: string; presentation?: "image";
+      /**
+       * Hosts with the "jobRetry" capability show a Retry action on this job's
+       * entry in Background Operations (e.g. the Image generation panel) when
+       * the job fails. Calling it should start a fresh job (the plugin calls
+       * `accept` again); the host then removes the failed entry. Rejections
+       * or a returned `{ ok: false }` are shown as the entry's error and keep
+       * it.
+       */
+      retry?: () => Promise<ApiResult<number>>;
+    },
     start: () => Promise<ApiResult<number>>,
   ): Promise<ApiResult<number>>;
 }

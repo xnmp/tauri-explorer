@@ -231,7 +231,20 @@
               </div>
             </div>
             {#if job.status !== "running"}
-              <button class="action-btn" aria-label={`Dismiss ${job.label}`} onclick={() => jobsStore.removeJob(job.id)}>×</button>
+              <div class="operation-actions">
+                {#if job.status === "error" && job.retry}
+                  <button class="action-btn retry" aria-label={`Retry ${job.label}`} title="Retry"
+                    disabled={job.retrying} aria-busy={job.retrying} onclick={() => void jobsStore.retryJob(job.id)}>
+                    <svg width="12" height="12" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+                      <path d="M2 8C2 4.69 4.69 2 8 2C10.22 2 12.16 3.21 13.2 5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+                      <path d="M14 8C14 11.31 11.31 14 8 14C5.78 14 3.84 12.79 2.8 11" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+                      <path d="M13 2V5H10" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+                      <path d="M3 14V11H6" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+                    </svg>
+                  </button>
+                {/if}
+                <button class="action-btn" aria-label={`Dismiss ${job.label}`} onclick={() => jobsStore.removeJob(job.id)}>×</button>
+              </div>
             {/if}
           </div>
         {/each}
@@ -495,5 +508,12 @@
   .action-btn.retry:hover {
     background: rgba(0, 120, 212, 0.1);
     color: var(--accent-text, var(--accent));
+  }
+
+  .action-btn:disabled,
+  .action-btn:disabled:hover {
+    opacity: 0.5;
+    cursor: default;
+    background: transparent;
   }
 </style>

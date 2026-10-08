@@ -1,6 +1,6 @@
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { basename } from "$lib/domain/path";
-import { jobsStore } from "$lib/state/jobs.svelte";
+import { jobsStore, type JobRetry } from "$lib/state/jobs.svelte";
 import { toastStore } from "$lib/state/toast.svelte";
 import { windowTabsManager } from "$lib/state/window-tabs.svelte";
 
@@ -17,6 +17,8 @@ interface JobRegistration {
   label: string;
   detail: string;
   presentation?: "image";
+  /** Offered as Retry on the failed entry (capability "jobRetry"). */
+  retry?: JobRetry;
 }
 
 type StartResult = { ok: true; data: number } | { ok: false; error: string };
@@ -188,10 +190,10 @@ export function createPluginJobsController(deps: Dependencies) {
   };
 }
 
-export const pluginJobsController = createPluginJobsController({
-  listen: <T>(name: string, handler: (payload: T) => void) =>
-    listen<T>(name, (event) => handler(event.payload)),
-  add: ({ id, label, detail, kind, presentation }) => jobsStore.addJob(id, label, detail, kind, presentation),
+/** Where the window's plugin jobs are shown and announced; everything but the
+ *  backend event source, so tests can drive the real store with fake events. */
+export const windowJobSink: Omit<Dependencies, "listen"> = {
+  add: ({ id, label, detail, kind, presentation, retry }) => jobsStore.addJob(id, label, detail, kind, presentation, retry),
   complete: (id, outputPath) => jobsStore.completeJob(id, outputPath),
   fail: (id, error) => jobsStore.failJob(id, error),
   success: (message) => toastStore.show(message, "success"),
@@ -199,4 +201,10 @@ export const pluginJobsController = createPluginJobsController({
   refresh: async () => {
     await Promise.all(windowTabsManager.getAllExplorers().map((explorer) => explorer.refresh({ silent: true })));
   },
+};
+
+export const pluginJobsController = createPluginJobsController({
+  listen: <T>(name: string, handler: (payload: T) => void) =>
+    listen<T>(name, (event) => handler(event.payload)),
+  ...windowJobSink,
 });

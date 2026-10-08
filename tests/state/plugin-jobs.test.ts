@@ -37,6 +37,14 @@ describe("window-owned plugin jobs", () => {
     expect(f.successes[0]).toContain("Trace completion pending");
     expect(f.refreshes).toBe(1);
   });
+  it("hands a registration's retry to the job's entry", async () => {
+    const f = fixture();
+    const retry = async () => ({ ok: true as const, data: 8 });
+    await f.controller.accept({ kind: "openai-image", label: "a.png", detail: "d", presentation: "image", retry }, async () => ({ ok: true, data: 7 }));
+    expect(f.added).toHaveLength(1);
+    expect(f.added[0]).toMatchObject({ id: 7, kind: "openai-image", presentation: "image" });
+    expect(f.added[0].retry).toBe(retry);
+  });
   it("monitors a newly installed job kind before invoking its provider",async()=>{
     const f=fixture();
     const result=await f.controller.accept({kind:"external-edit",label:"Image edit",detail:"paint"},async()=>{

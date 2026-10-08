@@ -20,8 +20,10 @@ All notable changes to Tauri Explorer.
   an AI image edit that fails (for example when the model replies with a
   refusal instead of an image) is one click to try again. Plugins opt in by
   passing `retry` when they register the job (capability `jobRetry`); the
-  failed entry is replaced by the new job, or keeps the reason the retry
-  could not start (#1031).
+  failed entry is replaced by the new job and focus moves to it, or the
+  entry keeps the reason the retry could not start, which is also shown as
+  a notification. An entry cannot be dismissed while its retry is starting,
+  and a disabled or removed plugin's jobs no longer offer Retry (#1031).
 
 ### Changed
 

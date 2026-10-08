@@ -116,7 +116,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `window-handoff.ts` — correlated native request/acknowledgement transport for tab adoption and warm activation; owns timeout and listener retirement.
 - `window-trace.ts` — launch/hand-off/tab-seed tracing: failures and timeouts to the native log in every build, progress phases only in hook builds (#884).
 - `load-watchdog.ts` — slow directory-load watchdog (#1022): in-flight trace registry, one threshold timer per load, records a stuck load while pending and replaces it with the outcome; drive-kind resolver registered by `drives.svelte.ts`. Contracts in `tests/state/load-watchdog.test.ts`.
-- `plugin-jobs.ts` — window-owned accepted jobs, terminal event reconciliation and cleanup independent of plugin contributions; `windowJobSink` is the store/toast side tests can pair with fake events; registrations may carry `retry`.
+- `plugin-jobs.ts` — window-owned accepted jobs, terminal event reconciliation and cleanup independent of plugin contributions; `windowJobSink` is the store/toast side tests can pair with fake events; registrations may carry `retry` (wrapped so a failed retry toasts like a failed job); `scopePluginJobs` gives each plugin context its own `jobs` (owner recorded, Retry dropped on retire).
 
 - `git-repo-watch.ts` — shared graph/SCM adapter over ordered watch ownership; retains unique native leases until acknowledged release, including retries.
 - `git-graph-coverage.ts` — repository observation leases shared by pending graph reads and retained snapshots; listener/watch acknowledgement precedes reads, final release drains acquisition, and UNC polling roots stay uncached.
@@ -230,7 +230,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `theme.svelte.ts` — active theme state + CSS var application.
 - `config-watch.ts` — applies `config-file-changed` to the settings/theme stores; `handleConfigFileChanged` is the routing seam (#599).
 - `terminal.svelte.ts` — embedded terminal panel state (#139).
-- `jobs.svelte.ts` — background jobs store (Ctrl+J); `retryJob` runs a failed job's `retry` once, then drops the entry or keeps it with the new error.
+- `jobs.svelte.ts` — background jobs store (Ctrl+J); `retryJob` runs a failed job's `retry` once, then drops the entry or keeps it with the new error; a retrying entry is active (`isJobActive`: not dismissable or cleared); `dropRetries(owner)` for retired plugins.
 - `toast.svelte.ts` — toast notification store.
 - `rename-suggestion.svelte.ts` — inline-rename autocomplete providers (#215).
 - `thumbnail-cache.ts` — client-side thumbnail cache + in-flight dedupe. Hot for preview perf.
@@ -292,6 +292,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 
 - `use-item-interactions.svelte.ts` — shared click/select/activate logic across views.
 - `use-inline-rename.svelte.ts` — inline rename edit lifecycle.
+- `use-job-retry.ts` — Retry for a failed job entry; moves focus to the replacement entry (or the panel) after success.
 - `use-marquee-selection.svelte.ts` — rubber-band marquee: candidate set + hit-testing.
 - `use-type-ahead.svelte.ts` — type-to-select matching in file lists.
 - `use-column-resize.svelte.ts` — One keyed resize owner with session-local Details widths, visibility projection and ordered retirement.

@@ -31,7 +31,7 @@ import { dialogStore } from "$lib/state/dialogs.svelte";
 import type { FileEntry } from "$lib/domain/file";
 import { parentDir, sameDirectory } from "$lib/domain/path";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
-import { pluginJobsController, type PluginJobKind } from "$lib/state/plugin-jobs";
+import { scopePluginJobs, type PluginJobKind } from "$lib/state/plugin-jobs";
 import { observeActiveDirectory } from "$lib/composables/observe-active-directory.svelte";
 import { extractError, type ApiResult } from "$lib/api/common";
 import { logFrontendError } from "$lib/api/crash";
@@ -274,6 +274,9 @@ export function createPluginContext(
     else disposers.push(fn);
   };
   const storage = createPluginStorage(pluginId);
+  // Accepted jobs outlive the plugin, but their Retry runs its code: drop it.
+  const pluginJobs = scopePluginJobs(pluginId);
+  disposers.push(() => pluginJobs.retire());
   // Preview targets are pane state owned by this plugin; drop them with it.
   disposers.push(() => {
     for (const explorer of windowTabsManager.getAllExplorers()) explorer.clearPreviewTargetsOwnedBy(pluginId);
@@ -352,7 +355,7 @@ export function createPluginContext(
     closeDialog(id: string): void {
       dialogRegistry.close(id);
     },
-    jobs: pluginJobsController,
+    jobs: pluginJobs.jobs,
     toast: {
       show: (message, variant) => toastStore.show(message, variant),
       error: (message) => toastStore.error(message),

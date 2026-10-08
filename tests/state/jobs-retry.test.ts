@@ -4,7 +4,7 @@
  * success and keeps it, with the new error, otherwise.
  */
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { jobsStore, type JobRetry } from "$lib/state/jobs.svelte";
+import { isJobActive, jobsStore, type JobRetry } from "$lib/state/jobs.svelte";
 
 afterEach(() => { for (const job of [...jobsStore.jobs]) jobsStore.removeJob(job.id); });
 
@@ -18,7 +18,7 @@ function deferred<T>() {
 }
 
 function failedJob(id: number, retry?: JobRetry) {
-  jobsStore.addJob(id, "lantern.png", "Make it daytime", "trace", "image", retry);
+  jobsStore.addJob(id, "lantern.png", "Make it daytime", "trace", "image", { retry });
   jobsStore.failJob(id, "Codex replied with a refusal");
 }
 
@@ -34,7 +34,7 @@ describe("jobsStore.retryJob", () => {
     const second = jobsStore.retryJob(10);
     expect(retry).toHaveBeenCalledTimes(1);
 
-    jobsStore.addJob(11, "lantern.png", "Make it daytime", "trace", "image", retry);
+    jobsStore.addJob(11, "lantern.png", "Make it daytime", "trace", "image", { retry });
     start.resolve({ ok: true, data: 11 });
     await Promise.all([first, second]);
     expect(retry).toHaveBeenCalledTimes(1);
@@ -90,8 +90,8 @@ describe("jobsStore.retryJob", () => {
     expect(find(60)).toMatchObject({ status: "error", error: "Codex replied with a refusal" });
 
     const retry = vi.fn<JobRetry>(async () => ({ ok: true, data: 99 }));
-    jobsStore.addJob(61, "a.png", "running", "trace", "image", retry);
-    jobsStore.addJob(62, "b.png", "done", "trace", "image", retry);
+    jobsStore.addJob(61, "a.png", "running", "trace", "image", { retry });
+    jobsStore.addJob(62, "b.png", "done", "trace", "image", { retry });
     jobsStore.completeJob(62, "/out/b.png");
     await jobsStore.retryJob(61);
     await jobsStore.retryJob(62);
@@ -101,8 +101,54 @@ describe("jobsStore.retryJob", () => {
     expect(find(62)?.status).toBe("completed");
   });
 
-  it("ignores a retry that is not a function", () => {
+  it("resolves to the replacement job's id, or null when the retry fails", async () => {
+    failedJob(80, async () => ({ ok: true, data: 81 }));
+    expect(await jobsStore.retryJob(80)).toBe(81);
+    failedJob(82, async () => ({ ok: false, error: "no" }));
+    expect(await jobsStore.retryJob(82)).toBeNull();
+  });
+
+  it("keeps an entry whose retry is starting: it cannot be dismissed or cleared", async () => {
+    const start = deferred<{ ok: false; error: string }>();
+    failedJob(90, () => start.promise);
+    jobsStore.addJob(91, "done.png", "d", "trace", "image");
+    jobsStore.failJob(91, "refused");
+    const retrying = jobsStore.retryJob(90);
+    expect(isJobActive(find(90)!)).toBe(true);
+
+    jobsStore.dismissJob(90);
+    jobsStore.clearCompleted();
+    expect(find(90)?.retrying).toBe(true);
+    expect(find(91)).toBeUndefined();
+
+    // So a failure after the click still lands on its entry.
+    start.resolve({ ok: false, error: "Rate limited" });
+    await retrying;
+    expect(find(90)).toMatchObject({ status: "error", error: "Rate limited", retrying: false });
+    expect(isJobActive(find(90)!)).toBe(false);
+    jobsStore.dismissJob(90);
+    expect(find(90)).toBeUndefined();
+  });
+
+  it("dismisses finished entries but never running ones", () => {
+    jobsStore.addJob(95, "a.png", "d");
+    jobsStore.dismissJob(95);
+    expect(find(95)?.status).toBe("running");
+  });
+
+  it("drops Retry only from the retired plugin's entries", () => {
+    const retry: JobRetry = async () => ({ ok: true, data: 0 });
+    jobsStore.addJob(96, "a.png", "d", "trace-image", "image", { owner: "trace", retry });
+    jobsStore.addJob(97, "b.png", "d", "other-image", "image", { owner: "other", retry });
+    jobsStore.dropRetries("trace");
+    expect(find(96)?.retry).toBeUndefined();
+    expect(find(97)?.retry).toBe(retry);
+  });
+
+  it("ignores a retry that is not a function, and a malformed owner", () => {
     failedJob(70, "not a function" as unknown as JobRetry);
     expect(find(70)?.retry).toBeUndefined();
+    jobsStore.addJob(71, "a.png", "d", "trace", "image", { owner: 5 as unknown as string });
+    expect(find(71)?.owner).toBeUndefined();
   });
 });

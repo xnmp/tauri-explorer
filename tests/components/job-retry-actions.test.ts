@@ -14,12 +14,12 @@ afterEach(() => { for (const job of [...jobsStore.jobs]) jobsStore.removeJob(job
 const retry: JobRetry = () => new Promise(() => {});
 
 function seed(): void {
-  jobsStore.addJob(1, "with-retry.png", "d", "trace", "image", retry);
+  jobsStore.addJob(1, "with-retry.png", "d", "trace", "image", { retry });
   jobsStore.failJob(1, "refused");
   jobsStore.addJob(2, "no-retry.png", "d", "trace", "image");
   jobsStore.failJob(2, "refused");
-  jobsStore.addJob(3, "running.png", "d", "trace", "image", retry);
-  jobsStore.addJob(4, "done.png", "d", "trace", "image", retry);
+  jobsStore.addJob(3, "running.png", "d", "trace", "image", { retry });
+  jobsStore.addJob(4, "done.png", "d", "trace", "image", { retry });
   jobsStore.completeJob(4, "/out/done.png");
 }
 
@@ -51,5 +51,23 @@ describe.each([
     jobsStore.addJob(5, "plain.png", "d", "trace", "image");
     jobsStore.failJob(5, "refused");
     expect(retryButtons(html())).toEqual([]);
+  });
+});
+
+describe("Image generation panel during a retry", () => {
+  const html = () => render(ProgressDialog as never, {} as never).body;
+  const button = (body: string, label: string) => body.match(new RegExp(`<button[^>]*aria-label="${label}"[^>]*>`))?.[0];
+
+  it("cannot be dismissed or closed until the retry settles", () => {
+    jobsStore.addJob(1, "with-retry.png", "d", "trace", "image", { retry });
+    jobsStore.failJob(1, "refused");
+    const idle = html();
+    expect(button(idle, "Dismiss with-retry.png")).not.toMatch(/\sdisabled/);
+    expect(button(idle, "Close")).toBeDefined();
+
+    void jobsStore.retryJob(1);
+    const retrying = html();
+    expect(button(retrying, "Dismiss with-retry.png")).toMatch(/\sdisabled/);
+    expect(button(retrying, "Close")).toBeUndefined();
   });
 });

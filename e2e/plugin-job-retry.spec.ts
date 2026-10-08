@@ -56,6 +56,8 @@ test("Retry on a failed image job starts a new job and replaces the failed entry
   await expect(progress.getByText("Codex replied with a refusal")).toHaveCount(0);
   await expect(progress.getByRole("progressbar")).toHaveCount(1);
   await expect(retry).toHaveCount(0);
+  // Focus follows to the replacement entry rather than falling to <body>.
+  await expect(progress.locator('[data-job-id="9002"]')).toBeFocused();
   const jobs = () => page.evaluate(async () => {
     const { jobsStore } = await import("/src/lib/state/jobs.svelte.ts");
     return jobsStore.jobs.map((job) => `${job.id}:${job.status}`);

@@ -15,3 +15,17 @@ background file menu also opens and intercepts clicks on column visibility.
 
 Regression coverage pairs real Rust image files with browser assertions of the
 rendered cells, hide/reload/show, change invalidation, and column resizing.
+
+Adding another Details column also widens its focusable row. At 150% zoom,
+native Tab focus can scroll an `overflow: hidden` ancestor toward the trailing
+columns and hide the file icon/name. The row's focus handler reveals its name
+cell with nearest alignment; it does not change column widths or selection.
+Keep the existing HTML-icon viewport assertions and a zoomed row-focus
+regression to cover this interaction. Settings normalization tests must include
+Resolution in the complete default-column object.
+
+The native-suite TypeScript test invokes an external compiler and is not a latency
+benchmark. Its child now has a 30-second process timeout and the enclosing test
+has a 35-second deadline; the zero-exit assertion is unchanged. This avoids the
+framework's five-second default rejecting a healthy compile on a slower host,
+while retaining a finite bound for hung processes.

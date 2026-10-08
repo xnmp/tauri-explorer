@@ -253,3 +253,7 @@ Directory reconciliation can retain entry identity when byte count and mtime are
 unchanged, so metadata must also invalidate through shared directory-change and
 local-mutation events. Header context-menu events must stop propagation to avoid
 opening the pane's file menu over the column menu.
+Details row focus must reveal the name cell with nearest alignment: when columns
+exceed the pane width, native Tab focus can scroll even overflow-hidden ancestors
+toward the trailing columns and hide the file identity at high zoom. Preserve
+column widths and selection; do not relax the icon viewport assertions.

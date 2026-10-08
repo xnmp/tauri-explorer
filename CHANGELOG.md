@@ -2,7 +2,12 @@
 
 All notable changes to Tauri Explorer.
 
-## Unreleased
+## v1.11.4 — 2026-10-09
+
+This update records why a folder takes more than 5 seconds to load, so you
+can send that with a bug report, and keeps the Preview image steady when
+moving between images. It also lets plugin Preview sections line up with the
+built-in info rows. It pairs with TraceExplorer v0.2.1.
 
 ### Added
 
@@ -16,7 +21,7 @@ All notable changes to Tauri Explorer.
   `slow-loads` folder inside the logs folder, and Report Issue offers to
   attach those from the last 24 hours to a bug report, showing exactly what
   will be sent; they include folder paths but no file names, and can be
-  excluded (#1022).
+  excluded (#1022, #1023).
 
 ### Fixed
 
@@ -24,7 +29,8 @@ All notable changes to Tauri Explorer.
   moves from one image to another: the previous image stays until the next
   one is decoded (with a spinner over it if that takes a while), so the pane
   does not flash or re-lay out. Plugin Preview-info sections can now line up
-  with the host's info rows in every dock through `--preview-info-inset`.
+  with the host's info rows in every dock through `--preview-info-inset`
+  (#1024).
 
 ## v1.11.3 — 2026-10-08
 

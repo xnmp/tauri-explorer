@@ -3,6 +3,7 @@
   Issue: tauri-explorer-iw0, tauri-explorer-bae, tauri-explorer-h3n, tauri-explorer-x25
 -->
 <script lang="ts">
+  import ImageResolutionCell from "./ImageResolutionCell.svelte";
   import type { FileEntry } from "$lib/domain/file";
   import { formatSize } from "$lib/domain/file";
   import { getFileType, getFileIconColor, formatDate, formatAbsoluteDate, isVideoMediaFile } from "$lib/domain/file-types";
@@ -168,6 +169,9 @@
     {/if}
   </div>
   {/if}
+  {#if settingsStore.columnVisibility.resolution}
+    <div class="resolution-cell"><ImageResolutionCell {entry} /></div>
+  {/if}
 </div>
 
 <style>
@@ -288,7 +292,8 @@
   /* Date, Type, Size cells */
   .date-cell,
   .type-cell,
-  .size-cell {
+  .size-cell,
+  .resolution-cell {
     font-size: var(--font-size-caption);
     color: var(--text-tertiary);
     overflow: hidden;

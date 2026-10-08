@@ -4,10 +4,12 @@ export interface ImageResolution {
   height: number;
 }
 
-export function formatImageResolution(_value: ImageResolution | null): string {
-  return "—";
+export function formatImageResolution(value: ImageResolution | null): string {
+  return value && Number.isInteger(value.width) && value.width > 0
+    && Number.isInteger(value.height) && value.height > 0
+    ? `${value.width} × ${value.height} px` : "—";
 }
 
-export function supportsImageResolution(_name: string): boolean {
-  return false;
+export function supportsImageResolution(name: string): boolean {
+  return /\.(png|jpe?g|gif|webp|bmp)$/i.test(name);
 }

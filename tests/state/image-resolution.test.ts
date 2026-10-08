@@ -1,10 +1,10 @@
 import { expect, test, vi } from "vitest";
-import { createResolutionQueue } from "$lib/state/image-resolution";
+import { createResolutionQueue, observeResolution } from "$lib/state/image-resolution";
 
 const flush = async () => { for (let i = 0; i < 8; i++) await Promise.resolve(); };
 test("reads stay bounded and scrolled-away queued rows never read", async () => {
   const pending: ((value: null) => void)[] = [];
-  const read = vi.fn(() => new Promise<null>(resolve => pending.push(resolve)));
+  const read = vi.fn((_path: string) => new Promise<null>(resolve => pending.push(resolve)));
   const queue = createResolutionQueue(read, 2);
   const publish = vi.fn();
   queue.request("first", publish); queue.request("second", publish);
@@ -33,6 +33,16 @@ test("a replaced row cannot publish a late result and rereads the same path", as
 test("failed reads show unavailable metadata and release their slot", async () => {
   const read = vi.fn().mockRejectedValueOnce(new Error("unreadable")).mockResolvedValue(null);
   const publish = vi.fn(); const queue = createResolutionQueue(read, 1);
-  queue.request("bad.png", publish); queue.request("next.png", publish); await flush();
-  expect(publish.mock.calls).toEqual([[null], [null]]);
+  queue.request("bad.png", publish); queue.request("next.png", publish); await vi.waitFor(() => expect(publish.mock.calls).toEqual([[null], [null]]));
+});
+
+test("change events reread unchanged entry paths and disposal removes observation", async () => {
+  const read = vi.fn().mockResolvedValueOnce({ width: 100, height: 50 }).mockResolvedValue({ width: 400, height: 200 });
+  const publish = vi.fn(), unsubscribe = vi.fn();
+  let invalidate!: () => void;
+  const stop = observeResolution(createResolutionQueue(read, 1), "same.png", publish, callback => { invalidate = callback; return unsubscribe; });
+  await flush(); expect(publish).toHaveBeenLastCalledWith({ width: 100, height: 50 });
+  invalidate(); await flush(); expect(publish).toHaveBeenLastCalledWith({ width: 400, height: 200 });
+  stop(); invalidate(); await flush();
+  expect(read).toHaveBeenCalledTimes(2); expect(unsubscribe).toHaveBeenCalledOnce();
 });

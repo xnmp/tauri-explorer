@@ -31,6 +31,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `PluginInspector.svelte` — selection-aware right-side host for plugin inspector contributions; hidden when none apply.
 - `PluginFileView.svelte` — hosts a plugin file view (SDK 2) in place of a pane's listing, with a pane-scoped handle; error boundary offers retry or return to files, and Preview targets it owned are cleared on unmount.
 - `PluginPreviewTarget.svelte` — Preview of a plugin target (a non-file subject): image, details and explicit actions only, no file actions, opening, sibling stepping or dragging.
+- `ImageResolutionCell.svelte` — lazy intrinsic image metadata for mounted Details rows.
 - `DetailsView.svelte` — virtual-scrolled table view (columns, resize, sort headers).
 - `ListView.svelte` — CSS-grid compact list view.
 - `TilesView.svelte` — CSS auto-fill grid tile view with thumbnails; runs `scroll-jank-monitor.ts` during scroll and logs `tiles-scroll-jank` events only when jank occurred (#593).
@@ -163,6 +164,8 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `git-summary-cache.ts` — shared per-repo `git_status` (working-tree summary) fetch: in-flight dedup + short TTL, used by SCM store + git-graph so one change is one scan, not several (#431); Git-change events revoke cached/joinable reads, publication uses current-flight identity, and successful summaries use a bounded 64-entry LRU.
 - `scm.svelte.ts` — Source Control state (staged/unstaged/commit, #54).
 - `commit-panel.svelte.ts` — per-pane rune store holding the git-graph uncommitted-node commit editor's live state (#466); wraps `domain/commit-panel` transitions so the in-flight commit guard survives close+reopen (`begin()`/`resetIfIdle()`). Disposed with the pane (like `disposeScmStore`).
+- `image-resolution.ts` — bounded cancellable metadata queue and event-owned observation.
+- `image-resolution-service.ts` — metadata API admission and shared directory-change subscription.
 - `file-events.ts` — cross-window file-change broadcast (affected dirs → all windows).
 - `src/lib/state/copy-operations.ts` — the copy session over that shared presentation.
 - `src/lib/state/session-operations.ts` — the one presentation shared by both ordered sessions: operation panel, conflict prompts, incremental entries, refresh broadcast and completion reporting.
@@ -234,6 +237,8 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `tab-transfer.ts` (above).
 
 ## src/lib/api/ — invoke() bridge to Rust. Thin IPC wrappers; grep here for Tauri command names.
+
+- `image-resolution.ts` — lazy source pixel metadata IPC; virtual paths are unavailable.
 
 - `pdf-preview.ts` — bounded native PDF bytes, lazy PDF.js worker/readiness, cancellable page rendering and validated native annotation-link dispatch (#728–#730).
 
@@ -365,6 +370,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `src/lib/domain/copy-session.ts` — ordered native session event, conflict-decision and positional result contracts, plus the copy and move incomplete-session presentations.
 - `file-history.ts` — shared action, summary, receipt and HistoryPort types for the native history authority.
 - `virtual-layout.ts` — variable-height virtual list layout math (VirtualList).
+- `image-resolution.ts` — source pixel shape, supported raster extensions and display formatting.
 - `detail-columns.ts` — Details column defaults, finite bounds, malformed-width normalization and visible grid projection.
 - `resize-size.ts` — bounded scalar normalization, visual/model delta conversion and axis-aware keyboard sizing.
 - `pane-viewport.ts` — pure descendant minima, canvas placement, active-pane reveal and keyboard divider policy.
@@ -443,6 +449,8 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `src-tauri/windows-app-manifest.xml` — shared Common Controls v6 and Per-Monitor V2 DPI declarations.
 
 ## src-tauri/src/ — Rust backend. Tauri commands; all commands are `async fn`.
+
+- `files/image_resolution.rs` — bounded header-only intrinsic raster dimensions, no directory-listing overhead.
 
 - `main.rs` — binary entry (console-window guard).
 - `lib.rs` — app entry: builder, command registration, plugin setup. Grep here to find where a command is wired.

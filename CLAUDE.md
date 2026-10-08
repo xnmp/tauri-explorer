@@ -242,3 +242,14 @@ Keep the avatar decoration out of Git Graph's table minimum width: at narrow
 sizes it should borrow from the message cell, not widen inline commit details.
 Native graph fixtures must wait for the reset view's `.file-list` before their
 repository is deleted, because reset navigation completes asynchronously.
+
+### Details image metadata (#994)
+
+Resolution uses `files::image_resolution::get_image_resolution`, a header-only
+read for PNG/JPEG/GIF/WebP/BMP (4 shared native slots, at most 1 MiB of input).
+Do not derive it from thumbnail dimensions or add it to eager directory scans.
+Virtualized cells own cancellable requests through `state/image-resolution.ts`.
+Directory reconciliation can retain entry identity when byte count and mtime are
+unchanged, so metadata must also invalidate through shared directory-change and
+local-mutation events. Header context-menu events must stop propagation to avoid
+opening the pane's file menu over the column menu.

@@ -5,7 +5,8 @@ async function openAtHeader(page: Page, edge = false) {
   const header = await page.locator(".column-headers").boundingBox();
   expect(header).not.toBeNull();
   const point = {
-    x: edge ? Math.min(header!.x + header!.width, page.viewportSize()!.width) - 4 : header!.x + 120,
+    // Stay inside the header rather than WebKit's non-overlay scrollbar.
+    x: edge ? Math.min(header!.x + header!.width, page.viewportSize()!.width) - 24 : header!.x + 120,
     y: header!.y + header!.height / 2,
   };
   await page.mouse.click(point.x, point.y, { button: "right" });

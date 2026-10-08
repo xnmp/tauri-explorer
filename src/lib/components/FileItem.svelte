@@ -105,6 +105,11 @@
   class:selected
   class:drop-target={interactions.isDropTarget(entry.path)}
   class:copy-drop={interactions.isCopyDrop(entry.path)}
+  onfocus={(event) => {
+    // A wide Details row can make native tab focus reveal its trailing columns
+    // by scrolling an overflow-hidden ancestor. Keep the file identity visible.
+    event.currentTarget.querySelector(".name-cell")?.scrollIntoView({ block: "nearest", inline: "nearest" });
+  }}
   onclick={handleClick}
   ondblclick={handleDoubleClick}
   oncontextmenu={(e) => interactions.handleContextMenu(e, entry)}

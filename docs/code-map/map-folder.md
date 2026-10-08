@@ -78,7 +78,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `ShortcutCheatsheet.svelte` — keyboard shortcut cheatsheet overlay.
 - `ThemePicker.svelte` — theme selection UI.
 - `RenameDialog`? see `dialogs.svelte.ts`; dialogs present: `DeleteDialog.svelte`, `ConflictDialog.svelte` (paste conflict overwrite/skip), `BulkRenameDialog.svelte`, `WorkspaceDialog.svelte` (save/restore workspaces), `ProgressDialog.svelte` (copy/move/extract progress), `InlineNewFolder.svelte` (inline new-entry input — folder or file, per `explorer.newEntryKind`), `FilePicker.svelte` (portal file-picker window).
-- `PreviewPane.svelte` — file preview (image/text/markdown/syntax/CSV table); CSV rows use the shared VirtualList with one shared column template and an outer horizontal scroll surface (#666).
+- `PreviewPane.svelte` — file preview (image/text/markdown/syntax/CSV table); CSV rows use the shared VirtualList with one shared column template and an outer horizontal scroll surface (#666). Image to image, the previous image stays (spinner over it when slow) until the next is decoded, so a selection change never blanks or re-lays out the pane (`e2e/preview-selection-stability.spec.ts`).
 - `PdfPreview.svelte` — lazy canvas PDF surface with centered fit/zoom, pointer-captured pan, annotation links, compact page controls and fullscreen keyboard ownership (#728–#730).
 - `TerminalPanel.svelte` — embedded xterm.js terminal panel (#139).
 - `StatusBar.svelte` — bottom status bar (selection count, size, path).

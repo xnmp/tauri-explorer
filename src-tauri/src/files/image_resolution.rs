@@ -11,3 +11,7 @@ pub struct ImageResolution {
 pub async fn get_image_resolution(_path: String) -> Option<ImageResolution> {
     None
 }
+
+#[cfg(test)]
+#[path = "../../test_support/image_resolution.rs"]
+mod tests;

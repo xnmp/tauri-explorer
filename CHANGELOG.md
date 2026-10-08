@@ -18,6 +18,10 @@ package.
   Preview-info sections, and pane-scoped Preview targets for non-file
   subjects such as unsaved images. SDK 1 plugins keep working unchanged.
 - Plugin workers created from blob URLs are permitted (`worker-src blob:`).
+- Plugins can show files as Tiles-view tiles in their own sections through
+  the SDK module `ui/file-tiles` (capability `fileTiles`): the same tile
+  look, thumbnails, names and tile-size setting as the built-in Tiles view,
+  with selection, opening and the context menu left to the plugin (#1018).
 - Plugins can be installed as `.teplugin` packages from the Plugins dialog
   and the command palette (Install Plugin…), then disabled or removed without
   deleting their outputs or history. Plugins can add inspectors beside the
@@ -70,6 +74,10 @@ package.
 
 ### Fixed
 
+- With Preview docked at the bottom or top, a plugin's Preview-info section
+  takes the height it needs instead of scrolling inside a clipped box, and
+  the image follows it directly without a gap. Plugin Preview targets (such
+  as unsaved images) get the same docked layout as files (#1018).
 - The Arch package is now the only install. After installing it, the setup
   script moves aside per-user launcher, desktop-entry and portal overrides
   that shadowed the package (kept under

@@ -14,10 +14,11 @@ function matchesAny(...matchedSelectors: string[]): (selectorList: string) => bo
     .some((selector) => matched.has(selector.trim()));
 }
 
-function fixture(terminalFocus = false) {
+function fixture(terminalFocus = false, ancestors: readonly string[] = []) {
   const target = new EventTarget();
   // Exercise real EventTarget dispatch and the production binding matcher.
-  Object.assign(target, { tagName: terminalFocus ? "TEXTAREA" : "DIV", closest: () => terminalFocus ? target : null });
+  const closest = (selector: string) => terminalFocus || ancestors.includes(selector) ? target : null;
+  Object.assign(target, { tagName: terminalFocus ? "TEXTAREA" : "DIV", closest });
   const executeCommand = vi.fn(async (_id: string) => {});
   const available = new Set<string>();
   const dialogs = { hasModalOpen: false, closeAll: vi.fn(), openJobsPanel: vi.fn(), openSettings: vi.fn() };
@@ -37,9 +38,11 @@ function fixture(terminalFocus = false) {
   });
   stops.push(stop);
   const bind = (id: string, shortcut: string) => { available.add(id); keybindingsStore.registerDefault(id, shortcut); };
-  const press = (key: string, modifiers: Partial<KeyboardEvent> = {}) => {
+  const press = (key: string, modifiers: Partial<KeyboardEvent> = {}, handledLocally = false) => {
     const event = new Event("keydown", { cancelable: true });
     Object.assign(event, { key, code: "", ctrlKey: false, metaKey: false, altKey: false, shiftKey: false, ...modifiers });
+    // The focused control's own handler runs before the window listener sees it.
+    if (handledLocally) event.preventDefault();
     target.dispatchEvent(event);
     return event;
   };
@@ -62,6 +65,16 @@ describe("window keyboard ownership", () => {
     expect(f.dialogs.openSettings).not.toHaveBeenCalled();
     expect(f.explorer.openFilter).not.toHaveBeenCalled();
     expect(f.terminal.toggle).not.toHaveBeenCalled();
+  });
+
+  it("a grid widget that handled an arrow key keeps it from window commands", () => {
+    const f = fixture(false, ['[role="grid"]']);
+    f.bind("navigation.goUp", "ArrowRight");
+    f.press("ArrowRight", {}, true);
+    expect(f.executeCommand).not.toHaveBeenCalled();
+    // Keys the grid leaves alone still reach window commands.
+    f.press("ArrowRight");
+    expect(f.executeCommand).toHaveBeenCalledExactlyOnceWith("navigation.goUp");
   });
 
   it("consumes an unmatched Explorer suffix without opening native Find or a surface", () => {

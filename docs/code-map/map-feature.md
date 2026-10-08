@@ -21,6 +21,7 @@ backend for E2E/browser).
 - `components/DetailsView.svelte` — virtual-scrolled table (columns, sort headers); `domain/detail-columns.ts` + `composables/use-column-resize.svelte.ts` project session-local widths through one keyed scalar resize owner
 - `components/ListView.svelte` — CSS-grid columns view
 - `components/TilesView.svelte` — auto-fill tile grid
+- `components/TileSurface.svelte`, `components/TileVisual.svelte`, `domain/tile-layout.ts` — the one tile implementation (chrome CSS, icon/name, geometry) shared by TilesView and the plugin SDK's `components/FileTiles.svelte`; change tiles here so both stay identical
 - `components/VirtualList.svelte` — windowing engine (visible-range calc, persistent extent canvas and positioned rows); settled scroll/layout callbacks keep marquees and explicitly revealed cursors aligned with current virtual rows
 - `domain/virtual-layout.ts` — row/col geometry math for the virtualizer
 - `composables/use-progressive-render.svelte.ts` — chunked reveal of large lists
@@ -36,7 +37,8 @@ backend for E2E/browser).
 
 - `plugins/inspector-registry.svelte.ts`, `components/PluginInspector.svelte`, `plugins/api.ts` — plugins can contribute an inspector for the active pane selection; the host disposes it with the plugin and hides the panel when no contribution applies.
 - SDK 2 file views: `plugins/file-view-registry.svelte.ts`, `components/PluginFileView.svelte`, `components/FileList.svelte` — a plugin view replaces a pane's listing; it gets a pane-scoped handle (directory, entries, selection, focus, select/open/context menu, Preview targets). `explorer.fileView` is per pane (persisted in window tabs, default from `settingsStore.defaultFileView`); `resolve()` falls back to the built-in view for virtual paths or when `available(dir)` is false, keeping the preference. Built-in view commands and the context menu clear it; `workspace.toggleFileView` returns to the previous built-in mode.
-- SDK 2 Preview: `plugins/preview-registry.svelte.ts`, `components/PluginPreviewTarget.svelte`, `components/PreviewPane.svelte` — Preview-info sections for files or the owning plugin's targets; pane-scoped Preview targets (`explorer.setPreviewTarget(owner, target)`) are non-file subjects with explicit actions, cleared on file selection, folder change and plugin disposal. Runtime SDK keeps `sdkVersion: 1` and adds `apiVersion: 2` + capabilities; manifests declare SDK 1 or 2 (`plugins/installed.ts`, `src-tauri/src/installed_plugins/package.rs`). The demo plugin exercises both (`e2e/plugin-file-views.spec.ts`).
+- SDK 2 Preview: `plugins/preview-registry.svelte.ts`, `components/PluginPreviewTarget.svelte`, `components/PreviewPane.svelte` — Preview-info sections for files or the owning plugin's targets; pane-scoped Preview targets (`explorer.setPreviewTarget(owner, target)`) are non-file subjects with explicit actions, cleared on file selection, folder change and plugin disposal. Runtime SDK keeps `sdkVersion: 1` and adds `apiVersion: 2` + capabilities; manifests declare SDK 1 or 2 (`plugins/installed.ts`, `src-tauri/src/installed_plugins/package.rs`). The demo plugin exercises both (`e2e/plugin-file-views.spec.ts`). In a vertical (top/bottom) dock `PreviewPane.svelte`'s grid places the chrome of both subjects, with Preview-info sections in a full-width row capped on the track (`e2e/preview-info-vertical-dock.spec.ts`).
+- SDK 2 file tiles: `plugins/runtime-sdk.ts` module `ui/file-tiles` (capability `fileTiles`) → `components/FileTiles.svelte` — Tiles-view tiles for plugin sections (`e2e/plugin-file-tiles.spec.ts`).
 
 - `composables/use-marquee-selection.svelte.ts` — drag-rect candidate set + hit-testing
 - `composables/use-item-interactions.svelte.ts` — click/ctrl/shift selection, focus
@@ -216,7 +218,7 @@ backend for E2E/browser).
 ## Rename flows
 
 - `composables/use-inline-rename.svelte.ts` — inline edit field lifecycle
-- `components/EntryName.svelte` — name label + inline rename input
+- `components/EntryName.svelte` — name label + inline rename input; the label itself is `components/EntryNameLabel.svelte`
 - `components/BulkRenameDialog.svelte` — multi-file pattern rename
 - `components/InlineNewFolder.svelte` — inline new-entry create (folder or file, per `explorer.newEntryKind`; #436)
 - `state/rename-suggestion.svelte.ts`, `domain/ai-rename.ts`, `api/ai-rename.ts` — AI rename suggestions
@@ -493,7 +495,7 @@ backend for E2E/browser).
 ## Source installers
 
 - `README.md` — documented one-command PowerShell invocation.
-- `arch_install.sh`, `PKGBUILD`, `scripts/build-arch-frontend.mjs` — Arch local source install: serialize installation, authenticate sudo, prepare frozen dependencies, reuse only verified unchanged frontend assets, then always run native release compilation and package installation. Direct makepkg/CI builds retain unconditional frontend compilation. Frontend receipt and failure contracts live in `tests/arch-frontend-build.test.ts`; the PKGBUILD invocation contract is in `tests/arch-install-script.test.ts`.
+- `arch_install.sh`, `PKGBUILD`, `scripts/build-arch-frontend.mjs` — Arch local source install: serialize installation, authenticate sudo, prepare frozen dependencies, reuse only verified unchanged frontend assets, then always run native release compilation and package installation, and retire per-user launcher/desktop/portal copies that would shadow `/usr`. Direct makepkg/CI builds retain unconditional frontend compilation. Frontend receipt and failure contracts live in `tests/arch-frontend-build.test.ts`; the PKGBUILD invocation contract is in `tests/arch-install-script.test.ts`.
 - `windows_install.ps1` — trusted Windows source-install entry point: prerequisite checks → existing checkout or temporary HTTPS clone → Tauri MSI build → explicit-UAC `msiexec`; reports `3010` as reboot-required success and removes temporary clones in `finally`.
 - `tests/windows-install-script.test.ts` — Windows-only PowerShell invocation harness; exercises missing tools, existing and cloned checkouts, quoted MSI paths, UAC, cleanup, and reboot-required success without building or installing software.
 - `docs/adr/0003-windows-installer-trust-boundary.md` — governs the installer download/trust, elevation, failure, reboot, and cleanup boundary.

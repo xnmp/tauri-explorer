@@ -34,8 +34,9 @@ async function command(label: string): Promise<void> {
 gatedDescribe("installed plugin file view (TraceExplorer package)", [[enabled, "TRACE_EXPLORER_PLUGIN_SMOKE=1 with a queued package"]], () => {
   const scratch = enabled ? fs.realpathSync(createNativeFixtureDirectory("trace-plugin-smoke-")) : "";
   const source = path.join(scratch, "source.png");
+  const notes = path.join(scratch, "notes.txt");
 
-  before(() => { fs.copyFileSync(fixture, source); });
+  before(() => { fs.copyFileSync(fixture, source); fs.writeFileSync(notes, "no provenance"); });
 
   it("installs the queued package and activates it", async () => {
     const installed = await browser.executeAsync((done: (value: unknown) => void) => {
@@ -86,6 +87,16 @@ gatedDescribe("installed plugin file view (TraceExplorer package)", [[enabled, "
     });
     await browser.waitUntil(async () => (await domText(".preview-pane")).includes("Trace"), { timeoutMsg: "Preview info has no Trace section" });
     expect(await domText(".preview-pane")).toContain("Inputs");
+
+    // The selected branch is drawn in a colour the theme defines, never an
+    // undefined token (which leaves the line without a stroke).
+    const strokes = await browser.execute(() => [...document.querySelectorAll<SVGPathElement>("path[data-route].highlight")]
+      .map((route) => getComputedStyle(route).stroke));
+    expect(strokes.length).toBeGreaterThan(0);
+    expect(strokes).not.toContain("none");
+
+    // Files without provenance use the host's own tiles (ui/file-tiles).
+    await $(`[data-file-view="trace.view"] .tile-item[data-entry-path="${notes}"]`).waitForDisplayed();
 
     await command("Toggle Trace View");
     await $('[data-file-view="trace.view"]').waitForDisplayed({ reverse: true });

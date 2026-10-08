@@ -11,6 +11,7 @@
   import { settingsStore } from "$lib/state/settings.svelte";
   import { useColumnResize } from "$lib/composables/use-column-resize.svelte";
   import { DETAIL_COLUMNS, type ColumnKey } from "$lib/domain/detail-columns";
+  import { clientToFixed } from "$lib/domain/zoom";
   import FileItem from "./FileItem.svelte";
   import VirtualList from "./VirtualList.svelte";
   import InlineNewFolder, { NEW_FOLDER_SENTINEL, isNewFolderSentinel } from "./InlineNewFolder.svelte";
@@ -51,11 +52,23 @@
 
   function handleColumnHeaderContextMenu(event: MouseEvent) {
     event.preventDefault();
+    event.stopPropagation();
     columnMenuPos = { x: event.clientX, y: event.clientY };
   }
 
   function closeColumnMenu() {
     columnMenuPos = null;
+  }
+
+  function positionColumnMenu(node: HTMLDivElement) {
+    if (!columnMenuPos) return;
+    // The pointer, viewport and measured menu must share fixed-CSS space.
+    // offset sizes avoid the engine-specific rect coordinate differences.
+    const pad = 8;
+    const x = clientToFixed(columnMenuPos.x);
+    const y = clientToFixed(columnMenuPos.y);
+    node.style.left = `${Math.max(pad, Math.min(x, clientToFixed(window.innerWidth) - node.offsetWidth - pad))}px`;
+    node.style.top = `${Math.max(pad, Math.min(y, clientToFixed(window.innerHeight) - node.offsetHeight - pad))}px`;
   }
 </script>
 
@@ -151,7 +164,7 @@
     <!-- svelte-ignore a11y_no_static_element_interactions -->
     <!-- svelte-ignore a11y_click_events_have_key_events -- click-outside backdrop pattern (matches CaretPicker/NavigationHistoryMenu); Escape/Tab away is not the primary dismiss path but the menu items themselves remain keyboard-focusable -->
     <div class="column-menu-backdrop" onclick={closeColumnMenu} oncontextmenu={(e) => { e.preventDefault(); closeColumnMenu(); }}></div>
-    <div class="column-menu" style="left: {columnMenuPos.x}px; top: {columnMenuPos.y}px;">
+    <div class="column-menu" use:positionColumnMenu>
       <button class="column-menu-item" onclick={() => { settingsStore.toggleColumn("date"); closeColumnMenu(); }}>
         <span class="column-menu-check">{settingsStore.columnVisibility.date ? "✓" : ""}</span>
         Date modified

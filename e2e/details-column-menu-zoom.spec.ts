@@ -5,11 +5,12 @@ async function openAtHeader(page: Page, edge = false) {
   const header = await page.locator(".column-headers").boundingBox();
   expect(header).not.toBeNull();
   const point = {
-    x: edge ? header!.x + header!.width - 4 : header!.x + 120,
+    x: edge ? Math.min(header!.x + header!.width, page.viewportSize()!.width) - 4 : header!.x + 120,
     y: header!.y + header!.height / 2,
   };
   await page.mouse.click(point.x, point.y, { button: "right" });
   await expect(page.locator(".column-menu")).toBeVisible();
+  await expect(page.locator(".context-menu")).toHaveCount(0);
   return point;
 }
 
@@ -17,6 +18,27 @@ async function menuBox(page: Page) {
   const box = await page.locator(".column-menu").boundingBox();
   expect(box).not.toBeNull();
   return box!;
+}
+
+async function capturePlacement(page: Page, point: { x: number; y: number }, zoom: number, path: string) {
+  // Annotate the real click position: headless screenshots omit the cursor.
+  // This adds only a non-interactive evidence marker, after layout assertions.
+  await page.evaluate(({ point, zoom }) => {
+    const scale = zoom / 100;
+    const marker = document.createElement("div");
+    marker.id = "placement-evidence";
+    marker.style.cssText = `position:absolute;left:${point.x / scale}px;top:${point.y / scale}px;width:10px;height:10px;border:2px solid #d02030;border-radius:50%;transform:translate(-50%,-50%);z-index:99999;pointer-events:none`;
+    const label = document.createElement("div");
+    label.textContent = `${zoom}% zoom · red ring marks header right-click`;
+    label.style.cssText = `position:absolute;left:${480 / scale}px;top:${8 / scale}px;padding:4px;background:white;color:#a01020;font:12px sans-serif;z-index:99999;pointer-events:none`;
+    label.id = "placement-label";
+    document.body.append(marker, label);
+  }, { point, zoom });
+  await page.screenshot({ path });
+  await page.evaluate(() => {
+    document.getElementById("placement-evidence")?.remove();
+    document.getElementById("placement-label")?.remove();
+  });
 }
 
 async function setZoom(page: Page, zoom: number) {
@@ -44,20 +66,20 @@ for (const [index, zoom] of [80, 130, 100].entries()) {
       const box = await menuBox(page);
       return Math.max(Math.abs(box.x - point.x), Math.abs(box.y - point.y));
     }).toBeLessThanOrEqual(2);
-    await page.screenshot({ path: `evidence/ac-${index + 1}-details-menu-${zoom}.png` });
+    await capturePlacement(page, point, zoom, `evidence/ac-${index + 1}-details-menu-${zoom}.png`);
   });
 }
 
 test("Details column popup stays onscreen and toggles all optional columns", async ({ page }) => {
   await setZoom(page, 130);
-  await openAtHeader(page, true);
+  const point = await openAtHeader(page, true);
   await expect.poll(async () => {
     const box = await menuBox(page);
     const viewport = page.viewportSize()!;
     return box.x >= 0 && box.y >= 0
       && box.x + box.width <= viewport.width && box.y + box.height <= viewport.height;
   }).toBe(true);
-  await page.screenshot({ path: "evidence/ac-4-details-menu-edge.png" });
+  await capturePlacement(page, point, 130, "evidence/ac-4-details-menu-edge.png");
 
   for (const [label, column] of [["Date modified", "date"], ["Type", "type"], ["Size", "size"]]) {
     const header = page.locator(`.column-headers .${column}-column`);

@@ -11,7 +11,10 @@ All notable changes to Tauri Explorer.
   would use there (the folder's own size from Tile View: Set Size or the
   context menu's Icon Size, else the global setting) and updates when either
   changes, and `ui/file-tiles` accepts that size through an optional `size`
-  prop. Without it, file tiles keep following the global setting (#1029).
+  prop. Without it, file tiles in a plugin file view follow that folder's
+  size too, so plugins built before this also follow Tile View: Set Size;
+  elsewhere they keep following the global setting. A malformed per-folder
+  size now falls back to the global setting rather than Medium (#1029).
 
 ### Changed
 

@@ -10,7 +10,8 @@
   import type { FileEntry } from "$lib/domain/file";
   import type { FileViewPane, RegisteredFileView } from "$lib/plugins/file-view-registry.svelte";
   import { logFrontendError } from "$lib/api/crash";
-  import { folderPaneTileSize } from "$lib/state/folder-tile-size";
+  import { folderPaneTileSize, folderTileSize } from "$lib/state/folder-tile-size";
+  import { setTileSizeContext } from "$lib/state/tile-size-context";
 
   interface Props {
     explorer: ExplorerInstance;
@@ -65,6 +66,10 @@
     },
     exitView() { windowTabsManager.setPaneFileView(paneId, null); },
   };
+
+  // `ui/file-tiles` in this view follows the folder's size even when the
+  // plugin passes no `size` (e.g. plugins built before "tileSize").
+  setTileSizeContext(() => folderTileSize(explorer.currentPath));
 
   // A Preview target belongs to the view that showed it; it never outlives it
   // (toggle, built-in mode, unavailable folder, plugin disable).

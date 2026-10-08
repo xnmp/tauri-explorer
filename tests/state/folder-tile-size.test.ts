@@ -54,8 +54,12 @@ describe("folder tile size", () => {
     expect(Object.isFrozen(folderPaneTileSize(PHOTOS))).toBe(true);
   });
 
-  it("falls back to medium for a malformed stored override, as the Tiles view does", () => {
-    folderViewsStore.set(PHOTOS, { thumbnailSize: "huge" as ThumbnailSize });
-    expect(folderPaneTileSize(PHOTOS)).toEqual({ preset: "medium", imagePx: 64 });
+  it("ignores a malformed stored override in favour of the global setting", () => {
+    settingsStore.update({ thumbnailSize: "large" });
+    for (const bad of ["huge", "", "constructor", "__proto__", 96, null]) {
+      folderViewsStore.set(PHOTOS, { thumbnailSize: bad as unknown as ThumbnailSize });
+      expect(folderTileSize(PHOTOS), String(bad)).toBe("large");
+      expect(folderPaneTileSize(PHOTOS)).toEqual({ preset: "large", imagePx: 96 });
+    }
   });
 });

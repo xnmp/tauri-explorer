@@ -2,10 +2,12 @@
   Demo file view (SDK 2): a card listing of the pane's entries plus one
   plugin-owned "virtual card" shown through a Preview target. It exercises
   the pane-scoped handle: selection, open, context menu, Preview targets and
-  the pane's tile size.
+  the pane's tile size. Its "Demo tiles" section uses `ui/file-tiles`
+  without `size`, as plugins built before "tileSize" do.
 -->
 <script lang="ts">
   import type { FileViewPane } from "$lib/plugins/file-view-registry.svelte";
+  import FileTiles from "$lib/components/FileTiles.svelte";
 
   let { pane, onGreet }: { pane: FileViewPane; onGreet: () => void } = $props();
   const selected = $derived(new Set(pane.selection.map((entry) => entry.path)));
@@ -38,6 +40,11 @@
       ondblclick={() => void pane.open(entry)}
       oncontextmenu={(event) => pane.contextMenu(event, entry)}>{entry.name}</button>
   {/each}
+  <section class="demo-tiles">
+    <FileTiles entries={pane.entries.slice(0, 3)} {selected} label="Demo tiles"
+      onselect={(entry) => pane.select(entry)} onopen={(entry) => void pane.open(entry)}
+      onmenu={(entry, event) => pane.contextMenu(event, entry)} />
+  </section>
 </div>
 
 <style>
@@ -46,4 +53,5 @@
   .card.selected { border-color: var(--accent-text); }
   .virtual { border-style: dashed; }
   .tile-size { flex-basis: 100%; color: var(--text-secondary); }
+  .demo-tiles { flex-basis: 100%; }
 </style>

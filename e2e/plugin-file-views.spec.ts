@@ -118,9 +118,12 @@ test.describe("Plugin file views (demo plugin)", () => {
     await chooseDemoView(page);
     const view = page.getByTestId("demo-file-view");
     const size = view.getByTestId("demo-tile-size");
+    // Its "Demo tiles" pass no `size`: they follow the view's folder too.
+    const tileIcon = view.getByRole("grid", { name: "Demo tiles" }).locator(".tile-icon").first();
     const expectSize = async (preset: string, px: number) => {
       await expect(size).toHaveAttribute("data-preset", preset);
       await expect(size).toHaveAttribute("data-image-px", String(px));
+      await expect.poll(() => tileIcon.evaluate((el) => Math.round(el.getBoundingClientRect().width))).toBe(px);
     };
     await expectSize("medium", 64);
     // Tag the mounted view: every later check must see this same instance.

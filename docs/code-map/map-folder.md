@@ -36,7 +36,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `TilesView.svelte` — row-virtualized tile view with thumbnails; renders through `TileSurface.svelte`/`TileVisual.svelte`; runs `scroll-jank-monitor.ts` during scroll and logs `tiles-scroll-jank` events only when jank occurred (#593).
 - `TileSurface.svelte` — tile-grid root: publishes `domain/tile-layout.ts` as tile CSS variables and owns all `.tile-item` chrome (hover, selected underline, ghosted/cut/drop states, icon scaling) for TilesView and FileTiles.
 - `TileVisual.svelte` — one tile's icon block (image/video thumbnail, folder preview, FileIcon, video marker) and name; the name defaults to `EntryNameLabel`, TilesView passes `EntryName`.
-- `FileTiles.svelte` — the SDK module `ui/file-tiles`: non-virtualized Tiles-view tiles for plugin sections, callbacks for select/open/menu, own-width columns, roving focus; optional `size` preset (else the global setting).
+- `FileTiles.svelte` — the SDK module `ui/file-tiles`: non-virtualized Tiles-view tiles for plugin sections, callbacks for select/open/menu, own-width columns, roving focus; size from the `size` prop, else the enclosing plugin view's context, else the global setting.
 - `VirtualList.svelte` — variable-height windowed scroller with persistent extent canvas; publishes scroll/layout settlement for marquee hit testing and cursor reveal. Perf-critical.
 - `MillerColumns.svelte` — column/Miller-columns browsing mode.
 - `FileItem.svelte` — single entry row/tile (icon, name, badges, selection state).
@@ -221,7 +221,8 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `home.svelte.ts` — cached home directory (sync `.value`).
 - `sidebar-views.svelte.ts` — activity-bar sidebar view registry (#52).
 - `folder-views.svelte.ts` — per-folder view overrides (e.g. thumbnail size, #8762).
-- `folder-tile-size.ts` — a folder's effective tile size (override, else global `thumbnailSize`) for TilesView, the context menu, "Tile View: Set Size" and `FileViewPane.tileSize`.
+- `folder-tile-size.ts` — a folder's effective tile size (valid override, else global `thumbnailSize`) for TilesView, the context menu, "Tile View: Set Size" and `FileViewPane.tileSize`.
+- `tile-size-context.ts` — Svelte context carrying the pane's tile size from PluginFileView to `ui/file-tiles` without `size`.
 - `empty-folders.svelte.ts` — lazy empty-folder resolver (avoids per-subdir read_dir, #129).
 - `manual-hidden.svelte.ts` — per-folder manually-hidden entry registry.
 - `settings.svelte.ts` — global settings store (toggles, defaults). Very hot for feature flags. `reloadFromDisk()` adopts external settings.json edits (#599).

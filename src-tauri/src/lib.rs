@@ -33,6 +33,7 @@ mod github;
 mod image_crop;
 mod image_operation;
 mod installed_plugins;
+mod load_diagnostics;
 mod nano_banana;
 mod palette;
 mod platform;
@@ -282,6 +283,8 @@ pub fn run_with_process_entry(launch_dir: Option<String>, t_process_entry: std::
             get_log_dir,
             system::get_app_info,
             user_report::submit_user_report,
+            load_diagnostics::record_slow_load,
+            load_diagnostics::recent_slow_loads,
             crash_report::take_crash_report,
             crash_report::log_frontend_error,
             crash_report::record_frontend_crash,

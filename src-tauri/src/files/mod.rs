@@ -103,6 +103,20 @@ pub(crate) fn is_network_share(path: &Path) -> bool {
         if matches!(prefix.kind(), Prefix::UNC(..) | Prefix::VerbatimUNC(..)))
 }
 
+/// The mount containing `path` by pathname alone, as `(fs type, mount point)`.
+/// Never stats `path`, so it stays responsive while that mount is hung
+/// (slow-load diagnostics, #1022). Bind-mount and namespace subtleties that
+/// trash placement resolves by mount ID do not matter for a diagnostic.
+#[cfg(target_os = "linux")]
+pub(crate) fn mount_for_path_lexically(path: &Path) -> Option<(String, String)> {
+    let snapshot = trash_mounts::MountSnapshot::read().ok()?;
+    let mount = snapshot.resolve_by_path(path)?;
+    Some((
+        mount.filesystem.to_string_lossy().into_owned(),
+        mount.mount_point.to_string_lossy().into_owned(),
+    ))
+}
+
 /// Run a blocking closure on the async runtime's blocking thread pool so
 /// heavy filesystem work doesn't stall the main async executor.
 pub(crate) async fn run_blocking<T, F>(f: F) -> Result<T, crate::error::AppError>

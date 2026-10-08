@@ -4,6 +4,13 @@
     submitUserReport,
   } from "$lib/api/user-report";
   import { openExternalUrl } from "$lib/api/crash";
+  import { recentSlowLoads } from "$lib/api/load-diagnostics";
+  import {
+    fitSlowLoadsForReport,
+    selectReportableSlowLoads,
+    slowLoadReportBudget,
+    type SlowLoadRecord,
+  } from "$lib/domain/load-diagnostics";
   import { clipboardHasImage } from "$lib/api/clipboard-image";
   import {
     MAX_USER_REPORT_CONTACT_UNITS,
@@ -41,13 +48,32 @@
     userReportDraftStore.clipboardAttachmentData !== null
       && attachments.some((attachment) => attachment.data === userReportDraftStore.clipboardAttachmentData),
   );
+  // Slow folder-load diagnostics (#1022): recorded locally when a folder
+  // load stalls past 5 s, offered here for bug reports, shown verbatim.
+  let slowLoads = $state.raw<SlowLoadRecord[]>([]);
+  let includeSlowLoads = $state(true);
+  const reportableSlowLoads = $derived(selectReportableSlowLoads(slowLoads, Date.now()));
+  // Fitted to the room the description leaves, so the preview is exactly
+  // what the relay receives.
+  const fittedSlowLoads = $derived(fitSlowLoadsForReport(
+    reportableSlowLoads,
+    slowLoadReportBudget(textDraft.body, textDraft.contact),
+  ));
+  const slowLoadText = $derived(fittedSlowLoads.text);
+  const includedSlowLoads = $derived(fittedSlowLoads.included);
+  const offerSlowLoads = $derived(textDraft.kind === "bug" && slowLoadText.length > 0);
 
   $effect(() => {
     if (!open) return;
     attachmentError = "";
     clipboardImageAvailable = false;
     void probeClipboardImage();
+    void loadSlowLoads();
   });
+
+  async function loadSlowLoads(): Promise<void> {
+    slowLoads = await recentSlowLoads();
+  }
 
   async function probeClipboardImage(): Promise<void> {
     clipboardImageAvailable = await clipboardHasImage();
@@ -93,6 +119,7 @@
       kind: textDraft.kind,
       contact: textDraft.contact,
       attachments: [...attachments],
+      ...(offerSlowLoads && includeSlowLoads ? { diagnostics: slowLoadText } : {}),
     };
     const submission = userReportDraftStore.beginSubmission();
     if (!submission) return;
@@ -296,10 +323,30 @@
       {/if}
     </section>
 
+    {#if offerSlowLoads}
+      <section class="diagnostics" aria-label="Slow folder-load diagnostics">
+        <label class="diagnostics-toggle">
+          <input type="checkbox" bind:checked={includeSlowLoads} disabled={submitting} />
+          <span>
+            Include {includedSlowLoads === 1 ? "1 recent slow folder load" : `${includedSlowLoads} recent slow folder loads`}
+          </span>
+        </label>
+        <p class="attachment-hint">
+          Recorded on this computer when a folder took more than 5 seconds to load: which step was
+          slow, timings, entry counts and filesystem type. They include full folder paths, which
+          will be public in the issue.
+        </p>
+        <details>
+          <summary>Show what will be sent</summary>
+          <pre class="diagnostics-preview">{slowLoadText}</pre>
+        </details>
+      </section>
+    {/if}
+
     <p class="report-disclosure">
       Submitting creates a public GitHub issue. Your description, optional contact details,
       app and OS version, and any images will be public. Images are uploaded to public hosting.
-      Local logs are not attached automatically.
+      Local logs are not attached automatically{offerSlowLoads && includeSlowLoads ? "; the slow folder-load diagnostics above are" : ""}.
     </p>
 
     <footer>
@@ -434,6 +481,35 @@
     background: rgb(0 0 0 / 70%);
     color: white;
     line-height: 18px;
+  }
+  .diagnostics {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+  .diagnostics-toggle {
+    flex-direction: row;
+    align-items: center;
+    gap: 8px;
+  }
+  .diagnostics-toggle input { width: auto; padding: 0; }
+  .diagnostics summary {
+    cursor: pointer;
+    color: var(--text-secondary);
+    font-size: 12px;
+  }
+  .diagnostics-preview {
+    max-height: 200px;
+    overflow: auto;
+    margin: 6px 0 0;
+    padding: 8px;
+    border: 1px solid var(--surface-stroke);
+    border-radius: var(--radius-sm);
+    background: var(--surface-secondary);
+    color: var(--text-primary);
+    font-size: 11px;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
   }
   footer { gap: 8px; }
   .hint { margin-right: auto; color: var(--text-secondary); font-size: 12px; }

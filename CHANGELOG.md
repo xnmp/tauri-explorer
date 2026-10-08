@@ -4,6 +4,18 @@ All notable changes to Tauri Explorer.
 
 ## Unreleased
 
+### Added
+
+- When a folder takes more than 5 seconds to load, Tauri Explorer now records
+  why while the load is still stuck: which step was waiting (queued behind
+  another listing, file-watcher setup, reading the directory, per-entry
+  metadata, sorting, and so on), entries read so far, any entry whose
+  metadata read is hanging, and the folder's filesystem type (for example an
+  sshfs, rclone or NFS mount). Records are kept in the `slow-loads` folder
+  inside the logs folder, and Report Issue offers to attach recent ones to a
+  bug report, showing exactly what will be sent; they include folder paths
+  and can be excluded (#1022).
+
 ### Fixed
 
 - Preview no longer blanks the image for a frame or more when the selection

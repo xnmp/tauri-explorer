@@ -4,7 +4,8 @@ import {
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { createDirectoryWatch } from "./directory-watch";
 import { directoryKey } from "$lib/domain/path";
-import { sidebarCloudDrives } from "$lib/domain/drives";
+import { driveKindFor, sidebarCloudDrives } from "$lib/domain/drives";
+import { loadWatchdog } from "./load-watchdog";
 import { pageForeground, type ForegroundGate } from "./page-foreground";
 
 // Change sources: the backend's `drives-changed` push, fs-watcher events on
@@ -214,3 +215,11 @@ export function createDrivesStore(foreground: ForegroundGate) {
 }
 
 export const drivesStore = createDrivesStore(pageForeground);
+
+// Slow-load diagnostics name the drive kind (removable, network, cloud) of a
+// stuck path from the same discovery that drives the sidebar (#1022).
+loadWatchdog.setDriveKindResolver((path) =>
+  driveKindFor(
+    directoryKey(path),
+    drivesStore.list.flatMap((drive) => (drive.path === null ? [] : [{ root: directoryKey(drive.path), kind: drive.kind }])),
+  ));

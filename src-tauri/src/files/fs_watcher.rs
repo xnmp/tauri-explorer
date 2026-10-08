@@ -25,6 +25,7 @@ use super::dir_listing::invalidate_dir_cache_sync;
 use super::directory_watches::{DirectoryWatches, Lease, Observer};
 use super::watch_observation::{Callback, Factory, Mode, Notice, Observation};
 use crate::error::AppError;
+use crate::load_diagnostics::{Phase, TraceHandle};
 use crate::renderer_owner::{self, Owner};
 use crate::search::{invalidate_search_cache_for_change, invalidate_search_cache_root};
 
@@ -431,7 +432,7 @@ impl Drop for PendingLease {
 /// Registration runs off the async executor. An undelivered result reclaims
 /// its lease even if cancellation races the command's reply.
 pub(crate) async fn acquire_directory(owner: Owner, path: String) -> Result<Lease, AppError> {
-    acquire_pending_directory(owner, path, false)
+    acquire_pending_directory(owner, path, false, TraceHandle::none())
         .await
         .map(PendingLease::take)
 }
@@ -439,19 +440,29 @@ pub(crate) async fn acquire_directory(owner: Owner, path: String) -> Result<Leas
 pub(super) async fn observe_directory(
     owner: Owner,
     path: String,
+    trace: TraceHandle,
 ) -> Result<PendingLease, AppError> {
-    acquire_pending_directory(owner, path, true).await
+    acquire_pending_directory(owner, path, true, trace).await
 }
 
+/// Watch registration holds the process-wide watcher lock across the OS
+/// registration call, so a mount that blocks `inotify_add_watch` delays every
+/// pane's navigation. The trace separates waiting for that lock from the
+/// registration itself (#1022).
 async fn acquire_pending_directory(
     owner: Owner,
     path: String,
     observed: bool,
+    trace: TraceHandle,
 ) -> Result<PendingLease, AppError> {
     let (send, receive) = tokio::sync::oneshot::channel();
+    trace.enter(Phase::BlockingQueue);
     tauri::async_runtime::spawn_blocking(move || {
+        trace.enter(Phase::ResolvePath);
         let path = super::directory_identity::resolve(&path);
+        trace.enter(Phase::WatchLock);
         let result = with_watcher(|watcher| {
+            trace.enter(Phase::WatchRegister);
             if observed {
                 watcher.observe(&owner, path)
             } else {

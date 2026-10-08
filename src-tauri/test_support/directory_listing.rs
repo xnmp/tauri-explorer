@@ -256,7 +256,7 @@ fn fresh_listing_returns_the_complete_sorted_snapshot_and_bypasses_cache() {
         fs::write(directory.path().join(format!("file-{index:05}.txt")), "x").unwrap();
     }
     let listing = runtime
-        .block_on(list_directory_fresh(path.clone()))
+        .block_on(fresh_listing(None, path.clone(), None))
         .unwrap();
     assert_eq!(listing.path, path);
     assert_eq!(
@@ -266,5 +266,54 @@ fn fresh_listing_returns_the_complete_sorted_snapshot_and_bypasses_cache() {
             .collect::<Vec<_>>()
     );
     fs::remove_dir_all(directory.path()).unwrap();
-    assert!(runtime.block_on(list_directory_fresh(path)).is_err());
+    assert!(runtime.block_on(fresh_listing(None, path, None)).is_err());
+}
+
+/// #1022: a traced fresh listing records every native scan phase in order,
+/// with its entry counts, so a slow-load record can name the slow phase.
+#[test]
+fn traced_fresh_listing_records_each_native_phase() {
+    use crate::load_diagnostics::trace::{snapshot, Outcome, Phase};
+    let runtime = tokio::runtime::Runtime::new().unwrap();
+    let directory = tempdir().unwrap();
+    for index in 0..25 {
+        fs::write(directory.path().join(format!("f{index}")), "x").unwrap();
+    }
+    fs::create_dir(directory.path().join("sub")).unwrap();
+    let path = directory.path().to_string_lossy().into_owned();
+    let id = "1700000000000-fresh1".to_string();
+    let listing = runtime
+        .block_on(fresh_listing(None, path.clone(), Some(id.clone())))
+        .unwrap();
+    assert_eq!(listing.entries.len(), 26);
+    let trace = snapshot(&id).expect("finished trace is retained");
+    assert_eq!(trace.outcome, Outcome::Ok);
+    assert_eq!(trace.pending_phase, None);
+    assert_eq!(trace.entries_listed, 26);
+    assert_eq!(trace.entries_statted, 26);
+    assert_eq!(trace.entries_done, 26);
+    assert_eq!(trace.stat_failures, 0);
+    assert!(trace.git_repo_probe);
+    let phases: Vec<Phase> = trace.phases.iter().map(|phase| phase.phase).collect();
+    assert_eq!(
+        phases,
+        vec![
+            Phase::ResolvePath,
+            Phase::BlockingQueue,
+            Phase::RootMetadata,
+            Phase::ReadDir,
+            Phase::EntryMetadata,
+            Phase::Sort,
+            Phase::Respond,
+        ]
+    );
+
+    let missing = "1700000000000-fresh2".to_string();
+    fs::remove_dir_all(directory.path()).unwrap();
+    assert!(runtime
+        .block_on(fresh_listing(None, path, Some(missing.clone())))
+        .is_err());
+    let failed = snapshot(&missing).unwrap();
+    assert_eq!(failed.outcome, Outcome::Error);
+    assert_eq!(failed.phases.last().unwrap().phase, Phase::RootMetadata);
 }

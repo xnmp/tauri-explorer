@@ -82,6 +82,9 @@ export interface UserReportDraft {
   kind: UserReportKind;
   contact?: string;
   attachments?: UserReportAttachment[];
+  /** Reporter-approved slow folder-load diagnostics (#1022), shown verbatim
+   *  in the dialog before submission. Not persisted with the text draft. */
+  diagnostics?: string;
 }
 
 export interface SubmittedUserReport {

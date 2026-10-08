@@ -14,6 +14,7 @@ export function submitUserReport(
     kind: draft.kind,
     contact: draft.contact || null,
     attachments: draft.attachments ?? [],
+    diagnostics: draft.diagnostics || null,
   });
 }
 

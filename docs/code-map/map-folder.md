@@ -8,7 +8,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 
 ## Root installers — platform-specific source install entry points.
 
-- `arch_install.sh`, `PKGBUILD` — Arch source installation: early sudo authentication, checkout installation lock, isolated makepkg staging, locked dependency preparation, verified local frontend reuse and unchanged native release compilation. `--rebuild` forces frontend regeneration; ordinary makepkg builds remain fresh.
+- `arch_install.sh`, `PKGBUILD` — Arch source installation: early sudo authentication, checkout installation lock, isolated makepkg staging, locked dependency preparation, verified local frontend reuse and unchanged native release compilation; after installing, per-user copies that shadow `/usr` are moved aside so the package is the only install. `--rebuild` forces frontend regeneration; ordinary makepkg builds remain fresh.
 - `scripts/build-arch-frontend.mjs` — content- and environment-verified local frontend build receipt; hashes source/config/dependencies/tool versions and output, locks builders through completion, and never publishes interrupted/changed-input builds.
 - `tests/arch-frontend-build.test.ts`, `tests/arch-install-script.test.ts` — frontend reuse/invalidation/failure/concurrency outcomes and the actual PKGBUILD preparation/native-build contract without package installation.
 - `windows_install.ps1` — Windows PowerShell source installer: validates Git/Rust/Bun and the VC toolchain, uses an existing checkout or temporary HTTPS clone, builds the MSI, invokes elevated `msiexec`, reports reboot-required success, and cleans temporary clones. Governed by `docs/adr/0003-windows-installer-trust-boundary.md`.

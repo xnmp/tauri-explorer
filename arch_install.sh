@@ -19,6 +19,7 @@ while (($#)); do
       echo "Reuse unchanged frontend assets by default; --rebuild forces their rebuild."
       echo "Queue TraceExplorer for installation on the next app launch when its package exists."
       echo "Plugin location: TRACE_EXPLORER_PLUGIN_PATH (default: \$HOME/Repos/TraceExplorer/package)."
+      echo "Per-user copies of the launcher, desktop entry or portal files are moved aside so /usr is the only install."
       exit 0 ;;
     *) echo "Unknown option: $arg" >&2; exit 2 ;;
   esac
@@ -94,6 +95,27 @@ PKG="tauri-explorer-${PKGVER}-${PKGREL}-${ARCH}.pkg.tar.zst"
 echo "Installing ${PKG}..."
 sudo -n pacman -U "$PKG" --noconfirm
 
+# The package is the only install. Per-user copies of the files it ships
+# (left by manual or development setups) take precedence over /usr and would
+# keep launching an older build, so move them aside once the package is in.
+DATA_HOME=${XDG_DATA_HOME:-$HOME/.local/share}
+RETIRED="${XDG_STATE_HOME:-$HOME/.local/state}/tauri-explorer/retired-overrides/$(date +%Y%m%d-%H%M%S)"
+for shadow in \
+  "$HOME/.local/bin/tauri-explorer" \
+  "$DATA_HOME/applications/tauri-explorer.desktop" \
+  "$DATA_HOME/dbus-1/services/org.freedesktop.impl.portal.desktop.tauri_explorer.service" \
+  "$DATA_HOME/xdg-desktop-portal/portals/tauri-explorer.portal"; do
+  if [[ -e "$shadow" || -L "$shadow" ]]; then
+    mkdir -p "$RETIRED"
+    mv -- "$shadow" "$RETIRED/"
+    echo "Moved per-user override $shadow to $RETIRED/ (it shadowed the installed package)."
+  fi
+done
+RESOLVED=$(command -v tauri-explorer || true)
+if [[ "$RESOLVED" != /usr/bin/tauri-explorer ]]; then
+  echo "Warning: 'tauri-explorer' resolves to ${RESOLVED:-nothing}, not /usr/bin/tauri-explorer; remove it to launch this install." >&2
+fi
+
 PLUGIN_FILE=
 if [[ -f "$PLUGIN_LOCATION" ]]; then
   PLUGIN_FILE=$PLUGIN_LOCATION
@@ -119,6 +141,13 @@ if [[ -n "$PLUGIN_FILE" ]]; then
   echo "Queued $(basename "$PLUGIN_FILE") for validated installation on the next app launch."
 else
   echo "No TraceExplorer package at $PLUGIN_LOCATION; skipping plugin installation."
+fi
+
+# A running instance (a window or the file-chooser portal) keeps the previous
+# build and receives new launches, so queued plugins wait until it exits.
+RUNNING=$(pgrep -x tauri-explorer | paste -sd ' ' || true)
+if [[ -n "$RUNNING" ]]; then
+  echo "Tauri Explorer is still running the previous build (PID $RUNNING); quit it so the next launch uses this install."
 fi
 
 echo "Done. Run 'tauri-explorer' to launch."

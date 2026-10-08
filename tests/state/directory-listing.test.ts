@@ -122,3 +122,58 @@ describe("complete directory listing ownership", () => {
     await listing.cleanup();
   });
 });
+
+describe("slow-load tracing (#1022)", () => {
+  function recordingTrace(id: string) {
+    const phases: string[] = [];
+    const blockers: unknown[] = [];
+    return {
+      id,
+      watched: true as const,
+      phases,
+      blockers,
+      phase: (phase: string) => { phases.push(phase); },
+      queuedBehind: (blocker: unknown) => { blockers.push(blocker); },
+    };
+  }
+
+  it("names the stuck refresh a navigation is queued behind and hands its own ID to the native listing", async () => {
+    const stuck = deferred<ApiResult<ObservedDirectoryListing>>();
+    loadDirectory.mockReturnValueOnce(stuck.promise).mockResolvedValueOnce(snapshot([entry("b")]));
+    let clock = 100;
+    const listing = createDirectoryListing({ now: () => clock, mintTraceId: () => "1791000000000-refresh" });
+    const refresh = listing.load("/slow");
+    await flush();
+    clock = 7100;
+    const trace = recordingTrace("1791000000000-nav");
+    const navigation = listing.load("/d", observation(), trace);
+    await flush();
+    // Still waiting: the refresh holds the pane's single scan slot.
+    expect(trace.phases).toEqual(["queued"]);
+    expect(trace.blockers).toEqual([
+      { path: "/slow", reason: "refresh", startedMono: 100, traceId: "1791000000000-refresh" },
+    ]);
+    expect(loadDirectory).toHaveBeenCalledTimes(1);
+    // Traced so a navigation behind it can be explained, but not watched:
+    // nothing records a background refresh on its own.
+    expect(loadDirectory.mock.calls[0][2]).toMatchObject({ id: "1791000000000-refresh", watched: false });
+
+    stuck.resolve(snapshot());
+    await expect(refresh).resolves.toMatchObject({ ok: false, cancelled: true });
+    await expect(navigation).resolves.toMatchObject({ ok: true, entries: [entry("b")] });
+    expect(trace.phases).toEqual(["queued", "watch-ready"]);
+    expect(loadDirectory.mock.calls[1][2]).toBe(trace);
+    await listing.cleanup();
+  });
+
+  it("reports no blocker when the queue is idle", async () => {
+    loadDirectory.mockResolvedValue(snapshot());
+    const listing = createDirectoryListing({ mintTraceId: () => "1791000000000-x" });
+    const trace = recordingTrace("1791000000000-nav");
+    await listing.load("/d", undefined, trace);
+    expect(trace.blockers).toEqual([null]);
+    // No observation: there is no watch-readiness wait to attribute.
+    expect(trace.phases).toEqual(["queued"]);
+    await listing.cleanup();
+  });
+});

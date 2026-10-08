@@ -22,6 +22,18 @@ import { providerFor } from "$lib/plugins/fs-providers";
 import { logFrontendDiagnostic } from "./frontend-log";
 import { getNativeResourceSession } from "./native-resource-session";
 import { invokeFileMutation } from "./file-mutations";
+import type { FrontendLoadPhase } from "$lib/domain/load-diagnostics";
+
+/** Slow-load trace seam (#1022): phases are recorded and the ID is handed to
+ *  the native command so its own phases join the same trace. */
+export interface ListingTrace {
+  readonly id: string;
+  /** A pane is waiting on this listing (a navigation), so the native side
+   *  may record it on its own if the frontend cannot. Background refreshes
+   *  are traced only to explain navigations queued behind them. */
+  readonly watched: boolean;
+  phase(phase: FrontendLoadPhase): void;
+}
 
 /** Commands whose successful result a native E2E probe may hold before publication. */
 export type HeldFileMutationCommand = "create_directory" | "rename_entry";
@@ -391,6 +403,7 @@ function isValidWatchLease(lease: unknown): lease is DirectoryWatchLease {
 export async function loadDirectory(
   path: string,
   observation?: { discard(lease: DirectoryWatchLease): void },
+  trace?: ListingTrace,
 ): Promise<ApiResult<ObservedDirectoryListing>> {
   const startedAt = Date.now();
   console.debug("[navigation] list_directory_fresh requested", { path });
@@ -398,6 +411,7 @@ export async function loadDirectory(
   const provider = providerFor(path);
   if (provider) {
     try {
+      trace?.phase("provider");
       const data = await provider.list(path);
       console.debug("[navigation] virtual directory listing completed", {
         path,
@@ -427,19 +441,25 @@ export async function loadDirectory(
   try {
     const native = isTauri();
     const observed = Boolean(observation && native);
+    trace?.phase("native");
     const sessionId = observed ? await getNativeResourceSession() : undefined;
+    const traced = trace ? { traceId: trace.id, traceWatched: trace.watched } : {};
     const payload = observed
       ? await invoke<CompactDirectoryListing & { watch_lease?: DirectoryWatchLease }>("start_observed_directory", {
-          path, sessionId,
+          path, sessionId, ...traced,
         })
-      : await invoke<CompactDirectoryListing & { watch_lease?: DirectoryWatchLease }>("list_directory_fresh", { path });
+      : await invoke<CompactDirectoryListing & { watch_lease?: DirectoryWatchLease }>("list_directory_fresh", { path, ...traced });
     acquired = payload;
     if (observed && !isValidWatchLease(payload.watch_lease)) {
       throw new Error("Invalid native directory watch lease");
     }
+    trace?.phase("decode");
     const data: ObservedDirectoryListing = { ...decodeDirectoryListing(payload), watch_lease: payload.watch_lease };
     if (data.watch_lease) publishReadyDirectoryWatch(data.watch_lease.path);
-    if (settleListing) await settleListing();
+    if (settleListing) {
+      trace?.phase("test-hold");
+      await settleListing();
+    }
     console.debug("[navigation] list_directory_fresh completed", {
       path,
       entries: data.entries.length,

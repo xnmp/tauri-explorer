@@ -194,4 +194,26 @@ describe("preview and directory IPC instrumentation (#497)", () => {
     );
     debug.mockRestore();
   });
+  it("hands a trace's ID and watched flag to the native listing, and nothing for untraced loads (#1022)", async () => {
+    isTauriMock.mockReturnValue(true);
+    const phases: string[] = [];
+    const trace = (watched: boolean) => ({ id: "1791000000000-t", watched, phase: (phase: string) => { phases.push(phase); } });
+    const lease = { id: "lease", path: "/watched" };
+    invokeMock.mockResolvedValueOnce({ ...emptyListing("/watched"), watch_lease: lease });
+    await expect(loadDirectory("/watched", { discard: vi.fn() }, trace(true))).resolves.toMatchObject({ ok: true });
+    expect(invokeMock).toHaveBeenCalledWith("start_observed_directory", {
+      path: "/watched", sessionId: "session", traceId: "1791000000000-t", traceWatched: true,
+    });
+    expect(phases).toEqual(["native", "decode"]);
+
+    invokeMock.mockResolvedValueOnce(emptyListing("/refresh"));
+    await loadDirectory("/refresh", undefined, trace(false));
+    expect(invokeMock).toHaveBeenLastCalledWith("list_directory_fresh", {
+      path: "/refresh", traceId: "1791000000000-t", traceWatched: false,
+    });
+
+    invokeMock.mockResolvedValueOnce(emptyListing("/plain"));
+    await loadDirectory("/plain");
+    expect(invokeMock).toHaveBeenLastCalledWith("list_directory_fresh", { path: "/plain" });
+  });
 });

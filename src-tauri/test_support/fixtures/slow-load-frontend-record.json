@@ -1,0 +1,56 @@
+{
+  "id": "1791000000000-fixture1",
+  "path": "/mnt/nas/photos",
+  "requestedPath": "/mnt/nas",
+  "pane": 2,
+  "reason": "navigate",
+  "spinnerVisible": true,
+  "startedAt": 1791547200000,
+  "capturedAt": 1791547205000,
+  "elapsedMs": 5000,
+  "thresholdMs": 5000,
+  "outcome": "pending",
+  "pendingPhase": "native",
+  "phases": [
+    {
+      "phase": "auto-enter",
+      "startMs": 0,
+      "durationMs": 10,
+      "pending": false
+    },
+    {
+      "phase": "queued",
+      "startMs": 10,
+      "durationMs": 10,
+      "pending": false
+    },
+    {
+      "phase": "watch-ready",
+      "startMs": 20,
+      "durationMs": 10,
+      "pending": false
+    },
+    {
+      "phase": "native",
+      "startMs": 30,
+      "durationMs": 4970,
+      "pending": true
+    }
+  ],
+  "queuedBehind": {
+    "path": "/mnt/nas/photos",
+    "reason": "refresh",
+    "elapsedMs": 7000,
+    "traceId": "1791000000000-blocker1"
+  },
+  "entries": 42,
+  "driveKind": "network",
+  "sinceBootMs": 1234,
+  "othersInFlight": [
+    {
+      "path": "/home/u",
+      "pendingPhase": "native",
+      "elapsedMs": 4900
+    }
+  ]
+}

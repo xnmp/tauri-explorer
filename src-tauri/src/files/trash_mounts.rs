@@ -68,7 +68,7 @@ impl MountSnapshot {
         self.resolve(&std::fs::canonicalize(existing)?)
     }
 
-    fn resolve_by_path(&self, path: &Path) -> Option<&Mount> {
+    pub(super) fn resolve_by_path(&self, path: &Path) -> Option<&Mount> {
         let max_depth = self
             .mounts
             .iter()

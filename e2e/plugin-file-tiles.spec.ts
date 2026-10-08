@@ -67,7 +67,8 @@ test.describe("Plugin SDK file tiles", () => {
     const tile = (name: string) => grid.locator(`[data-entry-path="${PICTURES}/${name}"]`);
 
     await expect(grid.locator(".name-tiles")).toHaveText(["vacation", "photo1.jpg", "photo2.jpg", "screenshot.png", "notes.txt"]);
-    await expect(tile("photo1.jpg").locator(".tile-icon img")).toBeVisible();
+    // Progressive thumbnails stack a micro and a full image; either shows it.
+    await expect(tile("photo1.jpg").locator(".tile-icon img").first()).toBeVisible();
     await expect(tile("photo2.jpg")).toHaveAttribute("aria-selected", "true");
     await expect(tile("photo2.jpg")).toHaveClass(/selected/);
     await expect(tile("photo1.jpg")).toHaveAttribute("aria-selected", "false");

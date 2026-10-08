@@ -49,3 +49,33 @@ test("visible metadata refreshes on replacement events without changing file-lis
   await handle.focus(); await page.keyboard.press("ArrowRight");
   await expect(handle).toHaveAttribute("aria-valuenow", String(initial + 10));
 });
+
+test("large image folders request metadata only for mounted rows and admit rows after scrolling", async ({ page }) => {
+  await page.addInitScript(() => {
+    const reads: { path: string; mounted: boolean }[] = [];
+    window.__mockControl = { imageResolution: path => {
+      reads.push({ path, mounted: [...document.querySelectorAll<HTMLElement>(".details-view .file-item")].some(row => row.dataset.path === path) });
+      document.documentElement.dataset.resolutionReads = JSON.stringify(reads);
+      return { width: 3000, height: 2000 };
+    } };
+  });
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/?path=/perf/images-500&viewMode=details");
+  const viewport = page.locator(".details-view .virtual-viewport");
+  await expect(page.locator(".resolution-cell").last()).toHaveText("3000 × 2000 px");
+  const initial = await page.evaluate(() => JSON.parse(document.documentElement.dataset.resolutionReads!) as { path: string; mounted: boolean }[]);
+  expect(initial.length).toBeGreaterThan(0);
+  expect(initial.length).toBeLessThan(100);
+  expect(initial.every(read => read.mounted)).toBe(true);
+  const mounted = await page.locator(".details-view .file-item").evaluateAll(rows => rows.map(row => (row as HTMLElement).dataset.path!));
+  expect(new Set(initial.map(read => read.path))).toEqual(new Set(mounted));
+  const lastPath = "/perf/images-500/wedding-00489.jpg";
+  expect(initial.map(read => read.path)).not.toContain(lastPath);
+  await expect(page.locator(`.file-item[data-path="${lastPath}"]`)).toHaveCount(0);
+  await viewport.evaluate(element => { element.scrollTop = element.scrollHeight; });
+  await expect(page.locator(`.file-item[data-path="${lastPath}"] .resolution-cell`)).toHaveText("3000 × 2000 px");
+  const after = await page.evaluate(() => JSON.parse(document.documentElement.dataset.resolutionReads!) as { path: string; mounted: boolean }[]);
+  expect(after.map(read => read.path)).toContain(lastPath);
+  expect(after.every(read => read.mounted)).toBe(true);
+  expect(after.length).toBeLessThan(200);
+});

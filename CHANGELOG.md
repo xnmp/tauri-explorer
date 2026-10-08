@@ -12,6 +12,17 @@ All notable changes to Tauri Explorer.
   Preview-info sections, and pane-scoped Preview targets for non-file
   subjects such as unsaved images. SDK 1 plugins keep working unchanged.
 - Plugin workers created from blob URLs are permitted (`worker-src blob:`).
+- Plugins can show files as Tiles-view tiles in their own sections through
+  the SDK module `ui/file-tiles` (capability `fileTiles`): the same tile
+  look, thumbnails, names and tile-size setting as the built-in Tiles view,
+  with selection, opening and the context menu left to the plugin.
+
+### Fixed
+
+- With Preview docked at the bottom or top, a plugin's Preview-info section
+  takes the height it needs instead of scrolling inside a clipped box, and
+  the image follows it directly without a gap. Plugin Preview targets (such
+  as unsaved images) get the same docked layout as files.
 
 ## v1.11.2 — 2026-09-30
 

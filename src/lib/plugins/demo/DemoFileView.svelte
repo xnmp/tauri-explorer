@@ -15,6 +15,9 @@
       id: "demo:virtual",
       title: "Virtual card",
       typeLabel: "DEMO",
+      // An image in the e2e mock filesystem; where it is missing, Preview
+      // shows its "No preview available" fallback instead.
+      imagePath: "/home/user/Pictures/screenshot.png",
       badge: "Unsaved",
       details: [{ label: "Source", value: "Demo plugin" }],
       actions: [{ id: "greet", label: "Greet", title: "Show a greeting", run: onGreet }],

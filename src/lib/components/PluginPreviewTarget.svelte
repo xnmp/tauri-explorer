@@ -67,22 +67,26 @@
 </div>
 
 {#if target.badge || target.actions?.length}
-  <div class="target-actions" role="group" aria-label="Actions for {target.title}">
-    {#if target.badge}<span class="target-badge">{target.badge}</span>{/if}
-    {#each target.actions ?? [] as action (action.id)}
-      <button type="button" class="target-action" title={action.title ?? action.label} aria-label={action.label}
-        disabled={action.disabled || running !== null} onclick={() => run(action)}>
-        {#if action.icon === "save"}
-          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 3h13l4 4v14H4zM8 3v6h9V3M8 21v-8h9v8"/></svg>
-        {:else if action.icon === "delete"}
-          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6h18M9 6V3h6v3M5 6l1 15h12l1-15M10 10v7M14 10v7"/></svg>
-        {/if}
-        {#if action.icon !== "delete"}<span>{action.label}</span>{/if}
-      </button>
-    {/each}
+  <!-- One wrapper so a vertical dock can place the actions and their status
+       as a single grid item (PreviewPane owns that layout). -->
+  <div class="target-actions-area">
+    <div class="target-actions" role="group" aria-label="Actions for {target.title}">
+      {#if target.badge}<span class="target-badge">{target.badge}</span>{/if}
+      {#each target.actions ?? [] as action (action.id)}
+        <button type="button" class="target-action" title={action.title ?? action.label} aria-label={action.label}
+          disabled={action.disabled || running !== null} onclick={() => run(action)}>
+          {#if action.icon === "save"}
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 3h13l4 4v14H4zM8 3v6h9V3M8 21v-8h9v8"/></svg>
+          {:else if action.icon === "delete"}
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6h18M9 6V3h6v3M5 6l1 15h12l1-15M10 10v7M14 10v7"/></svg>
+          {/if}
+          {#if action.icon !== "delete"}<span>{action.label}</span>{/if}
+        </button>
+      {/each}
+    </div>
+    {#if running}<p class="target-status" role="status">Working…</p>{/if}
+    {#if actionError}<p class="target-error" role="alert">{actionError}</p>{/if}
   </div>
-  {#if running}<p class="target-status" role="status">Working…</p>{/if}
-  {#if actionError}<p class="target-error" role="alert">{actionError}</p>{/if}
 {/if}
 
 {#if showInfo}
@@ -117,6 +121,7 @@
   .info-value { color: var(--text-secondary); text-align: right; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .target-content { display: flex; align-items: center; justify-content: center; }
   .target-content .preview-image { max-width: 100%; max-height: 100%; object-fit: contain; }
+  .target-actions-area { flex-shrink: 0; min-width: 0; }
   .target-actions { display: flex; align-items: center; gap: 6px; padding: 6px 12px; flex-wrap: wrap; }
   .target-badge { font-size: 10px; padding: 2px 6px; border-radius: 3px; color: var(--system-caution-text, var(--text-primary)); background: color-mix(in srgb, var(--system-caution-text, #a76d24) 14%, transparent); }
   .target-action { display: inline-flex; align-items: center; gap: 5px; padding: 3px 8px; font: inherit; font-size: 11px; color: var(--text-primary); background: var(--control-fill); border: 1px solid var(--control-stroke); border-radius: var(--radius-sm); cursor: pointer; }

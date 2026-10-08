@@ -10,6 +10,7 @@
   import type { FileEntry } from "$lib/domain/file";
   import type { FileViewPane, RegisteredFileView } from "$lib/plugins/file-view-registry.svelte";
   import { logFrontendError } from "$lib/api/crash";
+  import { folderPaneTileSize } from "$lib/state/folder-tile-size";
 
   interface Props {
     explorer: ExplorerInstance;
@@ -36,6 +37,7 @@
       const current = explorer.previewTarget;
       return current?.owner === owner ? current.target : null;
     },
+    get tileSize() { return folderPaneTileSize(explorer.currentPath); },
     select(entry, modifiers = {}) {
       windowTabsManager.setActivePane(paneId);
       explorer.selectEntry(entry, { ctrlKey: !!modifiers.ctrlKey, shiftKey: !!modifiers.shiftKey });

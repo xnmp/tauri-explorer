@@ -20,6 +20,38 @@ export const THUMBNAIL_SIZE_CONFIG: Record<ThumbnailSize, ThumbnailSizeConfig> =
   xlarge: { displaySize: 128, genSize: 256, quality: 90, gridMinWidth: 172 },
 };
 
+/** Whether a value is one of the tile-size presets (an own key, so
+ *  `"constructor"` and the like are not). */
+export function isThumbnailSize(value: unknown): value is ThumbnailSize {
+  return typeof value === "string" && Object.hasOwn(THUMBNAIL_SIZE_CONFIG, value);
+}
+
+/** The plugin SDK's name for a tile-size preset. */
+export type TileSizePreset = ThumbnailSize;
+
+/**
+ * A pane's tile size as the plugin SDK exposes it (`FileViewPane.tileSize`):
+ * the preset and its thumbnail image edge in CSS px.
+ */
+export interface PaneTileSize {
+  readonly preset: TileSizePreset;
+  /** Thumbnail image edge in CSS px for that preset (48 / 64 / 96 / 128). */
+  readonly imagePx: number;
+}
+
+// One frozen value per preset: repeated reads of an unchanged size return the
+// same object, so a plugin derivation over it does not re-run.
+const PANE_TILE_SIZES = Object.freeze(Object.fromEntries(
+  (Object.keys(THUMBNAIL_SIZE_CONFIG) as ThumbnailSize[]).map((preset) =>
+    [preset, Object.freeze({ preset, imagePx: THUMBNAIL_SIZE_CONFIG[preset].displaySize })]),
+) as Record<ThumbnailSize, PaneTileSize>);
+
+/** The SDK tile size for a preset; an unknown preset falls back to medium,
+ *  like `tileLayout`. */
+export function paneTileSize(size: ThumbnailSize): PaneTileSize {
+  return PANE_TILE_SIZES[isThumbnailSize(size) ? size : "medium"];
+}
+
 /** Reserved fixed name height: two lines at line-height 1.4 * 13px font. */
 export const TILE_NAME_HEIGHT = 37;
 
@@ -49,7 +81,7 @@ export interface TileLayout extends ThumbnailSizeConfig {
 /** Layout for a tile size; an unknown size (e.g. a stale stored value) falls
  *  back to medium rather than breaking the grid. */
 export function tileLayout(size: ThumbnailSize): TileLayout {
-  const resolved: ThumbnailSize = Object.hasOwn(THUMBNAIL_SIZE_CONFIG, size) ? size : "medium";
+  const resolved: ThumbnailSize = isThumbnailSize(size) ? size : "medium";
   const config = THUMBNAIL_SIZE_CONFIG[resolved];
   const small = resolved === "small";
   const gap = small ? 2 : 6;

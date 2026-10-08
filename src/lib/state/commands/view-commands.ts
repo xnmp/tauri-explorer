@@ -6,6 +6,8 @@ import type { Command } from "../commands.svelte";
 import { settingsStore, generateToggleCommands } from "../settings.svelte";
 import { themeStore } from "../theme.svelte";
 import { folderViewsStore } from "../folder-views.svelte";
+import { folderTileSize } from "../folder-tile-size";
+import { isThumbnailSize } from "$lib/domain/tile-layout";
 import { sidebarViewsStore } from "../sidebar-views.svelte";
 import { dialogStore } from "../dialogs.svelte";
 import { terminalPanelStore } from "../terminal.svelte";
@@ -210,7 +212,7 @@ export const viewCommands: Command[] = [
     category: "view",
     handler: () => {
       const e = getActiveExplorer();
-      const currentSize = e ? (folderViewsStore.get(e.currentPath)?.thumbnailSize ?? settingsStore.state.thumbnailSize) : settingsStore.state.thumbnailSize;
+      const currentSize = e ? folderTileSize(e.currentPath) : settingsStore.thumbnailSize;
       dialogStore.openPicker({
         title: "Select tile size",
         options: [
@@ -221,10 +223,12 @@ export const viewCommands: Command[] = [
         ],
         onSelect: (id) => {
           const explorer = getActiveExplorer();
-          if (explorer) {
-            setBuiltInView("tiles");
-            folderViewsStore.set(explorer.currentPath, { thumbnailSize: id as "small" | "medium" | "large" | "xlarge" });
-          }
+          if (!explorer || !isThumbnailSize(id)) return;
+          // A plugin file view sizes its tiles from `pane.tileSize`, so it
+          // stays, as with the context menu's Icon Size; a built-in mode
+          // switches to Tiles to show the new size.
+          if (!explorer.showsPluginView) setBuiltInView("tiles");
+          folderViewsStore.set(explorer.currentPath, { thumbnailSize: id });
         },
       });
     },

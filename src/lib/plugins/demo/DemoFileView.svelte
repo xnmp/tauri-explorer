@@ -1,7 +1,8 @@
 <!--
   Demo file view (SDK 2): a card listing of the pane's entries plus one
   plugin-owned "virtual card" shown through a Preview target. It exercises
-  the pane-scoped handle: selection, open, context menu and Preview targets.
+  the pane-scoped handle: selection, open, context menu, Preview targets and
+  the pane's tile size.
 -->
 <script lang="ts">
   import type { FileViewPane } from "$lib/plugins/file-view-registry.svelte";
@@ -27,6 +28,9 @@
 </script>
 
 <div class="demo-cards" data-testid="demo-file-view">
+  {#if pane.tileSize}
+    <span class="tile-size" data-testid="demo-tile-size" data-preset={pane.tileSize.preset} data-image-px={pane.tileSize.imagePx}>Tiles: {pane.tileSize.preset} ({pane.tileSize.imagePx}px)</span>
+  {/if}
   <button type="button" class="card virtual" class:selected={target?.id === "demo:virtual"} onclick={showVirtual}>Virtual card</button>
   {#each pane.entries as entry (entry.path)}
     <button type="button" class="card" class:selected={selected.has(entry.path)} data-path={entry.path}
@@ -41,4 +45,5 @@
   .card { min-width: 120px; padding: 12px; font: inherit; color: var(--text-primary); background: var(--control-fill); border: 1px solid var(--control-stroke); border-radius: var(--radius-sm); cursor: pointer; }
   .card.selected { border-color: var(--accent-text); }
   .virtual { border-style: dashed; }
+  .tile-size { flex-basis: 100%; color: var(--text-secondary); }
 </style>

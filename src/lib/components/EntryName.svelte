@@ -12,6 +12,7 @@
   import { useInlineRename } from "$lib/composables/use-inline-rename.svelte";
   import { renameSuggestionStore } from "$lib/state/rename-suggestion.svelte";
   import { rectDimToCSS } from "$lib/domain/zoom";
+  import EntryNameLabel from "./EntryNameLabel.svelte";
 
   interface Props {
     entry: FileEntry;
@@ -179,7 +180,7 @@
          therefore never shifts neighbouring tiles, however many lines it grows
          to. -->
     <div class="tile-rename-anchor">
-      <span class="name-tiles rename-placeholder" aria-hidden="true">{entry.name}</span>
+      <EntryNameLabel name={entry.name} variant="tiles" placeholder />
       <!-- svelte-ignore a11y_autofocus -->
       <textarea
         class="rename-input tile-rename"
@@ -250,13 +251,7 @@
     </span>
   {/if}
 {:else}
-  <span
-    class="entry-name"
-    class:name-details={variant === "details"}
-    class:name-list={variant === "list"}
-    class:name-tiles={variant === "tiles"}
-    title={variant === "tiles" ? entry.name : undefined}
-  >{entry.name}</span>
+  <EntryNameLabel name={entry.name} {variant} />
 {/if}
 
 <style>
@@ -311,14 +306,6 @@
   .tile-rename-anchor {
     position: relative;
     width: 100%;
-  }
-
-  /* Invisible copy of the name that holds the tile's natural height open while
-     the absolutely-positioned rename box floats over it — so renaming never
-     shifts neighbouring tiles, regardless of how many lines the box grows to. */
-  .rename-placeholder {
-    visibility: hidden;
-    pointer-events: none;
   }
 
   .rename-input.tile-rename {
@@ -411,35 +398,5 @@
     z-index: 10;
   }
 
-  /* Name display — variant-specific styles */
-  .name-details {
-    font-size: 13px;
-    font-weight: 400;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    flex: 1;
-  }
-
-  .name-list {
-    display: block;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  .name-tiles {
-    width: 100%;
-    overflow: hidden;
-    display: -webkit-box;
-    -webkit-line-clamp: 2;
-    line-clamp: 2;
-    -webkit-box-orient: vertical;
-    text-overflow: ellipsis;
-    white-space: normal;
-    line-height: 1.4;
-    word-break: break-word;
-    overflow-wrap: break-word;
-    padding-top: 1px;
-  }
+  /* Name display styles live in EntryNameLabel. */
 </style>

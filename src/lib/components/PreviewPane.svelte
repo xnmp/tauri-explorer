@@ -1150,20 +1150,32 @@ import { openFile } from "$lib/api/open";
      The header column takes what the name and badge need, capped at 65% of
      the pane or everything but 16rem, whichever is larger. The metadata
      column takes the rest and ellipsizes. Neither can squeeze the other to
-     nothing, however long the name or a diff's path. */
+     nothing, however long the name or a diff's path.
+     Plugin Preview-info sections get their own full-width row above the
+     content, as tall as their content. The content row keeps a floor (96px,
+     or 40% of a very short dock) and the sections row yields first: only
+     when the dock cannot fit both does the section scroll. The sizing lives
+     on the tracks, not on the item: a percentage max-height on an item in an
+     auto row resolves against that row after it was sized to the item's full
+     height, which clipped the section behind a scrollbar and left the
+     clipped-off height as dead space above the image.
+     PluginPreviewTarget renders the same chrome classes as direct children of
+     this pane, so the placement rules below match them with :global — this
+     component owns the dock layout for both kinds of subject. */
   .preview-pane.vertical:not(.fullscreen) {
     display: grid;
     grid-template-columns: fit-content(max(65%, 100% - 16rem)) minmax(0, 1fr);
-    grid-template-rows: auto auto minmax(0, 1fr);
+    grid-template-rows: auto auto minmax(0, max-content) minmax(min(96px, 40%), 1fr);
     grid-template-areas:
       "header info"
       "actions actions"
+      "sections sections"
       "content content";
   }
 
   /* The name has priority over the type badge: the badge gives up width
      first, down to its first few letters, before the name truncates. */
-  .preview-pane.vertical:not(.fullscreen) > .preview-header {
+  .preview-pane.vertical:not(.fullscreen) > :global(.preview-header) {
     grid-area: header;
     display: grid;
     grid-template-columns: minmax(0, max-content) minmax(3.5rem, 1fr);
@@ -1174,7 +1186,7 @@ import { openFile } from "$lib/api/open";
     padding: 8px 12px;
   }
 
-  .preview-pane.vertical:not(.fullscreen) > .preview-header .preview-type-badge {
+  .preview-pane.vertical:not(.fullscreen) > :global(.preview-header) :global(.preview-type-badge) {
     display: block;
     align-self: center;
     justify-self: start;
@@ -1184,17 +1196,23 @@ import { openFile } from "$lib/api/open";
     white-space: nowrap;
   }
 
-  .preview-pane.vertical:not(.fullscreen) > .diff-actions {
+  .preview-pane.vertical:not(.fullscreen) > :global(:is(.diff-actions, .target-actions-area)) {
     grid-area: actions;
   }
 
-  .preview-pane.vertical:not(.fullscreen) > .preview-content {
+  .preview-pane.vertical:not(.fullscreen) > .preview-sections {
+    grid-area: sections;
+    max-height: none;
+    min-height: 0;
+  }
+
+  .preview-pane.vertical:not(.fullscreen) > :global(.preview-content) {
     grid-area: content;
   }
 
   /* Each metadata field keeps its own row beside the header. A shared
      ellipsis can hide the entire Modified field in a narrow window. */
-  .preview-pane.vertical:not(.fullscreen) > .preview-info {
+  .preview-pane.vertical:not(.fullscreen) > :global(.preview-info) {
     grid-area: info;
     display: flex;
     flex-direction: column;
@@ -1209,7 +1227,7 @@ import { openFile } from "$lib/api/open";
     border-bottom: 1px solid var(--divider);
   }
 
-  .preview-pane.vertical:not(.fullscreen) > .preview-info .info-row {
+  .preview-pane.vertical:not(.fullscreen) > :global(.preview-info) :global(.info-row) {
     display: flex;
     gap: 8px;
     min-width: 0;
@@ -1217,11 +1235,11 @@ import { openFile } from "$lib/api/open";
     border-bottom: none;
   }
 
-  .preview-pane.vertical:not(.fullscreen) > .preview-info .info-label {
+  .preview-pane.vertical:not(.fullscreen) > :global(.preview-info) :global(.info-label) {
     flex-shrink: 0;
   }
 
-  .preview-pane.vertical:not(.fullscreen) > .preview-info .info-value {
+  .preview-pane.vertical:not(.fullscreen) > :global(.preview-info) :global(.info-value) {
     min-width: 0;
     overflow: hidden;
     text-overflow: ellipsis;

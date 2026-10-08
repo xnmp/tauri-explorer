@@ -156,7 +156,7 @@ describe("settingsStore.init precedence (#280)", () => {
     expect(store.zoomLevel).toBe(100);
     expect(store.backgroundOpacity).toBe(100);
     expect(store.navBarButtons).toEqual({ back: false, forward: true, up: true, refresh: false });
-    expect(store.columnVisibility).toEqual({ date: true, type: true, size: true });
+    expect(store.columnVisibility).toEqual({ date: true, type: true, size: true, resolution: true });
     expect(store.pluginsEnabled).toEqual({ demo: false });
     expect(store.terminalShortcuts).toEqual({ home: "Ctrl+A" });
     expect(store.viewMode).toBe("details");

@@ -6,9 +6,11 @@ describe("native suite TypeScript gate (#690)", () => {
     const result = spawnSync(
       "bun",
       ["run", "check:e2e:tauri"],
-      { cwd: process.cwd(), encoding: "utf8" },
+      // This launches a compiler, not a latency benchmark. Bound the child
+      // explicitly; Vitest's default 5s can expire on a healthy slower host.
+      { cwd: process.cwd(), encoding: "utf8", timeout: 30_000 },
     );
 
     expect(result.status, result.stdout + result.stderr).toBe(0);
-  });
+  }, 35_000);
 });

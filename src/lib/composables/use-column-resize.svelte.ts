@@ -7,7 +7,7 @@ import { useControlledSize } from "$lib/composables/use-controlled-size.svelte";
 /** One gesture owns one column. Retire it before changing the key so neither its
  * pending frame nor its final commit can be attributed to a replacement column. */
 export function useColumnResize(initialWidths?: Partial<ColumnWidths>,
-  getVisibility: () => ColumnVisibility = () => ({ date: true, type: true, size: true })) {
+  getVisibility: () => ColumnVisibility = () => ({ date: true, type: true, size: true, resolution: true })) {
   let committed = $state(normalizeColumnWidths(initialWidths));
   let column = $state<ColumnKey>("name");
   const resize = useControlledSize(() => committed[column],

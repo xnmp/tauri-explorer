@@ -3,6 +3,7 @@
   Issue: tauri-explorer-iw0, tauri-explorer-bae, tauri-explorer-h3n, tauri-explorer-x25
 -->
 <script lang="ts">
+  import ImageResolutionCell from "./ImageResolutionCell.svelte";
   import type { FileEntry } from "$lib/domain/file";
   import { formatSize } from "$lib/domain/file";
   import { getFileType, getFileIconColor, formatDate, formatAbsoluteDate, isVideoMediaFile } from "$lib/domain/file-types";
@@ -104,6 +105,11 @@
   class:selected
   class:drop-target={interactions.isDropTarget(entry.path)}
   class:copy-drop={interactions.isCopyDrop(entry.path)}
+  onfocus={(event) => {
+    // A wide Details row can make native tab focus reveal its trailing columns
+    // by scrolling an overflow-hidden ancestor. Keep the file identity visible.
+    event.currentTarget.querySelector(".name-cell")?.scrollIntoView({ block: "nearest", inline: "nearest" });
+  }}
   onclick={handleClick}
   ondblclick={handleDoubleClick}
   oncontextmenu={(e) => interactions.handleContextMenu(e, entry)}
@@ -167,6 +173,9 @@
       <span class="empty-cell">—</span>
     {/if}
   </div>
+  {/if}
+  {#if settingsStore.columnVisibility.resolution}
+    <div class="resolution-cell"><ImageResolutionCell {entry} /></div>
   {/if}
 </div>
 
@@ -288,7 +297,8 @@
   /* Date, Type, Size cells */
   .date-cell,
   .type-cell,
-  .size-cell {
+  .size-cell,
+  .resolution-cell {
     font-size: var(--font-size-caption);
     color: var(--text-tertiary);
     overflow: hidden;

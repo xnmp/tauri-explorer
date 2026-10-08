@@ -1463,6 +1463,12 @@ const mockCommands: Record<string, CommandHandler> = {
 
   cancel_content_search: () => {},
 
+  // Source header fixture is intentionally independent of thumbnail dimensions.
+  get_image_resolution: (args) => getMockControl().imageResolution
+    ? getMockControl().imageResolution!(String(args.path))
+    : /\.(png|jpe?g|gif|webp|bmp)$/i.test(String(args.path))
+    ? { width: 1920, height: 1080 } : null,
+
   get_thumbnail: () => {
     throw new Error("Thumbnails not available in mock mode");
   },

@@ -317,6 +317,7 @@ pub fn run_with_process_entry(launch_dir: Option<String>, t_process_entry: std::
             file_mutation::cancel_copy_session,
             files::file_ops::read_text_file,
             files::file_ops::read_image_data_url,
+            files::image_resolution::get_image_resolution,
             files::image_crop::capture_image_crop,
             file_mutation::save_image_crop,
             files::pdf_preview::read_pdf_bytes,

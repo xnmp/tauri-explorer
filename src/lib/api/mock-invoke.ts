@@ -12,6 +12,7 @@ import { createMockImageCrop } from "./mock-image-crop";
 import type { ImageCropSave } from "./image-crop";
 import type { DirectoryListing, FileEntry, FileMutationReceipt } from "$lib/domain/file";
 import { matchesPickerExtensions } from "$lib/domain/file-picker";
+import type { FrontendSlowLoadRecord, SlowLoadRecord } from "$lib/domain/load-diagnostics";
 import type { SearchFilter } from "./search";
 import { encodeDirectoryListing, type CompactDirectoryListing } from "./directory-wire";
 import { selectPreviewImages } from "$lib/domain/folder-preview";
@@ -43,6 +44,8 @@ interface MockCopyControl {
 }
 const mockCopyControls = new Map<string, MockCopyControl>();
 const mockVideoCapabilities = new Set<string>();
+
+const mockSlowLoads: SlowLoadRecord[] = [];
 
 const mutationReceipt = (entry: FileEntry): FileMutationReceipt => ({ path: entry.path, entry });
 const mockImageCrop = createMockImageCrop(mockFiles, nextTimestamp);
@@ -1138,6 +1141,29 @@ const mockCommands: Record<string, CommandHandler> = {
     localStorage.setItem(MOCK_LOCAL_KEYS.openedUrl, url);
     return undefined;
   },
+  // Slow-load diagnostics (#1022): an in-memory stand-in for the rotating
+  // records under the native log directory. The browser has no native trace
+  // or mount table, so those halves are null, as when native capture fails.
+  record_slow_load: (args) => {
+    const record = args.record as FrontendSlowLoadRecord;
+    const stored: SlowLoadRecord = {
+      ...record,
+      schema: 1,
+      source: "frontend",
+      native: null,
+      blocker: null,
+      filesystem: null,
+      appVersion: "0.0.0-mock",
+      os: "linux",
+    };
+    const index = mockSlowLoads.findIndex((existing) => existing.id === record.id);
+    if (index >= 0) mockSlowLoads.splice(index, 1, stored);
+    else mockSlowLoads.push(stored);
+    mockSlowLoads.sort((a, b) => b.id.localeCompare(a.id));
+    mockSlowLoads.splice(20);
+    return undefined;
+  },
+  recent_slow_loads: (args) => mockSlowLoads.slice(0, Math.min(20, (args.limit as number | null) ?? 20)),
   submit_user_report: (args) => {
     localStorage.setItem(MOCK_LOCAL_KEYS.submittedReport, JSON.stringify(args));
     const error = localStorage.getItem(MOCK_LOCAL_KEYS.reportError);

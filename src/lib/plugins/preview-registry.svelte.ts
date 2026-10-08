@@ -38,6 +38,12 @@ export type PreviewSubject =
   | { readonly kind: "file"; readonly entry: FileEntry; readonly paneId: string | null }
   | { readonly kind: "target"; readonly target: PreviewTarget; readonly pluginId: string; readonly paneId: string | null };
 
+/**
+ * A plugin's Preview-info section. It renders below the host's own info rows
+ * and spans the pane's full width; the host provides `--preview-info-inset`,
+ * the horizontal inset of its rows in the current dock, so a section that pads
+ * its content by it lines up with them while drawing full-width dividers.
+ */
 export interface PreviewInfoContribution {
   id: string;
   /** Receives `subject` (and `props`). */

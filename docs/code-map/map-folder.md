@@ -78,7 +78,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `ShortcutCheatsheet.svelte` — keyboard shortcut cheatsheet overlay.
 - `ThemePicker.svelte` — theme selection UI.
 - `RenameDialog`? see `dialogs.svelte.ts`; dialogs present: `DeleteDialog.svelte`, `ConflictDialog.svelte` (paste conflict overwrite/skip), `BulkRenameDialog.svelte`, `WorkspaceDialog.svelte` (save/restore workspaces), `ProgressDialog.svelte` (copy/move/extract progress), `InlineNewFolder.svelte` (inline new-entry input — folder or file, per `explorer.newEntryKind`), `FilePicker.svelte` (portal file-picker window).
-- `PreviewPane.svelte` — file preview (image/text/markdown/syntax/CSV table); CSV rows use the shared VirtualList with one shared column template and an outer horizontal scroll surface (#666).
+- `PreviewPane.svelte` — file preview (image/text/markdown/syntax/CSV table); CSV rows use the shared VirtualList with one shared column template and an outer horizontal scroll surface (#666). Image to image, the previous image stays (spinner over it when slow) until the next is decoded, so a selection change never blanks or re-lays out the pane (`e2e/preview-selection-stability.spec.ts`).
 - `PdfPreview.svelte` — lazy canvas PDF surface with centered fit/zoom, pointer-captured pan, annotation links, compact page controls and fullscreen keyboard ownership (#728–#730).
 - `TerminalPanel.svelte` — embedded xterm.js terminal panel (#139).
 - `StatusBar.svelte` — bottom status bar (selection count, size, path).
@@ -115,6 +115,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `window-launch.ts` — destination-keyed seed lifetime and native created/error ownership; labelled failure-phase diagnostics; tear-offs require adoption ACK before source retirement.
 - `window-handoff.ts` — correlated native request/acknowledgement transport for tab adoption and warm activation; owns timeout and listener retirement.
 - `window-trace.ts` — launch/hand-off/tab-seed tracing: failures and timeouts to the native log in every build, progress phases only in hook builds (#884).
+- `load-watchdog.ts` — slow directory-load watchdog (#1022): in-flight trace registry, one threshold timer per load, records a stuck load while pending and replaces it with the outcome; drive-kind resolver registered by `drives.svelte.ts`. Contracts in `tests/state/load-watchdog.test.ts`.
 - `plugin-jobs.ts` — window-owned accepted jobs, terminal event reconciliation and cleanup independent of plugin contributions.
 
 - `git-repo-watch.ts` — shared graph/SCM adapter over ordered watch ownership; retains unique native leases until acknowledged release, including retries.
@@ -257,6 +258,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `directory-wire.ts` — validates compact native listing columns and reconstructs exact immutable domain entries.
 - `files.ts` — all file-op IPC (list, create, rename, copy, move, delete, estimate), including typed per-path trash/restore outcomes. Hot.
 - `frontend-log.ts` — forwards diagnosable webview failures to the native rotating log.
+- `load-diagnostics.ts` — `record_slow_load` / `recent_slow_loads` IPC for slow directory-load records (#1022).
 - `e2e-hooks.ts` — the single frontend E2E hook gate: `E2E_HOOKS_ENABLED` (literal `VITE_E2E_HOOKS === "1"`, not DEV) and `loadE2EHooks()`, the only importer of `src/test-support/`; documents the orphan-chunk rule (#457, #884).
 - `mock-invoke.ts` — mock command dispatch/simulation for browser/E2E (no Tauri): stateful git working tree, trash, clipboard, drives. Open when E2E data wrong.
 - `mock-control.ts` — single typed control surface (`MockControl`, `getMockControl()`) e2e specs/tests use to set fixture overrides, failure/latency injection, and call mock-invoke's test hooks, replacing ad hoc `globalThis.__mockXxx` globals; also `MOCK_LOCAL_KEYS`, the named localStorage flag keys mock-invoke reads/writes (#869).
@@ -340,6 +342,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `wsl.ts` — WSL path recognition.
 - `virtual-path.ts` — virtual (plugin-provided) path parsing.
 - `drives.ts` — pure removable-drive tracking (isUnderRoot).
+- `load-diagnostics.ts` — pure slow directory-load traces (#1022): phase spans, 5 s threshold, frontend record, culprit diagnosis, bounded report text and chronological trace IDs. Contracts in `tests/domain/load-diagnostics.test.ts`.
 - `bookmark-drop-feedback.ts` — bookmark drop action feedback and effective local/cross-window drag-kind resolution (#675).
 - `quick-access.ts` — default sidebar system-folder rows under the resolved home directory; an unknown home yields none, so no row can navigate to a fabricated path while `get_home_directory` is in flight (#702).
 - `fuzzy-score.ts` — fuzzy match scorer for QuickOpen.
@@ -476,6 +479,13 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `shared_history/mod.rs`, `shared_history/model.rs`, `shared_history/store.rs` — async IPC, pure bounded history policy and cross-process SQLite transactions.
 - `portal.rs` — xdg-desktop-portal FileChooser backend (Linux).
 - `crash_report.rs` — local crash capture (#184).
+- `load_diagnostics/mod.rs` — slow directory-load records (#1022): merges the frontend record with the native trace and blocker and hands it to `persist.rs`; culprit naming (including an IPC-reply gap after a settled native command); `begin_listing` arms the fallback for watched listings.
+- `load_diagnostics/fallback.rs` — native-only record for a watched listing still in flight after 7 s, settled with its outcome when the listing finishes; background refreshes are never armed.
+- `load_diagnostics/reply.rs` — `TracedReply`: keeps a listing's trace open until Tauri serializes the reply, timing the encoding as the `serialize` phase.
+- `load_diagnostics/trace.rs` — in-flight native listing traces: phase timeline, per-entry progress and stalled-entry slots, finished ring; untraced listings are no-ops.
+- `load_diagnostics/filesystem.rs` — filesystem type/category for a path from the mount table (Linux mountinfo, macOS `getfsstat(MNT_NOWAIT)`, Windows UNC/`GetDriveTypeW`), after resolving symlinks that live on local mounts only; never stats the possibly hung directory.
+- `load_diagnostics/store.rs` — bounded rotating JSON records under `<app log dir>/slow-loads/` (newest 20, replace by trace ID).
+- `load_diagnostics/persist.rs` — record precedence (frontend beats native fallback; within a source settled beats late pending; re-checked against the file on disk), bounded in-memory session records, and one dedicated writer thread that also fills in the filesystem (time-bounded probe); `recent_slow_loads` reads disk on one reusable reader thread with a timeout.
 - `update_check.rs` — update check via GitHub releases (#185).
 - `warm_pool.rs` — native warm registry with label-scoped spawn reservations, bounded claims and committed activation.
 - `gemini.rs` — shared helpers for shelling out to `gemini` CLI.

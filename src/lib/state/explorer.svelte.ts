@@ -47,11 +47,17 @@ import { createPaneRefresh } from "./pane-refresh";
 import { createPaneMutations } from "./pane-mutations";
 import { undoActionLabel } from "./undo-helpers";
 import { broadcastFileChange } from "./file-events";
+import { loadWatchdog, type LoadTraceHandle } from "./load-watchdog";
+import type { LoadReason } from "$lib/domain/load-diagnostics";
 
 import type { ExplorerSeed } from "$lib/domain/window-input";
 import type { PreviewTarget } from "$lib/plugins/preview-registry.svelte";
 
+// Distinguishes concurrent panes in slow-load diagnostics (#1022).
+let explorerSerial = 0;
+
 function createExplorerState(seed?: ExplorerSeed) {
+  const pane = ++explorerSerial;
   // Listings are immutable revisions. Deep proxies would create per-entry
   // signals during whole-directory filtering, sorting and status aggregation.
   let entries = $state.raw<readonly FileEntry[]>(seed?.entries ?? []);
@@ -203,16 +209,39 @@ function createExplorerState(seed?: ExplorerSeed) {
     };
   }
 
-  async function navigateInternal(rawPath: string): Promise<"ok" | "error" | "stale"> {
+  // The pane's newest navigation trace. Starting another settles it as
+  // superseded at once: a navigation queued behind a listing that never
+  // returns would otherwise never reach its own settlement.
+  let activeLoad: LoadTraceHandle | null = null;
+
+  /** Start a slow-load trace (#1022) for a navigation to `path`. */
+  function traceLoad(path: string, reason: LoadReason): LoadTraceHandle {
+    const isSeeded = coreState.currentPath === path && coreState.entries.length > 0;
+    activeLoad?.finish("superseded");
+    activeLoad = loadWatchdog.begin({ path, pane, reason, spinnerVisible: !isSeeded });
+    return activeLoad;
+  }
+
+  async function navigateInternal(
+    rawPath: string,
+    reason: LoadReason = "history",
+    trace?: LoadTraceHandle,
+  ): Promise<"ok" | "error" | "stale"> {
     // Normalize separators to the platform-native style up front. The backend
     // echoes the requested path back verbatim as `currentPath`, so this is the
     // single chokepoint that keeps the address bar (and everything that records
     // `currentPath`) consistent — never mixed `C:\Users\x/Pictures`. Gated to
     // `/` on non-Windows, where a backslash is a legal filename character.
     const path = toNativeSeparators(rawPath, isWindows ? "\\" : "/");
-    if (destroyed) return "stale";
+    if (destroyed) {
+      trace?.finish("destroyed");
+      return "stale";
+    }
     creationSession = null;
     const gen = ++navGeneration;
+    // A caller's trace is used only while it is still the pane's newest;
+    // anything else starts this navigation's own trace.
+    const load = trace && trace === activeLoad ? trace : traceLoad(path, reason);
     const observation = watch.begin(path);
     try {
       // If we already have entries for this path (e.g. seeded from another tab),
@@ -226,12 +255,17 @@ function createExplorerState(seed?: ExplorerSeed) {
       revealedPath = null;
       showFilter = false;
 
-      const result = await dirListing.load(path, observation);
+      const result = await dirListing.load(path, observation, load);
 
       // A newer navigation started while this one was in flight — discard.
-      if (gen !== navGeneration || (!result.ok && result.cancelled)) return "stale";
+      if (gen !== navGeneration || (!result.ok && result.cancelled)) {
+        load.finish(destroyed ? "destroyed" : "superseded");
+        return "stale";
+      }
 
       if (result.ok) {
+        load.phase("publish");
+        load.entries(result.entries.length);
         coreState.currentPath = result.path;
         coreState.entries = result.entries;
         observation.commit();
@@ -256,20 +290,24 @@ function createExplorerState(seed?: ExplorerSeed) {
         onNavigateCallback?.();
 
         coreState.loading = false;
+        load.finish("ok");
         return "ok";
       } else {
         coreState.error = result.error;
         coreState.loading = false;
+        load.finish("error");
         return "error";
       }
     } finally {
       observation.close();
+      // Idempotent: settles a trace an unexpected throw left open.
+      load.finish("error");
     }
   }
 
   /** Navigate and push to history. Returns true on success. */
-  async function applyNavigation(path: string): Promise<boolean> {
-    const status = await navigateInternal(path);
+  async function applyNavigation(path: string, reason: LoadReason, trace?: LoadTraceHandle): Promise<boolean> {
+    const status = await navigateInternal(path, reason, trace);
     if (status !== "ok") return false;
     const newHistory = navigation.pushToHistory(
       coreState.history,
@@ -304,13 +342,28 @@ function createExplorerState(seed?: ExplorerSeed) {
     // undoes the whole jump in one press.
     let target = path;
     let skipped = 0;
-    if (autoEnterSingleSubdir && settingsStore.autoEnterSingleSubdir) {
-      const descent = await resolveAutoEnterTarget(path);
-      target = descent.path;
-      skipped = descent.skipped;
+    let trace: LoadTraceHandle | undefined;
+    let success: boolean;
+    try {
+      if (autoEnterSingleSubdir && settingsStore.autoEnterSingleSubdir) {
+        // The descent is part of what the user waits for, so it is traced too.
+        trace = traceLoad(path, "navigate");
+        trace.phase("auto-enter");
+        const descent = await resolveAutoEnterTarget(path);
+        target = descent.path;
+        skipped = descent.skipped;
+        // The listing that follows is of the descended folder.
+        trace.retarget(target);
+      }
+      // A navigation that started during the descent supersedes this one:
+      // its result must not land after the newer folder.
+      success = trace && (trace !== activeLoad || destroyed)
+        ? false
+        : await applyNavigation(target, "navigate", trace);
+    } finally {
+      // Idempotent: settles the trace if the descent threw.
+      trace?.finish("error");
     }
-
-    const success = await applyNavigation(target);
     if (success) {
       // Track the *resolved* path (separator-normalized by navigateInternal),
       // not the raw request, so the same folder reached two ways dedupes.
@@ -363,7 +416,7 @@ function createExplorerState(seed?: ExplorerSeed) {
   /** Initial load for restored/seeded panes: like navigateTo but does NOT
    *  record the visit in recent files or frecency (the user didn't navigate). */
   async function initialLoad(path: string) {
-    await applyNavigation(path);
+    await applyNavigation(path, "initial");
   }
 
   async function goBack() {
@@ -417,7 +470,7 @@ function createExplorerState(seed?: ExplorerSeed) {
   /** Fallback navigation when the current directory no longer exists. */
   async function navigateToParent(): Promise<void> {
     const parentPath = navigation.getParentPath(breadcrumbs);
-    if (parentPath) await navigateInternal(parentPath);
+    if (parentPath) await navigateInternal(parentPath, "parent-fallback");
   }
 
   // ===================
@@ -969,6 +1022,7 @@ function createExplorerState(seed?: ExplorerSeed) {
       destroyed = true;
       creationSession = null;
       navGeneration += 1;
+      activeLoad?.finish("destroyed");
       const results = await Promise.allSettled([watch.destroy(), dirListing.cleanup()]);
       const failure = results.find((result) => result.status === "rejected");
       if (failure?.status === "rejected") throw failure.reason;

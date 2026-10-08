@@ -103,6 +103,30 @@ pub(crate) fn is_network_share(path: &Path) -> bool {
         if matches!(prefix.kind(), Prefix::UNC(..) | Prefix::VerbatimUNC(..)))
 }
 
+/// The mount table, for finding the mount that holds a path by pathname
+/// alone. Lookups never stat the path, so they stay responsive while that
+/// mount is hung (slow-load diagnostics, #1022). Bind-mount and namespace
+/// subtleties that trash placement resolves by mount ID do not matter for a
+/// diagnostic.
+#[cfg(target_os = "linux")]
+pub(crate) struct MountTable(trash_mounts::MountSnapshot);
+
+#[cfg(target_os = "linux")]
+impl MountTable {
+    pub(crate) fn read() -> Option<Self> {
+        trash_mounts::MountSnapshot::read().ok().map(Self)
+    }
+
+    /// `(fs type, mount point)` of the mount whose pathname contains `path`.
+    pub(crate) fn mount_for(&self, path: &Path) -> Option<(String, std::path::PathBuf)> {
+        let mount = self.0.resolve_by_path(path)?;
+        Some((
+            mount.filesystem.to_string_lossy().into_owned(),
+            mount.mount_point.clone(),
+        ))
+    }
+}
+
 /// Run a blocking closure on the async runtime's blocking thread pool so
 /// heavy filesystem work doesn't stall the main async executor.
 pub(crate) async fn run_blocking<T, F>(f: F) -> Result<T, crate::error::AppError>

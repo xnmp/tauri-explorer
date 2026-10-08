@@ -299,6 +299,10 @@ import { openFile } from "$lib/api/open";
 
   // Preview content state
   let previewImageUrl = $state<string | null>(null);
+  // True while `previewImageUrl` is the previous file's image, kept on screen
+  // while the next image loads and decodes. Blanking it in between left the
+  // content empty for the decode and re-laid out the pane for those frames.
+  let previewImageHeld = $state(false);
   let previewImageNote = $state<string | null>(null);
   let previewText = $state<string | null>(null);
   let previewHighlightedHtml = $state<string | null>(null);
@@ -547,6 +551,7 @@ import { openFile } from "$lib/api/open";
       previewLifetime.clearBlob();
       lastPreviewKey = null;
       previewImageUrl = null;
+      previewImageHeld = false;
       previewImageNote = null;
       previewText = null;
       previewHighlightedHtml = null;
@@ -566,6 +571,20 @@ import { openFile } from "$lib/api/open";
     loadPreview(file);
   });
 
+  /** Shows a decoded image. A held image's blob is released here unless the
+   * new image already adopted a blob in its place (which released it). */
+  function showImage(url: string): void {
+    if (!url.startsWith("blob:")) previewLifetime.clearBlob();
+    previewImageUrl = url;
+    previewImageHeld = false;
+  }
+
+  /** Whether loadPreview shows this file as a plain image (its image branch). */
+  function rendersAsImage(file: FileEntry): boolean {
+    return file.kind !== "directory" && !isZipFile(file) && !isPdfFile(file) && !isVideoMediaFile(file)
+      && (isImageFile(file) || isSvgFile(file));
+  }
+
   /** Decode an image off the main thread so selection/animation aren't blocked */
   async function decodeImage(url: string): Promise<string> {
     const img = new Image();
@@ -576,10 +595,17 @@ import { openFile } from "$lib/api/open";
 
   async function loadPreview(file: FileEntry): Promise<void> {
     const request = previewLifetime.begin(`${file.path}|${file.modified}|${file.size}`);
-    // Release any object-URL from a previous backend-fallback image so the
-    // bytes aren't pinned in memory across navigations.
-    previewLifetime.clearBlob();
-    previewImageUrl = null;
+    // Image to image keeps the current image until the next one is decoded;
+    // its blob (if any) is released when the next image is adopted or shown
+    // (showImage), or below if that load fails. Otherwise release any
+    // object-URL from a previous backend-fallback image now so the bytes
+    // aren't pinned in memory across navigations.
+    const holdImage = previewImageUrl !== null && rendersAsImage(file);
+    if (!holdImage) {
+      previewLifetime.clearBlob();
+      previewImageUrl = null;
+    }
+    previewImageHeld = holdImage;
     previewImageNote = null;
     previewText = null;
     previewHighlightedHtml = null;
@@ -702,7 +728,7 @@ import { openFile } from "$lib/api/open";
           try {
             await decodeImage(fallback.data);
             if (!previewLifetime.isCurrent(request)) return;
-            previewImageUrl = fallback.data;
+            showImage(fallback.data);
             previewImageNote = /\.avif$/i.test(file.name) ? "AVIF fallback preview shows the first frame." : null;
           } catch (error) {
             if (!previewLifetime.isCurrent(request)) return;
@@ -732,7 +758,7 @@ import { openFile } from "$lib/api/open";
           // Decode off-screen — spinner stays visible until ready
           await decodeImage(url);
           if (!previewLifetime.isCurrent(request)) return; // Stale after decode
-          previewImageUrl = url;
+          showImage(url);
         } catch (assetErr) {
           if (!previewLifetime.isCurrent(request)) return;
           console.warn("[preview] asset image decode failed; using backend fallback", {
@@ -760,7 +786,7 @@ import { openFile } from "$lib/api/open";
         try {
           await decodeImage(result.data);
           if (!previewLifetime.isCurrent(request)) return;
-          previewImageUrl = result.data;
+          showImage(result.data);
         } catch (error) {
           if (!previewLifetime.isCurrent(request)) return;
           previewLifetime.releaseBlob(request, result.data);
@@ -827,7 +853,15 @@ import { openFile } from "$lib/api/open";
     }
 
     // A superseded request must not hide the current selection's spinner.
-    if (previewLifetime.isCurrent(request)) previewLoading = false;
+    if (previewLifetime.isCurrent(request)) {
+      // The next image failed: drop the previous one so the error shows.
+      if (previewImageHeld) {
+        previewImageHeld = false;
+        previewImageUrl = null;
+        previewLifetime.clearBlob();
+      }
+      previewLoading = false;
+    }
   }
 
   onDestroy(() => {
@@ -972,11 +1006,11 @@ import { openFile } from "$lib/api/open";
     {/if}
 
     <!-- svelte-ignore a11y_no_noninteractive_tabindex -- a scrollable region must be keyboard-focusable (WCAG 2.1.1, #797). -->
-    <div class="preview-content" role="region" aria-label="Preview of {selectedFile.name}{isVideoMediaFile(selectedFile) ? ' (video)' : ''}" tabindex="0">
+    <div class="preview-content" role="region" aria-label="Preview of {selectedFile.name}{isVideoMediaFile(selectedFile) ? ' (video)' : ''}" aria-busy={previewLoading} tabindex="0">
       {#if isVideoMediaFile(selectedFile)}
         <span class="video-preview-marker"><VideoIndicator /></span>
       {/if}
-      {#if previewLoading}
+      {#if previewLoading && !previewImageHeld}
         {#if showPreviewSpinner}
           <div class="preview-loading">
             <div class="spinner"></div>
@@ -1015,6 +1049,9 @@ import { openFile } from "$lib/api/open";
             draggable="false"
           />
           {#if previewImageNote}<p class="image-preview-note">{previewImageNote}</p>{/if}
+          {#if previewImageHeld && showPreviewSpinner}
+            <div class="preview-loading preview-loading-over-image"><div class="spinner"></div></div>
+          {/if}
           {#if fullscreen}
             <div class="fs-zoom-indicator">{Math.round(zoom * 100)}%</div>
           {/if}
@@ -1127,6 +1164,10 @@ import { openFile } from "$lib/api/open";
     border-left: 1px solid var(--divider);
     background: var(--background-card-secondary);
     overflow: hidden;
+    /* Horizontal inset of the Preview chrome and info rows. Plugin
+       Preview-info sections inherit it so their rows line up with the host's
+       (SDK: PreviewInfoContribution). */
+    --preview-info-inset: 16px;
   }
 
   .preview-pane.resizing {
@@ -1163,6 +1204,7 @@ import { openFile } from "$lib/api/open";
      this pane, so the placement rules below match them with :global — this
      component owns the dock layout for both kinds of subject. */
   .preview-pane.vertical:not(.fullscreen) {
+    --preview-info-inset: 12px;
     display: grid;
     grid-template-columns: fit-content(max(65%, 100% - 16rem)) minmax(0, 1fr);
     grid-template-rows: auto auto minmax(0, max-content) minmax(min(96px, 40%), 1fr);
@@ -1183,7 +1225,7 @@ import { openFile } from "$lib/api/open";
     gap: 8px;
     min-width: 0;
     overflow: hidden;
-    padding: 8px 12px;
+    padding: 8px var(--preview-info-inset);
   }
 
   .preview-pane.vertical:not(.fullscreen) > :global(.preview-header) :global(.preview-type-badge) {
@@ -1220,7 +1262,7 @@ import { openFile } from "$lib/api/open";
     gap: 2px;
     min-width: 0;
     overflow: hidden;
-    padding: 8px 12px;
+    padding: 8px var(--preview-info-inset);
     font-size: var(--font-size-caption);
     white-space: nowrap;
     border-top: none;
@@ -1360,7 +1402,7 @@ import { openFile } from "$lib/api/open";
     display: flex;
     flex-direction: column;
     gap: 6px;
-    padding: 16px 16px 14px;
+    padding: 16px var(--preview-info-inset) 14px;
     border-bottom: 1px solid var(--divider);
     flex-shrink: 0;
   }
@@ -1479,6 +1521,14 @@ import { openFile } from "$lib/api/open";
     justify-content: center;
     flex: 1;
     padding: 24px;
+  }
+
+  /* A slow next image: the previous one stays, with the spinner over it. */
+  .preview-loading-over-image {
+    position: absolute;
+    inset: 0;
+    padding: 0;
+    pointer-events: none;
   }
 
   .spinner {
@@ -1814,7 +1864,7 @@ import { openFile } from "$lib/api/open";
   }
 
   .preview-section-error {
-    margin: 8px 16px;
+    margin: 8px var(--preview-info-inset);
     font-size: var(--font-size-caption);
     color: var(--text-tertiary);
   }
@@ -1834,7 +1884,7 @@ import { openFile } from "$lib/api/open";
     align-items: center;
     gap: 8px;
     font-size: var(--font-size-caption);
-    padding: 8px 16px;
+    padding: 8px var(--preview-info-inset);
     border-bottom: 1px solid var(--divider);
   }
 

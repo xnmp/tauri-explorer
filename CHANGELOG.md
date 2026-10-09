@@ -2,7 +2,12 @@
 
 All notable changes to Tauri Explorer.
 
-## Unreleased
+## v1.11.5 — 2026-10-09
+
+This update lets an image a plugin shows in Preview, such as an unsaved
+TraceExplorer image, go full screen like any image file. Plugin views can now
+follow the folder's tile size, and failed plugin jobs offer Retry right in
+the Image generation panel. It pairs with TraceExplorer v0.2.2.
 
 ### Added
 

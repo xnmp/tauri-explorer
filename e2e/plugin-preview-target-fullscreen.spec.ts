@@ -155,10 +155,11 @@ test.describe("Plugin Preview target fullscreen", () => {
   test("a file image still fullscreens, zooms and steps between siblings", async ({ page }) => {
     await installFullResolutionImage(page);
     await page.goto("/?path=/home/user/Pictures");
-    await applySettingsAndReload(page, { showPreviewPane: true, showPreviewInfo: true });
+    await applySettingsAndReload(page, { showPreviewPane: true, showPreviewInfo: true, pluginsEnabled: { demo: true } });
     await waitForEntries(page);
     await page.locator(".entry-item").filter({ hasText: "photo1.jpg" }).first().click();
     const pane = page.locator(".preview-pane");
+    await expect(pane.getByTestId("demo-preview-info")).toHaveText("Demo info: photo1.jpg");
     const image = pane.locator("img.preview-image");
     await expect(image).toHaveAttribute("alt", "photo1.jpg");
     await expect.poll(() => naturalWidth(image)).toBe(FULL_WIDTH);
@@ -167,6 +168,8 @@ test.describe("Plugin Preview target fullscreen", () => {
     await expect(pane).toHaveClass(/fullscreen/);
     await expect(page.locator("html")).toHaveAttribute("data-preview-fullscreen", "");
     await expect(pane.locator(".preview-header")).toBeHidden();
+    // Plugin Preview-info sections hide in fullscreen too.
+    await expect(pane.getByTestId("demo-preview-info")).toBeHidden();
 
     await page.keyboard.press("=");
     await expect(pane.locator(".fs-zoom-indicator")).toHaveText("125%");
@@ -180,5 +183,6 @@ test.describe("Plugin Preview target fullscreen", () => {
     await page.keyboard.press("Escape");
     await expect(pane).not.toHaveClass(/fullscreen/);
     await expect(page.locator("html")).not.toHaveAttribute("data-preview-fullscreen", "");
+    await expect(pane.getByTestId("demo-preview-info")).toHaveText("Demo info: photo2.jpg");
   });
 });

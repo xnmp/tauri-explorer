@@ -99,8 +99,10 @@ import { openFile } from "$lib/api/open";
     if (!(target instanceof Element) || target.closest(
       'button, a, input, textarea, select, [contenteditable], [role="separator"], .preview-image-container, .pdf-preview, .video-preview, video, audio, iframe',
     )) return;
-    // A plugin target is fullscreen-able only as an image.
-    if (pluginTarget && !pluginTarget.target.imagePath) return;
+    // A plugin target is fullscreen-able only as an image (a diff, when open,
+    // is shown instead of the target). Leaving fullscreen is always allowed.
+    const showsTarget = pluginTarget && !activeDiff && !commitDiff;
+    if (!fullscreen.active && showsTarget && !pluginTarget.target.imagePath) return;
     fullscreen.toggle();
   }
 

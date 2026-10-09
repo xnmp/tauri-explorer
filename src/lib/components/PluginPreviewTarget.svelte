@@ -4,7 +4,8 @@
   details and explicit actions only — no file actions, opening, sibling
   stepping or dragging, because it is not an Explorer file. Its image
   fullscreens like a file image, through the pane's fullscreen controller
-  (#1033): the pane shows a thumbnail, fullscreen the full-resolution image.
+  (#1033): the pane shows a 1024px thumbnail until the target first goes
+  fullscreen, which loads the full-resolution image; that is then kept.
 -->
 <script lang="ts">
   import { onDestroy, type Snippet } from "svelte";
@@ -27,7 +28,9 @@
   // The full-resolution image, loaded like a file image's (asset protocol,
   // then the backend read), so a path outside the current folder — such as a
   // plugin's temp directory — works too. Fetched the first time this target
-  // goes fullscreen and kept for it; the thumbnail shows until it decodes.
+  // goes fullscreen and then shown in the pane too; the thumbnail shows until
+  // it decodes. Targets carry no version: a plugin that rewrites an image in
+  // place gives the new image a new target id (the component is keyed on it).
   let fullImage = $state<{ path: string; url: string } | null>(null);
   const fullImageLifetime = createPreviewLifetime((url) => URL.revokeObjectURL(url));
   onDestroy(() => fullImageLifetime.dispose());
@@ -146,7 +149,6 @@
   .info-row { display: flex; justify-content: space-between; align-items: center; gap: 8px; font-size: var(--font-size-caption); padding: 8px var(--preview-info-inset); border-bottom: 1px solid var(--divider); }
   .info-label { color: var(--text-tertiary); flex-shrink: 0; }
   .info-value { color: var(--text-secondary); text-align: right; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .target-content { display: flex; align-items: center; justify-content: center; }
   .target-actions-area { flex-shrink: 0; min-width: 0; }
   .target-actions { display: flex; align-items: center; gap: 6px; padding: 6px 12px; flex-wrap: wrap; }
   .target-badge { font-size: 10px; padding: 2px 6px; border-radius: 3px; color: var(--system-caution-text, var(--text-primary)); background: color-mix(in srgb, var(--system-caution-text, #a76d24) 14%, transparent); }

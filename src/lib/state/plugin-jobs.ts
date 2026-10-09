@@ -1,6 +1,6 @@
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { basename } from "$lib/domain/path";
-import { jobsStore } from "$lib/state/jobs.svelte";
+import { jobsStore, type JobRetry } from "$lib/state/jobs.svelte";
 import { toastStore } from "$lib/state/toast.svelte";
 import { windowTabsManager } from "$lib/state/window-tabs.svelte";
 
@@ -17,6 +17,10 @@ interface JobRegistration {
   label: string;
   detail: string;
   presentation?: "image";
+  /** The plugin that accepted the job (set by its scoped `jobs`). */
+  owner?: string;
+  /** Offered as Retry on the failed entry (capability "jobRetry"). */
+  retry?: JobRetry;
 }
 
 type StartResult = { ok: true; data: number } | { ok: false; error: string };
@@ -52,6 +56,28 @@ export function createPluginJobsController(deps: Dependencies) {
     }
   };
 
+  const actionOf = (registration: Pick<JobRegistration, "kind" | "label">) =>
+    JOB_LABELS[registration.kind as keyof typeof JOB_LABELS] ?? registration.label;
+  const announceFailure = (registration: Pick<JobRegistration, "kind" | "label">, error: string) =>
+    deps.error(`${actionOf(registration)} failed: ${error.slice(0, 100)}`);
+
+  // A retry that cannot start is announced like the job's own failure, even
+  // when its entry was dismissed or torn down meanwhile.
+  const announcingRetry = (registration: JobRegistration): JobRetry | undefined => {
+    const retry = registration.retry;
+    if (typeof retry !== "function") return undefined;
+    return async () => {
+      try {
+        const result = await retry();
+        if (result?.ok !== true) announceFailure(registration, typeof result?.error === "string" && result.error ? result.error : "Retry failed");
+        return result;
+      } catch (error) {
+        announceFailure(registration, error instanceof Error ? error.message : String(error));
+        throw error;
+      }
+    };
+  };
+
   const publish = (kind: PluginJobKind, id: number, outcome: Outcome) => {
     const key = keyOf(kind, id);
     if (settled.has(key)) return;
@@ -66,13 +92,11 @@ export function createPluginJobsController(deps: Dependencies) {
     retainBounded(settled, 1024);
     if (outcome.status === "completed") {
       deps.complete(id, outcome.outputPath);
-      const action = JOB_LABELS[kind as keyof typeof JOB_LABELS] ?? registration.label;
-      deps.success(`${action} complete: ${basename(outcome.outputPath)}${outcome.warning ? `. ${outcome.warning}` : ""}`);
+      deps.success(`${actionOf(registration)} complete: ${basename(outcome.outputPath)}${outcome.warning ? `. ${outcome.warning}` : ""}`);
       void deps.refresh().catch((error) => console.error("[plugin-jobs] refresh failed:", error));
     } else {
       deps.fail(id, outcome.error);
-      const action = JOB_LABELS[kind as keyof typeof JOB_LABELS] ?? registration.label;
-      deps.error(`${action} failed: ${outcome.error.slice(0, 100)}`);
+      announceFailure(registration, outcome.error);
     }
   };
 
@@ -118,8 +142,10 @@ export function createPluginJobsController(deps: Dependencies) {
   const register = (registration: JobRegistration): void => {
     const key = keyOf(registration.kind, registration.id);
     if (settled.has(key) || owned.has(key)) return;
-    owned.set(key, registration);
-    deps.add(registration);
+    // The entry holds the retry; the reconciliation map never needs it.
+    const { retry: _retry, ...tracked } = registration;
+    owned.set(key, tracked);
+    deps.add({ ...tracked, retry: announcingRetry(registration) });
     const outcome = pending.get(key);
     if (outcome) {
       pending.delete(key);
@@ -188,10 +214,10 @@ export function createPluginJobsController(deps: Dependencies) {
   };
 }
 
-export const pluginJobsController = createPluginJobsController({
-  listen: <T>(name: string, handler: (payload: T) => void) =>
-    listen<T>(name, (event) => handler(event.payload)),
-  add: ({ id, label, detail, kind, presentation }) => jobsStore.addJob(id, label, detail, kind, presentation),
+/** Where the window's plugin jobs are shown and announced; everything but the
+ *  backend event source, so tests can drive the real store with fake events. */
+export const windowJobSink: Omit<Dependencies, "listen"> = {
+  add: ({ id, label, detail, kind, presentation, owner, retry }) => jobsStore.addJob(id, label, detail, kind, presentation, { owner, retry }),
   complete: (id, outputPath) => jobsStore.completeJob(id, outputPath),
   fail: (id, error) => jobsStore.failJob(id, error),
   success: (message) => toastStore.show(message, "success"),
@@ -199,4 +225,39 @@ export const pluginJobsController = createPluginJobsController({
   refresh: async () => {
     await Promise.all(windowTabsManager.getAllExplorers().map((explorer) => explorer.refresh({ silent: true })));
   },
+};
+
+export const pluginJobsController = createPluginJobsController({
+  listen: <T>(name: string, handler: (payload: T) => void) =>
+    listen<T>(name, (event) => handler(event.payload)),
+  ...windowJobSink,
 });
+
+type Accept = ReturnType<typeof createPluginJobsController>["accept"];
+
+/**
+ * One plugin's view of the window's jobs: its registrations record it as the
+ * owner, and retiring it (plugin disable/uninstall) drops Retry from its
+ * entries, so a retired plugin's code never runs from Background Operations.
+ */
+export function scopePluginJobs(
+  owner: string,
+  accept: Accept = (registration, start) => pluginJobsController.accept(registration, start),
+  dropRetries: (owner: string) => void = (id) => jobsStore.dropRetries(id),
+) {
+  let retired = false;
+  return {
+    jobs: {
+      async accept(registration: Omit<JobRegistration, "id" | "owner">, start: () => Promise<StartResult>): Promise<StartResult> {
+        const result = await accept({ ...registration, owner, retry: retired ? undefined : registration.retry }, start);
+        // Retired while the job was starting: its entry was added after the drop.
+        if (retired) dropRetries(owner);
+        return result;
+      },
+    },
+    retire(): void {
+      retired = true;
+      dropRetries(owner);
+    },
+  };
+}

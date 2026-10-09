@@ -8,7 +8,8 @@
     getOperationLabel,
     type Operation,
   } from "$lib/state/operations.svelte";
-  import { jobsStore } from "$lib/state/jobs.svelte";
+  import { isJobActive, jobsStore } from "$lib/state/jobs.svelte";
+  import { retryJobAndRefocus } from "$lib/composables/use-job-retry";
   import { formatSize } from "$lib/domain/file";
   import { imageJobProgress, formatJobDuration } from "$lib/domain/image-job-progress";
 
@@ -17,7 +18,9 @@
   const operations = $derived(operationsManager.showProgressDialog ? operationsManager.operations : []);
   const imageJobs = $derived(jobsStore.jobs.filter((job) => job.presentation === "image"));
   const showDialog = $derived(operationsManager.showProgressDialog);
-  const hasActive = $derived(operationsManager.hasActiveOperations || imageJobs.some((job) => job.status === "running"));
+  // A retry in progress keeps its failed entry, and the panel, open.
+  const hasActive = $derived(operationsManager.hasActiveOperations || imageJobs.some(isJobActive));
+  let region: HTMLElement | undefined = $state();
 
   $effect(() => {
     if (!imageJobs.some(job => job.status === "running")) return;
@@ -44,13 +47,13 @@
 
   function handleClearAll(): void {
     operationsManager.cleanupCompletedOperations();
-    imageJobs.filter((job) => job.status !== "running").forEach((job) => jobsStore.removeJob(job.id));
+    imageJobs.forEach((job) => jobsStore.dismissJob(job.id));
   }
 
   function handleClose(): void {
     if (!hasActive) {
       operationsManager.hideDialog();
-      imageJobs.forEach((job) => jobsStore.removeJob(job.id));
+      imageJobs.forEach((job) => jobsStore.dismissJob(job.id));
     }
   }
 
@@ -70,7 +73,7 @@
 
 {#if (showDialog && operations.length > 0) || imageJobs.length > 0}
   <div class="progress-dialog-container">
-    <div class="progress-dialog" role="region" aria-label="Background progress">
+    <div class="progress-dialog" role="region" aria-label="Background progress" tabindex="-1" bind:this={region}>
       <div class="dialog-header">
         <h3 class="dialog-title">{imageJobs.length ? operations.length ? "Background Operations" : "Image generation" : "File Operations"}</h3>
         <div class="header-actions">
@@ -210,7 +213,7 @@
         {/each}
         {#each imageJobs as job (job.id)}
           {@const timing = imageJobProgress(job, jobsStore.jobs, now)}
-          <div class="operation-item" class:error={job.status === "error"}>
+          <div class="operation-item" class:error={job.status === "error"} data-job-id={job.id} tabindex="-1">
             <div class="operation-info">
               <div class="operation-icon" aria-hidden="true">
                 {#if job.status === "running"}<div class="spinner-small"></div>
@@ -231,7 +234,20 @@
               </div>
             </div>
             {#if job.status !== "running"}
-              <button class="action-btn" aria-label={`Dismiss ${job.label}`} onclick={() => jobsStore.removeJob(job.id)}>×</button>
+              <div class="operation-actions">
+                {#if job.status === "error" && job.retry}
+                  <button class="action-btn retry" aria-label={`Retry ${job.label}`} title="Retry"
+                    disabled={job.retrying} aria-busy={job.retrying} onclick={() => void retryJobAndRefocus(job.id, region)}>
+                    <svg width="12" height="12" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+                      <path d="M2 8C2 4.69 4.69 2 8 2C10.22 2 12.16 3.21 13.2 5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+                      <path d="M14 8C14 11.31 11.31 14 8 14C5.78 14 3.84 12.79 2.8 11" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+                      <path d="M13 2V5H10" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+                      <path d="M3 14V11H6" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+                    </svg>
+                  </button>
+                {/if}
+                <button class="action-btn" aria-label={`Dismiss ${job.label}`} disabled={job.retrying} onclick={() => jobsStore.dismissJob(job.id)}>×</button>
+              </div>
             {/if}
           </div>
         {/each}
@@ -495,5 +511,18 @@
   .action-btn.retry:hover {
     background: rgba(0, 120, 212, 0.1);
     color: var(--accent-text, var(--accent));
+  }
+
+  .action-btn:disabled,
+  .action-btn:disabled:hover {
+    opacity: 0.5;
+    cursor: default;
+    background: transparent;
+  }
+
+  /* Focus lands here after a successful Retry (the button goes with its entry). */
+  .operation-item:focus-visible {
+    outline: 2px solid var(--focus-stroke-outer);
+    outline-offset: -2px;
   }
 </style>

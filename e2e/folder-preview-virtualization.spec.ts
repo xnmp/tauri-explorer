@@ -33,6 +33,7 @@ test("previewing a 5000-entry folder renders a windowed slice of its children (#
   const names = list.locator(".folder-item-name");
   // Directories sort first, so the huge folder's first child is its first folder.
   await expect(names.first()).toHaveText("folder-00000", { timeout: 10000 });
+  await expect(names.first()).toBeVisible();
 
   // 5000 children exist; pre-fix every one rendered. A generous cap proves
   // windowing without being brittle to the preview pane's height.

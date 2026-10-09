@@ -21,6 +21,7 @@ test("Create Theme from Image is in AI and unavailable for unsupported selection
   const createTheme = aiMenu.getByText("Create Theme from Image", { exact: true });
   await expect(createTheme).toBeVisible();
   await page.screenshot({ path: "evidence/ac-1-theme-image-in-ai.png" });
+  await page.screenshot({ path: "evidence/ac-5-context-menu-coverage.png" });
 
   await page.keyboard.press("Escape");
   await page.goto("/?path=/home/user/Pictures");

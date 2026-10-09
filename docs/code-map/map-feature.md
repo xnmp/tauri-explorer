@@ -26,7 +26,7 @@ backend for E2E/browser).
 - `composables/use-progressive-render.svelte.ts` — chunked reveal of large lists
 - `composables/use-row-grid-view.svelte.ts` — shared virtualization wiring (rows, DnD, new-folder sentinel, scrollToIndex) behind List + Tiles
 - `state/commands/view-commands.ts` — view.details/list/tiles, sort, columns cmds
-- `state/sort-prefs.ts`, `state/folder-views.svelte.ts` — per-folder view+sort persistence
+- `state/sort-prefs.ts`, `state/folder-views.svelte.ts` — per-folder view+sort persistence; `state/folder-tile-size.ts` resolves a folder's effective tile size (override, else global) for every consumer
 - `components/FileIcon.svelte` — shared icon renderer used by all 3 views (via `FileItem.svelte` for Details and directly from List/Tiles); linked-folder and git-repo-folder badge overlays and the HTML/HTM web-document glyph live here so a display feature added once covers all views automatically
 - `domain/file-types.ts` — `isGitRepoFolder` (icon-selection predicate for the git-repo folder badge, #463); backend flag set in `src-tauri/src/files/mod.rs::metadata_to_entry` (`FileEntry.is_git_repo`, one `.git`-exists stat per directory entry)
 - `domain/relative-time.ts` — shared compact relative labels for file metadata, today's git commits, and PR comments
@@ -38,6 +38,8 @@ backend for E2E/browser).
 - SDK 2 file views: `plugins/file-view-registry.svelte.ts`, `components/PluginFileView.svelte`, `components/FileList.svelte` — a plugin view replaces a pane's listing; it gets a pane-scoped handle (directory, entries, selection, focus, select/open/context menu, Preview targets). `explorer.fileView` is per pane (persisted in window tabs, default from `settingsStore.defaultFileView`); `resolve()` falls back to the built-in view for virtual paths or when `available(dir)` is false, keeping the preference. Built-in view commands and the context menu clear it; `workspace.toggleFileView` returns to the previous built-in mode.
 - SDK 2 Preview: `plugins/preview-registry.svelte.ts`, `components/PluginPreviewTarget.svelte`, `components/PreviewPane.svelte` — Preview-info sections for files or the owning plugin's targets; pane-scoped Preview targets (`explorer.setPreviewTarget(owner, target)`) are non-file subjects with explicit actions, cleared on file selection, folder change and plugin disposal. Runtime SDK keeps `sdkVersion: 1` and adds `apiVersion: 2` + capabilities; manifests declare SDK 1 or 2 (`plugins/installed.ts`, `src-tauri/src/installed_plugins/package.rs`). The demo plugin exercises both (`e2e/plugin-file-views.spec.ts`). In a vertical (top/bottom) dock `PreviewPane.svelte`'s grid places the chrome of both subjects, with Preview-info sections in a full-width row capped on the track (`e2e/preview-info-vertical-dock.spec.ts`). The pane sets `--preview-info-inset` (16px in the side dock, 12px in vertical docks) for its own rows and header; plugin sections pad by it to line up (`e2e/preview-selection-stability.spec.ts`).
 - SDK 2 file tiles: `plugins/runtime-sdk.ts` module `ui/file-tiles` (capability `fileTiles`) → `components/FileTiles.svelte` — Tiles-view tiles for plugin sections (`e2e/plugin-file-tiles.spec.ts`).
+- SDK 2 pane tile size (capability `tileSize`): `FileViewPane.tileSize` (`{ preset, imagePx }`, `domain/tile-layout.ts` `paneTileSize`) from `state/folder-tile-size.ts` via `components/PluginFileView.svelte`; plugins pass `tileSize?.preset` as file-tiles' `size`; without it, file-tiles reads the pane's size from `state/tile-size-context.ts` (set by PluginFileView), then the global setting. "Tile View: Set Size" keeps a showing plugin view (`state/commands/view-commands.ts`); `e2e/plugin-file-views.spec.ts`.
+- SDK 2 job retry (capability `jobRetry`): `PluginJobs.accept` registration `retry` (`plugins/api.ts`) → `state/plugin-jobs.ts` → `state/jobs.svelte.ts` `retryJob` → Retry on failed entries in `components/ProgressDialog.svelte` and `components/JobsPanel.svelte` via `composables/use-job-retry.ts` (`e2e/plugin-job-retry.spec.ts`). `ctx.jobs` is `scopePluginJobs(pluginId)`: disposing the context drops Retry from that plugin's entries.
 
 - `composables/use-marquee-selection.svelte.ts` — drag-rect candidate set + hit-testing
 - `composables/use-item-interactions.svelte.ts` — click/ctrl/shift selection, focus
@@ -276,6 +278,7 @@ backend for E2E/browser).
 - Supported-platform PDF proof also uses the hosted Windows native suite and `e2e-tauri/macos-pdf-preview.ts` through Appium Mac2/XCTest. `e2e-tauri/macos-display.swift` measures display geometry; `e2e-tauri/pdf_screenshot.py` reads native page landmarks without browser scripting or modifying screenshots, with negative controls in `e2e-tauri/test_pdf_screenshot.py`.
 
 - `state/preview-lifetime.ts` — revision tokens and blob ownership across text/image/archive/directory/video loads and unmount.
+- Fullscreen image viewing (#219, #236, #1033): `composables/use-preview-fullscreen.svelte.ts` (one controller per pane: gestures, keys, chrome-hiding attribute) + `domain/image-viewer-zoom.ts` (math) + `components/PreviewImageSurface.svelte` (shared image surface), used by file images in `PreviewPane.svelte` and by `PluginPreviewTarget.svelte`. Full-resolution images for both load through `state/preview-image.ts`. Left/Right sibling stepping is file-only (`e2e/plugin-preview-target-fullscreen.spec.ts`, `e2e/image-preview-fullscreen.spec.ts`).
 
 - `components/PreviewPane.svelte` — text/image/diff/archive/CSV preview + syntax highlight; CSV uses shared column sizing, a single outer horizontal scroll surface, and virtualized data rows; shared controlled resize (width at right, height at top/bottom); pointer capture, dock-aware keyboard bounds and fullscreen retirement; reads `settingsStore.resolvedPreviewPanePosition` (never the raw mode) for its own dock class
 - `domain/preview-size.ts` — resolved dock selects the raw dimension setting and bounded resize options; zero decodes only at the source.
@@ -291,7 +294,7 @@ backend for E2E/browser).
 - `domain/syntax-highlight.ts` — `highlightCode`, `highlightDiffLine` (hljs)
 - `domain/csv-preview.ts` — quoted CSV table parser; malformed input leaves PreviewPane on its existing text path (#666)
 - `domain/diff.ts`, `domain/markdown.ts` — diff parsing, markdown render
-- `api/files.ts` (readTextFile, readImageAsBlobUrl, listArchiveContents, gitDiff)
+- `api/files.ts` (readTextFile, readImageAsBlobUrl, listArchiveContents, gitDiff); `state/preview-image.ts` drives `readImageAsBlobUrl` as the image fallback
 - `themes/syntax.css` — shared hljs token colors
 - FLOW: selection change → PreviewPane fetches content by type → CSV parses to a shared-column virtual table or text highlights/renders. 512KB read cap, 200 CSV data-row cap, 50KB highlight cap.
 
@@ -465,7 +468,7 @@ backend for E2E/browser).
 
 - `plugins/registry.svelte.ts` — `pluginRegistry` owns activation, retry and shutdown completion; context retirement precedes reentrant hooks
 - `plugins/api.ts` — `Plugin`/`PluginContext` contract (storage, jobs, toast, settings, selection-aware inspector, and auto-disposed workspace file-change notifications)
-- `state/plugin-jobs.ts`, `api/plugin-jobs.ts` — window-owned accepted job/event reconciliation and typed IPC; plugin disable removes contributions while accepted work retains its owner.
+- `state/plugin-jobs.ts`, `api/plugin-jobs.ts` — window-owned accepted job/event reconciliation and typed IPC; plugin disable removes contributions while accepted work retains its owner. A registration's `retry` becomes the failed entry's Retry action.
 - `src-tauri/src/image_operation.rs` — immutable input snapshots and optional installed provenance around built-in image publication, independently of the Trace inspector contribution; failure/cancellation settlement retains durable attempt history.
 - `plugins/dialog-registry.svelte.ts`, `settings-registry.svelte.ts`, `fs-providers.ts` — extension points
 - built-ins: `plugins/ai-organize/`, `ai-rename/`, `nano-banana/`, `theme-from-image/`, `upscale/`, `demo/`

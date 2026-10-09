@@ -2,6 +2,50 @@
 
 All notable changes to Tauri Explorer.
 
+## v1.11.5 — 2026-10-09
+
+This update lets an image a plugin shows in Preview, such as an unsaved
+TraceExplorer image, go full screen like any image file. Plugin views can now
+follow the folder's tile size, and failed plugin jobs offer Retry right in
+the Image generation panel. It pairs with TraceExplorer v0.2.2.
+
+### Added
+
+- Plugin file views can match the folder's tile size (capability
+  `tileSize`): the pane handle's `tileSize` gives the size the Tiles view
+  would use there (the folder's own size from Tile View: Set Size or the
+  context menu's Icon Size, else the global setting) and updates when either
+  changes, and `ui/file-tiles` accepts that size through an optional `size`
+  prop. Without it, file tiles in a plugin file view follow that folder's
+  size too, so plugins built before this also follow Tile View: Set Size;
+  elsewhere they keep following the global setting. A malformed per-folder
+  size now falls back to the global setting rather than Medium (#1029).
+- Failed plugin jobs can offer Retry right on their entry in Background
+  Operations (the Image generation panel) and the Background Jobs panel, so
+  an AI image edit that fails (for example when the model replies with a
+  refusal instead of an image) is one click to try again. Plugins opt in by
+  passing `retry` when they register the job (capability `jobRetry`); the
+  failed entry is replaced by the new job and focus moves to it, or the
+  entry keeps the reason the retry could not start, which is also shown as
+  a notification. An entry cannot be dismissed while its retry is starting,
+  and a disabled or removed plugin's jobs no longer offer Retry (#1031).
+
+### Changed
+
+- Tile View: Set Size keeps a plugin file view that is showing, which now
+  follows the new size, instead of switching the pane to Tiles; from a
+  built-in view it still switches to Tiles (#1029).
+
+### Fixed
+
+- An image shown in Preview by a plugin, such as an unsaved TraceExplorer
+  image that exists only in a temp folder, can now be viewed full screen like
+  any image file: double-click the Preview pane or click the image, zoom with
+  +/-, 0 or the mouse wheel, drag or use the arrow keys to pan, and press Esc
+  to leave. Full screen shows the image at its full resolution rather than
+  the Preview thumbnail. Plugin Preview-info sections are now hidden in full
+  screen too, for files as well as plugin images (#1033).
+
 ## v1.11.4 — 2026-10-09
 
 This update records why a folder takes more than 5 seconds to load, so you

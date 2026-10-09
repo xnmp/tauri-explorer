@@ -2,7 +2,8 @@
   Jobs Panel - Background job status viewer (Ctrl+J)
 -->
 <script lang="ts">
-  import { jobsStore, type Job } from "$lib/state/jobs.svelte";
+  import { isJobActive, jobsStore, type Job } from "$lib/state/jobs.svelte";
+  import { retryJobAndRefocus } from "$lib/composables/use-job-retry";
   import { basename } from "$lib/domain/path";
   import Modal from "./Modal.svelte";
 
@@ -12,6 +13,8 @@
   }
 
   let { open, onClose }: Props = $props();
+
+  let panel: HTMLElement | undefined = $state();
 
   // Live elapsed time counter for running jobs
   let now = $state(Date.now());
@@ -43,11 +46,11 @@
   overlayClass="panel-overlay"
   labelledby="jobs-panel-title"
 >
-    <div class="panel">
+    <div class="panel" tabindex="-1" bind:this={panel}>
       <header class="panel-header">
         <h2 id="jobs-panel-title">Background Jobs</h2>
         <div class="header-actions">
-          {#if jobsStore.jobs.some((j) => j.status !== "running")}
+          {#if jobsStore.jobs.some((j) => !isJobActive(j))}
             <button class="clear-btn" onclick={() => jobsStore.clearCompleted()}>
               Clear Completed
             </button>
@@ -75,7 +78,7 @@
         {:else}
           <div class="job-list">
             {#each jobsStore.jobs as job (job.id)}
-              <div class="job-item" class:completed={job.status === "completed"} class:error={job.status === "error"}>
+              <div class="job-item" class:completed={job.status === "completed"} class:error={job.status === "error"} data-job-id={job.id} tabindex="-1">
                 <div class="job-status">
                   {#if job.status === "running"}
                     <div class="spinner"></div>
@@ -100,6 +103,10 @@
                   {/if}
                 </div>
                 <div class="job-time">{formatElapsed(job)}</div>
+                {#if job.status === "error" && job.retry}
+                  <button class="clear-btn retry-btn" aria-label={`Retry ${job.label}`} disabled={job.retrying}
+                    aria-busy={job.retrying} onclick={() => void retryJobAndRefocus(job.id, panel)}>Retry</button>
+                {/if}
               </div>
             {/each}
           </div>
@@ -162,6 +169,17 @@
   .clear-btn:hover {
     background: var(--control-fill-secondary);
     color: var(--text-primary);
+  }
+
+  .clear-btn:disabled {
+    opacity: 0.5;
+    cursor: default;
+    background: var(--control-fill);
+    color: var(--text-secondary);
+  }
+
+  .retry-btn {
+    flex-shrink: 0;
   }
 
   .close-btn {
@@ -294,5 +312,11 @@
     font-size: 12px;
     color: var(--text-tertiary);
     font-variant-numeric: tabular-nums;
+  }
+
+  /* Focus lands here after a successful Retry (the button goes with its entry). */
+  .job-item:focus-visible {
+    outline: 2px solid var(--focus-stroke-outer);
+    outline-offset: -2px;
   }
 </style>

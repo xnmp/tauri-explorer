@@ -6,7 +6,7 @@
 // from the emitted tokens exactly as the browser paints them, and contrast is
 // computed with an oracle independent of the production helper.
 import { describe, expect, it } from "vitest";
-import { buildTheme, contrastRatio, hexToRgb } from "$lib/domain/theme-from-palette";
+import { buildTheme, contrastRatio, hexToRgb, rgbToOklch } from "$lib/domain/theme-from-palette";
 
 const AA_TEXT = 4.5;
 const FILL_TOKENS = ["accent", "system-success", "system-caution", "system-critical"] as const;
@@ -175,6 +175,20 @@ describe("generated theme text contrast", () => {
       const [p, s, t] = TEXT_TOKENS.map((token) => worstContrast(opaque(tokens, token), surf));
       return p > s && s > t && s >= 1.2 * t ? [] : [`${label}: ${p.toFixed(2)} / ${s.toFixed(2)} / ${t.toFixed(2)}`];
     });
+    expect(failures).toEqual([]);
+  });
+
+  it("solves -text companions in OKLCH lightness, keeping the fill's hue", () => {
+    const hue = (c: Rgb) => rgbToOklch({ r: c[0], g: c[1], b: c[2] });
+    const failures = cases.flatMap(({ label, tokens }) =>
+      FILL_TOKENS.flatMap((fill) => {
+        if (!tokens.has(`${fill}-text`)) return [];
+        const [from, to] = [hue(opaque(tokens, fill)), hue(opaque(tokens, `${fill}-text`))];
+        if (from.c < 0.03 || to.c < 0.03) return []; // hue is noise near grey
+        const drift = Math.abs(((to.h - from.h + 540) % 360) - 180);
+        return drift <= 4 ? [] : [`${label}: --${fill}-text hue drifted ${drift.toFixed(1)}°`];
+      }),
+    );
     expect(failures).toEqual([]);
   });
 

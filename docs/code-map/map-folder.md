@@ -401,7 +401,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `zoom.ts` — CSS zoom level utils.
 - `raf-coalesce.ts` — coalesce high-freq value streams via rAF.
 - `scroll-jank-monitor.ts` — pure rAF-gap sampler (rAF/cancel injected) reporting long-frame counts for scroll-jank diagnostics; wired into `TilesView.svelte` (#593).
-- `theme-from-palette.ts` — build theme from extracted image palette (#203).
+- `theme-from-palette.ts` — build theme from extracted image palette (#203); text tokens solved in OKLCH for WCAG AA on every composited surface (#791).
 - `ai-rename.ts` — pure AI-rename suggestion logic (#145).
 - `terminal-command.ts` — shell command construction/quoting for terminal.
 - `terminal-cwd-sync.ts` — "terminal follows explorer" cwd decision (#149).

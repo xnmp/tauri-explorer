@@ -25,7 +25,7 @@ export interface PreviewTarget {
   readonly id: string;
   readonly title: string;
   readonly typeLabel?: string;
-  /** Local image shown through the thumbnail service (never as a file entry). */
+  /** Local image (never shown as a file entry): a thumbnail in the pane, full resolution in fullscreen. Any readable path, e.g. a plugin temp file. */
   readonly imagePath?: string;
   readonly badge?: string;
   readonly details?: readonly { label: string; value: string }[];

@@ -31,6 +31,16 @@ All notable changes to Tauri Explorer.
   follows the new size, instead of switching the pane to Tiles; from a
   built-in view it still switches to Tiles (#1029).
 
+### Fixed
+
+- An image shown in Preview by a plugin, such as an unsaved TraceExplorer
+  image that exists only in a temp folder, can now be viewed full screen like
+  any image file: double-click the Preview pane or click the image, zoom with
+  +/-, 0 or the mouse wheel, drag or use the arrow keys to pan, and press Esc
+  to leave. Full screen shows the image at its full resolution rather than
+  the Preview thumbnail. Plugin Preview-info sections are now hidden in full
+  screen too, for files as well as plugin images (#1033).
+
 ## v1.11.4 — 2026-10-09
 
 This update records why a folder takes more than 5 seconds to load, so you

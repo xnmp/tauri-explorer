@@ -278,6 +278,7 @@ backend for E2E/browser).
 - Supported-platform PDF proof also uses the hosted Windows native suite and `e2e-tauri/macos-pdf-preview.ts` through Appium Mac2/XCTest. `e2e-tauri/macos-display.swift` measures display geometry; `e2e-tauri/pdf_screenshot.py` reads native page landmarks without browser scripting or modifying screenshots, with negative controls in `e2e-tauri/test_pdf_screenshot.py`.
 
 - `state/preview-lifetime.ts` — revision tokens and blob ownership across text/image/archive/directory/video loads and unmount.
+- Fullscreen image viewing (#219, #236, #1033): `composables/use-preview-fullscreen.svelte.ts` (one controller per pane: gestures, keys, chrome-hiding attribute) + `domain/image-viewer-zoom.ts` (math) + `components/PreviewImageSurface.svelte` (shared image surface), used by file images in `PreviewPane.svelte` and by `PluginPreviewTarget.svelte`. Full-resolution images for both load through `state/preview-image.ts`. Left/Right sibling stepping is file-only (`e2e/plugin-preview-target-fullscreen.spec.ts`, `e2e/image-preview-fullscreen.spec.ts`).
 
 - `components/PreviewPane.svelte` — text/image/diff/archive/CSV preview + syntax highlight; CSV uses shared column sizing, a single outer horizontal scroll surface, and virtualized data rows; shared controlled resize (width at right, height at top/bottom); pointer capture, dock-aware keyboard bounds and fullscreen retirement; reads `settingsStore.resolvedPreviewPanePosition` (never the raw mode) for its own dock class
 - `domain/preview-size.ts` — resolved dock selects the raw dimension setting and bounded resize options; zero decodes only at the source.
@@ -293,7 +294,7 @@ backend for E2E/browser).
 - `domain/syntax-highlight.ts` — `highlightCode`, `highlightDiffLine` (hljs)
 - `domain/csv-preview.ts` — quoted CSV table parser; malformed input leaves PreviewPane on its existing text path (#666)
 - `domain/diff.ts`, `domain/markdown.ts` — diff parsing, markdown render
-- `api/files.ts` (readTextFile, readImageAsBlobUrl, listArchiveContents, gitDiff)
+- `api/files.ts` (readTextFile, readImageAsBlobUrl, listArchiveContents, gitDiff); `state/preview-image.ts` drives `readImageAsBlobUrl` as the image fallback
 - `themes/syntax.css` — shared hljs token colors
 - FLOW: selection change → PreviewPane fetches content by type → CSV parses to a shared-column virtual table or text highlights/renders. 512KB read cap, 200 CSV data-row cap, 50KB highlight cap.
 

@@ -1,11 +1,14 @@
 <!--
   Folder-list preview: the children of a previewed directory or ZIP archive,
   with an indicator when the preview descended through single-child folders.
+  Rows are virtualized: a folder can hold thousands of children, and mounting
+  a FileIcon for each one lagged the whole UI (#1040).
 -->
 <script lang="ts">
   import type { FileEntry } from "$lib/domain/file";
   import { getFileIconColor } from "$lib/domain/file-types";
   import FileIcon from "./FileIcon.svelte";
+  import VirtualList from "./VirtualList.svelte";
 
   interface Props {
     entries: readonly FileEntry[];
@@ -15,6 +18,9 @@
   }
 
   let { entries, collapsedRoot, collapsedNote }: Props = $props();
+
+  // Fixed row height for the virtual window; `.folder-item` fills it.
+  const ROW_HEIGHT = 24;
 </script>
 
 <div class="preview-folder-list">
@@ -27,21 +33,31 @@
       <span class="collapsed-root-note">{collapsedNote}</span>
     </div>
   {/if}
-  {#each entries as child}
-    <div class="folder-item" class:is-directory={child.kind === "directory"}>
-      <span class="folder-item-icon" style:color={child.kind !== "directory" ? getFileIconColor(child) : undefined}>
-        <FileIcon entry={child} size="small" />
-      </span>
-      <span class="folder-item-name">{child.name}</span>
-    </div>
-  {/each}
+  <VirtualList items={entries as FileEntry[]} itemHeight={ROW_HEIGHT} class="preview-folder-rows">
+    {#snippet children(child)}
+      <div class="folder-item" class:is-directory={child.kind === "directory"}>
+        <span class="folder-item-icon" style:color={child.kind !== "directory" ? getFileIconColor(child) : undefined}>
+          <FileIcon entry={child} size="small" />
+        </span>
+        <span class="folder-item-name">{child.name}</span>
+      </div>
+    {/snippet}
+  </VirtualList>
 </div>
 
 <style>
   .preview-folder-list {
+    display: flex;
     flex: 1;
-    overflow: auto;
+    flex-direction: column;
+    min-height: 0;
     padding: 4px 0;
+  }
+
+  /* VirtualList's viewport owns the vertical scroll; without min-height: 0 the
+     flex child grows to the full list height and every row renders (#469). */
+  .preview-folder-list :global(.preview-folder-rows) {
+    min-height: 0;
   }
 
   .collapsed-root-indicator {
@@ -55,6 +71,7 @@
     border-radius: var(--radius-sm);
     font-size: 12px;
     color: var(--text-secondary);
+    flex-shrink: 0;
   }
 
   .collapsed-root-icon {
@@ -81,7 +98,9 @@
     display: flex;
     align-items: center;
     gap: 6px;
-    padding: 4px 16px;
+    box-sizing: border-box;
+    height: 100%;
+    padding: 0 16px;
     font-size: 13px;
     color: var(--text-secondary);
   }

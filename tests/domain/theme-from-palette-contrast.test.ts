@@ -79,6 +79,31 @@ function worstContrast(text: Rgb, surf: Record<string, Rgb>): number {
   return Math.min(...Object.values(surf).map((s) => oracleContrast(text, s)));
 }
 
+const oklchOf = (c: Rgb) => rgbToOklch({ r: c[0], g: c[1], b: c[2] });
+const hueDrift = (a: number, b: number) => Math.abs(((b - a + 540) % 360) - 180);
+
+/** Largest chroma at OKLCH lightness `l` and hue `h` inside sRGB (Ottosson's inverse). */
+function maxInGamutChroma(l: number, h: number): number {
+  const inGamut = (c: number) => {
+    const A = c * Math.cos((h * Math.PI) / 180);
+    const B = c * Math.sin((h * Math.PI) / 180);
+    const L = (l + 0.3963377774 * A + 0.2158037573 * B) ** 3;
+    const M = (l - 0.1055613458 * A - 0.0638541728 * B) ** 3;
+    const S = (l - 0.0894841775 * A - 1.291485548 * B) ** 3;
+    return [
+      4.0767416621 * L - 3.3077115913 * M + 0.2309699292 * S,
+      -1.2684380046 * L + 2.6097574011 * M - 0.3413193965 * S,
+      -0.0041960863 * L - 0.7034186147 * M + 1.707614701 * S,
+    ].every((v) => v >= -1e-4 && v <= 1 + 1e-4);
+  };
+  let [lo, hi] = [0, 0.5];
+  for (let i = 0; i < 30; i++) {
+    const mid = (lo + hi) / 2;
+    if (inGamut(mid)) lo = mid; else hi = mid;
+  }
+  return lo;
+}
+
 /** Deterministic PRNG so failures reproduce. */
 function mulberry32(seed: number) {
   return () => {
@@ -178,17 +203,37 @@ describe("generated theme text contrast", () => {
     expect(failures).toEqual([]);
   });
 
-  it("solves -text companions in OKLCH lightness, keeping the fill's hue", () => {
-    const hue = (c: Rgb) => rgbToOklch({ r: c[0], g: c[1], b: c[2] });
+  it("solves -text companions in OKLCH lightness, keeping the fill's hue and chroma", () => {
     const failures = cases.flatMap(({ label, tokens }) =>
       FILL_TOKENS.flatMap((fill) => {
         if (!tokens.has(`${fill}-text`)) return [];
-        const [from, to] = [hue(opaque(tokens, fill)), hue(opaque(tokens, `${fill}-text`))];
-        if (from.c < 0.03 || to.c < 0.03) return []; // hue is noise near grey
-        const drift = Math.abs(((to.h - from.h + 540) % 360) - 180);
-        return drift <= 4 ? [] : [`${label}: --${fill}-text hue drifted ${drift.toFixed(1)}°`];
+        const [from, to] = [oklchOf(opaque(tokens, fill)), oklchOf(opaque(tokens, `${fill}-text`))];
+        if (from.c < 0.03) return []; // a near-grey fill has no hue to keep
+        // Chroma may only shrink as far as the sRGB gamut forces at the new lightness.
+        const expected = Math.min(from.c, maxInGamutChroma(to.l, from.h));
+        const drift = hueDrift(from.h, to.h);
+        return to.c >= expected - 0.02 && (expected < 0.03 || drift <= 4)
+          ? []
+          : [`${label}: --${fill}-text c ${to.c.toFixed(3)} (expected ≥ ${expected.toFixed(3)}), hue drift ${drift.toFixed(1)}°`];
       }),
     );
+    expect(failures).toEqual([]);
+  });
+
+  it("keeps the surface's tint in secondary and tertiary text", () => {
+    // Text is seeded from the surface hue; solving lightness must not grey it.
+    // (Primary text sits near white/black by design, where hue is noise.)
+    const failures = cases.flatMap(({ label, tokens }) => {
+      const bg = oklchOf(opaque(tokens, "background-solid"));
+      if (bg.c < 0.03) return [];
+      return (["text-secondary", "text-tertiary"] as const).flatMap((token) => {
+        const t = oklchOf(opaque(tokens, token));
+        const drift = hueDrift(bg.h, t.h);
+        return t.c >= 0.2 * bg.c && drift <= 25
+          ? []
+          : [`${label}: --${token} c ${t.c.toFixed(3)} vs surface ${bg.c.toFixed(3)}, hue drift ${drift.toFixed(1)}°`];
+      });
+    });
     expect(failures).toEqual([]);
   });
 

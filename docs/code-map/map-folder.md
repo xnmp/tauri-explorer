@@ -30,7 +30,8 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `FileList.svelte` — dispatches to Details/List/Tiles by view mode; hosts marquee, drop, empty-state. Central view entry.
 - `PluginInspector.svelte` — selection-aware right-side host for plugin inspector contributions; hidden when none apply.
 - `PluginFileView.svelte` — hosts a plugin file view (SDK 2) in place of a pane's listing, with a pane-scoped handle; error boundary offers retry or return to files, and Preview targets it owned are cleared on unmount.
-- `PluginPreviewTarget.svelte` — Preview of a plugin target (a non-file subject): image, details and explicit actions only, no file actions, opening, sibling stepping or dragging. Its chrome is placed in a vertical dock by `PreviewPane.svelte`'s grid rules.
+- `PluginPreviewTarget.svelte` — Preview of a plugin target (a non-file subject): image, details and explicit actions only, no file actions, opening, sibling stepping or dragging. Its chrome is placed in a vertical dock by `PreviewPane.svelte`'s grid rules. Its image fullscreens like a file image through the pane's controller: a 1024px thumbnail in the pane, the full-resolution image (loaded like a file image) once fullscreen (#1033).
+- `PreviewImageSurface.svelte` — the Preview pane's image surface (container, image, zoom indicator, fullscreen styles) shared by file images and plugin targets; event handling comes from `use-preview-fullscreen` (#1033).
 - `DetailsView.svelte` — virtual-scrolled table view (columns, resize, sort headers).
 - `ListView.svelte` — CSS-grid compact list view.
 - `TilesView.svelte` — row-virtualized tile view with thumbnails; renders through `TileSurface.svelte`/`TileVisual.svelte`; runs `scroll-jank-monitor.ts` during scroll and logs `tiles-scroll-jank` events only when jank occurred (#593).
@@ -122,6 +123,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `git-graph-coverage.ts` — repository observation leases shared by pending graph reads and retained snapshots; listener/watch acknowledgement precedes reads, final release drains acquisition, and UNC polling roots stay uncached.
 - `directory-watch.ts` — generic ordered path-lease ownership plus the directory adapter; retains exact release authority across failed teardown and drains late acquisition; reused by Git, thumbnails, Miller columns and drives.
 - `preview-lifetime.ts` — full-revision preview request and object-URL ownership; stale results cannot publish or revoke a replacement.
+- `preview-image.ts` — full-resolution Preview image load for files and plugin targets: asset protocol + off-screen decode, then the backend `read_image_data_url` fallback (paths outside the asset scope, cloud placeholders; the only path in browser mode); blob ownership through the caller's lifetime (#1033).
 - `terminal-key-handler.ts` — xterm key adapter: eligible command ownership precedes clipboard/readline effects, with modifier tracking and chord retirement.
 - `pdf-preview.svelte.ts` — latest-document/page intent and detached-canvas render lifetimes; releases departed pages and cancels owned PDF workers (#728–#730).
 - `terminal-session.ts` — frontend terminal reservation/listener/spawn lifetime; drains late resources and serializes restart/stop. Owns the session's only input path (`domain/terminal-input-queue.ts`): opened at start/restart so typeahead is kept, attached at reservation, closed on stop/exit; `insert` builds text (path insertions) in the spawned shell's dialect and holds it across an exited shell for the next start (#709, #882).
@@ -289,6 +291,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 ## src/lib/composables/ — reusable behavior modules (`.svelte.ts` = runes-aware).
 
 - `use-lazy-dialog.svelte.ts` — binds one dialog open predicate to its loader and retires it with the host effect.
+- `use-preview-fullscreen.svelte.ts` — Preview fullscreen controller shared by file images and plugin targets: toggle/exit, zoom/pan state, wheel/pointer/click handlers and keys (`createPreviewFullscreen`, effect-free and unit-tested), plus the window key listener and `data-preview-fullscreen` attribute (`usePreviewFullscreen`) (#1033).
 
 - `use-item-interactions.svelte.ts` — shared click/select/activate logic across views.
 - `use-inline-rename.svelte.ts` — inline rename edit lifecycle.
@@ -387,6 +390,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `settings-numbers.ts` — Numeric preference consumer contracts shared by persisted validation and interactive setters.
 - `folder-preview.ts` — folder preview image selection (#146).
 - `preview-size.ts` — pure dock-to-setting resize policy; source-zero defaults and bounded width/height options.
+- `image-viewer-zoom.ts` — pure fullscreen image zoom/pan math: clamped zoom, cursor-anchored zoom, pan, transform and the fullscreen key map (#219, #236, #1033).
 - `image-crop.ts` — full-resolution crop bounds and measured pointer mapping; fixed ICNS canvas projection with transparent padding (#681, crop UI/save implementation pending).
 - `preview-pane-position.ts` — validate/cycle preview dock edge right/bottom/top, plus "auto" mode/heuristic (`resolveAutoDockPosition`, #460, #467).
 - `nerd-icons.ts` — nerd-font icon mappings (Material theme).

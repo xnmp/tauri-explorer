@@ -2,21 +2,36 @@
   Preview of a plugin target (SDK 2): a non-file subject such as an unsaved
   generated image or an outside reference. It shows the target's image,
   details and explicit actions only — no file actions, opening, sibling
-  stepping or dragging, because it is not an Explorer file.
+  stepping or dragging, because it is not an Explorer file. Its image
+  fullscreens like a file image, through the pane's fullscreen controller
+  (#1033): the pane shows a thumbnail, fullscreen the full-resolution image.
 -->
 <script lang="ts">
+  import { onDestroy, type Snippet } from "svelte";
   import { getThumbnailData } from "$lib/api/thumbnails";
+  import { loadPreviewImage } from "$lib/state/preview-image";
+  import type { PreviewFullscreen } from "$lib/composables/use-preview-fullscreen.svelte";
   import type { PreviewTarget, PreviewTargetAction } from "$lib/plugins/preview-registry.svelte";
-  import type { Snippet } from "svelte";
+  import { createPreviewLifetime } from "$lib/state/preview-lifetime";
+  import PreviewImageSurface from "./PreviewImageSurface.svelte";
 
   interface Props {
     target: PreviewTarget;
     showInfo: boolean;
+    fullscreen: PreviewFullscreen;
     sections?: Snippet;
   }
 
-  let { target, showInfo, sections }: Props = $props();
+  let { target, showInfo, fullscreen, sections }: Props = $props();
   let imageUrl = $state<string | null>(null);
+  // The full-resolution image, loaded like a file image's (asset protocol,
+  // then the backend read), so a path outside the current folder — such as a
+  // plugin's temp directory — works too. Fetched the first time this target
+  // goes fullscreen and kept for it; the thumbnail shows until it decodes.
+  let fullImage = $state<{ path: string; url: string } | null>(null);
+  const fullImageLifetime = createPreviewLifetime((url) => URL.revokeObjectURL(url));
+  onDestroy(() => fullImageLifetime.dispose());
+  const shownUrl = $derived(fullImage && fullImage.path === target.imagePath ? fullImage.url : imageUrl);
   let imageError = $state(false);
   let running = $state<string | null>(null);
   let actionError = $state("");
@@ -33,6 +48,19 @@
       if (result.ok) { owned = result.data; imageUrl = result.data; } else imageError = true;
     });
     return () => { cancelled = true; if (owned) URL.revokeObjectURL(owned); };
+  });
+
+  $effect(() => {
+    const path = target.imagePath;
+    if (!fullscreen.active || !path || fullImage?.path === path) return;
+    const request = fullImageLifetime.begin(path);
+    void loadPreviewImage(path, target.id, {
+      isCurrent: () => fullImageLifetime.isCurrent(request),
+      adoptBlob: (url) => fullImageLifetime.adoptBlob(request, url),
+      releaseBlob: (url) => fullImageLifetime.releaseBlob(request, url),
+    }).then((image) => {
+      if (image.status === "ready") fullImage = { path, url: image.url };
+    });
   });
 
   // An action belongs to the target it was started for.
@@ -57,8 +85,8 @@
 {/if}
 
 <div class="preview-content target-content" role="region" aria-label="Preview of {target.title}">
-  {#if imageUrl}
-    <img src={imageUrl} alt={target.title} class="preview-image" draggable="false" />
+  {#if shownUrl}
+    <PreviewImageSurface src={shownUrl} alt={target.title} {fullscreen} />
   {:else if target.imagePath && !imageError}
     <div class="preview-loading"><div class="spinner"></div></div>
   {:else}
@@ -108,8 +136,7 @@
   .preview-header { display: flex; flex-direction: column; gap: 6px; padding: 16px var(--preview-info-inset) 14px; border-bottom: 1px solid var(--divider); flex-shrink: 0; }
   .preview-filename { font-size: var(--font-size-body); font-weight: 600; color: var(--text-primary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .preview-type-badge { display: inline-flex; align-self: flex-start; font-size: 10px; line-height: 1; color: var(--accent-text, var(--accent)); background: color-mix(in srgb, var(--accent) 12%, transparent); padding: 3px 8px; border-radius: var(--radius-pill); }
-  .preview-content { position: relative; flex: 1; overflow: auto; display: flex; flex-direction: column; min-height: 0; padding: 12px; }
-  .preview-image { max-width: 100%; max-height: 100%; object-fit: contain; border-radius: var(--radius-sm); box-shadow: var(--shadow-card); }
+  .preview-content { position: relative; flex: 1; overflow: auto; display: flex; flex-direction: column; min-height: 0; }
   .preview-loading { display: flex; align-items: center; justify-content: center; flex: 1; padding: 24px; }
   .spinner { width: 20px; height: 20px; border: 1.5px solid var(--divider); border-top-color: var(--accent); border-radius: 50%; animation: target-spin 600ms linear infinite; }
   @keyframes target-spin { to { transform: rotate(360deg); } }
@@ -120,7 +147,6 @@
   .info-label { color: var(--text-tertiary); flex-shrink: 0; }
   .info-value { color: var(--text-secondary); text-align: right; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .target-content { display: flex; align-items: center; justify-content: center; }
-  .target-content .preview-image { max-width: 100%; max-height: 100%; object-fit: contain; }
   .target-actions-area { flex-shrink: 0; min-width: 0; }
   .target-actions { display: flex; align-items: center; gap: 6px; padding: 6px 12px; flex-wrap: wrap; }
   .target-badge { font-size: 10px; padding: 2px 6px; border-radius: 3px; color: var(--system-caution-text, var(--text-primary)); background: color-mix(in srgb, var(--system-caution-text, #a76d24) 14%, transparent); }

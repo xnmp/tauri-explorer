@@ -37,6 +37,7 @@ function listDemo(path: string): DirectoryListing {
           entry("subfolder", `${DEMO_ROOT}subfolder`, "directory"),
           entry("hello.txt", `${DEMO_ROOT}hello.txt`, "file", 12),
           entry("readme.md", `${DEMO_ROOT}readme.md`, "file", 128),
+          entry("theme-source.png", `${DEMO_ROOT}theme-source.png`, "file", 64),
         ];
   return { path, entries };
 }

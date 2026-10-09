@@ -2,6 +2,26 @@
 
 All notable changes to Tauri Explorer.
 
+## Unreleased
+
+### Added
+
+- Plugin file views can match the folder's tile size (capability
+  `tileSize`): the pane handle's `tileSize` gives the size the Tiles view
+  would use there (the folder's own size from Tile View: Set Size or the
+  context menu's Icon Size, else the global setting) and updates when either
+  changes, and `ui/file-tiles` accepts that size through an optional `size`
+  prop. Without it, file tiles in a plugin file view follow that folder's
+  size too, so plugins built before this also follow Tile View: Set Size;
+  elsewhere they keep following the global setting. A malformed per-folder
+  size now falls back to the global setting rather than Medium (#1029).
+
+### Changed
+
+- Tile View: Set Size keeps a plugin file view that is showing, which now
+  follows the new size, instead of switching the pane to Tiles; from a
+  built-in view it still switches to Tiles (#1029).
+
 ## v1.11.4 — 2026-10-09
 
 This update records why a folder takes more than 5 seconds to load, so you

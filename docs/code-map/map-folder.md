@@ -36,7 +36,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `TilesView.svelte` — row-virtualized tile view with thumbnails; renders through `TileSurface.svelte`/`TileVisual.svelte`; runs `scroll-jank-monitor.ts` during scroll and logs `tiles-scroll-jank` events only when jank occurred (#593).
 - `TileSurface.svelte` — tile-grid root: publishes `domain/tile-layout.ts` as tile CSS variables and owns all `.tile-item` chrome (hover, selected underline, ghosted/cut/drop states, icon scaling) for TilesView and FileTiles.
 - `TileVisual.svelte` — one tile's icon block (image/video thumbnail, folder preview, FileIcon, video marker) and name; the name defaults to `EntryNameLabel`, TilesView passes `EntryName`.
-- `FileTiles.svelte` — the SDK module `ui/file-tiles`: non-virtualized Tiles-view tiles for plugin sections, callbacks for select/open/menu, own-width columns, roving focus.
+- `FileTiles.svelte` — the SDK module `ui/file-tiles`: non-virtualized Tiles-view tiles for plugin sections, callbacks for select/open/menu, own-width columns, roving focus; size from the `size` prop, else the enclosing plugin view's context, else the global setting.
 - `VirtualList.svelte` — variable-height windowed scroller with persistent extent canvas; publishes scroll/layout settlement for marquee hit testing and cursor reveal. Perf-critical.
 - `MillerColumns.svelte` — column/Miller-columns browsing mode.
 - `FileItem.svelte` — single entry row/tile (icon, name, badges, selection state).
@@ -221,6 +221,8 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `home.svelte.ts` — cached home directory (sync `.value`).
 - `sidebar-views.svelte.ts` — activity-bar sidebar view registry (#52).
 - `folder-views.svelte.ts` — per-folder view overrides (e.g. thumbnail size, #8762).
+- `folder-tile-size.ts` — a folder's effective tile size (valid override, else global `thumbnailSize`) for TilesView, the context menu, "Tile View: Set Size" and `FileViewPane.tileSize`.
+- `tile-size-context.ts` — Svelte context carrying the pane's tile size from PluginFileView to `ui/file-tiles` without `size`.
 - `empty-folders.svelte.ts` — lazy empty-folder resolver (avoids per-subdir read_dir, #129).
 - `manual-hidden.svelte.ts` — per-folder manually-hidden entry registry.
 - `settings.svelte.ts` — global settings store (toggles, defaults). Very hot for feature flags. `reloadFromDisk()` adopts external settings.json edits (#599).
@@ -372,7 +374,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `src/lib/domain/copy-session.ts` — ordered native session event, conflict-decision and positional result contracts, plus the copy and move incomplete-session presentations.
 - `file-history.ts` — shared action, summary, receipt and HistoryPort types for the native history authority.
 - `virtual-layout.ts` — variable-height virtual list layout math (VirtualList).
-- `tile-layout.ts` — tile sizes (`THUMBNAIL_SIZE_CONFIG`, re-exported by settings), spacing/row-height `tileLayout()` and grid arrow-key `gridFocusStep()` shared by every tile grid.
+- `tile-layout.ts` — tile sizes (`THUMBNAIL_SIZE_CONFIG`, re-exported by settings), spacing/row-height `tileLayout()` and grid arrow-key `gridFocusStep()` shared by every tile grid; the SDK's `PaneTileSize`/`TileSizePreset` and `paneTileSize()`.
 - `detail-columns.ts` — Details column defaults, finite bounds, malformed-width normalization and visible grid projection.
 - `resize-size.ts` — bounded scalar normalization, visual/model delta conversion and axis-aware keyboard sizing.
 - `pane-viewport.ts` — pure descendant minima, canvas placement, active-pane reveal and keyboard divider policy.
@@ -816,7 +818,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `src-tauri/src/file_picker.rs` — owned native open/save picker requests; replies are scoped to their creating window.
 - `src-tauri/src/process_ext/windows_job.rs` — attach suspended launchers to kill-on-close JobObjects before descendants can start.
 - `src/lib/plugins/installed.ts` — load/remove installed contributions and synchronize package changes between windows.
-- `src/lib/plugins/runtime-sdk.ts`, `src/lib/plugins/svelte-runtime.d.ts` — frozen SDK and exact shared Svelte compiler/runtime bindings; host modules `ui/modal`, `ui/image-editor`, `ui/file-tiles` (capability `fileTiles`).
+- `src/lib/plugins/runtime-sdk.ts`, `src/lib/plugins/svelte-runtime.d.ts` — frozen SDK and exact shared Svelte compiler/runtime bindings; host modules `ui/modal`, `ui/image-editor`, `ui/file-tiles` (capability `fileTiles`); capability `tileSize` (`FileViewPane.tileSize`, file-tiles `size`).
 - `src/lib/components/InstalledPluginSettings.svelte` — install, enable, remove and activation errors in Settings.
 
 TraceExplorer's image UI, provider adapters and SQLite journal are maintained in https://github.com/xnmp/TraceExplorer rather than compiled into this host. Core crop outcomes remain covered in `e2e/image-crop.spec.ts` and `e2e/image-editor.spec.ts`.

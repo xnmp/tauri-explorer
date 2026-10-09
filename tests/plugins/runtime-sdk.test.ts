@@ -12,12 +12,12 @@ interface Sdk {
   modules: Record<string, { default?: unknown }>;
 }
 
-it("announces the file-tiles module alongside the existing SDK 2 contract", () => {
+it("announces the file-tiles module and pane tile sizes alongside the existing SDK 2 contract", () => {
   exposePluginSDK();
   const sdk = (globalThis as { __TAURI_EXPLORER_PLUGIN_SDK__?: Sdk }).__TAURI_EXPLORER_PLUGIN_SDK__!;
   expect(sdk.sdkVersion).toBe(1);
   expect(sdk.apiVersion).toBe(2);
-  expect(sdk.capabilities).toEqual(expect.arrayContaining(["fileViews", "previewInfo", "previewTargets", "blobWorkers", "fileTiles"]));
+  expect(sdk.capabilities).toEqual(expect.arrayContaining(["fileViews", "previewInfo", "previewTargets", "blobWorkers", "fileTiles", "tileSize"]));
   for (const name of ["ui/modal", "ui/image-editor", "ui/file-tiles"]) {
     expect(typeof sdk.modules[name]?.default, name).toBe("function");
   }

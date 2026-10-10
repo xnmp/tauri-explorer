@@ -970,7 +970,7 @@
           </div>
         </section>
 
-        <section class="settings-section" class:hidden={!sectionVisible(["Plugins", "install enable disable extensions packages"], ...pluginRegistry.plugins.map((p) => [p.name, p.description]), ...pluginSettingsSections.sections.map((section) => [section.title, ...section.rows.flatMap((row) => [row.label, row.description ?? ""])]))}>
+        <section class="settings-section" class:hidden={!sectionVisible(["Plugins", "install enable disable extensions packages"], ...pluginRegistry.plugins.map((p) => [p.name, p.description]), ...pluginSettingsSections.sections.map((section) => [section.title, ...section.rows.flatMap((row) => [row.label, row.description ?? ""]),...section.actions.flatMap(action=>[action.label,action.description??""])]))}>
           <h3 class="section-title">Plugins</h3>
           <button class="shortcuts-link" onclick={() => dialogStore.openPlugins()}>Open Plugins</button>
         </section>

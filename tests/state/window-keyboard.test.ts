@@ -21,7 +21,7 @@ function fixture(terminalFocus = false, ancestors: readonly string[] = []) {
   Object.assign(target, { tagName: terminalFocus ? "TEXTAREA" : "DIV", closest });
   const executeCommand = vi.fn(async (_id: string) => {});
   const available = new Set<string>();
-  const dialogs = { hasModalOpen: false, closeAll: vi.fn(), openJobsPanel: vi.fn(), openSettings: vi.fn() };
+  const dialogs = { hasModalOpen: false, requestCloseTop: vi.fn(), openJobsPanel: vi.fn(), openSettings: vi.fn() };
   const terminal = { enabled: true, toggle: vi.fn() };
   const explorer = {
     showFilter: false,
@@ -210,13 +210,20 @@ describe("window keyboard routing", () => {
     expect(f.explorer.closeFilter).not.toHaveBeenCalled();
   });
 
-  it("modal Escape closes the modal before the directory filter", () => {
+  it("modal Escape requests the top modal closure before the directory filter", () => {
     const f = fixture();
     f.dialogs.hasModalOpen = true;
     f.explorer.showFilter = true;
     f.press("Escape");
-    expect(f.dialogs.closeAll).toHaveBeenCalledOnce();
+    expect(f.dialogs.requestCloseTop).toHaveBeenCalledOnce();
     expect(f.explorer.closeFilter).not.toHaveBeenCalled();
+  });
+
+  it("an already accepted modal Escape cannot request another closure", () => {
+    const f = fixture();
+    f.dialogs.hasModalOpen = true;
+    f.press("Escape", {}, true);
+    expect(f.dialogs.requestCloseTop).not.toHaveBeenCalled();
   });
 
   it("editable and modal contexts do not run ordinary commands or hardcoded settings/jobs", () => {

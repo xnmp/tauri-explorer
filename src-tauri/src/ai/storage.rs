@@ -327,10 +327,10 @@ pub fn check_revision(config: &Configuration, expected: u64) -> Result<()> {
         ))
     }
 }
-fn read_value(path: &Path) -> Result<Option<Value>> {
+pub(super) fn read_value(path: &Path) -> Result<Option<Value>> {
     read_value_with_policy(path, false)
 }
-fn read_private_value(path: &Path) -> Result<Option<Value>> {
+pub(super) fn read_private_value(path: &Path) -> Result<Option<Value>> {
     read_value_with_policy(path, true)
 }
 fn read_value_with_policy(path: &Path, private: bool) -> Result<Option<Value>> {
@@ -450,7 +450,8 @@ fn migrate_summary_locked(root: &Path) -> Result<()> {
         return Ok(());
     }
     let target = root.join("plugin.trace.json");
-    let mut trace = read_value(&target)?.unwrap_or_else(|| json!({}));
+    let resolved = crate::config::resolve_write_target(&target).map_err(|_| storage_error())?;
+    let mut trace = read_value(&resolved)?.unwrap_or_else(|| json!({}));
     if !trace.is_object() {
         return Err(ServiceError::new(
             "unavailable",
@@ -471,7 +472,6 @@ fn migrate_summary_locked(root: &Path) -> Result<()> {
     }
     durable_write(&marker, b"{\"version\":1,\"state\":\"pending\"}")?;
     trace["summarizePrompts"] = json!(false);
-    let resolved = crate::config::resolve_write_target(&target).map_err(|_| storage_error())?;
     durable_write(
         &resolved,
         &serde_json::to_vec_pretty(&trace).map_err(|_| storage_error())?,
@@ -486,6 +486,7 @@ pub fn write_trace_config(root: &Path, data: &str) -> Result<()> {
     let _guard = store.lock()?;
     migrate_summary_locked(root)?;
     let target = root.join("plugin.trace.json");
+    let resolved = crate::config::resolve_write_target(&target).map_err(|_| storage_error())?;
     let mut incoming: Value = serde_json::from_str(data)
         .map_err(|_| ServiceError::invalid("Malformed Trace configuration"))?;
     if !incoming.is_object() {
@@ -494,12 +495,11 @@ pub fn write_trace_config(root: &Path, data: &str) -> Result<()> {
         ));
     }
     if incoming.get("summarizePrompts").is_none() {
-        if let Some(summary) = read_value(&target)?.and_then(|v| v.get("summarizePrompts").cloned())
+        if let Some(summary) = read_value(&resolved)?.and_then(|v| v.get("summarizePrompts").cloned())
         {
             incoming["summarizePrompts"] = summary;
         }
     }
-    let resolved = crate::config::resolve_write_target(&target).map_err(|_| storage_error())?;
     durable_write(
         &resolved,
         &serde_json::to_vec_pretty(&incoming).map_err(|_| storage_error())?,

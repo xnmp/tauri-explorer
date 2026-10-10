@@ -10,6 +10,7 @@
  * all contributions) on the spot.
  */
 
+import { isTauri } from "@tauri-apps/api/core";
 import { createPluginContext, type Plugin } from "./api";
 import { settingsStore } from "$lib/state/settings.svelte";
 import { demoPlugin } from "./demo";
@@ -33,7 +34,7 @@ export interface PluginInfo {
 
 function createPluginRegistry(
   plugins: Plugin[] = BUILT_IN_PLUGINS,
-  jobLifecycle: Pick<typeof pluginJobsController, "dispose"> = pluginJobsController,
+  jobLifecycle: Pick<typeof pluginJobsController, "dispose"> & Partial<Pick<typeof pluginJobsController, "init">> = pluginJobsController,
 ) {
   let registered = $state<Plugin[]>([...plugins]);
   // Contribution ranks survive removal of earlier plugins and async activation.
@@ -168,8 +169,9 @@ function createPluginRegistry(
     /** Activate all currently-enabled built-in plugins. Call once at startup. */
     async initPlugins(): Promise<void> {
       if (closed) return;
-      // Job event ownership starts lazily inside jobs.accept, before its
-      // backend invocation. Unused optional jobs do no startup IPC work.
+      // A window owns native snapshots even when its consumer contribution
+      // is absent. Initialization does not hold up unrelated activation.
+      if (isTauri()) void jobLifecycle.init?.().catch((error) => console.error("[plugins] background job recovery unavailable:", error));
       // Activations start together, in list order, so one that awaits
       // storage that never answers cannot hold back the others (#782). Their
       // contributions are placed by list position, not completion order.

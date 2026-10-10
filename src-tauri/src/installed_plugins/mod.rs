@@ -1,6 +1,8 @@
 //! Generic installed-package services; provider implementation stays external.
 mod backend;
-mod text_service;
+mod ai_operations;
+mod job_bridge;
+mod diagnostics;
 mod lifecycle;
 #[cfg(target_os = "linux")]
 mod ownership;
@@ -8,6 +10,14 @@ mod package;
 pub(crate) mod provenance;
 #[cfg(target_os = "linux")]
 mod queue;
+mod service_bridge;
+#[cfg(test)]
+mod service_bridge_tests;
+mod service_graph;
+#[cfg(test)]
+mod service_graph_tests;
+mod service_host;
+mod text_service;
 use crate::{config, error::AppError};
 use serde_json::Value;
 use std::{
@@ -16,10 +26,8 @@ use std::{
 };
 use tauri::Emitter;
 static LIFECYCLE: RwLock<()> = RwLock::new(());
-pub(super) fn read_lifecycle() -> Result<RwLockReadGuard<'static, ()>, AppError> {
-    LIFECYCLE
-        .read()
-        .map_err(|_| AppError::Other("Plugin lifecycle lock is unavailable".into()))
+pub(crate) fn read_lifecycle() -> Result<RwLockReadGuard<'static, ()>, AppError> {
+    crate::native_deadline::read(&LIFECYCLE,"Plugin lifecycle lock is unavailable")
 }
 static MUTATIONS: OnceLock<Mutex<()>> = OnceLock::new();
 static PENDING_INSTALL_ERRORS: Mutex<Vec<String>> = Mutex::new(Vec::new());
@@ -33,15 +41,31 @@ pub(super) fn initialize(app: tauri::AppHandle) -> Result<(), AppError> {
     }
     #[cfg(target_os = "linux")]
     let owner = ownership::acquire(&config::config_dir()?.canonicalize()?)?;
-    lifecycle::recover(&root()?)?;
     backend::initialize(app.clone());
+    // Ordinary browsing remains available if durable AI ownership is damaged.
+    // Package rollback and queued updates must not run until claims are readable.
+    let services_ready = service_host::initialize().is_ok();
+    if services_ready {
+        lifecycle::recover(&root()?)?;
+        service_bridge::recover_startup()?;
+        job_bridge::initialize()?;
+    } else {
+        PENDING_INSTALL_ERRORS
+            .lock()
+            .unwrap_or_else(|cause| cause.into_inner())
+            .push(
+                "AI operation storage requires recovery; queued package changes were deferred"
+                    .into(),
+            );
+    }
     #[cfg(target_os = "linux")]
     {
         *PROFILE_OWNER
             .lock()
             .unwrap_or_else(|cause| cause.into_inner()) = Some(owner);
         let directory = config::config_dir()?.join("pending-plugins");
-        if !matches!(std::fs::symlink_metadata(&directory), Err(cause) if cause.kind() == std::io::ErrorKind::NotFound)
+        if services_ready
+            && !matches!(std::fs::symlink_metadata(&directory), Err(cause) if cause.kind() == std::io::ErrorKind::NotFound)
         {
             let worker = std::thread::spawn(move || {
                 let errors = queue::apply(
@@ -103,6 +127,12 @@ fn write_lifecycle() -> Result<RwLockWriteGuard<'static, ()>, AppError> {
     }
     Ok(guard)
 }
+fn drain_idle(id: &str) -> Result<backend::DrainGuard, AppError> {
+    let _guard = write_lifecycle()?;
+    service_host::mutation_allowed(id)?;
+    if backend::busy(id) { return Err(AppError::Other("Finish active plugin operations before changing this package".into())); }
+    backend::begin_drain(id)
+}
 
 fn error_window(label: &str, visible: bool) -> bool {
     visible && (label == "main" || label.starts_with("explorer-"))
@@ -124,8 +154,26 @@ fn install_path(path: &Path) -> Result<package::Installed, AppError> {
         .get_or_init(|| Mutex::new(()))
         .lock()
         .map_err(|_| AppError::Other("Plugin installation lock is unavailable".into()))?;
-    let _lifecycle = write_lifecycle()?;
-    lifecycle::install(&root()?, path)
+    let candidate = package::prepare(&root()?, path)?;
+    let drain = {
+        let _lifecycle = write_lifecycle()?;
+        service_host::mutation_allowed(&candidate.manifest.id)?;
+        if backend::busy(&candidate.manifest.id) { return Err(AppError::Other("Finish active plugin operations before upgrading".into())); }
+        backend::begin_drain(&candidate.manifest.id)?
+    };
+    drain.quiesce()?;
+    let installed = {
+        let _lifecycle = write_lifecycle()?;
+        lifecycle::install(&root()?, path)?
+    };
+    drop(drain);
+    drop(_guard);
+    if installed.enabled {
+        if let Err(cause) = backend::activate(&installed.manifest.id) {
+            log::warn!("Installed plugin activation will retry on next use: {cause}");
+        }
+    } else { backend::retire(&installed.manifest.id); }
+    Ok(installed)
 }
 
 #[tauri::command]
@@ -153,10 +201,12 @@ pub async fn list_installed_plugins() -> Result<Value, AppError> {
 
 #[tauri::command]
 pub async fn plugin_backend_invoke(
+    window: tauri::WebviewWindow,
     package_id: String,
     method: String,
     params: Value,
 ) -> Result<Value, AppError> {
+    let origin_label=window.label().to_owned();
     tauri::async_runtime::spawn_blocking(move || {
         let _guard = read_lifecycle()?;
         if !package::list(&root()?)?
@@ -167,10 +217,35 @@ pub async fn plugin_backend_invoke(
                 "Plugin package is disabled or removed".into(),
             ));
         }
-        backend::call(&package_id, &method, params)
+        let _lease = backend::CallLease::acquire_method(&package_id,&method)?;
+        drop(_guard);
+        backend::call_with_origin(&package_id, &method, params,&origin_label)
     })
     .await
     .map_err(|error| AppError::WorkerFailed(error.to_string()))?
+}
+
+#[tauri::command]
+pub async fn plugin_jobs_snapshot(window:tauri::WebviewWindow)->Result<Value,AppError> {
+    let label=window.label().to_owned();
+    tauri::async_runtime::spawn_blocking(move||job_bridge::snapshot(&label)).await.map_err(|e|AppError::WorkerFailed(e.to_string()))?
+}
+#[tauri::command]
+pub async fn plugin_job_cancel(job_key:String)->Result<Value,AppError> {
+    tauri::async_runtime::spawn_blocking(move||job_bridge::cancel(&job_key)).await.map_err(|e|AppError::WorkerFailed(e.to_string()))?
+}
+#[tauri::command]
+pub async fn plugin_job_resume(job_key:String)->Result<Value,AppError> {
+    tauri::async_runtime::spawn_blocking(move||job_bridge::resume(&job_key)).await.map_err(|e|AppError::WorkerFailed(e.to_string()))?
+}
+#[tauri::command]
+pub async fn plugin_job_dismiss(job_key:String)->Result<Value,AppError> {
+    tauri::async_runtime::spawn_blocking(move|| {
+        if let Some(revision)=service_host::store()?.dismiss_job(&job_key)? {
+            backend::emit_job_event(serde_json::json!({"type":"dismissed","jobKey":job_key,"revision":revision}));
+        }
+        Ok(Value::Null)
+    }).await.map_err(|e|AppError::WorkerFailed(e.to_string()))?
 }
 
 #[tauri::command]
@@ -194,14 +269,18 @@ pub async fn uninstall_plugin(app: tauri::AppHandle, id: String) -> Result<(), A
             .get_or_init(|| Mutex::new(()))
             .lock()
             .map_err(|_| AppError::Other("Plugin installation lock is unavailable".into()))?;
-        let _lifecycle = write_lifecycle()?;
-        if backend::busy(&id) {
-            return Err(AppError::Other(
-                "Finish active plugin operations before removing this package".into(),
-            ));
-        }
-        backend::retire(&id);
-        package::uninstall(&root()?, &id)
+        let drain = drain_idle(&id)?;
+        drain.quiesce()?;
+        let result = {
+            let _lifecycle = write_lifecycle()?;
+            let mut remaining = package::list(&root()?)?;
+            remaining.retain(|entry| entry.manifest.id != id);
+            service_graph::validate_enabled(&remaining)?;
+            backend::retire(&id);
+            package::uninstall(&root()?, &id)
+        };
+        drop(drain);
+        result
     })
     .await
     .map_err(|error| AppError::Other(error.to_string()))?;
@@ -222,15 +301,38 @@ pub async fn set_plugin_package_enabled(
     enabled: bool,
 ) -> Result<(), AppError> {
     let result = tauri::async_runtime::spawn_blocking(move || {
+        let _mutation = MUTATIONS.get_or_init(|| Mutex::new(())).lock()
+            .map_err(|_| AppError::Other("Plugin installation lock is unavailable".into()))?;
+        {
+            let _guard = read_lifecycle()?;
+            let entries = package::list(&root()?)?;
+            let current = entries.iter().find(|entry| entry.manifest.id == id)
+                .ok_or_else(|| AppError::Other("Plugin package is not installed".into()))?;
+            if current.enabled == enabled { return Ok(()); }
+        }
+        let drain = if enabled { None } else { Some(drain_idle(&id)?) };
+        if let Some(drain) = &drain { drain.quiesce()?; }
+        let result = {
         let _guard = write_lifecycle()?;
         let root = root()?;
         let mut entries = package::list(&root)?;
+        let current=entries.iter().find(|entry|entry.manifest.id==id).ok_or_else(||AppError::Other("Plugin package is not installed".into()))?;
+        if current.enabled==enabled {return Ok(());}
+        if !enabled {service_host::mutation_allowed(&id)?;if backend::busy(&id) {return Err(AppError::Other("Finish active plugin operations before changing this package".into()));}}
+        else if service_host::store()?.claims()?.iter().any(|a|(a.consumer.package_id==id&&a.consumer.digest!=current.digest)||(a.provider.package_id==id&&a.provider.digest!=current.digest)) {return Err(AppError::Other("Enable the pinned package version to recover its AI operations".into()));}
         let entry = entries
             .iter_mut()
             .find(|entry| entry.manifest.id == id)
             .ok_or_else(|| AppError::Other("Plugin package is not installed".into()))?;
         entry.enabled = enabled;
+        service_graph::validate_enabled(&entries)?;
+        if !enabled {
+            backend::retire(&id);
+        }
         package::write_index(&root, &entries)
+        };
+        drop(drain);
+        result
     })
     .await
     .map_err(|cause| AppError::WorkerFailed(cause.to_string()))?;
@@ -252,4 +354,18 @@ mod error_delivery_tests {
         assert!(!error_window("main", false));
         assert!(!error_window("file-picker-1", true));
     }
+}
+
+#[tauri::command]
+pub async fn ai_operations_snapshot()->Result<Value,AppError> {
+    tauri::async_runtime::spawn_blocking(ai_operations::snapshot).await.map_err(|e|AppError::WorkerFailed(e.to_string()))?
+}
+#[tauri::command]
+pub async fn ai_operation_resolve(consumer_package:String,operation_id:String,action:String)->Result<Value,AppError> {
+    tauri::async_runtime::spawn_blocking(move||ai_operations::resolve(&consumer_package,&operation_id,&action)).await.map_err(|e|AppError::WorkerFailed(e.to_string()))?
+}
+
+/// The committed package controls legacy settings compatibility, never a renderer flag.
+pub(crate) fn image_source_mode_at(profile:&Path)->Result<u8,AppError> {
+    Ok(package::list(&profile.join("installed-plugins"))?.into_iter().find(|p|p.enabled&&p.manifest.id=="xnmp.trace-explorer"&&p.manifest.contributions.iter().any(|c|c=="openai-image")).map(|p|if p.manifest.sdk_version<3 {1}else{2}).unwrap_or(0))
 }

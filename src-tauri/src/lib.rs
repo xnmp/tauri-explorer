@@ -34,6 +34,18 @@ mod github;
 mod image_crop;
 mod image_operation;
 mod installed_plugins;
+mod native_deadline;
+mod recovery_actor;
+#[cfg(unix)]
+mod process_supervisor;
+
+/// Dispatch the private process anchor before initializing the application.
+pub fn run_process_supervisor() -> Option<i32> {
+    #[cfg(unix)]
+    { process_supervisor::early_mode() }
+    #[cfg(not(unix))]
+    { None }
+}
 mod load_diagnostics;
 mod nano_banana;
 mod palette;
@@ -47,6 +59,7 @@ mod renderer_owner;
 #[cfg(all(target_os = "linux", feature = "e2e-renderer-recovery"))]
 #[path = "../test_support/renderer_recovery.rs"]
 mod renderer_recovery;
+mod service_state;
 mod update_check;
 mod upscale;
 mod user_report;
@@ -478,6 +491,12 @@ pub fn run_with_process_entry(launch_dir: Option<String>, t_process_entry: std::
             installed_plugins::uninstall_plugin,
             installed_plugins::set_plugin_package_enabled,
             installed_plugins::plugin_backend_invoke,
+            installed_plugins::plugin_jobs_snapshot,
+            installed_plugins::plugin_job_cancel,
+            installed_plugins::plugin_job_resume,
+            installed_plugins::plugin_job_dismiss,
+            installed_plugins::ai_operations_snapshot,
+            installed_plugins::ai_operation_resolve,
             // Window appearance
             set_window_theme,
             // Pre-warmed window pool

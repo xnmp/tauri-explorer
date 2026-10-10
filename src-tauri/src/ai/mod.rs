@@ -1,9 +1,10 @@
 //! Host-owned short text service. Broker identities are supplied by native code;
 //! JSON request fields cannot claim another caller's work or credentials.
 mod adapters;
-mod credentials;
+pub(crate) mod credentials;
 pub mod domain;
 mod storage;
+pub(crate) mod image_migration;
 use credentials::{OsSecrets, SecretStore};
 use domain::*;
 pub use domain::{Describe, ServiceError, TextResult};

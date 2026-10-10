@@ -847,3 +847,41 @@ TraceExplorer's image UI, provider adapters and SQLite journal are maintained in
 - `src-tauri/src/ai/adapters.rs` — bounded cancellable text HTTP and candidate CLI formatting/parsing; CLI production dispatch is unavailable until managed-policy isolation is established.
 - `src-tauri/src/ai/tests.rs` — native local HTTP/fake CLI, cancellation, capacity, credential uncertainty, cross-process CAS and migration outcome tests.
 - `src-tauri/src/installed_plugins/text_service.rs` — active-only native reverse-text bridge with trusted incarnation identity and reserved cancellation capacity.
+
+### Shared AI services implementation checkpoint
+
+- `src-tauri/src/ai/image_migration.rs` — native receipt-gated legacy image connection cutover, write fencing and rollback import epochs.
+- `src-tauri/src/installed_plugins/ai_operations.rs` — host-owned retained operation snapshots and explicit resume, discard and Stop controls.
+- `src-tauri/src/installed_plugins/diagnostics.rs` — bounded broker stderr storage and safe error classification.
+- `src-tauri/src/installed_plugins/job_bridge.rs` — qualified native job registration, receipt observation, controls and origin snapshots.
+- `src-tauri/src/installed_plugins/service_bridge.rs` — declared reverse-service routing, artifact callbacks and original-operation recovery.
+- `src-tauri/src/installed_plugins/service_bridge_tests.rs` — private ledger and fake-transport fixtures for the real image service business boundary.
+- `src-tauri/src/installed_plugins/service_graph.rs` — pure declared service dependency and enablement validation.
+- `src-tauri/src/installed_plugins/service_graph_tests.rs` — service graph version, identity, optional dependency and cycle contracts.
+- `src-tauri/src/installed_plugins/service_host.rs` — host lifetime service store and package mutation claim checks.
+- `src-tauri/src/native_deadline.rs` — scoped monotonic native lock, queue and RPC budgets.
+- `src-tauri/src/process_supervisor.rs` — Unix parent-death process group anchor and bounded owned CLI output.
+- `src-tauri/src/recovery_actor.rs` — fixed-worker generation recovery ownership, queue limits and original deadlines.
+- `src-tauri/src/service_state/artifacts.rs` — captured inputs, reserved output stages, sealing, acquisition proof and retained artifact custody.
+- `src-tauri/src/service_state/intents.rs` — immutable semantic admission identities and replay-conflict validation.
+- `src-tauri/src/service_state/job.rs` — durable host job presentation and snapshot wire records.
+- `src-tauri/src/service_state/job_store.rs` — transactional job revisions, ownership, recovery, pruning and Stop presentation policy.
+- `src-tauri/src/service_state/mod.rs` — service ledger module boundary.
+- `src-tauri/src/service_state/model.rs` — native package generations, artifact descriptors, admissions and quotas.
+- `src-tauri/src/service_state/receipt.rs` — strict canonical provider receipt validation including bounded Codex diagnostics.
+- `src-tauri/src/service_state/receipts.rs` — durable monotonic receipt acceptance and immutable execution evidence.
+- `src-tauri/src/service_state/request.rs` — credential-free image request semantics and input/option validation.
+- `src-tauri/src/service_state/rules.rs` — pure service ownership, phase, identity and quota rules.
+- `src-tauri/src/service_state/store.rs` — SQLite service ownership transactions, retention and execution claims.
+- `src-tauri/src/service_state/tests.rs` — private native ledger, custody, restart, corruption and commit-failure fixtures.
+- `src-tauri/src/windows_artifact_namespace.rs` — candidate Windows anchored NTFS namespace primitives; native qualification and integration remain pending.
+- `src/lib/api/ai-operations.ts` — native unresolved AI operation snapshot and action adapter.
+- `src/lib/api/mock-ai-presentation.ts` — mock command parity for native jobs and unresolved AI operations.
+- `src/lib/api/native-plugin-jobs.ts` — native job snapshots, events and immutable-key controls.
+- `src/lib/components/AiOperationConfirmation.svelte` — operation-specific discard and Stop confirmation.
+- `src/lib/components/AiOperationsDialog.svelte` — retained execution and delivery recovery surface.
+- `src/lib/domain/ai-operations.ts` — pure unresolved operation presentation and action rules.
+- `src/lib/domain/native-plugin-jobs.ts` — strict native job validation and revision merge rules.
+- `src/lib/state/ai-operations.ts` — unresolved operation subscriptions, coalesced refresh and action state.
+- `src/lib/state/native-plugin-jobs.ts` — subscribe-before-snapshot job reconciliation and origin-scoped notifications.
+- `src/test-support/modal/DirtyCloseDialog.svelte` — browser fixture for dirty nested modal ownership.

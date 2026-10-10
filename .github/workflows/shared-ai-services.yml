@@ -1,0 +1,182 @@
+name: Shared AI native acceptance
+
+on:
+  pull_request:
+    branches: [dev, main]
+    paths:
+      - 'src-tauri/src/ai/**'
+      - 'src-tauri/src/windows_artifact_namespace.rs'
+      - 'src-tauri/test_support/windows_artifact_namespace_fixture/**'
+      - '.github/workflows/shared-ai-services.yml'
+  push:
+    branches: [dev, main]
+    paths:
+      - 'src-tauri/src/ai/**'
+      - 'src-tauri/src/windows_artifact_namespace.rs'
+      - 'src-tauri/test_support/windows_artifact_namespace_fixture/**'
+      - '.github/workflows/shared-ai-services.yml'
+  workflow_dispatch:
+    inputs:
+      plugin_revision:
+        description: 'Full 40-hex TraceExplorer commit containing both SDK3 packages'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: shared-ai-native-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  windows-artifact-namespace:
+    runs-on: windows-2022
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri/test_support/windows_artifact_namespace_fixture
+      - name: Execute real Windows namespace boundary and require every fixture
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $manifest = 'src-tauri/test_support/windows_artifact_namespace_fixture/Cargo.toml'
+          $report = Join-Path $env:GITHUB_WORKSPACE 'qualification-results/shared-ai-windows'
+          New-Item -ItemType Directory -Force -Path $report | Out-Null
+          $privateTemp = Join-Path $env:RUNNER_TEMP 'shared-ai-windows-namespace'
+          New-Item -ItemType Directory -Force -Path $privateTemp | Out-Null
+          $env:TMP = $privateTemp
+          $env:TEMP = $privateTemp
+          $build = & cargo.exe test --locked --manifest-path $manifest --no-run --message-format=json 2>&1
+          $buildExit = $LASTEXITCODE
+          $build | Set-Content (Join-Path $report 'build.jsonl')
+          if ($buildExit -ne 0) { throw 'Windows fixture build failed' }
+          $binaries = @($build | ForEach-Object {
+            if (([string]$_).StartsWith('{')) {
+              $artifact = ([string]$_) | ConvertFrom-Json
+              if ($artifact.reason -eq 'compiler-artifact' -and $artifact.profile.test -and $artifact.executable) { $artifact.executable }
+            }
+          } | Select-Object -Unique)
+          if ($binaries.Count -ne 1) { throw 'Expected one exact native fixture executable' }
+          Get-FileHash -Algorithm SHA256 $binaries[0] | Format-List | Out-File (Join-Path $report 'binary-hash.txt')
+          Copy-Item -LiteralPath $binaries[0] -Destination (Join-Path $report 'namespace-fixture.exe')
+          $listing = & cargo.exe test --locked --manifest-path $manifest -- native_tests:: --list 2>&1
+          $listingExit = $LASTEXITCODE
+          $listing | Tee-Object -FilePath (Join-Path $report 'listed-tests.log') | Out-Host
+          if ($listingExit -ne 0) { throw 'Windows fixture compile/list failed' }
+          $expected = [regex]::Matches(($listing | Out-String), '(?m)^.+: test\r?$').Count
+          if ($expected -ne 9) { throw "Expected eight native outcomes and one private crash helper, got $expected listed tests" }
+          if (($listing | Out-String) -notmatch 'native_tests::native_child_crash_boundary: test') { throw 'Expected private crash helper is absent' }
+          $result = & cargo.exe test --locked --manifest-path $manifest -- native_tests:: --nocapture 2>&1
+          $testExit = $LASTEXITCODE
+          $result | Tee-Object -FilePath (Join-Path $report 'native-tests.log') | Out-Host
+          if ($testExit -ne 0) { throw 'Windows native namespace tests failed' }
+          if (($result | Out-String) -notmatch 'test result: ok\. 8 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out;') { throw 'Expected exactly eight native outcomes; the only ignored case is the subprocess crash helper exercised by its parent' }
+          if (($result | Out-String) -notmatch 'QUALIFICATION directory_flush=.+; file_flush=success; NTFS_native_write_through_create_and_rename=success') { throw 'Native flush and namespace evidence is absent' }
+          & git.exe diff --exit-code -- src-tauri/test_support/windows_artifact_namespace_fixture/Cargo.lock
+          if ($LASTEXITCODE -ne 0) { throw 'Windows fixture changed its frozen lockfile' }
+          & git.exe rev-parse HEAD | Set-Content (Join-Path $report 'host-commit.txt')
+          Get-FileHash -Algorithm SHA256 'src-tauri/src/windows_artifact_namespace.rs', 'src-tauri/test_support/windows_artifact_namespace_fixture/src/main.rs', $manifest, 'src-tauri/test_support/windows_artifact_namespace_fixture/Cargo.lock' | Format-List | Out-File (Join-Path $report 'source-hashes.txt')
+      - name: Retain native Windows boundary evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: shared-ai-windows-${{ github.sha }}-${{ github.run_attempt }}
+          path: qualification-results/shared-ai-windows/
+          if-no-files-found: warn
+
+  linux-installed-plugins:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-22.04
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v7
+      - name: Require immutable plugin source
+        env:
+          PLUGIN_REVISION: ${{ inputs.plugin_revision }}
+        run: '[[ "$PLUGIN_REVISION" =~ ^[0-9a-f]{40}$ ]]'
+      - uses: actions/checkout@v7
+        with:
+          repository: xnmp/TraceExplorer
+          ref: ${{ inputs.plugin_revision }}
+          path: plugin-fixture
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: '1.3.8'
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: shared-ai-e2e
+          workspaces: |
+            src-tauri
+            plugin-fixture/src-tauri
+            plugin-fixture/plugins/image-generation/backend
+      - name: Install private native runner dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev libsoup-3.0-dev libjavascriptcoregtk-4.1-dev webkit2gtk-driver xvfb openbox x11-utils dbus-daemon nasm libdav1d-dev
+          cargo install tauri-driver --locked
+      - name: Install frozen frontend dependencies
+        run: |
+          bun install --frozen-lockfile
+          bun install --cwd plugin-fixture --frozen-lockfile
+      - name: Build host fixture binary
+        env:
+          VITE_E2E_HOOKS: '1'
+        run: bun run tauri build --debug --no-bundle --features e2e-hooks -- --locked
+      - name: Build both independent plugin payloads
+        working-directory: plugin-fixture
+        run: |
+          bun run build:frontend
+          bun run build:image-generation:frontend
+          cargo build --locked --features e2e-hooks --manifest-path src-tauri/Cargo.toml
+          cargo build --locked --manifest-path plugins/image-generation/backend/Cargo.toml
+          python scripts/package-plugin.py --plugin trace --target x86_64-unknown-linux-gnu --binary src-tauri/target/debug/trace-explorer-backend
+          python scripts/package-plugin.py --plugin image-generation --target x86_64-unknown-linux-gnu --binary plugins/image-generation/backend/target/debug/image-generation-backend
+          python tests/packaging/verify_packages.py --target x86_64-unknown-linux-gnu --packages package --trace-binary src-tauri/target/debug/trace-explorer-backend --image-binary plugins/image-generation/backend/target/debug/image-generation-backend > package/verification.json
+      - name: Record exact source and payload provenance
+        env:
+          EXPECTED_PLUGIN_REVISION: ${{ inputs.plugin_revision }}
+        run: |
+          mkdir -p qualification-results/shared-ai
+          [[ "$(git -C plugin-fixture rev-parse HEAD)" == "$EXPECTED_PLUGIN_REVISION" ]]
+          git rev-parse HEAD > qualification-results/shared-ai/host-commit.txt
+          git -C plugin-fixture rev-parse HEAD > qualification-results/shared-ai/plugin-commit.txt
+          sha256sum src-tauri/target/debug/tauri-explorer plugin-fixture/src-tauri/target/debug/trace-explorer-backend plugin-fixture/plugins/image-generation/backend/target/debug/image-generation-backend > qualification-results/shared-ai/binaries.sha256
+          cp plugin-fixture/package/verification.json qualification-results/shared-ai/
+          git diff --exit-code -- bun.lock src-tauri/Cargo.lock
+          git -C plugin-fixture diff --exit-code -- bun.lock src-tauri/Cargo.lock plugins/image-generation/backend/Cargo.lock
+      - name: Run actual Trace without optional provider
+        timeout-minutes: 10
+        run: |
+          trace_archive=$(find "$PWD/plugin-fixture/package" -maxdepth 1 -name 'TraceExplorer-*.teplugin' -print)
+          [[ -f "$trace_archive" ]]
+          bash e2e-tauri/run-shared-ai-services.sh "$PWD/src-tauri/target/debug/tauri-explorer" "$trace_archive" 2>&1 | tee qualification-results/shared-ai/absent.log
+      - name: Run actual Trace and provider with one loopback fake response
+        timeout-minutes: 10
+        run: |
+          trace_archive=$(find "$PWD/plugin-fixture/package" -maxdepth 1 -name 'TraceExplorer-*.teplugin' -print)
+          image_archive=$(find "$PWD/plugin-fixture/package" -maxdepth 1 -name 'ImageGeneration-*.teplugin' -print)
+          [[ -f "$trace_archive" && -f "$image_archive" ]]
+          bash e2e-tauri/run-shared-ai-services.sh "$PWD/src-tauri/target/debug/tauri-explorer" "$trace_archive" "$image_archive" 2>&1 | tee qualification-results/shared-ai/present.log
+      - name: Retain native outcome and immutable payload evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: shared-ai-native-${{ github.sha }}-${{ github.run_attempt }}
+          path: |
+            qualification-results/shared-ai/
+            e2e-tauri/logs/
+            evidence/shared-ai-native/
+            plugin-fixture/package/
+          if-no-files-found: warn

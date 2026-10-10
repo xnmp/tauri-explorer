@@ -199,10 +199,10 @@
     />
   </svelte:boundary>
 {/if}
-{#each dialogRegistry.openDialogs as d (d.id)}
+{#each dialogRegistry.openDialogs as d (d.instanceId)}
   {@const DialogComponent = d.component}
-  <svelte:boundary onerror={dialogCrash(d.id, () => dialogRegistry.close(d.id))}>
-    <DialogComponent open={true} {...d.props} onClose={() => dialogRegistry.close(d.id)} />
+  <svelte:boundary onerror={dialogCrash(d.id, () => dialogRegistry.closeInstance(d.id,d.instanceId))}>
+    <DialogComponent {...d.props} open={true} onClose={() => dialogRegistry.closeInstance(d.id,d.instanceId)} />
   </svelte:boundary>
 {/each}
 {#if JobsPanel.component}

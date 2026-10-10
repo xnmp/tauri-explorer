@@ -215,10 +215,26 @@ pub(super) fn recover(root: &Path) -> Result<(), AppError> {
 pub(super) fn install(root: &Path, archive: &Path) -> Result<package::Installed, AppError> {
     recover(root)?;
     let next = package::prepare(root, archive)?;
+    super::service_host::mutation_allowed_at(
+        root.parent()
+            .ok_or_else(|| invalid("Plugin profile root is unavailable"))?,
+        &next.manifest.id,
+    )?;
     if backend::busy(&next.manifest.id) {
         return Err(invalid("Finish active plugin operations before upgrading"));
     }
     let previous = package::list(root)?;
+    let mut proposed = previous.clone();
+    proposed.retain(|entry| entry.manifest.id != next.manifest.id);
+    let mut proposed_next = next.clone();
+    if let Some(previous) = previous
+        .iter()
+        .find(|previous| previous.manifest.id == next.manifest.id)
+    {
+        proposed_next.enabled = previous.enabled;
+    }
+    proposed.push(proposed_next);
+    super::service_graph::validate_enabled(&proposed)?;
     backend::retire(&next.manifest.id);
     let snapshot = root.join("upgrade-pending");
     fs::create_dir(&snapshot)?;
@@ -263,15 +279,12 @@ pub(super) fn install(root: &Path, archive: &Path) -> Result<package::Installed,
         write_marker(&snapshot, &upgrade)?;
         sync_directory(root)?;
         let installed = package::publish(root, next.clone())?;
-        let candidate = backend::preflight(&installed.manifest.id)?;
+        backend::preflight(&installed.manifest.id)?;
         upgrade.phase = Phase::Committed;
         write_marker(&snapshot, &upgrade)?;
         // External journal reconciliation may collect publication proof. It is
         // safe only after the durable commit forbids database rollback.
-        if let Err(cause) = candidate.call("lifecycle.activate", serde_json::json!({})) {
-            backend::retire(&installed.manifest.id);
-            log::warn!("Installed plugin activation will retry on next use: {cause}");
-        }
+        // The caller activates after releasing the lifecycle/startup gates.
         Ok(installed)
     })();
     match result {

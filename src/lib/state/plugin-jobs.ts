@@ -3,6 +3,11 @@ import { basename } from "$lib/domain/path";
 import { jobsStore, type JobRetry } from "$lib/state/jobs.svelte";
 import { toastStore } from "$lib/state/toast.svelte";
 import { windowTabsManager } from "$lib/state/window-tabs.svelte";
+import { createNativePluginJobsController } from "./native-plugin-jobs";
+import { snapshotPluginJobs, watchPluginJobs, cancelPluginJob, dismissPluginJob, resumePluginJob } from "$lib/api/native-plugin-jobs";
+import { isTauri } from "$lib/api/common";
+import { nativeJobTerminal, type NativeJobRecord } from "$lib/domain/native-plugin-jobs";
+import { installedPackages } from "$lib/plugins/installed";
 
 const JOB_LABELS = { upscale: "Upscale", "nano-banana": "Nano Banana" } as const;
 export type PluginJobKind = string;
@@ -33,6 +38,7 @@ interface Dependencies {
   success(message: string): void;
   error(message: string): void;
   refresh(): Promise<void>;
+  native?: { init(): Promise<void>; dispose(): void; has(kind: string, id: number): boolean };
 }
 
 const keyOf = (kind: PluginJobKind, id: number) => `${kind}:${id}`;
@@ -69,10 +75,10 @@ export function createPluginJobsController(deps: Dependencies) {
     return async () => {
       try {
         const result = await retry();
-        if (result?.ok !== true) announceFailure(registration, typeof result?.error === "string" && result.error ? result.error : "Retry failed");
+        if (result?.ok !== true && !deps.native?.has(registration.kind, registration.id)) announceFailure(registration, typeof result?.error === "string" && result.error ? result.error : "Retry failed");
         return result;
       } catch (error) {
-        announceFailure(registration, error instanceof Error ? error.message : String(error));
+        if (!deps.native?.has(registration.kind, registration.id)) announceFailure(registration, error instanceof Error ? error.message : String(error));
         throw error;
       }
     };
@@ -122,7 +128,7 @@ export function createPluginJobsController(deps: Dependencies) {
     if (current) return current;
     const session: Session = { starting: Promise.resolve(), kinds: new Map(), unlisteners: [] };
     current = session;
-    session.starting = Promise.allSettled(Object.keys(JOB_LABELS).map((kind)=>addListeners(session,kind))).then((results)=>{
+    session.starting = Promise.allSettled([...Object.keys(JOB_LABELS).map((kind)=>addListeners(session,kind)), ...(deps.native ? [deps.native.init()] : [])]).then((results)=>{
       const failure=results.find((result)=>result.status==="rejected");
       if(failure?.status==="rejected")throw failure.reason;
     }).catch((error) => {
@@ -141,6 +147,10 @@ export function createPluginJobsController(deps: Dependencies) {
 
   const register = (registration: JobRegistration): void => {
     const key = keyOf(registration.kind, registration.id);
+    if (deps.native?.has(registration.kind, registration.id)) {
+      deps.add({ ...registration, retry: announcingRetry(registration) });
+      return;
+    }
     if (settled.has(key) || owned.has(key)) return;
     // The entry holds the retry; the reconciliation map never needs it.
     const { retry: _retry, ...tracked } = registration;
@@ -156,6 +166,14 @@ export function createPluginJobsController(deps: Dependencies) {
   return {
     init,
     register,
+    observeNative(records: readonly NativeJobRecord[]): void {
+      for (const record of records) {
+        const key = keyOf(record.kind, record.jobId);
+        owned.delete(key); pending.delete(key);
+        if (nativeJobTerminal(record.state)) settled.add(key);
+      }
+      retainBounded(settled, 1024);
+    },
     async accept(
       registration: Omit<JobRegistration, "id">,
       start: () => Promise<StartResult>,
@@ -187,6 +205,7 @@ export function createPluginJobsController(deps: Dependencies) {
       if (disposing) return disposing;
       const session = current;
       closed = true;
+      deps.native?.dispose();
       if (!session) return;
       closing = session;
       let task!: Promise<void>;
@@ -217,7 +236,8 @@ export function createPluginJobsController(deps: Dependencies) {
 /** Where the window's plugin jobs are shown and announced; everything but the
  *  backend event source, so tests can drive the real store with fake events. */
 export const windowJobSink: Omit<Dependencies, "listen"> = {
-  add: ({ id, label, detail, kind, presentation, owner, retry }) => jobsStore.addJob(id, label, detail, kind, presentation, { owner, retry }),
+  add: ({ id, label, detail, kind, presentation, owner, retry }) => jobsStore.addJob(id, label, detail, kind, presentation, { owner, retry,
+    nativeOwner: owner ? installedPackages().find((entry) => entry.manifest.contributions.includes(owner))?.manifest.id : undefined }),
   complete: (id, outputPath) => jobsStore.completeJob(id, outputPath),
   fail: (id, error) => jobsStore.failJob(id, error),
   success: (message) => toastStore.show(message, "success"),
@@ -227,10 +247,27 @@ export const windowJobSink: Omit<Dependencies, "listen"> = {
   },
 };
 
+const nativeJobs = createNativePluginJobsController({
+  watch: watchPluginJobs,
+  snapshot: snapshotPluginJobs,
+  apply: (records) => { jobsStore.applyNative(records); pluginJobsController.observeNative(records); },
+  error: (message) => jobsStore.setMonitoringError(message),
+  toast: (job) => {
+    if (job.state === "completed") { toastStore.show(`${job.label} complete`, "success"); void windowJobSink.refresh().catch(() => {}); }
+    else if (job.state === "error") toastStore.error(`${job.label} failed: ${(job.error ?? "Generation failed").slice(0,100)}`);
+  },
+});
+jobsStore.configureNativeControls({
+  refresh: () => nativeJobs.refresh(),
+  cancel: async (key) => { await cancelPluginJob(key); await nativeJobs.refresh(); },
+  dismiss: async (key) => { await dismissPluginJob(key); await nativeJobs.refresh(); },
+  resume: async (key) => { await resumePluginJob(key); await nativeJobs.refresh(); },
+});
 export const pluginJobsController = createPluginJobsController({
   listen: <T>(name: string, handler: (payload: T) => void) =>
     listen<T>(name, (event) => handler(event.payload)),
   ...windowJobSink,
+  native: { init: () => isTauri() ? nativeJobs.init() : Promise.resolve(), dispose: () => nativeJobs.dispose(), has: (kind,id) => nativeJobs.has(kind,id) },
 });
 
 type Accept = ReturnType<typeof createPluginJobsController>["accept"];

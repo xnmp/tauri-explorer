@@ -11,7 +11,7 @@ use std::{
 
 /// SDK versions this host can run. SDK 2 adds file views, Preview-info
 /// sections and Preview targets; SDK 1 packages keep working unchanged.
-pub(super) const SDK_VERSIONS: std::ops::RangeInclusive<u32> = 1..=2;
+pub(super) const SDK_VERSIONS: std::ops::RangeInclusive<u32> = 1..=3;
 pub(super) const SVELTE_VERSION: &str = "5.56.3";
 const MAX_ARCHIVE: u64 = 256 * 1024 * 1024;
 const MAX_PAYLOAD: u64 = 512 * 1024 * 1024;
@@ -31,6 +31,10 @@ pub(super) struct Manifest {
     pub styles: String,
     pub backend: String,
     pub contributions: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub services: Vec<ServiceExport>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub service_dependencies: Vec<ServiceDependency>,
     #[serde(default)]
     pub provenance: bool,
     #[serde(default)]
@@ -38,6 +42,28 @@ pub(super) struct Manifest {
     #[serde(default)]
     pub state_files: Vec<String>,
     pub files: BTreeMap<String, Payload>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(super) struct ServiceExport {
+    pub id: String,
+    pub major: u32,
+    pub methods: Vec<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(super) struct ServiceDependency {
+    pub package_id: String,
+    pub service_id: String,
+    pub major: u32,
+    #[serde(default)]
+    pub optional: bool,
+}
+
+pub(super) fn service_identifier(value: &str) -> bool {
+    identifier(value) && !value.contains('.') && value.len() <= 64
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -107,7 +133,7 @@ fn read_regular(path: &Path, limit: u64) -> std::io::Result<Vec<u8>> {
     }
     Ok(bytes)
 }
-fn identifier(value: &str) -> bool {
+pub(super) fn identifier(value: &str) -> bool {
     !value.is_empty()
         && value.len() <= 100
         && value.bytes().all(|byte| {
@@ -208,6 +234,7 @@ impl Manifest {
         {
             return Err(invalid("Invalid plugin contributions"));
         }
+        super::service_graph::validate_declarations(self)?;
         if self.state_files.len() > 16
             || self
                 .state_files
@@ -404,8 +431,14 @@ pub(super) fn prepare(root: &Path, archive: &Path) -> Result<Installed, AppError
     Ok(installed)
 }
 
-pub(super) fn publish(root: &Path, installed: Installed) -> Result<Installed, AppError> {
+pub(super) fn publish(root: &Path, mut installed: Installed) -> Result<Installed, AppError> {
     let mut index = list(root)?;
+    if let Some(previous) = index
+        .iter()
+        .find(|previous| previous.manifest.id == installed.manifest.id)
+    {
+        installed.enabled = previous.enabled;
+    }
     if index.iter().any(|previous| {
         previous.manifest.id != installed.manifest.id
             && (previous.manifest.provenance && installed.manifest.provenance
@@ -487,6 +520,8 @@ mod tests {
             styles: "frontend/index.css".into(),
             backend: "backend/worker".into(),
             contributions: vec!["example".into()],
+            services: vec![],
+            service_dependencies: vec![],
             provenance: false,
             initial_data_files: vec![],
             state_files: vec!["history.sqlite".into()],

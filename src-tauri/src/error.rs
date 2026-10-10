@@ -34,6 +34,9 @@ pub enum AppError {
     #[error("File operation may have changed files: {0}")]
     MutationUncertain(String),
 
+    #[error("{message}")]
+    Service { code: String, message: String },
+
     #[error("{0}")]
     Other(String),
 }
@@ -65,11 +68,25 @@ impl Serialize for AppError {
             AppError::Io(_) => "io",
             AppError::WorkerFailed(_) => "worker_failed",
             AppError::MutationUncertain(_) => "mutation_uncertain",
+            AppError::Service { code, .. } => code.as_str(),
             AppError::Other(_) => "other",
         };
         map.serialize_entry("kind", kind)?;
         map.serialize_entry("message", &self.to_string())?;
         map.end()
+    }
+}
+
+impl AppError {
+    pub(crate) fn service_code(&self) -> &str {
+        match self {
+            Self::Service {code, ..} => code,
+            Self::MutationUncertain(_) => "mutation_uncertain",
+            Self::NotFound(_) => "not_found",
+            Self::PermissionDenied(_) => "permission_denied",
+            Self::Io(_) => "storage_unavailable",
+            _ => "service_unavailable",
+        }
     }
 }
 

@@ -1,0 +1,35 @@
+# Shared AI native acceptance — working snapshot
+
+This record concerns the dirty implementation worktree, not a clean release or package qualification. The host baseline and merge-base are `882263e1cc6298bb43e037265185d746a6d2d126`; Trace's baseline is `cae90fb4344375cf8fc1453df74f50ecdc0b4d55`. The clean qualification wrapper (`scripts/build-native-qualification.ts`) requires a clean source worktree. No commits, merge, publication or user-profile installation are authorized for this acceptance work.
+
+## Fixtures and isolation
+
+`e2e-tauri/specs/shared-ai-services.spec.ts` uses the actual host debug binary, installed SDK3 archives, native plugin processes and shipped custom-protocol assets. `e2e-tauri/run-shared-ai-services.sh` creates a private XDG profile and runtime directory under `/tmp`, queues archives only into that profile, and runs WebDriver under private Xvfb/Openbox and D-Bus. It removes inherited AI authentication variables from this launch without changing `HOME`. The fixture records safe process identities and verifies the app/helpers share the private display, profile and D-Bus session. Existing WDIO process-group cleanup retires the owned application and driver; private journal evidence is retained.
+
+The core crop establishes real provenance so Trace's folder eligibility is exercised honestly. No paid generation is needed for cold startup, Trace rendering, optional-provider refusal or settings navigation. Provider connections created by the fixture explicitly select credential `none` and a loopback HTTP endpoint.
+
+Generation is separately gated by `SHARED_AI_NATIVE_GENERATE=1`; it must wait for coordinator confirmation that native consumer and host services are frozen. Its server accepts only fixture traffic and returns one known PNG. The spec checks the observed HTTP body/path and absent Authorization header, exact published bytes, Trace recipe/operation provenance, and the actual provider journal's Succeeded/Acquired receipt. Closing a modal never chooses result discard.
+
+## Build identity
+
+The documented Tauri CLI build embeds frontend assets and both E2E gates:
+
+```sh
+VITE_E2E_HOOKS=1 CARGO_BUILD_JOBS=2 CARGO_TARGET_DIR=/home/chong/Repos/tauri-explorer/src-tauri/target bun run tauri build --debug --no-bundle --features e2e-hooks -- --locked --offline
+```
+
+The final frozen host build succeeded in 30.52s. Before build, after build and after native acceptance, its build-input digest remained `b80658fd3b25b499c0b0cf37756a9de15355152b829cc338525c3ec446decd3e`. The final Trace build input digest remained `2ab8fa77a30367ffe67d71c00575ff031e21328f70309344489a36000c482657` before/after build. Trace sources subsequently changed (native protocol/recovery and retry hardening); the post-run digest is `35932b221485c17124780717a36d52ce6b2839dc1d722ec5f1677d927066f5b1`. The native evidence qualifies the immutable tested archives and the corresponding build inputs, rather than the later Trace working tree. Exact source timestamps, binary hash, archive hashes and manifests are retained in `evidence/shared-ai-native/working-snapshot-identity.json`. The tested host binary SHA-256 is `8c7f13c537d618d3b0d3d9756ea325cacfe65e93483f383ae12d562f63b9a44b`; Trace archive is `94e8ea09b73afc5f32a9663c3d191ded751ce6bc30deffcadf6a976adfca4496`, and Image Generation archive is `07dcd285643fa185a2c5491c62cd22256a856b40f134cee11973bb554bc408c2`. Any later source change requires rebuilding to qualify that change.
+
+Archives are produced with separate frontend outputs and `scripts/package-plugin.py --plugin ... --binary ...`; debug fixture archives are not release artifacts. The private run manifest retains exact binary/archive hashes and explicitly labels `dirty-working-snapshot`. Its timestamp binding records the fixture manifest creation, not an independently qualified clean build.
+
+## Outcomes
+
+Actual Linux WebKit runs passed on 2026-10-10: absent-provider profile **2 passed**, present-provider profile **3 passed**. Each profile reports one intentionally inapplicable case belonging to the other profile. The complete present run finished in 10.1s; its one observed HTTP request used `/fixture/images/generations`, the exact custom model/prompt, and no Authorization header. The native provider journal retained Succeeded/Acquired revision 5, with the actual model and external request ID. Trace's published bytes exactly matched the fixture PNG; the generated operation's own tile decoded and displayed the image. A held response proved provider disable refused while busy, the package stayed enabled, and eight simultaneous read controls remained live. After a pinned provider-only SIGKILL, a new native provider PID activated, the original receipt remained identical, and the HTTP count remained one.
+
+The settings case proved two credential-none profiles persisted natively, a dirty child Escape showed confirmation without closing the caller, and closing that child returned the caller draft, chosen profile and trigger focus. A changed provider default did not reroute the dirty caller. Cold startup exercised real core crop provenance, actual plugin styles under shipped CSP and the shared Svelte ABI. The absent provider blocked generation while ordinary browsing and Trace provenance remained available. Native fixture TypeScript and shell syntax checks passed.
+
+Logs: `/tmp/te-shared-ai-native-absent.log` and `/tmp/te-shared-ai-native-present-complete.log`. Screenshots and authoritative receipt/run JSON are under `evidence/shared-ai-native/`; the final private profile `/tmp/te-shared-ai-native.90cCC8` remains available for independent inspection. Earlier fixture selector/error/argv mistakes were corrected before the final green run. One earlier profile hit an OS disk-quota error despite free filesystem capacity; retired fixture profiles were confirmed process-free, their small metadata/bytes archived, and only those owned profiles removed before the successful run.
+
+This proves provider restart after completed acquisition, not consumer death during acceptance/handoff, strict installed completion-lane saturation, or the 60-second startup/recovery/lock-wait budget. The tested archive corresponds to the earlier standalone provider 40-case suite. Subsequent provider hardening now passes 59 native behavior tests, including safe CLI turn/discovery receipts, bounded corrupt-ledger refusal, authenticated idle/discard controls, and worker/timer IO lifetimes; those source changes are separate evidence and require a new native archive/build to qualify them through the actual host. CLI receipt tests use fake owned-process replies and do not qualify live CLI execution.
+
+Only Linux private-display acceptance is in scope here. Windows/macOS durability, user desktop interaction, physical-display acceptance, installation in the active profile, and clean release qualification remain unclaimed.

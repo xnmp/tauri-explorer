@@ -12,8 +12,11 @@
   import { retryJobAndRefocus } from "$lib/composables/use-job-retry";
   import { formatSize } from "$lib/domain/file";
   import { imageJobProgress, formatJobDuration } from "$lib/domain/image-job-progress";
+  import { jobStateLabel, nativeJobTerminal } from "$lib/domain/native-plugin-jobs";
+  import AiOperationsDialog from "./AiOperationsDialog.svelte";
 
   let now = $state(Date.now());
+  let unresolvedOpen = $state(false);
 
   const operations = $derived(operationsManager.showProgressDialog ? operationsManager.operations : []);
   const imageJobs = $derived(jobsStore.jobs.filter((job) => job.presentation === "image"));
@@ -23,7 +26,7 @@
   let region: HTMLElement | undefined = $state();
 
   $effect(() => {
-    if (!imageJobs.some(job => job.status === "running")) return;
+    if (!imageJobs.some(isJobActive)) return;
     now = Date.now();
     const timer = setInterval(() => { now = Date.now(); }, 1000);
     return () => clearInterval(timer);
@@ -77,6 +80,7 @@
       <div class="dialog-header">
         <h3 class="dialog-title">{imageJobs.length ? operations.length ? "Background Operations" : "Image generation" : "File Operations"}</h3>
         <div class="header-actions">
+          <button class="header-btn" onclick={() => { unresolvedOpen = true; }}>Unresolved AI</button>
           {#if operationsManager.hasActiveOperations}
             <button
               class="header-btn cancel-all"
@@ -211,33 +215,39 @@
             </div>
           </div>
         {/each}
-        {#each imageJobs as job (job.id)}
+        {#each imageJobs as job (job.jobKey ?? `${job.source}:${job.id}`)}
           {@const timing = imageJobProgress(job, jobsStore.jobs, now)}
           <div class="operation-item" class:error={job.status === "error"} data-job-id={job.id} tabindex="-1">
             <div class="operation-info">
               <div class="operation-icon" aria-hidden="true">
                 {#if job.status === "running"}<div class="spinner-small"></div>
-                {:else if job.status === "completed"}✓{:else}!{/if}
+                {:else if job.status === "completed"}✓{:else if job.status === "error"}!{:else}○{/if}
               </div>
               <div class="operation-details">
                 <div class="operation-name"><span class="file-name">{job.label}</span></div>
                 <p class="job-prompt">{job.detail}</p>
-                {#if job.status === "running"}
+                {#if job.status === "running" && !job.jobKey}
                   <div class="progress-bar-container" role="progressbar" aria-label="Estimated image generation progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow={timing.percent} aria-valuetext={`${timing.percent}% estimated`}>
                     <div class="progress-bar" style:width={`${timing.percent}%`}></div>
                   </div>
                   <div class="progress-text">~{timing.percent}% estimated · {timing.overdue ? "Taking longer than estimated" : `~${formatJobDuration(timing.remainingMs)} remaining`}</div>
                 {:else}
-                  <div class="status-text" role="status">{job.status === "completed" ? "Complete" : job.error}</div>
+                  <div class="status-text" role="status">{job.jobKey ? (job.status === "running" || job.status === "accepting" ? job.phase ?? jobStateLabel(job.status) : jobStateLabel(job.status)) : job.status === "completed" ? "Complete" : job.error}{job.cancelRequested ? " · cancellation requested" : ""}</div>
+                  {#if job.jobKey && job.error}<div class="error-text">{job.error}</div>{/if}
                 {/if}
+                {#if job.controlError}<div class="error-text" role="alert">{job.controlError}</div>{/if}
                 <div class="status-text">{formatJobDuration(timing.elapsedMs)} elapsed</div>
               </div>
             </div>
-            {#if job.status !== "running"}
+            {#if job.jobKey && ["accepting", "running", "recovering"].includes(job.status)}
+              <button class="action-btn" aria-label={`Cancel ${job.label}`} disabled={!!job.controlPending || job.cancelRequested} onclick={() => jobsStore.controlJob(job.id, "cancel")}>×</button>
+            {:else if job.status === "needs_attention"}
+              <button class="header-btn" onclick={() => { unresolvedOpen = true; }}>Inspect</button>
+            {:else if nativeJobTerminal(job.status)}
               <div class="operation-actions">
                 {#if job.status === "error" && job.retry}
                   <button class="action-btn retry" aria-label={`Retry ${job.label}`} title="Retry"
-                    disabled={job.retrying} aria-busy={job.retrying} onclick={() => void retryJobAndRefocus(job.id, region)}>
+                    disabled={job.retrying || !!job.controlPending} aria-busy={job.retrying} onclick={() => void retryJobAndRefocus(job.id, region)}>
                     <svg width="12" height="12" viewBox="0 0 16 16" fill="none" aria-hidden="true">
                       <path d="M2 8C2 4.69 4.69 2 8 2C10.22 2 12.16 3.21 13.2 5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
                       <path d="M14 8C14 11.31 11.31 14 8 14C5.78 14 3.84 12.79 2.8 11" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
@@ -246,7 +256,7 @@
                     </svg>
                   </button>
                 {/if}
-                <button class="action-btn" aria-label={`Dismiss ${job.label}`} disabled={job.retrying} onclick={() => jobsStore.dismissJob(job.id)}>×</button>
+                <button class="action-btn" aria-label={`Dismiss ${job.label}`} disabled={job.retrying || !!job.controlPending} onclick={() => jobsStore.dismissJob(job.id)}>×</button>
               </div>
             {/if}
           </div>
@@ -255,6 +265,7 @@
     </div>
   </div>
 {/if}
+{#if unresolvedOpen}<AiOperationsDialog onClose={() => { unresolvedOpen = false; }} />{/if}
 
 <style>
   .job-prompt { font-size: 12px; color: var(--text-secondary); margin: 0 0 6px; overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 2; line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }

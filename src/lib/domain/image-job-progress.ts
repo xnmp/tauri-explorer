@@ -1,6 +1,6 @@
 export interface ImageJobTiming {
   readonly source: string;
-  readonly status: "running" | "completed" | "error";
+  readonly status: string;
   readonly presentation?: "image";
   readonly startTime: number;
   readonly endTime?: number;

@@ -16,6 +16,7 @@ export interface RegisteredSettingsSection {
   id: string;
   title: string;
   rows: SettingRowDescriptor[];
+  actions: NonNullable<SettingsSectionDescriptor["actions"]>;
   /** Current values keyed by row id (reactive). */
   readonly values: Record<string, unknown>;
   /** Value for a row, falling back to the row's declared default. */
@@ -69,6 +70,7 @@ function createSection(
     id: desc.id,
     title: desc.title,
     rows: desc.rows,
+    actions:desc.actions??[],
     get values() {
       return values;
     },

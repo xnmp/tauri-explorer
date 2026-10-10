@@ -993,5 +993,8 @@ pub(super) fn startup_owners(
     Ok(owners)
 }
 #[cfg(all(test, target_os = "linux"))]
+#[path = "service_native_kill_tests.rs"]
+mod native_kill_tests;
+#[cfg(all(test, target_os = "linux"))]
 #[path = "service_native_tests.rs"]
 mod native_tests;

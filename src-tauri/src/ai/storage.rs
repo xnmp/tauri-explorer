@@ -365,41 +365,6 @@ fn read_value_with_policy(path: &Path, private: bool) -> Result<Option<Value>> {
         )
     })
 }
-/// Test-only replacement faults, so the Windows failure modes are exercised on
-/// every platform. Production never consults this; each platform's real
-/// replacement code below is unchanged.
-#[cfg(test)]
-pub(super) mod fault {
-    use std::{cell::RefCell, ffi::OsString, path::Path};
-    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-    pub enum Replace {
-        /// The replace call itself fails and the target is untouched, as
-        /// MoveFileExW does on a sharing violation or access denial.
-        Refused,
-        /// The replacement is durable but its confirmation fails afterwards.
-        AfterReplace,
-    }
-    thread_local! {
-        static NEXT: RefCell<Option<(OsString, Replace)>> = const { RefCell::new(None) };
-    }
-    /// Fail the next durable write on this thread to a file with this name.
-    pub fn inject(file_name: &str, fault: Replace) {
-        NEXT.with(|next| *next.borrow_mut() = Some((file_name.into(), fault)));
-    }
-    pub(super) fn take(path: &Path) -> Option<Replace> {
-        NEXT.with(|next| {
-            let mut next = next.borrow_mut();
-            let matches = next
-                .as_ref()
-                .is_some_and(|(name, _)| path.file_name() == Some(name.as_os_str()));
-            if matches {
-                next.take().map(|(_, fault)| fault)
-            } else {
-                None
-            }
-        })
-    }
-}
 pub fn durable_write(path: &Path, bytes: &[u8]) -> Result<()> {
     if bytes.len() > MAX_CONFIG {
         return Err(ServiceError::invalid("Configuration is too large"));
@@ -533,4 +498,39 @@ pub fn write_trace_config(root: &Path, data: &str) -> Result<()> {
         &resolved,
         &serde_json::to_vec_pretty(&incoming).map_err(|_| storage_error())?,
     )
+}
+/// Test-only replacement faults, so the Windows failure modes are exercised on
+/// every platform. Production never consults this; each platform's real
+/// replacement code below is unchanged.
+#[cfg(test)]
+pub(super) mod fault {
+    use std::{cell::RefCell, ffi::OsString, path::Path};
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    pub enum Replace {
+        /// The replace call itself fails and the target is untouched, as
+        /// MoveFileExW does on a sharing violation or access denial.
+        Refused,
+        /// The replacement is durable but its confirmation fails afterwards.
+        AfterReplace,
+    }
+    thread_local! {
+        static NEXT: RefCell<Option<(OsString, Replace)>> = const { RefCell::new(None) };
+    }
+    /// Fail the next durable write on this thread to a file with this name.
+    pub fn inject(file_name: &str, fault: Replace) {
+        NEXT.with(|next| *next.borrow_mut() = Some((file_name.into(), fault)));
+    }
+    pub(super) fn take(path: &Path) -> Option<Replace> {
+        NEXT.with(|next| {
+            let mut next = next.borrow_mut();
+            let matches = next
+                .as_ref()
+                .is_some_and(|(name, _)| path.file_name() == Some(name.as_os_str()));
+            if matches {
+                next.take().map(|(_, fault)| fault)
+            } else {
+                None
+            }
+        })
+    }
 }

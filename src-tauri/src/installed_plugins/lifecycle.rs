@@ -388,6 +388,8 @@ pub(super) fn set_enabled(profile: &Profile, id: &str, enabled: bool) -> Result<
     service_graph::validate_enabled(&entries)?;
     package::write_index(profile.root, &entries)
 }
+/// The broker-preflight entry used by the native candidate fixture.
+#[cfg(all(test, target_os = "linux"))]
 pub(super) fn install(
     root: &Path,
     next: package::Installed,

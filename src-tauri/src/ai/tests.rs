@@ -958,7 +958,7 @@ async fn profile_switch_keeps_admitted_endpoint_and_context() {
     let mut config = service.store.read().unwrap();
     config.profiles[0].model = "new-model".into();
     config.profiles[0].connection = Connection::Chat {
-        base_url: "http://127.0.0.1:1/v1".into(),
+        base_url: closed_root(),
         allow_insecure_http: true,
         credential: Credential::None,
     };

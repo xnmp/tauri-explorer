@@ -203,4 +203,8 @@ fn wait_for_native_test_gate(path: &Path) {
     while !gate.exists() && Instant::now() < deadline {
         std::thread::sleep(Duration::from_millis(20));
     }
+    let _ = std::fs::write(
+        gate.with_extension("exited"),
+        if gate.exists() { "released" } else { "timeout" },
+    );
 }

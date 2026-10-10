@@ -258,6 +258,19 @@ impl Store {
             .map_err(sql)?;
         Ok(conn)
     }
+    /// Failure injection for cross-module recovery tests: the next durable
+    /// transaction is rolled back after its work, before commit.
+    #[cfg(test)]
+    pub(crate) fn fail_next_write(&self) {
+        self.fail_next_commit
+            .store(true, std::sync::atomic::Ordering::Relaxed);
+    }
+    /// Holds an artifact's IO lease, as a concurrent reader would, so tests
+    /// can observe deferred byte collection.
+    #[cfg(test)]
+    pub(crate) fn hold_artifact_io(&self, handle: &str) -> Result<std::fs::File> {
+        self.lease(handle)
+    }
     pub(super) fn connect(&self) -> Result<Connection> {
         let conn = self.connect_with_create(false)?;
         let version: i64 = conn

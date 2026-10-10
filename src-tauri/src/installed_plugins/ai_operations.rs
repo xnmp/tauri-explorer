@@ -51,11 +51,21 @@ fn compatible(packages: &[package::Installed], generation: &PackageGeneration) -
 pub(super) fn snapshot() -> Result<Value, AppError> {
     let store = service_host::store()?;
     let packages = installed()?;
-    let rows=store.retained_operations()?.into_iter().map(|(a,created,stopped)| {
+    let rows = operation_rows(store, |generation| compatible(&packages, generation))?;
+    let migration=crate::ai::image_migration::status(&crate::config::config_dir()?).unwrap_or_else(|_|json!({"state":"pending","error":"Image migration storage requires repair; original settings are retained"}));
+    Ok(json!({"version":1,"operations":rows,"migration":migration}))
+}
+/// Unresolved-operation rows from durable host evidence alone; `available`
+/// reports whether an exact pinned package generation is installed and enabled.
+pub(super) fn operation_rows(
+    store: &crate::service_state::Store,
+    available: impl Fn(&PackageGeneration) -> bool,
+) -> Result<Vec<Value>, AppError> {
+    store.retained_operations()?.into_iter().map(|(a,created,stopped)| {
         let receipt=store.provider_receipt(&a.consumer.package_id,&a.operation_id)?;
         let execution=receipt.as_ref().and_then(|r|r["execution"]["state"].as_str()).unwrap_or("unconfirmed");
         let delivery=receipt.as_ref().and_then(|r|r["delivery"]["state"].as_str()).unwrap_or("none");
-        let consumer=compatible(&packages,&a.consumer);let provider=compatible(&packages,&a.provider);
+        let consumer=available(&a.consumer);let provider=available(&a.provider);
         let reason=if stopped {"Automatic recovery stopped; unknown execution evidence is retained"}
             else if !provider {"Install or enable the original provider package to recover this operation"}
             else if !consumer {"Install or enable the original consumer package to recover its retained output"}
@@ -63,9 +73,30 @@ pub(super) fn snapshot() -> Result<Value, AppError> {
             else if delivery=="unavailable" {"Retained output is unavailable; resume original local recovery or explicitly discard it"}
             else {"The original operation is awaiting execution or local delivery reconciliation"};
         Ok(json!({"operationId":a.operation_id,"consumerPackage":a.consumer.package_id,"providerPackage":a.provider.package_id,"createdAtMs":(created!=0).then_some(created),"execution":execution,"delivery":delivery,"reason":reason,"canResume":consumer&&!stopped,"canDiscard":provider&&execution=="succeeded"&&matches!(delivery,"available"|"unavailable"),"canStop":provider&&execution=="unknown"&&delivery=="none"&&!stopped}))
-    }).collect::<Result<Vec<_>,AppError>>()?;
-    let migration=crate::ai::image_migration::status(&crate::config::config_dir()?).unwrap_or_else(|_|json!({"state":"pending","error":"Image migration storage requires repair; original settings are retained"}));
-    Ok(json!({"version":1,"operations":rows,"migration":migration}))
+    }).collect()
+}
+/// Commits the provider's discard receipt. Bytes and claims are released only
+/// by that durable observation; a job awaiting its consumer is marked, never
+/// fabricated as a consumer-side discard.
+pub(super) fn commit_discard(
+    store: &crate::service_state::Store,
+    provider: &PackageGeneration,
+    a: &Admission,
+    receipt: &Value,
+) -> Result<Option<crate::service_state::job::JobRecord>, AppError> {
+    service_bridge::reconcile_at(store, provider, a, receipt)?;
+    let released = store
+        .get(&a.consumer.package_id, &a.operation_id)?
+        .ok_or_else(|| error("Discard receipt disappeared"))?;
+    if released.disposition.as_deref() != Some("discarded") {
+        return Err(error(
+            "Provider discard did not commit; retained bytes were not released",
+        ));
+    }
+    match store.job_for_operation(&a.consumer.package_id, &a.operation_id)? {
+        Some(job) if !job.state.terminal() => Ok(Some(store.update_job(&job.owner,&job.job_key,JobState::NeedsAttention,Some("provider_result_discarded".into()),None,job.run_id,Some("Provider result explicitly discarded; awaiting original consumer reconciliation".into()))?)),
+        _ => Ok(None),
+    }
 }
 fn provider(a: &Admission) -> Result<std::sync::Arc<backend::Broker>, AppError> {
     let broker = backend::ensure(&a.provider.package_id)?;
@@ -149,20 +180,8 @@ pub(super) fn resolve(consumer: &str, operation: &str, action: &str) -> Result<V
             "control.discardOperation",
             json!({"consumerPackage":consumer,"operationId":operation}),
         )?;
-        service_bridge::reconcile_at(store, &provider.generation(), &a, &receipt)?;
-        let released = store
-            .get(consumer, operation)?
-            .ok_or_else(|| error("Discard receipt disappeared"))?;
-        if released.disposition.as_deref() != Some("discarded") {
-            return Err(error(
-                "Provider discard did not commit; retained bytes were not released",
-            ));
-        }
-        if let Some(job) = store.job_for_operation(consumer, operation)? {
-            if !job.state.terminal() {
-                let updated=store.update_job(&job.owner,&job.job_key,JobState::NeedsAttention,Some("provider_result_discarded".into()),None,job.run_id,Some("Provider result explicitly discarded; awaiting original consumer reconciliation".into()))?;
-                backend::emit_job_event(json!({"type":"updated","job":updated}));
-            }
+        if let Some(updated) = commit_discard(store, &provider.generation(), &a, &receipt)? {
+            backend::emit_job_event(json!({"type":"updated","job":updated}));
         }
     } else {
         let receipt=store.provider_receipt(consumer,operation)?.ok_or_else(||error("An authoritative unknown execution receipt is required before stopping recovery"))?;

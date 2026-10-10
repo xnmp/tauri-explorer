@@ -34,6 +34,9 @@ pub enum AppError {
     #[error("File operation may have changed files: {0}")]
     MutationUncertain(String),
 
+    #[error("{message}")]
+    Service { code: String, message: String },
+
     #[error("{0}")]
     Other(String),
 }
@@ -65,11 +68,43 @@ impl Serialize for AppError {
             AppError::Io(_) => "io",
             AppError::WorkerFailed(_) => "worker_failed",
             AppError::MutationUncertain(_) => "mutation_uncertain",
+            AppError::Service { code, .. } => code.as_str(),
             AppError::Other(_) => "other",
         };
         map.serialize_entry("kind", kind)?;
         map.serialize_entry("message", &self.to_string())?;
         map.end()
+    }
+}
+
+/// A failed owned process run, classified by whether the program could have
+/// executed. Callers that must not replay side effects rely on this split.
+#[derive(Debug)]
+pub(crate) enum ProcessRunError {
+    /// Refused or failed before the program was executed: it had no effects.
+    NotStarted(AppError),
+    /// The program was spawned; whatever it did is unknown.
+    Started(AppError),
+}
+
+impl ProcessRunError {
+    pub(crate) fn into_error(self) -> AppError {
+        match self {
+            Self::NotStarted(cause) | Self::Started(cause) => cause,
+        }
+    }
+}
+
+impl AppError {
+    pub(crate) fn service_code(&self) -> &str {
+        match self {
+            Self::Service { code, .. } => code,
+            Self::MutationUncertain(_) => "mutation_uncertain",
+            Self::NotFound(_) => "not_found",
+            Self::PermissionDenied(_) => "permission_denied",
+            Self::Io(_) => "storage_unavailable",
+            _ => "service_unavailable",
+        }
     }
 }
 

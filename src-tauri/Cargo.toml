@@ -32,6 +32,8 @@ harness = false
 
 [dependencies]
 url = "2"
+reqwest = { version = "0.13.2", default-features = false, features = ["rustls", "json", "stream"] }
+keyring = { version = "3", features = ["apple-native", "windows-native", "sync-secret-service", "crypto-rust"] }
 tauri = { version = "2", features = ["protocol-asset", "macos-private-api"] }
 tauri-plugin-opener = "2"
 tauri-plugin-shell = "2"
@@ -39,7 +41,7 @@ tauri-plugin-drag = "2"
 clipboard-rs = "0.3.5"
 serde = { version = "1", features = ["derive", "rc"] }
 serde_json = "1"
-rusqlite = { version = "0.40.2", features = ["bundled"] }
+rusqlite = { version = "0.40.2", features = ["bundled", "limits"] }
 trash = "5"
 chrono = { version = "0.4", features = ["serde"] }
 dirs = "7"
@@ -115,6 +117,7 @@ avif = ["image/avif-native"]
 # zbus/url: xdg-desktop-portal FileChooser backend (system file picker).
 # Pure-Rust (zbus) + no system deps, so safe to build everywhere Linux.
 [target.'cfg(target_os = "linux")'.dependencies]
+dbus-secret-service = { version = "4.1", default-features = false, features = ["crypto-rust"] }
 gio = "0.22"
 # GDesktopAppInfo moved out of gio in gtk-rs 0.22.
 gio-unix = "0.22"
@@ -128,7 +131,7 @@ gdkx11-sys = "0.18"
 tauri-plugin-single-instance = "2.5.2"
 
 [target.'cfg(target_os = "windows")'.dependencies]
-windows-sys = {version="0.61",features= ["Win32_Foundation", "Win32_Security", "Win32_System_JobObjects", "Win32_System_Threading", "Win32_System_Diagnostics_ToolHelp"] }
+windows-sys = {version="0.61",features= ["Win32_Foundation", "Win32_Security", "Win32_System_JobObjects", "Win32_System_Threading", "Win32_System_Diagnostics_ToolHelp", "Win32_System_Registry"] }
 webview2-com = "0.39"
 windows-core = "0.62.2"
 # Win32_System_DataExchange/Memory: the clipboard sequence number and the
@@ -138,6 +141,7 @@ windows = { version = "0.62.2", features = ["Wdk_Foundation", "Wdk_Storage_FileS
 # NSPasteboard change count and a private token type prove Cut ownership
 # (clipboard/macos.rs, #877). clipboard-rs already builds these versions.
 [target.'cfg(target_os = "macos")'.dependencies]
+security-framework = "2.11"
 objc2 = "0.6"
 objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSArray", "NSData", "NSString", "NSURL"] }
 objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "NSPasteboard", "NSPasteboardItem"] }

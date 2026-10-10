@@ -7,12 +7,12 @@
 //!
 //! Use: `Command::new("git").no_console().args(...)`. No-op on non-Windows.
 
-use std::io::Read;
+use std::io::{Read, Write};
 use std::process::{Command, Output, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
-use crate::error::AppError;
+use crate::error::{AppError, ProcessRunError};
 #[cfg(windows)]
 mod windows_job;
 
@@ -61,8 +61,60 @@ pub(crate) fn output_controlled(
     limits: (usize, usize),
     cancel_message: &'static str,
 ) -> Result<Output, AppError> {
+    output_with_stdin(command, cancelled, limits, cancel_message, Stdio::null())
+}
+
+/// The owned text service supplies a bounded private prompt file as stdin.
+/// File-backed input cannot block a writer thread or exceed argv limits.
+pub(crate) fn output_with_stdin(
+    command: &mut Command,
+    cancelled: impl Fn() -> bool,
+    limits: (usize, usize),
+    cancel_message: &'static str,
+    stdin: Stdio,
+) -> Result<Output, AppError> {
+    run(
+        command,
+        cancelled,
+        limits,
+        cancel_message,
+        Input::Stdio(stdin),
+    )
+    .map_err(ProcessRunError::into_error)
+}
+
+/// Owned run for plugin processes. With `input`, stdin is a pipe that receives
+/// exactly those bytes and is then closed; without it, stdin is null. Failures
+/// are classified by whether the program could have executed.
+pub(crate) fn output_with_input(
+    command: &mut Command,
+    cancelled: impl Fn() -> bool,
+    limits: (usize, usize),
+    cancel_message: &'static str,
+    input: Option<Vec<u8>>,
+) -> Result<Output, ProcessRunError> {
+    let input = match input {
+        Some(bytes) => Input::Bytes(bytes),
+        None => Input::Stdio(Stdio::null()),
+    };
+    run(command, cancelled, limits, cancel_message, input)
+}
+
+enum Input {
+    Stdio(Stdio),
+    Bytes(Vec<u8>),
+}
+
+fn run(
+    command: &mut Command,
+    cancelled: impl Fn() -> bool,
+    limits: (usize, usize),
+    cancel_message: &'static str,
+    input: Input,
+) -> Result<Output, ProcessRunError> {
+    use ProcessRunError::{NotStarted, Started};
     if cancelled() {
-        return Err(AppError::Other(cancel_message.into()));
+        return Err(NotStarted(AppError::Other(cancel_message.into())));
     }
 
     #[cfg(unix)]
@@ -77,20 +129,26 @@ pub(crate) fn output_controlled(
     let owned_job = {
         use std::os::windows::process::CommandExt;
         command.creation_flags(0x0800_0000 | 0x0000_0004); // NO_WINDOW | SUSPENDED
-        windows_job::Job::new()?
+        windows_job::Job::new().map_err(|cause| NotStarted(cause.into()))?
     };
+    let (stdin, bytes) = match input {
+        Input::Stdio(stdin) => (stdin, None),
+        Input::Bytes(bytes) => (Stdio::piped(), Some(bytes)),
+    };
+    // std reports exec failures through spawn: an error means nothing ran.
     let mut child = command
-        .stdin(Stdio::null())
+        .stdin(stdin)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
-        .map_err(AppError::from)?;
+        .map_err(|cause| NotStarted(cause.into()))?;
     #[cfg(windows)]
     if let Err(error) = owned_job.attach_and_resume(&mut child) {
+        // The primary thread was created suspended and never resumed.
         owned_job.terminate();
         let _ = child.kill();
         let _ = child.wait();
-        return Err(error.into());
+        return Err(NotStarted(error.into()));
     }
     let pid = child.id();
     let terminate = |child: &mut std::process::Child| {
@@ -98,6 +156,67 @@ pub(crate) fn output_controlled(
         owned_job.terminate();
         terminate_process_tree(child, pid);
     };
+    let writer = match (bytes, child.stdin.take()) {
+        (None, _) => None,
+        (Some(bytes), Some(pipe)) => match write_input(pipe, bytes) {
+            Ok(writer) => Some(writer),
+            Err(error) => {
+                terminate(&mut child);
+                let _ = child.wait();
+                return Err(Started(error.into()));
+            }
+        },
+        (Some(_), None) => {
+            terminate(&mut child);
+            let _ = child.wait();
+            return Err(Started(AppError::Other(
+                "child stdin pipe unavailable".into(),
+            )));
+        }
+    };
+    // On Windows the job's descendants are retired as soon as the launcher
+    // exits; Unix keeps the group until its pipes reach EOF.
+    let launcher_exited = || {
+        #[cfg(windows)]
+        owned_job.terminate();
+    };
+    let result = supervise(
+        &mut child,
+        &terminate,
+        &launcher_exited,
+        cancelled,
+        limits,
+        cancel_message,
+    );
+    if let Some(writer) = writer {
+        // Termination closed every reader of stdin, so a blocked write fails
+        // promptly; never join a writer an escaped descendant still blocks.
+        finish_workers([writer]);
+    }
+    result.map_err(Started)
+}
+
+/// Blocking write on its own thread, then close stdin. A child that exits or
+/// closes stdin without reading yields a broken pipe: an ordinary outcome.
+fn write_input(
+    mut pipe: std::process::ChildStdin,
+    bytes: Vec<u8>,
+) -> std::io::Result<std::thread::JoinHandle<()>> {
+    std::thread::Builder::new()
+        .name("owned-process-input".into())
+        .spawn(move || {
+            let _ = pipe.write_all(&bytes);
+        })
+}
+
+fn supervise(
+    child: &mut std::process::Child,
+    terminate: &impl Fn(&mut std::process::Child),
+    launcher_exited: &impl Fn(),
+    cancelled: impl Fn() -> bool,
+    limits: (usize, usize),
+    cancel_message: &'static str,
+) -> Result<Output, AppError> {
     let mut stdout = child
         .stdout
         .take()
@@ -117,7 +236,7 @@ pub(crate) fn output_controlled(
     let mut exited = None;
     loop {
         if cancelled() || overflow.load(Ordering::Relaxed) {
-            terminate(&mut child);
+            terminate(child);
             let _ = child.wait();
             drain_readers(stdout_reader, stderr_reader);
             return Err(AppError::Other(
@@ -131,15 +250,14 @@ pub(crate) fn output_controlled(
         }
 
         if exited.is_none() {
-            match exited_without_reaping(&mut child) {
+            match exited_without_reaping(child) {
                 Ok(true) => {
-                    #[cfg(windows)]
-                    owned_job.terminate();
+                    launcher_exited();
                     exited = Some(Instant::now());
                 }
                 Ok(false) => {}
                 Err(error) => {
-                    terminate(&mut child);
+                    terminate(child);
                     let _ = child.wait();
                     drain_readers(stdout_reader, stderr_reader);
                     return Err(AppError::from(error));
@@ -150,7 +268,7 @@ pub(crate) fn output_controlled(
             if stdout_reader.is_finished() && stderr_reader.is_finished() {
                 // Kill redirected descendants before reaping the launcher.
                 // WNOWAIT keeps its PID/group identity reserved through cleanup.
-                terminate(&mut child);
+                terminate(child);
                 let status = child.wait()?;
                 let stdout = stdout_reader
                     .join()
@@ -172,7 +290,7 @@ pub(crate) fn output_controlled(
             // The launcher may exit while a descendant retains its pipes.
             // Continue observing cancellation until EOF, then bound that drain.
             if since.elapsed() >= Duration::from_secs(5) {
-                terminate(&mut child);
+                terminate(child);
                 let _ = child.wait();
                 drain_readers(stdout_reader, stderr_reader);
                 return Err(AppError::Other(
@@ -215,15 +333,18 @@ fn exited_without_reaping(child: &mut std::process::Child) -> std::io::Result<bo
 /// Never join a blocked pipe reader after termination: an independently
 /// detached descendant can hold a pipe even after the owned group is killed.
 fn drain_readers<T>(stdout: std::thread::JoinHandle<T>, stderr: std::thread::JoinHandle<T>) {
+    finish_workers([stdout, stderr]);
+}
+
+fn finish_workers<T, const N: usize>(workers: [std::thread::JoinHandle<T>; N]) {
     let deadline = Instant::now() + Duration::from_secs(1);
-    while !(stdout.is_finished() && stderr.is_finished()) && Instant::now() < deadline {
+    while !workers.iter().all(|worker| worker.is_finished()) && Instant::now() < deadline {
         std::thread::sleep(Duration::from_millis(10));
     }
-    if stdout.is_finished() {
-        let _ = stdout.join();
-    }
-    if stderr.is_finished() {
-        let _ = stderr.join();
+    for worker in workers {
+        if worker.is_finished() {
+            let _ = worker.join();
+        }
     }
 }
 

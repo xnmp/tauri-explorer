@@ -14,7 +14,7 @@ export function exposePluginSDK():void {
   Object.defineProperty(target,"__TAURI_EXPLORER_PLUGIN_SDK__",{value:Object.freeze({
     // sdkVersion stays 1: SDK 1 packages require exactly that value. Newer
     // capabilities are announced through apiVersion and the capability list.
-    sdkVersion:1,apiVersion:2,capabilities:Object.freeze(["fileViews","previewInfo","previewTargets","blobWorkers","fileTiles","tileSize","jobRetry"]),svelteVersion:SVELTE_ABI,
+    sdkVersion:1,apiVersion:3,capabilities:Object.freeze(["fileViews","previewInfo","previewTargets","blobWorkers","fileTiles","tileSize","jobRetry","textGeneration","pluginServices","serviceArtifacts","settingsActions","modalNavigation"]),svelteVersion:SVELTE_ABI,
     modules:Object.freeze({"svelte":svelte,"svelte/internal/client":client,"ui/modal":{default:Modal},"ui/image-editor":{default:ImageEditor},
       // Built-in Tiles view tiles (props in FileTiles.svelte); capability "fileTiles".
       // Capability "tileSize": FileViewPane.tileSize and file-tiles' `size` prop.

@@ -32,7 +32,7 @@
 
 <!-- Plugin-contributed settings sections (descriptor-driven) -->
 {#each pluginSettingsSections.sections as section (section.pluginId + ":" + section.id)}
-  <section class="settings-section" class:hidden={!section.rows.some(row => matchesSearch(section.title, row.label, row.description ?? "")) && !matchesSearch(section.title)}>
+  <section class="settings-section" class:hidden={!section.rows.some(row => matchesSearch(section.title, row.label, row.description ?? "")) && !section.actions.some(action=>matchesSearch(section.title,action.label,action.description??"")) && !matchesSearch(section.title)}>
     <h3 class="section-title">{section.title}</h3>
     {#each section.rows as row (row.id)}
       <div class="setting-row" class:hidden={!matchesSearch(section.title, row.label, row.description ?? "")}>
@@ -74,11 +74,19 @@
         {/if}
       </div>
     {/each}
+    {#each section.actions as action (action.id)}
+      <div class="setting-row" class:hidden={!matchesSearch(section.title,action.label,action.description??"")}>
+        <div class="setting-info"><span class="setting-label">{action.label}</span>{#if action.description}<span class="setting-description">{action.description}</span>{/if}</div>
+        <button class="settings-action" onclick={()=>action.run()}>{action.label}</button>
+      </div>
+    {/each}
   </section>
 {/each}
 
 <style>
   .hidden { display: none !important; }
+  .settings-action {flex-shrink:0;padding:6px 10px;border:1px solid var(--control-stroke);border-radius:var(--radius-sm);background:var(--control-fill);color:var(--text-primary);font:inherit;font-size:13px;cursor:pointer;}
+  .settings-action:focus-visible {outline:2px solid var(--focus-stroke-outer);outline-offset:2px;}
 
   .settings-section { margin-bottom: 24px; }
   .settings-section:last-child { margin-bottom: 0; }

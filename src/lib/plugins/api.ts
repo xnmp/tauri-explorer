@@ -56,6 +56,7 @@ export interface SettingsSectionDescriptor {
   id: string;
   title: string;
   rows: SettingRowDescriptor[];
+  actions?: {id:string;label:string;description?:string;run:()=>void|Promise<void>}[];
 }
 
 // ----- Storage -----
@@ -160,6 +161,13 @@ export interface PluginWorkspace {
  * Such cases carry a justification comment at the import site.
  */
 export interface PluginContext {
+  /** Managed navigation retains a caller's mounted modal and draft. */
+  presentation?: {openDialog(id:string,props?:Record<string,unknown>):Promise<import("./dialog-registry.svelte").DialogResult>};
+  /** Optional host text service settings notifications; execution is backend-owned. */
+  text?: {
+    subscribe(listener: (revision: number) => void): () => void;
+    openSettings(): void;
+  };
   backend?: {invoke<T>(method:string,params?:Record<string,unknown>):Promise<T>};
   saveSettings(patch:Record<string,unknown>):Promise<void>;
   /** Return the handler's work as a promise: a rejection is reported to the
@@ -269,6 +277,8 @@ export function createPluginContext(
 } {
   const disposers: (() => void)[] = [];
   let disposed = false;
+  const managedDialogs=new Set<()=>void>();
+  disposers.push(()=>{for(const close of managedDialogs)close();managedDialogs.clear();});
   const track = (fn: () => void) => {
     if (disposed) fn();
     else disposers.push(fn);
@@ -295,6 +305,23 @@ export function createPluginContext(
   };
 
   const ctx: PluginContext = {
+    presentation:{async openDialog(id,props) {if(disposed)throw new Error("Plugin caller was disposed");const session=dialogRegistry.openManaged(id,props);managedDialogs.add(session.close);try{return await session.result;}finally{managedDialogs.delete(session.close);}}},
+    text: {
+      subscribe(listener) {
+        let unlisten: UnlistenFn | undefined;
+        let closed = false;
+        const dispose = () => { closed = true; unlisten?.(); unlisten = undefined; };
+        track(dispose);
+        void listen<{ revision: number }>("ai:text-configuration-changed", event => {
+          if (!closed && !disposed && Number.isSafeInteger(event.payload.revision) && event.payload.revision >= 0) {
+            try { listener(event.payload.revision); }
+            catch (error) { report(error, "text configuration listener"); }
+          }
+        }).then(un => { if (closed || disposed) un(); else unlisten = un; }).catch(() => {});
+        return dispose;
+      },
+      openSettings: () => { if (!disposed) dialogStore.openSettings(); },
+    },
     registerCommand(cmd: Command): void {
       const handler = async () => {
         try {
@@ -317,7 +344,8 @@ export function createPluginContext(
       track(contextMenuItems.register({ ...item, handler }, order));
     },
     registerSettingsSection(section: SettingsSectionDescriptor): void {
-      track(pluginSettingsSections.register(pluginId, section, storage, order));
+      const actions=section.actions?.map(action=>({...action,async run(){if(disposed)return;try{await action.run();}catch(error){if(!disposed)report(error,`settings action ${action.id}`);}}}));
+      track(pluginSettingsSections.register(pluginId, {...section,actions}, storage, order));
     },
     registerFsProvider(scheme: string, provider: FsProvider): void {
       const list = async (path: string) => {

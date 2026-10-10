@@ -1,6 +1,8 @@
 //! Recoverable package upgrade: quiesce publishers, snapshot declared state, then activate.
-use super::{backend, package};
-use crate::error::AppError;
+//! Every package mutation (upgrade, removal, enablement) consults durable AI
+//! claims in either role before it fences, quiesces or rewrites the index.
+use super::{backend, package, service_graph, service_host};
+use crate::{error::AppError, service_state::Store};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{
@@ -9,11 +11,14 @@ use std::{
     path::{Path, PathBuf},
 };
 const MAX_STATE: u64 = 512 * 1024 * 1024;
+// Two bounded installed indexes plus snapshot metadata and future-safe slack.
+const MAX_JOURNAL: u64 = 4 * 1024 * 1024;
 #[derive(Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 enum Phase {
     Prepared,
     Committed,
+    Published,
     RolledBack,
 }
 #[derive(Serialize, Deserialize)]
@@ -34,6 +39,8 @@ struct Upgrade {
     phase: Phase,
     package_id: String,
     previous: Vec<package::Installed>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    committed_index: Option<Vec<package::Installed>>,
     files: Vec<SavedFile>,
 }
 fn invalid(message: impl Into<String>) -> AppError {
@@ -103,8 +110,12 @@ fn sync_directory(path: &Path) -> Result<(), AppError> {
     Ok(())
 }
 fn write_marker(snapshot: &Path, upgrade: &Upgrade) -> Result<(), AppError> {
+    let bytes = serde_json::to_vec(upgrade).map_err(|cause| invalid(cause.to_string()))?;
+    if bytes.len() as u64 > MAX_JOURNAL {
+        return Err(invalid("Plugin upgrade journal exceeds size limit"));
+    }
     let mut stage = tempfile::NamedTempFile::new_in(snapshot)?;
-    serde_json::to_writer(&mut stage, upgrade).map_err(|cause| invalid(cause.to_string()))?;
+    stage.write_all(&bytes)?;
     stage.flush()?;
     stage.as_file().sync_all()?;
     stage
@@ -120,6 +131,39 @@ fn data_root(root: &Path, id: &str) -> Result<PathBuf, AppError> {
         .join(id))
 }
 fn validate(upgrade: &Upgrade) -> Result<(), AppError> {
+    package::validate_index(&upgrade.previous)?;
+    if let Some(index) = &upgrade.committed_index {
+        package::validate_index(index)?;
+        let before: Vec<_> = upgrade
+            .previous
+            .iter()
+            .filter(|entry| entry.manifest.id != upgrade.package_id)
+            .collect();
+        let after: Vec<_> = index
+            .iter()
+            .filter(|entry| entry.manifest.id != upgrade.package_id)
+            .collect();
+        if index
+            .iter()
+            .filter(|entry| entry.manifest.id == upgrade.package_id)
+            .count()
+            != 1
+            || before.len() != after.len()
+        {
+            return Err(invalid("Plugin upgrade journal changes unrelated packages"));
+        }
+        for entry in before {
+            let other = after
+                .iter()
+                .find(|other| other.manifest.id == entry.manifest.id)
+                .ok_or_else(|| invalid("Plugin upgrade journal changes unrelated packages"))?;
+            if serde_json::to_value(entry).map_err(|cause| invalid(cause.to_string()))?
+                != serde_json::to_value(other).map_err(|cause| invalid(cause.to_string()))?
+            {
+                return Err(invalid("Plugin upgrade journal changes unrelated packages"));
+            }
+        }
+    }
     let valid_id = !upgrade.package_id.is_empty()
         && upgrade.package_id.len() <= 100
         && upgrade.package_id.bytes().all(|byte| {
@@ -131,6 +175,16 @@ fn validate(upgrade: &Upgrade) -> Result<(), AppError> {
             .previous
             .iter()
             .all(|entry| entry.manifest.validate().is_ok())
+        || upgrade.committed_index.as_ref().is_some_and(|index| {
+            index.len() > 64 || index.iter().any(|entry| entry.manifest.validate().is_err())
+        })
+        || upgrade
+            .files
+            .iter()
+            .map(|file| &file.name)
+            .collect::<std::collections::HashSet<_>>()
+            .len()
+            != upgrade.files.len()
         || upgrade.files.len() > 128
         || upgrade.files.iter().any(|file| {
             file.name.is_empty()
@@ -202,23 +256,166 @@ pub(super) fn recover(root: &Path) -> Result<(), AppError> {
         return Ok(());
     }
     let mut upgrade: Upgrade =
-        serde_json::from_reader(open_regular(&marker, 1024 * 1024)?.take(1024 * 1024 + 1))
+        serde_json::from_reader(open_regular(&marker, MAX_JOURNAL)?.take(MAX_JOURNAL + 1))
             .map_err(|cause| invalid(cause.to_string()))?;
     validate(&upgrade)?;
     if upgrade.phase == Phase::Prepared {
-        restore(root, &snapshot, &mut upgrade)
+        restore(root, &snapshot, &mut upgrade)?;
+        backend::release_recovered_fence(&upgrade.package_id)
     } else {
+        if upgrade.phase == Phase::Committed {
+            if let Some(index) = &upgrade.committed_index {
+                // Commit may have been durable before installed.json changed.
+                // Complete that decision; never roll a committed package back.
+                service_graph::validate_enabled(index)?;
+                package::write_index(root, index)?;
+                upgrade.phase = Phase::Published;
+                write_marker(&snapshot, &upgrade)?;
+            }
+        }
         cleanup(&snapshot);
+        backend::release_recovered_fence(&upgrade.package_id)?;
         Ok(())
     }
 }
-pub(super) fn install(root: &Path, archive: &Path) -> Result<package::Installed, AppError> {
+/// One profile's durable package state: its installed index and the claim
+/// ledger that every mutation consults. Production passes the host profile;
+/// tests pass a private one with the same layout.
+pub(super) struct Profile<'a> {
+    /// `<profile>/installed-plugins`; its parent also holds `service-state`.
+    pub root: &'a Path,
+    pub store: &'a Store,
+}
+/// Validation-only startup of a candidate. Production uses the real broker.
+pub(super) type Preflight<'a> =
+    &'a dyn Fn(&package::Installed, PathBuf, &backend::DrainGuard) -> Result<(), AppError>;
+/// Close admission for a package that has no durable claim or live native work.
+pub(super) fn drain_idle(store: &Store, id: &str) -> Result<backend::DrainGuard, AppError> {
+    let _guard = super::write_lifecycle()?;
+    service_host::mutation_allowed_in(store, id)?;
+    if backend::busy(id) {
+        return Err(service_host::busy(
+            "Finish active plugin operations before changing this package",
+        ));
+    }
+    backend::begin_drain(id)
+}
+/// Install or upgrade from an archive. The caller activates after return,
+/// once the mutation and lifecycle gates are released.
+pub(super) fn upgrade(
+    profile: &Profile,
+    archive: &Path,
+    preflight: Preflight,
+) -> Result<package::Installed, AppError> {
+    let _mutation = super::mutation_lock()?;
+    recover(profile.root)?;
+    let candidate = package::prepare(profile.root, archive)?;
+    let drain = drain_idle(profile.store, &candidate.manifest.id)?;
+    drain.quiesce()?;
+    // The package fence, not a global lock, owns snapshot/preflight/rollback.
+    // Reader threads may need lifecycle admission while retirement joins them.
+    install_with(profile.root, candidate, &drain, preflight)
+}
+pub(super) fn uninstall(profile: &Profile, id: &str) -> Result<(), AppError> {
+    let _mutation = super::mutation_lock()?;
+    recover(profile.root)?;
+    let drain = drain_idle(profile.store, id)?;
+    drain.quiesce()?;
+    let mut remaining = package::list(profile.root)?;
+    remaining.retain(|entry| entry.manifest.id != id);
+    service_graph::validate_enabled(&remaining)?;
+    backend::retire(id);
+    let _lifecycle = super::LIFECYCLE
+        .write()
+        .map_err(|_| invalid("Plugin lifecycle lock is unavailable"))?;
+    package::uninstall(profile.root, id)
+}
+pub(super) fn set_enabled(profile: &Profile, id: &str, enabled: bool) -> Result<(), AppError> {
+    let _mutation = super::mutation_lock()?;
+    recover(profile.root)?;
+    {
+        let _guard = super::read_lifecycle()?;
+        let entries = package::list(profile.root)?;
+        let current = entries
+            .iter()
+            .find(|entry| entry.manifest.id == id)
+            .ok_or_else(|| invalid("Plugin package is not installed"))?;
+        if current.enabled == enabled {
+            return Ok(());
+        }
+    }
+    let drain = if enabled {
+        None
+    } else {
+        Some(drain_idle(profile.store, id)?)
+    };
+    if let Some(drain) = &drain {
+        drain.quiesce()?;
+        // A safe disable stops routing before the index changes.
+        backend::retire(id);
+    }
+    let _guard = super::LIFECYCLE
+        .write()
+        .map_err(|_| invalid("Plugin lifecycle lock is unavailable"))?;
+    let mut entries = package::list(profile.root)?;
+    let current = entries
+        .iter()
+        .find(|entry| entry.manifest.id == id)
+        .ok_or_else(|| invalid("Plugin package is not installed"))?;
+    if current.enabled == enabled {
+        return Ok(());
+    }
+    if !enabled {
+        service_host::mutation_allowed_in(profile.store, id)?;
+        if backend::busy(id) {
+            return Err(service_host::busy(
+                "Finish active plugin operations before changing this package",
+            ));
+        }
+    } else if profile.store.claims()?.iter().any(|a| {
+        (a.consumer.package_id == id && a.consumer.digest != current.digest)
+            || (a.provider.package_id == id && a.provider.digest != current.digest)
+    }) {
+        return Err(invalid(
+            "Enable the pinned package version to recover its AI operations",
+        ));
+    }
+    let entry = entries
+        .iter_mut()
+        .find(|entry| entry.manifest.id == id)
+        .ok_or_else(|| invalid("Plugin package is not installed"))?;
+    entry.enabled = enabled;
+    service_graph::validate_enabled(&entries)?;
+    package::write_index(profile.root, &entries)
+}
+/// The broker-preflight entry used by the native candidate fixture.
+#[cfg(all(test, target_os = "linux"))]
+pub(super) fn install(
+    root: &Path,
+    next: package::Installed,
+    fence: &backend::DrainGuard,
+) -> Result<package::Installed, AppError> {
+    install_with(root, next, fence, &backend::preflight_candidate)
+}
+fn install_with(
+    root: &Path,
+    next: package::Installed,
+    fence: &backend::DrainGuard,
+    preflight: Preflight,
+) -> Result<package::Installed, AppError> {
     recover(root)?;
-    let next = package::prepare(root, archive)?;
+    service_host::candidate_state_allowed_at(
+        root.parent()
+            .ok_or_else(|| invalid("Plugin profile root is unavailable"))?,
+        &next,
+    )?;
     if backend::busy(&next.manifest.id) {
-        return Err(invalid("Finish active plugin operations before upgrading"));
+        return Err(service_host::busy(
+            "Finish active plugin operations before upgrading",
+        ));
     }
     let previous = package::list(root)?;
+    let (proposed, installed) = package::planned_index(&previous, next.clone())?;
     backend::retire(&next.manifest.id);
     let snapshot = root.join("upgrade-pending");
     fs::create_dir(&snapshot)?;
@@ -247,6 +444,7 @@ pub(super) fn install(root: &Path, archive: &Path) -> Result<package::Installed,
         phase: Phase::Prepared,
         package_id: next.manifest.id.clone(),
         previous,
+        committed_index: None,
         files: vec![],
     };
     let result = (|| {
@@ -262,16 +460,50 @@ pub(super) fn install(root: &Path, archive: &Path) -> Result<package::Installed,
         }
         write_marker(&snapshot, &upgrade)?;
         sync_directory(root)?;
-        let installed = package::publish(root, next.clone())?;
-        let candidate = backend::preflight(&installed.manifest.id)?;
+        let validation = snapshot.join("validation");
+        fs::create_dir(&validation)?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&validation, fs::Permissions::from_mode(0o700))?;
+        }
+        // Copy all declared state, including SQLite companions. Legacy
+        // deferRecovery may migrate this private DB but cannot publish/recover.
+        for saved in &upgrade.files {
+            if saved.content.is_some() {
+                snapshot_file(
+                    &snapshot.join("state").join(&saved.name),
+                    &validation.join(&saved.name),
+                )?;
+            }
+        }
+        for name in &next.manifest.initial_data_files {
+            let destination = validation.join(name);
+            let source = root
+                .parent()
+                .ok_or_else(|| invalid("Plugin profile has no parent"))?
+                .join(name);
+            if !destination.exists() && source.exists() {
+                snapshot_file(&source, &destination)?;
+            }
+        }
+        preflight(&next, validation, fence)?;
+        // Persist the irrevocable decision before exposing the new index.
+        // Recovery completes publication if the host dies between the two.
         upgrade.phase = Phase::Committed;
+        upgrade.committed_index = Some(proposed.clone());
+        write_marker(&snapshot, &upgrade)?;
+        {
+            let _gate = super::LIFECYCLE
+                .write()
+                .map_err(|_| invalid("Plugin lifecycle lock is unavailable"))?;
+            package::write_index(root, &proposed)?;
+        }
+        upgrade.phase = Phase::Published;
         write_marker(&snapshot, &upgrade)?;
         // External journal reconciliation may collect publication proof. It is
         // safe only after the durable commit forbids database rollback.
-        if let Err(cause) = candidate.call("lifecycle.activate", serde_json::json!({})) {
-            backend::retire(&installed.manifest.id);
-            log::warn!("Installed plugin activation will retry on next use: {cause}");
-        }
+        // The caller activates after releasing the lifecycle/startup gates.
         Ok(installed)
     })();
     match result {
@@ -280,9 +512,18 @@ pub(super) fn install(root: &Path, archive: &Path) -> Result<package::Installed,
             Ok(installed)
         }
         Err(cause) => {
+            if matches!(upgrade.phase, Phase::Committed | Phase::Published) {
+                // The marker replacement/flush may have succeeded. Retain its
+                // decision and close admission until forward recovery settles.
+                fence.retain_for_recovery();
+                return Err(invalid(format!("Plugin commit requires recovery: {cause}")));
+            }
             backend::retire(&next.manifest.id);
             if snapshot.join("upgrade.json").exists() {
-                restore(root,&snapshot,&mut upgrade).map_err(|restore_error|invalid(format!("Plugin upgrade failed ({cause}); rollback requires recovery: {restore_error}")))?;
+                if let Err(restore_error) = restore(root, &snapshot, &mut upgrade) {
+                    fence.retain_for_recovery();
+                    return Err(invalid(format!("Plugin upgrade failed ({cause}); rollback requires recovery: {restore_error}")));
+                }
             } else {
                 cleanup(&snapshot);
             }
@@ -291,6 +532,12 @@ pub(super) fn install(root: &Path, archive: &Path) -> Result<package::Installed,
     }
 }
 
+#[cfg(test)]
+#[path = "mutation_matrix_tests.rs"]
+mod mutation_matrix_tests;
+#[cfg(all(test, target_os = "linux"))]
+#[path = "mutation_native_tests.rs"]
+pub(super) mod mutation_native_tests;
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -306,6 +553,7 @@ mod tests {
             phase,
             package_id: "example.plugin".into(),
             previous: vec![],
+            committed_index: None,
             files: vec![SavedFile {
                 name: "history.sqlite".into(),
                 content: Some(Content {
@@ -318,7 +566,7 @@ mod tests {
     }
     #[test]
     fn completed_snapshot_cleanup_cannot_erase_current_history_after_restart() {
-        for phase in [Phase::Committed, Phase::RolledBack] {
+        for phase in [Phase::Committed, Phase::Published, Phase::RolledBack] {
             let (_profile, root, data, upgrade) = fixture(phase);
             let snapshot = root.join("upgrade-pending");
             write_marker(&snapshot, &upgrade).unwrap();
@@ -331,6 +579,181 @@ mod tests {
             );
         }
     }
+    fn installed_fixture() -> package::Installed {
+        let target_suffix = match std::env::consts::OS {
+            "linux" => "unknown-linux-gnu",
+            "macos" => "apple-darwin",
+            "windows" => "pc-windows-msvc",
+            other => other,
+        };
+        let target = format!("{}-{target_suffix}", std::env::consts::ARCH);
+        let payload = serde_json::json!({"size": 1, "sha256": "a".repeat(64)});
+        serde_json::from_value(serde_json::json!({
+            "enabled": true, "digest": "b".repeat(64), "manifest": {
+            "formatVersion": 1, "id": "example.plugin", "name": "fixture",
+            "description": "fixture", "version": "2.0.0", "sdkVersion": 3,
+            "svelteVersion": "5.56.3", "target": target, "frontend": "index.js",
+            "styles": "index.css", "backend": "worker", "contributions": ["example"],
+            "files": {"index.js": payload, "index.css": payload, "worker": payload}
+            }
+        }))
+        .unwrap()
+    }
+    #[test]
+    fn committed_decision_finishes_index_publication_without_rolling_back_current_state() {
+        let (_profile, root, data, mut upgrade) = fixture(Phase::Committed);
+        let installed = installed_fixture();
+        upgrade.committed_index = Some(vec![installed.clone()]);
+        package::write_index(&root, &[]).unwrap();
+        write_marker(&root.join("upgrade-pending"), &upgrade).unwrap();
+        // Process died after committing, before publishing the index. A
+        // collected/missing old-state backup is irrelevant to forward recovery.
+        recover(&root).unwrap();
+        recover(&root).unwrap();
+        let actual = package::list(&root).unwrap();
+        assert_eq!(actual.len(), 1);
+        assert_eq!(actual[0].digest, installed.digest);
+        assert_eq!(actual[0].manifest.version, "2.0.0");
+        assert_eq!(
+            fs::read(data.join("history.sqlite")).unwrap(),
+            b"current history"
+        );
+        assert!(!root.join("upgrade-pending").exists());
+    }
+
+    #[test]
+    fn an_uncleaned_published_snapshot_cannot_resurrect_a_later_disabled_or_removed_package() {
+        for removed in [false, true] {
+            let (_profile, root, data, mut upgrade) = fixture(Phase::Published);
+            let installed = installed_fixture();
+            upgrade.committed_index = Some(vec![installed.clone()]);
+            write_marker(&root.join("upgrade-pending"), &upgrade).unwrap();
+            let mut disabled = installed.clone();
+            disabled.enabled = false;
+            let current = if removed { vec![] } else { vec![disabled] };
+            package::write_index(&root, &current).unwrap();
+            // A previous cleanup failed; another successful mutation followed.
+            recover(&root).unwrap();
+            let actual = package::list(&root).unwrap();
+            assert_eq!(actual.len(), usize::from(!removed));
+            if !removed {
+                assert!(!actual[0].enabled);
+            }
+            assert_eq!(
+                fs::read(data.join("history.sqlite")).unwrap(),
+                b"current history"
+            );
+        }
+    }
+
+    #[test]
+    fn a_valid_large_dual_index_journal_is_readable_through_forward_recovery() {
+        let (_profile, root, data, mut upgrade) = fixture(Phase::Committed);
+        let mut previous = Vec::new();
+        for i in 0..64 {
+            let mut entry = installed_fixture();
+            if i != 0 {
+                entry.manifest.id = format!("example.package{i}");
+            }
+            entry.manifest.name = "N".repeat(200);
+            entry.manifest.description = "D".repeat(2000);
+            entry.manifest.version = "1.0.0".into();
+            entry.manifest.contributions = (0..16)
+                .map(|j| format!("p{i}.c{j}.{}", "a".repeat(85)))
+                .collect();
+            entry.manifest.state_files = (0..16)
+                .map(|j| format!("s{j}.{}", "a".repeat(170)))
+                .collect();
+            entry.manifest.initial_data_files = (0..16)
+                .map(|j| format!("i{j}.{}", "b".repeat(170)))
+                .collect();
+            entry.manifest.validate().unwrap();
+            previous.push(entry);
+        }
+        let mut committed = previous.clone();
+        committed[0].manifest.version = "2.0.0".into();
+        package::write_index(&root, &previous).unwrap();
+        upgrade.previous = previous;
+        upgrade.committed_index = Some(committed);
+        let snapshot = root.join("upgrade-pending");
+        write_marker(&snapshot, &upgrade).unwrap();
+        assert!(fs::metadata(snapshot.join("upgrade.json")).unwrap().len() > 1024 * 1024);
+        recover(&root).unwrap();
+        let actual = package::list(&root).unwrap();
+        assert_eq!(actual.len(), 64);
+        assert_eq!(actual[0].manifest.version, "2.0.0");
+        assert!(actual
+            .iter()
+            .skip(1)
+            .all(|entry| entry.manifest.version == "1.0.0"));
+        assert_eq!(
+            fs::read(data.join("history.sqlite")).unwrap(),
+            b"current history"
+        );
+    }
+
+    #[test]
+    fn malformed_committed_index_is_rejected_before_changing_the_healthy_index() {
+        for duplicate in [false, true] {
+            let (_profile, root, data, mut upgrade) = fixture(Phase::Committed);
+            let healthy = installed_fixture();
+            package::write_index(&root, std::slice::from_ref(&healthy)).unwrap();
+            let original = fs::read(root.join("installed.json")).unwrap();
+            let mut malformed = healthy.clone();
+            if duplicate {
+                upgrade.committed_index = Some(vec![malformed.clone(), malformed]);
+            } else {
+                malformed.digest = "not-a-sha".into();
+                upgrade.committed_index = Some(vec![malformed]);
+            }
+            write_marker(&root.join("upgrade-pending"), &upgrade).unwrap();
+            assert!(recover(&root).is_err());
+            assert_eq!(fs::read(root.join("installed.json")).unwrap(), original);
+            assert_eq!(
+                fs::read(data.join("history.sqlite")).unwrap(),
+                b"current history"
+            );
+            assert!(root.join("upgrade-pending/upgrade.json").exists());
+        }
+    }
+
+    #[test]
+    fn duplicate_restore_targets_cannot_restore_then_delete_original_history() {
+        let (_profile, root, data, mut upgrade) = fixture(Phase::Prepared);
+        let snapshot = root.join("upgrade-pending");
+        fs::write(snapshot.join("state/history.sqlite"), b"old history!").unwrap();
+        upgrade.files.push(SavedFile {
+            name: "history.sqlite".into(),
+            content: None,
+        });
+        write_marker(&snapshot, &upgrade).unwrap();
+        assert!(recover(&root).is_err());
+        assert_eq!(
+            fs::read(data.join("history.sqlite")).unwrap(),
+            b"current history"
+        );
+        assert!(snapshot.join("upgrade.json").exists());
+    }
+
+    #[test]
+    fn a_commit_journal_cannot_replace_an_unrelated_package() {
+        let (_profile, root, _data, mut upgrade) = fixture(Phase::Committed);
+        let next = installed_fixture();
+        let mut other = next.clone();
+        other.manifest.id = "example.unrelated".into();
+        other.manifest.contributions = vec!["unrelated".into()];
+        upgrade.previous = vec![other.clone()];
+        let mut altered = other.clone();
+        altered.enabled = false;
+        upgrade.committed_index = Some(vec![next, altered]);
+        package::write_index(&root, &[other]).unwrap();
+        let original = fs::read(root.join("installed.json")).unwrap();
+        write_marker(&root.join("upgrade-pending"), &upgrade).unwrap();
+        assert!(recover(&root).is_err());
+        assert_eq!(fs::read(root.join("installed.json")).unwrap(), original);
+        assert!(root.join("upgrade-pending/upgrade.json").exists());
+    }
+
     #[test]
     fn absent_or_corrupted_required_backup_refuses_recovery_without_erasing_history() {
         for corrupt in [false, true] {

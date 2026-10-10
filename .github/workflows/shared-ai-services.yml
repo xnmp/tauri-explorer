@@ -1,0 +1,152 @@
+name: Shared AI native acceptance
+
+on:
+  pull_request:
+    branches: [dev, main]
+    paths:
+      - 'src-tauri/src/ai/**'
+      - 'src-tauri/src/installed_plugins/**'
+      - 'src-tauri/src/service_state/**'
+      - 'src-tauri/test_support/legacy_trace_preflight.py'
+      - '.github/workflows/shared-ai-services.yml'
+  push:
+    branches: [dev, main]
+    paths:
+      - 'src-tauri/src/ai/**'
+      - 'src-tauri/src/installed_plugins/**'
+      - 'src-tauri/src/service_state/**'
+      - 'src-tauri/test_support/legacy_trace_preflight.py'
+      - '.github/workflows/shared-ai-services.yml'
+  workflow_dispatch:
+    inputs:
+      plugin_revision:
+        description: 'Full 40-hex TraceExplorer commit containing both SDK3 packages'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: shared-ai-native-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  linux-installed-plugins:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-22.04
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v7
+      - name: Require immutable plugin source
+        env:
+          PLUGIN_REVISION: ${{ inputs.plugin_revision }}
+        run: '[[ "$PLUGIN_REVISION" =~ ^[0-9a-f]{40}$ ]]'
+      - uses: actions/checkout@v7
+        with:
+          repository: xnmp/TraceExplorer
+          ref: ${{ inputs.plugin_revision }}
+          path: plugin-fixture
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: '1.3.8'
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: shared-ai-e2e
+          workspaces: |
+            src-tauri
+            plugin-fixture/src-tauri
+            plugin-fixture/plugins/image-generation/backend
+      - name: Install private native runner dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev libsoup-3.0-dev libjavascriptcoregtk-4.1-dev webkit2gtk-driver xvfb openbox x11-utils dbus-daemon nasm libdav1d-dev
+          cargo install tauri-driver --locked
+      - name: Install frozen frontend dependencies
+        run: |
+          bun install --frozen-lockfile
+          bun install --cwd plugin-fixture --frozen-lockfile
+      - name: Verify actual broker private preflight and shutdown
+        timeout-minutes: 20
+        run: |
+          mkdir -p qualification-results/shared-ai
+          export TE_LIFECYCLE_NATIVE_FIXTURE=1 TE_SERVICE_NATIVE_FIXTURE=1
+          # Each fixture owns process-global lifecycle state and a fresh private profile.
+          run_native_fixture() {
+            fixture_root=$(mktemp -d "/tmp/${3:-te-lifecycle-native}.XXXXXX")
+            mkdir -p "$fixture_root/config" "$fixture_root/data" "$fixture_root/cache" "$fixture_root/state" "$fixture_root/runtime"
+            chmod 700 "$fixture_root/runtime"
+            status=0
+            XDG_CONFIG_HOME="$fixture_root/config" XDG_DATA_HOME="$fixture_root/data" XDG_CACHE_HOME="$fixture_root/cache" XDG_STATE_HOME="$fixture_root/state" XDG_RUNTIME_DIR="$fixture_root/runtime" \
+              env -u WAYLAND_DISPLAY -u OPENAI_API_KEY -u CODEX_API_KEY -u CODEX_ACCESS_TOKEN -u ANTHROPIC_API_KEY GDK_BACKEND=x11 xvfb-run -a dbus-run-session -- cargo test --locked --manifest-path src-tauri/Cargo.toml --lib "$1" -- --ignored --exact --nocapture --test-threads=1 2>&1 | tee "qualification-results/shared-ai/$2.log" || status=$?
+            rm -rf "$fixture_root"
+            return "$status"
+          }
+          run_native_fixture installed_plugins::backend::native_tests::native_private_preflight_retirement_and_shutdown lifecycle
+          run_native_fixture installed_plugins::backend::native_recovery_tests::native_startup_recovery_holds_readiness_and_shutdown_for_actual_io lifecycle-recovery
+          run_native_fixture installed_plugins::lifecycle::mutation_native_tests::native_disable_retires_the_backend_only_after_claims_drain retirement
+          run_native_fixture installed_plugins::lifecycle::mutation_native_tests::native_refused_drains_keep_the_sdk3_backend_serving refused-drain
+          run_native_fixture installed_plugins::lifecycle::mutation_native_tests::native_jobs_the_consumer_never_accepted_settle_and_free_their_package unaccepted-jobs
+          run_native_fixture installed_plugins::startup_native_tests::native_a_process_without_the_profile_never_recovers_its_live_claims profile-not-owned
+          run_native_fixture installed_plugins::startup_native_tests::native_unreadable_ai_storage_keeps_legacy_backends_and_retries storage-unreadable
+          run_native_fixture installed_plugins::startup_native_tests::native_startup_recovery_errors_degrade_instead_of_failing_setup recovery-error
+          run_native_fixture installed_plugins::service_bridge::native_tests::native_second_consumer_status_timeout_transport_loss_and_reverse_correlation service-routing te-service-native
+          run_native_fixture installed_plugins::service_bridge::native_kill_tests::native_consumer_kill_while_provider_runs_settles_each_gate_order_once consumer-kill te-service-native
+      - name: Build host fixture binary
+        env:
+          VITE_E2E_HOOKS: '1'
+        run: bun run tauri build --debug --no-bundle --features e2e-hooks -- --locked
+      - name: Build both independent plugin payloads
+        working-directory: plugin-fixture
+        run: |
+          bun run build:frontend
+          bun run build:image-generation:frontend
+          cargo build --locked --features e2e-hooks --manifest-path src-tauri/Cargo.toml
+          cargo build --locked --manifest-path plugins/image-generation/backend/Cargo.toml
+          python scripts/package-plugin.py --plugin trace --target x86_64-unknown-linux-gnu --binary src-tauri/target/debug/trace-explorer-backend
+          python scripts/package-plugin.py --plugin image-generation --target x86_64-unknown-linux-gnu --binary plugins/image-generation/backend/target/debug/image-generation-backend
+          python tests/packaging/verify_packages.py --target x86_64-unknown-linux-gnu --packages package --trace-binary src-tauri/target/debug/trace-explorer-backend --image-binary plugins/image-generation/backend/target/debug/image-generation-backend > package/verification.json
+      - name: Record exact source and payload provenance
+        env:
+          EXPECTED_PLUGIN_REVISION: ${{ inputs.plugin_revision }}
+        run: |
+          mkdir -p qualification-results/shared-ai
+          [[ "$(git -C plugin-fixture rev-parse HEAD)" == "$EXPECTED_PLUGIN_REVISION" ]]
+          git rev-parse HEAD > qualification-results/shared-ai/host-commit.txt
+          git -C plugin-fixture rev-parse HEAD > qualification-results/shared-ai/plugin-commit.txt
+          sha256sum src-tauri/target/debug/tauri-explorer plugin-fixture/src-tauri/target/debug/trace-explorer-backend plugin-fixture/plugins/image-generation/backend/target/debug/image-generation-backend > qualification-results/shared-ai/binaries.sha256
+          cp plugin-fixture/package/verification.json qualification-results/shared-ai/
+          git diff --exit-code -- bun.lock src-tauri/Cargo.lock
+          git -C plugin-fixture diff --exit-code -- bun.lock src-tauri/Cargo.lock plugins/image-generation/backend/Cargo.lock
+      - name: Run actual Trace without optional provider
+        timeout-minutes: 10
+        run: |
+          trace_archive=$(find "$PWD/plugin-fixture/package" -maxdepth 1 -name 'TraceExplorer-*.teplugin' -print)
+          [[ -f "$trace_archive" ]]
+          bash e2e-tauri/run-shared-ai-services.sh "$PWD/src-tauri/target/debug/tauri-explorer" "$trace_archive" 2>&1 | tee qualification-results/shared-ai/absent.log
+      - name: Run actual Trace and provider with one loopback fake response
+        timeout-minutes: 10
+        run: |
+          trace_archive=$(find "$PWD/plugin-fixture/package" -maxdepth 1 -name 'TraceExplorer-*.teplugin' -print)
+          image_archive=$(find "$PWD/plugin-fixture/package" -maxdepth 1 -name 'ImageGeneration-*.teplugin' -print)
+          [[ -f "$trace_archive" && -f "$image_archive" ]]
+          bash e2e-tauri/run-shared-ai-services.sh "$PWD/src-tauri/target/debug/tauri-explorer" "$trace_archive" "$image_archive" 2>&1 | tee qualification-results/shared-ai/present.log
+      - name: Retain native outcome and immutable payload evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: shared-ai-native-${{ github.sha }}-${{ github.run_attempt }}
+          path: |
+            qualification-results/shared-ai/
+            e2e-tauri/logs/
+            evidence/shared-ai-native/
+            plugin-fixture/package/
+          if-no-files-found: warn

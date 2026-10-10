@@ -6,7 +6,7 @@ use serde_json::{json, Value};
 use std::{
     collections::HashMap,
     path::{Path, PathBuf},
-    sync::{Arc, Mutex, OnceLock},
+    sync::{Arc, Condvar, Mutex, OnceLock},
 };
 
 static OWNERSHIP: Mutex<()> = Mutex::new(());
@@ -15,6 +15,7 @@ pub(super) fn ownership_guard() -> Result<std::sync::MutexGuard<'static, ()>, Ap
         .lock()
         .map_err(|_| AppError::Other("Recording ownership lock is unavailable".into()))
 }
+static PUBLISHERS_CHANGED: Condvar = Condvar::new();
 static LEASES: OnceLock<Mutex<HashMap<String, HashMap<i64, usize>>>> = OnceLock::new();
 fn leases() -> &'static Mutex<HashMap<String, HashMap<i64, usize>>> {
     LEASES.get_or_init(|| Mutex::new(HashMap::new()))
@@ -27,6 +28,14 @@ pub(super) fn active_runs(package: &str) -> Vec<i64> {
         .map(|runs| runs.keys().copied().collect())
         .unwrap_or_default()
 }
+pub(super) fn wait_for_publishers() {
+    let mut all = leases().lock().unwrap_or_else(|cause| cause.into_inner());
+    while all.values().any(|runs| !runs.is_empty()) {
+        all = PUBLISHERS_CHANGED
+            .wait(all)
+            .unwrap_or_else(|cause| cause.into_inner());
+    }
+}
 struct Lease {
     package: String,
     id: i64,
@@ -37,6 +46,7 @@ impl Drop for Lease {
         if let Some(runs) = all.get_mut(&self.package) {
             runs.remove(&self.id);
         }
+        PUBLISHERS_CHANGED.notify_all();
     }
 }
 #[derive(Clone, Default)]
@@ -72,6 +82,8 @@ pub(crate) fn begin_operation(start: OperationStart) -> Result<TraceRunHandle, A
     else {
         return Ok(TraceRunHandle::default());
     };
+    let _admission = backend::CallLease::acquire(&provider.manifest.id)?;
+    drop(_guard);
     let broker = backend::ensure(&provider.manifest.id)?;
     let _ownership = ownership_guard()?;
     let result = broker.call("provenance.begin", json!({"start":start}))?;
@@ -95,6 +107,8 @@ fn call(run: &TraceRunHandle, method: &str, mut params: Value) -> Result<(), App
     let Some(lease) = &run.0 else {
         return Ok(());
     };
+    let _admission = backend::CallLease::acquire_method(&lease.package, method)?;
+    drop(_guard);
     params["run"] = json!({"id":lease.id});
     backend::call(&lease.package, method, params).map(|_| ())
 }
@@ -174,6 +188,8 @@ pub(crate) async fn relocate_after_rename(
         else {
             return Ok(());
         };
+        let _admission = backend::CallLease::acquire(&provider.manifest.id)?;
+        drop(_guard);
         backend::call(
             &provider.manifest.id,
             "provenance.relocate",

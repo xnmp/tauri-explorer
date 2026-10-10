@@ -2,9 +2,11 @@
   import Modal from "./Modal.svelte";
   import PluginSettings from "./PluginSettings.svelte";
   import { settingsStore } from "$lib/state/settings.svelte";
+  import AiOperationsDialog from "./AiOperationsDialog.svelte";
 
   let { open, onClose }: { open: boolean; onClose: () => void } = $props();
   let query = $state("");
+  let unresolvedOpen = $state(false);
   $effect(() => { if (!open) query = ""; });
 </script>
 
@@ -15,6 +17,7 @@
         <h2 id="plugins-title">Plugins</h2>
       </div>
       <input class="plugins-search" aria-label="Filter plugins" placeholder="Filter plugins…" bind:value={query} data-autofocus />
+      <button class="operations-btn" onclick={() => { unresolvedOpen = true; }}>Unresolved AI operations</button>
       <button class="close-btn" onclick={onClose} aria-label="Close plugins">×</button>
     </header>
     <div class="dialog-content">
@@ -22,6 +25,7 @@
     </div>
   </div>
 </Modal>
+{#if unresolvedOpen}<AiOperationsDialog onClose={() => { unresolvedOpen = false; }} />{/if}
 
 <style>
   .plugins-dialog {
@@ -63,4 +67,7 @@
   .close-btn:hover { background: var(--subtle-fill-secondary); }
   .close-btn:focus-visible { outline: 2px solid var(--focus-stroke-outer); outline-offset: -2px; }
   .dialog-content { min-height: 0; overflow: auto; padding: 20px; }
+  .operations-btn { font: inherit; font-size: 12px; color: var(--text-primary); background: var(--control-fill); border: 1px solid var(--control-stroke); border-radius: var(--radius-sm); padding: 6px 10px; cursor: pointer; }
+  .operations-btn:focus-visible { outline: 2px solid var(--focus-stroke-outer); outline-offset: 2px; }
+  @media (max-width: 600px) { header { flex-wrap: wrap; } .plugins-search { max-width: none; } }
 </style>

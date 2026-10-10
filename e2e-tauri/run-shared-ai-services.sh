@@ -32,6 +32,18 @@ record={'schemaVersion':1,'sourceCommit':source,'profile':'dirty-working-snapsho
 open(manifest,'w').write(json.dumps(record,indent=2)+'\n')
 PY
 printf 'Private working-snapshot profile: %s\n' "$profile"
+# The host's default text profile is the Codex CLI, and the CLI adapters pass
+# CODEX_HOME/CLAUDE_CONFIG_DIR through. Point both at empty private homes and
+# shadow the real executables with refusing shims, so no saved CLI login can
+# ever run a real model call from this fixture.
+cli_home="$profile/cli"
+mkdir -p "$cli_home/bin" "$cli_home/codex-home" "$cli_home/claude-home"
+for cli in codex claude; do
+  printf '#!/bin/sh\nprintf "%%s\\n" "$0 $*" >> "%s/invocations.log"\necho "%s is disabled in native acceptance" >&2\nexit 127\n' "$cli_home" "$cli" > "$cli_home/bin/$cli"
+  chmod 755 "$cli_home/bin/$cli"
+done
+export PATH="$cli_home/bin:$PATH" CODEX_HOME="$cli_home/codex-home" CLAUDE_CONFIG_DIR="$cli_home/claude-home"
+trap 'printf "Refused CLI invocations: %s (%s)\n" "$(cat "$cli_home/invocations.log" 2>/dev/null | wc -l)" "$cli_home/invocations.log"' EXIT
 # Remove auth environment variables from this isolated launch only. Never change HOME.
 env -u WAYLAND_DISPLAY -u OPENAI_API_KEY -u CODEX_API_KEY -u CODEX_ACCESS_TOKEN -u ANTHROPIC_API_KEY GDK_BACKEND=x11 \
   xvfb-run -a --server-args="-screen 0 1440x1000x24" dbus-run-session -- \

@@ -199,9 +199,13 @@ function progressEntries(): Promise<ProgressEntry[]> {
 }
 /** Dismisses terminal entries left by earlier cases (presentation only). */
 async function clearProgress(): Promise<void> {
-  if (!await $(progress).isExisting()) return;
-  await $(progress).$("button.clear-all").click();
-  await $(progress).waitForExist({ reverse: true, timeoutMsg: "the progress panel kept dismissed image entries" });
+  // The panel re-renders as entries update, so each attempt re-queries the
+  // button instead of holding a handle that can go stale between lookups.
+  await browser.waitUntil(async () => {
+    if (!await $(progress).isExisting()) return true;
+    await $(`${progress} button.clear-all`).click().catch(() => undefined);
+    return !await $(progress).isExisting();
+  }, { timeout: 10_000, timeoutMsg: "the progress panel kept dismissed image entries" });
 }
 async function waitForTerminalProgress(status: string, timeoutMsg: string): Promise<ProgressEntry[]> {
   let entries: ProgressEntry[] = [];

@@ -849,6 +849,7 @@ TraceExplorer's image UI, provider adapters and SQLite journal are maintained in
 - `src-tauri/src/ai/cli_tests.rs` — fake-CLI isolation, refusal, typed-failure and process-tree reaping tests.
 - `src-tauri/src/ai/tests.rs` — native local HTTP/fake CLI, cancellation, capacity, credential uncertainty, cross-process CAS and migration outcome tests.
 - `src-tauri/src/installed_plugins/text_service.rs` — active-only native reverse-text bridge with trusted incarnation identity and reserved cancellation capacity.
+- `src-tauri/src/installed_plugins/process_run.rs` — `host.process.run` validation, admission, owned execution with bounded stdin, and typed pre-spawn refusal codes.
 
 ### Shared AI services implementation checkpoint
 

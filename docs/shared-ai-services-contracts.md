@@ -43,3 +43,25 @@ Codex CLI and Claude Code CLI text generation are enabled with enforced isolatio
 - owned process-tree cancellation.
 
 A profile is `unavailable` only when managed or organisation policy is detected, or when the installed CLI lacks a required isolation flag. Policy can force hooks or tools on above command-line flags. Details, evidence and limits: [CLI text isolation](shared-ai-cli-text-isolation.md).
+
+## Owned processes (`host.process.run`)
+
+Reverse request from a plugin backend; the host runs the program as an owned process tree (SDK 3 on Unix: the parent-death-safe supervisor; Windows: a kill-on-close job). Implementation: `src-tauri/src/installed_plugins/process_run.rs`. Plugin side: Trace `crates/plugin-runtime/src/process.rs`, whose `ProcessRequest` has this exact shape.
+
+Params (unknown fields are refused): `{program, args, cwd, env, stdoutLimit, stderrLimit, stdin?}`. `program` is an absolute path; at most 128 `args` of 64 KiB each; `cwd` is a path or null; `env` is at most 128 `[name, value|null]` pairs, where null removes the variable; `stdoutLimit` ≤ 16 MiB and `stderrLimit` ≤ 1 MiB. The result is `{handle, status, stdout, stderr}`, where `stdout`/`stderr` are spool paths kept until `host.process.release {handle}`. `host.process.cancel {requestId}` cancels a run; the plugin runtime sends it on its own cancellation or deadline.
+
+**Stdin.** Hosts that accept `stdin` advertise `processStdin: {version: 1, maxBytes: 262144}` in `initialize`. `stdin` is a UTF-8 string of at most `maxBytes` bytes (256 KiB). The whole request frame must still fit the 1 MiB plugin frame. The host writes the bytes to the child's stdin on a dedicated thread and then closes it; an absent or null `stdin` means stdin is null. A child that exits or closes stdin without reading it is an ordinary outcome: its exit status and output stand. A child that never reads cannot block the host, and cancellation and deadline reaping still apply. Older hosts don't advertise the capability and refuse the field as unknown, so plugins detect the capability and never compare versions.
+
+**Errors** (`error.data.code`). Each refusal before spawning has its own code, so a plugin can tell "never ran" from "may have run":
+
+| Code | Meaning | Could the program have run? |
+|---|---|---|
+| `invalid_request` | Malformed request, unknown field, invalid request ID, or a limit exceeded (including `stdin` over `maxBytes`) | No |
+| `capacity_reached` | The plugin already has 4 running processes or 8 retained output spools | No |
+| `not_found` | The executable or working directory does not exist | No |
+| `permission_denied` | The executable or working directory is not accessible | No |
+| `not_started` | Any other refusal or failure before the program executed: the plugin is not active, a lifecycle change or shutdown, call admission, output spool or supervision setup, worker start, cancellation before spawn, or another spawn error | No |
+| `interrupted` | The program was spawned and did not return a complete result: cancellation, an output limit, supervision loss or spool failure | Maybe |
+| `protocol_error` | The request ID belongs to a process that is still running; the reply reaches that process's waiter | Maybe |
+
+`preflight_not_active` (a validation-only backend) is refused before dispatch, as for every host service. Hosts before these codes reported every pre-spawn refusal as `service_unavailable` (and SDK 3 post-spawn failures as `interrupted`). A plugin must keep treating `service_unavailable` as uncertain.

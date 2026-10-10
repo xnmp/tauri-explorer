@@ -2,12 +2,11 @@
 use super::{package, root};
 use crate::{
     config,
-    error::AppError,
+    error::{AppError, ProcessRunError},
     plugin_job::JobControl,
-    process_ext::{output_controlled, NoConsole},
+    process_ext::NoConsole,
 };
 use base64::Engine;
-use serde::Deserialize;
 use serde_json::{json, Value};
 use std::{
     collections::{HashMap, HashSet},
@@ -1295,64 +1294,67 @@ impl Broker {
         Ok(())
     }
 
+    /// `host.process.run`. Every refusal returned here precedes spawning and
+    /// carries a typed code (see `process_run::code`); the worker reports
+    /// spawn refusals with the same codes and anything later as interrupted.
     fn run_process(self: &Arc<Self>, frame: &Value) -> Result<(), AppError> {
-        if self.installed.manifest.sdk_version >= 3 && !self.is_active() {
-            return Err(error("Plugin is not active"));
-        }
-        #[derive(Deserialize)]
-        #[serde(rename_all = "camelCase", deny_unknown_fields)]
-        struct Process {
-            program: String,
-            args: Vec<String>,
-            cwd: Option<PathBuf>,
-            env: Vec<(String, Option<String>)>,
-            stdout_limit: usize,
-            stderr_limit: usize,
-        }
+        use super::process_run::{code, refusal};
+        // An invalid ID can never name a running process, so its refusal
+        // cannot reach another request's waiter.
         let id = frame["id"]
             .as_str()
             .filter(|id| id.starts_with("host:") && id.len() < 100)
-            .ok_or_else(|| error("Invalid host-service request ID"))?
+            .ok_or_else(|| refusal(code::INVALID_REQUEST, "Invalid host-service request ID"))?
             .to_owned();
-        let request: Process = serde_json::from_value(frame["params"].clone())
-            .map_err(|_| error("Invalid host process request"))?;
-        if !PathBuf::from(&request.program).is_absolute()
-            || request.args.len() > 128
-            || request.env.len() > 128
-            || request.args.iter().any(|arg| arg.len() > 64 * 1024)
-            || request.stdout_limit > 16 * 1024 * 1024
-            || request.stderr_limit > 1024 * 1024
+        // Any reply to a running process's ID reaches that process's waiter:
+        // never claim non-execution there (admission re-checks under lock).
+        if self
+            .controls
+            .lock()
+            .map_or(true, |controls| controls.contains_key(&id))
         {
-            return Err(error("Host process request exceeds its limits"));
+            return Err(refusal(
+                code::PROTOCOL_ERROR,
+                "Plugin process request ID is already running",
+            ));
         }
+        if self.installed.manifest.sdk_version >= 3 && !self.is_active() {
+            return Err(refusal(code::NOT_STARTED, "Plugin is not active"));
+        }
+        let request = super::process_run::parse(&frame["params"])?;
         let control = JobControl::new();
         let spool = Arc::new(
             tempfile::Builder::new()
                 .prefix("tauri-explorer-plugin-output-")
-                .tempdir()?,
+                .tempdir()
+                .map_err(|_| refusal(code::NOT_STARTED, "Plugin output spool is unavailable"))?,
         );
         let lease = {
-            let _gate = super::read_lifecycle()?;
+            let not_started = |cause: AppError| refusal(code::NOT_STARTED, &cause.to_string());
+            let _gate = super::read_lifecycle().map_err(not_started)?;
             if self.installed.manifest.sdk_version >= 3 && !self.is_active() {
-                return Err(error("Plugin is not active for process admission"));
+                return Err(refusal(
+                    code::NOT_STARTED,
+                    "Plugin is not active for process admission",
+                ));
             }
-            let lease = CallLease::acquire(&self.package_id)?;
+            let lease = CallLease::acquire(&self.package_id).map_err(not_started)?;
             let mut controls = self
                 .controls
                 .lock()
-                .map_err(|_| error("Plugin process lock is unavailable"))?;
-            if controls.len() >= 4 || controls.contains_key(&id) {
-                return Err(error("Plugin process capacity reached"));
-            }
+                .map_err(|_| refusal(code::NOT_STARTED, "Plugin process lock is unavailable"))?;
             let mut spools = self
                 .spools
                 .lock()
-                .map_err(|_| error("Plugin spool lock is unavailable"))?;
-            if !self.alive.load(Ordering::Acquire) || spools.len() >= 8 {
-                return Err(error("Plugin output spool capacity reached"));
-            }
-            spools.insert(id.clone(), spool.clone());
-            controls.insert(id.clone(), control.clone());
+                .map_err(|_| refusal(code::NOT_STARTED, "Plugin spool lock is unavailable"))?;
+            super::process_run::admit(
+                &mut controls,
+                &mut spools,
+                self.alive.load(Ordering::Acquire),
+                &id,
+                &control,
+                &spool,
+            )?;
             lease
         };
         let owner = self.clone();
@@ -1380,39 +1382,21 @@ impl Broker {
             // order both on rejected spawn and after actual process/byte IO.
             let admission=admission;
             let spool=&admission.spool;
+            let modern = owner.installed.manifest.sdk_version >= 3;
             let result = (|| {
-                let mut command = Command::new(&request.program);
-                command.no_console().args(request.args);
-                if let Some(cwd) = request.cwd {
-                    command.current_dir(cwd);
-                }
-                for (key, value) in request.env {
-                    if let Some(value) = value {
-                        command.env(key, value);
-                    } else {
-                        command.env_remove(key);
-                    }
-                }
-                command.stdin(Stdio::null());
-                #[cfg(unix)]
-                let output_controlled = if owner.installed.manifest.sdk_version >= 3 {
-                    crate::process_supervisor::output_controlled
-                } else {
-                    output_controlled
-                };
-                let output = output_controlled(
-                    &mut command,
+                let output = super::process_run::execute(
+                    request,
                     || !owner.alive.load(Ordering::Acquire) || control.check().is_err(),
-                    (request.stdout_limit, request.stderr_limit),
-                    "Plugin process cancelled",
+                    cfg!(unix) && modern,
                 )?;
+                let started = ProcessRunError::Started;
                 if !owner.alive.load(Ordering::Acquire) || control.check().is_err() {
-                    return Err(error("Plugin process cancelled"));
+                    return Err(started(error("Plugin process cancelled")));
                 }
                 let stdout = spool.path().join("stdout");
                 let stderr = spool.path().join("stderr");
-                fs::write(&stdout, output.stdout)?;
-                fs::write(&stderr, output.stderr)?;
+                fs::write(&stdout, output.stdout).map_err(|cause| started(cause.into()))?;
+                fs::write(&stderr, output.stderr).map_err(|cause| started(cause.into()))?;
                 #[cfg(unix)]
                 let status = {
                     use std::os::unix::process::ExitStatusExt;
@@ -1424,7 +1408,7 @@ impl Broker {
                         output
                             .status
                             .code()
-                            .ok_or_else(|| error("Process exit code is unavailable"))?
+                            .ok_or_else(|| started(error("Process exit code is unavailable")))?
                             as u32,
                     )
                 };
@@ -1432,30 +1416,39 @@ impl Broker {
                     let spools = owner
                         .spools
                         .lock()
-                        .map_err(|_| error("Plugin spool lock is unavailable"))?;
+                        .map_err(|_| started(error("Plugin spool lock is unavailable")))?;
                     if !owner.alive.load(Ordering::Acquire)
                         || !spools.contains_key(&id)
                         || control.check().is_err()
                     {
-                        return Err(error("Plugin process cancelled"));
+                        return Err(started(error("Plugin process cancelled")));
                     }
                 }
-                Ok::<_, AppError>(
+                Ok::<_, ProcessRunError>(
                     json!({"handle":id,"status":status,"stdout":stdout,"stderr":stderr}),
                 )
             })();
             let completed = result.is_ok();
             let response = match result {
                 Ok(result) => json!({"jsonrpc":"2.0","id":id,"result":result}),
-                Err(cause) => {
-                    if owner.installed.manifest.sdk_version>=3 {
-                        // No failed host execution reply proves that a CLI did
-                        // not submit remotely. Preserve uncertainty across the
-                        // RPC boundary, including cancellation and output loss.
-                        json!({"jsonrpc":"2.0","id":id,"error":{"code":-32000,"message":"Owned plugin process did not provide a complete result","data":{"code":"interrupted"}}})
-                    } else {
-                        json!({"jsonrpc":"2.0","id":id,"error":{"code":-32000,"message":cause.to_string(),"data":{"code":cause.service_code()}}})
-                    }
+                Err(failure) if modern => {
+                    let code = super::process_run::failure_code(&failure);
+                    let message = match failure {
+                        ProcessRunError::NotStarted(cause) => {
+                            format!("Owned plugin process was not started: {cause}")
+                        }
+                        // No failed execution after spawn proves that a CLI
+                        // did not submit remotely. Preserve uncertainty across
+                        // the RPC boundary, including cancellation and output loss.
+                        ProcessRunError::Started(_) => {
+                            "Owned plugin process did not provide a complete result".into()
+                        }
+                    };
+                    json!({"jsonrpc":"2.0","id":id,"error":{"code":-32000,"message":message,"data":{"code":code}}})
+                }
+                Err(failure) => {
+                    let cause = failure.into_error();
+                    json!({"jsonrpc":"2.0","id":id,"error":{"code":-32000,"message":cause.to_string(),"data":{"code":cause.service_code()}}})
                 }
             };
             if owner.send(&response).is_err() {
@@ -1468,10 +1461,7 @@ impl Broker {
             } else if completed {
                 keep_spool.store(true, Ordering::Release);
             }
-        }).map_err(|_| AppError::Service {
-            code: "interrupted".into(),
-            message: "Owned plugin process worker could not be started".into(),
-        })?;
+        }).map_err(|_| refusal(code::NOT_STARTED, "Owned plugin process worker could not be started"))?;
         Ok(())
     }
 
@@ -2169,7 +2159,7 @@ fn start_broker(
     };
     let initialized = broker.call(
         "initialize",
-        json!({"protocolVersion":1,"activeRunIds":if validation_only {vec![]} else {super::provenance::active_runs(id)},"processService":true,"textService":{"version":1},"serviceService":{"version":1},"artifactService":{"version":1},"credentialService":{"version":1},"jobService":{"version":1},"hostControl":{"token":broker.control_token},"validationOnly":validation_only,"deferRecovery":deferred}),
+        json!({"protocolVersion":1,"activeRunIds":if validation_only {vec![]} else {super::provenance::active_runs(id)},"processService":true,"processStdin":super::process_run::stdin_capability(),"textService":{"version":1},"serviceService":{"version":1},"artifactService":{"version":1},"credentialService":{"version":1},"jobService":{"version":1},"hostControl":{"token":broker.control_token},"validationOnly":validation_only,"deferRecovery":deferred}),
     );
     // Legacy reconciliation serialization must not survive into failure cleanup.
     drop(ownership);

@@ -402,10 +402,45 @@ fn native_second_consumer_status_timeout_transport_loss_and_reverse_correlation(
     let text = reply(FIRST, &rest[3], Duration::from_secs(10));
     assert!(text["result"]["configurationRevision"].is_u64(), "{text}");
     // The lib test harness cannot host the SDK 3 process-supervisor anchor,
-    // so the owned process reports the uncertainty-preserving interruption.
-    // Its reply is still routed to its own request ID and nowhere else.
+    // so supervision setup fails before the leaf is spawned: a typed,
+    // definite non-execution. Its reply is still routed to its own request
+    // ID and nowhere else.
     let process = reply(FIRST, &rest[4], Duration::from_secs(10));
-    assert_eq!(process["error"]["data"]["code"], "interrupted", "{process}");
+    assert_eq!(process["error"]["data"]["code"], "not_started", "{process}");
+    // Bounded stdin is advertised at initialization and enforced before
+    // admission; an unknown field is still refused.
+    let initialize = log(FIRST)
+        .into_iter()
+        .find(|entry| entry["method"] == "initialize")
+        .unwrap();
+    assert_eq!(
+        initialize["params"]["processStdin"],
+        json!({"version":1,"maxBytes":256 * 1024}),
+        "{initialize}"
+    );
+    let shell = |extra: Value| {
+        let mut params = json!({"program":"/bin/sh","args":["-c","cat"],"cwd":null,"env":[],"stdoutLimit":1024,"stderrLimit":1024});
+        params
+            .as_object_mut()
+            .unwrap()
+            .extend(extra.as_object().unwrap().clone());
+        ("host.process.run", params)
+    };
+    let stdin = send(
+        FIRST,
+        vec![
+            shell(json!({"stdin":"x".repeat(256 * 1024 + 1)})),
+            shell(json!({"stdin":"bounded"})),
+            shell(json!({"stdinPath":"/etc/hostname"})),
+        ],
+    );
+    for (id, code) in stdin
+        .iter()
+        .zip(["invalid_request", "not_started", "invalid_request"])
+    {
+        let refused = reply(FIRST, id, Duration::from_secs(10));
+        assert_eq!(refused["error"]["data"]["code"], code, "{refused}");
+    }
     assert!(
         prepares[..8].iter().all(|id| !has_reply(FIRST, id)),
         "held prepares replied early"

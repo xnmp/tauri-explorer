@@ -77,6 +77,24 @@ impl Serialize for AppError {
     }
 }
 
+/// A failed owned process run, classified by whether the program could have
+/// executed. Callers that must not replay side effects rely on this split.
+#[derive(Debug)]
+pub(crate) enum ProcessRunError {
+    /// Refused or failed before the program was executed: it had no effects.
+    NotStarted(AppError),
+    /// The program was spawned; whatever it did is unknown.
+    Started(AppError),
+}
+
+impl ProcessRunError {
+    pub(crate) fn into_error(self) -> AppError {
+        match self {
+            Self::NotStarted(cause) | Self::Started(cause) => cause,
+        }
+    }
+}
+
 impl AppError {
     pub(crate) fn service_code(&self) -> &str {
         match self {

@@ -1,6 +1,6 @@
 # SDK3 Unix CLI supervision evidence
 
-`src-tauri/src/process_supervisor.rs` provides `early_mode() -> Option<i32>` and `output_controlled(&mut Command, cancelled, (stdout_limit, stderr_limit), cancel_message) -> Result<Output, AppError>`. The coordinator wires early mode before Tauri/logging initialization and uses the output helper only for SDK3 native `host.process.run`. Configure the original command's stdin before calling; arguments, environment, cwd and input stay on that command. Windows retains its existing suspended-start, kill-on-close Job object path.
+`src-tauri/src/process_supervisor.rs` provides `early_mode() -> Option<i32>` and `run(&mut Command, cancelled, (stdout_limit, stderr_limit), cancel_message, input: Option<Vec<u8>>) -> Result<Output, ProcessRunError>`. The coordinator wires early mode before Tauri/logging initialization and uses `run` only for SDK3 native `host.process.run`. Arguments, environment and cwd stay on the original command. With `input`, stdin is a pipe that a nonblocking writer thread fills and then closes; without it, the command's own stdin configuration is used. `ProcessRunError::NotStarted` covers every failure before the leaf is spawned (cancellation, supervision setup, spawn errors); everything later is `Started`. Windows retains its existing suspended-start, kill-on-close Job object path.
 
 ## Ownership design
 
@@ -30,12 +30,13 @@ CARGO_TARGET_DIR=/home/chong/Repos/tauri-explorer/src-tauri/target cargo build -
 python3 src-tauri/test_support/process_supervisor.py /home/chong/Repos/tauri-explorer/src-tauri/target/debug/te-process-supervisor-fixture
 ```
 
-14 outcome fixtures passed on 2026-10-10:
+14 outcome fixtures passed on 2026-10-10 (19 since bounded stdin, below):
 
 - Exact stdout/stderr and exit0, exact nonzero exit23, output exactly at its bound, and successful reuse of the same Command.
 - Early leaf exit0 with children/grandchildren retaining both pipes: output preserved and all owned processes stopped.
 - Cancellation, stdout overflow and stderr overflow: error returned and all descendants stopped.
-- Missing executable: no leaf dispatch, anchor cleanup completes.
+- Missing executable: no leaf dispatch, anchor cleanup completes, classified as not started.
+- Stdin (2026-10-10, bounded stdin): 1 MiB input reaches a reading leaf byte for byte (digest echoed); a leaf exiting without reading keeps its own exit status; a non-reading leaf is cancelled and its whole tree stopped without deadlock; a non-reading leaf flooding stdout hits the output limit without deadlock. Post-spawn failures are classified as started.
 - Actual parent SIGKILL: anchor, leaf, child and grandchild all stopped without Rust Drop.
 - Actual parent SIGKILL while a leaf is gated before exec: anchor and gated child stopped.
 - Private mode rejects a missing descriptor, a regular-file descriptor and an invalid socket handshake without output/application startup.

@@ -822,20 +822,29 @@ impl Store {
             let Ok(lease) = self.lease(&handle) else {
                 continue;
             };
+            // The Released commit already happened. Byte removal is best-effort:
+            // on failure the artifact row stays, so a later sweep retries it.
+            let mut collected = true;
             for path in [
                 self.bytes_path(&handle)?,
                 self.pending_path(&handle)?,
                 self.stage_path(&handle)?,
             ] {
                 match fs::remove_file(&path) {
-                    Ok(()) => sync_directory(path.parent().unwrap())?,
+                    Ok(()) => {
+                        if sync_directory(path.parent().unwrap()).is_err() {
+                            collected = false;
+                        }
+                    }
                     Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
-                    Err(_) => {
-                        return Err(reject(
-                            "released artifact cleanup failed; reservation retained",
-                        ))
+                    Err(error) => {
+                        log::warn!("released artifact cleanup deferred for a later sweep: {error}");
+                        collected = false;
                     }
                 }
+            }
+            if !collected {
+                continue;
             }
             self.transaction(|tx| {
                 tx.execute(

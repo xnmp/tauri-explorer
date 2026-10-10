@@ -92,8 +92,11 @@ impl Store {
             }
         }
         let path = store.root.join("ledger.sqlite");
-        let missing = !path.exists();
-        if missing
+        let exists = path.exists();
+        // A crash between SQLite creating the file and the schema commit leaves
+        // an empty database that is first-run, not an unsupported ledger.
+        let missing = !exists || store.interrupted_first_run()?;
+        if !exists
             && !fresh
             && fs::read_dir(&store.root)
                 .map_err(|_| reject("service directory is unreadable"))?
@@ -224,8 +227,58 @@ impl Store {
         // Directory-entry durability is qualified on every supported platform
         // (see crate::durable_dir), so startup recovery and GC run everywhere.
         store.recover_unaccepted()?;
-        store.gc()?;
+        // Released rows are already durable; a failed byte sweep (e.g. a file
+        // held open on Windows) must not take the Store down. It retries on
+        // the next sweep.
+        if let Err(error) = store.gc() {
+            log::warn!("startup artifact sweep deferred: {error}");
+        }
         Ok(store)
+    }
+    /// True only for a ledger that provably never held state: no tables,
+    /// `user_version` 0, and nothing else durable in the service directory
+    /// (bytes, stages and leases hold no entries). Any doubt fails closed.
+    fn interrupted_first_run(&self) -> Result<bool> {
+        for name in [
+            "ledger.sqlite",
+            "ledger.sqlite-wal",
+            "ledger.sqlite-shm",
+            "ledger.sqlite-journal",
+        ] {
+            super::artifacts::regular_or_missing(&self.root.join(name))?;
+        }
+        let entries = fs::read_dir(&self.root)
+            .map_err(|_| reject("service directory is unreadable"))?
+            .filter_map(std::result::Result::ok);
+        for entry in entries {
+            let name = entry.file_name();
+            let name = name.to_string_lossy();
+            let inert = matches!(
+                name.as_ref(),
+                ".initialize.lock"
+                    | "ledger.sqlite"
+                    | "ledger.sqlite-wal"
+                    | "ledger.sqlite-shm"
+                    | "ledger.sqlite-journal"
+            ) || (matches!(name.as_ref(), "bytes" | "stages" | "leases")
+                && fs::read_dir(entry.path()).is_ok_and(|mut d| d.next().is_none()));
+            if !inert {
+                return Ok(false);
+            }
+        }
+        let flags = OpenFlags::SQLITE_OPEN_READ_WRITE | OpenFlags::SQLITE_OPEN_NOFOLLOW;
+        let Ok(connection) = Connection::open_with_flags(self.root.join("ledger.sqlite"), flags)
+        else {
+            return Ok(false);
+        };
+        let blank = connection
+            .query_row(
+                "SELECT (SELECT user_version FROM pragma_user_version)=0 AND (SELECT count(*) FROM sqlite_schema)=0",
+                [],
+                |r| r.get::<_, bool>(0),
+            )
+            .unwrap_or(false);
+        Ok(blank)
     }
     fn connect_with_create(&self, create: bool) -> Result<Connection> {
         crate::native_deadline::check()?;

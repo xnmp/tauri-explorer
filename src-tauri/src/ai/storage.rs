@@ -10,6 +10,41 @@ use std::{
     path::{Path, PathBuf},
 };
 const MAX_CONFIG: usize = 256 * 1024;
+/// Prefix unique to `durable_write` temp files. Only names carrying it are swept.
+const TEMP_PREFIX: &str = ".ai-config-write-";
+/// A live writer finishes in milliseconds; only older leftovers are crash debris.
+const STALE_TEMP_AGE: std::time::Duration = std::time::Duration::from_secs(10 * 60);
+/// Remove temp files stranded by a crashed `durable_write` (they can hold a
+/// plaintext key). Best-effort; touches nothing but regular files with the
+/// writer's own prefix.
+pub(super) fn sweep_stale_temp(dir: &Path, min_age: std::time::Duration) {
+    let Ok(entries) = fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.filter_map(std::result::Result::ok) {
+        let stale = entry.file_name().to_string_lossy().starts_with(TEMP_PREFIX)
+            && entry
+                .metadata()
+                .ok()
+                .filter(|m| m.is_file())
+                .and_then(|m| m.modified().ok())
+                .and_then(|t| t.elapsed().ok())
+                .is_some_and(|age| age >= min_age);
+        if stale {
+            let _ = fs::remove_file(entry.path());
+        }
+    }
+}
+const MALFORMED_JSON: &str = "Configuration JSON is malformed; repair the existing file";
+/// Parse failures are repairable by the user; real I/O failures are not and
+/// still propagate.
+fn parsed_or_malformed(read: Result<Option<Value>>) -> Result<Option<Option<Value>>> {
+    match read {
+        Ok(value) => Ok(Some(value)),
+        Err(error) if error.message == MALFORMED_JSON => Ok(None),
+        Err(error) => Err(error),
+    }
+}
 pub struct Store {
     pub root: PathBuf,
 }
@@ -59,6 +94,7 @@ impl Store {
         if !metadata.is_file() || metadata.file_type().is_symlink() {
             return Err(storage_error());
         }
+        sweep_stale_temp(&self.root, STALE_TEMP_AGE);
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
         loop {
             match file.try_lock() {
@@ -254,11 +290,18 @@ impl Store {
                     // Replacement may have committed before directory sync failed. Retain
                     // the record unless a readable durable document proves it unreferenced.
                     if let Ok(observed) = self.read_locked() {
-                        if !observed.profiles.iter().any(|p| {
+                        let durable = observed.profiles.iter().any(|p| {
                             p.id == id
                                 && p.connection.credential()
                                     == Some(&Credential::Secret { id: new_id.clone() })
-                        }) {
+                        });
+                        if durable {
+                            // The replacement is the live reference, so the
+                            // superseded secret is orphaned; removal is idempotent.
+                            if let Credential::Secret { id: old_id } = &old {
+                                let _ = secrets.remove(id, old_id);
+                            }
+                        } else {
                             let _ = secrets.remove(id, &new_id);
                         }
                     }
@@ -358,12 +401,9 @@ fn read_value_with_policy(path: &Path, private: bool) -> Result<Option<Value>> {
             "AI configuration exceeds its storage limit",
         ));
     }
-    serde_json::from_slice(&bytes).map(Some).map_err(|_| {
-        ServiceError::new(
-            "unavailable",
-            "Configuration JSON is malformed; repair the existing file",
-        )
-    })
+    serde_json::from_slice(&bytes)
+        .map(Some)
+        .map_err(|_| ServiceError::new("unavailable", MALFORMED_JSON))
 }
 pub fn durable_write(path: &Path, bytes: &[u8]) -> Result<()> {
     if bytes.len() > MAX_CONFIG {
@@ -378,7 +418,12 @@ pub fn durable_write(path: &Path, bytes: &[u8]) -> Result<()> {
     #[cfg(not(test))]
     let fail_after_replace = false;
     let parent = path.parent().ok_or_else(storage_error)?;
-    let mut temp = tempfile::NamedTempFile::new_in(parent).map_err(|_| storage_error())?;
+    // `temp` unlinks itself on every early return below. Only a crash can
+    // strand it, and then `sweep_stale_temp` finds it by this unique prefix.
+    let mut temp = tempfile::Builder::new()
+        .prefix(TEMP_PREFIX)
+        .tempfile_in(parent)
+        .map_err(|_| storage_error())?;
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
@@ -403,7 +448,8 @@ pub fn durable_write(path: &Path, bytes: &[u8]) -> Result<()> {
     {
         use std::os::windows::ffi::OsStrExt;
         use windows::Win32::Storage::FileSystem::{
-            MoveFileExW, MOVEFILE_REPLACE_EXISTING, MOVEFILE_WRITE_THROUGH,
+            MoveFileExW, SetFileAttributesW, FILE_ATTRIBUTE_NORMAL, MOVEFILE_REPLACE_EXISTING,
+            MOVEFILE_WRITE_THROUGH,
         };
         let from: Vec<u16> = temp
             .path()
@@ -412,6 +458,10 @@ pub fn durable_write(path: &Path, bytes: &[u8]) -> Result<()> {
             .chain(Some(0))
             .collect();
         let to: Vec<u16> = path.as_os_str().encode_wide().chain(Some(0)).collect();
+        // The temp file is created FILE_ATTRIBUTE_TEMPORARY; this replace path
+        // bypasses `persist`, so clear it or the configuration keeps the hint.
+        unsafe { SetFileAttributesW(windows_core::PCWSTR(from.as_ptr()), FILE_ATTRIBUTE_NORMAL) }
+            .map_err(|_| storage_error())?;
         unsafe {
             MoveFileExW(
                 windows_core::PCWSTR(from.as_ptr()),
@@ -426,42 +476,66 @@ pub fn durable_write(path: &Path, bytes: &[u8]) -> Result<()> {
     }
     Ok(())
 }
-pub fn migrate_summary(root: &Path) -> Result<()> {
+/// Outcome of the one-time summary-preference migration.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SummaryMigration {
+    /// Nothing further to migrate (done now, previously, or not applicable).
+    Settled,
+    /// A malformed Trace or legacy file prevented the check. Nothing was
+    /// written and no marker was recorded, so a later call retries once the
+    /// file is repaired. Callers that retire the legacy source must not proceed.
+    Skipped,
+}
+pub fn migrate_summary(root: &Path) -> Result<SummaryMigration> {
     let store = Store::new(root.into());
     let _guard = store.lock()?;
     migrate_summary_locked(root)
 }
-fn migrate_summary_locked(root: &Path) -> Result<()> {
+fn migrate_summary_locked(root: &Path) -> Result<SummaryMigration> {
     let marker = root.join(".ai-trace-summary-migration.json");
     regular(&marker)?;
-    if read_private_value(&marker)?
+    if read_private_value(&marker)
+        .ok()
+        .flatten()
         .as_ref()
         .and_then(|v| v.get("state"))
         .and_then(Value::as_str)
         == Some("complete")
     {
-        return Ok(());
+        return Ok(SummaryMigration::Settled);
     }
     let target = root.join("plugin.trace.json");
     let resolved = crate::config::resolve_write_target(&target).map_err(|_| storage_error())?;
-    let mut trace = read_value(&resolved)?.unwrap_or_else(|| json!({}));
-    if !trace.is_object() {
-        return Err(ServiceError::new(
-            "unavailable",
-            "Trace settings must be an object",
-        ));
-    }
+    // An unparseable destination is repaired by the user's next whole-blob
+    // save, as before this migration existed; it must not block its own I/O.
+    let mut trace = match parsed_or_malformed(read_value(&resolved))? {
+        Some(None) => json!({}),
+        Some(Some(value)) if value.is_object() => value,
+        _ => {
+            log::warn!("Trace settings are unreadable; summary migration skipped");
+            return Ok(SummaryMigration::Skipped);
+        }
+    };
     if trace.get("summarizePrompts").is_some() {
-        return durable_write(&marker, b"{\"version\":1,\"state\":\"complete\"}");
+        durable_write(&marker, b"{\"version\":1,\"state\":\"complete\"}")?;
+        return Ok(SummaryMigration::Settled);
     }
-    let legacy = read_value(&root.join("plugin.openai-image.json"))?;
+    let legacy = match parsed_or_malformed(read_value(&root.join("plugin.openai-image.json")))? {
+        Some(value) => value,
+        None => {
+            log::warn!("Legacy image settings are unreadable; summary migration skipped");
+            return Ok(SummaryMigration::Skipped);
+        }
+    };
     if legacy
         .as_ref()
         .and_then(|v| v.get("titleGenerator"))
         .and_then(Value::as_str)
         != Some("disabled")
     {
-        return Ok(());
+        // The legacy file is still live and may later disable titles, so this
+        // is not terminal.
+        return Ok(SummaryMigration::Settled);
     }
     durable_write(&marker, b"{\"version\":1,\"state\":\"pending\"}")?;
     trace["summarizePrompts"] = json!(false);
@@ -469,7 +543,8 @@ fn migrate_summary_locked(root: &Path) -> Result<()> {
         &resolved,
         &serde_json::to_vec_pretty(&trace).map_err(|_| storage_error())?,
     )?;
-    durable_write(&marker, b"{\"version\":1,\"state\":\"complete\"}")
+    durable_write(&marker, b"{\"version\":1,\"state\":\"complete\"}")?;
+    Ok(SummaryMigration::Settled)
 }
 pub fn write_trace_config(root: &Path, data: &str) -> Result<()> {
     if data.len() > MAX_CONFIG {
@@ -488,8 +563,9 @@ pub fn write_trace_config(root: &Path, data: &str) -> Result<()> {
         ));
     }
     if incoming.get("summarizePrompts").is_none() {
-        if let Some(summary) =
-            read_value(&resolved)?.and_then(|v| v.get("summarizePrompts").cloned())
+        if let Some(summary) = parsed_or_malformed(read_value(&resolved))?
+            .flatten()
+            .and_then(|v| v.get("summarizePrompts").cloned())
         {
             incoming["summarizePrompts"] = summary;
         }
@@ -497,7 +573,9 @@ pub fn write_trace_config(root: &Path, data: &str) -> Result<()> {
     durable_write(
         &resolved,
         &serde_json::to_vec_pretty(&incoming).map_err(|_| storage_error())?,
-    )
+    )?;
+    // A skipped migration retries now that the destination is well-formed.
+    migrate_summary_locked(root).map(|_| ())
 }
 /// Test-only replacement faults, so the Windows failure modes are exercised on
 /// every platform. Production never consults this; each platform's real

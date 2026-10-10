@@ -384,7 +384,12 @@ pub(crate) fn migrate(
     destination: &dyn Destination,
 ) -> Result<()> {
     // Independent summary/text migration completes before the shared codexPath retires.
-    storage::migrate_summary(root)?;
+    if storage::migrate_summary(root)? == storage::SummaryMigration::Skipped {
+        return Err(issue(
+            "not_configured",
+            "Trace or legacy image settings are malformed; source retained until repaired",
+        ));
+    }
     storage::Store::new(root.into()).read()?;
     let configuration = destination.call("settings.read", json!({}))?;
     let store = storage::Store::new(root.into());

@@ -71,12 +71,15 @@ function privateProcesses(): unknown[] {
 }
 
 gatedDescribe("shared AI native working snapshot", [[process.platform === "linux", "Linux private display"], [!!directory, "SHARED_AI_NATIVE_FIXTURE private profile"], [process.env.SHARED_AI_NATIVE_ACCEPTANCE === "1", "SHARED_AI_NATIVE_ACCEPTANCE=1"]], () => {
-  const scratch = directory!;
-  const source = path.join(scratch, "source.png");
+  // Mocha evaluates skipped suite bodies, so paths resolve only once the gate runs it.
+  let scratch = "";
+  let source = "";
   let connectionA = "";
   let startupReady = false;
   let settingsReady = false;
   before(async () => {
+    scratch = directory!;
+    source = path.join(scratch, "source.png");
     fs.mkdirSync(scratch, { recursive: true }); fs.writeFileSync(source, png);
     fs.writeFileSync(path.join(scratch, "notes.txt"), "Native shared AI fixture\n");
     server = createServer(async (request, response) => {

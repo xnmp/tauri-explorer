@@ -362,6 +362,20 @@ mod worker_spawn_tests {
     }
 
     #[test]
+    fn rejected_migration_worker_releases_coordinator_ownership_for_an_unpaid_retry() {
+        let invoked = Arc::new(AtomicUsize::new(0));
+        let first = invoked.clone();
+        reject_after(0);
+        assert!(spawn_image_migration(move || { first.fetch_add(1, Ordering::AcqRel); }).is_err());
+        assert_eq!(invoked.load(Ordering::Acquire), 0);
+        let second = invoked.clone();
+        let (done, finished) = mpsc::channel();
+        assert_eq!(spawn_image_migration(move || { second.fetch_add(1, Ordering::AcqRel); done.send(()).unwrap(); }).unwrap(), true);
+        finished.recv_timeout(Duration::from_secs(2)).unwrap();
+        assert_eq!(invoked.load(Ordering::Acquire), 1);
+    }
+
+    #[test]
     fn rejected_process_worker_never_dispatches_and_releases_spool_control_and_admission() {
         let id = "fixture.process-spawn-rejected";
         let control = JobControl::new();
@@ -852,7 +866,9 @@ impl Broker {
             let reason = reason.to_owned();
             // Query durable acceptance after reconciliation. Never replay jobs.start:
             // losing a transport reply must not repeat a paid provider request.
-            std::thread::spawn(move || {
+            let refused_jobs: Vec<_> = jobs.iter().map(|(id, job)| (*id, job.kind.clone())).collect();
+            let refused_app = app.clone();
+            let spawned = spawn_worker("legacy-plugin-reconciliation", move || {
                 let _recovery = recovery;
                 if CLOSING.load(Ordering::Acquire) {
                     return;
@@ -888,6 +904,11 @@ impl Broker {
                     let _ = app.emit(&event, payload);
                 }
             });
+            if spawned.is_err() {
+                for (id, kind) in refused_jobs {
+                    let _ = refused_app.emit(&format!("{kind}-error"), json!({"jobId":id,"error":"Native recovery worker could not start; inspect the original operation history before repeating it"}));
+                }
+            }
         }
     }
 
@@ -1286,11 +1307,11 @@ impl Broker {
 }
 
 pub(super) fn ensure(id: &str) -> Result<Arc<Broker>, AppError> {
-    if !OWNERSHIP_READY.load(Ordering::Acquire) { return Err(error("Plugin ownership recovery is incomplete")); }
     // Startup/activation are owned before taking the package startup mutex.
     // Mutation cannot fence a package whose handshake has already begun.
     let _startup_admission = {
         let _gate = super::read_lifecycle()?;
+        if !OWNERSHIP_READY.load(Ordering::Acquire) { return Err(error("Plugin ownership recovery is incomplete")); }
         CallLease::acquire_direction(id, 3)?
     };
     let broker = ensure_mode(id)?;
@@ -1303,14 +1324,20 @@ pub(super) fn ensure(id: &str) -> Result<Arc<Broker>, AppError> {
     Ok(broker)
 }
 static IMAGE_MIGRATION: AtomicBool = AtomicBool::new(false);
+fn spawn_image_migration(work: impl FnOnce() + Send + 'static) -> Result<bool, AppError> {
+    if IMAGE_MIGRATION.compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire).is_err() { return Ok(false); }
+    struct Done;
+    impl Drop for Done { fn drop(&mut self) { IMAGE_MIGRATION.store(false, Ordering::Release); } }
+    // Owned before spawning, including OS refusal and callback panic.
+    let done = Done;
+    spawn_worker("native-image-migration", move || { let _done = done; work(); })
+        .map_err(|_| error("Image connection import worker could not start"))?;
+    Ok(true)
+}
 fn schedule_image_migration() {
     // One owned coordinator, never a worker per renderer request. Candidate
     // preflight does not enter ensure() and cannot install this source fence.
-    if IMAGE_MIGRATION.compare_exchange(false,true,Ordering::AcqRel,Ordering::Acquire).is_err() {return;}
-    std::thread::spawn(|| {
-        struct Done;
-        impl Drop for Done {fn drop(&mut self){IMAGE_MIGRATION.store(false,Ordering::Release);}}
-        let _done=Done;
+    let scheduled = spawn_image_migration(|| {
         let result=(|| -> Result<(),AppError> {
             let eligible={
                 let _gate=super::read_lifecycle()?;
@@ -1346,6 +1373,7 @@ fn schedule_image_migration() {
             if let Some(app)=APP.get() {let _=app.emit("ai:image-migration-changed",json!({"state":"pending","error":{"code":error.service_code(),"message":"Image connection import is pending; original settings are retained. Unlock credential storage or open Image Generation connections."}}));}
         }
     });
+    if let Err(cause) = scheduled { log::warn!("Image connection import pending: {cause}"); }
 }
 fn migration_bindings_current(packages:&[package::Installed],trace:&package::Installed,provider:&package::Installed)->bool {
     [trace,provider].iter().all(|bound|bound.manifest.sdk_version>=3 && packages.iter().any(|current|

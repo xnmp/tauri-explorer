@@ -41,9 +41,17 @@ pub(super) fn initialize(app: tauri::AppHandle) -> Result<(), AppError> {
     if crate::portal::is_portal_mode() {
         return Ok(());
     }
+    let _initializing = mutation_lock()?;
     #[cfg(target_os = "linux")]
-    let owner = ownership::acquire(&config::config_dir()?.canonicalize()?)?;
+    {
+        let owner = ownership::acquire(&config::config_dir()?.canonicalize()?)?;
+        *PROFILE_OWNER.lock().unwrap_or_else(|cause| cause.into_inner()) = Some(owner);
+    }
     backend::initialize(app.clone());
+    // No brokers are running yet. Reconstruct native metadata under this
+    // bootstrap gate so newly scheduled reconciliation cannot race readiness.
+    // No provider RPC or candidate handshake occurs while this gate is held.
+    let bootstrap = LIFECYCLE.write().map_err(|_| AppError::Other("Plugin lifecycle lock is unavailable".into()))?;
     // Ordinary browsing remains available if durable AI ownership is damaged.
     // Package rollback and queued updates must not run until claims are readable.
     let services_ready = service_host::initialize().is_ok();
@@ -61,13 +69,11 @@ pub(super) fn initialize(app: tauri::AppHandle) -> Result<(), AppError> {
                     .into(),
             );
     }
+    drop(bootstrap);
     #[cfg(target_os = "linux")]
     {
-        *PROFILE_OWNER
-            .lock()
-            .unwrap_or_else(|cause| cause.into_inner()) = Some(owner);
         let directory = config::config_dir()?.join("pending-plugins");
-        if services_ready
+        if services_ready && !backend::is_closing()
             && !matches!(std::fs::symlink_metadata(&directory), Err(cause) if cause.kind() == std::io::ErrorKind::NotFound)
         {
             let worker = std::thread::spawn(move || {
@@ -107,6 +113,8 @@ pub(super) fn shutdown() {
     // A private candidate is owned by its mutation, rather than the routable
     // broker map. Wait for its commit/rollback on every platform.
     let _settled = MUTATIONS.get_or_init(|| Mutex::new(())).lock().unwrap_or_else(|cause| cause.into_inner());
+    service_bridge::shutdown_recovery();
+    job_bridge::shutdown();
     backend::wait_for_admissions();
     provenance::wait_for_publishers();
     #[cfg(target_os = "linux")]

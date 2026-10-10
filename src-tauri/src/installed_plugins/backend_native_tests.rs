@@ -92,9 +92,7 @@ fn native_private_preflight_retirement_and_shutdown() {
     app.listen("preflight-must-stay-private", move |_| {
         observed_events.fetch_add(1, Ordering::AcqRel);
     });
-    initialize(app.handle().clone());
-    super::super::service_host::initialize().unwrap();
-    finish_initialize();
+    super::super::initialize(app.handle().clone()).unwrap();
     let root = root().unwrap();
     fs::create_dir_all(&root).unwrap();
     let original = candidate(&root, "fixture.lifecycle", "original");

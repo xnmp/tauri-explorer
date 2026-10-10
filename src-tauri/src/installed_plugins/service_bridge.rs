@@ -657,10 +657,24 @@ fn credential(caller: &PackageGeneration, method: &str, params: Value) -> Result
 
 /// Transfer reconciliation ownership to the host before replacing a dead
 /// backend. Only operations owned by that incarnation enter this worker.
+static RECOVERY: std::sync::OnceLock<std::io::Result<crate::recovery_actor::RecoveryActor<PackageGeneration>>> = std::sync::OnceLock::new();
+static RECOVERY_SETUP: std::sync::Mutex<()> = std::sync::Mutex::new(());
+pub(super) fn shutdown_recovery() {
+    // Setup and closing share a gate; no actor can appear after this snapshot.
+    let actor = {
+        let _setup = RECOVERY_SETUP.lock().unwrap_or_else(|cause| cause.into_inner());
+        RECOVERY.get().and_then(|result| result.as_ref().ok())
+    };
+    if let Some(actor) = actor {
+        // Queued signals keep their original durable ownership for restart.
+        let _retained = actor.begin_shutdown();
+        actor.join();
+    }
+}
 pub(super) fn on_dead(generation: PackageGeneration) {
     use crate::recovery_actor::{Enqueue,RecoveryActor,Task};
-    use std::{sync::OnceLock,time::{Duration,Instant}};
-    static RECOVERY:OnceLock<std::io::Result<RecoveryActor<PackageGeneration>>>=OnceLock::new();
+    use std::time::{Duration,Instant};
+    if backend::is_closing() { return; }
     let deadline=Instant::now()+Duration::from_secs(60);
     // A dead broker without durable work cannot consume recovery capacity.
     // Admission/death share this lock, so a paid forwarding winner is visible.
@@ -670,7 +684,12 @@ pub(super) fn on_dead(generation: PackageGeneration) {
         Ok(store.list_preparations()?.contains(&generation)||store.claims()?.iter().any(|a|a.consumer==generation||a.provider==generation))
     });
     if !matches!(retained,Ok(true)) {return;}
-    let Ok(actor)=RECOVERY.get_or_init(||RecoveryActor::new(recover_generation)) else {backend::emit_operations_changed();return;};
+    let actor = {
+        let _setup = RECOVERY_SETUP.lock().unwrap_or_else(|cause| cause.into_inner());
+        if backend::is_closing() { return; }
+        let Ok(actor) = RECOVERY.get_or_init(|| RecoveryActor::new(recover_generation)) else { backend::emit_operations_changed(); return; };
+        actor
+    };
     match actor.enqueue(Task{generation,deadline}) {
         Enqueue::Accepted|Enqueue::Duplicate=>{},
         Enqueue::Full(_)|Enqueue::Closed(_)=>{

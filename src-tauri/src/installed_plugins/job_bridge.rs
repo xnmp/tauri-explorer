@@ -7,6 +7,7 @@ fn error(message:&str)->AppError {AppError::Other(message.into())}
 fn now()->u64 {SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_millis().min(9_007_199_254_740_991) as u64}
 fn opaque(bytes:usize)->Result<String,AppError> {let mut value=vec![0;bytes];getrandom::fill(&mut value).map_err(|_|error("Could not allocate background operation identity"))?;Ok(hex::encode(value))}
 static BOOT:OnceLock<String>=OnceLock::new();
+static RECONCILER: Mutex<Option<std::thread::JoinHandle<()>>> = Mutex::new(None);
 pub(super) fn origin(label:&str)->Result<String,AppError> {
     if label.len()>64 || !label.bytes().all(|b|b.is_ascii_alphanumeric()||b"._-".contains(&b)) {return Err(error("Invalid background operation window"));}
     if BOOT.get().is_none(){let _=BOOT.set(opaque(24)?);}
@@ -98,7 +99,9 @@ pub(super) fn initialize()->Result<(),AppError> {
     for record in service_host::store()?.recover_jobs(None)? {emit(&record)}
     // Snapshot/status reconciliation is unpaid and owns at most eight workers.
     // Attention records remain retained until an explicit recovery action.
-    std::thread::spawn(|| {
+    let mut reconciler = RECONCILER.lock().map_err(|_| error("Background operation worker ownership is unavailable"))?;
+    if reconciler.is_some() { return Ok(()); }
+    let worker = std::thread::Builder::new().name("native-job-reconciler".into()).spawn(|| {
         while !backend::is_closing() {
             if let Ok(snapshot)=service_host::store().and_then(|s|s.snapshot_jobs()) {
                 for record in snapshot.jobs.into_iter().filter(|r|matches!(r.state,JobState::Accepting|JobState::Running|JobState::Recovering)) {
@@ -111,8 +114,13 @@ pub(super) fn initialize()->Result<(),AppError> {
             }
             std::thread::sleep(std::time::Duration::from_secs(2));
         }
-    });
+    }).map_err(|_| error("Background operation reconciliation worker could not start"))?;
+    *reconciler = Some(worker);
     Ok(())
+}
+pub(super) fn shutdown() {
+    let worker = { RECONCILER.lock().unwrap_or_else(|cause| cause.into_inner()).take() };
+    if let Some(worker) = worker { let _ = worker.join(); }
 }
 pub(super) fn snapshot(label:&str)->Result<Value,AppError> {
     let snapshot=service_host::store()?.snapshot_jobs()?;

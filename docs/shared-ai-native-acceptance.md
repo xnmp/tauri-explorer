@@ -1,35 +1,184 @@
-# Shared AI native acceptance — working snapshot
+# Shared AI native acceptance (working snapshot)
 
-This record concerns the dirty implementation worktree, not a clean release or package qualification. The host baseline and merge-base are `882263e1cc6298bb43e037265185d746a6d2d126`; Trace's baseline is `cae90fb4344375cf8fc1453df74f50ecdc0b4d55`. The clean qualification wrapper (`scripts/build-native-qualification.ts`) requires a clean source worktree. No commits, merge, publication or user-profile installation are authorized for this acceptance work.
+This record covers the `test/shared-ai-native-e2e` worktrees. It is not a clean release or package qualification. The clean qualification wrapper, `scripts/build-native-qualification.ts`, requires a clean source worktree.
 
 ## Fixtures and isolation
 
-`e2e-tauri/specs/shared-ai-services.spec.ts` uses the actual host debug binary, installed SDK3 archives, native plugin processes and shipped custom-protocol assets. `e2e-tauri/run-shared-ai-services.sh` creates a private XDG profile and runtime directory under `/tmp`, queues archives only into that profile, and runs WebDriver under private Xvfb/Openbox and D-Bus. It removes inherited AI authentication variables from this launch without changing `HOME`. The fixture records safe process identities and verifies the app/helpers share the private display, profile and D-Bus session. Existing WDIO process-group cleanup retires the owned application and driver; private journal evidence is retained.
+`e2e-tauri/specs/shared-ai-services.spec.ts` drives the real native stack:
 
-The core crop establishes real provenance so Trace's folder eligibility is exercised honestly. No paid generation is needed for cold startup, Trace rendering, optional-provider refusal or settings navigation. Provider connections created by the fixture explicitly select credential `none` and a loopback HTTP endpoint.
+- the actual host debug binary;
+- the installed SDK3 Trace and Image Generation archives;
+- native plugin processes;
+- shipped custom-protocol assets.
 
-Generation is separately gated by `SHARED_AI_NATIVE_GENERATE=1`; it must wait for coordinator confirmation that native consumer and host services are frozen. Its server accepts only fixture traffic and returns one known PNG. The spec checks the observed HTTP body/path and absent Authorization header, exact published bytes, Trace recipe/operation provenance, and the actual provider journal's Succeeded/Acquired receipt. Closing a modal never chooses result discard.
+`e2e-tauri/run-shared-ai-services.sh` isolates each run:
+
+- It creates a private XDG profile and runtime directory under `$TMPDIR`.
+- It queues the archives only into that profile.
+- It runs WebDriver under private Xvfb, Openbox and D-Bus.
+- It removes the AI authentication variables from this launch without changing `HOME`.
+
+The fixture verifies that the app and its helpers share the private display, profile and D-Bus session. The private profile, journals and run manifest are kept for inspection.
+
+Every connection the fixture creates uses credential `none` and a loopback endpoint:
+
+- **Images:** `/fixture/images/{generations,edits}`. Replies can be scripted per request (400, then 200). Each output PNG is distinct.
+- **Text:** `/fixture/text/v1/chat/completions` returns a distinct title for each model. One model can be held to simulate a slow response.
+
+The server records, for each request:
+
+- the path and headers;
+- the body (JSON, or multipart fields);
+- the SHA-256 of every image part, in order.
+
+Generation cases run only with `SHARED_AI_NATIVE_GENERATE=1`.
 
 ## Build identity
 
-The documented Tauri CLI build embeds frontend assets and both E2E gates:
+The host was built with:
 
 ```sh
-VITE_E2E_HOOKS=1 CARGO_BUILD_JOBS=2 CARGO_TARGET_DIR=/home/chong/Repos/tauri-explorer/src-tauri/target bun run tauri build --debug --no-bundle --features e2e-hooks -- --locked --offline
+VITE_E2E_HOOKS=1 CARGO_BUILD_JOBS=4 CARGO_TARGET_DIR=/var/tmp/te-wt/host-e2e-target bun run tauri build --debug --no-bundle --features e2e-hooks -- --locked
 ```
 
-The final frozen host build succeeded in 30.52s. Before build, after build and after native acceptance, its build-input digest remained `b80658fd3b25b499c0b0cf37756a9de15355152b829cc338525c3ec446decd3e`. The final Trace build input digest remained `2ab8fa77a30367ffe67d71c00575ff031e21328f70309344489a36000c482657` before/after build. Trace sources subsequently changed (native protocol/recovery and retry hardening); the post-run digest is `35932b221485c17124780717a36d52ce6b2839dc1d722ec5f1677d927066f5b1`. The native evidence qualifies the immutable tested archives and the corresponding build inputs, rather than the later Trace working tree. Exact source timestamps, binary hash, archive hashes and manifests are retained in `evidence/shared-ai-native/working-snapshot-identity.json`. The tested host binary SHA-256 is `8c7f13c537d618d3b0d3d9756ea325cacfe65e93483f383ae12d562f63b9a44b`; Trace archive is `94e8ea09b73afc5f32a9663c3d191ded751ce6bc30deffcadf6a976adfca4496`, and Image Generation archive is `07dcd285643fa185a2c5491c62cd22256a856b40f134cee11973bb554bc408c2`. Any later source change requires rebuilding to qualify that change.
+The Trace archive was built with `bun run build:frontend`, then `python3 scripts/package-plugin.py --binary <target>/debug/trace-explorer-backend --output package-e2e`. The provider archive was built the same way with `--plugin image-generation`.
 
-Archives are produced with separate frontend outputs and `scripts/package-plugin.py --plugin ... --binary ...`; debug fixture archives are not release artifacts. The private run manifest retains exact binary/archive hashes and explicitly labels `dirty-working-snapshot`. Its timestamp binding records the fixture manifest creation, not an independently qualified clean build.
+Tested artifacts (SHA-256):
 
-## Outcomes
+| Artifact | SHA-256 |
+|---|---|
+| Host binary | `6d1a8f4fcd248c9db2c9613ebbde679b4a9caa3341e6be0107a21810e5fdb453` |
+| `TraceExplorer-0.2.3-x86_64-unknown-linux-gnu.teplugin` | `f0e4a243f7e36e1e15e1624e8f866efb9560c643e8b1869472c0ca22fb2df23f` |
+| `ImageGeneration-0.1.0-x86_64-unknown-linux-gnu.teplugin` | `5341e04122efda6c65a5eaff338021a3328be55dee02f38c9ae28ee4af92c589` |
 
-Actual Linux WebKit runs passed on 2026-10-10: absent-provider profile **2 passed**, present-provider profile **3 passed**. Each profile reports one intentionally inapplicable case belonging to the other profile. The complete present run finished in 10.1s; its one observed HTTP request used `/fixture/images/generations`, the exact custom model/prompt, and no Authorization header. The native provider journal retained Succeeded/Acquired revision 5, with the actual model and external request ID. Trace's published bytes exactly matched the fixture PNG; the generated operation's own tile decoded and displayed the image. A held response proved provider disable refused while busy, the package stayed enabled, and eight simultaneous read controls remained live. After a pinned provider-only SIGKILL, a new native provider PID activated, the original receipt remained identical, and the HTTP count remained one.
+The run manifest records the same hashes and is labelled `dirty-working-snapshot`. Its `buildCommandKnown: false` flag means the recorded command is the documented one, not one that was observed.
 
-The settings case proved two credential-none profiles persisted natively, a dirty child Escape showed confirmation without closing the caller, and closing that child returned the caller draft, chosen profile and trigger focus. A changed provider default did not reroute the dirty caller. Cold startup exercised real core crop provenance, actual plugin styles under shipped CSP and the shared Svelte ABI. The absent provider blocked generation while ordinary browsing and Trace provenance remained available. Native fixture TypeScript and shell syntax checks passed.
+## Outcomes (Linux WebKit, 2026-10-10)
 
-Logs: `/tmp/te-shared-ai-native-absent.log` and `/tmp/te-shared-ai-native-present-complete.log`. Screenshots and authoritative receipt/run JSON are under `evidence/shared-ai-native/`; the final private profile `/tmp/te-shared-ai-native.90cCC8` remains available for independent inspection. Earlier fixture selector/error/argv mistakes were corrected before the final green run. One earlier profile hit an OS disk-quota error despite free filesystem capacity; retired fixture profiles were confirmed process-free, their small metadata/bytes archived, and only those owned profiles removed before the successful run.
+| Profile | Result | Log |
+|---|---|---|
+| Absent provider | 2 passed | `/var/tmp/te-wt/logs/final-absent.log` |
+| Present provider, no generation | 3 passed | `final-present-nogen.log` |
+| Present provider, generation, run 1 | 9 passed | `final-present-gen-1.log` |
+| Present provider, generation, run 2 | 9 passed | `final-present-gen-2.log` |
 
-This proves provider restart after completed acquisition, not consumer death during acceptance/handoff with the real Trace package (the host-side contract for a consumer SIGKILLed while the provider runs is covered separately by the stand-in fixture `service_native_kill_tests.rs`), strict installed completion-lane saturation, or the 60-second startup/recovery/lock-wait budget. The tested archive corresponds to the earlier standalone provider 40-case suite. Subsequent provider hardening now passes 59 native behavior tests, including safe CLI turn/discovery receipts, bounded corrupt-ledger refusal, authenticated idle/discard controls, and worker/timer IO lifetimes; those source changes are separate evidence and require a new native archive/build to qualify them through the actual host. CLI receipt tests use fake owned-process replies and do not qualify live CLI execution.
+Earlier cases (cold start, absent-provider refusal, settings navigation, publish plus provider restart) are unchanged and still pass.
 
-Only Linux private-display acceptance is in scope here. Windows/macOS durability, user desktop interaction, physical-display acceptance, installation in the active profile, and clean release qualification remain unclaimed.
+The cases below were added for plan §14.4 and §21.3 item 12. Each was checked by temporarily breaking the rule it guards, confirming the native suite failed, and then restoring. The break logs are `/var/tmp/te-wt/logs/break-*.log`.
+
+### Generation from a selection (4.6 selection, 4.9)
+
+The selection case edits two Ctrl-selected images, moves one earlier, and asserts:
+
+- The endpoint received `/edits` image parts in the displayed order.
+- The run records its inputs in that order, with their digests.
+- The submitted prompt is recorded as entered.
+- The published bytes match the endpoint's output.
+- Provenance lists both inputs.
+- Trace routes link each input to the output tile.
+- The progress panel shows exactly one entry: "Complete".
+
+**Break check:** swapping the source and first reference made the image-order assertion fail.
+
+### Retry (4.7, 4.9)
+
+The endpoint rejects the first request with 400. The case then checks:
+
+- The panel shows one "Failed" entry, with the error and a Retry action.
+- After Retry, a new run with `retry_of` set to the failed run is read back through the Trace backend RPC `recent_openai_image_runs`.
+- The retry has a new `operation_id`.
+- It pins the same inputs and the same options: prompt, model, size, resolution, aspect, quality, background, connection and revision, input roles, and submitted prompt.
+- The endpoint received the same request bodies apart from the reply status.
+- The panel shows one "Complete" entry.
+
+**Break check:** dropping `retryOf` failed the case with "Retry never published a run linked to the failed one".
+
+**Break check for 4.9:** registering a duplicate host job left an extra entry, and the case failed.
+
+### Save and discard (4.10)
+
+The case runs "Save image permanently" and then "Delete unsaved image" through the native context menu. It checks:
+
+- The saved file is in the run's folder and its bytes equal the output.
+- Provenance points at the saved file and is no longer temporary.
+- The discarded file is gone from disk, and its provenance artifact reads `discarded: true`.
+- The folder lists exactly one new PNG.
+- Provider receipts stay Succeeded/Acquired.
+- No new endpoint requests were made.
+
+The temporary file is intentionally kept after Save, as a provenance locator.
+
+**Break checks:** making save a no-op failed the case ("Save did not move the image"). Making discard a no-op failed it too ("Discard left the temporary image on disk").
+
+### Text titles and independent settings (4.2, 4.3, 4.5)
+
+**4.2.** Two text profiles are created in host Settings. When each is made the global default, the real Trace prompt node shows that profile's distinct title ("Alpha…", then "Beta…").
+
+**4.3.** A held, slow profile is made the default, and then Beta is restored before the slow response is released. The case asserts:
+
+- The node never displays "Slow stale title" (a MutationObserver watches it).
+- Once all slow responses close, a barrier `trace_prompt_title` call returns Beta, and so does the node.
+- Each model and prompt pair is requested at most once.
+
+**4.5.** Saving text settings leaves `settings.read` (image) unchanged. Saving a different default image connection changes the image default and leaves `ai_connections_read` (text) unchanged.
+
+**Break checks:**
+
+- Removing Trace's revision filter made the node fall back to the prompt instead of Beta.
+- Inverting each persisted-equality assertion made it fail.
+- Before the host palette fix, the image connections dialog never opened (run `e2e-present-gen-15`).
+
+### Generation from a folder entry point (4.6 folder)
+
+The case uses the folder's context menu ("AI", then "Generate image with OpenAI…") and asserts:
+
+- The request is `/generations` with no image parts.
+- The run's inputs are empty.
+- The output is temporary, with the suggested directory set to that folder.
+- The folder stays empty until a save.
+- The panel shows one "Complete" entry.
+
+**Break check:** opening on the parent folder made the suggestion assertion fail.
+
+### Plugins page to provider configuration (21.12, present profile, no generation needed)
+
+"Configure connections" is opened from the Plugins page. The case asserts:
+
+- The connections dialog is the only `aria-modal` surface.
+- Focus stays inside it across 12 Tabs.
+- The Plugins page is `inert` underneath.
+- Escape on a dirty draft asks for confirmation, and "Keep editing" keeps the draft.
+- Discarding returns focus to the section button, keeps the Plugins filter, and leaves settings unchanged.
+
+**Break check:** routing `requestTopClose` to the bottom surface failed only this case.
+
+## Product bugs found and fixed
+
+1. **Host: commands run from the palette could not open managed dialogs.** `CommandPalette.executeSelected` ran the command while the palette's modal surface was still on top. `dialogRegistry.openManaged` therefore bound the new dialog to the palette and closed it ("caller-closed") as the palette unmounted.
+   - **Fix:** `src/lib/state/run-after-close.ts` waits a tick for the palette to release its surface before running the command.
+   - **Test:** `tests/state/run-after-close.test.ts`.
+2. **Trace: a provider success that was still sealing was shown as uncertain.**
+   - **Fix:** `src-tauri/src/trace/service_images.rs` treats `storage_unavailable` as temporary within the settlement budget (plan §8.2).
+3. **Trace: a repeated text-configuration revision cleared titles and re-sent paid title requests.** The host emits the same revision twice, from `ai/mod.rs` and from `config_watch.rs`.
+   - **Fix:** `prompt-titles.svelte.ts` ignores repeated or older revisions.
+
+## Not closed natively
+
+The editor entry point for 4.6 cannot be reached. The host opens `ImageCropEditor` only with the "crop" tool. It has no tool switcher, and nothing opens it with a plugin tool id, so Trace's registered "AI edit" editor tool cannot be reached. Closing this needs a host change: either a tool switcher in the editor, or a command or SDK call that opens it with a tool id.
+
+Killing the real Trace package while the provider runs is not driven here. The host-side contract for that case (a consumer SIGKILLed while the provider runs, in both gate orders) is covered by the stand-in fixture `src-tauri/src/installed_plugins/service_native_kill_tests.rs`, which uses real processes and the production brokers.
+
+## Notes
+
+- **WebKitWebDriver drops Shift after a right-click action.** After any right-click action, later typing in the session loses Shift (`:` becomes `;`, and capitals become lowercase). For that reason the spec types lowercase text, and the right-click (folder) case runs after the typing cases.
+- **The progress corner panel stays above modal dialogs by design** (`--z-progress`). At 1200×800 it covers modal footers, so cases dismiss finished entries first, as a user would.
+- **Host startup logs show several frontend "unhandled rejection: … 'e.startsWith'" messages.** They were not investigated.
+
+## Out of scope
+
+Only Linux private-display acceptance is covered here. None of the following is claimed:
+
+- Windows or macOS;
+- physical-display or user-desktop interaction;
+- installation in the active profile;
+- clean release qualification.

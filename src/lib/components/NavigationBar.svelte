@@ -14,6 +14,7 @@
   import { isWslDistroRoot, isWslHome } from "$lib/domain/wsl";
   import { directoryKey, isDriveRoot } from "$lib/domain/path";
   import { drivesStore } from "$lib/state/drives.svelte";
+  import { getCommandShortcut } from "$lib/state/commands.svelte";
   import BreadcrumbAutocomplete from "./BreadcrumbAutocomplete.svelte";
   import CaretPicker from "./CaretPicker.svelte";
   import NavigationHistoryMenu from "./NavigationHistoryMenu.svelte";
@@ -24,6 +25,11 @@
   }
 
   let { explorer, paneId }: Props = $props();
+
+  const backShortcut = $derived(getCommandShortcut("navigation.goBack"));
+  const forwardShortcut = $derived(getCommandShortcut("navigation.goForward"));
+  const backTitle = $derived(`Back${backShortcut ? ` (${backShortcut})` : ""} — right-click for history`);
+  const forwardTitle = $derived(`Forward${forwardShortcut ? ` (${forwardShortcut})` : ""} — right-click for history`);
 
   // Home directory detection for breadcrumb collapsing. Read from the shared
   // app-wide cache so a freshly mounted bar (new tab / tab switch) collapses
@@ -296,7 +302,7 @@
       <button
         class="nav-btn"
         class:disabled={!explorer.canGoBack}
-        title="Back (Alt+Left) — right-click for history"
+        title={backTitle}
         aria-disabled={!explorer.canGoBack}
         onclick={() => explorer.goBack()}
         oncontextmenu={openHistoryMenu}
@@ -312,7 +318,7 @@
       <button
         class="nav-btn"
         class:disabled={!explorer.canGoForward}
-        title="Forward (Alt+Right) — right-click for history"
+        title={forwardTitle}
         aria-disabled={!explorer.canGoForward}
         onclick={() => explorer.goForward()}
         oncontextmenu={openHistoryMenu}

@@ -131,7 +131,7 @@ gdkx11-sys = "0.18"
 tauri-plugin-single-instance = "2.5.2"
 
 [target.'cfg(target_os = "windows")'.dependencies]
-windows-sys = {version="0.61",features= ["Win32_Foundation", "Win32_Security", "Win32_System_JobObjects", "Win32_System_Threading", "Win32_System_Diagnostics_ToolHelp"] }
+windows-sys = {version="0.61",features= ["Win32_Foundation", "Win32_Security", "Win32_System_JobObjects", "Win32_System_Threading", "Win32_System_Diagnostics_ToolHelp", "Win32_System_Registry"] }
 webview2-com = "0.39"
 windows-core = "0.62.2"
 # Win32_System_DataExchange/Memory: the clipboard sequence number and the

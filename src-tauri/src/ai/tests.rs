@@ -39,6 +39,11 @@ fn fixture_service(config: Configuration) -> (tempfile::TempDir, &'static Servic
     service.store.save(config, 0).unwrap();
     (root, service)
 }
+/// Tests that saturate the process-wide local worker semaphore run one at a
+/// time. Its FIFO fairness otherwise lets one test's `acquire_many(4)` queue
+/// ahead of another test's own single acquire while that test holds three
+/// permits, stalling every text test until a timeout breaks the cycle.
+static LOCAL_SLOT_SATURATION: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 /// A loopback root whose connections close at once. Unlike a closed port,
 /// this fails immediately on Windows too, where refused connects are retried.
 fn closed_root() -> String {
@@ -483,113 +488,6 @@ async fn queue_deadline_includes_wait_and_quota_is_bounded() {
     assert!(service.admit("b".into(), &r, Arc::new(|| false)).is_ok());
     drop(admissions);
 }
-#[cfg(unix)]
-fn fake_cli(path: &Path, kind: &str, delay: bool) -> std::path::PathBuf {
-    use std::os::unix::fs::PermissionsExt;
-    let script = path.join(kind);
-    let source = format!(
-        r#"#!/usr/bin/env python3
-import sys,json,os,time
-if '--help' in sys.argv:
- print('--ignore-user-config --ignore-rules --ephemeral --json --model --safe-mode --restricted --tools --setting-sources --strict-mcp-config --no-session-persistence --output-format');sys.exit(0)
-a=sys.argv
-assert '--model' in a and a[a.index('--model')+1]=='fixture-model'
-assert os.getcwd()!={repo:?}
-input=sys.stdin.read()
-assert 'An example prompt' in input
-if {kind:?}=='codex':
- assert '--ignore-user-config' in a and '--ignore-rules' in a and '--ephemeral' in a
- assert 'shell_tool' in a and 'hooks' in a and 'apps' in a
-else:
- assert '--safe-mode' in a and '--restricted' in a and '--strict-mcp-config' in a
- assert a[a.index('--tools')+1]=='' and a[a.index('--setting-sources')+1]==''
-if {delay}:
- time.sleep(3)
-if {kind:?}=='codex':
- print(json.dumps({{'type':'item.completed','item':{{'type':'reasoning','text':'Do not return reasoning'}}}}))
- print(json.dumps({{'type':'item.completed','item':{{'type':'agent_message','text':'Fixture title'}}}}))
- print(json.dumps({{'type':'turn.completed','usage':{{'input_tokens':10,'output_tokens':2}}}}))
-else:
- print(json.dumps({{'type':'result','subtype':'success','is_error':False,'result':'Fixture title'}}))
-"#,
-        repo = std::env::current_dir().unwrap().to_string_lossy(),
-        kind = kind,
-        delay = if delay { "True" } else { "False" }
-    );
-    fs::write(&script, source).unwrap();
-    fs::set_permissions(&script, fs::Permissions::from_mode(0o700)).unwrap();
-    script
-}
-#[cfg(unix)]
-#[tokio::test]
-async fn both_cli_adapters_enforce_isolated_args_and_extract_final_text() {
-    for kind in ["codex", "claude"] {
-        let root = tempfile::tempdir().unwrap();
-        let executable = fake_cli(root.path(), kind, false);
-        let mut c = config_http("https://example.test/v1");
-        c.profiles[0].model = "fixture-model".into();
-        c.profiles[0].connection = if kind == "codex" {
-            Connection::Codex {
-                executable_path: executable.to_string_lossy().into(),
-            }
-        } else {
-            Connection::Claude {
-                executable_path: executable.to_string_lossy().into(),
-            }
-        };
-        let profile = c.profiles.remove(0);
-        let request: Request = serde_json::from_value(request("x")).unwrap();
-        let now = Instant::now();
-        let control = Control {
-            cancelled: AtomicBool::new(false),
-            active: AtomicBool::new(false),
-            deadline: Mutex::new(now + Duration::from_secs(2)),
-            started: now,
-            owner: Arc::new(|| false),
-        };
-        let result = tokio::task::spawn_blocking(move || {
-            adapters::candidate_cli_for_test(&profile, &request, &control)
-        })
-        .await
-        .unwrap()
-        .unwrap();
-        assert_eq!(result, "Fixture title");
-    }
-}
-#[cfg(unix)]
-#[tokio::test]
-async fn cli_deadline_terminates_owned_process_before_return() {
-    let root = tempfile::tempdir().unwrap();
-    let executable = fake_cli(root.path(), "codex", true);
-    let mut c = config_http("https://example.test/v1");
-    c.profiles[0].model = "fixture-model".into();
-    c.profiles[0].connection = Connection::Codex {
-        executable_path: executable.to_string_lossy().into(),
-    };
-    let profile = c.profiles.remove(0);
-    let request: Request = serde_json::from_value(request("x")).unwrap();
-    let now = Instant::now();
-    let control = Control {
-        cancelled: AtomicBool::new(false),
-        active: AtomicBool::new(false),
-        deadline: Mutex::new(now + Duration::from_millis(150)),
-        started: now,
-        owner: Arc::new(|| false),
-    };
-    let started = Instant::now();
-    assert_eq!(
-        tokio::task::spawn_blocking(move || adapters::candidate_cli_for_test(
-            &profile, &request, &control
-        ))
-        .await
-        .unwrap()
-        .unwrap_err()
-        .code,
-        "timed_out"
-    );
-    assert!(started.elapsed() < Duration::from_secs(2));
-}
-
 #[tokio::test]
 async fn cancellation_before_admission_never_reaches_provider() {
     let (_root, service) = fixture_service(config_http(&closed_root()));
@@ -793,6 +691,7 @@ async fn aborted_snapshot_keeps_local_worker_slot_until_io_finishes() {
             release: std::sync::Mutex::new(release_rx),
         }),
     )));
+    let _exclusive = LOCAL_SLOT_SATURATION.lock().await;
     let reserve = local_slots().acquire_many_owned(3).await.unwrap();
     let task =
         tokio::spawn(service.generate("plugin:a".into(), request("x"), Arc::new(|| false), None));
@@ -866,46 +765,36 @@ fn deleting_profile_retires_its_owned_credential() {
         assert!(secrets.get("http", &id).unwrap().is_none());
     }
 }
+/// Describe and check only run the CLI's `--help`; generation goes through
+/// the enabled isolated adapter and returns only the final text.
 #[cfg(unix)]
 #[tokio::test]
-async fn unavailable_cli_never_starts_executable_even_for_describe() {
-    use std::os::unix::fs::PermissionsExt;
-    for kind in ["codex", "claude"] {
+async fn cli_profiles_describe_by_help_probe_and_generate_titles() {
+    use super::cli_tests::{fake_cli, kinds, profile, success_output};
+    for (kind, help) in kinds() {
         let root = tempfile::tempdir().unwrap();
-        let marker = root.path().join("must-not-start");
-        let executable = root.path().join(kind);
-        fs::write(
-            &executable,
-            format!(
-                "#!/usr/bin/env python3\nopen({:?},'w').write('started')\n",
-                marker.to_string_lossy()
-            ),
-        )
-        .unwrap();
-        fs::set_permissions(&executable, fs::Permissions::from_mode(0o700)).unwrap();
+        let executable = fake_cli(root.path(), kind, help, &success_output(kind), 0);
         let mut config = config_http("https://fixture.test/v1");
-        config.profiles[0].connection = if kind == "codex" {
-            Connection::Codex {
-                executable_path: executable.to_string_lossy().into(),
-            }
-        } else {
-            Connection::Claude {
-                executable_path: executable.to_string_lossy().into(),
-            }
+        config.profiles[0] = Profile {
+            id: "http".into(),
+            ..profile(kind, &executable, "fixture-model")
         };
         let (_config_root, service) = fixture_service(config);
         let described = service.describe().unwrap();
-        assert!(!described.available);
-        assert_eq!(described.error.unwrap().code, "unavailable");
-        assert_eq!(
-            service
-                .generate("plugin:a".into(), request("x"), Arc::new(|| false), None)
-                .await
-                .unwrap_err()
-                .code,
-            "unavailable"
+        assert!(described.available, "{kind}: {:?}", described.error);
+        assert!(
+            !root.path().join("run.json").exists(),
+            "{kind}: describe never generates"
         );
-        assert!(!marker.exists());
+        // A generous deadline: this asserts the enabled path, not timing.
+        let mut slow_host = request("x");
+        slow_host["timeoutMs"] = json!(20_000);
+        let result = service
+            .generate("plugin:a".into(), slow_host, Arc::new(|| false), None)
+            .await
+            .unwrap();
+        assert_eq!(result.text, "Fixture title", "{kind}");
+        assert!(root.path().join("run.json").exists());
     }
 }
 #[test]
@@ -934,6 +823,7 @@ async fn describe_dead_owner_never_reads_native_configuration() {
 }
 #[tokio::test]
 async fn describe_cancels_while_waiting_for_bounded_local_workers() {
+    let _exclusive = LOCAL_SLOT_SATURATION.lock().await;
     let held = local_slots().acquire_many_owned(4).await.unwrap();
     let dead = Arc::new(AtomicBool::new(false));
     let observed = dead.clone();
@@ -1299,180 +1189,4 @@ async fn http_empty_or_textless_bodies_are_classified_invalid() {
         received.recv().unwrap();
         worker.join().unwrap();
     }
-}
-#[cfg(unix)]
-fn scripted_cli(path: &Path, kind: &str, stdout: &str, code: i32) -> std::path::PathBuf {
-    use std::os::unix::fs::PermissionsExt;
-    let script = path.join(kind);
-    fs::write(
-        &script,
-        format!(
-            r#"#!/usr/bin/env python3
-import sys
-if '--help' in sys.argv:
- print('--ignore-user-config --ignore-rules --ephemeral --json --model --safe-mode --restricted --tools --setting-sources --strict-mcp-config --no-session-persistence --output-format');sys.exit(0)
-sys.stdin.read()
-sys.stdout.write({stdout:?})
-sys.exit({code})
-"#
-        ),
-    )
-    .unwrap();
-    fs::set_permissions(&script, fs::Permissions::from_mode(0o700)).unwrap();
-    script
-}
-#[cfg(unix)]
-fn run_candidate_cli(executable: &Path, kind: &str) -> ServiceError {
-    let mut profile = config_http("https://example.test/v1").profiles.remove(0);
-    let executable_path = executable.to_string_lossy().into();
-    profile.connection = if kind == "codex" {
-        Connection::Codex { executable_path }
-    } else {
-        Connection::Claude { executable_path }
-    };
-    let request: Request = serde_json::from_value(request("x")).unwrap();
-    let now = Instant::now();
-    let control = Control {
-        cancelled: AtomicBool::new(false),
-        active: AtomicBool::new(false),
-        deadline: Mutex::new(now + Duration::from_secs(5)),
-        started: now,
-        owner: Arc::new(|| false),
-    };
-    adapters::candidate_cli_for_test(&profile, &request, &control).unwrap_err()
-}
-#[cfg(unix)]
-#[test]
-fn cli_exit_status_and_incomplete_streams_are_classified() {
-    let codex_message =
-        r#"{"type":"item.completed","item":{"type":"agent_message","text":"Fixture title"}}"#;
-    let completed = r#"{"type":"turn.completed","usage":{"input_tokens":1,"output_tokens":1}}"#;
-    let cases = [
-        // A well-formed answer from a CLI that exits nonzero is not a title.
-        (
-            "codex",
-            format!("{codex_message}\n{completed}\n"),
-            3,
-            "provider_failed",
-        ),
-        (
-            "claude",
-            r#"{"type":"result","subtype":"success","is_error":false,"result":"Fixture title"}"#
-                .into(),
-            1,
-            "provider_failed",
-        ),
-        // Partial streams: no completed turn, and a line cut mid-event.
-        ("codex", format!("{codex_message}\n"), 0, "invalid_response"),
-        (
-            "codex",
-            format!("{codex_message}\n{{\"type\":\"turn.comp"),
-            0,
-            "invalid_response",
-        ),
-        (
-            "claude",
-            r#"{"type":"result","subtype":"succ"#.into(),
-            0,
-            "invalid_response",
-        ),
-        // Empty output.
-        ("codex", String::new(), 0, "invalid_response"),
-        ("claude", String::new(), 0, "invalid_response"),
-        // A completed turn or success result without its text field.
-        ("codex", format!("{completed}\n"), 0, "invalid_response"),
-        (
-            "claude",
-            r#"{"type":"result","subtype":"success","is_error":false}"#.into(),
-            0,
-            "invalid_response",
-        ),
-    ];
-    for (index, (kind, stdout, code, expected)) in cases.into_iter().enumerate() {
-        let root = tempfile::tempdir().unwrap();
-        let executable = scripted_cli(root.path(), kind, &stdout, code);
-        assert_eq!(
-            run_candidate_cli(&executable, kind).code,
-            expected,
-            "case {index}"
-        );
-    }
-}
-#[cfg(target_os = "linux")]
-#[tokio::test]
-async fn cli_deadline_reaps_the_owned_process_group() {
-    use std::os::unix::fs::PermissionsExt;
-    let root = tempfile::tempdir().unwrap();
-    let pids = root.path().join("pids");
-    let executable = root.path().join("codex");
-    fs::write(
-        &executable,
-        format!(
-            r#"#!/usr/bin/env python3
-import os,subprocess,sys,time
-if '--help' in sys.argv:
- print('--ignore-user-config --ignore-rules --ephemeral --json --model');sys.exit(0)
-child=subprocess.Popen([sys.executable,'-c','import os,subprocess,sys,time\ng=subprocess.Popen([sys.executable,"-c","import time\\nwhile True: time.sleep(1)"])\nopen(sys.argv[1]+".tmp","w").write(str(g.pid))\nos.rename(sys.argv[1]+".tmp",sys.argv[1])\nwhile True: time.sleep(1)',{grand:?}])
-while not os.path.exists({grand:?}): time.sleep(.01)
-grandchild=open({grand:?}).read()
-open({pids:?}+'.tmp','w').write(' '.join([str(os.getpid()),str(child.pid),grandchild]))
-os.rename({pids:?}+'.tmp',{pids:?})
-while True: time.sleep(1)
-"#,
-            grand = root.path().join("grandchild").to_string_lossy(),
-            pids = pids.to_string_lossy(),
-        ),
-    )
-    .unwrap();
-    fs::set_permissions(&executable, fs::Permissions::from_mode(0o700)).unwrap();
-    let mut profile = config_http("https://example.test/v1").profiles.remove(0);
-    profile.connection = Connection::Codex {
-        executable_path: executable.to_string_lossy().into(),
-    };
-    let request: Request = serde_json::from_value(request("x")).unwrap();
-    let now = Instant::now();
-    let control = Control {
-        cancelled: AtomicBool::new(false),
-        active: AtomicBool::new(false),
-        deadline: Mutex::new(now + Duration::from_millis(1500)),
-        started: now,
-        owner: Arc::new(|| false),
-    };
-    let error = tokio::task::spawn_blocking(move || {
-        adapters::candidate_cli_for_test(&profile, &request, &control)
-    })
-    .await
-    .unwrap()
-    .unwrap_err();
-    assert_eq!(error.code, "timed_out");
-    let owned: Vec<i32> = fs::read_to_string(&pids)
-        .expect("the CLI tree started before its deadline")
-        .split_whitespace()
-        .map(|pid| pid.parse().unwrap())
-        .collect();
-    assert_eq!(owned.len(), 3);
-    // Exited or a zombie awaiting its reaper: never still running.
-    let stopped = |pid: i32| {
-        fs::read_to_string(format!("/proc/{pid}/stat"))
-            .map(|stat| {
-                stat.rsplit_once(')')
-                    .unwrap()
-                    .1
-                    .trim_start()
-                    .starts_with('Z')
-            })
-            .unwrap_or(true)
-    };
-    let deadline = Instant::now() + Duration::from_secs(3);
-    while !owned.iter().all(|pid| stopped(*pid)) && Instant::now() < deadline {
-        tokio::time::sleep(Duration::from_millis(10)).await;
-    }
-    let survivors: Vec<_> = owned.iter().filter(|pid| !stopped(**pid)).collect();
-    for pid in &survivors {
-        unsafe { libc::kill(**pid, libc::SIGKILL) };
-    }
-    assert!(
-        survivors.is_empty(),
-        "orphaned CLI processes: {survivors:?}"
-    );
 }

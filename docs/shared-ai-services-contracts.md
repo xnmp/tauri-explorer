@@ -34,4 +34,12 @@ Tracking issue publication was rejected by automatic approval review; local work
 
 ## Implementation-time decision: CLI availability
 
-Current Codex 0.162.0 can normalize opt-out flags to mandatory managed-feature values, and Claude Code 2.1.296 preserves managed hooks in safe mode. The candidate exec adapters therefore cannot prove the requested isolation across admission. Production CLI describe/check/generation is unavailable before executable start, while Codex remains the configured first-run default. HTTP adapters are enabled. Candidate CLI argv/result/deadline fixtures are not evidence of working production CLI support. A same-instance effective-policy inspection before turn admission remains required; see [native evidence](shared-ai-native-text-evidence.md). Stage B and the complete user request are consequently unfinished.
+Codex CLI and Claude Code CLI text generation are enabled with enforced isolation:
+
+- the installed CLI's isolation flags;
+- an empty working directory;
+- an allowlisted environment (saved login kept, API keys withheld);
+- the prompt on stdin;
+- owned process-tree cancellation.
+
+A profile is `unavailable` only when managed or organisation policy is detected, or when the installed CLI lacks a required isolation flag. Policy can force hooks or tools on above command-line flags. Details, evidence and limits: [CLI text isolation](shared-ai-cli-text-isolation.md).

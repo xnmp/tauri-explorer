@@ -1,6 +1,7 @@
 //! Host-owned short text service. Broker identities are supplied by native code;
 //! JSON request fields cannot claim another caller's work or credentials.
 mod adapters;
+mod cli;
 pub(crate) mod credentials;
 pub mod domain;
 pub(crate) mod image_migration;
@@ -488,5 +489,7 @@ pub async fn ai_connection_test(
 pub async fn ai_connection_cancel_test(window: tauri::Window, request_id: String) -> Result<bool> {
     Ok(cancel(&format!("settings:{}", window.label()), &request_id))
 }
+#[cfg(test)]
+mod cli_tests;
 #[cfg(test)]
 mod tests;

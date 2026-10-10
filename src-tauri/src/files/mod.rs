@@ -81,6 +81,7 @@ mod trash_outcome;
 #[cfg(unix)]
 mod tree_removal;
 mod watch_observation;
+mod search_observation;
 #[cfg(windows)]
 mod windows_io;
 #[cfg(target_os = "windows")]

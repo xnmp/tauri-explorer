@@ -6,6 +6,7 @@ mod job_bridge;
 mod lifecycle;
 mod ownership;
 mod package;
+mod process_run;
 pub(crate) mod provenance;
 #[cfg(target_os = "linux")]
 mod queue;

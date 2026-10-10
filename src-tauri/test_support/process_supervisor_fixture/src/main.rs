@@ -10,6 +10,11 @@ mod error {
             Self::Io(value)
         }
     }
+    #[derive(Debug)]
+    pub enum ProcessRunError {
+        NotStarted(AppError),
+        Started(AppError),
+    }
     impl std::fmt::Display for AppError {
         fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
             match self {
@@ -49,6 +54,13 @@ fn main() {
     if args[0] == "missing" {
         command = Command::new("/nonexistent/owned-process-fixture");
     }
+    // Input larger than any OS pipe buffer, so an unread write must block.
+    let input = args[0].starts_with("stdin-").then(|| {
+        (0..1024 * 1024u32)
+            .map(|n| (n.wrapping_mul(2_654_435_761) >> 24) as u8)
+            .collect::<Vec<u8>>()
+    });
+    let expected = input.as_deref().map(digest);
     if args[0] == "preexec-hold" {
         use std::os::unix::process::CommandExt;
         let path = std::ffi::CString::new(args[1].clone()).unwrap();
@@ -89,22 +101,25 @@ fn main() {
         })
     };
     let begin = Instant::now();
-    let result = process_supervisor::output_controlled(
+    let result = process_supervisor::run(
         &mut command,
         || {
-            (args[0] == "cancel" && begin.elapsed() > Duration::from_millis(150))
+            (matches!(args[0].as_str(), "cancel" | "stdin-unread-cancel")
+                && begin.elapsed() > Duration::from_millis(150))
                 || backend_dead()
         },
         (65536, 65536),
         "fixture cancelled",
+        input,
     );
     if args[0] == "reuse" {
         let first = result.unwrap();
-        let second = process_supervisor::output_controlled(
+        let second = process_supervisor::run(
             &mut command,
             || false,
             (65536, 65536),
             "fixture cancelled",
+            None,
         )
         .unwrap();
         assert!(first.status.success() && second.status.success());
@@ -114,19 +129,45 @@ fn main() {
         return;
     }
     match result {
+        Ok(output) if args[0] == "stdin-digest" => {
+            println!("status={}", output.status.code().unwrap_or(-1));
+            let echoed = String::from_utf8_lossy(&output.stdout);
+            println!("digest-match={}", Some(echoed.trim()) == expected.as_deref());
+        }
         Ok(output) => {
             println!("status={}", output.status.code().unwrap_or(-1));
             println!("stdout={}", String::from_utf8_lossy(&output.stdout));
             println!("stderr={}", String::from_utf8_lossy(&output.stderr));
         }
-        Err(error) => {
-            println!("error={error}");
+        Err(process_supervisor_error::NotStarted(error)) => {
+            println!("not-started-error={error}");
+            std::process::exit(2)
+        }
+        Err(process_supervisor_error::Started(error)) => {
+            println!("started-error={error}");
             std::process::exit(2)
         }
     }
 }
+use error::ProcessRunError as process_supervisor_error;
+/// FNV-1a over the bytes, with their length: echoed by the stdin leaf.
+fn digest(bytes: &[u8]) -> String {
+    let hash = bytes.iter().fold(0xcbf2_9ce4_8422_2325u64, |hash, byte| {
+        (hash ^ u64::from(*byte)).wrapping_mul(0x0000_0100_0000_01b3)
+    });
+    format!("{}:{hash:016x}", bytes.len())
+}
 fn leaf(args: &[String]) {
     match args[0].as_str() {
+        "stdin-digest" => {
+            let mut bytes = Vec::new();
+            std::io::stdin().read_to_end(&mut bytes).unwrap();
+            println!("{}", digest(&bytes));
+        }
+        "stdin-unread-exit" => {
+            println!("exact-unread-exit");
+            std::process::exit(5)
+        }
         "success" => {
             println!(
                 "exact-success:{}",
@@ -175,7 +216,7 @@ fn leaf(args: &[String]) {
                 println!("exact-early-success");
                 return;
             }
-            if mode == "overflow" {
+            if mode == "overflow" || mode == "stdin-unread-overflow" {
                 std::io::stdout().write_all(&vec![b'x'; 200_000]).unwrap();
             }
             if mode == "stderr-overflow" {

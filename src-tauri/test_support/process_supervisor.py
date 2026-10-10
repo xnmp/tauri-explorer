@@ -68,7 +68,7 @@ def run(mode):
         process = subprocess.Popen([str(EXE), mode, str(path)], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         pids = []
         try:
-            if mode not in ['success', 'nonzero', 'large-success', 'missing', 'reuse']:
+            if mode not in ['success', 'nonzero', 'large-success', 'missing', 'reuse', 'stdin-digest', 'stdin-unread-exit']:
                 pids = report(path)
             if mode == 'backend-death':
                 # Kill the owning backend while its CLI tree is still running.
@@ -92,10 +92,19 @@ def run(mode):
                 assert process.returncode == 0 and b'status=23\nstdout=exact-nonzero\n' in output
             elif mode == 'early-exit':
                 assert process.returncode == 0 and b'status=0\nstdout=exact-early-success\n' in output
-            elif mode in ['cancel', 'backend-death']:
-                assert process.returncode == 2 and b'fixture cancelled' in output
-            elif mode in ['overflow', 'stderr-overflow']:
-                assert process.returncode == 2 and b'exceeded its limit' in output
+            elif mode == 'stdin-digest':
+                # The leaf read exactly the 1 MiB input to EOF and echoed its digest.
+                assert process.returncode == 0 and output == b'status=0\ndigest-match=true\n', output
+            elif mode == 'stdin-unread-exit':
+                # Unread input is an ordinary outcome: the leaf's own status stands.
+                assert process.returncode == 0 and output.startswith(b'status=5\nstdout=exact-unread-exit\n'), output
+            elif mode in ['cancel', 'backend-death', 'stdin-unread-cancel']:
+                assert process.returncode == 2 and output.startswith(b'started-error=fixture cancelled'), output
+            elif mode in ['overflow', 'stderr-overflow', 'stdin-unread-overflow']:
+                assert process.returncode == 2 and output.startswith(b'started-error=') and b'exceeded its limit' in output, output
+            elif mode == 'missing':
+                # A spawn failure is classified as never having executed.
+                assert process.returncode == 2 and output.startswith(b'not-started-error='), output
             else:
                 assert process.returncode == 2
         finally:
@@ -109,7 +118,8 @@ def run(mode):
     print('PASS', mode, flush=True)
 
 
-for mode in ['success', 'reuse', 'nonzero', 'large-success', 'early-exit', 'cancel', 'backend-death', 'overflow', 'stderr-overflow', 'missing']:
+for mode in ['success', 'reuse', 'nonzero', 'large-success', 'early-exit', 'cancel', 'backend-death', 'overflow', 'stderr-overflow', 'missing',
+             'stdin-digest', 'stdin-unread-exit', 'stdin-unread-cancel', 'stdin-unread-overflow']:
     run(mode)
 
 with tempfile.TemporaryDirectory(prefix='te-supervisor-parent-death-') as root:
@@ -161,4 +171,4 @@ for fd_kind in ['missing', 'regular', 'socket-invalid-handshake']:
         output, errors = helper.communicate(timeout=3)
         assert helper.returncode == 64 and output == errors == b'', (fd_kind, helper.returncode, output, errors)
     print('PASS private-mode-refuses-' + fd_kind, flush=True)
-print('15 process-supervisor outcome fixtures passed', flush=True)
+print('19 process-supervisor outcome fixtures passed', flush=True)

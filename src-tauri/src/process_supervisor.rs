@@ -2,14 +2,14 @@
 //! The host spawns the original Command directly: no argv/environment serialization,
 //! output spools, shell wrapping, or supervisor-owned output reader is involved.
 #![cfg(unix)]
-use crate::error::AppError;
+use crate::error::{AppError, ProcessRunError};
 use std::{
     io::{self, Read, Write},
     os::{
         fd::{AsRawFd, FromRawFd, RawFd},
         unix::{net::UnixStream, process::CommandExt},
     },
-    process::{Child, Command, Output, Stdio},
+    process::{Child, ChildStdin, Command, Output, Stdio},
     sync::{
         atomic::{AtomicBool, Ordering},
         Arc,
@@ -271,6 +271,7 @@ struct Readers {
     stop: Arc<AtomicBool>,
     stdout: Option<JoinHandle<io::Result<Vec<u8>>>>,
     stderr: Option<JoinHandle<io::Result<Vec<u8>>>>,
+    stdin: Option<JoinHandle<()>>,
 }
 impl Drop for Readers {
     fn drop(&mut self) {
@@ -280,7 +281,38 @@ impl Drop for Readers {
                 let _ = reader.join();
             }
         }
+        if let Some(writer) = self.stdin.take() {
+            let _ = writer.join();
+        }
     }
+}
+/// Write the bounded input on its own nonblocking thread, then close stdin.
+/// A child that never reads cannot stall the host: the writer only waits on a
+/// full pipe until the shared stop flag, which every return path sets. A child
+/// that exits or closes stdin early yields a broken pipe, an ordinary outcome:
+/// its exit status and output remain authoritative.
+fn writer(
+    mut pipe: ChildStdin,
+    input: Vec<u8>,
+    stop: Arc<AtomicBool>,
+) -> io::Result<JoinHandle<()>> {
+    nonblocking(pipe.as_raw_fd())?;
+    std::thread::Builder::new()
+        .name("owned-process-input".into())
+        .spawn(move || {
+            let mut rest = input.as_slice();
+            while !rest.is_empty() && !stop.load(Ordering::Acquire) {
+                match pipe.write(rest) {
+                    Ok(0) => return,
+                    Ok(count) => rest = &rest[count..],
+                    Err(e) if e.kind() == io::ErrorKind::Interrupted => {}
+                    Err(e) if e.kind() == io::ErrorKind::WouldBlock => {
+                        std::thread::sleep(Duration::from_millis(5));
+                    }
+                    Err(_) => return,
+                }
+            }
+        })
 }
 fn reader(
     mut pipe: impl Read + Send + 'static,
@@ -324,30 +356,44 @@ fn reader(
             }
         })
 }
-/// SDK3 owned process path. Caller configures stdin; original args/env/cwd stay
-/// on the original Command. Success retains the leaf's exit status, not anchor's.
-pub(crate) fn output_controlled(
+/// SDK3 owned process path. Original args/env/cwd stay on the original
+/// Command. With `input`, stdin is a pipe that receives exactly those bytes and
+/// is then closed; without it, the caller's stdin configuration is used.
+/// Success retains the leaf's exit status, not anchor's.
+///
+/// Failures before the leaf is spawned (cancellation, supervision setup, a
+/// spawn error) are `NotStarted`: the program never executed. Every later
+/// failure is `Started`.
+pub(crate) fn run(
     command: &mut Command,
     cancelled: impl Fn() -> bool,
     limits: (usize, usize),
     cancel_message: &'static str,
-) -> Result<Output, AppError> {
+    input: Option<Vec<u8>>,
+) -> Result<Output, ProcessRunError> {
     if limits.0 > MAX_OUTPUT || limits.1 > MAX_OUTPUT {
-        return Err(AppError::Other(
+        return Err(ProcessRunError::NotStarted(AppError::Other(
             "Owned process output limit is invalid".into(),
-        ));
+        )));
     }
     if cancelled() {
-        return Err(AppError::Other(cancel_message.into()));
+        return Err(ProcessRunError::NotStarted(AppError::Other(
+            cancel_message.into(),
+        )));
     }
-    let mut owned = anchor()?;
+    let mut owned = anchor().map_err(ProcessRunError::NotStarted)?;
     if cancelled() {
-        return Err(AppError::Other(cancel_message.into()));
+        return Err(ProcessRunError::NotStarted(AppError::Other(
+            cancel_message.into(),
+        )));
     }
     command
         .process_group(owned.anchor.id() as libc::pid_t)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
+    if input.is_some() {
+        command.stdin(Stdio::piped());
+    }
     let parent = unsafe { libc::getpid() };
     unsafe {
         command.pre_exec(move || {
@@ -360,7 +406,23 @@ pub(crate) fn output_controlled(
             Ok(())
         });
     }
-    owned.leaf = Some(command.spawn()?);
+    // std reports exec and pre_exec failures through spawn: an error here
+    // means the program image never ran.
+    owned.leaf = Some(
+        command
+            .spawn()
+            .map_err(|cause| ProcessRunError::NotStarted(cause.into()))?,
+    );
+    supervise(&mut owned, cancelled, limits, cancel_message, input)
+        .map_err(ProcessRunError::Started)
+}
+fn supervise(
+    owned: &mut Owned,
+    cancelled: impl Fn() -> bool,
+    limits: (usize, usize),
+    cancel_message: &'static str,
+    input: Option<Vec<u8>>,
+) -> Result<Output, AppError> {
     let leaf = owned.leaf.as_mut().expect("owned leaf");
     let stdout = leaf
         .stdout
@@ -370,6 +432,15 @@ pub(crate) fn output_controlled(
         .stderr
         .take()
         .ok_or_else(|| AppError::Other("Owned stderr pipe unavailable".into()))?;
+    let stdin = match input {
+        Some(input) => Some((
+            leaf.stdin
+                .take()
+                .ok_or_else(|| AppError::Other("Owned stdin pipe unavailable".into()))?,
+            input,
+        )),
+        None => None,
+    };
     nonblocking(stdout.as_raw_fd())?;
     nonblocking(stderr.as_raw_fd())?;
     let overflow = Arc::new(AtomicBool::new(false));
@@ -378,9 +449,13 @@ pub(crate) fn output_controlled(
         stop: stop.clone(),
         stdout: None,
         stderr: None,
+        stdin: None,
     };
     readers.stdout = Some(reader(stdout, limits.0, overflow.clone(), stop.clone())?);
-    readers.stderr = Some(reader(stderr, limits.1, overflow.clone(), stop)?);
+    readers.stderr = Some(reader(stderr, limits.1, overflow.clone(), stop.clone())?);
+    if let Some((pipe, input)) = stdin {
+        readers.stdin = Some(writer(pipe, input, stop)?);
+    }
     loop {
         if cancelled() || overflow.load(Ordering::Acquire) {
             owned.stop();

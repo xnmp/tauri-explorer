@@ -146,6 +146,33 @@ Anything whose failure mode involves races, watcher timing, git state, or cache 
 
 Config autoreload tests must write through the canonical target of any symlinked config file or theme directory; watching the link itself does not prove inotify observes the target.
 
+Config-watch retargets must restore every surviving descendant after retiring a
+recursive ancestor: notify's inotify backend removes descendant native watches
+even if they were separately registered. Apply this restoration only to inotify;
+exact-root backends such as Windows retain descendants and re-registering them
+can leak native callback owners. Keep obsolete descendant cleanup obligations
+until each removal succeeds, including after partial ancestor failures.
+Include the permanent config-directory
+watch when it is nested under that ancestor, and retain failed restorations for
+retry. The Linux contracts in `src-tauri/test_support/config_watch_nested_roots_test.rs`
+drive the production handover synchronously before writing canonical targets;
+a receipt before ancestor removal can otherwise hide lost coverage (#938,
+ADR 0004).
+The public integration regression in `src-tauri/tests/config_watch_nested_root_test.rs`
+also runs against the real refresh worker. It waits for native ancestor retirement
+through `/proc/self/fdinfo`, then uses a first-ever bookmarks callback as an
+inotify event-loop barrier before probing the canonical nested settings target.
+Keep source-included Rust test filenames ending in `_test.rs` so the publication
+gate recognizes them, and retain the public integration test when testing with
+the entire implementation file reverted.
+Pending config-watch removals are cleanup obligations, not confirmed coverage.
+On a return retarget, complete uncertain cleanup before registering the root
+again; otherwise an unregister error after native removal can leave that root
+permanently unwatched, or an error before removal can duplicate native owners.
+If cleaning the returning root removes the previous plan's descendants, restore
+their coverage on registration rollback. The return/failure contracts live in
+`src-tauri/test_support/config_watch_cleanup_return_test.rs` (#938, ADR 0004).
+
 The public report relay under `website/api/` uses `GITHUB_ISSUE_TOKEN` only for issue creation. Production spam counters must use the shared REST KV variables `KV_REST_API_URL` and `KV_REST_API_TOKEN`; when Vercel is detected without them the endpoint fails closed. The in-memory counter is intentionally limited to local development and unit tests.
 
 **Repro-first for bug fixes.** Before changing logic, write the test that fails for the reported reason (or demonstrate the failure at the pre-fix commit). Gold standard: the test passes on your branch and fails with the fix reverted. If the buggy logic has no importable seam, extracting the seam is part of the fix — don't settle for verifying a transcribed copy.

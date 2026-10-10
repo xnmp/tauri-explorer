@@ -21,7 +21,7 @@
 
 use notify::{Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 use serde::Serialize;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fmt::Display;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Condvar, Mutex, OnceLock};
@@ -72,7 +72,23 @@ struct WatchPlan {
 /// refresh worker touches it after setup; the event callback never does.
 struct Registrations<W> {
     watcher: W,
+    /// Confirmed active native coverage only; failed removals are not coverage.
     external_roots: HashMap<PathBuf, RecursiveMode>,
+    pending_removals: HashSet<PathBuf>,
+    /// An ancestor unwatch can remove the config directory's native coverage.
+    /// Keep that obligation separate from the external-root plan for retries.
+    config_root_needs_restore: bool,
+}
+
+impl<W> Registrations<W> {
+    fn new(watcher: W, external_roots: HashMap<PathBuf, RecursiveMode>) -> Self {
+        Self {
+            watcher,
+            external_roots,
+            pending_removals: HashSet::new(),
+            config_root_needs_restore: false,
+        }
+    }
 }
 
 /// Registration operations of a filesystem watcher.
@@ -87,6 +103,11 @@ trait WatchRegistration {
     type Error: Display;
     fn register(&mut self, path: &Path, mode: RecursiveMode) -> Result<(), Self::Error>;
     fn unregister(&mut self, path: &Path) -> Result<(), Self::Error>;
+    /// inotify recursively removes separately registered descendant roots;
+    /// exact-root backends must retain those registrations without re-watching.
+    fn unregister_removes_descendants(&self) -> bool {
+        false
+    }
 }
 
 impl WatchRegistration for RecommendedWatcher {
@@ -97,7 +118,17 @@ impl WatchRegistration for RecommendedWatcher {
     }
 
     fn unregister(&mut self, path: &Path) -> Result<(), Self::Error> {
-        self.unwatch(path)
+        match self.unwatch(path) {
+            // A previous partial removal or ancestor removal may have already
+            // retired this root. Treat its absence as completed cleanup.
+            Err(error) if matches!(error.kind, notify::ErrorKind::WatchNotFound) => Ok(()),
+            result => result,
+        }
+    }
+
+    fn unregister_removes_descendants(&self) -> bool {
+        // These are the platforms where notify uses INotifyWatcher.
+        cfg!(any(target_os = "linux", target_os = "android"))
     }
 }
 
@@ -381,10 +412,7 @@ where
     for (root, mode) in &external_roots {
         watcher.watch(root, *mode)?;
     }
-    let registrations = Registrations {
-        watcher,
-        external_roots: external_roots.into_iter().collect(),
-    };
+    let registrations = Registrations::new(watcher, external_roots.into_iter().collect());
 
     let stop = Arc::new(StopSignal::default());
     let phase = Arc::new(PhaseRecorder::default());
@@ -561,21 +589,28 @@ fn spawn_flush_thread(app: AppHandle) {
 /// delivers is already mapped and an event from a retired root is already
 /// filtered. If a registration fails, the previous plan is restored and its
 /// roots stay watched; successful additions are retained for the next retry.
+/// Removing a recursive ancestor can also remove surviving descendants on
+/// inotify. Invalidate their registration records and restore that coverage
+/// after all retirements, including the permanent config-directory watch.
 fn reconcile_watch_plan<W: WatchRegistration>(
     replacement: WatchPlan,
     plan: &Mutex<WatchPlan>,
     registrations: &mut Registrations<W>,
     phase: &PhaseRecorder,
 ) {
+    let config_dir = replacement.config_dir.clone();
+    let required_roots = replacement.external_roots.clone();
+    restore_config_root(&config_dir, registrations, phase);
     let additions: Vec<(PathBuf, RecursiveMode)> = replacement
         .external_roots
         .iter()
         .filter(|(root, mode)| registrations.external_roots.get(root) != Some(mode))
         .cloned()
         .collect();
-    let stale: Vec<PathBuf> = registrations
+    let stale: HashSet<PathBuf> = registrations
         .external_roots
         .keys()
+        .chain(registrations.pending_removals.iter())
         .filter(|root| {
             !replacement
                 .external_roots
@@ -590,31 +625,155 @@ fn reconcile_watch_plan<W: WatchRegistration>(
     };
 
     for (root, mode) in additions {
-        phase.enter(WorkerPhase::Registering(root.clone()));
-        if let Err(error) = registrations.watcher.register(&root, mode) {
-            log::warn!(
-                "Config autoreload cannot watch updated symlink target {}: {error}",
-                root.display()
-            );
+        if !ensure_external_root(
+            &root,
+            mode,
+            &required_roots,
+            &config_dir,
+            registrations,
+            phase,
+        ) {
+            let previous_roots = previous.external_roots.clone();
             if let Ok(mut current) = plan.lock() {
                 *current = previous;
             }
+            // Cleaning an uncertain returning ancestor can invalidate the
+            // previous plan's descendants before its new registration fails.
+            // Restore that coverage as well as the previous callback mapping.
+            restore_external_roots(&previous_roots, &config_dir, registrations, phase);
+            restore_config_root(&config_dir, registrations, phase);
             return;
         }
-        registrations.external_roots.insert(root, mode);
     }
 
     for root in stale {
-        phase.enter(WorkerPhase::Unregistering(root.clone()));
-        match registrations.watcher.unregister(&root) {
-            Ok(()) => {
-                registrations.external_roots.remove(&root);
+        retire_external_root(&root, &required_roots, &config_dir, registrations, phase);
+    }
+
+    restore_config_root(&config_dir, registrations, phase);
+    restore_external_roots(&required_roots, &config_dir, registrations, phase);
+}
+
+fn retire_external_root<W: WatchRegistration>(
+    root: &Path,
+    required_roots: &[(PathBuf, RecursiveMode)],
+    config_dir: &Path,
+    registrations: &mut Registrations<W>,
+    phase: &PhaseRecorder,
+) -> bool {
+    // Unregister errors are ambiguous: coverage may be gone, or a native
+    // callback owner may remain. Track cleanup separately from active coverage.
+    registrations.external_roots.remove(root);
+    registrations.pending_removals.insert(root.to_path_buf());
+    phase.enter(WorkerPhase::Unregistering(root.to_path_buf()));
+    let result = registrations.watcher.unregister(root);
+    if registrations.watcher.unregister_removes_descendants() {
+        let invalidated: Vec<PathBuf> = registrations
+            .external_roots
+            .keys()
+            .filter(|current| current.starts_with(root))
+            .cloned()
+            .collect();
+        for descendant in invalidated {
+            registrations.external_roots.remove(&descendant);
+            if !required_roots
+                .iter()
+                .any(|(required, _)| required == &descendant)
+            {
+                registrations.pending_removals.insert(descendant);
             }
-            Err(error) => log::warn!(
+        }
+        if config_dir.starts_with(root) {
+            registrations.config_root_needs_restore = true;
+        }
+    }
+    match result {
+        Ok(()) => {
+            registrations.pending_removals.remove(root);
+            true
+        }
+        Err(error) => {
+            log::warn!(
                 "Config autoreload cannot retire old symlink target {}: {error}",
                 root.display()
-            ),
+            );
+            false
         }
+    }
+}
+
+fn ensure_external_root<W: WatchRegistration>(
+    root: &Path,
+    mode: RecursiveMode,
+    required_roots: &[(PathBuf, RecursiveMode)],
+    config_dir: &Path,
+    registrations: &mut Registrations<W>,
+    phase: &PhaseRecorder,
+) -> bool {
+    if registrations.pending_removals.contains(root)
+        && !retire_external_root(root, required_roots, config_dir, registrations, phase)
+    {
+        return false;
+    }
+    if registrations.external_roots.get(root) == Some(&mode) {
+        return true;
+    }
+    phase.enter(WorkerPhase::Registering(root.to_path_buf()));
+    match registrations.watcher.register(root, mode) {
+        Ok(()) => {
+            registrations
+                .external_roots
+                .insert(root.to_path_buf(), mode);
+            true
+        }
+        Err(error) => {
+            log::warn!(
+                "Config autoreload cannot establish symlink target {}: {error}",
+                root.display()
+            );
+            false
+        }
+    }
+}
+
+fn restore_external_roots<W: WatchRegistration>(
+    required_roots: &[(PathBuf, RecursiveMode)],
+    config_dir: &Path,
+    registrations: &mut Registrations<W>,
+    phase: &PhaseRecorder,
+) {
+    for (root, mode) in required_roots {
+        ensure_external_root(
+            root,
+            *mode,
+            required_roots,
+            config_dir,
+            registrations,
+            phase,
+        );
+        // Failed cleanup or registration remains separately tracked/missing,
+        // so future refreshes retry it instead of assuming active coverage.
+    }
+}
+
+fn restore_config_root<W: WatchRegistration>(
+    config_dir: &Path,
+    registrations: &mut Registrations<W>,
+    phase: &PhaseRecorder,
+) {
+    if !registrations.config_root_needs_restore {
+        return;
+    }
+    phase.enter(WorkerPhase::Registering(config_dir.to_path_buf()));
+    match registrations
+        .watcher
+        .register(config_dir, RecursiveMode::Recursive)
+    {
+        Ok(()) => registrations.config_root_needs_restore = false,
+        Err(error) => log::warn!(
+            "Config autoreload cannot restore config directory {}: {error}",
+            config_dir.display()
+        ),
     }
 }
 
@@ -623,6 +782,18 @@ fn reconcile_watch_plan<W: WatchRegistration>(
 fn settings_path(config_dir: &Path) -> std::path::PathBuf {
     config_dir.join(SETTINGS_FILE)
 }
+
+#[cfg(test)]
+#[path = "../test_support/config_watch_nested_roots_test.rs"]
+mod nested_root_tests;
+
+#[cfg(test)]
+#[path = "../test_support/config_watch_registration_contracts_test.rs"]
+mod registration_contract_tests;
+
+#[cfg(test)]
+#[path = "../test_support/config_watch_cleanup_return_test.rs"]
+mod cleanup_return_tests;
 
 #[cfg(test)]
 mod tests {
@@ -688,10 +859,8 @@ mod tests {
         initial: WatchPlan,
         watcher: W,
     ) -> (Arc<Mutex<WatchPlan>>, Registrations<W>) {
-        let registrations = Registrations {
-            watcher,
-            external_roots: initial.external_roots.iter().cloned().collect(),
-        };
+        let registrations =
+            Registrations::new(watcher, initial.external_roots.iter().cloned().collect());
         (Arc::new(Mutex::new(initial)), registrations)
     }
 
@@ -881,14 +1050,14 @@ mod tests {
         std::fs::write(old.join(SETTINGS_FILE), "{}").expect("old settings");
         std::fs::write(new.join(SETTINGS_FILE), "{}").expect("new settings");
         let current = Arc::new(Mutex::new(plan(&config, Some(&old))));
-        let mut registrations = Registrations {
-            watcher: CallbackCoupledWatcher {
+        let mut registrations = Registrations::new(
+            CallbackCoupledWatcher {
                 plan: Arc::clone(&current),
                 delivered: Vec::new(),
                 blocked: Vec::new(),
             },
-            external_roots: HashMap::from([(old.clone(), RecursiveMode::NonRecursive)]),
-        };
+            HashMap::from([(old.clone(), RecursiveMode::NonRecursive)]),
+        );
 
         reconcile_watch_plan(
             plan(&config, Some(&new)),
@@ -947,10 +1116,10 @@ mod tests {
         watcher
             .watch(&first, RecursiveMode::NonRecursive)
             .expect("initial watch");
-        let mut registrations = Registrations {
+        let mut registrations = Registrations::new(
             watcher,
-            external_roots: HashMap::from([(first.clone(), RecursiveMode::NonRecursive)]),
-        };
+            HashMap::from([(first.clone(), RecursiveMode::NonRecursive)]),
+        );
 
         let writing = Arc::new(AtomicBool::new(true));
         let writer = {
@@ -1036,10 +1205,7 @@ mod tests {
             let gate = Arc::clone(&gate);
             std::thread::spawn(move || {
                 let current = Mutex::new(plan(config, None));
-                let mut registrations = Registrations {
-                    watcher: StuckWatcher(gate),
-                    external_roots: HashMap::new(),
-                };
+                let mut registrations = Registrations::new(StuckWatcher(gate), HashMap::new());
                 let _ = entered.send(());
                 reconcile_watch_plan(
                     plan(config, Some(target)),

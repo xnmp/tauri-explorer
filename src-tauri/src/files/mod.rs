@@ -71,6 +71,7 @@ pub(crate) mod recovery;
 mod replacement;
 #[cfg(any(target_os = "windows", test))]
 mod restore_outcome;
+mod search_observation;
 pub mod shortcuts;
 pub mod trash;
 pub(crate) mod trash_artifact;
@@ -81,7 +82,6 @@ mod trash_outcome;
 #[cfg(unix)]
 mod tree_removal;
 mod watch_observation;
-mod search_observation;
 #[cfg(windows)]
 mod windows_io;
 #[cfg(target_os = "windows")]

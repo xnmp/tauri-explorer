@@ -79,6 +79,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `ShortcutCheatsheet.svelte` — keyboard shortcut cheatsheet overlay.
 - `ThemePicker.svelte` — theme selection UI.
 - `RenameDialog`? see `dialogs.svelte.ts`; dialogs present: `DeleteDialog.svelte`, `ConflictDialog.svelte` (paste conflict overwrite/skip), `BulkRenameDialog.svelte`, `WorkspaceDialog.svelte` (save/restore workspaces), `ProgressDialog.svelte` (copy/move/extract progress), `InlineNewFolder.svelte` (inline new-entry input — folder or file, per `explorer.newEntryKind`), `FilePicker.svelte` (portal file-picker window).
+- `PreviewFolderList.svelte` — folder/ZIP children list in the Preview pane, with the collapsed single-folder indicator; rows go through the shared VirtualList so huge folders render only a windowed slice (#1040).
 - `PreviewPane.svelte` — file preview (image/text/markdown/syntax/CSV table); CSV rows use the shared VirtualList with one shared column template and an outer horizontal scroll surface (#666). Image to image, the previous image stays (spinner over it when slow) until the next is decoded, so a selection change never blanks or re-lays out the pane (`e2e/preview-selection-stability.spec.ts`).
 - `PdfPreview.svelte` — lazy canvas PDF surface with centered fit/zoom, pointer-captured pan, annotation links, compact page controls and fullscreen keyboard ownership (#728–#730).
 - `TerminalPanel.svelte` — embedded xterm.js terminal panel (#139).
@@ -401,7 +402,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `zoom.ts` — CSS zoom level utils.
 - `raf-coalesce.ts` — coalesce high-freq value streams via rAF.
 - `scroll-jank-monitor.ts` — pure rAF-gap sampler (rAF/cancel injected) reporting long-frame counts for scroll-jank diagnostics; wired into `TilesView.svelte` (#593).
-- `theme-from-palette.ts` — build theme from extracted image palette (#203).
+- `theme-from-palette.ts` — build theme from extracted image palette (#203); text tokens solved in OKLCH for WCAG AA on every composited surface (#791).
 - `ai-rename.ts` — pure AI-rename suggestion logic (#145).
 - `terminal-command.ts` — shell command construction/quoting for terminal.
 - `terminal-cwd-sync.ts` — "terminal follows explorer" cwd decision (#149).
@@ -607,6 +608,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `src-tauri/src/files/freedesktop_trash/restoration.rs` — immutable exact restoration plans, per-resource shared admission, descriptor-relative missing-parent creation and per-batch identity-checked parent reuse; native target authority stays separate from display receipt keys.
 - `fs_watcher.rs` — blocking native directory watch adapter, coalesced retirement cleanup and recursive search-cache coverage; directory-changed events preserve mutation priority and observation time.
 - `directory_watches.rs` — renderer-owned directory lease identities, shared registrations, cancellation, failed-release retry and retired-observer reconstruction.
+- `src-tauri/src/files/search_observation.rs` — independent recursive-search watch worker, demand-incarnation fences and live coverage snapshots; never runs native work under the direct directory lease mutex.
 - `watch_observation.rs` — shared native generations, parent/root registration roles, callback failure/rescan recovery, partial recursive registration isolation and retry deadlines.
 - `git_status.rs` — per-entry git status indicators.
 - `drives.rs` — enumerate drives/volumes cross-platform; Linux mount-table fallback and udev label decoding. Mount-table/sysfs integration contracts against the private `enumerate_linux_drives` in `src-tauri/test_support/linux_drives_mounts.rs` (#926).

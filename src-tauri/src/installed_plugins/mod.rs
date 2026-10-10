@@ -23,7 +23,7 @@ pub(super) fn read_lifecycle() -> Result<RwLockReadGuard<'static, ()>, AppError>
 static MUTATIONS: OnceLock<Mutex<()>> = OnceLock::new();
 static PENDING_INSTALL_ERRORS: Mutex<Vec<String>> = Mutex::new(Vec::new());
 #[cfg(target_os = "linux")]
-static PROFILE_OWNER: Mutex<Option<std::fs::File>> = Mutex::new(None);
+static PROFILE_OWNER: Mutex<Option<ownership::ProfileOwner>> = Mutex::new(None);
 #[cfg(target_os = "linux")]
 static QUEUE_WORKER: Mutex<Option<std::thread::JoinHandle<()>>> = Mutex::new(None);
 pub(super) fn initialize(app: tauri::AppHandle) -> Result<(), AppError> {

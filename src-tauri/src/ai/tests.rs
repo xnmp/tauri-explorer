@@ -677,6 +677,138 @@ fn native_trace_writes_keep_explicit_preference_and_copy_off() {
     assert_eq!(value["summarizePrompts"], true);
     assert_eq!(value["unrelated"], 8);
 }
+fn write_trace_over_malformed(legacy: Option<&str>) -> (tempfile::TempDir, Result<()>) {
+    let root = tempfile::tempdir().unwrap();
+    if let Some(legacy) = legacy {
+        fs::write(root.path().join("plugin.openai-image.json"), legacy).unwrap();
+    }
+    fs::write(root.path().join("plugin.trace.json"), "{ not json").unwrap();
+    let result = storage::write_trace_config(root.path(), r#"{"unrelated":9}"#);
+    (root, result)
+}
+#[test]
+fn trace_save_repairs_a_hand_broken_trace_config() {
+    let (root, saved) = write_trace_over_malformed(None);
+    saved.expect("a whole-blob save overwrites a malformed file, as before");
+    let value: Value =
+        serde_json::from_slice(&fs::read(root.path().join("plugin.trace.json")).unwrap()).unwrap();
+    assert_eq!(value["unrelated"], 9);
+}
+#[test]
+fn trace_save_repairing_malformed_config_still_migrates_a_valid_legacy_off_switch() {
+    let (root, saved) = write_trace_over_malformed(Some(r#"{"titleGenerator":"disabled"}"#));
+    saved.unwrap();
+    let value: Value =
+        serde_json::from_slice(&fs::read(root.path().join("plugin.trace.json")).unwrap()).unwrap();
+    assert_eq!(value["unrelated"], 9);
+    assert_eq!(value["summarizePrompts"], false, "legacy setting not lost");
+}
+#[test]
+fn reading_a_malformed_trace_config_is_not_blocked_by_migration() {
+    let root = tempfile::tempdir().unwrap();
+    fs::write(root.path().join("plugin.trace.json"), "{ not json").unwrap();
+    fs::write(
+        root.path().join("plugin.openai-image.json"),
+        r#"{"titleGenerator":"disabled"}"#,
+    )
+    .unwrap();
+    assert_eq!(
+        storage::migrate_summary(root.path()).unwrap(),
+        storage::SummaryMigration::Skipped
+    );
+    assert_eq!(
+        fs::read_to_string(root.path().join("plugin.trace.json")).unwrap(),
+        "{ not json",
+        "migration never rewrites an unparseable destination"
+    );
+}
+#[test]
+fn trace_save_is_not_blocked_by_a_malformed_legacy_image_file() {
+    let root = tempfile::tempdir().unwrap();
+    fs::write(root.path().join("plugin.openai-image.json"), "{ nope").unwrap();
+    storage::write_trace_config(root.path(), r#"{"unrelated":4}"#).unwrap();
+    let value: Value =
+        serde_json::from_slice(&fs::read(root.path().join("plugin.trace.json")).unwrap()).unwrap();
+    assert_eq!(value["unrelated"], 4);
+    assert_eq!(
+        fs::read_to_string(root.path().join("plugin.openai-image.json")).unwrap(),
+        "{ nope"
+    );
+    // Once the legacy file is repaired the pending migration still applies.
+    fs::write(
+        root.path().join("plugin.openai-image.json"),
+        r#"{"titleGenerator":"disabled"}"#,
+    )
+    .unwrap();
+    storage::migrate_summary(root.path()).unwrap();
+    let value: Value =
+        serde_json::from_slice(&fs::read(root.path().join("plugin.trace.json")).unwrap()).unwrap();
+    assert_eq!(value["summarizePrompts"], false);
+}
+#[test]
+fn stale_config_temp_files_are_swept_by_prefix_only() {
+    let root = tempfile::tempdir().unwrap();
+    // Crash debris from durable_write: can contain a plaintext API key.
+    let stale = root.path().join(".ai-config-write-AbC123");
+    fs::write(&stale, r#"{"apiKey":"leaked"}"#).unwrap();
+    let old = std::time::SystemTime::now() - Duration::from_secs(3600);
+    fs::File::options()
+        .write(true)
+        .open(&stale)
+        .unwrap()
+        .set_modified(old)
+        .unwrap();
+    let fresh = root.path().join(".ai-config-write-live");
+    fs::write(&fresh, "in-flight").unwrap();
+    let bystander = root.path().join(".tmpUnrelated");
+    fs::write(&bystander, "not ours").unwrap();
+    fs::File::options()
+        .write(true)
+        .open(&bystander)
+        .unwrap()
+        .set_modified(old)
+        .unwrap();
+    drop(storage::Store::new(root.path().into()).lock().unwrap());
+    assert!(!stale.exists(), "stale writer temp removed");
+    assert!(fresh.exists(), "a live writer's temp is left alone");
+    assert!(bystander.exists(), "other files are never touched");
+}
+#[test]
+fn failed_durable_write_leaves_no_temp_file_behind() {
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().join("plugin.openai-image.json");
+    storage::fault::inject(
+        "plugin.openai-image.json",
+        storage::fault::Replace::AfterReplace,
+    );
+    assert!(storage::durable_write(&path, br#"{"apiKey":"secret"}"#).is_err());
+    let leftovers: Vec<_> = fs::read_dir(root.path())
+        .unwrap()
+        .map(|e| e.unwrap().file_name())
+        .filter(|n| n != "plugin.openai-image.json")
+        .collect();
+    assert!(leftovers.is_empty(), "{leftovers:?}");
+}
+#[test]
+fn superseded_secret_is_removed_when_replacement_committed_but_confirmation_failed() {
+    let root = tempfile::tempdir().unwrap();
+    let store = storage::Store::new(root.path().into());
+    let secrets = MemorySecrets::default();
+    store
+        .save(config_http("https://fixture.test/v1"), 0)
+        .unwrap();
+    store
+        .credential("http", Some("first-key"), 1, &secrets)
+        .unwrap();
+    assert_eq!(secrets.count(), 1);
+    storage::fault::inject("ai-connections.json", storage::fault::Replace::AfterReplace);
+    assert!(store
+        .credential("http", Some("second-key"), 2, &secrets)
+        .is_err());
+    let (_, _, credential) = store.snapshot(&secrets, None).unwrap();
+    assert_eq!(credential.as_deref(), Some("second-key"));
+    assert_eq!(secrets.count(), 1, "the superseded key is not orphaned");
+}
 #[test]
 fn durable_replacement_replaces_existing_document() {
     let root = tempfile::tempdir().unwrap();

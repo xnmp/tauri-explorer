@@ -564,6 +564,113 @@ fn startup_resumes_durable_released_cleanup_without_replaying() {
     );
 }
 #[test]
+fn failed_byte_cleanup_after_committed_release_is_not_an_error_and_is_retried() {
+    let (root, s) = store();
+    let d = output(&s, "stuck");
+    let sealed = std::path::PathBuf::from(
+        s.read(&owner("consumer", 1), "consumer", "stuck", &d)
+            .unwrap()
+            .path,
+    );
+    // A directory in place of the file cannot be unlinked: stands in for a
+    // Windows sharing violation held by an indexer or antivirus.
+    fs::remove_file(&sealed).unwrap();
+    fs::create_dir(&sealed).unwrap();
+    fs::write(sealed.join("held"), b"x").unwrap();
+    let released = s
+        .release(
+            &owner("provider", 1),
+            "consumer",
+            "stuck",
+            "discarded",
+            None,
+        )
+        .expect("committed release must not fail on byte cleanup");
+    assert_eq!(released.phase, AdmissionPhase::Released);
+    assert_eq!(
+        s.get("consumer", "stuck").unwrap().unwrap().phase,
+        AdmissionPhase::Released
+    );
+    drop(s);
+    let s = Store::open(root.path().join("service"), Limits::default())
+        .expect("startup must tolerate a failed byte sweep");
+    assert_eq!(
+        s.get("consumer", "stuck").unwrap().unwrap().phase,
+        AdmissionPhase::Released
+    );
+    fs::remove_dir_all(&sealed).unwrap();
+    fs::write(&sealed, b"bytes").unwrap();
+    s.gc().unwrap();
+    assert!(!sealed.exists(), "a later sweep deletes the retained bytes");
+}
+/// A service directory a crashed first run could have left behind.
+fn interrupted_first_run(root: &Path, prepare: impl FnOnce(&Path)) -> std::path::PathBuf {
+    let dir = root.join("service");
+    fs::create_dir(&dir).unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(&dir, fs::Permissions::from_mode(0o700)).unwrap();
+    }
+    prepare(&dir.join("ledger.sqlite"));
+    dir
+}
+#[test]
+fn zero_byte_ledger_from_an_interrupted_first_run_initializes() {
+    let root = tempfile::tempdir().unwrap();
+    let dir = interrupted_first_run(root.path(), |ledger| fs::write(ledger, b"").unwrap());
+    let s = Store::open(dir, Limits::default()).expect("empty ledger is first-run");
+    s.reserve(admission("op", vec![])).unwrap();
+    assert!(s.get("consumer", "op").unwrap().is_some());
+}
+#[test]
+fn wal_initialised_empty_ledger_from_an_interrupted_first_run_initializes() {
+    let root = tempfile::tempdir().unwrap();
+    let dir = interrupted_first_run(root.path(), |ledger| {
+        let c = rusqlite::Connection::open(ledger).unwrap();
+        c.pragma_update(None, "journal_mode", "WAL").unwrap();
+    });
+    let s = Store::open(dir, Limits::default()).expect("WAL-only ledger is first-run");
+    s.reserve(admission("op", vec![])).unwrap();
+}
+#[test]
+fn unversioned_ledger_with_foreign_state_still_fails_closed() {
+    let root = tempfile::tempdir().unwrap();
+    let dir = interrupted_first_run(root.path(), |ledger| {
+        let c = rusqlite::Connection::open(ledger).unwrap();
+        c.execute_batch(
+            "CREATE TABLE receipts_i_might_be(x); INSERT INTO receipts_i_might_be VALUES(1);",
+        )
+        .unwrap();
+    });
+    assert!(Store::open(dir.clone(), Limits::default()).is_err());
+    let c = rusqlite::Connection::open(dir.join("ledger.sqlite")).unwrap();
+    let n: i64 = c
+        .query_row("SELECT count(*) FROM receipts_i_might_be", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(n, 1, "an unknown database is never reset");
+}
+#[test]
+fn blank_ledger_beside_artifact_bytes_still_fails_closed() {
+    let root = tempfile::tempdir().unwrap();
+    let dir = interrupted_first_run(root.path(), |ledger| fs::write(ledger, b"").unwrap());
+    fs::create_dir(dir.join("bytes")).unwrap();
+    fs::write(dir.join("bytes").join("orphan.bin"), b"payload").unwrap();
+    assert!(Store::open(dir.clone(), Limits::default()).is_err());
+    assert!(dir.join("bytes").join("orphan.bin").exists());
+}
+#[test]
+fn newer_ledger_version_still_fails_closed() {
+    let (root, s) = store();
+    drop(s);
+    let ledger = root.path().join("service").join("ledger.sqlite");
+    rusqlite::Connection::open(&ledger)
+        .unwrap()
+        .pragma_update(None, "user_version", 2)
+        .unwrap();
+    assert!(Store::open(root.path().join("service"), Limits::default()).is_err());
+}
+#[test]
 fn seal_retry_finalizes_stage_and_quota_after_committed_metadata() {
     let (_root, s) = store();
     s.reserve(admission("stage-retry", vec![])).unwrap();

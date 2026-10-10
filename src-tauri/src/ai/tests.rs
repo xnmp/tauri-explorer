@@ -720,9 +720,7 @@ fn credential_remains_readable_after_post_replace_sync_failure() {
     store
         .save(config_http("https://fixture.test/v1"), 0)
         .unwrap();
-    store
-        .fail_next_commit_after_replace
-        .store(true, Ordering::Relaxed);
+    storage::fault::inject("ai-connections.json", storage::fault::Replace::AfterReplace);
     assert_eq!(
         store
             .credential("http", Some("retained-after-commit"), 1, &secrets)
@@ -1051,5 +1049,421 @@ async fn cancellation_quota_cannot_exhaust_other_callers() {
             .unwrap_err()
             .code,
         "provider_failed"
+    );
+}
+#[test]
+fn text_fingerprint_follows_endpoint_and_transport_and_is_canonical() {
+    use sha2::{Digest, Sha256};
+    let chat = config_http("https://example.test/v1").profiles.remove(0);
+    let base = chat.context(1).fingerprint;
+    // Independent golden over the documented canonical tuple.
+    assert_eq!(
+        base,
+        hex::encode(Sha256::digest(
+            br#"["text-adapter-v1","openai-chat-completions","https://example.test/v1","editable-model"]"#
+        ))
+    );
+    let mut cosmetic = chat.clone();
+    cosmetic.name = "Renamed".into();
+    cosmetic.timeout_ms = 1000;
+    assert_eq!(cosmetic.context(99).fingerprint, base);
+    let with = |connection: Connection| Profile {
+        connection,
+        ..chat.clone()
+    };
+    let http = |url: &str, messages: bool| {
+        let (base_url, allow_insecure_http, credential) = (url.into(), false, Credential::None);
+        with(if messages {
+            Connection::Messages {
+                base_url,
+                allow_insecure_http,
+                credential,
+            }
+        } else {
+            Connection::Chat {
+                base_url,
+                allow_insecure_http,
+                credential,
+            }
+        })
+    };
+    let variants = [
+        // Endpoint: another host, and another path prefix on the same host.
+        http("https://other.test/v1", false),
+        http("https://example.test/proxy/v1", false),
+        // Transport: the same URL and model spoken as Anthropic Messages.
+        http("https://example.test/v1", true),
+        with(Connection::Codex {
+            executable_path: "/opt/fixture/cli".into(),
+        }),
+        with(Connection::Claude {
+            executable_path: "/opt/fixture/cli".into(),
+        }),
+        with(Connection::Codex {
+            executable_path: "/opt/other/cli".into(),
+        }),
+    ];
+    let mut seen = std::collections::HashSet::from([base]);
+    for variant in &variants {
+        assert_eq!(
+            variant.context(1).fingerprint,
+            variant.context(7).fingerprint
+        );
+        assert!(
+            seen.insert(variant.context(1).fingerprint),
+            "{:?} shares a fingerprint",
+            variant.connection
+        );
+    }
+}
+#[test]
+fn native_profile_validation_rejects_unknown_transport_wrong_types_and_duplicates() {
+    let valid = serde_json::to_value(config_http("https://example.test/v1")).unwrap();
+    let mut accepted = parse_configuration(valid.clone()).unwrap();
+    validate_configuration(&mut accepted).unwrap();
+    let edit = |change: &dyn Fn(&mut Value)| {
+        let mut value = valid.clone();
+        change(&mut value);
+        value
+    };
+    let rejected = [
+        edit(&|v| v["profiles"][0]["transport"] = json!("openai-responses")),
+        edit(&|v| v["profiles"][0]["transport"] = json!(7)),
+        edit(&|v| v["profiles"][0]["timeoutMs"] = json!("45000")),
+        edit(&|v| v["profiles"][0]["timeoutMs"] = json!(-1)),
+        edit(&|v| v["profiles"][0]["model"] = json!(5)),
+        edit(&|v| v["profiles"][0]["model"] = Value::Null),
+        edit(&|v| v["profiles"][0]["allowInsecureHttp"] = json!("yes")),
+        edit(&|v| v["profiles"][0]["credential"] = json!("none")),
+        edit(&|v| v["profiles"][0]["credential"] = json!({"kind":"keychain"})),
+        edit(&|v| v["profiles"][0]["executablePath"] = json!("/usr/bin/codex")),
+        edit(&|v| v["profiles"] = json!({"http": {}})),
+        edit(&|v| v["enabled"] = json!("true")),
+        edit(&|v| v["revision"] = json!(-1)),
+        edit(&|v| v["defaultProfileId"] = json!(3)),
+        edit(&|v| {
+            let duplicate = v["profiles"][0].clone();
+            v["profiles"].as_array_mut().unwrap().push(duplicate);
+        }),
+        edit(&|v| v["defaultProfileId"] = json!("absent")),
+    ];
+    let root = tempfile::tempdir().unwrap();
+    let store = storage::Store::new(root.path().into());
+    store.save(accepted, 0).unwrap();
+    let committed = fs::read(root.path().join("ai-connections.json")).unwrap();
+    for (index, value) in rejected.into_iter().enumerate() {
+        let error = parse_configuration(value).and_then(|mut config| {
+            validate_configuration(&mut config)?;
+            // A native save must refuse it as well, not only this validator.
+            store.save(config, 1)
+        });
+        assert_eq!(error.unwrap_err().code, "invalid_request", "case {index}");
+    }
+    assert_eq!(
+        fs::read(root.path().join("ai-connections.json")).unwrap(),
+        committed
+    );
+    // Duplicate IDs reach the store directly and are still refused.
+    let mut duplicate = config_http("https://example.test/v1");
+    duplicate.profiles.push(duplicate.profiles[0].clone());
+    assert_eq!(
+        store.save(duplicate, 1).unwrap_err().code,
+        "invalid_request"
+    );
+    assert_eq!(store.read().unwrap().revision, 1);
+}
+#[test]
+fn refused_windows_style_replacement_never_commits_or_overwrites_explicit_settings() {
+    use storage::fault::{inject, Replace};
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().join("ai-connections.json");
+    let store = storage::Store::new(root.path().into());
+    let secrets = MemorySecrets::default();
+    let mut explicit = config_http("https://explicit.test/v1");
+    explicit.enabled = false;
+    explicit.profiles[0].model = "explicit-model".into();
+    store.save(explicit, 0).unwrap();
+    let committed = fs::read(&path).unwrap();
+    let residue = || {
+        let mut names: Vec<_> = fs::read_dir(root.path())
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name().into_string().unwrap())
+            .collect();
+        names.sort();
+        names
+    };
+    let files = residue();
+    // A sharing violation refuses the replacement: no revision is reported,
+    // the explicit document stays byte-identical and no temporary remains.
+    let mut edit = store.read().unwrap();
+    edit.profiles[0].model = "edited-model".into();
+    inject("ai-connections.json", Replace::Refused);
+    assert_eq!(store.save(edit.clone(), 1).unwrap_err().code, "unavailable");
+    assert_eq!(fs::read(&path).unwrap(), committed);
+    assert_eq!(residue(), files);
+    let current = store.read().unwrap();
+    assert_eq!((current.revision, current.enabled), (1, false));
+    assert_eq!(current.profiles[0].model, "explicit-model");
+    // The CAS revision did not advance, so the same edit can be retried.
+    assert_eq!(store.save(edit, 1).unwrap().revision, 2);
+    // A refused credential rotation keeps the old key and leaks no new secret.
+    store
+        .credential("http", Some("first-key"), 2, &secrets)
+        .unwrap();
+    inject("ai-connections.json", Replace::Refused);
+    assert!(store
+        .credential("http", Some("second-key"), 3, &secrets)
+        .is_err());
+    let current = store.read().unwrap();
+    let key = credentials::resolve(&current.profiles[0], &secrets).unwrap();
+    assert_eq!((current.revision, key.as_deref()), (3, Some("first-key")));
+    assert_eq!(secrets.count(), 1);
+    // A newer or corrupt document is never replaced by a save.
+    for unreadable in [r#"{"schemaVersion":2,"revision":9}"#, "{"] {
+        fs::write(&path, unreadable).unwrap();
+        assert!(store
+            .save(config_http("https://default.test/v1"), 3)
+            .is_err());
+        assert!(store.read().is_err());
+        assert_eq!(fs::read(&path).unwrap(), unreadable.as_bytes());
+    }
+}
+#[test]
+fn refused_first_run_and_trace_writes_keep_state_unpublished() {
+    use storage::fault::{inject, Replace};
+    let root = tempfile::tempdir().unwrap();
+    let store = storage::Store::new(root.path().into());
+    // Refused first-run creation reports no in-memory default as committed.
+    inject("ai-connections.json", Replace::Refused);
+    assert_eq!(store.read().unwrap_err().code, "unavailable");
+    assert!(!root.path().join("ai-connections.json").exists());
+    assert_eq!(store.read().unwrap().revision, 0);
+    // An explicit Trace preference is not replaced by the legacy "disabled".
+    fs::write(
+        root.path().join("plugin.openai-image.json"),
+        r#"{"titleGenerator":"disabled"}"#,
+    )
+    .unwrap();
+    let trace = root.path().join("plugin.trace.json");
+    fs::write(&trace, r#"{"summarizePrompts":true,"unrelated":1}"#).unwrap();
+    inject("plugin.trace.json", Replace::Refused);
+    assert!(storage::write_trace_config(root.path(), r#"{"unrelated":2}"#).is_err());
+    assert_eq!(
+        fs::read(&trace).unwrap(),
+        br#"{"summarizePrompts":true,"unrelated":1}"#
+    );
+    storage::write_trace_config(root.path(), r#"{"unrelated":2}"#).unwrap();
+    let value: Value = serde_json::from_slice(&fs::read(&trace).unwrap()).unwrap();
+    assert_eq!(value, json!({"summarizePrompts":true,"unrelated":2}));
+}
+#[tokio::test]
+async fn http_empty_or_textless_bodies_are_classified_invalid() {
+    let chat_missing = json!({"choices":[{"finish_reason":"stop","message":{"role":"assistant"}}]});
+    let messages_missing =
+        json!({"stop_reason":"end_turn","content":[{"type":"text"}]}).to_string();
+    for (body, messages) in [
+        (String::new(), false),
+        (String::new(), true),
+        (chat_missing.to_string(), false),
+        (messages_missing, true),
+        (
+            json!({"stop_reason":"end_turn","content":[]}).to_string(),
+            true,
+        ),
+    ] {
+        let (url, received, worker) = http_fixture("200 OK", body.clone(), Duration::ZERO);
+        let mut config = config_http(&url);
+        if messages {
+            config.profiles[0].connection = Connection::Messages {
+                base_url: url,
+                allow_insecure_http: true,
+                credential: Credential::None,
+            };
+        }
+        let (_root, service) = fixture_service(config);
+        let error = service
+            .generate("plugin:a".into(), request("x"), Arc::new(|| false), None)
+            .await
+            .unwrap_err();
+        assert_eq!(error.code, "invalid_response", "{body}");
+        assert!(!error.message.contains("assistant"));
+        received.recv().unwrap();
+        worker.join().unwrap();
+    }
+}
+#[cfg(unix)]
+fn scripted_cli(path: &Path, kind: &str, stdout: &str, code: i32) -> std::path::PathBuf {
+    use std::os::unix::fs::PermissionsExt;
+    let script = path.join(kind);
+    fs::write(
+        &script,
+        format!(
+            r#"#!/usr/bin/env python3
+import sys
+if '--help' in sys.argv:
+ print('--ignore-user-config --ignore-rules --ephemeral --json --model --safe-mode --restricted --tools --setting-sources --strict-mcp-config --no-session-persistence --output-format');sys.exit(0)
+sys.stdin.read()
+sys.stdout.write({stdout:?})
+sys.exit({code})
+"#
+        ),
+    )
+    .unwrap();
+    fs::set_permissions(&script, fs::Permissions::from_mode(0o700)).unwrap();
+    script
+}
+#[cfg(unix)]
+fn run_candidate_cli(executable: &Path, kind: &str) -> ServiceError {
+    let mut profile = config_http("https://example.test/v1").profiles.remove(0);
+    let executable_path = executable.to_string_lossy().into();
+    profile.connection = if kind == "codex" {
+        Connection::Codex { executable_path }
+    } else {
+        Connection::Claude { executable_path }
+    };
+    let request: Request = serde_json::from_value(request("x")).unwrap();
+    let now = Instant::now();
+    let control = Control {
+        cancelled: AtomicBool::new(false),
+        active: AtomicBool::new(false),
+        deadline: Mutex::new(now + Duration::from_secs(5)),
+        started: now,
+        owner: Arc::new(|| false),
+    };
+    adapters::candidate_cli_for_test(&profile, &request, &control).unwrap_err()
+}
+#[cfg(unix)]
+#[test]
+fn cli_exit_status_and_incomplete_streams_are_classified() {
+    let codex_message =
+        r#"{"type":"item.completed","item":{"type":"agent_message","text":"Fixture title"}}"#;
+    let completed = r#"{"type":"turn.completed","usage":{"input_tokens":1,"output_tokens":1}}"#;
+    let cases = [
+        // A well-formed answer from a CLI that exits nonzero is not a title.
+        (
+            "codex",
+            format!("{codex_message}\n{completed}\n"),
+            3,
+            "provider_failed",
+        ),
+        (
+            "claude",
+            r#"{"type":"result","subtype":"success","is_error":false,"result":"Fixture title"}"#
+                .into(),
+            1,
+            "provider_failed",
+        ),
+        // Partial streams: no completed turn, and a line cut mid-event.
+        ("codex", format!("{codex_message}\n"), 0, "invalid_response"),
+        (
+            "codex",
+            format!("{codex_message}\n{{\"type\":\"turn.comp"),
+            0,
+            "invalid_response",
+        ),
+        (
+            "claude",
+            r#"{"type":"result","subtype":"succ"#.into(),
+            0,
+            "invalid_response",
+        ),
+        // Empty output.
+        ("codex", String::new(), 0, "invalid_response"),
+        ("claude", String::new(), 0, "invalid_response"),
+        // A completed turn or success result without its text field.
+        ("codex", format!("{completed}\n"), 0, "invalid_response"),
+        (
+            "claude",
+            r#"{"type":"result","subtype":"success","is_error":false}"#.into(),
+            0,
+            "invalid_response",
+        ),
+    ];
+    for (index, (kind, stdout, code, expected)) in cases.into_iter().enumerate() {
+        let root = tempfile::tempdir().unwrap();
+        let executable = scripted_cli(root.path(), kind, &stdout, code);
+        assert_eq!(
+            run_candidate_cli(&executable, kind).code,
+            expected,
+            "case {index}"
+        );
+    }
+}
+#[cfg(target_os = "linux")]
+#[tokio::test]
+async fn cli_deadline_reaps_the_owned_process_group() {
+    use std::os::unix::fs::PermissionsExt;
+    let root = tempfile::tempdir().unwrap();
+    let pids = root.path().join("pids");
+    let executable = root.path().join("codex");
+    fs::write(
+        &executable,
+        format!(
+            r#"#!/usr/bin/env python3
+import os,subprocess,sys,time
+if '--help' in sys.argv:
+ print('--ignore-user-config --ignore-rules --ephemeral --json --model');sys.exit(0)
+child=subprocess.Popen([sys.executable,'-c','import os,subprocess,sys,time\ng=subprocess.Popen([sys.executable,"-c","import time\\nwhile True: time.sleep(1)"])\nopen(sys.argv[1]+".tmp","w").write(str(g.pid))\nos.rename(sys.argv[1]+".tmp",sys.argv[1])\nwhile True: time.sleep(1)',{grand:?}])
+while not os.path.exists({grand:?}): time.sleep(.01)
+grandchild=open({grand:?}).read()
+open({pids:?}+'.tmp','w').write(' '.join([str(os.getpid()),str(child.pid),grandchild]))
+os.rename({pids:?}+'.tmp',{pids:?})
+while True: time.sleep(1)
+"#,
+            grand = root.path().join("grandchild").to_string_lossy(),
+            pids = pids.to_string_lossy(),
+        ),
+    )
+    .unwrap();
+    fs::set_permissions(&executable, fs::Permissions::from_mode(0o700)).unwrap();
+    let mut profile = config_http("https://example.test/v1").profiles.remove(0);
+    profile.connection = Connection::Codex {
+        executable_path: executable.to_string_lossy().into(),
+    };
+    let request: Request = serde_json::from_value(request("x")).unwrap();
+    let now = Instant::now();
+    let control = Control {
+        cancelled: AtomicBool::new(false),
+        active: AtomicBool::new(false),
+        deadline: Mutex::new(now + Duration::from_millis(1500)),
+        started: now,
+        owner: Arc::new(|| false),
+    };
+    let error = tokio::task::spawn_blocking(move || {
+        adapters::candidate_cli_for_test(&profile, &request, &control)
+    })
+    .await
+    .unwrap()
+    .unwrap_err();
+    assert_eq!(error.code, "timed_out");
+    let owned: Vec<i32> = fs::read_to_string(&pids)
+        .expect("the CLI tree started before its deadline")
+        .split_whitespace()
+        .map(|pid| pid.parse().unwrap())
+        .collect();
+    assert_eq!(owned.len(), 3);
+    // Exited or a zombie awaiting its reaper: never still running.
+    let stopped = |pid: i32| {
+        fs::read_to_string(format!("/proc/{pid}/stat"))
+            .map(|stat| {
+                stat.rsplit_once(')')
+                    .unwrap()
+                    .1
+                    .trim_start()
+                    .starts_with('Z')
+            })
+            .unwrap_or(true)
+    };
+    let deadline = Instant::now() + Duration::from_secs(3);
+    while !owned.iter().all(|pid| stopped(*pid)) && Instant::now() < deadline {
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    let survivors: Vec<_> = owned.iter().filter(|pid| !stopped(**pid)).collect();
+    for pid in &survivors {
+        unsafe { libc::kill(**pid, libc::SIGKILL) };
+    }
+    assert!(
+        survivors.is_empty(),
+        "orphaned CLI processes: {survivors:?}"
     );
 }

@@ -70,6 +70,13 @@ def run(mode):
         try:
             if mode not in ['success', 'nonzero', 'large-success', 'missing', 'reuse']:
                 pids = report(path)
+            if mode == 'backend-death':
+                # Kill the owning backend while its CLI tree is still running.
+                backend = Path(str(path) + '.backend')
+                deadline = time.monotonic() + 3
+                while not (backend.exists() and backend.read_text()) and time.monotonic() < deadline:
+                    time.sleep(.01)
+                os.kill(int(backend.read_text()), signal.SIGKILL)
             output, errors = process.communicate(timeout=5)
             wait_stopped(pids)
             assert not errors, errors
@@ -85,7 +92,7 @@ def run(mode):
                 assert process.returncode == 0 and b'status=23\nstdout=exact-nonzero\n' in output
             elif mode == 'early-exit':
                 assert process.returncode == 0 and b'status=0\nstdout=exact-early-success\n' in output
-            elif mode == 'cancel':
+            elif mode in ['cancel', 'backend-death']:
                 assert process.returncode == 2 and b'fixture cancelled' in output
             elif mode in ['overflow', 'stderr-overflow']:
                 assert process.returncode == 2 and b'exceeded its limit' in output
@@ -102,7 +109,7 @@ def run(mode):
     print('PASS', mode, flush=True)
 
 
-for mode in ['success', 'reuse', 'nonzero', 'large-success', 'early-exit', 'cancel', 'overflow', 'stderr-overflow', 'missing']:
+for mode in ['success', 'reuse', 'nonzero', 'large-success', 'early-exit', 'cancel', 'backend-death', 'overflow', 'stderr-overflow', 'missing']:
     run(mode)
 
 with tempfile.TemporaryDirectory(prefix='te-supervisor-parent-death-') as root:
@@ -154,4 +161,4 @@ for fd_kind in ['missing', 'regular', 'socket-invalid-handshake']:
         output, errors = helper.communicate(timeout=3)
         assert helper.returncode == 64 and output == errors == b'', (fd_kind, helper.returncode, output, errors)
     print('PASS private-mode-refuses-' + fd_kind, flush=True)
-print('14 process-supervisor outcome fixtures passed', flush=True)
+print('15 process-supervisor outcome fixtures passed', flush=True)

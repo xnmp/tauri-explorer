@@ -2123,20 +2123,45 @@ pub(super) fn emit_job_event(payload: Value) {
     }
 }
 pub(super) fn call(id: &str, method: &str, params: Value) -> Result<Value, AppError> {
-    call_with_origin(id, method, params, "native")
+    call_with_origin(id, method, params, "native", std::time::SystemTime::now())
+}
+/// A generation's ten-minute budget starts when the request entered native
+/// code, so blocking-pool queueing and admission count against it.
+fn operation_deadline_ms(entered: std::time::SystemTime) -> u64 {
+    entered
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis()
+        .saturating_add(600_000)
+        .min(9_007_199_254_740_991) as u64
+}
+#[cfg(test)]
+mod deadline_tests {
+    use super::operation_deadline_ms;
+    use std::time::{Duration, UNIX_EPOCH};
+    #[test]
+    fn budget_is_measured_from_native_entry_not_dispatch() {
+        let entered = UNIX_EPOCH + Duration::from_millis(1_000_000);
+        assert_eq!(operation_deadline_ms(entered), 1_600_000);
+    }
+    #[test]
+    fn pre_epoch_and_far_future_clocks_stay_in_json_safe_range() {
+        assert_eq!(
+            operation_deadline_ms(UNIX_EPOCH - Duration::from_secs(5)),
+            600_000
+        );
+        let far = UNIX_EPOCH + Duration::from_secs(u64::MAX / 4);
+        assert_eq!(operation_deadline_ms(far), 9_007_199_254_740_991);
+    }
 }
 pub(super) fn call_with_origin(
     id: &str,
     method: &str,
     mut params: Value,
     origin_label: &str,
+    entered: std::time::SystemTime,
 ) -> Result<Value, AppError> {
-    let operation_deadline = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_millis()
-        .saturating_add(600_000)
-        .min(9_007_199_254_740_991) as u64;
+    let operation_deadline = operation_deadline_ms(entered);
     if !params.is_object() || method.len() > 128 {
         return Err(error("Invalid plugin request"));
     }

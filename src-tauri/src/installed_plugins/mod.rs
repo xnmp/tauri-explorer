@@ -250,6 +250,7 @@ pub async fn plugin_backend_invoke(
     params: Value,
 ) -> Result<Value, AppError> {
     let origin_label = window.label().to_owned();
+    let entered = std::time::SystemTime::now();
     tauri::async_runtime::spawn_blocking(move || {
         let _guard = read_lifecycle()?;
         if !package::list(&root()?)?
@@ -262,7 +263,7 @@ pub async fn plugin_backend_invoke(
         }
         let _lease = backend::CallLease::acquire_method(&package_id, &method)?;
         drop(_guard);
-        backend::call_with_origin(&package_id, &method, params, &origin_label)
+        backend::call_with_origin(&package_id, &method, params, &origin_label, entered)
     })
     .await
     .map_err(|error| AppError::WorkerFailed(error.to_string()))?

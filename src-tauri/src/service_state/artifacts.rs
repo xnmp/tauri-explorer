@@ -206,6 +206,20 @@ fn image(bytes: &[u8], output: bool) -> Result<(String, u32, u32)> {
 }
 // Directory-entry durability: see crate::durable_dir for the per-platform
 // barrier. An unsupported flush fails the operation instead of claiming it.
+/// Flushes a file verified through a read-only handle. Unix fsyncs that same
+/// handle; Windows only flushes through a writable one.
+fn sync_verified(file: &File, path: &Path) -> std::io::Result<()> {
+    #[cfg(unix)]
+    {
+        let _ = path;
+        file.sync_all()
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = file;
+        crate::durable_dir::sync_file(path)
+    }
+}
 fn sync_directory(path: &Path) -> Result<()> {
     crate::durable_dir::sync(path).map_err(|_| reject("artifact directory sync failed"))
 }
@@ -279,8 +293,7 @@ impl Store {
             if prior != bytes {
                 return Err(reject("immutable artifact conflicts with a previous seal"));
             }
-            file.sync_all()
-                .map_err(|_| reject("immutable artifact sync failed"))?;
+            sync_verified(&file, &target).map_err(|_| reject("immutable artifact sync failed"))?;
         } else {
             // Deterministic private temporary names remain tied to their
             // durable reservation through crashes and are collectable only
@@ -739,8 +752,7 @@ impl Store {
         if bytes.len() as u64 != d.byte_length || hex::encode(Sha256::digest(&bytes)) != d.sha256 {
             return Err(reject("consumer copy does not match the sealed output"));
         }
-        file.sync_all()
-            .map_err(|_| reject("consumer evidence sync failed"))?;
+        sync_verified(&file, &physical).map_err(|_| reject("consumer evidence sync failed"))?;
         #[cfg(unix)]
         for (path, directory) in evidence_parents.into_iter().rev() {
             #[cfg(test)]

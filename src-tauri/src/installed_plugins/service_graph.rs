@@ -76,6 +76,23 @@ pub(super) fn select<'a>(
     Ok((provider, export))
 }
 
+/// Call-time routing: the caller must declare the exact dependency and the
+/// selected provider generation must export the requested method.
+pub(super) fn route<'a>(
+    entries: &'a [Installed],
+    consumer: &Manifest,
+    package_id: &str,
+    service_id: &str,
+    major: u32,
+    method: &str,
+) -> Result<(&'a Installed, &'a ServiceExport), AppError> {
+    let (provider, export) = select(entries, consumer, package_id, service_id, major)?;
+    if !export.methods.iter().any(|exported| exported == method) {
+        return Err(invalid("Provider does not export this service method"));
+    }
+    Ok((provider, export))
+}
+
 /// Required edges must resolve; unavailable optional edges preserve the consumer.
 /// Present edges participate in cycle detection before any backend starts.
 pub(super) fn validate_enabled(entries: &[Installed]) -> Result<(), AppError> {

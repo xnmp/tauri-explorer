@@ -33,6 +33,8 @@ enum Phase {
 const OP: &str = "matrix-operation";
 
 struct Fixture {
+    /// Owns every path below; only the Linux queue test reads it directly.
+    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
     profile: tempfile::TempDir,
     root: PathBuf,
     store: Store,

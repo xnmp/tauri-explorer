@@ -77,13 +77,21 @@ jobs:
       - name: Verify actual broker private preflight and shutdown
         timeout-minutes: 20
         run: |
-          fixture_root=$(mktemp -d /tmp/te-lifecycle-native.XXXXXX)
-          mkdir -p "$fixture_root/config" "$fixture_root/data" "$fixture_root/cache" "$fixture_root/state" "$fixture_root/runtime"
-          chmod 700 "$fixture_root/runtime"
-          export XDG_CONFIG_HOME="$fixture_root/config" XDG_DATA_HOME="$fixture_root/data" XDG_CACHE_HOME="$fixture_root/cache" XDG_STATE_HOME="$fixture_root/state" XDG_RUNTIME_DIR="$fixture_root/runtime"
-          export TE_LIFECYCLE_NATIVE_FIXTURE=1
           mkdir -p qualification-results/shared-ai
-          env -u WAYLAND_DISPLAY -u OPENAI_API_KEY -u CODEX_API_KEY -u CODEX_ACCESS_TOKEN -u ANTHROPIC_API_KEY GDK_BACKEND=x11 xvfb-run -a dbus-run-session -- cargo test --locked --manifest-path src-tauri/Cargo.toml --lib installed_plugins::backend::native_tests::native_private_preflight_retirement_and_shutdown -- --ignored --exact --nocapture --test-threads=1 2>&1 | tee qualification-results/shared-ai/lifecycle.log
+          export TE_LIFECYCLE_NATIVE_FIXTURE=1
+          # Each fixture owns process-global lifecycle state and a fresh private profile.
+          run_native_fixture() {
+            fixture_root=$(mktemp -d /tmp/te-lifecycle-native.XXXXXX)
+            mkdir -p "$fixture_root/config" "$fixture_root/data" "$fixture_root/cache" "$fixture_root/state" "$fixture_root/runtime"
+            chmod 700 "$fixture_root/runtime"
+            status=0
+            XDG_CONFIG_HOME="$fixture_root/config" XDG_DATA_HOME="$fixture_root/data" XDG_CACHE_HOME="$fixture_root/cache" XDG_STATE_HOME="$fixture_root/state" XDG_RUNTIME_DIR="$fixture_root/runtime" \
+              env -u WAYLAND_DISPLAY -u OPENAI_API_KEY -u CODEX_API_KEY -u CODEX_ACCESS_TOKEN -u ANTHROPIC_API_KEY GDK_BACKEND=x11 xvfb-run -a dbus-run-session -- cargo test --locked --manifest-path src-tauri/Cargo.toml --lib "$1" -- --ignored --exact --nocapture --test-threads=1 2>&1 | tee "qualification-results/shared-ai/$2.log" || status=$?
+            rm -rf "$fixture_root"
+            return "$status"
+          }
+          run_native_fixture installed_plugins::backend::native_tests::native_private_preflight_retirement_and_shutdown lifecycle
+          run_native_fixture installed_plugins::backend::native_recovery_tests::native_startup_recovery_holds_readiness_and_shutdown_for_actual_io lifecycle-recovery
       - name: Build host fixture binary
         env:
           VITE_E2E_HOOKS: '1'

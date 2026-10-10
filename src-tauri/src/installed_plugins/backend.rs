@@ -2328,5 +2328,8 @@ pub(super) fn shutdown() {
 }
 
 #[cfg(all(test, target_os = "linux"))]
+#[path = "backend_native_recovery_tests.rs"]
+mod native_recovery_tests;
+#[cfg(all(test, target_os = "linux"))]
 #[path = "backend_native_tests.rs"]
 mod native_tests;

@@ -61,28 +61,88 @@ ownership child helper and the explicitly executed native fixture. These runs
 cover fence/startup/text ownership, forward recovery, leftover Published snapshots,
 malformed journals, service routing, Stop and downgrade retention. The final run includes the valid dual-index journal exceeding1MiB recovery case.
 
-Actual Wry/production-broker fixture:
-`src-tauri/src/installed_plugins/backend_native_tests.rs`. The first private run
-passed in `/tmp/te-lifecycle-real-broker-native.log`; the reviewed run with a
-retained native publisher passed in `/tmp/te-lifecycle-real-broker-reviewed.log`.
-It observes an old index and unchanged real DB during held validation, responsive
-unrelated RPC, all reverse requests denied, rollback preserving DB/index, fresh
-real-data startup, actual reader/writer/stderr retirement, prompt held-candidate
-termination and shutdown waiting for the publisher. It uses private fake SDK2
-processes and no real provider or credential operations. The final source also
-asserts zero native candidate events and rejection of late mutation admission;
-this final fixture passed in `/tmp/te-lifecycle-real-broker-final.log`.
+Actual Wry/production-broker fixtures, each `#[ignore]` and executed in its own
+`cargo test` process with its own private `/tmp/te-lifecycle-native.XXXXXX`
+profile (the CI step "Verify actual broker private preflight and shutdown" runs
+both). They use private fake processes and no real provider or credential
+operations.
+
+1. `native_private_preflight_retirement_and_shutdown`
+   (`src-tauri/src/installed_plugins/backend_native_tests.rs`). It observes an old
+   index and unchanged real DB during held validation, responsive unrelated RPC,
+   all reverse requests denied, zero candidate events, rollback preserving
+   DB/index, fresh real-data startup, actual reader/writer/stderr retirement,
+   prompt held-candidate termination and rejection of late mutation admission.
+   Publisher proof: shutdown also joins the job reconciler, which observes
+   closing only between 2 s sleeps (`job_bridge.rs`), so the former 100 ms
+   "still pending" check could not tell a publisher wait from a poller wait. The
+   fixture now holds the native publisher lease until 5 s (2 × poll interval +
+   1 s) after shutdown began, asserts shutdown has not returned and the profile
+   lease is still owned, then drops the publisher and requires return within
+   500 ms; observed 45 µs–1.5 ms. Mutation check: with
+   `provenance::wait_for_publishers()` commented out of `shutdown`, the fixture
+   fails ("Shutdown finished while an admitted publisher lease was live",
+   finished in 2.24 s, i.e. at the poller bound); restored source passes.
+2. `native_startup_recovery_holds_readiness_and_shutdown_for_actual_io`
+   (`src-tauri/src/installed_plugins/backend_native_recovery_tests.rs`). Before
+   `initialize`, public `Store` APIs seed the private `service-state` ledger with
+   an accepted shared-provider claim owned by dead incarnations of two fake SDK3
+   packages and its running presentation job. The provider records every method,
+   answers `cancel` with an in-flight receipt and holds `status` on a gate file;
+   the consumer holds each `jobs.status` on its own gate.
+   - Readiness observables: startup marks the job `recovering` before any
+     consumer receipt; while the recovery actor is inside the provider `status`
+     RPC the claim stays `accepted` without attention, `mutation_allowed` refuses
+     both packages and `ai_operations::snapshot()` lists the operation; the job
+     stays `recovering` until the held `jobs.status` returns, and only that
+     returned receipt moves it to `running`.
+   - Shutdown: `backend::shutdown` stops both brokers, which returns their
+     pending RPCs (both processes are reaped). The recovery actor then writes its
+     attention evidence; the fixture holds the ledger write lock so that durable
+     IO stays in progress. Shutdown has not returned and still owns the profile
+     lease 2.5 s after it began (past the 2 s poller bound, inside the ledger's
+     3 s busy timeout); after the lock is released it returns within 32–48 ms
+     and the attention write is already durable, with the claim still retained
+     (`accepted`) for the next start. Mutation check: with
+     `service_bridge::shutdown_recovery()` commented out, the fixture fails
+     ("Shutdown returned while the recovery actor was inside ledger IO").
+   - Unpaid recovery: the provider received only `initialize`,
+     `lifecycle.activate`, `services.fixture-image.v1.cancel` and
+     `services.fixture-image.v1.status`; the consumer only `initialize`,
+     `lifecycle.activate` and `jobs.status`. No `*start` method was issued.
+
+Results on 2026-10-10 (HEAD `6126913e` plus these test changes), logs in
+`/var/tmp/te-native/`: the unchanged fixture 1 passed on the original source
+(`baseline.log`, 1 passed, 2.16 s). After the changes, fixture 1 passed 6/6
+(`strengthened.log`, `final-pub-{1,2,3}.log`, `workflow-lifecycle.log`,
+`committed-pub.log`; 5.66–5.84 s each) and fixture 2 passed 6/6 (`recovery.log`,
+`final-rec-{1,2,3}.log`, `workflow-lifecycle-recovery.log`, `committed-rec.log`;
+4.69–4.87 s each). The `workflow-*` pair ran through the CI step script itself;
+the `committed-*` pair ran on the committed (formatted) source.
+`cargo clippy --all-targets -- -D warnings` and `cargo fmt --check` pass. Mutation logs:
+`mutation-publishers.log`, `mutation-recovery.log`.
 
 ```sh
 cd /tmp/te-shared-ai-host
-fixture_root=$(mktemp -d /tmp/te-lifecycle-native.XXXXXX)
-mkdir -p "$fixture_root/config" "$fixture_root/data" "$fixture_root/cache" "$fixture_root/state" "$fixture_root/runtime"
-chmod 700 "$fixture_root/runtime"
-export XDG_CONFIG_HOME="$fixture_root/config" XDG_DATA_HOME="$fixture_root/data" XDG_CACHE_HOME="$fixture_root/cache" XDG_STATE_HOME="$fixture_root/state" XDG_RUNTIME_DIR="$fixture_root/runtime"
-export TE_LIFECYCLE_NATIVE_FIXTURE=1
-export CARGO_TARGET_DIR=/home/chong/Repos/tauri-explorer/src-tauri/target
-env -u WAYLAND_DISPLAY -u OPENAI_API_KEY -u CODEX_API_KEY -u CODEX_ACCESS_TOKEN -u ANTHROPIC_API_KEY GDK_BACKEND=x11 xvfb-run -a dbus-run-session -- cargo test --locked --offline --manifest-path src-tauri/Cargo.toml --lib installed_plugins::backend::native_tests::native_private_preflight_retirement_and_shutdown -- --ignored --exact --nocapture --test-threads=1
+export TE_LIFECYCLE_NATIVE_FIXTURE=1 CARGO_TARGET_DIR=/home/chong/Repos/tauri-explorer/src-tauri/target
+for test in \
+  installed_plugins::backend::native_tests::native_private_preflight_retirement_and_shutdown \
+  installed_plugins::backend::native_recovery_tests::native_startup_recovery_holds_readiness_and_shutdown_for_actual_io
+do
+  fixture_root=$(mktemp -d /tmp/te-lifecycle-native.XXXXXX)
+  mkdir -p "$fixture_root/config" "$fixture_root/data" "$fixture_root/cache" "$fixture_root/state" "$fixture_root/runtime" "$fixture_root/home"
+  chmod 700 "$fixture_root/runtime"
+  CARGO_HOME="${CARGO_HOME:-$HOME/.cargo}" RUSTUP_HOME="${RUSTUP_HOME:-$HOME/.rustup}" HOME="$fixture_root/home" \
+  XDG_CONFIG_HOME="$fixture_root/config" XDG_DATA_HOME="$fixture_root/data" XDG_CACHE_HOME="$fixture_root/cache" XDG_STATE_HOME="$fixture_root/state" XDG_RUNTIME_DIR="$fixture_root/runtime" \
+    env -u WAYLAND_DISPLAY -u OPENAI_API_KEY -u CODEX_API_KEY -u CODEX_ACCESS_TOKEN -u ANTHROPIC_API_KEY GDK_BACKEND=x11 xvfb-run -a dbus-run-session -- cargo test --locked --manifest-path src-tauri/Cargo.toml --lib "$test" -- --ignored --exact --nocapture --test-threads=1
+  rm -rf "$fixture_root"
+done
 ```
+
+Observation (not a defect claim): a clean shutdown that interrupts startup
+recovery durably sets `needsAttention` on the still-retained claim
+(`recover_generation` marks every remaining claim once closing ends its loop).
+The claim stays non-released and is recovered again on the next start.
 
 The genuine previous Trace binary independently passed4 native initialization
 cases without activation; see `docs/shared-ai-legacy-preflight-evidence.md` and

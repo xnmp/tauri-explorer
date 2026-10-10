@@ -3,6 +3,8 @@
 use super::*;
 use sha2::{Digest, Sha256};
 use std::path::Path;
+/// Mirrors the job reconciler's sleep in job_bridge::initialize.
+pub(super) const JOB_POLL_INTERVAL: Duration = Duration::from_secs(2);
 
 fn candidate(root: &Path, id: &str, behavior: &str) -> package::Installed {
     let source = format!(
@@ -32,6 +34,14 @@ for line in sys.stdin:
  else: send({{'jsonrpc':'2.0','id':f['id'],'result':{{'ready':True}}}})
 "#
     );
+    let mut installed = payload(root, &source);
+    installed.manifest.id = id.into();
+    installed.manifest.contributions = vec![id.into()];
+    installed
+}
+/// Publish an executable worker as an enabled package payload. The caller owns
+/// any manifest field beyond the SDK 2 defaults written here.
+pub(super) fn payload(root: &Path, source: &str) -> package::Installed {
     let digest = hex::encode(Sha256::digest(source.as_bytes()));
     let directory = root.join("payloads").join(&digest);
     fs::create_dir_all(&directory).unwrap();
@@ -54,12 +64,12 @@ for line in sys.stdin:
     fs::set_permissions(directory.join("worker"), fs::Permissions::from_mode(0o700)).unwrap();
     let target = format!("{}-unknown-linux-gnu", std::env::consts::ARCH);
     serde_json::from_value(json!({"enabled":true,"digest":digest,"manifest":{
-        "formatVersion":1,"id":id,"name":"native fixture","description":"private production-broker fixture",
+        "formatVersion":1,"id":"fixture.payload","name":"native fixture","description":"private production-broker fixture",
         "version":"1.0.0","sdkVersion":2,"svelteVersion":"5.56.3","target":target,"frontend":"index.js",
-        "styles":"index.css","backend":"worker","contributions":[id],"stateFiles":["history.sqlite"],"files":declarations
+        "styles":"index.css","backend":"worker","contributions":["fixture.payload"],"stateFiles":["history.sqlite"],"files":declarations
     }})).unwrap()
 }
-fn wait_file(path: &Path) {
+pub(super) fn wait_file(path: &Path) {
     let deadline = Instant::now() + Duration::from_secs(5);
     while !path.exists() && Instant::now() < deadline {
         std::thread::sleep(Duration::from_millis(10));
@@ -231,14 +241,34 @@ fn native_private_preflight_retirement_and_shutdown() {
         "Shutdown failed to stop a private candidate promptly"
     );
     // Private rollback has finished, but shutdown still owns the profile until
-    // an already-admitted native publisher releases its evidence lease.
-    assert!(matches!(
-        finished.recv_timeout(Duration::from_millis(100)),
-        Err(mpsc::RecvTimeoutError::Timeout)
-    ));
+    // an already-admitted native publisher releases its evidence lease. Shutdown
+    // also joins the job reconciler, which observes closing only between
+    // JOB_POLL_INTERVAL sleeps; hold the publisher well past that bound so a
+    // pending shutdown here can only be waiting for the publisher.
+    let profile_root = config::config_dir().unwrap().canonicalize().unwrap();
+    let hold_until = started + JOB_POLL_INTERVAL * 2 + Duration::from_secs(1);
+    assert!(
+        matches!(
+            finished.recv_timeout(hold_until.saturating_duration_since(Instant::now())),
+            Err(mpsc::RecvTimeoutError::Timeout)
+        ),
+        "Shutdown finished while an admitted publisher lease was live"
+    );
+    assert!(
+        super::super::ownership::acquire(&profile_root).is_err(),
+        "Shutdown released profile ownership while a publisher lease was live"
+    );
+    let released = Instant::now();
     drop(publisher);
     finished.recv_timeout(Duration::from_secs(5)).unwrap();
+    let tail = released.elapsed();
+    eprintln!("lifecycle-native: shutdown returned {tail:?} after publisher release");
+    assert!(
+        tail < Duration::from_millis(500),
+        "Shutdown waited {tail:?} after the last publisher released"
+    );
     shutdown_worker.join().unwrap();
+    drop(super::super::ownership::acquire(&profile_root).unwrap());
     assert_eq!(
         fs::read(data.join("history.sqlite")).unwrap(),
         b"original database"

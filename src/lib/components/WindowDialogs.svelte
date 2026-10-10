@@ -122,7 +122,7 @@
   {@const target = dialogStore.imageEditorTarget}
   {#key target}
     <svelte:boundary onerror={dialogCrash("Image editor", () => dialogStore.closeImageEditor(target))}>
-      <ImageCropEditor.component path={target.path} name={target.name} onclose={() => dialogStore.closeImageEditor(target)} />
+      <ImageCropEditor.component path={target.path} name={target.name} initialTool={target.tool} onclose={() => dialogStore.closeImageEditor(target)} />
     </svelte:boundary>
   {/key}
 {/if}

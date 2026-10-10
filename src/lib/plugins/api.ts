@@ -29,7 +29,8 @@ import { writeConfigQueued } from "$lib/state/persisted";
 import { windowTabsManager } from "$lib/state/window-tabs.svelte";
 import { dialogStore } from "$lib/state/dialogs.svelte";
 import type { FileEntry } from "$lib/domain/file";
-import { parentDir, sameDirectory } from "$lib/domain/path";
+import { basename, parentDir, sameDirectory } from "$lib/domain/path";
+import { imageEditorRequestError } from "$lib/domain/plugin-image-editor";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { scopePluginJobs, type PluginJobKind } from "$lib/state/plugin-jobs";
 import { observeActiveDirectory } from "$lib/composables/observe-active-directory.svelte";
@@ -162,7 +163,11 @@ export interface PluginWorkspace {
  */
 export interface PluginContext {
   /** Managed navigation retains a caller's mounted modal and draft. */
-  presentation?: {openDialog(id:string,props?:Record<string,unknown>):Promise<import("./dialog-registry.svelte").DialogResult>};
+  presentation?: {
+    openDialog(id:string,props?:Record<string,unknown>):Promise<import("./dialog-registry.svelte").DialogResult>;
+    /** Opens the host image editor directly in one of this plugin's editor tools; settles when it closes. */
+    openImageEditor?(request:{path:string;tool:string}):Promise<void>;
+  };
   /** Optional host text service settings notifications; execution is backend-owned. */
   text?: {
     subscribe(listener: (revision: number) => void): () => void;
@@ -278,6 +283,8 @@ export function createPluginContext(
   const disposers: (() => void)[] = [];
   let disposed = false;
   const managedDialogs=new Set<()=>void>();
+  // Editor tools this plugin registered; only these may be opened directly.
+  const editorTools=new Set<string>();
   disposers.push(()=>{for(const close of managedDialogs)close();managedDialogs.clear();});
   const track = (fn: () => void) => {
     if (disposed) fn();
@@ -305,7 +312,17 @@ export function createPluginContext(
   };
 
   const ctx: PluginContext = {
-    presentation:{async openDialog(id,props) {if(disposed)throw new Error("Plugin caller was disposed");const session=dialogRegistry.openManaged(id,props);managedDialogs.add(session.close);try{return await session.result;}finally{managedDialogs.delete(session.close);}}},
+    presentation:{
+      async openDialog(id,props) {if(disposed)throw new Error("Plugin caller was disposed");const session=dialogRegistry.openManaged(id,props);managedDialogs.add(session.close);try{return await session.result;}finally{managedDialogs.delete(session.close);}},
+      async openImageEditor(request) {
+        if(disposed)throw new Error("Plugin caller was disposed");
+        const refused=imageEditorRequestError(request,editorTools);
+        if(refused)throw new Error(refused);
+        const session=dialogStore.openImageEditorTool(request.path,basename(request.path),request.tool);
+        managedDialogs.add(session.close);
+        try{await session.closed;}finally{managedDialogs.delete(session.close);}
+      },
+    },
     text: {
       subscribe(listener) {
         let unlisten: UnlistenFn | undefined;
@@ -363,6 +380,7 @@ export function createPluginContext(
     },
     registerImageEditorTool(tool: ImageEditorTool): void {
       track(imageEditorRegistry.register(tool, order));
+      editorTools.add(tool.id);
     },
     registerInspector(descriptor: InspectorContribution): void {
       track(inspectorRegistry.register(descriptor, order));

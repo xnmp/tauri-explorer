@@ -429,6 +429,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `file-view-registry.svelte.ts` — SDK 2 file view contributions (ordered, owner-disposed) and the pane handle type a view receives.
 - `preview-registry.svelte.ts` — SDK 2 Preview extension points: plugin preview targets (non-file subjects) and Preview-info sections.
 - `src/lib/plugins/image-editor-registry.svelte.ts` — ordered, owner-disposed image editing tool contributions with immutable captured source revisions and opaque service ports.
+- `src/lib/domain/plugin-image-editor.ts` — rules for `ctx.presentation.openImageEditor`: a plugin opens the editor directly only in a tool it registered, for one absolute file path.
 - `fs-providers.ts` — virtual-filesystem provider registry + dispatch.
 - `demo/index.ts` — demo plugin exercising every contribution seam.
 - `demo/DemoFileView.svelte` + `demo/DemoPreviewInfo.svelte` — demo file view and Preview-info section exercising the SDK 2 seams.

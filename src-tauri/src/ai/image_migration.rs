@@ -300,7 +300,7 @@ fn plan(value: &Value, configuration: &Value, source_id: String) -> Result<Journ
         }
         profiles.push(json!({"id":codex_id,"name":"Imported Codex images","recipeRevision":"import-pending","transport":"codex-cli","executablePath":path,"modelSelection":false,"credential":{"kind":"cli_saved_login"}}));
     }
-    let default_connection_id = legacy.then(|| if http { http_id } else { codex_id });
+    let default_connection_id = legacy.then_some(if http { http_id } else { codex_id });
     Ok(Journal {
         version: 1,
         source_id,

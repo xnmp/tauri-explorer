@@ -416,14 +416,11 @@ mod worker_spawn_tests {
         assert_eq!(invoked.load(Ordering::Acquire), 0);
         let second = invoked.clone();
         let (done, finished) = mpsc::channel();
-        assert_eq!(
-            spawn_image_migration(move || {
-                second.fetch_add(1, Ordering::AcqRel);
-                done.send(()).unwrap();
-            })
-            .unwrap(),
-            true
-        );
+        assert!(spawn_image_migration(move || {
+            second.fetch_add(1, Ordering::AcqRel);
+            done.send(()).unwrap();
+        })
+        .unwrap());
         finished.recv_timeout(Duration::from_secs(2)).unwrap();
         assert_eq!(invoked.load(Ordering::Acquire), 1);
     }

@@ -7,7 +7,7 @@ pub(crate) struct Store {
     pub(super) limits: Limits,
     #[cfg(test)]
     pub(super) fail_next_commit: std::sync::atomic::AtomicBool,
-    #[cfg(test)]
+    #[cfg(all(test, unix))]
     pub(super) fail_evidence_sync_at: std::sync::Mutex<Option<PathBuf>>,
 }
 pub(super) fn sql(_: rusqlite::Error) -> crate::error::AppError {
@@ -57,7 +57,7 @@ impl Store {
             limits,
             #[cfg(test)]
             fail_next_commit: std::sync::atomic::AtomicBool::new(false),
-            #[cfg(test)]
+            #[cfg(all(test, unix))]
             fail_evidence_sync_at: std::sync::Mutex::new(None),
         };
         let init_path = store.root.join(".initialize.lock");
@@ -221,14 +221,10 @@ impl Store {
             .prepare("SELECT created_at_ms FROM operations LIMIT 0")
             .map_err(sql)?;
         drop(init);
-        // Unqualified platforms still support durable ledger status/reads.
-        // Artifact namespace mutation/recovery is unavailable there, so retain
-        // all reservations rather than delete bytes without directory proof.
-        #[cfg(unix)]
-        {
-            store.recover_unaccepted()?;
-            store.gc()?;
-        }
+        // Directory-entry durability is qualified on every supported platform
+        // (see crate::durable_dir), so startup recovery and GC run everywhere.
+        store.recover_unaccepted()?;
+        store.gc()?;
         Ok(store)
     }
     fn connect_with_create(&self, create: bool) -> Result<Connection> {
@@ -546,6 +542,7 @@ impl Store {
             Ok((a, true))
         })
     }
+    #[cfg(test)]
     pub fn forwarding(&self, caller: &PackageGeneration, op: &str) -> Result<Admission> {
         self.claim_forwarding(caller, op).map(|(a, _)| a)
     }
@@ -630,6 +627,7 @@ impl Store {
             Ok(a)
         })
     }
+    #[cfg(test)]
     pub fn release_execution_after_attention(
         &self,
         provider: &PackageGeneration,

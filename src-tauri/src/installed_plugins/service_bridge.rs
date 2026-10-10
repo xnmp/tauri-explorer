@@ -447,6 +447,7 @@ fn invoke(consumer: &Arc<Broker>, request: Invocation) -> Result<Value, AppError
 }
 /// Durable business boundary shared by the real broker and native protocol
 /// fixtures. Transport and lifecycle admission remain outside this function.
+#[allow(clippy::too_many_arguments)]
 pub(super) fn image_call(
     store: &crate::service_state::Store,
     caller: &PackageGeneration,
@@ -479,8 +480,8 @@ pub(super) fn image_call(
         .transpose()?
         .flatten();
     if let Some(a) = &admission {
-        store.verify_consumer(&caller, &a.operation_id)?;
-        store.verify_provider(&provider, &caller.package_id, &a.operation_id)?;
+        store.verify_consumer(caller, &a.operation_id)?;
+        store.verify_provider(provider, &caller.package_id, &a.operation_id)?;
     }
     if matches!(dispatch_method.as_str(), "start" | "status")
         && admission.is_some()
@@ -515,7 +516,7 @@ pub(super) fn image_call(
             &semantic,
         )?;
         let (claimed, winner) = if a.phase == AdmissionPhase::Reserved {
-            store.claim_forwarding(&caller, op)?
+            store.claim_forwarding(caller, op)?
         } else {
             (a, false)
         };
@@ -541,7 +542,7 @@ pub(super) fn image_call(
         }
         if body["disposition"] == "acquired" {
             store.verify_acquisition(
-                &caller,
+                caller,
                 op,
                 text(&body, "outputSha256")?,
                 text(&body, "transferReceipt")?,
@@ -561,7 +562,7 @@ pub(super) fn image_call(
         json!({"caller":{"packageId":caller.package_id,"packageDigest":caller.digest,"incarnation":caller.incarnation},"request":body}),
     )?;
     if let Some(a) = admission {
-        return reconcile_receipt(store, &provider, &a, &result);
+        return reconcile_receipt(store, provider, &a, &result);
     }
     Ok(result)
 }

@@ -151,6 +151,7 @@ impl Store {
         let _guard = self.lock()?;
         self.read_locked()
     }
+    #[cfg(test)]
     pub fn save(&self, config: Configuration, expected: u64) -> Result<Configuration> {
         self.save_with_secrets(config, expected, None)
     }

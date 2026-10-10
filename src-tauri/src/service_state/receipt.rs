@@ -303,12 +303,11 @@ pub(crate) fn validate(value: &Value, admission: &Admission) -> Result<Value, Ap
                 return Err(invalid());
             }
         }
-        Delivery::Acquired { transfer_receipt } => {
+        Delivery::Acquired { transfer_receipt }
             if transfer_receipt.len() != 48
-                || !transfer_receipt.bytes().all(|b| b.is_ascii_hexdigit())
-            {
-                return Err(invalid());
-            }
+                || !transfer_receipt.bytes().all(|b| b.is_ascii_hexdigit()) =>
+        {
+            return Err(invalid());
         }
         _ => {}
     }

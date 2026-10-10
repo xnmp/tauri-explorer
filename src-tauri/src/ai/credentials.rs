@@ -89,9 +89,13 @@ impl SecretStore for MemorySecrets {
     }
 }
 
+/// Windows Credential Manager needs no interaction lock; a unit struct (not
+/// `()`) lets callers bind the guard the same way on every platform.
 #[cfg(windows)]
-fn interaction_guard() -> Result<()> {
-    Ok(())
+struct NoInteractionLock;
+#[cfg(windows)]
+fn interaction_guard() -> Result<NoInteractionLock> {
+    Ok(NoInteractionLock)
 }
 #[cfg(target_os = "macos")]
 fn interaction_guard() -> Result<(

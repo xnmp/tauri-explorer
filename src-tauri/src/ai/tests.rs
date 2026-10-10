@@ -1,10 +1,11 @@
 use super::*;
 use credentials::{MemorySecrets, SecretStore};
+#[cfg(unix)]
+use std::path::Path;
 use std::{
     fs,
     io::{Read, Write},
     net::TcpListener,
-    path::Path,
     sync::mpsc,
 };
 fn config_http(root: &str) -> Configuration {

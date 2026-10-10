@@ -325,10 +325,8 @@ pub fn validate_configuration(config: &mut Configuration) -> Result<()> {
                             ));
                         }
                     }
-                    Credential::Secret { id } => {
-                        if !valid_id(id) {
-                            return Err(ServiceError::invalid("Invalid credential reference"));
-                        }
+                    Credential::Secret { id } if !valid_id(id) => {
+                        return Err(ServiceError::invalid("Invalid credential reference"));
                     }
                     _ => {}
                 }

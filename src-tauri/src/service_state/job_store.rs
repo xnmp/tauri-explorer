@@ -366,6 +366,7 @@ impl Store {
         tx.commit().map_err(sql)?;
         Ok(snapshot)
     }
+    #[allow(clippy::too_many_arguments)]
     pub fn update_job(
         &self,
         owner: &PackageGeneration,
@@ -387,6 +388,7 @@ impl Store {
             None,
         )
     }
+    #[allow(clippy::too_many_arguments)]
     pub fn observe_job(
         &self,
         owner: &PackageGeneration,
@@ -412,6 +414,7 @@ impl Store {
             Some(source_revision),
         )
     }
+    #[allow(clippy::too_many_arguments)]
     fn update_job_revision(
         &self,
         owner: &PackageGeneration,

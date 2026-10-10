@@ -791,7 +791,6 @@ impl Store {
             .map_err(sql)?;
         drop(q);
         drop(conn);
-        if !handles.is_empty() {}
         for handle in handles {
             let Ok(lease) = self.lease(&handle) else {
                 continue;
@@ -922,7 +921,7 @@ impl Store {
             })?;
             drop(leases);
             if changed {
-                self.collect_released(&owner.package_id, &op)?;
+                self.collect_released(&owner.package_id, op)?;
             }
         }
         Ok(())

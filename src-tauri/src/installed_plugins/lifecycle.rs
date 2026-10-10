@@ -567,7 +567,7 @@ mod tests {
         for duplicate in [false, true] {
             let (_profile, root, data, mut upgrade) = fixture(Phase::Committed);
             let healthy = installed_fixture();
-            package::write_index(&root, &[healthy.clone()]).unwrap();
+            package::write_index(&root, std::slice::from_ref(&healthy)).unwrap();
             let original = fs::read(root.join("installed.json")).unwrap();
             let mut malformed = healthy.clone();
             if duplicate {

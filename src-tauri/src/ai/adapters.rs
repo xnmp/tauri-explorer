@@ -654,7 +654,7 @@ fn parse_http(v: &Value, anthropic: bool) -> Result<(String, Option<String>, Opt
     Ok((text, actual, usage))
 }
 
-#[cfg(test)]
+#[cfg(all(test, unix))]
 pub(super) fn candidate_cli_for_test(
     profile: &Profile,
     request: &Request,

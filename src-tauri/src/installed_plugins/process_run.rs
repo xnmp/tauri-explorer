@@ -174,8 +174,9 @@ pub(super) fn failure_code(failure: &ProcessRunError) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(unix)]
+    use std::path::Path;
     use std::{
-        path::Path,
         sync::mpsc,
         time::{Duration, Instant},
     };

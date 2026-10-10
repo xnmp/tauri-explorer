@@ -318,6 +318,18 @@ fn ledger_sidecars_survive_the_last_connection_so_concurrent_opens_never_race_th
     // Every connection has closed; SQLite would otherwise delete these.
     assert!(service.join("ledger.sqlite-wal").is_file());
     assert!(service.join("ledger.sqlite-shm").is_file());
+    // The kept journal is truncated, so it can never replay stale frames over
+    // a restored ledger.
+    assert_eq!(
+        fs::metadata(service.join("ledger.sqlite-wal"))
+            .unwrap()
+            .len(),
+        0
+    );
+    drop(s);
+    // Reopening an existing ledger (the first-run probe included) keeps them.
+    let s = Store::open(service.clone(), Limits::default()).unwrap();
+    assert!(service.join("ledger.sqlite-wal").is_file());
     drop(s);
     let s = Store::open(service, Limits::default()).unwrap();
     assert!(s.get("consumer", "kept").unwrap().is_some());

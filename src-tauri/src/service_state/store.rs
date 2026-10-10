@@ -1,7 +1,11 @@
 use super::{model::*, rules::*};
 use rusqlite::{params, Connection, OpenFlags, OptionalExtension};
 use serde::{de::DeserializeOwned, Serialize};
-use std::{fs, path::PathBuf, time::Duration};
+use std::{
+    fs,
+    path::{Path, PathBuf},
+    time::Duration,
+};
 pub(crate) struct Store {
     pub(super) root: PathBuf,
     pub(super) limits: Limits,
@@ -267,8 +271,7 @@ impl Store {
             }
         }
         let flags = OpenFlags::SQLITE_OPEN_READ_WRITE | OpenFlags::SQLITE_OPEN_NOFOLLOW;
-        let Ok(connection) = Connection::open_with_flags(self.root.join("ledger.sqlite"), flags)
-        else {
+        let Ok(connection) = open_ledger(&self.root, flags) else {
             return Ok(false);
         };
         let blank = connection
@@ -295,8 +298,7 @@ impl Store {
         if create {
             flags |= OpenFlags::SQLITE_OPEN_CREATE;
         }
-        let conn =
-            Connection::open_with_flags(self.root.join("ledger.sqlite"), flags).map_err(sql)?;
+        let conn = open_ledger(&self.root, flags)?;
         conn.set_limit(rusqlite::limits::Limit::SQLITE_LIMIT_LENGTH, 256 * 1024)
             .map_err(sql)?;
         conn.set_limit(rusqlite::limits::Limit::SQLITE_LIMIT_SQL_LENGTH, 64 * 1024)
@@ -305,7 +307,6 @@ impl Store {
             .map_err(sql)?;
         conn.busy_timeout(crate::native_deadline::remaining(Duration::from_secs(3))?)
             .map_err(sql)?;
-        persist_wal(&conn)?;
         conn.pragma_update(None, "journal_mode", "WAL")
             .map_err(sql)?;
         conn.pragma_update(None, "synchronous", "FULL")
@@ -1022,11 +1023,15 @@ impl Store {
     }
 }
 
-/// Keeps the WAL and wal-index when the last connection closes. Every connect
-/// stats those sidecars to refuse links; if SQLite deleted them on close, a
-/// concurrent connect on Windows could observe a delete-pending file, which
-/// reads as access denied rather than missing.
-fn persist_wal(conn: &Connection) -> Result<()> {
+/// Every ledger connection goes through here. The WAL and wal-index are kept
+/// when the last connection closes: each connect stats those sidecars to refuse
+/// links, and if SQLite deleted them on close, a concurrent connect on Windows
+/// could observe a delete-pending file, which reads as access denied rather
+/// than missing. `journal_size_limit=0` truncates the kept WAL on that close,
+/// so no stale frames outlive it (a restored `ledger.sqlite` is never
+/// overwritten by an old journal) and reconnecting replays nothing.
+fn open_ledger(root: &Path, flags: OpenFlags) -> Result<Connection> {
+    let conn = Connection::open_with_flags(root.join("ledger.sqlite"), flags).map_err(sql)?;
     let mut on: std::ffi::c_int = 1;
     // SAFETY: the handle is live for `conn`'s lifetime, "main" is a valid
     // NUL-terminated schema name, and PERSIST_WAL takes a pointer to an int
@@ -1039,11 +1044,12 @@ fn persist_wal(conn: &Connection) -> Result<()> {
             (&raw mut on).cast(),
         )
     };
-    if code == rusqlite::ffi::SQLITE_OK {
-        Ok(())
-    } else {
-        Err(reject(
+    if code != rusqlite::ffi::SQLITE_OK {
+        return Err(reject(
             "could not keep the ledger journal across connections",
-        ))
+        ));
     }
+    conn.pragma_update(None, "journal_size_limit", 0)
+        .map_err(sql)?;
+    Ok(conn)
 }

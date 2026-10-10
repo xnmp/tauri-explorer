@@ -532,9 +532,17 @@ pub(super) fn frontend_asset(root: &Path, path: &str) -> Result<(Vec<u8>, &'stat
 }
 
 #[cfg(test)]
-mod tests {
+pub(super) mod tests {
     use super::*;
     fn archive(directory: &Path, mutate: impl FnOnce(&mut Manifest)) -> PathBuf {
+        archive_named(directory, "fixture.teplugin", mutate)
+    }
+    /// A valid package archive for this host target; `mutate` edits its manifest.
+    pub(in super::super) fn archive_named(
+        directory: &Path,
+        file_name: &str,
+        mutate: impl FnOnce(&mut Manifest),
+    ) -> PathBuf {
         let contents = [
             ("frontend/index.js", b"export const plugins=[];".as_slice()),
             ("frontend/index.css", b"body{}".as_slice()),
@@ -572,7 +580,7 @@ mod tests {
                 .collect(),
         };
         mutate(&mut manifest);
-        let path = directory.join("fixture.teplugin");
+        let path = directory.join(file_name);
         let mut zip = zip::ZipWriter::new(File::create(&path).unwrap());
         let options = zip::write::SimpleFileOptions::default();
         zip.start_file("manifest.json", options).unwrap();

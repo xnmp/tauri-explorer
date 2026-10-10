@@ -84,6 +84,17 @@ jobs:
           export TE_LIFECYCLE_NATIVE_FIXTURE=1
           mkdir -p qualification-results/shared-ai
           env -u WAYLAND_DISPLAY -u OPENAI_API_KEY -u CODEX_API_KEY -u CODEX_ACCESS_TOKEN -u ANTHROPIC_API_KEY GDK_BACKEND=x11 xvfb-run -a dbus-run-session -- cargo test --locked --manifest-path src-tauri/Cargo.toml --lib installed_plugins::backend::native_tests::native_private_preflight_retirement_and_shutdown -- --ignored --exact --nocapture --test-threads=1 2>&1 | tee qualification-results/shared-ai/lifecycle.log
+      - name: Verify disable retires the actual broker only after claims drain
+        timeout-minutes: 10
+        run: |
+          fixture_root=$(mktemp -d /tmp/te-lifecycle-native.XXXXXX)
+          mkdir -p "$fixture_root/config" "$fixture_root/data" "$fixture_root/cache" "$fixture_root/state" "$fixture_root/runtime"
+          chmod 700 "$fixture_root/runtime"
+          export XDG_CONFIG_HOME="$fixture_root/config" XDG_DATA_HOME="$fixture_root/data" XDG_CACHE_HOME="$fixture_root/cache" XDG_STATE_HOME="$fixture_root/state" XDG_RUNTIME_DIR="$fixture_root/runtime"
+          export TE_LIFECYCLE_NATIVE_FIXTURE=1
+          mkdir -p qualification-results/shared-ai
+          set -o pipefail
+          env -u WAYLAND_DISPLAY -u OPENAI_API_KEY -u CODEX_API_KEY -u CODEX_ACCESS_TOKEN -u ANTHROPIC_API_KEY GDK_BACKEND=x11 xvfb-run -a dbus-run-session -- cargo test --locked --manifest-path src-tauri/Cargo.toml --lib installed_plugins::lifecycle::mutation_native_tests::native_disable_retires_the_backend_only_after_claims_drain -- --ignored --exact --nocapture --test-threads=1 2>&1 | tee qualification-results/shared-ai/retirement.log
       - name: Build host fixture binary
         env:
           VITE_E2E_HOOKS: '1'

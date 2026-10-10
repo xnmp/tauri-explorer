@@ -1,6 +1,8 @@
 //! Recoverable package upgrade: quiesce publishers, snapshot declared state, then activate.
-use super::{backend, package};
-use crate::error::AppError;
+//! Every package mutation (upgrade, removal, enablement) consults durable AI
+//! claims in either role before it fences, quiesces or rewrites the index.
+use super::{backend, package, service_graph, service_host};
+use crate::{error::AppError, service_state::Store};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{
@@ -265,7 +267,7 @@ pub(super) fn recover(root: &Path) -> Result<(), AppError> {
             if let Some(index) = &upgrade.committed_index {
                 // Commit may have been durable before installed.json changed.
                 // Complete that decision; never roll a committed package back.
-                super::service_graph::validate_enabled(index)?;
+                service_graph::validate_enabled(index)?;
                 package::write_index(root, index)?;
                 upgrade.phase = Phase::Published;
                 write_marker(&snapshot, &upgrade)?;
@@ -276,19 +278,139 @@ pub(super) fn recover(root: &Path) -> Result<(), AppError> {
         Ok(())
     }
 }
+/// One profile's durable package state: its installed index and the claim
+/// ledger that every mutation consults. Production passes the host profile;
+/// tests pass a private one with the same layout.
+pub(super) struct Profile<'a> {
+    /// `<profile>/installed-plugins`; its parent also holds `service-state`.
+    pub root: &'a Path,
+    pub store: &'a Store,
+}
+/// Validation-only startup of a candidate. Production uses the real broker.
+pub(super) type Preflight<'a> =
+    &'a dyn Fn(&package::Installed, PathBuf, &backend::DrainGuard) -> Result<(), AppError>;
+/// Close admission for a package that has no durable claim or live native work.
+pub(super) fn drain_idle(store: &Store, id: &str) -> Result<backend::DrainGuard, AppError> {
+    let _guard = super::write_lifecycle()?;
+    service_host::mutation_allowed_in(store, id)?;
+    if backend::busy(id) {
+        return Err(service_host::busy(
+            "Finish active plugin operations before changing this package",
+        ));
+    }
+    backend::begin_drain(id)
+}
+/// Install or upgrade from an archive. The caller activates after return,
+/// once the mutation and lifecycle gates are released.
+pub(super) fn upgrade(
+    profile: &Profile,
+    archive: &Path,
+    preflight: Preflight,
+) -> Result<package::Installed, AppError> {
+    let _mutation = super::mutation_lock()?;
+    recover(profile.root)?;
+    let candidate = package::prepare(profile.root, archive)?;
+    let drain = drain_idle(profile.store, &candidate.manifest.id)?;
+    drain.quiesce()?;
+    // The package fence, not a global lock, owns snapshot/preflight/rollback.
+    // Reader threads may need lifecycle admission while retirement joins them.
+    install_with(profile.root, candidate, &drain, preflight)
+}
+pub(super) fn uninstall(profile: &Profile, id: &str) -> Result<(), AppError> {
+    let _mutation = super::mutation_lock()?;
+    recover(profile.root)?;
+    let drain = drain_idle(profile.store, id)?;
+    drain.quiesce()?;
+    let mut remaining = package::list(profile.root)?;
+    remaining.retain(|entry| entry.manifest.id != id);
+    service_graph::validate_enabled(&remaining)?;
+    backend::retire(id);
+    let _lifecycle = super::LIFECYCLE
+        .write()
+        .map_err(|_| invalid("Plugin lifecycle lock is unavailable"))?;
+    package::uninstall(profile.root, id)
+}
+pub(super) fn set_enabled(profile: &Profile, id: &str, enabled: bool) -> Result<(), AppError> {
+    let _mutation = super::mutation_lock()?;
+    recover(profile.root)?;
+    {
+        let _guard = super::read_lifecycle()?;
+        let entries = package::list(profile.root)?;
+        let current = entries
+            .iter()
+            .find(|entry| entry.manifest.id == id)
+            .ok_or_else(|| invalid("Plugin package is not installed"))?;
+        if current.enabled == enabled {
+            return Ok(());
+        }
+    }
+    let drain = if enabled {
+        None
+    } else {
+        Some(drain_idle(profile.store, id)?)
+    };
+    if let Some(drain) = &drain {
+        drain.quiesce()?;
+        // A safe disable stops routing before the index changes.
+        backend::retire(id);
+    }
+    let _guard = super::LIFECYCLE
+        .write()
+        .map_err(|_| invalid("Plugin lifecycle lock is unavailable"))?;
+    let mut entries = package::list(profile.root)?;
+    let current = entries
+        .iter()
+        .find(|entry| entry.manifest.id == id)
+        .ok_or_else(|| invalid("Plugin package is not installed"))?;
+    if current.enabled == enabled {
+        return Ok(());
+    }
+    if !enabled {
+        service_host::mutation_allowed_in(profile.store, id)?;
+        if backend::busy(id) {
+            return Err(service_host::busy(
+                "Finish active plugin operations before changing this package",
+            ));
+        }
+    } else if profile.store.claims()?.iter().any(|a| {
+        (a.consumer.package_id == id && a.consumer.digest != current.digest)
+            || (a.provider.package_id == id && a.provider.digest != current.digest)
+    }) {
+        return Err(invalid(
+            "Enable the pinned package version to recover its AI operations",
+        ));
+    }
+    let entry = entries
+        .iter_mut()
+        .find(|entry| entry.manifest.id == id)
+        .ok_or_else(|| invalid("Plugin package is not installed"))?;
+    entry.enabled = enabled;
+    service_graph::validate_enabled(&entries)?;
+    package::write_index(profile.root, &entries)
+}
 pub(super) fn install(
     root: &Path,
     next: package::Installed,
     fence: &backend::DrainGuard,
 ) -> Result<package::Installed, AppError> {
+    install_with(root, next, fence, &backend::preflight_candidate)
+}
+fn install_with(
+    root: &Path,
+    next: package::Installed,
+    fence: &backend::DrainGuard,
+    preflight: Preflight,
+) -> Result<package::Installed, AppError> {
     recover(root)?;
-    super::service_host::candidate_state_allowed_at(
+    service_host::candidate_state_allowed_at(
         root.parent()
             .ok_or_else(|| invalid("Plugin profile root is unavailable"))?,
         &next,
     )?;
     if backend::busy(&next.manifest.id) {
-        return Err(invalid("Finish active plugin operations before upgrading"));
+        return Err(service_host::busy(
+            "Finish active plugin operations before upgrading",
+        ));
     }
     let previous = package::list(root)?;
     let (proposed, installed) = package::planned_index(&previous, next.clone())?;
@@ -363,7 +485,7 @@ pub(super) fn install(
                 snapshot_file(&source, &destination)?;
             }
         }
-        backend::preflight_candidate(&next, validation, fence)?;
+        preflight(&next, validation, fence)?;
         // Persist the irrevocable decision before exposing the new index.
         // Recovery completes publication if the host dies between the two.
         upgrade.phase = Phase::Committed;
@@ -408,6 +530,12 @@ pub(super) fn install(
     }
 }
 
+#[cfg(test)]
+#[path = "mutation_matrix_tests.rs"]
+mod mutation_matrix_tests;
+#[cfg(all(test, target_os = "linux"))]
+#[path = "mutation_native_tests.rs"]
+mod mutation_native_tests;
 #[cfg(test)]
 mod tests {
     use super::*;

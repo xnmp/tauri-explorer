@@ -163,15 +163,9 @@ fn mutation_lock() -> Result<std::sync::MutexGuard<'static, ()>, AppError> {
     }
     Ok(guard)
 }
+#[cfg(all(test, target_os = "linux"))]
 fn drain_idle(id: &str) -> Result<backend::DrainGuard, AppError> {
-    let _guard = write_lifecycle()?;
-    service_host::mutation_allowed(id)?;
-    if backend::busy(id) {
-        return Err(AppError::Other(
-            "Finish active plugin operations before changing this package".into(),
-        ));
-    }
-    backend::begin_drain(id)
+    lifecycle::drain_idle(service_host::store()?, id)
 }
 
 fn error_window(label: &str, visible: bool) -> bool {
@@ -190,25 +184,12 @@ pub(super) fn notify_pending_errors(window: &tauri::Window) {
 }
 
 fn install_path(path: &Path) -> Result<package::Installed, AppError> {
-    let _guard = mutation_lock()?;
-    lifecycle::recover(&root()?)?;
-    let candidate = package::prepare(&root()?, path)?;
-    let drain = {
-        let _lifecycle = write_lifecycle()?;
-        service_host::mutation_allowed(&candidate.manifest.id)?;
-        if backend::busy(&candidate.manifest.id) {
-            return Err(AppError::Other(
-                "Finish active plugin operations before upgrading".into(),
-            ));
-        }
-        backend::begin_drain(&candidate.manifest.id)?
+    let root = root()?;
+    let profile = lifecycle::Profile {
+        root: &root,
+        store: service_host::store()?,
     };
-    drain.quiesce()?;
-    // The package fence, not a global lock, owns snapshot/preflight/rollback.
-    // Reader threads may need lifecycle admission while retirement joins them.
-    let installed = lifecycle::install(&root()?, candidate, &drain)?;
-    drop(drain);
-    drop(_guard);
+    let installed = lifecycle::upgrade(&profile, path, &backend::preflight_candidate)?;
     if installed.enabled {
         if let Err(cause) = backend::activate(&installed.manifest.id) {
             log::warn!("Installed plugin activation will retry on next use: {cause}");
@@ -319,22 +300,14 @@ pub async fn install_plugin(app: tauri::AppHandle, path: String) -> Result<Value
 #[tauri::command]
 pub async fn uninstall_plugin(app: tauri::AppHandle, id: String) -> Result<(), AppError> {
     let result = tauri::async_runtime::spawn_blocking(move || {
-        let _guard = mutation_lock()?;
-        lifecycle::recover(&root()?)?;
-        let drain = drain_idle(&id)?;
-        drain.quiesce()?;
-        let mut remaining = package::list(&root()?)?;
-        remaining.retain(|entry| entry.manifest.id != id);
-        service_graph::validate_enabled(&remaining)?;
-        backend::retire(&id);
-        let result = {
-            let _lifecycle = LIFECYCLE
-                .write()
-                .map_err(|_| AppError::Other("Plugin lifecycle lock is unavailable".into()))?;
-            package::uninstall(&root()?, &id)
-        };
-        drop(drain);
-        result
+        let root = root()?;
+        lifecycle::uninstall(
+            &lifecycle::Profile {
+                root: &root,
+                store: service_host::store()?,
+            },
+            &id,
+        )
     })
     .await
     .map_err(|error| AppError::Other(error.to_string()))?;
@@ -355,66 +328,15 @@ pub async fn set_plugin_package_enabled(
     enabled: bool,
 ) -> Result<(), AppError> {
     let result = tauri::async_runtime::spawn_blocking(move || {
-        let _mutation = mutation_lock()?;
-        lifecycle::recover(&root()?)?;
-        {
-            let _guard = read_lifecycle()?;
-            let entries = package::list(&root()?)?;
-            let current = entries
-                .iter()
-                .find(|entry| entry.manifest.id == id)
-                .ok_or_else(|| AppError::Other("Plugin package is not installed".into()))?;
-            if current.enabled == enabled {
-                return Ok(());
-            }
-        }
-        let drain = if enabled {
-            None
-        } else {
-            Some(drain_idle(&id)?)
-        };
-        if let Some(drain) = &drain {
-            drain.quiesce()?;
-            backend::retire(&id);
-        }
-        let result = {
-            let _guard = LIFECYCLE
-                .write()
-                .map_err(|_| AppError::Other("Plugin lifecycle lock is unavailable".into()))?;
-            let root = root()?;
-            let mut entries = package::list(&root)?;
-            let current = entries
-                .iter()
-                .find(|entry| entry.manifest.id == id)
-                .ok_or_else(|| AppError::Other("Plugin package is not installed".into()))?;
-            if current.enabled == enabled {
-                return Ok(());
-            }
-            if !enabled {
-                service_host::mutation_allowed(&id)?;
-                if backend::busy(&id) {
-                    return Err(AppError::Other(
-                        "Finish active plugin operations before changing this package".into(),
-                    ));
-                }
-            } else if service_host::store()?.claims()?.iter().any(|a| {
-                (a.consumer.package_id == id && a.consumer.digest != current.digest)
-                    || (a.provider.package_id == id && a.provider.digest != current.digest)
-            }) {
-                return Err(AppError::Other(
-                    "Enable the pinned package version to recover its AI operations".into(),
-                ));
-            }
-            let entry = entries
-                .iter_mut()
-                .find(|entry| entry.manifest.id == id)
-                .ok_or_else(|| AppError::Other("Plugin package is not installed".into()))?;
-            entry.enabled = enabled;
-            service_graph::validate_enabled(&entries)?;
-            package::write_index(&root, &entries)
-        };
-        drop(drain);
-        result
+        let root = root()?;
+        lifecycle::set_enabled(
+            &lifecycle::Profile {
+                root: &root,
+                store: service_host::store()?,
+            },
+            &id,
+            enabled,
+        )
     })
     .await
     .map_err(|cause| AppError::WorkerFailed(cause.to_string()))?;

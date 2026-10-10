@@ -63,6 +63,15 @@ pub(super) fn apply(
             Ok(()) => {
                 fs::remove_file(entry.path())?;
             }
+            Err(cause) if super::service_host::is_busy(&cause) => {
+                // Durable claims or live work own this package. Keep this and
+                // every later request in publication order for a later launch,
+                // so neither participant upgrades before its claims recover.
+                errors.push(format!(
+                    "Queued plugin change will retry on next launch once its AI operations are resolved: {cause}"
+                ));
+                break;
+            }
             Err(cause) => {
                 if cancelled() {
                     break;

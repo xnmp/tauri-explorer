@@ -362,17 +362,18 @@ pub(super) fn policy_paths(cli: Cli, env: Env) -> Vec<PathBuf> {
             }
         }
         Cli::Claude => {
-            let mut roots = Vec::new();
             #[cfg(target_os = "linux")]
-            roots.extend([
+            let roots = vec![
                 PathBuf::from("/etc/claude-code"),
                 // WSL can inherit the Windows policy directory.
                 PathBuf::from("/mnt/c/Program Files/ClaudeCode"),
-            ]);
+            ];
             #[cfg(target_os = "macos")]
-            roots.push(PathBuf::from("/Library/Application Support/ClaudeCode"));
+            let roots = vec![PathBuf::from("/Library/Application Support/ClaudeCode")];
             #[cfg(windows)]
-            roots.push(program("ProgramFiles", r"C:\Program Files").join("ClaudeCode"));
+            let roots = vec![program("ProgramFiles", r"C:\Program Files").join("ClaudeCode")];
+            #[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
+            let roots: Vec<PathBuf> = Vec::new();
             for root in roots {
                 for name in [
                     "managed-settings.json",

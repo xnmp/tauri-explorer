@@ -110,7 +110,7 @@ The message names the policy source that was found. The sources checked are:
 ## Known limits
 
 - **Organisation policy without a local cache.** Server- or cloud-delivered policy can be fetched during the run itself and cannot be detected beforehand: a first run after login, or Claude settings that need approval, which `-p` runs apply without caching. The host deliberately does not read login tokens to infer the account's plan. A policy change between the check and the run (time-of-check/time-of-use) is likewise not excluded. The backstops are:
-  - the event and result checks reject any tool activity;
+  - the event and result checks reject any tool activity. Codex `todo_list` items (its `update_plan` tool) are the one allowed exception: they touch no files and run nothing. A switch that disables the plan tool could not be verified in the installed Codex feature list, so none is set;
   - the read-only sandbox and empty tool set still apply;
   - every request runs in an empty, owned and reaped process tree.
 - **Global instructions.** Codex may still include `$CODEX_HOME/AGENTS.md` as global instructions. That affects wording only; it cannot add tools.

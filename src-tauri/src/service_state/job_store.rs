@@ -176,9 +176,10 @@ fn all(conn: &Connection) -> Result<Vec<JobRecord>> {
     }
     // Parking moves a row from active to retained without changing the
     // total, so retained presentation is bounded by the total until pruned.
-    if records.iter().filter(|r| !retained(r)).count() > MAX_ACTIVE
-        || records.len() > MAX_ACTIVE + MAX_TERMINAL
-    {
+    // More than MAX_ACTIVE active rows is tolerated on read: such a ledger
+    // must still open so the user can dismiss; `register_job` refuses new
+    // work while it is over capacity.
+    if records.len() > MAX_ACTIVE + MAX_TERMINAL {
         return Err(reject("durable jobs exceed retained capacity"));
     }
     Ok(records)
@@ -492,6 +493,14 @@ impl Store {
             }
             if old.state.terminal() {
                 return Err(reject("a terminal job outcome is immutable"));
+            }
+            // Parked rows do not count toward active capacity, so they may
+            // never become active again; only a terminal outcome or another
+            // parked state is allowed.
+            if parked(&old) && !(next.state.terminal() || parked(&next)) {
+                return Err(reject(
+                    "a stopped or discarded job cannot become active again",
+                ));
             }
             transition(old.state, state)?;
             next.revision = next_revision(conn)?;
@@ -1042,5 +1051,73 @@ mod tests {
         let newest = store.job(&record(428).job_key).unwrap().unwrap();
         change(&store, &newest, JobState::Cancelled).unwrap();
         store.register_job(record(429)).unwrap();
+    }
+    #[test]
+    fn a_parked_job_can_only_move_to_a_terminal_state_never_back_to_active() {
+        let (root, store) = fixture();
+        let parked_jobs: Vec<_> = (1..=2)
+            .map(|n| {
+                let phase = if n == 1 {
+                    "stopped"
+                } else {
+                    "provider_result_discarded"
+                };
+                park(&store, &store.register_job(record(n)).unwrap(), phase)
+            })
+            .collect();
+        for n in 3..=130 {
+            store.register_job(record(n)).unwrap();
+        }
+        for job in &parked_jobs {
+            for state in [JobState::Recovering, JobState::Running, JobState::Accepting] {
+                assert!(change(&store, job, state).is_err());
+            }
+            assert_eq!(store.job(&job.job_key).unwrap().unwrap(), *job);
+        }
+        // Still usable and reopenable; the terminal exit remains available.
+        assert!(store.register_job(record(131)).is_err());
+        drop(store);
+        let store = Store::open(root.path().join("services"), Limits::default()).unwrap();
+        assert_eq!(store.snapshot_jobs().unwrap().jobs.len(), 130);
+        let cancelled = change(&store, &parked_jobs[1], JobState::Cancelled).unwrap();
+        assert!(cancelled.state.terminal());
+    }
+    #[test]
+    fn an_existing_over_capacity_ledger_opens_refuses_new_work_and_allows_dismissal() {
+        let (root, store) = fixture();
+        for n in 1..=128 {
+            store.register_job(record(n)).unwrap();
+        }
+        let mut extra = record(129);
+        extra.revision = 129;
+        let conn = Connection::open(root.path().join("services/ledger.sqlite")).unwrap();
+        conn.execute(
+            "INSERT INTO presentation_jobs(key,owner,operation,job_id,revision,record)VALUES(?1,?2,?3,?4,?5,?6)",
+            params![extra.job_key, "consumer", extra.operation_id, 129, 129, serialized(&extra).unwrap()],
+        )
+        .unwrap();
+        conn.execute("UPDATE presentation_sequence SET revision=129", [])
+            .unwrap();
+        drop(conn);
+        drop(store);
+        let store = Store::open(root.path().join("services"), Limits::default()).unwrap();
+        assert_eq!(store.snapshot_jobs().unwrap().jobs.len(), 129);
+        assert!(store.register_job(record(130)).is_err());
+        // Active work is resolved by the user, after which the ledger recovers.
+        change(
+            &store,
+            &store.job(&extra.job_key).unwrap().unwrap(),
+            JobState::Cancelled,
+        )
+        .unwrap();
+        let cancelled = store.job(&extra.job_key).unwrap().unwrap();
+        store.dismiss_job(&cancelled.job_key).unwrap();
+        change(
+            &store,
+            &store.job(&record(1).job_key).unwrap().unwrap(),
+            JobState::Cancelled,
+        )
+        .unwrap();
+        store.register_job(record(130)).unwrap();
     }
 }

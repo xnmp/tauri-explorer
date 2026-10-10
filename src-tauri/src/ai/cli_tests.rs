@@ -594,6 +594,7 @@ fn cli_failures_are_typed_and_never_return_partial_text() {
         r#"{"type":"item.completed","item":{"type":"agent_message","text":"Fixture title"}}"#;
     let completed = r#"{"type":"turn.completed","usage":{"input_tokens":1,"output_tokens":1}}"#;
     let warning = r#"{"type":"item.completed","item":{"type":"error","message":"unknown feature key in config: code_mode_host"}}"#;
+    let todo = r#"{"type":"item.completed","item":{"type":"todo_list","items":[{"text":"Draft title","completed":false}]}}"#;
     let tool = r#"{"type":"item.completed","item":{"type":"command_execution","command":"ls"}}"#;
     let claude = |result: Value| result.to_string();
     let cases: Vec<(&str, String, i32, Option<&str>)> = vec![
@@ -687,6 +688,13 @@ fn cli_failures_are_typed_and_never_return_partial_text() {
             ),
             0,
             Some("invalid_response"),
+        ),
+        // Codex's plan tool emits todo_list items; they are harmless.
+        (
+            "codex",
+            format!("{todo}\n{message}\n{completed}\n"),
+            0,
+            None,
         ),
         // Codex reports config warnings as error items; they are not failures.
         (

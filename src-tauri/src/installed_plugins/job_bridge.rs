@@ -360,6 +360,11 @@ pub(super) fn cancel(key: &str) -> Result<Value, AppError> {
     if record.phase.as_deref() == Some("stopped") {
         return Err(error("Automatic recovery was explicitly stopped; its unknown execution evidence remains retained"));
     }
+    if record.phase.as_deref() == Some("provider_result_discarded") {
+        return Err(error(
+            "The provider result was discarded; this operation cannot be resumed",
+        ));
+    }
     let broker = backend::ensure(&record.owner.package_id)?;
     if broker.generation().digest != record.owner.digest {
         return Err(error(

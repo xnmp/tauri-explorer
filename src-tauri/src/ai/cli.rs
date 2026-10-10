@@ -783,6 +783,9 @@ fn parse_codex(bytes: &[u8]) -> Result<(String, Option<String>, Option<Usage>)> 
                 // Codex reports configuration and runtime warnings as error
                 // items; fatal errors arrive as `error`/`turn.failed` events.
                 Some("reasoning" | "error") => {}
+                // The harmless `update_plan` tool reports its checklist as a
+                // `todo_list` item; it touches no files and runs nothing.
+                Some("todo_list") => {}
                 _ => {
                     return Err(ServiceError::new(
                         "invalid_response",

@@ -688,7 +688,7 @@ fn failed_durable_write_leaves_no_temp_file_behind() {
     assert!(leftovers.is_empty(), "{leftovers:?}");
 }
 #[test]
-fn superseded_secret_is_removed_when_replacement_committed_but_confirmation_failed() {
+fn failed_confirmation_keeps_both_secrets_and_the_next_commit_removes_the_orphan() {
     let root = tempfile::tempdir().unwrap();
     let store = storage::Store::new(root.path().into());
     let secrets = MemorySecrets::default();
@@ -703,9 +703,55 @@ fn superseded_secret_is_removed_when_replacement_committed_but_confirmation_fail
     assert!(store
         .credential("http", Some("second-key"), 2, &secrets)
         .is_err());
+    // The rename is not proven durable: a crash could restore the old document,
+    // so the superseded secret must survive alongside the new one.
+    let (_, revision, credential) = store.snapshot(&secrets, None).unwrap();
+    assert_eq!(credential.as_deref(), Some("second-key"));
+    assert_eq!(secrets.count(), 2, "the superseded key must be retained");
+    // The next fully successful commit removes the orphan, never the live key.
+    store
+        .credential("http", Some("third-key"), revision, &secrets)
+        .unwrap();
+    assert_eq!(secrets.count(), 1);
+    let (_, _, credential) = store.snapshot(&secrets, None).unwrap();
+    assert_eq!(credential.as_deref(), Some("third-key"));
+}
+#[test]
+fn orphan_sweep_never_removes_the_current_secret() {
+    let root = tempfile::tempdir().unwrap();
+    let store = storage::Store::new(root.path().into());
+    let secrets = MemorySecrets::default();
+    store
+        .save(config_http("https://fixture.test/v1"), 0)
+        .unwrap();
+    store
+        .credential("http", Some("first-key"), 1, &secrets)
+        .unwrap();
+    storage::fault::inject("ai-connections.json", storage::fault::Replace::AfterReplace);
+    assert!(store
+        .credential("http", Some("second-key"), 2, &secrets)
+        .is_err());
+    // A tampered orphan list naming the live secret must not delete it.
+    let (_, revision, _) = store.snapshot(&secrets, None).unwrap();
+    let live = store.read().unwrap().profiles[0]
+        .connection
+        .credential()
+        .cloned();
+    let Some(super::domain::Credential::Secret { id: live_id }) = live else {
+        panic!("expected a secret credential")
+    };
+    std::fs::write(
+        root.path().join("ai-secret-orphans.json"),
+        serde_json::to_vec(&[("http", live_id.as_str()), ("http", "not-a-secret-id")]).unwrap(),
+    )
+    .unwrap();
+    let config = store.read().unwrap();
+    store
+        .save_with_secrets(config, revision, Some(&secrets))
+        .unwrap();
+    assert_eq!(secrets.count(), 2, "only the genuine orphan is swept");
     let (_, _, credential) = store.snapshot(&secrets, None).unwrap();
     assert_eq!(credential.as_deref(), Some("second-key"));
-    assert_eq!(secrets.count(), 1, "the superseded key is not orphaned");
 }
 #[test]
 fn durable_replacement_replaces_existing_document() {

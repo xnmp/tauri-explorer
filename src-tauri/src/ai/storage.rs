@@ -221,6 +221,9 @@ impl Store {
                 }
             }
         }
+        if let Some(secrets) = secrets {
+            self.sweep_orphans(&committed, secrets);
+        }
         Ok(committed)
     }
     fn commit(&self, mut config: Configuration, revision: u64) -> Result<Configuration> {
@@ -277,31 +280,35 @@ impl Store {
         };
         *p.connection.credential_mut().expect("HTTP credential") = new.clone();
         let revision = config.revision;
+        // The superseded secret is recorded durably before the commit and only
+        // deleted by a sweep after a later fully successful commit: a failed
+        // directory sync cannot prove the new document survives a crash.
+        if let Credential::Secret { id: old_id } = &old {
+            if let Err(e) = self.record_orphan(id, old_id) {
+                if let Credential::Secret { id: new_id } = &new {
+                    let _ = secrets.remove(id, new_id);
+                }
+                return Err(e);
+            }
+        }
         match self.commit(config, revision) {
             Ok(config) => {
                 // Generation snapshots resolve credentials under this lock before release.
-                if let Credential::Secret { id: old_id } = old {
-                    let _ = secrets.remove(id, &old_id);
-                }
+                self.sweep_orphans(&config, secrets);
                 Ok(config)
             }
             Err(e) => {
                 if let Credential::Secret { id: new_id } = new {
                     // Replacement may have committed before directory sync failed. Retain
-                    // the record unless a readable durable document proves it unreferenced.
+                    // the new record unless a readable durable document proves it
+                    // unreferenced. The superseded secret is never removed here.
                     if let Ok(observed) = self.read_locked() {
                         let durable = observed.profiles.iter().any(|p| {
                             p.id == id
                                 && p.connection.credential()
                                     == Some(&Credential::Secret { id: new_id.clone() })
                         });
-                        if durable {
-                            // The replacement is the live reference, so the
-                            // superseded secret is orphaned; removal is idempotent.
-                            if let Credential::Secret { id: old_id } = &old {
-                                let _ = secrets.remove(id, old_id);
-                            }
-                        } else {
+                        if !durable {
                             let _ = secrets.remove(id, &new_id);
                         }
                     }
@@ -309,6 +316,53 @@ impl Store {
                 Err(e)
             }
         }
+    }
+    fn orphans_path(&self) -> std::path::PathBuf {
+        self.root.join("ai-secret-orphans.json")
+    }
+    fn read_orphans(&self) -> Vec<(String, String)> {
+        std::fs::read(self.orphans_path())
+            .ok()
+            .and_then(|bytes| serde_json::from_slice::<Vec<(String, String)>>(&bytes).ok())
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|(_, id)| id.len() == 32 && id.bytes().all(|b| b.is_ascii_hexdigit()))
+            .collect()
+    }
+    fn write_orphans(&self, orphans: &[(String, String)]) -> Result<()> {
+        durable_write(
+            &self.orphans_path(),
+            &serde_json::to_vec(orphans).map_err(|_| storage_error())?,
+        )
+    }
+    fn record_orphan(&self, owner: &str, secret_id: &str) -> Result<()> {
+        let mut orphans = self.read_orphans();
+        let entry = (owner.to_string(), secret_id.to_string());
+        if !orphans.contains(&entry) {
+            orphans.push(entry);
+        }
+        self.write_orphans(&orphans)
+    }
+    /// Removes recorded superseded secrets that the committed configuration
+    /// does not reference. Only entries this app recorded are ever touched.
+    fn sweep_orphans(&self, committed: &Configuration, secrets: &dyn SecretStore) {
+        let orphans = self.read_orphans();
+        if orphans.is_empty() {
+            return;
+        }
+        let mut kept = Vec::new();
+        for (owner, secret_id) in orphans {
+            let referenced = committed.profiles.iter().any(|p| {
+                p.connection.credential()
+                    == Some(&Credential::Secret {
+                        id: secret_id.clone(),
+                    })
+            });
+            if !referenced && secrets.remove(&owner, &secret_id).is_err() {
+                kept.push((owner, secret_id));
+            }
+        }
+        let _ = self.write_orphans(&kept);
     }
     pub fn snapshot(
         &self,

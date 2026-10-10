@@ -32,6 +32,8 @@ harness = false
 
 [dependencies]
 url = "2"
+reqwest = { version = "0.13.2", default-features = false, features = ["rustls", "json", "stream"] }
+keyring = { version = "3", features = ["apple-native", "windows-native", "sync-secret-service", "crypto-rust"] }
 tauri = { version = "2", features = ["protocol-asset", "macos-private-api"] }
 tauri-plugin-opener = "2"
 tauri-plugin-shell = "2"
@@ -115,6 +117,7 @@ avif = ["image/avif-native"]
 # zbus/url: xdg-desktop-portal FileChooser backend (system file picker).
 # Pure-Rust (zbus) + no system deps, so safe to build everywhere Linux.
 [target.'cfg(target_os = "linux")'.dependencies]
+dbus-secret-service = { version = "4.1", default-features = false, features = ["crypto-rust"] }
 gio = "0.22"
 # GDesktopAppInfo moved out of gio in gtk-rs 0.22.
 gio-unix = "0.22"
@@ -138,6 +141,7 @@ windows = { version = "0.62.2", features = ["Wdk_Foundation", "Wdk_Storage_FileS
 # NSPasteboard change count and a private token type prove Cut ownership
 # (clipboard/macos.rs, #877). clipboard-rs already builds these versions.
 [target.'cfg(target_os = "macos")'.dependencies]
+security-framework = "2.11"
 objc2 = "0.6"
 objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSArray", "NSData", "NSString", "NSURL"] }
 objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "NSPasteboard", "NSPasteboardItem"] }

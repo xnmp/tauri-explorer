@@ -1,3 +1,4 @@
+import { createMockTextConnections } from "./mock-text-connections";
 import pdfFixtureUrl from "./fixtures/preview-landmarks.pdf?url";
 import videoFixtureUrl from "./fixtures/video-preview.webm?url";
 /**
@@ -1068,7 +1069,15 @@ function mockDirectoryListing(raw: string): CompactDirectoryListing {
   return encodeDirectoryListing({ path, entries: sortListing(getDirectoryEntries(path)) });
 }
 
+const mockTextConnections = createMockTextConnections();
 const mockCommands: Record<string, CommandHandler> = {
+  ai_connections_read: () => mockTextConnections.read(),
+  ai_connections_save: ({ configuration, expectedRevision }) => mockTextConnections.save(configuration, expectedRevision),
+  ai_connection_set_credential: ({ profileId, key, expectedRevision }) => mockTextConnections.credential(profileId, key, expectedRevision),
+  ai_connection_clear_credential: ({ profileId, expectedRevision }) => mockTextConnections.credential(profileId, null, expectedRevision),
+  ai_connection_check: ({ profileId }) => mockTextConnections.check(profileId),
+  ai_connection_test: ({ profileId, expectedConfigurationRevision }) => mockTextConnections.test(profileId, expectedConfigurationRevision),
+  ai_connection_cancel_test: () => undefined,
   get_home_directory: () => "/home/user",
   get_launch_cwd: () => "/home/user",
   list_drives: () => {

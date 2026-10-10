@@ -831,3 +831,19 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 TraceExplorer's image UI, provider adapters and SQLite journal are maintained in https://github.com/xnmp/TraceExplorer rather than compiled into this host. Core crop outcomes remain covered in `e2e/image-crop.spec.ts` and `e2e/image-editor.spec.ts`.
 
 - `src/lib/domain/settings-search.ts` — shared multi-token substring/subsequence filtering for general and plugin Settings.
+
+## Shared text services — new files
+
+- `src/lib/components/ai/LanguageModelsSettings.svelte` — global language-model profiles, default/enabled controls and explicit check/test actions in Settings.
+- `src/lib/components/ai/TextProfileEditor.svelte` — protocol-specific endpoint/model/executable, credential source and write-only key controls.
+- `src/lib/domain/text-connections.ts` — pure profile/config validation and discriminated public text contracts.
+- `src/lib/api/text-connections.ts` — typed native settings/credential/check/test commands and revision subscriptions.
+- `src/lib/api/mock-text-connections.ts` — isolated browser fixture using the public validation/revision rules.
+- `src/lib/state/text-connections.ts` — dirty draft/CAS, stale result/cancellation and cross-window event reconciliation.
+- `src-tauri/src/ai/mod.rs` — native short-text service admission, owned cancellation/deadlines, settings commands and safe committed revision notifications.
+- `src-tauri/src/ai/domain.rs` — native profile/request contracts, URL/default validation, non-secret context identity and safe errors.
+- `src-tauri/src/ai/storage.rs` — cross-process locking, synced config replacement/CAS and resumable copy-if-unset legacy preferences.
+- `src-tauri/src/ai/credentials.rs` — owner-scoped OS secrets and injectable test store; no secret reads in public settings output.
+- `src-tauri/src/ai/adapters.rs` — bounded cancellable text HTTP and candidate CLI formatting/parsing; CLI production dispatch is unavailable until managed-policy isolation is established.
+- `src-tauri/src/ai/tests.rs` — native local HTTP/fake CLI, cancellation, capacity, credential uncertainty, cross-process CAS and migration outcome tests.
+- `src-tauri/src/installed_plugins/text_service.rs` — active-only native reverse-text bridge with trusted incarnation identity and reserved cancellation capacity.

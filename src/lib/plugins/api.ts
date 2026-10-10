@@ -160,6 +160,11 @@ export interface PluginWorkspace {
  * Such cases carry a justification comment at the import site.
  */
 export interface PluginContext {
+  /** Optional host text service settings notifications; execution is backend-owned. */
+  text?: {
+    subscribe(listener: (revision: number) => void): () => void;
+    openSettings(): void;
+  };
   backend?: {invoke<T>(method:string,params?:Record<string,unknown>):Promise<T>};
   saveSettings(patch:Record<string,unknown>):Promise<void>;
   /** Return the handler's work as a promise: a rejection is reported to the
@@ -295,6 +300,22 @@ export function createPluginContext(
   };
 
   const ctx: PluginContext = {
+    text: {
+      subscribe(listener) {
+        let unlisten: UnlistenFn | undefined;
+        let closed = false;
+        const dispose = () => { closed = true; unlisten?.(); unlisten = undefined; };
+        track(dispose);
+        void listen<{ revision: number }>("ai:text-configuration-changed", event => {
+          if (!closed && !disposed && Number.isSafeInteger(event.payload.revision) && event.payload.revision >= 0) {
+            try { listener(event.payload.revision); }
+            catch (error) { report(error, "text configuration listener"); }
+          }
+        }).then(un => { if (closed || disposed) un(); else unlisten = un; }).catch(() => {});
+        return dispose;
+      },
+      openSettings: () => { if (!disposed) dialogStore.openSettings(); },
+    },
     registerCommand(cmd: Command): void {
       const handler = async () => {
         try {

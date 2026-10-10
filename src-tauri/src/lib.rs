@@ -1,6 +1,7 @@
 //! Tauri Explorer app entry point.
 //! Issue: tauri-explorer-nv2y, tauri-explorer-hgt6, tauri-explorer-im3m, tauri-explorer-bo8l, tauri-explorer-yclf
 
+pub(crate) mod ai;
 mod ai_organize;
 mod ai_rename;
 mod archive;
@@ -267,6 +268,7 @@ pub fn run_with_process_entry(launch_dir: Option<String>, t_process_entry: std::
                 installed_plugins::notify_pending_errors(window);
             }
             if matches!(event, tauri::WindowEvent::Destroyed) {
+                ai::cancel_caller(&format!("settings:{}", window.label()));
                 renderer_owner::on_window_destroyed(window);
             }
         })
@@ -278,6 +280,13 @@ pub fn run_with_process_entry(launch_dir: Option<String>, t_process_entry: std::
             }
         })
         .invoke_handler(tauri::generate_handler![
+            ai::ai_connections_read,
+            ai::ai_connections_save,
+            ai::ai_connection_set_credential,
+            ai::ai_connection_clear_credential,
+            ai::ai_connection_check,
+            ai::ai_connection_test,
+            ai::ai_connection_cancel_test,
             // Launch info
             get_launch_cwd,
             get_log_dir,
@@ -668,7 +677,7 @@ pub fn run_with_process_entry(launch_dir: Option<String>, t_process_entry: std::
         .build(tauri::generate_context!())
         .expect("error while running tauri application")
         .run(|app, event| {
-            if matches!(&event,tauri::RunEvent::Exit){installed_plugins::shutdown();}
+            if matches!(&event,tauri::RunEvent::Exit){ai::cancel_all();installed_plugins::shutdown();}
             // Portal mode has no persistent window: closing a picker window
             // must not exit the service, or the D-Bus name would drop.
             if portal::is_portal_mode() {

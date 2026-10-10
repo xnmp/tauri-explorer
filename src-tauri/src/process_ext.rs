@@ -61,6 +61,18 @@ pub(crate) fn output_controlled(
     limits: (usize, usize),
     cancel_message: &'static str,
 ) -> Result<Output, AppError> {
+    output_with_stdin(command, cancelled, limits, cancel_message, Stdio::null())
+}
+
+/// The owned text service supplies a bounded private prompt file as stdin.
+/// File-backed input cannot block a writer thread or exceed argv limits.
+pub(crate) fn output_with_stdin(
+    command: &mut Command,
+    cancelled: impl Fn() -> bool,
+    limits: (usize, usize),
+    cancel_message: &'static str,
+    stdin: Stdio,
+) -> Result<Output, AppError> {
     if cancelled() {
         return Err(AppError::Other(cancel_message.into()));
     }
@@ -80,7 +92,7 @@ pub(crate) fn output_controlled(
         windows_job::Job::new()?
     };
     let mut child = command
-        .stdin(Stdio::null())
+        .stdin(stdin)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()

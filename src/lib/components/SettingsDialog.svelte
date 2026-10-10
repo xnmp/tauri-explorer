@@ -16,6 +16,8 @@
   import { matchesSettingsQuery } from "$lib/domain/settings-search";
   import { tick } from "svelte";
   import { pluginRegistry } from "$lib/plugins/registry.svelte";
+  import LanguageModelsSettings from "./ai/LanguageModelsSettings.svelte";
+  import { TEXT_SETTINGS_SEARCH_TERMS } from "$lib/domain/text-connections";
   import { pluginSettingsSections } from "$lib/plugins/settings-registry.svelte";
 
   interface Props {
@@ -232,6 +234,13 @@
       </header>
 
       <div class="dialog-content">
+        {#if open}
+          <section class="settings-section" class:hidden={!matchesSearch(...TEXT_SETTINGS_SEARCH_TERMS)}>
+            <h3 class="section-title">AI</h3>
+            <LanguageModelsSettings />
+          </section>
+        {/if}
+
         <!-- Appearance Section -->
         <section class="settings-section" class:hidden={!sectionVisible(...appearanceRows)}>
           <h3 class="section-title">Appearance</h3>

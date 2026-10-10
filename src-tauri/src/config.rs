@@ -90,7 +90,7 @@ fn resolve_config_path(filename: &str) -> Result<PathBuf, AppError> {
 /// Follow a config-file symlink chain without requiring the final target to
 /// exist. `canonicalize` cannot resolve a dangling final link, which is a
 /// valid dotfile-manager setup that a first app save should populate.
-fn resolve_write_target(path: &Path) -> std::io::Result<PathBuf> {
+pub(crate) fn resolve_write_target(path: &Path) -> std::io::Result<PathBuf> {
     const MAX_SYMLINKS: usize = 40;
     let mut target = path.to_path_buf();
     let mut followed = 0;
@@ -178,6 +178,10 @@ fn write_atomic(path: &Path, data: &str) -> std::io::Result<()> {
 pub async fn read_config_file(filename: String) -> Result<String, AppError> {
     let path = resolve_config_path(&filename)?;
     tokio::task::spawn_blocking(move || {
+        if filename == "plugin.trace.json" {
+            crate::ai::migrate_summary(path.parent().expect("config parent"))
+                .map_err(|error| AppError::Other(error.message))?;
+        }
         if !path.exists() {
             return Ok(String::new());
         }
@@ -221,6 +225,10 @@ pub async fn write_config_file(filename: String, data: String) -> Result<(), App
     let _guard = write_lock().lock().await;
     tokio::task::spawn_blocking(move || {
         log::debug!("Writing config file: {}", filename);
+        if filename == "plugin.trace.json" {
+            return crate::ai::write_trace_config(path.parent().expect("config parent"), &data)
+                .map_err(|error| AppError::Other(error.message));
+        }
         write_atomic(&path, &data).map_err(|e| {
             AppError::Other(format!("Failed to write config file '{}': {}", filename, e))
         })

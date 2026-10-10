@@ -23,6 +23,7 @@ use std::{
 };
 use tauri::{AppHandle, Emitter};
 static CLOSING: AtomicBool = AtomicBool::new(false);
+static INCARNATIONS: AtomicU64 = AtomicU64::new(1);
 static APP: OnceLock<AppHandle> = OnceLock::new();
 static RECOVERING: OnceLock<Mutex<HashMap<String, usize>>> = OnceLock::new();
 fn recovering() -> &'static Mutex<HashMap<String, usize>> {
@@ -72,6 +73,9 @@ pub(super) struct Broker {
     input: Mutex<Option<mpsc::SyncSender<Vec<u8>>>>,
     alive: AtomicBool,
     retired: AtomicBool,
+    active: AtomicBool,
+    incarnation: u64,
+    text_bridge: OnceLock<Arc<super::text_service::TextBridge>>,
     sequence: AtomicU64,
     pending: Mutex<HashMap<u64, Waiter>>,
     jobs: Mutex<HashMap<u64, Job>>,
@@ -80,6 +84,24 @@ pub(super) struct Broker {
 }
 
 impl Broker {
+    fn text_owner(&self) -> String {
+        format!("plugin:{}:{}", self.package_id, self.incarnation)
+    }
+
+    fn text_request(self: &Arc<Self>, frame: Value) -> Result<(), AppError> {
+        let bridge = self.text_bridge.get_or_init(|| {
+            let active_owner = Arc::downgrade(self);
+            let sender = Arc::downgrade(self);
+            Arc::new(super::text_service::TextBridge::new(self.text_owner(),
+                move || active_owner.upgrade().is_some_and(|owner| owner.active.load(Ordering::Acquire) && owner.alive.load(Ordering::Acquire)),
+                move |frame| { if let Some(owner) = sender.upgrade() { if owner.alive.load(Ordering::Acquire) && owner.send(&frame).is_err() { owner.fail("Text service reply could not be delivered"); } } },
+                Arc::new(super::text_service::NativeText)))
+        });
+        if !frame["id"].as_str().is_some_and(|id| id.starts_with("host:") && id.len() <= 128) { return Err(error("Invalid text service request ID")); }
+        bridge.handle(frame);
+        Ok(())
+    }
+
     fn send(&self, value: &Value) -> Result<(), AppError> {
         let bytes = serde_json::to_vec(value).map_err(|cause| error(cause.to_string()))?;
         if bytes.len() > 1024 * 1024 {
@@ -134,7 +156,12 @@ impl Broker {
             return Err(cause);
         }
         match receiver.recv_timeout(Duration::from_secs(60)) {
-            Ok(Ok(value)) => Ok(value),
+            Ok(Ok(value)) => {
+                if method == "lifecycle.activate" {
+                    self.active.store(true, Ordering::Release);
+                }
+                Ok(value)
+            },
             Ok(Err(cause)) => Err(error(cause)),
             Err(_) => {
                 // The worker may still be validating an unaccepted operation.
@@ -161,6 +188,8 @@ impl Broker {
         if !self.alive.swap(false, Ordering::AcqRel) {
             return;
         }
+        self.active.store(false, Ordering::Release);
+        crate::ai::cancel_caller(&self.text_owner());
         // Reserve reconciliation ownership before any caller can replace this
         // dead broker. A normal replacement must not turn crash recovery into
         // an intentional retirement or leave an accepted job without an event.
@@ -282,6 +311,9 @@ impl Broker {
                     if let Err(cause) = self.run_process(&frame) {
                         self.send(&json!({"jsonrpc":"2.0","id":frame["id"],"error":{"code":-32002,"message":cause.to_string()}}))?;
                     }
+                }
+                "host.text.describe" | "host.text.generate" | "host.text.cancel" => {
+                    self.text_request(frame.clone())?;
                 }
                 "host.process.cancel" => {
                     if let Some(id) = frame["params"]["requestId"].as_str() {
@@ -611,6 +643,9 @@ fn ensure_mode(id: &str, defer_recovery: bool) -> Result<Arc<Broker>, AppError> 
         input: Mutex::new(Some(writer)),
         alive: AtomicBool::new(true),
         retired: AtomicBool::new(false),
+        active: AtomicBool::new(false),
+        incarnation: INCARNATIONS.fetch_add(1, Ordering::Relaxed),
+        text_bridge: OnceLock::new(),
         sequence: AtomicU64::new(1),
         pending: Mutex::new(HashMap::new()),
         jobs: Mutex::new(HashMap::new()),
@@ -665,7 +700,7 @@ fn ensure_mode(id: &str, defer_recovery: bool) -> Result<Arc<Broker>, AppError> 
     let _ownership = super::provenance::ownership_guard()?;
     match broker.call(
         "initialize",
-        json!({"protocolVersion":1,"activeRunIds":super::provenance::active_runs(id),"processService":true,"deferRecovery":defer_recovery}),
+        json!({"protocolVersion":1,"activeRunIds":super::provenance::active_runs(id),"processService":true,"textService":{"version":1},"deferRecovery":defer_recovery}),
     ) {
         Ok(result) if result["protocolVersion"] == 1 && result["ready"] == !defer_recovery => {}
         Ok(_) => {
@@ -677,6 +712,7 @@ fn ensure_mode(id: &str, defer_recovery: bool) -> Result<Arc<Broker>, AppError> 
             return Err(cause);
         }
     }
+    broker.active.store(!defer_recovery, Ordering::Release);
     Ok(broker)
 }
 

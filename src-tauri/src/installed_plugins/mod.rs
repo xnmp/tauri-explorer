@@ -1,5 +1,6 @@
 //! Generic installed-package services; provider implementation stays external.
 mod backend;
+mod text_service;
 mod lifecycle;
 #[cfg(target_os = "linux")]
 mod ownership;

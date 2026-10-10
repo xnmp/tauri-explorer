@@ -64,6 +64,15 @@ test("a plugin opens the image editor directly in its own tool and learns when i
   await dialog.getByRole("button",{name:"Close image editor"}).click();
   await expect(dialog).toBeHidden();
   await expect.poll(events).toContain("first:closed");
+  // An editor opened over another dialog would steal its focus and Escape.
+  await page.evaluate(async()=>{
+    const load=new Function("path","return import(path)");const {dialogStore}=await load('/src/lib/state/dialogs.svelte.ts');
+    const w=window as any;dialogStore.openSettings();
+    await w.__editorCtx.presentation.openImageEditor({path:"/home/user/Pictures/screenshot.png",tool:"fixture.ai-edit"}).catch((error:Error)=>w.__editorEvents.push(`over-settings:${error.message}`));
+    dialogStore.closeSettings();
+  });
+  await expect.poll(events).toContain("over-settings:Close the open dialog first");
+  await expect(dialog).toBeHidden();
   // Disabling the plugin closes the editor it opened and settles its request.
   await page.evaluate(()=>{const w=window as any;w.__editorCtx.presentation.openImageEditor({path:"/home/user/Pictures/screenshot.png",tool:"fixture.ai-edit"}).then(()=>w.__editorEvents.push("third:closed"));});
   await expect(dialog).toBeVisible();

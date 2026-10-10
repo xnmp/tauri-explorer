@@ -61,6 +61,16 @@ function createDialogStore() {
     imageEditorClosed.delete(target);
   }
 
+  function closeImageEditor(target: object | null = imageEditorTarget): void {
+    if (target !== imageEditorTarget) return;
+    imageEditorTarget = null;
+    releaseImageEditor(target);
+  }
+
+  function anyModalOpen(): boolean {
+    return openWithStore.isOpen || modalOwnership.hasOpen || imageEditorTarget !== null || shortcutsOpen || keybindingsOpen || pluginsOpen || activeDialog !== null || quickOpenOpen || commandPaletteOpen || settingsOpen || contentSearchOpen || workspaceOpen || bulkRenameOpen || jobsPanelOpen || themePickerOpen || pickerConfig !== null || userReportOpen || fileRecoveryOpen;
+  }
+
   function closeIfActive(dialogType: DialogType, session = fileOperationSession): void {
     if (activeDialog === dialogType && session === fileOperationSession) {
       activeDialog = null;
@@ -180,6 +190,8 @@ function createDialogStore() {
 
     openImageEditor(entry: FileEntry): void {
       commandPaletteOpen = false;
+      // A replaced plugin opening is closed, so its caller still settles.
+      releaseImageEditor(imageEditorTarget);
       imageEditorTarget = { path: entry.path, name: entry.name };
     },
 
@@ -190,16 +202,16 @@ function createDialogStore() {
     openImageEditorTool(path: string, name: string, tool: string): { closed: Promise<void>; close: () => void } {
       if (imageEditorTarget) throw new Error("Close the open image editor first");
       commandPaletteOpen = false;
+      // It would register above a modal drawn over it and take its focus/Escape.
+      if (anyModalOpen()) throw new Error("Close the open dialog first");
       const target = { path, name, tool };
       const closed = new Promise<void>((resolve) => imageEditorClosed.set(target, resolve));
       imageEditorTarget = target;
-      return { closed, close: () => this.closeImageEditor(target) };
+      return { closed, close: () => closeImageEditor(target) };
     },
 
-    closeImageEditor(target = imageEditorTarget): void {
-      if (target !== imageEditorTarget) return;
-      imageEditorTarget = null;
-      releaseImageEditor(target);
+    closeImageEditor(target: object | null = imageEditorTarget): void {
+      closeImageEditor(target);
     },
 
     // File operation actions
@@ -227,7 +239,7 @@ function createDialogStore() {
 
     /** True when any modal dialog is open (file ops or overlays). */
     get hasModalOpen(): boolean {
-      return openWithStore.isOpen || modalOwnership.hasOpen || imageEditorTarget !== null || shortcutsOpen || keybindingsOpen || pluginsOpen || activeDialog !== null || quickOpenOpen || commandPaletteOpen || settingsOpen || contentSearchOpen || workspaceOpen || bulkRenameOpen || jobsPanelOpen || themePickerOpen || pickerConfig !== null || userReportOpen || fileRecoveryOpen;
+      return anyModalOpen();
     },
 
     // Overlay dialog actions

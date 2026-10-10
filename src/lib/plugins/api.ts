@@ -318,7 +318,8 @@ export function createPluginContext(
         if(disposed)throw new Error("Plugin caller was disposed");
         const refused=imageEditorRequestError(request,editorTools);
         if(refused)throw new Error(refused);
-        const session=dialogStore.openImageEditorTool(request.path,basename(request.path),request.tool);
+        const {path,tool}=request;
+        const session=dialogStore.openImageEditorTool(path,basename(path),tool);
         managedDialogs.add(session.close);
         try{await session.closed;}finally{managedDialogs.delete(session.close);}
       },

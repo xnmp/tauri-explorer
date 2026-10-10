@@ -132,6 +132,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `owned-registry.ts` — framework-free contribution registration identity; old disposers cannot remove replacements even when values are reused.
 - `ordered-registry.ts` — owned contributions sorted by plugin list position, then registration; shared by context-menu items and plugin settings sections.
 - `modal-ownership.svelte.ts` — shared input ownership for mounted and contributed modals; closing releases only the corresponding registration.
+- `run-after-close.ts` — runs a command chosen from a modal launcher (the command palette) only after the launcher has released the top modal surface, so the dialog it opens is not closed as the caller.
 - `open-with.svelte.ts` — captured application-choice sessions, late-result rejection and single launch lifecycle.
 
 - `recycle-bin.ts` — turns the native Recycle Bin IPC result into a user-visible failure toast; called by `FilesSidebarView.svelte`.

@@ -305,6 +305,7 @@ impl Store {
             .map_err(sql)?;
         conn.busy_timeout(crate::native_deadline::remaining(Duration::from_secs(3))?)
             .map_err(sql)?;
+        persist_wal(&conn)?;
         conn.pragma_update(None, "journal_mode", "WAL")
             .map_err(sql)?;
         conn.pragma_update(None, "synchronous", "FULL")
@@ -1018,5 +1019,31 @@ impl Store {
             return Err(reject("acquisition receipt or output identity is invalid"));
         }
         Ok(())
+    }
+}
+
+/// Keeps the WAL and wal-index when the last connection closes. Every connect
+/// stats those sidecars to refuse links; if SQLite deleted them on close, a
+/// concurrent connect on Windows could observe a delete-pending file, which
+/// reads as access denied rather than missing.
+fn persist_wal(conn: &Connection) -> Result<()> {
+    let mut on: std::ffi::c_int = 1;
+    // SAFETY: the handle is live for `conn`'s lifetime, "main" is a valid
+    // NUL-terminated schema name, and PERSIST_WAL takes a pointer to an int
+    // that outlives the call.
+    let code = unsafe {
+        rusqlite::ffi::sqlite3_file_control(
+            conn.handle(),
+            c"main".as_ptr(),
+            rusqlite::ffi::SQLITE_FCNTL_PERSIST_WAL,
+            (&raw mut on).cast(),
+        )
+    };
+    if code == rusqlite::ffi::SQLITE_OK {
+        Ok(())
+    } else {
+        Err(reject(
+            "could not keep the ledger journal across connections",
+        ))
     }
 }

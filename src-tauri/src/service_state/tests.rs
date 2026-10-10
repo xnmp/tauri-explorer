@@ -311,6 +311,18 @@ fn terminal_attention_can_release_execution_only_with_explicit_worker_proof() {
     );
 }
 #[test]
+fn ledger_sidecars_survive_the_last_connection_so_concurrent_opens_never_race_their_deletion() {
+    let (root, s) = store();
+    s.reserve(admission("kept", vec![])).unwrap();
+    let service = root.path().join("service");
+    // Every connection has closed; SQLite would otherwise delete these.
+    assert!(service.join("ledger.sqlite-wal").is_file());
+    assert!(service.join("ledger.sqlite-shm").is_file());
+    drop(s);
+    let s = Store::open(service, Limits::default()).unwrap();
+    assert!(s.get("consumer", "kept").unwrap().is_some());
+}
+#[test]
 fn unknown_outcomes_hold_operation_capacity_until_recovery_is_stopped() {
     let root = tempfile::tempdir().unwrap();
     let s = Store::open(

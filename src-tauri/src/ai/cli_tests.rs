@@ -962,12 +962,15 @@ fn cli_cancellation_reaps_a_cmd_shim_process_tree() {
         ),
     )
     .unwrap();
-    let control = control(Duration::from_secs(40));
+    // Two nested PowerShell cold starts can take tens of seconds on a loaded
+    // runner. Readiness may use most of the deadline; cancellation must still
+    // land before it.
+    let control = control(Duration::from_secs(150));
     let canceller = {
         let control = control.clone();
         let pids = pids.clone();
         std::thread::spawn(move || {
-            let give_up = Instant::now() + Duration::from_secs(30);
+            let give_up = Instant::now() + Duration::from_secs(120);
             while !pids.exists() && Instant::now() < give_up {
                 std::thread::sleep(Duration::from_millis(20));
             }

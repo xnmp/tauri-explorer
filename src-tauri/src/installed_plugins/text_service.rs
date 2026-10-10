@@ -41,6 +41,7 @@ impl TextEngine for NativeText {
 }
 pub(super) struct TextBridge {
     caller: String,
+    package: String,
     active: Arc<dyn Fn() -> bool + Send + Sync>,
     send: Arc<dyn Fn(Value) + Send + Sync>,
     engine: Arc<dyn TextEngine>,
@@ -56,12 +57,14 @@ impl TextBridge {
     pub(super) fn has_pending(&self) -> bool { self.pending.load(Ordering::Acquire) > 0 }
     pub fn new(
         caller: String,
+        package: String,
         active: impl Fn() -> bool + Send + Sync + 'static,
         send: impl Fn(Value) + Send + Sync + 'static,
         engine: Arc<dyn TextEngine>,
     ) -> Self {
         Self {
             caller,
+            package,
             active: Arc::new(active),
             send: Arc::new(send),
             engine,
@@ -89,6 +92,17 @@ impl TextBridge {
             return;
         }
         let method = frame["method"].as_str().unwrap_or("");
+        let admission = (|| {
+            let _gate = super::read_lifecycle()?;
+            super::backend::CallLease::acquire_method(&self.package, method)
+        })();
+        let admission = match admission {
+            Ok(admission) => Arc::new(admission),
+            Err(_) => {
+                self.reply(id, Err(json!({"code":"unavailable","message":"Text caller cannot admit work during a lifecycle change"})));
+                return;
+            }
+        };
         if method == "host.text.cancel" {
             let Some(request_id) = frame["params"]["requestId"]
                 .as_str()
@@ -129,6 +143,14 @@ impl TextBridge {
         let owner = self.clone();
         let permit = Pending(owner.clone());
         let describe = method == "host.text.describe";
+        let active = owner.active.clone();
+        // The native cancellation predicate travels with local blocking
+        // workers too. Their actual return, not a timeout reply, releases this
+        // package admission and permits state snapshot/retirement.
+        let cancelled: OwnerCheck = Arc::new(move || {
+            let _owned = &admission;
+            !active()
+        });
         let id = id.to_owned();
         tauri::async_runtime::spawn(async move {
             let permit = permit;
@@ -137,16 +159,14 @@ impl TextBridge {
             let result = if !(owner.active)() {
                 Err(json!({"code":"cancelled","message":"Text caller is no longer active"}))
             } else if describe {
-                let active = owner.active.clone();
-                owner.engine.describe(Arc::new(move || !active())).await
+                owner.engine.describe(cancelled).await
             } else {
-                let active = owner.active.clone();
                 owner
                     .engine
                     .generate(
                         owner.caller.clone(),
                         frame["params"].clone(),
-                        Arc::new(move || !active()),
+                        cancelled,
                     )
                     .await
             };
@@ -196,6 +216,7 @@ mod tests {
         });
         let bridge = Arc::new(TextBridge::new(
             "trusted-package-1".into(),
+            "fixture.text-preflight".into(),
             || false,
             move |frame| sink.lock().unwrap().push(frame),
             engine,
@@ -215,6 +236,74 @@ mod tests {
             .all(|frame| frame["error"]["data"]["code"] == "unavailable"));
         assert!(calls.lock().unwrap().is_empty());
     }
+    #[test]
+    fn an_active_legacy_caller_cannot_dispatch_text_after_its_package_is_fenced() {
+        let package = "fixture.text-legacy-fenced";
+        let fence = super::super::backend::begin_drain(package).unwrap();
+        let calls = Arc::new(Mutex::new(vec![]));
+        let frames = Arc::new(Mutex::new(vec![]));
+        let sink = frames.clone();
+        let bridge = Arc::new(TextBridge::new(
+            "legacy-incarnation".into(), package.into(), || true,
+            move |frame| sink.lock().unwrap().push(frame),
+            Arc::new(Fixture { calls: calls.clone(), gate: Arc::new(tokio::sync::Semaphore::new(1)) }),
+        ));
+        for method in ["host.text.generate", "host.text.describe", "host.text.cancel"] {
+            bridge.handle(json!({"jsonrpc":"2.0","id":"host:fenced","method":method,"params":{"requestId":"original"}}));
+        }
+        assert!(calls.lock().unwrap().is_empty());
+        assert_eq!(frames.lock().unwrap().len(), 3);
+        assert!(frames.lock().unwrap().iter().all(|frame| frame["error"]["data"]["code"] == "unavailable"));
+        drop(fence);
+        bridge.handle(json!({"jsonrpc":"2.0","id":"host:restored","method":"host.text.cancel","params":{"requestId":"original"}}));
+        assert_eq!(calls.lock().unwrap().as_slice(), &["cancel:legacy-incarnation"]);
+    }
+
+    #[tokio::test]
+    async fn an_early_text_reply_keeps_native_worker_ownership_until_actual_return() {
+        struct EarlyReply {
+            release: Arc<(Mutex<bool>, std::sync::Condvar)>,
+            worker: Arc<Mutex<Option<std::thread::JoinHandle<()>>>>,
+        }
+        impl TextEngine for EarlyReply {
+            fn describe(&self, _: OwnerCheck) -> Work { unreachable!() }
+            fn cancel(&self, _: &str, _: &str) -> bool { false }
+            fn generate(&self, _: String, _: Value, owner: OwnerCheck) -> Work {
+                let release = self.release.clone();
+                let worker = std::thread::spawn(move || {
+                    let (gate, wake) = &*release;
+                    let mut finished = gate.lock().unwrap();
+                    while !*finished { finished = wake.wait(finished).unwrap(); }
+                    // A native snapshot/config worker retains its caller's
+                    // predicate even if its outer future already replied.
+                    assert!(!owner());
+                });
+                *self.worker.lock().unwrap() = Some(worker);
+                Box::pin(async { Err(json!({"code":"timed_out","message":"Fixture returned before local IO"})) })
+            }
+        }
+        let package = "fixture.text-early-native-reply";
+        let release = Arc::new((Mutex::new(false), std::sync::Condvar::new()));
+        let worker = Arc::new(Mutex::new(None));
+        let (send, mut frames) = tokio::sync::mpsc::unbounded_channel();
+        let bridge = Arc::new(TextBridge::new(
+            "owned-incarnation".into(), package.into(), || true,
+            move |frame| { send.send(frame).unwrap(); },
+            Arc::new(EarlyReply { release: release.clone(), worker: worker.clone() }),
+        ));
+        bridge.handle(json!({"jsonrpc":"2.0","id":"host:early","method":"host.text.generate","params":{}}));
+        let reply = tokio::time::timeout(std::time::Duration::from_secs(2), frames.recv()).await.unwrap().unwrap();
+        assert_eq!(reply["error"]["data"]["code"], "timed_out");
+        assert!(super::super::backend::begin_drain(package).is_err());
+        {
+            let (gate, wake) = &*release;
+            *gate.lock().unwrap() = true;
+            wake.notify_all();
+        }
+        worker.lock().unwrap().take().unwrap().join().unwrap();
+        assert!(super::super::backend::begin_drain(package).is_ok());
+    }
+
     #[tokio::test]
     async fn reader_keeps_control_capacity_and_queued_work_cannot_outlive_its_incarnation() {
         let (send, mut frames) = tokio::sync::mpsc::unbounded_channel();
@@ -224,6 +313,7 @@ mod tests {
         let gate = Arc::new(tokio::sync::Semaphore::new(0));
         let bridge = Arc::new(TextBridge::new(
             "trusted-package-1".into(),
+            "fixture.text-incarnation".into(),
             move || liveness.load(Ordering::Acquire),
             move |frame| {
                 send.send(frame).unwrap();

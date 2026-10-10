@@ -885,3 +885,5 @@ TraceExplorer's image UI, provider adapters and SQLite journal are maintained in
 - `src/lib/state/ai-operations.ts` — unresolved operation subscriptions, coalesced refresh and action state.
 - `src/lib/state/native-plugin-jobs.ts` — subscribe-before-snapshot job reconciliation and origin-scoped notifications.
 - `src/test-support/modal/DirtyCloseDialog.svelte` — browser fixture for dirty nested modal ownership.
+
+- `src-tauri/src/installed_plugins/backend_native_tests.rs` — isolated actual Wry/production-broker fixture for held private validation, reverse quarantine, independent controls, rollback, retirement and publisher-aware shutdown.

@@ -27,7 +27,7 @@ now=datetime.datetime.now(datetime.timezone.utc).isoformat()
 def sha(path):return hashlib.sha256(open(path,'rb').read()).hexdigest()
 source=subprocess.check_output(['git','rev-parse','HEAD'],text=True).strip()
 dirty=subprocess.check_output(['git','status','--porcelain=v1'],text=True)
-record={'schemaVersion':1,'sourceCommit':source,'profile':'dirty-working-snapshot-debug-custom-protocol-e2e-hooks','buildCommand':['bun','run','tauri','build','--debug','--no-bundle','--features','e2e-hooks','--','--locked','--offline'],'startedAt':now,'completedAt':now,'binary':binary,'binarySha256':sha(binary),'binaryBytes':os.stat(binary).st_size,'binaryModifiedAt':datetime.datetime.fromtimestamp(os.stat(binary).st_mtime,datetime.timezone.utc).isoformat(),'qualification':'working-snapshot-only','buildTimesKnown':False,'sourcePostBuildStatusSha256':hashlib.sha256(dirty.encode()).hexdigest(),'sourcePostBuildDirty':bool(dirty.strip()),'archives':[{'path':p,'sha256':sha(p)} for p in [trace,provider] if p]}
+record={'schemaVersion':1,'sourceCommit':source,'profile':'dirty-working-snapshot-debug-custom-protocol-e2e-hooks','buildCommand':None,'buildCommandKnown':False,'startedAt':now,'completedAt':now,'binary':binary,'binarySha256':sha(binary),'binaryBytes':os.stat(binary).st_size,'binaryModifiedAt':datetime.datetime.fromtimestamp(os.stat(binary).st_mtime,datetime.timezone.utc).isoformat(),'qualification':'working-snapshot-only','buildTimesKnown':False,'sourcePostBuildStatusSha256':hashlib.sha256(dirty.encode()).hexdigest(),'sourcePostBuildDirty':bool(dirty.strip()),'archives':[{'path':p,'sha256':sha(p)} for p in [trace,provider] if p]}
 open(manifest,'w').write(json.dumps(record,indent=2)+'\n')
 PY
 printf 'Private working-snapshot profile: %s\n' "$profile"

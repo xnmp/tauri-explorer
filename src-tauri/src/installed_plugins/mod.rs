@@ -27,7 +27,9 @@ use std::{
 use tauri::Emitter;
 static LIFECYCLE: RwLock<()> = RwLock::new(());
 pub(crate) fn read_lifecycle() -> Result<RwLockReadGuard<'static, ()>, AppError> {
-    crate::native_deadline::read(&LIFECYCLE,"Plugin lifecycle lock is unavailable")
+    let guard = crate::native_deadline::read(&LIFECYCLE,"Plugin lifecycle lock is unavailable")?;
+    if backend::is_closing() { return Err(AppError::Other("Plugin host is shutting down".into())); }
+    Ok(guard)
 }
 static MUTATIONS: OnceLock<Mutex<()>> = OnceLock::new();
 static PENDING_INSTALL_ERRORS: Mutex<Vec<String>> = Mutex::new(Vec::new());
@@ -49,6 +51,7 @@ pub(super) fn initialize(app: tauri::AppHandle) -> Result<(), AppError> {
         lifecycle::recover(&root()?)?;
         service_bridge::recover_startup()?;
         job_bridge::initialize()?;
+        backend::finish_initialize();
     } else {
         PENDING_INSTALL_ERRORS
             .lock()
@@ -98,21 +101,16 @@ pub(super) fn shutdown() {
     backend::shutdown();
     #[cfg(target_os = "linux")]
     {
-        if let Some(worker) = QUEUE_WORKER
-            .lock()
-            .unwrap_or_else(|cause| cause.into_inner())
-            .take()
-        {
-            let _ = worker.join();
-        }
-        // Stop new mutations and let in-flight commits or rollback finish before
-        // another process can acquire this profile and recover its journal.
-        let _settled = LIFECYCLE.write().unwrap_or_else(|cause| cause.into_inner());
-        PROFILE_OWNER
-            .lock()
-            .unwrap_or_else(|cause| cause.into_inner())
-            .take();
+        let queued = { QUEUE_WORKER.lock().unwrap_or_else(|cause| cause.into_inner()).take() };
+        if let Some(worker) = queued { let _ = worker.join(); }
     }
+    // A private candidate is owned by its mutation, rather than the routable
+    // broker map. Wait for its commit/rollback on every platform.
+    let _settled = MUTATIONS.get_or_init(|| Mutex::new(())).lock().unwrap_or_else(|cause| cause.into_inner());
+    backend::wait_for_admissions();
+    provenance::wait_for_publishers();
+    #[cfg(target_os = "linux")]
+    PROFILE_OWNER.lock().unwrap_or_else(|cause| cause.into_inner()).take();
 }
 fn root() -> Result<PathBuf, AppError> {
     Ok(config::config_dir()?.join("installed-plugins"))
@@ -125,6 +123,11 @@ fn write_lifecycle() -> Result<RwLockWriteGuard<'static, ()>, AppError> {
     if backend::is_closing() {
         return Err(AppError::Other("Plugin host is shutting down".into()));
     }
+    Ok(guard)
+}
+fn mutation_lock() -> Result<std::sync::MutexGuard<'static, ()>, AppError> {
+    let guard = crate::native_deadline::lock(MUTATIONS.get_or_init(|| Mutex::new(())), "Plugin installation lock is unavailable")?;
+    if backend::is_closing() { return Err(AppError::Other("Plugin host is shutting down".into())); }
     Ok(guard)
 }
 fn drain_idle(id: &str) -> Result<backend::DrainGuard, AppError> {
@@ -150,10 +153,8 @@ pub(super) fn notify_pending_errors(window: &tauri::Window) {
 }
 
 fn install_path(path: &Path) -> Result<package::Installed, AppError> {
-    let _guard = MUTATIONS
-        .get_or_init(|| Mutex::new(()))
-        .lock()
-        .map_err(|_| AppError::Other("Plugin installation lock is unavailable".into()))?;
+    let _guard = mutation_lock()?;
+    lifecycle::recover(&root()?)?;
     let candidate = package::prepare(&root()?, path)?;
     let drain = {
         let _lifecycle = write_lifecycle()?;
@@ -162,10 +163,9 @@ fn install_path(path: &Path) -> Result<package::Installed, AppError> {
         backend::begin_drain(&candidate.manifest.id)?
     };
     drain.quiesce()?;
-    let installed = {
-        let _lifecycle = write_lifecycle()?;
-        lifecycle::install(&root()?, path)?
-    };
+    // The package fence, not a global lock, owns snapshot/preflight/rollback.
+    // Reader threads may need lifecycle admission while retirement joins them.
+    let installed = lifecycle::install(&root()?, candidate, &drain)?;
     drop(drain);
     drop(_guard);
     if installed.enabled {
@@ -265,18 +265,16 @@ pub async fn install_plugin(app: tauri::AppHandle, path: String) -> Result<Value
 #[tauri::command]
 pub async fn uninstall_plugin(app: tauri::AppHandle, id: String) -> Result<(), AppError> {
     let result = tauri::async_runtime::spawn_blocking(move || {
-        let _guard = MUTATIONS
-            .get_or_init(|| Mutex::new(()))
-            .lock()
-            .map_err(|_| AppError::Other("Plugin installation lock is unavailable".into()))?;
+        let _guard = mutation_lock()?;
+        lifecycle::recover(&root()?)?;
         let drain = drain_idle(&id)?;
         drain.quiesce()?;
+        let mut remaining = package::list(&root()?)?;
+        remaining.retain(|entry| entry.manifest.id != id);
+        service_graph::validate_enabled(&remaining)?;
+        backend::retire(&id);
         let result = {
-            let _lifecycle = write_lifecycle()?;
-            let mut remaining = package::list(&root()?)?;
-            remaining.retain(|entry| entry.manifest.id != id);
-            service_graph::validate_enabled(&remaining)?;
-            backend::retire(&id);
+            let _lifecycle = LIFECYCLE.write().map_err(|_| AppError::Other("Plugin lifecycle lock is unavailable".into()))?;
             package::uninstall(&root()?, &id)
         };
         drop(drain);
@@ -301,8 +299,8 @@ pub async fn set_plugin_package_enabled(
     enabled: bool,
 ) -> Result<(), AppError> {
     let result = tauri::async_runtime::spawn_blocking(move || {
-        let _mutation = MUTATIONS.get_or_init(|| Mutex::new(())).lock()
-            .map_err(|_| AppError::Other("Plugin installation lock is unavailable".into()))?;
+        let _mutation = mutation_lock()?;
+        lifecycle::recover(&root()?)?;
         {
             let _guard = read_lifecycle()?;
             let entries = package::list(&root()?)?;
@@ -311,9 +309,12 @@ pub async fn set_plugin_package_enabled(
             if current.enabled == enabled { return Ok(()); }
         }
         let drain = if enabled { None } else { Some(drain_idle(&id)?) };
-        if let Some(drain) = &drain { drain.quiesce()?; }
+        if let Some(drain) = &drain {
+            drain.quiesce()?;
+            backend::retire(&id);
+        }
         let result = {
-        let _guard = write_lifecycle()?;
+        let _guard = LIFECYCLE.write().map_err(|_| AppError::Other("Plugin lifecycle lock is unavailable".into()))?;
         let root = root()?;
         let mut entries = package::list(&root)?;
         let current=entries.iter().find(|entry|entry.manifest.id==id).ok_or_else(||AppError::Other("Plugin package is not installed".into()))?;
@@ -326,9 +327,6 @@ pub async fn set_plugin_package_enabled(
             .ok_or_else(|| AppError::Other("Plugin package is not installed".into()))?;
         entry.enabled = enabled;
         service_graph::validate_enabled(&entries)?;
-        if !enabled {
-            backend::retire(&id);
-        }
         package::write_index(&root, &entries)
         };
         drop(drain);

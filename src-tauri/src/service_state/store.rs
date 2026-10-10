@@ -680,6 +680,15 @@ impl Store {
         self.collect_released(consumer, op)?;
         Ok(a)
     }
+    /// Old consumers do not understand retained shared-operation links. Even
+    /// explicitly stopped unknown outcomes must keep that history intact.
+    pub fn legacy_consumer_compatible(&self, package: &str) -> Result<bool> {
+        let retained: bool = self.connect()?.query_row(
+            "SELECT EXISTS(SELECT 1 FROM operations WHERE consumer=?1 AND admission IS NOT NULL AND phase!='released')",
+            [package], |row| row.get(0),
+        ).map_err(sql)?;
+        Ok(!retained)
+    }
     pub fn retained_operations(&self)->Result<Vec<(Admission,u64,bool)>> {
         let conn=self.connect()?;
         let mut query=conn.prepare("SELECT consumer,operation,created_at_ms,exec_released FROM operations WHERE admission IS NOT NULL AND phase!='released' ORDER BY created_at_ms DESC LIMIT 128").map_err(sql)?;

@@ -257,16 +257,7 @@ pub(super) fn list(root: &Path) -> Result<Vec<Installed>, AppError> {
         Ok(bytes) if bytes.len() <= 1024 * 1024 => {
             let entries: Vec<Installed> = serde_json::from_slice(&bytes)
                 .map_err(|error| invalid(format!("Invalid installed plugin index: {error}")))?;
-            if entries.len() > 64
-                || entries.iter().any(|entry| {
-                    !identifier(&entry.manifest.id)
-                        || entry.digest.len() != 64
-                        || !entry.digest.bytes().all(|byte| byte.is_ascii_hexdigit())
-                        || entry.manifest.files.keys().any(|name| !portable_path(name))
-                })
-            {
-                return Err(invalid("Invalid installed plugin index"));
-            }
+            validate_index(&entries)?;
             Ok(entries)
         }
         Ok(_) => Err(invalid("Installed plugin index exceeds size limit")),
@@ -275,9 +266,24 @@ pub(super) fn list(root: &Path) -> Result<Vec<Installed>, AppError> {
     }
 }
 
+pub(super) fn validate_index(entries: &[Installed]) -> Result<(), AppError> {
+    if entries.len() > 64
+        || entries.iter().map(|entry| &entry.manifest.id).collect::<HashSet<_>>().len() != entries.len()
+        || entries.iter().any(|entry| {
+            !identifier(&entry.manifest.id) || entry.digest.len() != 64
+                || !entry.digest.bytes().all(|byte| byte.is_ascii_hexdigit())
+                || entry.manifest.files.keys().any(|name| !portable_path(name))
+        }) {
+        return Err(invalid("Invalid installed plugin index"));
+    }
+    Ok(())
+}
 pub(super) fn write_index(root: &Path, index: &[Installed]) -> Result<(), AppError> {
+    validate_index(index)?;
+    let bytes = serde_json::to_vec(index).map_err(|error| invalid(error.to_string()))?;
+    if bytes.len() > 1024 * 1024 { return Err(invalid("Installed plugin index exceeds size limit")); }
     let mut stage = tempfile::NamedTempFile::new_in(root)?;
-    serde_json::to_writer(&mut stage, index).map_err(|error| invalid(error.to_string()))?;
+    stage.write_all(&bytes)?;
     stage.flush()?;
     stage.as_file().sync_all()?;
     stage
@@ -431,8 +437,8 @@ pub(super) fn prepare(root: &Path, archive: &Path) -> Result<Installed, AppError
     Ok(installed)
 }
 
-pub(super) fn publish(root: &Path, mut installed: Installed) -> Result<Installed, AppError> {
-    let mut index = list(root)?;
+pub(super) fn planned_index(previous: &[Installed], mut installed: Installed) -> Result<(Vec<Installed>, Installed), AppError> {
+    let mut index = previous.to_vec();
     if let Some(previous) = index
         .iter()
         .find(|previous| previous.manifest.id == installed.manifest.id)
@@ -454,6 +460,17 @@ pub(super) fn publish(root: &Path, mut installed: Installed) -> Result<Installed
     }
     index.retain(|previous| previous.manifest.id != installed.manifest.id);
     index.push(installed.clone());
+    validate_index(&index)?;
+    super::service_graph::validate_enabled(&index)?;
+    if serde_json::to_vec(&index).map_err(|error| invalid(error.to_string()))?.len() > 1024 * 1024 {
+        return Err(invalid("Installed plugin index exceeds size limit"));
+    }
+    Ok((index, installed))
+}
+
+#[cfg(test)]
+pub(super) fn publish(root: &Path, installed: Installed) -> Result<Installed, AppError> {
+    let (index, installed) = planned_index(&list(root)?, installed)?;
     write_index(root, &index)?;
     Ok(installed)
 }

@@ -148,6 +148,11 @@ fn explicit_stop_retains_original_unknown_and_refuses_automatic_or_duplicate_dis
         assert!(matches!(call(&store,method,request,|_,_|panic!("stopped operation reached provider")),Err(AppError::Service{ref code,..}) if code=="recovery_stopped"));
     }
     assert_eq!(store.provider_receipt("consumer",op).unwrap(),Some(unknown));assert!(store.claims().unwrap().is_empty());
+    // Execution release allows compatible package changes, not an old
+    // consumer that would relabel the original unknown as interrupted.
+    assert!(super::service_host::require_legacy_consumer_compatible(&store, "consumer").is_err());
+    assert!(super::service_host::require_legacy_consumer_compatible(&store, "provider").is_ok());
+    assert!(super::service_host::require_legacy_consumer_compatible(&store, "unrelated").is_ok());
 }
 #[test]
 fn explicit_discard_is_authoritative_for_a_previously_queued_recovery_snapshot() {

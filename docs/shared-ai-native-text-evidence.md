@@ -1,4 +1,4 @@
-# Native text service: implementation and remaining CLI isolation boundary
+# Native text service: implementation and CLI isolation boundary
 
 Implemented against host `origin/dev` at `3ebfba5792379026f749afed78cb2c65736534a7`.
 
@@ -8,22 +8,27 @@ Configuration serialization uses an OS file lock shared by separate host process
 
 First-run text migration imports an explicit legacy `titleCodexPath`, falling back to `codexPath`, only when `ai-connections.json` is absent. Paths retain the legacy resolver's trimming semantics. It imports no image key or image-provider selection. A private pending/complete marker converges from the committed destination. Summary migration copies `titleGenerator: disabled` to an absent `plugin.trace.json.summarizePrompts`; both native Trace reads and writes use the same cross-process coordination. Legacy symlink targets remain supported, while FIFO/device/directory targets are rejected without blocking. Explicit destination preferences win.
 
-The two HTTP adapters are enabled. Their API root includes any version/prefix; they append `chat/completions` or `messages` exactly once. Redirects are disabled. They return only complete final text, reject tool calls, refusals, truncation, malformed or oversized bodies, and never echo provider diagnostics or credentials. HTTP cancellation drops the native request future. Blocking local work and candidate CLI children retain their worker permits until their owned work ends even if the calling async task is dropped.
+The two HTTP adapters are enabled. Their API root includes any version/prefix; they append `chat/completions` or `messages` exactly once. Redirects are disabled. They return only complete final text, reject tool calls, refusals, truncation, malformed or oversized bodies, and never echo provider diagnostics or credentials. HTTP cancellation drops the native request future. Blocking local work and CLI children retain their worker permits until their owned work ends even if the calling async task is dropped.
 
-## CLI adapters deliberately unavailable
+## CLI adapters enabled behind isolation checks
 
-The configured Codex default and saved CLI profiles are preserved. Both availability and generation return an actionable `unavailable` error for CLI profiles. No CLI executable is started on that production path. Candidate CLI argument construction, bounded stdin/output, final-text parsing and process-tree deadline behavior are fixture-tested; that is not evidence that production CLI generation is ready.
+Codex CLI (the default) and Claude Code CLI profiles are enabled. Each runs with:
 
-On 2026-10-10, installed help was inspected for Codex 0.162.0 and Claude Code 2.1.296. Codex supports `--ignore-user-config`, `--ignore-rules` and `--ephemeral`; [its documented user-config flag retains saved authentication](https://learn.chatgpt.com/docs/developer-commands?surface=cli). The proposed default `gpt-6-luna` is [documented for Codex](https://learn.chatgpt.com/docs/models).
+- every isolation flag its installed help advertises;
+- an empty temporary working directory;
+- a cleared, allowlisted environment that keeps the saved login and withholds API keys;
+- the prompt on stdin;
+- owned process-tree supervision.
 
-[Claude's documented safe mode](https://code.claude.com/docs/en/cli-reference) preserves saved authentication but also preserves managed policy hooks. Its `--bare` mode disables saved-login authentication and is unsuitable. [Managed policy can come from server, MDM, registry or files](https://code.claude.com/docs/en/managed-settings), so checking only known files cannot establish isolation. `--restricted`, empty `--tools`, empty `--setting-sources`, and `--strict-mcp-config` do not establish that managed hooks cannot execute.
+A profile is refused as `unavailable`, before any process starts, when either of the following holds:
 
-Pinned [Codex 0.162.0 managed-feature source](https://github.com/openai/codex/blob/rust-v0.162.0/codex-rs/core/src/config/managed_features.rs) applies required feature values during `normalize_candidate` before validating the normalized result. An administrator can consequently force hooks/tool features enabled despite CLI opt-outs. The separately exported explicit-feature-conflict validator is not the validation performed by the ordinary ConfigBuilder load path. [The configuration loader](https://github.com/openai/codex/blob/rust-v0.162.0/codex-rs/core/src/config/mod.rs) creates `ManagedFeatures` from the configured features and requirements; [exec](https://github.com/openai/codex/blob/rust-v0.162.0/codex-rs/exec/src/lib.rs) fetches the cloud configuration before creating that effective configuration.
+- **Managed or organisation policy is detected.** This means system, MDM or registry policy, or the local cache of server- or cloud-delivered policy.
+- **The installed CLI's `--help` lacks a required flag.** Only `--help` runs for availability.
 
-A future supported CLI adapter needs an owned same-instance app-server/policy inspection and thread/turn admission boundary that proves the effective configuration disables hooks/tools before execution. A separate inspection followed by a new `exec` process leaves a policy-change race. No authenticated CLI startup or paid request was used for this investigation. This part of Stage B remains unresolved; HTTP completion must not be described as completion of all four adapters.
+Flags, evidence (Codex 0.162.0, Claude Code 2.1.296, 2026-10-10) and residual limits are in [CLI text isolation](shared-ai-cli-text-isolation.md). The earlier finding still holds: managed requirements can force features back on, and Claude safe mode keeps policy hooks. That is why detected policy is refused and not run. Policy fetched during the run itself, without a local cache, remains a documented limit. The backstops reject any tool activity in the output.
 
 ## Verification
 
-Native fixtures cover HTTP auth and protocol headers, nested roots, redirect refusal, provider failures and safe messages, final text extraction, malformed/truncated/oversized responses, cancellation/dead owners, pre-admission cancellation, queue deadlines and caller quotas, cross-process CAS, credential rotation/clear/deletion, post-replacement failure, worker ownership after task abortion, first-run migrations, symlink preservation, and fail-closed CLI availability with zero executable invocations.
+Native fixtures cover HTTP auth and protocol headers, nested roots, redirect refusal, provider failures and safe messages, final text extraction, malformed/truncated/oversized responses, cancellation/dead owners, pre-admission cancellation, queue deadlines and caller quotas, cross-process CAS, credential rotation/clear/deletion, post-replacement failure, worker ownership after task abortion, first-run migrations, symlink preservation, and CLI isolation: exact argv, prompt never in argv, allowlisted environment, empty working directory, help-probe refusal and caching, managed-policy refusal before start, typed failures, and deadline/cancel reaping of the owned tree (`ai/cli_tests.rs`).
 
 The final combined native regression run passed **66 tests** (37 AI service fixtures plus broker admission, process ownership and config/watch regressions). Its log is `/tmp/te-ai-native-regression.log`; fixture runs contain no paid provider requests. Full browser/plugin acceptance is owned by the coordinator. Native OS credential stores and Windows/macOS process/replacement behavior still need qualification on those operating systems.

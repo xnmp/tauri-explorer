@@ -1,6 +1,6 @@
 # Shared AI native acceptance (working snapshot)
 
-This record covers `feat/shared-ai-services` (host `67c8cbfb` plus the runner and spec changes committed with this record; Trace `4a284f5`). It is not a clean release or package qualification. The clean qualification wrapper, `scripts/build-native-qualification.ts`, requires a clean source worktree.
+This record covers `feat/shared-ai-services` (host `890aaf64`, Trace `52af23a`). It is not a clean release or package qualification. The clean qualification wrapper, `scripts/build-native-qualification.ts`, requires a clean source worktree.
 
 ## Fixtures and isolation
 
@@ -48,8 +48,8 @@ Tested artifacts (SHA-256):
 
 | Artifact | SHA-256 |
 |---|---|
-| Host binary | `6abd232f37a2c3cac1d71e94b0c9be68a6f2ec4087d1008412e454f4f3d36135` |
-| `TraceExplorer-0.2.3-x86_64-unknown-linux-gnu.teplugin` | `3f6d22bef194395e2577222b294a583d9a3634121c74352bb162ca73f85e45b8` |
+| Host binary | `6890d4f2085dd5481438c4f5898f638ce9e030dac3e1a4df6c7d2c0074f24ce8` |
+| `TraceExplorer-0.2.3-x86_64-unknown-linux-gnu.teplugin` | `6e747344696a2e3bde59eae82c419d38f6d843161b4086ac449fade779452c1d` |
 | `ImageGeneration-0.1.0-x86_64-unknown-linux-gnu.teplugin` | `123c7ac7a122db0ceacf42c032fb6b3417f5eaf30dc02a4d419c3d36c507f307` |
 
 The run manifest records the same hashes and is labelled `dirty-working-snapshot`. Its `buildCommandKnown: false` flag means the recorded command is the documented one, not one that was observed.
@@ -58,14 +58,16 @@ The run manifest records the same hashes and is labelled `dirty-working-snapshot
 
 | Profile | Result | Log |
 |---|---|---|
-| Absent provider | 2 passed | `/var/tmp/te-wt/logs/final3-absent.log` |
-| Present provider, no generation | 3 passed | `final3-present-nogen.log` |
-| Present provider, generation, run 1 | 9 passed | `final3-present-gen-1.log` |
-| Present provider, generation, runs 3 and 4 | 9 passed each | `final3-present-gen-{3,4}.log` |
+| Absent provider | 2 passed | `/var/tmp/te-wt/logs/final4-absent.log` |
+| Present provider, no generation | 3 passed | `final4-present-nogen.log` |
+| Present provider, generation, run 1 | 9 passed | `final4-present-gen-1.log` |
+| Present provider, generation, run 2 | 9 passed | `final4-present-gen-2.log` |
 
-Generation run 2 (`final3-present-gen-2.log`) failed two cases: a stale element in `clearProgress`, and a later case that depended on it. The helper held a handle to the progress region while the panel re-rendered. It now re-queries the Clear button on every attempt, and runs 3 and 4 pass.
+The final4 runs are on the final tips (host `890aaf64`, Trace `52af23a`). Each run refused 3 CLI invocations, all `codex exec --help` probes. The paragraphs below describe earlier runs.
 
-The first attempt at this record (`final2-present-gen-*.log`, before the CLI shims) failed one case because the default Codex profile titled prompts through a real saved login. That run made a few real title requests, which is why the runner now isolates CLI homes and executables.
+In the earlier final3 runs, generation run 2 (`final3-present-gen-2.log`) failed two cases: a stale element in `clearProgress`, and a later case that depended on it. The helper held a handle to the progress region while the panel re-rendered. It now re-queries the Clear button on every attempt, and final3 runs 3 and 4 passed.
+
+The first attempt at this record (the earlier `final2-present-gen-*.log` runs, before the CLI shims) failed one case because the default Codex profile titled prompts through a real saved login. That run made a few real title requests, which is why the runner now isolates CLI homes and executables.
 
 Earlier cases (cold start, absent-provider refusal, settings navigation, publish plus provider restart) are unchanged and still pass.
 

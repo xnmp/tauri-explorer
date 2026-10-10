@@ -887,3 +887,7 @@ TraceExplorer's image UI, provider adapters and SQLite journal are maintained in
 - `src/test-support/modal/DirtyCloseDialog.svelte` — browser fixture for dirty nested modal ownership.
 
 - `src-tauri/src/installed_plugins/backend_native_tests.rs` — isolated actual Wry/production-broker fixture for held private validation, reverse quarantine, independent controls, rollback, retirement and publisher-aware shutdown.
+- `src-tauri/src/installed_plugins/backend_native_recovery_tests.rs` — actual Wry fixture seeding startup claims: readiness held until recovery, shutdown waits for in-flight recovery IO, no paid start.
+- `src-tauri/src/installed_plugins/mutation_matrix_tests.rs` — role × action × phase package mutation matrix and cold start with queued upgrades behind durable claims.
+- `src-tauri/src/installed_plugins/mutation_native_tests.rs` — actual Wry fixture: disable retires the backend only after claims drain.
+- `src-tauri/src/installed_plugins/service_native_tests.rs` — actual Wry fixture: per-consumer status timeouts, transport-loss recovery, reverse RPC correlation and routing without Trace.

@@ -16,6 +16,21 @@ const MAX_ACTIVE: usize = 128;
 const MAX_TERMINAL: usize = 256;
 const ROWS: &str = "SELECT CASE WHEN length(CAST(key AS BLOB))<=48 THEN key ELSE NULL END,CASE WHEN length(CAST(owner AS BLOB))<=256 THEN owner ELSE NULL END,CASE WHEN length(CAST(operation AS BLOB))<=128 THEN operation ELSE NULL END,job_id,revision,CASE WHEN length(CAST(record AS BLOB))<=16384 THEN record ELSE NULL END FROM presentation_jobs";
 
+/// Presentation the host already settled by explicit user action: a stopped
+/// recovery (no live worker was proven) or a discarded provider result. The
+/// operation ledger keeps its execution evidence; this row is presentation
+/// only, so it is dismissable and never holds active capacity.
+fn parked(record: &JobRecord) -> bool {
+    record.state == JobState::NeedsAttention
+        && matches!(
+            record.phase.as_deref(),
+            Some("stopped" | "provider_result_discarded")
+        )
+}
+/// Retained presentation: terminal or parked. Only the rest is active work.
+fn retained(record: &JobRecord) -> bool {
+    record.state.terminal() || parked(record)
+}
 fn opaque(value: &str) -> bool {
     !value.is_empty()
         && value.len() <= 128
@@ -159,8 +174,10 @@ fn all(conn: &Connection) -> Result<Vec<JobRecord>> {
         }
         records.push(record);
     }
-    if records.iter().filter(|r| !r.state.terminal()).count() > MAX_ACTIVE
-        || records.iter().filter(|r| r.state.terminal()).count() > MAX_TERMINAL
+    // Parking moves a row from active to retained without changing the
+    // total, so retained presentation is bounded by the total until pruned.
+    if records.iter().filter(|r| !retained(r)).count() > MAX_ACTIVE
+        || records.len() > MAX_ACTIVE + MAX_TERMINAL
     {
         return Err(reject("durable jobs exceed retained capacity"));
     }
@@ -227,10 +244,10 @@ fn prune(conn: &Connection) -> Result<()> {
     if records.len() > MAX_ACTIVE + MAX_TERMINAL {
         return Err(reject("durable jobs exceed retained capacity"));
     }
-    let terminal: Vec<_> = records.iter().filter(|r| r.state.terminal()).collect();
-    for record in terminal
+    let settled: Vec<_> = records.iter().filter(|r| retained(r)).collect();
+    for record in settled
         .iter()
-        .take(terminal.len().saturating_sub(MAX_TERMINAL))
+        .take(settled.len().saturating_sub(MAX_TERMINAL))
     {
         conn.execute(
             "DELETE FROM presentation_jobs WHERE key=?1",
@@ -309,6 +326,7 @@ impl Store {
         record.revision = next_revision(conn)?;
         valid(&record, false)?;
         persist(conn, &record)?;
+        prune(conn)?;
         Ok(Some(record))
     }
     pub(super) fn validate_jobs(&self) -> Result<()> {
@@ -327,7 +345,9 @@ impl Store {
                 if !immutable(old, &record) { return Err(reject("job identity already belongs to another registration")); }
                 return Ok(old.clone());
             }
-            if jobs.iter().filter(|r| !r.state.terminal()).count() >= MAX_ACTIVE { return Err(reject("resolve active jobs before starting more")); }
+            if jobs.iter().filter(|r| !retained(r)).count() >= MAX_ACTIVE { return Err(reject("resolve active jobs before starting more")); }
+            // Parked rows may have filled retained capacity; keep room for one more.
+            prune(conn)?;
             record.revision = next_revision(conn)?;
             conn.execute("INSERT INTO presentation_jobs(key,owner,operation,job_id,revision,record)VALUES(?1,?2,?3,?4,?5,?6)",params![record.job_key,record.owner.package_id,record.operation_id,record.job_id as i64,record.revision as i64,serialized(&record)?]).map_err(sql)?;
             Ok(record)
@@ -489,7 +509,7 @@ impl Store {
             let Some(record) = stored(conn, job_key)? else {
                 return Ok(None);
             };
-            if !record.state.terminal() {
+            if !retained(&record) {
                 return Err(reject("a recoverable job cannot be dismissed"));
             }
             let revision = next_revision(conn)?;
@@ -947,5 +967,80 @@ mod tests {
         let snapshot = store.snapshot_jobs().unwrap();
         assert_eq!(snapshot.watermark, terminal.revision + 1);
         assert!(snapshot.jobs.is_empty());
+    }
+    fn park(store: &Store, job: &JobRecord, phase: &str) -> JobRecord {
+        store
+            .update_job(
+                &job.owner,
+                &job.job_key,
+                JobState::NeedsAttention,
+                Some(phase.into()),
+                None,
+                None,
+                Some("Automatic recovery stopped; unknown execution evidence is retained".into()),
+            )
+            .unwrap()
+    }
+    #[test]
+    fn stopped_and_discarded_jobs_are_dismissable_presentation_only() {
+        let (_root, store) = fixture();
+        let attention = store.register_job(record(1)).unwrap();
+        let attention = park(&store, &attention, "needs_attention");
+        // Unresolved recovery stays until an explicit stop or discard.
+        assert!(store.dismiss_job(&attention.job_key).is_err());
+        for (n, phase) in [(2, "stopped"), (3, "provider_result_discarded")] {
+            let parked = park(&store, &store.register_job(record(n)).unwrap(), phase);
+            assert!(!parked.state.terminal());
+            assert_eq!(
+                store.dismiss_job(&parked.job_key).unwrap(),
+                Some(store.snapshot_jobs().unwrap().watermark)
+            );
+            assert!(store.job(&parked.job_key).unwrap().is_none());
+            assert!(store
+                .job_for_operation("consumer", &parked.operation_id)
+                .unwrap()
+                .is_none());
+        }
+        assert!(store.job(&attention.job_key).unwrap().is_some());
+    }
+    #[test]
+    fn parked_jobs_never_exhaust_active_capacity_or_fail_the_journal_closed() {
+        let (root, store) = fixture();
+        // Far more explicit stops than active capacity, none ever dismissed.
+        for n in 1..=300 {
+            let job = store.register_job(record(n)).unwrap();
+            park(
+                &store,
+                &job,
+                if n % 2 == 0 {
+                    "stopped"
+                } else {
+                    "provider_result_discarded"
+                },
+            );
+        }
+        for n in 301..=428 {
+            store.register_job(record(n)).unwrap();
+        }
+        // Only genuinely active jobs refuse new work.
+        assert!(store.register_job(record(429)).is_err());
+        drop(store);
+        let store = Store::open(root.path().join("services"), Limits::default()).unwrap();
+        let snapshot = store.snapshot_jobs().unwrap();
+        assert_eq!(
+            snapshot
+                .jobs
+                .iter()
+                .filter(|r| r.state == JobState::Accepting)
+                .count(),
+            128
+        );
+        // Old parked presentation is pruned like terminal presentation.
+        assert!(snapshot.jobs.len() <= 384);
+        assert!(store.job(&record(1).job_key).unwrap().is_none());
+        assert!(store.job(&record(300).job_key).unwrap().is_some());
+        let newest = store.job(&record(428).job_key).unwrap().unwrap();
+        change(&store, &newest, JobState::Cancelled).unwrap();
+        store.register_job(record(429)).unwrap();
     }
 }

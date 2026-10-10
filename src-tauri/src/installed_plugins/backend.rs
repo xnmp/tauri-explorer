@@ -173,6 +173,10 @@ pub(super) fn initialize(app: AppHandle) {
 pub(super) fn finish_initialize() {
     OWNERSHIP_READY.store(true, Ordering::Release);
 }
+/// Profile ownership and startup recovery completed in this process.
+pub(super) fn ownership_ready() -> bool {
+    OWNERSHIP_READY.load(Ordering::Acquire)
+}
 fn error(message: impl Into<String>) -> AppError {
     AppError::Other(message.into())
 }
@@ -684,6 +688,13 @@ impl Broker {
         params["controlToken"] = json!(self.control_token);
         self.call(method, params)
     }
+    /// A `jobs.start` for this job is in flight, or it was accepted here.
+    pub(super) fn owns_job(&self, id: u64) -> bool {
+        self.jobs
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .contains_key(&id)
+    }
     pub(super) fn finish_job(&self, id: u64) {
         self.jobs
             .lock()
@@ -816,6 +827,16 @@ impl Broker {
     }
 
     pub(super) fn call(&self, method: &str, params: Value) -> Result<Value, AppError> {
+        self.call_reporting(method, params, &mut false)
+    }
+    /// `sent` becomes true once the request is queued to the writer. A failure
+    /// while it is false is definite: the backend never received the request.
+    pub(super) fn call_reporting(
+        &self,
+        method: &str,
+        params: Value,
+        sent: &mut bool,
+    ) -> Result<Value, AppError> {
         let rpc_wait = crate::native_deadline::remaining(Duration::from_secs(
             if self.installed.manifest.sdk_version >= 3 {
                 15
@@ -865,6 +886,7 @@ impl Broker {
                 .remove(&id);
             return Err(cause);
         }
+        *sent = true;
         match receiver
             .recv_timeout(crate::native_deadline::remaining(rpc_wait).unwrap_or(Duration::ZERO))
         {
@@ -1070,7 +1092,14 @@ impl Broker {
                         return Ok(());
                     }
                     if self.installed.manifest.sdk_version >= 3 && !self.can_recover() {
-                        return Err(error("Inactive plugin cannot publish service events"));
+                        // A lifecycle phase race (a refused drain, activation
+                        // pending) is not transport failure. Inactive plugins
+                        // cannot publish, so the notification is dropped.
+                        log::debug!(
+                            "Dropped an event from inactive plugin {} ({name})",
+                            self.package_id
+                        );
+                        return Ok(());
                     }
                     if self.installed.manifest.sdk_version >= 3
                         && (name.ends_with("-complete")
@@ -1505,7 +1534,15 @@ pub(super) fn ensure(id: &str) -> Result<Arc<Broker>, AppError> {
     let _startup_admission = {
         let _gate = super::read_lifecycle()?;
         if !OWNERSHIP_READY.load(Ordering::Acquire) {
-            return Err(error("Plugin ownership recovery is incomplete"));
+            let installed = package::list(&root()?)?
+                .into_iter()
+                .find(|entry| entry.manifest.id == id && entry.enabled)
+                .ok_or_else(|| error("Plugin package is disabled or removed"))?;
+            if !super::degraded_backend_allowed(&installed)? {
+                return Err(error(
+                    "Plugin AI services are unavailable in this process; this plugin waits for their recovery",
+                ));
+            }
         }
         CallLease::acquire_direction(id, 3)?
     };
@@ -1691,6 +1728,10 @@ pub(super) struct DrainGuard {
     id: String,
     broker: Option<Arc<Broker>>,
     recovery_required: AtomicBool,
+    /// Set once `lifecycle.quiesce` may have left the plugin not ready: it was
+    /// accepted, or its reply was lost. A reply that refused, or kept the
+    /// plugin ready, leaves it serving exactly as before the drain.
+    quiesced: AtomicBool,
 }
 pub(super) fn begin_drain(id: &str) -> Result<DrainGuard, AppError> {
     // The caller holds the short lifecycle write gate. Admission and fencing
@@ -1733,6 +1774,7 @@ pub(super) fn begin_drain(id: &str) -> Result<DrainGuard, AppError> {
         id: id.to_owned(),
         broker,
         recovery_required: AtomicBool::new(false),
+        quiesced: AtomicBool::new(false),
     })
 }
 impl DrainGuard {
@@ -1744,7 +1786,11 @@ impl DrainGuard {
             if broker.installed.manifest.sdk_version >= 3
                 && broker.phase.load(Ordering::Acquire) == DRAINING_PHASE
             {
-                let result = broker.call("lifecycle.quiesce", json!({}))?;
+                let result = broker.call("lifecycle.quiesce", json!({}));
+                if !refused_ready(&result) {
+                    self.quiesced.store(true, Ordering::Release);
+                }
+                let result = result?;
                 if result["ready"] != false
                     || result["idle"] != true
                     || result["checkpoint"] != true
@@ -1771,11 +1817,18 @@ impl Drop for DrainGuard {
         }
         if let Some(broker) = &self.broker {
             if broker.alive.load(Ordering::Acquire) && !broker.retired.load(Ordering::Acquire) {
-                // A refused mutation becomes activatable on its next ordinary
-                // admission. Drop never waits on RPC or invokes callbacks.
+                // A plugin that never quiesced is still ready: it resumes
+                // serving events and reverse calls. One that may have
+                // quiesced re-activates on its next ordinary admission.
+                // Drop never waits on RPC or invokes callbacks.
+                let restored = if self.quiesced.load(Ordering::Acquire) {
+                    PREFLIGHT_PHASE
+                } else {
+                    ACTIVE_PHASE
+                };
                 let _ = broker.phase.compare_exchange(
                     DRAINING_PHASE,
-                    PREFLIGHT_PHASE,
+                    restored,
                     Ordering::AcqRel,
                     Ordering::Acquire,
                 );
@@ -1787,6 +1840,22 @@ impl Drop for DrainGuard {
             .unwrap_or_else(|cause| cause.into_inner())
             .fenced
             .remove(&self.id);
+    }
+}
+/// The plugin answered quiesce and stayed ready: a definite service refusal,
+/// or a reply that still reports readiness. Lost or ambiguous replies are not.
+fn refused_ready(result: &Result<Value, AppError>) -> bool {
+    match result {
+        Ok(value) => value["ready"] == true,
+        Err(AppError::Service { code, .. }) => !matches!(
+            code.as_str(),
+            "timed_out"
+                | "worker_failed"
+                | "mutation_uncertain"
+                | "transport_unavailable"
+                | "protocol_error"
+        ),
+        Err(_) => false,
     }
 }
 pub(super) fn release_recovered_fence(id: &str) -> Result<(), AppError> {
@@ -1818,6 +1887,19 @@ pub(super) fn release_recovered_fence(id: &str) -> Result<(), AppError> {
     admissions.recovery_fences.remove(id);
     admissions.fenced.remove(id);
     Ok(())
+}
+/// Drops a settled job from its live broker's in-memory ownership, so that
+/// presentation the host has settled cannot keep the package busy.
+pub(super) fn release_job(owner: &crate::service_state::model::PackageGeneration, job_id: u64) {
+    let broker = brokers()
+        .lock()
+        .unwrap_or_else(|cause| cause.into_inner())
+        .get(&owner.package_id)
+        .filter(|broker| broker.installed.digest == owner.digest)
+        .cloned();
+    if let Some(broker) = broker {
+        broker.finish_job(job_id);
+    }
 }
 pub(super) fn active_instance(id: &str, digest: &str) -> Option<Arc<Broker>> {
     crate::native_deadline::lock(brokers(), "Plugin runtime lock is unavailable")
@@ -1876,7 +1958,12 @@ fn ensure_mode(id: &str) -> Result<Arc<Broker>, AppError> {
         .ok_or_else(|| error("Plugin package is disabled or removed"))?;
     super::service_graph::validate_enabled(&package::list(&root()?)?)?;
     if installed.manifest.sdk_version < 3 {
-        super::service_host::require_legacy_consumer_compatible(super::service_host::store()?, id)?;
+        // Without an opened ledger (another process owns the profile, or it
+        // is unreadable) no retained history is checkable; SDK 3 to legacy
+        // downgrades are refused while history is retained, so none exists.
+        if let Ok(store) = super::service_host::store() {
+            super::service_host::require_legacy_consumer_compatible(store, id)?;
+        }
     }
     let data = config::config_dir()?.join("plugin-data").join(id);
     fs::create_dir_all(&data)?;
@@ -2231,20 +2318,33 @@ pub(super) fn call_with_origin(
     } else {
         None
     };
-    let result = broker.call(method, params);
+    let mut sent = false;
+    let result = broker.call_reporting(method, params, &mut sent);
     if let Some(record) = durable_job.as_ref() {
-        super::job_bridge::schedule_status(broker.clone(), record.clone());
+        if result.is_err() && !sent {
+            // Refused before reaching the backend: it cannot have accepted.
+            let _ = super::job_bridge::unsent(record, &broker);
+        } else {
+            super::job_bridge::schedule_status(broker.clone(), record.clone());
+        }
     }
     if result.is_err() {
         if let Some((job_id, operation_id)) = job {
-            if let Ok(status) = ensure(id).and_then(|current| {
-                current.call("jobs.status", json!({"operationId":operation_id}))
-            }) {
+            if let Some((current, status)) = sent
+                .then(|| {
+                    ensure(id).and_then(|current| {
+                        let status =
+                            current.call("jobs.status", json!({"operationId":operation_id}))?;
+                        Ok((current, status))
+                    })
+                })
+                .and_then(Result::ok)
+            {
                 if status["jobId"].as_u64() == Some(job_id) {
                     return Ok(json!(job_id));
                 }
-                if let (Some(record), Err(cause)) = (durable_job.as_ref(), &result) {
-                    let _ = super::job_bridge::rejected(record, cause, &broker, &status);
+                if let Some(record) = durable_job.as_ref() {
+                    let _ = super::job_bridge::rejected(record, &current, &status);
                 }
             }
             broker
@@ -2337,4 +2437,4 @@ pub(super) fn shutdown() {
 mod native_recovery_tests;
 #[cfg(all(test, target_os = "linux"))]
 #[path = "backend_native_tests.rs"]
-mod native_tests;
+pub(super) mod native_tests;

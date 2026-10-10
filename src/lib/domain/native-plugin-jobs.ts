@@ -15,6 +15,14 @@ const key = (v: unknown): v is string => typeof v === "string" && /^[a-f0-9]{48}
 const bytes = (v: unknown, limit: number): v is string => typeof v === "string" && v.length <= limit && new TextEncoder().encode(v).length <= limit && !v.includes("\0");
 const windowLabel = (v: unknown): v is string => typeof v === "string" && /^[!-~]{1,128}$/.test(v);
 export const nativeJobTerminal = (state: NativeJobState): boolean => ["completed", "error", "cancelled", "discarded"].includes(state);
+/** Presentation the host settled by explicit Stop or provider Discard. Its
+ *  evidence stays in Unresolved AI operations; the job itself is dismissable
+ *  and no longer active work. Mirrors the host's `parked` job rule. */
+export const nativeJobParked = (state: NativeJobState, phase?: string | null): boolean =>
+  state === "needs_attention" && (phase === "stopped" || phase === "provider_result_discarded");
+/** Terminal or parked: no longer active, and dismissable. */
+export const nativeJobSettled = (record: Pick<NativeJobRecord, "state" | "phase">): boolean =>
+  nativeJobTerminal(record.state) || nativeJobParked(record.state, record.phase);
 export function validNativeJob(value: unknown): value is NativeJobRecord {
   if (!value || typeof value !== "object") return false;
   const r = value as NativeJobRecord;
@@ -62,15 +70,15 @@ export function mergeNativeJobEvent(old: NativeJobView, event: NativeJobEvent): 
   const jobs = new Map(old.jobs), tombstones = new Map(old.tombstones);
   if (event.type === "dismissed") {
     const previous = jobs.get(jobKey);
-    if (previous && !nativeJobTerminal(previous.state)) return old;
+    if (previous && !nativeJobSettled(previous)) return old;
     jobs.delete(jobKey); tombstones.set(jobKey, revision);
   } else {
     const previous = jobs.get(jobKey);
     if (previous && (!sameIdentity(previous, event.job) || nativeJobTerminal(previous.state) && previous.state !== event.job.state)) return old;
     if ([...jobs.values()].some((r) => r.jobKey !== jobKey && (r.jobId === event.job.jobId || r.owner.packageId === event.job.owner.packageId && r.operationId === event.job.operationId))) return old;
-    if (!previous && !nativeJobTerminal(event.job.state) && [...jobs.values()].filter((r) => !nativeJobTerminal(r.state)).length >= 128) return old;
+    if (!previous && !nativeJobSettled(event.job) && [...jobs.values()].filter((r) => !nativeJobSettled(r)).length >= 128) return old;
     jobs.set(jobKey, event.job);
-    const finished = [...jobs.values()].filter((r) => nativeJobTerminal(r.state)).sort((a, b) => a.revision - b.revision);
+    const finished = [...jobs.values()].filter(nativeJobSettled).sort((a, b) => a.revision - b.revision);
     for (const record of finished.slice(0, Math.max(0, finished.length - 256))) { jobs.delete(record.jobKey); tombstones.set(record.jobKey, record.revision); }
   }
   let baseline = old.baseline;

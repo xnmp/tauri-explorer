@@ -41,7 +41,7 @@ for line in sys.stdin:
 }
 /// Publish an executable worker as an enabled package payload. The caller owns
 /// any manifest field beyond the SDK 2 defaults written here.
-pub(super) fn payload(root: &Path, source: &str) -> package::Installed {
+pub(in crate::installed_plugins) fn payload(root: &Path, source: &str) -> package::Installed {
     let digest = hex::encode(Sha256::digest(source.as_bytes()));
     let directory = root.join("payloads").join(&digest);
     fs::create_dir_all(&directory).unwrap();

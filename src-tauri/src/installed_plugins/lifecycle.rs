@@ -537,7 +537,7 @@ fn install_with(
 mod mutation_matrix_tests;
 #[cfg(all(test, target_os = "linux"))]
 #[path = "mutation_native_tests.rs"]
-mod mutation_native_tests;
+pub(super) mod mutation_native_tests;
 #[cfg(test)]
 mod tests {
     use super::*;

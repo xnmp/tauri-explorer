@@ -8,6 +8,7 @@ use crate::{
     service_state::{
         job::{JobRecord, JobState},
         model::PackageGeneration,
+        Store,
     },
 };
 use serde_json::{json, Value};
@@ -199,6 +200,26 @@ fn schedule_reconcile(broker: Option<Arc<Broker>>, record: JobRecord) {
                 }
                 let status =
                     broker.call("jobs.status", json!({"operationId":record.operation_id}))?;
+                if status.is_null() {
+                    // A start still in flight in this process owns its answer,
+                    // including one registered but not yet dispatched.
+                    if broker.owns_job(record.job_id)
+                        || now().saturating_sub(record.created_at_ms) < DISPATCH_GRACE_MS
+                    {
+                        return Err(error("Consumer is still accepting this operation"));
+                    }
+                    let settled = settle_unaccepted(
+                        service_host::store()?,
+                        &record,
+                        &status,
+                        &mut |method| {
+                            broker.call(method, json!({"operationId":record.operation_id}))
+                        },
+                    )?
+                    .ok_or_else(|| error("Consumer has not reported this operation"))?;
+                    broker.finish_job(settled.job_id);
+                    return Ok(settled);
+                }
                 let updated = observe(&record, &status)?;
                 if updated.state.terminal() {
                     broker.finish_job(updated.job_id);
@@ -289,7 +310,18 @@ pub(super) fn initialize() -> Result<(), AppError> {
     let worker = std::thread::Builder::new().name("native-job-reconciler".into()).spawn(|| {
         while !backend::is_closing() {
             if let Ok(snapshot)=service_host::store().and_then(|s|s.snapshot_jobs()) {
-                for record in snapshot.jobs.into_iter().filter(|r|matches!(r.state,JobState::Accepting|JobState::Running|JobState::Recovering)) {
+                for record in snapshot.jobs {
+                    if record.state == JobState::NeedsAttention && unacknowledged(&record) {
+                        // Probe only a consumer that is already running, e.g.
+                        // after it restarts; never respawn one for attention.
+                        if let Some(broker) = backend::active_instance(&record.owner.package_id, &record.owner.digest) {
+                            schedule_reconcile(Some(broker), record);
+                        }
+                        continue;
+                    }
+                    if !matches!(record.state,JobState::Accepting|JobState::Running|JobState::Recovering) {
+                        continue;
+                    }
                     if now().saturating_sub(record.created_at_ms)>600_000 {
                         if let Ok(updated)=service_host::store().and_then(|s|s.update_job(&record.owner,&record.job_key,JobState::NeedsAttention,Some("needs_attention".into()),None,record.run_id,Some("Recovery requires attention; the original operation has not been replayed".into()))) {emit(&updated);}
                         continue;
@@ -390,38 +422,320 @@ pub(super) fn resume(key: &str) -> Result<Value, AppError> {
     Ok(json!(updated))
 }
 
+/// The consumer never acknowledged this operation: no receipt revision was
+/// observed and no run was pinned. Host-settled stop/discard is excluded.
+fn unacknowledged(record: &JobRecord) -> bool {
+    record.source_revision == 0
+        && record.run_id.is_none()
+        && matches!(
+            record.state,
+            JobState::Accepting | JobState::Recovering | JobState::NeedsAttention
+        )
+        && !matches!(
+            record.phase.as_deref(),
+            Some("stopped" | "provider_result_discarded")
+        )
+}
+/// Longer than the SDK 3 reply deadline: an older unanswered start has failed
+/// in its own caller, which settles or reconciles it.
+const DISPATCH_GRACE_MS: u64 = 30_000;
+const NOT_ACCEPTED: &str =
+    "Image request was not accepted; nothing was started. Review its inputs and connection settings before retrying";
+fn settle(store: &Store, record: &JobRecord) -> Result<JobRecord, AppError> {
+    store.update_job(
+        &record.owner,
+        &record.job_key,
+        JobState::Error,
+        Some("not_accepted".into()),
+        None,
+        None,
+        Some(NOT_ACCEPTED.into()),
+    )
+}
+fn admitted(store: &Store, record: &JobRecord) -> Result<bool, AppError> {
+    Ok(store
+        .get(&record.owner.package_id, &record.operation_id)?
+        .is_some())
+}
+/// Settles a job its consumer authoritatively does not know. The consumer
+/// first fences the original operation ID, so no late or repeated start can
+/// accept it, then must still report it unknown. A service admission means
+/// the provider may have work: such a job is never settled here.
+fn settle_unaccepted(
+    store: &Store,
+    record: &JobRecord,
+    status: &Value,
+    consumer: &mut dyn FnMut(&str) -> Result<Value, AppError>,
+) -> Result<Option<JobRecord>, AppError> {
+    let eligible = |store: &Store| -> Result<Option<JobRecord>, AppError> {
+        match store.job(&record.job_key)? {
+            Some(current) if unacknowledged(&current) && !admitted(store, &current)? => {
+                Ok(Some(current))
+            }
+            _ => Ok(None),
+        }
+    };
+    if !status.is_null() || eligible(store)?.is_none() {
+        return Ok(None);
+    }
+    consumer("jobs.cancelOperation")?;
+    if !consumer("jobs.status")?.is_null() {
+        return Ok(None);
+    }
+    eligible(store)?
+        .map(|current| settle(store, &current))
+        .transpose()
+}
+/// A start refused before its request reached the backend is definite.
+fn settle_unsent(store: &Store, record: &JobRecord) -> Result<Option<JobRecord>, AppError> {
+    match store.job(&record.job_key)? {
+        Some(current) if unacknowledged(&current) && !admitted(store, &current)? => {
+            settle(store, &current).map(Some)
+        }
+        _ => Ok(None),
+    }
+}
+pub(super) fn unsent(record: &JobRecord, broker: &Broker) -> Result<(), AppError> {
+    if let Some(updated) = settle_unsent(service_host::store()?, record)? {
+        broker.finish_job(record.job_id);
+        emit(&updated);
+    }
+    Ok(())
+}
+/// A failed `jobs.start` whose request reached the backend. `current` is the
+/// consumer that answered `status`, possibly a replacement after a crash.
 pub(super) fn rejected(
     record: &JobRecord,
-    cause: &AppError,
-    broker: &Broker,
+    current: &Broker,
     status: &Value,
 ) -> Result<(), AppError> {
-    let definite = matches!(cause,AppError::Service{code,..} if !matches!(code.as_str(),"timed_out"|"worker_failed"|"mutation_uncertain"|"transport_unavailable"|"protocol_error"));
-    if !definite
-        || !broker.is_active()
-        || !status.is_null()
-        || service_host::store()?
-            .get(&record.owner.package_id, &record.operation_id)?
-            .is_some()
+    let generation = current.generation();
+    if !current.is_active()
+        || generation.package_id != record.owner.package_id
+        || generation.digest != record.owner.digest
     {
         return Ok(());
     }
-    // A completed native rejection + no durable local/service acceptance is
-    // distinct from a transport loss. Fence this original UUID before settling.
-    broker.call(
-        "jobs.cancelOperation",
-        json!({"operationId":record.operation_id}),
-    )?;
-    let status = broker.call("jobs.status", json!({"operationId":record.operation_id}))?;
-    if !status.is_null()
-        || service_host::store()?
-            .get(&record.owner.package_id, &record.operation_id)?
-            .is_some()
+    if let Some(updated) =
+        settle_unaccepted(service_host::store()?, record, status, &mut |method| {
+            current.call(method, json!({"operationId":record.operation_id}))
+        })?
     {
-        return Ok(());
+        backend::release_job(&record.owner, record.job_id);
+        emit(&updated);
     }
-    let updated=service_host::store()?.update_job(&record.owner,&record.job_key,JobState::Error,Some("not_accepted".into()),None,None,Some("Image request was rejected before acceptance; review its inputs and connection settings".into()))?;
-    broker.finish_job(record.job_id);
-    emit(&updated);
     Ok(())
+}
+/// Dismissal removes presentation only; operation and receipt evidence stay.
+pub(super) fn dismiss(key: &str) -> Result<Value, AppError> {
+    let store = service_host::store()?;
+    let record = store.job(key)?;
+    if let Some(revision) = store.dismiss_job(key)? {
+        if let Some(record) = record {
+            backend::release_job(&record.owner, record.job_id);
+        }
+        backend::emit_job_event(json!({"type":"dismissed","jobKey":key,"revision":revision}));
+    }
+    Ok(Value::Null)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::service_state::model::{Admission, AdmissionPhase, Limits, ServiceTarget};
+    const OPERATION: &str = "0123456789abcdef0123456789abcdef";
+    fn owner() -> PackageGeneration {
+        PackageGeneration {
+            package_id: "xnmp.trace-explorer".into(),
+            digest: "a".repeat(64),
+            incarnation: 7,
+        }
+    }
+    fn fixture() -> (tempfile::TempDir, Store, JobRecord) {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::open(dir.path().join("service-state"), Limits::default()).unwrap();
+        let created = now().saturating_sub(60_000);
+        // Exactly what register() persists before dispatch.
+        let record = store
+            .register_job(JobRecord {
+                job_key: opaque(24).unwrap(),
+                owner: owner(),
+                operation_id: OPERATION.into(),
+                job_id: (1u64 << 51) | 5,
+                kind: "openai-image".into(),
+                label: "AI image".into(),
+                origin_window: "main.x".into(),
+                revision: 0,
+                source_revision: 0,
+                created_at_ms: created,
+                updated_at_ms: created,
+                state: JobState::Accepting,
+                phase: Some("preparing".into()),
+                output_path: None,
+                run_id: None,
+                error: None,
+            })
+            .unwrap();
+        (dir, store, record)
+    }
+    /// A consumer that does not know the operation: it records every call.
+    fn unknown<'a>(calls: &'a mut Vec<String>) -> impl FnMut(&str) -> Result<Value, AppError> + 'a {
+        move |method| {
+            calls.push(method.into());
+            Ok(Value::Null)
+        }
+    }
+    fn admit(store: &Store) {
+        let provider = PackageGeneration {
+            package_id: "xnmp.image-generation".into(),
+            digest: "c".repeat(64),
+            incarnation: 1,
+        };
+        store
+            .reserve(Admission {
+                consumer: owner(),
+                provider: provider.clone(),
+                target: ServiceTarget {
+                    package_id: provider.package_id.clone(),
+                    service_id: "image-generation".into(),
+                    major: 1,
+                },
+                operation_id: OPERATION.into(),
+                fingerprint: "b".repeat(64),
+                phase: AdmissionPhase::Reserved,
+                inputs: vec![],
+                output: None,
+                needs_attention: false,
+                disposition: None,
+                transfer_receipt: None,
+            })
+            .unwrap();
+        assert!(store.get(&owner().package_id, OPERATION).unwrap().is_some());
+    }
+
+    #[test]
+    fn a_job_the_consumer_never_accepted_settles_after_its_fence_and_unblocks_the_package() {
+        let (_dir, store, record) = fixture();
+        // A crashed or timed-out start: the host saw no definite rejection.
+        let attention = store
+            .update_job(
+                &record.owner,
+                &record.job_key,
+                JobState::NeedsAttention,
+                Some("needs_attention".into()),
+                None,
+                None,
+                Some("Recovery requires attention".into()),
+            )
+            .unwrap();
+        assert!(store.busy("xnmp.trace-explorer").unwrap());
+        let mut calls = vec![];
+        let settled = settle_unaccepted(&store, &attention, &Value::Null, &mut unknown(&mut calls))
+            .unwrap()
+            .expect("settled");
+        // The original ID is fenced before its absence is trusted.
+        assert_eq!(calls, ["jobs.cancelOperation", "jobs.status"]);
+        assert_eq!(settled.state, JobState::Error);
+        assert_eq!(settled.phase.as_deref(), Some("not_accepted"));
+        assert!(!store.busy("xnmp.trace-explorer").unwrap());
+        assert!(store.dismiss_job(&settled.job_key).unwrap().is_some());
+    }
+
+    #[test]
+    fn an_admitted_operation_is_never_settled_as_not_accepted() {
+        let (_dir, store, record) = fixture();
+        admit(&store);
+        let mut calls = vec![];
+        assert!(
+            settle_unaccepted(&store, &record, &Value::Null, &mut unknown(&mut calls))
+                .unwrap()
+                .is_none()
+        );
+        assert!(settle_unsent(&store, &record).unwrap().is_none());
+        assert_eq!(
+            store.job(&record.job_key).unwrap().unwrap().state,
+            JobState::Accepting
+        );
+        assert!(calls.is_empty());
+    }
+
+    #[test]
+    fn only_an_authoritative_unknown_after_the_fence_settles() {
+        let (_dir, store, record) = fixture();
+        // Acknowledged at the fence: the consumer now owns its answer.
+        let mut calls = 0;
+        let mut acknowledged = |method: &str| {
+            calls += 1;
+            Ok(if method == "jobs.status" {
+                json!({"jobId":record.job_id,"operationId":OPERATION,"status":"pending","revision":1})
+            } else {
+                Value::Null
+            })
+        };
+        assert!(
+            settle_unaccepted(&store, &record, &Value::Null, &mut acknowledged)
+                .unwrap()
+                .is_none()
+        );
+        assert_eq!(calls, 2);
+        // The fence itself failed: no settlement from an unfenced absence.
+        let mut unreachable =
+            |_: &str| -> Result<Value, AppError> { Err(error("Plugin backend is unavailable")) };
+        assert!(settle_unaccepted(&store, &record, &Value::Null, &mut unreachable).is_err());
+        // A non-null first answer is a receipt for observe(), never a settlement.
+        let mut calls = vec![];
+        assert!(settle_unaccepted(
+            &store,
+            &record,
+            &json!({"jobId":record.job_id,"operationId":OPERATION,"status":"running"}),
+            &mut unknown(&mut calls)
+        )
+        .unwrap()
+        .is_none());
+        assert!(calls.is_empty());
+        assert_eq!(
+            store.job(&record.job_key).unwrap().unwrap().state,
+            JobState::Accepting
+        );
+    }
+
+    #[test]
+    fn a_job_the_consumer_once_reported_is_never_settled_as_not_accepted() {
+        let (_dir, store, record) = fixture();
+        let observed = store
+            .observe_job(
+                &record.owner,
+                &record.job_key,
+                1,
+                JobState::Recovering,
+                Some("recovering".into()),
+                None,
+                None,
+                None,
+            )
+            .unwrap();
+        let mut calls = vec![];
+        assert!(
+            settle_unaccepted(&store, &observed, &Value::Null, &mut unknown(&mut calls))
+                .unwrap()
+                .is_none()
+        );
+        assert!(settle_unsent(&store, &observed).unwrap().is_none());
+        assert!(calls.is_empty());
+        assert_eq!(
+            store.job(&record.job_key).unwrap().unwrap().state,
+            JobState::Recovering
+        );
+    }
+
+    #[test]
+    fn a_start_refused_before_it_was_sent_settles_without_a_consumer() {
+        let (_dir, store, record) = fixture();
+        let settled = settle_unsent(&store, &record).unwrap().expect("settled");
+        assert_eq!(settled.state, JobState::Error);
+        assert_eq!(settled.phase.as_deref(), Some("not_accepted"));
+        assert!(!store.busy("xnmp.trace-explorer").unwrap());
+        // Settling again is a no-op, never a second terminal transition.
+        assert!(settle_unsent(&store, &record).unwrap().is_none());
+    }
 }

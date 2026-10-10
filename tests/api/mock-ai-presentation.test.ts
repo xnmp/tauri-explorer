@@ -28,5 +28,8 @@ describe("native presentation mock outcomes", () => {
     expect(mock.resolve("consumer", "original", "discard").operations).toEqual([]);
     expect(mock.snapshot().jobs[0]).toMatchObject({ state: "needs_attention", phase: "provider_result_discarded" });
     expect(mock.calls.map(r => r.action)).toEqual(["stop", "discard"]);
+    // Dismissal removes settled presentation only, as the host does.
+    mock.dismiss(job("recovering").jobKey);
+    expect(mock.snapshot().jobs).toEqual([]);
   });
 });

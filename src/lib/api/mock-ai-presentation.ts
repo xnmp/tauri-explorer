@@ -1,5 +1,5 @@
 /** Private browser fixture ledger. Controls never invoke a provider or invent completion. */
-import { nativeJobTerminal, validNativeSnapshot, type NativeJobRecord, type NativeJobSnapshot } from "$lib/domain/native-plugin-jobs";
+import { nativeJobSettled, nativeJobTerminal, validNativeSnapshot, type NativeJobRecord, type NativeJobSnapshot } from "$lib/domain/native-plugin-jobs";
 import { aiOperationKey, resolutionAvailable, validAiOperations, type AiOperationsSnapshot, type AiResolution } from "$lib/domain/ai-operations";
 export function createMockAiPresentation(emit: (name: string, value: unknown) => void) {
   let jobs: NativeJobRecord[] = [], watermark = 0;
@@ -21,7 +21,7 @@ export function createMockAiPresentation(emit: (name: string, value: unknown) =>
     cancel(key: string): void { const current = job(key); if (nativeJobTerminal(current.state)) return; calls.push({ command: "cancel", identity: key }); },
     resume(key: string): void { job(key); calls.push({ command: "resume", identity: key }); },
     dismiss(key: string): void {
-      const current = job(key); if (!nativeJobTerminal(current.state)) throw new Error("Active or unresolved jobs cannot be dismissed");
+      const current = job(key); if (!nativeJobSettled(current)) throw new Error("Active or unresolved jobs cannot be dismissed");
       calls.push({ command: "dismiss", identity: key }); jobs = jobs.filter(r => r.jobKey !== key);
       emit("plugin-jobs:changed", { type: "dismissed", jobKey: key, revision: ++watermark });
     },

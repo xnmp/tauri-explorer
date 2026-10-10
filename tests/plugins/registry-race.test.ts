@@ -4,7 +4,7 @@
  * registered once the activation resolves.
  */
 
-import { describe, it, expect, beforeEach, vi } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 
 // The registry statically imports the built-in plugins, which pull in Svelte
 // dialog components; stub them so the node-env test doesn't compile Svelte.
@@ -40,10 +40,20 @@ function makeSlowPlugin(id: string) {
 }
 
 beforeEach(() => {
+  vi.stubGlobal("isTauri",false);
   localStorage.clear();
 });
 
+afterEach(()=>vi.unstubAllGlobals());
 describe("plugin registry activation race", () => {
+  it("hydrates native window jobs without waiting for monitoring before activation",async()=>{
+    vi.stubGlobal("isTauri",true);
+    const activate=vi.fn();const jobs={init:vi.fn(()=>new Promise<void>(()=>{})),dispose:vi.fn(async()=>{})};
+    const registry=createPluginRegistry([{id:"native-independent",name:"Native",description:"fixture",enabledByDefault:true,activate}],jobs);
+    await registry.initPlugins();
+    expect(jobs.init).toHaveBeenCalledOnce();expect(activate).toHaveBeenCalledOnce();
+    await registry.dispose();expect(jobs.dispose).toHaveBeenCalledOnce();
+  });
   it("activates plugins without waiting for unused job event infrastructure", async () => {
     let release!: () => void;
     const gate = new Promise<void>((resolve) => { release = resolve; });

@@ -62,6 +62,31 @@ function createDialogStore() {
     }
   }
 
+  function closeUnmountedDialogs(): void {
+    imageEditorTarget = null;
+    openWithStore.close();
+    shortcutsOpen = false;
+    activeDialog = null;
+    pluginsOpen = false;
+    keybindingsOpen = false;
+    fileOperationSession = null;
+    permanentDelete = false;
+    targetEntry = null;
+    targetEntries = [];
+    quickOpenOpen = false;
+    commandPaletteOpen = false;
+    settingsOpen = false;
+    contentSearchOpen = false;
+    workspaceOpen = false;
+    bulkRenameOpen = false;
+    bulkRenameItems = [];
+    jobsPanelOpen = false;
+    themePickerOpen = false;
+    pickerConfig = null;
+    userReportOpen = false;
+    fileRecoveryOpen = false;
+  }
+
   return {
     // File operation dialog accessors
     get activeDialog() {
@@ -305,32 +330,16 @@ function createDialogStore() {
 
     closeFileRecovery(): void { fileRecoveryOpen = false; },
 
+    requestCloseTop(event?: KeyboardEvent): void {
+      if (!modalOwnership.requestTopClose(event)) closeUnmountedDialogs();
+    },
+
     closeAll(): void {
       modalOwnership.closeAll();
-      // Rendered editors close through their modal's canClose contract. Clear
-      // an opening that has not mounted yet, while retaining an accepted save.
-      if (!modalOwnership.hasOpen) imageEditorTarget = null;
-      openWithStore.close();
-      shortcutsOpen = false;
-      activeDialog = null;
-      pluginsOpen = false;
-      keybindingsOpen = false;
-      fileOperationSession = null;
-      permanentDelete = false;
-      targetEntry = null;
-      targetEntries = [];
-      quickOpenOpen = false;
-      commandPaletteOpen = false;
-      settingsOpen = false;
-      contentSearchOpen = false;
-      workspaceOpen = false;
-      bulkRenameOpen = false;
-      bulkRenameItems = [];
-      jobsPanelOpen = false;
-      themePickerOpen = false;
-      pickerConfig = null;
-      userReportOpen = false;
-      fileRecoveryOpen = false;
+      // Mounted close guards own the outcome. A veto or pending unmount must
+      // retain every suspended built-in flag and its caller's draft.
+      if (modalOwnership.hasOpen) return;
+      closeUnmountedDialogs();
     },
   };
 }

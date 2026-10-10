@@ -16,6 +16,7 @@
   import { settingsStore } from "$lib/state/settings.svelte";
   import { usePointerIntent } from "$lib/composables/use-pointer-intent.svelte";
   import { commandFrecencyPoints, scoreCommand } from "$lib/domain/fuzzy-score";
+  import { runAfterClose } from "$lib/state/run-after-close";
   import Modal from "./Modal.svelte";
 
   interface Props {
@@ -118,9 +119,8 @@
     });
   }
 
-  async function executeSelected(cmd: Command): Promise<void> {
-    onClose();
-    await executeCommand(cmd.id);
+  function executeSelected(cmd: Command): Promise<void> {
+    return runAfterClose(onClose, () => executeCommand(cmd.id));
   }
 
   function handleInput(): void {

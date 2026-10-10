@@ -42,6 +42,7 @@ const WATCH_PLAN_REFRESH_INTERVAL: Duration = Duration::from_secs(2);
 const SETTINGS_FILE: &str = "settings.json";
 const BOOKMARKS_FILE: &str = "bookmarks.json";
 const FOLDER_VIEWS_FILE: &str = "folder-views.json";
+const AI_CONNECTIONS_FILE: &str = "ai-connections.json";
 /// User theme CSS lives one level down, in `<config>/themes/`.
 const THEMES_DIR: &str = "themes";
 
@@ -451,7 +452,10 @@ pub(crate) fn watched_config_name(config_dir: &Path, changed: &Path) -> Option<S
 
     match parts.as_slice() {
         [name]
-            if *name == SETTINGS_FILE || *name == BOOKMARKS_FILE || *name == FOLDER_VIEWS_FILE =>
+            if *name == SETTINGS_FILE
+                || *name == BOOKMARKS_FILE
+                || *name == FOLDER_VIEWS_FILE
+                || *name == AI_CONNECTIONS_FILE =>
         {
             Some((*name).to_string())
         }
@@ -538,6 +542,16 @@ fn spawn_flush_thread(app: AppHandle) {
         };
 
         for filename in ready {
+            if filename == AI_CONNECTIONS_FILE {
+                // File CAS coordinates separate host processes. Relay only a
+                // readable committed revision; this never probes a provider/CLI.
+                if let Ok(revision) = crate::ai::configuration_revision() {
+                    let _ = app.emit(
+                        "ai:text-configuration-changed",
+                        serde_json::json!({"revision":revision}),
+                    );
+                }
+            }
             log::debug!("config-file-changed: {filename}");
             if let Err(error) = app.emit(
                 "config-file-changed",

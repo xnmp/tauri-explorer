@@ -462,6 +462,14 @@ backend for E2E/browser).
 - `state/window-backdrop.ts`, `state/window-appearance.ts`, `components/AnimatedBackground.svelte`, `background-animations/` (particles, starfield, registry) — window backdrop + animated bg
 - FLOW: themeStore sets CSS vars / `data-theme`; `set_window_theme`/`set_window_backdrop` for native chrome. Theme application is imperative, not reactive, so anything that changes `settings.theme` behind the store's back must call `themeStore.syncFromSettings()` — config autoreload does (#599), as does `settingsStore.init()`. A `themes/*.css` edit re-runs `initTheme()` to re-inject and re-discover.
 
+## Global language models
+
+- `src/lib/components/ai/LanguageModelsSettings.svelte`, `src/lib/components/ai/TextProfileEditor.svelte` — Settings → AI → Language models: global profiles/default, custom API roots/models, explicit local checks/test generation and write-only key controls.
+- `src/lib/domain/text-connections.ts`, `src/lib/api/text-connections.ts`, `src/lib/api/mock-text-connections.ts`, `src/lib/state/text-connections.ts` — validated text contracts, typed IPC, browser fixture and window-local dirty draft/CAS/test/event coordination.
+- `src-tauri/src/ai/{mod,domain,storage,credentials,adapters}.rs` — native admission/deadlines/cancellation, canonical configuration/fingerprint, cross-process CAS/migration, OS credential ownership and HTTP adapters. Current CLI candidates fail closed while managed-policy tool isolation is unresolved.
+- `src-tauri/src/installed_plugins/text_service.rs`, `backend.rs` — broker-derived caller/incarnation, active-only reverse text routing, bounded scheduling and cancellation capacity; does not publish cross-plugin image services.
+- FLOW: global Settings → native configuration/secret commit → revision event/config watcher → consumer invalidation; Trace backend → reverse text bridge → snapshotted native adapter → context-qualified title cache. Native tests use fake CLI/local HTTP and in-memory secrets; actual keychains and packaged GUI integration remain separate acceptance.
+
 ## Plugins
 
 - `state/owned-registry.ts` — invocation identity and duplicate policy shared by command, menu, dialog and filesystem contributions.
@@ -538,7 +546,9 @@ Planned move journal authority: `src-tauri/src/files/recovery/move_model.rs` own
 - `src/lib/plugins/runtime-sdk.ts`, `src/lib/plugins/svelte-runtime.d.ts` — precompiled external UI binds to SDK v1 and Svelte5.56.3; no private store imports or second runtime.
 - `src-tauri/src/installed_plugins/package.rs`, `src-tauri/src/installed_plugins/mod.rs`, `src-tauri/src/file_picker.rs` — native package picker, bounded validated extraction/index updates, restricted frontend asset service and lifecycle admission.
 - `src-tauri/src/installed_plugins/backend.rs`, `src-tauri/src/process_ext/windows_job.rs` — correlated bounded RPC, owned processes/spools, durable status recovery and no generation replay after lost replies.
-- `src-tauri/src/installed_plugins/lifecycle.rs` — state snapshot and preflight; durable terminal journal phase precedes cleanup, and external publication recovery begins only after commit.
+- `src-tauri/src/installed_plugins/lifecycle.rs` — private copied-state preflight with SDK-independent reverse quarantine; an irrevocable commit journal precedes index publication, a published marker prevents cleanup from undoing later mutations, and forward recovery completes interrupted publication.
 - `src-tauri/src/installed_plugins/provenance.rs`, `src-tauri/src/image_operation.rs` — optional recording for built-in producers and core crop/rename; live publisher leases survive backend replacement. TraceExplorer's provider implementation lives in https://github.com/xnmp/TraceExplorer.
 
 - `components/PreviewPane.svelte` — highlighted code inherits the configured preview font, avoiding a user-agent monospace override.
+
+- `src-tauri/src/installed_plugins/backend_native_tests.rs`, `src-tauri/test_support/legacy_trace_preflight.py` — production-broker native lifecycle outcomes and genuine prior SDK2 initialize-only copies; no live provider calls or user profile.

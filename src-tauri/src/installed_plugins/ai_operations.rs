@@ -220,6 +220,8 @@ pub(super) fn resolve(consumer: &str, operation: &str, action: &str) -> Result<V
         let (_, updated) =
             store.stop_recovery(&provider.generation(), consumer, operation, true)?;
         if let Some(job) = updated {
+            // No live worker was proven above; the stopped job holds nothing.
+            backend::release_job(&job.owner, job.job_id);
             backend::emit_job_event(json!({"type":"updated","job":job}));
         }
     }

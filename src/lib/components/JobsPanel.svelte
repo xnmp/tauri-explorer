@@ -114,6 +114,7 @@
                 <div class="job-time">{formatElapsed(job)}</div>
                 {#if job.jobKey && ["accepting", "running", "recovering"].includes(job.status)}<button class="clear-btn" aria-label={`Cancel ${job.label}`} disabled={!!job.controlPending || job.cancelRequested} onclick={() => jobsStore.controlJob(job.id, "cancel")}>{job.cancelRequested ? "Cancel requested" : "Cancel"}</button>{/if}
                 {#if job.jobKey && job.status === "needs_attention"}<button class="clear-btn" onclick={() => { unresolvedOpen = true; }}>Inspect operation</button>{/if}
+                {#if job.jobKey && job.status === "needs_attention" && !isJobActive(job)}<button class="clear-btn" aria-label={`Dismiss ${job.label}`} disabled={!!job.controlPending} onclick={() => jobsStore.dismissJob(job.id)}>Dismiss</button>{/if}
                 {#if job.status === "error" && job.retry}
                   <button class="clear-btn retry-btn" aria-label={`Retry ${job.label}`} disabled={job.retrying || !!job.controlPending}
                     aria-busy={job.retrying} onclick={() => void retryJobAndRefocus(job.id, panel)}>Retry</button>

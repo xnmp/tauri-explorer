@@ -223,6 +223,19 @@ fn sync_verified(file: &File, path: &Path) -> std::io::Result<()> {
 fn sync_directory(path: &Path) -> Result<()> {
     crate::durable_dir::sync(path).map_err(|_| reject("artifact directory sync failed"))
 }
+/// One artifact's exclusive IO lease. Released explicitly: closing alone
+/// leaves the flock held while any concurrently spawned child (between fork
+/// and exec) still has a duplicate descriptor, which made a following seal,
+/// read or collection fail with "artifact IO is already owned".
+/// A forked child's copy never unlocks the still-live parent's lease.
+pub(crate) struct ArtifactLease(File, u32);
+impl Drop for ArtifactLease {
+    fn drop(&mut self) {
+        if std::process::id() == self.1 {
+            let _ = self.0.unlock();
+        }
+    }
+}
 impl Store {
     fn bytes_path(&self, handle: &str) -> Result<PathBuf> {
         if !identity(handle) {
@@ -240,7 +253,7 @@ impl Store {
         private_directory(&parent)?;
         Ok(parent.join(format!("{handle}.png")))
     }
-    pub(super) fn lease(&self, handle: &str) -> Result<File> {
+    pub(super) fn lease(&self, handle: &str) -> Result<ArtifactLease> {
         if handle.len() != 48
             || !handle
                 .bytes()
@@ -277,7 +290,7 @@ impl Store {
         }
         file.try_lock()
             .map_err(|_| reject("artifact IO is already owned"))?;
-        Ok(file)
+        Ok(ArtifactLease(file, std::process::id()))
     }
     fn pending_path(&self, handle: &str) -> Result<PathBuf> {
         Ok(self.bytes_path(handle)?.with_extension("pending"))

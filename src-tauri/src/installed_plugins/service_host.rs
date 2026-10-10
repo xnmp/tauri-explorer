@@ -1,31 +1,32 @@
 //! Host lifetime store: recover ownership before processing package mutations.
 use crate::{
-    config,
     error::AppError,
     service_state::{model::Limits, Store},
 };
-use std::sync::OnceLock;
-static STORE: OnceLock<Result<Store, String>> = OnceLock::new();
-pub(super) fn initialize() -> Result<(), AppError> {
-    let result = STORE.get_or_init(|| {
-        config::config_dir()
-            .and_then(|root| Store::open(root.join("service-state"), Limits::default()))
-            .map_err(|_| {
-                "AI operation storage is unavailable; package changes require recovery".into()
-            })
-    });
-    result
-        .as_ref()
-        .map(|_| ())
-        .map_err(|message| AppError::Other(message.clone()))
+use std::sync::{Mutex, OnceLock};
+/// Only a successful open is cached. A failed open (for example a transient
+/// I/O or lock error) stays retryable for the life of the process.
+static STORE: OnceLock<Store> = OnceLock::new();
+static OPENING: Mutex<()> = Mutex::new(());
+const UNAVAILABLE: &str = "AI operation storage is unavailable; package changes require recovery";
+/// Opens the profile's ledger. The caller owns the profile (see `ownership`)
+/// and runs startup recovery before treating the store as ready.
+pub(super) fn initialize(profile: &std::path::Path) -> Result<&'static Store, AppError> {
+    let _opening = OPENING.lock().unwrap_or_else(|cause| cause.into_inner());
+    if let Some(store) = STORE.get() {
+        return Ok(store);
+    }
+    let store = Store::open(profile.join("service-state"), Limits::default()).map_err(|cause| {
+        log::warn!("AI operation storage could not be opened: {cause}");
+        AppError::Other(UNAVAILABLE.into())
+    })?;
+    Ok(STORE.get_or_init(|| store))
 }
+/// The opened ledger. A process that does not own the profile never opens it.
 pub(super) fn store() -> Result<&'static Store, AppError> {
-    initialize()?;
     STORE
         .get()
-        .expect("initialized")
-        .as_ref()
-        .map_err(|message| AppError::Other(message.clone()))
+        .ok_or_else(|| AppError::Other(UNAVAILABLE.into()))
 }
 /// Service code for a mutation refused only because work is still owned.
 /// Queued requests carrying it are retained rather than discarded.

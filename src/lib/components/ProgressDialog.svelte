@@ -242,7 +242,10 @@
             {#if job.jobKey && ["accepting", "running", "recovering"].includes(job.status)}
               <button class="action-btn" aria-label={`Cancel ${job.label}`} disabled={!!job.controlPending || job.cancelRequested} onclick={() => jobsStore.controlJob(job.id, "cancel")}>×</button>
             {:else if job.status === "needs_attention"}
-              <button class="header-btn" onclick={() => { unresolvedOpen = true; }}>Inspect</button>
+              <div class="operation-actions">
+                <button class="header-btn" onclick={() => { unresolvedOpen = true; }}>Inspect</button>
+                {#if !isJobActive(job)}<button class="action-btn" aria-label={`Dismiss ${job.label}`} disabled={!!job.controlPending} onclick={() => jobsStore.dismissJob(job.id)}>×</button>{/if}
+              </div>
             {:else if nativeJobTerminal(job.status)}
               <div class="operation-actions">
                 {#if job.status === "error" && job.retry}

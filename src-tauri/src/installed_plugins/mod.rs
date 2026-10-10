@@ -4,7 +4,6 @@ mod backend;
 mod diagnostics;
 mod job_bridge;
 mod lifecycle;
-#[cfg(target_os = "linux")]
 mod ownership;
 mod package;
 pub(crate) mod provenance;
@@ -17,6 +16,8 @@ mod service_graph;
 #[cfg(test)]
 mod service_graph_tests;
 mod service_host;
+#[cfg(all(test, target_os = "linux"))]
+mod startup_native_tests;
 mod text_service;
 use crate::{config, error::AppError};
 use serde_json::Value;
@@ -35,51 +36,36 @@ pub(crate) fn read_lifecycle() -> Result<RwLockReadGuard<'static, ()>, AppError>
 }
 static MUTATIONS: OnceLock<Mutex<()>> = OnceLock::new();
 static PENDING_INSTALL_ERRORS: Mutex<Vec<String>> = Mutex::new(Vec::new());
-#[cfg(target_os = "linux")]
 static PROFILE_OWNER: Mutex<Option<ownership::ProfileOwner>> = Mutex::new(None);
 #[cfg(target_os = "linux")]
 static QUEUE_WORKER: queue::WorkerSlot = Mutex::new(None);
+const NOT_OWNER: &str = "Another Tauri Explorer process owns this plugin profile; AI operations and plugin changes are available there until it exits";
+const STORAGE_DEFERRED: &str =
+    "AI operation storage requires recovery; queued package changes were deferred";
 pub(super) fn initialize(app: tauri::AppHandle) -> Result<(), AppError> {
     if crate::portal::is_portal_mode() {
         return Ok(());
     }
-    let _initializing = mutation_lock()?;
-    #[cfg(target_os = "linux")]
-    {
-        let owner = ownership::acquire(&config::config_dir()?.canonicalize()?)?;
-        *PROFILE_OWNER
-            .lock()
-            .unwrap_or_else(|cause| cause.into_inner()) = Some(owner);
-    }
     backend::initialize(app.clone());
-    // No brokers are running yet. Reconstruct native metadata under this
-    // bootstrap gate so newly scheduled reconciliation cannot race readiness.
-    // No provider RPC or candidate handshake occurs while this gate is held.
-    let bootstrap = LIFECYCLE
-        .write()
-        .map_err(|_| AppError::Other("Plugin lifecycle lock is unavailable".into()))?;
-    // Ordinary browsing remains available if durable AI ownership is damaged.
-    // Package rollback and queued updates must not run until claims are readable.
-    let services_ready = service_host::initialize().is_ok();
-    if services_ready {
-        lifecycle::recover(&root()?)?;
-        service_bridge::recover_startup()?;
-        job_bridge::initialize()?;
-        backend::finish_initialize();
-    } else {
+    // Ordinary browsing, and legacy backends with no durable AI involvement,
+    // stay available when the profile is owned elsewhere or its AI ledger is
+    // damaged. Package rollback and queued updates wait for readable claims.
+    let services = mutation_lock().and_then(|_initializing| bootstrap_services());
+    if let Err(cause) = &services {
+        log::warn!("Plugin AI services are unavailable: {cause}");
+        let owned = PROFILE_OWNER
+            .lock()
+            .unwrap_or_else(|cause| cause.into_inner())
+            .is_some();
         PENDING_INSTALL_ERRORS
             .lock()
             .unwrap_or_else(|cause| cause.into_inner())
-            .push(
-                "AI operation storage requires recovery; queued package changes were deferred"
-                    .into(),
-            );
+            .push(if owned { STORAGE_DEFERRED } else { NOT_OWNER }.into());
     }
-    drop(bootstrap);
     #[cfg(target_os = "linux")]
     {
         let directory = config::config_dir()?.join("pending-plugins");
-        if services_ready
+        if services.is_ok()
             && !matches!(std::fs::symlink_metadata(&directory), Err(cause) if cause.kind() == std::io::ErrorKind::NotFound)
         {
             let notify = app.clone();
@@ -121,6 +107,88 @@ pub(super) fn initialize(app: tauri::AppHandle) -> Result<(), AppError> {
     }
     Ok(())
 }
+/// Profile ownership, then the durable ledger, then startup recovery. The
+/// caller holds the mutation lock. Each step is retryable: nothing is marked
+/// ready until all succeed, and a process that cannot own the profile never
+/// opens its ledger, recovers its claims or starts service participants.
+fn bootstrap_services() -> Result<(), AppError> {
+    if backend::ownership_ready() {
+        return Ok(());
+    }
+    let profile = config::config_dir()?;
+    {
+        let mut owner = PROFILE_OWNER
+            .lock()
+            .unwrap_or_else(|cause| cause.into_inner());
+        if owner.is_none() {
+            *owner = Some(
+                ownership::acquire(&profile.canonicalize()?).map_err(|cause| {
+                    log::warn!("Plugin profile ownership refused: {cause}");
+                    AppError::Other(NOT_OWNER.into())
+                })?,
+            );
+        }
+    }
+    // Reconstruct native metadata under this bootstrap gate so newly scheduled
+    // reconciliation cannot race readiness. Service participants cannot have
+    // started yet; no provider RPC or candidate handshake occurs under it.
+    let _bootstrap = write_lifecycle()?;
+    service_host::initialize(&profile)?;
+    lifecycle::recover(&root()?)?;
+    service_bridge::recover_startup()?;
+    job_bridge::initialize()?;
+    backend::finish_initialize();
+    Ok(())
+}
+/// Explicit service actions retry a bootstrap that failed earlier, e.g. once
+/// another process released the profile or transient storage errors cleared.
+fn ensure_services() -> Result<(), AppError> {
+    if backend::ownership_ready() {
+        return Ok(());
+    }
+    let _initializing = mutation_lock()?;
+    bootstrap_services()
+}
+/// Opportunistic retry from frequent read paths: bounded to one attempt per
+/// interval and never waits behind a running package mutation.
+fn retry_services() {
+    static LAST: Mutex<Option<std::time::Instant>> = Mutex::new(None);
+    if backend::ownership_ready() {
+        return;
+    }
+    {
+        let mut last = LAST.lock().unwrap_or_else(|cause| cause.into_inner());
+        if last.is_some_and(|at| at.elapsed() < std::time::Duration::from_secs(2)) {
+            return;
+        }
+        *last = Some(std::time::Instant::now());
+    }
+    let Some(_initializing) = MUTATIONS.get_or_init(|| Mutex::new(())).try_lock().ok() else {
+        return;
+    };
+    if !backend::is_closing() {
+        if let Err(cause) = bootstrap_services() {
+            log::debug!("Plugin AI services remain unavailable: {cause}");
+        }
+    }
+}
+/// Without ready AI services only legacy (SDK 1/2) backends start, and only
+/// when nothing durable can involve them: no interrupted package change is
+/// awaiting rollback and, when the ledger is readable, no claim names them.
+/// SDK 3 packages are service participants and wait for recovery.
+fn degraded_backend_allowed(installed: &package::Installed) -> Result<bool, AppError> {
+    if installed.manifest.sdk_version >= 3 || root()?.join("upgrade-pending").exists() {
+        return Ok(false);
+    }
+    let Ok(store) = service_host::store() else {
+        return Ok(true);
+    };
+    let id = &installed.manifest.id;
+    Ok(!store
+        .claims()?
+        .iter()
+        .any(|a| &a.consumer.package_id == id || &a.provider.package_id == id))
+}
 pub(super) fn shutdown() {
     backend::shutdown();
     let mutations = MUTATIONS.get_or_init(|| Mutex::new(()));
@@ -134,7 +202,6 @@ pub(super) fn shutdown() {
     job_bridge::shutdown();
     backend::wait_for_admissions();
     provenance::wait_for_publishers();
-    #[cfg(target_os = "linux")]
     PROFILE_OWNER
         .lock()
         .unwrap_or_else(|cause| cause.into_inner())
@@ -184,6 +251,7 @@ pub(super) fn notify_pending_errors(window: &tauri::Window) {
 }
 
 fn install_path(path: &Path) -> Result<package::Installed, AppError> {
+    ensure_services()?;
     let root = root()?;
     let profile = lifecycle::Profile {
         root: &root,
@@ -233,6 +301,7 @@ pub async fn plugin_backend_invoke(
     let origin_label = window.label().to_owned();
     let entered = std::time::SystemTime::now();
     tauri::async_runtime::spawn_blocking(move || {
+        retry_services();
         let _guard = read_lifecycle()?;
         if !package::list(&root()?)?
             .iter()
@@ -253,31 +322,36 @@ pub async fn plugin_backend_invoke(
 #[tauri::command]
 pub async fn plugin_jobs_snapshot(window: tauri::WebviewWindow) -> Result<Value, AppError> {
     let label = window.label().to_owned();
-    tauri::async_runtime::spawn_blocking(move || job_bridge::snapshot(&label))
-        .await
-        .map_err(|e| AppError::WorkerFailed(e.to_string()))?
+    tauri::async_runtime::spawn_blocking(move || {
+        retry_services();
+        job_bridge::snapshot(&label)
+    })
+    .await
+    .map_err(|e| AppError::WorkerFailed(e.to_string()))?
 }
 #[tauri::command]
 pub async fn plugin_job_cancel(job_key: String) -> Result<Value, AppError> {
-    tauri::async_runtime::spawn_blocking(move || job_bridge::cancel(&job_key))
-        .await
-        .map_err(|e| AppError::WorkerFailed(e.to_string()))?
+    tauri::async_runtime::spawn_blocking(move || {
+        ensure_services()?;
+        job_bridge::cancel(&job_key)
+    })
+    .await
+    .map_err(|e| AppError::WorkerFailed(e.to_string()))?
 }
 #[tauri::command]
 pub async fn plugin_job_resume(job_key: String) -> Result<Value, AppError> {
-    tauri::async_runtime::spawn_blocking(move || job_bridge::resume(&job_key))
-        .await
-        .map_err(|e| AppError::WorkerFailed(e.to_string()))?
+    tauri::async_runtime::spawn_blocking(move || {
+        ensure_services()?;
+        job_bridge::resume(&job_key)
+    })
+    .await
+    .map_err(|e| AppError::WorkerFailed(e.to_string()))?
 }
 #[tauri::command]
 pub async fn plugin_job_dismiss(job_key: String) -> Result<Value, AppError> {
     tauri::async_runtime::spawn_blocking(move || {
-        if let Some(revision) = service_host::store()?.dismiss_job(&job_key)? {
-            backend::emit_job_event(
-                serde_json::json!({"type":"dismissed","jobKey":job_key,"revision":revision}),
-            );
-        }
-        Ok(Value::Null)
+        ensure_services()?;
+        job_bridge::dismiss(&job_key)
     })
     .await
     .map_err(|e| AppError::WorkerFailed(e.to_string()))?
@@ -300,6 +374,7 @@ pub async fn install_plugin(app: tauri::AppHandle, path: String) -> Result<Value
 #[tauri::command]
 pub async fn uninstall_plugin(app: tauri::AppHandle, id: String) -> Result<(), AppError> {
     let result = tauri::async_runtime::spawn_blocking(move || {
+        ensure_services()?;
         let root = root()?;
         lifecycle::uninstall(
             &lifecycle::Profile {
@@ -328,6 +403,7 @@ pub async fn set_plugin_package_enabled(
     enabled: bool,
 ) -> Result<(), AppError> {
     let result = tauri::async_runtime::spawn_blocking(move || {
+        ensure_services()?;
         let root = root()?;
         lifecycle::set_enabled(
             &lifecycle::Profile {
@@ -362,9 +438,12 @@ mod error_delivery_tests {
 
 #[tauri::command]
 pub async fn ai_operations_snapshot() -> Result<Value, AppError> {
-    tauri::async_runtime::spawn_blocking(ai_operations::snapshot)
-        .await
-        .map_err(|e| AppError::WorkerFailed(e.to_string()))?
+    tauri::async_runtime::spawn_blocking(|| {
+        retry_services();
+        ai_operations::snapshot()
+    })
+    .await
+    .map_err(|e| AppError::WorkerFailed(e.to_string()))?
 }
 #[tauri::command]
 pub async fn ai_operation_resolve(
@@ -373,6 +452,7 @@ pub async fn ai_operation_resolve(
     action: String,
 ) -> Result<Value, AppError> {
     tauri::async_runtime::spawn_blocking(move || {
+        ensure_services()?;
         ai_operations::resolve(&consumer_package, &operation_id, &action)
     })
     .await

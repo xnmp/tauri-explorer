@@ -5,7 +5,7 @@
  * e.g. AI image edits) with status, elapsed time, and output info.
  */
 
-import { nativeJobTerminal, type NativeJobRecord, type NativeJobState } from "$lib/domain/native-plugin-jobs";
+import { nativeJobSettled, nativeJobTerminal, type NativeJobRecord, type NativeJobState } from "$lib/domain/native-plugin-jobs";
 export type JobStatus = NativeJobState;
 
 /** Starts a replacement for a failed job (a plugin's `accept` result). */
@@ -47,9 +47,10 @@ export interface JobExtras {
 }
 
 /** Running, or a failed job whose retry is starting: not dismissable, and
- *  it keeps Background Operations open. */
+ *  it keeps Background Operations open. A stopped or discarded recovery is
+ *  settled: its evidence stays in Unresolved AI operations. */
 export function isJobActive(job: Job): boolean {
-  return !nativeJobTerminal(job.status) || job.retrying === true || !!job.controlPending;
+  return !nativeJobSettled({ state: job.status, phase: job.phase }) || job.retrying === true || !!job.controlPending;
 }
 
 function describeError(error: unknown): string {
@@ -117,7 +118,7 @@ function createJobsStore() {
     const legacy = jobs.filter((job) => !job.jobKey && !records.some((r) => r.jobId === job.id));
     const next = records.map((r): Job => {
       const previous = jobs.find((job) => job.jobKey === r.jobKey || !job.jobKey && job.id === r.jobId && job.source === r.kind && job.nativePackageOwner === r.owner.packageId);
-      const terminal = nativeJobTerminal(r.state);
+      const terminal = nativeJobSettled(r);
       return { id: r.jobId, jobKey: r.jobKey, revision: r.revision, owner: previous?.owner ?? r.owner.packageId, nativePackageOwner: r.owner.packageId, source: r.kind, label: r.label,
         detail: previous?.detail ?? "", presentation: "image", status: r.state, startTime: r.createdAtMs,
         ...(terminal ? { endTime: r.updatedAtMs } : {}), outputPath: r.outputPath ?? undefined, error: r.error ?? undefined, phase: r.phase ?? undefined,

@@ -321,7 +321,7 @@ impl Store {
     /// Holds an artifact's IO lease, as a concurrent reader would, so tests
     /// can observe deferred byte collection.
     #[cfg(test)]
-    pub(crate) fn hold_artifact_io(&self, handle: &str) -> Result<std::fs::File> {
+    pub(crate) fn hold_artifact_io(&self, handle: &str) -> Result<super::artifacts::ArtifactLease> {
         self.lease(handle)
     }
     pub(super) fn connect(&self) -> Result<Connection> {

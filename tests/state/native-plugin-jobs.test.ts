@@ -92,3 +92,26 @@ describe("native job store integration",()=>{
     await jobsStore.controlJob(record().jobId,"dismiss");expect(jobsStore.jobs[0]).toMatchObject({status:"cancelled",controlError:"Disk unavailable"});
   });
 });
+describe("settled recovery presentation", () => {
+  const parked = (n: number, revision: number, phase: string): NativeJobRecord => ({ ...record(n, revision, "needs_attention"), phase });
+  it("a stopped or discarded job is dismissable and leaves active capacity; unresolved attention is not", () => {
+    let state = emptyNativeJobs();
+    for (let n = 1; n <= 128; n++) state = mergeNativeJobEvent(state, { type: "updated", job: parked(n, n, n % 2 ? "stopped" : "provider_result_discarded") });
+    // 128 explicit stops never block a new native job from presentation.
+    state = mergeNativeJobEvent(state, { type: "updated", job: record(200, 200) });
+    expect(state.jobs.has(record(200).jobKey)).toBe(true);
+    state = mergeNativeJobEvent(state, { type: "dismissed", jobKey: parked(1, 1, "stopped").jobKey, revision: 201 });
+    expect(state.jobs.has(parked(1, 1, "stopped").jobKey)).toBe(false);
+    state = mergeNativeJobEvent(state, { type: "updated", job: parked(300, 202, "needs_attention") });
+    expect(mergeNativeJobEvent(state, { type: "dismissed", jobKey: record(300).jobKey, revision: 203 })).toBe(state);
+  });
+  it("Clear Completed dismisses a stopped job natively while unresolved attention stays active", async () => {
+    const dismissed: string[] = [];
+    jobsStore.configureNativeControls({ cancel: async () => {}, dismiss: async (key) => { dismissed.push(key); }, resume: async () => {} });
+    jobsStore.applyNative([parked(1, 1, "stopped"), parked(2, 2, "needs_attention")]);
+    expect(jobsStore.jobs.map(isJobActive)).toEqual([false, true]);
+    expect(jobsStore.hasRunningJobs).toBe(true);
+    jobsStore.clearCompleted();
+    await vi.waitFor(() => expect(dismissed).toEqual([parked(1, 1, "stopped").jobKey]));
+  });
+});

@@ -1009,6 +1009,29 @@ fn ancestor_symlink_cannot_redirect_a_sealed_artifact_read() {
     assert!(s.busy("provider").unwrap());
 }
 #[test]
+fn sealed_read_distinguishes_missing_from_corrupt_bytes() {
+    let (_root, s) = store();
+    let d = output(&s, "tamper");
+    let bytes = s.root.join("bytes").join(format!("{}.bin", d.handle));
+    let original = fs::read(&bytes).unwrap();
+    let mut flipped = original.clone();
+    flipped[original.len() / 2] ^= 0xff;
+    fs::write(&bytes, &flipped).unwrap();
+    let corrupt = s
+        .read(&owner("consumer", 1), "consumer", "tamper", &d)
+        .unwrap_err();
+    assert_eq!(corrupt.service_code(), "corrupt");
+    fs::remove_file(&bytes).unwrap();
+    let missing = s
+        .read(&owner("consumer", 1), "consumer", "tamper", &d)
+        .unwrap_err();
+    assert_eq!(missing.service_code(), "not_found");
+    // Restored bytes are deliverable again: neither error was terminal.
+    fs::write(&bytes, &original).unwrap();
+    s.read(&owner("consumer", 1), "consumer", "tamper", &d)
+        .unwrap();
+}
+#[test]
 fn startup_collects_crash_left_temporary_bytes_only_after_durable_release() {
     let (root, s) = store();
     let d = output(&s, "pending");

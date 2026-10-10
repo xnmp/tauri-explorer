@@ -337,11 +337,26 @@ impl Store {
     fn verify_bytes(&self, d: &ArtifactDescriptor) -> Result<PathBuf> {
         descriptor(d)?;
         let path = self.bytes_path(&d.handle)?;
+        // Typed codes let a provider report missing versus corrupt delivery.
+        if matches!(fs::symlink_metadata(&path), Err(e) if e.kind() == std::io::ErrorKind::NotFound)
+        {
+            return Err(crate::error::AppError::Service {
+                code: "not_found".into(),
+                message: "Sealed artifact is missing".into(),
+            });
+        }
         no_links(&path)?;
         let mut file = open_regular(&path)?;
-        let bytes = bounded(&mut file, d.byte_length)?;
+        let mut bytes = Vec::new();
+        Read::by_ref(&mut file)
+            .take(d.byte_length.saturating_add(1))
+            .read_to_end(&mut bytes)
+            .map_err(|_| reject("artifact read failed"))?;
         if bytes.len() as u64 != d.byte_length || hex::encode(Sha256::digest(&bytes)) != d.sha256 {
-            return Err(reject("sealed artifact is missing or corrupt"));
+            return Err(crate::error::AppError::Service {
+                code: "corrupt".into(),
+                message: "Sealed artifact bytes do not match their descriptor".into(),
+            });
         }
         Ok(path)
     }

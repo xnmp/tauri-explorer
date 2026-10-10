@@ -1,12 +1,6 @@
 //! Startup requests use the same transactional installer as the UI.
 use crate::error::AppError;
-use std::{
-    fs,
-    path::Path,
-    sync::Mutex,
-    thread::JoinHandle,
-    time::SystemTime,
-};
+use std::{fs, path::Path, sync::Mutex, thread::JoinHandle, time::SystemTime};
 
 pub(super) fn apply(
     directory: &Path,
@@ -116,7 +110,9 @@ pub(super) fn publish_worker(
 pub(super) fn settle_worker(mutations: &Mutex<()>, slot: &WorkerSlot) {
     let worker = {
         let _published = mutations.lock().unwrap_or_else(|cause| cause.into_inner());
-        slot.lock().unwrap_or_else(|cause| cause.into_inner()).take()
+        slot.lock()
+            .unwrap_or_else(|cause| cause.into_inner())
+            .take()
     };
     if let Some(worker) = worker {
         let _ = worker.join();
@@ -128,7 +124,10 @@ mod tests {
     use super::*;
     #[test]
     fn shutdown_cannot_finish_before_a_worker_published_during_initialization() {
-        use std::sync::{atomic::{AtomicBool, Ordering}, mpsc, Arc};
+        use std::sync::{
+            atomic::{AtomicBool, Ordering},
+            mpsc, Arc,
+        };
         let mutations = Arc::new(Mutex::new(()));
         let slot = Arc::new(WorkerSlot::new(None));
         let closing = Arc::new(AtomicBool::new(false));
@@ -140,8 +139,12 @@ mod tests {
         // Initialization: holds the gate, passes the Closing check, then pauses
         // between eligibility and handle publication.
         let init = {
-            let (mutations, slot, closing, io_finished) =
-                (mutations.clone(), slot.clone(), closing.clone(), io_finished.clone());
+            let (mutations, slot, closing, io_finished) = (
+                mutations.clone(),
+                slot.clone(),
+                closing.clone(),
+                io_finished.clone(),
+            );
             std::thread::spawn(move || {
                 let _initializing = mutations.lock().unwrap();
                 let resume_init = Mutex::new(Some(resume_init_rx));
@@ -174,11 +177,14 @@ mod tests {
         closing.store(true, Ordering::SeqCst);
         let (shutdown_done_tx, shutdown_done_rx) = mpsc::channel();
         let shutdown = {
-            let (mutations, slot, io_finished) = (mutations.clone(), slot.clone(), io_finished.clone());
+            let (mutations, slot, io_finished) =
+                (mutations.clone(), slot.clone(), io_finished.clone());
             std::thread::spawn(move || {
                 settle_worker(&mutations, &slot);
                 // Profile ownership would be released here.
-                shutdown_done_tx.send(io_finished.load(Ordering::SeqCst)).unwrap();
+                shutdown_done_tx
+                    .send(io_finished.load(Ordering::SeqCst))
+                    .unwrap();
             })
         };
         // Let shutdown reach the gate first: the old ordering read the slot here.
@@ -187,11 +193,16 @@ mod tests {
         init.join().unwrap();
         io_started_rx.recv().unwrap();
         assert!(
-            shutdown_done_rx.recv_timeout(std::time::Duration::from_millis(200)).is_err(),
+            shutdown_done_rx
+                .recv_timeout(std::time::Duration::from_millis(200))
+                .is_err(),
             "shutdown must wait for in-flight queue IO"
         );
         release_io_tx.send(()).unwrap();
-        assert!(shutdown_done_rx.recv().unwrap(), "queue IO outlived shutdown");
+        assert!(
+            shutdown_done_rx.recv().unwrap(),
+            "queue IO outlived shutdown"
+        );
         shutdown.join().unwrap();
     }
     #[test]
@@ -205,9 +216,16 @@ mod tests {
     #[test]
     fn spawn_refusal_leaves_no_worker_and_reports_the_cause() {
         let slot = WorkerSlot::new(None);
-        let refused = publish_worker(&slot, || false, || {
-            Err(std::io::Error::new(std::io::ErrorKind::OutOfMemory, "thread limit"))
-        });
+        let refused = publish_worker(
+            &slot,
+            || false,
+            || {
+                Err(std::io::Error::new(
+                    std::io::ErrorKind::OutOfMemory,
+                    "thread limit",
+                ))
+            },
+        );
         assert_eq!(refused.unwrap_err().kind(), std::io::ErrorKind::OutOfMemory);
         assert!(slot.lock().unwrap().is_none());
     }

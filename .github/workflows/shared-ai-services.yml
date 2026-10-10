@@ -8,8 +8,6 @@ on:
       - 'src-tauri/src/installed_plugins/**'
       - 'src-tauri/src/service_state/**'
       - 'src-tauri/test_support/legacy_trace_preflight.py'
-      - 'src-tauri/src/windows_artifact_namespace.rs'
-      - 'src-tauri/test_support/windows_artifact_namespace_fixture/**'
       - '.github/workflows/shared-ai-services.yml'
   push:
     branches: [dev, main]
@@ -18,8 +16,6 @@ on:
       - 'src-tauri/src/installed_plugins/**'
       - 'src-tauri/src/service_state/**'
       - 'src-tauri/test_support/legacy_trace_preflight.py'
-      - 'src-tauri/src/windows_artifact_namespace.rs'
-      - 'src-tauri/test_support/windows_artifact_namespace_fixture/**'
       - '.github/workflows/shared-ai-services.yml'
   workflow_dispatch:
     inputs:
@@ -36,64 +32,6 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  windows-artifact-namespace:
-    runs-on: windows-2022
-    timeout-minutes: 20
-    steps:
-      - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: src-tauri/test_support/windows_artifact_namespace_fixture
-      - name: Execute real Windows namespace boundary and require every fixture
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = 'Stop'
-          $manifest = 'src-tauri/test_support/windows_artifact_namespace_fixture/Cargo.toml'
-          $report = Join-Path $env:GITHUB_WORKSPACE 'qualification-results/shared-ai-windows'
-          New-Item -ItemType Directory -Force -Path $report | Out-Null
-          $privateTemp = Join-Path $env:RUNNER_TEMP 'shared-ai-windows-namespace'
-          New-Item -ItemType Directory -Force -Path $privateTemp | Out-Null
-          $env:TMP = $privateTemp
-          $env:TEMP = $privateTemp
-          $build = & cargo.exe test --locked --manifest-path $manifest --no-run --message-format=json 2>&1
-          $buildExit = $LASTEXITCODE
-          $build | Set-Content (Join-Path $report 'build.jsonl')
-          if ($buildExit -ne 0) { throw 'Windows fixture build failed' }
-          $binaries = @($build | ForEach-Object {
-            if (([string]$_).StartsWith('{')) {
-              $artifact = ([string]$_) | ConvertFrom-Json
-              if ($artifact.reason -eq 'compiler-artifact' -and $artifact.profile.test -and $artifact.executable) { $artifact.executable }
-            }
-          } | Select-Object -Unique)
-          if ($binaries.Count -ne 1) { throw 'Expected one exact native fixture executable' }
-          Get-FileHash -Algorithm SHA256 $binaries[0] | Format-List | Out-File (Join-Path $report 'binary-hash.txt')
-          Copy-Item -LiteralPath $binaries[0] -Destination (Join-Path $report 'namespace-fixture.exe')
-          $listing = & cargo.exe test --locked --manifest-path $manifest -- native_tests:: --list 2>&1
-          $listingExit = $LASTEXITCODE
-          $listing | Tee-Object -FilePath (Join-Path $report 'listed-tests.log') | Out-Host
-          if ($listingExit -ne 0) { throw 'Windows fixture compile/list failed' }
-          $expected = [regex]::Matches(($listing | Out-String), '(?m)^.+: test\r?$').Count
-          if ($expected -ne 21) { throw "Expected twenty native outcomes and one private crash helper, got $expected listed tests" }
-          if (($listing | Out-String) -notmatch 'native_tests::native_child_crash_boundary: test') { throw 'Expected private crash helper is absent' }
-          $result = & cargo.exe test --locked --manifest-path $manifest -- native_tests:: --nocapture 2>&1
-          $testExit = $LASTEXITCODE
-          $result | Tee-Object -FilePath (Join-Path $report 'native-tests.log') | Out-Host
-          if ($testExit -ne 0) { throw 'Windows native namespace tests failed' }
-          if (($result | Out-String) -notmatch 'test result: ok\. 20 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out;') { throw 'Expected exactly twenty native outcomes; the only ignored case is the subprocess crash helper exercised by its parent' }
-          if (($result | Out-String) -notmatch 'QUALIFICATION directory_flush=.+; file_flush=success; NTFS_native_write_through_create_and_rename=success') { throw 'Native flush and namespace evidence is absent' }
-          & git.exe diff --exit-code -- src-tauri/test_support/windows_artifact_namespace_fixture/Cargo.lock
-          if ($LASTEXITCODE -ne 0) { throw 'Windows fixture changed its frozen lockfile' }
-          & git.exe rev-parse HEAD | Set-Content (Join-Path $report 'host-commit.txt')
-          Get-FileHash -Algorithm SHA256 'src-tauri/src/windows_artifact_namespace.rs', 'src-tauri/test_support/windows_artifact_namespace_fixture/src/main.rs', $manifest, 'src-tauri/test_support/windows_artifact_namespace_fixture/Cargo.lock' | Format-List | Out-File (Join-Path $report 'source-hashes.txt')
-      - name: Retain native Windows boundary evidence
-        if: always()
-        uses: actions/upload-artifact@v7
-        with:
-          name: shared-ai-windows-${{ github.sha }}-${{ github.run_attempt }}
-          path: qualification-results/shared-ai-windows/
-          if-no-files-found: warn
-
   linux-installed-plugins:
     if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-22.04

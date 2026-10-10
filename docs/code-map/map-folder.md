@@ -860,6 +860,7 @@ TraceExplorer's image UI, provider adapters and SQLite journal are maintained in
 - `src-tauri/src/installed_plugins/service_graph_tests.rs` — service graph version, identity, optional dependency and cycle contracts.
 - `src-tauri/src/installed_plugins/service_host.rs` — host lifetime service store and package mutation claim checks.
 - `src-tauri/src/native_deadline.rs` — scoped monotonic native lock, queue and RPC budgets.
+- `src-tauri/src/durable_dir.rs` — per-platform directory-entry durability barrier (Unix fsync, Windows writable directory-handle flush).
 - `src-tauri/src/process_supervisor.rs` — Unix parent-death process group anchor and bounded owned CLI output.
 - `src-tauri/src/recovery_actor.rs` — fixed-worker generation recovery ownership, queue limits and original deadlines.
 - `src-tauri/src/service_state/artifacts.rs` — captured inputs, reserved output stages, sealing, acquisition proof and retained artifact custody.
@@ -874,7 +875,6 @@ TraceExplorer's image UI, provider adapters and SQLite journal are maintained in
 - `src-tauri/src/service_state/rules.rs` — pure service ownership, phase, identity and quota rules.
 - `src-tauri/src/service_state/store.rs` — SQLite service ownership transactions, retention and execution claims.
 - `src-tauri/src/service_state/tests.rs` — private native ledger, custody, restart, corruption and commit-failure fixtures.
-- `src-tauri/src/windows_artifact_namespace.rs` — candidate Windows anchored NTFS namespace primitives; native qualification and integration remain pending.
 - `src/lib/api/ai-operations.ts` — native unresolved AI operation snapshot and action adapter.
 - `src/lib/api/mock-ai-presentation.ts` — mock command parity for native jobs and unresolved AI operations.
 - `src/lib/api/native-plugin-jobs.ts` — native job snapshots, events and immutable-key controls.

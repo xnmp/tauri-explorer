@@ -158,7 +158,10 @@ fn handle_inner(broker: Arc<Broker>, frame: Value, reply: bool) -> Result<(), Ap
                 })();
                 if !reply {
                     if let Ok(result) = &result {
-                        broker.emit_service_update(result["consumerPackageId"].clone(), result["status"].clone());
+                        broker.emit_service_update(
+                            result["consumerPackageId"].clone(),
+                            result["status"].clone(),
+                        );
                     }
                 }
                 let frame = match result {
@@ -222,7 +225,9 @@ fn dispatch(broker: &Arc<Broker>, method: &str, params: Value) -> Result<Value, 
         "host.services.describe" => {
             let target: ServiceTarget = decode(params)?;
             if target.service_id != "image-generation" || target.major != 1 {
-                return Ok(json!({"version":1,"available":false,"target":target,"reason":{"code":"unsupported_service","message":"This host does not support the requested service protocol"}}));
+                return Ok(
+                    json!({"version":1,"available":false,"target":target,"reason":{"code":"unsupported_service","message":"This host does not support the requested service protocol"}}),
+                );
             }
             let _gate = super::read_lifecycle()?;
             let entries = package::list(&super::root()?)?;
@@ -234,11 +239,8 @@ fn dispatch(broker: &Arc<Broker>, method: &str, params: Value) -> Result<Value, 
                 target.major,
             );
             Ok(match selected {
-                Ok((provider, _)) if cfg!(unix) => {
+                Ok((provider, _)) => {
                     json!({"version":1,"available":true,"target":target,"providerDigest":provider.digest})
-                }
-                Ok(_) => {
-                    json!({"version":1,"available":false,"target":target,"reason":{"code":"unsupported_platform","message":"Durable image artifact storage is unavailable on this platform"}})
                 }
                 Err(_) => {
                     json!({"version":1,"available":false,"target":target,"reason":{"code":"service_unavailable","message":"Image Generation package is missing, disabled or incompatible"}})
@@ -262,7 +264,9 @@ fn dispatch(broker: &Arc<Broker>, method: &str, params: Value) -> Result<Value, 
         }
         "host.services.test.begin" => {
             let _admission = ADMISSION.lock().unwrap_or_else(|cause| cause.into_inner());
-            if !broker.can_recover() { return Err(error("Connection test owner disconnected before admission")); }
+            if !broker.can_recover() {
+                return Err(error("Connection test owner disconnected before admission"));
+            }
             if !cfg!(unix) {
                 return Err(error("Image generation is unavailable on this platform because durable artifact storage is unsupported"));
             }
@@ -385,8 +389,13 @@ fn test_provider(broker: &Broker) -> Result<(), AppError> {
     Ok(())
 }
 fn invoke(consumer: &Arc<Broker>, request: Invocation) -> Result<Value, AppError> {
-    if request.service_id != "image-generation" || request.major != 1
-        || !matches!(request.method.as_str(),"describe"|"prepare"|"start"|"status"|"cancel"|"acknowledge") {
+    if request.service_id != "image-generation"
+        || request.major != 1
+        || !matches!(
+            request.method.as_str(),
+            "describe" | "prepare" | "start" | "status" | "cancel" | "acknowledge"
+        )
+    {
         return Err(error("Unsupported service ownership protocol"));
     }
     let (provider, _lease) = {
@@ -473,12 +482,20 @@ pub(super) fn image_call(
         store.verify_consumer(&caller, &a.operation_id)?;
         store.verify_provider(&provider, &caller.package_id, &a.operation_id)?;
     }
-    if matches!(dispatch_method.as_str(),"start"|"status") && admission.is_some() && store.execution_released(&caller.package_id,operation.as_deref().expect("owned operation"))? {
+    if matches!(dispatch_method.as_str(), "start" | "status")
+        && admission.is_some()
+        && store.execution_released(
+            &caller.package_id,
+            operation.as_deref().expect("owned operation"),
+        )?
+    {
         return Err(AppError::Service{code:"recovery_stopped".into(),message:"Automatic recovery was stopped for this original operation; its unknown execution evidence is retained".into()});
     }
     if dispatch_method == "start" {
         let _admission = ADMISSION.lock().unwrap_or_else(|cause| cause.into_inner());
-        if !alive() { return Err(error("Service owner disconnected before durable admission")); }
+        if !alive() {
+            return Err(error("Service owner disconnected before durable admission"));
+        }
         let op = operation.as_ref().expect("start operation");
         let semantic = crate::service_state::request::semantic(&body)?;
         let a = store.reserve_intent(
@@ -621,8 +638,7 @@ fn reconcile_receipt(
 fn credential(caller: &PackageGeneration, method: &str, params: Value) -> Result<Value, AppError> {
     use crate::ai::credentials::{OsSecrets, SecretStore};
     let profile = text(&params, "profileId")?;
-    if !crate::service_state::receipt::identity(profile)
-    {
+    if !crate::service_state::receipt::identity(profile) {
         return Err(error("Invalid image credential profile"));
     }
     let owner = format!("plugin:{}:{}", caller.package_id, profile);
@@ -657,12 +673,16 @@ fn credential(caller: &PackageGeneration, method: &str, params: Value) -> Result
 
 /// Transfer reconciliation ownership to the host before replacing a dead
 /// backend. Only operations owned by that incarnation enter this worker.
-static RECOVERY: std::sync::OnceLock<std::io::Result<crate::recovery_actor::RecoveryActor<PackageGeneration>>> = std::sync::OnceLock::new();
+static RECOVERY: std::sync::OnceLock<
+    std::io::Result<crate::recovery_actor::RecoveryActor<PackageGeneration>>,
+> = std::sync::OnceLock::new();
 static RECOVERY_SETUP: std::sync::Mutex<()> = std::sync::Mutex::new(());
 pub(super) fn shutdown_recovery() {
     // Setup and closing share a gate; no actor can appear after this snapshot.
     let actor = {
-        let _setup = RECOVERY_SETUP.lock().unwrap_or_else(|cause| cause.into_inner());
+        let _setup = RECOVERY_SETUP
+            .lock()
+            .unwrap_or_else(|cause| cause.into_inner());
         RECOVERY.get().and_then(|result| result.as_ref().ok())
     };
     if let Some(actor) = actor {
@@ -672,95 +692,138 @@ pub(super) fn shutdown_recovery() {
     }
 }
 pub(super) fn on_dead(generation: PackageGeneration) {
-    use crate::recovery_actor::{Enqueue,RecoveryActor,Task};
-    use std::time::{Duration,Instant};
-    if backend::is_closing() { return; }
-    let deadline=Instant::now()+Duration::from_secs(60);
+    use crate::recovery_actor::{Enqueue, RecoveryActor, Task};
+    use std::time::{Duration, Instant};
+    if backend::is_closing() {
+        return;
+    }
+    let deadline = Instant::now() + Duration::from_secs(60);
     // A dead broker without durable work cannot consume recovery capacity.
     // Admission/death share this lock, so a paid forwarding winner is visible.
-    let retained=crate::native_deadline::scoped(deadline,||->Result<bool,AppError>{
-        let store=service_host::store()?;
-        let _admission=crate::native_deadline::lock(&ADMISSION,"Recovery admission lock is unavailable")?;
-        Ok(store.list_preparations()?.contains(&generation)||store.claims()?.iter().any(|a|a.consumer==generation||a.provider==generation))
+    let retained = crate::native_deadline::scoped(deadline, || -> Result<bool, AppError> {
+        let store = service_host::store()?;
+        let _admission =
+            crate::native_deadline::lock(&ADMISSION, "Recovery admission lock is unavailable")?;
+        Ok(store.list_preparations()?.contains(&generation)
+            || store
+                .claims()?
+                .iter()
+                .any(|a| a.consumer == generation || a.provider == generation))
     });
-    if !matches!(retained,Ok(true)) {return;}
+    if !matches!(retained, Ok(true)) {
+        return;
+    }
     let actor = {
-        let _setup = RECOVERY_SETUP.lock().unwrap_or_else(|cause| cause.into_inner());
-        if backend::is_closing() { return; }
-        let Ok(actor) = RECOVERY.get_or_init(|| RecoveryActor::new(recover_generation)) else { backend::emit_operations_changed(); return; };
+        let _setup = RECOVERY_SETUP
+            .lock()
+            .unwrap_or_else(|cause| cause.into_inner());
+        if backend::is_closing() {
+            return;
+        }
+        let Ok(actor) = RECOVERY.get_or_init(|| RecoveryActor::new(recover_generation)) else {
+            backend::emit_operations_changed();
+            return;
+        };
         actor
     };
-    match actor.enqueue(Task{generation,deadline}) {
-        Enqueue::Accepted|Enqueue::Duplicate=>{},
-        Enqueue::Full(_)|Enqueue::Closed(_)=>{
+    match actor.enqueue(Task {
+        generation,
+        deadline,
+    }) {
+        Enqueue::Accepted | Enqueue::Duplicate => {}
+        Enqueue::Full(_) | Enqueue::Closed(_) => {
             // Never renew a rejected signal's budget or submit its operation.
             // The durable claim is still visible for explicit recovery/startup.
-            let _=actor.take_rescan_needed();
+            let _ = actor.take_rescan_needed();
             backend::emit_operations_changed();
         }
     }
 }
-fn recover_generation(dispatch:crate::recovery_actor::Dispatch<PackageGeneration>)->crate::recovery_actor::RecoveryOutcome {
-    use crate::recovery_actor::{Mode,RecoveryOutcome};
-    use std::{collections::HashSet,time::{Duration,Instant}};
-    if dispatch.mode==Mode::Expired {return RecoveryOutcome::Retained;}
-    let generation=dispatch.task.generation;
-    let aggregate_deadline=dispatch.task.deadline;
-    let attempt_deadline=dispatch.attempt_deadline;
-        let recover = || -> Result<(), AppError> {
-            let store = service_host::store()?;
-            let _ = store.release_preparations(&generation);
-            let claims = {
-                let _admission = crate::native_deadline::lock(&ADMISSION,"Recovery admission lock is unavailable")?;
-                store.claims()?
+fn recover_generation(
+    dispatch: crate::recovery_actor::Dispatch<PackageGeneration>,
+) -> crate::recovery_actor::RecoveryOutcome {
+    use crate::recovery_actor::{Mode, RecoveryOutcome};
+    use std::{
+        collections::HashSet,
+        time::{Duration, Instant},
+    };
+    if dispatch.mode == Mode::Expired {
+        return RecoveryOutcome::Retained;
+    }
+    let generation = dispatch.task.generation;
+    let aggregate_deadline = dispatch.task.deadline;
+    let attempt_deadline = dispatch.attempt_deadline;
+    let recover = || -> Result<(), AppError> {
+        let store = service_host::store()?;
+        let _ = store.release_preparations(&generation);
+        let claims = {
+            let _admission =
+                crate::native_deadline::lock(&ADMISSION, "Recovery admission lock is unavailable")?;
+            store.claims()?
+        }
+        .into_iter()
+        .filter(|a| {
+            (a.consumer == generation || a.provider == generation)
+                && a.phase != AdmissionPhase::Reserved
+                && a.phase != AdmissionPhase::Released
+        })
+        .collect::<Vec<_>>();
+        let mut remaining = claims;
+        let mut cancelled = HashSet::new();
+        // Signal every live shared-provider worker before waiting for any
+        // receipt. A slow first status cannot delay the other cancellations.
+        for admission in &remaining {
+            if dispatch.mode != Mode::Attempt
+                || backend::is_closing()
+                || Instant::now() >= attempt_deadline
+            {
+                break;
             }
-                .into_iter()
-                .filter(|a| {
-                    (a.consumer == generation || a.provider == generation)
-                        && a.phase != AdmissionPhase::Reserved
-                        && a.phase != AdmissionPhase::Released
-                })
-                .collect::<Vec<_>>();
-            let mut remaining = claims;
-            let mut cancelled = HashSet::new();
-            // Signal every live shared-provider worker before waiting for any
-            // receipt. A slow first status cannot delay the other cancellations.
-            for admission in &remaining {
-                if dispatch.mode!=Mode::Attempt || backend::is_closing() || Instant::now()>=attempt_deadline {break;}
-                let notify=crate::native_deadline::scoped(attempt_deadline,||->Result<(),AppError>{
-                    let _action=super::ai_operations::action_guard()?;
-                    if recovery_retained_status(store,admission)?.is_some(){return Ok(())}
+            let notify = crate::native_deadline::scoped(
+                attempt_deadline,
+                || -> Result<(), AppError> {
+                    let _action = super::ai_operations::action_guard()?;
+                    if recovery_retained_status(store, admission)?.is_some() {
+                        return Ok(());
+                    }
                     crate::native_deadline::check()?;
                     if admission.consumer == generation {
-                    if let Some(provider) = backend::active_instance(
-                        &admission.provider.package_id,
-                        &admission.provider.digest,
-                    ) {
-                        // Queue acceptance is not execution confirmation. A
-                        // saturated provider may reject this burst; the loop
-                        // below retries cancel with an authoritative reply.
-                        let _ = provider.notify_request(&format!("services.{}.v{}.cancel",admission.target.service_id,admission.target.major),json!({"caller":{"packageId":admission.consumer.package_id,"packageDigest":admission.consumer.digest,"incarnation":admission.consumer.incarnation},"request":{"operationId":admission.operation_id}}));
+                        if let Some(provider) = backend::active_instance(
+                            &admission.provider.package_id,
+                            &admission.provider.digest,
+                        ) {
+                            // Queue acceptance is not execution confirmation. A
+                            // saturated provider may reject this burst; the loop
+                            // below retries cancel with an authoritative reply.
+                            let _ = provider.notify_request(&format!("services.{}.v{}.cancel",admission.target.service_id,admission.target.major),json!({"caller":{"packageId":admission.consumer.package_id,"packageDigest":admission.consumer.digest,"incarnation":admission.consumer.incarnation},"request":{"operationId":admission.operation_id}}));
+                        }
                     }
-                }
                     Ok(())
-                });
-                if notify.is_err() && Instant::now()>=attempt_deadline {break;}
+                },
+            );
+            if notify.is_err() && Instant::now() >= attempt_deadline {
+                break;
             }
-            let deadline=attempt_deadline;
-            while !remaining.is_empty() && !backend::is_closing() && Instant::now() < deadline {
-                let mut pending = vec![];
-                for admission in remaining {
-                    if backend::is_closing() || Instant::now() >= deadline {
-                        pending.push(admission);
-                        continue;
-                    }
-                    let identity = (
-                        admission.consumer.package_id.clone(),
-                        admission.operation_id.clone(),
-                    );
-                    let attempt = crate::native_deadline::scoped(deadline,|| -> Result<Value, AppError> {
-                        let _action=super::ai_operations::action_guard()?;
-                        if let Some(status)=recovery_retained_status(store,&admission)? {return Ok(status);}
+        }
+        let deadline = attempt_deadline;
+        while !remaining.is_empty() && !backend::is_closing() && Instant::now() < deadline {
+            let mut pending = vec![];
+            for admission in remaining {
+                if backend::is_closing() || Instant::now() >= deadline {
+                    pending.push(admission);
+                    continue;
+                }
+                let identity = (
+                    admission.consumer.package_id.clone(),
+                    admission.operation_id.clone(),
+                );
+                let attempt = crate::native_deadline::scoped(
+                    deadline,
+                    || -> Result<Value, AppError> {
+                        let _action = super::ai_operations::action_guard()?;
+                        if let Some(status) = recovery_retained_status(store, &admission)? {
+                            return Ok(status);
+                        }
                         let _lease = {
                             let _gate = super::read_lifecycle()?;
                             let entries = package::list(&super::root()?)?;
@@ -782,49 +845,67 @@ fn recover_generation(dispatch:crate::recovery_actor::Dispatch<PackageGeneration
                             };
                         let response=provider.call(&format!("services.{}.v{}.{}",admission.target.service_id,admission.target.major,method),json!({"caller":{"packageId":admission.consumer.package_id,"packageDigest":admission.consumer.digest,"incarnation":admission.consumer.incarnation},"request":{"operationId":admission.operation_id}}))?;
                         reconcile(&provider.generation(), &admission, &response)?;
-                        if method == "cancel" { cancelled.insert(identity); }
+                        if method == "cancel" {
+                            cancelled.insert(identity);
+                        }
                         Ok(response)
-                    });
-                    if !attempt.as_ref().is_ok_and(|status| {
-                        !matches!(
-                            status["execution"]["state"].as_str(),
-                            Some("accepted" | "running")
-                        )
-                    }) {
-                        pending.push(admission);
-                    }
-                }
-                remaining = pending;
-                if !remaining.is_empty() {
-                    std::thread::sleep(Duration::from_millis(100));
-                }
-            }
-            for admission in remaining {
-                crate::native_deadline::check()?;
-                let _ = store.mark_attention(
-                    &admission.provider,
-                    &admission.consumer.package_id,
-                    &admission.operation_id,
+                    },
                 );
+                if !attempt.as_ref().is_ok_and(|status| {
+                    !matches!(
+                        status["execution"]["state"].as_str(),
+                        Some("accepted" | "running")
+                    )
+                }) {
+                    pending.push(admission);
+                }
             }
-            let preparation_deadline = aggregate_deadline;
-            while !backend::is_closing()
-                && Instant::now() < preparation_deadline
-                && store.list_preparations()?.contains(&generation)
-            {
-                let _ = store.release_preparations(&generation);
-                std::thread::sleep(Duration::from_millis(50));
+            remaining = pending;
+            if !remaining.is_empty() {
+                std::thread::sleep(Duration::from_millis(100));
             }
-            Ok(())
-        };
-        let result=crate::native_deadline::scoped(aggregate_deadline,recover);
-        backend::emit_operations_changed();
-        if result.is_ok(){RecoveryOutcome::Settled}else{RecoveryOutcome::Retained}
+        }
+        for admission in remaining {
+            crate::native_deadline::check()?;
+            let _ = store.mark_attention(
+                &admission.provider,
+                &admission.consumer.package_id,
+                &admission.operation_id,
+            );
+        }
+        let preparation_deadline = aggregate_deadline;
+        while !backend::is_closing()
+            && Instant::now() < preparation_deadline
+            && store.list_preparations()?.contains(&generation)
+        {
+            let _ = store.release_preparations(&generation);
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        Ok(())
+    };
+    let result = crate::native_deadline::scoped(aggregate_deadline, recover);
+    backend::emit_operations_changed();
+    if result.is_ok() {
+        RecoveryOutcome::Settled
+    } else {
+        RecoveryOutcome::Retained
+    }
 }
-pub(super) fn recovery_retained_status(store:&crate::service_state::Store,admission:&Admission)->Result<Option<Value>,AppError> {
-    let current=store.get(&admission.consumer.package_id,&admission.operation_id)?.ok_or_else(||error("Recovery admission disappeared"))?;
-    if current.phase==AdmissionPhase::Released || store.execution_released(&admission.consumer.package_id,&admission.operation_id)? {
-        return Ok(Some(store.provider_receipt(&admission.consumer.package_id,&admission.operation_id)?.unwrap_or_else(||json!({"execution":{"state":"unknown"}}))));
+pub(super) fn recovery_retained_status(
+    store: &crate::service_state::Store,
+    admission: &Admission,
+) -> Result<Option<Value>, AppError> {
+    let current = store
+        .get(&admission.consumer.package_id, &admission.operation_id)?
+        .ok_or_else(|| error("Recovery admission disappeared"))?;
+    if current.phase == AdmissionPhase::Released
+        || store.execution_released(&admission.consumer.package_id, &admission.operation_id)?
+    {
+        return Ok(Some(
+            store
+                .provider_receipt(&admission.consumer.package_id, &admission.operation_id)?
+                .unwrap_or_else(|| json!({"execution":{"state":"unknown"}})),
+        ));
     }
     Ok(None)
 }

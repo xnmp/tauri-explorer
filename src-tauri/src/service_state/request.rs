@@ -33,7 +33,10 @@ pub(crate) fn semantic(value: &Value) -> Result<String, AppError> {
     if !valid_id
         || !super::receipt::identity(&request.connection_id)
         || !super::receipt::identity(&request.expected_connection_revision)
-        || request.model.as_ref().is_some_and(|v| !super::receipt::model(v))
+        || request
+            .model
+            .as_ref()
+            .is_some_and(|v| !super::receipt::model(v))
         || request.prompt.trim().is_empty()
         || request.prompt.len() > 16000
         || request.prompt.contains('\0')
@@ -52,7 +55,8 @@ pub(crate) fn semantic(value: &Value) -> Result<String, AppError> {
     for input in &request.inputs {
         total = total.checked_add(input.byte_length).ok_or_else(reject)?;
         if input.sha256.len() != 64
-            || input.handle.is_empty() || input.handle.len()>128
+            || input.handle.is_empty()
+            || input.handle.len() > 128
             || !input.sha256.bytes().all(|b| b.is_ascii_hexdigit())
             || input.byte_length == 0
             || input.byte_length > 20 * 1024 * 1024

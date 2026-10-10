@@ -138,16 +138,38 @@ fn simultaneous_same_id_dispatches_start_once_and_reconciles_other_calls() {
 }
 #[test]
 fn explicit_stop_retains_original_unknown_and_refuses_automatic_or_duplicate_dispatch() {
-    let (_root,store)=fixture();let op="stopped";start(&store,op);
-    let mut unknown=status(op,"unknown",json!({"state":"none"}));unknown["revision"]=json!(2);unknown["execution"]["error"]=json!({"code":"interrupted","message":"Remote result is unconfirmed","correlationId":null});
-    call(&store,"status",json!({"operationId":op}),|_,_|Ok(unknown.clone())).unwrap();
-    let original=store.get("consumer",op).unwrap().unwrap();
-    store.stop_recovery(&provider(),"consumer",op,true).unwrap();
-    assert_eq!(super::service_bridge::recovery_retained_status(&store,&original).unwrap(),Some(unknown.clone()));
-    for (method,request) in [("status",json!({"operationId":op})),("start",request(op))] {
-        assert!(matches!(call(&store,method,request,|_,_|panic!("stopped operation reached provider")),Err(AppError::Service{ref code,..}) if code=="recovery_stopped"));
+    let (_root, store) = fixture();
+    let op = "stopped";
+    start(&store, op);
+    let mut unknown = status(op, "unknown", json!({"state":"none"}));
+    unknown["revision"] = json!(2);
+    unknown["execution"]["error"] =
+        json!({"code":"interrupted","message":"Remote result is unconfirmed","correlationId":null});
+    call(&store, "status", json!({"operationId":op}), |_, _| {
+        Ok(unknown.clone())
+    })
+    .unwrap();
+    let original = store.get("consumer", op).unwrap().unwrap();
+    store
+        .stop_recovery(&provider(), "consumer", op, true)
+        .unwrap();
+    assert_eq!(
+        super::service_bridge::recovery_retained_status(&store, &original).unwrap(),
+        Some(unknown.clone())
+    );
+    for (method, request) in [
+        ("status", json!({"operationId":op})),
+        ("start", request(op)),
+    ] {
+        assert!(
+            matches!(call(&store,method,request,|_,_|panic!("stopped operation reached provider")),Err(AppError::Service{ref code,..}) if code=="recovery_stopped")
+        );
     }
-    assert_eq!(store.provider_receipt("consumer",op).unwrap(),Some(unknown));assert!(store.claims().unwrap().is_empty());
+    assert_eq!(
+        store.provider_receipt("consumer", op).unwrap(),
+        Some(unknown)
+    );
+    assert!(store.claims().unwrap().is_empty());
     // Execution release allows compatible package changes, not an old
     // consumer that would relabel the original unknown as interrupted.
     assert!(super::service_host::require_legacy_consumer_compatible(&store, "consumer").is_err());
@@ -156,11 +178,16 @@ fn explicit_stop_retains_original_unknown_and_refuses_automatic_or_duplicate_dis
 }
 #[test]
 fn explicit_discard_is_authoritative_for_a_previously_queued_recovery_snapshot() {
-    let (_root,store)=fixture();let op="discarded-recovery";ready(&store,op);
-    let original=store.get("consumer",op).unwrap().unwrap();
-    let receipt=status(op,"succeeded",json!({"state":"discarded"}));
-    reconcile_at(&store,&provider(),&original,&receipt).unwrap();
-    assert_eq!(super::service_bridge::recovery_retained_status(&store,&original).unwrap(),Some(receipt));
+    let (_root, store) = fixture();
+    let op = "discarded-recovery";
+    ready(&store, op);
+    let original = store.get("consumer", op).unwrap().unwrap();
+    let receipt = status(op, "succeeded", json!({"state":"discarded"}));
+    reconcile_at(&store, &provider(), &original, &receipt).unwrap();
+    assert_eq!(
+        super::service_bridge::recovery_retained_status(&store, &original).unwrap(),
+        Some(receipt)
+    );
     assert!(store.claims().unwrap().is_empty());
 }
 #[test]

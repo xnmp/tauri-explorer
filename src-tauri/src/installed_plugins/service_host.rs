@@ -47,7 +47,10 @@ pub(super) fn mutation_allowed_at(
 
 /// SDK1/2 consumers may reconcile shared uncertain runs as ordinary interrupted
 /// work. Refuse that downgrade independently of released execution claims.
-pub(super) fn candidate_state_allowed_at(profile: &std::path::Path, candidate: &super::package::Installed) -> Result<(), AppError> {
+pub(super) fn candidate_state_allowed_at(
+    profile: &std::path::Path,
+    candidate: &super::package::Installed,
+) -> Result<(), AppError> {
     mutation_allowed_at(profile, &candidate.manifest.id)?;
     if candidate.manifest.sdk_version < 3 {
         let store = Store::open(profile.join("service-state"), Limits::default())?;
@@ -55,7 +58,10 @@ pub(super) fn candidate_state_allowed_at(profile: &std::path::Path, candidate: &
     }
     Ok(())
 }
-pub(super) fn require_legacy_consumer_compatible(store: &Store, package: &str) -> Result<(), AppError> {
+pub(super) fn require_legacy_consumer_compatible(
+    store: &Store,
+    package: &str,
+) -> Result<(), AppError> {
     if !store.legacy_consumer_compatible(package)? {
         return Err(AppError::Other("This legacy package cannot preserve retained shared AI history; keep a compatible package enabled".into()));
     }

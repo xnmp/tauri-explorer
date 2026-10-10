@@ -19,6 +19,7 @@ mod file_picker;
 mod shared_history;
 // pub: criterion benches (src-tauri/benches/) call into
 // files::dir_listing::{scan_directory_parallel, sort_entries} directly.
+mod durable_dir;
 pub mod files;
 mod gemini;
 pub mod git;
@@ -35,16 +36,20 @@ mod image_crop;
 mod image_operation;
 mod installed_plugins;
 mod native_deadline;
-mod recovery_actor;
 #[cfg(unix)]
 mod process_supervisor;
+mod recovery_actor;
 
 /// Dispatch the private process anchor before initializing the application.
 pub fn run_process_supervisor() -> Option<i32> {
     #[cfg(unix)]
-    { process_supervisor::early_mode() }
+    {
+        process_supervisor::early_mode()
+    }
     #[cfg(not(unix))]
-    { None }
+    {
+        None
+    }
 }
 mod load_diagnostics;
 mod nano_banana;

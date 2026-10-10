@@ -85,13 +85,49 @@ pub(crate) struct Options {
     background: String,
 }
 impl Options {
-    pub(crate) fn valid(&self)->bool {
-        let size=if self.size=="auto" {true} else {self.size.split_once('x').and_then(|(w,h)|Some((w.parse::<u64>().ok()?,h.parse::<u64>().ok()?))).is_some_and(|(w,h)|w>0&&h>0&&w<=3840&&h<=3840&&w%16==0&&h%16==0&&w<=h*3&&h<=w*3&&(655360..=8294400).contains(&(w*h)))};
-        size&&matches!(self.quality.as_str(),"auto"|"low"|"medium"|"high")&&matches!(self.background.as_str(),"auto"|"opaque"|"transparent")&&self.resolution.as_deref().is_none_or(|v|matches!(v,"1k"|"2k"|"4k"))&&self.aspect_ratio.as_deref().is_none_or(|v|matches!(v,"keep"|"1:1"|"4:3"|"3:4"|"3:2"|"2:3"|"16:9"|"9:16"))
+    pub(crate) fn valid(&self) -> bool {
+        let size = if self.size == "auto" {
+            true
+        } else {
+            self.size
+                .split_once('x')
+                .and_then(|(w, h)| Some((w.parse::<u64>().ok()?, h.parse::<u64>().ok()?)))
+                .is_some_and(|(w, h)| {
+                    w > 0
+                        && h > 0
+                        && w <= 3840
+                        && h <= 3840
+                        && w % 16 == 0
+                        && h % 16 == 0
+                        && w <= h * 3
+                        && h <= w * 3
+                        && (655360..=8294400).contains(&(w * h))
+                })
+        };
+        size && matches!(self.quality.as_str(), "auto" | "low" | "medium" | "high")
+            && matches!(self.background.as_str(), "auto" | "opaque" | "transparent")
+            && self
+                .resolution
+                .as_deref()
+                .is_none_or(|v| matches!(v, "1k" | "2k" | "4k"))
+            && self.aspect_ratio.as_deref().is_none_or(|v| {
+                matches!(
+                    v,
+                    "keep" | "1:1" | "4:3" | "3:4" | "3:2" | "2:3" | "16:9" | "9:16"
+                )
+            })
     }
 }
-pub(crate) fn model(value:&str)->bool {!value.trim().is_empty()&&value.chars().count()<=256&&!value.chars().any(char::is_control)}
-pub(crate) fn identity(value:&str)->bool {!value.is_empty()&&value.len()<=128&&value.bytes().all(|b|b.is_ascii_alphanumeric()||b"._-".contains(&b))}
+pub(crate) fn model(value: &str) -> bool {
+    !value.trim().is_empty() && value.chars().count() <= 256 && !value.chars().any(char::is_control)
+}
+pub(crate) fn identity(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= 128
+        && value
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b"._-".contains(&b))
+}
 fn bounded(value: &str, max: usize) -> bool {
     value.len() <= max && !value.chars().any(char::is_control)
 }
@@ -109,7 +145,11 @@ fn valid_error(error: &SafeError) -> bool {
 }
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
-enum CodexTurnState { Completed, Failed, Incomplete }
+enum CodexTurnState {
+    Completed,
+    Failed,
+    Incomplete,
+}
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct TokenUsage {
@@ -119,7 +159,10 @@ struct TokenUsage {
 }
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
-enum ExplanationKind { Reply, Error }
+enum ExplanationKind {
+    Reply,
+    Error,
+}
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct FailedExplanation {
@@ -128,7 +171,12 @@ struct FailedExplanation {
     pub truncated: bool,
 }
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(tag = "kind", rename_all = "snake_case", rename_all_fields = "camelCase", deny_unknown_fields)]
+#[serde(
+    tag = "kind",
+    rename_all = "snake_case",
+    rename_all_fields = "camelCase",
+    deny_unknown_fields
+)]
 enum OperationDiagnostics {
     CodexImageTurn {
         thread_id: String,
@@ -140,10 +188,34 @@ enum OperationDiagnostics {
 impl OperationDiagnostics {
     pub fn valid(&self, succeeded: bool) -> bool {
         match self {
-            Self::CodexImageTurn { thread_id, usage, explanation, .. } => {
-                thread_id.len() == 36 && thread_id.bytes().enumerate().all(|(i,b)| if matches!(i,8|13|18|23) { b == b'-' } else { b.is_ascii_hexdigit() })
-                    && usage.as_ref().is_none_or(|u| [u.input_tokens,u.cached_input_tokens,u.output_tokens].iter().all(|v|v.is_none_or(|v|v <= 9_007_199_254_740_991)))
-                    && explanation.as_ref().is_none_or(|e| !succeeded && !e.text.trim().is_empty() && e.text.len() <= 4096 && !e.text.chars().any(|c|c.is_control() && !matches!(c,'\n'|'\r'|'\t')))
+            Self::CodexImageTurn {
+                thread_id,
+                usage,
+                explanation,
+                ..
+            } => {
+                thread_id.len() == 36
+                    && thread_id.bytes().enumerate().all(|(i, b)| {
+                        if matches!(i, 8 | 13 | 18 | 23) {
+                            b == b'-'
+                        } else {
+                            b.is_ascii_hexdigit()
+                        }
+                    })
+                    && usage.as_ref().is_none_or(|u| {
+                        [u.input_tokens, u.cached_input_tokens, u.output_tokens]
+                            .iter()
+                            .all(|v| v.is_none_or(|v| v <= 9_007_199_254_740_991))
+                    })
+                    && explanation.as_ref().is_none_or(|e| {
+                        !succeeded
+                            && !e.text.trim().is_empty()
+                            && e.text.len() <= 4096
+                            && !e
+                                .text
+                                .chars()
+                                .any(|c| c.is_control() && !matches!(c, '\n' | '\r' | '\t'))
+                    })
             }
         }
     }
@@ -166,19 +238,19 @@ pub(crate) fn validate(value: &Value, admission: &Admission) -> Result<Value, Ap
     {
         return Err(invalid());
     }
-    if receipt.diagnostics.as_ref().is_some_and(|d| !d.valid(matches!(receipt.execution, Execution::Succeeded { .. }))) { return Err(invalid()); }
+    if receipt
+        .diagnostics
+        .as_ref()
+        .is_some_and(|d| !d.valid(matches!(receipt.execution, Execution::Succeeded { .. })))
+    {
+        return Err(invalid());
+    }
     match &receipt.execution {
         Execution::Succeeded { metadata } => {
             if !matches!(metadata.adapter.as_str(), "openai-images" | "codex-cli")
                 || !bounded(&metadata.endpoint_identity, 8192)
-                || metadata
-                    .requested_model
-                    .as_ref()
-                    .is_some_and(|v| !model(v))
-                || metadata
-                    .actual_model
-                    .as_ref()
-                    .is_some_and(|v| !model(v))
+                || metadata.requested_model.as_ref().is_some_and(|v| !model(v))
+                || metadata.actual_model.as_ref().is_some_and(|v| !model(v))
                 || metadata
                     .external_request_id
                     .as_ref()
@@ -246,10 +318,15 @@ pub(crate) fn validate_transition(previous: &Value, next: &Value) -> Result<(), 
     let reject = || AppError::Other("Image receipt conflicts with its durable outcome".into());
     if let Some(d) = previous.get("diagnostics") {
         let n = &next["diagnostics"];
-        if d["kind"] != n["kind"] || d["threadId"] != n["threadId"]
+        if d["kind"] != n["kind"]
+            || d["threadId"] != n["threadId"]
             || (d["explanation"].is_object() && d["explanation"] != n["explanation"])
-            || (previous["execution"]["state"] != "running" && previous["execution"]["state"] != "accepted" && d != n)
-        { return Err(reject()); }
+            || (previous["execution"]["state"] != "running"
+                && previous["execution"]["state"] != "accepted"
+                && d != n)
+        {
+            return Err(reject());
+        }
     }
     let before = previous["execution"]["state"].as_str();
     let after = next["execution"]["state"].as_str();

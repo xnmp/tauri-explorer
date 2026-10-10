@@ -230,8 +230,14 @@ pub async fn write_config_file(filename: String, data: String) -> Result<(), App
                 .map_err(|error| AppError::Other(error.message));
         }
         if filename == "plugin.openai-image.json" {
-            return crate::ai::image_migration::write_source(path.parent().expect("config parent"), &data)
-                .map_err(|error| AppError::Service { code: error.code.into(), message: error.message });
+            return crate::ai::image_migration::write_source(
+                path.parent().expect("config parent"),
+                &data,
+            )
+            .map_err(|error| AppError::Service {
+                code: error.code.into(),
+                message: error.message,
+            });
         }
         write_atomic(&path, &data).map_err(|e| {
             AppError::Other(format!("Failed to write config file '{}': {}", filename, e))

@@ -16,7 +16,10 @@ pub(crate) enum JobState {
 }
 impl JobState {
     pub fn terminal(self) -> bool {
-        matches!(self, Self::Completed | Self::Error | Self::Cancelled | Self::Discarded)
+        matches!(
+            self,
+            Self::Completed | Self::Error | Self::Cancelled | Self::Discarded
+        )
     }
 }
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]

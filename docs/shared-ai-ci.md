@@ -39,13 +39,7 @@ The job has a 60-minute total bound, with each installed-app scenario bounded to
 measured runtimes. Neither workflow publishes a release or installs outside a
 disposable profile.
 
-Windows native qualification is mandatory before merge. Its namespace outcome
-must be recorded independently of Linux packaging. The command is:
-
-```sh
-cargo test --locked --manifest-path src-tauri/test_support/windows_artifact_namespace_fixture/Cargo.toml -- native_tests:: --nocapture
-```
-
-A cross-target check or zero matched tests cannot satisfy that gate. Actual
-Windows Store integration and provider/Trace handoff still require their native
-fixture route; no cross-repository Windows handoff command exists at this checkpoint.
+Windows native qualification is mandatory before merge. The integrated Store,
+`durable_dir` and installed-plugin tests run natively in the "Rust platforms"
+Windows job; the Trace and provider handoff tests run natively in TraceExplorer's
+Windows "Build plugin" job. A cross-target check cannot satisfy that gate.

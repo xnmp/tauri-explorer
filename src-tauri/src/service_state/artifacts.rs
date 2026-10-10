@@ -13,14 +13,30 @@ use std::{
 const INPUT: u64 = 20 * 1024 * 1024;
 const TOTAL: u64 = 64 * 1024 * 1024;
 const OUTPUT: u64 = 50 * 1024 * 1024;
-fn may_finish_stage(connection:&rusqlite::Connection, admission:&Admission)->Result<bool> {
-    if matches!(admission.phase,AdmissionPhase::Forwarding|AdmissionPhase::Accepted) {return Ok(true);}
-    if admission.phase != AdmissionPhase::Terminal || admission.output.is_some() {return Ok(false);}
-    let status:Option<String>=connection.query_row("SELECT status FROM provider_receipts WHERE consumer=?1 AND operation=?2",params![admission.consumer.package_id,admission.operation_id],|row|row.get(0)).optional().map_err(sql)?;
-    let Some(status)=status else{return Ok(false);};
-    let value:serde_json::Value=decode(&status)?;
-    let status=super::receipt::validate(&value,admission)?;
-    Ok(status["execution"]["state"]=="succeeded" && status["delivery"]["state"]=="unavailable")
+fn may_finish_stage(connection: &rusqlite::Connection, admission: &Admission) -> Result<bool> {
+    if matches!(
+        admission.phase,
+        AdmissionPhase::Forwarding | AdmissionPhase::Accepted
+    ) {
+        return Ok(true);
+    }
+    if admission.phase != AdmissionPhase::Terminal || admission.output.is_some() {
+        return Ok(false);
+    }
+    let status: Option<String> = connection
+        .query_row(
+            "SELECT status FROM provider_receipts WHERE consumer=?1 AND operation=?2",
+            params![admission.consumer.package_id, admission.operation_id],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(sql)?;
+    let Some(status) = status else {
+        return Ok(false);
+    };
+    let value: serde_json::Value = decode(&status)?;
+    let status = super::receipt::validate(&value, admission)?;
+    Ok(status["execution"]["state"] == "succeeded" && status["delivery"]["state"] == "unavailable")
 }
 pub(super) fn opaque_id() -> Result<String> {
     let mut bytes = [0u8; 24];
@@ -188,28 +204,10 @@ fn image(bytes: &[u8], output: bool) -> Result<(String, u32, u32)> {
         .map_err(|_| reject("image data is malformed or truncated"))?;
     Ok((media.into(), w, h))
 }
-// Directory-entry durability is qualified on Unix. Windows FlushFileBuffers
-// documents writable file/volume handles, not a portable directory fsync; do
-// not silently claim durable handoff on an unqualified platform.
-fn durable_names_supported() -> Result<()> {
-    #[cfg(not(unix))]
-    return Err(reject(
-        "unsupported platform: durable artifact directory synchronization is unavailable",
-    ));
-    #[cfg(unix)]
-    Ok(())
-}
+// Directory-entry durability: see crate::durable_dir for the per-platform
+// barrier. An unsupported flush fails the operation instead of claiming it.
 fn sync_directory(path: &Path) -> Result<()> {
-    durable_names_supported()?;
-    #[cfg(unix)]
-    {
-        File::open(path)
-            .and_then(|f| f.sync_all())
-            .map_err(|_| reject("artifact directory sync failed"))?;
-    }
-    #[cfg(not(unix))]
-    let _ = path;
-    Ok(())
+    crate::durable_dir::sync(path).map_err(|_| reject("artifact directory sync failed"))
 }
 impl Store {
     fn bytes_path(&self, handle: &str) -> Result<PathBuf> {
@@ -271,7 +269,6 @@ impl Store {
         Ok(self.bytes_path(handle)?.with_extension("pending"))
     }
     fn write_sealed(&self, handle: &str, bytes: &[u8]) -> Result<()> {
-        durable_names_supported()?;
         let target = self.bytes_path(handle)?;
         let pending = self.pending_path(handle)?;
         regular_or_missing(&target)?;
@@ -341,7 +338,6 @@ impl Store {
         op: &str,
         inputs: Vec<CaptureInput>,
     ) -> Result<Vec<CapturedArtifact>> {
-        durable_names_supported()?;
         generation(caller)?;
         if !identity(op) || inputs.is_empty() || inputs.len() > 8 {
             return Err(reject("capture requires 1–8 inputs and a valid operation"));
@@ -477,9 +473,8 @@ impl Store {
         consumer: &str,
         op: &str,
     ) -> Result<OutputStage> {
-        durable_names_supported()?;
         let a = self.verify_provider(provider, consumer, op)?;
-        if !may_finish_stage(&self.connect()?,&a)? {
+        if !may_finish_stage(&self.connect()?, &a)? {
             return Err(reject("output staging requires a forwarded admission"));
         }
         let handle: String = self
@@ -509,8 +504,11 @@ impl Store {
             sync_directory(path.parent().unwrap())?;
         }
         self.transaction(|tx| {
-            let current=Self::record(tx,consumer,op)?.ok_or_else(||reject("stage admission disappeared"))?;
-            if !may_finish_stage(tx,&current)? {return Err(reject("output staging disposition changed"));}
+            let current = Self::record(tx, consumer, op)?
+                .ok_or_else(|| reject("stage admission disappeared"))?;
+            if !may_finish_stage(tx, &current)? {
+                return Err(reject("output staging disposition changed"));
+            }
             tx.execute(
                 "UPDATE artifacts SET status='staged' WHERE handle=?1 AND status='reserved'",
                 [&handle],
@@ -572,7 +570,7 @@ impl Store {
             }
             return Ok(d);
         }
-        if !may_finish_stage(&self.connect()?,&a)? {
+        if !may_finish_stage(&self.connect()?, &a)? {
             return Err(reject(
                 "staged output recovery requires durable proven success with unavailable delivery",
             ));
@@ -605,7 +603,6 @@ impl Store {
         Ok(d)
     }
     fn finalize_stage(&self, handle: &str, d: &ArtifactDescriptor) -> Result<()> {
-        durable_names_supported()?;
         let path = self.stage_path(handle)?;
         match fs::remove_file(&path) {
             Ok(()) => sync_directory(path.parent().unwrap())?,
@@ -713,7 +710,6 @@ impl Store {
         if a.phase != AdmissionPhase::Terminal || a.output.as_ref() != Some(d) {
             return Err(reject("acquisition requires the exact terminal output"));
         }
-        durable_names_supported()?;
         let root: String = self
             .connect()?
             .query_row(
@@ -795,9 +791,7 @@ impl Store {
             .map_err(sql)?;
         drop(q);
         drop(conn);
-        if !handles.is_empty() {
-            durable_names_supported()?;
-        }
+        if !handles.is_empty() {}
         for handle in handles {
             let Ok(lease) = self.lease(&handle) else {
                 continue;

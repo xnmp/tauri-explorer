@@ -34,7 +34,9 @@ fn text(value: &str, bytes: usize) -> bool {
 }
 fn valid(record: &JobRecord, registering: bool) -> Result<()> {
     generation(&record.owner)?;
-    if record.source_revision>SAFE {return Err(reject("invalid consumer job revision"));}
+    if record.source_revision > SAFE {
+        return Err(reject("invalid consumer job revision"));
+    }
     if !key(&record.job_key)
         || !opaque(&record.operation_id)
         || !opaque(&record.kind)
@@ -275,20 +277,38 @@ fn indexes(conn: &Connection) -> Result<()> {
     Ok(())
 }
 impl Store {
-    pub(super) fn stop_job_in(&self,conn:&Connection,consumer:&str,operation:&str)->Result<Option<JobRecord>> {
-        let sequence=watermark(conn)?;
-        let Some(raw)=conn.query_row(&format!("{ROWS} WHERE owner=?1 AND operation=?2"),params![consumer,operation],row).optional().map_err(sql)? else {return Ok(None)};
-        let mut record=checked(raw,sequence)?;
-        if record.state.terminal() || record.phase.as_deref()==Some("stopped") {return Ok(None)}
-        transition(record.state,JobState::NeedsAttention)?;
-        record.state=JobState::NeedsAttention;
-        record.phase=Some("stopped".into());
-        record.error=Some("Automatic recovery stopped; unknown execution evidence is retained".into());
-        record.output_path=None;
-        record.updated_at_ms=clock()?;
-        record.revision=next_revision(conn)?;
-        valid(&record,false)?;
-        persist(conn,&record)?;
+    pub(super) fn stop_job_in(
+        &self,
+        conn: &Connection,
+        consumer: &str,
+        operation: &str,
+    ) -> Result<Option<JobRecord>> {
+        let sequence = watermark(conn)?;
+        let Some(raw) = conn
+            .query_row(
+                &format!("{ROWS} WHERE owner=?1 AND operation=?2"),
+                params![consumer, operation],
+                row,
+            )
+            .optional()
+            .map_err(sql)?
+        else {
+            return Ok(None);
+        };
+        let mut record = checked(raw, sequence)?;
+        if record.state.terminal() || record.phase.as_deref() == Some("stopped") {
+            return Ok(None);
+        }
+        transition(record.state, JobState::NeedsAttention)?;
+        record.state = JobState::NeedsAttention;
+        record.phase = Some("stopped".into());
+        record.error =
+            Some("Automatic recovery stopped; unknown execution evidence is retained".into());
+        record.output_path = None;
+        record.updated_at_ms = clock()?;
+        record.revision = next_revision(conn)?;
+        valid(&record, false)?;
+        persist(conn, &record)?;
         Ok(Some(record))
     }
     pub(super) fn validate_jobs(&self) -> Result<()> {
@@ -337,9 +357,12 @@ impl Store {
         })
     }
     pub fn snapshot_jobs(&self) -> Result<JobSnapshot> {
-        let mut conn=self.connect()?;
-        let tx=conn.transaction().map_err(sql)?;
-        let snapshot=JobSnapshot{jobs:all(&tx)?,watermark:watermark(&tx)?};
+        let mut conn = self.connect()?;
+        let tx = conn.transaction().map_err(sql)?;
+        let snapshot = JobSnapshot {
+            jobs: all(&tx)?,
+            watermark: watermark(&tx)?,
+        };
         tx.commit().map_err(sql)?;
         Ok(snapshot)
     }
@@ -353,13 +376,53 @@ impl Store {
         run_id: Option<i64>,
         error: Option<String>,
     ) -> Result<JobRecord> {
-        self.update_job_revision(owner,job_key,state,phase,output_path,run_id,error,None)
+        self.update_job_revision(
+            owner,
+            job_key,
+            state,
+            phase,
+            output_path,
+            run_id,
+            error,
+            None,
+        )
     }
-    pub fn observe_job(&self,owner:&PackageGeneration,job_key:&str,source_revision:u64,state:JobState,phase:Option<String>,output_path:Option<String>,run_id:Option<i64>,error:Option<String>)->Result<JobRecord> {
-        if source_revision==0 || source_revision>SAFE {return Err(reject("invalid consumer job revision"));}
-        self.update_job_revision(owner,job_key,state,phase,output_path,run_id,error,Some(source_revision))
+    pub fn observe_job(
+        &self,
+        owner: &PackageGeneration,
+        job_key: &str,
+        source_revision: u64,
+        state: JobState,
+        phase: Option<String>,
+        output_path: Option<String>,
+        run_id: Option<i64>,
+        error: Option<String>,
+    ) -> Result<JobRecord> {
+        if source_revision == 0 || source_revision > SAFE {
+            return Err(reject("invalid consumer job revision"));
+        }
+        self.update_job_revision(
+            owner,
+            job_key,
+            state,
+            phase,
+            output_path,
+            run_id,
+            error,
+            Some(source_revision),
+        )
     }
-    fn update_job_revision(&self,owner:&PackageGeneration,job_key:&str,state:JobState,phase:Option<String>,output_path:Option<String>,run_id:Option<i64>,error:Option<String>,source_revision:Option<u64>)->Result<JobRecord> {
+    fn update_job_revision(
+        &self,
+        owner: &PackageGeneration,
+        job_key: &str,
+        state: JobState,
+        phase: Option<String>,
+        output_path: Option<String>,
+        run_id: Option<i64>,
+        error: Option<String>,
+        source_revision: Option<u64>,
+    ) -> Result<JobRecord> {
         generation(owner)?;
         if !key(job_key) {
             return Err(reject("invalid job key"));
@@ -369,11 +432,21 @@ impl Store {
             if &old.owner != owner {
                 return Err(reject("job update does not own its exact bound generation"));
             }
-            if source_revision.is_some_and(|revision|revision<=old.source_revision) {return Ok(old)}
-            if source_revision.is_some() && (old.phase.as_deref()==Some("stopped") || old.phase.as_deref()==Some("provider_result_discarded") && state!=JobState::Discarded){return Ok(old)}
-            if old.run_id.is_some() && old.run_id!=run_id {return Err(reject("job receipt changed its pinned consumer run"));}
+            if source_revision.is_some_and(|revision| revision <= old.source_revision) {
+                return Ok(old);
+            }
+            if source_revision.is_some()
+                && (old.phase.as_deref() == Some("stopped")
+                    || old.phase.as_deref() == Some("provider_result_discarded")
+                        && state != JobState::Discarded)
+            {
+                return Ok(old);
+            }
+            if old.run_id.is_some() && old.run_id != run_id {
+                return Err(reject("job receipt changed its pinned consumer run"));
+            }
             let mut next = JobRecord {
-                source_revision:source_revision.unwrap_or(old.source_revision),
+                source_revision: source_revision.unwrap_or(old.source_revision),
                 state,
                 phase,
                 output_path,
@@ -385,7 +458,15 @@ impl Store {
             if next == old {
                 return Ok(old);
             }
-            if old.state.terminal() && source_revision.is_some() && next.state==old.state && next.output_path==old.output_path && next.run_id==old.run_id && next.error==old.error {return Ok(old)}
+            if old.state.terminal()
+                && source_revision.is_some()
+                && next.state == old.state
+                && next.output_path == old.output_path
+                && next.run_id == old.run_id
+                && next.error == old.error
+            {
+                return Ok(old);
+            }
             if old.state.terminal() {
                 return Err(reject("a terminal job outcome is immutable"));
             }
@@ -397,13 +478,20 @@ impl Store {
             Ok(next)
         })
     }
-    pub fn dismiss_job(&self,job_key:&str)->Result<Option<u64>> {
-        if !key(job_key) {return Err(reject("invalid job key"));}
+    pub fn dismiss_job(&self, job_key: &str) -> Result<Option<u64>> {
+        if !key(job_key) {
+            return Err(reject("invalid job key"));
+        }
         self.transaction(|conn| {
-            let Some(record)=stored(conn,job_key)? else {return Ok(None)};
-            if !record.state.terminal(){return Err(reject("a recoverable job cannot be dismissed"));}
-            let revision=next_revision(conn)?;
-            conn.execute("DELETE FROM presentation_jobs WHERE key=?1",[job_key]).map_err(sql)?;
+            let Some(record) = stored(conn, job_key)? else {
+                return Ok(None);
+            };
+            if !record.state.terminal() {
+                return Err(reject("a recoverable job cannot be dismissed"));
+            }
+            let revision = next_revision(conn)?;
+            conn.execute("DELETE FROM presentation_jobs WHERE key=?1", [job_key])
+                .map_err(sql)?;
             Ok(Some(revision))
         })
     }
@@ -775,34 +863,86 @@ mod tests {
     }
     #[test]
     fn consumer_revisions_reject_late_receipts_and_pin_the_first_run() {
-        let (_root,store)=fixture();let accepted=store.register_job(record(1)).unwrap();
-        let observe=|revision,state,run|store.observe_job(&accepted.owner,&accepted.job_key,revision,state,None,None,Some(run),None);
-        let running=observe(4,JobState::Running,7).unwrap();
-        assert_eq!(observe(3,JobState::Recovering,7).unwrap(),running);
-        assert_eq!(observe(4,JobState::Recovering,7).unwrap(),running);
-        assert!(observe(5,JobState::Running,8).is_err());
-        assert_eq!(store.snapshot_jobs().unwrap().watermark,running.revision);
-        let attention=observe(5,JobState::NeedsAttention,7).unwrap();
-        assert!(attention.revision>running.revision);assert_eq!(attention.run_id,Some(7));
+        let (_root, store) = fixture();
+        let accepted = store.register_job(record(1)).unwrap();
+        let observe = |revision, state, run| {
+            store.observe_job(
+                &accepted.owner,
+                &accepted.job_key,
+                revision,
+                state,
+                None,
+                None,
+                Some(run),
+                None,
+            )
+        };
+        let running = observe(4, JobState::Running, 7).unwrap();
+        assert_eq!(observe(3, JobState::Recovering, 7).unwrap(), running);
+        assert_eq!(observe(4, JobState::Recovering, 7).unwrap(), running);
+        assert!(observe(5, JobState::Running, 8).is_err());
+        assert_eq!(store.snapshot_jobs().unwrap().watermark, running.revision);
+        let attention = observe(5, JobState::NeedsAttention, 7).unwrap();
+        assert!(attention.revision > running.revision);
+        assert_eq!(attention.run_id, Some(7));
     }
     #[test]
     fn autonomous_receipts_cannot_undo_explicit_stop_or_discard_policy() {
-        let (_root,store)=fixture();let accepted=store.register_job(record(1)).unwrap();
-        for phase in ["stopped","provider_result_discarded"] {
-            let policy=store.update_job(&accepted.owner,&accepted.job_key,JobState::NeedsAttention,Some(phase.into()),None,None,None).unwrap();
-            let late=store.observe_job(&accepted.owner,&accepted.job_key,10,JobState::Running,None,None,None,None).unwrap();
-            assert_eq!(late,policy);
+        let (_root, store) = fixture();
+        let accepted = store.register_job(record(1)).unwrap();
+        for phase in ["stopped", "provider_result_discarded"] {
+            let policy = store
+                .update_job(
+                    &accepted.owner,
+                    &accepted.job_key,
+                    JobState::NeedsAttention,
+                    Some(phase.into()),
+                    None,
+                    None,
+                    None,
+                )
+                .unwrap();
+            let late = store
+                .observe_job(
+                    &accepted.owner,
+                    &accepted.job_key,
+                    10,
+                    JobState::Running,
+                    None,
+                    None,
+                    None,
+                    None,
+                )
+                .unwrap();
+            assert_eq!(late, policy);
         }
-        let discarded=store.observe_job(&accepted.owner,&accepted.job_key,11,JobState::Discarded,None,None,None,None).unwrap();
-        assert_eq!(discarded.state,JobState::Discarded);
+        let discarded = store
+            .observe_job(
+                &accepted.owner,
+                &accepted.job_key,
+                11,
+                JobState::Discarded,
+                None,
+                None,
+                None,
+                None,
+            )
+            .unwrap();
+        assert_eq!(discarded.state, JobState::Discarded);
     }
     #[test]
     fn dismissal_only_removes_terminal_presentation_and_advances_the_watermark_once() {
-        let (_root,store)=fixture();let accepted=store.register_job(record(1)).unwrap();
+        let (_root, store) = fixture();
+        let accepted = store.register_job(record(1)).unwrap();
         assert!(store.dismiss_job(&accepted.job_key).is_err());
-        let terminal=change(&store,&accepted,JobState::Cancelled).unwrap();
-        assert_eq!(store.dismiss_job(&terminal.job_key).unwrap(),Some(terminal.revision+1));
-        assert_eq!(store.dismiss_job(&terminal.job_key).unwrap(),None);
-        let snapshot=store.snapshot_jobs().unwrap();assert_eq!(snapshot.watermark,terminal.revision+1);assert!(snapshot.jobs.is_empty());
+        let terminal = change(&store, &accepted, JobState::Cancelled).unwrap();
+        assert_eq!(
+            store.dismiss_job(&terminal.job_key).unwrap(),
+            Some(terminal.revision + 1)
+        );
+        assert_eq!(store.dismiss_job(&terminal.job_key).unwrap(), None);
+        let snapshot = store.snapshot_jobs().unwrap();
+        assert_eq!(snapshot.watermark, terminal.revision + 1);
+        assert!(snapshot.jobs.is_empty());
     }
 }

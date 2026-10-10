@@ -109,7 +109,9 @@ fn sync_directory(path: &Path) -> Result<(), AppError> {
 }
 fn write_marker(snapshot: &Path, upgrade: &Upgrade) -> Result<(), AppError> {
     let bytes = serde_json::to_vec(upgrade).map_err(|cause| invalid(cause.to_string()))?;
-    if bytes.len() as u64 > MAX_JOURNAL { return Err(invalid("Plugin upgrade journal exceeds size limit")); }
+    if bytes.len() as u64 > MAX_JOURNAL {
+        return Err(invalid("Plugin upgrade journal exceeds size limit"));
+    }
     let mut stage = tempfile::NamedTempFile::new_in(snapshot)?;
     stage.write_all(&bytes)?;
     stage.flush()?;
@@ -130,17 +132,32 @@ fn validate(upgrade: &Upgrade) -> Result<(), AppError> {
     package::validate_index(&upgrade.previous)?;
     if let Some(index) = &upgrade.committed_index {
         package::validate_index(index)?;
-        let before: Vec<_> = upgrade.previous.iter().filter(|entry| entry.manifest.id != upgrade.package_id).collect();
-        let after: Vec<_> = index.iter().filter(|entry| entry.manifest.id != upgrade.package_id).collect();
-        if index.iter().filter(|entry| entry.manifest.id == upgrade.package_id).count() != 1
-            || before.len() != after.len() {
+        let before: Vec<_> = upgrade
+            .previous
+            .iter()
+            .filter(|entry| entry.manifest.id != upgrade.package_id)
+            .collect();
+        let after: Vec<_> = index
+            .iter()
+            .filter(|entry| entry.manifest.id != upgrade.package_id)
+            .collect();
+        if index
+            .iter()
+            .filter(|entry| entry.manifest.id == upgrade.package_id)
+            .count()
+            != 1
+            || before.len() != after.len()
+        {
             return Err(invalid("Plugin upgrade journal changes unrelated packages"));
         }
         for entry in before {
-            let other = after.iter().find(|other| other.manifest.id == entry.manifest.id)
+            let other = after
+                .iter()
+                .find(|other| other.manifest.id == entry.manifest.id)
                 .ok_or_else(|| invalid("Plugin upgrade journal changes unrelated packages"))?;
             if serde_json::to_value(entry).map_err(|cause| invalid(cause.to_string()))?
-                != serde_json::to_value(other).map_err(|cause| invalid(cause.to_string()))? {
+                != serde_json::to_value(other).map_err(|cause| invalid(cause.to_string()))?
+            {
                 return Err(invalid("Plugin upgrade journal changes unrelated packages"));
             }
         }
@@ -156,9 +173,16 @@ fn validate(upgrade: &Upgrade) -> Result<(), AppError> {
             .previous
             .iter()
             .all(|entry| entry.manifest.validate().is_ok())
-        || upgrade.committed_index.as_ref().is_some_and(|index|
-            index.len() > 64 || index.iter().any(|entry| entry.manifest.validate().is_err()))
-        || upgrade.files.iter().map(|file| &file.name).collect::<std::collections::HashSet<_>>().len() != upgrade.files.len()
+        || upgrade.committed_index.as_ref().is_some_and(|index| {
+            index.len() > 64 || index.iter().any(|entry| entry.manifest.validate().is_err())
+        })
+        || upgrade
+            .files
+            .iter()
+            .map(|file| &file.name)
+            .collect::<std::collections::HashSet<_>>()
+            .len()
+            != upgrade.files.len()
         || upgrade.files.len() > 128
         || upgrade.files.iter().any(|file| {
             file.name.is_empty()
@@ -252,7 +276,11 @@ pub(super) fn recover(root: &Path) -> Result<(), AppError> {
         Ok(())
     }
 }
-pub(super) fn install(root: &Path, next: package::Installed, fence: &backend::DrainGuard) -> Result<package::Installed, AppError> {
+pub(super) fn install(
+    root: &Path,
+    next: package::Installed,
+    fence: &backend::DrainGuard,
+) -> Result<package::Installed, AppError> {
     recover(root)?;
     super::service_host::candidate_state_allowed_at(
         root.parent()
@@ -310,7 +338,8 @@ pub(super) fn install(root: &Path, next: package::Installed, fence: &backend::Dr
         sync_directory(root)?;
         let validation = snapshot.join("validation");
         fs::create_dir(&validation)?;
-        #[cfg(unix)] {
+        #[cfg(unix)]
+        {
             use std::os::unix::fs::PermissionsExt;
             fs::set_permissions(&validation, fs::Permissions::from_mode(0o700))?;
         }
@@ -318,13 +347,21 @@ pub(super) fn install(root: &Path, next: package::Installed, fence: &backend::Dr
         // deferRecovery may migrate this private DB but cannot publish/recover.
         for saved in &upgrade.files {
             if saved.content.is_some() {
-                snapshot_file(&snapshot.join("state").join(&saved.name), &validation.join(&saved.name))?;
+                snapshot_file(
+                    &snapshot.join("state").join(&saved.name),
+                    &validation.join(&saved.name),
+                )?;
             }
         }
         for name in &next.manifest.initial_data_files {
             let destination = validation.join(name);
-            let source = root.parent().ok_or_else(|| invalid("Plugin profile has no parent"))?.join(name);
-            if !destination.exists() && source.exists() { snapshot_file(&source, &destination)?; }
+            let source = root
+                .parent()
+                .ok_or_else(|| invalid("Plugin profile has no parent"))?
+                .join(name);
+            if !destination.exists() && source.exists() {
+                snapshot_file(&source, &destination)?;
+            }
         }
         backend::preflight_candidate(&next, validation, fence)?;
         // Persist the irrevocable decision before exposing the new index.
@@ -333,7 +370,9 @@ pub(super) fn install(root: &Path, next: package::Installed, fence: &backend::Dr
         upgrade.committed_index = Some(proposed.clone());
         write_marker(&snapshot, &upgrade)?;
         {
-            let _gate = super::LIFECYCLE.write().map_err(|_| invalid("Plugin lifecycle lock is unavailable"))?;
+            let _gate = super::LIFECYCLE
+                .write()
+                .map_err(|_| invalid("Plugin lifecycle lock is unavailable"))?;
             package::write_index(root, &proposed)?;
         }
         upgrade.phase = Phase::Published;
@@ -411,20 +450,24 @@ mod tests {
         }
     }
     fn installed_fixture() -> package::Installed {
-    let target_suffix = match std::env::consts::OS {
-        "linux" => "unknown-linux-gnu", "macos" => "apple-darwin", "windows" => "pc-windows-msvc", other => other,
-    };
-    let target = format!("{}-{target_suffix}", std::env::consts::ARCH);
-    let payload = serde_json::json!({"size": 1, "sha256": "a".repeat(64)});
-    serde_json::from_value(serde_json::json!({
-        "enabled": true, "digest": "b".repeat(64), "manifest": {
-        "formatVersion": 1, "id": "example.plugin", "name": "fixture",
-        "description": "fixture", "version": "2.0.0", "sdkVersion": 3,
-        "svelteVersion": "5.56.3", "target": target, "frontend": "index.js",
-        "styles": "index.css", "backend": "worker", "contributions": ["example"],
-        "files": {"index.js": payload, "index.css": payload, "worker": payload}
-        }
-    })).unwrap()
+        let target_suffix = match std::env::consts::OS {
+            "linux" => "unknown-linux-gnu",
+            "macos" => "apple-darwin",
+            "windows" => "pc-windows-msvc",
+            other => other,
+        };
+        let target = format!("{}-{target_suffix}", std::env::consts::ARCH);
+        let payload = serde_json::json!({"size": 1, "sha256": "a".repeat(64)});
+        serde_json::from_value(serde_json::json!({
+            "enabled": true, "digest": "b".repeat(64), "manifest": {
+            "formatVersion": 1, "id": "example.plugin", "name": "fixture",
+            "description": "fixture", "version": "2.0.0", "sdkVersion": 3,
+            "svelteVersion": "5.56.3", "target": target, "frontend": "index.js",
+            "styles": "index.css", "backend": "worker", "contributions": ["example"],
+            "files": {"index.js": payload, "index.css": payload, "worker": payload}
+            }
+        }))
+        .unwrap()
     }
     #[test]
     fn committed_decision_finishes_index_publication_without_rolling_back_current_state() {
@@ -441,7 +484,10 @@ mod tests {
         assert_eq!(actual.len(), 1);
         assert_eq!(actual[0].digest, installed.digest);
         assert_eq!(actual[0].manifest.version, "2.0.0");
-        assert_eq!(fs::read(data.join("history.sqlite")).unwrap(), b"current history");
+        assert_eq!(
+            fs::read(data.join("history.sqlite")).unwrap(),
+            b"current history"
+        );
         assert!(!root.join("upgrade-pending").exists());
     }
 
@@ -460,8 +506,13 @@ mod tests {
             recover(&root).unwrap();
             let actual = package::list(&root).unwrap();
             assert_eq!(actual.len(), usize::from(!removed));
-            if !removed { assert!(!actual[0].enabled); }
-            assert_eq!(fs::read(data.join("history.sqlite")).unwrap(), b"current history");
+            if !removed {
+                assert!(!actual[0].enabled);
+            }
+            assert_eq!(
+                fs::read(data.join("history.sqlite")).unwrap(),
+                b"current history"
+            );
         }
     }
 
@@ -471,13 +522,21 @@ mod tests {
         let mut previous = Vec::new();
         for i in 0..64 {
             let mut entry = installed_fixture();
-            if i != 0 { entry.manifest.id = format!("example.package{i}"); }
+            if i != 0 {
+                entry.manifest.id = format!("example.package{i}");
+            }
             entry.manifest.name = "N".repeat(200);
             entry.manifest.description = "D".repeat(2000);
             entry.manifest.version = "1.0.0".into();
-            entry.manifest.contributions = (0..16).map(|j| format!("p{i}.c{j}.{}", "a".repeat(85))).collect();
-            entry.manifest.state_files = (0..16).map(|j| format!("s{j}.{}", "a".repeat(170))).collect();
-            entry.manifest.initial_data_files = (0..16).map(|j| format!("i{j}.{}", "b".repeat(170))).collect();
+            entry.manifest.contributions = (0..16)
+                .map(|j| format!("p{i}.c{j}.{}", "a".repeat(85)))
+                .collect();
+            entry.manifest.state_files = (0..16)
+                .map(|j| format!("s{j}.{}", "a".repeat(170)))
+                .collect();
+            entry.manifest.initial_data_files = (0..16)
+                .map(|j| format!("i{j}.{}", "b".repeat(170)))
+                .collect();
             entry.manifest.validate().unwrap();
             previous.push(entry);
         }
@@ -493,8 +552,14 @@ mod tests {
         let actual = package::list(&root).unwrap();
         assert_eq!(actual.len(), 64);
         assert_eq!(actual[0].manifest.version, "2.0.0");
-        assert!(actual.iter().skip(1).all(|entry| entry.manifest.version == "1.0.0"));
-        assert_eq!(fs::read(data.join("history.sqlite")).unwrap(), b"current history");
+        assert!(actual
+            .iter()
+            .skip(1)
+            .all(|entry| entry.manifest.version == "1.0.0"));
+        assert_eq!(
+            fs::read(data.join("history.sqlite")).unwrap(),
+            b"current history"
+        );
     }
 
     #[test]
@@ -514,7 +579,10 @@ mod tests {
             write_marker(&root.join("upgrade-pending"), &upgrade).unwrap();
             assert!(recover(&root).is_err());
             assert_eq!(fs::read(root.join("installed.json")).unwrap(), original);
-            assert_eq!(fs::read(data.join("history.sqlite")).unwrap(), b"current history");
+            assert_eq!(
+                fs::read(data.join("history.sqlite")).unwrap(),
+                b"current history"
+            );
             assert!(root.join("upgrade-pending/upgrade.json").exists());
         }
     }
@@ -524,10 +592,16 @@ mod tests {
         let (_profile, root, data, mut upgrade) = fixture(Phase::Prepared);
         let snapshot = root.join("upgrade-pending");
         fs::write(snapshot.join("state/history.sqlite"), b"old history!").unwrap();
-        upgrade.files.push(SavedFile { name: "history.sqlite".into(), content: None });
+        upgrade.files.push(SavedFile {
+            name: "history.sqlite".into(),
+            content: None,
+        });
         write_marker(&snapshot, &upgrade).unwrap();
         assert!(recover(&root).is_err());
-        assert_eq!(fs::read(data.join("history.sqlite")).unwrap(), b"current history");
+        assert_eq!(
+            fs::read(data.join("history.sqlite")).unwrap(),
+            b"current history"
+        );
         assert!(snapshot.join("upgrade.json").exists());
     }
 

@@ -35,7 +35,6 @@ impl Store {
             return Err(reject("invalid store limits"));
         }
         let fresh = !root.exists();
-        #[cfg(unix)]
         let created_directories: Vec<_> = root
             .ancestors()
             .take_while(|path| !path.exists())
@@ -141,7 +140,9 @@ impl Store {
             tx.commit().map_err(sql)?;
         } else if !matches!(
             marker,
-            super::receipts::RECEIPT_SCHEMA | super::intents::INTENT_SCHEMA | super::job_store::JOB_SCHEMA
+            super::receipts::RECEIPT_SCHEMA
+                | super::intents::INTENT_SCHEMA
+                | super::job_store::JOB_SCHEMA
         ) || !receipt_table
         {
             return Err(reject("durable receipt schema is missing or unsupported"));
@@ -159,17 +160,27 @@ impl Store {
             tx.execute_batch(super::intents::INTENT_TABLE)
                 .map_err(sql)?;
             tx.commit().map_err(sql)?;
-        } else if !matches!(marker,super::intents::INTENT_SCHEMA|super::job_store::JOB_SCHEMA) || !intent_table {
+        } else if !matches!(
+            marker,
+            super::intents::INTENT_SCHEMA | super::job_store::JOB_SCHEMA
+        ) || !intent_table
+        {
             return Err(reject("durable intent schema is missing or unsupported"));
         }
-        let marker:i64=connection.pragma_query_value(None,"application_id",|r|r.get(0)).map_err(sql)?;
+        let marker: i64 = connection
+            .pragma_query_value(None, "application_id", |r| r.get(0))
+            .map_err(sql)?;
         let job_tables:i64=connection.query_row("SELECT count(*) FROM sqlite_schema WHERE type='table' AND name IN ('presentation_jobs','presentation_sequence')",[],|r|r.get(0)).map_err(sql)?;
-        if marker==super::intents::INTENT_SCHEMA && job_tables==0 {
-            let tx=connection.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate).map_err(sql)?;
+        if marker == super::intents::INTENT_SCHEMA && job_tables == 0 {
+            let tx = connection
+                .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+                .map_err(sql)?;
             tx.execute_batch(super::job_store::JOB_TABLE).map_err(sql)?;
             tx.commit().map_err(sql)?;
-        } else if marker!=super::job_store::JOB_SCHEMA || job_tables!=2 {
-            return Err(reject("durable job presentation schema is missing or unsupported"));
+        } else if marker != super::job_store::JOB_SCHEMA || job_tables != 2 {
+            return Err(reject(
+                "durable job presentation schema is missing or unsupported",
+            ));
         }
         let integrity: String = connection
             .query_row("PRAGMA quick_check", [], |r| r.get(0))
@@ -186,29 +197,29 @@ impl Store {
             }
             super::artifacts::private_directory(&path)?;
         }
-        #[cfg(unix)]
-        {
-            // SQLite syncs its journal and files; commit newly-created host
-            // directory entries too before any admission can be advertised.
-            fs::File::open(&store.root)
-                .and_then(|directory| directory.sync_all())
-                .map_err(|_| reject("service directory sync failed"))?;
-            for directory in created_directories {
-                if let Some(parent) = directory.parent() {
-                    fs::File::open(parent)
-                        .and_then(|directory| directory.sync_all())
-                        .map_err(|_| reject("service parent directory sync failed"))?;
-                }
+        // SQLite syncs its journal and files; commit newly-created host
+        // directory entries too before any admission can be advertised.
+        crate::durable_dir::sync(&store.root)
+            .map_err(|_| reject("service directory sync failed"))?;
+        for directory in created_directories {
+            if let Some(parent) = directory.parent() {
+                crate::durable_dir::sync(parent)
+                    .map_err(|_| reject("service parent directory sync failed"))?;
             }
         }
         // Deserialization is part of startup reconciliation, before claims advertised.
         store.claims()?;
         let invalid_execution:i64=store.connect()?.query_row("SELECT count(*) FROM operations WHERE exec_released NOT IN(0,1) OR (exec_released=1 AND (phase!='terminal' OR admission IS NULL OR json_extract(admission,'$.output') IS NOT NULL OR json_extract(admission,'$.needsAttention') IS NOT 1))",[],|r|r.get(0)).map_err(sql)?;
-        if invalid_execution!=0 {return Err(reject("invalid retained execution claim"));}
+        if invalid_execution != 0 {
+            return Err(reject("invalid retained execution claim"));
+        }
         store.validate_receipts()?;
         store.validate_intents()?;
         store.validate_jobs()?;
-        store.connect()?.prepare("SELECT created_at_ms FROM operations LIMIT 0").map_err(sql)?;
+        store
+            .connect()?
+            .prepare("SELECT created_at_ms FROM operations LIMIT 0")
+            .map_err(sql)?;
         drop(init);
         // Unqualified platforms still support durable ledger status/reads.
         // Artifact namespace mutation/recovery is unavailable there, so retain
@@ -243,7 +254,8 @@ impl Store {
             .map_err(sql)?;
         conn.set_limit(rusqlite::limits::Limit::SQLITE_LIMIT_COLUMN, 64)
             .map_err(sql)?;
-        conn.busy_timeout(crate::native_deadline::remaining(Duration::from_secs(3))?).map_err(sql)?;
+        conn.busy_timeout(crate::native_deadline::remaining(Duration::from_secs(3))?)
+            .map_err(sql)?;
         conn.pragma_update(None, "journal_mode", "WAL")
             .map_err(sql)?;
         conn.pragma_update(None, "synchronous", "FULL")
@@ -625,9 +637,16 @@ impl Store {
         op: &str,
         no_live_worker: bool,
     ) -> Result<Admission> {
-        self.stop_recovery(provider,consumer,op,no_live_worker).map(|(admission,_)|admission)
+        self.stop_recovery(provider, consumer, op, no_live_worker)
+            .map(|(admission, _)| admission)
     }
-    pub fn stop_recovery(&self,provider:&PackageGeneration,consumer:&str,op:&str,no_live_worker:bool)->Result<(Admission,Option<super::job::JobRecord>)> {
+    pub fn stop_recovery(
+        &self,
+        provider: &PackageGeneration,
+        consumer: &str,
+        op: &str,
+        no_live_worker: bool,
+    ) -> Result<(Admission, Option<super::job::JobRecord>)> {
         self.transaction(|tx| {
             let a = Self::record(tx, consumer, op)?.ok_or_else(|| reject("operation is not admitted"))?;
             if !same_owner(&a.provider, provider) || a.phase != AdmissionPhase::Terminal || !a.needs_attention || a.output.is_some() || !no_live_worker {
@@ -689,23 +708,58 @@ impl Store {
         ).map_err(sql)?;
         Ok(!retained)
     }
-    pub fn retained_operations(&self)->Result<Vec<(Admission,u64,bool)>> {
-        let conn=self.connect()?;
+    pub fn retained_operations(&self) -> Result<Vec<(Admission, u64, bool)>> {
+        let conn = self.connect()?;
         let mut query=conn.prepare("SELECT consumer,operation,created_at_ms,exec_released FROM operations WHERE admission IS NOT NULL AND phase!='released' ORDER BY created_at_ms DESC LIMIT 128").map_err(sql)?;
-        let rows=query.query_map([],|r|Ok((r.get::<_,String>(0)?,r.get::<_,String>(1)?,r.get::<_,i64>(2)?,r.get::<_,i64>(3)?))).map_err(sql)?;
-        let mut result=Vec::new();
-        for row in rows {let (consumer,operation,created,released)=row.map_err(sql)?;
-            if created<0 || !matches!(released,0|1) {return Err(reject("invalid operation retention metadata"));}
-            let a=Self::record(&conn,&consumer,&operation)?.ok_or_else(||reject("missing retained operation"))?;
-            result.push((a,created as u64,released!=0));
+        let rows = query
+            .query_map([], |r| {
+                Ok((
+                    r.get::<_, String>(0)?,
+                    r.get::<_, String>(1)?,
+                    r.get::<_, i64>(2)?,
+                    r.get::<_, i64>(3)?,
+                ))
+            })
+            .map_err(sql)?;
+        let mut result = Vec::new();
+        for row in rows {
+            let (consumer, operation, created, released) = row.map_err(sql)?;
+            if created < 0 || !matches!(released, 0 | 1) {
+                return Err(reject("invalid operation retention metadata"));
+            }
+            let a = Self::record(&conn, &consumer, &operation)?
+                .ok_or_else(|| reject("missing retained operation"))?;
+            result.push((a, created as u64, released != 0));
         }
         Ok(result)
     }
-    pub fn execution_released(&self,consumer:&str,operation:&str)->Result<bool> {
-        self.connect()?.query_row("SELECT exec_released FROM operations WHERE consumer=?1 AND operation=?2",params![consumer,operation],|r|r.get::<_,i64>(0)).map_err(sql).and_then(|value|if matches!(value,0|1){Ok(value!=0)}else{Err(reject("invalid execution retention flag"))})
+    pub fn execution_released(&self, consumer: &str, operation: &str) -> Result<bool> {
+        self.connect()?
+            .query_row(
+                "SELECT exec_released FROM operations WHERE consumer=?1 AND operation=?2",
+                params![consumer, operation],
+                |r| r.get::<_, i64>(0),
+            )
+            .map_err(sql)
+            .and_then(|value| {
+                if matches!(value, 0 | 1) {
+                    Ok(value != 0)
+                } else {
+                    Err(reject("invalid execution retention flag"))
+                }
+            })
     }
     pub fn busy(&self, package: &str) -> Result<bool> {
-        if self.snapshot_jobs()?.jobs.iter().any(|j|j.owner.package_id==package&&!j.state.terminal()&&!matches!(j.phase.as_deref(),Some("stopped"|"provider_result_discarded"))) {return Ok(true)}
+        if self.snapshot_jobs()?.jobs.iter().any(|j| {
+            j.owner.package_id == package
+                && !j.state.terminal()
+                && !matches!(
+                    j.phase.as_deref(),
+                    Some("stopped" | "provider_result_discarded")
+                )
+        }) {
+            return Ok(true);
+        }
         if self
             .claims()?
             .iter()

@@ -130,10 +130,12 @@ fn evidence(
     Ok(())
 }
 impl Store {
-    pub fn provider_receipt(&self,consumer:&str,operation:&str)->Result<Option<Value>> {
-        let conn=self.connect()?;
-        let Some(a)=Self::record(&conn,consumer,operation)? else {return Ok(None)};
-        Ok(observed(&conn,&a)?.map(|receipt|receipt.status))
+    pub fn provider_receipt(&self, consumer: &str, operation: &str) -> Result<Option<Value>> {
+        let conn = self.connect()?;
+        let Some(a) = Self::record(&conn, consumer, operation)? else {
+            return Ok(None);
+        };
+        Ok(observed(&conn, &a)?.map(|receipt| receipt.status))
     }
     pub fn observe_receipt(
         &self,

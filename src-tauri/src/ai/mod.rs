@@ -3,8 +3,8 @@
 mod adapters;
 pub(crate) mod credentials;
 pub mod domain;
-mod storage;
 pub(crate) mod image_migration;
+mod storage;
 use credentials::{OsSecrets, SecretStore};
 use domain::*;
 pub use domain::{Describe, ServiceError, TextResult};

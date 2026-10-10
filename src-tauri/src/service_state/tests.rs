@@ -312,20 +312,57 @@ fn terminal_attention_can_release_execution_only_with_explicit_worker_proof() {
 }
 #[test]
 fn stop_recovery_commits_execution_release_and_presentation_policy_together() {
-    use super::job::{JobRecord,JobState};
-    let (root,s)=store();let op="atomic-stop";
-    s.reserve(admission(op,vec![])).unwrap();s.forwarding(&owner("consumer",1),op).unwrap();
-    s.terminal(&owner("provider",1),"consumer",op,None,true).unwrap();
-    let job=s.register_job(JobRecord{job_key:"1".repeat(48),owner:owner("consumer",1),operation_id:op.into(),job_id:1,kind:"openai-image".into(),label:"generated.png".into(),origin_window:"main".into(),revision:0,source_revision:0,created_at_ms:1,updated_at_ms:1,state:JobState::Accepting,phase:None,output_path:None,run_id:None,error:None}).unwrap();
-    s.fail_next_commit.store(true,Ordering::Relaxed);
-    assert!(s.stop_recovery(&owner("provider",1),"consumer",op,true).is_err());
-    assert!(!s.execution_released("consumer",op).unwrap());assert_eq!(s.job(&job.job_key).unwrap(),Some(job.clone()));assert!(s.busy("consumer").unwrap());
-    let (_,updated)=s.stop_recovery(&owner("provider",1),"consumer",op,true).unwrap();
-    let stopped=updated.unwrap();assert_eq!(stopped.state,JobState::NeedsAttention);assert_eq!(stopped.phase.as_deref(),Some("stopped"));
-    assert!(s.execution_released("consumer",op).unwrap());assert!(!s.busy("consumer").unwrap());
-    assert!(s.stop_recovery(&owner("provider",1),"consumer",op,true).unwrap().1.is_none());
-    drop(s);let reopened=Store::open(root.path().join("service"),Limits::default()).unwrap();
-    assert!(reopened.execution_released("consumer",op).unwrap());assert_eq!(reopened.job(&job.job_key).unwrap(),Some(stopped));
+    use super::job::{JobRecord, JobState};
+    let (root, s) = store();
+    let op = "atomic-stop";
+    s.reserve(admission(op, vec![])).unwrap();
+    s.forwarding(&owner("consumer", 1), op).unwrap();
+    s.terminal(&owner("provider", 1), "consumer", op, None, true)
+        .unwrap();
+    let job = s
+        .register_job(JobRecord {
+            job_key: "1".repeat(48),
+            owner: owner("consumer", 1),
+            operation_id: op.into(),
+            job_id: 1,
+            kind: "openai-image".into(),
+            label: "generated.png".into(),
+            origin_window: "main".into(),
+            revision: 0,
+            source_revision: 0,
+            created_at_ms: 1,
+            updated_at_ms: 1,
+            state: JobState::Accepting,
+            phase: None,
+            output_path: None,
+            run_id: None,
+            error: None,
+        })
+        .unwrap();
+    s.fail_next_commit.store(true, Ordering::Relaxed);
+    assert!(s
+        .stop_recovery(&owner("provider", 1), "consumer", op, true)
+        .is_err());
+    assert!(!s.execution_released("consumer", op).unwrap());
+    assert_eq!(s.job(&job.job_key).unwrap(), Some(job.clone()));
+    assert!(s.busy("consumer").unwrap());
+    let (_, updated) = s
+        .stop_recovery(&owner("provider", 1), "consumer", op, true)
+        .unwrap();
+    let stopped = updated.unwrap();
+    assert_eq!(stopped.state, JobState::NeedsAttention);
+    assert_eq!(stopped.phase.as_deref(), Some("stopped"));
+    assert!(s.execution_released("consumer", op).unwrap());
+    assert!(!s.busy("consumer").unwrap());
+    assert!(s
+        .stop_recovery(&owner("provider", 1), "consumer", op, true)
+        .unwrap()
+        .1
+        .is_none());
+    drop(s);
+    let reopened = Store::open(root.path().join("service"), Limits::default()).unwrap();
+    assert!(reopened.execution_released("consumer", op).unwrap());
+    assert_eq!(reopened.job(&job.job_key).unwrap(), Some(stopped));
 }
 #[test]
 fn unaccepted_release_cannot_reuse_or_remove_other_operations() {
@@ -1843,40 +1880,107 @@ fn committed_seal_lost_reply_recovers_same_descriptor_after_terminal_unavailable
 #[test]
 fn proven_success_can_finish_its_original_stage_after_unavailable_status_wins_race() {
     use sha2::Digest;
-    let (root,s)=store();
-    s.reserve(admission("stage-race",vec![])).unwrap();
-    s.forwarding(&owner("consumer",1),"stage-race").unwrap();
-    let stage=s.stage(&owner("provider",1),"consumer","stage-race").unwrap();
+    let (root, s) = store();
+    s.reserve(admission("stage-race", vec![])).unwrap();
+    s.forwarding(&owner("consumer", 1), "stage-race").unwrap();
+    let stage = s
+        .stage(&owner("provider", 1), "consumer", "stage-race")
+        .unwrap();
     png(Path::new(&stage.path));
-    let bytes=fs::read(&stage.path).unwrap();
-    s.terminal(&owner("provider",1),"consumer","stage-race",None,true).unwrap();
+    let bytes = fs::read(&stage.path).unwrap();
+    s.terminal(&owner("provider", 1), "consumer", "stage-race", None, true)
+        .unwrap();
     // Terminal alone is not a proof that a paid image was generated.
-    assert!(s.seal(&owner("provider",1),"consumer","stage-race",&stage.handle,"image/png").is_err());
-    let mut status=provider_receipt("stage-race",1,Some(ArtifactDescriptor{handle:stage.handle.clone(),sha256:"a".repeat(64),byte_length:bytes.len() as u64,media_type:"image/png".into()}));
-    status["delivery"]=serde_json::json!({"state":"unavailable","reason":"storage_unavailable"});
-    s.observe_receipt(&owner("provider",1),"consumer","stage-race",1,status).unwrap();
+    assert!(s
+        .seal(
+            &owner("provider", 1),
+            "consumer",
+            "stage-race",
+            &stage.handle,
+            "image/png"
+        )
+        .is_err());
+    let mut status = provider_receipt(
+        "stage-race",
+        1,
+        Some(ArtifactDescriptor {
+            handle: stage.handle.clone(),
+            sha256: "a".repeat(64),
+            byte_length: bytes.len() as u64,
+            media_type: "image/png".into(),
+        }),
+    );
+    status["delivery"] = serde_json::json!({"state":"unavailable","reason":"storage_unavailable"});
+    s.observe_receipt(&owner("provider", 1), "consumer", "stage-race", 1, status)
+        .unwrap();
     drop(s);
-    let s=Store::open(root.path().join("service"),Limits::default()).unwrap();
-    let sealed=s.seal(&owner("provider",2),"consumer","stage-race",&stage.handle,"image/png").unwrap();
-    assert_eq!(sealed.handle,stage.handle);
-    assert_eq!(sealed.sha256,hex::encode(sha2::Sha256::digest(&bytes)));
-    s.terminal(&owner("provider",2),"consumer","stage-race",Some(sealed.clone()),false).unwrap();
-    let path=s.read(&owner("consumer",2),"consumer","stage-race",&sealed).unwrap();
-    assert_eq!(fs::read(path.path).unwrap(),bytes);
+    let s = Store::open(root.path().join("service"), Limits::default()).unwrap();
+    let sealed = s
+        .seal(
+            &owner("provider", 2),
+            "consumer",
+            "stage-race",
+            &stage.handle,
+            "image/png",
+        )
+        .unwrap();
+    assert_eq!(sealed.handle, stage.handle);
+    assert_eq!(sealed.sha256, hex::encode(sha2::Sha256::digest(&bytes)));
+    s.terminal(
+        &owner("provider", 2),
+        "consumer",
+        "stage-race",
+        Some(sealed.clone()),
+        false,
+    )
+    .unwrap();
+    let path = s
+        .read(&owner("consumer", 2), "consumer", "stage-race", &sealed)
+        .unwrap();
+    assert_eq!(fs::read(path.path).unwrap(), bytes);
 }
 #[test]
 fn proven_success_can_begin_its_original_reserved_stage_after_remote_checkpoint() {
-    let (_root,s)=store();let op="success-before-stage";
-    s.reserve(admission(op,vec![])).unwrap();s.forwarding(&owner("consumer",1),op).unwrap();
-    s.terminal(&owner("provider",1),"consumer",op,None,true).unwrap();
-    assert!(s.stage(&owner("provider",1),"consumer",op).is_err());
-    let mut receipt=provider_receipt(op,1,Some(ArtifactDescriptor{handle:"proof-only".into(),sha256:"a".repeat(64),byte_length:1,media_type:"image/png".into()}));
-    receipt["delivery"]=serde_json::json!({"state":"unavailable","reason":"storage_unavailable"});
-    s.observe_receipt(&owner("provider",1),"consumer",op,1,receipt).unwrap();
-    let stage=s.stage(&owner("provider",1),"consumer",op).unwrap();
-    assert_eq!(s.stage(&owner("provider",2),"consumer",op).unwrap().handle,stage.handle);
-    png(Path::new(&stage.path));let sealed=s.seal(&owner("provider",1),"consumer",op,&stage.handle,"image/png").unwrap();
-    s.terminal(&owner("provider",1),"consumer",op,Some(sealed),false).unwrap();
-    s.release(&owner("provider",1),"consumer",op,"discarded",None).unwrap();
-    assert!(s.stage(&owner("provider",1),"consumer",op).is_err());
+    let (_root, s) = store();
+    let op = "success-before-stage";
+    s.reserve(admission(op, vec![])).unwrap();
+    s.forwarding(&owner("consumer", 1), op).unwrap();
+    s.terminal(&owner("provider", 1), "consumer", op, None, true)
+        .unwrap();
+    assert!(s.stage(&owner("provider", 1), "consumer", op).is_err());
+    let mut receipt = provider_receipt(
+        op,
+        1,
+        Some(ArtifactDescriptor {
+            handle: "proof-only".into(),
+            sha256: "a".repeat(64),
+            byte_length: 1,
+            media_type: "image/png".into(),
+        }),
+    );
+    receipt["delivery"] = serde_json::json!({"state":"unavailable","reason":"storage_unavailable"});
+    s.observe_receipt(&owner("provider", 1), "consumer", op, 1, receipt)
+        .unwrap();
+    let stage = s.stage(&owner("provider", 1), "consumer", op).unwrap();
+    assert_eq!(
+        s.stage(&owner("provider", 2), "consumer", op)
+            .unwrap()
+            .handle,
+        stage.handle
+    );
+    png(Path::new(&stage.path));
+    let sealed = s
+        .seal(
+            &owner("provider", 1),
+            "consumer",
+            op,
+            &stage.handle,
+            "image/png",
+        )
+        .unwrap();
+    s.terminal(&owner("provider", 1), "consumer", op, Some(sealed), false)
+        .unwrap();
+    s.release(&owner("provider", 1), "consumer", op, "discarded", None)
+        .unwrap();
+    assert!(s.stage(&owner("provider", 1), "consumer", op).is_err());
 }

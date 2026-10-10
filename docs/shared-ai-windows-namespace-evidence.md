@@ -1,100 +1,56 @@
-# Windows namespace implementation and qualification
+# Windows artifact durability
 
-Candidate source: `src-tauri/src/windows_artifact_namespace.rs`. Target/merge-base is `882263e1cc6298bb43e037265185d746a6d2d126`. Scope is platform IO only; the coordinator owns Store, consumer, profile and public contract integration. No paid calls, administrative volume flush, user profile mutation or Windows runtime execution occurred in the Linux development environment.
+Shared AI artifact custody (host Store), Trace publication and provider profile
+writes need a directory-entry durability barrier after create, hard-link, rename
+and delete. Unix fsyncs the directory. Windows has no directory fsync.
 
-## Implemented boundary
+## Decision
 
-`AnchoredDirectory::open_absolute` accepts an absolute local drive namespace and verifies local NTFS through the opened volume. Each filesystem component opens relative to the preceding retained directory handle. Every opened object is checked as a disk object of the required type without a reparse tag. Ancestor directory handles deny delete sharing; directory write sharing is permitted for the kernel's own rename/link target open. Regular-file handles continue to deny write/delete sharing. UNC, drive-relative, traversal, alternate streams, special device names, invalid Unicode and oversized names are refused. C:\ requires traversal/attribute rights, not writable volume-root access.
+`src-tauri/src/durable_dir.rs` (and the identical
+`te_plugin_runtime::durable_dir` in TraceExplorer) flushes a **writable directory
+handle** on Windows: `CreateFileW` with `GENERIC_READ|GENERIC_WRITE`,
+`FILE_FLAG_BACKUP_SEMANTICS|FILE_FLAG_OPEN_REPARSE_POINT`, a check that the
+handle is a directory without a reparse tag, then `FlushFileBuffers`. Config
+replacement keeps `MoveFileExW(MOVEFILE_REPLACE_EXISTING|MOVEFILE_WRITE_THROUGH)`.
 
-`create_new` and `create_directory` use native exclusive creation, synchronous write-through IO and no inherited handles. Creation of an existing name never truncates it. A newly created directory's read guard must reopen the exact captured file identity after its creation handle closes; substitution fails. Ordinary `create_directory` preserves its caller's inherited security policy. `create_private_directory` instead supplies a protected descriptor at creation, with full object/container-inheritable access only for the process-token user and SYSTEM; it verifies owner, protection and the exact two allowed entries through an owned security handle. No Administrators ACE or broad Users/Everyone ACE is added. `secure_private_directory` repairs the requested owned root through `SetSecurityInfo`, and verifies it afterward. It does not certify existing descendants' explicit ACLs.
+Basis:
 
-`publish_noreplace` accepts only a writable owned file from the same opened directory identity. It flushes that actual handle, issues relative `FileRenameInformation` with replacement disabled, then flushes the same file again. The caller retains `AnchoredFile` through its descriptor/grant transaction, preserving all ancestor handles. No path-based rename window, cross-volume copying, temporary-spool fallback or directory-flush no-op exists. On an error after rename, the original durable reservation remains the caller's recovery authority; no new provider execution is authorized.
+- NTFS journals namespace changes. Flushing a handle forces the log through that
+  handle's changes, which includes earlier records such as ancestor creation.
+  Trace therefore flushes only the deepest directory on Windows; ordinary users
+  cannot open ancestors like a drive root for write.
+- Native windows-2022 qualification (tauri-explorer run 38033644731, host
+  24622bea) measured a writable directory-handle flush returning success. A
+  read-only handle returns `PermissionDenied`, which is why the handle is
+  writable.
+- A refused flush is returned as an error. Callers fail the operation; nothing
+  claims durability it did not get.
 
-`flush_evidence` verifies the directory identity and requires the actual writable file handle. It is a file barrier, not a recursive directory-fsync theorem. The coordinator must qualify initialization/new consumer ancestors and use equivalent namespace creation/publication before accepting transfer evidence. Generic Store `sync_directory` must not be redirected to this function.
+Path handling stays on the existing std helpers proven by Trace publication:
+final components open with `FILE_FLAG_OPEN_REPARSE_POINT`, and ancestors are
+checked with `symlink_metadata`, which reports junctions and symlinks as links.
+This does not defend against a same-user process swapping an ancestor between
+check and use. The plan already treats same-user native plugins as not
+OS-isolated (§9.1), so that race is outside the threat model.
 
-## Primary API basis
+## Superseded candidate
 
-Microsoft documents [NtCreateFile](https://learn.microsoft.com/en-us/windows/win32/api/winternl/nf-winternl-ntcreatefile) as a user-mode API. `OBJECT_ATTRIBUTES.RootDirectory` resolves relative names from an existing handle; exclusive creation and directory-only opening are separate dispositions/options. Its directory option explicitly permits write-through requests.
+An earlier candidate, `windows_artifact_namespace.rs`, held every ancestor
+handle and used handle-relative NT rename and link. It passed 20 standalone
+native outcomes, but it was never wired into the Store, Trace or provider. It
+was removed in favour of the barrier above, which the integrated native suites
+exercise directly:
 
-The [CreateFile caching documentation](https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-createfilew#caching-behavior) states that NTFS write-through requests flush metadata changes arising from the request, including renames. This is the candidate namespace primitive rather than an assumption that directory `FlushFileBuffers` behaves like Unix fsync. Buffered write-through avoids the alignment requirements of unbuffered IO.
+- the host "Rust platforms" Windows job (Store, `durable_dir`,
+  installed-plugin tests);
+- TraceExplorer's Windows "Build plugin" job (service-image handoff, restart,
+  acquisition, discard and publication tests, plus the provider profile tests).
 
-[Native rename information](https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/ntifs/ns-ntifs-_file_rename_information) supports a relative destination root and prohibits replacement when its flag is false. [FlushFileBuffers](https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-flushfilebuffers) provides an explicit file flush, requiring writable access. Volume-wide flush requires privileges and is not used. The narrower [MoveFileExW](https://learn.microsoft.com/en-us/windows/win32/api/winbase/nf-winbase-movefileexw) write-through copy/delete wording is avoided by this handle-relative implementation.
+Its source remains in git history at 24622bea if handle-anchored ancestry is
+ever needed.
 
-The kernel/filesystem/device must honor successful write-through and flush requests. This is the ordinary durability assumption, also explicit in [SQLite's hardware assumptions](https://sqlite.org/atomiccommit.html#hardware_assumptions); tests below do not establish physical power-loss behavior.
+## Not covered
 
-## Exact-module verification
-
-The standalone fixture compiles the production module directly, without Tauri or provider execution:
-
-```sh
-cargo test --locked --manifest-path src-tauri/test_support/windows_artifact_namespace_fixture/Cargo.toml -- native_tests:: --nocapture
-```
-
-Expected native result after fixes: **20 passed, 1 ignored child helper, 0 filtered**. The child helper is exercised by the crash outcome test. Outcomes cover actual write-through creation/rename/file flush; invalid names and paths; no replacement; lifetime of ancestor guards after the directory owner drops; junction refusal; cross-namespace publication/acquisition refusal; long Unicode names; and process termination after pending flush, rename, and final flush with exact bytes on reopen.
-
-The qualification marker reports both a dedicated writable-directory flush attempt and the retained read-only anchor's actual kernel result. The dedicated probe closes its read guard before opening the private child with `GENERIC_READ|GENERIC_WRITE`; otherwise a sharing violation would measure our own lock policy instead of filesystem support. An unsupported/error result is recorded accurately and is never converted into success.
-
-Expanded exact-source cross-checks passed for MSVC and GNU API/types:
-
-```sh
-CARGO_TARGET_DIR=/tmp/te-windows-artifact-target cargo check --offline --locked --tests --manifest-path src-tauri/test_support/windows_artifact_namespace_fixture/Cargo.toml --target x86_64-pc-windows-msvc
-```
-
-Latest logs: `/tmp/te-windows-artifact-extension-check.log`, `/tmp/te-windows-artifact-extension-gnu-check-retry.log`. The first GNU attempt failed with a disk-quota error while emitting dependency metadata (`/tmp/te-windows-artifact-extension-gnu-check.log`). Removing only this isolated target's stale incremental metadata and retrying with incremental compilation disabled passed. Linux cross-checking proves type/API availability, not runtime behavior. The CI owner has added the actual Windows-2022 fixture job; its successful run and archived source/executable hashes are required before selecting the production boundary or merging.
-
-## Remaining coordinated qualification
-
-Native primitive fixtures alone do not qualify integrated durable root initialization, existing child ACL privacy, descriptor/SQLite ordering, acquired evidence, retained deletion/quota cleanup, provider post-replace settings commits, or the complete consumer/provider handoff. FAT/exFAT input support is implemented but the default NTFS fixture does not execute that filesystem boundary. A separate actual local FAT/exFAT input probe is required. These require coordinator integration and actual Windows outcome fixtures. Process-crash tests leave OS caches running and must not be described as power-loss tests. The existing fail-closed mutation guard remains until this evidence and integration are complete.
-
-## Expanded integration APIs
-
-- `AnchoredDirectory::ensure_private_absolute(path)` validates the entire bounded path before any creation, walks existing regular ancestors, creates missing ancestors with native write-through and protected private security descriptors, then secures/verifies the final root. It refuses volume-root ACL changes. The retained chain must outlive initialization/SQLite commits.
-- `open_directory(name)` retains another bounded anchored child; `create_private_directory(name)`, `secure_private_directory()` and `verify_private_directory()` establish/check the narrow policy above. Root repair is not a blanket assertion about existing child file ACLs. Callers must inspect/migrate pre-existing namespace content separately before treating it as private.
-- `hardlink_noreplace(source, name)` consumes a writable source guard and creates a relative native link with replacement disabled. `PublishedLink` retains the original opened source plus both ancestor chains and exposes `file`, `path`, `source_path`, `flush`. It deliberately does not pretend that cloning the source file handle opened the destination name: rename/delete on that clone would affect the wrong link. After descriptor commit and guard release, use `open_regular` on the destination if a destination-specific handle is needed.
-- `open_absolute_readonly(path)` permits local non-NTFS volumes for input reads, still refusing reparse/device/remote ancestry. Its file is genuinely readonly; flush, publication, hardlink and deletion refuse it. This path grants no namespace/acquired authority. All writable/output paths continue to require NTFS.
-- `replace_regular(pending, final_name)` is configuration-only same-directory write-through replacement. It rejects a reparse/directory destination, flushes before rename and again afterward. An error after rename is mutation-uncertain: keep minted credentials and recovery evidence until inspecting the durable destination. Never use this API for immutable output publication.
-- `delete_regular(file)` performs real POSIX disposition, a file flush, closes the exact delete handle and verifies that its name is absent. It returns only `DeletionOutcome::RemovedDurabilityUnqualified`. This is explicit physical cleanup evidence, not permission to delete the caller's durable cleanup reservation. A conservative GC flow first uses write-through `publish_noreplace` to retire the original name into a deterministic owned tombstone; retain ledger ownership until the final deletion boundary is qualified.
-
-The expanded fixtures cover retained source/destination guards, no-replace hardlink and original-source preservation after process death, protected DACL creation/foreign-ACE detection/repair, zero creation for malformed fresh-ancestor requests, fresh-ancestor reopen, exact config replacement and reparse refusal, readonly-input zero mutations, and physical unlink with the unqualified result preserved.
-
-## Additional primary basis and open deletion boundary
-
-[FileLinkInformation](https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/ntifs/ns-ntifs-_file_link_information) supplies relative-root linking and a replacement-disabled contract. [SetSecurityInfo](https://learn.microsoft.com/en-us/windows/win32/api/aclapi/nf-aclapi-setsecurityinfo) addresses the actual object by handle; its null-DACL behavior would grant everyone access, so this module requires a present non-null descriptor. DACL protection and exact ACE verification are separate from owner equality. Security changes on existing descendants are not inferred from a successful root call.
-
-Microsoft's [POSIX disposition documentation](https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/ntddk/ns-ntddk-_file_disposition_information_ex) places visible name removal at delete-handle close. A flush while that handle is still open does not prove a completed final-directory barrier. Neither a successful post-close existence probe nor a process crash leaving OS caches alive proves power-loss durability. The module therefore exposes this remaining qualification boundary explicitly instead of returning fabricated durable deletion success. Actual native accepted final deletion/GC durability and common Store accounting remain required before full Windows acceptance.
-
-No administrative volume flush, filesystem formatting, user-profile change or paid call was performed. The coordinator executed the baseline native Windows CI run recorded below; this Linux author performed only cross-checks. Existing common non-Unix failclosed guards were not edited.
-
-## Drive alias review correction
-
-A fresh independent review identified that `OBJ_DONT_REPARSE` can reject the Object Manager drive-letter link before reaching the filesystem on Windows 10. The root opener now uses [QueryDosDeviceW](https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-querydosdevicew) for the original drive only, selects its first/current mapping, and accepts only a direct `\Device\HarddiskVolume` target followed entirely by decimal digits. SUBST subpaths, network targets, other devices and historical MULTI_SZ mappings never become authority. It opens that volume root directly; every subsequent filesystem component still uses the unchanged handle-relative no-reparse checks. This is the same narrow alias-resolution approach used by the primary [Codex Windows sandbox implementation](https://github.com/openai/codex/blob/main/codex-rs/windows-sandbox-rs/src/no_reparse_dir.rs).
-
-Logical paths retain their original drive prefix. The additional native outcome fixture compares the actual opened file's NT volume path with the current direct alias target, verifies unchanged logical root/file paths, and reads back exact bytes. It emits `drive_alias=direct_disk_volume; logical_path=preserved; actual_volume_handle=matched`. The baseline alias fixture passed on the first actual Windows CI run; runtime execution of the later sharing/owner corrections is pending. Exact-source MSVC/GNU type-check logs after the alias correction are `/tmp/te-windows-artifact-alias-msvc-check.log` and `/tmp/te-windows-artifact-alias-gnu-check.log`.
-
-## In-place reparse conversion qualification
-
-Held directory handles are evidence against rename/delete, not automatically evidence against in-place attribute/EA mutation. The new adversarial native fixture creates existing empty directories with ordinary inherited security, retains the complete readonly ancestry, and attempts actual `FSCTL_SET_REPARSE_POINT` mount-point conversion with full-write, attributes-only and attributes-plus-EA access. It uses the same reparse payload against unheld positive-control directories and refuses to pass if every positive control is unsupported. Each access mode's actual open/control result is printed; a denied unsupported control is not described as share-lock protection.
-
-If conversion succeeds while held, reopening the converted logical path must fail, retained create/read operations must refuse the substitution, and the substitute target's original marker and exact directory contents must remain unchanged. A conversion failure permits IO only in the original held directory. No source directory receives a guard file by default; all attempted mutations are private fixture directories. The first actual Windows CI run demonstrated that attributes-only and attributes-plus-EA conversion succeeds while these directory handles remain held. Its sequential reopen/create/read checks rejected the substitution and left the target intact. Those observations do not close a validation/use race, and later directory-sharing changes require another native run; complete in-place conversion resistance remains **unqualified**. Common production failclosed guards remain unchanged. Even a passing sequential conversion fixture does not prove every concurrent conversion race or every supported Windows release.
-
-Microsoft documents [FSCTL_SET_REPARSE_POINT](https://learn.microsoft.com/en-us/windows/win32/api/winioctl/ni-winioctl-fsctl_set_reparse_point) as an actual directory/file mutation. The primary Codex Windows sandbox source uses a nonempty guard file for its owned provisioning directories in addition to directory handles. That approach is not silently applied here to readonly user input ancestry. Latest cross-check logs for this additional fixture are `/tmp/te-windows-artifact-reparse-msvc-check.log` and `/tmp/te-windows-artifact-reparse-gnu-check.log`; they establish compilation only.
-
-## Independent DACL outcome coverage
-
-The foreign-principal fixture now installs exactly two otherwise-valid full-access inheritable allowed ACEs (SYSTEM and Everyone), preserves the owner and protected control, reads the actual installed ACL, then requires foreign-principal refusal. It cannot pass merely because an entry-count check rejected a one-entry ACL.
-
-A separate fixture installs an otherwise-correct two-principal ACL without protected control. Its parent deliberately has no inheritable entries, so removing protection cannot add unrelated inherited entries and accidentally exercise another policy. It verifies actual owner, principal set, masks, flags and count before requiring protection refusal and successful repair.
-
-The created child-file fixture closes its native writer, reads the real file owner and DACL through a security handle, and requires exactly SYSTEM and current-user effective inherited full-access entries plus the current-user owner. Root security success does not substitute for this file outcome. The fixture also exposes any mismatch between a Windows token's default owner and the explicit token-user owner contract; the first actual Windows CI run confirmed a mismatch (Administrators owner versus token user). The producer now supplies an explicit owner-only descriptor at file creation and retains normal parent DACL inheritance; actual runtime verification of this fix is pending. Compilation logs are `/tmp/te-windows-artifact-dacl-msvc-check.log` and `/tmp/te-windows-artifact-dacl-gnu-check.log`. Native runtime and complete private output/configuration acceptance remain pending.
-
-## First actual Windows run and corrective candidate
-
-Host draft PR 1048, commit `8946f3ba`, Windows run `38032691900` executed the baseline exact module: **9 passed, 10 failed, 1 ignored**. Failure log: `/tmp/te-windows-first-native-ci-failure.log`. This is genuine failed qualification evidence, not a passing Windows acceptance run.
-
-The repeated error 32 during rename/hardlink/replacement was a self-conflict: the native target-open path requests directory WRITE_DATA while our held directory shared only READ. Microsoft's [rename RootDirectory documentation](https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/ntifs/ns-ntifs-_file_rename_information) describes the compatible traverse/read-attribute and target-open combination. The corrected module shares WRITE only for directory handles; no directory handle shares DELETE, and regular-file READ-only sharing is unchanged. The same fix addresses another fixture's still-retained common ancestor colliding with a legitimate rename after a unique child guard was dropped. Tests do not need to weaken their lifecycle assertions or serialize away that conflict.
-
-The baseline created-file owner was `S-1-5-32-544` (Administrators), while the required owner was the current token user's SID. `create_new` now supplies an explicit owner-only descriptor. A private parent's ACL still supplies the effective inherited SYSTEM/current-user entries; generic user-output parents do not become certified private roots merely because file ownership is explicit. The existing child-file outcome fixture stays unchanged and must pass on the next native run.
-
-A new deterministic thread-local test-only seam runs immediately after parent-handle validation and before the actual kernel create/link/rename request. It distinguishes native operation types so configuration destination preflight reads cannot consume the intended rename checkpoint. The race outcome performs attribute conversion at that exact boundary for empty create/link destinations, requiring zero substitute mutations and refusal. For rename/replacement, it attempts conversion of the actual nonempty parent while the source file guard remains held, requiring unchanged original ownership and exact final bytes. `NtSetInformationFile` has no `OBJ_DONT_REPARSE` argument; the link race is therefore a required qualification result, not an inference from ordinary open checks. The seam is absent in production. No guard files are added to user input directories.
-
-Corrective-source cross-checks: `/tmp/te-windows-native-fix-msvc-check.log` and `/tmp/te-windows-native-fix-gnu-check.log`. They cannot substitute for the next actual Windows run. All common non-Unix production guards remain untouched.
+- Physical power loss. Process-crash tests leave OS caches running.
+- FAT/exFAT output folders. If the filesystem refuses the directory flush,
+  publication fails closed instead of degrading silently.

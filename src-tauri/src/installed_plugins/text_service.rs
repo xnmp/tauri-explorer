@@ -54,7 +54,9 @@ impl Drop for Pending {
     }
 }
 impl TextBridge {
-    pub(super) fn has_pending(&self) -> bool { self.pending.load(Ordering::Acquire) > 0 }
+    pub(super) fn has_pending(&self) -> bool {
+        self.pending.load(Ordering::Acquire) > 0
+    }
     pub fn new(
         caller: String,
         package: String,
@@ -163,11 +165,7 @@ impl TextBridge {
             } else {
                 owner
                     .engine
-                    .generate(
-                        owner.caller.clone(),
-                        frame["params"].clone(),
-                        cancelled,
-                    )
+                    .generate(owner.caller.clone(), frame["params"].clone(), cancelled)
                     .await
             };
             drop(permit);
@@ -244,19 +242,35 @@ mod tests {
         let frames = Arc::new(Mutex::new(vec![]));
         let sink = frames.clone();
         let bridge = Arc::new(TextBridge::new(
-            "legacy-incarnation".into(), package.into(), || true,
+            "legacy-incarnation".into(),
+            package.into(),
+            || true,
             move |frame| sink.lock().unwrap().push(frame),
-            Arc::new(Fixture { calls: calls.clone(), gate: Arc::new(tokio::sync::Semaphore::new(1)) }),
+            Arc::new(Fixture {
+                calls: calls.clone(),
+                gate: Arc::new(tokio::sync::Semaphore::new(1)),
+            }),
         ));
-        for method in ["host.text.generate", "host.text.describe", "host.text.cancel"] {
+        for method in [
+            "host.text.generate",
+            "host.text.describe",
+            "host.text.cancel",
+        ] {
             bridge.handle(json!({"jsonrpc":"2.0","id":"host:fenced","method":method,"params":{"requestId":"original"}}));
         }
         assert!(calls.lock().unwrap().is_empty());
         assert_eq!(frames.lock().unwrap().len(), 3);
-        assert!(frames.lock().unwrap().iter().all(|frame| frame["error"]["data"]["code"] == "unavailable"));
+        assert!(frames
+            .lock()
+            .unwrap()
+            .iter()
+            .all(|frame| frame["error"]["data"]["code"] == "unavailable"));
         drop(fence);
         bridge.handle(json!({"jsonrpc":"2.0","id":"host:restored","method":"host.text.cancel","params":{"requestId":"original"}}));
-        assert_eq!(calls.lock().unwrap().as_slice(), &["cancel:legacy-incarnation"]);
+        assert_eq!(
+            calls.lock().unwrap().as_slice(),
+            &["cancel:legacy-incarnation"]
+        );
     }
 
     #[tokio::test]
@@ -266,20 +280,28 @@ mod tests {
             worker: Arc<Mutex<Option<std::thread::JoinHandle<()>>>>,
         }
         impl TextEngine for EarlyReply {
-            fn describe(&self, _: OwnerCheck) -> Work { unreachable!() }
-            fn cancel(&self, _: &str, _: &str) -> bool { false }
+            fn describe(&self, _: OwnerCheck) -> Work {
+                unreachable!()
+            }
+            fn cancel(&self, _: &str, _: &str) -> bool {
+                false
+            }
             fn generate(&self, _: String, _: Value, owner: OwnerCheck) -> Work {
                 let release = self.release.clone();
                 let worker = std::thread::spawn(move || {
                     let (gate, wake) = &*release;
                     let mut finished = gate.lock().unwrap();
-                    while !*finished { finished = wake.wait(finished).unwrap(); }
+                    while !*finished {
+                        finished = wake.wait(finished).unwrap();
+                    }
                     // A native snapshot/config worker retains its caller's
                     // predicate even if its outer future already replied.
                     assert!(!owner());
                 });
                 *self.worker.lock().unwrap() = Some(worker);
-                Box::pin(async { Err(json!({"code":"timed_out","message":"Fixture returned before local IO"})) })
+                Box::pin(async {
+                    Err(json!({"code":"timed_out","message":"Fixture returned before local IO"}))
+                })
             }
         }
         let package = "fixture.text-early-native-reply";
@@ -287,12 +309,24 @@ mod tests {
         let worker = Arc::new(Mutex::new(None));
         let (send, mut frames) = tokio::sync::mpsc::unbounded_channel();
         let bridge = Arc::new(TextBridge::new(
-            "owned-incarnation".into(), package.into(), || true,
-            move |frame| { send.send(frame).unwrap(); },
-            Arc::new(EarlyReply { release: release.clone(), worker: worker.clone() }),
+            "owned-incarnation".into(),
+            package.into(),
+            || true,
+            move |frame| {
+                send.send(frame).unwrap();
+            },
+            Arc::new(EarlyReply {
+                release: release.clone(),
+                worker: worker.clone(),
+            }),
         ));
-        bridge.handle(json!({"jsonrpc":"2.0","id":"host:early","method":"host.text.generate","params":{}}));
-        let reply = tokio::time::timeout(std::time::Duration::from_secs(2), frames.recv()).await.unwrap().unwrap();
+        bridge.handle(
+            json!({"jsonrpc":"2.0","id":"host:early","method":"host.text.generate","params":{}}),
+        );
+        let reply = tokio::time::timeout(std::time::Duration::from_secs(2), frames.recv())
+            .await
+            .unwrap()
+            .unwrap();
         assert_eq!(reply["error"]["data"]["code"], "timed_out");
         assert!(super::super::backend::begin_drain(package).is_err());
         {

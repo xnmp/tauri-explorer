@@ -80,7 +80,7 @@ impl Serialize for AppError {
 impl AppError {
     pub(crate) fn service_code(&self) -> &str {
         match self {
-            Self::Service {code, ..} => code,
+            Self::Service { code, .. } => code,
             Self::MutationUncertain(_) => "mutation_uncertain",
             Self::NotFound(_) => "not_found",
             Self::PermissionDenied(_) => "permission_denied",

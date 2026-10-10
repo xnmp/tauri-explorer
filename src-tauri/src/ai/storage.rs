@@ -495,7 +495,8 @@ pub fn write_trace_config(root: &Path, data: &str) -> Result<()> {
         ));
     }
     if incoming.get("summarizePrompts").is_none() {
-        if let Some(summary) = read_value(&resolved)?.and_then(|v| v.get("summarizePrompts").cloned())
+        if let Some(summary) =
+            read_value(&resolved)?.and_then(|v| v.get("summarizePrompts").cloned())
         {
             incoming["summarizePrompts"] = summary;
         }

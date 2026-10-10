@@ -31,7 +31,9 @@ pub(super) fn active_runs(package: &str) -> Vec<i64> {
 pub(super) fn wait_for_publishers() {
     let mut all = leases().lock().unwrap_or_else(|cause| cause.into_inner());
     while all.values().any(|runs| !runs.is_empty()) {
-        all = PUBLISHERS_CHANGED.wait(all).unwrap_or_else(|cause| cause.into_inner());
+        all = PUBLISHERS_CHANGED
+            .wait(all)
+            .unwrap_or_else(|cause| cause.into_inner());
     }
 }
 struct Lease {

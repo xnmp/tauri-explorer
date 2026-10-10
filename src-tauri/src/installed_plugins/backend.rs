@@ -2150,8 +2150,12 @@ mod deadline_tests {
             operation_deadline_ms(UNIX_EPOCH - Duration::from_secs(5)),
             600_000
         );
-        let far = UNIX_EPOCH + Duration::from_secs(u64::MAX / 4);
-        assert_eq!(operation_deadline_ms(far), 9_007_199_254_740_991);
+        // Windows SystemTime cannot represent instants this far out.
+        #[cfg(not(windows))]
+        {
+            let far = UNIX_EPOCH + Duration::from_secs(u64::MAX / 4);
+            assert_eq!(operation_deadline_ms(far), 9_007_199_254_740_991);
+        }
     }
 }
 pub(super) fn call_with_origin(

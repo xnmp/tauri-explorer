@@ -267,9 +267,6 @@ fn dispatch(broker: &Arc<Broker>, method: &str, params: Value) -> Result<Value, 
             if !broker.can_recover() {
                 return Err(error("Connection test owner disconnected before admission"));
             }
-            if !cfg!(unix) {
-                return Err(error("Image generation is unavailable on this platform because durable artifact storage is unsupported"));
-            }
             test_provider(broker)?;
             let operation = text(&params, "operationId")?;
             let fingerprint = text(&params, "effectiveRecipeDigest")?;
@@ -460,9 +457,6 @@ pub(super) fn image_call(
 ) -> Result<Value, AppError> {
     if !alive() {
         return Err(error("Service consumer disconnected before admission"));
-    }
-    if matches!(method, "prepare" | "start") && !cfg!(unix) {
-        return Err(error("Image generation is unavailable on this platform because durable artifact storage is unsupported"));
     }
     let mut dispatch_method = method.to_owned();
     let mut body = params;

@@ -39,6 +39,18 @@ fn fixture_service(config: Configuration) -> (tempfile::TempDir, &'static Servic
     service.store.save(config, 0).unwrap();
     (root, service)
 }
+/// A loopback root whose connections close at once. Unlike a closed port,
+/// this fails immediately on Windows too, where refused connects are retried.
+fn closed_root() -> String {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = listener.local_addr().unwrap();
+    std::thread::spawn(move || {
+        for stream in listener.incoming() {
+            drop(stream);
+        }
+    });
+    format!("http://{address}/v1")
+}
 fn http_fixture(
     status: &str,
     body: String,
@@ -580,7 +592,7 @@ async fn cli_deadline_terminates_owned_process_before_return() {
 
 #[tokio::test]
 async fn cancellation_before_admission_never_reaches_provider() {
-    let (_root, service) = fixture_service(config_http("http://127.0.0.1:1/v1"));
+    let (_root, service) = fixture_service(config_http(&closed_root()));
     assert!(service.cancel("plugin:a", "not-yet-admitted"));
     let error = service
         .generate(
@@ -768,10 +780,7 @@ async fn aborted_snapshot_keeps_local_worker_slot_until_io_finishes() {
         root.path().into(),
         Arc::new(MemorySecrets::default()),
     )));
-    service
-        .store
-        .save(config_http("http://127.0.0.1:1/v1"), 0)
-        .unwrap();
+    service.store.save(config_http(&closed_root()), 0).unwrap();
     service
         .store
         .credential("http", Some("fixture-key"), 1, service.secrets.as_ref())
@@ -794,7 +803,7 @@ async fn aborted_snapshot_keeps_local_worker_slot_until_io_finishes() {
         .unwrap();
     task.abort();
     let _ = task.await;
-    let (_other_root, other) = fixture_service(config_http("http://127.0.0.1:1/v1"));
+    let (_other_root, other) = fixture_service(config_http(&closed_root()));
     let mut blocked = request("blocked");
     blocked["timeoutMs"] = json!(30);
     assert_eq!(
@@ -1032,7 +1041,7 @@ fn legacy_symlink_to_fifo_is_rejected_and_regular_target_still_migrates() {
 }
 #[tokio::test]
 async fn cancellation_quota_cannot_exhaust_other_callers() {
-    let (_root, service) = fixture_service(config_http("http://127.0.0.1:1/v1"));
+    let (_root, service) = fixture_service(config_http(&closed_root()));
     for i in 0..100 {
         assert!(service.cancel("plugin:a", &format!("cancel-{i}")));
     }

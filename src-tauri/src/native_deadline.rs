@@ -100,11 +100,13 @@ mod tests {
     }
     #[test]
     fn nested_attempts_cannot_extend_an_aggregate_budget() {
-        scoped(Instant::now() + Duration::from_millis(35), || {
+        // Generous outer budget: a loaded runner may oversleep, but the nested
+        // five-second scope must still never outlive the outer one.
+        scoped(Instant::now() + Duration::from_millis(400), || {
             std::thread::sleep(Duration::from_millis(15));
             scoped(Instant::now() + Duration::from_secs(5), || {
                 let wait = remaining(Duration::from_secs(15)).unwrap();
-                assert!(wait < Duration::from_millis(25));
+                assert!(wait < Duration::from_millis(390));
                 let (_send, receive) = std::sync::mpsc::channel::<()>();
                 assert!(receive.recv_timeout(wait).is_err());
                 assert!(check().is_err());

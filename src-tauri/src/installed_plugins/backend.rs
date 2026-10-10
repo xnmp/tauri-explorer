@@ -1705,7 +1705,8 @@ pub(super) fn begin_drain(id: &str) -> Result<DrainGuard, AppError> {
             .iter()
             .any(|((package, _), count)| package == id && *count > 0)
     {
-        return Err(error(
+        // Typed busy: a queued upgrade racing a live call retries next launch.
+        return Err(super::service_host::busy(
             "Finish active plugin operations before changing this package",
         ));
     }

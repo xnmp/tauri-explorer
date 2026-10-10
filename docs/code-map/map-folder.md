@@ -608,6 +608,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `src-tauri/src/files/freedesktop_trash/restoration.rs` — immutable exact restoration plans, per-resource shared admission, descriptor-relative missing-parent creation and per-batch identity-checked parent reuse; native target authority stays separate from display receipt keys.
 - `fs_watcher.rs` — blocking native directory watch adapter, coalesced retirement cleanup and recursive search-cache coverage; directory-changed events preserve mutation priority and observation time.
 - `directory_watches.rs` — renderer-owned directory lease identities, shared registrations, cancellation, failed-release retry and retired-observer reconstruction.
+- `src-tauri/src/files/search_observation.rs` — independent recursive-search watch worker, demand-incarnation fences and live coverage snapshots; never runs native work under the direct directory lease mutex.
 - `watch_observation.rs` — shared native generations, parent/root registration roles, callback failure/rescan recovery, partial recursive registration isolation and retry deadlines.
 - `git_status.rs` — per-entry git status indicators.
 - `drives.rs` — enumerate drives/volumes cross-platform; Linux mount-table fallback and udev label decoding. Mount-table/sysfs integration contracts against the private `enumerate_linux_drives` in `src-tauri/test_support/linux_drives_mounts.rs` (#926).

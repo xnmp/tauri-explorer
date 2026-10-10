@@ -2,6 +2,25 @@
 
 All notable changes to Tauri Explorer.
 
+## v1.11.6 — 2026-10-10
+
+Hotfix for folder loads that could stall for a minute after Quick Open searched
+a large folder such as the home directory.
+
+### Fixed
+
+- Recursive search-cache watcher registration, cleanup and recovery now run
+  independently of folder navigation. A slow, unreadable or over-capacity search
+  tree no longer holds the shared watcher lock needed by other panes and windows.
+  Cache coverage is revoked immediately on the final folder-watch release, and
+  late registration cannot revive an old cache after release/reacquire (#1028).
+- The Preview pane virtualizes huge folder listings instead of rendering every
+  entry at once (#1040).
+- Generated image themes solve text contrast for WCAG AA (#791).
+- Create Theme from Image appears in the shared AI submenu (#1041).
+- Plugin profile ownership is released even when descendants inherit process
+  descriptors (#1037).
+
 ## v1.11.5 — 2026-10-09
 
 This update lets an image a plugin shows in Preview, such as an unsaved

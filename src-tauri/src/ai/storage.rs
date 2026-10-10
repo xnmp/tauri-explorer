@@ -12,8 +12,6 @@ use std::{
 const MAX_CONFIG: usize = 256 * 1024;
 pub struct Store {
     pub root: PathBuf,
-    #[cfg(test)]
-    pub fail_next_commit_after_replace: std::sync::atomic::AtomicBool,
 }
 pub struct Guard {
     _file: File,
@@ -37,11 +35,7 @@ fn regular(path: &Path) -> Result<()> {
 }
 impl Store {
     pub fn new(root: PathBuf) -> Self {
-        Self {
-            root,
-            #[cfg(test)]
-            fail_next_commit_after_replace: std::sync::atomic::AtomicBool::new(false),
-        }
+        Self { root }
     }
     pub fn lock(&self) -> Result<Guard> {
         let path = self.root.join(".ai-connections.lock");
@@ -198,16 +192,9 @@ impl Store {
             .checked_add(1)
             .filter(|n| *n <= 9_007_199_254_740_991)
             .ok_or_else(storage_error)?;
-        #[cfg(test)]
-        let fail_after_replace = self
-            .fail_next_commit_after_replace
-            .swap(false, std::sync::atomic::Ordering::Relaxed);
-        #[cfg(not(test))]
-        let fail_after_replace = false;
-        durable_write_impl(
+        durable_write(
             &self.root.join("ai-connections.json"),
             &serde_json::to_vec_pretty(&config).map_err(|_| storage_error())?,
-            fail_after_replace,
         )?;
         Ok(config)
     }
@@ -379,12 +366,17 @@ fn read_value_with_policy(path: &Path, private: bool) -> Result<Option<Value>> {
     })
 }
 pub fn durable_write(path: &Path, bytes: &[u8]) -> Result<()> {
-    durable_write_impl(path, bytes, false)
-}
-fn durable_write_impl(path: &Path, bytes: &[u8], fail_after_replace: bool) -> Result<()> {
     if bytes.len() > MAX_CONFIG {
         return Err(ServiceError::invalid("Configuration is too large"));
     }
+    #[cfg(test)]
+    let fail_after_replace = match fault::take(path) {
+        Some(fault::Replace::Refused) => return Err(storage_error()),
+        Some(fault::Replace::AfterReplace) => true,
+        None => false,
+    };
+    #[cfg(not(test))]
+    let fail_after_replace = false;
     let parent = path.parent().ok_or_else(storage_error)?;
     let mut temp = tempfile::NamedTempFile::new_in(parent).map_err(|_| storage_error())?;
     #[cfg(unix)]
@@ -506,4 +498,39 @@ pub fn write_trace_config(root: &Path, data: &str) -> Result<()> {
         &resolved,
         &serde_json::to_vec_pretty(&incoming).map_err(|_| storage_error())?,
     )
+}
+/// Test-only replacement faults, so the Windows failure modes are exercised on
+/// every platform. Production never consults this; each platform's real
+/// replacement code below is unchanged.
+#[cfg(test)]
+pub(super) mod fault {
+    use std::{cell::RefCell, ffi::OsString, path::Path};
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    pub enum Replace {
+        /// The replace call itself fails and the target is untouched, as
+        /// MoveFileExW does on a sharing violation or access denial.
+        Refused,
+        /// The replacement is durable but its confirmation fails afterwards.
+        AfterReplace,
+    }
+    thread_local! {
+        static NEXT: RefCell<Option<(OsString, Replace)>> = const { RefCell::new(None) };
+    }
+    /// Fail the next durable write on this thread to a file with this name.
+    pub fn inject(file_name: &str, fault: Replace) {
+        NEXT.with(|next| *next.borrow_mut() = Some((file_name.into(), fault)));
+    }
+    pub(super) fn take(path: &Path) -> Option<Replace> {
+        NEXT.with(|next| {
+            let mut next = next.borrow_mut();
+            let matches = next
+                .as_ref()
+                .is_some_and(|(name, _)| path.file_name() == Some(name.as_os_str()));
+            if matches {
+                next.take().map(|(_, fault)| fault)
+            } else {
+                None
+            }
+        })
+    }
 }

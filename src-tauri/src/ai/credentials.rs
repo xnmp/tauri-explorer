@@ -72,6 +72,12 @@ pub fn resolve(profile: &Profile, store: &dyn SecretStore) -> Result<Option<Stri
 #[derive(Default)]
 pub struct MemorySecrets(std::sync::Mutex<std::collections::HashMap<(String, String), String>>);
 #[cfg(test)]
+impl MemorySecrets {
+    pub fn count(&self) -> usize {
+        self.0.lock().unwrap().len()
+    }
+}
+#[cfg(test)]
 impl SecretStore for MemorySecrets {
     fn get(&self, o: &str, i: &str) -> Result<Option<String>> {
         Ok(self.0.lock().unwrap().get(&(o.into(), i.into())).cloned())

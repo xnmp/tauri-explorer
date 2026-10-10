@@ -72,10 +72,29 @@ fn main() {
             });
         }
     }
+    // The owning plugin backend: its death must cancel and reap the CLI tree,
+    // as the broker's liveness predicate does for host.process.run.
+    let backend = (args[0] == "backend-death").then(|| {
+        std::sync::Mutex::new(
+            Command::new(std::env::current_exe().unwrap())
+                .args(["leaf", "backend-hold", &format!("{}.backend", args[1])])
+                .stdin(Stdio::null())
+                .spawn()
+                .unwrap(),
+        )
+    });
+    let backend_dead = || {
+        backend.as_ref().is_some_and(|backend| {
+            !matches!(backend.lock().unwrap().try_wait(), Ok(None))
+        })
+    };
     let begin = Instant::now();
     let result = process_supervisor::output_controlled(
         &mut command,
-        || args[0] == "cancel" && begin.elapsed() > Duration::from_millis(150),
+        || {
+            (args[0] == "cancel" && begin.elapsed() > Duration::from_millis(150))
+                || backend_dead()
+        },
         (65536, 65536),
         "fixture cancelled",
     );
@@ -118,6 +137,12 @@ fn leaf(args: &[String]) {
         "nonzero" => {
             println!("exact-nonzero");
             std::process::exit(23)
+        }
+        "backend-hold" => {
+            std::fs::write(&args[1], std::process::id().to_string()).unwrap();
+            loop {
+                unsafe { libc::pause() };
+            }
         }
         "large-success" => {
             std::io::stdout().write_all(&vec![b'x'; 65536]).unwrap();

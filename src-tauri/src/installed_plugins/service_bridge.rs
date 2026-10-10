@@ -398,16 +398,14 @@ fn invoke(consumer: &Arc<Broker>, request: Invocation) -> Result<Value, AppError
     let (provider, _lease) = {
         let _gate = super::read_lifecycle()?;
         let entries = package::list(&super::root()?)?;
-        let (provider, export) = service_graph::select(
+        let (provider, _) = service_graph::route(
             &entries,
             consumer.manifest(),
             &request.package_id,
             &request.service_id,
             request.major,
+            &request.method,
         )?;
-        if !export.methods.contains(&request.method) {
-            return Err(error("Provider does not export this service method"));
-        }
         (
             provider.clone(),
             backend::CallLease::acquire_lane(

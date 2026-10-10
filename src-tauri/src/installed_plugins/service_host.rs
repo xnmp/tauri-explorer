@@ -27,10 +27,21 @@ pub(super) fn store() -> Result<&'static Store, AppError> {
         .as_ref()
         .map_err(|message| AppError::Other(message.clone()))
 }
-pub(super) fn mutation_allowed(package: &str) -> Result<(), AppError> {
-    let store = store()?;
+/// Service code for a mutation refused only because work is still owned.
+/// Queued requests carrying it are retained rather than discarded.
+pub(super) const PACKAGE_BUSY: &str = "package_busy";
+pub(super) fn busy(message: &str) -> AppError {
+    AppError::Service {
+        code: PACKAGE_BUSY.into(),
+        message: message.into(),
+    }
+}
+pub(super) fn is_busy(error: &AppError) -> bool {
+    matches!(error, AppError::Service { code, .. } if code == PACKAGE_BUSY)
+}
+pub(super) fn mutation_allowed_in(store: &Store, package: &str) -> Result<(), AppError> {
     if store.busy(package)? {
-        return Err(AppError::Other("Package has unresolved AI operations; open Unresolved AI operations before changing it".into()));
+        return Err(busy("Package has unresolved AI operations; open Unresolved AI operations before changing it"));
     }
     Ok(())
 }
@@ -38,11 +49,10 @@ pub(super) fn mutation_allowed_at(
     profile: &std::path::Path,
     package: &str,
 ) -> Result<(), AppError> {
-    let store = Store::open(profile.join("service-state"), Limits::default())?;
-    if store.busy(package)? {
-        return Err(AppError::Other("Package has unresolved AI operations; open Unresolved AI operations before changing it".into()));
-    }
-    Ok(())
+    mutation_allowed_in(
+        &Store::open(profile.join("service-state"), Limits::default())?,
+        package,
+    )
 }
 
 /// SDK1/2 consumers may reconcile shared uncertain runs as ordinary interrupted

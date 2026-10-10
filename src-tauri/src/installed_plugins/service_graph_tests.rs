@@ -91,3 +91,50 @@ fn duplicate_and_self_dependencies_fail_before_startup() {
     dependency(&mut entry, "example.b", false);
     assert!(validate_declarations(&entry.manifest).is_err());
 }
+#[test]
+fn duplicate_service_exports_are_rejected_but_distinct_majors_are_not() {
+    let mut entry = package("example.images");
+    export(&mut entry);
+    let mut next_major = entry.manifest.services[0].clone();
+    next_major.major = 2;
+    entry.manifest.services.push(next_major);
+    assert!(validate_declarations(&entry.manifest).is_ok());
+    export(&mut entry);
+    assert!(validate_declarations(&entry.manifest).is_err());
+    assert!(validate_enabled(&[entry]).is_err());
+}
+#[test]
+fn calls_route_only_declared_targets_and_exported_methods() {
+    let mut consumer = package("example.trace");
+    dependency(&mut consumer, "example.images", false);
+    let mut provider = package("example.images");
+    export(&mut provider);
+    let mut unrelated = package("example.other");
+    export(&mut unrelated);
+    let entries = [consumer.clone(), provider, unrelated];
+    let route = |target: &str, method: &str| {
+        route(
+            &entries,
+            &consumer.manifest,
+            target,
+            "image-generation",
+            1,
+            method,
+        )
+        .map(|(provider, _)| provider.manifest.id.clone())
+    };
+    assert_eq!(route("example.images", "start").unwrap(), "example.images");
+    // Exported by a package the caller never declared.
+    assert!(route("example.other", "start").is_err());
+    // A method the selected provider does not export.
+    assert!(route("example.images", "acknowledge").is_err());
+    assert!(route("example.images", "host.credentials.resolve").is_err());
+}
+#[test]
+fn an_absent_required_dependency_fails_while_an_absent_optional_one_does_not() {
+    let mut consumer = package("example.trace");
+    dependency(&mut consumer, "example.images", false);
+    assert!(validate_enabled(std::slice::from_ref(&consumer)).is_err());
+    consumer.manifest.service_dependencies[0].optional = true;
+    assert!(validate_enabled(&[consumer]).is_ok());
+}

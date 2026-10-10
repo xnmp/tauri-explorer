@@ -92,6 +92,7 @@ jobs:
           }
           run_native_fixture installed_plugins::backend::native_tests::native_private_preflight_retirement_and_shutdown lifecycle
           run_native_fixture installed_plugins::backend::native_recovery_tests::native_startup_recovery_holds_readiness_and_shutdown_for_actual_io lifecycle-recovery
+          run_native_fixture installed_plugins::lifecycle::mutation_native_tests::native_disable_retires_the_backend_only_after_claims_drain retirement
       - name: Build host fixture binary
         env:
           VITE_E2E_HOOKS: '1'

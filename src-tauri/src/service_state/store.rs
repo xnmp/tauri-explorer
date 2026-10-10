@@ -438,7 +438,9 @@ impl Store {
                 })
                 .map_err(sql)?;
             if global >= self.limits.operations as i64 || local >= self.limits.per_consumer as i64 {
-                return Err(reject("operation capacity reached"));
+                // A terminal unknown outcome keeps its execution claim, and so its
+                // slot, until the user stops its recovery (plan §7.3, §21).
+                return Err(reject("operation capacity reached; wait for running AI work or resolve unconfirmed operations in AI Operations"));
             }
         }
         Ok(())

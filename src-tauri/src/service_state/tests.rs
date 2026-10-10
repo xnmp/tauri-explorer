@@ -311,6 +311,33 @@ fn terminal_attention_can_release_execution_only_with_explicit_worker_proof() {
     );
 }
 #[test]
+fn unknown_outcomes_hold_operation_capacity_until_recovery_is_stopped() {
+    let root = tempfile::tempdir().unwrap();
+    let s = Store::open(
+        root.path().join("service"),
+        Limits {
+            disk_bytes: 2 * 1024 * 1024 * 1024,
+            operations: 8,
+            per_consumer: 1,
+        },
+    )
+    .unwrap();
+    s.reserve(admission("unknown", vec![])).unwrap();
+    s.forwarding(&owner("consumer", 1), "unknown").unwrap();
+    s.terminal(&owner("provider", 1), "consumer", "unknown", None, true)
+        .unwrap();
+    let refused = s
+        .reserve(admission("next", vec![]))
+        .unwrap_err()
+        .to_string();
+    assert!(refused.contains("operation capacity reached"), "{refused}");
+    assert!(refused.contains("AI Operations"), "{refused}");
+    assert!(s.get("consumer", "next").unwrap().is_none());
+    s.release_execution_after_attention(&owner("provider", 1), "consumer", "unknown", true)
+        .unwrap();
+    s.reserve(admission("next", vec![])).unwrap();
+}
+#[test]
 fn stop_recovery_commits_execution_release_and_presentation_policy_together() {
     use super::job::{JobRecord, JobState};
     let (root, s) = store();

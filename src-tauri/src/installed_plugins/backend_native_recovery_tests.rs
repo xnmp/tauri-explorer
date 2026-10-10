@@ -41,6 +41,7 @@ for line in sys.stdin:
   result=receipt('cancelled',2)
  else: result={'ready':True}
  if 'id' in f: send({'jsonrpc':'2.0','id':f['id'],'result':result})
+ if method.endswith('.status'): (gate/'provider-status-replied').write_text('sent')
 "#;
 /// Records every host method and holds the n-th `jobs.status` until the test
 /// writes `consumer-status-release-<n>`.
@@ -249,7 +250,11 @@ fn native_startup_recovery_holds_readiness_and_shutdown_for_actual_io() {
     );
     for package in [CONSUMER, PROVIDER] {
         assert!(
-            super::super::service_host::mutation_allowed(package).is_err(),
+            super::super::service_host::mutation_allowed_in(
+                super::super::service_host::store().unwrap(),
+                package
+            )
+            .is_err(),
             "{package} was released for package changes before its claim was recovered"
         );
     }
@@ -282,13 +287,25 @@ fn native_startup_recovery_holds_readiness_and_shutdown_for_actual_io() {
         std::thread::sleep(Duration::from_millis(10));
     }
 
-    // (b) Shutdown stops both brokers, which returns their pending RPCs. The
-    // recovery actor then persists its attention evidence; hold the ledger's
-    // write lock so that durable IO is still in progress.
+    // Let the reconciler finish this and any later poll, so the only actor
+    // that can still be inside ledger IO during shutdown is recovery.
+    for n in 2..=32 {
+        fs::write(gate.join(format!("consumer-status-release-{n}")), b"go").unwrap();
+    }
+    // (b) Hold the ledger's write lock, then let the provider answer status.
+    // The recovery actor must persist that authoritative receipt, so it is
+    // inside durable ledger IO when shutdown begins.
     let profile_root = config.canonicalize().unwrap();
     let ledger = rusqlite::Connection::open(config.join("service-state/ledger.sqlite")).unwrap();
     ledger.busy_timeout(Duration::from_secs(5)).unwrap();
     ledger.execute_batch("BEGIN IMMEDIATE").unwrap();
+    fs::write(gate.join("provider-status-release"), b"go").unwrap();
+    wait_file(&gate.join("provider-status-replied"));
+    // Margin for the actor to read the reply and reach the held write; the
+    // receipt assertion below proves it did. Two mechanisms each keep
+    // shutdown pending here: joining the recovery actor, and waiting for the
+    // CallLease it holds across that IO. Removing both fails this test.
+    std::thread::sleep(Duration::from_millis(200));
     let started = Instant::now();
     let (complete, finished) = mpsc::channel();
     let shutdown_worker = std::thread::spawn(move || {
@@ -332,11 +349,16 @@ fn native_startup_recovery_holds_readiness_and_shutdown_for_actual_io() {
         "Shutdown waited {tail:?} after recovery IO returned"
     );
     shutdown_worker.join().unwrap();
-    // The actor's held write completed before shutdown returned; ownership is
-    // retained for the next start rather than settled.
+    // The actor's held write (the provider's authoritative cancellation)
+    // completed before shutdown returned, and shutdown itself recorded no
+    // attention verdict.
     let claim = store.get(CONSUMER, OPERATION).unwrap().unwrap();
-    assert!(claim.needs_attention);
-    assert_eq!(claim.phase, AdmissionPhase::Accepted);
+    assert_ne!(
+        claim.phase,
+        AdmissionPhase::Accepted,
+        "The receipt write held during shutdown never landed"
+    );
+    assert!(!claim.needs_attention);
     drop(super::super::ownership::acquire(&profile_root).unwrap());
 
     // (c) Recovery is unpaid: only handshake, cancellation and status reached
@@ -356,6 +378,5 @@ fn native_startup_recovery_holds_readiness_and_shutdown_for_actual_io() {
             "Recovery issued a paid start: {method}"
         );
     }
-    assert!(!gate.join("provider-status-release").exists());
     drop(app);
 }

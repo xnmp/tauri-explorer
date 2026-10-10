@@ -96,16 +96,20 @@ operations.
      both packages and `ai_operations::snapshot()` lists the operation; the job
      stays `recovering` until the held `jobs.status` returns, and only that
      returned receipt moves it to `running`.
-   - Shutdown: `backend::shutdown` stops both brokers, which returns their
-     pending RPCs (both processes are reaped). The recovery actor then writes its
-     attention evidence; the fixture holds the ledger write lock so that durable
-     IO stays in progress. Shutdown has not returned and still owns the profile
-     lease 2.5 s after it began (past the 2 s poller bound, inside the ledger's
-     3 s busy timeout); after the lock is released it returns within 32–48 ms
-     and the attention write is already durable, with the claim still retained
-     (`accepted`) for the next start. Mutation check: with
-     `service_bridge::shutdown_recovery()` commented out, the fixture fails
-     ("Shutdown returned while the recovery actor was inside ledger IO").
+   - Shutdown: the fixture first lets the job reconciler finish its held polls,
+     takes the ledger write lock, then releases the provider's `status`. The
+     recovery actor must persist that authoritative receipt, so it is inside
+     durable ledger IO when `shutdown` begins. Shutdown has not returned and
+     still owns the profile lease 2.5 s later; after the lock is released it
+     returns within about 30 ms, the receipt has landed (the claim left
+     `accepted`), and no attention verdict was recorded. Shutdown no longer
+     marks claims for attention when it interrupts recovery (the claim is simply
+     retained for the next start). Two mechanisms each hold shutdown here:
+     `service_bridge::shutdown_recovery()` joins the actor, and
+     `backend::wait_for_admissions()` waits for the CallLease the actor holds
+     across its IO. Mutation check: removing either alone still passes (defense
+     in depth); removing both fails ("Shutdown returned while the recovery actor
+     was inside ledger IO").
    - Unpaid recovery: the provider received only `initialize`,
      `lifecycle.activate`, `services.fixture-image.v1.cancel` and
      `services.fixture-image.v1.status`; the consumer only `initialize`,

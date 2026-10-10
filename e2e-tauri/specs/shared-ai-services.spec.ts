@@ -417,7 +417,7 @@ gatedDescribe("shared AI native working snapshot", [[process.platform === "linux
   it("keeps Trace available and refuses generation when the optional provider is absent", async function () {
     if (present) this.skip();
     await $(entryPathSelector(source)).click();
-    await command("OpenAI: Generate Image…");
+    await command("AI: Generate Image…");
     await $("textarea").setValue("No optional provider must never dispatch");
     expect(await $("button=Generate").isEnabled()).toBe(false);
     expect(await domText(".plugin-dialog")).toMatch(/install|missing|enable/i);
@@ -430,7 +430,7 @@ gatedDescribe("shared AI native working snapshot", [[process.platform === "linux
     if (!present) this.skip();
     expect(startupReady).toBe(true);
     await $(entryPathSelector(source)).click();
-    await command("OpenAI: Generate Image…");
+    await command("AI: Generate Image…");
     await $("textarea").setValue("Keep the native caller draft");
     await $("button=Configure connections").click();
     await $(".connections").waitForDisplayed();
@@ -590,6 +590,40 @@ gatedDescribe("shared AI native working snapshot", [[process.platform === "linux
     });
     fs.writeFileSync(path.join(evidence, "selection-edit-run.json"), JSON.stringify({ run: selectionRun, request: sent }, null, 2));
     await screenshot("selection-edit-trace");
+  });
+  // Plan §14.4 (4.6 editor entry): the host image editor opens directly in the
+  // plugin's AI tool and its generation is a normal provenance-linked edit.
+  if (generate) it("edits from the host image editor's AI tool with the exact source revision as its only input", async function () {
+    this.timeout(150_000);
+    expect(selectionRun).toBeDefined();
+    await traceView(false, source);
+    await clearProgress();
+    await $(entryPathSelector(source)).click();
+    await command("AI Edit in Image Editor…");
+    const editor = $('[role="dialog"][aria-label="AI edit"]');
+    await editor.waitForDisplayed({ timeoutMsg: "the image editor did not open in the AI tool" });
+    // The AI tool replaces crop: no crop handles or crop save actions.
+    expect(await editor.$('[role="slider"][aria-label="Right crop edge"]').isExisting()).toBe(false);
+    expect(await editor.$("button=Save copy").isExisting()).toBe(false);
+    await editor.$(".editor-ai .plugin-dialog, .editor-ai.plugin-dialog").waitForDisplayed();
+    expect(await inputOrder()).toEqual([source]);
+    const before = requests.length;
+    imageReplies.push({ status: 200 });
+    const prompt = "native editor tool edit";
+    await submitImageDialog(prompt);
+    await editor.waitForExist({ reverse: true, timeoutMsg: "the image editor stayed open after accepting the job" });
+    const run = await waitForRun(entry => entry.run.parameters.prompt === prompt && entry.run.status === "succeeded",
+      "the editor edit never published its output");
+    expect(requests.length).toBe(before + 1);
+    const sent = requests[before];
+    expect(sent.path).toBe("/fixture/images/edits");
+    expect(sent.images.map(part => part.sha256)).toEqual([sha256(fs.readFileSync(source))]);
+    expect(run.run.operation).toBe("openai.image.edit");
+    expect(run.inputs).toEqual([{ path: source, digest: sha256(fs.readFileSync(source)) }]);
+    expect(sha256(fs.readFileSync(run.outputPath!))).toBe(sent.outputSha256);
+    expect((await provenance(run.outputPath!, run.run.id)).inputs).toEqual([source]);
+    await waitForTerminalProgress("Complete", "the progress panel never showed the editor edit's outcome");
+    fs.writeFileSync(path.join(evidence, "editor-entry-run.json"), JSON.stringify({ run, request: sent }, null, 2));
   });
   // Plan §14.4 (4.7, 4.9): a rejected run fails visibly; Retry is a new durable operation.
   if (generate) it("retries a rejected run from the progress panel as a new operation with the same pinned inputs and options", async function () {
@@ -781,7 +815,7 @@ gatedDescribe("shared AI native working snapshot", [[process.platform === "linux
     await $(entryPathSelector(folder)).click({ button: "right" });
     await clickMenuItem("AI");
     await $(".ai-submenu").waitForDisplayed();
-    await clickMenuItem("Generate image with OpenAI");
+    await clickMenuItem("Generate image with AI");
     await $(".plugin-dialog").waitForDisplayed();
     expect(await inputOrder()).toEqual([]);
     const before = requests.length;

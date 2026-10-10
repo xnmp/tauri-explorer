@@ -1,6 +1,6 @@
 # Shared AI native acceptance (working snapshot)
 
-This record covers `feat/shared-ai-services` (host `890aaf64`, Trace `52af23a`). It is not a clean release or package qualification. The clean qualification wrapper, `scripts/build-native-qualification.ts`, requires a clean source worktree.
+This record covers `feat/shared-ai-services` (host `890aaf64`, Trace `52af23a`), then the image editor entry follow-up (host `feat/plugin-image-editor-entry` `614d0d81`, Trace `feat/editor-entry` `9dee5cc`). It is not a clean release or package qualification. The clean qualification wrapper, `scripts/build-native-qualification.ts`, requires a clean source worktree.
 
 ## Fixtures and isolation
 
@@ -48,9 +48,9 @@ Tested artifacts (SHA-256):
 
 | Artifact | SHA-256 |
 |---|---|
-| Host binary | `6890d4f2085dd5481438c4f5898f638ce9e030dac3e1a4df6c7d2c0074f24ce8` |
-| `TraceExplorer-0.2.3-x86_64-unknown-linux-gnu.teplugin` | `6e747344696a2e3bde59eae82c419d38f6d843161b4086ac449fade779452c1d` |
-| `ImageGeneration-0.1.0-x86_64-unknown-linux-gnu.teplugin` | `123c7ac7a122db0ceacf42c032fb6b3417f5eaf30dc02a4d419c3d36c507f307` |
+| Host binary | `13d4b71d16d88ca77639b08425bbad03aa3348d206c83f0ecfab711258b3efff` |
+| `TraceExplorer-0.2.3-x86_64-unknown-linux-gnu.teplugin` | `290bc64b1860217047d66529f31ce07c2cf5e6dbe80531db27908f26e5767558` |
+| `ImageGeneration-0.1.0-x86_64-unknown-linux-gnu.teplugin` | `a409008e8ecd41604ad7f6745e9d137f932dd3699a4a0f291a6d48db2ede07d2` |
 
 The run manifest records the same hashes and is labelled `dirty-working-snapshot`. Its `buildCommandKnown: false` flag means the recorded command is the documented one, not one that was observed.
 
@@ -58,12 +58,14 @@ The run manifest records the same hashes and is labelled `dirty-working-snapshot
 
 | Profile | Result | Log |
 |---|---|---|
-| Absent provider | 2 passed | `/var/tmp/te-wt/logs/final4-absent.log` |
-| Present provider, no generation | 3 passed | `final4-present-nogen.log` |
-| Present provider, generation, run 1 | 9 passed | `final4-present-gen-1.log` |
-| Present provider, generation, run 2 | 9 passed | `final4-present-gen-2.log` |
+| Absent provider | 2 passed | `/var/tmp/te-wt/logs/editor-absent.log` |
+| Present provider, no generation | 3 passed | `editor-present-nogen.log` |
+| Present provider, generation, run 1 | 10 passed | `editor-present-gen-1.log` |
+| Present provider, generation, run 2 | 10 passed | `editor-present-gen-2.log` |
 
-The final4 runs are on the final tips (host `890aaf64`, Trace `52af23a`). Each run refused 3 CLI invocations, all `codex exec --help` probes. The paragraphs below describe earlier runs.
+The editor runs are on the editor entry tips (host `614d0d81`, Trace `9dee5cc`, the provider archive from Trace `main` `75d0865`); the hashes above are theirs. Each run refused 3 CLI invocations, all `codex exec --help` probes.
+
+The earlier final4 runs (9 passed per generation run) were on host `890aaf64` and Trace `52af23a`. Each run refused 3 CLI invocations, all `codex exec --help` probes. The paragraphs below describe earlier runs.
 
 In the earlier final3 runs, generation run 2 (`final3-present-gen-2.log`) failed two cases: a stale element in `clearProgress`, and a later case that depended on it. The helper held a handle to the progress region while the panel re-rendered. It now re-queries the Clear button on every attempt, and final3 runs 3 and 4 passed.
 
@@ -147,6 +149,18 @@ The case uses the folder's context menu ("AI", then "Generate image with OpenAIâ
 
 **Break check:** opening on the parent folder made the suggestion assertion fail.
 
+### Generation from the host image editor (4.6 editor)
+
+With one source image selected, "AI Edit in Image Editorâ€¦" calls `ctx.presentation.openImageEditor({ path, tool })`, and the host opens `ImageCropEditor` directly in Trace's registered AI edit tool. The case asserts:
+
+- The AI edit dialog is open and the crop controls ("Save copy", crop sliders) are absent.
+- The ordered inputs are exactly `[source]`.
+- The provider request goes to `/fixture/images/edits`, and its only image part has the source's SHA-256.
+- The run is `openai.image.edit` with inputs `[{ path: source, digest }]`, the output file has the delivered SHA-256, and provenance records the source as its only input.
+- The editor closes on submit, and progress reaches "Complete".
+
+Evidence: `evidence/shared-ai-native/editor-entry-run.json`.
+
 ### Plugins page to provider configuration (21.12, present profile, no generation needed)
 
 "Configure connections" is opened from the Plugins page. The case asserts:
@@ -170,8 +184,6 @@ The case uses the folder's context menu ("AI", then "Generate image with OpenAIâ
    - **Fix:** `prompt-titles.svelte.ts` ignores repeated or older revisions.
 
 ## Not closed natively
-
-The editor entry point for 4.6 cannot be reached. The host opens `ImageCropEditor` only with the "crop" tool. It has no tool switcher, and nothing opens it with a plugin tool id, so Trace's registered "AI edit" editor tool cannot be reached. Closing this needs a host change: either a tool switcher in the editor, or a command or SDK call that opens it with a tool id.
 
 Killing the real Trace package while the provider runs is not driven here. The host-side contract for that case (a consumer SIGKILLed while the provider runs, in both gate orders) is covered by the stand-in fixture `src-tauri/src/installed_plugins/service_native_kill_tests.rs`, which uses real processes and the production brokers.
 

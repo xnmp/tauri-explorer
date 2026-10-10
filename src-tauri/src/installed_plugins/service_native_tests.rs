@@ -14,7 +14,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-const PROVIDER: &str = "xnmp.image-generation";
+pub(super) const PROVIDER: &str = "xnmp.image-generation";
 const FIRST: &str = "fixture.consumer";
 const SECOND: &str = "fixture.second";
 
@@ -97,7 +97,22 @@ for line in sys.stdin:
 
 fn package(root: &Path, id: &str, services: Value, dependencies: Value) -> package::Installed {
     // One script per role; the role names its reverse request IDs.
-    let source = BACKEND.replace("%ROLE%", id);
+    package_from(
+        root,
+        id,
+        &BACKEND.replace("%ROLE%", id),
+        services,
+        dependencies,
+    )
+}
+/// Installs `source` as the SDK 3 backend of package `id`.
+pub(super) fn package_from(
+    root: &Path,
+    id: &str,
+    source: &str,
+    services: Value,
+    dependencies: Value,
+) -> package::Installed {
     let digest = hex::encode(Sha256::digest(source.as_bytes()));
     let directory = root.join("payloads").join(&digest);
     fs::create_dir_all(&directory).unwrap();
@@ -127,10 +142,10 @@ fn package(root: &Path, id: &str, services: Value, dependencies: Value) -> packa
     }}))
     .unwrap()
 }
-fn data(id: &str) -> PathBuf {
+pub(super) fn data(id: &str) -> PathBuf {
     config::config_dir().unwrap().join("plugin-data").join(id)
 }
-fn log(id: &str) -> Vec<Value> {
+pub(super) fn log(id: &str) -> Vec<Value> {
     fs::read_to_string(data(id).join("log.jsonl"))
         .unwrap_or_default()
         .lines()
@@ -143,7 +158,7 @@ fn provider_calls(verb: &str) -> Vec<Value> {
         .filter(|entry| entry["method"] == format!("services.image-generation.v1.{verb}"))
         .collect()
 }
-fn wait_until(what: &str, limit: Duration, mut done: impl FnMut() -> bool) {
+pub(super) fn wait_until(what: &str, limit: Duration, mut done: impl FnMut() -> bool) {
     let deadline = Instant::now() + limit;
     while !done() {
         assert!(Instant::now() < deadline, "timed out waiting for {what}");
@@ -184,7 +199,7 @@ fn invoke(method: &str, params: Value) -> (&'static str, Value) {
         json!({"packageId":PROVIDER,"serviceId":"image-generation","major":1,"method":method,"params":params}),
     )
 }
-fn start_request(op: &str) -> Value {
+pub(super) fn start_request(op: &str) -> Value {
     json!({"operationId":op,"connectionId":"fixture-profile","expectedConnectionRevision":"fixture-revision","model":null,"prompt":"fixture prompt","inputs":[],"options":{"size":"1024x1024","resolution":null,"aspectRatio":null,"quality":"low","background":"auto"},"preparationToken":"fixture-token","effectiveRecipeDigest":"c".repeat(64)})
 }
 fn provider_incarnation() -> u64 {
@@ -200,9 +215,9 @@ fn provider_incarnation() -> u64 {
         .incarnation
 }
 
-#[test]
-#[ignore = "requires a private native display/profile; execute via dedicated subprocess"]
-fn native_second_consumer_status_timeout_transport_loss_and_reverse_correlation() {
+/// Refuses to run outside a private te-service-native.* XDG profile or with
+/// any real provider credential in the environment.
+pub(super) fn require_private_fixture() {
     assert_eq!(
         std::env::var("TE_SERVICE_NATIVE_FIXTURE").as_deref(),
         Ok("1"),
@@ -224,6 +239,12 @@ fn native_second_consumer_status_timeout_transport_loss_and_reverse_correlation(
     ] {
         assert!(std::env::var_os(secret).is_none(), "{secret} must be unset");
     }
+}
+
+#[test]
+#[ignore = "requires a private native display/profile; execute via dedicated subprocess"]
+fn native_second_consumer_status_timeout_transport_loss_and_reverse_correlation() {
+    require_private_fixture();
     let app = tauri::Builder::<tauri::Wry>::default()
         .any_thread()
         .build(tauri::test::mock_context(tauri::test::noop_assets()))

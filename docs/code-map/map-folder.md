@@ -895,3 +895,4 @@ TraceExplorer's image UI, provider adapters and SQLite journal are maintained in
 - `src-tauri/src/installed_plugins/mutation_native_tests.rs` — actual Wry fixture: disable retires the backend only after claims drain.
 - `src-tauri/src/installed_plugins/service_native_tests.rs` — actual Wry fixture: per-consumer status timeouts, transport-loss recovery, reverse RPC correlation and routing without Trace.
 - `src-tauri/src/installed_plugins/service_native_kill_tests.rs` — actual Wry fixture: consumer SIGKILLed while the provider runs; both cancel/success gate orders settle once, without failure, replayed start or a retained artifact lease.
+- `src-tauri/src/installed_plugins/startup_native_tests.rs` — actual Wry fixtures: unreadable AI storage keeps legacy backends and retries; startup recovery errors degrade instead of failing setup; a process without the profile never recovers live claims.

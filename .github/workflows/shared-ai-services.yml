@@ -5,6 +5,9 @@ on:
     branches: [dev, main]
     paths:
       - 'src-tauri/src/ai/**'
+      - 'src-tauri/src/installed_plugins/**'
+      - 'src-tauri/src/service_state/**'
+      - 'src-tauri/test_support/legacy_trace_preflight.py'
       - 'src-tauri/src/windows_artifact_namespace.rs'
       - 'src-tauri/test_support/windows_artifact_namespace_fixture/**'
       - '.github/workflows/shared-ai-services.yml'
@@ -12,6 +15,9 @@ on:
     branches: [dev, main]
     paths:
       - 'src-tauri/src/ai/**'
+      - 'src-tauri/src/installed_plugins/**'
+      - 'src-tauri/src/service_state/**'
+      - 'src-tauri/test_support/legacy_trace_preflight.py'
       - 'src-tauri/src/windows_artifact_namespace.rs'
       - 'src-tauri/test_support/windows_artifact_namespace_fixture/**'
       - '.github/workflows/shared-ai-services.yml'
@@ -68,13 +74,13 @@ jobs:
           $listing | Tee-Object -FilePath (Join-Path $report 'listed-tests.log') | Out-Host
           if ($listingExit -ne 0) { throw 'Windows fixture compile/list failed' }
           $expected = [regex]::Matches(($listing | Out-String), '(?m)^.+: test\r?$').Count
-          if ($expected -ne 9) { throw "Expected eight native outcomes and one private crash helper, got $expected listed tests" }
+          if ($expected -ne 20) { throw "Expected nineteen native outcomes and one private crash helper, got $expected listed tests" }
           if (($listing | Out-String) -notmatch 'native_tests::native_child_crash_boundary: test') { throw 'Expected private crash helper is absent' }
           $result = & cargo.exe test --locked --manifest-path $manifest -- native_tests:: --nocapture 2>&1
           $testExit = $LASTEXITCODE
           $result | Tee-Object -FilePath (Join-Path $report 'native-tests.log') | Out-Host
           if ($testExit -ne 0) { throw 'Windows native namespace tests failed' }
-          if (($result | Out-String) -notmatch 'test result: ok\. 8 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out;') { throw 'Expected exactly eight native outcomes; the only ignored case is the subprocess crash helper exercised by its parent' }
+          if (($result | Out-String) -notmatch 'test result: ok\. 19 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out;') { throw 'Expected exactly nineteen native outcomes; the only ignored case is the subprocess crash helper exercised by its parent' }
           if (($result | Out-String) -notmatch 'QUALIFICATION directory_flush=.+; file_flush=success; NTFS_native_write_through_create_and_rename=success') { throw 'Native flush and namespace evidence is absent' }
           & git.exe diff --exit-code -- src-tauri/test_support/windows_artifact_namespace_fixture/Cargo.lock
           if ($LASTEXITCODE -ne 0) { throw 'Windows fixture changed its frozen lockfile' }
@@ -130,6 +136,16 @@ jobs:
         run: |
           bun install --frozen-lockfile
           bun install --cwd plugin-fixture --frozen-lockfile
+      - name: Verify actual broker private preflight and shutdown
+        timeout-minutes: 20
+        run: |
+          fixture_root=$(mktemp -d /tmp/te-lifecycle-native.XXXXXX)
+          mkdir -p "$fixture_root/config" "$fixture_root/data" "$fixture_root/cache" "$fixture_root/state" "$fixture_root/runtime"
+          chmod 700 "$fixture_root/runtime"
+          export XDG_CONFIG_HOME="$fixture_root/config" XDG_DATA_HOME="$fixture_root/data" XDG_CACHE_HOME="$fixture_root/cache" XDG_STATE_HOME="$fixture_root/state" XDG_RUNTIME_DIR="$fixture_root/runtime"
+          export TE_LIFECYCLE_NATIVE_FIXTURE=1
+          mkdir -p qualification-results/shared-ai
+          env -u WAYLAND_DISPLAY -u OPENAI_API_KEY -u CODEX_API_KEY -u CODEX_ACCESS_TOKEN -u ANTHROPIC_API_KEY GDK_BACKEND=x11 xvfb-run -a dbus-run-session -- cargo test --locked --manifest-path src-tauri/Cargo.toml --lib installed_plugins::backend::native_tests::native_private_preflight_retirement_and_shutdown -- --ignored --exact --nocapture --test-threads=1 2>&1 | tee qualification-results/shared-ai/lifecycle.log
       - name: Build host fixture binary
         env:
           VITE_E2E_HOOKS: '1'

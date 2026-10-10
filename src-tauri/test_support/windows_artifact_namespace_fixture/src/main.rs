@@ -437,63 +437,64 @@ mod native_tests {
         assert_eq!(fs::read_dir(&target.path).unwrap().count(), 0);
         fs::remove_dir(junction).unwrap();
     }
+    use std::os::windows::{fs::OpenOptionsExt, io::AsRawHandle};
+    use windows::Win32::{
+        Foundation::HANDLE,
+        Storage::FileSystem as win,
+        System::{Ioctl::FSCTL_SET_REPARSE_POINT, IO::DeviceIoControl},
+    };
+    fn junction_data(target: &std::path::Path) -> Vec<u8> {
+        // Microsoft mount-point reparse buffer, not a symbolic-link tag.
+        // Exercise the same empty-directory conversion used by junctions.
+        let substitute: Vec<u16> = format!("\\??\\{}", target.display())
+            .encode_utf16()
+            .collect();
+        let print: Vec<u16> = target.as_os_str().encode_wide().collect();
+        let mut names = substitute.clone();
+        names.push(0);
+        names.extend(&print);
+        names.push(0);
+        let mut data = Vec::new();
+        data.extend(0xA0000003u32.to_le_bytes()); // IO_REPARSE_TAG_MOUNT_POINT
+        data.extend((8u16 + (names.len() * 2) as u16).to_le_bytes());
+        data.extend(0u16.to_le_bytes());
+        data.extend(0u16.to_le_bytes()); // SubstituteNameOffset
+        data.extend(((substitute.len() * 2) as u16).to_le_bytes());
+        data.extend((((substitute.len() + 1) * 2) as u16).to_le_bytes());
+        data.extend(((print.len() * 2) as u16).to_le_bytes());
+        for unit in names {
+            data.extend(unit.to_le_bytes());
+        }
+        data
+    }
+    fn attempt_reparse_conversion(
+        path: &std::path::Path,
+        access: u32,
+        data: &[u8],
+    ) -> std::io::Result<()> {
+        let directory = fs::OpenOptions::new()
+            .access_mode(access)
+            .share_mode((win::FILE_SHARE_READ | win::FILE_SHARE_WRITE | win::FILE_SHARE_DELETE).0)
+            .custom_flags(win::FILE_FLAG_BACKUP_SEMANTICS.0 | win::FILE_FLAG_OPEN_REPARSE_POINT.0)
+            .open(path)?;
+        let mut returned = 0;
+        unsafe {
+            DeviceIoControl(
+                HANDLE(directory.as_raw_handle()),
+                FSCTL_SET_REPARSE_POINT,
+                Some(data.as_ptr().cast()),
+                data.len() as u32,
+                None,
+                0,
+                Some(&mut returned),
+                None,
+            )
+        }
+        .map_err(std::io::Error::from)
+    }
     #[test]
     fn native_held_empty_ancestry_conversion_never_follows_substituted_target() {
-        use std::os::windows::{fs::OpenOptionsExt, io::AsRawHandle};
-        use windows::Win32::{
-            Foundation::{GENERIC_WRITE, HANDLE},
-            Storage::FileSystem as win,
-            System::{Ioctl::FSCTL_SET_REPARSE_POINT, IO::DeviceIoControl},
-        };
-        fn junction_data(target: &std::path::Path) -> Vec<u8> {
-            // Microsoft mount-point reparse buffer, not a symbolic-link tag.
-            // Exercise the same empty-directory conversion used by junctions.
-            let substitute: Vec<u16> = format!("\\??\\{}", target.display())
-                .encode_utf16()
-                .collect();
-            let print: Vec<u16> = target.as_os_str().encode_wide().collect();
-            let mut names = substitute.clone();
-            names.push(0);
-            names.extend(&print);
-            names.push(0);
-            let mut data = Vec::new();
-            data.extend(0xA0000003u32.to_le_bytes()); // IO_REPARSE_TAG_MOUNT_POINT
-            data.extend((8u16 + (names.len() * 2) as u16).to_le_bytes());
-            data.extend(0u16.to_le_bytes());
-            data.extend(0u16.to_le_bytes()); // SubstituteNameOffset
-            data.extend(((substitute.len() * 2) as u16).to_le_bytes());
-            data.extend((((substitute.len() + 1) * 2) as u16).to_le_bytes());
-            data.extend(((print.len() * 2) as u16).to_le_bytes());
-            for unit in names {
-                data.extend(unit.to_le_bytes());
-            }
-            data
-        }
-        fn attempt(path: &std::path::Path, access: u32, data: &[u8]) -> std::io::Result<()> {
-            let directory = fs::OpenOptions::new()
-                .access_mode(access)
-                .share_mode(
-                    (win::FILE_SHARE_READ | win::FILE_SHARE_WRITE | win::FILE_SHARE_DELETE).0,
-                )
-                .custom_flags(
-                    win::FILE_FLAG_BACKUP_SEMANTICS.0 | win::FILE_FLAG_OPEN_REPARSE_POINT.0,
-                )
-                .open(path)?;
-            let mut returned = 0;
-            unsafe {
-                DeviceIoControl(
-                    HANDLE(directory.as_raw_handle()),
-                    FSCTL_SET_REPARSE_POINT,
-                    Some(data.as_ptr().cast()),
-                    data.len() as u32,
-                    None,
-                    0,
-                    Some(&mut returned),
-                    None,
-                )
-            }
-            .map_err(std::io::Error::from)
-        }
+        use windows::Win32::Foundation::GENERIC_WRITE;
         let root = Fixture::new();
         let target = Fixture::new();
         {
@@ -522,11 +523,11 @@ mod native_tests {
         ] {
             let control_path = root.path.join(format!("unheld-{label}"));
             fs::create_dir(&control_path).unwrap();
-            let control = attempt(&control_path, access, &data);
+            let control = attempt_reparse_conversion(&control_path, access, &data);
             let held_path = root.path.join(format!("held-empty-{label}"));
             fs::create_dir(&held_path).unwrap();
             let held = AnchoredDirectory::open_absolute(&held_path).unwrap();
-            let result = attempt(&held_path, access, &data);
+            let result = attempt_reparse_conversion(&held_path, access, &data);
             println!("QUALIFICATION in_place_reparse_access={label}; unheld_control={control:?}; held_attempt={result:?}");
             if control.is_ok() {
                 positive_controls += 1;
@@ -578,6 +579,165 @@ mod native_tests {
         // A privilege/payload failure on every unheld attempt cannot be used as
         // evidence that retained handles prevented conversion. Fail honestly.
         assert!(positive_controls > 0, "no supported unheld native conversion; ancestry conversion boundary remains unqualified");
+    }
+    #[test]
+    fn native_check_to_relative_create_link_rename_replace_race_never_writes_substitute() {
+        use super::windows_artifact_namespace::{at_native_boundary, NativeBoundary};
+        use std::sync::{atomic::AtomicBool, Arc};
+        for operation in ["create", "link"] {
+            let root = Fixture::new();
+            let target = Fixture::new();
+            {
+                let mut marker = target
+                    .root()
+                    .create_new(OsStr::new("target-marker"))
+                    .unwrap();
+                marker
+                    .file_mut()
+                    .write_all(b"untouched substitute marker")
+                    .unwrap();
+                marker.flush().unwrap();
+            }
+            let held_path = root.path.join(format!("empty-destination-{operation}"));
+            fs::create_dir(&held_path).unwrap();
+            let destination = AnchoredDirectory::open_absolute(&held_path).unwrap();
+            let data = junction_data(&target.path);
+            let converted = Arc::new(AtomicBool::new(false));
+            let observed = converted.clone();
+            let convert_path = held_path.clone();
+            let callback = move || {
+                // The module invokes this after opened-parent validation and
+                // immediately before the kernel operation, not before checking.
+                attempt_reparse_conversion(
+                    &convert_path,
+                    (win::FILE_READ_ATTRIBUTES | win::FILE_WRITE_ATTRIBUTES).0,
+                    &data,
+                )
+                .unwrap();
+                observed.store(true, Ordering::Release);
+            };
+            if operation == "create" {
+                let result = at_native_boundary(NativeBoundary::Create, callback, || {
+                    destination.create_new(OsStr::new("must-not-create"))
+                });
+                assert!(
+                    result.is_err(),
+                    "check/use create accepted converted ancestry"
+                );
+            } else {
+                let mut source = root
+                    .root()
+                    .create_new(OsStr::new("source.pending"))
+                    .unwrap();
+                source.file_mut().write_all(b"retained paid bytes").unwrap();
+                source.flush().unwrap();
+                let result = at_native_boundary(NativeBoundary::Link, callback, || {
+                    destination.hardlink_noreplace(source, OsStr::new("must-not-link"))
+                });
+                assert!(
+                    result.is_err(),
+                    "check/use link accepted converted ancestry"
+                );
+                assert_eq!(
+                    fs::read(root.path.join("source.pending")).unwrap(),
+                    b"retained paid bytes"
+                );
+            }
+            assert!(
+                converted.load(Ordering::Acquire),
+                "native boundary callback did not execute"
+            );
+            assert!(AnchoredDirectory::open_absolute(&held_path).is_err());
+            assert_eq!(
+                fs::read_dir(&target.path).unwrap().count(),
+                1,
+                "{operation} mutated substituted target"
+            );
+            assert_eq!(
+                fs::read(target.path.join("target-marker")).unwrap(),
+                b"untouched substitute marker"
+            );
+            println!("QUALIFICATION check_use_race={operation}; conversion=after_validation; substitute_mutations=zero");
+            drop(destination);
+            fs::remove_dir(held_path).unwrap();
+        }
+        for operation in ["rename", "replace"] {
+            let root = Fixture::new();
+            let target = Fixture::new();
+            {
+                let mut marker = target
+                    .root()
+                    .create_new(OsStr::new("target-marker"))
+                    .unwrap();
+                marker
+                    .file_mut()
+                    .write_all(b"untouched substitute marker")
+                    .unwrap();
+                marker.flush().unwrap();
+            }
+            if operation == "replace" {
+                let mut original = root.root().create_new(OsStr::new("final")).unwrap();
+                original
+                    .file_mut()
+                    .write_all(b"original configuration")
+                    .unwrap();
+                original.flush().unwrap();
+            }
+            let mut pending = root
+                .root()
+                .create_new(OsStr::new("source.pending"))
+                .unwrap();
+            pending
+                .file_mut()
+                .write_all(b"exact new publication")
+                .unwrap();
+            pending.flush().unwrap();
+            let data = junction_data(&target.path);
+            let attempted = Arc::new(AtomicBool::new(false));
+            let observed = attempted.clone();
+            let root_path = root.path.clone();
+            let callback = move || {
+                // Unlike an empty hardlink destination, the owned source file
+                // keeps this parent nonempty and denies deletion through its
+                // retained file handle. Exercise the real conversion attempt.
+                let result = attempt_reparse_conversion(
+                    &root_path,
+                    (win::FILE_READ_ATTRIBUTES | win::FILE_WRITE_ATTRIBUTES).0,
+                    &data,
+                );
+                println!("QUALIFICATION check_use_nonempty_parent={operation}; conversion_attempt={result:?}");
+                assert!(
+                    result.is_err(),
+                    "owned nonempty rename parent converted at kernel boundary"
+                );
+                observed.store(true, Ordering::Release);
+            };
+            let published = at_native_boundary(NativeBoundary::Rename, callback, || {
+                if operation == "replace" {
+                    root.root().replace_regular(pending, OsStr::new("final"))
+                } else {
+                    root.root().publish_noreplace(pending, OsStr::new("final"))
+                }
+            })
+            .unwrap();
+            assert!(
+                attempted.load(Ordering::Acquire),
+                "rename kernel boundary callback did not execute"
+            );
+            published.flush().unwrap();
+            assert_eq!(published.path(), root.path.join("final"));
+            assert_eq!(
+                fs::read(published.path()).unwrap(),
+                b"exact new publication"
+            );
+            assert!(!root.path.join("source.pending").exists());
+            assert_eq!(fs::read_dir(&target.path).unwrap().count(), 1);
+            assert_eq!(
+                fs::read(target.path.join("target-marker")).unwrap(),
+                b"untouched substitute marker"
+            );
+            println!("QUALIFICATION check_use_race={operation}; owned_original_namespace=preserved; substitute_mutations=zero");
+        }
     }
     #[test]
     fn native_cross_namespace_publication_and_acquisition_are_refused() {

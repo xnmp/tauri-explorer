@@ -74,13 +74,13 @@ jobs:
           $listing | Tee-Object -FilePath (Join-Path $report 'listed-tests.log') | Out-Host
           if ($listingExit -ne 0) { throw 'Windows fixture compile/list failed' }
           $expected = [regex]::Matches(($listing | Out-String), '(?m)^.+: test\r?$').Count
-          if ($expected -ne 20) { throw "Expected nineteen native outcomes and one private crash helper, got $expected listed tests" }
+          if ($expected -ne 21) { throw "Expected twenty native outcomes and one private crash helper, got $expected listed tests" }
           if (($listing | Out-String) -notmatch 'native_tests::native_child_crash_boundary: test') { throw 'Expected private crash helper is absent' }
           $result = & cargo.exe test --locked --manifest-path $manifest -- native_tests:: --nocapture 2>&1
           $testExit = $LASTEXITCODE
           $result | Tee-Object -FilePath (Join-Path $report 'native-tests.log') | Out-Host
           if ($testExit -ne 0) { throw 'Windows native namespace tests failed' }
-          if (($result | Out-String) -notmatch 'test result: ok\. 19 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out;') { throw 'Expected exactly nineteen native outcomes; the only ignored case is the subprocess crash helper exercised by its parent' }
+          if (($result | Out-String) -notmatch 'test result: ok\. 20 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out;') { throw 'Expected exactly twenty native outcomes; the only ignored case is the subprocess crash helper exercised by its parent' }
           if (($result | Out-String) -notmatch 'QUALIFICATION directory_flush=.+; file_flush=success; NTFS_native_write_through_create_and_rename=success') { throw 'Native flush and namespace evidence is absent' }
           & git.exe diff --exit-code -- src-tauri/test_support/windows_artifact_namespace_fixture/Cargo.lock
           if ($LASTEXITCODE -ne 0) { throw 'Windows fixture changed its frozen lockfile' }

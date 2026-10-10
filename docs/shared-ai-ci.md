@@ -2,7 +2,7 @@
 
 The `Shared AI native acceptance` workflow runs the standalone native Windows
 namespace fixture on relevant pull requests/pushes and manual dispatches. It
-requires exactly nineteen passing outcome tests plus one ignored child helper,
+requires exactly twenty passing outcome tests plus one ignored child helper,
 which the crash-boundary parent test explicitly executes in three subprocesses.
 It refuses zero matches, changed lockfiles or missing real flush evidence, and
 retains the exact test executable/hash, host/source hashes and logs. The fixture

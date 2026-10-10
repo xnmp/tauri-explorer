@@ -26,6 +26,55 @@ use windows::{
         System::{Threading, IO::IO_STATUS_BLOCK},
     },
 };
+#[cfg(test)]
+thread_local! {
+    static NATIVE_BOUNDARY: std::cell::RefCell<Option<(NativeBoundary, Box<dyn FnOnce()>)>> = std::cell::RefCell::new(None);
+}
+#[cfg(test)]
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum NativeBoundary {
+    Create,
+    Rename,
+    Link,
+}
+#[cfg(test)]
+pub(crate) fn at_native_boundary<T>(
+    boundary: NativeBoundary,
+    callback: impl FnOnce() + 'static,
+    operation: impl FnOnce() -> T,
+) -> T {
+    struct Reset;
+    impl Drop for Reset {
+        fn drop(&mut self) {
+            NATIVE_BOUNDARY.with(|hook| {
+                hook.borrow_mut().take();
+            });
+        }
+    }
+    NATIVE_BOUNDARY.with(|hook| {
+        assert!(hook.borrow().is_none());
+        *hook.borrow_mut() = Some((boundary, Box::new(callback)));
+    });
+    let _reset = Reset;
+    operation()
+}
+#[cfg(test)]
+fn before_native_operation(boundary: NativeBoundary) {
+    let callback = NATIVE_BOUNDARY.with(|hook| {
+        let matches = hook
+            .borrow()
+            .as_ref()
+            .is_some_and(|(expected, _)| *expected == boundary);
+        if matches {
+            hook.borrow_mut().take()
+        } else {
+            None
+        }
+    });
+    if let Some((_, callback)) = callback {
+        callback();
+    }
+}
 
 fn invalid(message: &'static str) -> io::Error {
     io::Error::new(io::ErrorKind::InvalidInput, message)
@@ -244,6 +293,11 @@ fn open_native_options(
         } else {
             nt::NTCREATEFILE_CREATE_OPTIONS(0)
         };
+    if let Some(parent) = parent {
+        information(parent, true)?;
+    }
+    #[cfg(test)]
+    before_native_operation(NativeBoundary::Create);
     nt_result(unsafe {
         nt::NtCreateFile(
             &mut result,
@@ -252,7 +306,14 @@ fn open_native_options(
             &mut status,
             None,
             win::FILE_ATTRIBUTE_NORMAL,
-            win::FILE_SHARE_READ,
+            // The kernel's relative rename/link target open requests directory
+            // WRITE_DATA. Share that directory access, never deletion. Regular
+            // file writers/readers retain the stricter sharing policy.
+            if directory {
+                win::FILE_SHARE_READ | win::FILE_SHARE_WRITE
+            } else {
+                win::FILE_SHARE_READ
+            },
             if create {
                 nt::FILE_CREATE
             } else {
@@ -281,6 +342,9 @@ fn rename_file(parent: &File, source: &File, name: &OsStr, replace: bool) -> io:
         std::ptr::copy_nonoverlapping(wide.as_ptr(), (*rename).FileName.as_mut_ptr(), wide.len());
     }
     let mut status = IO_STATUS_BLOCK::default();
+    information(parent, true)?;
+    #[cfg(test)]
+    before_native_operation(NativeBoundary::Rename);
     nt_result(unsafe {
         nt::NtSetInformationFile(
             handle(source),
@@ -315,6 +379,12 @@ impl PrivateDescriptor {
         security::PSECURITY_DESCRIPTOR(self.0 .0)
     }
     fn current_user() -> io::Result<Self> {
+        Self::for_current_user(true)
+    }
+    fn owner_only() -> io::Result<Self> {
+        Self::for_current_user(false)
+    }
+    fn for_current_user(private_dacl: bool) -> io::Result<Self> {
         let mut token = HANDLE::default();
         unsafe {
             Threading::OpenProcessToken(
@@ -351,7 +421,11 @@ impl PrivateDescriptor {
             unsafe { text.to_string() }.map_err(|_| invalid("Token SID is not valid Unicode"))?;
         // Exactly current user and SYSTEM. Administrators are not implicitly
         // added; privileged administrators remain outside the privacy threat model.
-        let descriptor = format!("O:{sid_text}D:P(A;OICI;FA;;;SY)(A;OICI;FA;;;{sid_text})");
+        let descriptor = if private_dacl {
+            format!("O:{sid_text}D:P(A;OICI;FA;;;SY)(A;OICI;FA;;;{sid_text})")
+        } else {
+            format!("O:{sid_text}")
+        };
         drop(owned_text);
         let wide: Vec<u16> = descriptor.encode_utf16().chain(Some(0)).collect();
         let mut result = security::PSECURITY_DESCRIPTOR::default();
@@ -690,6 +764,9 @@ impl AnchoredDirectory {
             std::ptr::copy_nonoverlapping(wide.as_ptr(), (*link).FileName.as_mut_ptr(), wide.len());
         }
         let mut status = IO_STATUS_BLOCK::default();
+        information(self.directory(), true)?;
+        #[cfg(test)]
+        before_native_operation(NativeBoundary::Link);
         nt_result(unsafe {
             nt::NtSetInformationFile(
                 handle(&source.file),
@@ -842,7 +919,18 @@ impl AnchoredDirectory {
     }
     pub fn create_new(&self, name: &OsStr) -> io::Result<AnchoredFile> {
         self.require_authority()?;
-        let file = open_native(Some(self.directory()), component(name)?, false, true, true)?;
+        // Elevated tokens can default ownership to Administrators. Specify the
+        // current token user explicitly while inheriting the parent's DACL.
+        let descriptor = PrivateDescriptor::owner_only()?;
+        let file = open_native_options(
+            Some(self.directory()),
+            component(name)?,
+            false,
+            true,
+            true,
+            win::FILE_ACCESS_RIGHTS(0),
+            Some(descriptor.pointer()),
+        )?;
         Ok(AnchoredFile {
             file,
             parent: self.chain.clone(),
@@ -934,6 +1022,9 @@ impl AnchoredDirectory {
             );
         }
         let mut status = IO_STATUS_BLOCK::default();
+        information(self.directory(), true)?;
+        #[cfg(test)]
+        before_native_operation(NativeBoundary::Rename);
         nt_result(unsafe {
             nt::NtSetInformationFile(
                 handle(&pending.file),

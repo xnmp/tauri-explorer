@@ -1,6 +1,12 @@
 //! Startup requests use the same transactional installer as the UI.
 use crate::error::AppError;
-use std::{fs, path::Path, time::SystemTime};
+use std::{
+    fs,
+    path::Path,
+    sync::Mutex,
+    thread::JoinHandle,
+    time::SystemTime,
+};
 
 pub(super) fn apply(
     directory: &Path,
@@ -84,9 +90,127 @@ pub(super) fn apply(
     Ok(errors)
 }
 
+pub(super) type WorkerSlot = Mutex<Option<JoinHandle<()>>>;
+
+/// Publishes the queue worker while the caller holds the mutation gate.
+/// Shutdown sets Closing before taking that gate, so a worker is either
+/// published before shutdown inspects the slot or never spawned at all.
+/// Returns Ok(false) when Closing already won.
+pub(super) fn publish_worker(
+    slot: &WorkerSlot,
+    closing: impl Fn() -> bool,
+    spawn: impl FnOnce() -> std::io::Result<JoinHandle<()>>,
+) -> std::io::Result<bool> {
+    if closing() {
+        return Ok(false);
+    }
+    let worker = spawn()?;
+    *slot.lock().unwrap_or_else(|cause| cause.into_inner()) = Some(worker);
+    Ok(true)
+}
+
+/// Joins any published worker after Closing is set. The slot is read under
+/// the mutation gate (publication is settled), but the join happens outside
+/// it: the worker's own installer must be able to acquire the gate to observe
+/// Closing and return.
+pub(super) fn settle_worker(mutations: &Mutex<()>, slot: &WorkerSlot) {
+    let worker = {
+        let _published = mutations.lock().unwrap_or_else(|cause| cause.into_inner());
+        slot.lock().unwrap_or_else(|cause| cause.into_inner()).take()
+    };
+    if let Some(worker) = worker {
+        let _ = worker.join();
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn shutdown_cannot_finish_before_a_worker_published_during_initialization() {
+        use std::sync::{atomic::{AtomicBool, Ordering}, mpsc, Arc};
+        let mutations = Arc::new(Mutex::new(()));
+        let slot = Arc::new(WorkerSlot::new(None));
+        let closing = Arc::new(AtomicBool::new(false));
+        let io_finished = Arc::new(AtomicBool::new(false));
+        let (eligible_tx, eligible_rx) = mpsc::channel();
+        let (resume_init_tx, resume_init_rx) = mpsc::channel::<()>();
+        let (io_started_tx, io_started_rx) = mpsc::channel();
+        let (release_io_tx, release_io_rx) = mpsc::channel::<()>();
+        // Initialization: holds the gate, passes the Closing check, then pauses
+        // between eligibility and handle publication.
+        let init = {
+            let (mutations, slot, closing, io_finished) =
+                (mutations.clone(), slot.clone(), closing.clone(), io_finished.clone());
+            std::thread::spawn(move || {
+                let _initializing = mutations.lock().unwrap();
+                let resume_init = Mutex::new(Some(resume_init_rx));
+                let published = publish_worker(
+                    &slot,
+                    || {
+                        let open = !closing.load(Ordering::SeqCst);
+                        if let Some(resume) = resume_init.lock().unwrap().take() {
+                            eligible_tx.send(()).unwrap();
+                            resume.recv().unwrap();
+                        }
+                        !open
+                    },
+                    || {
+                        let mutations = mutations.clone();
+                        std::thread::Builder::new().spawn(move || {
+                            io_started_tx.send(()).unwrap();
+                            release_io_rx.recv().unwrap();
+                            // The installer re-enters the gate to observe Closing.
+                            drop(mutations.lock().unwrap());
+                            io_finished.store(true, Ordering::SeqCst);
+                        })
+                    },
+                )
+                .unwrap();
+                assert!(published);
+            })
+        };
+        eligible_rx.recv().unwrap();
+        closing.store(true, Ordering::SeqCst);
+        let (shutdown_done_tx, shutdown_done_rx) = mpsc::channel();
+        let shutdown = {
+            let (mutations, slot, io_finished) = (mutations.clone(), slot.clone(), io_finished.clone());
+            std::thread::spawn(move || {
+                settle_worker(&mutations, &slot);
+                // Profile ownership would be released here.
+                shutdown_done_tx.send(io_finished.load(Ordering::SeqCst)).unwrap();
+            })
+        };
+        // Let shutdown reach the gate first: the old ordering read the slot here.
+        std::thread::sleep(std::time::Duration::from_millis(50));
+        resume_init_tx.send(()).unwrap();
+        init.join().unwrap();
+        io_started_rx.recv().unwrap();
+        assert!(
+            shutdown_done_rx.recv_timeout(std::time::Duration::from_millis(200)).is_err(),
+            "shutdown must wait for in-flight queue IO"
+        );
+        release_io_tx.send(()).unwrap();
+        assert!(shutdown_done_rx.recv().unwrap(), "queue IO outlived shutdown");
+        shutdown.join().unwrap();
+    }
+    #[test]
+    fn closing_before_eligibility_never_spawns_a_worker() {
+        let slot = WorkerSlot::new(None);
+        let published = publish_worker(&slot, || true, || panic!("No worker expected")).unwrap();
+        assert!(!published);
+        assert!(slot.lock().unwrap().is_none());
+        settle_worker(&Mutex::new(()), &slot);
+    }
+    #[test]
+    fn spawn_refusal_leaves_no_worker_and_reports_the_cause() {
+        let slot = WorkerSlot::new(None);
+        let refused = publish_worker(&slot, || false, || {
+            Err(std::io::Error::new(std::io::ErrorKind::OutOfMemory, "thread limit"))
+        });
+        assert_eq!(refused.unwrap_err().kind(), std::io::ErrorKind::OutOfMemory);
+        assert!(slot.lock().unwrap().is_none());
+    }
     #[test]
     fn missing_queue_is_optional() {
         let temp = tempfile::tempdir().unwrap();

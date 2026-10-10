@@ -36,7 +36,7 @@ static PENDING_INSTALL_ERRORS: Mutex<Vec<String>> = Mutex::new(Vec::new());
 #[cfg(target_os = "linux")]
 static PROFILE_OWNER: Mutex<Option<ownership::ProfileOwner>> = Mutex::new(None);
 #[cfg(target_os = "linux")]
-static QUEUE_WORKER: Mutex<Option<std::thread::JoinHandle<()>>> = Mutex::new(None);
+static QUEUE_WORKER: queue::WorkerSlot = Mutex::new(None);
 pub(super) fn initialize(app: tauri::AppHandle) -> Result<(), AppError> {
     if crate::portal::is_portal_mode() {
         return Ok(());
@@ -73,10 +73,11 @@ pub(super) fn initialize(app: tauri::AppHandle) -> Result<(), AppError> {
     #[cfg(target_os = "linux")]
     {
         let directory = config::config_dir()?.join("pending-plugins");
-        if services_ready && !backend::is_closing()
+        if services_ready
             && !matches!(std::fs::symlink_metadata(&directory), Err(cause) if cause.kind() == std::io::ErrorKind::NotFound)
         {
-            let worker = std::thread::spawn(move || {
+            let notify = app.clone();
+            let spawned = queue::publish_worker(&QUEUE_WORKER, backend::is_closing, || std::thread::Builder::new().name("plugin-install-queue".into()).spawn(move || {
                 let errors = queue::apply(
                     &directory,
                     |path| install_path(path).map(|_| ()),
@@ -95,24 +96,28 @@ pub(super) fn initialize(app: tauri::AppHandle) -> Result<(), AppError> {
                     .unwrap_or_else(|cause| cause.into_inner())
                     .extend(errors);
                 let _ = app.emit("plugins:changed", ());
-            });
-            *QUEUE_WORKER
-                .lock()
-                .unwrap_or_else(|cause| cause.into_inner()) = Some(worker);
+            }));
+            // Queued files stay in place, so a refused worker retries next launch.
+            if let Err(cause) = spawned {
+                PENDING_INSTALL_ERRORS
+                    .lock()
+                    .unwrap_or_else(|cause| cause.into_inner())
+                    .push(format!("Queued plugin installation will retry on next launch: {cause}"));
+                let _ = notify.emit("plugins:changed", ());
+            }
         }
     }
     Ok(())
 }
 pub(super) fn shutdown() {
     backend::shutdown();
+    let mutations = MUTATIONS.get_or_init(|| Mutex::new(()));
+    // Never join while holding the gate: the worker's installer acquires it.
     #[cfg(target_os = "linux")]
-    {
-        let queued = { QUEUE_WORKER.lock().unwrap_or_else(|cause| cause.into_inner()).take() };
-        if let Some(worker) = queued { let _ = worker.join(); }
-    }
+    queue::settle_worker(mutations, &QUEUE_WORKER);
     // A private candidate is owned by its mutation, rather than the routable
     // broker map. Wait for its commit/rollback on every platform.
-    let _settled = MUTATIONS.get_or_init(|| Mutex::new(())).lock().unwrap_or_else(|cause| cause.into_inner());
+    let _settled = mutations.lock().unwrap_or_else(|cause| cause.into_inner());
     service_bridge::shutdown_recovery();
     job_bridge::shutdown();
     backend::wait_for_admissions();

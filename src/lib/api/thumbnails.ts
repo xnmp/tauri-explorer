@@ -4,6 +4,7 @@
  */
 
 import type { FolderPreview } from "$lib/domain/folder-preview";
+import type { PreviewImageSource } from "$lib/domain/preview-rendition";
 import { invoke, extractError, virtualPathGuard, dataUriToBlobUrl, type ApiResult } from "./common";
 
 /**
@@ -21,6 +22,25 @@ export async function getThumbnail(
   try {
     const thumbnailPath = await invoke<string>("get_thumbnail", { path, size });
     return { ok: true, data: thumbnailPath };
+  } catch (err) {
+    return { ok: false, error: extractError(err) };
+  }
+}
+
+/**
+ * What the Preview pane should load for an image (#1054): the original, or the
+ * path of a cached display-sized rendition no larger than `maxEdge` device
+ * pixels, which the caller streams through the asset protocol.
+ */
+export async function getPreviewImage(
+  path: string,
+  maxEdge: number
+): Promise<ApiResult<PreviewImageSource>> {
+  const guard = virtualPathGuard(path);
+  if (guard) return guard;
+  try {
+    const source = await invoke<PreviewImageSource>("get_preview_image", { path, maxEdge });
+    return { ok: true, data: source };
   } catch (err) {
     return { ok: false, error: extractError(err) };
   }

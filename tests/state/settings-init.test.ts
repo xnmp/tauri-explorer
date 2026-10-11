@@ -7,15 +7,9 @@
  * update() must merge partially and persist.
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
-// Compile/load the production Svelte store at suite collection time. Each test
-// still resets modules after seeding localStorage, but its five-second budget
-// now measures settings behavior rather than cold transforms under suite load.
-import "$lib/state/settings.svelte";
 
-const { readConfigFileMock, writeConfigQueuedMock } = vi.hoisted(() => ({
-  readConfigFileMock: vi.fn(),
-  writeConfigQueuedMock: vi.fn(),
-}));
+const readConfigFileMock = vi.fn();
+const writeConfigQueuedMock = vi.fn();
 
 vi.mock("$lib/api/config", async (importOriginal) => {
   const original = await importOriginal<Record<string, unknown>>();

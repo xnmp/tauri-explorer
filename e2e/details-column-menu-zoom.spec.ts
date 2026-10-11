@@ -50,6 +50,19 @@ async function setZoom(page: Page, zoom: number) {
   await expect.poll(() => page.evaluate(() => document.documentElement.style.zoom)).toBe(`${zoom}%`);
 }
 
+async function captureColumnState(page: Page, label: string, column: string, state: "hidden" | "restored") {
+  // Caption the asserted running-app state without changing its columns.
+  await page.evaluate((text) => {
+    const caption = document.createElement("div");
+    caption.id = "column-state-evidence";
+    caption.textContent = text;
+    caption.style.cssText = "position:absolute;left:400px;top:8px;padding:4px;background:white;color:#a01020;font:12px sans-serif;z-index:99999;pointer-events:none";
+    document.body.append(caption);
+  }, `130% zoom · ${label} ${state}`);
+  await page.screenshot({ path: `evidence/ac-4-${column}-${state}.png` });
+  await page.evaluate(() => document.getElementById("column-state-evidence")?.remove());
+}
+
 test.beforeEach(async ({ page }) => {
   await seedSettings(page, {
     viewMode: "details", zoomLevel: 100,
@@ -89,9 +102,11 @@ test("Details column popup stays onscreen and toggles all optional columns", asy
     await expect(header).toHaveCount(0);
     await expect(page.locator(".column-menu")).toHaveCount(0);
     await openAtHeader(page, true);
+    await captureColumnState(page, label, column, "hidden");
     await page.locator(".column-menu-item").filter({ hasText: label }).click();
     await expect(header).toBeVisible();
     await openAtHeader(page, true);
+    await captureColumnState(page, label, column, "restored");
   }
   await page.locator(".column-menu-backdrop").click({ position: { x: 10, y: 10 } });
   await expect(page.locator(".column-menu")).toHaveCount(0);

@@ -171,15 +171,39 @@ for (const mode of ["details", "list", "tiles"] as const) {
       await navigatePane(page, 0, "/home/user/Documents");
       await expect(file(page, 0, "/home/user/Documents/beach.jpg")).toBeVisible();
       await expect(file(page, 0, "/home/user/Documents/sunset.png")).toBeVisible();
-      // The drag activated the pane it started in; keys go there and nowhere else.
+      // Keys go to whichever pane is active after the drag and nowhere else; which
+      // pane that is depends on the engine's drag path (HTML5 dragstart activates
+      // the source pane, pointer drag does not), so the product must not rely on it.
       // (The moved files' focused row is gone, so DOM focus has nothing to land on.)
-      const active = 1;
-      await expect(pane(page, active)).toHaveClass(isActive);
+      const active = (await pane(page, 1).getAttribute("class"))?.match(isActive) ? 1 : 0;
       const before = await pane(page, 1 - active).locator('.entry-item[aria-selected="true"]').count();
       await page.keyboard.press("Control+a");
       await expect(pane(page, active).locator('.entry-item[aria-selected="true"]'))
         .toHaveCount(await pane(page, active).locator(".entry-item").count());
       expect(await pane(page, 1 - active).locator('.entry-item[aria-selected="true"]').count()).toBe(before);
+    });
+
+    test("stale DOM focus left in another pane is never restored, so that pane does not become active", async ({ page }) => {
+      await file(page, 1, beach).click();
+      await expect(pane(page, 1)).toHaveClass(isActive);
+      // Keyboard pane switch: pane A becomes active while DOM focus stays on beach.
+      await page.keyboard.press("Alt+ArrowRight");
+      await expect(pane(page, 0)).toHaveClass(isActive);
+      await file(page, 1, sunset).click({ modifiers: ["Control"] });
+      await expect(file(page, 1, sunset)).toHaveAttribute("aria-selected", "true");
+      await expect(pane(page, 0)).toHaveClass(isActive);
+      await expect(pane(page, 1)).not.toHaveClass(isActive);
+      expect(await focusedPaneIndex(page)).toBe(0);
+      // Commands target the active pane's own selection.
+      await page.keyboard.press("Delete");
+      const dialog = page.getByRole("alertdialog", { name: "Delete 2 items?" });
+      await expect(dialog).toBeVisible();
+      await expect(dialog).toContainText("photo1.jpg");
+      await expect(dialog).toContainText("photo2.jpg");
+      await expect(dialog).not.toContainText("beach");
+      await expect(dialog).not.toContainText("sunset");
+      await page.keyboard.press("Escape");
+      await expect(dialog).toBeHidden();
     });
 
     test("restores focus to the focused pane when the previous focus owner was document.body", async ({ page }) => {

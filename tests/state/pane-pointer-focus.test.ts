@@ -14,6 +14,22 @@ it("returns pointer-induced focus to its owner on release, once", () => {
   expect(restore).toHaveBeenCalledOnce();
 });
 
+it("stays active while restoring, so the restore's own focus event cannot activate a pane", () => {
+  const focus = createPanePointerFocus();
+  let activeDuringRestore: boolean | null = null;
+  focus.begin(() => { activeDuringRestore = focus.active; });
+  focus.release();
+  expect(activeDuringRestore).toBe(true);
+  expect(focus.active).toBe(false);
+});
+
+it("ends the gesture even if the restore throws", () => {
+  const focus = createPanePointerFocus();
+  focus.begin(() => { throw new Error("detached"); });
+  expect(() => focus.release()).toThrow();
+  expect(focus.active).toBe(false);
+});
+
 it("ending a gesture discards its restore", () => {
   const focus = createPanePointerFocus();
   const restore = vi.fn();

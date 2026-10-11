@@ -9,12 +9,14 @@ export function createPanePointerFocus() {
     begin(restoreFocus: (() => void) | null): void { restore = restoreFocus; },
     /** True while a gesture that must not activate its pane is in progress. */
     get active(): boolean { return restore !== null; },
-    /** Ends the gesture, then runs its restore. Returns whether one was pending. */
+    /** Runs the pending restore, then ends the gesture. The gesture stays
+     * active while restoring so the `focusin` the restore causes cannot
+     * activate whichever pane receives focus. Returns whether one was pending. */
     release(): boolean {
       const pending = restore;
-      restore = null;
-      pending?.();
-      return pending !== null;
+      if (!pending) return false;
+      try { pending(); } finally { restore = null; }
+      return true;
     },
     end(): void { restore = null; },
   };

@@ -231,10 +231,14 @@ import { nextRemovableRoot } from "$lib/domain/drives";
     pointerFocus.begin(keepsPaneFocus(event) ? () => {
       if (windowTabsManager.activePaneId !== focusedPane) return;
       const owner = document.querySelector<HTMLElement>(`[data-pane-id="${CSS.escape(focusedPane)}"]`);
-      // The previous owner may be document.body or no longer focusable; the
-      // focused pane must still own DOM focus so keyboard input follows it.
+      // The previous focus owner only counts when it lies inside the pane that
+      // was active: stale focus left in another pane (e.g. after a keyboard pane
+      // switch) must never be restored, or that pane would become active. It may
+      // also be document.body or unfocusable, so fall back to the pane's own
+      // row/tile, then the pane element, which keeps keyboard input with it.
       focusFirstAccepting([
-        previousFocus instanceof HTMLElement && previousFocus.isConnected ? previousFocus : null,
+        previousFocus instanceof HTMLElement && previousFocus.isConnected && owner?.contains(previousFocus)
+          ? previousFocus : null,
         owner?.querySelector<HTMLElement>('.entry-item[tabindex="0"], [role="gridcell"][tabindex="0"]'),
         owner,
       ], () => document.activeElement);

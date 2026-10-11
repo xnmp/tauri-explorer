@@ -53,6 +53,12 @@ struct ConfigChangedPayload {
     filename: String,
 }
 
+/// The single constructor for every `config-file-changed` payload; the
+/// frontend listener reads `payload.filename`.
+pub(crate) fn config_changed_payload(filename: &str) -> serde_json::Value {
+    serde_json::Value::String(filename.to_string())
+}
+
 /// The filesystem locations that must be watched to observe reloadable config.
 ///
 /// `config_dir` is always watched recursively. Symlink targets outside it are

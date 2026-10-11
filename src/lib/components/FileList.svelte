@@ -3,7 +3,7 @@
   Issue: tauri-explorer-iw0, tauri-explorer-x25, tauri-explorer-as45, tauri-explorer-1k9k, tauri-explorer-im3m, tauri-explorer-9djf.5
 -->
 <script lang="ts">
-  import { tick, onDestroy } from "svelte";
+  import { flushSync, tick, onDestroy } from "svelte";
   import { setFileListFocusReturn } from "$lib/state/file-list-focus-context";
   import { createDeferredFocusRequest, type DeferredFocusRequest } from "$lib/state/deferred-focus";
   import type { ExplorerInstance } from "$lib/state/explorer.svelte";
@@ -101,7 +101,10 @@
     if (!contentRef) return;
     const observer = new ResizeObserver((entries) => {
       const width = entries[0]?.contentRect.width ?? 0;
-      contentWidth = width;
+      // ResizeObserver runs after layout and before paint. Commit both the
+      // column count and row chunking in this delivery, so a restored preview
+      // dock cannot paint rows sized for the previous (fullscreen) width.
+      flushSync(() => { contentWidth = width; });
       if (cachedDragRect) {
         cachedDragRect = contentRef!.getBoundingClientRect();
       }

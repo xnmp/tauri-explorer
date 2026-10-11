@@ -445,7 +445,7 @@ backend for E2E/browser).
 - `components/WindowDialogs.svelte`, `composables/use-lazy-dialog.svelte.ts`, `state/lazy-dialog.svelte.ts` — typed lazy constructors with independent demand, one pending import per host/dialog, retained success and teardown-safe publication. The host includes plugin dialogs and portal feedback.
 - `domain/lazy-dialog.ts` — shared failure containment and mount-crash recovery; the host wraps each dialog in `<svelte:boundary>`. Active failures roll back modal ownership and notify; cancelled requests and destroyed hosts cannot publish stale feedback.
 - `domain/theme-list.ts` — `dedupeThemesById`, last occurrence wins; applied in `theme.svelte.ts` `discoverThemes()` so a user theme reusing a built-in id overrides it instead of crashing ThemePicker's keyed each (#585)
-- `components/Modal.svelte`, `components/modal.css` — modal shell
+- `components/Modal.svelte`, `components/modal.css` — modal shell; static blurred backdrop and shared clip/margin entrances avoid WebKitGTK opening flashes, including legacy plugin dialog cards (#1080).
 - `components/UserReportDialog.svelte`, `state/user-report-draft.svelte.ts`, `domain/user-report.ts`, `api/user-report.ts` — bug/feature draft UI, debounced persisted text-only drafts, exclusive pending submission ownership, preservation of newer drafts across older completions, preserved GitHub fallback, and report IPC
 - `components/CrashNotice.svelte`/`state`+`api/crash.ts`, `UpdateNotice.svelte`+`api/update.ts`
 - `src/hooks.client.ts` — installs global crash/error handlers before mount; `domain/crash-report.ts` — pure dedupe + log-tail→markdown

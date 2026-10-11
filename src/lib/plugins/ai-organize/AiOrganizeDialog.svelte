@@ -164,13 +164,10 @@
     border: 1px solid var(--surface-stroke);
     border-radius: var(--radius-lg);
     box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25);
-    animation: slideUp 150ms cubic-bezier(0, 0, 0, 1);
+    animation: modal-card-in 150ms cubic-bezier(0, 0, 0, 1);
   }
 
-  @keyframes slideUp {
-    from { opacity: 0; transform: translateY(20px) scale(0.98); }
-    to { opacity: 1; transform: translateY(0) scale(1); }
-  }
+  @media (prefers-reduced-motion: reduce) { .dialog { animation: none; } }
 
   .dialog-header {
     display: flex;

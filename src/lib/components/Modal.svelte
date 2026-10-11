@@ -209,8 +209,15 @@
     align-items: center;
     justify-content: center;
     z-index: var(--z-modal, 1000);
-    animation: modal-overlay-in 150ms cubic-bezier(0, 0, 0, 1);
     outline: none;
+  }
+
+  /* Keep the blurred backdrop static. Ending opacity/transform animations on
+     it or its contents can drop a WebKitGTK surface for a frame (#1080).
+     Installed plugins may ship older entrance CSS; the modal owns their safe
+     entrance without requiring every plugin to ship a matching fix. */
+  .modal-overlay > :global(.plugin-dialog) {
+    animation: modal-card-in 150ms cubic-bezier(0, 0, 0, 1);
   }
 
   .modal-overlay.top-aligned {
@@ -223,13 +230,8 @@
     animation: none;
   }
 
-  @keyframes modal-overlay-in {
-    from {
-      opacity: 0;
-    }
-    to {
-      opacity: 1;
-    }
+  @media (prefers-reduced-motion: reduce) {
+    .modal-overlay > :global(.plugin-dialog) { animation: none; }
   }
 
   @media (prefers-color-scheme: dark) {

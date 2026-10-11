@@ -1224,3 +1224,7 @@ mod tests {
         assert!(body.contains("abc"));
     }
 }
+
+#[cfg(test)]
+#[path = "../test_support/user_report_video.rs"]
+mod video_tests;

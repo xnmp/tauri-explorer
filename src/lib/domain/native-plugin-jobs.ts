@@ -3,7 +3,9 @@ export type NativeJobState = "accepting" | "running" | "recovering" | "needs_att
 export interface NativeJobRecord {
   jobKey: string; owner: { packageId: string; digest: string; incarnation: number }; operationId: string; jobId: number;
   kind: string; label: string; originWindow: string; revision: number; sourceRevision?: number;
-  createdAtMs: number; updatedAtMs: number; state: NativeJobState; phase?: string | null; outputPath?: string | null; runId?: number | null; error?: string | null;
+  createdAtMs: number; updatedAtMs: number;
+  /** When the host first settled the job; absent while active and on jobs settled before it was recorded. */
+  settledAtMs?: number | null; state: NativeJobState; phase?: string | null; outputPath?: string | null; runId?: number | null; error?: string | null;
 }
 export interface NativeJobSnapshot { originWindow: string; watermark: number; jobs: NativeJobRecord[] }
 export type NativeJobEvent = { type: "updated"; job: NativeJobRecord } | { type: "dismissed"; jobKey: string; revision: number };
@@ -29,6 +31,7 @@ export function validNativeJob(value: unknown): value is NativeJobRecord {
   return key(r.jobKey) && !!r.owner && id(r.owner.packageId, 256) && /^[a-f0-9]{64}$/.test(r.owner.digest) && safe(r.owner.incarnation, true)
     && id(r.operationId) && id(r.kind) && safe(r.jobId, true) && safe(r.revision, true)
     && (r.sourceRevision === undefined || safe(r.sourceRevision)) && safe(r.createdAtMs) && safe(r.updatedAtMs)
+    && (r.settledAtMs == null || safe(r.settledAtMs))
     && typeof r.label === "string" && !!r.label && Array.from(r.label).length <= 256 && !/\p{Cc}/u.test(r.label)
     && windowLabel(r.originWindow) && states.has(r.state)
     && (r.phase == null || bytes(r.phase, 128)) && (r.error == null || bytes(r.error, 2048))

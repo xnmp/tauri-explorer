@@ -60,6 +60,7 @@ fn valid(record: &JobRecord, registering: bool) -> Result<()> {
         || record.job_id > SAFE
         || record.created_at_ms > SAFE
         || record.updated_at_ms > SAFE
+        || record.settled_at_ms.is_some_and(|n| n > SAFE)
         || record.label.is_empty()
         || record.label.chars().count() > 256
         || record.label.chars().any(char::is_control)
@@ -201,6 +202,15 @@ fn immutable(a: &JobRecord, b: &JobRecord) -> bool {
         && a.label == b.label
         && a.origin_window == b.origin_window
         && a.created_at_ms == b.created_at_ms
+}
+/// Stamp the moment a row first becomes retained; a later change to a
+/// retained row (dismissal, terminal outcome after parking) keeps it.
+fn stamp_settled(old: &JobRecord, next: &mut JobRecord) {
+    next.settled_at_ms = match (retained(old), retained(next)) {
+        (true, _) => old.settled_at_ms,
+        (false, true) => Some(next.updated_at_ms),
+        (false, false) => None,
+    };
 }
 fn transition(from: JobState, to: JobState) -> Result<()> {
     if from.terminal() || from != JobState::Accepting && to == JobState::Accepting {
@@ -353,12 +363,14 @@ impl Store {
             return Ok(None);
         }
         transition(record.state, JobState::NeedsAttention)?;
+        let before = record.clone();
         record.state = JobState::NeedsAttention;
         record.phase = Some("stopped".into());
         record.error =
             Some("Automatic recovery stopped; unknown execution evidence is retained".into());
         record.output_path = None;
         record.updated_at_ms = clock()?;
+        stamp_settled(&before, &mut record);
         record.revision = next_revision(conn)?;
         valid(&record, false)?;
         persist(conn, &record)?;
@@ -540,6 +552,7 @@ impl Store {
             transition(old.state, state)?;
             next.revision = next_revision(conn)?;
             next.updated_at_ms = clock()?;
+            stamp_settled(&old, &mut next);
             persist(conn, &next)?;
             prune(conn)?;
             Ok(next)
@@ -605,6 +618,7 @@ mod tests {
             source_revision: 0,
             created_at_ms: 1,
             updated_at_ms: 1,
+            settled_at_ms: None,
             state: JobState::Accepting,
             phase: None,
             output_path: None,
@@ -1046,6 +1060,53 @@ mod tests {
                 .is_none());
         }
         assert!(store.job(&attention.job_key).unwrap().is_some());
+    }
+    #[test]
+    fn settlement_time_is_stamped_once_and_survives_later_changes_and_restart() {
+        let (root, store) = fixture();
+        let wait = || std::thread::sleep(std::time::Duration::from_millis(5));
+        let active = store.register_job(record(1)).unwrap();
+        assert_eq!(active.settled_at_ms, None);
+        wait();
+        let running = change(&store, &active, JobState::Running).unwrap();
+        assert_eq!(running.settled_at_ms, None);
+        // Parking settles; the later terminal outcome does not move the end.
+        wait();
+        let parked = park(&store, &running, "stopped");
+        assert_eq!(parked.settled_at_ms, Some(parked.updated_at_ms));
+        wait();
+        let discarded = change(&store, &parked, JobState::Discarded).unwrap();
+        assert!(discarded.updated_at_ms > parked.updated_at_ms);
+        assert_eq!(discarded.settled_at_ms, parked.settled_at_ms);
+        // A directly terminal job is settled when it became terminal.
+        let done = change(
+            &store,
+            &store.register_job(record(2)).unwrap(),
+            JobState::Completed,
+        )
+        .unwrap();
+        assert_eq!(done.settled_at_ms, Some(done.updated_at_ms));
+        drop(store);
+        let store = Store::open(root.path().join("services"), Limits::default()).unwrap();
+        assert_eq!(
+            store
+                .job(&discarded.job_key)
+                .unwrap()
+                .unwrap()
+                .settled_at_ms,
+            parked.settled_at_ms
+        );
+    }
+    #[test]
+    fn rows_stored_before_settlement_time_existed_decode_without_inventing_one() {
+        let mut legacy = serde_json::to_value(record(1)).unwrap();
+        assert!(legacy
+            .as_object_mut()
+            .unwrap()
+            .remove("settledAtMs")
+            .is_none());
+        let decoded: JobRecord = serde_json::from_value(legacy).unwrap();
+        assert_eq!(decoded.settled_at_ms, None);
     }
     #[test]
     fn parked_jobs_never_exhaust_active_capacity_or_fail_the_journal_closed() {

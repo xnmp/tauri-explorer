@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { emptyNativeJobs, mergeNativeJobEvent, adoptNativeSnapshot, validNativeJob, type NativeJobRecord } from "$lib/domain/native-plugin-jobs";
 import { createNativePluginJobsController } from "$lib/state/native-plugin-jobs";
 import { jobsStore, isJobActive } from "$lib/state/jobs.svelte";
+import { jobDuration } from "$lib/domain/image-job-progress";
 import { createPluginJobsController, windowJobSink } from "$lib/state/plugin-jobs";
 vi.mock("$lib/plugins/installed", async (original) => ({ ...await original<object>(), installedPackages: () => [{ manifest: { id: "consumer", contributions: ["image-contribution"] } }] }));
 const record = (n = 1, revision = 1, state: NativeJobRecord["state"] = "running"): NativeJobRecord => ({
@@ -113,5 +114,19 @@ describe("settled recovery presentation", () => {
     expect(jobsStore.hasRunningJobs).toBe(true);
     jobsStore.clearCompleted();
     await vi.waitFor(() => expect(dismissed).toEqual([parked(1, 1, "stopped").jobKey]));
+  });
+  it("a settled job's duration is its host-recorded settled time, not its last update, and does not move with the clock", () => {
+    // Updated (e.g. dismissed) long after it settled at t=39s.
+    jobsStore.applyNative([
+      { ...record(1, 1, "completed"), createdAtMs: 1_000, settledAtMs: 39_000, updatedAtMs: 900_000 },
+      { ...record(2, 2, "completed"), createdAtMs: 1_000, updatedAtMs: 900_000 },
+      { ...record(3, 3, "running"), createdAtMs: 1_000 },
+    ]);
+    const [settled, legacy, active] = jobsStore.jobs;
+    expect(jobDuration(settled, 39_000)).toBe(38_000);
+    expect(jobDuration(settled, 5_000_000)).toBe(38_000);
+    expect(jobDuration(legacy, 5_000_000)).toBeNull();
+    expect(jobDuration(active, 61_000)).toBe(60_000);
+    expect(jobDuration(active, 121_000)).toBe(120_000);
   });
 });

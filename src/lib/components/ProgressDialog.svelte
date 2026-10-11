@@ -11,7 +11,7 @@
   import { isJobActive, jobsStore } from "$lib/state/jobs.svelte";
   import { retryJobAndRefocus } from "$lib/composables/use-job-retry";
   import { formatSize } from "$lib/domain/file";
-  import { imageJobProgress, formatJobDuration } from "$lib/domain/image-job-progress";
+  import { imageJobProgress, formatJobDuration, isTimingSettled } from "$lib/domain/image-job-progress";
   import { jobStateLabel, nativeJobTerminal } from "$lib/domain/native-plugin-jobs";
   import { unresolvedIndicator } from "$lib/domain/ai-operations";
   import { unresolvedAiCount } from "$lib/state/ai-operations.svelte";
@@ -31,8 +31,11 @@
 
   onMount(() => unresolvedAiCount.subscribe());
 
+  // A settled job's duration is frozen: only unsettled jobs need a tick.
+  const ticking = $derived(imageJobs.some((job) => !isTimingSettled(job)));
+
   $effect(() => {
-    if (!imageJobs.some(isJobActive)) return;
+    if (!ticking) return;
     now = Date.now();
     const timer = setInterval(() => { now = Date.now(); }, 1000);
     return () => clearInterval(timer);
@@ -244,7 +247,7 @@
                   {#if job.jobKey && job.error}<div class="error-text">{job.error}</div>{/if}
                 {/if}
                 {#if job.controlError}<div class="error-text" role="alert">{job.controlError}</div>{/if}
-                <div class="status-text">{formatJobDuration(timing.elapsedMs)} elapsed</div>
+                {#if timing.elapsedMs !== null}<div class="status-text">{formatJobDuration(timing.elapsedMs)} elapsed</div>{/if}
               </div>
             </div>
             {#if job.jobKey && ["accepting", "running", "recovering"].includes(job.status)}

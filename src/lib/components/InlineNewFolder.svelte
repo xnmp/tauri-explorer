@@ -244,8 +244,11 @@
     flex-shrink: 0;
   }
 
-  /* Scale the SVG to match the current tile size */
+  /* Scale the SVG to match the current tile size. flex-shrink: 0 keeps the
+     64px source SVG from being shrunk to the 48px Small slot before the
+     scale runs, like TileSurface's rule (#1049). */
   .tile-icon > :global(svg) {
+    flex-shrink: 0;
     transform: scale(var(--tile-icon-scale, 1));
   }
 

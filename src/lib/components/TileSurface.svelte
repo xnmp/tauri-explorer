@@ -160,6 +160,13 @@
   .tile-surface :global(.tile-icon > .folder-thumb > svg:not(.folder-layer)),
   .tile-surface :global(.tile-icon > .folder-thumb > .icon-cat),
   .tile-surface :global(.tile-icon > .folder-thumb > .nf-icon-badge) {
+    /* The icon slot is a flex container narrower than the 64px source SVG at
+       the Small preset (48px). A bare <svg> flex item shrinks to the slot
+       width BEFORE the scale runs and draws at 36px, while wrapped icons
+       (.icon-cat, the git-repo folder, every file icon) keep their 64px
+       min-content and draw at 48px (#1049). Pin the source size so the
+       scale alone decides the rendered size for every icon. */
+    flex-shrink: 0;
     transform: scale(var(--tile-icon-scale, 1));
   }
 

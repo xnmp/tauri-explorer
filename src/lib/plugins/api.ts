@@ -29,9 +29,10 @@ import { writeConfigQueued } from "$lib/state/persisted";
 import { windowTabsManager } from "$lib/state/window-tabs.svelte";
 import { dialogStore } from "$lib/state/dialogs.svelte";
 import type { FileEntry } from "$lib/domain/file";
-import { parentDir, sameDirectory } from "$lib/domain/path";
+import { basename, parentDir, sameDirectory } from "$lib/domain/path";
+import { imageEditorRequestError } from "$lib/domain/plugin-image-editor";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
-import { pluginJobsController, type PluginJobKind } from "$lib/state/plugin-jobs";
+import { scopePluginJobs, type PluginJobKind } from "$lib/state/plugin-jobs";
 import { observeActiveDirectory } from "$lib/composables/observe-active-directory.svelte";
 import { extractError, type ApiResult } from "$lib/api/common";
 import { logFrontendError } from "$lib/api/crash";
@@ -56,6 +57,7 @@ export interface SettingsSectionDescriptor {
   id: string;
   title: string;
   rows: SettingRowDescriptor[];
+  actions?: {id:string;label:string;description?:string;run:()=>void|Promise<void>}[];
 }
 
 // ----- Storage -----
@@ -72,7 +74,18 @@ export interface PluginStorage {
 /** Window-owned background jobs survive plugin activation changes. */
 export interface PluginJobs {
   accept(
-    registration: { kind: PluginJobKind; label: string; detail: string; presentation?: "image" },
+    registration: {
+      kind: PluginJobKind; label: string; detail: string; presentation?: "image";
+      /**
+       * Hosts with the "jobRetry" capability show a Retry action on this job's
+       * entry in Background Operations (e.g. the Image generation panel) when
+       * the job fails. Calling it should start a fresh job (the plugin calls
+       * `accept` again); the host then removes the failed entry. Rejections
+       * or a returned `{ ok: false }` are shown as the entry's error and keep
+       * it.
+       */
+      retry?: () => Promise<ApiResult<number>>;
+    },
     start: () => Promise<ApiResult<number>>,
   ): Promise<ApiResult<number>>;
 }
@@ -149,6 +162,17 @@ export interface PluginWorkspace {
  * Such cases carry a justification comment at the import site.
  */
 export interface PluginContext {
+  /** Managed navigation retains a caller's mounted modal and draft. */
+  presentation?: {
+    openDialog(id:string,props?:Record<string,unknown>):Promise<import("./dialog-registry.svelte").DialogResult>;
+    /** Opens the host image editor directly in one of this plugin's editor tools; settles when it closes. */
+    openImageEditor?(request:{path:string;tool:string}):Promise<void>;
+  };
+  /** Optional host text service settings notifications; execution is backend-owned. */
+  text?: {
+    subscribe(listener: (revision: number) => void): () => void;
+    openSettings(): void;
+  };
   backend?: {invoke<T>(method:string,params?:Record<string,unknown>):Promise<T>};
   saveSettings(patch:Record<string,unknown>):Promise<void>;
   /** Return the handler's work as a promise: a rejection is reported to the
@@ -258,11 +282,18 @@ export function createPluginContext(
 } {
   const disposers: (() => void)[] = [];
   let disposed = false;
+  const managedDialogs=new Set<()=>void>();
+  // Editor tools this plugin registered; only these may be opened directly.
+  const editorTools=new Set<string>();
+  disposers.push(()=>{for(const close of managedDialogs)close();managedDialogs.clear();});
   const track = (fn: () => void) => {
     if (disposed) fn();
     else disposers.push(fn);
   };
   const storage = createPluginStorage(pluginId);
+  // Accepted jobs outlive the plugin, but their Retry runs its code: drop it.
+  const pluginJobs = scopePluginJobs(pluginId);
+  disposers.push(() => pluginJobs.retire());
   // Preview targets are pane state owned by this plugin; drop them with it.
   disposers.push(() => {
     for (const explorer of windowTabsManager.getAllExplorers()) explorer.clearPreviewTargetsOwnedBy(pluginId);
@@ -281,6 +312,34 @@ export function createPluginContext(
   };
 
   const ctx: PluginContext = {
+    presentation:{
+      async openDialog(id,props) {if(disposed)throw new Error("Plugin caller was disposed");const session=dialogRegistry.openManaged(id,props);managedDialogs.add(session.close);try{return await session.result;}finally{managedDialogs.delete(session.close);}},
+      async openImageEditor(request) {
+        if(disposed)throw new Error("Plugin caller was disposed");
+        const refused=imageEditorRequestError(request,editorTools);
+        if(refused)throw new Error(refused);
+        const {path,tool}=request;
+        const session=dialogStore.openImageEditorTool(path,basename(path),tool);
+        managedDialogs.add(session.close);
+        try{await session.closed;}finally{managedDialogs.delete(session.close);}
+      },
+    },
+    text: {
+      subscribe(listener) {
+        let unlisten: UnlistenFn | undefined;
+        let closed = false;
+        const dispose = () => { closed = true; unlisten?.(); unlisten = undefined; };
+        track(dispose);
+        void listen<{ revision: number }>("ai:text-configuration-changed", event => {
+          if (!closed && !disposed && Number.isSafeInteger(event.payload.revision) && event.payload.revision >= 0) {
+            try { listener(event.payload.revision); }
+            catch (error) { report(error, "text configuration listener"); }
+          }
+        }).then(un => { if (closed || disposed) un(); else unlisten = un; }).catch(() => {});
+        return dispose;
+      },
+      openSettings: () => { if (!disposed) dialogStore.openSettings(); },
+    },
     registerCommand(cmd: Command): void {
       const handler = async () => {
         try {
@@ -303,7 +362,8 @@ export function createPluginContext(
       track(contextMenuItems.register({ ...item, handler }, order));
     },
     registerSettingsSection(section: SettingsSectionDescriptor): void {
-      track(pluginSettingsSections.register(pluginId, section, storage, order));
+      const actions=section.actions?.map(action=>({...action,async run(){if(disposed)return;try{await action.run();}catch(error){if(!disposed)report(error,`settings action ${action.id}`);}}}));
+      track(pluginSettingsSections.register(pluginId, {...section,actions}, storage, order));
     },
     registerFsProvider(scheme: string, provider: FsProvider): void {
       const list = async (path: string) => {
@@ -321,6 +381,7 @@ export function createPluginContext(
     },
     registerImageEditorTool(tool: ImageEditorTool): void {
       track(imageEditorRegistry.register(tool, order));
+      editorTools.add(tool.id);
     },
     registerInspector(descriptor: InspectorContribution): void {
       track(inspectorRegistry.register(descriptor, order));
@@ -341,7 +402,7 @@ export function createPluginContext(
     closeDialog(id: string): void {
       dialogRegistry.close(id);
     },
-    jobs: pluginJobsController,
+    jobs: pluginJobs.jobs,
     toast: {
       show: (message, variant) => toastStore.show(message, variant),
       error: (message) => toastStore.error(message),

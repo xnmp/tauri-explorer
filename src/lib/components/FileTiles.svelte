@@ -3,7 +3,9 @@
   `ui/file-tiles`). The plugin supplies the entries and selection and handles
   every interaction through callbacks; nothing here reads or changes pane
   state. Tiles render through TileSurface and TileVisual, the same chrome,
-  thumbnails, names and size setting as the built-in Tiles view.
+  thumbnails, names and size setting as the built-in Tiles view: the `size`
+  a plugin passes from `pane.tileSize`, else the size of the plugin file
+  view it renders in, else the global setting.
 
   NOT virtualized: every tile is in the DOM. It serves plugin sections of
   modest size; a whole-directory listing belongs in TilesView.
@@ -11,8 +13,9 @@
 <script lang="ts">
   import type { FileEntry } from "$lib/domain/file";
   import { autoFillColumns, chunkIntoRows } from "$lib/domain/virtual-layout";
-  import { gridFocusStep, tileLayout, TILE_GRID_PAD_X } from "$lib/domain/tile-layout";
+  import { gridFocusStep, isThumbnailSize, tileLayout, TILE_GRID_PAD_X, type TileSizePreset } from "$lib/domain/tile-layout";
   import { settingsStore } from "$lib/state/settings.svelte";
+  import { getTileSizeContext } from "$lib/state/tile-size-context";
   import TileSurface from "./TileSurface.svelte";
   import TileVisual from "./TileVisual.svelte";
 
@@ -27,11 +30,19 @@
     onmenu: (entry: FileEntry, event: MouseEvent) => void;
     /** The grid's accessible name. */
     label?: string;
+    /** Tile size preset (capability "tileSize"); a file view passes
+     *  `pane.tileSize?.preset` to match its folder's size. Omitted or
+     *  unknown: the enclosing plugin file view's folder size, else the
+     *  global tile-size setting. */
+    size?: TileSizePreset;
   }
 
-  let { entries, selected, onselect, onopen, onmenu, label = "Files" }: Props = $props();
+  let { entries, selected, onselect, onopen, onmenu, label = "Files", size }: Props = $props();
 
-  const layout = $derived(tileLayout(settingsStore.thumbnailSize));
+  // Precedence: explicit `size`, then the enclosing pane's folder size
+  // (PluginFileView's context), then the global setting.
+  const paneSize = getTileSizeContext();
+  const layout = $derived(tileLayout(isThumbnailSize(size) ? size : (paneSize?.() ?? settingsStore.thumbnailSize)));
   let width = $state(0);
   // Same column math as TilesView, against this component's own width (less
   // the grid's 8px side padding). The width comes from a zero-height probe:

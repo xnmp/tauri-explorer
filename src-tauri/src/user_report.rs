@@ -158,6 +158,14 @@ pub struct Environment<'a> {
 }
 
 const MAX_REPORT_DESCRIPTION_UNITS: usize = 8000;
+/// The relay's body ceiling (`maxRelayBodyUnits` in the relay contract).
+const MAX_RELAY_BODY_UNITS: usize = 8500;
+/// Slow folder-load diagnostics the reporter chose to include (#1022).
+const MAX_DIAGNOSTICS_UNITS: usize = 6000;
+/// Below this remaining budget a diagnostics section would be too truncated
+/// to help, so it is omitted instead.
+const MIN_DIAGNOSTICS_UNITS: usize = 200;
+const DIAGNOSTICS_TRUNCATED: &str = "\n… (truncated to fit the report)";
 
 fn sanitize(value: &str) -> String {
     value
@@ -219,6 +227,63 @@ pub fn assemble_issue_body(
     } else {
         format!("{description}\n\n{suffix}")
     }
+}
+
+fn units(value: &str) -> usize {
+    value.encode_utf16().count()
+}
+
+/// Append the reporter-approved slow-load diagnostics (#1022) after the
+/// environment block, inside a collapsed section and a code fence so paths
+/// render literally. The relay body limit is never exceeded: the section is
+/// truncated at a line boundary to the remaining budget, or omitted when too
+/// little remains. This is not a log tail (#595): the dialog shows exactly
+/// these records, each captured when a load stalled, and the reporter can
+/// exclude them.
+fn append_diagnostics(body: String, diagnostics: Option<&str>) -> String {
+    let Some(diagnostics) = diagnostics
+        .map(sanitize)
+        .map(|value| value.trim().to_owned())
+        .filter(|value| !value.is_empty())
+    else {
+        return body;
+    };
+    let longest_backtick_run = diagnostics
+        .split(|character| character != '`')
+        .map(str::len)
+        .max()
+        .unwrap_or(0);
+    let fence = "`".repeat(longest_backtick_run.max(2) + 1);
+    let open =
+        format!("\n\n<details><summary>Slow folder-load diagnostics</summary>\n\n{fence}text\n");
+    let close = format!("\n{fence}\n\n</details>");
+    let overhead = units(&body) + units(&open) + units(&close);
+    let Some(budget) = MAX_RELAY_BODY_UNITS
+        .checked_sub(overhead)
+        .filter(|budget| *budget >= MIN_DIAGNOSTICS_UNITS)
+    else {
+        return body;
+    };
+    let fitted = if units(&diagnostics) <= budget {
+        diagnostics
+    } else {
+        let keep = truncate_utf16(&diagnostics, budget - units(DIAGNOSTICS_TRUNCATED));
+        let keep = keep
+            .rfind('\n')
+            .map_or(keep.as_str(), |line_end| &keep[..line_end]);
+        format!("{keep}{DIAGNOSTICS_TRUNCATED}")
+    };
+    format!("{body}{open}{fitted}{close}")
+}
+
+fn validate_diagnostics(diagnostics: Option<&str>) -> Result<(), SubmitReportError> {
+    if diagnostics.is_some_and(|value| units(value) > MAX_DIAGNOSTICS_UNITS) {
+        return Err(SubmitReportError::new(
+            "malformed_input",
+            "Diagnostics must be at most 6000 characters",
+        ));
+    }
+    Ok(())
 }
 
 fn validate_draft(
@@ -487,19 +552,24 @@ pub async fn submit_user_report(
     kind: String,
     contact: Option<String>,
     attachments: Option<Vec<ReportAttachment>>,
+    diagnostics: Option<String>,
 ) -> Result<SubmittedUserReport, SubmitReportError> {
     validate_draft(&title, &body, &kind, contact.as_deref())?;
+    validate_diagnostics(diagnostics.as_deref())?;
     let attachments = attachments.unwrap_or_default();
     validate_attachments(&attachments)?;
     let info = crate::system::get_app_info().await;
-    let assembled = assemble_issue_body(
-        &body,
-        contact.as_deref(),
-        &Environment {
-            version: &info.version,
-            os: &info.os,
-            arch: &info.arch,
-        },
+    let assembled = append_diagnostics(
+        assemble_issue_body(
+            &body,
+            contact.as_deref(),
+            &Environment {
+                version: &info.version,
+                os: &info.os,
+                arch: &info.arch,
+            },
+        ),
+        diagnostics.as_deref(),
     );
     let endpoint = report_endpoint(std::env::var(REPORT_URL_OVERRIDE).ok().as_deref())?;
     let payload = RelayRequest {
@@ -516,6 +586,10 @@ pub async fn submit_user_report(
 
 #[cfg(test)]
 mod tests {
+    use super::{
+        append_diagnostics, truncate_utf16, units, validate_diagnostics, MAX_DIAGNOSTICS_UNITS,
+        MAX_RELAY_BODY_UNITS,
+    };
     use super::{
         assemble_issue_body, attachment_from_image_bytes, map_transport_error, relay_error_kind,
         report_image_media_type, send_report, validate_attachments, validate_draft, Environment,
@@ -1056,5 +1130,97 @@ mod tests {
                 .kind,
             "malformed_input"
         );
+    }
+
+    fn environment() -> Environment<'static> {
+        Environment {
+            version: "1.11.3",
+            os: "linux",
+            arch: "x86_64",
+        }
+    }
+
+    #[test]
+    fn relay_body_ceiling_matches_the_relay_contract() {
+        assert_eq!(MAX_RELAY_BODY_UNITS, contract_limit("maxRelayBodyUnits"));
+    }
+
+    #[test]
+    fn approved_diagnostics_follow_the_environment_in_a_collapsed_literal_block() {
+        let base = assemble_issue_body("It hangs", None, &environment());
+        let body = append_diagnostics(
+            base.clone(),
+            Some("1. /mnt/nas/photos — 7.4 s, still pending\n   stuck in: native read-dir"),
+        );
+        assert!(body.starts_with(&base));
+        assert!(body.contains("<details><summary>Slow folder-load diagnostics</summary>"));
+        assert!(body.contains("```text\n1. /mnt/nas/photos"));
+        assert!(body.ends_with("```\n\n</details>"));
+        // Nothing approved, nothing appended.
+        assert_eq!(append_diagnostics(base.clone(), None), base);
+        assert_eq!(append_diagnostics(base.clone(), Some("  \n ")), base);
+    }
+
+    #[test]
+    fn a_path_containing_backticks_cannot_close_the_fence() {
+        let body = append_diagnostics(
+            assemble_issue_body("", None, &environment()),
+            Some("1. /tmp/```weird````dir — 6.0 s"),
+        );
+        assert!(body.contains("`````text\n1. /tmp/```weird````dir"));
+    }
+
+    #[test]
+    fn diagnostics_never_push_the_body_past_the_relay_limit() {
+        let lines: String = (0..400)
+            .map(|n| format!("{n}. /very/long/path/{}\n", "x".repeat(10)))
+            .collect();
+        let diagnostics = truncate_utf16(&lines, MAX_DIAGNOSTICS_UNITS);
+        validate_diagnostics(Some(&diagnostics)).unwrap();
+        for description in ["", "short", &"d".repeat(4000), &"🐛".repeat(3900)] {
+            let body = append_diagnostics(
+                assemble_issue_body(description, Some("@me"), &environment()),
+                Some(&diagnostics),
+            );
+            assert!(units(&body) <= MAX_RELAY_BODY_UNITS, "{}", units(&body));
+            assert!(body.contains(description));
+            let truncated = body.contains("(truncated to fit the report)");
+            assert_eq!(
+                truncated,
+                units(description) > 1000,
+                "{}",
+                units(description)
+            );
+            // Truncation happens at a line boundary.
+            assert!(!body.contains("/very/long/path/xxxxx\n…"));
+        }
+        // A maximal description still fits: only what the budget allows.
+        let full = assemble_issue_body(
+            &"x".repeat(MAX_REPORT_DESCRIPTION_UNITS),
+            Some(&"c".repeat(MAX_CONTACT_UNITS)),
+            &environment(),
+        );
+        let with = append_diagnostics(full.clone(), Some(&diagnostics));
+        assert!(with.starts_with(&full));
+        assert!(units(&with) <= MAX_RELAY_BODY_UNITS);
+        // With too little room left the section is omitted, not mangled.
+        let crowded = format!(
+            "{full}{}",
+            "y".repeat(MAX_RELAY_BODY_UNITS - units(&full) - 150)
+        );
+        assert!(append_diagnostics(crowded.clone(), Some(&diagnostics)) == crowded);
+    }
+
+    #[test]
+    fn oversized_or_control_laden_diagnostics_are_handled_at_the_boundary() {
+        assert_eq!(
+            validate_diagnostics(Some(&"x".repeat(MAX_DIAGNOSTICS_UNITS + 1)))
+                .unwrap_err()
+                .kind,
+            "malformed_input"
+        );
+        validate_diagnostics(None).unwrap();
+        let body = append_diagnostics(String::from("base"), Some("a\u{0}b\u{7}c"));
+        assert!(body.contains("abc"));
     }
 }

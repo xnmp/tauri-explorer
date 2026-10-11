@@ -1,3 +1,6 @@
+import { createMockTextConnections } from "./mock-text-connections";
+import { createMockAiPresentation } from "./mock-ai-presentation";
+import type { AiResolution } from "$lib/domain/ai-operations";
 import pdfFixtureUrl from "./fixtures/preview-landmarks.pdf?url";
 import videoFixtureUrl from "./fixtures/video-preview.webm?url";
 /**
@@ -12,6 +15,7 @@ import { createMockImageCrop } from "./mock-image-crop";
 import type { ImageCropSave } from "./image-crop";
 import type { DirectoryListing, FileEntry, FileMutationReceipt } from "$lib/domain/file";
 import { matchesPickerExtensions } from "$lib/domain/file-picker";
+import type { FrontendSlowLoadRecord, SlowLoadRecord } from "$lib/domain/load-diagnostics";
 import type { SearchFilter } from "./search";
 import { encodeDirectoryListing, type CompactDirectoryListing } from "./directory-wire";
 import { selectPreviewImages } from "$lib/domain/folder-preview";
@@ -44,8 +48,13 @@ interface MockCopyControl {
 const mockCopyControls = new Map<string, MockCopyControl>();
 const mockVideoCapabilities = new Set<string>();
 
+const mockSlowLoads: SlowLoadRecord[] = [];
+
 const mutationReceipt = (entry: FileEntry): FileMutationReceipt => ({ path: entry.path, entry });
 const mockImageCrop = createMockImageCrop(mockFiles, nextTimestamp);
+const mockAiPresentation = () => getMockControl().nativeAiPresentation ??= createMockAiPresentation((name, value) => {
+  if (typeof window !== "undefined") window.dispatchEvent(new CustomEvent(name, { detail: value }));
+});
 
 /** Relocate one entry's mock listing state. Backs the `move_entries` session
  *  mock's per-item relocation, and is injected into `createMockFileHistory`
@@ -1065,7 +1074,21 @@ function mockDirectoryListing(raw: string): CompactDirectoryListing {
   return encodeDirectoryListing({ path, entries: sortListing(getDirectoryEntries(path)) });
 }
 
+const mockTextConnections = createMockTextConnections();
 const mockCommands: Record<string, CommandHandler> = {
+  plugin_jobs_snapshot: () => mockAiPresentation().snapshot(),
+  plugin_job_cancel: (args) => mockAiPresentation().cancel(String(args.jobKey)),
+  plugin_job_dismiss: (args) => mockAiPresentation().dismiss(String(args.jobKey)),
+  plugin_job_resume: (args) => mockAiPresentation().resume(String(args.jobKey)),
+  ai_operations_snapshot: () => mockAiPresentation().operationSnapshot(),
+  ai_operation_resolve: (args) => mockAiPresentation().resolve(String(args.consumerPackage), String(args.operationId), args.action as AiResolution),
+  ai_connections_read: () => mockTextConnections.read(),
+  ai_connections_save: ({ configuration, expectedRevision }) => mockTextConnections.save(configuration, expectedRevision),
+  ai_connection_set_credential: ({ profileId, key, expectedRevision }) => mockTextConnections.credential(profileId, key, expectedRevision),
+  ai_connection_clear_credential: ({ profileId, expectedRevision }) => mockTextConnections.credential(profileId, null, expectedRevision),
+  ai_connection_check: ({ profileId }) => mockTextConnections.check(profileId),
+  ai_connection_test: ({ profileId, expectedConfigurationRevision }) => mockTextConnections.test(profileId, expectedConfigurationRevision),
+  ai_connection_cancel_test: () => undefined,
   get_home_directory: () => "/home/user",
   get_launch_cwd: () => "/home/user",
   list_drives: () => {
@@ -1138,6 +1161,29 @@ const mockCommands: Record<string, CommandHandler> = {
     localStorage.setItem(MOCK_LOCAL_KEYS.openedUrl, url);
     return undefined;
   },
+  // Slow-load diagnostics (#1022): an in-memory stand-in for the rotating
+  // records under the native log directory. The browser has no native trace
+  // or mount table, so those halves are null, as when native capture fails.
+  record_slow_load: (args) => {
+    const record = args.record as FrontendSlowLoadRecord;
+    const stored: SlowLoadRecord = {
+      ...record,
+      schema: 1,
+      source: "frontend",
+      native: null,
+      blocker: null,
+      filesystem: null,
+      appVersion: "0.0.0-mock",
+      os: "linux",
+    };
+    const index = mockSlowLoads.findIndex((existing) => existing.id === record.id);
+    if (index >= 0) mockSlowLoads.splice(index, 1, stored);
+    else mockSlowLoads.push(stored);
+    mockSlowLoads.sort((a, b) => b.id.localeCompare(a.id));
+    mockSlowLoads.splice(20);
+    return undefined;
+  },
+  recent_slow_loads: (args) => mockSlowLoads.slice(0, Math.min(20, (args.limit as number | null) ?? 20)),
   submit_user_report: (args) => {
     localStorage.setItem(MOCK_LOCAL_KEYS.submittedReport, JSON.stringify(args));
     const error = localStorage.getItem(MOCK_LOCAL_KEYS.reportError);

@@ -42,3 +42,22 @@ export function nextRemovableRoot(
   if (previous && isUnderRoot(pathKey, previous)) return previous;
   return null;
 }
+
+/**
+ * Kind of the drive whose mount root most specifically contains `pathKey`
+ * (canonical keys, as for `nextRemovableRoot`), or null when none does.
+ */
+export function driveKindFor<K extends string>(
+  pathKey: string,
+  drives: readonly { root: string; kind: K }[],
+): K | null {
+  if (!pathKey) return null;
+  let best: { root: string; kind: K } | null = null;
+  for (const drive of drives) {
+    const contains = drive.root.endsWith("/") ? pathKey.startsWith(drive.root) : isUnderRoot(pathKey, drive.root);
+    if (drive.root && contains && (!best || drive.root.length > best.root.length)) {
+      best = drive;
+    }
+  }
+  return best?.kind ?? null;
+}

@@ -1,5 +1,69 @@
 use super::*;
 
+#[test]
+fn blocked_recursive_registration_does_not_delay_unrelated_folder_navigation() {
+    use super::super::watch_observation::tests::NativeHarness;
+    use std::sync::mpsc;
+    let root = tempfile::tempdir().unwrap();
+    let destination = tempfile::tempdir().unwrap();
+    std::fs::write(destination.path().join("visible.txt"), "entry").unwrap();
+    let (started_tx, started_rx) = mpsc::channel();
+    let (release_tx, release_rx) = mpsc::channel();
+    let direct = NativeHarness::default();
+    let recursive = NativeHarness::default();
+    let release = Arc::new(Mutex::new(Some(release_rx)));
+    let observer = NativeObserver::with_cache(GlobalSearchCache, |mode| match mode {
+        Mode::Direct => direct.factory(),
+        Mode::Recursive => {
+            let factory = recursive.factory();
+            let started_tx = started_tx.clone();
+            let release = release.clone();
+            Box::new(move |callback| {
+                if let Some(release_rx) = release.lock().unwrap().take() {
+                    started_tx.send(()).unwrap();
+                    release_rx.recv_timeout(Duration::from_secs(10)).unwrap();
+                }
+                factory(callback)
+            })
+        }
+    });
+    let watches = Arc::new(Mutex::new(DirectoryWatches::new(observer)));
+    let owner = Owner::default();
+    watches
+        .lock()
+        .unwrap()
+        .acquire(&owner, root.path().to_string_lossy().into_owned())
+        .unwrap();
+    let search_watches = watches.clone();
+    let search_path = root.path().to_path_buf();
+    let search = std::thread::spawn(move || ensure_search_watch(&search_watches, &search_path));
+    started_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+    let (loaded_tx, loaded_rx) = mpsc::channel();
+    let navigation_path = destination.path().to_path_buf();
+    let navigation = std::thread::spawn(move || {
+        watches
+            .lock()
+            .unwrap()
+            .observe(&owner, navigation_path.to_string_lossy().into_owned())
+            .unwrap();
+        let names: Vec<_> = std::fs::read_dir(navigation_path)
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name())
+            .collect();
+        loaded_tx.send(names).unwrap();
+    });
+    let before_release = loaded_rx.recv_timeout(Duration::from_secs(1));
+    release_tx.send(()).unwrap();
+    assert!(search.join().unwrap());
+    navigation.join().unwrap();
+    assert_eq!(
+        before_release.expect(
+            "folder navigation must complete while recursive watch registration is blocked"
+        ),
+        vec![std::ffi::OsString::from("visible.txt")]
+    );
+}
+
 fn change(origin: ChangeOrigin, at: Instant, observed_at_ms: u64) -> PendingChange {
     PendingChange {
         origin,
@@ -134,6 +198,7 @@ fn issue_974_overlap_coverage_preserves_parent_cache_and_rebuilds_surviving_chil
     let child_revision = cache.begin_load(&child);
 
     watches.release(&owner, &parent.id).unwrap();
+    watches.observer.search.settle();
     assert!(watches.covered(&child_path));
     assert!(watches.observer.search.healthy(&child));
     assert_ne!(cache.begin_load(&child), child_revision);
@@ -233,4 +298,129 @@ fn issue_974_shared_owner_retirement_preserves_cache_until_final_owner_retires()
     assert!(after.contains(&"after.txt".to_string()));
     assert!(!after.contains(&"before.txt".to_string()));
     assert_eq!(walks.get(), 2);
+}
+
+#[test]
+fn released_search_registration_cannot_cover_a_reacquired_directory() {
+    use super::super::watch_observation::tests::NativeHarness;
+    use std::sync::mpsc;
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().to_string_lossy().into_owned();
+    let cache = Arc::new(crate::search_cache::SearchEntryCache::<String>::new());
+    let direct = NativeHarness::default();
+    let recursive = NativeHarness::default();
+    let (started_tx, started_rx) = mpsc::channel();
+    let (release_tx, release_rx) = mpsc::channel();
+    let release = Arc::new(Mutex::new(Some(release_rx)));
+    let observer = NativeObserver::with_cache(cache.clone(), |mode| match mode {
+        Mode::Direct => direct.factory(),
+        Mode::Recursive => {
+            let factory = recursive.factory();
+            let started_tx = started_tx.clone();
+            let release = release.clone();
+            Box::new(move |callback| {
+                if let Some(release) = release.lock().unwrap().take() {
+                    started_tx.send(()).unwrap();
+                    release.recv_timeout(Duration::from_secs(5)).unwrap();
+                }
+                factory(callback)
+            })
+        }
+    });
+    let mut watches = DirectoryWatches::new(observer);
+    let owner = Owner::default();
+    let lease = watches.acquire(&owner, path.clone()).unwrap();
+    let original = watches.observer.search.prepare(root.path());
+    started_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+    let old_revision = cache.begin_load(root.path());
+    watches.release(&owner, &lease.id).unwrap();
+    assert!(!watches.observer.search.healthy(root.path()));
+    cache.publish_if_unchanged(
+        root.path(),
+        Arc::new(vec!["stale.txt".into()]),
+        old_revision,
+    );
+    assert!(cache.completed(root.path()).is_none());
+    watches.acquire(&Owner::default(), path).unwrap();
+    let replacement = watches.observer.search.prepare(root.path());
+    assert!(!watches.observer.search.healthy(root.path()));
+    release_tx.send(()).unwrap();
+    assert!(
+        !original.wait(),
+        "a late result belongs to the released demand"
+    );
+    assert!(
+        replacement.wait(),
+        "the replacement must establish its own coverage"
+    );
+    assert!(watches.observer.search.healthy(root.path()));
+    cache.publish_if_unchanged(
+        root.path(),
+        Arc::new(vec!["stale.txt".into()]),
+        old_revision,
+    );
+    assert!(cache.completed(root.path()).is_none());
+}
+
+#[test]
+fn published_recursive_health_observes_native_callback_faults_immediately() {
+    use super::super::watch_observation::tests::NativeHarness;
+    let root = tempfile::tempdir().unwrap();
+    let cache = Arc::new(crate::search_cache::SearchEntryCache::<String>::new());
+    use std::sync::{atomic::AtomicUsize, mpsc};
+    let direct = NativeHarness::default();
+    let recursive = NativeHarness::default();
+    let (started_tx, started_rx) = mpsc::channel();
+    let (release_tx, release_rx) = mpsc::channel();
+    let release = Arc::new(Mutex::new(Some(release_rx)));
+    let builds = Arc::new(AtomicUsize::new(0));
+    let observer = NativeObserver::with_cache(cache.clone(), |mode| match mode {
+        Mode::Direct => direct.factory(),
+        Mode::Recursive => {
+            let factory = recursive.factory();
+            let started_tx = started_tx.clone();
+            let release = release.clone();
+            let builds = builds.clone();
+            Box::new(move |callback| {
+                if builds.fetch_add(1, Ordering::SeqCst) == 1 {
+                    started_tx.send(()).unwrap();
+                    release
+                        .lock()
+                        .unwrap()
+                        .take()
+                        .unwrap()
+                        .recv_timeout(Duration::from_secs(5))
+                        .unwrap();
+                }
+                factory(callback)
+            })
+        }
+    });
+    let mut watches = DirectoryWatches::new(observer);
+    watches
+        .acquire(
+            &Owner::default(),
+            root.path().to_string_lossy().into_owned(),
+        )
+        .unwrap();
+    watches.observer.search.add(root.path(), true).unwrap();
+    let revision = cache.begin_load(root.path());
+    cache.publish_if_unchanged(root.path(), Arc::new(vec!["before.txt".into()]), revision);
+    assert!(cache.completed(root.path()).is_some());
+    recursive.emit(
+        recursive.latest_generation(),
+        Err(notify::Error::generic("injected overflow")),
+    );
+    started_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+    assert!(
+        !watches.observer.search.healthy(root.path()),
+        "published health must retain the live generation fault"
+    );
+    assert!(cache.completed(root.path()).is_none());
+    let recovering = watches.observer.search.prepare(root.path());
+    release_tx.send(()).unwrap();
+    assert!(recovering.wait());
+    assert!(watches.observer.search.healthy(root.path()));
+    cache.publish_if_unchanged(root.path(), Arc::new(vec!["stale.txt".into()]), revision);
+    assert!(cache.completed(root.path()).is_none());
 }

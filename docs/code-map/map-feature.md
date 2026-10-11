@@ -27,7 +27,7 @@ backend for E2E/browser).
 - `composables/use-progressive-render.svelte.ts` — chunked reveal of large lists
 - `composables/use-row-grid-view.svelte.ts` — shared virtualization wiring (rows, DnD, new-folder sentinel, scrollToIndex) behind List + Tiles
 - `state/commands/view-commands.ts` — view.details/list/tiles, sort, columns cmds
-- `state/sort-prefs.ts`, `state/folder-views.svelte.ts` — per-folder view+sort persistence
+- `state/sort-prefs.ts`, `state/folder-views.svelte.ts` — per-folder view+sort persistence; `state/folder-tile-size.ts` resolves a folder's effective tile size (override, else global) for every consumer
 - `components/FileIcon.svelte` — shared icon renderer used by all 3 views (via `FileItem.svelte` for Details and directly from List/Tiles); linked-folder and git-repo-folder badge overlays and the HTML/HTM web-document glyph live here so a display feature added once covers all views automatically
 - `domain/file-types.ts` — `isGitRepoFolder` (icon-selection predicate for the git-repo folder badge, #463); backend flag set in `src-tauri/src/files/mod.rs::metadata_to_entry` (`FileEntry.is_git_repo`, one `.git`-exists stat per directory entry)
 - `domain/relative-time.ts` — shared compact relative labels for file metadata, today's git commits, and PR comments
@@ -37,8 +37,10 @@ backend for E2E/browser).
 
 - `plugins/inspector-registry.svelte.ts`, `components/PluginInspector.svelte`, `plugins/api.ts` — plugins can contribute an inspector for the active pane selection; the host disposes it with the plugin and hides the panel when no contribution applies.
 - SDK 2 file views: `plugins/file-view-registry.svelte.ts`, `components/PluginFileView.svelte`, `components/FileList.svelte` — a plugin view replaces a pane's listing; it gets a pane-scoped handle (directory, entries, selection, focus, select/open/context menu, Preview targets). `explorer.fileView` is per pane (persisted in window tabs, default from `settingsStore.defaultFileView`); `resolve()` falls back to the built-in view for virtual paths or when `available(dir)` is false, keeping the preference. Built-in view commands and the context menu clear it; `workspace.toggleFileView` returns to the previous built-in mode.
-- SDK 2 Preview: `plugins/preview-registry.svelte.ts`, `components/PluginPreviewTarget.svelte`, `components/PreviewPane.svelte` — Preview-info sections for files or the owning plugin's targets; pane-scoped Preview targets (`explorer.setPreviewTarget(owner, target)`) are non-file subjects with explicit actions, cleared on file selection, folder change and plugin disposal. Runtime SDK keeps `sdkVersion: 1` and adds `apiVersion: 2` + capabilities; manifests declare SDK 1 or 2 (`plugins/installed.ts`, `src-tauri/src/installed_plugins/package.rs`). The demo plugin exercises both (`e2e/plugin-file-views.spec.ts`). In a vertical (top/bottom) dock `PreviewPane.svelte`'s grid places the chrome of both subjects, with Preview-info sections in a full-width row capped on the track (`e2e/preview-info-vertical-dock.spec.ts`).
+- SDK 2 Preview: `plugins/preview-registry.svelte.ts`, `components/PluginPreviewTarget.svelte`, `components/PreviewPane.svelte` — Preview-info sections for files or the owning plugin's targets; pane-scoped Preview targets (`explorer.setPreviewTarget(owner, target)`) are non-file subjects with explicit actions, cleared on file selection, folder change and plugin disposal. Runtime SDK keeps `sdkVersion: 1` and adds `apiVersion: 2` + capabilities; manifests declare SDK 1 or 2 (`plugins/installed.ts`, `src-tauri/src/installed_plugins/package.rs`). The demo plugin exercises both (`e2e/plugin-file-views.spec.ts`). In a vertical (top/bottom) dock `PreviewPane.svelte`'s grid places the chrome of both subjects, with Preview-info sections in a full-width row capped on the track (`e2e/preview-info-vertical-dock.spec.ts`). The pane sets `--preview-info-inset` (16px in the side dock, 12px in vertical docks) for its own rows and header; plugin sections pad by it to line up (`e2e/preview-selection-stability.spec.ts`).
 - SDK 2 file tiles: `plugins/runtime-sdk.ts` module `ui/file-tiles` (capability `fileTiles`) → `components/FileTiles.svelte` — Tiles-view tiles for plugin sections (`e2e/plugin-file-tiles.spec.ts`).
+- SDK 2 pane tile size (capability `tileSize`): `FileViewPane.tileSize` (`{ preset, imagePx }`, `domain/tile-layout.ts` `paneTileSize`) from `state/folder-tile-size.ts` via `components/PluginFileView.svelte`; plugins pass `tileSize?.preset` as file-tiles' `size`; without it, file-tiles reads the pane's size from `state/tile-size-context.ts` (set by PluginFileView), then the global setting. "Tile View: Set Size" keeps a showing plugin view (`state/commands/view-commands.ts`); `e2e/plugin-file-views.spec.ts`.
+- SDK 2 job retry (capability `jobRetry`): `PluginJobs.accept` registration `retry` (`plugins/api.ts`) → `state/plugin-jobs.ts` → `state/jobs.svelte.ts` `retryJob` → Retry on failed entries in `components/ProgressDialog.svelte` and `components/JobsPanel.svelte` via `composables/use-job-retry.ts` (`e2e/plugin-job-retry.spec.ts`). `ctx.jobs` is `scopePluginJobs(pluginId)`: disposing the context drops Retry from that plugin's entries.
 
 - `composables/use-marquee-selection.svelte.ts` — drag-rect candidate set + hit-testing
 - `composables/use-item-interactions.svelte.ts` — click/ctrl/shift selection, focus
@@ -78,8 +80,10 @@ backend for E2E/browser).
 - `src-tauri/src/files/fs_watcher.rs` — notify watcher → emits event; `files/dir_listing.rs` — cached reads + fresh complete snapshots; navigation establishes observation before scanning
 - `api/directory-wire.ts` + `src-tauri/src/files/directory_wire.rs` — compact native listing transport, exact path reconstruction and shared Rust/TypeScript fixtures; stores retain the complete immutable entry model.
 - `src-tauri/src/files/directory_cache.rs` — pure snapshot retention/publication policy, bounded by path count and retained allocation estimate; checked blocking scans in `dir_listing.rs` publish only complete results.
+- `src-tauri/src/files/search_observation.rs` — recursive search-cache registration, removal and retries run on an independent worker; final directory lease release revokes eligibility immediately, with demand identity fencing late registration. Direct directory leases never wait for recursive OS work (#1028).
 - `src-tauri/src/files/watch_observation.rs` — injected native observation generations and recovery; nonrecursive parent/root sharing, lazy recursive coverage, immediate fault invalidation and deadline-based retries (ADR 0013).
 - FLOW: `start_observed_directory` establishes renderer-owned demand before scanning; the pane stages its returned lease before publishing entries. `directory-changed` (fs_watcher.rs → directory-events.ts → pane-watch.ts) and cross-window `broadcastFileChange` both funnel through `requestRefresh` → pane `refresh()`. Refresh policy split across 3 layers — read header of `refresh-manager.ts` before touching.
+- Slow-load diagnostics (#1022): `state/explorer.svelte.ts` navigations start a trace in `state/load-watchdog.ts` and pass it through `state/directory-listing.ts` (queued-behind blocker, watch-ready) and `api/files.ts` `loadDirectory` (provider/native/decode, `traceId`/`traceWatched` IPC args; refreshes are traced but not watched) into `start_observed_directory`/`list_directory_fresh`, whose replies are `TracedReply`s (encoding timed) and whose phases (`src-tauri/src/load_diagnostics/trace.rs`) are instrumented in `files/dir_listing.rs` and `files/fs_watcher.rs`. A new step on the load path should enter a phase on that trace. At 5 s the watchdog calls `record_slow_load` (`src-tauri/src/load_diagnostics/mod.rs`) while the load is pending; `UserReportDialog.svelte` offers recent records (`domain/load-diagnostics.ts` formatting) and `user_report.rs` appends them within the relay body limit.
 - Native mutation events bypass the watcher quiet period and retain priority through coalescing. The refresh manager fixes their 150ms deadline at the first mutation request, waits for any active scan, then reconciles without the watcher storm interval. Later watcher traffic cannot move that deadline. Contracts: `tests/state/refresh-manager.test.ts`, `tests/state/pane-watch.test.ts`, `src-tauri/test_support/fs_watcher_changes.rs`.
 
 ## System file picker
@@ -276,7 +280,9 @@ backend for E2E/browser).
 - Supported-platform PDF proof also uses the hosted Windows native suite and `e2e-tauri/macos-pdf-preview.ts` through Appium Mac2/XCTest. `e2e-tauri/macos-display.swift` measures display geometry; `e2e-tauri/pdf_screenshot.py` reads native page landmarks without browser scripting or modifying screenshots, with negative controls in `e2e-tauri/test_pdf_screenshot.py`.
 
 - `state/preview-lifetime.ts` — revision tokens and blob ownership across text/image/archive/directory/video loads and unmount.
+- Fullscreen image viewing (#219, #236, #1033): `composables/use-preview-fullscreen.svelte.ts` (one controller per pane: gestures, keys, chrome-hiding attribute) + `domain/image-viewer-zoom.ts` (math) + `components/PreviewImageSurface.svelte` (shared image surface), used by file images in `PreviewPane.svelte` and by `PluginPreviewTarget.svelte`. Full-resolution images for both load through `state/preview-image.ts`. Left/Right sibling stepping is file-only (`e2e/plugin-preview-target-fullscreen.spec.ts`, `e2e/image-preview-fullscreen.spec.ts`).
 
+- `components/PreviewFolderList.svelte` — directory/ZIP children list for the preview, virtualized for huge folders (#1040)
 - `components/PreviewPane.svelte` — text/image/diff/archive/CSV preview + syntax highlight; CSV uses shared column sizing, a single outer horizontal scroll surface, and virtualized data rows; shared controlled resize (width at right, height at top/bottom); pointer capture, dock-aware keyboard bounds and fullscreen retirement; reads `settingsStore.resolvedPreviewPanePosition` (never the raw mode) for its own dock class
 - `domain/preview-size.ts` — resolved dock selects the raw dimension setting and bounded resize options; zero decodes only at the source.
 - `domain/image-crop.ts` — validated full-resolution rectangles, independent edge adjustment, size-preserving crop translation and image-rect pointer mapping; per-representation ICNS transparent-padding geometry (#681; used by the crop editor and native save validation).
@@ -291,7 +297,7 @@ backend for E2E/browser).
 - `domain/syntax-highlight.ts` — `highlightCode`, `highlightDiffLine` (hljs)
 - `domain/csv-preview.ts` — quoted CSV table parser; malformed input leaves PreviewPane on its existing text path (#666)
 - `domain/diff.ts`, `domain/markdown.ts` — diff parsing, markdown render
-- `api/files.ts` (readTextFile, readImageAsBlobUrl, listArchiveContents, gitDiff)
+- `api/files.ts` (readTextFile, readImageAsBlobUrl, listArchiveContents, gitDiff); `state/preview-image.ts` drives `readImageAsBlobUrl` as the image fallback
 - `themes/syntax.css` — shared hljs token colors
 - FLOW: selection change → PreviewPane fetches content by type → CSV parses to a shared-column virtual table or text highlights/renders. 512KB read cap, 200 CSV data-row cap, 50KB highlight cap.
 
@@ -442,6 +448,7 @@ backend for E2E/browser).
 - `components/CrashNotice.svelte`/`state`+`api/crash.ts`, `UpdateNotice.svelte`+`api/update.ts`
 - `src/hooks.client.ts` — installs global crash/error handlers before mount; `domain/crash-report.ts` — pure dedupe + log-tail→markdown
 - FLOW: any store calls `toastStore.show(...)`; ToastOverlay renders queue.
+- REPORT DIAGNOSTICS (#1022): for bug reports the dialog lists recent slow folder-load records from `recent_slow_loads`, shows the exact text, and sends it only while its checkbox is on (`diagnostics` arg); `user_report.rs` `append_diagnostics` places it in a collapsed fenced block after the environment and truncates it to the relay's `maxRelayBodyUnits`.
 - REPORT FLOW: `help.reportIssue` → `dialogStore` → `UserReportDialog` (text fields bind through `userReportDraftStore`'s debounced localStorage draft; picker + clipboard-image previews and failed-draft attachment retry cache remain in-session) → `submit_user_report` (`src-tauri/src/user_report.rs`, validates attachments and appends version/OS metadata without truncating the 8,000-unit user description or including log tails (#595)) → the public relay for both text and image reports. The relay hosts images on Blob, creates the GitHub issue, and cleans up blobs only on definite rejection. An ambiguous POST/response is reported as `submission_uncertain` so the app retains the draft and asks the reporter to check recent issues without opening a duplicate issue form. Ordinary failures use `userReportFallbackUrl`.
 - RELAY LIMITS: `website/api/report.js` is the public handler; `website/api/_report-core.js` validates reports and atomic REST Redis acknowledgements before image upload or issue creation. The underscore helper is excluded from Vercel function discovery. Production requires both shared KV environment variables and rejects malformed or unavailable counter responses with typed 503 errors (#849).
 
@@ -456,6 +463,14 @@ backend for E2E/browser).
 - `state/window-backdrop.ts`, `state/window-appearance.ts`, `components/AnimatedBackground.svelte`, `background-animations/` (particles, starfield, registry) — window backdrop + animated bg
 - FLOW: themeStore sets CSS vars / `data-theme`; `set_window_theme`/`set_window_backdrop` for native chrome. Theme application is imperative, not reactive, so anything that changes `settings.theme` behind the store's back must call `themeStore.syncFromSettings()` — config autoreload does (#599), as does `settingsStore.init()`. A `themes/*.css` edit re-runs `initTheme()` to re-inject and re-discover.
 
+## Global language models
+
+- `src/lib/components/ai/LanguageModelsSettings.svelte`, `src/lib/components/ai/TextProfileEditor.svelte` — Settings → AI → Language models: global profiles/default, custom API roots/models, explicit local checks/test generation and write-only key controls.
+- `src/lib/domain/text-connections.ts`, `src/lib/api/text-connections.ts`, `src/lib/api/mock-text-connections.ts`, `src/lib/state/text-connections.ts` — validated text contracts, typed IPC, browser fixture and window-local dirty draft/CAS/test/event coordination.
+- `src-tauri/src/ai/{mod,domain,storage,credentials,adapters}.rs` — native admission/deadlines/cancellation, canonical configuration/fingerprint, cross-process CAS/migration, OS credential ownership and HTTP adapters. Current CLI candidates fail closed while managed-policy tool isolation is unresolved.
+- `src-tauri/src/installed_plugins/text_service.rs`, `backend.rs` — broker-derived caller/incarnation, active-only reverse text routing, bounded scheduling and cancellation capacity; does not publish cross-plugin image services.
+- FLOW: global Settings → native configuration/secret commit → revision event/config watcher → consumer invalidation; Trace backend → reverse text bridge → snapshotted native adapter → context-qualified title cache. Native tests use fake CLI/local HTTP and in-memory secrets; actual keychains and packaged GUI integration remain separate acceptance.
+
 ## Plugins
 
 - `state/owned-registry.ts` — invocation identity and duplicate policy shared by command, menu, dialog and filesystem contributions.
@@ -464,7 +479,7 @@ backend for E2E/browser).
 
 - `plugins/registry.svelte.ts` — `pluginRegistry` owns activation, retry and shutdown completion; context retirement precedes reentrant hooks
 - `plugins/api.ts` — `Plugin`/`PluginContext` contract (storage, jobs, toast, settings, selection-aware inspector, and auto-disposed workspace file-change notifications)
-- `state/plugin-jobs.ts`, `api/plugin-jobs.ts` — window-owned accepted job/event reconciliation and typed IPC; plugin disable removes contributions while accepted work retains its owner.
+- `state/plugin-jobs.ts`, `api/plugin-jobs.ts` — window-owned accepted job/event reconciliation and typed IPC; plugin disable removes contributions while accepted work retains its owner. A registration's `retry` becomes the failed entry's Retry action.
 - `src-tauri/src/image_operation.rs` — immutable input snapshots and optional installed provenance around built-in image publication, independently of the Trace inspector contribution; failure/cancellation settlement retains durable attempt history.
 - `plugins/dialog-registry.svelte.ts`, `settings-registry.svelte.ts`, `fs-providers.ts` — extension points
 - built-ins: `plugins/ai-organize/`, `ai-rename/`, `nano-banana/`, `theme-from-image/`, `upscale/`, `demo/`
@@ -532,7 +547,9 @@ Planned move journal authority: `src-tauri/src/files/recovery/move_model.rs` own
 - `src/lib/plugins/runtime-sdk.ts`, `src/lib/plugins/svelte-runtime.d.ts` — precompiled external UI binds to SDK v1 and Svelte5.56.3; no private store imports or second runtime.
 - `src-tauri/src/installed_plugins/package.rs`, `src-tauri/src/installed_plugins/mod.rs`, `src-tauri/src/file_picker.rs` — native package picker, bounded validated extraction/index updates, restricted frontend asset service and lifecycle admission.
 - `src-tauri/src/installed_plugins/backend.rs`, `src-tauri/src/process_ext/windows_job.rs` — correlated bounded RPC, owned processes/spools, durable status recovery and no generation replay after lost replies.
-- `src-tauri/src/installed_plugins/lifecycle.rs` — state snapshot and preflight; durable terminal journal phase precedes cleanup, and external publication recovery begins only after commit.
+- `src-tauri/src/installed_plugins/lifecycle.rs` — private copied-state preflight with SDK-independent reverse quarantine; an irrevocable commit journal precedes index publication, a published marker prevents cleanup from undoing later mutations, and forward recovery completes interrupted publication.
 - `src-tauri/src/installed_plugins/provenance.rs`, `src-tauri/src/image_operation.rs` — optional recording for built-in producers and core crop/rename; live publisher leases survive backend replacement. TraceExplorer's provider implementation lives in https://github.com/xnmp/TraceExplorer.
 
 - `components/PreviewPane.svelte` — highlighted code inherits the configured preview font, avoiding a user-agent monospace override.
+
+- `src-tauri/src/installed_plugins/backend_native_tests.rs`, `src-tauri/test_support/legacy_trace_preflight.py` — production-broker native lifecycle outcomes and genuine prior SDK2 initialize-only copies; no live provider calls or user profile.

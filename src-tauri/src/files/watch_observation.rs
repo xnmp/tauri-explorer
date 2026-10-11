@@ -249,6 +249,19 @@ impl Retry {
     }
 }
 
+/// Read-only health retains the callback's live fault/retirement state, so
+/// publishing a snapshot never hides a native error that arrives afterward.
+pub(super) struct Coverage {
+    source: Arc<Source>,
+    covered: HashSet<PathBuf>,
+}
+
+impl Coverage {
+    pub fn healthy(&self, path: &Path) -> bool {
+        self.source.healthy() && self.covered.contains(path)
+    }
+}
+
 pub(super) struct Observation {
     mode: Mode,
     factory: Factory,
@@ -262,6 +275,12 @@ pub(super) struct Observation {
     rebuild_retry: Option<Retry>,
 }
 impl Observation {
+    pub fn coverage(&self) -> Coverage {
+        Coverage {
+            source: self.source.clone(),
+            covered: self.covered.clone(),
+        }
+    }
     pub fn new(mode: Mode, factory: Factory, notify: Notify) -> Self {
         Self {
             mode,

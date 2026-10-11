@@ -44,6 +44,7 @@ import type { Drive } from "./drives";
 import type { GitFileEntry, GitOpState } from "./git";
 import type { ImageCropCapture, ImageCropSave } from "./image-crop";
 import type { FileMutationReceipt } from "$lib/domain/file";
+import type { MockAiPresentation } from "./mock-ai-presentation";
 
 export interface MockGitState {
   branch: string;
@@ -63,6 +64,8 @@ export interface MockGitCommit {
 }
 
 export interface MockControl {
+  /** Private native-receipt fixtures; no provider execution or durable custody simulation. */
+  nativeAiPresentation?: MockAiPresentation;
   // ----- Preview / thumbnails: fixture overrides + action hooks -----
   /** Overrides `read_text_file` for the path under test. */
   previewReadText?: (path: string) => string | Promise<string>;

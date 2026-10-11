@@ -3,7 +3,7 @@
  * exercised through the built-in demo plugin's "Demo Cards" view.
  */
 import { test, expect, type Page } from "./fixtures";
-import { HOME_URL, pressShortcut, runPaletteCommand, switchViewMode, waitForEntries } from "./helpers";
+import { applySettingsAndReload, HOME_URL, pressShortcut, runPaletteCommand, switchViewMode, waitForEntries } from "./helpers";
 
 async function setDemoPluginEnabled(page: Page, enabled: boolean) {
   await page.keyboard.press("Control+,");
@@ -31,6 +31,27 @@ async function chooseDemoView(page: Page) {
   await menu.waitFor({ state: "visible", timeout: 2000 });
   await menu.getByRole("menuitemradio", { name: "Demo Cards" }).click();
   await expect(page.getByTestId("demo-file-view")).toBeVisible();
+}
+
+/** Changes the global tile size from the Settings dialog. */
+async function setGlobalTileSize(page: Page, size: "small" | "medium" | "large" | "xlarge") {
+  await page.keyboard.press("Control+,");
+  const dialog = page.locator(".settings-dialog");
+  await expect(dialog).toBeVisible({ timeout: 2000 });
+  const row = dialog.locator(".setting-row").filter({ has: page.locator(".setting-label", { hasText: /^Thumbnail Size$/ }) });
+  await row.scrollIntoViewIfNeeded();
+  await row.locator("select").selectOption(size);
+  await dialog.locator(".close-btn").click();
+  await expect(dialog).toBeHidden();
+}
+
+/** Sets this folder's tile size through "Tile View: Set Size". */
+async function setFolderTileSize(page: Page, label: string) {
+  await runPaletteCommand(page, "Tile View: Set Size");
+  const picker = page.locator(".option-picker-dialog");
+  await expect(picker).toBeVisible({ timeout: 2000 });
+  await picker.locator(".option-picker-item").filter({ hasText: new RegExp(`^\\s*${label}\\s*$`) }).click();
+  await expect(picker).toBeHidden();
 }
 
 async function openPreview(page: Page) {
@@ -88,6 +109,55 @@ test.describe("Plugin file views (demo plugin)", () => {
     await view.locator('.card[data-path="/home/user/readme.txt"]').click();
     await expect(preview.getByTestId("demo-preview-info")).toHaveText("Demo info: readme.txt");
     await expect(preview).not.toContainText("Virtual card");
+  });
+
+  test("the view reads its folder's tile size, live, and Set Size keeps it shown", async ({ page }) => {
+    await applySettingsAndReload(page, { thumbnailSize: "medium" });
+    await waitForEntries(page);
+    await setDemoPluginEnabled(page, true);
+    await chooseDemoView(page);
+    const view = page.getByTestId("demo-file-view");
+    const size = view.getByTestId("demo-tile-size");
+    // Its "Demo tiles" pass no `size`: they follow the view's folder too.
+    const tileIcon = view.getByRole("grid", { name: "Demo tiles" }).locator(".tile-icon").first();
+    const expectSize = async (preset: string, px: number) => {
+      await expect(size).toHaveAttribute("data-preset", preset);
+      await expect(size).toHaveAttribute("data-image-px", String(px));
+      await expect.poll(() => tileIcon.evaluate((el) => Math.round(el.getBoundingClientRect().width))).toBe(px);
+    };
+    await expectSize("medium", 64);
+    // Tag the mounted view: every later check must see this same instance.
+    await view.evaluate((element) => { (element as HTMLElement & { __mountTag?: string }).__mountTag = "first"; });
+    const sameMount = () => view.evaluate((element) => (element as HTMLElement & { __mountTag?: string }).__mountTag);
+
+    await setGlobalTileSize(page, "large");
+    await expectSize("large", 96);
+
+    await setFolderTileSize(page, "Extra Large");
+    await expectSize("xlarge", 128);
+    // The plugin view stays, sized by the folder's new override.
+    await expect(page.locator(".tiles-view")).toHaveCount(0);
+    expect(await sameMount()).toBe("first");
+
+    // The folder's override wins over a later global change...
+    await setGlobalTileSize(page, "small");
+    await expectSize("xlarge", 128);
+    expect(await sameMount()).toBe("first");
+
+    // ...and applies to this folder only.
+    await view.locator('.card[data-path="/home/user/Documents"]').dblclick();
+    await expect(view.locator('.card[data-path="/home/user/Documents/project"]')).toBeVisible();
+    await expectSize("small", 48);
+    await runPaletteCommand(page, "Go Back");
+    await expect(view.locator('.card[data-path="/home/user/Documents"]')).toBeVisible();
+    await expectSize("xlarge", 128);
+  });
+
+  test("Set Size from a built-in view still switches to Tiles", async ({ page }) => {
+    await setDemoPluginEnabled(page, true);
+    await setFolderTileSize(page, "Large");
+    await expect(page.locator(".tiles-view")).toBeVisible();
+    await expect(page.getByTestId("demo-file-view")).toHaveCount(0);
   });
 
   test("the toggle command returns to the previous built-in view", async ({ page }) => {

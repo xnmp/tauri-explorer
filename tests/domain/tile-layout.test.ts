@@ -2,7 +2,7 @@
  * Tile geometry shared by the Tiles view and the plugin SDK's file tiles.
  */
 import { describe, expect, it } from "vitest";
-import { gridFocusStep, THUMBNAIL_SIZE_CONFIG, tileLayout, type ThumbnailSize } from "$lib/domain/tile-layout";
+import { gridFocusStep, isThumbnailSize, paneTileSize, THUMBNAIL_SIZE_CONFIG, tileLayout, type ThumbnailSize } from "$lib/domain/tile-layout";
 
 describe("tileLayout", () => {
   it("sizes rows to padding, icon, name, selection border and gap", () => {
@@ -27,6 +27,40 @@ describe("tileLayout", () => {
   it("falls back to medium for an unknown size", () => {
     for (const bad of ["huge", "", "constructor", "__proto__", undefined, null]) {
       expect(tileLayout(bad as unknown as ThumbnailSize)).toEqual(tileLayout("medium"));
+    }
+  });
+});
+
+describe("paneTileSize (plugin SDK FileViewPane.tileSize)", () => {
+  it("gives each preset's thumbnail edge in CSS px", () => {
+    expect((["small", "medium", "large", "xlarge"] as const).map((preset) => paneTileSize(preset)))
+      .toEqual([
+        { preset: "small", imagePx: 48 },
+        { preset: "medium", imagePx: 64 },
+        { preset: "large", imagePx: 96 },
+        { preset: "xlarge", imagePx: 128 },
+      ]);
+  });
+
+  it("falls back to medium for an unknown preset, like tileLayout", () => {
+    for (const bad of ["huge", "", "constructor", "__proto__", "toString", undefined, null]) {
+      expect(paneTileSize(bad as unknown as ThumbnailSize)).toEqual({ preset: "medium", imagePx: 64 });
+    }
+  });
+
+  it("is immutable, so a plugin cannot change it for other readers", () => {
+    const value = paneTileSize("large");
+    expect(Object.isFrozen(value)).toBe(true);
+    expect(() => { (value as { imagePx: number }).imagePx = 1; }).toThrow();
+    expect(paneTileSize("large").imagePx).toBe(96);
+  });
+});
+
+describe("isThumbnailSize", () => {
+  it("accepts exactly the presets", () => {
+    expect(["small", "medium", "large", "xlarge"].every(isThumbnailSize)).toBe(true);
+    for (const bad of ["Small", "huge", "", "constructor", "hasOwnProperty", 64, null, undefined, {}]) {
+      expect(isThumbnailSize(bad), String(bad)).toBe(false);
     }
   });
 });

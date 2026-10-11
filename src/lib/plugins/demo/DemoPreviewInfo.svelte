@@ -25,7 +25,7 @@
 </div>
 
 <style>
-  .demo-section { padding: 10px 16px; font-size: 12px; color: var(--text-secondary); }
+  .demo-section { padding: 10px var(--preview-info-inset); font-size: 12px; color: var(--text-secondary); }
   .demo-title { margin: 0 0 6px; font-size: 13px; font-weight: 600; color: var(--text-primary); }
   .demo-info, .demo-prompt { margin: 0 0 6px; }
   .demo-rows { margin: 0; display: grid; gap: 4px; }

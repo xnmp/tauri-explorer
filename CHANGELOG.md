@@ -2,6 +2,99 @@
 
 All notable changes to Tauri Explorer.
 
+## v1.11.6 — 2026-10-10
+
+Hotfix for folder loads that could stall for a minute after Quick Open searched
+a large folder such as the home directory.
+
+### Fixed
+
+- Recursive search-cache watcher registration, cleanup and recovery now run
+  independently of folder navigation. A slow, unreadable or over-capacity search
+  tree no longer holds the shared watcher lock needed by other panes and windows.
+  Cache coverage is revoked immediately on the final folder-watch release, and
+  late registration cannot revive an old cache after release/reacquire (#1028).
+- The Preview pane virtualizes huge folder listings instead of rendering every
+  entry at once (#1040).
+- Generated image themes solve text contrast for WCAG AA (#791).
+- Create Theme from Image appears in the shared AI submenu (#1041).
+- Plugin profile ownership is released even when descendants inherit process
+  descriptors (#1037).
+
+## v1.11.5 — 2026-10-09
+
+This update lets an image a plugin shows in Preview, such as an unsaved
+TraceExplorer image, go full screen like any image file. Plugin views can now
+follow the folder's tile size, and failed plugin jobs offer Retry right in
+the Image generation panel. It pairs with TraceExplorer v0.2.2.
+
+### Added
+
+- Plugin file views can match the folder's tile size (capability
+  `tileSize`): the pane handle's `tileSize` gives the size the Tiles view
+  would use there (the folder's own size from Tile View: Set Size or the
+  context menu's Icon Size, else the global setting) and updates when either
+  changes, and `ui/file-tiles` accepts that size through an optional `size`
+  prop. Without it, file tiles in a plugin file view follow that folder's
+  size too, so plugins built before this also follow Tile View: Set Size;
+  elsewhere they keep following the global setting. A malformed per-folder
+  size now falls back to the global setting rather than Medium (#1029).
+- Failed plugin jobs can offer Retry right on their entry in Background
+  Operations (the Image generation panel) and the Background Jobs panel, so
+  an AI image edit that fails (for example when the model replies with a
+  refusal instead of an image) is one click to try again. Plugins opt in by
+  passing `retry` when they register the job (capability `jobRetry`); the
+  failed entry is replaced by the new job and focus moves to it, or the
+  entry keeps the reason the retry could not start, which is also shown as
+  a notification. An entry cannot be dismissed while its retry is starting,
+  and a disabled or removed plugin's jobs no longer offer Retry (#1031).
+
+### Changed
+
+- Tile View: Set Size keeps a plugin file view that is showing, which now
+  follows the new size, instead of switching the pane to Tiles; from a
+  built-in view it still switches to Tiles (#1029).
+
+### Fixed
+
+- An image shown in Preview by a plugin, such as an unsaved TraceExplorer
+  image that exists only in a temp folder, can now be viewed full screen like
+  any image file: double-click the Preview pane or click the image, zoom with
+  +/-, 0 or the mouse wheel, drag or use the arrow keys to pan, and press Esc
+  to leave. Full screen shows the image at its full resolution rather than
+  the Preview thumbnail. Plugin Preview-info sections are now hidden in full
+  screen too, for files as well as plugin images (#1033).
+
+## v1.11.4 — 2026-10-09
+
+This update records why a folder takes more than 5 seconds to load, so you
+can send that with a bug report, and keeps the Preview image steady when
+moving between images. It also lets plugin Preview sections line up with the
+built-in info rows. It pairs with TraceExplorer v0.2.1.
+
+### Added
+
+- When a folder takes more than 5 seconds to load, Tauri Explorer now records
+  why while the load is still stuck: which step was waiting (queued behind
+  another listing, file-watcher setup, reading the directory, per-entry
+  metadata, sorting, and so on), entries read so far, any entry whose
+  metadata read is hanging, time spent encoding or delivering a very large
+  listing, and the folder's filesystem type (for example an sshfs, rclone or
+  NFS mount, also when reached through a symlink). Records are kept in the
+  `slow-loads` folder inside the logs folder, and Report Issue offers to
+  attach those from the last 24 hours to a bug report, showing exactly what
+  will be sent; they include folder paths but no file names, and can be
+  excluded (#1022, #1023).
+
+### Fixed
+
+- Preview no longer blanks the image for a frame or more when the selection
+  moves from one image to another: the previous image stays until the next
+  one is decoded (with a spinner over it if that takes a while), so the pane
+  does not flash or re-lay out. Plugin Preview-info sections can now line up
+  with the host's info rows in every dock through `--preview-info-inset`
+  (#1024).
+
 ## v1.11.3 — 2026-10-08
 
 This update adds installable plugins with a revamped plugin SDK, AI image

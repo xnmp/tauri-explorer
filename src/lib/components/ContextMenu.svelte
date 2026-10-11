@@ -11,6 +11,7 @@
   import { manualHiddenStore } from "$lib/state/manual-hidden.svelte";
   import { settingsStore, type ThumbnailSize } from "$lib/state/settings.svelte";
   import { folderViewsStore } from "$lib/state/folder-views.svelte";
+  import { folderTileSize } from "$lib/state/folder-tile-size";
   import { frecencyStore } from "$lib/state/frecency.svelte";
   import { toastStore } from "$lib/state/toast.svelte";
   import { openFile } from "$lib/api/open";
@@ -312,9 +313,7 @@
 
   const tileSizeLabels: Record<string, string> = { small: "Small", medium: "Medium", large: "Large", xlarge: "Extra Large" };
 
-  const effectiveThumbnailSize = $derived(
-    folderViewsStore.getThumbnailSize(explorer.currentPath, settingsStore.thumbnailSize)
-  );
+  const effectiveThumbnailSize = $derived(folderTileSize(explorer.currentPath));
 
   // Compute submenu flip direction from the already-clamped menu position
   // and viewport size. All values are in CSS pixels — no getBoundingClientRect

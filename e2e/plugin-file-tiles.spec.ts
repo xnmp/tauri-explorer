@@ -10,8 +10,8 @@ import { applySettingsAndReload, switchViewMode, waitForEntries } from "./helper
 const PICTURES = "/home/user/Pictures";
 
 /** Mounts the module into a fixed-width host and records every callback. */
-async function mountTiles(page: Page, width: number): Promise<void> {
-  await page.evaluate(async ({ width, root }) => {
+async function mountTiles(page: Page, width: number, size?: string): Promise<void> {
+  await page.evaluate(async ({ width, root, size }) => {
     const { exposePluginSDK } = await import("/src/lib/plugins/runtime-sdk.ts");
     exposePluginSDK();
     const sdk = (window as any).__TAURI_EXPLORER_PLUGIN_SDK__;
@@ -36,9 +36,10 @@ async function mountTiles(page: Page, width: number): Promise<void> {
         onselect: (e: { path: string }, event: MouseEvent) => calls.push(`select:${e.path}:${event instanceof MouseEvent}:${event.ctrlKey}`),
         onopen: (e: { path: string }) => calls.push(`open:${e.path}`),
         onmenu: (e: { path: string }, event: MouseEvent) => calls.push(`menu:${e.path}:${event.defaultPrevented}`),
+        ...(size === undefined ? {} : { size }),
       },
     });
-  }, { width, root: PICTURES });
+  }, { width, root: PICTURES, size });
 }
 
 const calls = (page: Page) => page.evaluate(() => (window as any).__tileCalls as string[]);
@@ -109,6 +110,24 @@ test.describe("Plugin SDK file tiles", () => {
     await page.evaluate(() => { (window as any).__tileHost.style.width = "300px"; });
     await expect(grid).toHaveAttribute("aria-colcount", "2");
     await expect(grid.getByRole("row")).toHaveCount(3);
+  });
+
+  test("a size preset overrides the global tile-size setting", async ({ page }) => {
+    await applySettingsAndReload(page, { thumbnailSize: "medium" });
+    await waitForEntries(page);
+    const capabilities = await page.evaluate(async () => {
+      const { exposePluginSDK } = await import("/src/lib/plugins/runtime-sdk.ts");
+      exposePluginSDK();
+      return (window as any).__TAURI_EXPLORER_PLUGIN_SDK__.capabilities as string[];
+    });
+    expect(capabilities).toContain("tileSize");
+    await mountTiles(page, 640, "xlarge");
+    const grid = page.getByRole("grid", { name: "Trace images" });
+    // 640px less 16px padding fits three 172px xlarge columns with 6px gaps
+    // (five at the global medium size).
+    await expect(grid).toHaveAttribute("aria-colcount", "3");
+    const icon = grid.locator(`[data-entry-path="${PICTURES}/notes.txt"] .tile-icon`);
+    await expect.poll(() => icon.evaluate((el) => Math.round(el.getBoundingClientRect().width))).toBe(128);
   });
 
   test("tiles match the built-in Tiles view's", async ({ page }) => {

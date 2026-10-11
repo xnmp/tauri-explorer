@@ -17,8 +17,7 @@
   import { createScrollJankMonitor } from "$lib/domain/scroll-jank-monitor";
   import { logFrontendDiagnostic } from "$lib/api/frontend-log";
 
-  import { settingsStore } from "$lib/state/settings.svelte";
-  import { folderViewsStore } from "$lib/state/folder-views.svelte";
+  import { folderTileSize } from "$lib/state/folder-tile-size";
   import EntryName from "./EntryName.svelte";
   import GitStatusBadge from "./GitStatusBadge.svelte";
   import TileSurface from "./TileSurface.svelte";
@@ -44,9 +43,7 @@
 
   let { explorer, contentWidth, onitemclick, onitemdblclick, scrollToIndex = $bindable(), containsIndex = $bindable(), fallbackTabStop, onviewportscroll, onlayoutchange }: Props = $props();
 
-  const effectiveThumbnailSize = $derived(
-    folderViewsStore.getThumbnailSize(explorer.currentPath, settingsStore.thumbnailSize)
-  );
+  const effectiveThumbnailSize = $derived(folderTileSize(explorer.currentPath));
   // Sizes, spacing and the fixed row height shared with every tile grid.
   const layout = $derived(tileLayout(effectiveThumbnailSize));
 

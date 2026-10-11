@@ -10,6 +10,9 @@ import type { FileEntry } from "$lib/domain/file";
 import { isVirtualPath } from "$lib/domain/virtual-path";
 import { createOrderedRegistry } from "$lib/state/ordered-registry";
 import type { PreviewTarget } from "./preview-registry.svelte";
+import type { PaneTileSize } from "$lib/domain/tile-layout";
+
+export type { PaneTileSize, TileSizePreset } from "$lib/domain/tile-layout";
 
 import { isFileViewId } from "$lib/domain/file-view-id";
 
@@ -28,6 +31,14 @@ export interface FileViewPane {
   readonly active: boolean;
   /** The pane's current plugin preview target, when this view owns it. */
   readonly previewTarget: PreviewTarget | null;
+  /**
+   * The tile size the built-in Tiles view would use here: the folder's
+   * override ("Tile View: Set Size", the context menu's Icon Size), else the
+   * global setting. Reactive, so a view sized from it follows both. Present
+   * on hosts with the `"tileSize"` capability; pass `tileSize?.preset` as
+   * `ui/file-tiles`'s `size`.
+   */
+  readonly tileSize?: PaneTileSize;
   /** Select one entry with the normal modifier semantics (Ctrl toggles, Shift extends). */
   select(entry: FileEntry, modifiers?: { ctrlKey?: boolean; shiftKey?: boolean }): void;
   /** Replace the selection; `focus` becomes the cursor/primary entry. */

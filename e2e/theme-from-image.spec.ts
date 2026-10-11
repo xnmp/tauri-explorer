@@ -14,7 +14,9 @@ test("context menu generates and applies a theme from an image", async ({ page }
   const image = page.locator(".entry-item", { hasText: ".jpg" }).first();
   await image.click({ button: "right" });
 
-  const item = page.locator(".context-menu .menu-item", { hasText: "Create Theme from Image" });
+  const menu = page.locator(".context-menu");
+  await menu.getByRole("menuitem", { name: "AI", exact: true }).hover();
+  const item = menu.locator(".ai-submenu .menu-item", { hasText: "Create Theme from Image" });
   await expect(item).toBeVisible();
   await item.click();
 
@@ -30,6 +32,7 @@ test("context menu generates and applies a theme from an image", async ({ page }
   expect(accent).toBe("#d98500");
 
   await expect(page.locator(".toast")).toContainText("created and applied");
+  await page.screenshot({ path: "evidence/ac-3-theme-image-created.png" });
 });
 
 test("context item hidden for non-image files", async ({ page }) => {

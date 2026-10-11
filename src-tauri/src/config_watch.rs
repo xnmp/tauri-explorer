@@ -53,6 +53,17 @@ struct ConfigChangedPayload {
     filename: String,
 }
 
+/// Tell the frontend a config-dir file changed. Every emitter goes through
+/// here so the payload always has the `{filename}` shape the listener reads.
+pub(crate) fn emit_config_file_changed(app: &AppHandle, filename: &str) -> tauri::Result<()> {
+    app.emit(
+        "config-file-changed",
+        ConfigChangedPayload {
+            filename: filename.to_owned(),
+        },
+    )
+}
+
 /// The filesystem locations that must be watched to observe reloadable config.
 ///
 /// `config_dir` is always watched recursively. Symlink targets outside it are
@@ -553,12 +564,7 @@ fn spawn_flush_thread(app: AppHandle) {
                 }
             }
             log::debug!("config-file-changed: {filename}");
-            if let Err(error) = app.emit(
-                "config-file-changed",
-                ConfigChangedPayload {
-                    filename: filename.clone(),
-                },
-            ) {
+            if let Err(error) = emit_config_file_changed(&app, &filename) {
                 log::warn!("Failed to emit config-file-changed for {filename}: {error}");
             }
         }

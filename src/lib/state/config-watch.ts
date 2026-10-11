@@ -75,6 +75,13 @@ export async function handleConfigFileChanged(filename: string): Promise<void> {
   }
 }
 
+/** The filename an event payload names, or null when it is not the `{filename}` shape the backend sends. */
+export function changedFilename(payload: unknown): string | null {
+  if (!payload || typeof payload !== "object") return null;
+  const filename = (payload as { filename?: unknown }).filename;
+  return typeof filename === "string" ? filename : null;
+}
+
 /**
  * Start applying config-file changes. Returns a stop function.
  *
@@ -86,8 +93,9 @@ export function startConfigWatch(): () => void {
   let unlisten: UnlistenFn | null = null;
   let stopped = false;
 
-  void listen<{ filename: string }>(CONFIG_CHANGED_EVENT, (event) => {
-    void handleConfigFileChanged(event.payload.filename);
+  void listen<unknown>(CONFIG_CHANGED_EVENT, (event) => {
+    const filename = changedFilename(event.payload);
+    if (filename !== null) void handleConfigFileChanged(filename);
   })
     .then((fn) => {
       // The caller may have torn down before listen() resolved.

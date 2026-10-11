@@ -1,6 +1,6 @@
 /** @typedef {{ scope: string, key: string, limit: number, windowMs: number }} LimitEntry */
 /** @typedef {{ consume(entries: LimitEntry[], now?: number): Promise<string | undefined> }} RateLimitStore */
-/** @typedef {{ name: string, mediaType: "image/png" | "image/jpeg" | "image/gif", bytes: Uint8Array }} ValidAttachment */
+/** @typedef {{ name: string, mediaType: "image/png" | "image/jpeg" | "image/gif" | "video/mp4" | "video/webm" | "video/quicktime", bytes: Uint8Array }} ValidAttachment */
 /** @typedef {{ title: string, body: string, kind: "bug" | "feature", attachments: ValidAttachment[] }} ValidReport */
 /** @typedef {{ upload(attachment: ValidAttachment): Promise<string>, remove(urls: string[]): Promise<void> }} AttachmentStore */
 
@@ -76,7 +76,7 @@ function optionalMultilineString(input, field, max) {
 }
 
 /** @param {string} mediaType @param {Uint8Array} bytes */
-function hasImageMagic(mediaType, bytes) {
+function hasMediaMagic(mediaType, bytes) {
   /** @param {number[]} signature */
   const startsWith = (signature) =>
     signature.every((value, index) => bytes[index] === value);
@@ -88,14 +88,20 @@ function hasImageMagic(mediaType, bytes) {
     return startsWith([0x47, 0x49, 0x46, 0x38, 0x37, 0x61])
       || startsWith([0x47, 0x49, 0x46, 0x38, 0x39, 0x61]);
   }
-  return false;
+  if (mediaType === "video/webm") return startsWith([26, 69, 223, 163]);
+  if (mediaType !== "video/mp4" && mediaType !== "video/quicktime") return false;
+  if (bytes.length < 16 || Buffer.from(bytes.subarray(4, 8)).toString("latin1") !== "ftyp") return false;
+  const boxSize = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength).getUint32(0);
+  if (boxSize < 16 || boxSize > bytes.length) return false;
+  const brand = Buffer.from(bytes.subarray(8, 12)).toString("latin1");
+  return mediaType === "video/quicktime" ? brand === "qt  " : ["isom", "iso2", "iso3", "iso4", "iso5", "iso6", "iso8", "iso9", "avc1", "mp41", "mp42", "M4V ", "MSNV", "dash"].includes(brand);
 }
 
 /** @param {unknown} input @returns {ValidAttachment[]} */
 function validateAttachments(input) {
   if (input == null) return [];
   if (!Array.isArray(input) || input.length > REPORT_LIMITS.maxAttachments) {
-    throw new ReportError("malformed_input", "Attach up to 3 images");
+    throw new ReportError("malformed_input", "Attach up to 3 images and videos");
   }
   let total = 0;
   return input.map((value) => {
@@ -105,7 +111,7 @@ function validateAttachments(input) {
     const record = /** @type {Record<string, unknown>} */ (value);
     const name = requiredString(record.name, "attachment name", REPORT_LIMITS.maxAttachmentNameUnits);
     const mediaType = record.mediaType;
-    if (!["image/png", "image/jpeg", "image/gif"].includes(
+    if (!["image/png", "image/jpeg", "image/gif", "video/mp4", "video/webm", "video/quicktime"].includes(
       /** @type {string} */ (mediaType),
     )) {
       throw new ReportError("malformed_input", "Attachment type is invalid");
@@ -120,7 +126,7 @@ function validateAttachments(input) {
     if (buffer.toString("base64") !== record.data
       || buffer.length === 0
       || buffer.length > REPORT_LIMITS.maxAttachmentBytes
-      || !hasImageMagic(/** @type {string} */ (mediaType), buffer)) {
+      || !hasMediaMagic(/** @type {string} */ (mediaType), buffer)) {
       throw new ReportError("malformed_input", "Attachment data is invalid");
     }
     total += buffer.length;
@@ -164,14 +170,14 @@ function escapeMarkdownAlt(value) {
   return value.replaceAll("\\", "\\\\").replaceAll("[", "\\[").replaceAll("]", "\\]");
 }
 
-/** @typedef {{ name: string, url: string }} HostedAttachment */
+/** @typedef {{ name: string, url: string, mediaType?: string }} HostedAttachment */
 
 /** @param {ValidReport} report @param {HostedAttachment[]} [hostedAttachments] */
 export function buildGitHubIssue(report, hostedAttachments = []) {
   const attachments = hostedAttachments.length === 0
     ? ""
-    : `${report.body ? "\n\n" : ""}## Attachments\n\n${hostedAttachments.map(({ name, url }) =>
-      `![${escapeMarkdownAlt(name)}](${url})`
+    : `${report.body ? "\n\n" : ""}## Attachments\n\n${hostedAttachments.map(({ name, url, mediaType }) =>
+      `${mediaType?.startsWith("video/") ? "" : "!"}[${escapeMarkdownAlt(name)}](${url})`
     ).join("\n\n")}`;
   return {
     title: report.title,
@@ -281,7 +287,7 @@ export async function processReport(
     return createIssue(buildGitHubIssue(report));
   }
   if (!attachmentStore) {
-    throw new ReportError("server_rejected", "Image hosting is not configured", 503);
+    throw new ReportError("server_rejected", "Attachment hosting is not configured", 503);
   }
   const hostedAttachments = [];
   let issueAttempted = false;
@@ -289,6 +295,7 @@ export async function processReport(
     for (const attachment of report.attachments) {
       hostedAttachments.push({
         name: attachment.name,
+        mediaType: attachment.mediaType,
         url: await attachmentStore.upload(attachment),
       });
     }

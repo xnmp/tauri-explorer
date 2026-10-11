@@ -43,3 +43,15 @@ surfaces with a frame-diffed recording of the real app.
 animate only non-composited properties (clip-path, margin/inset, size).
 Opacity, transform and filter animations make WebKitGTK drop the backdrop for
 a frame when they end.
+
+**Follow-up (#1071):** the first version of the spec counted
+`animationstart` events per gesture. WebKit dispatches animation events lazily:
+locally they arrived 150–400 ms after the reveal, with `animationend` right
+behind. On CI they could arrive after the 500 ms settle window (count 0), or
+after the next gesture's probe reset (count 2). The spec now observes
+synchronously:
+- reveals, from the `revealed` class mutation;
+- composited keyframes, through `getAnimations({ subtree: true })` both at the
+  reveal and on every frame. Headless WebKit can finish a 140 ms entrance before
+  the next frame, so the check at reveal is what catches it there;
+- opacity, through computed style on every frame.

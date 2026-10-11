@@ -8,8 +8,8 @@
  * opening. Chromium cannot render that glitch, so this suite pins the contract
  * that prevents it: menu surfaces (`.context-menu`, `.submenu`) and their
  * contents never run composited animations and are fully opaque on every
- * visible frame; the main menu's entrance starts once, only after its hidden
- * measuring frame; and each gesture mounts the menu exactly once.
+ * visible frame; the main menu is revealed (with its entrance) once, only
+ * after its hidden measuring frame; and each gesture mounts it exactly once.
  */
 import { test, expect, type Locator, type Page } from "./fixtures";
 import { ALL_VIEW_MODES, seedSettings, waitForEntries, type ViewMode } from "./helpers";
@@ -21,52 +21,73 @@ const LAYOUTS = ["single pane", "preview pane + two panes"] as const;
 
 type Probe = {
   inserted: number;
-  animations: number;
-  animationsWhileHidden: number;
+  reveals: number;
+  revealsWhileHidden: number;
+  unanimatedReveals: number;
   compositedAnimations: number;
   translucentFrames: number;
 };
 
-const ZERO = { animationsWhileHidden: 0, compositedAnimations: 0, translucentFrames: 0 };
+const ZERO = { revealsWhileHidden: 0, unanimatedReveals: 0, compositedAnimations: 0, translucentFrames: 0 };
 
 const MENU_SURFACE = ".context-menu, .submenu";
 
+/**
+ * Everything is observed synchronously (mutations, getAnimations, computed
+ * style per frame). WebKit dispatches animationstart/animationend lazily — up
+ * to ~400 ms after the animation began locally, later on CI — so counting
+ * those events attributed them to the wrong gesture (#1071).
+ */
 async function installProbe(page: Page): Promise<void> {
   await page.evaluate((surface) => {
     const w = window as unknown as { __ctxProbe: Probe };
-    w.__ctxProbe = { inserted: 0, animations: 0, animationsWhileHidden: 0, compositedAnimations: 0, translucentFrames: 0 };
+    w.__ctxProbe = { inserted: 0, reveals: 0, revealsWhileHidden: 0, unanimatedReveals: 0, compositedAnimations: 0, translucentFrames: 0 };
     // Properties WebKit animates on the compositor (layer torn down at the end).
     const COMPOSITED = ["opacity", "transform", "translate", "scale", "rotate", "filter", "backdropFilter"];
+    const seen = new WeakSet<Animation>();
+    const inspectAnimations = (el: HTMLElement) => {
+      for (const animation of el.getAnimations({ subtree: true })) {
+        if (seen.has(animation)) continue;
+        seen.add(animation);
+        const keyframes = (animation.effect as KeyframeEffect).getKeyframes();
+        if (keyframes.some((frame) => COMPOSITED.some((prop) => prop in frame))) w.__ctxProbe.compositedAnimations++;
+      }
+    };
+    const revealed = (el: HTMLElement) => {
+      w.__ctxProbe.reveals++;
+      // Also at reveal: headless WebKit can finish a short entrance before the
+      // next animation frame samples it.
+      inspectAnimations(el);
+      const style = getComputedStyle(el);
+      if (style.visibility === "hidden") w.__ctxProbe.revealsWhileHidden++;
+      if (!style.animationName.includes("menuReveal")) w.__ctxProbe.unanimatedReveals++;
+    };
     new MutationObserver((records) => {
       for (const record of records) {
+        if (record.type === "attributes") {
+          const el = record.target as HTMLElement;
+          const was = (record.oldValue ?? "").split(/\s+/).includes("revealed");
+          if (el.classList.contains("context-menu") && el.classList.contains("revealed") && !was) revealed(el);
+          continue;
+        }
         for (const node of record.addedNodes) {
           if (!(node instanceof HTMLElement)) continue;
-          if (node.matches(".context-menu") || node.querySelector(".context-menu")) w.__ctxProbe.inserted++;
+          const menu = node.matches(".context-menu") ? node : node.querySelector<HTMLElement>(".context-menu");
+          if (!menu) continue;
+          w.__ctxProbe.inserted++;
+          if (menu.classList.contains("revealed")) revealed(menu);
         }
       }
-    }).observe(document.body, { childList: true, subtree: true });
-    document.addEventListener(
-      "animationstart",
-      (e) => {
-        const target = e.target as HTMLElement;
-        if (!target.closest?.(surface)) return;
-        for (const animation of target.getAnimations()) {
-          const keyframes = (animation.effect as KeyframeEffect).getKeyframes();
-          if (keyframes.some((frame) => COMPOSITED.some((prop) => prop in frame))) w.__ctxProbe.compositedAnimations++;
-        }
-        if (!target.classList.contains("context-menu")) return;
-        w.__ctxProbe.animations++;
-        if (getComputedStyle(target).visibility === "hidden") w.__ctxProbe.animationsWhileHidden++;
-      },
-      true,
-    );
-    // Every frame, any visible menu surface must already be fully opaque.
+    }).observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ["class"], attributeOldValue: true });
+    // Every frame: any visible menu surface must be fully opaque, and no
+    // animation on a surface or inside it may animate a composited property.
     const sample = () => {
       for (const el of document.querySelectorAll<HTMLElement>(surface)) {
         const style = getComputedStyle(el);
         if (style.visibility !== "hidden" && el.offsetParent !== null && style.opacity !== "1") {
           w.__ctxProbe.translucentFrames++;
         }
+        inspectAnimations(el);
       }
       requestAnimationFrame(sample);
     };
@@ -77,11 +98,7 @@ async function installProbe(page: Page): Promise<void> {
 async function resetProbe(page: Page): Promise<void> {
   await page.evaluate(() => {
     const w = window as unknown as { __ctxProbe: Probe };
-    w.__ctxProbe.inserted = 0;
-    w.__ctxProbe.animations = 0;
-    w.__ctxProbe.animationsWhileHidden = 0;
-    w.__ctxProbe.compositedAnimations = 0;
-    w.__ctxProbe.translucentFrames = 0;
+    for (const key of Object.keys(w.__ctxProbe) as (keyof Probe)[]) w.__ctxProbe[key] = 0;
   });
 }
 
@@ -133,7 +150,7 @@ for (const layout of LAYOUTS) {
         await waitForEntries(page);
         await resetProbe(page);
         await rows(page).nth(0).click({ button: "right" });
-        expect(await settledCounts(page)).toEqual({ inserted: 1, animations: 1, ...ZERO });
+        expect(await settledCounts(page)).toEqual({ inserted: 1, reveals: 1, ...ZERO });
       });
 
       test("right-click on another entry while a menu is open replaces it with one mount", async ({ page }) => {
@@ -147,7 +164,7 @@ for (const layout of LAYOUTS) {
         await resetProbe(page);
         await page.mouse.click(x, y, { button: "right" });
         await expect(second).toHaveClass(/selected/);
-        expect(await settledCounts(page)).toEqual({ inserted: 1, animations: 1, ...ZERO });
+        expect(await settledCounts(page)).toEqual({ inserted: 1, reveals: 1, ...ZERO });
         // The menu moved to the new target rather than staying on the old one.
         await expect(page.locator(".file-list").first().locator(".entry-item.selected")).toHaveAttribute("data-path", secondPath!);
       });
@@ -159,7 +176,7 @@ for (const layout of LAYOUTS) {
         await resetProbe(page);
         const box = (await page.locator(".file-list").first().boundingBox())!;
         await page.mouse.click(box.x + 6, box.y + box.height - 6, { button: "right" });
-        expect(await settledCounts(page)).toEqual({ inserted: 1, animations: 1, ...ZERO });
+        expect(await settledCounts(page)).toEqual({ inserted: 1, reveals: 1, ...ZERO });
       });
     });
   }

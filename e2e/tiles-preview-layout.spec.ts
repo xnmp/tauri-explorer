@@ -18,8 +18,14 @@ async function installLayoutProbe(page: Page) {
             const row = surface?.querySelector<HTMLElement>(".tile-row");
             if (!surface || !row) continue;
             const style = getComputedStyle(surface);
+            // Use the live row width, including any scrollbar space already
+            // consumed by its viewport. It is independent of column count.
             const probe = document.createElement("div");
-            probe.style.cssText = `position:absolute;visibility:hidden;display:grid;width:${entry.contentRect.width - 16}px;grid-template-columns:repeat(auto-fill,minmax(${style.getPropertyValue("--tile-min-col")},1fr));gap:${style.getPropertyValue("--tile-gap")}`;
+            probe.style.cssText = `position:absolute;visibility:hidden;display:grid;width:${row.getBoundingClientRect().width}px;grid-template-columns:repeat(auto-fill,minmax(${style.getPropertyValue("--tile-min-col")},1fr));gap:${style.getPropertyValue("--tile-gap")}`;
+            // WebKit omits gaps from empty auto-fill grids. Populate every
+            // possible track so the probe models a real row in both engines.
+            const slots = Math.ceil(row.getBoundingClientRect().width / parseFloat(style.getPropertyValue("--tile-min-col")));
+            for (let i = 0; i < slots; i++) probe.append(document.createElement("div"));
             document.body.append(probe);
             samples.push({
               width: entry.contentRect.width,
@@ -58,7 +64,7 @@ async function expectMatchingDelivery(page: Page) {
   const samples = await page.evaluate(() =>
     (window as unknown as { tileLayoutSamples: { expected: string; actual: string }[] }).tileLayoutSamples,
   );
-  for (const sample of samples) expect(sample.actual).toBe(sample.expected);
+  for (const sample of samples) expect(sample.actual, JSON.stringify(sample)).toBe(sample.expected);
 }
 
 for (const exit of ["Escape", "double-click"] as const) {

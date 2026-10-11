@@ -12,3 +12,7 @@ tracks immediately after the application callback, before deferred Svelte work.
 An independent browser CSS auto-fill grid supplies the expected tracks. Sampling
 only after an awaited locator assertion would miss the stale layout. This proves
 layout delivery, not presentation timing in a native Wayland compositor.
+
+Populate CSS auto-fill probes: WebKit reports empty-grid track widths without
+subtracting gaps. Use the live row width and enough blank cells to occupy every
+possible track, then compare actual tracks synchronously during delivery.

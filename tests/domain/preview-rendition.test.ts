@@ -6,6 +6,7 @@ import { describe, expect, it } from "vitest";
 import {
   DEFAULT_RENDITION_EDGE,
   RENDITION_EDGE_BUCKETS,
+  mayHaveRendition,
   needsFullResolution,
   renditionMaxEdge,
 } from "$lib/domain/preview-rendition";
@@ -58,5 +59,23 @@ describe("needsFullResolution", () => {
     expect(needsFullResolution({ fullscreen: false, zoom: 1 })).toBe(false);
     expect(needsFullResolution({ fullscreen: true, zoom: 1 })).toBe(true);
     expect(needsFullResolution({ fullscreen: false, zoom: 1.25 })).toBe(true);
+  });
+});
+
+describe("mayHaveRendition", () => {
+  it("is true for the raster formats the backend can render down", () => {
+    for (const path of ["/w/a.jpg", "/w/b.JPEG", "/w/c.png", "/w/d.webp", "C:\\Users\\u\\e.bmp"]) {
+      expect(mayHaveRendition(path), path).toBe(true);
+    }
+  });
+
+  it("is false for formats the webview must render and for odd names", () => {
+    for (const path of ["/w/a.gif", "/w/b.svg", "/w/c.avif", "/w/d.icns", "/w/.png", "/w/png", "/w.png/readme", ""]) {
+      expect(mayHaveRendition(path), path).toBe(false);
+    }
+  });
+
+  it("is false for virtual paths, which the backend cannot read", () => {
+    expect(mayHaveRendition("zip:///home/u/a.zip/huge.png")).toBe(false);
   });
 });

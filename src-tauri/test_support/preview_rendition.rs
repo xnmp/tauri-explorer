@@ -3,6 +3,7 @@
 
 use super::*;
 use std::fs::File;
+use std::io::{BufReader, Cursor};
 use std::time::SystemTime;
 use tempfile::{tempdir, TempDir};
 
@@ -387,4 +388,228 @@ fn the_command_answer_serialises_as_the_frontend_expects() {
         .unwrap(),
         serde_json::json!({ "kind": "rendition", "path": "/c/a.preview.jpg" })
     );
+}
+
+#[test]
+fn the_same_mtime_with_a_different_length_produces_a_new_rendition() {
+    let fx = Fixture::new();
+    let source = fx.path("wide.png");
+    let mtime = SystemTime::UNIX_EPOCH + Duration::from_secs(1_500_000_000);
+    opaque(3000, 1500).save(&source).unwrap();
+    with_mtime(&source, mtime);
+    let first = rendition_path(&fx.resolve("wide.png", 1024).0);
+
+    // A different image, written back with the identical mtime.
+    opaque(3000, 1499).save(&source).unwrap();
+    with_mtime(&source, mtime);
+    let second = rendition_path(&fx.resolve("wide.png", 1024).0);
+    assert_ne!(first, second);
+    assert_eq!(image::image_dimensions(second).unwrap(), (1024, 512));
+}
+
+#[test]
+fn a_renamed_file_gets_its_own_rendition() {
+    let fx = Fixture::new();
+    opaque(3000, 1500).save(fx.path("before.png")).unwrap();
+    let first = rendition_path(&fx.resolve("before.png", 1024).0);
+
+    fs::rename(fx.path("before.png"), fx.path("after.png")).unwrap();
+    let (second, resolution) = fx.resolve("after.png", 1024);
+    assert!(matches!(resolution, Resolution::Generated { .. }));
+    assert_ne!(rendition_path(&second), first);
+}
+
+/// A minimal but well-formed ICC header-sized blob; the decoders treat ICC
+/// payloads as opaque bytes.
+fn fake_icc_profile() -> Vec<u8> {
+    let mut profile = vec![0u8; 132];
+    profile[..4].copy_from_slice(&132u32.to_be_bytes());
+    profile[36..40].copy_from_slice(b"acsp");
+    profile[100..]
+        .iter_mut()
+        .enumerate()
+        .for_each(|(i, b)| *b = i as u8);
+    profile
+}
+
+#[test]
+fn a_jpeg_rendition_keeps_the_source_colour_profile() {
+    let fx = Fixture::new();
+    let profile = fake_icc_profile();
+    let mut bytes = Vec::new();
+    let mut encoder = PngEncoder::new(&mut bytes);
+    encoder.set_icc_profile(profile.clone()).unwrap();
+    encoder
+        .write_image(
+            opaque(3000, 1500).as_raw(),
+            3000,
+            1500,
+            image::ExtendedColorType::Rgb8,
+        )
+        .unwrap();
+    fs::write(fx.path("profiled.png"), bytes).unwrap();
+
+    let path = rendition_path(&fx.resolve("profiled.png", 1024).0);
+    assert_eq!(path.extension().unwrap(), "jpg");
+    let data = fs::read(&path).unwrap();
+    let mut decoder = JpegDecoder::new(Cursor::new(data.as_slice())).unwrap();
+    assert_eq!(decoder.icc_profile().unwrap(), Some(profile));
+    assert_eq!(
+        image::load_from_memory(&data).unwrap().width(),
+        1024,
+        "still a valid JPEG"
+    );
+}
+
+#[test]
+fn a_png_rendition_keeps_the_source_colour_profile() {
+    let fx = Fixture::new();
+    let profile = fake_icc_profile();
+    let translucent = image::RgbaImage::from_fn(2400, 1200, |_, _| image::Rgba([10, 20, 30, 128]));
+    let mut bytes = Vec::new();
+    let mut encoder = PngEncoder::new(&mut bytes);
+    encoder.set_icc_profile(profile.clone()).unwrap();
+    encoder
+        .write_image(
+            translucent.as_raw(),
+            2400,
+            1200,
+            image::ExtendedColorType::Rgba8,
+        )
+        .unwrap();
+    fs::write(fx.path("profiled-alpha.png"), bytes).unwrap();
+
+    let path = rendition_path(&fx.resolve("profiled-alpha.png", 1024).0);
+    let mut decoder = PngDecoder::new(BufReader::new(File::open(path).unwrap())).unwrap();
+    assert_eq!(decoder.icc_profile().unwrap(), Some(profile));
+}
+
+#[test]
+fn a_cmyk_jpeg_stays_the_original() {
+    let fx = Fixture::new();
+    let (width, height) = (3000usize, 1500usize);
+    let pixels = vec![40u8; width * height * 4];
+    let image = turbojpeg::Image {
+        pixels: pixels.as_slice(),
+        width,
+        pitch: width * 4,
+        height,
+        format: turbojpeg::PixelFormat::CMYK,
+    };
+    let jpeg = turbojpeg::compress(image, 90, turbojpeg::Subsamp::None).unwrap();
+    fs::write(fx.path("print.jpg"), &*jpeg).unwrap();
+
+    assert_eq!(
+        fx.resolve("print.jpg", 1024).0,
+        PreviewImageSource::Original
+    );
+}
+
+#[test]
+fn jpeg_renditions_keep_full_chroma_resolution() {
+    let fx = Fixture::new();
+    opaque(3000, 1500).save(fx.path("screenshot.png")).unwrap();
+    let data = fs::read(rendition_path(&fx.resolve("screenshot.png", 1024).0)).unwrap();
+    let header = turbojpeg::Decompressor::new()
+        .unwrap()
+        .read_header(&data)
+        .unwrap();
+    assert_eq!(
+        header.subsamp,
+        turbojpeg::Subsamp::None,
+        "4:4:4, no chroma fringes on text"
+    );
+}
+
+#[test]
+fn transparent_edges_do_not_darken_when_downscaled() {
+    let fx = Fixture::new();
+    // Opaque white columns between fully transparent *black* ones: every
+    // reduction block mixes the two, as at an anti-aliased edge.
+    let image = image::RgbaImage::from_fn(2400, 1200, |x, _| {
+        if x % 2 == 0 {
+            image::Rgba([255, 255, 255, 255])
+        } else {
+            image::Rgba([0, 0, 0, 0])
+        }
+    });
+    image.save(fx.path("edge.png")).unwrap();
+
+    let decoded = image::open(rendition_path(&fx.resolve("edge.png", 1024).0))
+        .unwrap()
+        .to_rgba8();
+    let edge: Vec<_> = decoded
+        .pixels()
+        .filter(|p| p.0[3] > 0 && p.0[3] < 255)
+        .collect();
+    assert!(
+        !edge.is_empty(),
+        "the fixture must produce partially transparent edge pixels"
+    );
+    assert!(
+        edge.iter().all(|p| p.0[..3].iter().all(|&c| c >= 250)),
+        "edge pixels stay white, not a dark halo: {:?}",
+        edge.iter().take(3).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn an_oversized_file_is_rejected_before_its_header_is_read() {
+    let fx = Fixture::new();
+    // Sparse, so the test does not write 200 MB.
+    let file = File::create(fx.path("huge.jpg")).unwrap();
+    file.set_len(crate::thumbnails::MAX_IMAGE_FILE_BYTES + 1)
+        .unwrap();
+
+    let error = resolve_preview_image(&fx.path("huge.jpg"), 1024, fx.cache.path()).unwrap_err();
+    assert!(error.to_string().contains("too large"), "{error}");
+}
+
+/// The asset scope as the app configures it on Unix: `$HOME/**/*` with Tauri's
+/// default leading-dot rule (`tauri.linux.conf.json`, `tauri.macos.conf.json`).
+#[cfg(unix)]
+fn configured_asset_scope(home: &Path) -> tauri::scope::fs::Scope {
+    let app = tauri::test::mock_app();
+    let config = tauri::utils::config::FsScope::AllowedPaths(vec![home.join("**").join("*")]);
+    tauri::scope::fs::Scope::new(&app, &config).unwrap()
+}
+
+#[cfg(unix)]
+#[test]
+fn the_asset_scope_serves_renditions_under_a_dot_cache_directory() {
+    let home = tempdir().unwrap();
+    let dir = rendition_cache_dir(&home.path().join(".cache/tauri-explorer/thumbnails"));
+    let scope = configured_asset_scope(home.path());
+    let rendition = dir.join("0123abcd.preview.jpg");
+    fs::create_dir_all(&dir).unwrap();
+    fs::write(&rendition, b"jpeg").unwrap();
+    assert!(
+        !scope.is_allowed(&rendition),
+        "the configured glob alone skips ~/.cache (the #1054 trap)"
+    );
+
+    allow_rendition_directory(&scope, &dir).unwrap();
+    assert!(scope.is_allowed(&rendition));
+
+    // Only that directory: other hidden paths stay out of scope.
+    let secret = home.path().join(".ssh/id_ed25519");
+    fs::create_dir_all(secret.parent().unwrap()).unwrap();
+    fs::write(&secret, b"key").unwrap();
+    assert!(!scope.is_allowed(&secret));
+    let nested = dir.join("nested/x.jpg");
+    fs::create_dir_all(nested.parent().unwrap()).unwrap();
+    fs::write(&nested, b"x").unwrap();
+    assert!(!scope.is_allowed(&nested), "not recursive");
+}
+
+#[test]
+fn allowing_the_rendition_directory_creates_it() {
+    let root = tempdir().unwrap();
+    let dir = rendition_cache_dir(root.path());
+    let scope = {
+        let app = tauri::test::mock_app();
+        tauri::scope::fs::Scope::new(&app, &tauri::utils::config::FsScope::default()).unwrap()
+    };
+    allow_rendition_directory(&scope, &dir).unwrap();
+    assert!(dir.is_dir());
 }

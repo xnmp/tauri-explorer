@@ -23,7 +23,7 @@ import { readImageAsBlobUrl } from "$lib/api/files";
 import { logFrontendDiagnostic } from "$lib/api/frontend-log";
 import { getPreviewImage } from "$lib/api/thumbnails";
 import { SKIPPED, type LatestOnlyRunner } from "$lib/domain/latest-only";
-import type { PreviewImageResolution } from "$lib/domain/preview-rendition";
+import { mayHaveRendition, type PreviewImageResolution } from "$lib/domain/preview-rendition";
 
 export interface PreviewImageOwner {
   /** Whether this load is still the one the caller wants. */
@@ -188,7 +188,7 @@ export async function loadPreviewImage(
   owner: PreviewImageOwner,
   options: PreviewImageOptions = {},
 ): Promise<PreviewImageLoad> {
-  if (options.rendition) {
+  if (options.rendition && mayHaveRendition(path)) {
     const rendition = await loadRendition(path, cacheBust, owner, options.rendition);
     if (rendition) return rendition;
   }

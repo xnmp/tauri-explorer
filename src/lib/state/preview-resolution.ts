@@ -25,10 +25,12 @@ export interface FullResolutionUpgrade {
   /** The pane now shows `rendition`, or (null) an original or nothing. */
   showing(rendition: ShownRendition | null): void;
   /**
-   * Loads the shown rendition's original once. Resolves with it while the
-   * same rendition is still shown and its load still current; otherwise null.
+   * Loads the shown rendition's original once. Resolves with it only while
+   * the same rendition is still shown, its load still current and the viewer
+   * still `wanted()` full resolution; otherwise null. An original no longer
+   * wanted (fullscreen left mid-load) is dropped and can be loaded again.
    */
-  upgrade(): Promise<PreviewImageReady | null>;
+  upgrade(wanted: () => boolean): Promise<PreviewImageReady | null>;
 }
 
 export function createFullResolutionUpgrade(load: typeof loadPreviewImage = loadPreviewImage): FullResolutionUpgrade {
@@ -40,12 +42,16 @@ export function createFullResolutionUpgrade(load: typeof loadPreviewImage = load
       shown = rendition;
       started = null;
     },
-    async upgrade() {
+    async upgrade(wanted) {
       const target = shown;
-      if (!target || started === target) return null;
+      if (!target || started === target || !wanted()) return null;
       started = target;
       const image = await load(target.path, target.cacheBust, target.owner);
-      if (shown !== target || image.status !== "ready") return null;
+      if (shown !== target || image.status !== "ready" || !target.owner.isCurrent()) return null;
+      if (!wanted()) {
+        started = null;
+        return null;
+      }
       shown = null;
       return image;
     },

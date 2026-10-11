@@ -9,6 +9,8 @@
  * need detail the rendition lacks, so they use the original.
  */
 
+import { isVirtualPath } from "./virtual-path";
+
 /** The backend's answer: show the file itself, or a cached rendition file. */
 export type PreviewImageSource =
   | { readonly kind: "original" }
@@ -51,6 +53,24 @@ export function renditionMaxEdge(surface: PreviewSurface): number {
   // Finite inputs can still overflow to Infinity; that falls to the largest bucket.
   if (!(needed > 0)) return DEFAULT_RENDITION_EDGE;
   return RENDITION_EDGE_BUCKETS.find((edge) => edge >= needed) ?? RENDITION_EDGE_BUCKETS[RENDITION_EDGE_BUCKETS.length - 1];
+}
+
+/**
+ * Extensions the backend can make a rendition for (mirrors
+ * `RENDITION_EXTENSIONS` in `thumbnails/preview_rendition.rs`). GIF, SVG,
+ * AVIF and the rest are always their own original.
+ */
+const RENDITION_EXTENSIONS: ReadonlySet<string> = new Set(["jpg", "jpeg", "png", "webp", "bmp"]);
+
+/**
+ * Whether asking the backend for a rendition of `path` can ever pay off. Other
+ * paths skip the request, so they never queue behind a running decode.
+ */
+export function mayHaveRendition(path: string): boolean {
+  if (isVirtualPath(path)) return false;
+  const name = path.slice(Math.max(path.lastIndexOf("/"), path.lastIndexOf("\\")) + 1);
+  const dot = name.lastIndexOf(".");
+  return dot > 0 && RENDITION_EXTENSIONS.has(name.slice(dot + 1).toLowerCase());
 }
 
 export interface PreviewViewState {

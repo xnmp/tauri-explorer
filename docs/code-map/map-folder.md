@@ -409,7 +409,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `terminal-command.ts` — shell command construction/quoting for terminal.
 - `terminal-cwd-sync.ts` — "terminal follows explorer" cwd decision (#149).
 - `terminal-keys.ts` — terminal vs app key-ownership rules (#249/#260).
-- `preview-rendition.ts` — Preview rendition policy: surface CSS size × devicePixelRatio × app zoom → 1024/2048/3072 edge buckets; fullscreen/zoom need the original (#1054).
+- `preview-rendition.ts` — Preview rendition policy: surface CSS size × devicePixelRatio × app zoom → 1024/2048/3072 edge buckets; which paths may have one (mirrors the backend's extensions, never virtual paths); fullscreen/zoom need the original (#1054).
 - `latest-only.ts` — one task in flight, only the newest waiting task runs next; skipped Preview selections never queue rendition decodes (#1054).
 - `ordered-writer.ts` — one-in-flight, coalescing ordered stream over an IPC transport that does not preserve call order; PTY input (#709).
 - `terminal-input-queue.ts` — the terminal's one input queue: strings and promises (paste reads, insertions) in call order, held until the terminal has an id, sent through an ordered writer with gap-free `terminal_write` sequence numbers; unsent input never crosses to a successor stream (#882).
@@ -475,7 +475,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `wsl.rs` — WSL UNC path parsing (`\\wsl.localhost\<distro>\…` → distro + Linux path), shared by terminal/search/git delegation.
 - `content_search.rs` — grep-across-files (ripgrep/grep crate).
 - `thumbnails.rs` — image/video thumbnail generation + cache; `with_decode_gate` clamps concurrent decodes to `cores/4` (2-8, override `TAURI_EXPLORER_DECODE_PERMITS`, 0=off) and lowers decode-thread priority to avoid starving the webview compositor; `diag` module logs slow (`>100ms`) requests + rolling aggregates (#593); disk-cache pruning by write count or bytes written. Hot.
-- `thumbnails/preview_rendition.rs` — `get_preview_image`: header-only check, then a cached display-sized JPEG/PNG rendition of large still rasters in the thumbnail cache (namespaced key, inflight lock, decode gate); small/animated/GIF/AVIF/SVG/rotated non-JPEG stay originals (#1054).
+- `thumbnails/preview_rendition.rs` — `get_preview_image`: bounded header-only check, then a cached display-sized JPEG (4:4:4) / PNG (premultiplied downscale) rendition of large still rasters, ICC profile kept, in the thumbnail cache's `previews/` subdirectory with its own 300 MB budget (namespaced key, inflight lock, decode gate); small/animated/CMYK/GIF/AVIF/SVG/rotated non-JPEG stay originals. `allow_rendition_assets` (called first in `lib.rs` setup) adds that directory to the asset scope, which `$HOME/**/*` misses on Unix (leading-dot rule) (#1054).
 - `palette.rs` — dominant-color extraction for themes (#203).
 - `src-tauri/src/platform.rs` — host capabilities that shape recorded history: `TRASH_RESTORE_SUPPORTED` and the `TrashRestore` value passed to history admission (macOS has no trash restore).
 - `wallpaper.rs` — set desktop wallpaper (mac/Linux/Windows).
@@ -569,7 +569,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `src-tauri/src/files/recovery/private_storage/windows.rs` — Windows protected ACL, kind/reparse, hardlink and delete-pending evidence checks through retained handles.
 - `src-tauri/test_support/recovery_private_storage.rs` — real filesystem policy outcomes for retained files, hardlinks, retirement and widened permissions.
 - `src-tauri/test_support/native_directory_contract.rs` — cross-platform real filesystem contracts for retained anchors, exclusive creation/rename, removal kinds, existence and invalid-name rejection.
-- `src-tauri/test_support/preview_rendition.rs` — rendition sizing, encoding (alpha → PNG), EXIF orientation, originals kept, cache hit/mtime keying and single decode under concurrency (#1054).
+- `src-tauri/test_support/preview_rendition.rs` — rendition sizing, encoding (alpha → PNG, ICC, 4:4:4, no halos), EXIF orientation, originals kept, cache keying, single decode under concurrency, and the asset scope serving a dot-directory cache (#1054).
 - `src-tauri/test_support/case_only_rename.rs` — runtime case-sensitivity contracts for rename, move, ordered-session conflicts and physical identity, shared by native-directory and recovery admission tests.
 
 - `mod.rs` — files module root + re-exports; `FileEntry` incl. `is_git_repo` and `metadata_to_entry`'s one-stat-per-directory git-repo-root detection (#463).

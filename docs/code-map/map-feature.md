@@ -270,7 +270,7 @@ backend for E2E/browser).
 - `state/thumbnail-cache.ts` — in-memory cache (`getThumbnailCache`, `renameThumbnailCache`)
 - `api/thumbnails.ts` — getThumbnail/getThumbnailData/getMicroThumbnail/getVideoThumbnailData/getFolderPreview — per-item requests, deliberately not batched (a batched-IPC scheduler was tried and removed twice: it clumps responses into one main-thread burst and measures worse for scroll pacing than per-item dispatch even though it wins on raw throughput, #593)
 - `domain/folder-preview.ts` — folder-preview shaping
-- `src-tauri/src/thumbnails/preview_rendition.rs` (+ `src-tauri/test_support/preview_rendition.rs`) — Preview pane renditions share this cache: `{key}.preview.{jpg,png}` under a namespaced key, same inflight lock, decode gate and pruning (#1054)
+- `src-tauri/src/thumbnails/preview_rendition.rs` (+ `src-tauri/test_support/preview_rendition.rs`) — Preview pane renditions live in this cache's `previews/` subdirectory (own 300 MB budget): `{key}.preview.{jpg,png}` under a namespaced key, same inflight lock, decode gate and pruning; startup adds that directory to the asset scope (#1054)
 - `src-tauri/src/thumbnails.rs` — disk cache, image/video decode; `with_decode_gate` bounds concurrent decodes to `cores/4` (2-8, `TAURI_EXPLORER_DECODE_PERMITS` override) and lowers decode-thread priority so decodes don't starve the webview compositor; `diag` module logs slow (>100ms) requests + rolling aggregates (#593); `files/dir_listing.rs` folder preview
 - FLOW: ThumbnailImage requests via api/thumbnails → Rust cache lookup/generate (decode gated + priority-lowered) → data URL cached in thumbnail-cache.ts keyed by path. Rename preserves cache via `renameThumbnailCache`.
 

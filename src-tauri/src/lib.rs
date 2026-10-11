@@ -523,6 +523,9 @@ pub fn run_with_process_entry(launch_dir: Option<String>, t_process_entry: std::
         ])
         .setup(move |app| {
             let t_setup = std::time::Instant::now();
+            // Before any window: the asset scope must serve Preview renditions
+            // from the cache (its `$HOME/**/*` glob skips dot-dirs, #1054).
+            thumbnails::preview_rendition::allow_rendition_assets(app);
             installed_plugins::initialize(app.handle().clone())?;
 
             // Before any window exists, so every mutation command can admit.

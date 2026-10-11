@@ -143,7 +143,11 @@ describe("loadPreviewImage with a rendition", () => {
 
     expect(getPreviewImage).toHaveBeenCalledWith("/w/huge.png", 2048);
     expect(result).toEqual({ status: "ready", url: `asset://localhost${RENDITION}?v=1-2`, viaBackend: false, resolution: "rendition" });
+    // The rendition itself is shown: neither the original nor the backend
+    // read is touched (a blocked rendition must not pass as success).
     expect(decoded).toEqual([`asset://localhost${RENDITION}?v=1-2`]);
+    expect(convertFileSrc).not.toHaveBeenCalledWith("/w/huge.png");
+    expect(readImageAsBlobUrl).not.toHaveBeenCalled();
   });
 
   it("loads the original when the backend says the image is its own original", async () => {
@@ -160,7 +164,7 @@ describe("loadPreviewImage with a rendition", () => {
     expect(result).toMatchObject({ status: "ready", url: "asset://localhost/w/odd.png?v=v", resolution: "original" });
   });
 
-  it("falls back to the original when the rendition file cannot be shown", async () => {
+  it("falls back to the original when the rendition file cannot be shown (pruned since)", async () => {
     isTauri.mockReturnValue(true);
     undecodable.add(`asset://localhost${RENDITION}`);
     getPreviewImage.mockResolvedValue({ ok: true, data: { kind: "rendition", path: RENDITION } });
@@ -224,5 +228,13 @@ describe("loadPreviewImage with a rendition", () => {
     const result = await loadPreviewImage("/w/huge.png", "v", owner().value, withRendition);
     expect(readImageAsBlobUrl).toHaveBeenCalledWith(RENDITION);
     expect(result).toEqual({ status: "ready", url: "blob:rendition", viaBackend: true, resolution: "rendition" });
+  });
+
+  it("never asks for a rendition of a format that cannot have one, or of a virtual path", async () => {
+    isTauri.mockReturnValue(true);
+    for (const path of ["/w/anim.gif", "/w/logo.svg", "/w/photo.avif", "/w/icon.icns", "zip:///a.zip/huge.png"]) {
+      await loadPreviewImage(path, "v", owner().value, withRendition);
+    }
+    expect(getPreviewImage).not.toHaveBeenCalled();
   });
 });

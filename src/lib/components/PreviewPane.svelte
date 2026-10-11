@@ -447,10 +447,13 @@ import { openFile } from "$lib/api/open";
 
   // Fullscreen or zoom needs the original: decode it off-screen while the
   // rendition stays up, then swap it in (#1054).
+  const wantsFullResolution = () => needsFullResolution({ fullscreen: fullscreen.active, zoom: fullscreen.zoom });
   $effect(() => {
-    if (!previewShowsRendition || !needsFullResolution({ fullscreen: fullscreen.active, zoom: fullscreen.zoom })) return;
-    void fullResolution.upgrade().then((image) => {
-      if (!image) return;
+    if (!previewShowsRendition || !wantsFullResolution()) return;
+    void fullResolution.upgrade(wantsFullResolution).then((image) => {
+      // Re-checked at the swap: leaving fullscreen or moving to another file
+      // while the original decoded must keep what is on screen.
+      if (!image || !previewShowsRendition || !wantsFullResolution()) return;
       showImage(image.url);
       previewShowsRendition = false;
     });

@@ -29,7 +29,7 @@ a display-sized rendition and loads full resolution only when asked.
   lock.
 - Pruning now also triggers on bytes written. The old trigger was every 256
   writes, which suited small thumbnails but would let multi-MB renditions
-  overshoot the 500 MB cap by gigabytes.
+  overshoot the cap by gigabytes.
 - Cold generation, measured on the real wallpapers off the main thread: PNG
   400–690 ms, JPEG ~210 ms (helped by the DCT-scaled decode). A cache hit takes
   ~40 µs.
@@ -56,6 +56,45 @@ a display-sized rendition and loads full resolution only when asked.
   a pruned file, and a cache directory outside the asset scope.
 - Plugin targets keep their existing flow: a 1024 px thumbnail in the pane and
   the original in fullscreen.
+
+**The trap a mock E2E cannot catch: the asset scope skips dot-directories.**
+The first version passed every test and still did nothing on Linux. Every
+rendition got a 403 from the asset protocol, and the pane quietly fell back to
+the original, after already paying for the backend decode.
+- Tauri 2 scope globs default to `require_literal_leading_dot = true` on Unix
+  (`tauri/src/scope/fs.rs`). As a result the configured `$HOME/**/*` never
+  matches `~/.cache/tauri-explorer/...`. It also misses an `XDG_CACHE_HOME`
+  outside `$HOME`.
+- The fix is in `lib.rs` setup, before any window exists.
+  `allow_rendition_assets` creates the `previews/` cache directory. It then
+  calls `asset_protocol_scope().allow_directory(dir, false)` for both the given
+  and the canonical spelling, because `is_allowed` canonicalises the request
+  path.
+- Do not disable `requireLiteralLeadingDot` globally. That would expose every
+  dotfile under `$HOME` to the webview.
+- `the_asset_scope_serves_renditions_under_a_dot_cache_directory` builds a
+  scope shaped like the app's config, using `tauri::test::mock_app`. It
+  asserts three things:
+  - the configured glob alone rejects the rendition;
+  - the helper admits it;
+  - other dot-paths stay out.
+- Any file the webview loads from a hidden directory needs the same check.
+
+**Hardening from the adversarial review:**
+- JPEG headers are read from a bounded 2 MiB prefix after the file-size check.
+  image's `JpegDecoder::new` reads its whole input into memory.
+- ICC profiles are embedded: PNG through the encoder, JPEG as APP2 segments
+  after turbojpeg. CMYK/YCCK JPEGs keep the original.
+- Alpha images are downscaled premultiplied. Plain box averaging bleeds the
+  colour of transparent pixels into the edges.
+- EXIF rotation happens after the downscale.
+- JPEGs use 4:4:4 chroma.
+- Renditions get their own `previews/` subdirectory and 300 MB budget, so they
+  cannot evict tile thumbnails.
+- The frontend skips the request for extensions that never get a rendition,
+  and for virtual paths.
+- The full-resolution swap re-checks that the viewer still wants it and that
+  the load is current.
 
 **Why the perf tests missed it:** `mock-invoke.ts` serves the same 128 px JPEG
 for every image preview (`read_image_data_url` reuses the thumbnail mock), and

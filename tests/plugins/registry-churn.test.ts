@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { strict as assert } from "node:assert";
 import type { Component } from "svelte";
 
 vi.mock("$lib/plugins/nano-banana/NanoBananaDialog.svelte", () => ({ default: {} }));
@@ -108,6 +109,9 @@ describe("plugin registry churn", () => {
         ctx.registerDialog({ id: "churn-beta.dialog", component: dialogComponent });
       },
     };
+    // Reuse the deterministic fault: this test exercises contribution cleanup,
+    // not stack capture/source-map formatting for thousands of distinct errors.
+    const activationFailure = new Error("expected churn activation failure");
     const failing: Plugin = {
       id: "churn-failing", name: "failing", description: "test", enabledByDefault: false,
       activate(ctx) {
@@ -115,7 +119,7 @@ describe("plugin registry churn", () => {
         ctx.registerSettingsSection({
           id: "churn-failing.settings", title: "Failure", rows: [],
         });
-        throw new Error("expected churn activation failure");
+        throw activationFailure;
       },
     };
     const jobs = { dispose: vi.fn(async () => {}) };
@@ -131,23 +135,28 @@ describe("plugin registry churn", () => {
           registry.setEnabled(failing.id, true),
         ]);
 
-        expect(getCommand("plugin.churn-alpha.cmd")).toBeDefined();
-        expect(contextMenuItems.itemsFor([entry]).filter((item) => item.id === "plugin.churn-alpha.menu")).toHaveLength(1);
-        expect(providerFor("churn-beta://root")).not.toBeNull();
+        // These are correctness checks, not a matcher throughput benchmark.
+        // Native strict assertions keep every per-cycle invariant while avoiding
+        // thousands of matcher wrappers competing with full-suite transforms.
+        const enabled = `cycle ${cycle + 1}: enabled`;
+        assert.notEqual(getCommand("plugin.churn-alpha.cmd"), undefined, enabled);
+        assert.equal(contextMenuItems.itemsFor([entry]).filter((item) => item.id === "plugin.churn-alpha.menu").length, 1, enabled);
+        assert.notEqual(providerFor("churn-beta://root"), null, enabled);
         dialogRegistry.open("churn-beta.dialog");
-        expect(dialogRegistry.isOpen("churn-beta.dialog")).toBe(true);
-        expect(pluginSettingsSections.sections.filter((section) =>
-          section.pluginId === failing.id)).toHaveLength(0);
+        assert.equal(dialogRegistry.isOpen("churn-beta.dialog"), true, enabled);
+        assert.equal(pluginSettingsSections.sections.filter((section) =>
+          section.pluginId === failing.id).length, 0, enabled);
 
         await Promise.all([
           registry.setEnabled(alpha.id, false),
           registry.setEnabled(beta.id, false),
           registry.setEnabled(failing.id, false),
         ]);
-        expect(getCommand("plugin.churn-alpha.cmd")).toBeUndefined();
-        expect(contextMenuItems.itemsFor([entry]).some((item) => item.id === "plugin.churn-alpha.menu")).toBe(false);
-        expect(providerFor("churn-beta://root")).toBeNull();
-        expect(dialogRegistry.isOpen("churn-beta.dialog")).toBe(false);
+        const disabled = `cycle ${cycle + 1}: disabled`;
+        assert.equal(getCommand("plugin.churn-alpha.cmd"), undefined, disabled);
+        assert.equal(contextMenuItems.itemsFor([entry]).some((item) => item.id === "plugin.churn-alpha.menu"), false, disabled);
+        assert.equal(providerFor("churn-beta://root"), null, disabled);
+        assert.equal(dialogRegistry.isOpen("churn-beta.dialog"), false, disabled);
       }
 
       expect(calls).toEqual({ alpha: iterations, beta: iterations, failing: iterations });

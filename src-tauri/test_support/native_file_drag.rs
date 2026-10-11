@@ -5,6 +5,123 @@ use super::*;
 static OBSERVER_TEST_LOCK: Mutex<()> = Mutex::new(());
 
 #[test]
+fn completion_backlog_cannot_lend_identity_to_a_later_external_enter() {
+    use std::sync::Arc;
+    let registry = Arc::new(Mutex::new(Registry::default()));
+    registry.lock().unwrap().begin(
+        1,
+        "source".into(),
+        Some(Source {
+            native_copy_policy: Some(CopyPolicy::Move),
+            ..source()
+        }),
+    );
+    // An original receiver has already captured Enter before cancellation.
+    registry.lock().unwrap().capture_at(
+        41,
+        &wry::DragDropEvent::Enter {
+            paths: paths(),
+            position: (20, 30),
+        },
+        false,
+        1000.25,
+    );
+    let retire_registry = registry.clone();
+    let delivered = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let notification_delivered = delivered.clone();
+    let mut queue = VecDeque::new();
+    complete_native_drag(
+        move || retire_registry.lock().unwrap().complete(1),
+        move || {
+            notification_delivered.store(true, Ordering::Relaxed);
+        },
+        |notification| queue.push_back(notification),
+    );
+    assert!(!delivered.load(Ordering::Relaxed));
+    // Tao/GTK can service this platform callback with completion still queued.
+    for event in [
+        wry::DragDropEvent::Enter {
+            paths: paths(),
+            position: (20, 30),
+        },
+        wry::DragDropEvent::Drop {
+            paths: paths(),
+            position: (20, 30),
+        },
+    ] {
+        registry
+            .lock()
+            .unwrap()
+            .capture_at(42, &event, true, 1002.25);
+    }
+    queue.pop_front().unwrap()();
+    assert!(delivered.load(Ordering::Relaxed));
+    let point = tauri::PhysicalPosition { x: 20.0, y: 30.0 };
+    for event in [
+        tauri::DragDropEvent::Enter {
+            paths: paths(),
+            position: point,
+        },
+        tauri::DragDropEvent::Drop {
+            paths: paths(),
+            position: point,
+        },
+    ] {
+        let payload =
+            serde_json::to_value(registry.lock().unwrap().take(42, &event).unwrap()).unwrap();
+        assert_eq!(payload["source"], serde_json::Value::Null);
+        assert_eq!(payload["copyModifier"], true);
+        assert_eq!(payload["completedGestureSequence"], 1);
+    }
+    let original = serde_json::to_value(
+        registry
+            .lock()
+            .unwrap()
+            .take(
+                41,
+                &tauri::DragDropEvent::Enter {
+                    paths: paths(),
+                    position: point,
+                },
+            )
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(original["source"]["sessionId"], "first");
+    assert_eq!(original["completedGestureSequence"], 0);
+}
+
+#[test]
+fn failed_start_does_not_fence_a_surviving_html5_source() {
+    let mut registry = Registry::default();
+    registry.begin(1, "source".into(), Some(source()));
+    registry.failed_start(1);
+    registry.capture_at(
+        42,
+        &wry::DragDropEvent::Enter {
+            paths: paths(),
+            position: (20, 30),
+        },
+        false,
+        1000.25,
+    );
+    let payload = serde_json::to_value(
+        registry
+            .take(
+                42,
+                &tauri::DragDropEvent::Enter {
+                    paths: paths(),
+                    position: tauri::PhysicalPosition { x: 20.0, y: 30.0 },
+                },
+            )
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(payload["source"], serde_json::Value::Null);
+    assert_eq!(payload["completedGestureSequence"], 0);
+}
+
+#[test]
 fn deferred_platform_leave_does_not_reach_a_reused_native_receiver() {
     let _observer_guard = OBSERVER_TEST_LOCK.lock().unwrap();
     use std::{cell::RefCell, rc::Rc};
@@ -439,6 +556,7 @@ fn path(name: &str) -> String {
 fn source() -> Source {
     Source {
         session_id: "first".into(),
+        gesture_sequence: 1,
         path: path("a.png"),
         name: "a.png".into(),
         kind: "file".into(),
@@ -456,11 +574,26 @@ fn native_source_round_trip_preserves_source_copy_policy() {
         let mut json = serde_json::to_value(source()).unwrap();
         json["nativeCopyPolicy"] = policy.into();
         let restored: Source = serde_json::from_value(json).unwrap();
+        assert_eq!(restored.gesture_sequence, 1);
         assert_eq!(
             serde_json::to_value(restored).unwrap()["nativeCopyPolicy"],
             policy
         );
     }
+}
+
+#[test]
+fn native_provenance_requires_a_frontend_safe_gesture_sequence() {
+    for sequence in [0, 9_007_199_254_740_992, u64::MAX] {
+        let invalid = Source {
+            gesture_sequence: sequence,
+            ..source()
+        };
+        assert!(!matches(&invalid, &paths()));
+    }
+    let mut json = serde_json::to_value(source()).unwrap();
+    json.as_object_mut().unwrap().remove("gestureSequence");
+    assert!(serde_json::from_value::<Source>(json).is_err());
 }
 
 #[test]
@@ -472,6 +605,7 @@ fn receiver_event_carries_drop_time_modifiers_independently_of_source_policy() {
             source: Some(source()),
             copy_modifier: Some(copying),
             observed_at: 1011.25,
+            completed_gesture_sequence: 0,
         };
         let json = serde_json::to_value(event).unwrap();
         assert_eq!(json["type"], "drop");

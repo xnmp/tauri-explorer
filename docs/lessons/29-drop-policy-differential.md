@@ -9,6 +9,8 @@ cross-window rows, twelve expired-identity rows (six per window scope), and 66
 adversarial path rows, with dev outcome,
 branch outcome and named intended difference. The TSV is a review artifact;
 tests calculate expectations from the independent pure policy, not this file.
+The seventh review adds 46 temporal orderings in `dropTemporalCases`; these
+extend the static TSV with the event-producing gesture's policy.
 
 Sources: listing file, listing folder, Miller file, Miller folder, Recent
 shortcut, sidebar bookmark reorder, external OS file, plain text,
@@ -202,6 +204,86 @@ Independent review confirmed the changes and ran 4,678 focused tests. It found
 the deferred GTK callback issue above, then verified the lifetime guard. No
 remaining behavioral defect was reproduced; actual native effect negotiation
 remains a platform acceptance check.
+
+## Seventh review: retained sources and completion backlog
+
+The failing-first frontend probe reproduced Recent bookmark drops moving the
+folder instead of pinning, plugin delivery reporting `external` instead of
+`pane`, and old explicit native provenance still authorizing transfers after
+identity eviction (10 failures in the initial 22 temporal cases). A Rust probe
+through the production completion seam also failed: with completion delivery
+left queued, a later Enter/Drop for identical paths captured the cancelled
+Explorer source. This is a deterministic callback-order regression; it does
+not claim a physical native timing reproduction.
+
+`dragState.start` now allocates a shared monotonic gesture sequence for every
+HTML5/pointer gesture. Retained local consumers keep their original source,
+while `latestSource` chooses the newer source across windows. Automatic GTK
+events use observation time to select the newest matching HTML5 interval,
+including live peer history, rather than requiring it to match local retained
+state. A late reply only updates its own session; it cannot repair or rewrite
+the receiver's already captured gesture.
+
+The native completion callback retires `Registry.active` synchronously, then
+queues only its frontend notification. Already captured receiver snapshots
+remain valid; a subsequent external Enter cannot acquire completed identity.
+Each Enter/Drop also snapshots `completedGestureSequence`, so an accepted
+source whose start reply and HTML5 end are both backlogged cannot lend its
+still-open frontend interval to a later external event. Failed starts retire
+their native registration without advancing that marker: a newer rejected
+Recent gesture remains eligible for automatic Wry recovery.
+Rust source provenance requires the frontend's positive, JavaScript-safe
+`gestureSequence` and preserves it in Enter/Drop events. Routing checks the
+sequence against the last eight gestures even for an explicit matching source;
+path verification no longer bypasses expiry. Sequence expiry also advances
+through pointer-only successors and survives wall-clock changes. Automatic
+source-less GTK observations retain the existing timestamp-floor admission.
+Verified inferred sources also reject ambiguous end/start observations within
+the same JS millisecond and backwards-clock intervals. They retain local proof
+when only shared-storage quota/rejected floors advance; explicit Rust identity
+and a previously admitted receiver snapshot use sequence expiry.
+
+| Temporal ordering | Cases | Required outcome |
+| --- | ---: | --- |
+| Finished A retained with native reply pending; peer Recent B rejects native start; A's reply arrives after B Drop | 4 | B pins on bookmark or delivers plugin `pane`, for either A reply result |
+| Same overlap, but A's reply arrives between B Enter and Drop | 4 | B retains its captured link-only identity |
+| Cancelled listing completion notification backlogged behind later external same-path Enter, then delivered before Drop; start acknowledged/end delivered or both still pending | 12 | Platform copy modifier copies, or plugin receives `external` |
+| Explicit old source delivered after eight HTML5 or pointer-only successor gestures in another renderer | 12 | Cancel without transfer or plugin delivery |
+| Source completion arrives before delivery of the already captured Enter/Drop | 6 | Original listing policy and plugin `pane` survive |
+| A newer same-path Recent gesture starts before delivery of the original captured events | 6 | Original listing policy wins, independently of the newer link-only source |
+| A finishes and same-path Recent B starts in the same millisecond; delayed automatic event could belong to either | 2 | Cancel ambiguous inference without transfer or plugin delivery |
+
+The Rust regression additionally verifies that pre-completion snapshots survive
+while a later external Enter/Drop receives `source: null` and preserves Ctrl.
+Malformed, zero, missing and non-JavaScript-safe native sequence values are
+rejected before they can acquire provenance.
+Independent review reproduced two additional failing-first Linux outcomes
+before the completion-marker fix (`move` instead of `copy`, plugin `pane`
+instead of `external`), plus same-millisecond successor misclassification.
+The reviewer reran production-routing probes after the fixes. Native execution
+on physical Linux/macOS/Windows desktops remains an acceptance check.
+
+Final seventh-review verification:
+
+```text
+bunx vitest run tests/state tests/plugins tests/composables tests/domain tests/api --maxWorkers=2
+Test Files  354 passed (354)
+Tests       8123 passed (8123)
+
+bun run check
+website/api/report.js:2:26 Cannot find module '@vercel/blob' or its corresponding type declarations.
+COMPLETED 1845 FILES 1 ERRORS 0 WARNINGS 1 FILES_WITH_PROBLEMS
+
+CARGO_TARGET_DIR=/var/tmp/te-wt2/target-pdlg cargo test --offline --manifest-path src-tauri/Cargo.toml native_file_drag
+test result: ok. 21 passed; 0 failed; 0 ignored; 0 measured; 2166 filtered out
+
+Independent adversarial production-routing probes
+Test Files  1 passed (1)
+Tests       3 passed (3)
+
+python3 docs/code-map/validate.py --coverage
+coverage: 747/747 source files in map-folder.md
+```
 
 ## Acceptance still to run
 

@@ -59,7 +59,7 @@ export const intendedDifferences = [
   { id: "recent-modality", reason: "Recent follows the same pane and plugin ownership admission as other Explorer file sources.",
     when: (c: DropCase) => c.source === "recent" && ["covered-pane", "textarea", "plugin-view"].includes(c.target), outcome: (): Outcome => "blocked" },
   { id: "expired-gesture", reason: "An evicted source observation or retired DOM gesture must cancel instead of becoming an external file operation; bounded identity retention cannot guess old provenance.",
-    when: (c: DropCase) => c.lifetime === "expired" && ((explorer(c) && c.platform === "linux" && c.transport === "native-rejected")
+    when: (c: DropCase) => c.lifetime === "expired" && ((explorer(c) && (c.transport === "native-accepted" || (c.platform === "linux" && c.transport === "native-rejected")))
       || (c.source === "external-file" && nativeRoute(c))), outcome: (): Outcome => "blocked" },
   { id: "ordinary-dom-payloads", reason: "The file adapter must preserve browser text insertion and plugin-specific DOM handlers (review finding 3).", when: nonfile,
     outcome: (c: DropCase): Outcome => c.target === "textarea" ? "text-insertion" : c.target === "plugin" || c.target === "plugin-view" ? "plugin:dom" : "ignored" },
@@ -93,6 +93,38 @@ export const dropCrossWindowCases: DropCase[] = dropCases.filter(c =>
   ["listing-file", "listing-folder", "miller-file", "miller-folder", "recent"].includes(c.source)
   && (c.transport !== "dom-only" || c.platform === "linux")
 ).concat(dropBoundaryCases).map(c => ({ ...c, window: "cross-window" }));
+
+/** Policy belongs to the event-producing gesture, irrespective of callback
+ * delivery order. These rows exercise production source state and routing. */
+export type TemporalDropCase = DropCase & {
+  ordering: "retained-local" | "late-start-reply" | "completion-backlog" | "expired-provenance" | "captured-before-completion" | "captured-before-replacement" | "same-millisecond-replacement";
+  reply?: "accepted" | "rejected";
+  successors?: "html5" | "pointer";
+  completion?: "acknowledged" | "pending-reply";
+};
+export const dropTemporalCases: TemporalDropCase[] = [
+  ...(["folder", "plugin"] as const).map(target => ({ ordering: "same-millisecond-replacement" as const,
+    platform: "linux" as const, source: "listing-file" as const, target, modifier: "none" as const,
+    transport: "native-rejected" as const, lifetime: "expired" as const, window: "cross-window" as const })),
+  ...(["retained-local", "late-start-reply"] as const).flatMap(ordering => (["accepted", "rejected"] as const).flatMap(reply => (["bookmark", "plugin"] as const).map(target => ({
+    ordering, reply, platform: "linux" as const, source: "recent" as const, target, modifier: "none" as const,
+    transport: "native-rejected" as const, window: "cross-window" as const,
+  })))),
+  ...dropPlatforms.flatMap(platform => (["folder", "plugin"] as const).flatMap(target => [
+    { ordering: "completion-backlog" as const, platform, source: "external-file" as const, target,
+      modifier: platform === "mac" ? "option" as const : "ctrl" as const, transport: "native-accepted" as const, completion: "acknowledged" as const },
+    { ordering: "completion-backlog" as const, platform, source: "external-file" as const, target,
+      modifier: platform === "mac" ? "option" as const : "ctrl" as const, transport: "native-accepted" as const, completion: "pending-reply" as const },
+    { ordering: "expired-provenance" as const, platform, source: "listing-file" as const, target,
+      modifier: "none" as const, transport: "native-accepted" as const, lifetime: "expired" as const, window: "cross-window" as const, successors: "html5" as const },
+    { ordering: "expired-provenance" as const, platform, source: "listing-file" as const, target,
+      modifier: "none" as const, transport: "native-accepted" as const, lifetime: "expired" as const, window: "cross-window" as const, successors: "pointer" as const },
+    { ordering: "captured-before-completion" as const, platform, source: "listing-file" as const, target,
+      modifier: "none" as const, transport: "native-accepted" as const, window: "cross-window" as const },
+    { ordering: "captured-before-replacement" as const, platform, source: "listing-file" as const, target,
+      modifier: "none" as const, transport: "native-accepted" as const, window: "cross-window" as const },
+  ])),
+];
 
 /** Adversarial pairs have literal expectations, independent of production
  * path normalization. Expand each across the actual transport variants. */

@@ -37,21 +37,24 @@ export function useNativeDropHandler(deps: NativeDropDeps) {
   const pendingDomDrops = new Set<() => void>();
   let clearNativeHighlights: (() => void) | null = null;
 
-  function nativeSource(source: DragData | null | undefined, observedAt?: number): DragData | null {
-    if (source !== null) return source ?? dragState.current ?? dragState.readCrossWindow();
+  function nativeSource(source: DragData | null | undefined, observedAt?: number, completedGestureSequence?: number): DragData | null {
+    if (source !== null) return source ?? dragState.latestSource();
     // Explicit source:null is external except for WebKitGTK's surviving HTML5
     // gesture. Never infer provenance from an asynchronous consumer's retained
     // source. Admission below still requires the entire native path multiset.
-    return !isMac && !isWindows ? dragState.survivingHtml5Source(observedAt) : null;
+    return !isMac && !isWindows ? dragState.survivingHtml5Source(observedAt, completedGestureSequence) : null;
   }
 
-  function handleNativeEnter(rawPaths: string[], _position: { x: number; y: number }, source?: DragData | null, copyModifier?: boolean | null, observedAt?: number): void {
+  function handleNativeEnter(rawPaths: string[], _position: { x: number; y: number }, source?: DragData | null, copyModifier?: boolean | null, observedAt?: number, completedGestureSequence?: number): void {
     if (copyModifier != null) copyModifierHeld = copyModifier;
     const paths = nativeDropPaths(rawPaths, isWindows);
-    const data = nativeSource(source, observedAt);
+    const data = nativeSource(source, observedAt, completedGestureSequence);
     const livePaths = internalDragPaths(data, isWindows);
     const verifiedSource = livePaths && sameDropPathSet(paths, livePaths, isWindows);
-    if (!verifiedSource && dragState.expiredNativeObservation(observedAt)) {
+    // Explicit Rust provenance is already correlated at the platform callback.
+    // Inferred HTML5 identity also needs timestamp admission: an end/start in
+    // the same JS millisecond cannot identify which gesture made this event.
+    if (dragState.expiredNativeObservation(observedAt, verifiedSource ? data : null, source == null)) {
       nativeGesture = { data: null, expired: true };
       nativeDomSession = dragState.cancelledNativeSession(observedAt, paths, isWindows);
       return;
@@ -61,12 +64,13 @@ export function useNativeDropHandler(deps: NativeDropDeps) {
     nativeDomSession = nativeGesture.data?.sessionId;
   }
 
-  async function handleNativeDrop(rawPaths: string[], position: { x: number; y: number }, source?: DragData | null, copyModifier?: boolean | null, observedAt?: number): Promise<void> {
+  async function handleNativeDrop(rawPaths: string[], position: { x: number; y: number }, source?: DragData | null, copyModifier?: boolean | null, observedAt?: number, completedGestureSequence?: number): Promise<void> {
     const paths = nativeDropPaths(rawPaths, isWindows);
-    const dragData = source ?? (nativeGesture ? nativeGesture.data : nativeSource(source, observedAt));
+    const dragData = source ?? (nativeGesture ? nativeGesture.data : nativeSource(source, observedAt, completedGestureSequence));
     const internalPaths = internalDragPaths(dragData, isWindows);
     const isInternalDrag = internalPaths !== null && sameDropPathSet(paths, internalPaths, isWindows);
-    if (!isInternalDrag && (nativeGesture?.expired || dragState.expiredNativeObservation(observedAt))) {
+    if (nativeGesture?.expired || dragState.expiredNativeObservation(observedAt, isInternalDrag ? dragData : null,
+        source == null && !nativeGesture?.data)) {
       nativeDomSession ??= dragState.cancelledNativeSession(observedAt, paths, isWindows);
       nativeGesture = null;
       clearHighlights();
@@ -162,7 +166,7 @@ export function useNativeDropHandler(deps: NativeDropDeps) {
     if (copyModifier != null) copyModifierHeld = copyModifier;
     const explorer = deps.getActiveExplorer();
     if (explorer) {
-      const dragData = dragState.current ?? dragState.readCrossWindow();
+      const dragData = nativeGesture ? nativeGesture.data : dragState.latestSource();
       if (dragData) {
         const target = resolveDropTarget(position);
         if (target?.type === "background") {
@@ -214,7 +218,7 @@ export function useNativeDropHandler(deps: NativeDropDeps) {
     const target = resolveDropTargetFromElement(event.target as Element | null);
     const terminal = target?.type === "plugin" || target?.type === "blocked";
     const source = deferredDomSources.get(event) ?? bound;
-    const live = dragState.current ?? dragState.readCrossWindow();
+    const live = dragState.latestSource();
     // A decision belongs to its captured source session. An old drop cannot
     // borrow a successor's pending handoff and regain validity during replay.
     const pending = deferredDomSources.has(event) || !source || source.sessionId !== live?.sessionId ? undefined : dragState.pendingNative();

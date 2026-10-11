@@ -37,6 +37,7 @@ fn native_drag_options(source: Option<&Source>) -> drag::Options {
 #[serde(rename_all = "camelCase")]
 pub struct Source {
     session_id: String,
+    gesture_sequence: u64,
     path: String,
     name: String,
     kind: String,
@@ -68,6 +69,8 @@ fn matches_with(
         .as_deref()
         .unwrap_or(std::slice::from_ref(&source.path));
     if source.session_id.is_empty()
+        || source.gesture_sequence == 0
+        || source.gesture_sequence > 9_007_199_254_740_991
         || !matches!(source.kind.as_str(), "file" | "directory")
         || !source_paths.contains(&source.path)
         || source_paths.iter().any(|path| {
@@ -161,6 +164,7 @@ impl CapturedSource {
 #[derive(Default)]
 struct Registry {
     active: Option<(u64, String, Option<CapturedSource>)>,
+    completed_gesture_sequence: u64,
     receivers: HashMap<String, CapturedSource>,
     pending: HashMap<usize, VecDeque<(wry::DragDropEvent, Event)>>,
     native_labels: HashMap<usize, String>,
@@ -217,6 +221,7 @@ impl Registry {
                     source,
                     copy_modifier: Some(copying),
                     observed_at,
+                    completed_gesture_sequence: self.completed_gesture_sequence,
                 }
             }
             wry::DragDropEvent::Over { position: point } => Event::Over {
@@ -234,6 +239,7 @@ impl Registry {
                     source,
                     copy_modifier: Some(copying),
                     observed_at,
+                    completed_gesture_sequence: self.completed_gesture_sequence,
                 }
             }
             wry::DragDropEvent::Leave => {
@@ -269,6 +275,18 @@ impl Registry {
         );
     }
     fn complete(&mut self, token: u64) {
+        if let Some((active_token, _, Some(source))) = &self.active {
+            if *active_token == token {
+                self.completed_gesture_sequence = self
+                    .completed_gesture_sequence
+                    .max(source.original.gesture_sequence);
+            }
+        }
+        self.failed_start(token);
+    }
+    // A failed explicit start leaves the original HTML5 gesture alive on GTK.
+    // Only real native completion can fence automatic HTML5 source recovery.
+    fn failed_start(&mut self, token: u64) {
         if self.active.as_ref().is_some_and(|active| active.0 == token) {
             self.active = None;
         }
@@ -362,6 +380,7 @@ enum Event {
         source: Option<Source>,
         copy_modifier: Option<bool>,
         observed_at: f64,
+        completed_gesture_sequence: u64,
     },
     Over {
         position: tauri::PhysicalPosition<f64>,
@@ -373,6 +392,7 @@ enum Event {
         source: Option<Source>,
         copy_modifier: Option<bool>,
         observed_at: f64,
+        completed_gesture_sequence: u64,
     },
     Leave,
 }
@@ -500,6 +520,19 @@ pub struct Completion {
     cursor_pos: drag::CursorPosition,
 }
 
+// Keep platform completion ordering importable for deterministic event-loop
+// probes. The dispatcher may yield to another OS event before draining work.
+fn complete_native_drag(
+    retire: impl FnOnce() + Send + 'static,
+    notify: impl FnOnce() + Send + 'static,
+    enqueue: impl FnOnce(Box<dyn FnOnce() + Send>),
+) {
+    // Wry captures receiver identity in the platform callback. Queued receiver
+    // snapshots survive retirement, but a later Enter must see no active source.
+    retire();
+    enqueue(Box::new(notify));
+}
+
 #[tauri::command]
 pub async fn start_file_drag(
     app: tauri::AppHandle,
@@ -570,26 +603,32 @@ pub async fn start_file_drag(
                     move |result, cursor_pos| {
                         let app = callback_app.clone();
                         let on_event = on_event.clone();
-                        // A direct main→main dispatch executes immediately. Dispatch
-                        // from a worker and wait only for queue admission, so Enter/
-                        // Drop already queued by Wry precede source retirement. No
-                        // later OS gesture can enter between completion and admission.
-                        let queued = std::thread::spawn(move || {
-                            let owner = app.clone();
-                            app.run_on_main_thread(move || {
+                        let owner = app.clone();
+                        complete_native_drag(
+                            move || {
                                 owner
                                     .state::<Sessions>()
                                     .registry
                                     .lock()
                                     .unwrap_or_else(|poison| poison.into_inner())
                                     .complete(token);
+                            },
+                            move || {
                                 let _ = on_event.send(Completion { result, cursor_pos });
-                            })
-                        })
-                        .join();
-                        if !matches!(queued, Ok(Ok(()))) {
-                            log::warn!("Could not queue native drag completion");
-                        }
+                            },
+                            move |notification| {
+                                // Main→main dispatch runs inline. Queue just
+                                // notification behind already captured events;
+                                // active-source retirement has already happened.
+                                let queued = std::thread::spawn(move || {
+                                    app.run_on_main_thread(notification)
+                                })
+                                .join();
+                                if !matches!(queued, Ok(Ok(()))) {
+                                    log::warn!("Could not queue native drag completion");
+                                }
+                            },
+                        );
                     },
                     options,
                 )
@@ -601,7 +640,7 @@ pub async fn start_file_drag(
                 .registry
                 .lock()
                 .unwrap_or_else(|poison| poison.into_inner())
-                .complete(token);
+                .failed_start(token);
         }
         let _ = send.send(result);
     })

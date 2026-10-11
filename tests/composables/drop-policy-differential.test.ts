@@ -1,5 +1,5 @@
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-import { dropCases, dropBoundaryCases, dropCrossWindowCases, dropPathCases, dropPlatforms, branchDropPolicy, devDropPolicy, nativeRoute, intendedDifferences, type DropCase, type Outcome } from "../helpers/drop-policy";
+import { dropCases, dropBoundaryCases, dropCrossWindowCases, dropPathCases, dropTemporalCases, dropPlatforms, branchDropPolicy, devDropPolicy, nativeRoute, intendedDifferences, type DropCase, type Outcome } from "../helpers/drop-policy";
 import { dropElement } from "../helpers/drop-element";
 
 const io = vi.hoisted(() => ({ start: vi.fn(), listener: undefined as ((event: any) => void) | undefined,
@@ -36,9 +36,9 @@ function event(type: string, dt: DataTransfer, c: DropCase, target = hit): DragE
   e.stopImmediatePropagation = () => { e.stopped = true; stop(); };
   return e as unknown as DragEvent & { stopped: boolean };
 }
-function native(type: string, source: any, c: DropCase, observedAt?: number) {
+function native(type: string, source: any, c: DropCase, observedAt?: number, completedGestureSequence?: number) {
   observationTime += 2;
-  io.listener!({ payload: { type, paths: [sourcePath], source, position: { x: 60, y: 80 }, copyModifier: c.modifier === (c.platform === "mac" ? "option" : "ctrl"), observedAt: observedAt ?? observationTime + 0.25 } });
+  io.listener!({ payload: { type, paths: [sourcePath], source, position: { x: 60, y: 80 }, copyModifier: c.modifier === (c.platform === "mac" ? "option" : "ctrl"), observedAt: observedAt ?? observationTime + 0.25, completedGestureSequence } });
 }
 function target(c: DropCase) {
   const pane = dropElement("explorer-pane", { "data-pane-id": "owner" });
@@ -201,6 +201,73 @@ describe.each(dropPlatforms)("differential drop outcomes: %s", platform => {
     const outcomes = await run(c);
     // Also catches duplicate transfer/pinning/delivery across native and DOM.
     expect(outcomes).toEqual([policy.outcome]);
+    for (const record of io.records) {
+      expect(record.paths).toEqual([sourcePath]);
+      if (record.target) expect(record.target).toBe(destPath);
+    }
+  });
+  it.each(dropTemporalCases.filter(c => c.platform === platform))("temporal: $ordering / $reply / $successors / $completion / $source → $target", async c => {
+    hit = target(c);
+    if (c.target === "plugin") cleanup.push(modules.targets.fileDropTargets.register(hit, (paths: readonly string[], kind: string) => {
+      io.outcomes.push(`plugin:${kind}`); io.records.push({ paths: [...paths] });
+    }));
+    const entry = { path: sourcePath, name: "item", kind: "file" };
+    if (c.ordering === "retained-local" || c.ordering === "late-start-reply") {
+      vi.spyOn(console, "warn").mockImplementation(() => {});
+      let resolveStart!: () => void, rejectStart!: (reason: string) => void;
+      const decideStart = () => c.reply === "accepted" ? resolveStart() : rejectStart("unavailable");
+      io.start.mockImplementationOnce(() => new Promise<void>((resolve, reject) => { resolveStart = resolve; rejectStart = reject; }))
+        .mockRejectedValueOnce("unavailable");
+      const old = modules.html.createHtml5FileDrag(() => {}, "move");
+      old.start(event("dragstart", transfer(), c), { ...entry, path: "/old/item" });
+      observationTime += 2; old.end();
+      expect(modules.drag.dragState.current?.path).toBe("/old/item");
+      observationTime += 2;
+      const recent = peer.html.createHtml5FileDrag(() => {}, "link");
+      recent.start(event("dragstart", transfer(), c), { ...entry, kind: "directory" }); sourceEnd = recent.end;
+      await flush();
+      native("enter", null, c);
+      if (c.ordering === "late-start-reply") { decideStart(); await flush(); }
+      native("drop", null, c); await flush();
+      if (c.ordering === "retained-local") { decideStart(); await flush(); }
+    } else {
+      const sourceState = (c.window === "cross-window" ? peer : modules).drag.dragState;
+      sourceState.start({ ...entry, html5: true, nativeCopyPolicy: "move" });
+      const source = { ...sourceState.current };
+      const lease = sourceState.beginNative(source);
+      if (c.ordering === "same-millisecond-replacement") lease.failed();
+      else if (c.completion !== "pending-reply") lease.acknowledge();
+      const capturedAt = observationTime + (c.ordering === "same-millisecond-replacement" ? 2.25 : 0.25);
+      if (c.ordering === "completion-backlog") {
+        // Rust verifies that platform completion retires before this Enter.
+        // Its renderer notification has deliberately not arrived yet.
+        observationTime += 2;
+        if (c.completion !== "pending-reply") sourceState.endHtml5(source);
+        native("enter", null, c, undefined, source.gestureSequence); lease.complete(); lease.acknowledge();
+        native("drop", null, c, undefined, source.gestureSequence);
+      } else {
+        observationTime += 2; sourceState.endHtml5(source);
+        if (c.ordering === "same-millisecond-replacement") sourceState.finish(source);
+        else lease.complete();
+        if (c.ordering === "expired-provenance") {
+          for (let i = 0; i < 8; i++) {
+            observationTime += 2;
+            modules.drag.dragState.start({ ...entry, html5: c.successors === "html5" });
+            observationTime += 2; modules.drag.dragState.finish(modules.drag.dragState.current);
+          }
+        }
+        if (c.ordering === "captured-before-replacement" || c.ordering === "same-millisecond-replacement") {
+          if (c.ordering !== "same-millisecond-replacement") observationTime += 2;
+          modules.drag.dragState.start({ ...entry, kind: "directory", html5: true, nativeCopyPolicy: "link" });
+        }
+        const provenance = c.ordering === "same-millisecond-replacement" ? null : source;
+        native("enter", provenance, c, capturedAt); native("drop", provenance, c, capturedAt);
+      }
+      await flush();
+    }
+    await vi.waitFor(() => expect(io.outcomes.length || modules.toast.toastStore.toasts.some((toast: {message: string}) => /gesture identity expired/.test(toast.message))).toBeTruthy());
+    const outcomes = io.outcomes.length ? io.outcomes : ["blocked"];
+    expect(outcomes).toEqual([branchDropPolicy(c).outcome]);
     for (const record of io.records) {
       expect(record.paths).toEqual([sourcePath]);
       if (record.target) expect(record.target).toBe(destPath);

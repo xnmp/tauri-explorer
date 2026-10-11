@@ -27,7 +27,7 @@ vi.mock("$lib/composables/use-native-drop-target.svelte", () => ({
 vi.mock("$lib/state/drag.svelte", () => ({
   dragState: { get current() { return state.dragData; }, finish: vi.fn(), claim: () => ({ finish: vi.fn() }),
     start: vi.fn((data: NonNullable<typeof state.dragData>) => { state.dragData = data; }),
-    readCrossWindow: () => null, clear: vi.fn(), expiredNativeObservation: () => false },
+    readCrossWindow: () => null, latestSource: () => state.dragData, clear: vi.fn(), expiredNativeObservation: () => false },
 }));
 vi.mock("$lib/state/drop-operations", () => ({ handleFileDropMany: transfer }));
 vi.mock("$lib/state/bookmarks.svelte", () => ({ bookmarksStore: bookmarks }));

@@ -20,8 +20,8 @@ export interface ExternalDropState {
 }
 
 export interface ExternalDropCallbacks {
-  onDrop: (paths: string[], position: { x: number; y: number }, source?: DragData | null, copyModifier?: boolean | null, observedAt?: number) => void | Promise<void>;
-  onEnter?: (paths: string[], position: { x: number; y: number }, source?: DragData | null, copyModifier?: boolean | null, observedAt?: number) => void;
+  onDrop: (paths: string[], position: { x: number; y: number }, source?: DragData | null, copyModifier?: boolean | null, observedAt?: number, completedGestureSequence?: number) => void | Promise<void>;
+  onEnter?: (paths: string[], position: { x: number; y: number }, source?: DragData | null, copyModifier?: boolean | null, observedAt?: number, completedGestureSequence?: number) => void;
   onOver?: (position: { x: number; y: number }, copyModifier?: boolean | null) => void;
   onLeave?: () => void;
 }
@@ -53,7 +53,7 @@ export function useExternalDrop(callbacks: ExternalDropCallbacks) {
         if (eventType === "over" || eventType === "enter") {
           state.isDragging = true;
           state.dropPosition = event.payload.position;
-          if (eventType === "enter") callbacks.onEnter?.(event.payload.paths, event.payload.position, event.payload.source, event.payload.copyModifier, event.payload.observedAt);
+          if (eventType === "enter") callbacks.onEnter?.(event.payload.paths, event.payload.position, event.payload.source, event.payload.copyModifier, event.payload.observedAt, event.payload.completedGestureSequence);
           callbacks.onOver?.(event.payload.position, event.payload.copyModifier);
         } else if (eventType === "drop") {
           state.isDragging = false;
@@ -64,7 +64,7 @@ export function useExternalDrop(callbacks: ExternalDropCallbacks) {
           state.dropPosition = null;
           // Drop routing owns cleanup in finally. A leave callback here would
           // erase feedback for a gesture started by a synchronous consumer.
-          void callbacks.onDrop(paths, position, event.payload.source, event.payload.copyModifier, event.payload.observedAt);
+          void callbacks.onDrop(paths, position, event.payload.source, event.payload.copyModifier, event.payload.observedAt, event.payload.completedGestureSequence);
         } else {
           state.isDragging = false;
           state.dropPosition = null;

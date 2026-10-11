@@ -1576,13 +1576,14 @@ mod tests {
     #[test]
     #[cfg(unix)]
     fn pty_shell_runs_in_cwd_and_emits_output() {
+        let _cleanup = DestroyOnDrop("test-window");
         let dir = tempfile::tempdir().unwrap();
         let canonical = dir.path().canonicalize().unwrap();
         let (tx, rx) = mpsc::channel::<String>();
         let (exit_tx, exit_rx) = mpsc::channel::<Option<u32>>();
         // Output and exit are delivered by independent threads. Hold the first
         // output callback until the test has observed exit to exercise that order.
-        let (_release_output, output_gate) = mpsc::channel::<()>();
+        let (release_output, output_gate) = mpsc::channel::<()>();
         let output_gate = Mutex::new(Some(output_gate));
 
         let (id, token) = reserve_started("test-window");
@@ -1610,29 +1611,32 @@ mod tests {
 
         write_terminal(id, "test-window", 0, b"pwd && exit\n".to_vec()).unwrap();
 
+        let exited = exit_rx
+            .recv_timeout(Duration::from_secs(10))
+            .expect("shell never exited");
+        release_output.send(()).unwrap();
+
+        // Reaping the child does not join its independent output reader.
+        // Wait for that reader's channel to close, rather than draining only
+        // the chunks that happened to arrive before the exit notification.
         let mut output = String::new();
         let deadline = std::time::Instant::now() + Duration::from_secs(10);
-        let exited = loop {
-            if let Ok(code) = exit_rx.try_recv() {
-                break code;
+        loop {
+            let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+            match rx.recv_timeout(remaining) {
+                Ok(chunk) => output.push_str(&chunk),
+                Err(mpsc::RecvTimeoutError::Disconnected) => break,
+                Err(mpsc::RecvTimeoutError::Timeout) => {
+                    panic!("PTY output never finished; output: {output}");
+                }
             }
-            if let Ok(chunk) = rx.recv_timeout(Duration::from_millis(100)) {
-                output.push_str(&chunk);
-            }
-            assert!(
-                std::time::Instant::now() < deadline,
-                "shell never exited; output: {output}"
-            );
-        };
-        while let Ok(chunk) = rx.try_recv() {
-            output.push_str(&chunk);
         }
 
         assert!(
             output.contains(&*canonical.to_string_lossy()),
             "pwd output should contain the spawn cwd; got: {output}"
         );
-        assert!(exited.is_some(), "exit code should be reported");
+        assert_eq!(exited, Some(0), "pwd and shell exit should succeed");
         assert!(
             !terminals()
                 .lock()

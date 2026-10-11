@@ -10,8 +10,11 @@ The full operator suite exposed a timeout in the unrelated 5,001-activation
 registry regression under CPU contention. Its expectations were correct, so an
 attempt to optimize the existing test was refused by the immutable-test gate.
 Restore the file unchanged and use ordered Vitest projects: churn runs before
-the parallel unit group, with the same timeout, all cycles and assertions, and
-CLI worker overrides. No production lifecycle change is needed.
+the unchanged native-suite subprocess compiler check, then the parallel unit
+group, with the same timeouts, all cycles and assertions, and CLI worker
+overrides. The compiler check also exhausted its deadline under parallel
+transforms; a separate phase preserves its original test. No production
+lifecycle change is needed.
 
 Vitest merges inherited include arrays by concatenation. Put explicit includes
 in each project rather than inheriting the full unit glob into the churn
@@ -25,7 +28,7 @@ review found that Vitest sends isolated order-zero projects to a trailing group
 when `maxWorkers=1`. Use positive ordered groups. The execution regression binds
 lightweight real worker modules to the production-selected projects and journals
 module admission and churn completion for one- and two-worker runs; it exercises
-the actual scheduler without repeating 5,001 activations inside a parallel unit
-test. This removes
+the actual scheduler at both phase boundaries without repeating 5,001 activations
+or invoking a second compiler inside a parallel unit test. This removes
 contention between the test projects; it cannot promise immunity to unrelated
 host load.

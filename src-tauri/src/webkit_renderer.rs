@@ -87,9 +87,6 @@ pub(crate) struct Host {
     pub webkit: (u32, u32),
     /// NVIDIA's proprietary kernel driver is loaded.
     pub nvidia_proprietary: bool,
-    /// A DRM render node (`/dev/dri/renderD*`) can be opened, so GL is
-    /// hardware-backed. Without one, Mesa falls back to llvmpipe.
-    pub gpu_render_node: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -132,7 +129,14 @@ impl RendererPlan {
 }
 
 /// Choose the renderer for `host`, reading the environment through `get`.
-pub(crate) fn plan(host: Host, get: impl Fn(&str) -> Option<String>) -> RendererPlan {
+/// `gpu_render_node` reports whether a hardware render node is accessible; it
+/// is only called when no override, user variable or NVIDIA driver has already
+/// decided, so the probe never runs where its answer is irrelevant.
+pub(crate) fn plan(
+    host: Host,
+    get: impl Fn(&str) -> Option<String>,
+    gpu_render_node: impl FnOnce() -> bool,
+) -> RendererPlan {
     let version = format!("WebKitGTK {}.{}", host.webkit.0, host.webkit.1);
     let supports_shm = host.webkit >= FORCE_SHM_MIN_VERSION;
 
@@ -185,43 +189,83 @@ pub(crate) fn plan(host: Host, get: impl Fn(&str) -> Option<String>) -> Renderer
             format!("{var} set by the user on {version}{ignored}"),
         );
     }
-    let supports_skia_cpu = host.webkit >= SKIA_CPU_MIN_VERSION;
-    let (mode, why) = match (host.nvidia_proprietary, host.gpu_render_node) {
-        (true, _) if supports_shm => (RendererMode::SharedMemory, "NVIDIA proprietary driver"),
-        (true, _) => (
+    if host.nvidia_proprietary {
+        let (mode, why) = if supports_shm {
+            (RendererMode::SharedMemory, "NVIDIA proprietary driver")
+        } else {
+            (
+                RendererMode::Legacy,
+                "NVIDIA proprietary driver, WebKitGTK predates FORCE_SHM",
+            )
+        };
+        return RendererPlan::chosen(mode, format!("{why} on {version}{ignored}"));
+    }
+    let software_gl = forced_software_gl(&get)
+        .or_else(|| (!gpu_render_node()).then_some("no accessible GPU render node"));
+    let (mode, why) = match software_gl {
+        Some(cause) if host.webkit >= SKIA_CPU_MIN_VERSION => {
+            (RendererMode::CpuPainting, format!("{cause} (software GL)"))
+        }
+        Some(cause) => (
             RendererMode::Legacy,
-            "NVIDIA proprietary driver, WebKitGTK predates FORCE_SHM",
+            format!("{cause} (software GL), WebKitGTK predates Skia"),
         ),
-        (false, false) if supports_skia_cpu => (
-            RendererMode::CpuPainting,
-            "no GPU render node (software GL)",
-        ),
-        (false, false) => (
-            RendererMode::Legacy,
-            "no GPU render node (software GL), WebKitGTK predates Skia",
-        ),
-        (false, true) => (
+        None => (
             RendererMode::Native,
-            "GPU without NVIDIA proprietary driver",
+            "GPU without NVIDIA proprietary driver".to_string(),
         ),
     };
     RendererPlan::chosen(mode, format!("{why} on {version}{ignored}"))
 }
 
-/// Whether this process can open any DRM render node. Opening one has no side
-/// effects; a node that exists but is not accessible (sandbox, permissions)
-/// leaves GL on software just like a missing one.
+/// Mesa variables that force software rendering regardless of the hardware.
+/// Mesa reads `LIBGL_ALWAYS_SOFTWARE` as a boolean that is false only for
+/// "0", "n", "no", "f" or "false".
+fn forced_software_gl(get: &impl Fn(&str) -> Option<String>) -> Option<&'static str> {
+    let always_software = get("LIBGL_ALWAYS_SOFTWARE").is_some_and(|value| {
+        let value = value.trim().to_ascii_lowercase();
+        !value.is_empty() && !matches!(value.as_str(), "0" | "n" | "no" | "f" | "false")
+    });
+    if always_software {
+        return Some("LIBGL_ALWAYS_SOFTWARE set");
+    }
+    let gallium = get("GALLIUM_DRIVER").map(|value| value.trim().to_ascii_lowercase());
+    matches!(gallium.as_deref(), Some("llvmpipe" | "softpipe"))
+        .then_some("GALLIUM_DRIVER selects a software rasteriser")
+}
+
+/// Whether this process has read/write access to a hardware DRM render node —
+/// a likely, not certain, sign that GL is hardware-backed. Known misses: VMs
+/// whose virtual GPU lacks 3D (node present, llvmpipe anyway → WebKit
+/// defaults, as before) and WSLg, whose d3d12 GL uses `/dev/dxg` rather than a
+/// DRM node (may get CPU painting while compositing stays on the GPU).
+///
+/// Uses `access(2)`, never `open(2)`: opening a node runs the driver's open
+/// hook, which can runtime-resume a sleeping laptop dGPU. `access` honours
+/// mode bits and uaccess ACLs; sandbox denials surface later in Mesa itself.
+/// `vgem` (a buffer-sharing driver WSL kernels ship) has a render node but no
+/// rendering, so it is skipped.
 fn has_usable_render_node() -> bool {
     let Ok(entries) = std::fs::read_dir("/dev/dri") else {
         return false;
     };
     entries.flatten().any(|entry| {
-        entry.file_name().to_string_lossy().starts_with("renderD")
-            && std::fs::OpenOptions::new()
-                .read(true)
-                .write(true)
-                .open(entry.path())
-                .is_ok()
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+        if !name.starts_with("renderD") {
+            return false;
+        }
+        let driver = std::fs::read_link(format!("/sys/class/drm/{name}/device/driver"));
+        if driver.is_ok_and(|link| link.file_name().is_some_and(|base| base == "vgem")) {
+            return false;
+        }
+        let Ok(path) = std::ffi::CString::new(entry.path().into_os_string().into_encoded_bytes())
+        else {
+            return false;
+        };
+        // SAFETY: `path` is a valid NUL-terminated string; access(2) only
+        // checks permissions.
+        unsafe { libc::access(path.as_ptr(), libc::R_OK | libc::W_OK) == 0 }
     })
 }
 
@@ -239,11 +283,12 @@ pub(crate) fn apply() -> RendererPlan {
     let host = Host {
         webkit,
         nvidia_proprietary: std::path::Path::new("/sys/module/nvidia").exists(),
-        gpu_render_node: has_usable_render_node(),
     };
-    let plan = plan(host, |name| {
-        std::env::var_os(name).map(|value| value.to_string_lossy().into_owned())
-    });
+    let plan = plan(
+        host,
+        |name| std::env::var_os(name).map(|value| value.to_string_lossy().into_owned()),
+        has_usable_render_node,
+    );
     for name in &plan.unset {
         std::env::remove_var(name);
     }
@@ -261,19 +306,25 @@ mod tests {
     const NVIDIA: Host = Host {
         webkit: (2, 54),
         nvidia_proprietary: true,
-        gpu_render_node: true,
     };
     const MESA: Host = Host {
         webkit: (2, 54),
         nvidia_proprietary: false,
-        gpu_render_node: true,
     };
-    /// VM / CI runner / container: no usable render node.
+    /// VM / CI runner / container: probed with no usable render node.
     const NO_GPU: Host = Host {
         webkit: (2, 52),
         nvidia_proprietary: false,
-        gpu_render_node: false,
     };
+
+    /// A host with an accessible render node.
+    fn with_gpu(host: Host, get: impl Fn(&str) -> Option<String>) -> RendererPlan {
+        plan(host, get, || true)
+    }
+    /// A host without one.
+    fn without_gpu(host: Host, get: impl Fn(&str) -> Option<String>) -> RendererPlan {
+        plan(host, get, || false)
+    }
 
     fn env(pairs: &[(&str, &str)]) -> impl Fn(&str) -> Option<String> {
         let map: HashMap<String, String> = pairs
@@ -289,7 +340,7 @@ mod tests {
 
     #[test]
     fn nvidia_keeps_compositing_without_hardware_buffers() {
-        let plan = plan(NVIDIA, env(&[]));
+        let plan = with_gpu(NVIDIA, env(&[]));
         assert_eq!(plan.mode, RendererMode::SharedMemory);
         assert!(sets(&plan, "WEBKIT_DMABUF_RENDERER_FORCE_SHM"));
         // Distribution patches disable DMABuf on NVIDIA unless forced.
@@ -300,19 +351,19 @@ mod tests {
 
     #[test]
     fn other_gpus_keep_webkit_defaults() {
-        let plan = plan(MESA, env(&[]));
+        let plan = with_gpu(MESA, env(&[]));
         assert_eq!(plan.mode, RendererMode::Native);
         assert!(plan.set.is_empty() && plan.unset.is_empty());
     }
 
     #[test]
     fn hosts_without_a_gpu_paint_on_the_cpu_but_keep_compositing() {
-        let plan = plan(NO_GPU, env(&[]));
+        let plan = without_gpu(NO_GPU, env(&[]));
         assert_eq!(plan.mode, RendererMode::CpuPainting);
         assert!(sets(&plan, "WEBKIT_SKIA_ENABLE_CPU_RENDERING"));
         assert!(!sets(&plan, "WEBKIT_DISABLE_COMPOSITING_MODE"));
         assert!(
-            plan.reason.contains("no GPU render node"),
+            plan.reason.contains("no accessible GPU render node"),
             "{}",
             plan.reason
         );
@@ -321,7 +372,7 @@ mod tests {
     #[test]
     fn hosts_without_a_gpu_on_pre_skia_webkit_use_the_legacy_workaround() {
         for webkit in [(2, 45), (2, 44), (2, 40)] {
-            let plan = plan(Host { webkit, ..NO_GPU }, env(&[]));
+            let plan = without_gpu(Host { webkit, ..NO_GPU }, env(&[]));
             assert_eq!(plan.mode, RendererMode::Legacy, "{webkit:?}");
             assert!(sets(&plan, "WEBKIT_DISABLE_COMPOSITING_MODE"));
         }
@@ -329,29 +380,67 @@ mod tests {
             webkit: (2, 46),
             ..NO_GPU
         };
-        assert_eq!(plan(first_skia, env(&[])).mode, RendererMode::CpuPainting);
+        assert_eq!(
+            without_gpu(first_skia, env(&[])).mode,
+            RendererMode::CpuPainting
+        );
     }
 
     #[test]
-    fn nvidia_policy_does_not_depend_on_the_render_node_probe() {
-        let no_node = Host {
-            gpu_render_node: false,
-            ..NVIDIA
-        };
-        assert_eq!(plan(no_node, env(&[])).mode, RendererMode::SharedMemory);
+    fn the_render_node_probe_runs_only_when_it_decides_the_mode() {
+        let probe = || -> bool { panic!("render-node probe ran") };
+        assert_eq!(
+            plan(NVIDIA, env(&[]), probe).mode,
+            RendererMode::SharedMemory
+        );
+        assert_eq!(
+            plan(MESA, env(&[(OVERRIDE_VAR, "native")]), probe).mode,
+            RendererMode::Native
+        );
+        assert_eq!(
+            plan(MESA, env(&[("WEBKIT_DISABLE_COMPOSITING_MODE", "")]), probe).mode,
+            RendererMode::Native
+        );
+        assert_eq!(
+            plan(MESA, env(&[("LIBGL_ALWAYS_SOFTWARE", "1")]), probe).mode,
+            RendererMode::CpuPainting
+        );
+    }
+
+    #[test]
+    fn forced_software_gl_counts_as_no_gpu() {
+        for (var, value) in [
+            ("LIBGL_ALWAYS_SOFTWARE", "1"),
+            ("LIBGL_ALWAYS_SOFTWARE", "true"),
+            ("GALLIUM_DRIVER", "llvmpipe"),
+            ("GALLIUM_DRIVER", " Softpipe "),
+        ] {
+            let plan = with_gpu(MESA, env(&[(var, value)]));
+            assert_eq!(plan.mode, RendererMode::CpuPainting, "{var}={value:?}");
+            assert!(plan.reason.contains(var), "{}", plan.reason);
+        }
+        for (var, value) in [
+            ("LIBGL_ALWAYS_SOFTWARE", "0"),
+            ("LIBGL_ALWAYS_SOFTWARE", "false"),
+            ("LIBGL_ALWAYS_SOFTWARE", ""),
+            ("GALLIUM_DRIVER", "radeonsi"),
+        ] {
+            let plan = with_gpu(MESA, env(&[(var, value)]));
+            assert_eq!(plan.mode, RendererMode::Native, "{var}={value:?}");
+        }
     }
 
     #[test]
     fn user_variables_and_overrides_win_on_hosts_without_a_gpu() {
-        let user = plan(NO_GPU, env(&[("WEBKIT_DISABLE_COMPOSITING_MODE", "1")]));
+        let user = without_gpu(NO_GPU, env(&[("WEBKIT_DISABLE_COMPOSITING_MODE", "1")]));
         assert_eq!(user.mode, RendererMode::Native);
         assert!(user.set.is_empty() && user.unset.is_empty());
 
-        let native = plan(NO_GPU, env(&[(OVERRIDE_VAR, "native")]));
+        let native = without_gpu(NO_GPU, env(&[(OVERRIDE_VAR, "native")]));
         assert_eq!(native.mode, RendererMode::Native);
         assert!(native.set.is_empty());
 
-        let cpu = plan(
+        let cpu = with_gpu(
             MESA,
             env(&[
                 (OVERRIDE_VAR, "cpu"),
@@ -366,13 +455,13 @@ mod tests {
     #[test]
     fn nvidia_on_webkit_without_force_shm_uses_the_legacy_workaround() {
         for webkit in [(2, 43), (2, 42), (2, 40)] {
-            let plan = plan(Host { webkit, ..NVIDIA }, env(&[]));
+            let plan = with_gpu(Host { webkit, ..NVIDIA }, env(&[]));
             assert_eq!(plan.mode, RendererMode::Legacy, "{webkit:?}");
             assert!(sets(&plan, "WEBKIT_DISABLE_DMABUF_RENDERER"));
             assert!(sets(&plan, "WEBKIT_DISABLE_COMPOSITING_MODE"));
         }
         assert_eq!(
-            plan(
+            with_gpu(
                 Host {
                     webkit: (2, 44),
                     ..NVIDIA
@@ -383,7 +472,7 @@ mod tests {
             RendererMode::SharedMemory
         );
         assert_eq!(
-            plan(
+            with_gpu(
                 Host {
                     webkit: (3, 0),
                     ..NVIDIA
@@ -399,7 +488,7 @@ mod tests {
     fn any_user_renderer_variable_wins_even_when_empty_or_zero() {
         for var in USER_RENDERER_VARS {
             for value in ["1", "0", ""] {
-                let plan = plan(NVIDIA, env(&[(var, value)]));
+                let plan = with_gpu(NVIDIA, env(&[(var, value)]));
                 assert_eq!(plan.mode, RendererMode::Native, "{var}={value:?}");
                 assert!(plan.set.is_empty() && plan.unset.is_empty(), "{var}");
             }
@@ -410,17 +499,17 @@ mod tests {
     fn override_selects_the_mode_and_clears_conflicting_variables() {
         let user = ("WEBKIT_DISABLE_DMABUF_RENDERER", "1");
 
-        let shm = plan(MESA, env(&[(OVERRIDE_VAR, "SHM"), user]));
+        let shm = with_gpu(MESA, env(&[(OVERRIDE_VAR, "SHM"), user]));
         assert_eq!(shm.mode, RendererMode::SharedMemory);
         assert!(shm.unset.contains(&"WEBKIT_DISABLE_DMABUF_RENDERER"));
         assert!(!shm.unset.contains(&"WEBKIT_DMABUF_RENDERER_FORCE_SHM"));
 
-        let legacy = plan(NVIDIA, env(&[(OVERRIDE_VAR, " legacy ")]));
+        let legacy = with_gpu(NVIDIA, env(&[(OVERRIDE_VAR, " legacy ")]));
         assert_eq!(legacy.mode, RendererMode::Legacy);
         assert!(!legacy.unset.contains(&"WEBKIT_DISABLE_DMABUF_RENDERER"));
         assert!(legacy.unset.contains(&"WEBKIT_DMABUF_RENDERER_FORCE_SHM"));
 
-        let native = plan(NVIDIA, env(&[(OVERRIDE_VAR, "native"), user]));
+        let native = with_gpu(NVIDIA, env(&[(OVERRIDE_VAR, "native"), user]));
         assert_eq!(native.mode, RendererMode::Native);
         assert!(native.set.is_empty());
         assert!(native.unset.contains(&"WEBKIT_DISABLE_DMABUF_RENDERER"));
@@ -432,18 +521,18 @@ mod tests {
             webkit: (2, 42),
             ..NVIDIA
         };
-        let plan = plan(old, env(&[(OVERRIDE_VAR, "shm")]));
+        let plan = with_gpu(old, env(&[(OVERRIDE_VAR, "shm")]));
         assert_eq!(plan.mode, RendererMode::SharedMemory);
         assert!(plan.reason.contains("ignores FORCE_SHM"), "{}", plan.reason);
     }
 
     #[test]
     fn unrecognised_override_falls_through_and_is_reported() {
-        let plan = plan(NVIDIA, env(&[(OVERRIDE_VAR, "gpu")]));
+        let plan = with_gpu(NVIDIA, env(&[(OVERRIDE_VAR, "gpu")]));
         assert_eq!(plan.mode, RendererMode::SharedMemory);
         assert!(plan.reason.contains("\"gpu\""), "{}", plan.reason);
         assert_eq!(
-            super::plan(NVIDIA, env(&[(OVERRIDE_VAR, "  ")])).mode,
+            with_gpu(NVIDIA, env(&[(OVERRIDE_VAR, "  ")])).mode,
             RendererMode::SharedMemory
         );
     }

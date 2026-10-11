@@ -24,10 +24,16 @@ reads it.
   `WEBKIT_FORCE_DMABUF_RENDERER=1` defeats the Debian/Ubuntu/Gentoo patch that
   otherwise disables DMABuf (and with it compositing) on NVIDIA.
 - NVIDIA on older WebKitGTK: the legacy variables (FORCE_SHM is first read in 2.44).
-- No usable GPU render node (`/dev/dri/renderD*`; VMs, CI runners,
-  containers) on WebKitGTK ≥2.46: `WEBKIT_SKIA_ENABLE_CPU_RENDERING=1` keeps
-  compositing but paints tiles with Skia on the CPU. Older versions get the
-  legacy variables.
+- Software GL — no accessible non-`vgem` render node (`/dev/dri/renderD*`;
+  VMs, CI runners, containers), or Mesa forced to software by
+  `LIBGL_ALWAYS_SOFTWARE`/`GALLIUM_DRIVER=llvmpipe|softpipe` — on WebKitGTK
+  ≥2.46: `WEBKIT_SKIA_ENABLE_CPU_RENDERING=1` keeps compositing but paints
+  tiles with Skia on the CPU. Older versions get the legacy variables. The
+  render node is a likely, not certain, signal: VMs whose virtual GPU lacks 3D
+  keep a node and stay on WebKit defaults, and WSLg's d3d12 GL needs no DRM
+  node. The probe uses `access(2)`, never `open(2)` (a driver's open hook can
+  wake a sleeping laptop dGPU), and runs only when no override, user variable
+  or NVIDIA driver has decided.
 - Every other GPU: WebKit's defaults, which every other WebKitGTK app ships with.
 - Any user-set WebKit renderer variable — even empty or "0", since WebKit
   treats presence as a choice — leaves the environment untouched.

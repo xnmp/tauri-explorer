@@ -103,3 +103,17 @@ fn no_paths_preserves_image_result_and_no_image_error() {
     );
     assert!(!has_report_attachment(&[], &Reader::new(false)).unwrap());
 }
+
+#[test]
+fn malformed_image_data_keeps_its_validation_error_with_non_video_path() {
+    let reader = Reader {
+        image: Some(b"not PNG bytes".to_vec()),
+        image_reads: Cell::new(0),
+    };
+    let error = read_report_attachment(&["/tmp/foo.png".into()], &reader).unwrap_err();
+    assert_eq!(
+        serde_json::to_value(error).unwrap()["kind"],
+        "malformed_input"
+    );
+    assert_eq!(reader.image_reads.get(), 1);
+}

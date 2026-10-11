@@ -34,7 +34,7 @@ test("picker video survives close and failed submission, retries and submits", a
 test("copied video enables Attach from clipboard and supports removal", async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 1100 });
   await page.goto("/"); await waitForEntries(page);
-  await page.evaluate(() => localStorage.setItem("mock-report-clipboard-video", "1"));
+  await page.evaluate((key) => localStorage.setItem(key, "1"), MOCK_LOCAL_KEYS.reportClipboardVideo);
   const dialog = await openReport(page);
   await expect(dialog.getByRole("button", { name: "Attach from clipboard" })).toBeEnabled();
   await dialog.getByRole("button", { name: "Attach from clipboard" }).click();

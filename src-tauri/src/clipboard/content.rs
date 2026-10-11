@@ -21,7 +21,13 @@ pub(super) fn read_report_image(reader: &dyn ClipboardReader) -> Option<(Vec<u8>
 pub(super) fn read_report_image_attachment(
     reader: &dyn ClipboardReader,
 ) -> Result<crate::user_report::ReportAttachment, crate::user_report::SubmitReportError> {
-    let (bytes, media_type) = read_report_image(reader).ok_or_else(|| {
+    report_image_attachment(read_report_image(reader))
+}
+
+fn report_image_attachment(
+    image: Option<(Vec<u8>, &'static str)>,
+) -> Result<crate::user_report::ReportAttachment, crate::user_report::SubmitReportError> {
+    let (bytes, media_type) = image.ok_or_else(|| {
         crate::user_report::SubmitReportError::new(
             "clipboard_unavailable",
             "No image data in clipboard",
@@ -44,10 +50,18 @@ pub(super) fn read_report_attachment(
     paths: &[String],
     reader: &dyn ClipboardReader,
 ) -> Result<crate::user_report::ReportAttachment, crate::user_report::SubmitReportError> {
-    if paths.is_empty() {
-        read_report_image_attachment(reader)
-    } else {
-        crate::user_report::attachment_from_clipboard_files(paths)
+    // A copied recording wins over any thumbnail offered by its clipboard
+    // owner. Multiple files retain the explicit copy-one-file contract.
+    if paths.len() > 1
+        || paths
+            .first()
+            .is_some_and(|path| crate::user_report::clipboard_video_media_type(path).is_some())
+    {
+        return crate::user_report::attachment_from_clipboard_files(paths);
+    }
+    match read_report_image(reader) {
+        None if !paths.is_empty() => crate::user_report::attachment_from_clipboard_files(paths),
+        image => report_image_attachment(image),
     }
 }
 
@@ -55,7 +69,10 @@ pub(super) fn has_report_attachment(
     paths: &[String],
     reader: &dyn ClipboardReader,
 ) -> Result<bool, AppError> {
-    if !paths.is_empty() {
+    if paths
+        .iter()
+        .any(|path| crate::user_report::clipboard_video_media_type(path).is_some())
+    {
         Ok(true)
     } else {
         reader.has_image_result()

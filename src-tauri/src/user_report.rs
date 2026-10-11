@@ -1258,6 +1258,22 @@ mod tests {
 #[path = "../test_support/user_report_video.rs"]
 mod video_tests;
 
+/// File extensions eligible for the copied-video route. Signature validation
+/// remains mandatory when reading the file; discovery does not read its bytes.
+pub(crate) fn clipboard_video_media_type(path: &str) -> Option<&'static str> {
+    match std::path::Path::new(path)
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .map(str::to_ascii_lowercase)
+        .as_deref()
+    {
+        Some("mp4") => Some("video/mp4"),
+        Some("webm") => Some("video/webm"),
+        Some("mov") => Some("video/quicktime"),
+        _ => None,
+    }
+}
+
 /// Read only one explicitly copied regular video file; never allocate more
 /// than the relay's per-file cap, even if the file grows during the read.
 pub(crate) fn attachment_from_clipboard_files(
@@ -1269,21 +1285,8 @@ pub(crate) fn attachment_from_clipboard_files(
         return Err(fail("Copy one video file to attach from clipboard"));
     }
     let path = std::path::Path::new(&paths[0]);
-    let media_type = match path
-        .extension()
-        .and_then(|ext| ext.to_str())
-        .map(str::to_ascii_lowercase)
-        .as_deref()
-    {
-        Some("mp4") => "video/mp4",
-        Some("webm") => "video/webm",
-        Some("mov") => "video/quicktime",
-        _ => {
-            return Err(fail(
-                "Unsupported clipboard file. Copy an MP4, WebM, or MOV video.",
-            ))
-        }
-    };
+    let media_type = clipboard_video_media_type(&paths[0])
+        .ok_or_else(|| fail("Unsupported clipboard file. Copy an MP4, WebM, or MOV video."))?;
     if !path.is_file() {
         return Err(fail(
             "Unsupported clipboard file: select a regular video file",

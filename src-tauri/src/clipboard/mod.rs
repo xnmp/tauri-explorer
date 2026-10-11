@@ -99,17 +99,11 @@ pub async fn clipboard_has_report_attachment() -> Result<bool, AppError> {
 #[tauri::command]
 pub async fn clipboard_read_report_attachment(
 ) -> Result<crate::user_report::ReportAttachment, crate::user_report::SubmitReportError> {
-    let paths = match clipboard_snapshot().await {
-        Ok(snapshot) => snapshot.paths,
-        Err(error) => {
-            return clipboard_read_report_image().await.map_err(|_| {
-                crate::user_report::SubmitReportError::new(
-                    "clipboard_unavailable",
-                    error.to_string(),
-                )
-            });
-        }
-    };
+    // A failed file-list probe must not hide either the image or its error.
+    let paths = clipboard_snapshot()
+        .await
+        .map(|snapshot| snapshot.paths)
+        .unwrap_or_default();
     tokio::task::spawn_blocking(move || {
         content::read_report_attachment(&paths, platform::reader().as_ref())
     })

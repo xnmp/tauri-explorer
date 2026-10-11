@@ -11,7 +11,7 @@
 //! `parse_github_remote` and the `gh` response mappings are pure and tested
 //! directly (no network in tests, per project policy).
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -214,11 +214,6 @@ fn cache_get(key: &str) -> Option<Vec<PrInfo>> {
         CacheState::Hit(prs) => prs.clone(),
         CacheState::Failed => Vec::new(),
     })
-}
-
-#[cfg(test)]
-fn cache_put(key: String, state: CacheState) {
-    cache_put_if_current(key, state, PR_CACHE_REVISION.load(Ordering::Relaxed));
 }
 
 fn cache_put_if_current(key: String, state: CacheState, revision: u64) {
@@ -1272,6 +1267,36 @@ pub enum PrMergeMethod {
 #[path = "../test_support/github_pr_actions.rs"]
 mod pr_actions_tests;
 
+// All windows and worktrees targeting one GitHub repository share admission.
+static PR_MUTATIONS: LazyLock<Mutex<HashSet<String>>> =
+    LazyLock::new(|| Mutex::new(HashSet::new()));
+struct PrMutationGuard(String);
+impl PrMutationGuard {
+    fn acquire(slug: &str) -> Result<Self, AppError> {
+        let key = format!("github.com/{}", slug.to_ascii_lowercase());
+        if !PR_MUTATIONS.lock().unwrap().insert(key.clone()) {
+            return Err(AppError::Service {
+                code: "pr_mutation_busy".into(),
+                message: "A GitHub PR action is already running for this repository".into(),
+            });
+        }
+        Ok(Self(key))
+    }
+}
+impl Drop for PrMutationGuard {
+    fn drop(&mut self) {
+        PR_MUTATIONS.lock().unwrap().remove(&self.0);
+    }
+}
+fn uncertain_pr_mutation(detail: impl std::fmt::Display) -> AppError {
+    AppError::Service {
+        code: "pr_mutation_uncertain".into(),
+        message: format!(
+            "GitHub may have applied this PR action; check GitHub before retrying. {detail}"
+        ),
+    }
+}
+
 /// Runs a confirmed mutation against the same selected remote used by badges.
 /// The executable parameter isolates subprocess tests without global PATH edits.
 fn execute_pr_action(
@@ -1321,7 +1346,7 @@ fn execute_pr_action(
             args.extend([
                 "create".into(),
                 "--repo".into(),
-                slug.clone(),
+                format!("github.com/{slug}"),
                 "--head".into(),
                 head_branch,
                 "--base".into(),
@@ -1344,7 +1369,7 @@ fn execute_pr_action(
                 "merge".into(),
                 pr_number.to_string(),
                 "--repo".into(),
-                slug.clone(),
+                format!("github.com/{slug}"),
                 flag.into(),
             ]);
         }
@@ -1353,18 +1378,22 @@ fn execute_pr_action(
                 "review".into(),
                 pr_number.to_string(),
                 "--repo".into(),
-                slug.clone(),
+                format!("github.com/{slug}"),
                 "--approve".into(),
             ]);
         }
     }
+    let admission = PrMutationGuard::acquire(&slug)?;
     let mut command = Command::new(executable);
     command
         .no_console()
         .args(&args)
         .current_dir(repo_root)
-        .stdin(std::process::Stdio::null());
-    let result = command.output().map_err(gh_command_error);
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped());
+    let child = command.spawn().map_err(gh_command_error)?;
+    let result = child.wait_with_output().map_err(uncertain_pr_mutation);
     // A remote may have accepted work even when the client reports an error.
     // Evict cached badges on either outcome so the next fetch reconciles truth.
     {
@@ -1372,10 +1401,19 @@ fn execute_pr_action(
         PR_CACHE_REVISION.fetch_add(1, Ordering::Relaxed);
         cache.remove(&slug);
     }
-    let output = result?;
+    let output = match result {
+        Ok(output) => output,
+        Err(error) => {
+            // wait_with_output can fail before reaping the child. Fail closed:
+            // keep this target admitted until process exit instead of risking
+            // a duplicate while an unobserved child still runs.
+            std::mem::forget(admission);
+            return Err(error);
+        }
+    };
     if !output.status.success() {
         let message = String::from_utf8_lossy(&output.stderr).trim().to_string();
-        return Err(AppError::Other(if message.is_empty() {
+        return Err(uncertain_pr_mutation(if message.is_empty() {
             "GitHub CLI PR action failed".into()
         } else {
             message
@@ -1388,7 +1426,7 @@ fn execute_pr_action(
 pub async fn git_pr_action(repo_root: String, request: PrAction) -> Result<String, AppError> {
     tokio::task::spawn_blocking(move || execute_pr_action(&repo_root, request, Path::new("gh")))
         .await
-        .map_err(|e| AppError::Other(format!("Task join error: {e}")))?
+        .map_err(uncertain_pr_mutation)?
 }
 
 #[derive(Debug, Serialize)]

@@ -62,8 +62,9 @@ it("shares pending admission between simultaneously mounted graph panes", async 
   const first = createGitPrSession("/repair/two-panes", deps);
   const second = createGitPrSession("/repair/two-panes", deps);
   const operation = first.performAction(approval);
-  await second.performAction(approval);
+  const duplicate = second.performAction(approval);
   expect(mutate).toHaveBeenCalledTimes(1);
+  await duplicate;
   resolve("");
   await operation;
   expect(second.actionResult?.action).toBe("approve");

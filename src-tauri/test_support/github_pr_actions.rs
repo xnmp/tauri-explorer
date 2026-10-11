@@ -2,12 +2,24 @@
 use super::*;
 use std::os::unix::fs::PermissionsExt;
 
+fn cache_put(key: String, state: CacheState) {
+    cache_put_if_current(key, state, PR_CACHE_REVISION.load(Ordering::Relaxed));
+}
+fn fixture_slug(root: &str) -> String {
+    format!(
+        "action-tests/{}",
+        Path::new(root).file_name().unwrap().to_str().unwrap()
+    )
+}
 fn fixture() -> (tempfile::TempDir, String, std::path::PathBuf) {
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path().to_str().unwrap().to_string();
     let repo = git2::Repository::init(&root).unwrap();
-    repo.remote("origin", "https://github.com/action-tests/example.git")
-        .unwrap();
+    repo.remote(
+        "origin",
+        &format!("https://github.com/{}.git", fixture_slug(&root)),
+    )
+    .unwrap();
     let tree_id = repo.index().unwrap().write_tree().unwrap();
     let tree = repo.find_tree(tree_id).unwrap();
     let sig = git2::Signature::now("Test", "test@example.com").unwrap();
@@ -45,7 +57,8 @@ fn argv(root: &str) -> Vec<String> {
 #[test]
 fn pr_actions_create_runs_gh_in_repo_and_returns_url() {
     let (_dir, root, exe) = fixture();
-    let output = execute_pr_action(&root, create("feature"), &exe).unwrap();
+    let output =
+        execute_pr_action(&root, create_for("feature", &fixture_slug(&root)), &exe).unwrap();
     assert_eq!(output, "https://github.com/action-tests/example/pull/9");
     assert_eq!(
         argv(&root),
@@ -53,7 +66,7 @@ fn pr_actions_create_runs_gh_in_repo_and_returns_url() {
             "pr",
             "create",
             "--repo",
-            "action-tests/example",
+            &format!("github.com/{}", fixture_slug(&root)),
             "--head",
             "feature",
             "--base",
@@ -84,7 +97,7 @@ fn pr_actions_merge_and_approve_use_explicit_repo_and_number() {
         execute_pr_action(
             &root,
             PrAction::Merge {
-                repo_slug: "action-tests/example".into(),
+                repo_slug: fixture_slug(&root),
                 pr_number: 9,
                 method,
             },
@@ -93,13 +106,20 @@ fn pr_actions_merge_and_approve_use_explicit_repo_and_number() {
         .unwrap();
         assert_eq!(
             argv(&root),
-            ["pr", "merge", "9", "--repo", "action-tests/example", flag]
+            [
+                "pr",
+                "merge",
+                "9",
+                "--repo",
+                &format!("github.com/{}", fixture_slug(&root)),
+                flag
+            ]
         );
     }
     execute_pr_action(
         &root,
         PrAction::Approve {
-            repo_slug: "action-tests/example".into(),
+            repo_slug: fixture_slug(&root),
             pr_number: 9,
         },
         &exe,
@@ -112,7 +132,7 @@ fn pr_actions_merge_and_approve_use_explicit_repo_and_number() {
             "review",
             "9",
             "--repo",
-            "action-tests/example",
+            &format!("github.com/{}", fixture_slug(&root)),
             "--approve"
         ]
     );
@@ -120,14 +140,16 @@ fn pr_actions_merge_and_approve_use_explicit_repo_and_number() {
 #[test]
 fn pr_actions_refuse_stale_or_detached_head_before_spawning() {
     let (_dir, root, exe) = fixture();
-    assert!(execute_pr_action(&root, create("other"), &exe)
-        .unwrap_err()
-        .to_string()
-        .contains("branch"));
+    assert!(
+        execute_pr_action(&root, create_for("other", &fixture_slug(&root)), &exe)
+            .unwrap_err()
+            .to_string()
+            .contains("branch")
+    );
     let repo = git2::Repository::open(&root).unwrap();
     repo.set_head_detached(repo.head().unwrap().target().unwrap())
         .unwrap();
-    assert!(execute_pr_action(&root, create("feature"), &exe).is_err());
+    assert!(execute_pr_action(&root, create_for("feature", &fixture_slug(&root)), &exe).is_err());
     assert!(!Path::new(&root).join("argv").exists());
 }
 #[test]
@@ -200,7 +222,7 @@ fn create_for(head: &str, slug: &str) -> PrAction {
 fn pr_actions_confirmed_repository_change_refuses_all_mutations_before_spawning() {
     let (_dir, root, exe) = fixture();
     let displayed = pr_context(&root).unwrap();
-    assert_eq!(displayed.repo_slug, "action-tests/example");
+    assert_eq!(displayed.repo_slug, fixture_slug(&root));
     assert_eq!(displayed.head_branch.as_deref(), Some("feature"));
     let requests = [
         create_for("feature", &displayed.repo_slug),

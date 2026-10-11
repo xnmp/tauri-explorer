@@ -967,22 +967,27 @@
   const prActionBusy = $derived(prSession.actionBusy);
   const prActionResult = $derived(prSession.actionResult);
   const prActionError = $derived(prSession.actionError);
+  const prActionUncertain = $derived(prSession.actionUncertain);
+  let uncertainRetryAcknowledged = $state(false);
   async function createPrDialog(): Promise<void> {
     if (!headBranch || prActionBusy) return;
+    uncertainRetryAcknowledged = false;
     prDialog = await prSession.prepareCreate(headBranch);
   }
   function openPrAction(action: "merge" | "approve", pr: PrSnapshot): void {
     if (prActionBusy) return;
     const repoSlug = prRepositorySlug(pr);
     if (!repoSlug) { toastStore.error("Cannot determine this PR's GitHub repository"); return; }
+    uncertainRetryAcknowledged = false;
     prSession.clearActionStatus();
     prDialog = action === "merge"
       ? { action, repoSlug, prNumber: pr.number, method: "squash" }
       : { action, repoSlug, prNumber: pr.number };
   }
   async function submitPrAction(): Promise<void> {
-    if (!prDialog || prActionBusy) return;
-    await prSession.performAction({ ...prDialog });
+    if (!prDialog || prActionBusy || (prActionUncertain && !uncertainRetryAcknowledged)) return;
+    await prSession.performAction({ ...prDialog }, uncertainRetryAcknowledged);
+    uncertainRetryAcknowledged = false;
     if (!prSession.actionError) prDialog = null;
   }
 
@@ -2618,9 +2623,10 @@
           <p>Submit an approving review for this PR on GitHub?</p>
         {/if}
         {#if prActionError}<p class="error-message" role="alert">{prActionError}</p>{/if}
+        {#if prActionUncertain}<label><input type="checkbox" bind:checked={uncertainRetryAcknowledged} disabled={prActionBusy} /> I checked GitHub and want to retry this action</label>{/if}
         <div class="dialog-actions">
           <button type="button" class="btn secondary" disabled={prActionBusy} onclick={() => (prDialog = null)}>Cancel</button>
-          <button type="submit" class="btn primary" disabled={prActionBusy || (prDialog.action === "create" && (!prDialog.title.trim() || !prDialog.base.trim()))}>{prActionBusy ? "Working…" : prDialog.action === "create" ? "Create PR" : prDialog.action === "merge" ? "Merge PR" : "Approve PR"}</button>
+          <button type="submit" class="btn primary" disabled={prActionBusy || (prActionUncertain && !uncertainRetryAcknowledged) || (prDialog.action === "create" && (!prDialog.title.trim() || !prDialog.base.trim()))}>{prActionBusy ? "Working…" : prDialog.action === "create" ? "Create PR" : prDialog.action === "merge" ? "Merge PR" : "Approve PR"}</button>
         </div>
       </form>
     {/if}
@@ -2654,7 +2660,7 @@
   .pr-actions-status { overflow-wrap: anywhere; }
   .pr-action-card .form-field { margin-top: var(--spacing-md); }
   .pr-action-card textarea, .pr-action-card select { width: 100%; box-sizing: border-box; padding: var(--spacing-sm); border: 1px solid var(--control-stroke); border-radius: var(--radius-sm); background: var(--control-fill); color: var(--text-primary); font: inherit; }
-  .pr-action-card textarea:focus, .pr-action-card select:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+  .pr-action-card textarea:focus, .pr-action-card select:focus { outline: 2px solid var(--focus-stroke-outer); outline-offset: 1px; }
   .pr-action-card textarea { resize: vertical; }
 
   .git-graph-view {

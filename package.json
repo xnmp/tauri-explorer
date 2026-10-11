@@ -76,6 +76,7 @@
     "webdriverio": "^9.27.0"
   },
   "overrides": {
-    "esbuild": "^0.25.0"
+    "esbuild": "^0.25.0",
+    "undici": "^6.28.1"
   }
 }

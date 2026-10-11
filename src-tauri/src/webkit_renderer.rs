@@ -16,16 +16,25 @@
 //! `WEBKIT_FORCE_DMABUF_RENDERER` is set; forcing it is safe here because
 //! shared memory never uses the hardware buffer path.
 //!
-//! Only NVIDIA's proprietary driver is known to need any of this, so other GPUs
-//! keep WebKit's own defaults — the configuration every other WebKitGTK app
-//! ships with. Variables a user sets themselves always win, and
-//! `TAURI_EXPLORER_WEBKIT_RENDERER` selects a mode for one launch.
+//! Hosts with no GPU render node (VMs, CI runners, containers) would otherwise
+//! composite and paint through software GL (llvmpipe). Measured under llvmpipe,
+//! that path left a 12-step selection walk with 1 repainted frame and stalled
+//! input for 150–450 ms (the Linux CI resize specs, #1057). WebKitGTK 2.46+
+//! can keep compositing while painting with Skia on the CPU, which was as
+//! smooth there as the non-composited path (59 changed frames, ≤84 ms gaps);
+//! older WebKitGTK gets the non-composited workaround.
+//!
+//! NVIDIA's proprietary driver and GPU-less hosts are the only cases known to
+//! need any of this, so other GPUs keep WebKit's own defaults — the
+//! configuration every other WebKitGTK app ships with. Variables a user sets
+//! themselves always win, and `TAURI_EXPLORER_WEBKIT_RENDERER` selects a mode
+//! for one launch.
 //!
 //! The decision is a pure function of the WebKitGTK runtime version, the GPU
-//! driver and the environment; only `apply` touches the process environment,
+//! driver, whether a GPU render node is usable, and the environment; only `apply` touches the process environment,
 //! and it must run before GTK/WebKit start.
 
-/// Per-launch override: `shm`, `legacy` or `native`.
+/// Per-launch override: `shm`, `cpu`, `legacy` or `native`.
 pub(crate) const OVERRIDE_VAR: &str = "TAURI_EXPLORER_WEBKIT_RENDERER";
 
 /// WebKit renderer variables a user may already have chosen. WebKit treats any
@@ -45,10 +54,15 @@ const USER_RENDERER_VARS: &[&str] = &[
 /// First WebKitGTK release that reads `WEBKIT_DMABUF_RENDERER_FORCE_SHM`.
 const FORCE_SHM_MIN_VERSION: (u32, u32) = (2, 44);
 
+/// First WebKitGTK release that paints with Skia (and so reads
+/// `WEBKIT_SKIA_ENABLE_CPU_RENDERING`).
+const SKIA_CPU_MIN_VERSION: (u32, u32) = (2, 46);
+
 const SHARED_MEMORY_ENV: &[(&str, &str)] = &[
     ("WEBKIT_DMABUF_RENDERER_FORCE_SHM", "1"),
     ("WEBKIT_FORCE_DMABUF_RENDERER", "1"),
 ];
+const CPU_PAINTING_ENV: &[(&str, &str)] = &[("WEBKIT_SKIA_ENABLE_CPU_RENDERING", "1")];
 const LEGACY_ENV: &[(&str, &str)] = &[
     ("WEBKIT_DISABLE_COMPOSITING_MODE", "1"),
     ("WEBKIT_DISABLE_DMABUF_RENDERER", "1"),
@@ -58,6 +72,8 @@ const LEGACY_ENV: &[(&str, &str)] = &[
 pub(crate) enum RendererMode {
     /// Composited DMABuf renderer over shared-memory buffers.
     SharedMemory,
+    /// Composited, with Skia painting tiles on the CPU instead of through GL.
+    CpuPainting,
     /// DMABuf renderer and compositing disabled (non-composited painting).
     Legacy,
     /// WebKit's own defaults; the environment is left untouched.
@@ -71,6 +87,9 @@ pub(crate) struct Host {
     pub webkit: (u32, u32),
     /// NVIDIA's proprietary kernel driver is loaded.
     pub nvidia_proprietary: bool,
+    /// A DRM render node (`/dev/dri/renderD*`) can be opened, so GL is
+    /// hardware-backed. Without one, Mesa falls back to llvmpipe.
+    pub gpu_render_node: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -87,6 +106,7 @@ impl RendererPlan {
     fn chosen(mode: RendererMode, reason: String) -> Self {
         let set = match mode {
             RendererMode::SharedMemory => SHARED_MEMORY_ENV,
+            RendererMode::CpuPainting => CPU_PAINTING_ENV,
             RendererMode::Legacy => LEGACY_ENV,
             RendererMode::Native => &[],
         };
@@ -130,6 +150,17 @@ pub(crate) fn plan(host: Host, get: impl Fn(&str) -> Option<String>) -> Renderer
                 format!("{OVERRIDE_VAR}=shm on {version}{caveat}"),
             );
         }
+        Some("cpu") => {
+            let caveat = if host.webkit >= SKIA_CPU_MIN_VERSION {
+                ""
+            } else {
+                " (this WebKitGTK predates Skia and ignores it)"
+            };
+            return RendererPlan::overridden(
+                RendererMode::CpuPainting,
+                format!("{OVERRIDE_VAR}=cpu on {version}{caveat}"),
+            );
+        }
         Some("legacy") => {
             return RendererPlan::overridden(
                 RendererMode::Legacy,
@@ -154,15 +185,44 @@ pub(crate) fn plan(host: Host, get: impl Fn(&str) -> Option<String>) -> Renderer
             format!("{var} set by the user on {version}{ignored}"),
         );
     }
-    let (mode, why) = match (host.nvidia_proprietary, supports_shm) {
-        (false, _) => (RendererMode::Native, "no NVIDIA proprietary driver"),
-        (true, true) => (RendererMode::SharedMemory, "NVIDIA proprietary driver"),
-        (true, false) => (
+    let supports_skia_cpu = host.webkit >= SKIA_CPU_MIN_VERSION;
+    let (mode, why) = match (host.nvidia_proprietary, host.gpu_render_node) {
+        (true, _) if supports_shm => (RendererMode::SharedMemory, "NVIDIA proprietary driver"),
+        (true, _) => (
             RendererMode::Legacy,
             "NVIDIA proprietary driver, WebKitGTK predates FORCE_SHM",
         ),
+        (false, false) if supports_skia_cpu => (
+            RendererMode::CpuPainting,
+            "no GPU render node (software GL)",
+        ),
+        (false, false) => (
+            RendererMode::Legacy,
+            "no GPU render node (software GL), WebKitGTK predates Skia",
+        ),
+        (false, true) => (
+            RendererMode::Native,
+            "GPU without NVIDIA proprietary driver",
+        ),
     };
     RendererPlan::chosen(mode, format!("{why} on {version}{ignored}"))
+}
+
+/// Whether this process can open any DRM render node. Opening one has no side
+/// effects; a node that exists but is not accessible (sandbox, permissions)
+/// leaves GL on software just like a missing one.
+fn has_usable_render_node() -> bool {
+    let Ok(entries) = std::fs::read_dir("/dev/dri") else {
+        return false;
+    };
+    entries.flatten().any(|entry| {
+        entry.file_name().to_string_lossy().starts_with("renderD")
+            && std::fs::OpenOptions::new()
+                .read(true)
+                .write(true)
+                .open(entry.path())
+                .is_ok()
+    })
 }
 
 /// Apply the renderer plan to this process. Must run before GTK or WebKit is
@@ -179,6 +239,7 @@ pub(crate) fn apply() -> RendererPlan {
     let host = Host {
         webkit,
         nvidia_proprietary: std::path::Path::new("/sys/module/nvidia").exists(),
+        gpu_render_node: has_usable_render_node(),
     };
     let plan = plan(host, |name| {
         std::env::var_os(name).map(|value| value.to_string_lossy().into_owned())
@@ -200,10 +261,18 @@ mod tests {
     const NVIDIA: Host = Host {
         webkit: (2, 54),
         nvidia_proprietary: true,
+        gpu_render_node: true,
     };
     const MESA: Host = Host {
         webkit: (2, 54),
         nvidia_proprietary: false,
+        gpu_render_node: true,
+    };
+    /// VM / CI runner / container: no usable render node.
+    const NO_GPU: Host = Host {
+        webkit: (2, 52),
+        nvidia_proprietary: false,
+        gpu_render_node: false,
     };
 
     fn env(pairs: &[(&str, &str)]) -> impl Fn(&str) -> Option<String> {
@@ -234,6 +303,64 @@ mod tests {
         let plan = plan(MESA, env(&[]));
         assert_eq!(plan.mode, RendererMode::Native);
         assert!(plan.set.is_empty() && plan.unset.is_empty());
+    }
+
+    #[test]
+    fn hosts_without_a_gpu_paint_on_the_cpu_but_keep_compositing() {
+        let plan = plan(NO_GPU, env(&[]));
+        assert_eq!(plan.mode, RendererMode::CpuPainting);
+        assert!(sets(&plan, "WEBKIT_SKIA_ENABLE_CPU_RENDERING"));
+        assert!(!sets(&plan, "WEBKIT_DISABLE_COMPOSITING_MODE"));
+        assert!(
+            plan.reason.contains("no GPU render node"),
+            "{}",
+            plan.reason
+        );
+    }
+
+    #[test]
+    fn hosts_without_a_gpu_on_pre_skia_webkit_use_the_legacy_workaround() {
+        for webkit in [(2, 45), (2, 44), (2, 40)] {
+            let plan = plan(Host { webkit, ..NO_GPU }, env(&[]));
+            assert_eq!(plan.mode, RendererMode::Legacy, "{webkit:?}");
+            assert!(sets(&plan, "WEBKIT_DISABLE_COMPOSITING_MODE"));
+        }
+        let first_skia = Host {
+            webkit: (2, 46),
+            ..NO_GPU
+        };
+        assert_eq!(plan(first_skia, env(&[])).mode, RendererMode::CpuPainting);
+    }
+
+    #[test]
+    fn nvidia_policy_does_not_depend_on_the_render_node_probe() {
+        let no_node = Host {
+            gpu_render_node: false,
+            ..NVIDIA
+        };
+        assert_eq!(plan(no_node, env(&[])).mode, RendererMode::SharedMemory);
+    }
+
+    #[test]
+    fn user_variables_and_overrides_win_on_hosts_without_a_gpu() {
+        let user = plan(NO_GPU, env(&[("WEBKIT_DISABLE_COMPOSITING_MODE", "1")]));
+        assert_eq!(user.mode, RendererMode::Native);
+        assert!(user.set.is_empty() && user.unset.is_empty());
+
+        let native = plan(NO_GPU, env(&[(OVERRIDE_VAR, "native")]));
+        assert_eq!(native.mode, RendererMode::Native);
+        assert!(native.set.is_empty());
+
+        let cpu = plan(
+            MESA,
+            env(&[
+                (OVERRIDE_VAR, "cpu"),
+                ("WEBKIT_DISABLE_COMPOSITING_MODE", "1"),
+            ]),
+        );
+        assert_eq!(cpu.mode, RendererMode::CpuPainting);
+        assert!(cpu.unset.contains(&"WEBKIT_DISABLE_COMPOSITING_MODE"));
+        assert!(!cpu.unset.contains(&"WEBKIT_SKIA_ENABLE_CPU_RENDERING"));
     }
 
     #[test]

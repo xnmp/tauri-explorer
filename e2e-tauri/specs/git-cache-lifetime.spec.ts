@@ -48,6 +48,10 @@ describe("native graph cache lifetime", () => {
     git("add", "."); git("commit", "--quiet", "-m", "cache initial commit");
     // A retained graph must own its invalidation coverage; an independently
     // mounted SCM panel must not accidentally keep this regression green.
+    // navigateTo resets the view first: a commit graph a previous spec left
+    // open is restored from shared localStorage, and `.file-list` would then
+    // never render (#447; seen on CI after git-author-avatar, #1057).
+    await navigateTo(cacheRoot);
     await $(".file-list").waitForExist({ timeout: 15_000 });
     await browser.keys(["Control", ","]);
     await $(".settings-dialog .settings-search").waitForDisplayed();

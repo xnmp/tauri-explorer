@@ -24,15 +24,37 @@ reads it.
   `WEBKIT_FORCE_DMABUF_RENDERER=1` defeats the Debian/Ubuntu/Gentoo patch that
   otherwise disables DMABuf (and with it compositing) on NVIDIA.
 - NVIDIA on older WebKitGTK: the legacy variables (FORCE_SHM is first read in 2.44).
+- No usable GPU render node (`/dev/dri/renderD*`; VMs, CI runners,
+  containers) on WebKitGTK ≥2.46: `WEBKIT_SKIA_ENABLE_CPU_RENDERING=1` keeps
+  compositing but paints tiles with Skia on the CPU. Older versions get the
+  legacy variables.
 - Every other GPU: WebKit's defaults, which every other WebKitGTK app ships with.
 - Any user-set WebKit renderer variable — even empty or "0", since WebKit
   treats presence as a choice — leaves the environment untouched.
-  `TAURI_EXPLORER_WEBKIT_RENDERER=shm|legacy|native` forces a mode for one
+  `TAURI_EXPLORER_WEBKIT_RENDERER=shm|cpu|legacy|native` forces a mode for one
   launch and clears conflicting variables. The decision is logged first in
   setup as `Renderer(webkit)`.
 
 Measured on the NVIDIA machine with FORCE_SHM: scroll 17 ms, marquee 21 ms,
 context menu 57–95 ms.
+
+**GPU-less hosts (found by Linux CI):** WebKit's defaults composite and paint
+through software GL (llvmpipe) there. On the PR the CI resize specs saw one
+coalesced pointer move across a 150 ms pause (`[240, 240]`), and the whole
+native suite ran ~23% slower. Locally, forcing Mesa llvmpipe
+(`__EGL_VENDOR_LIBRARY_FILENAMES=…/50_mesa.json LIBGL_ALWAYS_SOFTWARE=1`)
+and stepping the selection 12 times in a tiled 68-wallpaper folder measured:
+
+| mode | changed frames | max gap |
+|---|---|---|
+| native (llvmpipe) | 1 | — |
+| shm | 10 | 617 ms |
+| legacy | 57 | 66 ms |
+| Skia CPU | 59 | 84 ms |
+
+Skia CPU is chosen over legacy because it stays on WebKit's composited path,
+so `backdrop-filter` keeps rendering and the 2.54 non-composited
+secondary-window repaint risk is avoided.
 
 **Gotchas:**
 - Removing both variables with no replacement reproduces `Error 71` on NVIDIA.

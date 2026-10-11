@@ -43,6 +43,7 @@ Rules that bite:
   keep it distinct from `--icon-folder` (the Hacker theme deliberately uses its
   darker terminal green) and cover every file-list view mode when changing it.
 - Three view modes (Details/List/Tiles) dispatched by `FileList.svelte` — display features must land in all three.
+- Details-only columns (e.g. Length, #995) are the exception: their values are lazy per-row metadata requested by rendered `FileItem` rows through a cached resolver, never fields on directory listings.
 - Keep high-frequency hover feedback on file entries, sidebar navigation, and tabs immediate. Preserve motion for one-shot structural events (such as tab enter/close), but do not add CSS transition settling to pointer highlights; it reads as input latency even when the main thread is idle (#503).
 - Refresh policy is split deliberately: WHEN=`refresh-manager`, WHETHER=`pane-watch`, HOW=`pane-refresh`. Don't add a fourth gate, and don't build private refresh stacks inside components — the git graph did, and it produced #431/#432.
 - Watcher callbacks are delayed work: capture the explorer path when queuing a refresh and drop the callback if that explorer navigates before it runs. Preserve the backend observation time too: notify delivery can lag behind a trailing listing, and treating an already-covered change as new work creates a third refresh. Otherwise an event attributed to the old directory refreshes the new one and corrupts both directories' cadence.

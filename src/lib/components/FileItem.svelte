@@ -14,6 +14,8 @@
   import { settingsStore } from "$lib/state/settings.svelte";
   import { manualHiddenStore } from "$lib/state/manual-hidden.svelte";
   import { emptyFolderResolver } from "$lib/state/empty-folders.svelte";
+  import { mediaDurationResolver } from "$lib/state/media-durations.svelte";
+  import { formatMediaDuration } from "$lib/domain/media-duration";
   import { useItemInteractions, isInClipboard as checkInClipboard, isClipboardCut } from "$lib/composables/use-item-interactions.svelte";
   import { usePointerDrag } from "$lib/composables/use-pointer-drag.svelte";
   import { windowTabsManager } from "$lib/state/window-tabs.svelte";
@@ -67,6 +69,13 @@
   const absoluteDateText = $derived(formatAbsoluteDate(entry.modified));
   const typeText = $derived(getFileType(entry));
   const sizeText = $derived(entry.kind === "file" ? formatSize(entry.size) : "");
+
+  // Video length is probed lazily for rendered rows only, and only while the
+  // Length column is shown; unchanged files reuse the resolver's cache (#995).
+  $effect(() => {
+    if (settingsStore.columnVisibility.length) mediaDurationResolver.request(entry);
+  });
+  const lengthText = $derived(formatMediaDuration(mediaDurationResolver.duration(entry)));
 
   function handleClick(event: MouseEvent) {
     if (isRenaming) {
@@ -168,12 +177,19 @@
     {/if}
   </div>
   {/if}
+
+  <!-- Length column -->
+  {#if settingsStore.columnVisibility.length}
+  <div class="length-cell">
+    {lengthText}
+  </div>
+  {/if}
 </div>
 
 <style>
   .file-item {
     display: grid;
-    grid-template-columns: var(--details-grid-columns, var(--col-name, 300px) var(--col-date, 180px) var(--col-type, 120px) var(--col-size, 90px));
+    grid-template-columns: var(--details-grid-columns, var(--col-name, 300px) var(--col-date, 180px) var(--col-type, 120px) var(--col-size, 90px) var(--col-length, 90px));
     gap: 0;
     align-items: center;
     padding: 4px 16px;
@@ -288,7 +304,8 @@
   /* Date, Type, Size cells */
   .date-cell,
   .type-cell,
-  .size-cell {
+  .size-cell,
+  .length-cell {
     font-size: var(--font-size-caption);
     color: var(--text-tertiary);
     overflow: hidden;
@@ -296,9 +313,14 @@
     white-space: nowrap;
   }
 
-  .size-cell {
+  .size-cell,
+  .length-cell {
     text-align: right;
     padding-right: 8px;
+  }
+
+  .length-cell {
+    font-variant-numeric: tabular-nums;
   }
 
   .empty-cell {

@@ -107,10 +107,10 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 
 - `lazy-dialog.svelte.ts` — per-host pending import ownership, retained constructors and demand-aware failure publication.
 
-- `git-graph-query.svelte.ts` — mounted history/pagination owner; shared reloader, captured query/walk, partial log paint, page-zero cache and invocation-scoped cleanup.
+- `git-graph-query.svelte.ts` — mounted history/pagination owner, including merge-base target paging; shared reloader, captured query/walk, partial log paint, page-zero cache and invocation-scoped cleanup.
 - `src/lib/state/git-graph-detail.svelte.ts` — Selected commit/comparison files, mutation refresh tokens and inline diff ownership.
 - `git-pr-session.svelte.ts` — mounted GitHub badge, PR detail and CI log requests; immutable snapshots, invocation identities and disposal.
-- `git-graph-branches.svelte.ts` — lazy branch/author metadata owner; known-coverage fallback and query/popover request coordination.
+- `git-graph-branches.svelte.ts` — lazy branch/author metadata and cancellable merge-base jump owner; known-coverage fallback and query/popover request coordination.
 
 - `window-startup.ts` — window-owned settings/theme/plugin startup; disposal prevents late settings from activating plugins.
 - `window-session.ts` — composes page subscriptions, startup, one-shot launch address-bar focus, command readiness and post-readiness warm priming with rollback/teardown.

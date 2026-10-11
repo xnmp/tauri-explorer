@@ -73,7 +73,8 @@ for (const exit of ["Escape", "double-click"] as const) {
     await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
     await clearSamples(page);
     if (exit === "Escape") await page.keyboard.press("Escape");
-    else await page.locator(".preview-pane").dblclick({ position: { x: 10, y: 100 } });
+    // Target the pane handler directly: image descendants own their clicks.
+    else await page.locator(".preview-pane").dispatchEvent("dblclick");
     await expect(page.locator(".preview-pane")).not.toHaveClass(/fullscreen/);
     await expectMatchingDelivery(page);
     await expect(selected).toHaveText(before);

@@ -83,6 +83,12 @@ export interface GitRef {
   target: string;
 }
 
+/** Exact branch identity; remote names must not collide with local shorthands. */
+export interface MergeBaseBranch {
+  name: string;
+  remote: boolean;
+}
+
 export interface GitRefs {
   local_branches: GitRef[];
   remote_branches: GitRef[];

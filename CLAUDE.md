@@ -186,6 +186,9 @@ that inspect the complete transcript must wait for the output channel to close
 as well as for the child exit; an exit notification does not mean the last
 output callback has run. Keep those waits bounded and retain terminal cleanup
 on assertion failures.
+Use private XDG config/data/cache directories for the native library suite:
+rename completion consults installed provenance plugins, so an inherited host
+profile can change its warning result.
 
 When a bug resists quick diagnosis: search `docs/lessons/` + the frozen `lessons_learnt.md` archive and commit history first, then add targeted logging/instrumentation before another fix attempt. Suite-wide test timeouts (~5 s) under parallel/CPU load are a known flake mode — rerun the failing files in isolation before treating them as regressions.
 

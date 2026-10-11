@@ -6,6 +6,7 @@ export const USER_REPORT_IMAGE_TYPES = [
   "image/gif",
 ] as const;
 export type UserReportImageType = (typeof USER_REPORT_IMAGE_TYPES)[number];
+export type UserReportMediaType = UserReportImageType | "video/mp4" | "video/webm" | "video/quicktime";
 
 // Mirrors the native boundary and the relay; all three assert these against
 // tests/contract/fixtures/report_relay.json.
@@ -18,8 +19,8 @@ export const MAX_USER_REPORT_CONTACT_UNITS = 100;
 
 export interface UserReportAttachment {
   name: string;
-  mediaType: UserReportImageType;
-  /** Base64-encoded image bytes without a data-URL prefix. */
+  mediaType: UserReportMediaType;
+  /** Base64-encoded media bytes without a data-URL prefix. */
   data: string;
 }
 

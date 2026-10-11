@@ -24,6 +24,10 @@ export function videoKeyAction(
     ? "consume" : action;
 }
 
+export function videoClickAction(control: "surface" | "button" | "message"): VideoAction | null {
+  return control === "surface" ? "fullscreen" : null;
+}
+
 export function mediaTime(seconds: number): string {
   if (!Number.isFinite(seconds) || seconds < 0) return "0:00";
   const value = Math.floor(seconds);

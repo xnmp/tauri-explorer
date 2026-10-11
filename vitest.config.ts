@@ -13,6 +13,10 @@ export default defineConfig({
     exclude: ["tests/perf/**", "**/node_modules/**"],
     environment: "node",
     setupFiles: ["./tests/setup.ts"],
+    // Hundreds of cold Svelte transforms otherwise contend across every core,
+    // exhausting behavior-test timers. Keep the default bounded like browser
+    // tests; explicit Vitest --maxWorkers overrides still take precedence.
+    maxWorkers: 4,
   },
   resolve: {
     alias: {

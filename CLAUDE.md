@@ -181,6 +181,8 @@ behavior-test timers. Hoist mocks needed by eager imports, and retain fresh
 module instances after each test's persisted-data seed. Compiler exit-status
 checks belong in bounded suite setup rather than an application-behavior timer;
 keep their real command and success assertion intact (#993 PR repair).
+The unit suite defaults to four workers to bound concurrent cold transforms;
+explicit Vitest worker overrides remain available, and perf tests stay serial.
 
 For Windows native transfer waits, use one renderer-side observer through
 `executeAsync` to correlate the requested operation token or listing mutation.

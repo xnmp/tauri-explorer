@@ -30,7 +30,7 @@ export function createMockAiPresentation(emit: (name: string, value: unknown) =>
       if (!current || !["resume", "discard", "stop"].includes(action) || !resolutionAvailable(current, action)) throw new Error("Original operation action is unavailable; reload its retained status");
       calls.push({ command: "resolve", identity: aiOperationKey(current), action });
       if (action !== "resume") {
-        operations = { ...operations, operations: action === "discard" ? operations.operations.filter(r => r !== current) : operations.operations.map(r => r === current ? { ...r, canStop: false, canResume: false, reason: "Active recovery stopped. Unknown outcome evidence remains retained." } : r) };
+        operations = { ...operations, operations: action === "discard" ? operations.operations.filter(r => r !== current) : operations.operations.map(r => r === current ? { ...r, active: false, canStop: false, canResume: false, reason: "Active recovery stopped. Unknown outcome evidence remains retained." } : r) };
         jobs = jobs.map(r => r.owner.packageId === consumerPackage && r.operationId === operationId && !nativeJobTerminal(r.state)
           ? { ...r, revision: ++watermark, updatedAtMs: Date.now(), state: "needs_attention", phase: action === "discard" ? "provider_result_discarded" : "stopped" } : r);
         for (const r of jobs.filter(r => r.owner.packageId === consumerPackage && r.operationId === operationId && !nativeJobTerminal(r.state))) emit("plugin-jobs:changed", { type: "updated", job: structuredClone(r) });

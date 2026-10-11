@@ -1,12 +1,13 @@
 /**
- * Live count of unresolved AI operations. Reads the native snapshot and refreshes on change
+ * Live count of AI operations needing attention (active, in-progress ones excluded). Reads the native snapshot and refreshes on change
  * events while at least one consumer holds a subscription (ref-counted). Failures leave the
  * count at 0, so indicators stay hidden rather than surfacing an error.
  */
+import { needsAttentionCount } from "$lib/domain/ai-operations";
 import { readAiOperations, watchAiOperations } from "$lib/api/ai-operations";
 
 export interface AiOperationsCountDeps {
-  read: () => Promise<{ operations: readonly unknown[] }>;
+  read: () => Promise<{ operations: readonly { active?: boolean }[] }>;
   watch: (receive: () => void) => Promise<() => void>;
 }
 
@@ -19,7 +20,7 @@ export function createUnresolvedAiCount(deps: AiOperationsCountDeps) {
   async function refresh(gen: number): Promise<void> {
     try {
       const snapshot = await deps.read();
-      if (gen === generation) count = snapshot.operations.length;
+      if (gen === generation) count = needsAttentionCount(snapshot);
     } catch {
       if (gen === generation) count = 0;
     }

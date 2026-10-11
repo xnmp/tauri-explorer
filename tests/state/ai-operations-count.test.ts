@@ -2,13 +2,13 @@ import { describe, it, expect, vi } from "vitest";
 import { createUnresolvedAiCount } from "$lib/state/ai-operations.svelte";
 
 const flush = () => new Promise((r) => setTimeout(r, 0));
-function setup(initial: unknown[] = []) {
+function setup(initial: { active?: boolean }[] = []) {
   let ops = initial, fail = false, notify = () => {};
   const unwatch = vi.fn();
   const watch = vi.fn(async (receive: () => void) => { notify = receive; return unwatch; });
   const read = vi.fn(async () => { if (fail) throw new Error("boom"); return { operations: ops }; });
   return { store: createUnresolvedAiCount({ read, watch }), watch, unwatch, read,
-    set: (o: unknown[]) => { ops = o; notify(); }, failNext: () => { fail = true; notify(); } };
+    set: (o: { active?: boolean }[]) => { ops = o; notify(); }, failNext: () => { fail = true; notify(); } };
 }
 
 describe("unresolved AI count", () => {
@@ -18,6 +18,14 @@ describe("unresolved AI count", () => {
     expect(t.store.count).toBe(1);
     t.set([{}, {}, {}]); await flush();
     expect(t.store.count).toBe(3);
+    release();
+  });
+  it("does not count operations whose job is still actively running", async () => {
+    const t = setup([{ active: true }]);
+    const release = t.store.subscribe(); await flush();
+    expect(t.store.count).toBe(0);
+    t.set([{ active: true }, { active: false }, {}]); await flush();
+    expect(t.store.count).toBe(2);
     release();
   });
   it("shares one watch across consumers and stops after the last release", async () => {

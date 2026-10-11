@@ -55,6 +55,13 @@ pub(super) fn snapshot() -> Result<Value, AppError> {
     let migration=crate::ai::image_migration::status(&crate::config::config_dir()?).unwrap_or_else(|_|json!({"state":"pending","error":"Image migration storage requires repair; original settings are retained"}));
     Ok(json!({"version":1,"operations":rows,"migration":migration}))
 }
+/// True only while a live job is still driving the operation: the job exists,
+/// is not terminal, is not parked in `NeedsAttention`, and recovery was not
+/// stopped. Accepting/Running/Recovering are all host-driven progress; such an
+/// operation is in progress, not something the user must resolve.
+pub(super) fn is_active(job: Option<JobState>, stopped: bool) -> bool {
+    !stopped && job.is_some_and(|s| !s.terminal() && s != JobState::NeedsAttention)
+}
 /// Unresolved-operation rows from durable host evidence alone; `available`
 /// reports whether an exact pinned package generation is installed and enabled.
 pub(super) fn operation_rows(
@@ -72,7 +79,8 @@ pub(super) fn operation_rows(
             else if execution=="unknown" {"Remote execution outcome is unknown; this operation will not be replayed"}
             else if delivery=="unavailable" {"Retained output is unavailable; resume original local recovery or explicitly discard it"}
             else {"The original operation is awaiting execution or local delivery reconciliation"};
-        Ok(json!({"operationId":a.operation_id,"consumerPackage":a.consumer.package_id,"providerPackage":a.provider.package_id,"createdAtMs":(created!=0).then_some(created),"execution":execution,"delivery":delivery,"reason":reason,"canResume":consumer&&!stopped,"canDiscard":provider&&execution=="succeeded"&&matches!(delivery,"available"|"unavailable"),"canStop":provider&&execution=="unknown"&&delivery=="none"&&!stopped}))
+        let active=is_active(store.job_for_operation(&a.consumer.package_id,&a.operation_id)?.map(|j|j.state),stopped);
+        Ok(json!({"active":active,"operationId":a.operation_id,"consumerPackage":a.consumer.package_id,"providerPackage":a.provider.package_id,"createdAtMs":(created!=0).then_some(created),"execution":execution,"delivery":delivery,"reason":reason,"canResume":consumer&&!stopped,"canDiscard":provider&&execution=="succeeded"&&matches!(delivery,"available"|"unavailable"),"canStop":provider&&execution=="unknown"&&delivery=="none"&&!stopped}))
     }).collect()
 }
 /// Commits the provider's discard receipt. Bytes and claims are released only
@@ -227,4 +235,34 @@ pub(super) fn resolve(consumer: &str, operation: &str, action: &str) -> Result<V
     }
     backend::emit_operations_changed();
     snapshot()
+}
+
+#[cfg(test)]
+mod active_tests {
+    use super::{is_active, JobState};
+    #[test]
+    fn live_job_states_are_active() {
+        for s in [JobState::Accepting, JobState::Running, JobState::Recovering] {
+            assert!(is_active(Some(s), false), "{s:?}");
+        }
+    }
+    #[test]
+    fn no_job_is_not_active() {
+        assert!(!is_active(None, false));
+    }
+    #[test]
+    fn needs_attention_is_not_active() {
+        assert!(!is_active(Some(JobState::NeedsAttention), false));
+    }
+    #[test]
+    fn terminal_jobs_are_not_active() {
+        for s in [JobState::Completed, JobState::Error, JobState::Cancelled, JobState::Discarded] {
+            assert!(!is_active(Some(s), false), "{s:?}");
+        }
+    }
+    #[test]
+    fn stopped_recovery_is_not_active() {
+        assert!(!is_active(Some(JobState::Recovering), true));
+        assert!(!is_active(Some(JobState::Running), true));
+    }
 }

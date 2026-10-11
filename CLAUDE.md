@@ -254,8 +254,9 @@ Directory reconciliation can retain entry identity when byte count and mtime are
 unchanged, so metadata must also invalidate through shared directory-change and
 local-mutation events. Header context-menu events must stop propagation to avoid
 opening the pane's file menu over the column menu.
-Details row focus must reveal the outer row with inline-start alignment: when columns
-exceed the pane width, native Tab focus can scroll even overflow-hidden ancestors
-toward the trailing columns and hide the file identity at high zoom. Preserve
-column widths and selection; revealing only the padded name cell clips the
-leading focus ring. Do not relax the icon viewport or focus-ring assertions.
+Details rows reveal their outer edge only on visible keyboard entry from outside
+the row grid. Native Tab focus can scroll clipping ancestors and hide the file
+identity at high zoom; aligning the outer edge also preserves its leading ring.
+Pointer selection and cursor moves within the grid must retain the user's
+horizontal column position and FileList's preventScroll ownership (ADR 0015).
+Do not relax the icon viewport, focus-ring or horizontal-scroll assertions.

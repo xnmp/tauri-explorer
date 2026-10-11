@@ -437,18 +437,19 @@ test("overlapping picker reads cannot bypass attachment limits", async ({ page }
   await waitForEntries(page);
   const dialog = await openReportDialog(page);
 
-  await dialog.getByLabel("Add images").evaluate((element) => {
+  await dialog.getByLabel("Add images").evaluate((element, pngBytes) => {
+    const imageBytes = Uint8Array.from(pngBytes);
     const input = element as HTMLInputElement;
     const select = (prefix: string) => {
       const transfer = new DataTransfer();
-      transfer.items.add(new File(["first"], `${prefix}-first.png`, { type: "image/png" }));
-      transfer.items.add(new File(["second"], `${prefix}-second.png`, { type: "image/png" }));
+      transfer.items.add(new File([imageBytes], `${prefix}-first.png`, { type: "image/png" }));
+      transfer.items.add(new File([imageBytes], `${prefix}-second.png`, { type: "image/png" }));
       input.files = transfer.files;
       input.dispatchEvent(new Event("change", { bubbles: true }));
     };
     select("one");
     select("two");
-  });
+  }, Array.from(png));
 
   await expect(dialog.getByRole("button", { name: /^Remove / })).toHaveCount(2);
   await expect(dialog.getByRole("alert")).toContainText("up to 3");
@@ -541,7 +542,7 @@ for (const [kind, message] of [
 
     await expect(dialog).toBeHidden();
     await expect(page.locator(".toast.error")).toContainText(message);
-    await expect(page.locator(".toast.error")).toContainText("add the images there manually");
+    await expect(page.locator(".toast.error")).toContainText("add the attachments there manually");
     await expect.poll(() => page.evaluate((key) => localStorage.getItem(key), MOCK_LOCAL_KEYS.openedUrl))
       .toContain("https://github.com/xnmp/tauri-explorer/issues/new?");
   });

@@ -24,3 +24,12 @@ The header contextmenu event must stop at the header. Otherwise FileList opens
 its background menu over the column controls. Assert that competing menu is
 absent. Near the viewport edge, choose input inside the header, clear of WebKit's
 non-overlay scrollbar; the popup itself must still fit entirely onscreen.
+
+## Legacy edge clamping
+
+Legacy fixed offsets scale twice but menu dimensions scale once. Convert the
+rendered menu dimensions (`offsetWidth * zoom`, likewise height) through the
+same fixed-coordinate helper as the pointer and viewport before subtraction.
+Subtracting raw layout dimensions overflowed the right/bottom edges below 100%.
+`fixedMenuPosition` owns this calculation; regression tests assert resulting
+viewport bounds for single-offset and both legacy WebKit models.

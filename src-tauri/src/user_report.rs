@@ -1313,3 +1313,7 @@ pub(crate) fn attachment_from_clipboard_files(
         .ok_or_else(|| fail("Clipboard video has an invalid filename"))?;
     attachment_from_image_bytes(name.into(), media_type, bytes)
 }
+
+#[cfg(test)]
+#[path = "../test_support/user_report_media_contract.rs"]
+mod media_contract_tests;

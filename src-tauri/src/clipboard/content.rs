@@ -334,3 +334,7 @@ mod tests {
         assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 0);
     }
 }
+
+#[cfg(test)]
+#[path = "../../test_support/report_clipboard_routing.rs"]
+mod report_routing;

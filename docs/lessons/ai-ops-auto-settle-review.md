@@ -45,3 +45,35 @@ activation, jobs.start ownership, status RPC, reverse artifact IO, upgraded
 completion events, malformed answers, evidence repair, provider death, and deadline exhaustion. Lifecycle crash
 boundaries and non-empty input quota reuse run against the production store and
 mutation entry points. Native fixtures require private Xvfb/D-Bus/XDG profiles.
+
+The success witness must be retained before `BEGIN IMMEDIATE`, not only inside
+its transaction. A write-lock timeout can precede the transaction body. Share
+that witness across handles of the same ledger, include it despite a prior
+settlement marker, and keep failed available/unavailable publication in the
+existing recovery loop. Validate its original artifact identity before latching;
+invalid acquired/discarded proof must not poison a corrected receipt at the same
+revision. Commit successful receipt and terminal custody projection together.
+
+Provider repair follows the consumer policy. Compatible replacements use the
+original pinned authority for status, reverse stage/seal and acknowledgement.
+A restart can erase an uncommitted session witness after an upgrade, so fenced
+Unknown also permits compatible unpaid provider recovery; its start fence stays
+intact. Explicit provider removal disables transitive required dependents in one
+index commit, after all affected packages pass live-work fences. Optional
+consumers remain enabled. Release/report share a transaction, including legacy
+successful receipt rows whose terminal projection never committed.
+
+Legacy NeedsAttention/stopped presentation can deliver an authoritative success
+without re-entering active job capacity. Correct it only after original output
+acquisition and a newer consumer completion prove delivery. Storage-full
+presentation has the same acknowledged-completion correction in native and live
+frontend history.
+
+A recovery permit is authority, not capacity. Stage and seal must reacquire the
+normal stage-plus-seal budget with transactional quota admission before writing.
+Never inflate reservations when merely observing a success or opening a legacy
+ledger. Quota refusal publishes storage-full job state and does not spend the
+finite uncertainty budget; existing recovery passes retry after capacity release.
+The real-broker regression fills normal reservations, refuses six original raw
+image recovery passes, releases one reservation and checks original image bytes
+and completed job history without another start.

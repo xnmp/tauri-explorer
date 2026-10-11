@@ -1407,10 +1407,11 @@ fn durable_observation_retries_interrupted_phase_transition_without_regressing()
             false
         )
         .is_err());
-    assert_eq!(
-        s.get("consumer", "observed").unwrap().unwrap().phase,
-        AdmissionPhase::Accepted
-    );
+    // Success and its custody projection now commit together. A failed
+    // follow-up terminal call cannot hide the already deliverable output.
+    assert!(s
+        .read(&owner("consumer", 2), "consumer", "observed", &d)
+        .is_ok());
     drop(s);
     let s = Store::open(root.path().join("service"), Limits::default()).unwrap();
     assert_eq!(

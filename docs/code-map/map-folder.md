@@ -907,11 +907,11 @@ TraceExplorer's image UI, provider adapters and SQLite journal are maintained in
 - `src-tauri/src/service_state/artifacts.rs` — captured inputs, reserved output stages, sealing, acquisition proof and retained artifact custody.
 - `src-tauri/src/service_state/intents.rs` — immutable semantic admission identities and replay-conflict validation.
 - `src-tauri/src/service_state/job.rs` — durable host job presentation and snapshot wire records.
-- `src-tauri/src/service_state/job_store.rs` — transactional job revisions, ownership, recovery, pruning and Stop presentation policy.
+- `src-tauri/src/service_state/job_store.rs` — transactional job revisions, ownership, quota-full delivery presentation, legacy stopped completion, recovery and pruning.
 - `src-tauri/src/service_state/mod.rs` — service ledger module boundary.
 - `src-tauri/src/service_state/model.rs` — native package generations, artifact descriptors, admissions and quotas.
 - `src-tauri/src/service_state/receipt.rs` — pure automatic settlement policy and strict canonical provider receipt validation including bounded Codex diagnostics.
-- `src-tauri/src/service_state/receipts.rs` — durable monotonic receipt acceptance, automatic dismissal transactions and immutable execution evidence.
+- `src-tauri/src/service_state/receipts.rs` — durable monotonic receipt acceptance, session success witnesses shared across ledger handles, explicit participant removal, automatic dismissal and immutable execution evidence.
 - `src-tauri/src/service_state/request.rs` — credential-free image request semantics and input/option validation.
 - `src-tauri/src/service_state/rules.rs` — pure service ownership, phase, identity and quota rules.
 - `src-tauri/src/service_state/store.rs` — SQLite service ownership transactions, retention and execution claims.

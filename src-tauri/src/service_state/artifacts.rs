@@ -13,6 +13,7 @@ use std::{
 const INPUT: u64 = 20 * 1024 * 1024;
 const TOTAL: u64 = 64 * 1024 * 1024;
 const OUTPUT: u64 = 50 * 1024 * 1024;
+const OUTPUT_RESERVATION: u64 = 2 * OUTPUT;
 struct OriginalOutput {
     path: PathBuf,
     bytes: Vec<u8>,
@@ -62,6 +63,27 @@ impl Drop for OutputRecoveryGuard<'_> {
     }
 }
 impl Store {
+    /// Settlement releases unused capacity, not the artifact's identity.
+    /// Acquire the same stage + seal budget as initial admission before any
+    /// writable path or new publication can consume it again.
+    fn reserve_output_capacity(&self, consumer: &str, op: &str, handle: &str) -> Result<()> {
+        let result=self.transaction(|tx| {
+            let bytes:i64=tx.query_row("SELECT bytes FROM artifacts WHERE handle=?1 AND consumer=?2 AND operation=?3 AND kind='output'",params![handle,consumer,op],|r| r.get(0)).map_err(sql)?;
+            let bytes=u64::try_from(bytes).map_err(|_|reject("negative artifact reservation"))?;
+            if bytes < OUTPUT_RESERVATION {
+                self.quota(tx,consumer,OUTPUT_RESERVATION-bytes,false)?;
+                tx.execute("UPDATE artifacts SET bytes=?2 WHERE handle=?1",params![handle,OUTPUT_RESERVATION as i64]).map_err(sql)?;
+            }
+            Ok(())
+        });
+        if matches!(&result,Err(crate::error::AppError::Service { code,.. }) if code=="storage_full")
+        {
+            if let Some(job) = self.job_for_operation(consumer, op)? {
+                self.mark_storage_full(&job)?;
+            }
+        }
+        result
+    }
     /// Unpaid provider reconciliation may publish its retained original copy
     /// even after Unknown was fenced. This grants stage/seal only; it never
     /// revokes the execution fence or allows a disposed output to reappear.
@@ -852,6 +874,7 @@ impl Store {
             )
             .map_err(sql)?;
         let _lease = self.lease(&handle)?;
+        self.reserve_output_capacity(consumer, op, &handle)?;
         let path = self.stage_path(&handle)?;
         regular_or_missing(&path)?;
         if !path.exists() {
@@ -931,6 +954,7 @@ impl Store {
             if let Err(cause) = self.verify_bytes(&d) {
                 if matches!(&cause, crate::error::AppError::Service { code, .. } if matches!(code.as_str(), "not_found" | "corrupt"))
                 {
+                    self.reserve_output_capacity(consumer, op, handle)?;
                     self.restore_original_seal(&a, &d, cause)?;
                 } else {
                     return Err(cause);
@@ -948,6 +972,7 @@ impl Store {
                 "staged output recovery requires durable proven success with unavailable delivery",
             ));
         }
+        self.reserve_output_capacity(consumer, op, handle)?;
         let original = self.original_output(handle)?;
         if original.media_type != media {
             return Err(reject("output format does not match media type"));

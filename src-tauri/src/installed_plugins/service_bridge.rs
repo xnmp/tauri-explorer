@@ -232,7 +232,23 @@ fn handle_inner(broker: Arc<Broker>, frame: Value, reply: bool) -> Result<(), Ap
                         }
                         backend::CallLease::acquire_direction(&broker.manifest().id, lane)?
                     };
+                    let operation = params["operationId"].as_str().map(str::to_owned);
+                    let consumer = params["consumerPackageId"]
+                        .as_str()
+                        .unwrap_or(&broker.manifest().id)
+                        .to_owned();
                     let result = dispatch(&broker, &method, params);
+                    if matches!(&result,Err(AppError::Service { code,.. }) if code=="storage_full")
+                    {
+                        if let Some(operation) = operation {
+                            if let Ok(Some(job)) = service_host::store()
+                                .and_then(|s| s.job_for_operation(&consumer, &operation))
+                            {
+                                backend::release_job(&job.owner, job.job_id);
+                                backend::emit_job_event(json!({"type":"updated","job":job}));
+                            }
+                        }
+                    }
                     drop(lease);
                     result
                 })();
@@ -310,6 +326,29 @@ fn dispatch(broker: &Arc<Broker>, method: &str, params: Value) -> Result<Value, 
             broker.manifest(),
             &broker.generation(),
             text(&params, "operationId")?,
+        )?
+    } else if matches!(
+        method,
+        "host.artifacts.stage"
+            | "host.artifacts.seal"
+            | "host.artifacts.read"
+            | "host.services.provider.update"
+            | "host.services.test.update"
+    ) {
+        let consumer = params["consumerPackageId"]
+            .as_str()
+            .unwrap_or(&broker.manifest().id);
+        let operation = if method == "host.services.provider.update" {
+            text(&params["status"], "operationId")?
+        } else {
+            text(&params, "operationId")?
+        };
+        recovery_provider(
+            store,
+            broker.manifest(),
+            &broker.generation(),
+            consumer,
+            operation,
         )?
     } else {
         broker.generation()
@@ -555,7 +594,17 @@ fn invoke(consumer: &Arc<Broker>, request: Invocation) -> Result<Value, AppError
     } else {
         consumer.generation()
     };
-    let provider = backend.generation();
+    let provider = if let Some(operation) = request.params["operationId"].as_str() {
+        recovery_provider(
+            store,
+            backend.manifest(),
+            &backend.generation(),
+            &caller.package_id,
+            operation,
+        )?
+    } else {
+        backend.generation()
+    };
     let target = ServiceTarget {
         package_id: request.package_id,
         service_id: request.service_id,
@@ -586,20 +635,63 @@ pub(super) fn recovery_caller(
     if a.consumer.digest == current.digest {
         return Ok(current.clone());
     }
-    let success = a.output.is_some()
-        || store
-            .provider_receipt(&current.package_id, operation)?
-            .is_some_and(|r| r["execution"]["state"] == "succeeded");
+    let success = store.success_known(&a)?;
     if manifest.id != current.package_id
         || !service_graph::consumer_recovers(manifest, &a.target)
         || !success
-        || !matches!(a.phase, AdmissionPhase::Terminal | AdmissionPhase::Released)
+        || !matches!(
+            a.phase,
+            AdmissionPhase::Forwarding
+                | AdmissionPhase::Accepted
+                | AdmissionPhase::Terminal
+                | AdmissionPhase::Released
+        )
     {
         return Err(error(
             "Consumer package does not advertise the original recovery contract",
         ));
     }
     Ok(a.consumer)
+}
+/// Preserve the original authority while a compatible replacement runs only
+/// local result recovery. No admission identity or paid request is rewritten.
+pub(super) fn recovery_provider(
+    store: &crate::service_state::Store,
+    manifest: &package::Manifest,
+    current: &PackageGeneration,
+    consumer: &str,
+    operation: &str,
+) -> Result<PackageGeneration, AppError> {
+    let Some(a) = store.get(consumer, operation)? else {
+        return Ok(current.clone());
+    };
+    if a.provider.package_id != current.package_id {
+        return Err(error("Provider package does not own this operation"));
+    }
+    if a.provider.digest == current.digest {
+        return Ok(current.clone());
+    }
+    let settled_unknown = a.phase == AdmissionPhase::Terminal
+        && store.execution_released(consumer, operation)?
+        && store
+            .provider_receipt(consumer, operation)?
+            .is_none_or(|r| r["execution"]["state"] == "unknown");
+    if manifest.id != current.package_id
+        || !service_graph::provider_recovers(manifest, &a.target)
+        || !(store.success_known(&a)? || settled_unknown)
+        || !matches!(
+            a.phase,
+            AdmissionPhase::Forwarding
+                | AdmissionPhase::Accepted
+                | AdmissionPhase::Terminal
+                | AdmissionPhase::Released
+        )
+    {
+        return Err(error(
+            "Provider package does not advertise the original recovery contract",
+        ));
+    }
+    Ok(a.provider)
 }
 /// Durable business boundary shared by the real broker and native protocol
 /// fixtures. Transport and lifecycle admission remain outside this function.
@@ -762,6 +854,9 @@ fn reconcile_receipt(
     status: &Value,
 ) -> Result<Value, AppError> {
     let validated = crate::service_state::receipt::validate(status, admission)?;
+    // BEGIN IMMEDIATE itself may time out before observe_receipt can run.
+    // Preserve an authenticated success before crossing that write boundary.
+    store.retain_success(provider, admission, &validated)?;
     let latest = store.observe_receipt(
         provider,
         &admission.consumer.package_id,

@@ -32,6 +32,24 @@ fn optional_absence_preserves_consumer_but_does_not_route() {
     )
     .is_err());
 }
+
+#[test]
+fn explicit_removal_disables_transitive_required_dependents_but_keeps_optional_consumers() {
+    let provider = package("example.provider");
+    let mut direct = package("example.direct");
+    dependency(&mut direct, "example.provider", false);
+    let mut transitive = package("example.transitive");
+    dependency(&mut transitive, "example.direct", false);
+    let mut optional = package("example.optional");
+    dependency(&mut optional, "example.provider", true);
+    assert_eq!(
+        removal_packages(
+            &[provider, direct, transitive, optional],
+            "example.provider"
+        ),
+        ["example.direct", "example.provider", "example.transitive"]
+    );
+}
 #[test]
 fn exact_declared_package_version_and_enablement_required() {
     let mut consumer = package("example.trace");

@@ -82,7 +82,7 @@ export function mergeNativeJobEvent(old: NativeJobView, event: NativeJobEvent): 
     // The native ledger may correct a host-settled Unknown after its original
     // output is acknowledged. Keep every other terminal outcome immutable.
     const recoveredSettlement = (previous?.state === "discarded" && previous.phase === "stopped"
-      || previous?.state === "error" && previous.phase === "delivery_failed")
+      || previous?.state === "error" && (previous.phase === "delivery_failed" || previous.phase === "storage_full"))
       && event.job.state === "completed" && !!event.job.outputPath && safe(event.job.runId, true);
     const consumerRemoval = previous?.state !== "completed" && event.job.state === "error"
       && event.job.phase === "consumer_removed" && !!event.job.error;

@@ -43,7 +43,7 @@ pub(super) fn is_busy(error: &AppError) -> bool {
     matches!(error, AppError::Service { code, .. } if code == PACKAGE_BUSY)
 }
 pub(super) fn mutation_allowed_in(store: &Store, package: &str) -> Result<(), AppError> {
-    if store.busy_for_consumer_repair(package)? {
+    if store.busy_for_delivery_repair(package)? {
         return Err(busy(
             "Package still owns AI work; wait for automatic recovery to finish",
         ));
@@ -57,7 +57,7 @@ pub(super) fn native_mutation_busy_in(store: &Store, package: &str) -> Result<bo
         .into_iter()
         .filter(|a| a.consumer.package_id == package)
     {
-        if store.consumer_delivery_pending(&a)? {
+        if store.output_delivery_pending(&a)? {
             retained.insert(a.operation_id);
         }
     }

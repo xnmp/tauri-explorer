@@ -865,6 +865,30 @@ fn native_review_live_failed_delivery_does_not_pin_consumer_job_ownership() {
     review_consumer_upgrade("delivery-fails");
 }
 
+#[test]
+#[ignore = "requires a private native display/profile; execute via dedicated subprocess"]
+fn native_review_legacy_stopped_job_delivers_authoritative_success() {
+    review_consumer_upgrade("legacy-stopped");
+}
+
+#[test]
+#[ignore = "requires a private native display/profile; execute via dedicated subprocess"]
+fn native_review_broken_provider_upgrade_recovers_original_success() {
+    review_consumer_upgrade("provider-repair");
+}
+
+#[test]
+#[ignore = "requires a private native display/profile; execute via dedicated subprocess"]
+fn native_review_failed_late_publication_survives_provider_upgrade_without_replay() {
+    review_consumer_upgrade("late-provider-repair");
+}
+
+#[test]
+#[ignore = "requires a private native display/profile; execute via dedicated subprocess"]
+fn native_review_storage_full_survives_recovery_budget_and_delivers_after_release() {
+    review_consumer_upgrade("quota-recovery");
+}
+
 fn review_consumer_upgrade(old_role: &str) {
     use crate::service_state::{job::*, model::*};
     require_private_fixture();
@@ -877,11 +901,35 @@ fn review_consumer_upgrade(old_role: &str) {
     backend::finish_initialize();
     let root = root().unwrap();
     let id = "fixture.repair-consumer";
-    let deps = json!([{"packageId":PROVIDER,"serviceId":"image-generation","major":1}]);
+    let provider_repair = matches!(old_role, "provider-repair" | "late-provider-repair");
+    let late = old_role == "late-provider-repair";
+    let quota = old_role == "quota-recovery";
+    let deps = json!([{"packageId":PROVIDER,"serviceId":"image-generation","major":1,"optional":provider_repair}]);
+    let provider_source = REVIEW_RECOVERY_BACKEND.replace(
+        "%ROLE%",
+        if provider_repair {
+            "broken"
+        } else {
+            "provider"
+        },
+    );
+    let provider_source = if quota {
+        provider_source.replace(
+        "  elif m=='services.image-generation.v1.status': r=json.loads((root/'retained.json').read_text())",
+        r#"  elif m=='services.image-generation.v1.status':
+   r=json.loads((root/'retained.json').read_text());op=p['request']['operationId'];consumer=p['caller']['packageId']
+   if r['delivery']['state']=='unavailable':
+    stage=rpc('host.artifacts.stage',{'consumerPackageId':consumer,'operationId':op})
+    pathlib.Path(stage['path']).write_bytes((root/'raw.png').read_bytes())
+    artifact=rpc('host.artifacts.seal',{'consumerPackageId':consumer,'operationId':op,'handle':stage['handle'],'mediaType':'image/png'})
+    r['delivery']={'state':'available','output':artifact};(root/'retained.json').write_text(json.dumps(r))"#)
+    } else {
+        provider_source
+    };
     let p = package_from(
         &root,
         PROVIDER,
-        &REVIEW_RECOVERY_BACKEND.replace("%ROLE%", "provider"),
+        &provider_source,
         json!([{"id":"image-generation","major":1,"methods":["status","cancel","acknowledge"]}]),
         json!([]),
     );
@@ -967,11 +1015,61 @@ fn review_consumer_upgrade(old_role: &str) {
     image::RgbaImage::from_pixel(2, 3, image::Rgba([12, 34, 56, 255]))
         .save_with_format(&stage.path, image::ImageFormat::Png)
         .unwrap();
-    let artifact = store
-        .seal(&provider, id, op, &stage.handle, "image/png")
-        .unwrap();
+    let artifact = if late || quota {
+        let bytes = fs::read(&stage.path).unwrap();
+        ArtifactDescriptor {
+            handle: stage.handle.clone(),
+            sha256: hex::encode(Sha256::digest(&bytes)),
+            byte_length: bytes.len() as u64,
+            media_type: "image/png".into(),
+        }
+    } else {
+        store
+            .seal(&provider, id, op, &stage.handle, "image/png")
+            .unwrap()
+    };
     let success = json!({"version":1,"operationId":op,"requestFingerprint":a.fingerprint,"provider":{"packageId":PROVIDER,"serviceId":"image-generation","major":1},"revision":1,"execution":{"state":"succeeded","metadata":{"adapter":"openai-images","endpointIdentity":"fixture","requestedModel":null,"actualModel":null,"externalRequestId":null,"threadId":null,"options":{"size":"1024x1024","resolution":null,"aspectRatio":null,"quality":"low","background":"auto"},"remoteChargeUncertain":false}},"delivery":{"state":"available","output":artifact}});
-    super::reconcile_at(store, &provider, &a, &success).unwrap();
+    let mut success = success;
+    if late || quota {
+        let mut unknown = success.clone();
+        unknown["execution"] = json!({"state":"unknown","error":{"code":"interrupted","message":"Unconfirmed","correlationId":null}});
+        unknown["delivery"] = json!({"state":"none"});
+        super::reconcile_at(store, &provider, &a, &unknown).unwrap();
+        store.auto_settle_operation(id, op, true).unwrap();
+        assert!(store.auto_settlement_operations().unwrap().is_empty());
+        success["revision"] = json!(2);
+        if late {
+            assert!(
+                super::reconcile_at(store, &provider, &a, &success).is_err(),
+                "unsealed original must fail publication"
+            );
+            assert_eq!(
+                store.auto_settlement_operations().unwrap().len(),
+                1,
+                "failed publication must remain discoverable"
+            );
+        } else {
+            store.revisit_uncertain_settlements().unwrap();
+        }
+    } else {
+        super::reconcile_at(store, &provider, &a, &success).unwrap();
+    }
+    if old_role == "legacy-stopped" {
+        store
+            .update_job(
+                &job.owner,
+                &job.job_key,
+                JobState::NeedsAttention,
+                Some("stopped".into()),
+                None,
+                None,
+                Some("Automatic recovery stopped".into()),
+            )
+            .unwrap();
+    }
+    if quota {
+        success["delivery"] = json!({"state":"unavailable","reason":"storage_unavailable"});
+    }
     fs::create_dir_all(data(PROVIDER)).unwrap();
     fs::write(
         data(PROVIDER).join("retained.json"),
@@ -984,12 +1082,204 @@ fn review_consumer_upgrade(old_role: &str) {
         serde_json::to_vec(&json!({"jobId":job.job_id,"operationId":op})).unwrap(),
     )
     .unwrap();
+    if quota {
+        fs::write(
+            data(PROVIDER).join("raw.png"),
+            fs::read(&stage.path).unwrap(),
+        )
+        .unwrap();
+        let capacity_provider = PackageGeneration {
+            package_id: "fixture.capacity-provider".into(),
+            digest: "f".repeat(64),
+            incarnation: 1,
+        };
+        for i in 0..20 {
+            let c = PackageGeneration {
+                package_id: format!("fixture.capacity-{i}"),
+                ..consumer.clone()
+            };
+            let occupied = store
+                .reserve(Admission {
+                    consumer: c.clone(),
+                    provider: capacity_provider.clone(),
+                    target: ServiceTarget {
+                        package_id: capacity_provider.package_id.clone(),
+                        ..a.target.clone()
+                    },
+                    operation_id: "capacity".into(),
+                    ..a.clone()
+                })
+                .unwrap();
+            store.claim_forwarding(&c, "capacity").unwrap();
+            let mut receipt = success.clone();
+            receipt["operationId"] = json!("capacity");
+            receipt["provider"]["packageId"] = json!(capacity_provider.package_id);
+            receipt["delivery"] = json!({"state":"unavailable","reason":"missing"});
+            super::reconcile_at(store, &capacity_provider, &occupied, &receipt).unwrap();
+        }
+        for _ in 0..6 {
+            super::super::ai_operations::auto_reconcile_in(
+                store,
+                &super::super::ai_operations::LiveAutomatic,
+            )
+            .unwrap();
+            assert_eq!(
+                store.job(&job.job_key).unwrap().unwrap().phase.as_deref(),
+                Some("storage_full")
+            );
+            assert!(
+                store
+                    .auto_settlement_operations()
+                    .unwrap()
+                    .iter()
+                    .any(|(a, _, _)| a.consumer.package_id == id && a.operation_id == op),
+                "quota failure must not exhaust recovery or re-hide Unknown"
+            );
+        }
+        store
+            .release(
+                &capacity_provider,
+                "fixture.capacity-0",
+                "capacity",
+                "discarded",
+                None,
+            )
+            .unwrap();
+        super::super::ai_operations::auto_reconcile_in(
+            store,
+            &super::super::ai_operations::LiveAutomatic,
+        )
+        .unwrap();
+        wait_until(
+            "capacity release delivers original output",
+            Duration::from_secs(15),
+            || store.job(&job.job_key).unwrap().unwrap().state == JobState::Completed,
+        );
+        let completed = store.job(&job.job_key).unwrap().unwrap();
+        assert_eq!(
+            hex::encode(Sha256::digest(
+                fs::read(completed.output_path.unwrap()).unwrap()
+            )),
+            artifact.sha256
+        );
+        let methods = fs::read_to_string(data(PROVIDER).join("methods")).unwrap();
+        assert!(
+            methods
+                .lines()
+                .filter(|m| *m == "services.image-generation.v1.status")
+                .count()
+                >= 7
+        );
+        assert!(!methods.contains(".start"));
+        backend::shutdown();
+        return;
+    }
+    if provider_repair {
+        let profile = super::super::lifecycle::Profile { root: &root, store };
+        let incompatible = package_from(
+            &root,
+            PROVIDER,
+            &REVIEW_RECOVERY_BACKEND.replace("%ROLE%", "incompatible-provider"),
+            json!([{"id":"image-generation","major":2,"methods":["status","cancel","acknowledge"]}]),
+            json!([]),
+        );
+        super::super::lifecycle::upgrade(
+            &profile,
+            &review_archive(&root, &incompatible),
+            &backend::preflight_candidate,
+        )
+        .expect("broken provider must be repairable");
+        super::super::ai_operations::auto_reconcile_in(
+            store,
+            &super::super::ai_operations::LiveAutomatic,
+        )
+        .unwrap();
+        assert_ne!(
+            store.job(&job.job_key).unwrap().unwrap().state,
+            JobState::Completed,
+            "incompatible provider must not acquire original recovery authority"
+        );
+        assert_ne!(
+            store.get(id, op).unwrap().unwrap().phase,
+            AdmissionPhase::Released
+        );
+        let source=REVIEW_RECOVERY_BACKEND.replace("%ROLE%","fixed-provider").replace(
+            "  elif m=='services.image-generation.v1.status': r=json.loads((root/'retained.json').read_text())",
+            r#"  elif m=='services.image-generation.v1.status':
+   r=json.loads((root/'retained.json').read_text())
+   artifact=rpc('host.artifacts.seal',{'consumerPackageId':p['caller']['packageId'],'operationId':p['request']['operationId'],'handle':r['delivery']['output']['handle'],'mediaType':'image/png'})
+   assert artifact==r['delivery']['output']"#);
+        let next = package_from(
+            &root,
+            PROVIDER,
+            &source,
+            json!([{"id":"image-generation","major":1,"methods":["status","cancel","acknowledge"]}]),
+            json!([]),
+        );
+        let upgraded = super::super::lifecycle::upgrade(
+            &profile,
+            &review_archive(&root, &next),
+            &backend::preflight_candidate,
+        )
+        .unwrap();
+        assert_ne!(upgraded.digest, p.digest);
+        super::super::ai_operations::auto_reconcile_in(
+            store,
+            &super::super::ai_operations::LiveAutomatic,
+        )
+        .unwrap();
+        wait_until(
+            "upgraded provider delivery",
+            Duration::from_secs(15),
+            || store.job(&job.job_key).unwrap().unwrap().state == JobState::Completed,
+        );
+        let completed = store.job(&job.job_key).unwrap().unwrap();
+        assert_eq!(
+            hex::encode(Sha256::digest(
+                fs::read(completed.output_path.unwrap()).unwrap()
+            )),
+            artifact.sha256
+        );
+        assert_eq!(
+            store.get(id, op).unwrap().unwrap().disposition.as_deref(),
+            Some("acquired")
+        );
+        for package in [id, PROVIDER] {
+            let methods = fs::read_to_string(data(package).join("methods")).unwrap();
+            assert!(
+                !methods.contains(".start"),
+                "original operation must not be replayed"
+            );
+        }
+        backend::shutdown();
+        return;
+    }
     // Original consumer activation fails; automatic passes keep success/bytes.
     super::super::ai_operations::auto_reconcile_in(
         store,
         &super::super::ai_operations::LiveAutomatic,
     )
     .unwrap();
+    if old_role == "legacy-stopped" {
+        wait_until(
+            "legacy stopped job delivery",
+            Duration::from_secs(3),
+            || store.job(&job.job_key).unwrap().unwrap().state == JobState::Completed,
+        );
+        let finished = store.job(&job.job_key).unwrap().unwrap();
+        assert_eq!(
+            hex::encode(Sha256::digest(
+                fs::read(finished.output_path.unwrap()).unwrap()
+            )),
+            artifact.sha256
+        );
+        assert_eq!(
+            store.get(id, op).unwrap().unwrap().disposition.as_deref(),
+            Some("acquired")
+        );
+        backend::shutdown();
+        return;
+    }
     assert_eq!(
         store.get(id, op).unwrap().unwrap().output,
         Some(artifact.clone())

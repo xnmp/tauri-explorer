@@ -477,7 +477,13 @@ pub(super) fn resume(key: &str) -> Result<Value, AppError> {
     if record.state.terminal() {
         return Ok(json!(record));
     }
-    if record.phase.as_deref() == Some("stopped") {
+    if record.phase.as_deref() == Some("stopped")
+        && !service_host::store()?
+            .get(&record.owner.package_id, &record.operation_id)?
+            .map(|a| service_host::store()?.success_known(&a))
+            .transpose()?
+            .unwrap_or(false)
+    {
         return Err(error("Automatic recovery was explicitly stopped; its unknown execution evidence remains retained"));
     }
     let broker = backend::ensure(&record.owner.package_id)?;
@@ -505,15 +511,22 @@ pub(super) fn resume(key: &str) -> Result<Value, AppError> {
         "jobs.resumeOperation",
         json!({"operationId":record.operation_id}),
     )?;
-    let updated = service_host::store()?.update_job(
-        &record.owner,
-        &record.job_key,
-        JobState::Recovering,
-        Some("recovering".into()),
-        None,
-        record.run_id,
-        None,
-    )?;
+    // A legacy stop is retained presentation, not an active-capacity slot.
+    // Keep it parked until the original handoff is acknowledged and status
+    // proves completion; that terminal correction needs no new job admission.
+    let updated = if record.phase.as_deref() == Some("stopped") {
+        record.clone()
+    } else {
+        service_host::store()?.update_job(
+            &record.owner,
+            &record.job_key,
+            JobState::Recovering,
+            Some("recovering".into()),
+            None,
+            record.run_id,
+            None,
+        )?
+    };
     emit(&updated);
     schedule_status(broker, updated.clone());
     Ok(json!(updated))

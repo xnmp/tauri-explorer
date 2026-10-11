@@ -179,3 +179,13 @@ it("publishes the delivery-loss report when a settled Unknown later succeeds and
   expect(next.jobs.get(stopped.jobKey)).toEqual(removed);
   expect(mergeNativeJobEvent(next, { type: "updated", job: stopped }).jobs.get(stopped.jobKey)).toEqual(removed);
 });
+
+it("shows the original output after storage-full recovery completes without a reload", () => {
+  const running = record(1, 2, "running");
+  const before = mergeNativeJobEvent(emptyNativeJobs(), { type: "updated", job: running });
+  const full = { ...running, revision: 3, state: "error" as const, phase: "storage_full", error: "AI image storage is full; recovery will retry automatically when capacity is available" };
+  const waiting = mergeNativeJobEvent(before, { type: "updated", job: full });
+  expect(waiting.jobs.get(full.jobKey)?.error).toContain("storage is full");
+  const complete = { ...full, revision: 4, state: "completed" as const, phase: "succeeded", error: null, outputPath: "/generated/original.png", runId: 7 };
+  expect(mergeNativeJobEvent(waiting, { type: "updated", job: complete }).jobs.get(full.jobKey)).toEqual(complete);
+});

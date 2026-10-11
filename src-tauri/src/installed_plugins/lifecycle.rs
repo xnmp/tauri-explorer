@@ -322,21 +322,45 @@ pub(super) fn upgrade(
 pub(super) fn uninstall(profile: &Profile, id: &str) -> Result<(), AppError> {
     let _mutation = super::mutation_lock()?;
     recover(profile.root)?;
-    let drain = drain_idle(profile.store, id)?;
-    drain.quiesce()?;
-    let mut remaining = package::list(profile.root)?;
-    remaining.retain(|entry| entry.manifest.id != id);
-    service_graph::validate_enabled(&remaining)?;
-    backend::retire(id);
-    let _lifecycle = super::LIFECYCLE
-        .write()
-        .map_err(|_| invalid("Plugin lifecycle lock is unavailable"))?;
-    profile.store.prepare_consumer_removal(id)?;
-    package::uninstall(profile.root, id)?;
-    report_consumer_removal(profile.store, id)
+    remove_or_disable(profile, id, true)
+}
+/// Commit a coherent index for explicit removal, including required dependents.
+/// Every affected package must first pass the ordinary live-work/claim fences;
+/// no dependent is stopped merely because its provider is being removed.
+fn remove_or_disable(profile: &Profile, id: &str, uninstall: bool) -> Result<(), AppError> {
+    let mut entries = package::list(profile.root)?;
+    let ids = service_graph::removal_packages(&entries, id);
+    let drains = ids
+        .iter()
+        .map(|id| drain_idle(profile.store, id))
+        .collect::<Result<Vec<_>, _>>()?;
+    for drain in &drains {
+        drain.quiesce()?;
+    }
+    for id in &ids {
+        backend::retire(id);
+    }
+    let _lifecycle = super::write_lifecycle()?;
+    for entry in &mut entries {
+        if ids.contains(&entry.manifest.id) {
+            entry.enabled = false;
+        }
+    }
+    if uninstall {
+        entries.retain(|entry| entry.manifest.id != id);
+    }
+    service_graph::validate_enabled(&entries)?;
+    for id in &ids {
+        profile.store.prepare_consumer_removal(id)?;
+    }
+    package::write_index(profile.root, &entries)?;
+    for id in &ids {
+        report_consumer_removal(profile.store, id)?;
+    }
+    Ok(())
 }
 fn report_consumer_removal(store: &Store, id: &str) -> Result<(), AppError> {
-    for job in store.abandon_consumer_outputs(id)? {
+    for job in store.abandon_package_outputs(id)? {
         backend::release_job(&job.owner, job.job_id);
         backend::emit_job_event(serde_json::json!({"type":"updated","job":job}));
     }
@@ -365,70 +389,40 @@ fn recover_consumer_removals(root: &Path) -> Result<(), AppError> {
 pub(super) fn set_enabled(profile: &Profile, id: &str, enabled: bool) -> Result<(), AppError> {
     let _mutation = super::mutation_lock()?;
     recover(profile.root)?;
-    {
-        let _guard = super::read_lifecycle()?;
-        let entries = package::list(profile.root)?;
-        let current = entries
-            .iter()
-            .find(|entry| entry.manifest.id == id)
-            .ok_or_else(|| invalid("Plugin package is not installed"))?;
-        if current.enabled == enabled {
-            return Ok(());
-        }
-    }
-    let drain = if enabled {
-        None
-    } else {
-        Some(drain_idle(profile.store, id)?)
-    };
-    if let Some(drain) = &drain {
-        drain.quiesce()?;
-        // A safe disable stops routing before the index changes.
-        backend::retire(id);
-    }
-    let _guard = super::LIFECYCLE
-        .write()
-        .map_err(|_| invalid("Plugin lifecycle lock is unavailable"))?;
+    let _guard = super::read_lifecycle()?;
     let mut entries = package::list(profile.root)?;
     let current = entries
         .iter()
-        .find(|entry| entry.manifest.id == id)
+        .find(|p| p.manifest.id == id)
         .ok_or_else(|| invalid("Plugin package is not installed"))?;
     if current.enabled == enabled {
         return Ok(());
     }
     if !enabled {
-        service_host::mutation_allowed_in(profile.store, id)?;
-        if service_host::native_mutation_busy_in(profile.store, id)? {
-            return Err(service_host::busy(
-                "Finish active plugin operations before changing this package",
+        drop(_guard);
+        return remove_or_disable(profile, id, false);
+    }
+    for a in profile.store.claims()? {
+        if ((a.consumer.package_id == id && a.consumer.digest != current.digest)
+            || (a.provider.package_id == id && a.provider.digest != current.digest))
+            && !profile.store.output_delivery_pending(&a)?
+        {
+            return Err(invalid(
+                "Enable the pinned package version to recover its AI operations",
             ));
         }
-    } else if profile.store.claims()?.iter().any(|a| {
-        (a.consumer.package_id == id
-            && a.consumer.digest != current.digest
-            && !profile.store.consumer_delivery_pending(a).unwrap_or(false))
-            || (a.provider.package_id == id && a.provider.digest != current.digest)
-    }) {
-        return Err(invalid(
-            "Enable the pinned package version to recover its AI operations",
-        ));
     }
-    let entry = entries
+    drop(_guard);
+    let _guard = super::write_lifecycle()?;
+    entries
         .iter_mut()
-        .find(|entry| entry.manifest.id == id)
-        .ok_or_else(|| invalid("Plugin package is not installed"))?;
-    entry.enabled = enabled;
+        .find(|p| p.manifest.id == id)
+        .unwrap()
+        .enabled = true;
     service_graph::validate_enabled(&entries)?;
-    if !enabled {
-        profile.store.prepare_consumer_removal(id)?;
-    }
-    package::write_index(profile.root, &entries)?;
-    if !enabled {
-        report_consumer_removal(profile.store, id)?;
-    }
-    Ok(())
+    package::write_index(profile.root, &entries)
 }
+
 /// The broker-preflight entry used by the native candidate fixture.
 #[cfg(all(test, target_os = "linux"))]
 pub(super) fn install(

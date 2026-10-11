@@ -270,9 +270,7 @@ fn each_role_mutation_waits_for_claims_and_live_work_then_commits_safely() {
                 let preflights = Cell::new(0);
                 let leases = fx.enter(phase);
                 let before = fx.index();
-                if phase != Phase::Released
-                    && !(matches!(role, Role::Consumer) && phase == Phase::SucceededUnacknowledged)
-                {
+                if phase != Phase::Released && phase != Phase::SucceededUnacknowledged {
                     let result = fx.act(&fx.store, action, role, &preflights);
                     fx.assert_refused(result, role, &before, &name);
                     assert_eq!(preflights.get(), 0, "{name}: preflight ran while owned");
@@ -384,8 +382,13 @@ fn cold_start_keeps_both_queued_upgrades_until_claims_recover() {
 
 #[test]
 fn review_successful_consumer_can_upgrade_disable_and_uninstall_without_losing_automatic_output() {
-    for action in [Action::Upgrade, Action::Disable, Action::Remove] {
-        let fx = Fixture::new(&format!("consumer-repair-{action:?}").to_lowercase());
+    for (action, role) in [Role::Consumer, Role::Provider]
+        .into_iter()
+        .flat_map(|role| {
+            [Action::Upgrade, Action::Disable, Action::Remove].map(|action| (action, role))
+        })
+    {
+        let fx = Fixture::new(&format!("delivery-repair-{role:?}-{action:?}").to_lowercase());
         fx.enter(Phase::SucceededUnacknowledged);
         let output = fx
             .store
@@ -405,8 +408,8 @@ fn review_successful_consumer_can_upgrade_disable_and_uninstall_without_losing_a
             .unwrap()
             .path;
         let preflights = Cell::new(0);
-        fx.act(&fx.store, action, Role::Consumer, &preflights)
-            .expect("retained success must permit explicit consumer repair/removal");
+        fx.act(&fx.store, action, role, &preflights)
+            .expect("retained success must permit explicit package repair/removal");
         let a = fx.store.get(fx.id(Role::Consumer), OP).unwrap().unwrap();
         match action {
             Action::Upgrade => {
@@ -427,6 +430,12 @@ fn review_successful_consumer_can_upgrade_disable_and_uninstall_without_losing_a
                     .error
                     .unwrap()
                     .contains("One image could not be delivered"));
+                super::recover(&fx.root).unwrap();
+                assert_eq!(
+                    fx.store.snapshot_jobs().unwrap().jobs.len(),
+                    1,
+                    "removal recovery must report the undelivered image once"
+                );
             }
         }
     }
@@ -474,5 +483,40 @@ fn review_consumer_removal_recovers_each_durable_index_commit_order() {
         }
         super::recover(&fx.root).unwrap();
         assert_eq!(recovered.get(consumer, OP).unwrap().unwrap(), a);
+    }
+}
+
+#[test]
+fn review_provider_removal_disables_required_dependents_and_reports_once_after_restart() {
+    for action in [Action::Disable, Action::Remove] {
+        let fx = Fixture::new(&format!("required-provider-{action:?}").to_lowercase());
+        let mut entries = package::list(&fx.root).unwrap();
+        entries.iter_mut().find(|p|p.manifest.id==fx.id(Role::Provider)).unwrap().manifest.services=serde_json::from_value(serde_json::json!([{"id":"image-generation","major":1,"methods":["status","cancel","acknowledge"]}])).unwrap();
+        entries.iter_mut().find(|p|p.manifest.id==fx.id(Role::Consumer)).unwrap().manifest.service_dependencies=serde_json::from_value(serde_json::json!([{"packageId":fx.id(Role::Provider),"serviceId":"image-generation","major":1}])).unwrap();
+        package::write_index(&fx.root, &entries).unwrap();
+        fx.enter(Phase::SucceededUnacknowledged);
+        let before = fx.index();
+        let live = backend::CallLease::acquire(fx.id(Role::Consumer)).unwrap();
+        fx.assert_refused(
+            fx.act(&fx.store, action, Role::Provider, &Cell::new(0)),
+            Role::Provider,
+            &before,
+            "active required consumer",
+        );
+        drop(live);
+        fx.act(&fx.store, action, Role::Provider, &Cell::new(0))
+            .unwrap();
+        assert!(!fx.installed(Role::Consumer).unwrap().enabled);
+        super::recover(&fx.root).unwrap();
+        let reopened =
+            Store::open(fx.profile.path().join("service-state"), Limits::default()).unwrap();
+        assert!(reopened.claims().unwrap().is_empty());
+        assert_eq!(reopened.snapshot_jobs().unwrap().jobs.len(), 1);
+        assert!(reopened.snapshot_jobs().unwrap().jobs[0]
+            .error
+            .as_ref()
+            .unwrap()
+            .contains("One image could not be delivered"));
+        super::super::service_graph::validate_enabled(&package::list(&fx.root).unwrap()).unwrap();
     }
 }

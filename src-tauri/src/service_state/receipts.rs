@@ -8,6 +8,29 @@ use super::{
 use rusqlite::{params, Connection, OptionalExtension};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
+use std::{
+    collections::HashMap,
+    path::{Path, PathBuf},
+    sync::{Arc, LazyLock, Mutex, Weak},
+};
+type SuccessReceipts = HashMap<(String, String), Value>;
+pub(super) type PendingSuccess = Arc<Mutex<SuccessReceipts>>;
+/// Session witnesses are shared by handles of the same ledger (lifecycle
+/// preflight opens a second handle), and expire with the last store handle.
+pub(super) fn pending_success_for_root(root: &Path) -> Result<PendingSuccess> {
+    static ROOTS: LazyLock<Mutex<HashMap<PathBuf, Weak<Mutex<SuccessReceipts>>>>> =
+        LazyLock::new(Default::default);
+    let mut roots = ROOTS
+        .lock()
+        .map_err(|_| reject("success recovery ownership is unavailable"))?;
+    roots.retain(|_, value| value.strong_count() != 0);
+    if let Some(existing) = roots.get(root).and_then(Weak::upgrade) {
+        return Ok(existing);
+    }
+    let receipts = Arc::new(Mutex::new(HashMap::new()));
+    roots.insert(root.to_path_buf(), Arc::downgrade(&receipts));
+    Ok(receipts)
+}
 pub(super) const RECEIPT_SCHEMA: i64 = 0x5445_4931;
 pub(super) const RECEIPT_TABLE: &str = "CREATE TABLE provider_receipts(consumer TEXT NOT NULL,operation TEXT NOT NULL,provider TEXT NOT NULL,revision INTEGER NOT NULL,status TEXT NOT NULL,digest TEXT NOT NULL,PRIMARY KEY(consumer,operation)); PRAGMA application_id=1413826865;";
 pub(super) const DISMISSAL_TABLE: &str = "CREATE TABLE IF NOT EXISTS dismissed_operations(consumer TEXT NOT NULL,operation TEXT NOT NULL,revision INTEGER NOT NULL,dismissed_at_ms INTEGER NOT NULL,PRIMARY KEY(consumer,operation)); CREATE TABLE IF NOT EXISTS consumer_removals(package TEXT PRIMARY KEY NOT NULL)";
@@ -131,6 +154,125 @@ fn evidence(
     Ok(())
 }
 impl Store {
+    pub fn pending_success(&self, a: &Admission) -> Result<Option<Value>> {
+        Ok(self
+            .pending_success
+            .lock()
+            .map_err(|_| reject("success recovery ownership is unavailable"))?
+            .get(&(a.consumer.package_id.clone(), a.operation_id.clone()))
+            .cloned())
+    }
+    pub(super) fn pending_success_keys(&self) -> Result<Vec<(String, String)>> {
+        Ok(self
+            .pending_success
+            .lock()
+            .map_err(|_| reject("success recovery ownership is unavailable"))?
+            .keys()
+            .cloned()
+            .collect())
+    }
+    pub fn success_known(&self, a: &Admission) -> Result<bool> {
+        Ok(a.output.is_some()
+            || self.pending_success(a)?.is_some()
+            || self
+                .provider_receipt(&a.consumer.package_id, &a.operation_id)?
+                .is_some_and(|r| r["execution"]["state"] == "succeeded"))
+    }
+    pub fn retain_success(
+        &self,
+        provider: &PackageGeneration,
+        a: &Admission,
+        status: &Value,
+    ) -> Result<()> {
+        generation(provider)?;
+        if !same_owner(&a.provider, provider) {
+            return Err(reject("provider receipt owner does not match"));
+        }
+        let status = super::receipt::validate(status, a)?;
+        if status["execution"]["state"] == "succeeded"
+            && matches!(
+                status["delivery"]["state"].as_str(),
+                Some("available" | "unavailable")
+            )
+        {
+            if status["delivery"]["state"] == "available" {
+                let d: ArtifactDescriptor =
+                    serde_json::from_value(status["delivery"]["output"].clone())
+                        .map_err(|_| reject("invalid output descriptor"))?;
+                if a.output.as_ref().is_some_and(|output| output != &d) {
+                    return Err(reject("provider output conflicts with its pinned output"));
+                }
+                if let Ok(conn) = self.connect() {
+                    let artifact:Option<(String,Option<String>)>=conn.query_row(
+                        "SELECT status,descriptor FROM artifacts WHERE handle=?1 AND consumer=?2 AND operation=?3 AND kind='output'",
+                        params![d.handle,a.consumer.package_id,a.operation_id],|r|Ok((r.get(0)?,r.get(1)?))).optional().map_err(sql)?;
+                    if artifact.is_none_or(|(state, raw)| {
+                        state == "sealed"
+                            && raw
+                                .and_then(|r| decode::<ArtifactDescriptor>(&r).ok())
+                                .as_ref()
+                                != Some(&d)
+                    }) {
+                        return Err(reject(
+                            "artifact descriptor or ownership does not match durable metadata",
+                        ));
+                    }
+                }
+            }
+            if let Ok(Some(previous)) =
+                self.provider_receipt(&a.consumer.package_id, &a.operation_id)
+            {
+                if status["revision"].as_u64() < previous["revision"].as_u64() {
+                    return Ok(());
+                }
+                if status["revision"] == previous["revision"] {
+                    if status != previous {
+                        return Err(reject("provider receipt conflicts at the same revision"));
+                    }
+                    return Ok(());
+                }
+                super::receipt::validate_transition(&previous, &status)?;
+            }
+            self.remember_success(a, &status)?;
+        }
+        Ok(())
+    }
+    fn remember_success(&self, a: &Admission, status: &Value) -> Result<()> {
+        let mut pending = self
+            .pending_success
+            .lock()
+            .map_err(|_| reject("success recovery ownership is unavailable"))?;
+        let key = (a.consumer.package_id.clone(), a.operation_id.clone());
+        if let Some(previous) = pending.get(&key) {
+            if status["revision"].as_u64() < previous["revision"].as_u64() {
+                return Err(reject("provider observation predates its retained success"));
+            }
+            if status["revision"] == previous["revision"] {
+                if status != previous {
+                    return Err(reject("provider success conflicts at the same revision"));
+                }
+            } else {
+                super::receipt::validate_transition(previous, status)?;
+            }
+        }
+        if a.phase != AdmissionPhase::Released
+            && status["execution"]["state"] == "succeeded"
+            && matches!(
+                status["delivery"]["state"].as_str(),
+                Some("available" | "unavailable")
+            )
+        {
+            pending.insert(key, status.clone());
+        }
+        Ok(())
+    }
+    fn forget_success(&self, consumer: &str, operation: &str) -> Result<()> {
+        self.pending_success
+            .lock()
+            .map_err(|_| reject("success recovery ownership is unavailable"))?
+            .remove(&(consumer.into(), operation.into()));
+        Ok(())
+    }
     pub fn prepare_consumer_removal(&self, package: &str) -> Result<()> {
         if !identity(package) {
             return Err(reject("invalid consumer package"));
@@ -171,41 +313,58 @@ impl Store {
             Ok(())
         })
     }
-    /// User-authorized removal of a successful operation's consumer. This is
+    /// User-authorized removal of a successful operation's participant. This is
     /// deliberately separate from automatic no-output settlement.
-    pub fn abandon_consumer_outputs(&self, package: &str) -> Result<Vec<super::job::JobRecord>> {
+    pub fn abandon_package_outputs(&self, package: &str) -> Result<Vec<super::job::JobRecord>> {
         let mut jobs = Vec::new();
         for a in self
             .claims()?
             .into_iter()
-            .filter(|a| a.consumer.package_id == package)
+            .filter(|a| a.consumer.package_id == package || a.provider.package_id == package)
         {
-            if !self.consumer_delivery_pending(&a)? {
+            if !self.output_delivery_pending(&a)? {
                 continue;
             }
             let job = self.transaction(|tx| {
-                let mut current = Self::record(tx, package, &a.operation_id)?
+                let mut current = Self::record(tx, &a.consumer.package_id, &a.operation_id)?
                     .ok_or_else(|| reject("operation disappeared"))?;
                 if current.phase == AdmissionPhase::Released {
                     return Ok(None);
                 }
-                if current.phase != AdmissionPhase::Terminal
-                    || current.provider.package_id == package
-                {
+                if !matches!(
+                    current.phase,
+                    AdmissionPhase::Forwarding
+                        | AdmissionPhase::Accepted
+                        | AdmissionPhase::Terminal
+                ) {
                     return Err(reject(
-                        "consumer removal cannot release unfinished execution",
+                        "package removal cannot release unfinished execution",
                     ));
                 }
                 current.phase = AdmissionPhase::Released;
                 current.disposition = Some("discarded".into());
                 current.transfer_receipt = None;
+                // Older hosts could commit the successful receipt before its
+                // terminal projection. Keep that descriptor in the tombstone
+                // so explicit removal remains valid on the next open.
+                if let Some(receipt) = Self::provider_receipt_at(tx, &current)? {
+                    if receipt["execution"]["state"] == "succeeded"
+                        && receipt["delivery"]["state"] == "available"
+                    {
+                        current.output = Some(
+                            serde_json::from_value(receipt["delivery"]["output"].clone())
+                                .map_err(|_| reject("invalid output descriptor"))?,
+                        );
+                    }
+                }
                 Self::persist(tx, &current)?;
                 self.report_undelivered_in(tx, &current)
             })?;
             if let Some(job) = job {
                 jobs.push(job);
             }
-            self.collect_released(package, &a.operation_id)?;
+            self.forget_success(&a.consumer.package_id, &a.operation_id)?;
+            self.collect_released(&a.consumer.package_id, &a.operation_id)?;
         }
         Ok(jobs)
     }
@@ -231,7 +390,9 @@ impl Store {
         status: Value,
     ) -> Result<Value> {
         generation(provider)?;
-        self.transaction(|tx| {
+        let admission = self.verify_provider(provider, consumer, op)?;
+        self.retain_success(provider, &admission, &status)?;
+        let result = self.transaction(|tx| {
             let admission = Self::record(tx,consumer,op)?.ok_or_else(||reject("provider receipt has no admitted operation"))?;
             if !same_owner(&admission.provider,provider) {return Err(reject("provider receipt owner does not match"));}
             let (status, raw, digest) = receipt_json(&status,&admission,revision)?;
@@ -243,8 +404,21 @@ impl Store {
                 }
                 super::receipt::validate_transition(&old.status, &status)?;
             }
+            // Capture custody before artifact validation or the receipt commit
+            // can fail. The existing recovery loop retries this exact answer.
+            self.remember_success(&admission, &status)?;
             evidence(self, tx, &admission, &status, true)?;
             tx.execute("INSERT INTO provider_receipts(consumer,operation,provider,revision,status,digest)VALUES(?1,?2,?3,?4,?5,?6)ON CONFLICT(consumer,operation)DO UPDATE SET revision=excluded.revision,status=excluded.status,digest=excluded.digest", params![consumer,op,encode(&admission.provider)?,revision as i64,raw,digest]).map_err(sql)?;
+            if status["execution"]["state"] == "succeeded" && admission.phase != AdmissionPhase::Released {
+                let mut recovered=admission.clone();
+                transition(recovered.phase,AdmissionPhase::Terminal)?;
+                recovered.phase=AdmissionPhase::Terminal;
+                if status["delivery"]["state"] == "available" {
+                    recovered.output=Some(serde_json::from_value(status["delivery"]["output"].clone()).map_err(|_|reject("invalid provider output descriptor"))?);
+                }
+                recovered.needs_attention=false;
+                Self::persist(tx,&recovered)?;
+            }
             let released: bool = tx.query_row("SELECT exec_released FROM operations WHERE consumer=?1 AND operation=?2", params![consumer, op], |r| r.get(0)).map_err(sql)?;
             if released && status["execution"]["state"] != "unknown" {
                 // Publication and settlement serialize on the same IMMEDIATE
@@ -252,22 +426,25 @@ impl Store {
                 // a late success owns recovery before any publisher can crash.
                 tx.execute("UPDATE operations SET exec_released=0 WHERE consumer=?1 AND operation=?2", params![consumer, op]).map_err(sql)?;
                 tx.execute("DELETE FROM dismissed_operations WHERE consumer=?1 AND operation=?2", params![consumer, op]).map_err(sql)?;
-                if matches!(status["execution"]["state"].as_str(), Some("accepted" | "running" | "succeeded")) && admission.phase != AdmissionPhase::Released {
-                    tx.execute("UPDATE artifacts SET bytes=?3 WHERE consumer=?1 AND operation=?2 AND kind='output' AND status IN ('reserved','staged')", params![consumer, op, 100 * 1024 * 1024i64]).map_err(sql)?;
-                }
-                if status["delivery"]["state"] == "available" && admission.phase != AdmissionPhase::Released {
-                    let mut recovered = admission.clone();
-                    transition(recovered.phase, AdmissionPhase::Terminal)?;
-                    recovered.phase = AdmissionPhase::Terminal;
-                    recovered.output = Some(serde_json::from_value(status["delivery"]["output"].clone()).map_err(|_| reject("invalid provider output descriptor"))?);
-                    recovered.needs_attention = false;
-                    Self::persist(tx, &recovered)?;
-                }
             } else if released && !(admission.phase == AdmissionPhase::Terminal && admission.needs_attention) {
                 tx.execute("UPDATE dismissed_operations SET revision=?3 WHERE consumer=?1 AND operation=?2", params![consumer, op, revision as i64]).map_err(sql)?;
             }
             Ok(status)
-        })
+        });
+        if let Ok(status) = &result {
+            let mut pending = self
+                .pending_success
+                .lock()
+                .map_err(|_| reject("success recovery ownership is unavailable"))?;
+            let key = (consumer.to_owned(), op.to_owned());
+            if pending.get(&key).is_some_and(|witness| {
+                status["execution"]["state"] == "succeeded"
+                    && status["revision"].as_u64() >= witness["revision"].as_u64()
+            }) {
+                pending.remove(&key);
+            }
+        }
+        result
     }
     /// Records the user's acceptance of an unknown outcome. Receipts, evidence
     /// and the admission are untouched; only a marker pinned to the current
@@ -337,7 +514,7 @@ impl Store {
             let status = receipt.as_ref().map(|r| &r.status);
             let execution = status.and_then(|r| r["execution"]["state"].as_str()).unwrap_or("unconfirmed");
             let delivery = status.and_then(|r| r["delivery"]["state"].as_str()).unwrap_or("none");
-            if super::receipt::auto_settlement(a.phase, execution, delivery, !no_live_worker) != super::receipt::AutoSettlement::Settle || a.output.is_some() && !(a.phase == AdmissionPhase::Released && a.disposition.as_deref() == Some("discarded")) {
+            if self.pending_success(&a)?.is_some() || super::receipt::auto_settlement(a.phase, execution, delivery, !no_live_worker) != super::receipt::AutoSettlement::Settle || a.output.is_some() && !(a.phase == AdmissionPhase::Released && a.disposition.as_deref() == Some("discarded")) {
                 return Err(reject("automatic settlement requires idle workers and no recoverable output"));
             }
             tx.execute("UPDATE operations SET exec_released=1 WHERE consumer=?1 AND operation=?2", params![consumer, op]).map_err(sql)?;
@@ -433,9 +610,6 @@ impl Store {
                         params![consumer, op],
                     )
                     .map_err(sql)?;
-                    if status.is_some_and(|r| matches!(r["execution"]["state"].as_str(), Some("accepted" | "running" | "succeeded"))) && a.phase != AdmissionPhase::Released {
-                        tx.execute("UPDATE artifacts SET bytes=?3 WHERE consumer=?1 AND operation=?2 AND kind='output' AND status IN ('reserved','staged')", params![consumer, op, 100 * 1024 * 1024i64]).map_err(sql)?;
-                    }
                     Ok(())
                 })?;
             } else {

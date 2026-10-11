@@ -11,6 +11,7 @@ pub(crate) struct Store {
     pub(super) limits: Limits,
     pub(super) output_recovery:
         std::sync::Mutex<std::collections::HashMap<(String, String), usize>>,
+    pub(super) pending_success: super::receipts::PendingSuccess,
     #[cfg(test)]
     pub(super) fail_next_commit: std::sync::atomic::AtomicBool,
     #[cfg(test)]
@@ -59,9 +60,11 @@ impl Store {
             fs::set_permissions(&root, fs::Permissions::from_mode(0o700))
                 .map_err(|_| reject("could not secure service directory"))?;
         }
+        let root =
+            dunce::canonicalize(&root).map_err(|_| reject("service directory is unreadable"))?;
         let store = Self {
-            root: dunce::canonicalize(&root)
-                .map_err(|_| reject("service directory is unreadable"))?,
+            pending_success: super::receipts::pending_success_for_root(&root)?,
+            root,
             limits,
             output_recovery: Default::default(),
             #[cfg(test)]
@@ -445,7 +448,11 @@ impl Store {
             .checked_add(additional_bytes)
             .is_none_or(|n| n > self.limits.disk_bytes)
         {
-            return Err(reject("artifact capacity reached"));
+            return Err(crate::error::AppError::Service {
+                code: "storage_full".into(),
+                message: "AI image storage is full; recovery will retry when capacity is available"
+                    .into(),
+            });
         }
         if new_operation {
             let (global, local): (i64, i64) = conn
@@ -829,7 +836,7 @@ impl Store {
     }
     pub fn auto_settlement_operations(&self) -> Result<Vec<(Admission, u64, bool)>> {
         let conn = self.connect()?;
-        let mut query=conn.prepare("SELECT consumer,operation,created_at_ms,exec_released FROM operations WHERE admission IS NOT NULL AND (phase!='released' OR EXISTS(SELECT 1 FROM presentation_jobs j WHERE j.owner=operations.consumer AND j.operation=operations.operation AND (json_extract(j.record,'$.state') IN ('accepting','running','recovering','needs_attention') OR (json_extract(j.record,'$.state')='error' AND json_extract(j.record,'$.error') IS NULL) OR (json_extract(j.record,'$.state') IN ('discarded','error') AND json_extract(j.record,'$.phase') IN ('stopped','delivery_failed') AND json_extract(operations.admission,'$.disposition')='acquired')))) AND NOT EXISTS(SELECT 1 FROM dismissed_operations d WHERE d.consumer=operations.consumer AND d.operation=operations.operation AND d.revision=coalesce((SELECT revision FROM provider_receipts p WHERE p.consumer=operations.consumer AND p.operation=operations.operation),0) AND exec_released=1) ORDER BY created_at_ms ASC").map_err(sql)?;
+        let mut query=conn.prepare("SELECT consumer,operation,created_at_ms,exec_released FROM operations WHERE admission IS NOT NULL AND (phase!='released' OR EXISTS(SELECT 1 FROM presentation_jobs j WHERE j.owner=operations.consumer AND j.operation=operations.operation AND (json_extract(j.record,'$.state') IN ('accepting','running','recovering','needs_attention') OR (json_extract(j.record,'$.state')='error' AND json_extract(j.record,'$.error') IS NULL) OR (json_extract(j.record,'$.state') IN ('discarded','error') AND json_extract(j.record,'$.phase') IN ('stopped','delivery_failed','storage_full') AND json_extract(operations.admission,'$.disposition')='acquired')))) AND NOT EXISTS(SELECT 1 FROM dismissed_operations d WHERE d.consumer=operations.consumer AND d.operation=operations.operation AND d.revision=coalesce((SELECT revision FROM provider_receipts p WHERE p.consumer=operations.consumer AND p.operation=operations.operation),0) AND exec_released=1) ORDER BY created_at_ms ASC").map_err(sql)?;
         let rows = query
             .query_map([], |r| {
                 Ok((
@@ -849,6 +856,29 @@ impl Store {
             let a = Self::record(&conn, &consumer, &operation)?
                 .ok_or_else(|| reject("missing retained operation"))?;
             result.push((a, created as u64, released != 0));
+        }
+        // An authoritative success can precede a failed receipt transaction.
+        // Its session witness overrides the old no-output settlement marker.
+        for (consumer, operation) in self.pending_success_keys()? {
+            if result
+                .iter()
+                .any(|(a, _, _)| a.consumer.package_id == consumer && a.operation_id == operation)
+            {
+                continue;
+            }
+            if let Some(a) = Self::record(&conn, &consumer, &operation)? {
+                if a.phase != AdmissionPhase::Released {
+                    let (created, released): (i64, bool) = conn.query_row(
+                        "SELECT created_at_ms,exec_released FROM operations WHERE consumer=?1 AND operation=?2",
+                        params![consumer, operation], |r| Ok((r.get(0)?, r.get(1)?))).map_err(sql)?;
+                    result.push((
+                        a,
+                        u64::try_from(created)
+                            .map_err(|_| reject("invalid operation retention metadata"))?,
+                        released,
+                    ));
+                }
+            }
         }
         Ok(result)
     }
@@ -907,33 +937,34 @@ impl Store {
             .map_err(sql)?;
         Ok(count > 0)
     }
-    /// A retained successful handoff may survive consumer replacement or an
-    /// explicit removal. Provider ownership and unfinished execution still
-    /// block mutation; live work is fenced separately by the lifecycle layer.
-    pub fn consumer_delivery_pending(&self, a: &Admission) -> Result<bool> {
-        Ok(a.consumer.package_id != a.provider.package_id
-            && a.phase == AdmissionPhase::Terminal
-            && (a.output.is_some()
-                || self
-                    .provider_receipt(&a.consumer.package_id, &a.operation_id)?
-                    .is_some_and(|r| r["execution"]["state"] == "succeeded")))
+    /// Retained success permits either participant's repair or explicit
+    /// removal. Live calls/workers are fenced separately by lifecycle.
+    pub fn output_delivery_pending(&self, a: &Admission) -> Result<bool> {
+        Ok(matches!(
+            a.phase,
+            AdmissionPhase::Forwarding | AdmissionPhase::Accepted | AdmissionPhase::Terminal
+        ) && self.success_known(a)?)
     }
-    pub fn busy_for_consumer_repair(&self, package: &str) -> Result<bool> {
+    pub fn busy_for_delivery_repair(&self, package: &str) -> Result<bool> {
         let claims = self.claims()?;
         let recoverable = claims
             .iter()
-            .filter(|a| a.consumer.package_id == package)
+            .filter(|a| a.consumer.package_id == package || a.provider.package_id == package)
             .map(|a| {
-                self.consumer_delivery_pending(a)
-                    .map(|pending| (a.operation_id.as_str(), pending))
+                self.output_delivery_pending(a).map(|pending| {
+                    (
+                        a.consumer.package_id.as_str(),
+                        a.operation_id.as_str(),
+                        pending,
+                    )
+                })
             })
             .collect::<Result<Vec<_>>>()?;
         if claims.iter().any(|a| {
-            a.provider.package_id == package
-                || a.consumer.package_id == package
-                    && !recoverable
-                        .iter()
-                        .any(|(op, pending)| *op == a.operation_id && *pending)
+            (a.provider.package_id == package || a.consumer.package_id == package)
+                && !recoverable.iter().any(|(consumer, op, pending)| {
+                    *consumer == a.consumer.package_id && *op == a.operation_id && *pending
+                })
         }) {
             return Ok(true);
         }
@@ -944,9 +975,9 @@ impl Store {
                     j.phase.as_deref(),
                     Some("stopped" | "provider_result_discarded")
                 )
-                && !recoverable
-                    .iter()
-                    .any(|(op, pending)| *op == j.operation_id && *pending)
+                && !recoverable.iter().any(|(consumer, op, pending)| {
+                    *consumer == j.owner.package_id && *op == j.operation_id && *pending
+                })
         }) {
             return Ok(true);
         }
@@ -972,6 +1003,19 @@ impl Store {
             let (consumer, op, released) = row.map_err(sql)?;
             if let Some(a) = Self::record(&conn, &consumer, &op)? {
                 if a.phase != AdmissionPhase::Released && (!released || a.output.is_some()) {
+                    claims.push(a);
+                }
+            }
+        }
+        for (consumer, operation) in self.pending_success_keys()? {
+            if claims
+                .iter()
+                .any(|a| a.consumer.package_id == consumer && a.operation_id == operation)
+            {
+                continue;
+            }
+            if let Some(a) = Self::record(&conn, &consumer, &operation)? {
+                if a.phase != AdmissionPhase::Released {
                     claims.push(a);
                 }
             }

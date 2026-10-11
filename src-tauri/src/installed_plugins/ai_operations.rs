@@ -259,6 +259,13 @@ fn auto_reconcile_candidates(
             Ok(())
         });
         if let Err(cause) = result {
+            if matches!(&cause,AppError::Service { code,.. } if code=="storage_full") {
+                if let Some(job) =
+                    store.job_for_operation(&a.consumer.package_id, &a.operation_id)?
+                {
+                    settled.push(job);
+                }
+            }
             log::debug!(
                 "Automatic AI settlement deferred for {}: {cause}",
                 a.operation_id
@@ -275,7 +282,6 @@ struct ReconciliationAttempt {
     startup_failures: usize,
     status_failures: usize,
     status_incarnation: Option<u64>,
-    pending_success: Option<Value>,
 }
 #[derive(Clone, Copy)]
 enum ReconciliationPhase {
@@ -373,7 +379,7 @@ impl AutomaticPort for LiveAutomatic {
         // A valid successful answer is custody evidence even when the host's
         // receipt transaction failed. Retry that observation before any new
         // unavailable-provider verdict; a storage error is not a failed answer.
-        if let Some(receipt) = reconciliation_attempt(a)?.pending_success {
+        if let Some(receipt) = store.pending_success(a)? {
             if service_bridge::reconcile_at(store, &a.provider, a, &receipt).is_ok() {
                 forget_reconciliation(a)?;
             }
@@ -392,19 +398,41 @@ impl AutomaticPort for LiveAutomatic {
             None
         };
         let provider_present = installed_provider.is_some();
-        let attempt = reconciliation_attempt(a)?;
-        if provider_present && (!attempt.exhausted() || attempt.pending_success.is_some()) {
-            if !installed_provider
-                .as_ref()
-                .is_some_and(|p| p.enabled && p.digest == a.provider.digest)
-                || backend::ensure(&a.provider.package_id).is_err()
+        let storage_blocked = store
+            .job_for_operation(&a.consumer.package_id, &a.operation_id)?
+            .is_some_and(|j| j.phase.as_deref() == Some("storage_full"));
+        let mut provider_owner = a.provider.clone();
+        let provider_compatible = installed_provider.as_ref().is_some_and(|p| {
+            let current = PackageGeneration {
+                digest: p.digest.clone(),
+                ..a.provider.clone()
+            };
+            if p.enabled
+                && service_bridge::recovery_provider(
+                    store,
+                    &p.manifest,
+                    &current,
+                    &a.consumer.package_id,
+                    &a.operation_id,
+                )
+                .is_ok()
             {
+                provider_owner = current;
+                true
+            } else {
+                false
+            }
+        });
+        let attempt = reconciliation_attempt(a)?;
+        if provider_present && (!attempt.exhausted() || store.success_known(a)? || storage_blocked)
+        {
+            if !provider_compatible || backend::ensure(&a.provider.package_id).is_err() {
                 reconciliation_failed(a, ReconciliationPhase::Startup)?;
             }
         }
         let _fence =
             backend::IdleCallFence::acquire(&[&a.consumer.package_id, &a.provider.package_id])?;
-        let provider = backend::settlement_broker(&a.provider)?;
+        let provider = backend::settlement_broker(&provider_owner)?;
         if provider.is_none() && provider_present && !reconciliation_attempt(a)?.exhausted() {
             return apply(true);
         }
@@ -467,7 +495,8 @@ impl AutomaticPort for LiveAutomatic {
             let incarnation = broker.generation().incarnation;
             if attempt.status_failures < RECONCILIATION_ATTEMPTS
                 || attempt.status_incarnation != Some(incarnation)
-                || attempt.pending_success.is_some()
+                || store.success_known(a)?
+                || storage_blocked
             {
                 let _output_recovery = store.output_recovery_guard(a)?;
                 let mut sent = false;
@@ -480,7 +509,7 @@ impl AutomaticPort for LiveAutomatic {
                 }
                 match status {
                     Ok(receipt) => {
-                        if let Some(previous) = &attempt.pending_success {
+                        if let Some(previous) = &store.pending_success(a)? {
                             if receipt["revision"].as_u64() < previous["revision"].as_u64()
                                 || receipt["execution"]["state"] != "succeeded"
                             {
@@ -498,15 +527,32 @@ impl AutomaticPort for LiveAutomatic {
                                 )?;
                             }
                         }
-                        if receipt["execution"]["state"] == "succeeded" {
-                            update_reconciliation(a, |attempt| {
-                                attempt.pending_success = Some(receipt.clone())
-                            })?;
-                        }
-                        service_bridge::reconcile_at(store, &broker.generation(), a, &receipt)?;
+                        let authority = service_bridge::recovery_provider(
+                            store,
+                            broker.manifest(),
+                            &broker.generation(),
+                            &a.consumer.package_id,
+                            &a.operation_id,
+                        )?;
+                        service_bridge::reconcile_at(store, &authority, a, &receipt)?;
                         forget_reconciliation(a)?;
                     }
                     Err(cause) => {
+                        // A quota refusal is local delivery backpressure, not
+                        // evidence that the original remote result is absent.
+                        // Keep using the existing recovery passes after release.
+                        if matches!(&cause,AppError::Service { code,.. } if code=="storage_full")
+                            || store
+                                .job_for_operation(&a.consumer.package_id, &a.operation_id)?
+                                .is_some_and(|j| j.phase.as_deref() == Some("storage_full"))
+                        {
+                            return Err(AppError::Service {
+                                code: "storage_full".into(),
+                                message:
+                                    "AI image storage is full; recovery will retry automatically"
+                                        .into(),
+                            });
+                        }
                         if !sent
                             || reconciliation_failed(a, ReconciliationPhase::Status)?
                                 < RECONCILIATION_ATTEMPTS
@@ -517,7 +563,7 @@ impl AutomaticPort for LiveAutomatic {
                 }
             }
         }
-        if reconciliation_attempt(a)?.pending_success.is_some() {
+        if store.pending_success(a)?.is_some() {
             return apply(true);
         }
         if let Some(broker) = &consumer {
@@ -558,7 +604,13 @@ impl AutomaticPort for LiveAutomatic {
             let receipt = broker.call("services.image-generation.v1.status", json!({"caller":{"packageId":a.consumer.package_id,"packageDigest":a.consumer.digest,"incarnation":a.consumer.incarnation},"request":{"operationId":a.operation_id}}))?;
             service_bridge::reconcile_at(
                 service_host::store()?,
-                &broker.generation(),
+                &service_bridge::recovery_provider(
+                    service_host::store()?,
+                    broker.manifest(),
+                    &broker.generation(),
+                    &a.consumer.package_id,
+                    &a.operation_id,
+                )?,
                 a,
                 &receipt,
             )?;
@@ -726,11 +778,13 @@ pub(super) fn commit_discard(
 }
 fn provider(a: &Admission) -> Result<std::sync::Arc<backend::Broker>, AppError> {
     let broker = backend::ensure(&a.provider.package_id)?;
-    if broker.generation().digest != a.provider.digest {
-        return Err(error(
-            "Enable the original provider package before resolving this operation",
-        ));
-    }
+    service_bridge::recovery_provider(
+        service_host::store()?,
+        broker.manifest(),
+        &broker.generation(),
+        &a.consumer.package_id,
+        &a.operation_id,
+    )?;
     Ok(broker)
 }
 pub(super) fn resolve(consumer: &str, operation: &str, action: &str) -> Result<Value, AppError> {

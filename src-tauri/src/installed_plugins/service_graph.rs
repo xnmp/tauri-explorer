@@ -90,6 +90,48 @@ pub(super) fn consumer_recovers(
         })
 }
 
+pub(super) fn provider_recovers(
+    manifest: &Manifest,
+    target: &crate::service_state::model::ServiceTarget,
+) -> bool {
+    manifest.sdk_version >= 3
+        && manifest.id == target.package_id
+        && manifest.services.iter().any(|export| {
+            export.id == target.service_id
+                && export.major == target.major
+                && ["status", "cancel", "acknowledge"]
+                    .iter()
+                    .all(|method| export.methods.iter().any(|exported| exported == method))
+        })
+}
+
+/// Required dependents cannot stay enabled after explicit provider removal.
+/// Optional dependencies retain their usual unavailable-service behavior.
+pub(super) fn removal_packages(entries: &[Installed], package: &str) -> Vec<String> {
+    let mut removed = HashSet::from([package.to_owned()]);
+    loop {
+        let dependents: Vec<_> = entries
+            .iter()
+            .filter(|p| {
+                p.enabled
+                    && !removed.contains(&p.manifest.id)
+                    && p.manifest
+                        .service_dependencies
+                        .iter()
+                        .any(|dep| !dep.optional && removed.contains(&dep.package_id))
+            })
+            .map(|p| p.manifest.id.clone())
+            .collect();
+        if dependents.is_empty() {
+            break;
+        }
+        removed.extend(dependents);
+    }
+    let mut removed: Vec<_> = removed.into_iter().collect();
+    removed.sort();
+    removed
+}
+
 /// Call-time routing: the caller must declare the exact dependency and the
 /// selected provider generation must export the requested method.
 pub(super) fn route<'a>(

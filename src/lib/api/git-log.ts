@@ -426,3 +426,6 @@ export interface PrContext { repoSlug: string; headBranch: string | null }
 export async function gitPrContext(repoPath: string): Promise<PrContext> {
   return invoke<PrContext>("git_pr_context", { repoRoot: repoPath });
 }
+
+/** A window's retained repository mutation outcome, independent of graph mounts. */
+export interface PrMutationResult { action: PrAction["action"]; output: string; prNumber?: number }

@@ -176,6 +176,108 @@ fn explicit_stop_retains_original_unknown_and_refuses_automatic_or_duplicate_dis
     assert!(super::service_host::require_legacy_consumer_compatible(&store, "provider").is_ok());
     assert!(super::service_host::require_legacy_consumer_compatible(&store, "unrelated").is_ok());
 }
+fn stopped_unknown(store: &Store, op: &str) -> Value {
+    start(store, op);
+    let mut unknown = status(op, "unknown", json!({"state":"none"}));
+    unknown["revision"] = json!(2);
+    unknown["execution"]["error"] =
+        json!({"code":"interrupted","message":"Remote result is unconfirmed","correlationId":null});
+    call(store, "status", json!({"operationId":op}), |_, _| {
+        Ok(unknown.clone())
+    })
+    .unwrap();
+    store
+        .stop_recovery(&provider(), "consumer", op, true)
+        .unwrap();
+    unknown
+}
+#[test]
+fn dismissing_a_stopped_unknown_operation_clears_it_durably_and_keeps_its_evidence() {
+    use crate::service_state::job::JobState;
+    let (root, s) = fixture();
+    let (op, other) = ("dismissed", "kept");
+    s.register_job(job(op, 5)).unwrap();
+    let unknown = stopped_unknown(&s, op);
+    ready(&s, other);
+    let rows = super::ai_operations::operation_rows(&s, |_| true).unwrap();
+    let row = rows.iter().find(|r| r["operationId"] == op).unwrap();
+    assert_eq!(row["canDismiss"], true);
+    assert_eq!(row["canStop"], false);
+    assert_eq!(row["canResume"], false);
+    assert_eq!(
+        rows.iter().find(|r| r["operationId"] == other).unwrap()["canDismiss"],
+        false
+    );
+    let settled = s.dismiss_operation("consumer", op).unwrap().unwrap();
+    assert_eq!(settled.state, JobState::Discarded);
+    assert!(s.dismiss_operation("consumer", op).unwrap().is_none());
+    let visible = |s: &Store| {
+        super::ai_operations::operation_rows(s, |_| true)
+            .unwrap()
+            .iter()
+            .map(|r| r["operationId"].as_str().unwrap().to_owned())
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(visible(&s), [other]);
+    // Evidence is retained, not deleted, and nothing can replay it.
+    assert_eq!(s.provider_receipt("consumer", op).unwrap(), Some(unknown));
+    assert!(s.get("consumer", op).unwrap().is_some());
+    assert!(s.execution_released("consumer", op).unwrap());
+    assert!(
+        matches!(call(&s,"start",request(op),|_,_|panic!("dismissed operation reached provider")),Err(AppError::Service{ref code,..}) if code=="recovery_stopped")
+    );
+    drop(s);
+    let reopened = Store::open(root.path().join("service"), Limits::default()).unwrap();
+    assert_eq!(visible(&reopened), [other]);
+    assert_eq!(
+        reopened.job(&settled.job_key).unwrap().unwrap().state,
+        JobState::Discarded
+    );
+}
+#[test]
+fn only_a_stopped_unknown_operation_can_be_dismissed() {
+    let (_root, s) = fixture();
+    start(&s, "running");
+    ready(&s, "succeeded");
+    let mut unknown = status("live", "unknown", json!({"state":"none"}));
+    unknown["revision"] = json!(2);
+    unknown["execution"]["error"] =
+        json!({"code":"interrupted","message":"Remote result is unconfirmed","correlationId":null});
+    start(&s, "live");
+    call(&s, "status", json!({"operationId":"live"}), |_, _| {
+        Ok(unknown.clone())
+    })
+    .unwrap();
+    for op in ["running", "succeeded", "live", "missing"] {
+        assert!(s.dismiss_operation("consumer", op).is_err(), "{op}");
+    }
+    let rows = super::ai_operations::operation_rows(&s, |_| true).unwrap();
+    assert!(rows.iter().all(|r| r["canDismiss"] == false));
+    assert_eq!(rows.len(), 3);
+}
+#[test]
+fn a_dismissed_operation_resurfaces_when_the_provider_reports_newer_evidence() {
+    let (_root, s) = fixture();
+    let op = "resurface";
+    let unknown = stopped_unknown(&s, op);
+    s.dismiss_operation("consumer", op).unwrap();
+    assert!(super::ai_operations::operation_rows(&s, |_| true)
+        .unwrap()
+        .is_empty());
+    let mut newer = unknown;
+    newer["revision"] = json!(3);
+    s.observe_receipt(&provider(), "consumer", op, 3, newer)
+        .unwrap();
+    let rows = super::ai_operations::operation_rows(&s, |_| true).unwrap();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0]["operationId"], op);
+    assert_eq!(rows[0]["canDismiss"], true);
+    // Dismissing again pins the newer revision.
+    s.dismiss_operation("consumer", op).unwrap();
+    assert!(super::ai_operations::operation_rows(&s, |_| true)
+        .unwrap()
+        .is_empty());
+}
 #[test]
 fn explicit_discard_is_authoritative_for_a_previously_queued_recovery_snapshot() {
     let (_root, store) = fixture();

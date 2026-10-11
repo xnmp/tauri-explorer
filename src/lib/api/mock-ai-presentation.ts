@@ -27,10 +27,16 @@ export function createMockAiPresentation(emit: (name: string, value: unknown) =>
     },
     resolve(consumerPackage: string, operationId: string, action: AiResolution): AiOperationsSnapshot {
       const current = operations.operations.find(r => r.consumerPackage === consumerPackage && r.operationId === operationId);
-      if (!current || !["resume", "discard", "stop"].includes(action) || !resolutionAvailable(current, action)) throw new Error("Original operation action is unavailable; reload its retained status");
+      if (!current || !["resume", "discard", "stop", "dismiss"].includes(action) || !resolutionAvailable(current, action)) throw new Error("Original operation action is unavailable; reload its retained status");
       calls.push({ command: "resolve", identity: aiOperationKey(current), action });
-      if (action !== "resume") {
-        operations = { ...operations, operations: action === "discard" ? operations.operations.filter(r => r !== current) : operations.operations.map(r => r === current ? { ...r, active: false, canStop: false, canResume: false, reason: "Active recovery stopped. Unknown outcome evidence remains retained." } : r) };
+      if (action === "dismiss") {
+        operations = { ...operations, operations: operations.operations.filter(r => r !== current) };
+        const settled = jobs.map(r => r.owner.packageId === consumerPackage && r.operationId === operationId && r.phase === "stopped" && !nativeJobTerminal(r.state)
+          ? { ...r, revision: ++watermark, updatedAtMs: Date.now(), state: "discarded" as const } : r);
+        const changed = settled.filter((r, i) => r !== jobs[i]); jobs = settled;
+        for (const r of changed) emit("plugin-jobs:changed", { type: "updated", job: structuredClone(r) });
+      } else if (action !== "resume") {
+        operations = { ...operations, operations: action === "discard" ? operations.operations.filter(r => r !== current) : operations.operations.map(r => r === current ? { ...r, active: false, canStop: false, canResume: false, canDismiss: current.execution === "unknown" && current.delivery === "none", reason: "Active recovery stopped. Unknown outcome evidence remains retained." } : r) };
         jobs = jobs.map(r => r.owner.packageId === consumerPackage && r.operationId === operationId && !nativeJobTerminal(r.state)
           ? { ...r, revision: ++watermark, updatedAtMs: Date.now(), state: "needs_attention", phase: action === "discard" ? "provider_result_discarded" : "stopped" } : r);
         for (const r of jobs.filter(r => r.owner.packageId === consumerPackage && r.operationId === operationId && !nativeJobTerminal(r.state))) emit("plugin-jobs:changed", { type: "updated", job: structuredClone(r) });

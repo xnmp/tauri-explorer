@@ -1,10 +1,12 @@
 /** Safe operation identities and available native resolution actions. No prompts or keys. */
-export type AiResolution = "resume" | "discard" | "stop";
+export type AiResolution = "resume" | "discard" | "stop" | "dismiss";
 export interface UnresolvedAiOperation {
   operationId: string; consumerPackage: string; providerPackage: string; createdAtMs: number | null;
   execution: string; delivery: string; reason: string; canResume: boolean; canDiscard: boolean; canStop: boolean;
   /** True while a live job still drives the operation (in progress, nothing for the user to resolve). Absent in older snapshots. */
   active?: boolean;
+  /** Recovery stopped, execution unknown, nothing retained: the user may accept the unknown outcome. Absent in older snapshots. */
+  canDismiss?: boolean;
 }
 export interface AiOperationsSnapshot {
   version: 1; operations: UnresolvedAiOperation[]; migration?: { state: "pending" | "complete" | "absent"; error?: string };
@@ -21,7 +23,7 @@ export function validAiOperations(value: unknown): value is AiOperationsSnapshot
       || typeof r.operationId !== "string" || !/^[A-Za-z0-9._-]{1,128}$/.test(r.operationId)
       || r.createdAtMs !== null && (!Number.isSafeInteger(r.createdAtMs) || r.createdAtMs < 0)
       || !bounded(r.execution, 128) || !bounded(r.delivery, 128) || !bounded(r.reason, 2048)
-      || ![r.canResume, r.canDiscard, r.canStop].every((v) => typeof v === "boolean") || r.active !== undefined && typeof r.active !== "boolean" || keys.has(aiOperationKey(r))) return false;
+      || ![r.canResume, r.canDiscard, r.canStop].every((v) => typeof v === "boolean") || r.active !== undefined && typeof r.active !== "boolean" || r.canDismiss !== undefined && typeof r.canDismiss !== "boolean" || keys.has(aiOperationKey(r))) return false;
     keys.add(aiOperationKey(r));
   }
   return s.migration === undefined || !!s.migration && ["pending", "complete", "absent"].includes(s.migration.state)
@@ -31,10 +33,12 @@ export function validAiOperations(value: unknown): value is AiOperationsSnapshot
 export const needsAttentionCount = (snapshot: { operations: readonly { active?: boolean }[] }): number =>
   snapshot.operations.filter((r) => r.active !== true).length;
 export const resolutionAvailable = (r: UnresolvedAiOperation, action: AiResolution): boolean =>
-  action === "resume" ? r.canResume : action === "discard" ? r.canDiscard : r.canStop;
-export function resolutionCopy(r: UnresolvedAiOperation, action: "discard" | "stop"): { title: string; body: string; button: string } {
+  action === "resume" ? r.canResume : action === "discard" ? r.canDiscard : action === "dismiss" ? r.canDismiss === true : r.canStop;
+export function resolutionCopy(r: UnresolvedAiOperation, action: Exclude<AiResolution, "resume">): { title: string; body: string; button: string } {
   return action === "discard"
     ? { title: "Discard this retained result?", body: `Discard the provider result for operation ${r.operationId}, owned by ${r.consumerPackage}. Its image bytes will be released after the disposition is durable. Generation will not run again.`, button: "Discard retained result" }
+    : action === "dismiss"
+    ? { title: "Dismiss this operation?", body: `Dismiss operation ${r.operationId}, owned by ${r.consumerPackage}. Its outcome stays unknown and its evidence is kept. It will not be retried.`, button: "Dismiss operation" }
     : { title: "Stop recovery for this operation?", body: `Stop active recovery for operation ${r.operationId}, owned by ${r.consumerPackage}. Unknown outcome evidence remains retained. This does not declare that generation failed or that no charge occurred.`, button: "Stop active recovery" };
 }
 

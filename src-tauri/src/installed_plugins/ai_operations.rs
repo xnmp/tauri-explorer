@@ -8,6 +8,7 @@ use crate::{
     service_state::{
         job::JobState,
         model::{Admission, PackageGeneration},
+        receipt::{dismissable, dismissal_holds},
     },
 };
 use serde_json::{json, Value};
@@ -69,20 +70,51 @@ pub(super) fn operation_rows(
     store: &crate::service_state::Store,
     available: impl Fn(&PackageGeneration) -> bool,
 ) -> Result<Vec<Value>, AppError> {
-    store.retained_operations()?.into_iter().map(|(a,created,stopped)| {
-        let receipt=store.provider_receipt(&a.consumer.package_id,&a.operation_id)?;
-        let execution=receipt.as_ref().and_then(|r|r["execution"]["state"].as_str()).unwrap_or("unconfirmed");
-        let delivery=receipt.as_ref().and_then(|r|r["delivery"]["state"].as_str()).unwrap_or("none");
-        let consumer=available(&a.consumer);let provider=available(&a.provider);
-        let reason=if stopped {"Automatic recovery stopped; unknown execution evidence is retained"}
-            else if !provider {"Install or enable the original provider package to recover this operation"}
-            else if !consumer {"Install or enable the original consumer package to recover its retained output"}
-            else if execution=="unknown" {"Remote execution outcome is unknown; this operation will not be replayed"}
-            else if delivery=="unavailable" {"Retained output is unavailable; resume original local recovery or explicitly discard it"}
-            else {"The original operation is awaiting execution or local delivery reconciliation"};
-        let active=is_active(store.job_for_operation(&a.consumer.package_id,&a.operation_id)?.map(|j|j.state),stopped,consumer&&provider);
-        Ok(json!({"active":active,"operationId":a.operation_id,"consumerPackage":a.consumer.package_id,"providerPackage":a.provider.package_id,"createdAtMs":(created!=0).then_some(created),"execution":execution,"delivery":delivery,"reason":reason,"canResume":consumer&&!stopped,"canDiscard":provider&&execution=="succeeded"&&matches!(delivery,"available"|"unavailable"),"canStop":provider&&execution=="unknown"&&delivery=="none"&&!stopped}))
-    }).collect()
+    let mut rows = Vec::new();
+    for (a, created, stopped) in store.retained_operations()? {
+        let receipt = store.provider_receipt(&a.consumer.package_id, &a.operation_id)?;
+        let execution = receipt
+            .as_ref()
+            .and_then(|r| r["execution"]["state"].as_str())
+            .unwrap_or("unconfirmed");
+        let delivery = receipt
+            .as_ref()
+            .and_then(|r| r["delivery"]["state"].as_str())
+            .unwrap_or("none");
+        if dismissal_holds(
+            store.dismissed_revision(&a.consumer.package_id, &a.operation_id)?,
+            receipt.as_ref().and_then(|r| r["revision"].as_u64()),
+            stopped,
+            execution,
+            delivery,
+        ) {
+            continue;
+        }
+        let consumer = available(&a.consumer);
+        let provider = available(&a.provider);
+        let reason = if stopped {
+            "Automatic recovery stopped; unknown execution evidence is retained"
+        } else if !provider {
+            "Install or enable the original provider package to recover this operation"
+        } else if !consumer {
+            "Install or enable the original consumer package to recover its retained output"
+        } else if execution == "unknown" {
+            "Remote execution outcome is unknown; this operation will not be replayed"
+        } else if delivery == "unavailable" {
+            "Retained output is unavailable; resume original local recovery or explicitly discard it"
+        } else {
+            "The original operation is awaiting execution or local delivery reconciliation"
+        };
+        let active = is_active(
+            store
+                .job_for_operation(&a.consumer.package_id, &a.operation_id)?
+                .map(|j| j.state),
+            stopped,
+            consumer && provider,
+        );
+        rows.push(json!({"active":active,"operationId":a.operation_id,"consumerPackage":a.consumer.package_id,"providerPackage":a.provider.package_id,"createdAtMs":(created!=0).then_some(created),"execution":execution,"delivery":delivery,"reason":reason,"canResume":consumer&&!stopped,"canDiscard":provider&&execution=="succeeded"&&matches!(delivery,"available"|"unavailable"),"canStop":provider&&execution=="unknown"&&delivery=="none"&&!stopped,"canDismiss":dismissable(stopped,execution,delivery)}));
+    }
+    Ok(rows)
 }
 /// Commits the provider's discard receipt. Bytes and claims are released only
 /// by that durable observation; a job awaiting its consumer is marked, never
@@ -118,7 +150,7 @@ fn provider(a: &Admission) -> Result<std::sync::Arc<backend::Broker>, AppError> 
 }
 pub(super) fn resolve(consumer: &str, operation: &str, action: &str) -> Result<Value, AppError> {
     let _action = action_guard()?;
-    if !matches!(action, "resume" | "discard" | "stop") {
+    if !matches!(action, "resume" | "discard" | "stop" | "dismiss") {
         return Err(error("Unknown AI recovery action"));
     }
     let store = service_host::store()?;
@@ -165,6 +197,17 @@ pub(super) fn resolve(consumer: &str, operation: &str, action: &str) -> Result<V
             };
             consumer.call("jobs.resumeOperation", json!({"operationId":operation}))?;
         }
+        return snapshot();
+    }
+    if action == "dismiss" {
+        // Host-only: the provider's `acknowledge` releases a *successful*
+        // output (it rejects anything else), and an unknown/none operation
+        // has no retained provider state to release. The marker is the
+        // host's own durable disposition; receipts stay untouched.
+        if let Some(job) = store.dismiss_operation(consumer, operation)? {
+            backend::emit_job_event(json!({"type":"updated","job":job}));
+        }
+        backend::emit_operations_changed();
         return snapshot();
     }
     let provider = provider(&a)?;

@@ -10,7 +10,7 @@
   import { pluginRegistry } from "$lib/plugins/registry.svelte";
   let { onClose, dependencies = { read: readAiOperations, resolve: resolveAiOperation, watch: watchAiOperations } }: { onClose: () => void; dependencies?: AiOperationsDependencies } = $props();
   let view = $state<AiOperationsView>({ snapshot: null, loading: false, busyKey: null, error: null });
-  let confirmation = $state<{ operation: UnresolvedAiOperation; action: "discard" | "stop" } | null>(null);
+  let confirmation = $state<{ operation: UnresolvedAiOperation; action: "discard" | "stop" | "dismiss" } | null>(null);
   let configuring = $state(false), connectionError = $state("");
   let alive = true;
   const controller = untrack(() => createAiOperationsController(dependencies, (next) => { view = next; }));
@@ -54,6 +54,7 @@
               {#if operation.canResume}<button disabled={!!view.busyKey} onclick={() => controller.resolve(operation, "resume")}>Resume original recovery</button>{/if}
               {#if operation.canDiscard}<button disabled={!!view.busyKey} onclick={() => { confirmation = { operation: { ...operation }, action: "discard" }; }}>Discard retained result…</button>{/if}
               {#if operation.canStop}<button disabled={!!view.busyKey} onclick={() => { confirmation = { operation: { ...operation }, action: "stop" }; }}>Stop active recovery…</button>{/if}
+              {#if operation.canDismiss}<button disabled={!!view.busyKey} onclick={() => { confirmation = { operation: { ...operation }, action: "dismiss" }; }}>Dismiss…</button>{/if}
             </div>
           </li>
         {/each}</ul>

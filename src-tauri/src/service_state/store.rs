@@ -189,6 +189,11 @@ impl Store {
                 "durable job presentation schema is missing or unsupported",
             ));
         }
+        // Additive and independent of the schema markers: an older host
+        // ignores this table, so downgrades stay safe.
+        connection
+            .execute_batch(super::receipts::DISMISSAL_TABLE)
+            .map_err(sql)?;
         let integrity: String = connection
             .query_row("PRAGMA quick_check", [], |r| r.get(0))
             .map_err(sql)?;
@@ -800,6 +805,21 @@ impl Store {
             result.push((a, created as u64, released != 0));
         }
         Ok(result)
+    }
+    /// Receipt revision the user dismissed this operation at, if any.
+    pub fn dismissed_revision(&self, consumer: &str, operation: &str) -> Result<Option<u64>> {
+        let value: Option<i64> = self
+            .connect()?
+            .query_row(
+                "SELECT revision FROM dismissed_operations WHERE consumer=?1 AND operation=?2",
+                params![consumer, operation],
+                |r| r.get(0),
+            )
+            .optional()
+            .map_err(sql)?;
+        value
+            .map(|v| u64::try_from(v).map_err(|_| reject("invalid dismissal revision")))
+            .transpose()
     }
     pub fn execution_released(&self, consumer: &str, operation: &str) -> Result<bool> {
         self.connect()?

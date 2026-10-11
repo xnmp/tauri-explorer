@@ -157,3 +157,56 @@ test("an actively running AI operation is not counted as unresolved", async ({ p
   await expect(dialog.locator('[data-operation-id="op-active"]').getByText("In progress")).toBeVisible();
   await expect(dialog.locator('[data-operation-id="op-stuck"]').getByText("In progress")).toHaveCount(0);
 });
+
+test("a stopped unknown operation can be dismissed: the row, its count and its job leave the unresolved surfaces", async ({ page }) => {
+  await page.goto(HOME_URL); await waitForEntries(page);
+  await page.evaluate(async () => {
+    const { getMockControl } = await import("/src/lib/api/mock-control.ts");
+    const { jobsStore } = await import("/src/lib/state/jobs.svelte.ts");
+    jobsStore.addJob(4324, "plain.png", "Anchor job", "openai-image", "image");
+    const stopped = { operationId: "op-stopped", consumerPackage: "xnmp.trace-explorer", providerPackage: "xnmp.image-generation", createdAtMs: Date.now(), execution: "unknown", delivery: "none", reason: "Automatic recovery stopped; unknown execution evidence is retained", canResume: false, canDiscard: false, canStop: false, canDismiss: true };
+    const kept = { ...stopped, operationId: "op-kept", execution: "succeeded", delivery: "available", reason: "Original output retained", canDiscard: true, canDismiss: false };
+    const job = { jobKey: "c".repeat(48), owner: { packageId: "xnmp.trace-explorer", digest: "b".repeat(64), incarnation: 1 }, operationId: "op-stopped", jobId: 99002, kind: "openai-image", label: "stopped.png", originWindow: "mock-window", revision: 1, createdAtMs: Date.now() - 3000, updatedAtMs: Date.now(), state: "needs_attention", phase: "stopped" };
+    getMockControl().nativeAiPresentation!.seed({ originWindow: "mock-window", watermark: 1, jobs: [job] }, { version: 1, operations: [stopped, kept] });
+  });
+  const progress = page.getByRole("region", { name: "Background progress" });
+  const indicator = progress.getByRole("button", { name: /Unresolved AI operations/ });
+  await expect(indicator).toHaveText("2 unresolved");
+  await indicator.click();
+  const dialog = page.getByRole("dialog", { name: "Unresolved AI operations", exact: true });
+  const row = dialog.locator('[data-operation-id="op-stopped"]');
+  await expect(row.getByRole("button", { name: "Dismiss…" })).toBeVisible();
+  await expect(dialog.locator('[data-operation-id="op-kept"]').getByRole("button", { name: "Dismiss…" })).toHaveCount(0);
+  await row.getByRole("button", { name: "Dismiss…" }).click();
+  const confirm = page.getByRole("alertdialog");
+  await expect(confirm).toContainText("Its outcome stays unknown and its evidence is kept. It will not be retried.");
+  await confirm.getByRole("button", { name: "Dismiss operation", exact: true }).click();
+  await expect(confirm).toBeHidden();
+  await expect(row).toHaveCount(0);
+  await expect(dialog.locator('[data-operation-id="op-kept"]')).toBeVisible();
+  await dialog.getByRole("button", { name: "Close unresolved operations" }).click();
+  await expect(indicator).toHaveText("1 unresolved");
+  await expect(progress.getByRole("button", { name: "Inspect operation" })).toHaveCount(0);
+  expect(await page.evaluate(async () => { const { getMockControl } = await import("/src/lib/api/mock-control.ts"); return getMockControl().nativeAiPresentation!.calls.filter(c => c.command === "resolve").map(c => c.action); })).toEqual(["dismiss"]);
+});
+
+test("dismissing the only unresolved operation removes the unresolved indicator", async ({ page }) => {
+  await page.goto(HOME_URL); await waitForEntries(page);
+  await page.evaluate(async () => {
+    const { jobsStore } = await import("/src/lib/state/jobs.svelte.ts");
+    const { getMockControl } = await import("/src/lib/api/mock-control.ts");
+    jobsStore.addJob(4323, "plain.png", "Anchor job", "openai-image", "image");
+    const stopped = { operationId: "op-only", consumerPackage: "xnmp.trace-explorer", providerPackage: "xnmp.image-generation", createdAtMs: Date.now(), execution: "unknown", delivery: "none", reason: "Automatic recovery stopped; unknown execution evidence is retained", canResume: false, canDiscard: false, canStop: false, canDismiss: true };
+    getMockControl().nativeAiPresentation!.seed({ originWindow: "mock-window", watermark: 0, jobs: [] }, { version: 1, operations: [stopped] });
+  });
+  const progress = page.getByRole("region", { name: "Background progress" });
+  const indicator = progress.getByRole("button", { name: "Unresolved AI operations: 1" });
+  await expect(indicator).toHaveText("1 unresolved");
+  await indicator.click();
+  const dialog = page.getByRole("dialog", { name: "Unresolved AI operations", exact: true });
+  await dialog.getByRole("button", { name: "Dismiss…" }).click();
+  await page.getByRole("alertdialog").getByRole("button", { name: "Dismiss operation", exact: true }).click();
+  await expect(dialog.getByText("No unresolved AI operations.", { exact: true })).toBeVisible();
+  await dialog.getByRole("button", { name: "Close unresolved operations" }).click();
+  await expect(progress.getByText(/unresolved/)).toHaveCount(0);
+});

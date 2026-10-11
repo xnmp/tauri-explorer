@@ -1,7 +1,7 @@
 <script lang="ts">
   import Modal from "./Modal.svelte";
   import { resolutionCopy, type UnresolvedAiOperation } from "$lib/domain/ai-operations";
-  let { operation, action, busy, error, onConfirm, onClose }: { operation: UnresolvedAiOperation; action: "discard" | "stop"; busy: boolean; error: string | null; onConfirm: () => void; onClose: () => void } = $props();
+  let { operation, action, busy, error, onConfirm, onClose }: { operation: UnresolvedAiOperation; action: "discard" | "stop" | "dismiss"; busy: boolean; error: string | null; onConfirm: () => void; onClose: () => void } = $props();
   const copy = $derived(resolutionCopy(operation, action));
 </script>
 <Modal open={true} {onClose} role="alertdialog" labelledby="ai-resolution-title" describedby="ai-resolution-body" canClose={() => !busy}>

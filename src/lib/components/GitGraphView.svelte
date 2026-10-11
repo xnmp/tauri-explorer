@@ -239,8 +239,12 @@
     prDetailHeight = 0;
   }
 
-  function closeDetails(cancelJump = true): void {
-    if (cancelJump) branchSession.cancelMergeBase();
+  function closeDetails(): void {
+    branchSession.cancelMergeBase();
+    resetDetails();
+  }
+
+  function resetDetails(): void {
     detailSession.close();
     // Keep the pane-owned in-flight commit guard across close/reopen.
     commitPanelStore.resetIfIdle();
@@ -814,7 +818,7 @@
       // avoids local/remote shorthand collisions in the branch-filter API.
       if (filePathReloadTimer !== null) clearTimeout(filePathReloadTimer);
       filePathReloadTimer = null;
-      closeDetails(false);
+      resetDetails();
       closePrDetail();
       branchFilter = null;
       filePathFilter = "";

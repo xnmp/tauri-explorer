@@ -1420,3 +1420,7 @@ pub async fn git_pr_context(repo_root: String) -> Result<PrContext, AppError> {
         .await
         .map_err(|e| AppError::Other(format!("Task join error: {e}")))?
 }
+
+#[cfg(all(test, unix))]
+#[path = "../test_support/github_pr_mutation_repair.rs"]
+mod pr_mutation_repair_tests;

@@ -29,6 +29,11 @@ it("runs the unchanged registry churn before other files without losing or dupli
     for (const spec of others) {
       expect(spec.project.config.sequence.groupOrder).toBeGreaterThan(churn!.project.config.sequence.groupOrder);
     }
+    const compiler = others.find(spec => spec.moduleId.endsWith("/tests/native-suite-typecheck.test.ts"));
+    expect(compiler).toBeDefined();
+    for (const spec of others.filter(spec => spec !== compiler)) {
+      expect(spec.project.config.sequence.groupOrder).toBeGreaterThan(compiler!.project.config.sequence.groupOrder);
+    }
     for (const spec of specs) {
       expect(spec.project.config.testTimeout).toBe(5_000);
       expect(spec.project.config.maxWorkers).toBe(2);
@@ -36,7 +41,7 @@ it("runs the unchanged registry churn before other files without losing or dupli
 
     // The developer's ordinary single-file invocation must still work, without
     // matching both projects or running unrelated files.
-    for (const file of ["tests/plugins/registry-churn.test.ts", "tests/state/git-pr-session.test.ts"]) {
+    for (const file of ["tests/plugins/registry-churn.test.ts", "tests/native-suite-typecheck.test.ts", "tests/state/git-pr-session.test.ts"]) {
       const selected = await runner.globTestSpecifications([file]);
       expect(selected.map(spec => relative(process.cwd(), spec.moduleId).replaceAll("\\", "/"))).toEqual([file]);
     }

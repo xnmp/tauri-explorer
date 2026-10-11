@@ -26,6 +26,33 @@ beforeEach(() => { vi.useFakeTimers(); });
 afterEach(() => { vi.useRealTimers(); jobsStore.applyNative([]); for (const job of [...jobsStore.jobs]) jobsStore.removeJob(job.id); });
 
 describe("elapsed time of native jobs", () => {
+  it("labels native progress as an estimate and shows overdue work without completion", () => {
+    jobsStore.applyNative([record(1, "running", { estimateKey: "fast" })]);
+    vi.setSystemTime(START + 30_000);
+    expect(progressText()).toContain("Estimate · ~1m 30s remaining");
+    vi.setSystemTime(START + 180_000);
+    const overdue = progressText();
+    expect(overdue).toContain("Estimate · longer than usual");
+    expect(overdue).not.toContain("100%");
+    expect(overdue).not.toContain("0s remaining");
+    expect(overdue).not.toContain(">Complete<");
+  });
+
+  it("passes native cohort identity and settled timings to the progress estimate", () => {
+    const past = [1,2,3].map(n=>record(n, "completed", { createdAtMs:START-120_000, settledAtMs:START-80_000, estimateKey:"fast" }));
+    const slow = [4,5,6].map(n=>record(n, "completed", { createdAtMs:START-240_000, settledAtMs:START-40_000, estimateKey:"slow" }));
+    jobsStore.applyNative([...past,...slow,record(7,"running",{estimateKey:"fast"})]);
+    vi.setSystemTime(START+20_000);
+    expect(progressText()).toContain("Estimate · ~20s remaining");
+  });
+  it("acknowledges cancellation while a native job is still running", async () => {
+    jobsStore.applyNative([record(1,"running")]);
+    jobsStore.configureNativeControls({cancel:async()=>{},dismiss:async()=>{},resume:async()=>{}});
+    await jobsStore.controlJob(9001,"cancel");
+    expect(progressText()).toContain("cancellation requested");
+    expect(progressText()).toContain("Estimate ·");
+    jobsStore.configureNativeControls(null);
+  });
   it.each([
     ["completed", record(1, "completed", { settledAtMs: START + 38_000 })],
     ["failed", record(1, "error", { settledAtMs: START + 38_000, error: "refused" })],

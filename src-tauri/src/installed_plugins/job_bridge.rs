@@ -78,6 +78,7 @@ pub(super) fn register(
             created_at_ms: timestamp,
             updated_at_ms: timestamp,
             settled_at_ms: None,
+            estimate_key: None,
             state: JobState::Accepting,
             phase: Some("preparing".into()),
             output_path: None,
@@ -150,6 +151,15 @@ fn observe(record: &JobRecord, status: &Value) -> Result<JobRecord, AppError> {
         output,
         status["runId"].as_i64(),
         message,
+        status
+            .get("estimateKey")
+            .map(|value| {
+                value
+                    .as_str()
+                    .map(str::to_owned)
+                    .ok_or_else(|| error("Invalid estimate key"))
+            })
+            .transpose()?,
     )
 }
 static STATUS_WORKERS: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
@@ -576,6 +586,7 @@ mod tests {
                 created_at_ms: created,
                 updated_at_ms: created,
                 settled_at_ms: None,
+                estimate_key: None,
                 state: JobState::Accepting,
                 phase: Some("preparing".into()),
                 output_path: None,
@@ -716,6 +727,7 @@ mod tests {
                 1,
                 JobState::Recovering,
                 Some("recovering".into()),
+                None,
                 None,
                 None,
                 None,

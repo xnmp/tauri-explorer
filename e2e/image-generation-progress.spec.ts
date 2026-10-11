@@ -12,7 +12,7 @@ test("image generation shows elapsed time and an explicitly estimated progress",
   const progress = page.getByRole("region", { name: "Background progress" });
   await expect(progress.getByText(/elapsed/)).toBeVisible();
   await expect(progress.getByRole("progressbar", { name: "Estimated image generation progress" })).toBeVisible();
-  await expect(progress.getByText(/estimated/)).toBeVisible();
+  await expect(progress.getByText(/^Estimate ·/)).toBeVisible();
   await expect(progress.getByText("Make it daytime", { exact: true })).toBeVisible();
   await page.clock.runFor(61_000);
   await expect(progress.getByText("1m 1s elapsed", {exact:true})).toBeVisible();
@@ -22,6 +22,43 @@ test("image generation shows elapsed time and an explicitly estimated progress",
   await page.clock.runFor(60_000);
   await expect(progress.getByText("1m 1s elapsed",{exact:true})).toBeVisible();
   await expect(progress.getByRole("progressbar")).toHaveCount(0);
+});
+
+test("native image estimates use the matching cohort and stay overdue until a result arrives", async ({ page }) => {
+  await page.clock.install();
+  await page.goto(HOME_URL);
+  await waitForEntries(page);
+  await page.evaluate(async () => {
+    const { jobsStore } = await import("/src/lib/state/jobs.svelte.ts");
+    const now = Date.now();
+    const record = (n: number, estimateKey: string, duration?: number) => ({
+      jobKey:n.toString(16).padStart(48,"0"), owner:{packageId:"consumer",digest:"a".repeat(64),incarnation:1},
+      operationId:`cohort-${n}`,jobId:9000+n,kind:"openai-image",label:`cohort-${n}.png`,originWindow:"main",revision:n,
+      createdAtMs:duration === undefined ? now : now-100_000-duration,updatedAtMs:now,
+      state:duration === undefined ? "running" as const : "completed" as const,estimateKey,
+      ...(duration === undefined ? {} : {settledAtMs:now-100_000,outputPath:`/cohort-${n}.png`,runId:n}),
+    });
+    const records = [1,2,3].map(n=>record(n,"fast",40_000)).concat([4,5,6].map(n=>record(n,"slow",200_000)),[record(7,"fast")]);
+    jobsStore.applyNative(records);
+    jobsStore.configureNativeControls({cancel:async()=>{},dismiss:async()=>{},resume:async()=>{}});
+    (window as any).completeCohort = () => jobsStore.applyNative([
+      ...records.slice(0,6),{...records[6],state:"completed",revision:8,updatedAtMs:Date.now(),settledAtMs:Date.now(),outputPath:"/result.png",runId:7},
+    ]);
+  });
+  const row = page.getByRole("region",{name:"Background progress"}).locator('[data-job-id="9007"]');
+  await page.clock.runFor(20_000);
+  await expect(row.getByText("Estimate · ~20s remaining",{exact:true})).toBeVisible();
+  await page.clock.runFor(25_000);
+  await expect(row.getByText("Estimate · longer than usual",{exact:true})).toBeVisible();
+  await expect(row.getByRole("progressbar")).toHaveAttribute("aria-valuenow","95");
+  await expect(row.getByText("Complete",{exact:true})).toHaveCount(0);
+  await row.getByRole("button",{name:"Cancel cohort-7.png"}).click();
+  await expect(row.getByText(/cancellation requested/)).toBeVisible();
+  await page.evaluate(()=>(window as any).completeCohort());
+  await expect(row.getByText("Complete",{exact:true})).toBeVisible();
+  await expect(row.getByRole("progressbar")).toHaveCount(0);
+  await page.clock.runFor(60_000);
+  await expect(row.getByText("45s elapsed",{exact:true})).toBeVisible();
 });
 
 for (const width of [1800, 800]) {

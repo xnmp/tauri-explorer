@@ -31,6 +31,9 @@ pub(crate) struct JobRecord {
     pub job_id: u64,
     pub kind: String,
     pub label: String,
+    /// Opaque timing cohort, pinned by the first prepared consumer receipt.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub estimate_key: Option<String>,
     pub origin_window: String,
     pub revision: u64,
     #[serde(default)]

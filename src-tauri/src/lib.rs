@@ -68,6 +68,8 @@ mod service_state;
 mod update_check;
 mod upscale;
 mod user_report;
+#[cfg(target_os = "linux")]
+mod webkit_renderer;
 mod window_launch;
 /// Non-Linux stub so the command registry stays platform-independent.
 #[cfg(not(target_os = "linux"))]
@@ -165,12 +167,10 @@ pub fn run_with_process_entry(launch_dir: Option<String>, t_process_entry: std::
         .map(|duration| duration.as_secs_f64() * 1000.0)
         .unwrap_or(f64::NAN);
 
-    // Fix webkit2gtk Wayland protocol errors on Linux compositors (Hyprland, Sway, etc.)
+    // Avoid WebKitGTK's DMABuf Wayland protocol errors without giving up
+    // composited painting (#1057); see webkit_renderer.
     #[cfg(target_os = "linux")]
-    {
-        std::env::set_var("WEBKIT_DISABLE_COMPOSITING_MODE", "1");
-        std::env::set_var("WEBKIT_DISABLE_DMABUF_RENDERER", "1");
-    }
+    let renderer_plan = webkit_renderer::apply();
 
     let home_dir = dirs::home_dir()
         .unwrap_or_else(|| std::path::PathBuf::from("/"))
@@ -523,6 +523,16 @@ pub fn run_with_process_entry(launch_dir: Option<String>, t_process_entry: std::
         ])
         .setup(move |app| {
             let t_setup = std::time::Instant::now();
+            // First in setup: portal mode returns early below, and a renderer
+            // crash after window creation is exactly when this line matters.
+            #[cfg(target_os = "linux")]
+            log::info!(
+                "Renderer(webkit): mode={:?} set={:?} unset={:?} reason={}",
+                renderer_plan.mode,
+                renderer_plan.set,
+                renderer_plan.unset,
+                renderer_plan.reason,
+            );
             // Before any window: the asset scope must serve Preview renditions
             // from the cache (its `$HOME/**/*` glob skips dot-dirs, #1054).
             thumbnails::preview_rendition::allow_rendition_assets(app);

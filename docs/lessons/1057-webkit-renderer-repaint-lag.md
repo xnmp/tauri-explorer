@@ -1,0 +1,47 @@
+# #1057 — Disabling WebKitGTK compositing made scroll, marquee and menus CPU-bound
+
+**Symptom:** On Linux (Arch/Hyprland, NVIDIA RTX 3070, WebKitGTK 2.54.1),
+scrolling, marquee selection and opening the context menu were laggy and got
+worse with window size. Measured at 2560×1440: scroll 44–68 ms median frames,
+marquee 53–89 ms, context menu 170–290 ms to open. Idle frames stayed at 16 ms.
+
+**Root cause:** `lib.rs` set `WEBKIT_DISABLE_DMABUF_RENDERER=1` and
+`WEBKIT_DISABLE_COMPOSITING_MODE=1` on every Linux machine (5d590688, the
+NVIDIA/Wayland `Error 71 (Protocol error)` crash workaround). On WebKitGTK
+2.44+ that leaves the webview non-composited: each frame CPU-paints its whole
+dirty region and ships it to the UI process, so a near-full-window scroll is a
+near-full-window CPU raster. (On 2.42/2.43 disabling DMABuf alone still fell
+back to a composited backing store; `DISABLE_COMPOSITING_MODE` disables
+compositing on every version.) The archived notes in `lessons_learnt.md` are
+wrong on two points: the DMABuf variable does affect rendering, and
+`WEBKIT_DISABLE_COMPOSITING_MODE` was **not** removed in 2.46 — 2.54 still
+reads it.
+
+**Fix:** `webkit_renderer.rs` decides at process start:
+- NVIDIA proprietary driver (`/sys/module/nvidia`) on WebKitGTK ≥2.44:
+  `WEBKIT_DMABUF_RENDERER_FORCE_SHM=1` keeps the composited renderer but hands
+  frames over in shared memory, so the crashing GPU-buffer path is never used.
+  `WEBKIT_FORCE_DMABUF_RENDERER=1` defeats the Debian/Ubuntu/Gentoo patch that
+  otherwise disables DMABuf (and with it compositing) on NVIDIA.
+- NVIDIA on older WebKitGTK: the legacy variables (FORCE_SHM is first read in 2.44).
+- Every other GPU: WebKit's defaults, which every other WebKitGTK app ships with.
+- Any user-set WebKit renderer variable — even empty or "0", since WebKit
+  treats presence as a choice — leaves the environment untouched.
+  `TAURI_EXPLORER_WEBKIT_RENDERER=shm|legacy|native` forces a mode for one
+  launch and clears conflicting variables. The decision is logged first in
+  setup as `Renderer(webkit)`.
+
+Measured on the NVIDIA machine with FORCE_SHM: scroll 17 ms, marquee 21 ms,
+context menu 57–95 ms.
+
+**Gotchas:**
+- Removing both variables with no replacement reproduces `Error 71` on NVIDIA.
+- Shared memory still rasterises with GPU Skia and reads back the full frame;
+  field reports show FORCE_SHM regressions on some stacks (runaway
+  WebKitWebProcess CPU/RSS on NVIDIA, white windows on old Intel/X11). Soak the
+  web process on NVIDIA before trusting it, and keep the per-launch override.
+- Frontend-created Linux windows are transparent (`window-appearance.ts`).
+  Transparent webviews in composited mode are the wry#1524 stale-frame case, so
+  verify Ctrl+N and warm-pool windows, not just the main window.
+- The mock-invoke / Chromium perf suites cannot see paint-mode cost. Measure on
+  the real binary (headless Hyprland output, rAF-gap sampling) — see #1054.

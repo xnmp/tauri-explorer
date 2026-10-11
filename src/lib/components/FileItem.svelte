@@ -107,8 +107,9 @@
   class:copy-drop={interactions.isCopyDrop(entry.path)}
   onfocus={(event) => {
     // A wide Details row can make native tab focus reveal its trailing columns
-    // by scrolling an overflow-hidden ancestor. Keep the file identity visible.
-    event.currentTarget.querySelector(".name-cell")?.scrollIntoView({ block: "nearest", inline: "nearest" });
+    // by scrolling an overflow-hidden ancestor. Reveal the outer row edge so
+    // its inset focus ring and the padded file identity both remain visible.
+    event.currentTarget.scrollIntoView({ block: "nearest", inline: "start" });
   }}
   onclick={handleClick}
   ondblclick={handleDoubleClick}

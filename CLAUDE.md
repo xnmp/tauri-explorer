@@ -186,6 +186,11 @@ that inspect the complete transcript must wait for the output channel to close
 as well as for the child exit; an exit notification does not mean the last
 output callback has run. Keep those waits bounded and retain terminal cleanup
 on assertion failures.
+When forcing output delivery to follow exit, gate a test-side forwarding
+consumer, never the production PTY reader: read backpressure can prevent the
+shell from exiting. Include output larger than the PTY buffer to catch this.
+For cwd/lifecycle tests, observe initial shell output before writing input;
+startup typeahead has separate regression coverage.
 Use private XDG config/data/cache directories for the native library suite:
 rename completion consults installed provenance plugins, so an inherited host
 profile can change its warning result.

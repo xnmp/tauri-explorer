@@ -4,7 +4,8 @@
 use super::*;
 use std::io::{Cursor, Seek};
 
-/// Counts every read and seek the parser issues.
+/// Counts every read and seek the parser issues; an Info child costs a few
+/// (header bytes, position checks, skip), so the bound is per element.
 struct Counting<R> {
     inner: R,
     calls: usize,
@@ -66,7 +67,7 @@ fn matroska_info_scan_stops_at_the_sibling_budget() {
     };
     assert_eq!(matroska_duration(&mut reader), None);
     assert!(
-        reader.calls < 4 * MAX_SIBLINGS + 64,
+        reader.calls < 8 * MAX_SIBLINGS + 64,
         "oversized Info took {} reads/seeks",
         reader.calls
     );
@@ -78,7 +79,10 @@ fn matroska_info_child_crossing_the_info_boundary_is_rejected() {
     // bytes that follow belong to the Segment, not to Info.
     let mut children = info(&[0x44, 0x89, 0x88]);
     children.extend_from_slice(&754_000.0f64.to_be_bytes());
-    assert_eq!(matroska_duration(&mut Cursor::new(matroska(&children))), None);
+    assert_eq!(
+        matroska_duration(&mut Cursor::new(matroska(&children))),
+        None
+    );
 }
 
 #[test]
@@ -87,7 +91,10 @@ fn matroska_timestamp_scale_crossing_the_info_boundary_is_rejected() {
     payload.extend_from_slice(&[0x2A, 0xD7, 0xB1, 0x83]); // TimestampScale, 3 bytes
     let mut children = info(&payload);
     children.extend_from_slice(&[0x0F, 0x42, 0x40]);
-    assert_eq!(matroska_duration(&mut Cursor::new(matroska(&children))), None);
+    assert_eq!(
+        matroska_duration(&mut Cursor::new(matroska(&children))),
+        None
+    );
 }
 
 /// `moov` holding an `mvhd` with `mvhd_payload`, followed by a sibling `trak`
@@ -115,11 +122,17 @@ fn mp4_short_mvhd_does_not_borrow_bytes_from_its_sibling() {
     let mut v0 = vec![0u8; 12];
     v0.extend_from_slice(&1000u32.to_be_bytes());
     v0.extend_from_slice(&[0xEA, 0x60, 0x00]);
-    assert_eq!(mp4_duration(&mut Cursor::new(moov_with_short_mvhd(&v0))), None);
+    assert_eq!(
+        mp4_duration(&mut Cursor::new(moov_with_short_mvhd(&v0))),
+        None
+    );
     // Version 1 needs 32 payload bytes.
     let mut v1 = vec![1u8, 0, 0, 0];
     v1.extend_from_slice(&[0u8; 16]);
-    assert_eq!(mp4_duration(&mut Cursor::new(moov_with_short_mvhd(&v1))), None);
+    assert_eq!(
+        mp4_duration(&mut Cursor::new(moov_with_short_mvhd(&v1))),
+        None
+    );
 }
 
 #[test]
@@ -162,7 +175,10 @@ fn ffmpeg_probe_kills_a_child_that_outlives_its_deadline() {
 #[test]
 fn ffmpeg_probe_reads_the_duration_of_a_child_that_exits() {
     let dir = tempfile::tempdir().unwrap();
-    let ffmpeg = fake_ffmpeg(dir.path(), "echo '  Duration: 00:01:02.50, start: 0' >&2\nexit 1");
+    let ffmpeg = fake_ffmpeg(
+        dir.path(),
+        "echo '  Duration: 00:01:02.50, start: 0' >&2\nexit 1",
+    );
     let seconds = ffmpeg_probe(&ffmpeg, Path::new("clip.avi"), Duration::from_secs(10)).unwrap();
     assert!((seconds - 62.5).abs() < 1e-9);
 }

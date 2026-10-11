@@ -57,9 +57,19 @@ fn read_u64<R: Read>(reader: &mut R) -> Option<u64> {
 fn mp4_duration<R: Read + Seek>(reader: &mut R) -> Option<f64> {
     let end = reader.seek(SeekFrom::End(0)).ok()?;
     let (moov_start, moov_end) = find_box(reader, 0, end, b"moov")?;
-    let (mvhd_start, _) = find_box(reader, moov_start, moov_end, b"mvhd")?;
+    let (mvhd_start, mvhd_end) = find_box(reader, moov_start, moov_end, b"mvhd")?;
     reader.seek(SeekFrom::Start(mvhd_start)).ok()?;
     let version = read_array::<4, _>(reader)?[0];
+    // Version/flags, creation and modification times, timescale, duration:
+    // the fields must lie inside mvhd, never in the box that follows it.
+    let needed = match version {
+        0 => 4 + 8 + 4 + 4,
+        1 => 4 + 16 + 4 + 8,
+        _ => return None,
+    };
+    if mvhd_end - mvhd_start < needed {
+        return None;
+    }
     let (timescale, duration) = match version {
         0 => {
             reader.seek(SeekFrom::Current(8)).ok()?;
@@ -159,9 +169,20 @@ fn matroska_duration<R: Read + Seek>(reader: &mut R) -> Option<f64> {
 fn matroska_info_duration<R: Read + Seek>(reader: &mut R, end: u64) -> Option<f64> {
     let mut scale = 1_000_000u64;
     let mut duration = None;
+    let mut visited = 0;
     while reader.stream_position().ok()? < end {
+        // An exhausted budget means the scan is incomplete, not that Info ended.
+        if visited == MAX_SIBLINGS {
+            return None;
+        }
+        visited += 1;
         let (id, size) = ebml_element(reader)?;
         let size = size?;
+        // Each child must end inside Info; never complete one from the bytes
+        // of the element that follows.
+        if reader.stream_position().ok()?.checked_add(size)? > end {
+            return None;
+        }
         match (id, size) {
             (TIMESTAMP_SCALE, 1..=8) => {
                 let mut value = 0u64;
@@ -227,18 +248,42 @@ fn ffmpeg_duration(path: &Path) -> Option<f64> {
 
 /// Asks ffmpeg to describe the input; it prints `Duration:` on stderr and then
 /// exits non-zero because no output was requested.
-fn ffmpeg_probe(ffmpeg: &Path, path: &Path, _timeout: Duration) -> Option<f64> {
+/// The child is owned until reaped: stderr is drained on a helper thread up to
+/// `MAX_FFMPEG_STDERR` bytes, and a child still running at `timeout` is killed.
+fn ffmpeg_probe(ffmpeg: &Path, path: &Path, timeout: Duration) -> Option<f64> {
     use crate::process_ext::NoConsole;
-    let output = std::process::Command::new(ffmpeg)
+    use std::time::Instant;
+    let mut child = std::process::Command::new(ffmpeg)
         .args(["-hide_banner", "-nostdin", "-i"])
         .arg(path)
         .no_console()
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::piped())
-        .output()
+        .spawn()
         .ok()?;
-    parse_ffmpeg_duration(&String::from_utf8_lossy(&output.stderr))
+    let stderr = child.stderr.take()?;
+    let drain = std::thread::spawn(move || {
+        let mut text = Vec::new();
+        let _ = stderr.take(MAX_FFMPEG_STDERR).read_to_end(&mut text);
+        text
+    });
+    let deadline = Instant::now() + timeout;
+    loop {
+        match child.try_wait() {
+            Ok(Some(_)) => break,
+            Ok(None) if Instant::now() < deadline => {
+                std::thread::sleep(Duration::from_millis(20));
+            }
+            _ => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return None;
+            }
+        }
+    }
+    let text = drain.join().ok()?;
+    parse_ffmpeg_duration(&String::from_utf8_lossy(&text))
 }
 
 /// Parses the `Duration: HH:MM:SS.ff` line ffmpeg prints for its input.

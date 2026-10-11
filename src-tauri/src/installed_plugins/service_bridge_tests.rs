@@ -1307,6 +1307,8 @@ fn job(op: &str, n: u64) -> crate::service_state::job::JobRecord {
         state: JobState::Accepting,
         phase: Some("preparing".into()),
         output_path: None,
+        cost: None,
+        reveal: None,
         run_id: None,
         error: None,
     }

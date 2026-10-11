@@ -627,7 +627,7 @@ fn invoke_admitted(
         service_id: request.service_id,
         major: request.major,
     };
-    image_call(
+    let result = image_call(
         store,
         &caller,
         &provider,
@@ -643,7 +643,11 @@ fn invoke_admitted(
             lease.require_current(&backend.manifest().id)?;
             backend.call(method, params)
         },
-    )
+    )?;
+    Ok(crate::service_state::receipt::for_consumer(
+        result,
+        consumer.supports("receiptBillingV1"),
+    ))
 }
 /// A compatible upgrade can deliver the original result using its original
 /// provider identity. This grants local recovery only, never a new execution.

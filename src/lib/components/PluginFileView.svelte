@@ -4,6 +4,7 @@
   targets this pane, not whichever pane is active.
 -->
 <script lang="ts">
+  import { registerFileViewPane } from "$lib/state/file-view-panes";
   import { onDestroy, untrack } from "svelte";
   import type { ExplorerInstance } from "$lib/state/explorer.svelte";
   import { clickSelectionEffect } from "$lib/domain/workspace-selection";
@@ -70,6 +71,8 @@
     },
     exitView() { windowTabsManager.setPaneFileView(paneId, null); },
   };
+
+  $effect(() => registerFileViewPane(view.id, pane));
 
   // `ui/file-tiles` in this view follows the folder's size even when the
   // plugin passes no `size` (e.g. plugins built before "tileSize").

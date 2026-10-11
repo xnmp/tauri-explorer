@@ -70,6 +70,8 @@ fn accepting_job(store: &Store) -> JobRecord {
             state: JobState::Accepting,
             phase: Some("preparing".into()),
             output_path: None,
+            cost: None,
+            reveal: None,
             run_id: None,
             error: None,
         })

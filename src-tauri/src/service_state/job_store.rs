@@ -1,6 +1,6 @@
 //! Host-owned job presentation. Receipts and artifact custody stay in their own ledgers.
 use super::{
-    job::{JobRecord, JobSnapshot, JobState},
+    job::{JobCost, JobRecord, JobReveal, JobSnapshot, JobState},
     model::PackageGeneration,
     rules::{generation, identity, reject, Result},
     store::{decode, encode, sql, Store},
@@ -823,6 +823,7 @@ impl Store {
             error,
             None,
             None,
+            None,
         )
     }
     #[allow(clippy::too_many_arguments)]
@@ -838,6 +839,33 @@ impl Store {
         error: Option<String>,
         estimate_key: Option<String>,
     ) -> Result<JobRecord> {
+        self.observe_job_with_presentation(
+            owner,
+            job_key,
+            source_revision,
+            state,
+            phase,
+            output_path,
+            run_id,
+            error,
+            estimate_key,
+            None,
+        )
+    }
+    #[allow(clippy::too_many_arguments)]
+    pub fn observe_job_with_presentation(
+        &self,
+        owner: &PackageGeneration,
+        job_key: &str,
+        source_revision: u64,
+        state: JobState,
+        phase: Option<String>,
+        output_path: Option<String>,
+        run_id: Option<i64>,
+        error: Option<String>,
+        estimate_key: Option<String>,
+        presentation: Option<(Option<JobCost>, Option<JobReveal>)>,
+    ) -> Result<JobRecord> {
         if source_revision == 0 || source_revision > SAFE {
             return Err(reject("invalid consumer job revision"));
         }
@@ -851,6 +879,7 @@ impl Store {
             error,
             Some(source_revision),
             estimate_key,
+            presentation,
         )
     }
     #[allow(clippy::too_many_arguments)]
@@ -865,6 +894,7 @@ impl Store {
         error: Option<String>,
         source_revision: Option<u64>,
         estimate_key: Option<String>,
+        presentation: Option<(Option<JobCost>, Option<JobReveal>)>,
     ) -> Result<JobRecord> {
         generation(owner)?;
         if !key(job_key) {
@@ -930,7 +960,16 @@ impl Store {
             {
                 return Err(reject("job receipt changed its pinned estimate key"));
             }
+            let (cost, reveal) = presentation
+                .clone()
+                .unwrap_or((old.cost.clone(), old.reveal.clone()));
             let mut next = JobRecord {
+                cost: if old.state.terminal() {
+                    old.cost.clone()
+                } else {
+                    cost.filter(JobCost::valid).or(old.cost.clone())
+                },
+                reveal: reveal.filter(JobReveal::valid).or(old.reveal.clone()),
                 estimate_key: old.estimate_key.clone().or(estimate_key.clone()),
                 source_revision: source_revision.unwrap_or(old.source_revision),
                 state,
@@ -940,21 +979,41 @@ impl Store {
                 error,
                 ..old.clone()
             };
-            valid(&next, false)?;
             if next == old {
                 return Ok(old);
             }
-            if old.state.terminal()
-                && source_revision.is_some()
-                && next.state == old.state
-                && next.output_path == old.output_path
-                && next.run_id == old.run_id
-                && next.error == old.error
-            {
-                return Ok(old);
-            }
             if old.state.terminal() && !recovered_settlement {
-                return Err(reject("a terminal job outcome is immutable"));
+                if source_revision.is_none()
+                    || next.state != old.state
+                    || next.run_id != old.run_id
+                    || next.error != old.error
+                {
+                    return Err(reject("a terminal job outcome is immutable"));
+                }
+                next = JobRecord {
+                    reveal: next.reveal,
+                    source_revision: next.source_revision,
+                    ..old.clone()
+                };
+            }
+            // Optional presentation must never prevent an active job settling.
+            // A terminal cost is pinned; an oversized new reveal keeps its predecessor.
+            if serialized(&next).is_err() {
+                next.cost = if old.state.terminal() {
+                    old.cost.clone()
+                } else {
+                    None
+                };
+            }
+            if serialized(&next).is_err() {
+                next.reveal = old.reveal.clone();
+            }
+            if serialized(&next).is_err() && !old.state.terminal() {
+                next.reveal = None;
+            }
+            valid(&next, false)?;
+            if next == old || old.state.terminal() && !recovered_settlement && next.reveal == old.reveal {
+                return Ok(old);
             }
             // Parked rows do not count toward active capacity, so they may
             // never become active again; only a terminal outcome or another
@@ -964,7 +1023,7 @@ impl Store {
                     "a stopped or discarded job cannot become active again",
                 ));
             }
-            if !recovered_settlement {
+            if !old.state.terminal() && !recovered_settlement {
                 transition(old.state, state)?;
             }
             next.revision = next_revision(conn)?;
@@ -1041,9 +1100,193 @@ mod tests {
             state: JobState::Accepting,
             phase: None,
             output_path: None,
+            cost: None,
+            reveal: None,
             run_id: None,
             error: None,
         }
+    }
+    #[test]
+    fn old_job_records_load_and_invalid_optional_metadata_is_dropped() {
+        let mut value = serde_json::to_value(record(1)).unwrap();
+        assert!(value.get("cost").is_none());
+        assert!(value.get("reveal").is_none());
+        let old: JobRecord = serde_json::from_value(value.clone()).unwrap();
+        assert!(old.cost.is_none() && old.reveal.is_none());
+        let valid_cost = serde_json::json!({"amount":"0.045","currency":"USD","estimated":true,"source":"ratecard:openai-images:2026-10-11"});
+        value["cost"] = valid_cost.clone();
+        value["reveal"] = serde_json::json!({"kind":"view","viewId":"trace.view","directory":"/images","targetId":"42"});
+        let new: JobRecord = serde_json::from_value(value.clone()).unwrap();
+        assert_eq!(serde_json::to_value(new.cost).unwrap(), valid_cost);
+        assert!(new.reveal.is_some());
+        for amount in [
+            serde_json::json!(-1),
+            serde_json::json!("-1"),
+            serde_json::json!("1.0000001"),
+            serde_json::json!("1e3"),
+            serde_json::json!(null),
+        ] {
+            value["cost"]["amount"] = amount;
+            let job: JobRecord = serde_json::from_value(value.clone()).unwrap();
+            assert!(job.cost.is_none());
+            assert!(job.reveal.is_some());
+        }
+        for reveal in [
+            serde_json::json!({"kind":"file","path":""}),
+            serde_json::json!({"kind":"file","path":"x".repeat(4097)}),
+            serde_json::json!({"kind":"view","viewId":"trace.view","directory":"/images","targetId":"x".repeat(129)}),
+        ] {
+            value["reveal"] = reveal;
+            assert!(serde_json::from_value::<JobRecord>(value.clone())
+                .unwrap()
+                .reveal
+                .is_none());
+        }
+        for bad in [
+            serde_json::json!({"amount":"1","currency":"usd","estimated":false,"source":"x"}),
+            serde_json::json!({"amount":"1","currency":"USD","estimated":false,"source":"x".repeat(65)}),
+        ] {
+            assert!(super::super::job::cost(&bad).is_none());
+        }
+    }
+    #[test]
+    fn completion_pins_cost_but_saved_reveal_can_change() {
+        let (_root, store) = fixture();
+        let job = store.register_job(record(1)).unwrap();
+        let cost = super::super::job::cost(&serde_json::json!({"amount":"0.08","currency":"USD","estimated":false,"source":"bfl.credits"})).unwrap();
+        let target = JobReveal::View {
+            view_id: "trace.view".into(),
+            directory: "/images".into(),
+            target_id: "42".into(),
+        };
+        let complete = store
+            .observe_job_with_presentation(
+                &job.owner,
+                &job.job_key,
+                1,
+                JobState::Completed,
+                None,
+                None,
+                Some(42),
+                None,
+                None,
+                Some((Some(cost.clone()), Some(target))),
+            )
+            .unwrap();
+        let saved = JobReveal::File {
+            path: "/images/out.png".into(),
+        };
+        let changed_cost = JobCost {
+            amount: "99".into(),
+            ..cost.clone()
+        };
+        let after = store
+            .observe_job_with_presentation(
+                &job.owner,
+                &job.job_key,
+                2,
+                JobState::Completed,
+                None,
+                Some("/images/out.png".into()),
+                Some(42),
+                None,
+                None,
+                Some((Some(changed_cost), Some(saved.clone()))),
+            )
+            .unwrap();
+        assert_eq!(after.output_path, None);
+        assert_eq!(after.cost, Some(cost));
+        assert_eq!(after.reveal, Some(saved));
+        assert_eq!(after.settled_at_ms, complete.settled_at_ms);
+        assert_eq!(store.job(&job.job_key).unwrap().unwrap(), after);
+    }
+    #[test]
+    fn oversized_optional_presentation_cannot_prevent_settlement_or_reveal_retention() {
+        let (_root, store) = fixture();
+        let job = store.register_job(record(1)).unwrap();
+        let cost = JobCost {
+            amount: "9".repeat(15000),
+            currency: "USD".into(),
+            estimated: false,
+            source: "bfl.credits".into(),
+        };
+        let running = store
+            .observe_job_with_presentation(
+                &job.owner,
+                &job.job_key,
+                1,
+                JobState::Running,
+                None,
+                None,
+                Some(42),
+                None,
+                None,
+                Some((Some(cost), None)),
+            )
+            .unwrap();
+        assert!(running.cost.is_some());
+        let complete = store
+            .observe_job_with_presentation(
+                &job.owner,
+                &job.job_key,
+                2,
+                JobState::Completed,
+                None,
+                Some(format!("/{}", "x".repeat(4000))),
+                Some(42),
+                None,
+                None,
+                None,
+            )
+            .unwrap();
+        assert_eq!(complete.state, JobState::Completed);
+        assert!(complete.cost.is_none());
+        let second = store.register_job(record(2)).unwrap();
+        let target = JobReveal::View {
+            view_id: "trace.view".into(),
+            directory: "/images".into(),
+            target_id: "42".into(),
+        };
+        let cost = JobCost {
+            amount: "9".repeat(13000),
+            currency: "USD".into(),
+            estimated: false,
+            source: "bfl.credits".into(),
+        };
+        let complete = store
+            .observe_job_with_presentation(
+                &second.owner,
+                &second.job_key,
+                1,
+                JobState::Completed,
+                None,
+                None,
+                Some(42),
+                None,
+                None,
+                Some((Some(cost), Some(target))),
+            )
+            .unwrap();
+        let after = store
+            .observe_job_with_presentation(
+                &second.owner,
+                &second.job_key,
+                2,
+                JobState::Completed,
+                None,
+                None,
+                Some(42),
+                None,
+                None,
+                Some((
+                    None,
+                    Some(JobReveal::File {
+                        path: format!("/{}", "x".repeat(4000)),
+                    }),
+                )),
+            )
+            .unwrap();
+        assert_eq!(after, complete);
     }
     fn fixture() -> (tempfile::TempDir, Store) {
         let root = tempfile::tempdir().unwrap();

@@ -3,6 +3,8 @@
   Issue: tauri-explorer-41o, tauri-explorer-jqi
 -->
 <script lang="ts">
+  import { formatJobCost } from "$lib/domain/job-presentation";
+  import { jobRevealController } from "$lib/state/job-reveal";
   import {
     operationsManager,
     getOperationLabel,
@@ -217,6 +219,7 @@
         {/each}
         {#each imageJobs as job (job.jobKey ?? `${job.source}:${job.id}`)}
           {@const timing = imageJobProgress(job, jobsStore.jobs, now)}
+          {@const cost = job.status === "completed" ? formatJobCost(job.cost) : ""}
           <div class="operation-item" class:error={job.status === "error"} data-job-id={job.id} tabindex="-1">
             <div class="operation-info">
               <div class="operation-icon" aria-hidden="true">
@@ -237,13 +240,16 @@
                 {/if}
                 {#if job.jobKey && job.error}<div class="error-text">{job.error}</div>{/if}
                 {#if job.controlError}<div class="error-text" role="alert">{job.controlError}</div>{/if}
-                {#if timing.elapsedMs !== null}<div class="status-text">{formatJobDuration(timing.elapsedMs)} elapsed</div>{/if}
+                {#if timing.elapsedMs !== null}<div class="status-text job-timing">{formatJobDuration(timing.elapsedMs)} elapsed{cost ? ` · ${cost}` : ""}</div>{:else if cost}<div class="status-text job-timing">{cost}</div>{/if}
               </div>
             </div>
             {#if job.jobKey && ["accepting", "running", "recovering"].includes(job.status)}
               <button class="action-btn" aria-label={`Cancel ${job.label}`} disabled={!!job.controlPending || job.cancelRequested} onclick={() => jobsStore.controlJob(job.id, "cancel")}>×</button>
             {:else if nativeJobTerminal(job.status)}
               <div class="operation-actions">
+                {#if job.status === "completed" && job.reveal}
+                  <button class="action-btn reveal" onclick={() => void jobRevealController.show(job)}>Show image</button>
+                {/if}
                 {#if job.status === "error" && job.retry}
                   <button class="action-btn retry" aria-label={`Retry ${job.label}`} title="Retry"
                     disabled={job.retrying || !!job.controlPending} aria-busy={job.retrying} onclick={() => void retryJobAndRefocus(job.id, region)}>
@@ -266,6 +272,8 @@
 {/if}
 
 <style>
+  .job-timing { overflow-wrap: anywhere; }
+  .action-btn.reveal { width: auto; padding: 0 4px; font: inherit; font-size: 11px; white-space: nowrap; }
   .job-prompt { font-size: 12px; color: var(--text-secondary); margin: 0 0 6px; overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 2; line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
   @media (prefers-reduced-motion: reduce) { .progress-dialog-container, .spinner-small { animation: none !important; } }
   .progress-dialog-container {

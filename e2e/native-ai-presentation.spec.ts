@@ -121,3 +121,44 @@ test("late acknowledged success replaces settled history with its output without
   await expect(jobs.getByText("late-delivered.png", { exact: true })).toBeVisible();
   await expect(jobs.getByText("Discarded", { exact: true })).toHaveCount(0);
 });
+
+for (const width of [320, 1024]) test(`completed native image cost and Show image activate the existing folder tab at ${width}px`, async ({ page }) => {
+  await page.setViewportSize({ width, height: 800 });
+  await page.goto("/?path=/home/user/Documents"); await waitForEntries(page);
+  await page.evaluate(async () => {
+    const { windowTabsManager } = await import("/src/lib/state/window-tabs.svelte.ts");
+    const { jobsStore } = await import("/src/lib/state/jobs.svelte.ts");
+    const original = windowTabsManager.activeTabId!;
+    const images = windowTabsManager.createTab("/home/user/Pictures");
+    await windowTabsManager.getActiveExplorer()!.navigateTo("/home/user/Pictures");
+    windowTabsManager.setPaneGitGraph(windowTabsManager.activePaneId, "/home/user/Pictures");
+    windowTabsManager.setActiveTab(original);
+    (window as any).imageFolderTab = images.id;
+    jobsStore.applyNative([{ jobKey: "e".repeat(48), owner: { packageId: "xnmp.trace-explorer", digest: "b".repeat(64), incarnation: 1 }, operationId: "completed-image", jobId: 99004, kind: "openai-image", label: "Completed image", originWindow: "mock-window", revision: 1, createdAtMs: Date.now() - 3000, updatedAtMs: Date.now(), settledAtMs: Date.now(), state: "completed", runId: 42, cost: { amount: "0.075", currency: "USD", estimated: false, source: "bfl.credits" }, reveal: { kind: "file", path: "/home/user/Pictures/screenshot.png" } }]);
+  });
+  const progress = page.getByRole("region", { name: "Background progress" });
+  await expect(progress.locator('[data-job-id="99004"]')).toContainText("US$0.08");
+  expect(await progress.evaluate(el => el.scrollWidth <= el.clientWidth)).toBe(true);
+  await progress.getByRole("button", { name: "Show image", exact: true }).click();
+  await expect(page.locator(".explorer-pane.active .entry-item.selected")).toHaveText(/screenshot.png/);
+  await expect(page.locator(".explorer-pane.active .entry-item.selected")).toBeInViewport();
+  expect(await page.evaluate(async () => (await import("/src/lib/state/window-tabs.svelte.ts")).windowTabsManager.activeTabId)).toBe(await page.evaluate(() => (window as any).imageFolderTab));
+});
+
+test("Show image refreshes a native job whose unsaved view output has since been saved", async ({ page }) => {
+  await page.goto("/?path=/home/user/Documents"); await waitForEntries(page);
+  await page.evaluate(async () => {
+    const { getMockControl } = await import("/src/lib/api/mock-control.ts");
+    const { createMockAiPresentation } = await import("/src/lib/api/mock-ai-presentation.ts");
+    const { jobsStore } = await import("/src/lib/state/jobs.svelte.ts");
+    const mock = getMockControl().nativeAiPresentation ??= createMockAiPresentation((name, value) => window.dispatchEvent(new CustomEvent(name, { detail: value })));
+    const job = { jobKey: "f".repeat(48), owner: { packageId: "xnmp.trace-explorer", digest: "b".repeat(64), incarnation: 1 }, operationId: "saved-image", jobId: 99005, kind: "openai-image", label: "Saved image", originWindow: "mock-window", revision: 1, createdAtMs: Date.now() - 3000, updatedAtMs: Date.now(), settledAtMs: Date.now(), state: "completed" as const, runId: 42, cost: { amount: "0.005", currency: "USD", estimated: true, source: "bfl.credits" }, reveal: { kind: "view" as const, viewId: "trace.view", directory: "/home/user/Pictures", targetId: "42" } };
+    jobsStore.applyNative([job]);
+    mock.seed({ originWindow: "mock-window", watermark: 2, jobs: [{ ...job, revision: 2, reveal: { kind: "file", path: "/home/user/Pictures/screenshot.png" } }] });
+  });
+  const progress = page.getByRole("region", { name: "Background progress" });
+  await expect(progress).toContainText("≈<US$0.01");
+  await progress.getByRole("button", { name: "Show image", exact: true }).click();
+  await expect(page.locator(".explorer-pane.active .entry-item.selected")).toHaveText(/screenshot.png/);
+  await expect(page.locator(".explorer-pane.active .entry-item.selected")).toBeInViewport();
+});

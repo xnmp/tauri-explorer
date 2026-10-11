@@ -3,6 +3,7 @@
   Issue: tauri-explorer-iw0, tauri-explorer-jql, tauri-explorer-bae, tauri-explorer-h3n, tauri-explorer-w3t, tauri-explorer-npjh, tauri-explorer-1ex, tauri-explorer-auj, tauri-explorer-npjh.4
 -->
 <script lang="ts">
+  import { jobRevealController } from "$lib/state/job-reveal";
   import "@fontsource-variable/inter/index.css";
   import { onMount } from "svelte";
   import { startWindowSession } from "$lib/state/window-session";
@@ -237,7 +238,7 @@
     if (hooks) void hooks.then(({ prepareWindowSessionProbe }) => start(prepareWindowSessionProbe))
       .catch((error) => console.error("Window probe initialization failed:", error));
     else start();
-    return () => { lifetime.abort(); session?.dispose(); session = undefined; };
+    return () => { jobRevealController.abort(); lifetime.abort(); session?.dispose(); session = undefined; };
   });
 </script>
 

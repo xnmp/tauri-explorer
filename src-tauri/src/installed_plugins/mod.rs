@@ -345,6 +345,15 @@ pub async fn plugin_jobs_snapshot(window: tauri::WebviewWindow) -> Result<Value,
     .map_err(|e| AppError::WorkerFailed(e.to_string()))?
 }
 #[tauri::command]
+pub async fn plugin_job_reveal(job_key: String) -> Result<Value, AppError> {
+    tauri::async_runtime::spawn_blocking(move || {
+        serde_json::to_value(job_bridge::latest_reveal(&job_key)?)
+            .map_err(|e| AppError::Other(e.to_string()))
+    })
+    .await
+    .map_err(|e| AppError::WorkerFailed(e.to_string()))?
+}
+#[tauri::command]
 pub async fn plugin_job_cancel(job_key: String) -> Result<Value, AppError> {
     tauri::async_runtime::spawn_blocking(move || {
         ensure_services()?;

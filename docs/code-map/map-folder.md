@@ -99,6 +99,9 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 
 ## src/lib/state/ — Svelte 5 runes stores + pure pane logic. Business state lives here.
 
+- `src/lib/state/job-reveal.ts` — window-owned status refresh and workspace effects for Show image.
+- `src/lib/state/file-view-panes.ts` — mounted plugin-view pane handles shared with host reveal routing.
+
 - `clipboard-image-progress.svelte.ts` — independent accepted image-paste lifetimes, retained until clipboard/write/listing settlement; shared by normal and explicit Paste Image.
 
 - `src/lib/state/file-recovery.svelte.ts` — page-created revision-ordered recovery state, explicit inspection/action capabilities and independently retired subscription lifetimes; no module-global active store.
@@ -346,6 +349,9 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `use-row-grid-view.svelte.ts` — shared virtualization wiring (rows, DnD, new-folder sentinel, scrollToIndex) for List + Tiles views.
 
 ## src/lib/domain/ — pure logic, no framework deps. Test + reuse here.
+
+- `src/lib/domain/job-presentation.ts` — validates optional job cost/reveal metadata and formats exact decimal money.
+- `src/lib/domain/job-reveal.ts` — pure pane choice, present-file selection, reveal routing and latest-click cancellation policy.
 
 - `src/lib/domain/image-job-progress.ts` — elapsed image-job timing and explicitly estimated progress; median of the latest 20 successful completions with ≥3 samples, keyed cohort → source → 120s, plus overdue estimate wording.
 - `src/lib/domain/file-drop.ts` — validated internal payloads, full path-set verification and explicit DOM/native transport authority.

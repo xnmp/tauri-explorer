@@ -231,3 +231,25 @@ it("shows the original output after storage-full recovery completes without a re
   const complete = { ...full, revision: 4, state: "completed" as const, phase: "succeeded", error: null, outputPath: "/generated/original.png", runId: 7 };
   expect(mergeNativeJobEvent(waiting, { type: "updated", job: complete }).jobs.get(full.jobKey)).toEqual(complete);
 });
+
+describe("optional job presentation projection", () => {
+  const cost = { amount: "0.045", currency: "USD", estimated: true, source: "bfl.credits" };
+  const reveal = { kind: "file" as const, path: "/generated/image.png" };
+  it("projects cost and reveal while loading old native records", () => {
+    jobsStore.applyNative([{ ...record(1, 2, "completed"), cost, reveal }, record(2, 3, "completed")]);
+    expect(jobsStore.jobs[0]).toMatchObject({ cost, reveal });
+    expect(jobsStore.jobs[1].cost).toBeUndefined(); expect(jobsStore.jobs[1].reveal).toBeUndefined();
+  });
+  it("drops malformed optional metadata without failing the completed job", () => {
+    jobsStore.applyNative([{ ...record(1, 2, "completed"), cost: { ...cost, amount: "-1" }, reveal: { kind: "file", path: "" } }]);
+    expect(jobsStore.jobs[0].status).toBe("completed"); expect(jobsStore.jobs[0].cost).toBeUndefined(); expect(jobsStore.jobs[0].reveal).toBeUndefined();
+  });
+  it("projects validated legacy completion metadata and includes cost in its toast", async () => {
+    const handlers = new Map<string, (value: any) => void>(); const messages: string[] = [];
+    const controller = createPluginJobsController({ ...windowJobSink, listen: async (name, handler) => { handlers.set(name, handler); return () => {}; }, success: message => messages.push(message), refresh: async () => {} });
+    await controller.accept({ kind: "openai-image", label: "image.png", detail: "" }, async () => ({ ok: true, data: 22 }));
+    handlers.get("openai-image-complete")!({ jobId: 22, outputPath: reveal.path, cost, reveal });
+    expect(jobsStore.jobs.find(job => job.id === 22)).toMatchObject({ status: "completed", cost, reveal });
+    expect(messages).toEqual(["image.png complete: image.png · ≈US$0.05"]); await controller.dispose();
+  });
+});

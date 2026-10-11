@@ -62,6 +62,48 @@ struct Receipt {
     delivery: Delivery,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     diagnostics: Option<OperationDiagnostics>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    billing: Option<Billing>,
+}
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct Billing {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    cost: Option<super::job::JobCost>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    evidence: Option<BillingEvidence>,
+}
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct BillingEvidence {
+    schema: String,
+    values: std::collections::BTreeMap<String, Value>,
+}
+impl Billing {
+    fn valid(&self) -> bool {
+        self.cost.as_ref().is_none_or(super::job::JobCost::valid)
+            && self.evidence.as_ref().is_none_or(|e| {
+                e.schema.chars().count() <= 64
+                    && e.values.len() <= 32
+                    && e.values.iter().all(|(k, v)| {
+                        k.chars().count() <= 64
+                            && match v {
+                                Value::String(s) => s.chars().count() <= 128,
+                                Value::Number(_) | Value::Bool(_) | Value::Null => true,
+                                _ => false,
+                            }
+                    })
+            })
+    }
+}
+/// Consumer compatibility is projected at delivery, never in durable evidence.
+pub(crate) fn for_consumer(mut receipt: Value, receipt_billing: bool) -> Value {
+    if !receipt_billing {
+        if let Some(object) = receipt.as_object_mut() {
+            object.remove("billing");
+        }
+    }
+    receipt
 }
 #[derive(Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -283,6 +325,16 @@ pub(crate) fn validate(value: &Value, admission: &Admission) -> Result<Value, Ap
     if serde_json::to_vec(value).map_err(|_| invalid())?.len() > 16 * 1024 {
         return Err(invalid());
     }
+    if let Some(billing) = value.get("billing") {
+        if !billing.is_object()
+            || billing
+                .get("cost")
+                .is_some_and(|v| super::job::cost(v).is_none())
+            || billing.get("evidence").is_some_and(|v| !v.is_object())
+        {
+            return Err(invalid());
+        }
+    }
     let receipt: Receipt = serde_json::from_value(value.clone()).map_err(|_| invalid())?;
     if receipt.version != 1
         || receipt.operation_id != admission.operation_id
@@ -300,6 +352,9 @@ pub(crate) fn validate(value: &Value, admission: &Admission) -> Result<Value, Ap
         .as_ref()
         .is_some_and(|d| !d.valid(matches!(receipt.execution, Execution::Succeeded { .. })))
     {
+        return Err(invalid());
+    }
+    if receipt.billing.as_ref().is_some_and(|b| !b.valid()) {
         return Err(invalid());
     }
     match &receipt.execution {

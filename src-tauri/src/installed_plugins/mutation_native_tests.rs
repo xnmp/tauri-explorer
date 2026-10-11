@@ -308,6 +308,8 @@ fn native_jobs_the_consumer_never_accepted_settle_and_free_their_package() {
             state: JobState::Accepting,
             phase: Some("preparing".into()),
             output_path: None,
+            cost: None,
+            reveal: None,
             run_id: None,
             error: None,
         })

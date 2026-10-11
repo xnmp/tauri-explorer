@@ -18,8 +18,10 @@ rendered cells, hide/reload/show, change invalidation, and column resizing.
 
 Adding another Details column also widens its focusable row. At 150% zoom,
 native Tab focus can scroll an `overflow: hidden` ancestor toward the trailing
-columns and hide the file icon/name. The row's focus handler reveals its name
-cell with nearest alignment; it does not change column widths or selection.
+columns and hide the file icon/name. The row's focus handler reveals its outer edge with inline-start alignment;
+revealing only the padded name cell with nearest alignment leaves the leading
+focus ring clipped while the trailing edge also overflows. Keep the leading
+ring visible; this does not change column widths or selection.
 Keep the existing HTML-icon viewport assertions and a zoomed row-focus
 regression to cover this interaction. Settings normalization tests must include
 Resolution in the complete default-column object.

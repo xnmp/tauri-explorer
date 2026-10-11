@@ -243,3 +243,5 @@ Keep the avatar decoration out of Git Graph's table minimum width: at narrow
 sizes it should borrow from the message cell, not widen inline commit details.
 Native graph fixtures must wait for the reset view's `.file-list` before their
 repository is deleted, because reset navigation completes asynchronously.
+
+- Files grid width updates must render within ResizeObserver delivery (`flushSync`); deferred row chunking can expose tracks from the fullscreen preview width on exit (#1061). See `docs/lessons/1061-tile-layout-delivery.md`.

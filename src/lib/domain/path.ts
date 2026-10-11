@@ -100,16 +100,16 @@ export function toBackslashes(path: string): string {
 
 /**
  * Coerce every separator in `path` to a single style. The caller supplies the
- * target separator (typically the platform's native one) so this stays pure and
- * platform-agnostic — a backslash is a legal character in a Unix filename, so
- * the conversion must be opt-in via `sep`, never inferred.
+ * target separator (typically the platform's native one) so this stays pure.
+ * POSIX absolute paths retain literal backslashes when `sep` is `/`, using
+ * the same native separator policy as `nativeDirectoryKey`.
  */
 export function toNativeSeparators(path: string, sep: "/" | "\\"): string {
   // Virtual (`scheme://…`) paths are plugin addresses, not OS paths — leave
   // their separators untouched so `demo://a/b` never becomes `demo:\a\b` on
   // Windows (which would break provider dispatch and breadcrumb parsing).
   if (isVirtualPath(path)) return path;
-  return sep === "\\" ? toBackslashes(toForwardSlashes(path)) : toForwardSlashes(path);
+  return sep === "\\" ? toBackslashes(toForwardSlashes(path)) : nativeForwardSlashes(path);
 }
 
 /** Strip a single trailing separator, but never reduce a bare root (`/`) to empty. */
@@ -161,8 +161,15 @@ export function isDriveRoot(path: string): boolean {
  * `"\\\\server\\share"`       → `"//server/share"` (a share root is its own parent)
  */
 export function parentDir(path: string): string {
-  const p = toForwardSlashes(path);
+  return parentOfNormalizedPath(toForwardSlashes(path));
+}
 
+/** Parent of a native path, retaining legal POSIX backslashes. */
+export function nativeParentDir(path: string): string {
+  return parentOfNormalizedPath(nativeForwardSlashes(path));
+}
+
+function parentOfNormalizedPath(p: string): string {
   // Windows drive paths (`C:` / `C:/` / `C:/Users/...`).
   const drive = p.match(DRIVE_PREFIX);
   if (drive) {
@@ -206,10 +213,20 @@ export function directoryKey(path: string): string {
 
 /** Native POSIX names may contain literal backslashes; comparison must retain
  * them while Windows paths still use the shared separator/case rules. */
+function nativeForwardSlashes(path: string): string {
+  return path.startsWith("/") && !path.startsWith("//") ? path : toForwardSlashes(path);
+}
+
 export function nativeDirectoryKey(path: string): string {
+  const native = nativeForwardSlashes(path);
   return path.startsWith("/") && !path.startsWith("//")
-    ? stripTrailingSlash(path)
-    : directoryKey(path);
+    ? stripTrailingSlash(native)
+    : directoryKey(native);
+}
+
+/** Native directory equality, including Windows separator and case rules. */
+export function sameNativeDirectory(a: string, b: string): boolean {
+  return nativeDirectoryKey(a) === nativeDirectoryKey(b);
 }
 
 /**

@@ -25,7 +25,7 @@ export function formatJobCost(value?: JobCost): string {
   const micros = BigInt(whole) * 1_000_000n + BigInt(fraction.padEnd(6, "0"));
   const prefix = cost.estimated ? "≈" : "";
   const currency = cost.currency === "USD" ? "US$" : `${cost.currency} `;
-  if (micros > 0n && micros < 10_000n) return `${prefix}<${currency}0.01`;
+  if (cost.currency === "USD" && micros > 0n && micros < 10_000n) return `${prefix}<${currency}0.01`;
   const cents = (micros + 5_000n) / 10_000n;
   return `${prefix}${currency}${cents / 100n}.${String(cents % 100n).padStart(2, "0")}`;
 }

@@ -1,12 +1,12 @@
 /** Reveal policy with injected workspace effects. No Svelte or IPC dependencies. */
 import type { JobReveal } from "$lib/plugins/api";
-import { parentDir, sameDirectory } from "./path";
+import { nativeParentDir, sameNativeDirectory } from "./path";
 import { jobReveal } from "./job-presentation";
 
 export interface RevealPane { tabId: string; paneId: string; directory: string; viewId?: string | null }
 export function findRevealPane(panes: readonly RevealPane[], reveal: JobReveal): RevealPane | undefined {
-  const directory = reveal.kind === "file" ? parentDir(reveal.path) : reveal.directory;
-  return panes.find(pane => sameDirectory(pane.directory, directory) && (reveal.kind === "file" || pane.viewId === reveal.viewId));
+  const directory = reveal.kind === "file" ? nativeParentDir(reveal.path) : reveal.directory;
+  return panes.find(pane => sameNativeDirectory(pane.directory, directory) && (reveal.kind === "file" || pane.viewId === reveal.viewId));
 }
 export interface FileSelectionWorkspace {
   currentDirectory(): string;
@@ -20,15 +20,15 @@ export interface FileSelectionWorkspace {
 export async function selectWorkspaceFile(path: string, workspace: FileSelectionWorkspace, signal?: AbortSignal): Promise<"selected" | "missing" | "aborted"> {
   const live = () => !signal?.aborted && workspace.current();
   if (!live()) return "aborted";
-  const directory = parentDir(path);
+  const directory = nativeParentDir(path);
   const previousDirectory = workspace.currentDirectory();
-  if (!sameDirectory(previousDirectory, directory)) {
+  if (!sameNativeDirectory(previousDirectory, directory)) {
     const navigation = workspace.navigate(directory);
     const ownsNavigation = workspace.capture();
     const navigated = await navigation;
     if (navigated === false && live() && ownsNavigation() && workspace.currentDirectory() === previousDirectory) return "missing";
   }
-  if (!live() || !sameDirectory(workspace.currentDirectory(), directory)) return "aborted";
+  if (!live() || !sameNativeDirectory(workspace.currentDirectory(), directory)) return "aborted";
   if (workspace.select(path)) return "selected";
   const ownsSelection = workspace.capture();
   await workspace.refresh();
@@ -45,7 +45,7 @@ export interface RevealDependencies {
 }
 export async function routeJobReveal(reveal: JobReveal, deps: RevealDependencies, signal: AbortSignal): Promise<void> {
   if (signal.aborted) return;
-  const directory = reveal.kind === "file" ? parentDir(reveal.path) : reveal.directory;
+  const directory = reveal.kind === "file" ? nativeParentDir(reveal.path) : reveal.directory;
   const opened = await deps.open(directory, findRevealPane(deps.panes(), reveal), signal);
   if (signal.aborted) return;
   if (opened === false) {

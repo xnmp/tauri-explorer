@@ -861,6 +861,11 @@ pub(super) fn image_call(
     if let Some(a) = admission {
         return reconcile_receipt(store, provider, &a, &result);
     }
+    // Status/cancel can describe provider operations absent from the host ledger.
+    // They still carry the receipt protocol; describe/prepare have other shapes.
+    if operation.is_some() {
+        return crate::service_state::receipt::validate_structure(&result);
+    }
     Ok(result)
 }
 fn reconcile(

@@ -2,7 +2,7 @@
 import { tick } from "svelte";
 import { latestPluginJobReveal } from "$lib/api/native-plugin-jobs";
 import { createJobRevealController, routeJobReveal, selectWorkspaceFile, type RevealDependencies } from "$lib/domain/job-reveal";
-import { parentDir, sameDirectory } from "$lib/domain/path";
+import { nativeParentDir, sameNativeDirectory } from "$lib/domain/path";
 import { fileViewRegistry } from "$lib/plugins/file-view-registry.svelte";
 import { mountedFileViewPane } from "./file-view-panes";
 import { windowTabsManager } from "./window-tabs.svelte";
@@ -14,10 +14,10 @@ export const jobRevealController = createJobRevealController<Job>({
   route: async (reveal, signal) => {
     let explorer = windowTabsManager.getActiveExplorer();
     let paneId = windowTabsManager.activePaneId;
-    const directory = reveal.kind === "file" ? parentDir(reveal.path) : reveal.directory;
+    const directory = reveal.kind === "file" ? nativeParentDir(reveal.path) : reveal.directory;
     let opened = false;
     let superseded = false;
-    const current = () => !signal.aborted && !!explorer && windowTabsManager.getActiveExplorer() === explorer && (!opened || sameDirectory(explorer.currentPath, directory));
+    const current = () => !signal.aborted && !!explorer && windowTabsManager.getActiveExplorer() === explorer && (!opened || sameNativeDirectory(explorer.currentPath, directory));
     const deps: RevealDependencies = {
       panes: () => windowTabsManager.tabs.flatMap(tab => tab.kind === "explorer" ? Object.entries(tab.panes).map(([id, pane]) => {
         const live = windowTabsManager.getExplorer(id);
@@ -30,7 +30,7 @@ export const jobRevealController = createJobRevealController<Job>({
         if (!explorer) throw new Error("No file pane is available");
         windowTabsManager.setPaneGitGraph(paneId, null);
         const previousDirectory = explorer.currentPath;
-        if (!sameDirectory(previousDirectory, directory) || explorer.state.loading) {
+        if (!sameNativeDirectory(previousDirectory, directory) || explorer.state.loading || explorer.error !== null) {
           const navigation = explorer.navigateTo(directory, { autoEnterSingleSubdir: false });
           const navigationOwner = explorer.captureMutation();
           if (!await navigation) {

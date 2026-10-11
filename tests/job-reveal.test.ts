@@ -80,3 +80,34 @@ it("workspace selection reports failed parent navigation as missing", async () =
 it("does not report a deleted file when newer navigation is pending", async () => {
   expect(await selectWorkspaceFile(file.path, { currentDirectory: () => "/old", current: () => true, navigate: async () => false, refresh: async () => {}, select: () => false, capture: () => () => false })).toBe("aborted");
 });
+
+
+describe("native reveal paths", () => {
+  it.each([
+    ["/images/saved\\draft.png", "/images", "/images"],
+    ["/images\\draft/out.png", "/images\\draft", "/images\\draft"],
+    ["C:\\Images\\out.png", "C:/Images", "c:\\images"],
+    ["C:\\out.png", "C:/", "c:\\"],
+  ])("routes %s to its native parent", async (path, directory, paneDirectory) => {
+    const pane = { tabId: "other", paneId: "right", directory: paneDirectory };
+    const deps = fixture([pane]); const signal = new AbortController().signal;
+    await routeJobReveal({ kind: "file", path }, deps, signal);
+    expect(deps.open).toHaveBeenCalledWith(directory, pane, signal);
+    expect(deps.file).toHaveBeenCalledWith(path, signal);
+  });
+  it("does not alias a POSIX backslash directory to a nested directory", async () => {
+    const deps = fixture([{ tabId: "wrong", paneId: "wrong", directory: "/images/draft", viewId: "trace.view" }]);
+    const signal = new AbortController().signal;
+    await routeJobReveal({ kind: "view", viewId: "trace.view", directory: "/images\\draft", targetId: "42" }, deps, signal);
+    expect(deps.open).toHaveBeenCalledWith("/images\\draft", undefined, signal);
+  });
+  it("selects a literal backslash filename without navigating away", async () => {
+    const navigate = vi.fn(async () => false); const select = vi.fn(() => true);
+    expect(await selectWorkspaceFile("/images/saved\\draft.png", {
+      currentDirectory: () => "/images", current: () => true, navigate,
+      refresh: async () => {}, select, capture: () => () => true,
+    })).toBe("selected");
+    expect(navigate).not.toHaveBeenCalled();
+    expect(select).toHaveBeenCalledWith("/images/saved\\draft.png");
+  });
+});

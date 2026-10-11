@@ -4185,3 +4185,63 @@ fn released_acquired_replay_validates_request_with_legacy_execution_flag() {
         assert!(copy.is_file());
     }
 }
+
+#[test]
+fn unadmitted_status_validates_receipt_structure_and_billing_bounds() {
+    let (_root, store) = fixture();
+    let base = running("unadmitted");
+    let mut invalid = vec![Value::Null, json!({"billing":{}})];
+    let mut malformed = base.clone();
+    malformed["revision"] = json!(0);
+    invalid.push(malformed);
+    for evidence in [
+        json!({"schema":"x".repeat(65),"values":{}}),
+        json!({"schema":"fixture","values":(0..33).map(|i| (i.to_string(), json!(i))).collect::<serde_json::Map<String, Value>>()}),
+        json!({"schema":"fixture","values":{"nested":{}}}),
+    ] {
+        let mut receipt = base.clone();
+        receipt["billing"] = json!({"evidence":evidence});
+        invalid.push(receipt);
+    }
+    let accepted: Vec<_> = invalid
+        .iter()
+        .filter(|receipt| {
+            ["status", "cancel"].iter().any(|method| {
+                call(
+                    &store,
+                    method,
+                    json!({"operationId":"unadmitted"}),
+                    |_, _| Ok((*receipt).clone()),
+                )
+                .is_ok()
+            })
+        })
+        .collect();
+    assert!(accepted.is_empty(), "unvalidated receipts: {accepted:?}");
+    assert!(store.get("consumer", "unadmitted").unwrap().is_none());
+}
+
+#[test]
+fn unadmitted_status_projects_billing_for_each_consumer_capability() {
+    let (_root, store) = fixture();
+    let mut receipt = running("unadmitted");
+    receipt["billing"] = json!({"cost":{"amount":"0.005","currency":"USD","estimated":true,"source":"fixture"},"evidence":{"schema":"x".repeat(64),"values":(0..32).map(|i| (i.to_string(), json!(i))).collect::<serde_json::Map<String, Value>>()}});
+    for supports in [false, true] {
+        let response = call(
+            &store,
+            "status",
+            json!({"operationId":"unadmitted"}),
+            |_, _| Ok(receipt.clone()),
+        )
+        .unwrap();
+        let response = crate::service_state::receipt::for_consumer(response, supports);
+        if supports {
+            assert_eq!(response, receipt);
+        } else {
+            let mut legacy = receipt.clone();
+            legacy.as_object_mut().unwrap().remove("billing");
+            assert_eq!(response, legacy);
+        }
+    }
+    assert!(store.get("consumer", "unadmitted").unwrap().is_none());
+}

@@ -320,7 +320,7 @@ impl OperationDiagnostics {
     }
 }
 
-pub(crate) fn validate(value: &Value, admission: &Admission) -> Result<Value, AppError> {
+pub(crate) fn validate_structure(value: &Value) -> Result<Value, AppError> {
     let invalid = || AppError::Other("Invalid image service receipt".into());
     if serde_json::to_vec(value).map_err(|_| invalid())?.len() > 16 * 1024 {
         return Err(invalid());
@@ -337,11 +337,15 @@ pub(crate) fn validate(value: &Value, admission: &Admission) -> Result<Value, Ap
     }
     let receipt: Receipt = serde_json::from_value(value.clone()).map_err(|_| invalid())?;
     if receipt.version != 1
-        || receipt.operation_id != admission.operation_id
-        || receipt.request_fingerprint != admission.fingerprint
-        || receipt.provider.package_id != admission.provider.package_id
-        || receipt.provider.service_id != admission.target.service_id
-        || receipt.provider.major != admission.target.major
+        || !identity(&receipt.operation_id)
+        || receipt.request_fingerprint.len() != 64
+        || !receipt
+            .request_fingerprint
+            .bytes()
+            .all(|b| b.is_ascii_hexdigit())
+        || !identity(&receipt.provider.package_id)
+        || !identity(&receipt.provider.service_id)
+        || receipt.provider.major == 0
         || receipt.revision == 0
         || receipt.revision > 9_007_199_254_740_991
     {
@@ -425,6 +429,20 @@ pub(crate) fn validate(value: &Value, admission: &Admission) -> Result<Value, Ap
     }
     serde_json::to_value(receipt).map_err(|_| invalid())
 }
+/// Ledger identity is an additional check, independent of receipt shape/bounds.
+pub(crate) fn validate(value: &Value, admission: &Admission) -> Result<Value, AppError> {
+    let receipt = validate_structure(value)?;
+    if receipt["operationId"] != admission.operation_id
+        || receipt["requestFingerprint"] != admission.fingerprint
+        || receipt["provider"]["packageId"] != admission.provider.package_id
+        || receipt["provider"]["serviceId"] != admission.target.service_id
+        || receipt["provider"]["major"] != admission.target.major
+    {
+        return Err(AppError::Other("Invalid image service receipt".into()));
+    }
+    Ok(receipt)
+}
+
 pub(crate) fn validate_transition(previous: &Value, next: &Value) -> Result<(), AppError> {
     let reject = || AppError::Other("Image receipt conflicts with its durable outcome".into());
     // Unknown fences replay; it does not disprove a delayed original result.

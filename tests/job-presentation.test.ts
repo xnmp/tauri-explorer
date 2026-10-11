@@ -7,7 +7,7 @@ describe("exact job cost display", () => {
     expect(formatJobCost({ ...cost, estimated: true })).toBe("≈US$0.08");
     expect(formatJobCost({ ...cost, amount: "0.009", estimated: true })).toBe("≈<US$0.01");
     expect(formatJobCost({ ...cost, currency: "AUD" })).toBe("AUD 0.08");
-    expect(formatJobCost({ ...cost, amount: "0.001", currency: "EUR" })).toBe("<EUR 0.01");
+    expect(formatJobCost({ ...cost, amount: "0.001", currency: "EUR" })).toBe("EUR 0.00");
     expect(formatJobCost()).toBe("");
   });
   it("retains precision for extremely large decimals", () => expect(formatJobCost({ ...cost, amount: `${"9".repeat(200)}.995` })).toBe(`US$1${"0".repeat(200)}.00`));
@@ -20,5 +20,27 @@ describe("exact job cost display", () => {
     expect(jobReveal({ kind: "file", path: "/images/output.png" })).toEqual({ kind: "file", path: "/images/output.png" });
     expect(jobReveal({ kind: "view", viewId: "trace.view", directory: "/images", targetId: "42" })).toBeDefined();
     for (const value of [null, {}, { kind: "file", path: "" }, { kind: "file", path: "x".repeat(4097) }, { kind: "file", path: "a\0b" }, { kind: "view", viewId: "bad id", directory: "/", targetId: "42" }, { kind: "view", viewId: "trace.view", directory: "/", targetId: "x".repeat(129) }]) expect(jobReveal(value)).toBeUndefined();
+  });
+});
+
+
+describe("plugin-compatible cost formatting", () => {
+  it.each([
+    ["0", "USD", false, "US$0.00"],
+    ["0.004", "USD", false, "<US$0.01"],
+    ["0.005", "USD", false, "<US$0.01"],
+    ["0.0049", "USD", true, "≈<US$0.01"],
+    ["12.345678", "USD", false, "US$12.35"],
+    ["0.004", "EUR", false, "EUR 0.00"],
+    ["0.005", "EUR", false, "EUR 0.01"],
+    ["12.345678", "EUR", false, "EUR 12.35"],
+  ])("formats %s %s (estimated=%s)", (amount, currency, estimated, expected) => {
+    expect(formatJobCost({ ...cost, amount, currency, estimated })).toBe(expected);
+  });
+  it.each(["-1", "1e3", "abc", "0.1234567"])("hides invalid amount %s", amount => {
+    expect(formatJobCost({ ...cost, amount })).toBe("");
+  });
+  it.each(["true", 1, null, undefined])("hides non-boolean estimated %s", estimated => {
+    expect(formatJobCost({ ...cost, estimated } as unknown as typeof cost)).toBe("");
   });
 });

@@ -427,3 +427,8 @@ describe("Windows UNC syntax", () => {
     }
   });
 });
+
+
+it("retains literal POSIX backslashes when using native separators", () => {
+  expect(toNativeSeparators("/images\\draft/out.png", "/")).toBe("/images\\draft/out.png");
+});

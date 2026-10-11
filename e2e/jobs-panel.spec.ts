@@ -171,3 +171,22 @@ test("large valid costs remain inside both job panels on a narrow viewport", asy
   await panel.getByRole("button", { name: "Show image", exact: true }).click();
   await expect(page.locator(".explorer-pane.active .entry-item.selected")).toHaveText(/screenshot.png/);
 });
+
+test("Show image recovers a folder listing hidden by a failed navigation", async ({ page }) => {
+  await page.goto("/?path=/home/user/Pictures"); await waitForEntries(page);
+  await page.evaluate(async () => {
+    const { windowTabsManager } = await import("/src/lib/state/window-tabs.svelte.ts");
+    const { jobsStore } = await import("/src/lib/state/jobs.svelte.ts");
+    await windowTabsManager.getActiveExplorer()!.navigateTo("/deleted");
+    jobsStore.addJob(99007, "Recovered image", "", "openai-image", "image");
+    jobsStore.completeJob(99007, "/home/user/Pictures/screenshot.png", {
+      reveal: { kind: "file", path: "/home/user/Pictures/screenshot.png" },
+    });
+  });
+  const pane = page.locator(".explorer-pane.active");
+  await expect(pane).toContainText("Path not found: /deleted");
+  await page.getByRole("region", { name: "Background progress" }).getByRole("button", { name: "Show image", exact: true }).click();
+  await expect(pane).not.toContainText("Path not found: /deleted");
+  await expect(pane.locator(".entry-item.selected")).toHaveText(/screenshot.png/);
+  await expect(pane.locator(".entry-item.selected")).toBeInViewport();
+});

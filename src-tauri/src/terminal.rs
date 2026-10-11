@@ -1609,7 +1609,15 @@ mod tests {
         .expect("spawn failed")
         .id;
 
-        write_terminal(id, "test-window", 0, b"pwd && exit\n".to_vec()).unwrap();
+        // Exceed a PTY buffer so a blocked output reader prevents shell exit
+        // even on platforms that can exit with a short final output pending.
+        write_terminal(
+            id,
+            "test-window",
+            0,
+            b"printf '%65536s\\n' ''; pwd && exit\n".to_vec(),
+        )
+        .unwrap();
 
         let exited = exit_rx
             .recv_timeout(Duration::from_secs(10))

@@ -239,7 +239,8 @@
     prDetailHeight = 0;
   }
 
-  function closeDetails(): void {
+  function closeDetails(cancelJump = true): void {
+    if (cancelJump) branchSession.cancelMergeBase();
     detailSession.close();
     // Keep the pane-owned in-flight commit guard across close/reopen.
     commitPanelStore.resetIfIdle();
@@ -664,7 +665,10 @@
   // Every watcher, filter and action refresh enters the query owner's shared
   // reloader. Pagination extends the mounted history without replacing its
   // retained page-zero snapshot or adding a separate refresh policy.
-  const reload = querySession.reload;
+  function reload(): Promise<void> {
+    branchSession.cancelMergeBase();
+    return querySession.reload();
+  }
   const loadMore = querySession.loadMore;
 
   /** Apply a file-history request from the SCM panel. Keeping the filter
@@ -703,7 +707,9 @@
       void prSession.reloadBadges();
       return;
     }
-    untrack(() => void reload());
+    // User filter handlers retire navigation themselves. The fork-point
+    // action also changes this query, so its own reload must keep ownership.
+    untrack(() => void querySession.reload());
   });
 
   // Live refresh (#365, #432): watch the repo and reload when git state
@@ -723,6 +729,8 @@
     void subscribeGitChanges((change) => {
       if (!shouldReloadGraphForChange(change)) return;
       if (change.repoRoot && directoryKey(change.repoRoot) !== directoryKey(repo)) return;
+      // Retire the lookup at observation time, before the trailing reload.
+      branchSession.cancelMergeBase();
       if (refreshTimer !== null) clearTimeout(refreshTimer);
       refreshTimer = setTimeout(() => {
         refreshTimer = null;
@@ -806,7 +814,7 @@
       // avoids local/remote shorthand collisions in the branch-filter API.
       if (filePathReloadTimer !== null) clearTimeout(filePathReloadTimer);
       filePathReloadTimer = null;
-      closeDetails();
+      closeDetails(false);
       closePrDetail();
       branchFilter = null;
       filePathFilter = "";
@@ -816,7 +824,7 @@
       savePersisted(LOCAL_ONLY_KEY, false);
       savePersisted(HIDE_REMOTE_ONLY_KEY, false);
       await tick();
-      await reload();
+      await querySession.reload();
       if (!isCurrent()) return false;
       const commit = await querySession.findCommit(oid, isCurrent);
       if (!commit || !isCurrent()) return false;
@@ -981,6 +989,7 @@
    *  it; opening it closes any open commit details (one expansion at a time). */
   function togglePrDetail(event: MouseEvent, commit: CommitInfo, pr: PrSnapshot): void {
     event.stopPropagation();
+    branchSession.cancelMergeBase();
     if (prDetail?.oid === commit.oid && prDetail.pr.number === pr.number) {
       closePrDetail();
       return;
@@ -1166,6 +1175,7 @@
     label: string,
     fn: () => Promise<void | GitUndoAction | null>,
   ): Promise<void> {
+    branchSession.cancelMergeBase();
     closeMenu();
     try {
       const undoAction = await fn();
@@ -1383,6 +1393,7 @@
 
   async function refreshWithFetch(): Promise<void> {
     if (fetching) return;
+    branchSession.cancelMergeBase();
     // Kill the post-F5 focus ring (#433): F5 is a keyboard event, so it
     // promotes whatever the pointer last left focused — the clicked commit row
     // or the active tab — to `:focus-visible`, painting the browser's default

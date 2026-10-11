@@ -32,7 +32,7 @@ async fn returns_real_ancestor_for_local_and_remote_branches_without_moving_head
         assert_eq!(git_merge_base(path.clone(), "refs/heads/left".into(), target.into()).await.unwrap(), Some(fork.to_string()));
     }
     assert_eq!(repo.head().unwrap().target(), Some(left));
-    assert_eq!(repo.head().unwrap().name(), Some("refs/heads/left"));
+    assert_eq!(repo.head().unwrap().name().unwrap(), "refs/heads/left");
     let unrelated = commit(&repo, &[], "unrelated");
     repo.reference("refs/heads/orphan", unrelated, true, "test").unwrap();
     assert_eq!(git_merge_base(path.clone(), "refs/heads/left".into(), "refs/heads/orphan".into()).await.unwrap(), None);

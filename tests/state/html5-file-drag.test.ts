@@ -14,13 +14,15 @@ beforeEach(() => { dragState.clear(); native.mockClear(); });
 afterEach(() => { for (const call of native.mock.calls) call[1]?.({ result: "Cancelled" }); dragState.clear(); vi.unstubAllGlobals(); });
 
 describe("shared HTML5 filesystem source protocol", () => {
-  it("Recent exposes only link and retains that restriction through native start", () => {
+  it("Recent retains internal link authority without exporting filesystem URIs or starting native drag", () => {
     vi.stubGlobal("window", { __TAURI_INTERNALS__: {} });
     const payload = transfer();
     const source = createHtml5FileDrag(() => {}, "link");
     source.start({ dataTransfer: payload } as DragEvent, { path: "/work/project", name: "project", kind: "directory" });
     expect(payload.effectAllowed).toBe("link");
-    expect(native.mock.calls[0][2].nativeCopyPolicy).toBe("link");
+    expect(payload.getData("text/uri-list")).toBe("");
+    expect(payload.getData("text/plain")).toBe("");
+    expect(native).not.toHaveBeenCalled();
     source.end();
   });
   it("publishes ordered MIME, absolute URI paths and a live gesture for browser drops", () => {
@@ -46,7 +48,7 @@ describe("shared HTML5 filesystem source protocol", () => {
     expect(dragState.survivingHtml5Source()).toBeNull();
   });
 
-  it("publishes the same native protocol for Miller/Recent single directory sources", () => {
+  it("publishes the native protocol for Miller single directory sources", () => {
     vi.stubGlobal("window", { __TAURI_INTERNALS__: {} }); const payload = transfer();
     const source = createHtml5FileDrag(); source.start({ dataTransfer: payload } as DragEvent, { path: "/my folder", name: "my folder", kind: "directory" });
     expect(payload.getData("application/x-explorer-path")).toBe("/my folder");

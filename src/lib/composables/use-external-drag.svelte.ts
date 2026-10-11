@@ -37,7 +37,9 @@ function normalizeForWindowsShell(path: string): string {
 
 export async function startExternalDrag(paths: string[], iconPath?: string): Promise<void> {
   const gesture = dragState.current;
-  if (!isTauri() || paths.length === 0) return;
+  // OS Link effects are not portable (GTK Wayland maps Link to Copy).
+  // Shortcut authority must never export the underlying filesystem object.
+  if (!isTauri() || paths.length === 0 || gesture?.nativeCopyPolicy === "link") return;
   const lease = dragState.beginNative(gesture);
   const item = isWindows ? paths.map(normalizeForWindowsShell) : paths;
   try {

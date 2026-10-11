@@ -11,6 +11,7 @@ import { windowTabsManager } from "$lib/state/window-tabs.svelte";
 import { fileDropTargets, type RegisteredDropTarget } from "$lib/state/file-drop-targets.svelte";
 import type { ExplorerInstance } from "$lib/state/explorer.svelte";
 import { dialogStore } from "$lib/state/dialogs.svelte";
+import { modalOwnership } from "$lib/state/modal-ownership.svelte";
 
 export type DropTargetResult =
   | RegisteredDropTarget
@@ -43,13 +44,28 @@ export function adjustForPointerZoom(pos: { x: number; y: number }): { x: number
   return { x: pos.x / zoom, y: pos.y / zoom };
 }
 
+/** Every surface has an owner. Tabs target their active pane even though the
+ * strip is outside its DOM; other window chrome has explicit window ownership. */
+export function resolveDropOwner(element: Element | null): string | null {
+  const tabId = element?.closest?.(".tab[data-tab-id]")?.getAttribute("data-tab-id");
+  if (tabId) {
+    const tab = windowTabsManager.tabs.find(tab => tab.id === tabId);
+    return tab?.kind === "explorer" ? tab.activePaneId : null;
+  }
+  return element?.closest?.("[data-pane-id]")?.getAttribute("data-pane-id") || null;
+}
+
+function isDropOwnerBlocked(element: Element | null, paneId = resolveDropOwner(element)): boolean {
+  // CSS suspension can lag ownership. Only the live owning dialog surface
+  // may admit its registered targets; every covered base surface is blocked.
+  return (!!element?.closest?.(".modal-overlay, .pane-dialog-container")
+      || dialogStore.hasModalOpen || (paneId !== null && dialogStore.isPaneBlocked(paneId)))
+    && (!element || !modalOwnership.ownsInput(element, dialogStore.hasModalOpen ? null : undefined));
+}
+
 export function resolveDropTargetFromElement(el: Element | null): DropTargetResult {
+  if (isDropOwnerBlocked(el)) return { type: "blocked" };
   if (!el) return null;
-  // Inert descendants can expose their owning wrapper during native hit
-  // testing. Ownership still blocks base content wherever it was rendered.
-  const paneId = el.closest?.("[data-pane-id]")?.getAttribute("data-pane-id");
-  if (paneId && !el.closest?.(".modal-overlay, .pane-dialog-container")
-      && dialogStore.isPaneBlocked(paneId)) return { type: "blocked" };
   const registered = fileDropTargets.resolve(el);
   if (registered) return registered;
 
@@ -127,20 +143,23 @@ export function captureDropDestination(element: Element | null, fallbackExplorer
   for (let node = element; node; node = node.parentElement) {
     ancestors.push({ node, parent: node.parentElement, attributes: names.map(name => node!.getAttribute(name)) });
   }
-  const paneId = element?.closest("[data-pane-id]")?.getAttribute("data-pane-id");
+  const paneId = resolveDropOwner(element);
   const explorer = paneId ? windowTabsManager.getExplorer(paneId)
     : (!target || (target.type === "background" && !target.path)) ? fallbackExplorer : undefined;
   const lease = explorer?.captureMutation();
   // Exact registration identity is its generation; replacement on the same
   // DOM node cannot receive a previous registration's gesture.
   const sameTarget = (current: DropTargetResult) => {
+    if (current?.type === "blocked") return false;
     if (!target || !current) return target === current;
     if (target.type === "plugin") return current.type === "plugin" && current.registration === target.registration && target.registration.live();
     return current.type === target.type && JSON.stringify(current) === JSON.stringify(target);
   };
   return () => !!element?.isConnected
     && ancestors.every(({ node, parent, attributes }) => node.parentElement === parent && names.every((name, i) => node.getAttribute(name) === attributes[i]))
-    && (!paneId || windowTabsManager.getExplorer(paneId) === explorer)
+    && resolveDropOwner(element) === paneId
+    && !isDropOwnerBlocked(element, paneId)
+    && (paneId === null || windowTabsManager.getExplorer(paneId) === explorer)
     && (!lease || lease.current())
     && sameTarget(resolveDropTargetFromElement(element));
 }

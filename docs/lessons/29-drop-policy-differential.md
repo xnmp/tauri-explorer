@@ -11,6 +11,9 @@ branch outcome and named intended difference. The TSV is a review artifact;
 tests calculate expectations from the independent pure policy, not this file.
 The seventh review adds 46 temporal orderings in `dropTemporalCases`; these
 extend the static TSV with the event-producing gesture's policy.
+The eighth review adds 26 pending-start/window-modal orderings (file and folder
+sources across all thirteen target types) and ten outgoing Recent adapter rows
+in `outgoingRecentCases`, with explicit platform Link-effect mappings.
 
 Sources: listing file, listing folder, Miller file, Miller folder, Recent
 shortcut, sidebar bookmark reorder, external OS file, plain text,
@@ -79,11 +82,12 @@ Cross-window rows instantiate independent source and receiver module graphs;
 only native source metadata or shared storage can carry identity/policy across
 them. The runner retains shared gesture history while those windows are alive
 and drains source completion between rows. Clearing only storage would invent a
-quota-loss boundary while leaving local gesture ordinals intact. Recent's
-macOS/Windows native cells exercise the source/receiver transport contract by
-explicitly starting native drag; the actual sidebar pointer source has no
-drag-out handoff. These synthetic events do not establish native Link-effect
-negotiation with an OS destination.
+quota-loss boundary while leaving local gesture ordinals intact. Recent's native
+cells are synthetic receiver-provenance contracts, not outgoing OS gestures.
+Recent's actual sources never start an outgoing native file drag or export
+filesystem URIs. `outgoingRecentCases` checks the HTML5 source, native-request
+guard and actual macOS/Windows sidebar pointer source separately. No synthetic
+event establishes physical effect negotiation with an OS destination.
 
 Other intended design29 admission changes, covered by the companion domain and
 lifecycle tables rather than normal disjoint-path Cartesian rows:
@@ -164,7 +168,8 @@ component-used logic rather than transcribing it into tests.
 
 1. Recent now starts `createHtml5FileDrag` with `link` authority. That policy is
    carried by DOM effect/MIME, persisted source metadata and Rust `Source`.
-   Native start advertises only GTK LINK, OLE DROPEFFECT_LINK or AppKit Link.
+   The sixth-review native Link advertisement was removed in the eighth review:
+   GTK3 Wayland maps Link to Copy, so it cannot enforce shortcut authority.
    DOM directory destinations and native receivers reject transfer; native
    terminal insertion also rejects Recent. Bookmarks and registered plugins
    remain eligible. Sidebar pointer sources carry the same policy and specific
@@ -280,6 +285,98 @@ test result: ok. 21 passed; 0 failed; 0 ignored; 0 measured; 2166 filtered out
 Independent adversarial production-routing probes
 Test Files  1 passed (1)
 Tests       3 passed (3)
+
+python3 docs/code-map/validate.py --coverage
+coverage: 747/747 source files in map-folder.md
+```
+
+## Eighth review: deferred destination ownership and outgoing Recent
+
+1. Deferred DOM fallback re-resolved the target, but the resolver gated modality
+   only when a DOM ancestor carried `data-pane-id`. Window-strip tabs and other
+   window chrome skipped that gate. `resolveDropOwner` now resolves every
+   surface: a tab owns the active pane whose path `getTabPath` returns, pane
+   content owns its marked pane, and remaining chrome owns the window. Deferred
+   destination leases capture that owner and re-check live modality immediately
+   before redispatch. A newly opened window modal covers every base target;
+   another pane's modal does not cover the destination pane.
+2. A `.modal-overlay` exemption was insufficient for registered dialog targets:
+   ownership can change before Svelte applies `inert`/suspension. Independent
+   review falsified pane-dialog coverage, older window-dialog coverage and
+   unavailable window/pane surface admission. `modalOwnership.ownsInput` uses the
+   same live top/availability predicate as the modal itself. Deferred registered
+   targets require that input ownership even when an unavailable pane surface
+   no longer blocks base content, retaining eligible active dialog drops.
+   A window opening also requires window-scoped surface ownership, blocking pane
+   dialog targets before the new window dialog mounts.
+3. Dev's Recent HTML5 row exported only `application/x-explorer-kind`, with
+   `effectAllowed = "link"`; its sidebar pointer source had no native handoff.
+   Recent now exports no `text/uri-list` or other standard filesystem payload
+   and never starts an outgoing native file drag. Private Explorer MIME/state
+   retain pinning and registered-plugin delivery. Frontend and Rust start
+   boundaries reject link-only sources, with Rust admission before native path
+   preparation, session registration or platform start.
+
+Pending-start table (`dropTemporalCases`), each with both Miller file and folder
+sources: drop on original surface → window ownership opens → native start
+rejects. Every outcome must be blocked without redispatch, transfer, pinning or
+plugin delivery:
+
+| Original target | Owner | Expected |
+| --- | --- | --- |
+| Folder | Marked pane | Blocked |
+| Breadcrumb | Marked pane | Blocked |
+| Tab | Tab's active pane, or window strip without an explorer tab | Blocked |
+| Bookmark | Window | Blocked |
+| Quick Access | Window | Blocked |
+| Sidebar reorder row | Window | Blocked |
+| Registered plugin | Pane or window according to its location | Blocked |
+| Dialog textarea | Owning modal surface; unregistered for files | Blocked |
+| Covered pane | Marked pane | Blocked |
+| Listing background | Marked pane | Blocked |
+| Miller background | Marked pane | Blocked |
+| Unregistered plugin view | Pane or window according to its location | Blocked |
+| Terminal | Pane or window according to its location | Blocked |
+
+Outgoing Recent table (`outgoingRecentCases`): HTML5 and direct native requests
+on every backend, plus the actual sidebar pointer source on macOS/Windows.
+These mappings describe the platform implementation, not physical reproduction.
+
+| Platform backend | Native Link maps to | Dev filesystem URI export | Branch filesystem URI export | Branch native start |
+| --- | --- | --- | --- | --- |
+| GTK3 X11 | Link | None | None | Blocked |
+| GTK3 Wayland | Copy | None | None | Blocked |
+| AppKit | Link | None | None | Blocked |
+| Windows OLE | Link | None | None | Blocked |
+
+GTK3's [Wayland effect conversion](https://github.com/GNOME/gtk/blob/gtk-3-24/gdk/wayland/gdkdnd-wayland.c#L153-L164)
+maps Link to Copy. Advertising only Link therefore does not provide a portable
+filesystem shortcut contract; omitting the outgoing file payload restores dev.
+
+Failing first: the deferred tab probes transferred behind actual window and
+destination-pane ownership; the target table exposed sixteen redispatch failures
+before the fix; Recent URI probes failed for all four backend mappings; Rust
+accepted the shortcut source. The independent surface probes and permanent
+   adapter regressions failed five coverage/availability cases, while their
+two active-dialog controls passed. No physical Wayland reproduction was run.
+
+Final eighth-review verification:
+
+```text
+bunx vitest run tests/state tests/plugins tests/composables tests/domain tests/api --maxWorkers=2
+Test Files  354 passed (354)
+Tests       8169 passed (8169)
+
+bun run check
+website/api/report.js:2:26 Cannot find module '@vercel/blob' or its corresponding type declarations.
+COMPLETED 1845 FILES 1 ERRORS 0 WARNINGS 1 FILES_WITH_PROBLEMS
+
+CARGO_TARGET_DIR=/var/tmp/te-wt2/target-pdlg cargo test --offline --manifest-path src-tauri/Cargo.toml native_file_drag
+test result: ok. 21 passed; 0 failed; 0 ignored; 0 measured; 2166 filtered out
+
+Independent adversarial production-routing probes
+Test Files  1 passed (1)
+Tests       7 passed (7)
 
 python3 docs/code-map/validate.py --coverage
 coverage: 747/747 source files in map-folder.md

@@ -28,6 +28,8 @@ import { toastStore } from "$lib/state/toast.svelte";
 import { createExplorerState } from "$lib/state/explorer.svelte";
 import { windowTabsManager } from "$lib/state/window-tabs.svelte";
 import { dialogStore } from "$lib/state/dialogs.svelte";
+import { modalOwnership } from "$lib/state/modal-ownership.svelte";
+import { dropIntoDirectory } from "$lib/composables/use-dom-directory-drop";
 
 const paths = ["/source/z.png", "/source/a.png"];
 const entry = { path: paths[1], name: "a.png", kind: "file", size: 1, modified: "" } as const;
@@ -91,6 +93,52 @@ afterEach(async () => {
 });
 
 describe("filesystem source to registered native/DOM listener lifecycle", () => {
+  it.each([
+    ["pane", "covered"], ["window", "covered"], ["pane", "window-opening"], ["pane", "unavailable"], ["window", "unavailable"], ["pane", "active"], ["window", "active"],
+  ] as const)("deferred registered %s dialog drops require %s surface ownership before DOM suspension updates", async (scope, state) => {
+    let reject!: (error: Error) => void;
+    native.start.mockImplementationOnce(() => new Promise<void>((_resolve, fail) => { reject = fail; }));
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    const container = scope === "pane" ? dropElement("pane-dialog-container", { "data-pane-id": "owner" }) : null;
+    const overlay = dropElement(scope === "pane" ? "modal-overlay pane-scoped" : "modal-overlay", {}, container);
+    hit = dropElement("", {}, overlay);
+    const handler = vi.fn(); cleanup.push(fileDropTargets.register(hit, handler));
+    let available = true;
+    cleanup.push(modalOwnership.registerSurface(() => {}, undefined, undefined, {
+      scope: scope === "pane" ? { paneId: "owner", token: Symbol() } : null,
+      element: () => overlay, available: () => available,
+    }).release);
+    hit.dispatchEvent = replay => { Object.defineProperty(replay, "target", { value: hit }); return win.dispatchEvent(replay); };
+    const { source, dt } = begin(); win.dispatchEvent(event("drop", dt));
+    if (state === "covered") cleanup.push(modalOwnership.registerSurface(() => {}).release);
+    if (state === "window-opening") { dialogStore.openSettings(); cleanup.push(() => dialogStore.closeSettings()); }
+    if (state === "unavailable") { available = false; modalOwnership.scopeChanged(); }
+    source.end(); reject(new Error("native unavailable")); await flush();
+    if (state === "active") expect(handler).toHaveBeenCalledExactlyOnceWith(paths, "pane");
+    else expect(handler).not.toHaveBeenCalled();
+    expect(transferFiles).not.toHaveBeenCalled();
+  });
+  it.each(["window", "destination-pane", "other-pane"] as const)("deferred tab drops re-evaluate %s modality against the tab's owning pane", async modal => {
+    let reject!: (error: Error) => void;
+    native.start.mockImplementationOnce(() => new Promise<void>((_resolve, fail) => { reject = fail; }));
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    vi.spyOn(windowTabsManager, "tabs", "get").mockReturnValue([
+      { id: "destination-tab", kind: "explorer", activePaneId: "destination-pane", panes: { "destination-pane": { path: "/destination" } } },
+    ] as any);
+    vi.spyOn(windowTabsManager, "activePaneId", "get").mockReturnValue("other-pane");
+    vi.spyOn(windowTabsManager, "getTabPath").mockReturnValue("/destination");
+    hit = dropElement("tab", { "data-tab-id": "destination-tab" });
+    hit.dispatchEvent = replay => { Object.defineProperty(replay, "target", { value: hit }); return win.dispatchEvent(replay); };
+    const effects: Promise<void>[] = [];
+    win.addEventListener("drop", e => { effects.push(dropIntoDirectory(e as DragEvent, "/destination", "tab", { onRefresh() {} })); });
+    const { source, dt } = begin(); win.dispatchEvent(event("drop", dt));
+    expect(transferFiles).not.toHaveBeenCalled();
+    cleanup.push(modalOwnership.registerSurface(() => {}, undefined, undefined,
+      modal === "window" ? {} : { scope: { paneId: modal, token: Symbol() } }).release);
+    source.end(); reject(new Error("native unavailable")); await flush(); await Promise.all(effects);
+    if (modal === "other-pane") expect(transferFiles).toHaveBeenCalledExactlyOnceWith(paths, "/destination", false, expect.anything());
+    else expect(transferFiles).not.toHaveBeenCalled();
+  });
   it("does not transfer an external drop through the inert Miller island into its covered pane", async () => {
     hit = dropElement("miller-island");
     vi.spyOn(dialogStore, "isPaneBlocked").mockReturnValue(true);
@@ -190,7 +238,7 @@ describe("filesystem source to registered native/DOM listener lifecycle", () => 
     begin(false); await flush(); emit("enter"); emit("drop", paths, true); await flush();
     expect(transferFiles).toHaveBeenCalledExactlyOnceWith(paths, "/source", true, expect.anything());
   });
-  it.each([true, false])("carries Miller/Recent copy intent through native handoff (Ctrl=%s)", async copying => {
+  it.each([true, false])("carries Miller copy intent through native handoff (Ctrl=%s)", async copying => {
     const { source, dt } = begin(copying); await flush();
     emit("enter"); emit("drop", [...paths].reverse()); await flush();
     doc.dispatchEvent(event("dragend", dt)); source.end();

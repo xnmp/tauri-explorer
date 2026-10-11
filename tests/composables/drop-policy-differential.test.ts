@@ -1,5 +1,5 @@
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-import { dropCases, dropBoundaryCases, dropCrossWindowCases, dropPathCases, dropTemporalCases, dropPlatforms, branchDropPolicy, devDropPolicy, nativeRoute, intendedDifferences, type DropCase, type Outcome } from "../helpers/drop-policy";
+import { dropCases, dropBoundaryCases, dropCrossWindowCases, dropPathCases, dropTemporalCases, outgoingRecentCases, dropPlatforms, branchDropPolicy, devDropPolicy, nativeRoute, intendedDifferences, type DropCase, type Outcome } from "../helpers/drop-policy";
 import { dropElement } from "../helpers/drop-element";
 
 const io = vi.hoisted(() => ({ start: vi.fn(), listener: undefined as ((event: any) => void) | undefined,
@@ -156,7 +156,7 @@ describe.each(dropPlatforms)("differential drop outcomes: %s", platform => {
       native: "$lib/composables/use-native-drop-handler", html: "$lib/state/html5-file-drag.svelte", items: "$lib/composables/use-item-interactions.svelte",
       pointer: "$lib/composables/use-pointer-drag.svelte", external: "$lib/composables/use-external-drag.svelte", drag: "$lib/state/drag.svelte",
       sidebarPointer: "$lib/composables/use-sidebar-drag.svelte",
-      sidebarEnd: "$lib/composables/use-sidebar-drag-end", targets: "$lib/state/file-drop-targets.svelte", dialogs: "$lib/state/dialogs.svelte",
+      sidebarEnd: "$lib/composables/use-sidebar-drag-end", targets: "$lib/state/file-drop-targets.svelte", dialogs: "$lib/state/dialogs.svelte", ownership: "$lib/state/modal-ownership.svelte",
       toast: "$lib/state/toast.svelte", tabs: "$lib/state/window-tabs.svelte", directory: "$lib/composables/use-dom-directory-drop", sidebar: "$lib/composables/use-sidebar-file-drop", folder: "$lib/composables/use-drop-target.svelte",
     };
     const load = async () => Object.fromEntries(await Promise.all(Object.entries(names).map(async ([key, name]) => [key, await import(name)])));
@@ -178,6 +178,11 @@ describe.each(dropPlatforms)("differential drop outcomes: %s", platform => {
     } }));
     vi.stubGlobal("document", Object.assign(doc, { elementFromPoint: () => hit, documentElement: { style: {} },
       createElement: () => ({ style: {}, remove() {} }), body: { appendChild() {}, style: {} } }));
+    vi.stubGlobal("DataTransfer", function () { return transfer(); });
+    vi.stubGlobal("DragEvent", function (type: string, init: DragEventInit) {
+      const { bubbles, cancelable, ...data } = init;
+      return Object.assign(new Event(type, { bubbles, cancelable }), data);
+    });
     vi.spyOn(modules.tabs.windowTabsManager, "getTabPath").mockImplementation(() => destPath);
     const service = modules.native.useNativeDropHandler({ getActiveExplorer: () => ({ currentPath: destPath }), refreshAllPanes() {} });
     service.setup(); cleanup.push(service.cleanup); await flush();
@@ -212,7 +217,34 @@ describe.each(dropPlatforms)("differential drop outcomes: %s", platform => {
       io.outcomes.push(`plugin:${kind}`); io.records.push({ paths: [...paths] });
     }));
     const entry = { path: sourcePath, name: "item", kind: "file" };
-    if (c.ordering === "retained-local" || c.ordering === "late-start-reply") {
+    if (c.ordering === "window-modal-during-native-start") {
+      let rejectStart!: (reason: string) => void;
+      io.start.mockImplementationOnce(() => new Promise<void>((_resolve, reject) => { rejectStart = reject; }));
+      vi.spyOn(console, "warn").mockImplementation(() => {});
+      const redispatch = vi.fn((replay: Event) => {
+        Object.defineProperty(replay, "target", { value: hit });
+        return win.dispatchEvent(replay);
+      });
+      hit.dispatchEvent = redispatch;
+      const effects: Promise<void>[] = [];
+      win.addEventListener("drop", e => { effects.push(domDestination(e as DragEvent, c)); });
+      const source = modules.html.createHtml5FileDrag();
+      const dt = transfer();
+      source.start(event("dragstart", dt, c), { ...entry, kind: c.source.endsWith("-folder") ? "directory" : "file" }); sourceEnd = source.end;
+      const drop = event("drop", dt, c); win.dispatchEvent(drop);
+      expect(drop.stopped).toBe(true);
+      expect(io.start).toHaveBeenCalledOnce();
+      expect(io.outcomes).toEqual([]);
+      cleanup.push(modules.ownership.modalOwnership.registerSurface(() => {}).release);
+      expect(modules.dialogs.dialogStore.hasModalOpen).toBe(true);
+      source.end(); rejectStart("unavailable"); await flush();
+      await Promise.all(effects);
+      expect(redispatch).not.toHaveBeenCalled();
+      expect(io.outcomes).toEqual([]);
+      expect(io.records).toEqual([]);
+      expect(c.expected).toBe("blocked");
+      return;
+    } else if (c.ordering === "retained-local" || c.ordering === "late-start-reply") {
       vi.spyOn(console, "warn").mockImplementation(() => {});
       let resolveStart!: () => void, rejectStart!: (reason: string) => void;
       const decideStart = () => c.reply === "accepted" ? resolveStart() : rejectStart("unavailable");
@@ -272,6 +304,28 @@ describe.each(dropPlatforms)("differential drop outcomes: %s", platform => {
       expect(record.paths).toEqual([sourcePath]);
       if (record.target) expect(record.target).toBe(destPath);
     }
+  });
+  it.each(outgoingRecentCases.filter(c => c.platform === platform))("outgoing Recent / $adapter / $backend (native Link maps to $nativeLinkEffect)", async ({ adapter }) => {
+    const dt = transfer();
+    const c: DropCase = { platform, source: "recent", target: "bookmark", modifier: "none", transport: "dom-only" };
+    if (adapter === "html5") {
+      const source = modules.html.createHtml5FileDrag(() => {}, "link");
+      source.start(event("dragstart", dt, c), { path: sourcePath, name: "item", kind: "directory" }); sourceEnd = source.end;
+      expect(dt.getData("text/uri-list")).toBe("");
+      expect(dt.getData("text/plain")).toBe("");
+    } else if (adapter === "pointer") {
+      hit = dropElement();
+      const source = modules.sidebarPointer.useSidebarDrag();
+      source.handlePointerDown({ button: 0, preventDefault() {}, clientX: 10, clientY: 10 } as MouseEvent, sourcePath, "item");
+      win.dispatchEvent(Object.assign(new Event("mousemove"), { clientX: -10, clientY: 40 }));
+      sourceEnd = () => win.dispatchEvent(new Event("blur"));
+    } else {
+      modules.drag.dragState.start({ path: sourcePath, name: "item", kind: "directory", nativeCopyPolicy: "link" });
+      void modules.external.startExternalDrag([sourcePath]);
+    }
+    await flush();
+    expect(modules.drag.dragState.current?.nativeCopyPolicy).toBe("link");
+    expect(io.start).not.toHaveBeenCalled();
   });
 });
 

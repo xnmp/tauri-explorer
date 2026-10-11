@@ -12,6 +12,10 @@ export function dropElement(classes = "", attrs: Record<string, string> = {}, pa
     isConnected: true,
     classList: { add: (name: string) => tokens.add(name), remove: (name: string) => tokens.delete(name), contains: (name: string) => tokens.has(name) },
     getAttribute: (name: string) => attrs[name] ?? null,
+    contains: (other: Element | null): boolean => {
+      for (let node = other; node; node = node.parentElement) if (node === element as unknown as Element) return true;
+      return false;
+    },
     closest: (selector: string): HTMLElement | null => selector.split(",").some(part => matches(part.trim())) ? element as unknown as HTMLElement : parent?.closest(selector) ?? null,
   };
   return element as unknown as HTMLElement;

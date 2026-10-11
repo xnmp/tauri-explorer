@@ -159,27 +159,24 @@ fn deferred_platform_leave_does_not_reach_a_reused_native_receiver() {
 }
 
 #[test]
-fn recent_native_start_allows_only_link_on_every_platform() {
+fn recent_native_start_is_rejected_before_exporting_files_on_every_platform() {
     let recent = Source {
         native_copy_policy: Some(CopyPolicy::Link),
         ..source()
     };
-    assert!(matches!(
-        native_drag_options(Some(&recent)).mode,
-        drag::DragMode::Link
-    ));
+    assert!(native_drag_options(Some(&recent)).is_err());
     for policy in [None, Some(CopyPolicy::Modifier), Some(CopyPolicy::Move)] {
         let ordinary = Source {
             native_copy_policy: policy,
             ..source()
         };
         assert!(matches!(
-            native_drag_options(Some(&ordinary)).mode,
+            native_drag_options(Some(&ordinary)).unwrap().mode,
             drag::DragMode::Copy
         ));
     }
     assert!(matches!(
-        native_drag_options(None).mode,
+        native_drag_options(None).unwrap().mode,
         drag::DragMode::Copy
     ));
 }

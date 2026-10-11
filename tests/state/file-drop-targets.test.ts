@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { createFileDropTargets, fileDropTargets } from "$lib/state/file-drop-targets.svelte";
 import { resolveDropTarget, resolveDropTargetAtPoint, highlightTarget, highlightTargetAtPoint, clearHighlights } from "$lib/composables/use-native-drop-target.svelte";
 import { dropElement } from "../helpers/drop-element";
+import { modalOwnership } from "$lib/state/modal-ownership.svelte";
 
 const disposers: (() => void)[] = [];
 afterEach(() => { disposers.splice(0).forEach(dispose => dispose()); clearHighlights(); vi.unstubAllGlobals(); });
@@ -32,6 +33,7 @@ describe("file drop target resolution and feedback", () => {
 
   it("allows enabled targets inside a modal while consuming the remaining modal area", () => {
     const overlay = dropElement("modal-overlay"); const target = dropElement("", {}, overlay);
+    disposers.push(modalOwnership.registerSurface(() => {}, undefined, undefined, { element: () => overlay }).release);
     register(target); hit(dropElement("", {}, target));
     expect(resolveDropTargetAtPoint(1, 2)?.type).toBe("plugin");
     hit(dropElement("", {}, overlay));

@@ -136,7 +136,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `repo-root-cache.svelte.ts` — bounded reactive repository discovery with positive/negative TTL, shared probes and invalidation-safe publication.
 - `owned-registry.ts` — framework-free contribution registration identity; old disposers cannot remove replacements even when values are reused.
 - `ordered-registry.ts` — owned contributions sorted by plugin list position, then registration; shared by context-menu items and plugin settings sections.
-- `modal-ownership.svelte.ts` — shared input ownership for mounted and contributed modals; closing releases only the corresponding registration.
+- `modal-ownership.svelte.ts` — shared input ownership for mounted and contributed modals; live surface admission precedes DOM suspension; closing releases only the corresponding registration.
 - `src/lib/state/modal-focus.ts` — pane dialog focus restoration tracks actual focus ownership across DOM detachment and releases listeners on cleanup; shared modal focus eligibility.
 - `src/lib/state/pane-dialogs.svelte.ts` — host-private pane capture handles, transient scope retirement, identity-bound overlay slots, retained portal mounts and shared inert registration for pane-owned content.
 - `src/lib/state/dialog-presentation-context.ts` — private scope/visibility/focus context inherited by the shared SDK Modal.
@@ -186,7 +186,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `src/lib/state/session-operations.ts` — the one presentation shared by both ordered sessions: operation panel, conflict prompts, incremental entries, refresh broadcast and completion reporting.
 - `src/lib/state/move-operations.ts` — the move session over it: deduplicated sources, vacated source directories refreshed, no renderer-owned inverse; also the plugin `PluginWorkspace.moveFile` path (#881).
 - `paste-operations.ts` — clipboard-mode dispatch to the copy or move session and cut-clipboard release.
-- `src/lib/state/html5-file-drag.svelte.ts` — shared listing/Miller/Recent filesystem source MIME, native handoff and source lifetime protocol.
+- `src/lib/state/html5-file-drag.svelte.ts` — listing/Miller filesystem source MIME and native handoff; Recent private link MIME without OS filesystem export; source lifetime protocol.
 - `src/lib/state/sidebar-navigation.ts` — sidebar mouse/keyboard navigation through the active pane's modal ownership gate.
 - `src/lib/state/file-drop-targets.svelte.ts` — plugin element registrations, terminal disabled/modal resolution and idempotent teardown.
 - `src/lib/state/dispatch-file-drop.ts` — synchronous plugin/blocked drop claims, immutable ordered delivery and gesture-scoped async cleanup.
@@ -321,7 +321,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `use-column-resize.svelte.ts` — One keyed resize owner with session-local Details widths, visibility projection and ordered retirement.
 - `use-progressive-render.svelte.ts` — chunked render to avoid freeze on huge dirs.
 - `use-drop-target.svelte.ts` — directory-entry drop-target behavior.
-- `use-native-drop-target.svelte.ts` — position-based drop target detection.
+- `use-native-drop-target.svelte.ts` — position-based drop target detection, shared pane/window owner resolution and live modality admission for deferred destinations.
 - `use-native-drop-handler.ts` — handle native (external) OS file drops.
 - `src/lib/composables/observe-active-directory.svelte.ts` — lifecycle-owned plugin observation of the active workspace directory without polling or cloning its listing.
 - `use-external-drop.svelte.ts` — external file drops into the app.
@@ -896,7 +896,7 @@ TraceExplorer's image UI, provider adapters and SQLite journal are maintained in
 - `src-tauri/src/installed_plugins/service_graph_tests.rs` — service graph version, identity, optional dependency and cycle contracts.
 - `src-tauri/src/installed_plugins/service_host.rs` — host lifetime service store and package mutation claim checks.
 - `src-tauri/src/native_deadline.rs` — scoped monotonic native lock, queue and RPC budgets.
-- `src-tauri/src/native_file_drag.rs` — async OS drag start, synchronous platform-completion retirement, sequence-bearing provenance and per-window receiver snapshots emitted before frontend channel reordering.
+- `src-tauri/src/native_file_drag.rs` — async OS drag start (rejects shortcut sources before export), synchronous platform-completion retirement, sequence-bearing provenance and per-window receiver snapshots emitted before frontend channel reordering.
 - `src-tauri/test_support/native_file_drag.rs` — native session ordering, completion-backlog interleavings, gesture-sequence admission, complete-set verification, successor retirement and later external same-path contracts.
 - `src-tauri/src/durable_dir.rs` — per-platform directory-entry durability barrier (Unix fsync, Windows writable directory-handle flush).
 - `src-tauri/src/process_supervisor.rs` — Unix parent-death process group anchor and bounded owned CLI output.

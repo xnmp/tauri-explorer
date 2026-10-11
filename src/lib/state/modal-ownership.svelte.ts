@@ -39,6 +39,8 @@ export function createModalOwnership() {
   const inScope = (scope: ModalScope) => currentEntries().filter(entry => entry.scope === scope);
   const topSurface = (scope: ModalScope) => inScope(scope).filter(entry => entry.surface && available(entry)).at(-1);
   const hasWindow = () => currentEntries().some(entry => entry.scope === null);
+  const isTop = (entry: Entry) => available(entry)
+    && (entry.scope === null || !hasWindow()) && topSurface(entry.scope) === entry;
   const notify = () => { revision = Symbol(); for (const listener of listeners) listener(); };
 
   function release(entry: Entry): void {
@@ -103,9 +105,14 @@ export function createModalOwnership() {
       return {
         release: () => release(entry),
         isTop(): boolean {
-          return available(entry) && (entry.scope === null || !hasWindow()) && topSurface(entry.scope) === entry;
+          return isTop(entry);
         },
       };
+    },
+    /** Live input admission must precede reactive inert/hidden DOM updates. */
+    ownsInput(element: Element, scope?: ModalScope): boolean {
+      const owner = [...currentEntries()].reverse().find(entry => entry.surface && entry.element?.()?.contains(element));
+      return !!owner && (scope === undefined || owner.scope === scope) && isTop(owner);
     },
     captureCaller,
     onCallerClosed(callback: () => void, scope: ModalScope = null): () => void {

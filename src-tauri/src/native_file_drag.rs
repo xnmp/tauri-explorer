@@ -22,15 +22,13 @@ enum CopyPolicy {
     Link,
 }
 
-fn native_drag_options(source: Option<&Source>) -> drag::Options {
-    drag::Options {
-        mode: if source.is_some_and(|source| source.native_copy_policy == Some(CopyPolicy::Link)) {
-            drag::DragMode::Link
-        } else {
-            drag::DragMode::default()
-        },
-        ..Default::default()
+fn native_drag_options(source: Option<&Source>) -> Result<drag::Options, String> {
+    // GTK3 Wayland maps GDK_ACTION_LINK to the protocol's Copy action.
+    // Recent has shortcut authority only; no portable OS file drag preserves it.
+    if source.is_some_and(|source| source.native_copy_policy == Some(CopyPolicy::Link)) {
+        return Err("Shortcut sources cannot start native file drags".into());
     }
+    Ok(drag::Options::default())
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
@@ -551,6 +549,7 @@ pub async fn start_file_drag(
     {
         return Err("Drag source does not match the native files".into());
     }
+    let options = native_drag_options(source.as_ref())?;
     let item = drag::prepare_file_paths(item).map_err(|error| error.to_string())?;
     let image = if let Some(data) = image.strip_prefix("data:image/png;base64,") {
         drag::Image::Raw(
@@ -575,7 +574,6 @@ pub async fn start_file_drag(
         let result = native_window
             .map_err(|error| error.to_string())
             .and_then(|native_window| {
-                let options = native_drag_options(source.as_ref());
                 window
                     .state::<Sessions>()
                     .registry

@@ -97,12 +97,16 @@ export const dropCrossWindowCases: DropCase[] = dropCases.filter(c =>
 /** Policy belongs to the event-producing gesture, irrespective of callback
  * delivery order. These rows exercise production source state and routing. */
 export type TemporalDropCase = DropCase & {
-  ordering: "retained-local" | "late-start-reply" | "completion-backlog" | "expired-provenance" | "captured-before-completion" | "captured-before-replacement" | "same-millisecond-replacement";
+  ordering: "window-modal-during-native-start" | "retained-local" | "late-start-reply" | "completion-backlog" | "expired-provenance" | "captured-before-completion" | "captured-before-replacement" | "same-millisecond-replacement";
   reply?: "accepted" | "rejected";
   successors?: "html5" | "pointer";
   completion?: "acknowledged" | "pending-reply";
+  expected?: Outcome;
 };
 export const dropTemporalCases: TemporalDropCase[] = [
+  ...(["miller-file", "miller-folder"] as const).flatMap(source => dropTargets.map(target => ({ ordering: "window-modal-during-native-start" as const,
+    platform: "linux" as const, source, target,
+    modifier: "none" as const, transport: "native-rejected" as const, expected: "blocked" as const }))),
   ...(["folder", "plugin"] as const).map(target => ({ ordering: "same-millisecond-replacement" as const,
     platform: "linux" as const, source: "listing-file" as const, target, modifier: "none" as const,
     transport: "native-rejected" as const, lifetime: "expired" as const, window: "cross-window" as const })),
@@ -125,6 +129,17 @@ export const dropTemporalCases: TemporalDropCase[] = [
       modifier: "none" as const, transport: "native-accepted" as const, window: "cross-window" as const },
   ])),
 ];
+
+/** Outgoing shortcuts must export no OS filesystem payload, as on dev.
+ * Link is not a portable filesystem effect: GTK3 Wayland maps it to Copy.
+ * The mappings describe platform negotiation, not a physical reproduction. */
+export const outgoingRecentCases = ([
+  { platform: "linux", backend: "gtk-x11", nativeLinkEffect: "link" },
+  { platform: "linux", backend: "gtk-wayland", nativeLinkEffect: "copy" },
+  { platform: "mac", backend: "appkit", nativeLinkEffect: "link" },
+  { platform: "windows", backend: "ole", nativeLinkEffect: "link" },
+] as const).flatMap(row => (row.platform === "linux" ? ["html5", "native-request"] as const : ["html5", "native-request", "pointer"] as const)
+  .map(adapter => ({ ...row, adapter, devExport: "none" as const, branchExport: "none" as const, nativeStart: "blocked" as const })));
 
 /** Adversarial pairs have literal expectations, independent of production
  * path normalization. Expand each across the actual transport variants. */

@@ -3,8 +3,8 @@ import { isTauri } from "$lib/api/common";
 import { isMac, isWindows } from "$lib/domain/platform";
 import { startExternalDrag } from "$lib/composables/use-external-drag.svelte";
 
-/** One HTML5 source protocol for listings, Miller columns and Recent. Linux
- * app gestures hand off to native; browser gestures retain DOM authority. */
+/** Listings/Miller can export files and hand off to native on Linux. Recent
+ * retains private Explorer link authority without an OS filesystem payload. */
 export function createHtml5FileDrag(onEnd: () => void = () => {}, copyPolicy: "modifier" | "move" | "link" = "modifier") {
   let source: DragData | null = null;
 
@@ -15,7 +15,7 @@ export function createHtml5FileDrag(onEnd: () => void = () => {}, copyPolicy: "m
     event.dataTransfer.setData("application/x-explorer-name", data.name);
     event.dataTransfer.setData("application/x-explorer-kind", data.kind);
     if (paths.length > 1) event.dataTransfer.setData("application/x-explorer-paths", JSON.stringify(paths));
-    event.dataTransfer.setData("text/uri-list", paths.map(path => "file://" + encodeURI(path)).join("\r\n"));
+    if (copyPolicy !== "link") event.dataTransfer.setData("text/uri-list", paths.map(path => "file://" + encodeURI(path)).join("\r\n"));
     event.dataTransfer.effectAllowed = copyPolicy === "link" ? "link" : "all";
     event.dataTransfer.setData("application/x-explorer-effect", copyPolicy === "link" ? "link" : "all");
     dragState.start({ ...data, paths: paths.length > 1 ? paths : undefined,
@@ -25,7 +25,7 @@ export function createHtml5FileDrag(onEnd: () => void = () => {}, copyPolicy: "m
     event.dataTransfer.setData("application/x-explorer-session", source!.sessionId!);
     event.dataTransfer.setData("application/x-explorer-observed-at", String(source!.html5StartedAt));
     decorate?.();
-    if (!isMac && !isWindows && isTauri()) void startExternalDrag(paths);
+    if (copyPolicy !== "link" && !isMac && !isWindows && isTauri()) void startExternalDrag(paths);
   }
 
   function end(): void {

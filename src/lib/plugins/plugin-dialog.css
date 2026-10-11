@@ -14,12 +14,20 @@
   border: 1px solid var(--surface-stroke);
   border-radius: var(--radius-lg);
   box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25);
-  animation: plugin-dialog-slide-up 150ms cubic-bezier(0, 0, 0, 1);
+  /* A clip reveal, never opacity/transform: ending composited animations
+     under the blurred modal backdrop drops WebKitGTK surfaces (#1080). This
+     also covers panels embedded in an open dialog, e.g. the image editor's
+     AI tool panel. */
+  animation: plugin-dialog-reveal 150ms cubic-bezier(0, 0, 0, 1);
 }
 
-@keyframes plugin-dialog-slide-up {
-  from { opacity: 0; transform: translateY(20px) scale(0.98); }
-  to { opacity: 1; transform: translateY(0) scale(1); }
+@keyframes plugin-dialog-reveal {
+  from { clip-path: inset(0 0 100% 0 round var(--radius-lg)); }
+  to { clip-path: inset(-80px round var(--radius-lg)); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .plugin-dialog { animation: none; }
 }
 
 .plugin-dialog .dialog-header {

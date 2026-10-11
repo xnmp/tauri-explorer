@@ -45,7 +45,7 @@ async function appearance(cell: Locator) {
     const name = el.querySelector<HTMLElement>(".name-tiles")!;
     const nameCSS = getComputedStyle(name);
     return {
-      classes: [...el.classList].filter((name) => name !== "tile-surface" && !name.startsWith("svelte-")).sort(),
+      classes: [...el.classList].filter((name) => name !== "tile-surface" && name !== "entry-item" && !name.startsWith("svelte-")).sort(),
       selected: el.getAttribute("aria-selected"),
       name: name.textContent,
       nameClass: [...name.classList].filter((name) => !name.startsWith("svelte-")).sort(),
@@ -79,6 +79,12 @@ test.describe("Plugin single file tile", () => {
       // Remove pointer hover/focus before comparing visual selection chrome.
       await native.evaluate((el: HTMLElement) => el.blur());
       await page.mouse.move(1100, 700);
+      // Grid items stretch to the tallest sibling. Another tile in this row
+      // ("screenshot.png") wraps to two lines, which is 37.4px against the
+      // 37px reserved name area, so the stretched native tile reads 131.375.
+      // The standalone plugin cell has no siblings; compare the native tile's
+      // own height by opting it out of stretching.
+      await native.evaluate((el: HTMLElement) => { el.style.alignSelf = "start"; });
       const expected = await appearance(native);
       const plugin = await mountTile(page, size);
       await expect(plugin.locator(".tile-icon .thumbnail-full")).toBeVisible();

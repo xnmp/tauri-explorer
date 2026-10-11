@@ -33,7 +33,7 @@
 </script>
 
 <TileSurface cell {layout} role="gridcell"
-  class="entry-item{entry.kind === 'directory' ? ' directory' : ''}{selected ? ' selected' : ''}{appearance.cut ? ' cut' : ''}{appearance.inClipboard ? ' in-clipboard' : ''}{appearance.hidden ? ' hidden-entry' : ''}{appearance.emptyFolder ? ' empty-folder' : ''}"
+  class="{entry.kind === 'directory' ? 'directory' : ''}{selected ? ' selected' : ''}{appearance.cut ? ' cut' : ''}{appearance.inClipboard ? ' in-clipboard' : ''}{appearance.hidden ? ' hidden-entry' : ''}{appearance.emptyFolder ? ' empty-folder' : ''}"
   data-path={entry.path} data-entry-path={entry.path}
   aria-label={isVideoMediaFile(entry) ? `${entry.name}, video` : undefined}
   aria-selected={selected} aria-colindex={column}

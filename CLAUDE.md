@@ -245,3 +245,16 @@ Native graph fixtures must wait for the reset view's `.file-list` before their
 repository is deleted, because reset navigation completes asynchronously.
 
 - Files grid width updates must render within ResizeObserver delivery (`flushSync`); deferred row chunking can expose tracks from the fullscreen preview width on exit (#1061). See `docs/lessons/1061-tile-layout-delivery.md`.
+
+Git Graph PR mutations use `git_pr_action` through `gh` with an explicit selected
+GitHub repository and user confirmation. Creation requires an already-pushed
+branch and revalidates the displayed HEAD branch before spawning the CLI.
+Every confirmation carries its displayed repository identity, which the backend
+rechecks against the selected remote. A successful merge command means “merge
+requested”: GitHub may enqueue it, so only refreshed badges reflect closure. PR
+mutations do not delete or update local branches and have no local undo receipt.
+Badge-cache revisions reject pre-mutation cache fills, including uncertain CLI
+failures; the mounted PR session refreshes badges and keeps duplicate submissions
+blocked through that refresh. Browser screenshots simulate GitHub, while isolated
+Rust subprocess fixtures cover the production argv/cwd and CLI error boundary.
+See ADR 0005 and ADR 0006.

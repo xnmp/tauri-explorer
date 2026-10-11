@@ -20,13 +20,14 @@
 //!   and whether a write is in flight, so it decides; here we just report.
 
 use notify::{Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
+use serde::Serialize;
 use std::collections::HashMap;
 use std::fmt::Display;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Condvar, Mutex, OnceLock};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
-use tauri::{AppHandle, Emitter};
+use tauri::{AppHandle, Emitter, Runtime};
 
 /// Trailing debounce window. An editor's save can produce several events
 /// (truncate, write, rename, chmod); one reload per settled file is enough.
@@ -45,11 +46,25 @@ const AI_CONNECTIONS_FILE: &str = "ai-connections.json";
 /// User theme CSS lives one level down, in `<config>/themes/`.
 const THEMES_DIR: &str = "themes";
 
-/// The single constructor for every `config-file-changed` payload; the
-/// frontend listener reads `payload.filename`, a config-dir-relative name,
-/// always forward-slashed: `settings.json` or `themes/<name>.css`.
-pub(crate) fn config_changed_payload(filename: &str) -> serde_json::Value {
-    serde_json::json!({ "filename": filename })
+/// The `config-file-changed` payload. The frontend listener reads
+/// `payload.filename`; a bare-string payload made it throw on every launch
+/// (#1056), so every emitter goes through [`emit_config_file_changed`].
+#[derive(Clone, Serialize)]
+pub(crate) struct ConfigChangedPayload {
+    /// Config-dir-relative name, always forward-slashed: `settings.json` or
+    /// `themes/<name>.css`.
+    filename: String,
+}
+
+/// Emit `config-file-changed` for `filename`, logging (not dropping) failures.
+pub(crate) fn emit_config_file_changed<R: Runtime>(app: &impl Emitter<R>, filename: &str) {
+    log::debug!("config-file-changed: {filename}");
+    let payload = ConfigChangedPayload {
+        filename: filename.to_owned(),
+    };
+    if let Err(error) = app.emit("config-file-changed", payload) {
+        log::warn!("Failed to emit config-file-changed for {filename}: {error}");
+    }
 }
 
 /// The filesystem locations that must be watched to observe reloadable config.
@@ -551,10 +566,7 @@ fn spawn_flush_thread(app: AppHandle) {
                     );
                 }
             }
-            log::debug!("config-file-changed: {filename}");
-            if let Err(error) = app.emit("config-file-changed", config_changed_payload(&filename)) {
-                log::warn!("Failed to emit config-file-changed for {filename}: {error}");
-            }
+            emit_config_file_changed(&app, &filename);
         }
     });
 }
@@ -637,26 +649,15 @@ mod tests {
     #[cfg(unix)]
     use super::THEMES_DIR;
     use super::{
-        config_changed_payload, map_event_paths, pending, reconcile_watch_plan, settings_path,
-        watched_config_name, ConfigWatchHarness, PhaseRecorder, Registrations, ShutdownError,
-        StopSignal, WatchPlan, WatchRegistration, WorkerPhase, BOOKMARKS_FILE, FOLDER_VIEWS_FILE,
-        SETTINGS_FILE,
+        map_event_paths, pending, reconcile_watch_plan, settings_path, watched_config_name,
+        ConfigWatchHarness, PhaseRecorder, Registrations, ShutdownError, StopSignal, WatchPlan,
+        WatchRegistration, WorkerPhase, BOOKMARKS_FILE, FOLDER_VIEWS_FILE, SETTINGS_FILE,
     };
     use notify::{RecommendedWatcher, RecursiveMode, Watcher};
     use std::collections::{HashMap, HashSet};
     use std::path::{Path, PathBuf};
     use std::sync::{mpsc, Arc, Mutex};
     use std::time::{Duration, Instant};
-
-    #[test]
-    fn config_changed_payload_is_an_object_the_frontend_listener_can_read() {
-        // The listener reads `payload.filename`; a bare string payload made it
-        // throw on every launch (#1056).
-        assert_eq!(
-            config_changed_payload("plugin.openai-image.json"),
-            serde_json::json!({"filename": "plugin.openai-image.json"})
-        );
-    }
 
     #[derive(Default)]
     struct RecordingWatcher {

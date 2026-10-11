@@ -101,12 +101,12 @@ test("Details column popup stays onscreen and toggles all optional columns", asy
     await page.locator(".column-menu-item").filter({ hasText: label }).click();
     await expect(header).toHaveCount(0);
     await expect(page.locator(".column-menu")).toHaveCount(0);
-    await openAtHeader(page, true);
     await captureColumnState(page, label, column, "hidden");
+    await openAtHeader(page, true);
     await page.locator(".column-menu-item").filter({ hasText: label }).click();
     await expect(header).toBeVisible();
-    await openAtHeader(page, true);
     await captureColumnState(page, label, column, "restored");
+    await openAtHeader(page, true);
   }
   await page.locator(".column-menu-backdrop").click({ position: { x: 10, y: 10 } });
   await expect(page.locator(".column-menu")).toHaveCount(0);

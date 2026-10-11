@@ -33,3 +33,10 @@ same fixed-coordinate helper as the pointer and viewport before subtraction.
 Subtracting raw layout dimensions overflowed the right/bottom edges below 100%.
 `fixedMenuPosition` owns this calculation; regression tests assert resulting
 viewport bounds for single-offset and both legacy WebKit models.
+
+## Toggle evidence
+
+Containment evidence alone does not show that columns disappear and return.
+Capture each optional column's hidden and restored states after its behavioral
+assertion, while the menu is dismissed so it cannot cover the Size header.
+Keep these images mapped to the same acceptance criterion as edge containment.

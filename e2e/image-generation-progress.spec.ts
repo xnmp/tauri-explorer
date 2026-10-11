@@ -25,11 +25,13 @@ test("image generation shows elapsed time and an explicitly estimated progress",
 });
 
 test("native image estimates use the matching cohort and stay overdue until a result arrives", async ({ page }) => {
-  await page.clock.install({ time: new Date("2026-01-01T12:00:00Z") });
+  // Real time keeps flowing under a plain install(), so the job's elapsed time would drift a few
+  // milliseconds past the runFor() steps and floor "~20s remaining" to "~19s". Pause the clock
+  // once the page is ready so elapsed time is exactly what the test advances.
+  await page.clock.install({ time: new Date("2026-01-01T00:00:00Z") });
   await page.goto(HOME_URL);
   await waitForEntries(page);
-  // Exact elapsed-time assertions must not include real runner/rendering delay.
-  await page.clock.pauseAt(await page.evaluate(() => Date.now() + 1_000));
+  await page.clock.pauseAt(new Date("2026-01-01T00:10:00Z"));
   await page.evaluate(async () => {
     const { jobsStore } = await import("/src/lib/state/jobs.svelte.ts");
     const now = Date.now();

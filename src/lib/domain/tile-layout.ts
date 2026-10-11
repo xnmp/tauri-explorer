@@ -29,6 +29,32 @@ export function isThumbnailSize(value: unknown): value is ThumbnailSize {
 /** The plugin SDK's name for a tile-size preset. */
 export type TileSizePreset = ThumbnailSize;
 
+/** Tile-grid allocation in CSS px, available from `ui/file-tile`.
+ * Columns stretch: use `repeat(auto-fill, minmax(cellWidth + 'px', 1fr))`.
+ * The built-in virtualizer advances rows by `cellHeight + gap`.
+ */
+export interface TileGridMetrics {
+  /** Minimum cell width; actual columns share the available width equally. */
+  readonly cellWidth: number;
+  /** Allocated cell height, excluding the inter-row gap. */
+  readonly cellHeight: number;
+  /** Inter-cell gap on both axes. */
+  readonly gap: number;
+  /** Padding on each edge of the built-in grid. */
+  readonly gridPadding: number;
+}
+
+/** Pure metrics lookup; omitted/unknown presets use medium. */
+export function tileGridMetrics(size: TileSizePreset = "medium"): TileGridMetrics {
+  const layout = tileLayout(size);
+  return Object.freeze({
+    cellWidth: layout.gridMinWidth,
+    cellHeight: layout.rowHeight - layout.gap,
+    gap: layout.gap,
+    gridPadding: TILE_GRID_PAD_X / 2,
+  });
+}
+
 /**
  * A pane's tile size as the plugin SDK exposes it (`FileViewPane.tileSize`):
  * the preset and its thumbnail image edge in CSS px.

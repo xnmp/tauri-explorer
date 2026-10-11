@@ -101,7 +101,9 @@ Rules that bite:
   preserving image validation/read errors. Clipboard routing and availability
   share `clipboard/content.rs`; test mixed image/file clipboard owners. Check container
   signatures in frontend draft admission, native submission and the relay, and
-  deploy the relay alongside the app. See `docs/lessons/1059-report-video-attachments.md`.
+  deploy the relay alongside the app. ADR 0028 governs copied-file authority,
+  bounded reads, signature limits, public disclosure and upload cleanup/uncertainty.
+  See `docs/lessons/1059-report-video-attachments.md`.
 
 ## Documentation
 

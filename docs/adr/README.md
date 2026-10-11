@@ -33,3 +33,4 @@ decision during review.
 | [0025](0025-linux-volume-mount-authority.md) | Linux volume discovery and mount authority | Proposed |
 | [0026](0026-durable-recovery-checkpoint-engine.md) | One checkpoint engine for durable recovery kinds | Proposed |
 | [0027](0027-git-avatar-cache-lifecycle.md) | Git avatar lookup and cache lifecycle | Accepted |
+| [0028](0028-report-attachment-admission-and-hosting.md) | Report attachment admission and public hosting | Accepted |

@@ -52,6 +52,7 @@ pub fn run_process_supervisor() -> Option<i32> {
     }
 }
 mod load_diagnostics;
+mod media_duration;
 mod nano_banana;
 mod palette;
 mod platform;

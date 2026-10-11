@@ -357,8 +357,8 @@
     // zoom-adjusted. The rAF callback below converts to CSS pixels.
 
     // Measure after layout, clamp, then reveal.
-    // Use offsetWidth/offsetHeight instead of getBoundingClientRect — the latter
-    // returns the animated (scaled-down) size due to the menuIn animation.
+    // Use offsetWidth/offsetHeight (layout size, untransformed) rather than
+    // getBoundingClientRect.
     requestAnimationFrame(async () => {
       if (!menuEl) return;
       // With CSS zoom, position:fixed coordinates are in CSS pixels but the
@@ -425,6 +425,7 @@
   <div
     bind:this={menuEl}
     class="context-menu"
+    class:revealed={menuVisible}
     style="left: {clampedX}px; top: {clampedY}px; visibility: {menuVisible ? 'visible' : 'hidden'};"
     role="menu"
     tabindex="-1"
@@ -863,20 +864,30 @@
     border: 1px solid var(--surface-stroke-flyout);
     border-radius: var(--radius-lg);
     box-shadow: var(--shadow-flyout);
-    animation: menuIn 100ms cubic-bezier(0, 0, 0, 1);
   }
-  .menu-item:focus-visible { outline: 2px solid var(--focus-stroke-outer); outline-offset: -2px; }
-
-  @keyframes menuIn {
+  /* Entrance: a downward clip reveal plus a short slide. Never animate
+     opacity, transform or filter on a blurred menu surface or its contents:
+     WebKitGTK composites those animations, and when one ends it drops the
+     backdrop-filter surface for a frame, so the menu blinked see-through
+     ~100 ms after opening (#1062). clip-path and margin repaint on the main
+     thread instead, with no layer to tear down. The menu is mounted hidden for
+     one measuring frame (clamp effect), so the reveal starts only once it is
+     visible. */
+  .context-menu.revealed {
+    animation: menuReveal 140ms cubic-bezier(0, 0, 0, 1);
+  }
+  @keyframes menuReveal {
     from {
-      opacity: 0;
-      transform: scale(0.95) translateY(-4px);
+      clip-path: inset(0 0 100% 0 round var(--radius-lg));
+      margin-top: -6px;
     }
     to {
-      opacity: 1;
-      transform: scale(1) translateY(0);
+      /* Outset so the flyout shadow is not clipped in the final frames. */
+      clip-path: inset(-40px round var(--radius-lg));
+      margin-top: 0;
     }
   }
+  .menu-item:focus-visible { outline: 2px solid var(--focus-stroke-outer); outline-offset: -2px; }
 
   .menu-item {
     display: flex;
@@ -971,7 +982,12 @@
     border: 1px solid var(--surface-stroke-flyout);
     border-radius: var(--radius-lg);
     box-shadow: var(--shadow-flyout);
-    animation: menuIn 100ms cubic-bezier(0, 0, 0, 1);
+    /* Same reveal as the main menu (see menuReveal). */
+    animation: menuReveal 140ms cubic-bezier(0, 0, 0, 1);
+  }
+  /* After both animated rules, so it wins the cascade. */
+  @media (prefers-reduced-motion: reduce) {
+    .context-menu.revealed, .submenu { animation: none; }
   }
 
   .ai-submenu {

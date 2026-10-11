@@ -11,6 +11,7 @@ use crate::error::AppError;
 use std::fs::File;
 use std::io::{BufReader, Read, Seek, SeekFrom};
 use std::path::Path;
+use std::time::Duration;
 
 /// Upper bound on boxes/elements visited per level, so a corrupt or hostile
 /// file cannot turn a metadata probe into an unbounded scan.
@@ -213,11 +214,21 @@ fn ebml_element<R: Read>(reader: &mut R) -> Option<(u64, Option<u64>)> {
     Some((id, (size != unknown).then_some(size)))
 }
 
+/// Longest an ffmpeg probe may run before it is killed (ADR 0028).
+const FFMPEG_PROBE_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// Most ffmpeg stderr bytes kept; `Duration:` appears in the first few lines.
+const MAX_FFMPEG_STDERR: u64 = 64 * 1024;
+
+fn ffmpeg_duration(path: &Path) -> Option<f64> {
+    let ffmpeg = crate::thumbnails::ffmpeg_path()?;
+    ffmpeg_probe(&ffmpeg, path, FFMPEG_PROBE_TIMEOUT)
+}
+
 /// Asks ffmpeg to describe the input; it prints `Duration:` on stderr and then
 /// exits non-zero because no output was requested.
-fn ffmpeg_duration(path: &Path) -> Option<f64> {
+fn ffmpeg_probe(ffmpeg: &Path, path: &Path, _timeout: Duration) -> Option<f64> {
     use crate::process_ext::NoConsole;
-    let ffmpeg = crate::thumbnails::ffmpeg_path()?;
     let output = std::process::Command::new(ffmpeg)
         .args(["-hide_banner", "-nostdin", "-i"])
         .arg(path)

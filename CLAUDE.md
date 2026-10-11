@@ -280,3 +280,5 @@ The native suite's public TypeScript command uses incremental compiler metadata
 under node_modules/.cache. Repeated typechecks must still validate changed imported
 contracts and recover after errors; do not alter the existing five-second test
 deadline to compensate for host load. Metadata is disposable, not acceptance proof.
+
+The new native cache contract probe also runs before parallel unit transforms, in its own ordered project after the unchanged public compiler check. Preserve exhaustive selection and worker overrides.

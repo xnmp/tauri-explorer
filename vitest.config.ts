@@ -38,10 +38,18 @@ export default defineConfig({
       {
         extends: true,
         test: {
+          name: "native-cache-contract",
+          include: ["tests/qualification/native-typecheck-cache.test.ts"],
+          sequence: { groupOrder: 3 },
+        },
+      },
+      {
+        extends: true,
+        test: {
           name: "unit",
           include: ["tests/**/*.test.ts", "tests/**/*.bench.ts"],
-          exclude: ["tests/plugins/registry-churn.test.ts", "tests/native-suite-typecheck.test.ts"],
-          sequence: { groupOrder: 3 },
+          exclude: ["tests/plugins/registry-churn.test.ts", "tests/native-suite-typecheck.test.ts", "tests/qualification/native-typecheck-cache.test.ts"],
+          sequence: { groupOrder: 4 },
         },
       },
     ],

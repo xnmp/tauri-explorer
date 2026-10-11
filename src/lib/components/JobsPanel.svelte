@@ -7,6 +7,7 @@
   import { basename } from "$lib/domain/path";
   import Modal from "./Modal.svelte";
   import AiOperationsDialog from "./AiOperationsDialog.svelte";
+  import { formatJobDuration, isTimingSettled, jobDuration } from "$lib/domain/image-job-progress";
   import { jobStateLabel } from "$lib/domain/native-plugin-jobs";
 
   interface Props {
@@ -19,22 +20,21 @@
   let panel: HTMLElement | undefined = $state();
   let unresolvedOpen = $state(false);
 
-  // Live elapsed time counter for running jobs
+  // Live elapsed time counter. Only unsettled jobs have a moving duration;
+  // a settled job's is frozen, so it never needs a tick.
   let now = $state(Date.now());
+  const ticking = $derived(open && jobsStore.jobs.some((job) => !isTimingSettled(job)));
 
   $effect(() => {
-    if (!open || !jobsStore.hasRunningJobs) return;
+    if (!ticking) return;
+    now = Date.now();
     const intervalId = setInterval(() => { now = Date.now(); }, 1000);
     return () => clearInterval(intervalId);
   });
 
   function formatElapsed(job: Job): string {
-    const end = job.endTime ?? now;
-    const seconds = Math.floor((end - job.startTime) / 1000);
-    if (seconds < 60) return `${seconds}s`;
-    const minutes = Math.floor(seconds / 60);
-    const secs = seconds % 60;
-    return `${minutes}m ${secs}s`;
+    const duration = jobDuration(job, now);
+    return duration === null ? "" : formatJobDuration(duration);
   }
 
   function truncateDetail(detail: string, maxLen: number = 60): string {

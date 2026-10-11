@@ -64,6 +64,7 @@ fn accepting_job(store: &Store) -> JobRecord {
             source_revision: 0,
             created_at_ms: now,
             updated_at_ms: now,
+            settled_at_ms: None,
             state: JobState::Accepting,
             phase: Some("preparing".into()),
             output_path: None,

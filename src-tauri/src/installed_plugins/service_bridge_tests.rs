@@ -1052,6 +1052,7 @@ fn job(op: &str, n: u64) -> crate::service_state::job::JobRecord {
         source_revision: 0,
         created_at_ms: 1_000 + n,
         updated_at_ms: 1_000 + n,
+        settled_at_ms: None,
         state: JobState::Accepting,
         phase: Some("preparing".into()),
         output_path: None,

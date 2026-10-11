@@ -121,7 +121,7 @@ function createJobsStore() {
       const terminal = nativeJobSettled(r);
       return { id: r.jobId, jobKey: r.jobKey, revision: r.revision, owner: previous?.owner ?? r.owner.packageId, nativePackageOwner: r.owner.packageId, source: r.kind, label: r.label,
         detail: previous?.detail ?? "", presentation: "image", status: r.state, startTime: r.createdAtMs,
-        ...(terminal ? { endTime: r.updatedAtMs } : {}), outputPath: r.outputPath ?? undefined, error: r.error ?? undefined, phase: r.phase ?? undefined,
+        ...(terminal && r.settledAtMs != null ? { endTime: r.settledAtMs } : {}), outputPath: r.outputPath ?? undefined, error: r.error ?? undefined, phase: r.phase ?? undefined,
         retry: previous?.retry, retrying: previous?.retrying,
         controlPending: terminal ? undefined : previous?.controlPending, controlError: previous?.controlError,
         cancelRequested: terminal ? false : previous?.cancelRequested };

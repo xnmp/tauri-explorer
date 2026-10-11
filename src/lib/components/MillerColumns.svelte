@@ -20,11 +20,11 @@
   import FileIcon from "./FileIcon.svelte";
   import EntryName from "./EntryName.svelte";
   import { createHtml5FileDrag } from "$lib/state/html5-file-drag.svelte";
-  import { dragState } from "$lib/state/drag.svelte";
+  import { isFileTransfer } from "$lib/domain/file-drop";
+  import { dropIntoDirectory } from "$lib/composables/use-dom-directory-drop";
   import { windowTabsManager } from "$lib/state/window-tabs.svelte";
   import { useDropTarget } from "$lib/composables/use-drop-target.svelte";
   import { usePointerDrag } from "$lib/composables/use-pointer-drag.svelte";
-  import { getDropSourcePaths, handleFileDropMany } from "$lib/state/drop-operations";
   import { isCopyModifier, usesPointerDrag, usesHtml5Drag } from "$lib/domain/platform";
   import { manualHiddenStore } from "$lib/state/manual-hidden.svelte";
   import { parentDir } from "$lib/domain/path";
@@ -271,8 +271,7 @@
   let bgDropCopy = $state(false);
 
   function handleBgDragOver(event: DragEvent, columnPath: string): void {
-    const types = event.dataTransfer?.types;
-    if (!types?.includes("application/x-explorer-path") && !types?.includes("Files") && !dragState.readCrossWindow()) return;
+    if (!isFileTransfer(event.dataTransfer)) return;
     event.preventDefault();
     const copying = isCopyModifier(event);
     if (event.dataTransfer) event.dataTransfer.dropEffect = copying ? "copy" : "move";
@@ -293,18 +292,7 @@
     bgDropCopy = false;
     if (!event.dataTransfer) return;
 
-    const sourcePaths = getDropSourcePaths(event.dataTransfer);
-    if (sourcePaths.length === 0) return;
-
-    const isCopy = isCopyModifier(event);
-
-    dragState.clear(event.dataTransfer);
-    const valid = sourcePaths.filter(
-      (sourcePath) => sourcePath !== columnPath && !columnPath.startsWith(sourcePath + "/"),
-    );
-    await handleFileDropMany(valid, columnPath, isCopy, {
-      onRefresh: () => windowTabsManager.refreshAllPanes(),
-    });
+    await dropIntoDirectory(event, columnPath, "miller-background", { onRefresh: () => windowTabsManager.refreshAllPanes() });
   }
 
   // Resizable width

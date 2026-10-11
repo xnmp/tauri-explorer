@@ -132,3 +132,25 @@ for (const target of ["folder", "breadcrumb", "tab"] as const) {
     else expect(sourcePaths).not.toContain(sourcePath);
   });
 }
+
+test("plugin-specific DOM text delivery passes through its registered file target", async ({ page }) => {
+  const { target, destination } = await fixture(page);
+  const before = await destination.locator('.card[data-path]').evaluateAll(elements => elements.map(element => element.getAttribute("data-path")));
+  await target.evaluate(element => {
+    element.addEventListener("dragover", event => {
+      if ((event as DragEvent).dataTransfer?.types.includes("text/plain")) event.preventDefault();
+    });
+    element.addEventListener("drop", event => {
+      element.setAttribute("data-text-received", (event as DragEvent).dataTransfer!.getData("text/plain"));
+    });
+    const source = document.createElement("div");
+    source.draggable = true; source.dataset.testid = "plugin-text-drag";
+    source.textContent = "Plugin DOM payload";
+    source.addEventListener("dragstart", event => event.dataTransfer!.setData("text/plain", source.textContent!));
+    element.parentElement!.prepend(source);
+  });
+  await page.getByTestId("plugin-text-drag").dragTo(target);
+  await expect(target).toHaveAttribute("data-text-received", "Plugin DOM payload");
+  expect(await destination.locator('.card[data-path]').evaluateAll(elements => elements.map(element => element.getAttribute("data-path")))).toEqual(before);
+  await expect(page.locator(".toast").filter({ hasText: /Copied|Moved/ })).toHaveCount(0);
+});

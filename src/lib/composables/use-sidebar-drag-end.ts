@@ -1,5 +1,6 @@
 import { dragState, type DragData } from "$lib/state/drag.svelte";
 import { bookmarksStore } from "$lib/state/bookmarks.svelte";
+import { isExplorerFileTransfer } from "$lib/domain/file-drop";
 
 /** Document capture runs before a source's bubble-phase dragend handler. */
 export function listenSidebarDragEnd(deps: {
@@ -8,8 +9,12 @@ export function listenSidebarDragEnd(deps: {
   reset: () => void;
 }): () => void {
   const sources = new WeakMap<EventTarget, DragData>();
-  const onDragStart = (event: Event) => {
-    if (event.target && dragState.current) sources.set(event.target, dragState.current);
+  const onDragStart = (event: DragEvent) => {
+    if (!event.target) return;
+    sources.delete(event.target);
+    if (!isExplorerFileTransfer(event.dataTransfer) || !event.dataTransfer) return;
+    const source = dragState.domSource(event.dataTransfer);
+    if (source) sources.set(event.target, source);
   };
   function onDragEnd(event: DragEvent): void {
     // dragend receives a fresh, protected DataTransfer: getData cannot recover
@@ -28,10 +33,10 @@ export function listenSidebarDragEnd(deps: {
     dragState.finish(endedSource);
     if (event.target) sources.delete(event.target);
   }
-  document.addEventListener("dragstart", onDragStart);
+  document.addEventListener("dragstart", onDragStart as EventListener);
   document.addEventListener("dragend", onDragEnd, { capture: true });
   return () => {
-    document.removeEventListener("dragstart", onDragStart);
+    document.removeEventListener("dragstart", onDragStart as EventListener);
     document.removeEventListener("dragend", onDragEnd, { capture: true });
   };
 }

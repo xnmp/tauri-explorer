@@ -14,4 +14,4 @@ export type NativeFileDragEvent = (
   | { type: "enter" | "drop"; paths: string[]; position: { x: number; y: number }; source: DragData | null }
   | { type: "over"; position: { x: number; y: number } }
   | { type: "leave" }
-) & { copyModifier?: boolean | null };
+) & { copyModifier?: boolean | null; observedAt?: number };

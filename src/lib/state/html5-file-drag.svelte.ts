@@ -18,10 +18,11 @@ export function createHtml5FileDrag(onEnd: () => void = () => {}, copyPolicy: "m
     event.dataTransfer.setData("text/uri-list", paths.map(path => "file://" + encodeURI(path)).join("\r\n"));
     event.dataTransfer.effectAllowed = "all";
     dragState.start({ ...data, paths: paths.length > 1 ? paths : undefined,
-      nativeCopyPolicy: copyPolicy });
+      nativeCopyPolicy: copyPolicy, html5: true });
     source = dragState.current;
     dragState.bindDomSource(event.dataTransfer, source!);
     event.dataTransfer.setData("application/x-explorer-session", source!.sessionId!);
+    event.dataTransfer.setData("application/x-explorer-observed-at", String(source!.html5StartedAt));
     decorate?.();
     if (!isMac && !isWindows && isTauri()) void startExternalDrag(paths);
   }
@@ -29,6 +30,7 @@ export function createHtml5FileDrag(onEnd: () => void = () => {}, copyPolicy: "m
   function end(): void {
     // Native result owns retirement after handoff. DOM dragend may precede
     // delivery of native Enter/Drop on a separate IPC channel.
+    dragState.endHtml5(source);
     dragState.finish(source);
     source = null;
     onEnd();

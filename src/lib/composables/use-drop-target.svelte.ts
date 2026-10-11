@@ -6,9 +6,8 @@
 
 import type { FileEntry } from "$lib/domain/file";
 import { isCopyModifier } from "$lib/domain/platform";
-import { isInsideDir } from "$lib/domain/path";
-import { dragState } from "$lib/state/drag.svelte";
-import { getDropSourcePaths, handleFileDropMany } from "$lib/state/drop-operations";
+import { dropIntoDirectory } from "./use-dom-directory-drop";
+import { isFileTransfer } from "$lib/domain/file-drop";
 
 interface DropTargetDeps {
   /** Called after a successful drop to refresh the UI */
@@ -21,8 +20,7 @@ export function useDropTarget(deps: DropTargetDeps) {
 
   function handleDragOver(event: DragEvent, entry: FileEntry): void {
     if (entry.kind !== "directory") return;
-    const types = event.dataTransfer?.types;
-    if (!types?.includes("application/x-explorer-path") && !types?.includes("Files") && !dragState.readCrossWindow()) return;
+    if (!isFileTransfer(event.dataTransfer)) return;
     event.preventDefault();
     const copying = isCopyModifier(event);
     if (event.dataTransfer) event.dataTransfer.dropEffect = copying ? "copy" : "move";
@@ -54,6 +52,7 @@ export function useDropTarget(deps: DropTargetDeps) {
   }
 
   async function handleDrop(event: DragEvent, entry: FileEntry): Promise<void> {
+    if (!isFileTransfer(event.dataTransfer)) return;
     event.preventDefault();
     // Item-level drops are fully handled here — never let them bubble to
     // background drop handlers (FileList content, Miller column background),
@@ -64,19 +63,7 @@ export function useDropTarget(deps: DropTargetDeps) {
 
     if (entry.kind !== "directory" || !event.dataTransfer) return;
 
-    const sourcePaths = getDropSourcePaths(event.dataTransfer);
-    if (sourcePaths.length === 0) return;
-
-    const isCopy = isCopyModifier(event);
-
-    dragState.clear(event.dataTransfer);
-
-    // Skip dropping onto self or into one's own descendant; a multi-item
-    // drop transfers as a single undoable batch (#163).
-    const valid = sourcePaths.filter((sourcePath) => !isInsideDir(entry.path, sourcePath));
-    await handleFileDropMany(valid, entry.path, isCopy, {
-      onRefresh: deps.onRefresh,
-    });
+    await dropIntoDirectory(event, entry.path, "folder", { onRefresh: deps.onRefresh });
   }
 
   function isDropTarget(path: string): boolean {

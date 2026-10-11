@@ -8,6 +8,8 @@
   import { homeDirectory } from "$lib/state/home.svelte";
   import { bookmarksStore } from "$lib/state/bookmarks.svelte";
   import { createHtml5FileDrag } from "$lib/state/html5-file-drag.svelte";
+  import { navigateFromSidebar } from "$lib/state/sidebar-navigation";
+  import { dropOnQuickAccess, dropBookmarkReorder } from "$lib/composables/use-sidebar-file-drop";
   import { listenSidebarDragEnd } from "$lib/composables/use-sidebar-drag-end";
   import { dragState } from "$lib/state/drag.svelte";
   import { mountDrive } from "$lib/api/drives";
@@ -25,14 +27,13 @@
   import { openRecycleBinWithFeedback } from "$lib/state/recycle-bin";
   import { toastStore } from "$lib/state/toast.svelte";
   import { getBookmarkDropHint, getEffectiveDragKind } from "$lib/domain/bookmark-drop-feedback";
+  import { isExplorerFileTransfer } from "$lib/domain/file-drop";
 
   const recentDrag = createHtml5FileDrag();
   const sidebarDrag = usesPointerDrag ? useSidebarDrag() : null;
 
   // Window-global surface: navigates whichever pane is active.
-  const navigateTo = (path: string) => {
-    windowTabsManager.getActiveExplorer()?.navigateTo(path);
-  };
+  const navigateTo = navigateFromSidebar;
 
   const openDrive = createDriveOpener({
     mount: mountDrive, navigate: navigateTo, error: toastStore.error,
@@ -133,14 +134,8 @@
     lastDragY = 0;
   }
 
-  // Accept the drop if either our in-memory drag state is set OR the
-  // DataTransfer carries our app's drag MIME. The MIME check is the fallback
-  // for cases where the drag source can't initiate the native OS shell drag
-  // (e.g. UNC paths skip tauri-plugin-drag); without it the browser's
-  // HTML5-only DnD ends up with dropEffect "none" and shows the cancel cursor.
   function isExplorerDrag(event: DragEvent): boolean {
-    if (dragState.current) return true;
-    return event.dataTransfer?.types.includes("application/x-explorer-kind") ?? false;
+    return isExplorerFileTransfer(event.dataTransfer);
   }
 
   function onQuickAccessDragEnter(event: DragEvent) {
@@ -168,18 +163,9 @@
   }
 
   function onQuickAccessDrop(event: DragEvent) {
-    event.preventDefault();
-    event.stopPropagation();
-    const source = event.dataTransfer ? dragState.domSource(event.dataTransfer) : dragState.current;
-    if (source) {
-      const { kind, path, name } = source;
-      if (kind === "directory" && path) {
-        bookmarksStore.addBookmark(path, name);
-      }
-    }
+    if (!dropOnQuickAccess(event)) return;
     isDragOver = false;
     isBookmarkDropTarget = false;
-    dragState.clear(event.dataTransfer);
     stopDragPoll();
   }
 
@@ -333,11 +319,7 @@
   }
 
   function handleBookmarkDrop(event: DragEvent, toIndex: number) {
-    if (draggedBookmarkIndex === null) return;
-    event.preventDefault();
-    if (draggedBookmarkIndex !== toIndex) {
-      bookmarksStore.reorderBookmarks(draggedBookmarkIndex, toIndex);
-    }
+    if (!dropBookmarkReorder(event, draggedBookmarkIndex, toIndex)) return;
     draggedBookmarkIndex = null;
     dropTargetIndex = null;
   }

@@ -62,3 +62,13 @@ describe("verified file drop paths", () => {
     expect(domOwnsFileDrop(true)).toBe(false);
   });
 });
+
+it.each([
+  [1010, 1010, 1012, true], [1011.25, 1010, 1012, true],
+  [1009.99, 1010, 1012, false], [1012, 1010, 1012, false], [1013, 1010, 1012, false],
+  [NaN, 1010, 1012, false], [Infinity, 1010, 1012, false], [1011, NaN, 1012, false],
+  [1011, 1010, NaN, false], [1011, 1010, undefined, true],
+])("native observation %s belongs to HTML5 [%s, %s): %s", async (observed, start, end, expected) => {
+  const { observedDuringGesture } = await import("$lib/domain/file-drop");
+  expect(observedDuringGesture(observed, start, end)).toBe(expected);
+});

@@ -353,3 +353,50 @@ for (const direction of ["right", "down"] as const) {
     await expect(page.getByLabel("Dialog instance")).toHaveText(instance!);
   });
 }
+
+for (const action of ["click", "Enter"] as const) {
+  test(`sidebar ${action} blocks navigation to covered A and permits uncovered B`, async ({ page }) => {
+    await page.goto("/?path=/home/user/Pictures"); await waitForEntries(page); await install(page);
+    await draft(page).fill("Preserved pane caller");
+    const shortcut = page.locator('.quick-access .bookmark-drop-target[data-path="/home/user/Downloads"]').first();
+    if (action === "click") await shortcut.click();
+    else { await shortcut.focus(); await shortcut.press("Enter"); }
+    await expect(pane(page, 0).locator(".content")).toHaveAttribute("data-current-path", "/home/user/Pictures");
+    await expect(draft(page)).toHaveValue("Preserved pane caller");
+    await pane(page, 1).locator(".entry-item").first().click();
+    await expect(pane(page, 1)).toHaveClass(/active/);
+    if (action === "click") await shortcut.click();
+    else { await shortcut.focus(); await shortcut.press("Enter"); }
+    await expect(pane(page, 1).locator(".content")).toHaveAttribute("data-current-path", "/home/user/Downloads");
+    await expect(pane(page, 0).locator(".content")).toHaveAttribute("data-current-path", "/home/user/Pictures");
+    await expect(draft(page)).toHaveValue("Preserved pane caller");
+  });
+}
+
+for (const retirement of ["dialog", "pane"] as const) {
+  test(`pane caller's image editor closes and releases the window when its ${retirement} retires`, async ({ page }) => {
+    await page.goto("/?path=/home/user/Pictures"); await waitForEntries(page); await install(page);
+    await page.evaluate(async () => {
+      // @ts-expect-error Vite serves test source modules.
+      const component = (await import("/src/lib/components/InstalledPluginSettings.svelte")).default;
+      const t = (window as any).__paneDialogTest;
+      t.ctx.registerImageEditorTool({ id: "caller.editor", title: "Caller tool", component, when: () => true });
+      t.editorClosed = false;
+      void t.ctx.presentation.openImageEditor({ path: "/home/user/Pictures/screenshot.png", tool: "caller.editor" })
+        .then(() => { t.editorClosed = true; });
+    });
+    const editor = page.getByRole("dialog", { name: "Caller tool", exact: true });
+    await expect(editor).toBeVisible();
+    await page.evaluate(async retirement => {
+      const t = (window as any).__paneDialogTest;
+      // @ts-expect-error Vite serves test source modules.
+      const { windowTabsManager: manager } = await import("/src/lib/state/window-tabs.svelte.ts");
+      if (retirement === "pane") manager.closePane(t.a);
+      else t.ctx.closeDialog("test.pane");
+    }, retirement);
+    await expect(editor).toBeHidden();
+    await expect.poll(() => page.evaluate(() => (window as any).__paneDialogTest.editorClosed)).toBe(true);
+    await page.keyboard.press("Control+t");
+    await expect(page.locator(".tab")).toHaveCount(2);
+  });
+}

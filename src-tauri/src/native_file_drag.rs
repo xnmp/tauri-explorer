@@ -173,6 +173,19 @@ impl Registry {
         ));
     }
     fn capture(&mut self, window: usize, event: &wry::DragDropEvent, copying: bool) {
+        let observed_at = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|duration| duration.as_secs_f64() * 1000.0)
+            .unwrap_or(0.0);
+        self.capture_at(window, event, copying, observed_at);
+    }
+    fn capture_at(
+        &mut self,
+        window: usize,
+        event: &wry::DragDropEvent,
+        copying: bool,
+        observed_at: f64,
+    ) {
         let native = event.clone();
         let receiver = window.to_string();
         let position = |(x, y): (i32, i32)| tauri::PhysicalPosition {
@@ -190,6 +203,7 @@ impl Registry {
                     position: position(*point),
                     source,
                     copy_modifier: Some(copying),
+                    observed_at,
                 }
             }
             wry::DragDropEvent::Over { position: point } => Event::Over {
@@ -206,6 +220,7 @@ impl Registry {
                     position: position(*point),
                     source,
                     copy_modifier: Some(copying),
+                    observed_at,
                 }
             }
             wry::DragDropEvent::Leave => {
@@ -293,6 +308,7 @@ enum Event {
         position: tauri::PhysicalPosition<f64>,
         source: Option<Source>,
         copy_modifier: Option<bool>,
+        observed_at: f64,
     },
     Over {
         position: tauri::PhysicalPosition<f64>,
@@ -303,6 +319,7 @@ enum Event {
         position: tauri::PhysicalPosition<f64>,
         source: Option<Source>,
         copy_modifier: Option<bool>,
+        observed_at: f64,
     },
     Leave,
 }

@@ -36,6 +36,7 @@ let win: EventTarget;
 let doc: EventTarget;
 let sourceElements: WeakMap<DataTransfer, HTMLElement>;
 const cleanup: (() => void | Promise<void>)[] = [];
+let clockEpoch = 10_000_000_000_000;
 const flush = async () => { for (let i = 0; i < 10; i++) await Promise.resolve(); };
 function payload(): DataTransfer {
   const values = new Map<string, string>();
@@ -452,4 +453,252 @@ describe("filesystem source to registered native/DOM listener lifecycle", () => 
     expect(dragState.readCrossWindow()?.path).toBe("/successor.png");
     successor.end();
   });
+});
+
+it.each(["application/x-bookmark-index", "text/plain", "application/x-plugin-item"])("%s does not adopt a pending plugin source in sidebar drop/end", async mime => {
+  const { dropOnQuickAccess } = await import("$lib/composables/use-sidebar-file-drop");
+  const { bookmarksStore } = await import("$lib/state/bookmarks.svelte");
+  const pin = vi.spyOn(bookmarksStore, "addBookmark");
+  let done!: () => void;
+  const wait = new Promise<void>(resolve => { done = resolve; });
+  const handler = vi.fn(() => wait); cleanup.push(fileDropTargets.register(hit, handler));
+  const old = createHtml5FileDrag(); const oldDt = payload();
+  old.start(event("dragstart", oldDt), { path: "/unbookmarked", name: "pending", kind: "directory" }); await flush();
+  const owned = dragState.current;
+  emit("enter", ["/unbookmarked"]); emit("drop", ["/unbookmarked"]); await flush();
+  const dt = payload(); dt.setData(mime, "0");
+  cleanup.push(listenSidebarDragEnd({ quickAccess: () => undefined, isDragOver: () => true, reset: vi.fn() }));
+  doc.dispatchEvent(event("dragstart", dt));
+  dropOnQuickAccess(event("drop", dt));
+  doc.dispatchEvent(event("dragend", dt));
+  try {
+    expect(pin).not.toHaveBeenCalled(); expect(dragState.current?.sessionId).toBe(owned?.sessionId);
+  } finally { done(); await flush(); old.end(); }
+});
+
+it("a stale DOM session cannot borrow a successor's identical paths for plugin delivery", async () => {
+  delete (win as any).__TAURI_INTERNALS__;
+  const handler = vi.fn(); cleanup.push(fileDropTargets.register(hit, handler));
+  const old = begin(); old.source.end();
+  begin(); const replacement = dragState.current;
+  win.dispatchEvent(event("drop", old.dt)); await flush();
+  expect(handler).not.toHaveBeenCalled(); expect(dragState.current?.sessionId).toBe(replacement?.sessionId);
+});
+
+it("a stale DOM session cannot defer on a successor's rejected native decision", async () => {
+  const internals = (win as any).__TAURI_INTERNALS__;
+  delete (win as any).__TAURI_INTERNALS__;
+  const old = begin(); old.source.end();
+  (win as any).__TAURI_INTERNALS__ = internals;
+  let reject!: (error: Error) => void;
+  native.start.mockImplementationOnce(() => new Promise<void>((_resolve, fail) => { reject = fail; }));
+  vi.spyOn(console, "warn").mockImplementation(() => {});
+  const successor = begin(); const replacement = dragState.current;
+  const handler = vi.fn(); cleanup.push(fileDropTargets.register(hit, handler));
+  win.dispatchEvent(event("drop", old.dt)); await flush();
+  reject(new Error("unavailable")); await flush();
+  expect(handler).not.toHaveBeenCalled();
+  expect(dragState.current?.sessionId).toBe(replacement?.sessionId);
+  successor.source.end();
+});
+
+it.each(["rejected-before-enter", "enter-before-rejection"])("Linux automatic source:null retains the HTML5 identity (%s)", async ordering => {
+  let reject!: (error: Error) => void;
+  native.start.mockImplementationOnce(() => new Promise<void>((_resolve, fail) => { reject = fail; }));
+  vi.spyOn(console, "warn").mockImplementation(() => {});
+  const handler = vi.fn(); cleanup.push(fileDropTargets.register(hit, handler));
+  const { source, dt } = begin(true);
+  const automatic = (type: string, incoming = [...paths].reverse()) => native.emit!({ payload: {
+    type, paths: incoming, source: null, position: { x: 40, y: 60 }, copyModifier: true,
+  } });
+  if (ordering === "rejected-before-enter") { reject(new Error("unavailable")); await flush(); }
+  automatic("enter");
+  if (ordering === "enter-before-rejection") {
+    doc.dispatchEvent(event("dragend", dt)); source.end(); reject(new Error("unavailable")); await flush();
+  }
+  automatic("drop"); await flush();
+  win.dispatchEvent(event("drop", dt, true)); await flush();
+  expect(handler).toHaveBeenCalledExactlyOnceWith(paths, "pane");
+  source.end();
+  // Neither a later external gesture nor a mismatching complete path set may
+  // reuse the retired Explorer identity, even when the paths overlap.
+  automatic("enter"); automatic("drop"); await flush();
+  expect(handler).toHaveBeenLastCalledWith([...paths].reverse(), "external");
+  expect(handler).toHaveBeenCalledTimes(2);
+});
+
+it("source:null cannot adopt an acknowledged native source solely by matching paths", async () => {
+  const handler = vi.fn(); cleanup.push(fileDropTargets.register(hit, handler));
+  begin(); await flush();
+  const source = dragState.current;
+  for (const type of ["enter", "drop"]) native.emit!({ payload: { type, paths, position: { x: 40, y: 60 }, source: null } });
+  await flush();
+  expect(handler).toHaveBeenCalledExactlyOnceWith(paths, "external");
+  expect(dragState.current?.sessionId).toBe(source?.sessionId);
+});
+
+it.each(["modal", "plugin"])("ordinary text DOM payloads pass through %s while native start is pending", async surface => {
+  native.start.mockImplementationOnce(() => new Promise<void>(() => {}));
+  begin();
+  hit = dropElement(surface === "modal" ? "modal-overlay" : "plugin-file-view");
+  const handler = vi.fn(); cleanup.push(fileDropTargets.register(hit, handler));
+  const listener = vi.fn(); win.addEventListener("drop", listener);
+  const dt = payload(); dt.setData("text/plain", "description");
+  const over = event("dragover", dt), drop = event("drop", dt);
+  win.dispatchEvent(over); win.dispatchEvent(drop); await flush();
+  expect(over.defaultPrevented).toBe(false); expect(drop.defaultPrevented).toBe(false);
+  expect(listener).toHaveBeenCalledExactlyOnceWith(drop);
+  expect(handler).not.toHaveBeenCalled();
+});
+
+it("Linux receiver observation preserves a rejected HTML5 gesture when queued Enter arrives after dragend", async () => {
+  let tick = 10; const epoch = clockEpoch += 1000;
+  vi.spyOn(Date, "now").mockImplementation(() => epoch + tick);
+  vi.stubGlobal("performance", { timeOrigin: epoch, now: () => tick });
+  native.start.mockRejectedValueOnce(new Error("unavailable"));
+  vi.spyOn(console, "warn").mockImplementation(() => {});
+  const handler = vi.fn(); cleanup.push(fileDropTargets.register(hit, handler));
+  const original = begin(); await flush();
+  tick = 12; original.source.end();
+  expect(dragState.current).toBeNull();
+  const observed = (type: string, observedAt: number) => native.emit!({ payload: { type, paths, position: { x: 40, y: 60 }, source: null, observedAt } });
+  observed("enter", epoch + 11); observed("drop", epoch + 11.5); await flush();
+  expect(handler).toHaveBeenCalledExactlyOnceWith(paths, "pane");
+  observed("enter", epoch + 13); observed("drop", epoch + 13.5); await flush();
+  expect(handler).toHaveBeenLastCalledWith(paths, "external");
+  expect(handler).toHaveBeenCalledTimes(2);
+});
+
+it("queued automatic native delivery cannot repeat an already delivered DOM fallback", async () => {
+  let tick = 10; const epoch = clockEpoch += 1000;
+  vi.spyOn(Date, "now").mockImplementation(() => epoch + tick);
+  vi.stubGlobal("performance", { timeOrigin: epoch, now: () => tick });
+  native.start.mockRejectedValueOnce(new Error("unavailable"));
+  vi.spyOn(console, "warn").mockImplementation(() => {});
+  const handler = vi.fn(); cleanup.push(fileDropTargets.register(hit, handler));
+  const { source, dt } = begin(); await flush();
+  win.dispatchEvent(event("drop", dt)); await flush();
+  tick = 12; source.end();
+  for (const type of ["enter", "drop"]) native.emit!({ payload: { type, paths, position: { x: 40, y: 60 }, source: null, observedAt: epoch + 11 } });
+  await flush();
+  expect(handler).toHaveBeenCalledExactlyOnceWith(paths, "pane");
+});
+
+it("evicted HTML5 observations fail closed instead of becoming external file operations", async () => {
+  let tick = 10; const epoch = clockEpoch += 1000;
+  vi.spyOn(Date, "now").mockImplementation(() => epoch + tick);
+  vi.stubGlobal("performance", { timeOrigin: epoch, now: () => tick });
+  native.start.mockRejectedValue(new Error("unavailable"));
+  vi.spyOn(console, "warn").mockImplementation(() => {});
+  const original = begin(); await flush(); tick = 12; original.source.end();
+  for (let i = 0; i < 8; i++) { tick = 20 + i * 2; const next = begin(); await flush(); tick++; next.source.end(); }
+  hit = dropElement("bookmark-drop-target", { "data-path": "/destination" });
+  for (const type of ["enter", "drop"]) native.emit!({ payload: { type, paths, position: { x: 40, y: 60 }, source: null, observedAt: epoch + 11 } });
+  await flush();
+  expect(transferFiles).not.toHaveBeenCalled();
+  expect(toastStore.toasts.some(toast => /drop.*cancel|gesture.*expir/i.test(toast.message))).toBe(true);
+  const stale = event("drop", original.dt); const listener = vi.fn(); win.addEventListener("drop", listener);
+  win.dispatchEvent(stale); await flush(); expect(listener).not.toHaveBeenCalled();
+});
+
+it("history persistence failure cannot erase a live or ended local HTML5 source", async () => {
+  let tick = 10; const epoch = clockEpoch += 1000;
+  vi.spyOn(Date, "now").mockImplementation(() => epoch + tick);
+  vi.stubGlobal("performance", { timeOrigin: epoch, now: () => tick });
+  const setItem = localStorage.setItem.bind(localStorage);
+  vi.spyOn(localStorage, "setItem").mockImplementation((key, value) => {
+    if (key === "explorer-html5-gestures") throw new Error("QuotaExceeded");
+    setItem(key, value);
+  });
+  native.start.mockRejectedValue(new Error("unavailable")); vi.spyOn(console, "warn").mockImplementation(() => {});
+  const handler = vi.fn(); cleanup.push(fileDropTargets.register(hit, handler));
+  const { source } = begin(); await flush(); tick = 12; source.end();
+  for (const type of ["enter", "drop"]) native.emit!({ payload: { type, paths, position: { x: 40, y: 60 }, source: null, observedAt: epoch + 11 } });
+  await flush(); expect(handler).toHaveBeenCalledExactlyOnceWith(paths, "pane");
+});
+
+it("authoritative Rust source identity wins over an ambiguous HTML5 end millisecond", async () => {
+  let tick = 10; const epoch = clockEpoch += 1000;
+  vi.spyOn(Date, "now").mockImplementation(() => epoch + tick);
+  const handler = vi.fn(); cleanup.push(fileDropTargets.register(hit, handler));
+  const { source } = begin(); await flush(); const captured = { ...dragState.current };
+  tick = 12; source.end();
+  for (const [type, observedAt] of [["enter", epoch + 12.2], ["drop", epoch + 15]] as const) native.emit!({ payload: { type, paths, position: { x: 40, y: 60 }, source: captured, observedAt } });
+  await flush(); expect(handler).toHaveBeenCalledExactlyOnceWith(paths, "pane");
+});
+
+it("a backwards clock interval cannot poison later unrelated native drops", async () => {
+  let tick = 10; const epoch = clockEpoch += 1000;
+  vi.spyOn(Date, "now").mockImplementation(() => epoch + tick);
+  native.start.mockRejectedValue(new Error("unavailable")); vi.spyOn(console, "warn").mockImplementation(() => {});
+  const old = begin(); await flush(); tick = 5; old.source.end();
+  const handler = vi.fn(); cleanup.push(fileDropTargets.register(hit, handler));
+  for (const type of ["enter", "drop"]) native.emit!({ payload: { type, paths: ["/external/fresh.png"], position: { x: 40, y: 60 }, source: null, observedAt: epoch + 100 } });
+  await flush(); expect(handler).toHaveBeenCalledExactlyOnceWith(["/external/fresh.png"], "external");
+});
+
+it("stale persisted history cannot evict a newer local gesture after quota failure", async () => {
+  let tick = 10; const epoch = clockEpoch += 1000;
+  vi.spyOn(Date, "now").mockImplementation(() => epoch + tick);
+  native.start.mockRejectedValue(new Error("unavailable")); vi.spyOn(console, "warn").mockImplementation(() => {});
+  for (let i = 0; i < 8; i++) { tick = 10 + 2 * i; const old = begin(); await flush(); tick++; old.source.end(); }
+  const setItem = localStorage.setItem.bind(localStorage);
+  vi.spyOn(localStorage, "setItem").mockImplementation((key, value) => { if (key !== "explorer-html5-gestures") setItem(key, value); });
+  tick = 30; const live = begin(); await flush();
+  const handler = vi.fn(); cleanup.push(fileDropTargets.register(hit, handler));
+  for (let i = 0; i < 4; i++) {
+    native.emit!({ payload: { type: "enter", paths, position: { x: 40, y: 60 }, source: null, observedAt: epoch + 31 } });
+    native.emit!({ payload: { type: "leave" } });
+  }
+  for (const type of ["enter", "drop"]) native.emit!({ payload: { type, paths, position: { x: 40, y: 60 }, source: null, observedAt: epoch + 31 } });
+  await flush(); expect(handler).toHaveBeenCalledExactlyOnceWith(paths, "pane"); live.source.end();
+});
+
+it.each(["live", "ended"])("a receiver without persisted history never treats a rejected HTML5 source as external (%s)", async phase => {
+  let tick = 10; const epoch = clockEpoch += 1000;
+  vi.spyOn(Date, "now").mockImplementation(() => epoch + tick);
+  const write = localStorage.setItem.bind(localStorage);
+  vi.spyOn(localStorage, "setItem").mockImplementation((key, value) => { if (key !== "explorer-html5-gestures") write(key, value); });
+  native.start.mockRejectedValue(new Error("unavailable")); vi.spyOn(console, "warn").mockImplementation(() => {});
+  const original = begin(); await flush(); cleanup[0]();
+  if (phase === "ended") { tick = 12; original.source.end(); }
+  vi.resetModules();
+  const receiver = await import("$lib/composables/use-native-drop-handler");
+  const targets = await import("$lib/state/file-drop-targets.svelte");
+  const receiverToasts = await import("$lib/state/toast.svelte");
+  const handler = vi.fn(); cleanup.push(targets.fileDropTargets.register(hit, handler));
+  const service = receiver.useNativeDropHandler({ getActiveExplorer: () => undefined, refreshAllPanes: vi.fn() });
+  service.setup(); cleanup.push(service.cleanup); await flush();
+  for (const type of ["enter", "drop"]) native.emit!({ payload: { type, paths, position: { x: 40, y: 60 }, source: null, observedAt: epoch + 11 } });
+  await flush();
+  if (phase === "live") expect(handler).toHaveBeenCalledExactlyOnceWith(paths, "pane");
+  else { expect(handler).not.toHaveBeenCalled(); expect(receiverToasts.toastStore.toasts.some(toast => /drop.*cancel/i.test(toast.message))).toBe(true); }
+  original.source.end();
+});
+
+it.each(["receiver", "local"])("replacing a rejected decision preserves the predecessor's authority after history write failure (%s)", async route => {
+  let tick = 10; const epoch = clockEpoch += 1000;
+  vi.spyOn(Date, "now").mockImplementation(() => epoch + tick);
+  const write = localStorage.setItem.bind(localStorage);
+  vi.spyOn(localStorage, "setItem").mockImplementation((key, value) => { if (key !== "explorer-html5-gestures") write(key, value); });
+  native.start.mockRejectedValue(new Error("unavailable")); vi.spyOn(console, "warn").mockImplementation(() => {});
+  const first = begin(); await flush(); tick = 12; first.source.end();
+  tick = 20; const successor = begin(); await flush(); tick = 22; successor.source.end();
+  let targets = fileDropTargets, toasts = toastStore;
+  if (route === "receiver") {
+    cleanup[0](); vi.resetModules();
+    const receiver = await import("$lib/composables/use-native-drop-handler");
+    targets = (await import("$lib/state/file-drop-targets.svelte")).fileDropTargets;
+    toasts = (await import("$lib/state/toast.svelte")).toastStore;
+    const service = receiver.useNativeDropHandler({ getActiveExplorer: () => undefined, refreshAllPanes: vi.fn() });
+    service.setup(); cleanup.push(service.cleanup); await flush();
+  }
+  const handler = vi.fn(); cleanup.push(targets.register(hit, handler));
+  for (const type of ["enter", "drop"]) native.emit!({ payload: { type, paths, position: { x: 40, y: 60 }, source: null, observedAt: epoch + 11 } });
+  await flush();
+  if (route === "local") expect(handler).toHaveBeenCalledExactlyOnceWith(paths, "pane");
+  else { expect(handler).not.toHaveBeenCalled(); expect(toasts.toasts.some(toast => /drop.*cancel/i.test(toast.message))).toBe(true); }
+  handler.mockClear();
+  for (const type of ["enter", "drop"]) native.emit!({ payload: { type, paths: ["/external/fresh.png"], position: { x: 40, y: 60 }, source: null, observedAt: epoch + 30 } });
+  await flush(); expect(handler).toHaveBeenCalledExactlyOnceWith(["/external/fresh.png"], "external");
 });

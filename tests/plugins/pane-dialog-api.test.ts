@@ -126,3 +126,30 @@ it("host plugin APIs capture scope, report invalid handles and dispose managed p
     error.mockRestore(); log.mockRestore(); await windowTabsManager.dispose();
   }
 });
+
+it.each(["caller-close", "pane-close", "plugin-dispose", "editor-close"])("managed image editor follows pane caller lifetime: %s", async route => {
+  windowTabsManager.init("/home/user", true);
+  const plugin = createPluginContext("pane-editor-caller");
+  const component = (() => {}) as unknown as Component;
+  let release = () => {};
+  try {
+    plugin.ctx.registerDialog({ id: "editor.caller", component });
+    plugin.ctx.registerImageEditorTool({ id: "caller.tool", title: "Tool", component, when: () => true });
+    const pane = plugin.ctx.workspace.capturePane!()!;
+    windowTabsManager.splitPane("right");
+    plugin.ctx.openDialog("editor.caller", {}, { scope: "pane", pane });
+    const caller = dialogRegistry.openDialogs.find(dialog => dialog.id === "editor.caller")!;
+    release = modalOwnership.registerSurface(() => {}, undefined, undefined, { scope: caller.scope, presentation: caller.presentation }).release;
+    const editor = plugin.ctx.presentation!.openImageEditor!({ path: "/home/user/image.png", tool: "caller.tool" });
+    expect(dialogStore.imageEditorTarget?.path).toBe("/home/user/image.png");
+    if (route === "caller-close") plugin.ctx.closeDialog("editor.caller");
+    if (route === "pane-close") windowTabsManager.closePane(pane.paneId);
+    if (route === "plugin-dispose") plugin.dispose();
+    if (route === "editor-close") dialogStore.closeImageEditor();
+    expect(dialogStore.imageEditorTarget).toBeNull();
+    await editor;
+    if (route === "editor-close") expect(dialogRegistry.isOpen("editor.caller")).toBe(true);
+  } finally {
+    release(); plugin.dispose(); dialogRegistry.clear(); dialogStore.closeAll(); await windowTabsManager.dispose();
+  }
+});

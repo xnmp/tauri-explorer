@@ -38,6 +38,7 @@ import { extractError, type ApiResult } from "$lib/api/common";
 import { logFrontendError } from "$lib/api/crash";
 import { subscribeToLocalFileChanges } from "$lib/state/file-events";
 import { fileDropTargets } from "$lib/state/file-drop-targets.svelte";
+import { modalOwnership } from "$lib/state/modal-ownership.svelte";
 
 export type { PaneTileSize, TileSizePreset, TileGridMetrics } from "$lib/domain/tile-layout";
 import type { TileSizePreset, TileGridMetrics } from "$lib/domain/tile-layout";
@@ -437,9 +438,14 @@ export function createPluginContext(
         const refused=imageEditorRequestError(request,editorTools);
         if(refused)throw new Error(refused);
         const {path,tool}=request;
+        // Capture before the window editor takes ownership/focus. Pane callers
+        // retain their lifetime while suspended by this managed child.
+        const pane=windowTabsManager.paneDialogs.capture();
+        const caller=modalOwnership.captureCaller(pane ? windowTabsManager.paneDialogs.resolve(pane) : null);
         const session=dialogStore.openImageEditorTool(path,basename(path),tool);
         managedDialogs.add(session.close);
-        try{await session.closed;}finally{managedDialogs.delete(session.close);}
+        const detachCaller=caller?.onClosed(session.close) ?? (()=>{});
+        try{await session.closed;}finally{detachCaller();managedDialogs.delete(session.close);}
       },
     },
     text: {

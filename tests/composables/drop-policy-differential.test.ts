@@ -1,0 +1,198 @@
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { dropCases, dropBoundaryCases, dropPlatforms, branchDropPolicy, devDropPolicy, nativeRoute, intendedDifferences, type DropCase, type Outcome } from "../helpers/drop-policy";
+import { dropElement } from "../helpers/drop-element";
+
+const io = vi.hoisted(() => ({ start: vi.fn(), listener: undefined as ((event: any) => void) | undefined,
+  callbacks: new Map<number, Function>(), sequence: 0, outcomes: [] as string[], records: [] as { paths: readonly string[]; target?: string }[] }));
+vi.mock("@tauri-apps/api/core", async original => ({ ...await original<object>(), invoke: (command: string, args: any) =>
+  command === "start_file_drag" ? io.start(args) : Promise.resolve(undefined) }));
+vi.mock("@tauri-apps/api/webview", () => ({ getCurrentWebview: () => ({ listen: (_: string, fn: any) => { io.listener = fn; return Promise.resolve(() => {}); } }) }));
+vi.mock("$lib/state/move-operations", () => ({ moveFiles: vi.fn(async (paths: string[], target: string) => { if (paths.length) { io.outcomes.push("move"); io.records.push({paths: [...paths], target}); } }) }));
+vi.mock("$lib/state/copy-operations", () => ({ copyFiles: vi.fn(async (paths: string[], target: string) => { if (paths.length) { io.outcomes.push("copy"); io.records.push({paths: [...paths], target}); } }) }));
+vi.mock("$lib/state/bookmarks.svelte", () => ({ bookmarksStore: {
+  addBookmark: vi.fn((path: string) => { io.outcomes.push("pin"); io.records.push({paths: [path]}); }), reorderBookmarks: vi.fn(() => io.outcomes.push("reorder")),
+} }));
+
+let modules: any;
+let win: EventTarget, doc: EventTarget, hit: HTMLElement;
+let cleanup: (() => void)[];
+let sourcePath: string, destPath: string;
+let observationTime = 0;
+let matrixClock = 20_000_000_000_000;
+let sourceEnd: (() => void) | undefined;
+const flush = async () => { for (let i = 0; i < 15; i++) await Promise.resolve(); };
+function transfer(values: Record<string, string> = {}): DataTransfer {
+  const data = new Map(Object.entries(values));
+  return { getData: (type: string) => data.get(type) ?? "", setData: (type: string, value: string) => { data.set(type, value); }, get types() { return [...data.keys()]; }, effectAllowed: "all", dropEffect: "none" } as unknown as DataTransfer;
+}
+function event(type: string, dt: DataTransfer, c: DropCase, target = hit): DragEvent & { stopped: boolean } {
+  const e = Object.assign(new Event(type, { cancelable: true }), { dataTransfer: dt, clientX: 30, clientY: 40,
+    ctrlKey: c.modifier === "ctrl", altKey: c.modifier === "option", stopped: false });
+  Object.defineProperty(e, "target", { value: target });
+  const stop = e.stopImmediatePropagation.bind(e);
+  e.stopImmediatePropagation = () => { e.stopped = true; stop(); };
+  return e as unknown as DragEvent & { stopped: boolean };
+}
+function native(type: string, source: any, c: DropCase, observedAt?: number) {
+  observationTime += 2;
+  io.listener!({ payload: { type, paths: [sourcePath], source, position: { x: 60, y: 80 }, copyModifier: c.modifier === (c.platform === "mac" ? "option" : "ctrl"), observedAt: observedAt ?? observationTime + 0.25 } });
+}
+function target(c: DropCase) {
+  const pane = dropElement("explorer-pane", { "data-pane-id": "owner" });
+  const access = dropElement("quick-access");
+  const targets = {
+    folder: dropElement("entry-item directory", { "data-path": destPath }, pane),
+    breadcrumb: dropElement("crumb", { "data-path": destPath }, pane),
+    tab: dropElement("tab", { "data-tab-id": "target-tab" }),
+    bookmark: dropElement("bookmark-drop-target", { "data-path": destPath }, access),
+    "quick-access": access,
+    "sidebar-reorder": dropElement("bookmark-drop-target", { "data-path": destPath }, access),
+    plugin: dropElement("plugin-file-view"),
+    textarea: dropElement("textarea", {}, dropElement("modal-overlay")),
+    "covered-pane": dropElement("content", { "data-current-path": destPath }, pane),
+    "listing-background": dropElement("content", { "data-current-path": destPath }, pane),
+    "miller-background": dropElement("miller-col", { "data-path": destPath }, pane),
+    "plugin-view": dropElement("plugin-file-view"),
+  };
+  return targets[c.target];
+}
+async function domDestination(e: DragEvent, c: DropCase) {
+  const { directory, sidebar, folder } = modules;
+  if (["quick-access", "bookmark", "sidebar-reorder"].includes(c.target)) {
+    if (c.target === "sidebar-reorder" && c.source === "sidebar-bookmark") sidebar.dropBookmarkReorder(e, 0, 1);
+    sidebar.dropOnQuickAccess(e); // real Quick Access ancestor receives a reorder too
+  } else if (c.target === "folder") await folder.useDropTarget({ onRefresh: () => {} }).handleDrop(e, { path: destPath, kind: "directory" });
+  else if (["breadcrumb", "tab", "listing-background", "miller-background", "covered-pane"].includes(c.target)) {
+    await directory.dropIntoDirectory(e, destPath, c.target === "covered-pane" ? "listing-background" : c.target, { onRefresh: () => {} });
+  }
+}
+async function run(c: DropCase): Promise<Outcome[]> {
+  hit = target(c);
+  vi.spyOn(modules.dialogs.dialogStore, "isPaneBlocked").mockReturnValue(c.target === "covered-pane");
+  const handler = vi.fn((paths: readonly string[], kind: string) => { io.outcomes.push(`plugin:${kind}`); io.records.push({paths: [...paths]}); });
+  if (c.target === "plugin") cleanup.push(modules.targets.fileDropTargets.register(hit, handler));
+  let dt = transfer();
+  const fileSource = c.source.startsWith("listing-") || c.source.startsWith("miller-");
+  const entry = { path: sourcePath, name: "item", kind: c.source.endsWith("-folder") ? "directory" : "file", size: 1, modified: "" };
+  if (fileSource && c.transport === "dom-only" && c.platform !== "linux") {
+    const drag = modules.pointer.usePointerDrag({ getExplorer: () => ({ getSelectedEntries: () => [entry], currentPath: destPath }) });
+    drag.handlePointerDown({ button: 0, preventDefault() {}, clientX: 10, clientY: 10 } as any, entry, true);
+    win.dispatchEvent(Object.assign(new Event("mousemove"), { clientX: 30, clientY: 40 }));
+    win.dispatchEvent(Object.assign(new Event("mouseup"), { clientX: 30, clientY: 40, ctrlKey: c.modifier === "ctrl", altKey: c.modifier === "option" }));
+    await flush();
+    return (io.outcomes.length ? io.outcomes : ["plugin-view", "covered-pane", "textarea"].includes(c.target) ? ["blocked"] : ["ignored"]) as Outcome[];
+  }
+  if (fileSource && c.transport === "native-accepted" && c.platform !== "linux") {
+    // Actual macOS/Windows source: pointer drag exits the client viewport and
+    // hands the same gesture to the native source boundary.
+    const drag = modules.pointer.usePointerDrag({ getExplorer: () => ({ getSelectedEntries: () => [entry], currentPath: destPath }) });
+    drag.handlePointerDown({ button: 0, preventDefault() {}, clientX: 10, clientY: 10 } as any, entry, true);
+    win.dispatchEvent(Object.assign(new Event("mousemove"), { clientX: -10, clientY: 40 }));
+    await flush();
+    const source = modules.drag.dragState.current;
+    dt = transfer({ "application/x-explorer-path": sourcePath, "application/x-explorer-kind": entry.kind,
+      "application/x-explorer-session": source.sessionId });
+  } else   if (fileSource) {
+    if (c.transport === "dom-only") delete (win as any).__TAURI_INTERNALS__;
+    const drag = c.source.startsWith("listing-") && c.platform === "linux" ? modules.items.useItemInteractions({ getExplorer: () => ({ getSelectedEntries: () => [entry], refresh() {} }) })
+      : modules.html.createHtml5FileDrag();
+    const start = event("dragstart", dt, c, dropElement());
+    if (c.source.startsWith("listing-") && c.platform === "linux") drag.handleDragStart(start, entry, true);
+    else drag.start(start, entry);
+    sourceEnd = c.source.startsWith("listing-") && c.platform === "linux" ? drag.handleDragEnd : drag.end;
+    doc.dispatchEvent(start);
+    if (c.transport !== "dom-only" && c.platform !== "linux") void modules.external.startExternalDrag([sourcePath]);
+    await flush();
+  } else if (c.source === "sidebar-bookmark") dt = transfer({ "application/x-bookmark-index": "0" });
+  else if (c.source === "external-file") dt = transfer({ Files: "" });
+  else dt = transfer({ "text/plain": "description", ...(c.source === "plugin-surface" ? { "application/x-plugin-item": "item" } : {}) });
+  let delayedObservation: number | undefined;
+  if (c.lifetime === "expired") {
+    delayedObservation = observationTime + 1.25;
+    observationTime += 2; sourceEnd?.(); sourceEnd = undefined;
+    for (let i = 0; i < 8; i++) {
+      observationTime += 2;
+      const successor = modules.html.createHtml5FileDrag();
+      successor.start(event("dragstart", transfer(), c), entry); await flush();
+      observationTime += 2; successor.end();
+    }
+  }
+  if (nativeRoute(c)) {
+    const source = c.source === "external-file" || c.transport === "native-rejected" ? null : { ...modules.drag.dragState.current };
+    native("enter", source, c, delayedObservation); native("drop", source, c, delayedObservation); await flush();
+  }
+  const over = event("dragover", dt, c); win.dispatchEvent(over);
+  const drop = event("drop", dt, c); win.dispatchEvent(drop);
+  if (c.source === "text" || c.source === "plugin-surface") {
+    expect(over.defaultPrevented).toBe(false); expect(drop.defaultPrevented).toBe(false); expect(drop.stopped).toBe(false);
+  }
+  if (!drop.stopped) {
+    const nonfile = c.source === "text" || c.source === "plugin-surface";
+    if (nonfile && ["plugin", "plugin-view"].includes(c.target)) io.outcomes.push("plugin:dom");
+    else if (nonfile && c.target === "textarea" && !drop.defaultPrevented && !over.defaultPrevented) io.outcomes.push("text-insertion");
+    else await domDestination(drop, c);
+  }
+  await flush();
+  if (!io.outcomes.length && ["plugin-view", "covered-pane", "textarea"].includes(c.target) && drop.stopped) io.outcomes.push("blocked");
+  // A file's native/pointer blocked result has no DOM outcome to inspect.
+  if (!io.outcomes.length && nativeRoute(c) && ["plugin-view", "covered-pane", "textarea"].includes(c.target)) io.outcomes.push("blocked");
+  if (!io.outcomes.length && modules.toast.toastStore.toasts.some((toast: {message: string}) => /gesture identity expired/.test(toast.message))) io.outcomes.push("blocked");
+  if (!io.outcomes.length) io.outcomes.push("ignored");
+  return io.outcomes as Outcome[];
+}
+
+describe.each(dropPlatforms)("differential drop outcomes: %s", platform => {
+  beforeAll(async () => {
+    vi.resetModules(); vi.stubGlobal("navigator", { platform: platform === "mac" ? "MacIntel" : platform === "windows" ? "Win32" : "Linux" });
+    const names = {
+      native: "$lib/composables/use-native-drop-handler", html: "$lib/state/html5-file-drag.svelte", items: "$lib/composables/use-item-interactions.svelte",
+      pointer: "$lib/composables/use-pointer-drag.svelte", external: "$lib/composables/use-external-drag.svelte", drag: "$lib/state/drag.svelte",
+      sidebarEnd: "$lib/composables/use-sidebar-drag-end", targets: "$lib/state/file-drop-targets.svelte", dialogs: "$lib/state/dialogs.svelte",
+      toast: "$lib/state/toast.svelte", tabs: "$lib/state/window-tabs.svelte", directory: "$lib/composables/use-dom-directory-drop", sidebar: "$lib/composables/use-sidebar-file-drop", folder: "$lib/composables/use-drop-target.svelte",
+    };
+    modules = Object.fromEntries(await Promise.all(Object.entries(names).map(async ([key, name]) => [key, await import(name)])));
+  });
+  beforeEach(async () => {
+    observationTime = matrixClock += 100;
+    vi.spyOn(Date, "now").mockImplementation(() => observationTime);
+    cleanup = []; sourceEnd = undefined; io.outcomes = []; io.records = []; io.callbacks.clear(); io.start.mockReset().mockResolvedValue(undefined);
+    localStorage.clear(); modules.drag.dragState.clear(); modules.toast.toastStore.clear();
+    win = new EventTarget(); doc = new EventTarget();
+    sourcePath = platform === "windows" ? "C:/source/item" : "/source/item";
+    destPath = platform === "windows" ? "C:/destination" : "/destination";
+    vi.stubGlobal("window", Object.assign(win, { innerWidth: 800, innerHeight: 600, devicePixelRatio: 2, __TAURI_INTERNALS__: {
+      transformCallback: (fn: Function) => { const id = ++io.sequence; io.callbacks.set(id, fn); return id; }, unregisterCallback: (id: number) => io.callbacks.delete(id),
+    } }));
+    vi.stubGlobal("document", Object.assign(doc, { elementFromPoint: () => hit, documentElement: { style: {} },
+      createElement: () => ({ style: {}, remove() {} }), body: { appendChild() {}, style: {} } }));
+    vi.spyOn(modules.tabs.windowTabsManager, "getTabPath").mockReturnValue(destPath);
+    const service = modules.native.useNativeDropHandler({ getActiveExplorer: () => ({ currentPath: destPath }), refreshAllPanes() {} });
+    service.setup(); cleanup.push(service.cleanup); await flush();
+  });
+  afterEach(() => {
+    sourceEnd?.();
+    for (const args of io.start.mock.calls) {
+      const callback = io.callbacks.get(args[0].onEvent.id);
+      callback?.({ index: 0, message: { result: "Cancelled" } });
+    }
+    cleanup.reverse().forEach(fn => fn()); modules.drag.dragState.finish(modules.drag.dragState.current, true);
+    vi.restoreAllMocks();
+  });
+  it.each([...dropCases, ...dropBoundaryCases].filter(c => c.platform === platform))("$source → $target / $modifier / $transport / $lifetime", async c => {
+    if (c.transport === "native-rejected") { io.start.mockRejectedValue("unavailable"); vi.spyOn(console, "warn").mockImplementation(() => {}); }
+    const policy = branchDropPolicy(c);
+    if (!policy.difference) expect(policy.outcome).toBe(devDropPolicy(c));
+    const outcomes = await run(c);
+    // Also catches duplicate transfer/pinning/delivery across native and DOM.
+    expect(outcomes).toEqual([policy.outcome]);
+    for (const record of io.records) {
+      expect(record.paths).toEqual([sourcePath]);
+      if (record.target) expect(record.target).toBe(destPath);
+    }
+  });
+});
+
+it("every declared difference has exercised rows, and the Cartesian matrix is complete", () => {
+  expect(dropCases).toHaveLength(2592);
+  for (const difference of intendedDifferences) expect([...dropCases, ...dropBoundaryCases].some(c => branchDropPolicy(c).difference === difference.id)).toBe(true);
+});

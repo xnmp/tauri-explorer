@@ -239,3 +239,21 @@ test("a failed report keeps its in-session attachment retry draft", async ({ pag
   await expect(dialog.getByText("Clipboard screenshot.png")).toBeVisible();
   await dialog.screenshot({ path: evidencePath("ac-4-failed-report-retry.png") });
 });
+
+test("ordinary text drag inserts into the report description", async ({ page }) => {
+  await page.goto("/"); await waitForEntries(page);
+  const dialog = await openReportDialog(page);
+  const description = dialog.getByLabel("Description");
+  await description.fill("Existing report details. ");
+  await description.evaluate(textarea => {
+    const source = document.createElement("div");
+    source.draggable = true;
+    source.dataset.testid = "report-text-drag";
+    source.textContent = "Additional dropped details";
+    source.addEventListener("dragstart", event => event.dataTransfer!.setData("text/plain", source.textContent!));
+    textarea.parentElement!.prepend(source);
+  });
+  await page.getByTestId("report-text-drag").dragTo(description);
+  await expect(description).toHaveValue(/Additional dropped details/);
+  await expect(description).toHaveValue(/Existing report details/);
+});

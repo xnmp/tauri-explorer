@@ -31,7 +31,10 @@ describe("shared HTML5 filesystem source protocol", () => {
     expect(native.mock.calls[0][0].item).toEqual(data.paths);
     document.dispatchEvent(new Event("dragstart"));
     document.dispatchEvent(new Event("dragend")); stop();
-    source.end(); expect(dragState.current).toBe(original); expect(dragState.readCrossWindow()?.paths).toEqual(data.paths);
+    source.end();
+    expect(dragState.current?.sessionId).toBe(original?.sessionId);
+    expect(dragState.readCrossWindow()?.paths).toEqual(data.paths);
+    expect(dragState.survivingHtml5Source()).toBeNull();
   });
 
   it("publishes the same native protocol for Miller/Recent single directory sources", () => {

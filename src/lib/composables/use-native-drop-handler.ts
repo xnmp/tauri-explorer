@@ -10,12 +10,12 @@ import { useExternalDrop } from "$lib/composables/use-external-drop.svelte";
 import { resolveDropTarget, resolveDropTargetFromElement, captureDropDestination, highlightTarget, highlightTargetAtPoint, clearHighlights, captureHighlightCleanup } from "$lib/composables/use-native-drop-target.svelte";
 import { dragState, type DragData } from "$lib/state/drag.svelte";
 import { handleFileDropMany } from "$lib/state/drop-operations";
-import { isCopyModifier as isCopyMod, isWindows } from "$lib/domain/platform";
+import { isCopyModifier as isCopyMod, isMac, isWindows } from "$lib/domain/platform";
 import { bookmarksStore } from "$lib/state/bookmarks.svelte";
 import { terminalPanelStore } from "$lib/state/terminal.svelte";
 import { parentDir, isInsideDir, samePath } from "$lib/domain/path";
 import { dispatchFileDrop } from "$lib/state/dispatch-file-drop";
-import { internalDragPaths, sameDropPathSet, domDropPaths, domOwnsFileDrop } from "$lib/domain/file-drop";
+import { internalDragPaths, sameDropPathSet, domDropPaths, domOwnsFileDrop, isFileTransfer, isExplorerFileTransfer } from "$lib/domain/file-drop";
 import { nativeDropPaths } from "$lib/domain/native-drop-paths";
 import { toastStore } from "$lib/state/toast.svelte";
 import { dialogStore } from "$lib/state/dialogs.svelte";
@@ -30,29 +30,50 @@ export function useNativeDropHandler(deps: NativeDropDeps) {
   let copyModifierHeld = false;
   // Receiver-owned snapshot of the live source at native Enter. Source result
   // and destination Drop use different IPC channels and can arrive reordered.
-  let nativeGesture: { data: DragData | null } | null = null;
+  let nativeGesture: { data: DragData | null; expired?: boolean } | null = null;
   let nativeDomSession: string | undefined;
   const deferredDomSources = new WeakMap<DragEvent, DragData>();
   const pendingDomDrops = new Set<() => void>();
   let clearNativeHighlights: (() => void) | null = null;
 
-  function handleNativeEnter(rawPaths: string[], _position: { x: number; y: number }, source?: DragData | null, copyModifier?: boolean | null): void {
+  function nativeSource(source: DragData | null | undefined, observedAt?: number): DragData | null {
+    if (source !== null) return source ?? dragState.current ?? dragState.readCrossWindow();
+    // Explicit source:null is external except for WebKitGTK's surviving HTML5
+    // gesture. Never infer provenance from an asynchronous consumer's retained
+    // source. Admission below still requires the entire native path multiset.
+    return !isMac && !isWindows ? dragState.survivingHtml5Source(observedAt) : null;
+  }
+
+  function handleNativeEnter(rawPaths: string[], _position: { x: number; y: number }, source?: DragData | null, copyModifier?: boolean | null, observedAt?: number): void {
     if (copyModifier != null) copyModifierHeld = copyModifier;
-    const data = source === undefined ? dragState.current ?? dragState.readCrossWindow() : source;
-    const livePaths = internalDragPaths(data, isWindows);
     const paths = nativeDropPaths(rawPaths, isWindows);
+    const data = nativeSource(source, observedAt);
+    const livePaths = internalDragPaths(data, isWindows);
+    const verifiedSource = livePaths && sameDropPathSet(paths, livePaths, isWindows);
+    if (!verifiedSource && dragState.expiredNativeObservation(observedAt)) {
+      nativeGesture = { data: null, expired: true };
+      nativeDomSession = dragState.cancelledNativeSession(observedAt, paths, isWindows);
+      return;
+    }
     nativeGesture = { data: livePaths && sameDropPathSet(paths, livePaths, isWindows) && data
       ? { ...data, paths: [...livePaths] } : null };
     nativeDomSession = nativeGesture.data?.sessionId;
   }
 
-  async function handleNativeDrop(rawPaths: string[], position: { x: number; y: number }, source?: DragData | null, copyModifier?: boolean | null): Promise<void> {
-    const target = resolveDropTarget(position);
+  async function handleNativeDrop(rawPaths: string[], position: { x: number; y: number }, source?: DragData | null, copyModifier?: boolean | null, observedAt?: number): Promise<void> {
     const paths = nativeDropPaths(rawPaths, isWindows);
-    const dragData = source === undefined ? (nativeGesture ? nativeGesture.data : dragState.current ?? dragState.readCrossWindow()) : source;
-    nativeGesture = null;
+    const dragData = source ?? (nativeGesture ? nativeGesture.data : nativeSource(source, observedAt));
     const internalPaths = internalDragPaths(dragData, isWindows);
     const isInternalDrag = internalPaths !== null && sameDropPathSet(paths, internalPaths, isWindows);
+    if (!isInternalDrag && (nativeGesture?.expired || dragState.expiredNativeObservation(observedAt))) {
+      nativeDomSession ??= dragState.cancelledNativeSession(observedAt, paths, isWindows);
+      nativeGesture = null;
+      clearHighlights();
+      toastStore.show("Drop cancelled because its gesture identity expired. Drop the files again.");
+      return;
+    }
+    const target = resolveDropTarget(position);
+    nativeGesture = null;
     if (isInternalDrag) nativeDomSession = dragData?.sessionId;
     const sourcePaths = isInternalDrag ? internalPaths : paths;
     const delivery = dispatchFileDrop(target, sourcePaths, isInternalDrag ? "pane" : "external", isInternalDrag ? dragData : null);
@@ -163,6 +184,7 @@ export function useNativeDropHandler(deps: NativeDropDeps) {
   function trackDragModifiers(event: DragEvent): void { copyModifierHeld = isCopyMod(event); }
 
   function handleDomDragOver(event: DragEvent): void {
+    if (!isFileTransfer(event.dataTransfer)) return;
     trackDragModifiers(event);
     event.preventDefault();
     const target = resolveDropTargetFromElement(event.target as Element | null);
@@ -173,14 +195,21 @@ export function useNativeDropHandler(deps: NativeDropDeps) {
   }
 
   function handleDomDrop(event: DragEvent): void {
+    if (!isFileTransfer(event.dataTransfer)) return;
+    const bound = event.dataTransfer && isExplorerFileTransfer(event.dataTransfer) ? dragState.domSource(event.dataTransfer) : null;
+    if (dragState.expiredDomSource(bound, event.dataTransfer)) {
+      event.preventDefault(); event.stopImmediatePropagation(); return;
+    }
     if (!deferredDomSources.has(event)) trackDragModifiers(event);
     event.preventDefault();
     const target = resolveDropTargetFromElement(event.target as Element | null);
     const terminal = target?.type === "plugin" || target?.type === "blocked";
-    const fileGesture = event.dataTransfer?.types.some(type => type === "Files" || type.startsWith("application/x-explorer-"));
-    const source = deferredDomSources.get(event) ?? dragState.current ?? dragState.readCrossWindow();
-    const pending = deferredDomSources.has(event) ? undefined : dragState.pendingNative();
-    if (pending && fileGesture) {
+    const source = deferredDomSources.get(event) ?? bound;
+    const live = dragState.current ?? dragState.readCrossWindow();
+    // A decision belongs to its captured source session. An old drop cannot
+    // borrow a successor's pending handoff and regain validity during replay.
+    const pending = deferredDomSources.has(event) || !source || source.sessionId !== live?.sessionId ? undefined : dragState.pendingNative();
+    if (pending) {
       // A Drop can beat the start-command reply. Reserve routing until the
       // handoff is known; snapshot while the DOM drag data store is readable.
       event.stopImmediatePropagation();
@@ -218,12 +247,12 @@ export function useNativeDropHandler(deps: NativeDropDeps) {
     const session = event.dataTransfer?.getData("application/x-explorer-session") || undefined;
     if (!domOwnsFileDrop(nativeGesture !== null || dragState.nativeOwns(session)
         || (!!session && session === nativeDomSession))) {
-      if (terminal || fileGesture) event.stopImmediatePropagation();
+      event.stopImmediatePropagation();
       return;
     }
     if (!terminal) return;
     event.stopImmediatePropagation();
-    const data = source;
+    const data = deferredDomSources.has(event) || source?.sessionId === live?.sessionId ? source : null;
     const livePaths = internalDragPaths(data, isWindows);
     const payload = event.dataTransfer ? domDropPaths(event.dataTransfer, isWindows) : null;
     const paths = livePaths && payload && sameDropPathSet(payload, livePaths, isWindows) ? livePaths : [];

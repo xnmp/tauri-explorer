@@ -1,5 +1,23 @@
 import { isNativeDropPath } from "./native-drop-paths";
 
+/** Admission uses the current gesture's types, never unrelated retained state.
+ * Bookmark reorder and plugin-specific/text payloads belong to their DOM owners. */
+export function isExplorerFileTransfer(data: Pick<DataTransfer, "types"> | null | undefined): boolean {
+  return !!data && ["application/x-explorer-path", "application/x-explorer-paths", "application/x-explorer-kind"]
+    .some(type => data.types.includes(type));
+}
+
+export function isFileTransfer(data: Pick<DataTransfer, "types"> | null | undefined): boolean {
+  return isExplorerFileTransfer(data) || !!data?.types.includes("Files");
+}
+
+/** Native observations use Unix milliseconds, captured before IPC delivery.
+ * End is exclusive: a later external gesture must not borrow retired identity. */
+export function observedDuringGesture(observedAt: number, startedAt: number, endedAt?: number): boolean {
+  return Number.isFinite(observedAt) && Number.isFinite(startedAt)
+    && observedAt >= startedAt && (endedAt === undefined || (Number.isFinite(endedAt) && observedAt < endedAt));
+}
+
 /** Internal payloads are all-or-nothing: a malformed member cannot fall back
  * to a single path or a stale persisted selection. Preserve source order. */
 export function validatedDropPaths(value: unknown, windows: boolean): string[] | null {

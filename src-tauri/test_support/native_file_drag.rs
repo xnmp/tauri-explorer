@@ -256,10 +256,12 @@ fn receiver_event_carries_drop_time_modifiers_independently_of_source_policy() {
             position: tauri::PhysicalPosition { x: 20.0, y: 30.0 },
             source: Some(source()),
             copy_modifier: Some(copying),
+            observed_at: 1011.25,
         };
         let json = serde_json::to_value(event).unwrap();
         assert_eq!(json["type"], "drop");
         assert_eq!(json["copyModifier"], copying);
+        assert_eq!(json["observedAt"], 1011.25);
         assert_eq!(json["source"]["nativeCopyPolicy"], "modifier");
     }
 }
@@ -374,4 +376,45 @@ fn filesystem_roots_can_drag_out_but_do_not_claim_explorer_receiver_identity() {
     registry.begin(1, "source-window".into(), Some(source));
     assert_eq!(registry.enter("receiver-window", &paths), None);
     assert_eq!(registry.receive_drop("receiver-window", &paths), None);
+}
+
+#[test]
+fn automatic_html5_observation_survives_source_retirement_and_delayed_delivery() {
+    let mut registry = Registry::default();
+    // A failed explicit start has retired the Rust source. Wry still observes
+    // the original HTML5 drag; the frontend must correlate its observation,
+    // never the later IPC delivery time, with the retained HTML5 lifetime.
+    registry.begin(1, "source".into(), Some(source()));
+    registry.complete(1);
+    for (native, delivered, observed_at) in [
+        (
+            wry::DragDropEvent::Enter {
+                paths: paths(),
+                position: (20, 30),
+            },
+            tauri::DragDropEvent::Enter {
+                paths: paths(),
+                position: tauri::PhysicalPosition { x: 20.0, y: 30.0 },
+            },
+            1011.25,
+        ),
+        (
+            wry::DragDropEvent::Drop {
+                paths: paths(),
+                position: (20, 30),
+            },
+            tauri::DragDropEvent::Drop {
+                paths: paths(),
+                position: tauri::PhysicalPosition { x: 20.0, y: 30.0 },
+            },
+            1011.5,
+        ),
+    ] {
+        registry.capture_at(42, &native, true, observed_at);
+        registry.destroyed("source");
+        let payload = serde_json::to_value(registry.take(42, &delivered).unwrap()).unwrap();
+        assert_eq!(payload["source"], serde_json::Value::Null);
+        assert_eq!(payload["observedAt"], observed_at);
+        assert_eq!(payload["copyModifier"], true);
+    }
 }

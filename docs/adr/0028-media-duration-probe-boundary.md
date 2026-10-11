@@ -45,23 +45,32 @@ child until it is reaped:
 
 - stderr is drained on a helper thread and capped at `MAX_FFMPEG_STDERR` bytes;
 - the child must exit within `FFMPEG_PROBE_TIMEOUT`, or it is killed and
-  reaped, and the file yields no duration.
+  reaped, and the file yields no duration;
+- the stderr helper thread is joined only after the child exits. A configured
+  `ffmpeg_path` that is a wrapper script and does not `exec` can leave a
+  grandchild holding stderr, and only the wrapper is killed. A real ffmpeg
+  binary does not fork, so this is accepted rather than handled with process
+  groups.
 
 ### Resource limits
 
-The frontend resolver batches same-tick row requests (16 paths per call) and
-keeps at most two `get_media_durations` calls in flight. It caches at most 5000
-results, keyed by path and revision (size + mtime). Each call runs its batch
-sequentially on one blocking task, so at most two probes, and therefore at most
-two ffmpeg children, run at once.
+Each window's frontend resolver batches same-tick row requests (16 paths per
+call) and keeps at most two `get_media_durations` calls in flight. It caches at
+most 5000 results, keyed by path and revision (size + mtime). Each call runs its
+batch sequentially on one blocking task, so a window runs at most two probes,
+and therefore at most two ffmpeg children, at once. The limit is per window,
+not per process: every explorer window has its own resolver and the native
+command has no global semaphore, so N open windows can run up to 2N probes.
 
 ### Failure behavior
 
 Every failure is per file and yields `null`: unreadable, unsupported, malformed
 or over-budget input, a missing ffmpeg, a timeout or an unparseable ffmpeg
 report. The frontend renders `null` as an empty cell and caches it for that
-revision, so a bad file is not re-probed until it changes. A failure never fails
-the batch, the listing, or other rows.
+revision, so a bad file is not re-probed until it changes. A timeout is cached
+the same way: a file that once took longer than `FFMPEG_PROBE_TIMEOUT` (for
+example on a cold network share) shows no length until it changes or the window
+reloads. A failure never fails the batch, the listing, or other rows.
 
 ## Consequences
 

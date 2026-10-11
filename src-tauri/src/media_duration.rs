@@ -239,8 +239,9 @@ fn ebml_element<R: Read>(reader: &mut R) -> Option<(u64, Option<u64>)> {
 /// Longest an ffmpeg probe may run before it is killed (ADR 0028).
 const FFMPEG_PROBE_TIMEOUT: Duration = Duration::from_secs(10);
 
-/// Most ffmpeg stderr bytes kept; `Duration:` appears in the first few lines.
-const MAX_FFMPEG_STDERR: u64 = 64 * 1024;
+/// Most ffmpeg stderr bytes kept. `Duration:` follows the container metadata
+/// dump, which large tags (lyrics, long comments) can stretch to many KiB.
+const MAX_FFMPEG_STDERR: u64 = 1024 * 1024;
 
 fn ffmpeg_duration(path: &Path) -> Option<f64> {
     let ffmpeg = crate::thumbnails::ffmpeg_path()?;
@@ -264,11 +265,18 @@ fn ffmpeg_probe(ffmpeg: &Path, path: &Path, timeout: Duration) -> Option<f64> {
         .spawn()
         .ok()?;
     let stderr = child.stderr.take()?;
-    let drain = std::thread::spawn(move || {
-        let mut text = Vec::new();
-        let _ = stderr.take(MAX_FFMPEG_STDERR).read_to_end(&mut text);
-        text
-    });
+    let drain = std::thread::Builder::new()
+        .name("ffmpeg-duration-stderr".into())
+        .spawn(move || {
+            let mut text = Vec::new();
+            let _ = stderr.take(MAX_FFMPEG_STDERR).read_to_end(&mut text);
+            text
+        });
+    let Ok(drain) = drain else {
+        let _ = child.kill();
+        let _ = child.wait();
+        return None;
+    };
     let deadline = Instant::now() + timeout;
     loop {
         match child.try_wait() {

@@ -97,14 +97,23 @@ test("Details column popup stays onscreen and toggles all optional columns", asy
 
   for (const [label, column] of [["Date modified", "date"], ["Type", "type"], ["Size", "size"]]) {
     const header = page.locator(`.column-headers .${column}-column`);
+    const rows = page.locator(".file-rows .file-item");
+    const rowCount = await rows.count();
+    expect(rowCount).toBeGreaterThan(0);
+    const cells = rows.locator(`.${column}-cell`);
     await expect(header).toBeVisible();
+    await expect(cells).toHaveCount(rowCount);
+    await expect(cells.first()).toBeVisible();
     await page.locator(".column-menu-item").filter({ hasText: label }).click();
     await expect(header).toHaveCount(0);
+    await expect(cells).toHaveCount(0);
     await expect(page.locator(".column-menu")).toHaveCount(0);
     await captureColumnState(page, label, column, "hidden");
     await openAtHeader(page, true);
     await page.locator(".column-menu-item").filter({ hasText: label }).click();
     await expect(header).toBeVisible();
+    await expect(cells).toHaveCount(rowCount);
+    await expect(cells.first()).toBeVisible();
     await captureColumnState(page, label, column, "restored");
     await openAtHeader(page, true);
   }

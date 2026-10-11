@@ -1,0 +1,23 @@
+Report Issue supports PNG/JPEG/GIF images and MP4/WebM/MOV videos. The raw
+attachment caps remain 3 files, 2 MiB per file, and 3 MiB total; base64 JSON
+must still fit Vercel's 4.5 MB request ceiling. This deliberately supports
+short clips rather than a new recording upload service.
+
+Clipboard video reads use the existing ordered file-clipboard snapshot, then
+read one regular file with a bounded `take(MAX_ATTACHMENT_BYTES + 1)`. Copying
+multiple files produces an explicit copy-one-file message. A copied video file
+takes precedence over a thumbnail image offered by the same clipboard owner.
+Screenshot reads fall back to the original image command, including when
+file-list tooling fails.
+
+Frontend draft admission, Rust submission and the relay all check signatures:
+PNG/JPEG/GIF prefixes, the WebM EBML prefix, and a bounded leading `ftyp` box
+with MP4 or QuickTime brands. These are container signature checks, not a full
+media decode. Keep the three lists in sync. Video previews deliberately use a
+placeholder so they do not decode untrusted attachments in the dialog.
+
+The relay retains image embeds and renders videos as Markdown links. Blob
+uploads use the declared validated content type and an extension matching it.
+Deploy the website relay along with the app; an older image-only relay rejects
+videos, and the app retains attachments for retry/fallback until the window
+closes. Attachments remain memory-only; only report text survives app restart.

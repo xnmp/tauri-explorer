@@ -91,10 +91,15 @@ Rules that bite:
 - Git-graph undo snapshots come from the Rust mutation command, stay session/repository-scoped in `state/git-graph-undo.ts`, and are re-verified by `git_undo` before the inverse. Merge/pull undo requires unchanged HEAD + a clean tree; tag deletion records the raw tag-object OID so annotated tags restore exactly (#513).
 - Git-graph tabs remount on activation; their snapshot cache must retain the supported 12-tab load fan-out so switching back can paint cached history instead of starting a new git-log request. External watcher changes evict the snapshot; valid cached remounts skip the redundant graph reload (#505).
 - Git-graph fetch, pull, and remote-branch push share one client-ID network-operation lifecycle in `git-graph-refresh.ts`. Per ADR 0006, fetch enumerates `fetch --all`-eligible remotes (respecting `skipFetchAll`/`skipDefaultUpdate`) and updates each one atomically; ordinary remote errors are aggregated after later remotes run, while cancellation stops immediately between remotes. Only the unbounded network phase is killable: pull receives a per-invocation IPC phase channel before starting, then must deliver the transition from atomic fetch to local fast-forward (or fail closed before moving HEAD) so the banner switches to “Finishing Git pull…” and removes the now-ineffective Cancel control while preserving completed-pull undo; remote-delete cancellation reports that the remote may already have applied it (#528).
-- User-report images are hosted as public Vercel Blobs before the relay creates
+- User-report images and videos are hosted as public Vercel Blobs before the relay creates
   the GitHub issue. Production therefore needs `BLOB_READ_WRITE_TOKEN` as well
   as `GITHUB_ISSUE_TOKEN`. Keep the raw attachment total at or below 3 MiB so
   its base64 JSON request stays below Vercel's 4.5 MB function-body limit.
+  Video reports support MP4/WebM/MOV within the existing 2 MiB/file cap. Clipboard
+  attachments use the ordered file snapshot and require one copied video file;
+  retain the image-read fallback if file-list tooling fails. Check container
+  signatures in frontend draft admission, native submission and the relay, and
+  deploy the relay alongside the app. See `docs/lessons/1059-report-video-attachments.md`.
 
 ## Documentation
 

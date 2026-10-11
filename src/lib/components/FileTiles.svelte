@@ -1,8 +1,9 @@
 <!--
   FileTiles - The Tiles view's tiles for plugin-owned surfaces (SDK module
   `ui/file-tiles`). The plugin supplies the entries and selection and handles
-  every interaction through callbacks; nothing here reads or changes pane
-  state. Tiles render through TileSurface and TileVisual, the same chrome,
+  every interaction through callbacks; selection remains plugin-owned.
+  Each FileTile reads shared host appearance and pane-owned inline rename.
+  Tiles render through TileSurface and TileVisual, the same chrome,
   thumbnails, names and size setting as the built-in Tiles view: the `size`
   a plugin passes from `pane.tileSize`, else the size of the plugin file
   view it renders in, else the global setting.
@@ -13,31 +14,14 @@
 <script lang="ts">
   import type { FileEntry } from "$lib/domain/file";
   import { autoFillColumns, chunkIntoRows } from "$lib/domain/virtual-layout";
-  import { gridFocusStep, isThumbnailSize, tileLayout, TILE_GRID_PAD_X, type TileSizePreset } from "$lib/domain/tile-layout";
+  import { gridFocusStep, isThumbnailSize, tileLayout, TILE_GRID_PAD_X } from "$lib/domain/tile-layout";
   import { settingsStore } from "$lib/state/settings.svelte";
   import { getTileSizeContext } from "$lib/state/tile-size-context";
   import TileSurface from "./TileSurface.svelte";
-  import TileVisual from "./TileVisual.svelte";
+  import FileTile from "./FileTile.svelte";
+  import type { FileTilesProps } from "$lib/plugins/api";
 
-  interface Props {
-    entries: readonly FileEntry[];
-    /** Selected entry paths. Pass a new Set (or a reactive one) to update
-     *  it; mutating a plain Set in place does not re-render. */
-    selected: ReadonlySet<string>;
-    onselect: (entry: FileEntry, event: MouseEvent) => void;
-    /** Double-click or Enter. */
-    onopen: (entry: FileEntry) => void;
-    onmenu: (entry: FileEntry, event: MouseEvent) => void;
-    /** The grid's accessible name. */
-    label?: string;
-    /** Tile size preset (capability "tileSize"); a file view passes
-     *  `pane.tileSize?.preset` to match its folder's size. Omitted or
-     *  unknown: the enclosing plugin file view's folder size, else the
-     *  global tile-size setting. */
-    size?: TileSizePreset;
-  }
-
-  let { entries, selected, onselect, onopen, onmenu, label = "Files", size }: Props = $props();
+  let { entries, selected, onselect, onopen, onmenu, label = "Files", size }: FileTilesProps = $props();
 
   // Precedence: explicit `size`, then the enclosing pane's folder size
   // (PluginFileView's context), then the global setting.
@@ -58,7 +42,7 @@
     focusedPath !== null && entries.some((entry) => entry.path === focusedPath) ? focusedPath : (entries[0]?.path ?? null),
   );
 
-  // Videos whose thumbnail failed (e.g. no ffmpeg) keep their plain icon.
+  // Retain failed-video fallback by path across row rechunking/remounts.
   let unavailable = $state<ReadonlySet<string>>(new Set());
   function markUnavailable(path: string): void {
     if (!unavailable.has(path)) unavailable = new Set([...unavailable, path]);
@@ -87,16 +71,11 @@
     {#each rows as row, rowIndex (row.startIndex)}
       <div role="row" aria-rowindex={rowIndex + 1} class="tile-row" style="grid-template-columns: repeat({columns}, minmax(0, 1fr)); gap: var(--tile-gap);">
         {#each row.items as entry, col (entry.path)}
-          {@const isSelected = selected.has(entry.path)}
-          <div role="gridcell" class="tile-item" class:selected={isSelected} aria-selected={isSelected} aria-colindex={col + 1}
-            tabindex={entry.path === tabStop ? 0 : -1} data-entry-path={entry.path}
+          <FileTile {entry} selected={selected.has(entry.path)} focused={entry.path === tabStop}
+            size={layout.size} column={col + 1} {onselect} {onopen} {onmenu}
+            videoUnavailable={unavailable.has(entry.path)} onvideounavailable={() => markUnavailable(entry.path)}
             onfocus={() => (focusedPath = entry.path)}
-            onclick={(event) => onselect(entry, event)}
-            ondblclick={() => onopen(entry)}
-            oncontextmenu={(event) => { event.preventDefault(); onmenu(entry, event); }}
-            onkeydown={(event) => onkeydown(event, entry, row.startIndex + col)}>
-            <TileVisual {entry} {layout} videoUnavailable={unavailable.has(entry.path)} onvideounavailable={() => markUnavailable(entry.path)} />
-          </div>
+            onkeydown={(event) => onkeydown(event, entry, row.startIndex + col)} />
         {/each}
       </div>
     {/each}

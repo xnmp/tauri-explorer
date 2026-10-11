@@ -38,6 +38,63 @@ import { extractError, type ApiResult } from "$lib/api/common";
 import { logFrontendError } from "$lib/api/crash";
 import { subscribeToLocalFileChanges } from "$lib/state/file-events";
 
+export type { PaneTileSize, TileSizePreset, TileGridMetrics } from "$lib/domain/tile-layout";
+import type { TileSizePreset, TileGridMetrics } from "$lib/domain/tile-layout";
+import type { Component } from "svelte";
+
+/** `ui/file-tile` (capability "fileTile"). Renders one `role="gridcell"`;
+ * the plugin supplies grid/row roles and owns keyboard navigation/selection.
+ * Host clipboard, hidden/empty-folder styling and pane-owned inline rename
+ * are reactive. No host drag/drop wiring: `ui/file-tiles` exposes none either.
+ */
+export interface FileTileProps {
+  entry: FileEntry;
+  selected: boolean;
+  /** Roving tab stop (0 when true, otherwise -1); does not move DOM focus. */
+  focused?: boolean;
+  /** Optional one-based column index, supplied by the plugin's layout. */
+  column?: number;
+  /** DOM focus notification; plugins may update their roving tab stop. */
+  onfocus?: (event: FocusEvent) => void;
+  /** Keyboard events are forwarded unchanged; the plugin owns navigation. */
+  onkeydown?: (event: KeyboardEvent) => void;
+  /** Optional remembered video-thumbnail failure; keeps the plain file icon. */
+  videoUnavailable?: boolean;
+  /** Allows a virtualized plugin grid to retain failed-video fallback by path. */
+  onvideounavailable?: (entry: FileEntry) => void;
+  /** Explicit preset, else enclosing pane's folder size, else global setting.
+   * Unknown values fall through like an omitted preset. */
+  size?: TileSizePreset;
+  /** Receives the original mouse event, including selection modifiers. */
+  onselect: (entry: FileEntry, event: MouseEvent) => void;
+  /** Double-click. Keyboard activation belongs to the plugin's grid. */
+  onopen: (entry: FileEntry) => void;
+  /** Receives the original event after preventDefault(). */
+  onmenu: (entry: FileEntry, event: MouseEvent) => void;
+}
+
+/** `ui/file-tiles` (capability "fileTiles"). Owns a non-virtualized grid,
+ * roving focus, arrows/Home/End and Enter activation. */
+export interface FileTilesProps {
+  entries: readonly FileEntry[];
+  /** Replace a plain Set to update selection, or use a reactive Set. */
+  selected: ReadonlySet<string>;
+  onselect: FileTileProps["onselect"];
+  onopen: FileTileProps["onopen"];
+  onmenu: FileTileProps["onmenu"];
+  /** Accessible grid name; defaults to "Files". */
+  label?: string;
+  /** Same explicit/pane/global resolution as `FileTileProps.size`. */
+  size?: TileSizePreset;
+}
+
+/** Shape of `sdk.modules["ui/file-tile"]`; detect `"fileTile"` capability. */
+export interface FileTileModule {
+  readonly default: Component<FileTileProps>;
+  /** Omitted/unknown preset: medium. CSS px, before host zoom. */
+  readonly tileGridMetrics: (size?: TileSizePreset) => TileGridMetrics;
+}
+
 // ----- Settings descriptors -----
 
 export type SettingRowType = "text" | "password" | "toggle" | "select";

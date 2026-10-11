@@ -36,7 +36,7 @@ export interface FileViewPane {
    * override ("Tile View: Set Size", the context menu's Icon Size), else the
    * global setting. Reactive, so a view sized from it follows both. Present
    * on hosts with the `"tileSize"` capability; pass `tileSize?.preset` as
-   * `ui/file-tiles`'s `size`.
+   * `ui/file-tiles` or `ui/file-tile`'s `size`.
    */
   readonly tileSize?: PaneTileSize;
   /** Select one entry with the normal modifier semantics (Ctrl toggles, Shift extends). */

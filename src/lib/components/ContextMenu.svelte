@@ -425,6 +425,7 @@
   <div
     bind:this={menuEl}
     class="context-menu"
+    class:revealed={menuVisible}
     style="left: {clampedX}px; top: {clampedY}px; visibility: {menuVisible ? 'visible' : 'hidden'};"
     role="menu"
     tabindex="-1"
@@ -863,6 +864,12 @@
     border: 1px solid var(--surface-stroke-flyout);
     border-radius: var(--radius-lg);
     box-shadow: var(--shadow-flyout);
+  }
+  /* The menu is mounted hidden for one measuring frame (see the clamp effect).
+     Start the entrance only once it is revealed: an animation begun while
+     hidden is spent or replayed by the engine at reveal, so the menu appeared
+     to fade in a second time (#1062). */
+  .context-menu.revealed {
     animation: menuIn 100ms cubic-bezier(0, 0, 0, 1);
   }
   .menu-item:focus-visible { outline: 2px solid var(--focus-stroke-outer); outline-offset: -2px; }

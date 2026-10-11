@@ -176,6 +176,12 @@ SCM archive actions preserve each repo-relative path under `.archive/` and add
 
 When a bug resists quick diagnosis: search `docs/lessons/` + the frozen `lessons_learnt.md` archive and commit history first, then add targeted logging/instrumentation before another fix attempt. Suite-wide test timeouts (~5 s) under parallel/CPU load are a known flake mode — rerun the failing files in isolation before treating them as regressions.
 
+Cold Svelte transforms belong at suite collection time, outside individual
+behavior-test timers. Hoist mocks needed by eager imports, and retain fresh
+module instances after each test's persisted-data seed. Compiler exit-status
+checks belong in bounded suite setup rather than an application-behavior timer;
+keep their real command and success assertion intact (#993 PR repair).
+
 For Windows native transfer waits, use one renderer-side observer through
 `executeAsync` to correlate the requested operation token or listing mutation.
 Retain failure JSON and screenshots under `e2e-tauri/logs/`, capturing the

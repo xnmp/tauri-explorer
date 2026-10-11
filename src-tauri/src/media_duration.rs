@@ -6,6 +6,7 @@
 //! files whose header carries no usable duration (e.g. fragmented MP4), fall
 //! back to ffmpeg when it is available. Anything unreadable yields `None`; the
 //! frontend renders that as an empty cell and caches it per file revision.
+//! Parser bounds, ffmpeg ownership and limits are fixed by ADR 0028.
 
 use crate::error::AppError;
 use std::fs::File;

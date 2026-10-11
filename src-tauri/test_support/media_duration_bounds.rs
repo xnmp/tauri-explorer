@@ -188,3 +188,43 @@ fn ffmpeg_duration_ignores_duration_text_in_paths_and_tags() {
     let stderr = "Input #0, avi, from 'Duration: 09:00:00.00, x.avi':\n  Metadata:\n    title           : Duration: 05:00:00.00\n  Duration: 00:00:42.00, start: 0.000000, bitrate: 1 kb/s\n";
     assert_eq!(parse_ffmpeg_duration(stderr), Some(42.0));
 }
+
+/// EBML header, then a Segment declaring `size` bytes, then `rest` (which may
+/// run past the declared Segment).
+fn matroska_finite(size: u64, rest: &[u8]) -> Vec<u8> {
+    let mut out = vec![0x1A, 0x45, 0xDF, 0xA3, 0x84, 0x42, 0x86, 0x81, 0x01];
+    out.extend_from_slice(&[0x18, 0x53, 0x80, 0x67, 0x01]);
+    out.extend_from_slice(&size.to_be_bytes()[1..]);
+    out.extend_from_slice(rest);
+    out
+}
+
+#[test]
+fn matroska_info_wholly_outside_a_finite_segment_is_ignored() {
+    // An empty Segment (`18 53 80 67 80`) followed by a valid-looking Info.
+    let mut bytes = vec![0x1A, 0x45, 0xDF, 0xA3, 0x84, 0x42, 0x86, 0x81, 0x01];
+    bytes.extend_from_slice(&[0x18, 0x53, 0x80, 0x67, 0x80]);
+    bytes.extend(info(&duration_f64(754_000.0)));
+    assert_eq!(matroska_duration(&mut Cursor::new(bytes)), None);
+}
+
+#[test]
+fn matroska_info_crossing_the_segment_end_is_rejected() {
+    let info = info(&duration_f64(754_000.0));
+    // The Segment ends one byte before the Info it contains.
+    let bytes = matroska_finite(info.len() as u64 - 1, &info);
+    assert_eq!(matroska_duration(&mut Cursor::new(bytes)), None);
+}
+
+#[test]
+fn matroska_info_inside_finite_and_unknown_size_segments_is_read() {
+    let info = info(&duration_f64(754_000.0));
+    let mut void_then_info = vec![0xEC, 0x82, 0, 0];
+    void_then_info.extend_from_slice(&info);
+    let finite = matroska_finite(void_then_info.len() as u64, &void_then_info);
+    let seconds = matroska_duration(&mut Cursor::new(finite)).unwrap();
+    assert!((seconds - 754.0).abs() < 1e-6);
+    let unknown = matroska(&void_then_info);
+    let seconds = matroska_duration(&mut Cursor::new(unknown)).unwrap();
+    assert!((seconds - 754.0).abs() < 1e-6);
+}

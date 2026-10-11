@@ -32,3 +32,10 @@ export function resolutionCopy(r: UnresolvedAiOperation, action: "discard" | "st
     ? { title: "Discard this retained result?", body: `Discard the provider result for operation ${r.operationId}, owned by ${r.consumerPackage}. Its image bytes will be released after the disposition is durable. Generation will not run again.`, button: "Discard retained result" }
     : { title: "Stop recovery for this operation?", body: `Stop active recovery for operation ${r.operationId}, owned by ${r.consumerPackage}. Unknown outcome evidence remains retained. This does not declare that generation failed or that no charge occurred.`, button: "Stop active recovery" };
 }
+
+export interface UnresolvedIndicator { text: string; label: string }
+/** Header indicator for the unresolved count; null (hidden) for zero, negative or malformed counts. */
+export function unresolvedIndicator(count: unknown): UnresolvedIndicator | null {
+  if (typeof count !== "number" || !Number.isSafeInteger(count) || count <= 0) return null;
+  return { text: `${count} unresolved`, label: `Unresolved AI operations: ${count}` };
+}

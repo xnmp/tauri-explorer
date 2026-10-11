@@ -106,3 +106,27 @@ test("Plugins opens the real unresolved command surface and distinguishes missin
   await expect(dialog.getByRole("alert")).toHaveText("Install the Image Generation package in Plugins to configure connections.");
   await dialog.getByRole("button", { name: "Close unresolved operations" }).click(); await expect(parent).toBeVisible();
 });
+
+test("progress panel shows the unresolved indicator only when AI operations are unresolved", async ({ page }) => {
+  await page.goto(HOME_URL); await waitForEntries(page);
+  await page.evaluate(async () => {
+    const { jobsStore } = await import("/src/lib/state/jobs.svelte.ts");
+    jobsStore.addJob(4321, "plain.png", "Normal job", "openai-image", "image");
+  });
+  const progress = page.getByRole("region", { name: "Background progress" });
+  await expect(progress.getByText("Normal job", { exact: true })).toBeVisible();
+  await expect(progress.getByRole("button", { name: /Unresolved AI/ })).toHaveCount(0);
+  await expect(progress.getByText(/unresolved/)).toHaveCount(0);
+
+  await page.evaluate(async () => {
+    const { getMockControl } = await import("/src/lib/api/mock-control.ts");
+    const control = getMockControl();
+    const op = { operationId: "op-1", consumerPackage: "xnmp.trace-explorer", providerPackage: "xnmp.image-generation", createdAtMs: Date.now(), execution: "succeeded", delivery: "sealed", reason: "Original output retained", canResume: true, canDiscard: true, canStop: false };
+    control.nativeAiPresentation!.seed({ originWindow: "mock-window", watermark: 0, jobs: [] }, { version: 1, operations: [op] });
+  });
+  const button = progress.getByRole("button", { name: "Unresolved AI operations: 1" });
+  await expect(button).toHaveText("1 unresolved");
+  await button.click();
+  const dialog = page.getByRole("dialog", { name: "Unresolved AI operations", exact: true });
+  await expect(dialog.getByText("Original output retained")).toBeVisible();
+});

@@ -13,6 +13,9 @@
   import { formatSize } from "$lib/domain/file";
   import { imageJobProgress, formatJobDuration } from "$lib/domain/image-job-progress";
   import { jobStateLabel, nativeJobTerminal } from "$lib/domain/native-plugin-jobs";
+  import { unresolvedIndicator } from "$lib/domain/ai-operations";
+  import { unresolvedAiCount } from "$lib/state/ai-operations.svelte";
+  import { onMount } from "svelte";
   import AiOperationsDialog from "./AiOperationsDialog.svelte";
 
   let now = $state(Date.now());
@@ -24,6 +27,9 @@
   // A retry in progress keeps its failed entry, and the panel, open.
   const hasActive = $derived(operationsManager.hasActiveOperations || imageJobs.some(isJobActive));
   let region: HTMLElement | undefined = $state();
+  const unresolved = $derived(unresolvedIndicator(unresolvedAiCount.count));
+
+  onMount(() => unresolvedAiCount.subscribe());
 
   $effect(() => {
     if (!imageJobs.some(isJobActive)) return;
@@ -80,7 +86,9 @@
       <div class="dialog-header">
         <h3 class="dialog-title">{imageJobs.length ? operations.length ? "Background Operations" : "Image generation" : "File Operations"}</h3>
         <div class="header-actions">
-          <button class="header-btn" onclick={() => { unresolvedOpen = true; }}>Unresolved AI</button>
+          {#if unresolved}
+            <button class="header-btn unresolved" aria-label={unresolved.label} onclick={() => { unresolvedOpen = true; }}>{unresolved.text}</button>
+          {/if}
           {#if operationsManager.hasActiveOperations}
             <button
               class="header-btn cancel-all"
@@ -343,6 +351,10 @@
   .header-btn:hover {
     background: var(--subtle-fill-secondary);
     color: var(--text-primary);
+  }
+
+  .header-btn.unresolved {
+    color: var(--system-caution-text, var(--system-caution));
   }
 
   .header-btn.cancel-all {

@@ -888,6 +888,7 @@ TraceExplorer's image UI, provider adapters and SQLite journal are maintained in
 - `src/lib/domain/ai-operations.ts` — pure unresolved operation presentation and action rules.
 - `src/lib/domain/native-plugin-jobs.ts` — strict native job validation and revision merge rules.
 - `src/lib/state/ai-operations.ts` — unresolved operation subscriptions, coalesced refresh and action state.
+- `src/lib/state/ai-operations.svelte.ts` — ref-counted live unresolved-AI-operation count for the progress panel indicator.
 - `src/lib/state/native-plugin-jobs.ts` — subscribe-before-snapshot job reconciliation and origin-scoped notifications.
 - `src/test-support/modal/DirtyCloseDialog.svelte` — browser fixture for dirty nested modal ownership.
 

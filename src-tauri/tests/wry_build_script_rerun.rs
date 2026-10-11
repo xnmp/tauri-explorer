@@ -27,7 +27,12 @@ fn compile_build_script(source: &Path, output: &Path) {
     );
 }
 
-fn run_build_script(executable: &Path, target_os: &str, manifest_dir: &Path, out_dir: &Path) -> String {
+fn run_build_script(
+    executable: &Path,
+    target_os: &str,
+    manifest_dir: &Path,
+    out_dir: &Path,
+) -> String {
     fs::create_dir_all(out_dir).expect("build output directory is created");
     let result = Command::new(executable)
         .env("CARGO_CFG_TARGET_OS", target_os)
@@ -62,7 +67,9 @@ fn build_script_declares_source_tracking_on_linux_and_preserves_android_directiv
         &scratch.join("linux-out"),
     );
     assert!(
-        linux_output.lines().any(|line| line == "cargo:rerun-if-changed=build.rs"),
+        linux_output
+            .lines()
+            .any(|line| line == "cargo:rerun-if-changed=build.rs"),
         "Linux build script output must make Cargo track build.rs; got:\n{linux_output}"
     );
 
@@ -81,7 +88,8 @@ fn build_script_declares_source_tracking_on_linux_and_preserves_android_directiv
     assert!(
         android_output
             .lines()
-            .any(|line| line.starts_with("cargo:rerun-if-changed=") && line.contains("src/android/kotlin")),
+            .any(|line| line.starts_with("cargo:rerun-if-changed=")
+                && line.contains("src/android/kotlin")),
         "Android build script output must preserve Kotlin source tracking; got:\n{android_output}"
     );
 

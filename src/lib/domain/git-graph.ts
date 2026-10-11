@@ -1105,3 +1105,10 @@ export function prRepositorySlug(pr: { htmlUrl: string; number: number }): strin
     return `${parts[1]}/${parts[2]}`;
   } catch { return null; }
 }
+
+/** Position already covered by an anchored menu; queued scroll delivery is not movement. */
+export interface GraphViewportPosition { top: number; left: number }
+
+export function graphViewportMoved(anchor: GraphViewportPosition, current: GraphViewportPosition): boolean {
+  return anchor.top !== current.top || anchor.left !== current.left;
+}

@@ -269,3 +269,9 @@ include explicitly instead of inheriting the unit glob. Keep existing test
 assertions, deadlines and CLI worker overrides intact. Use positive group orders:
 Vitest puts isolated order-zero projects last with `maxWorkers=1`. Verify actual
 worker admission as well as resolved config (#1082).
+
+Graph reference disclosures capture the scroller's actual position when opened.
+A native scroll notification can arrive after the click for positioning that
+already happened. Compare positions rather than dismissing on every delivery;
+inherit the snapshot into scoped actions and focus with preventScroll. Subsequent
+vertical or horizontal movement still dismisses the anchored menu (#1082).

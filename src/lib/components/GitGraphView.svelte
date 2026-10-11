@@ -41,7 +41,7 @@
   import {
     releaseGitSummaryConsumer,
   } from "$lib/state/git-summary-cache";
-  import { assignLayout, prRepositorySlug, baseUpdateMergeOids, branchPath, detachedHeadIndicator, groupRefChips, prBadgePresentation, ciStatusLabel, reviewDecisionLabel, prDescription, prDetailComments, shouldMuteBaseUpdateMerge, sliceBranchLine, stepOnBranchLine, scrollTopToReveal, traceGraphLineage, remoteOnlyBranchNames, GRAPH_PALETTE, type GraphLayout, type BranchLine, type BranchLineDirection, type RefChips, type RemoteRefChip, type BranchListEntry } from "$lib/domain/git-graph";
+  import { assignLayout, graphViewportMoved, type GraphViewportPosition, prRepositorySlug, baseUpdateMergeOids, branchPath, detachedHeadIndicator, groupRefChips, prBadgePresentation, ciStatusLabel, reviewDecisionLabel, prDescription, prDetailComments, shouldMuteBaseUpdateMerge, sliceBranchLine, stepOnBranchLine, scrollTopToReveal, traceGraphLineage, remoteOnlyBranchNames, GRAPH_PALETTE, type GraphLayout, type BranchLine, type BranchLineDirection, type RefChips, type RemoteRefChip, type BranchListEntry } from "$lib/domain/git-graph";
   import { openExternalUrl } from "$lib/api/crash";
   import {
     cancelActiveGitNetworkOperation,
@@ -910,7 +910,9 @@
     const el = event.target as HTMLElement;
     scrollTop = el.scrollTop;
     scrollLeft = el.scrollLeft;
-    if (menu?.trigger) closeMenu();
+    // Scroll positioning is synchronous, but its notification can follow the
+    // disclosure click. Dismiss only movement since the menu acquired its anchor.
+    if (menu?.trigger && menu.viewport && graphViewportMoved(menu.viewport, { top: el.scrollTop, left: el.scrollLeft })) closeMenu();
     if (el.scrollTop + el.clientHeight >= el.scrollHeight - ROW_HEIGHT * 20) {
       // loadMore() resumes from the cursor (unfiltered) or the real-commit
       // count (filtered); both are immune to the woven-stash off-by-N (#432).
@@ -998,6 +1000,7 @@
     y: number;
     commit: CommitInfo;
     trigger?: HTMLElement;
+    viewport?: GraphViewportPosition;
   }
   interface ActionMenu extends MenuAnchor {
     kind: "actions";
@@ -1066,6 +1069,7 @@
     menu = {
       kind: "actions",
       trigger,
+      viewport: trigger ? menu?.viewport : undefined,
       x: clientToFixed(event.clientX),
       y: clientToFixed(event.clientY),
       commit,
@@ -1083,6 +1087,7 @@
     event.preventDefault();
     prompt = null;
     menu = { kind: "references", commit, trigger,
+      viewport: { top: scrollerEl?.scrollTop ?? 0, left: scrollerEl?.scrollLeft ?? 0 },
       x: clientToFixed(rect.left), y: clientToFixed(rect.bottom) };
   }
 
@@ -1092,7 +1097,7 @@
       closeMenu();
       return;
     }
-    menuEl?.querySelector<HTMLButtonElement>("button")?.focus();
+    menuEl?.querySelector<HTMLButtonElement>("button")?.focus({ preventScroll: true });
   });
 
   /** Tracking checkout of a remote-only branch (#432): create/switch to a

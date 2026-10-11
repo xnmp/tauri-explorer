@@ -32,3 +32,9 @@ the actual scheduler at both phase boundaries without repeating 5,001 activation
 or invoking a second compiler inside a parallel unit test. This removes
 contention between the test projects; it cannot promise immunity to unrelated
 host load.
+
+Graph reference disclosures capture the scroller's actual position when opened.
+A native scroll notification can arrive after the click for positioning that
+already happened. Compare positions rather than dismissing on every delivery;
+inherit the snapshot into scoped actions and focus with preventScroll. Subsequent
+vertical or horizontal movement still dismisses the anchored menu (#1082).

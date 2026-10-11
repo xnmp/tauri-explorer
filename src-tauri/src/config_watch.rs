@@ -649,7 +649,7 @@ mod tests {
     #[cfg(unix)]
     use super::THEMES_DIR;
     use super::{
-        map_event_paths, pending, reconcile_watch_plan, settings_path, watched_config_name,
+        config_changed_payload, map_event_paths, pending, reconcile_watch_plan, settings_path, watched_config_name,
         ConfigWatchHarness, PhaseRecorder, Registrations, ShutdownError, StopSignal, WatchPlan,
         WatchRegistration, WorkerPhase, BOOKMARKS_FILE, FOLDER_VIEWS_FILE, SETTINGS_FILE,
     };
@@ -658,6 +658,16 @@ mod tests {
     use std::path::{Path, PathBuf};
     use std::sync::{mpsc, Arc, Mutex};
     use std::time::{Duration, Instant};
+
+    #[test]
+    fn config_changed_payload_is_an_object_the_frontend_listener_can_read() {
+        // The listener reads `payload.filename`; a bare string payload made it
+        // throw on every launch (#1056).
+        assert_eq!(
+            config_changed_payload("plugin.openai-image.json"),
+            serde_json::json!({"filename": "plugin.openai-image.json"})
+        );
+    }
 
     #[derive(Default)]
     struct RecordingWatcher {

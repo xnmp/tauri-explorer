@@ -127,11 +127,18 @@ async function addConnection(name: string): Promise<string> {
   await field("Images resource URL", endpoint);
   await field("Image model ID", "fixture/native-image-v1");
   await $(".connections").$("label*=Credential source").$("select").selectByAttribute("value", "none");
-  const id = await $(".connections").$("label*=Edit connection").$("select").getValue();
-  await $(".connections").$("label*=Default image connection").$("select").selectByAttribute("value", id);
+  await makeSelectedDefault();
   await $("button=Save connections").click();
   await browser.waitUntil(async () => !(await $("button=Save connections").isEnabled()), { timeoutMsg: "native connection save never committed" });
+  const saved = await backend("xnmp.image-generation", "settings.read");
+  const id = saved.profiles.find((profile: { name: string }) => profile.name === name)?.id;
+  expect(saved.defaultConnectionId).toBe(id);
   return id;
+}
+/** The selected connection becomes the default; the first connection already is one. */
+async function makeSelectedDefault(): Promise<void> {
+  const button = $(".connections").$("button=Set as default");
+  if (await button.isExisting()) await button.click();
 }
 function privateProcesses(): unknown[] {
   const profile = process.env.XDG_CONFIG_HOME!;
@@ -792,7 +799,9 @@ gatedDescribe("shared AI native working snapshot", [[process.platform === "linux
     await command("Image Generation: Configure connections");
     await $(".connections").waitForDisplayed({ timeoutMsg: "the palette's command opened no image connections dialog" });
     const otherDefault = imageSettings.profiles.map((profile: { id: string }) => profile.id).find((id: string) => id !== imageSettings.defaultConnectionId);
-    await choose($(".connections").$("label*=Default image connection").$("select"), otherDefault);
+    const otherName = imageSettings.profiles.find((profile: { id: string }) => profile.id === otherDefault).name;
+    await $(".connections nav").$(`button*=${otherName}`).click();
+    await makeSelectedDefault();
     await $("button=Save connections").click();
     await browser.waitUntil(async () => !(await $("button=Save connections").isEnabled()), { timeoutMsg: "image connection save never committed" });
     expect((await backend("xnmp.image-generation", "settings.read")).defaultConnectionId).toBe(otherDefault);

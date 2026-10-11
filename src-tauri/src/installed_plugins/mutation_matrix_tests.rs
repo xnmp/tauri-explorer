@@ -2,7 +2,7 @@
 //! Each case owns a private profile and calls the production mutation entry
 //! points. Only the candidate preflight, which starts a native process, is a
 //! counter; every claim, fence, queue and index write is the real one.
-use super::super::{backend, package, service_host};
+use super::super::{backend, package};
 use super::{set_enabled, uninstall, upgrade, Profile};
 use crate::{
     error::AppError,
@@ -24,11 +24,16 @@ enum Action {
 #[derive(Clone, Copy, Debug, PartialEq)]
 enum Phase {
     Prepared,
+    Forwarding,
     Accepted,
     Running,
     SucceededUnacknowledged,
     OutcomeUnknown,
+    SettledAccepted,
+    SettledRunning,
+    SettledUnknown,
     Released,
+    Acquired,
 }
 const OP: &str = "matrix-operation";
 
@@ -55,6 +60,11 @@ impl Fixture {
                 m.version = version.into();
                 m.sdk_version = 3;
                 m.contributions = vec![id.replace('.', "-")];
+                if id.contains("provider") {
+                    m.services = serde_json::from_value(serde_json::json!([{"id":"image-generation","major":1,"methods":["status","cancel","acknowledge"]}])).unwrap();
+                } else {
+                    m.service_dependencies = serde_json::from_value(serde_json::json!([{"packageId":format!("matrix.provider-{case}"),"serviceId":"image-generation","major":1,"optional":true}])).unwrap();
+                }
             })
         };
         let ids = [
@@ -114,9 +124,6 @@ impl Fixture {
             transfer_receipt: None,
         }
     }
-    fn index(&self) -> Vec<u8> {
-        fs::read(self.root.join("installed.json")).unwrap()
-    }
     fn installed(&self, role: Role) -> Option<package::Installed> {
         package::list(&self.root)
             .unwrap()
@@ -152,18 +159,93 @@ impl Fixture {
     /// Durable state for `phase`. Running also holds live native calls in
     /// both roles, as an in-flight consumer-to-provider request does.
     fn enter(&self, phase: Phase) -> Vec<backend::CallLease> {
-        self.store.reserve(self.admission()).unwrap();
+        let input = self.profile.path().join("input.png");
+        image::RgbaImage::from_pixel(2, 3, image::Rgba([12, 34, 56, 255]))
+            .save(&input)
+            .unwrap();
+        let captured = self
+            .store
+            .capture(
+                &self.generation(Role::Consumer),
+                OP,
+                vec![CaptureInput {
+                    path: input.to_string_lossy().into(),
+                    expected_digest: None,
+                }],
+            )
+            .unwrap();
+        let mut admission = self.admission();
+        admission.inputs = captured.into_iter().map(|c| c.artifact).collect();
+        self.store.reserve(admission).unwrap();
         if phase == Phase::Prepared {
             return vec![];
         }
         let consumer = self.generation(Role::Consumer);
         let provider = self.generation(Role::Provider);
         assert!(self.store.claim_forwarding(&consumer, OP).unwrap().1);
+        if phase == Phase::Forwarding {
+            return vec![];
+        }
         self.store
             .accepted(&provider, &consumer.package_id, OP)
             .unwrap();
         match phase {
-            Phase::Prepared | Phase::Accepted => vec![],
+            Phase::Prepared | Phase::Forwarding | Phase::Accepted => vec![],
+            Phase::SettledAccepted | Phase::SettledRunning | Phase::SettledUnknown => {
+                let state = match phase {
+                    Phase::SettledAccepted => "accepted",
+                    Phase::SettledRunning => "running",
+                    _ => "unknown",
+                };
+                let mut receipt = serde_json::json!({"version":1,"operationId":OP,"requestFingerprint":"b".repeat(64),"provider":{"packageId":provider.package_id,"serviceId":"image-generation","major":1},"revision":1,"execution":{"state":state},"delivery":{"state":"none"}});
+                if state == "unknown" {
+                    receipt["execution"]["error"] = serde_json::json!({"code":"interrupted","message":"Unconfirmed","correlationId":null});
+                }
+                super::super::service_bridge::reconcile_at(
+                    &self.store,
+                    &provider,
+                    &self.store.get(&consumer.package_id, OP).unwrap().unwrap(),
+                    &receipt,
+                )
+                .unwrap();
+                self.store
+                    .auto_settle_operation(&consumer.package_id, OP, true)
+                    .unwrap();
+                vec![]
+            }
+            Phase::Acquired => {
+                self.succeed();
+                let a = self.store.get(&consumer.package_id, OP).unwrap().unwrap();
+                let d = a.output.unwrap();
+                let data = self.profile.path().join("consumer-data");
+                fs::create_dir(&data).unwrap();
+                self.store
+                    .register_consumer_root(&consumer.package_id, data.clone())
+                    .unwrap();
+                let copy = data.join("generated.png");
+                fs::copy(
+                    self.store
+                        .read(&consumer, &consumer.package_id, OP, &d)
+                        .unwrap()
+                        .path,
+                    &copy,
+                )
+                .unwrap();
+                let proof = self
+                    .store
+                    .acquired(&consumer, OP, &d, copy.to_str().unwrap())
+                    .unwrap();
+                self.store
+                    .release(
+                        &provider,
+                        &consumer.package_id,
+                        OP,
+                        "acquired",
+                        Some(&proof.transfer_receipt),
+                    )
+                    .unwrap();
+                vec![]
+            }
             Phase::Running => [Role::Consumer, Role::Provider]
                 .map(|role| backend::CallLease::acquire(self.id(role)).unwrap())
                 .into(),
@@ -185,30 +267,6 @@ impl Fixture {
         }
     }
     /// The legitimate way each phase stops owning its packages.
-    fn settle(&self, phase: Phase) {
-        match phase {
-            Phase::Prepared => assert!(self
-                .store
-                .release_unaccepted(&self.generation(Role::Consumer), OP)
-                .unwrap()),
-            Phase::Accepted | Phase::Running => {
-                self.succeed();
-                self.discard();
-            }
-            Phase::SucceededUnacknowledged => self.discard(),
-            Phase::OutcomeUnknown => {
-                self.store
-                    .stop_recovery(
-                        &self.generation(Role::Provider),
-                        self.id(Role::Consumer),
-                        OP,
-                        true,
-                    )
-                    .unwrap();
-            }
-            Phase::Released => {}
-        }
-    }
     fn act(
         &self,
         store: &Store,
@@ -232,152 +290,6 @@ impl Fixture {
             .map(|_| ()),
         }
     }
-    fn assert_refused(&self, result: Result<(), AppError>, role: Role, before: &[u8], case: &str) {
-        let error = result.expect_err(case);
-        assert!(service_host::is_busy(&error), "{case}: {error}");
-        assert_eq!(self.index(), before, "{case}: index changed");
-        assert!(
-            !self.root.join("upgrade-pending").exists(),
-            "{case}: refusal left an upgrade journal"
-        );
-        // A refusal never leaves the package fenced.
-        drop(backend::CallLease::acquire(self.id(role)).expect(case));
-    }
-}
-fn other(role: Role) -> Role {
-    match role {
-        Role::Consumer => Role::Provider,
-        Role::Provider => Role::Consumer,
-    }
-}
-
-#[test]
-fn each_role_mutation_waits_for_claims_and_live_work_then_commits_safely() {
-    let mut case = 0;
-    for role in [Role::Consumer, Role::Provider] {
-        for action in [Action::Disable, Action::Remove, Action::Upgrade] {
-            for phase in [
-                Phase::Prepared,
-                Phase::Accepted,
-                Phase::Running,
-                Phase::SucceededUnacknowledged,
-                Phase::OutcomeUnknown,
-                Phase::Released,
-            ] {
-                case += 1;
-                let name = format!("{role:?} {action:?} at {phase:?}");
-                let fx = Fixture::new(&case.to_string());
-                let preflights = Cell::new(0);
-                let leases = fx.enter(phase);
-                let before = fx.index();
-                if phase != Phase::Released && phase != Phase::SucceededUnacknowledged {
-                    let result = fx.act(&fx.store, action, role, &preflights);
-                    fx.assert_refused(result, role, &before, &name);
-                    assert_eq!(preflights.get(), 0, "{name}: preflight ran while owned");
-                    fx.settle(phase);
-                }
-                if !leases.is_empty() {
-                    // Durable claims are resolved, but native calls still run.
-                    let result = fx.act(&fx.store, action, role, &preflights);
-                    fx.assert_refused(result, role, &before, &format!("{name} (live calls)"));
-                    drop(leases);
-                }
-                fx.act(&fx.store, action, role, &preflights)
-                    .unwrap_or_else(|cause| panic!("{name}: eventual mutation failed: {cause}"));
-                let after = fx.installed(role);
-                match action {
-                    Action::Disable => assert!(!after.expect(&name).enabled, "{name}"),
-                    Action::Remove => assert!(after.is_none(), "{name}"),
-                    Action::Upgrade => {
-                        let after = after.expect(&name);
-                        assert_eq!(after.manifest.version, "2.0.0", "{name}");
-                        assert_ne!(after.digest, fx.package(role).digest, "{name}");
-                        assert!(after.enabled, "{name}");
-                        assert_eq!(preflights.get(), 1, "{name}");
-                    }
-                }
-                // The other participant is never collateral damage.
-                let untouched = fx.installed(other(role)).expect(&name);
-                assert_eq!(untouched.digest, fx.package(other(role)).digest, "{name}");
-                assert!(untouched.enabled, "{name}");
-            }
-        }
-    }
-    assert_eq!(case, 36);
-}
-
-#[cfg(target_os = "linux")]
-#[test]
-fn cold_start_keeps_both_queued_upgrades_until_claims_recover() {
-    use std::time::{Duration, SystemTime};
-    let fx = Fixture::new("cold-start");
-    let queue = fx.profile.path().join("pending-plugins");
-    fs::create_dir(&queue).unwrap();
-    let queued = [Role::Consumer, Role::Provider].map(|role| {
-        let path = queue.join(format!("{}.teplugin", role as usize));
-        fs::copy(&fx.next[role as usize], &path).unwrap();
-        fs::File::options()
-            .write(true)
-            .open(&path)
-            .unwrap()
-            .set_modified(SystemTime::UNIX_EPOCH + Duration::from_secs(1 + role as u64))
-            .unwrap();
-        path
-    });
-    let leases = fx.enter(Phase::Accepted);
-    assert!(leases.is_empty());
-    let before = fx.index();
-    let preflights = Cell::new(0);
-    // Each launch reopens the durable ledger: nothing in memory survives.
-    let launch = || {
-        let store =
-            Store::open(fx.profile.path().join("service-state"), Limits::default()).unwrap();
-        super::recover(&fx.root).unwrap();
-        super::super::queue::apply(
-            &queue,
-            |path| {
-                upgrade(
-                    &Profile {
-                        root: &fx.root,
-                        store: &store,
-                    },
-                    path,
-                    &|_, _, _| {
-                        preflights.set(preflights.get() + 1);
-                        Ok(())
-                    },
-                )
-                .map(|_| ())
-            },
-            || false,
-        )
-        .unwrap()
-    };
-    let errors = launch();
-    assert_eq!(errors.len(), 1, "{errors:?}");
-    assert_eq!(fx.index(), before);
-    assert_eq!(preflights.get(), 0);
-    for (role, path) in [Role::Consumer, Role::Provider].into_iter().zip(&queued) {
-        assert_eq!(
-            fs::read(path).unwrap(),
-            fs::read(&fx.next[role as usize]).unwrap()
-        );
-    }
-    assert!(!queue.join("failed").exists());
-    // A launch before recovery still defers both, never consuming a request.
-    assert_eq!(launch().len(), 1);
-    assert!(queued.iter().all(|path| path.exists()));
-    // The provider proves success and the consumer's handoff settles.
-    fx.settle(Phase::Accepted);
-    assert!(launch().is_empty());
-    assert_eq!(preflights.get(), 2);
-    for role in [Role::Consumer, Role::Provider] {
-        let installed = fx.installed(role).unwrap();
-        assert_eq!(installed.manifest.version, "2.0.0");
-        assert!(installed.enabled);
-    }
-    assert!(queued.iter().all(|path| !path.exists()));
-    assert!(!queue.join("failed").exists());
 }
 
 #[test]
@@ -426,10 +338,7 @@ fn review_successful_consumer_can_upgrade_disable_and_uninstall_without_losing_a
                     .unwrap()
                     .unwrap();
                 assert_eq!(report.state, crate::service_state::job::JobState::Error);
-                assert!(report
-                    .error
-                    .unwrap()
-                    .contains("One image could not be delivered"));
+                assert!(report.error.unwrap().contains("could not be delivered"));
                 super::recover(&fx.root).unwrap();
                 assert_eq!(
                     fx.store.snapshot_jobs().unwrap().jobs.len(),
@@ -477,7 +386,7 @@ fn review_consumer_removal_recovers_each_durable_index_commit_order() {
                 .unwrap()
                 .error
                 .unwrap()
-                .contains("One image could not be delivered"));
+                .contains("could not be delivered"));
         } else {
             assert!(report.is_none());
         }
@@ -495,17 +404,10 @@ fn review_provider_removal_disables_required_dependents_and_reports_once_after_r
         entries.iter_mut().find(|p|p.manifest.id==fx.id(Role::Consumer)).unwrap().manifest.service_dependencies=serde_json::from_value(serde_json::json!([{"packageId":fx.id(Role::Provider),"serviceId":"image-generation","major":1}])).unwrap();
         package::write_index(&fx.root, &entries).unwrap();
         fx.enter(Phase::SucceededUnacknowledged);
-        let before = fx.index();
         let live = backend::CallLease::acquire(fx.id(Role::Consumer)).unwrap();
-        fx.assert_refused(
-            fx.act(&fx.store, action, Role::Provider, &Cell::new(0)),
-            Role::Provider,
-            &before,
-            "active required consumer",
-        );
-        drop(live);
         fx.act(&fx.store, action, Role::Provider, &Cell::new(0))
             .unwrap();
+        drop(live);
         assert!(!fx.installed(Role::Consumer).unwrap().enabled);
         super::recover(&fx.root).unwrap();
         let reopened =
@@ -516,7 +418,482 @@ fn review_provider_removal_disables_required_dependents_and_reports_once_after_r
             .error
             .as_ref()
             .unwrap()
-            .contains("One image could not be delivered"));
+            .contains("could not be delivered"));
         super::super::service_graph::validate_enabled(&package::list(&fx.root).unwrap()).unwrap();
     }
+}
+
+const PHASES: [Phase; 11] = [
+    Phase::Prepared,
+    Phase::Forwarding,
+    Phase::Accepted,
+    Phase::Running,
+    Phase::SucceededUnacknowledged,
+    Phase::OutcomeUnknown,
+    Phase::SettledAccepted,
+    Phase::SettledRunning,
+    Phase::SettledUnknown,
+    Phase::Released,
+    Phase::Acquired,
+];
+const JOB_STATES: [crate::service_state::job::JobState; 8] = {
+    use crate::service_state::job::JobState::*;
+    [
+        Accepting,
+        Running,
+        Recovering,
+        NeedsAttention,
+        Completed,
+        Error,
+        Cancelled,
+        Discarded,
+    ]
+};
+impl Fixture {
+    fn present(&self, state: crate::service_state::job::JobState) {
+        use crate::service_state::job::*;
+        let j = self
+            .store
+            .register_job(JobRecord {
+                job_key: "a".repeat(48),
+                job_id: 91,
+                owner: self.generation(Role::Consumer),
+                operation_id: OP.into(),
+                kind: "openai-image".into(),
+                label: "AI image".into(),
+                origin_window: "matrix".into(),
+                revision: 0,
+                source_revision: 0,
+                created_at_ms: 1,
+                updated_at_ms: 1,
+                settled_at_ms: None,
+                estimate_key: None,
+                state: JobState::Accepting,
+                phase: None,
+                output_path: None,
+                run_id: None,
+                error: None,
+            })
+            .unwrap();
+        if state != JobState::Accepting {
+            self.store
+                .update_job(
+                    &j.owner,
+                    &j.job_key,
+                    state,
+                    Some("fixture".into()),
+                    (state == JobState::Completed).then(|| "/delivered.png".into()),
+                    Some(17),
+                    None,
+                )
+                .unwrap();
+        }
+    }
+}
+#[test]
+fn invariant_a_disable_and_uninstall_release_every_phase_and_job_state() {
+    let mut case = 0;
+    for role in [Role::Consumer, Role::Provider] {
+        for action in [Action::Disable, Action::Remove] {
+            for phase in PHASES {
+                for state in JOB_STATES {
+                    case += 1;
+                    let fx = Fixture::new(&format!("exit-{case}"));
+                    let leases = fx.enter(phase);
+                    fx.present(state);
+                    fx.act(&fx.store, action, role, &Cell::new(0))
+                        .unwrap_or_else(|e| panic!("{role:?}/{action:?}/{phase:?}/{state:?}: {e}"));
+                    assert!(fx.store.claims().unwrap().is_empty());
+                    assert!(!fx.store.busy(fx.id(Role::Consumer)).unwrap());
+                    assert!(!fx.store.busy(fx.id(Role::Provider)).unwrap());
+                    assert_eq!(
+                        fx.store
+                            .get(fx.id(Role::Consumer), OP)
+                            .unwrap()
+                            .unwrap()
+                            .phase,
+                        AdmissionPhase::Released
+                    );
+                    let jobs = fx.store.snapshot_jobs().unwrap().jobs;
+                    assert_eq!(jobs.len(), 1);
+                    assert!(jobs[0].state.terminal());
+                    let notices = jobs
+                        .iter()
+                        .filter(|j| {
+                            j.error
+                                .as_ref()
+                                .is_some_and(|e| e.starts_with("An image from "))
+                        })
+                        .count();
+                    assert_eq!(
+                        notices,
+                        usize::from(
+                            phase == Phase::SucceededUnacknowledged
+                                && state != crate::service_state::job::JobState::Completed
+                        )
+                    );
+                    drop(leases);
+                    super::recover(&fx.root).unwrap();
+                    let reopened =
+                        Store::open(fx.profile.path().join("service-state"), Limits::default())
+                            .unwrap();
+                    assert_eq!(reopened.snapshot_jobs().unwrap().jobs, jobs);
+                    assert!(reopened.claims().unwrap().is_empty());
+                    assert!(fs::read_dir(fx.profile.path().join("service-state/bytes"))
+                        .unwrap()
+                        .next()
+                        .is_none());
+                    assert!(fs::read_dir(fx.profile.path().join("service-state/stages"))
+                        .unwrap()
+                        .next()
+                        .is_none());
+                }
+            }
+        }
+    }
+}
+#[test]
+fn invariant_b_upgrade_preserves_all_compatible_phases_and_releases_incompatible_ones() {
+    let mut case = 0;
+    for role in [Role::Consumer, Role::Provider] {
+        for compatible in [true, false] {
+            for phase in PHASES {
+                for state in JOB_STATES {
+                    case += 1;
+                    let fx = Fixture::new(&format!("repair-{case}"));
+                    let leases = fx.enter(phase);
+                    fx.present(state);
+                    let before = fx.store.get(fx.id(Role::Consumer), OP).unwrap().unwrap();
+                    let archive = if compatible {
+                        fx.next[role as usize].clone()
+                    } else {
+                        package::tests::archive_named(
+                            &fx.profile.path().join("archives"),
+                            "incompatible.teplugin",
+                            |m| {
+                                m.id = fx.id(role).into();
+                                m.version = "2.0.0".into();
+                                m.sdk_version = 3;
+                                m.contributions = vec![fx.id(role).replace('.', "-")];
+                            },
+                        )
+                    };
+                    let upgraded = upgrade(
+                        &Profile {
+                            root: &fx.root,
+                            store: &fx.store,
+                        },
+                        &archive,
+                        &|_, _, _| Ok(()),
+                    )
+                    .unwrap_or_else(|e| panic!("{role:?}/{compatible}/{phase:?}/{state:?}: {e}"));
+                    let after = fx.store.get(fx.id(Role::Consumer), OP).unwrap().unwrap();
+                    if compatible {
+                        assert_eq!(after, before, "upgrade changed original custody");
+                        let reopened =
+                            Store::open(fx.profile.path().join("service-state"), Limits::default())
+                                .unwrap();
+                        assert_eq!(
+                            reopened.get(fx.id(Role::Consumer), OP).unwrap(),
+                            Some(before.clone())
+                        );
+                        assert_eq!(
+                            reopened
+                                .execution_released(fx.id(Role::Consumer), OP)
+                                .unwrap(),
+                            matches!(
+                                phase,
+                                Phase::SettledAccepted
+                                    | Phase::SettledRunning
+                                    | Phase::SettledUnknown
+                            )
+                        );
+                        if phase != Phase::Released
+                            && (phase != Phase::Acquired || !state.terminal())
+                        {
+                            assert!(
+                                reopened
+                                    .auto_settlement_operations()
+                                    .unwrap()
+                                    .iter()
+                                    .any(|(a, _, _)| a.operation_id == OP),
+                                "replacement recovery was not re-armed"
+                            );
+                        }
+
+                        let current = PackageGeneration {
+                            package_id: upgraded.manifest.id.clone(),
+                            digest: upgraded.digest.clone(),
+                            incarnation: 2,
+                        };
+                        let authority = match role {
+                            Role::Consumer => super::super::service_bridge::recovery_caller(
+                                &fx.store,
+                                &upgraded.manifest,
+                                &current,
+                                OP,
+                            ),
+                            Role::Provider => super::super::service_bridge::recovery_provider(
+                                &fx.store,
+                                &upgraded.manifest,
+                                &current,
+                                fx.id(Role::Consumer),
+                                OP,
+                            ),
+                        }
+                        .expect("every compatible phase retains recovery authority");
+                        assert_eq!(authority, fx.generation(role));
+                        if before.output.is_some()
+                            && phase != Phase::Released
+                            && phase != Phase::Acquired
+                        {
+                            assert!(fx
+                                .store
+                                .read(
+                                    &fx.generation(Role::Consumer),
+                                    fx.id(Role::Consumer),
+                                    OP,
+                                    before.output.as_ref().unwrap()
+                                )
+                                .is_ok());
+                        }
+                    } else {
+                        assert_eq!(after.phase, AdmissionPhase::Released);
+                        assert!(fx.store.claims().unwrap().is_empty());
+                        assert!(fx
+                            .store
+                            .snapshot_jobs()
+                            .unwrap()
+                            .jobs
+                            .iter()
+                            .all(|j| j.state.terminal()));
+                    }
+                    drop(leases);
+                }
+            }
+        }
+    }
+}
+#[test]
+fn invariant_a_removal_intent_finishes_before_or_after_index_publication() {
+    for published in [false, true] {
+        let fx = Fixture::new(&format!("durable-exit-{published}"));
+        fx.enter(Phase::SucceededUnacknowledged);
+        fx.present(crate::service_state::job::JobState::Running);
+        let mut entries = package::list(&fx.root).unwrap();
+        entries.retain(|p| p.manifest.id != fx.id(Role::Provider));
+        let removal = super::Removal {
+            entries,
+            packages: vec![fx.id(Role::Provider).into()],
+        };
+        super::write_removal(&fx.root, &removal).unwrap();
+        if published {
+            package::write_index(&fx.root, &removal.entries).unwrap();
+        }
+        super::recover(&fx.root).unwrap();
+        assert!(fx.installed(Role::Provider).is_none());
+        assert!(fx.store.claims().unwrap().is_empty());
+        let jobs = fx.store.snapshot_jobs().unwrap().jobs;
+        assert_eq!(jobs.len(), 1);
+        assert!(jobs[0]
+            .error
+            .as_ref()
+            .unwrap()
+            .starts_with("An image from "));
+        super::recover(&fx.root).unwrap();
+        assert_eq!(fx.store.snapshot_jobs().unwrap().jobs, jobs);
+    }
+}
+
+#[test]
+fn invariant_a_delayed_workers_cannot_create_custody_or_jobs_after_lifecycle_change() {
+    use crate::service_state::job::*;
+    for action in [Action::Disable, Action::Remove, Action::Upgrade] {
+        let fx = Fixture::new(&format!("late-worker-{action:?}").to_lowercase());
+        fx.enter(Phase::Accepted);
+        let lease = backend::CallLease::acquire(fx.id(Role::Consumer)).unwrap();
+        let admission = fx.admission();
+        let old = fx.generation(Role::Consumer);
+        let delayed = crate::service_state::job::JobRecord {
+            job_key: "d".repeat(48),
+            job_id: 94,
+            owner: old.clone(),
+            operation_id: "late-registration".into(),
+            kind: "openai-image".into(),
+            label: "AI image".into(),
+            origin_window: "matrix".into(),
+            revision: 0,
+            source_revision: 0,
+            created_at_ms: 1,
+            updated_at_ms: 1,
+            settled_at_ms: None,
+            estimate_key: None,
+            state: JobState::Accepting,
+            phase: None,
+            output_path: None,
+            run_id: None,
+            error: None,
+        };
+        let waiting = std::sync::Arc::new(std::sync::Barrier::new(2));
+        let finished = waiting.clone();
+        std::thread::scope(|scope| {
+            let worker = scope.spawn(|| {
+                finished.wait();
+                let store = Store::open(fx.profile.path().join("service-state"), Limits::default())
+                    .unwrap();
+                assert!(
+                    store.register_job(delayed).is_err(),
+                    "retired worker registered after removal sweep"
+                );
+                let mut late = admission;
+                late.operation_id = "late-admission".into();
+                assert!(
+                    store.reserve(late).is_err(),
+                    "retired worker recreated an admission"
+                );
+                assert!(
+                    store
+                        .capture(
+                            &old,
+                            "late-capture",
+                            vec![CaptureInput {
+                                path: fx.profile.path().join("input.png").to_string_lossy().into(),
+                                expected_digest: None
+                            }]
+                        )
+                        .is_err(),
+                    "retired worker recreated input custody"
+                );
+            });
+            fx.act(&fx.store, action, Role::Consumer, &Cell::new(0))
+                .unwrap();
+            waiting.wait();
+            worker.join().unwrap();
+        });
+        drop(lease);
+        assert!(fx
+            .store
+            .job_for_operation(fx.id(Role::Consumer), "late-registration")
+            .unwrap()
+            .is_none());
+    }
+}
+#[test]
+fn invariant_a_same_session_journal_retry_retires_admissions_after_failed_sweep() {
+    let fx = Fixture::new("failed-removal-retirement");
+    fx.enter(Phase::Accepted);
+    fx.present(crate::service_state::job::JobState::Running);
+    let delayed = backend::CallLease::acquire(fx.id(Role::Consumer)).unwrap();
+    fx.store.fail_next_write();
+    assert!(fx
+        .act(&fx.store, Action::Disable, Role::Consumer, &Cell::new(0))
+        .is_err());
+    assert!(fx.root.join("removal-pending.json").is_file());
+    assert!(backend::CallLease::acquire(fx.id(Role::Consumer)).is_err());
+    super::recover(&fx.root).unwrap();
+    assert!(!fx.installed(Role::Consumer).unwrap().enabled);
+    assert!(fx.store.claims().unwrap().is_empty());
+    assert!(fx
+        .store
+        .snapshot_jobs()
+        .unwrap()
+        .jobs
+        .iter()
+        .all(|j| j.state.terminal()));
+    assert!(backend::call_admitted(
+        fx.id(Role::Consumer),
+        "jobs.start",
+        serde_json::json!({"kind":"image"}),
+        "main",
+        std::time::SystemTime::now(),
+        &delayed,
+    )
+    .unwrap_err()
+    .to_string()
+    .contains("lifecycle change"));
+    let mut late = fx.admission();
+    late.operation_id = "post-recovery-admission".into();
+    assert!(fx.store.reserve(late).is_err());
+    assert!(backend::CallLease::acquire(fx.id(Role::Consumer)).is_ok());
+    assert!(!fx.root.join("removal-pending.json").exists());
+}
+
+#[test]
+fn invariant_a_repeated_disable_releases_preparations_and_orphan_presentation() {
+    let fx = Fixture::new("already-disabled");
+    fx.enter(Phase::Accepted);
+    fx.present(crate::service_state::job::JobState::Accepting);
+    let mut entries = package::list(&fx.root).unwrap();
+    entries
+        .iter_mut()
+        .find(|p| p.manifest.id == fx.id(Role::Consumer))
+        .unwrap()
+        .enabled = false;
+    package::write_index(&fx.root, &entries).unwrap();
+    let input = fx.profile.path().join("input.png");
+    fx.store
+        .capture(
+            &fx.generation(Role::Consumer),
+            "unadmitted",
+            vec![CaptureInput {
+                path: input.to_string_lossy().into(),
+                expected_digest: None,
+            }],
+        )
+        .unwrap();
+    fx.act(&fx.store, Action::Disable, Role::Consumer, &Cell::new(0))
+        .unwrap();
+    assert!(fx.store.claims().unwrap().is_empty());
+    assert!(!fx.store.busy(fx.id(Role::Consumer)).unwrap());
+    assert!(fx.store.list_preparations().unwrap().is_empty());
+    assert!(fx
+        .store
+        .snapshot_jobs()
+        .unwrap()
+        .jobs
+        .iter()
+        .all(|j| j.state.terminal()));
+    assert!(fs::read_dir(fx.profile.path().join("service-state/bytes"))
+        .unwrap()
+        .next()
+        .is_none());
+}
+#[test]
+fn invariant_b_incompatible_provider_upgrade_disables_required_consumers_and_recovers_commit() {
+    let fx = Fixture::new("incompatible-required");
+    let mut index = package::list(&fx.root).unwrap();
+    index
+        .iter_mut()
+        .find(|p| p.manifest.id == fx.id(Role::Consumer))
+        .unwrap()
+        .manifest
+        .service_dependencies[0]
+        .optional = false;
+    package::write_index(&fx.root, &index).unwrap();
+    fx.enter(Phase::SucceededUnacknowledged);
+    fx.present(crate::service_state::job::JobState::Running);
+    let archive = package::tests::archive_named(
+        &fx.profile.path().join("archives"),
+        "missing-service.teplugin",
+        |m| {
+            m.id = fx.id(Role::Provider).into();
+            m.sdk_version = 3;
+            m.version = "2.0.0".into();
+            m.contributions = vec![fx.id(Role::Provider).replace('.', "-")];
+        },
+    );
+    upgrade(
+        &Profile {
+            root: &fx.root,
+            store: &fx.store,
+        },
+        &archive,
+        &|_, _, _| Ok(()),
+    )
+    .unwrap();
+    assert!(!fx.installed(Role::Consumer).unwrap().enabled);
+    assert!(fx.store.claims().unwrap().is_empty());
+    assert_eq!(fx.store.snapshot_jobs().unwrap().jobs.len(), 1);
+    super::recover(&fx.root).unwrap();
+    assert_eq!(fx.store.snapshot_jobs().unwrap().jobs.len(), 1);
 }

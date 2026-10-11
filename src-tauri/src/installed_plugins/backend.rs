@@ -69,10 +69,11 @@ struct Admissions {
     fenced: HashSet<String>,
     recovery_fences: HashSet<String>,
     idle_fences: HashSet<String>,
+    revisions: HashMap<String, u64>,
 }
 static CALLS: OnceLock<Mutex<Admissions>> = OnceLock::new();
 static ADMISSIONS_CHANGED: Condvar = Condvar::new();
-pub(super) struct CallLease((String, usize));
+pub(super) struct CallLease((String, usize), u64);
 /// Owns the admission gap between the worker-idle probes and their durable
 /// commit. Controls/callbacks can finish existing work; starts and activation
 /// cannot introduce new work, and lifecycle mutation cannot replace a broker.
@@ -128,6 +129,12 @@ pub(super) fn control_method(method: &str) -> bool {
         || method.ends_with(".acknowledge")
 }
 impl CallLease {
+    fn require_current(&self, package: &str) -> Result<(), AppError> {
+        if self.0 .0 != package {
+            return Err(error("Plugin call admission belongs to another package"));
+        }
+        publish_startup(package, self.1, || Ok(()))
+    }
     /// Acquire while holding the short lifecycle read gate, then release the
     /// gate before startup, callbacks or provider IO.
     pub(super) fn acquire(package: &str) -> Result<Self, AppError> {
@@ -171,7 +178,8 @@ impl CallLease {
             return Err(error("Plugin call capacity reached"));
         }
         *calls.entry(key.clone()).or_default() += 1;
-        Ok(Self(key))
+        let revision = admissions.revisions.get(package).copied().unwrap_or(0);
+        Ok(Self(key, revision))
     }
 }
 impl Drop for CallLease {
@@ -430,11 +438,11 @@ mod admission_tests {
             let routed = ensure_active_or_start(
                 package,
                 || Ok(Some("active broker")),
-                || panic!("an existing active broker must not start again"),
+                |_| panic!("an existing active broker must not start again"),
             );
             assert_eq!(routed.unwrap(), "active broker");
         }
-        assert!(ensure_active_or_start(package, || Ok(None::<()>), || Ok(())).is_err());
+        assert!(ensure_active_or_start(package, || Ok(None::<()>), |_| Ok(())).is_err());
     }
     #[test]
     fn a_package_without_a_broker_is_fenced_while_unrelated_controls_remain_usable() {
@@ -472,6 +480,48 @@ mod admission_tests {
         assert!(CallLease::acquire_direction(package, 3).is_ok());
     }
 
+    #[test]
+    fn lifecycle_change_cancels_startup_publication_after_its_fence_is_released() {
+        let id = "fixture.late-startup-publication";
+        let admission = CallLease::acquire_direction(id, 3).unwrap();
+        let drain = begin_change(id).unwrap();
+        assert!(publish_startup(id, admission.1, || Ok(())).is_err());
+        drop(drain);
+        assert!(publish_startup(id, admission.1, || Ok(())).is_err());
+        let fresh = CallLease::acquire_direction(id, 3).unwrap();
+        assert!(publish_startup(id, fresh.1, || Ok(())).is_ok());
+    }
+    #[test]
+    fn lifecycle_change_rejects_a_previously_admitted_ui_call_after_reenable() {
+        let id = "fixture.late-ui-dispatch";
+        let admission = CallLease::acquire_method(id, "jobs.start").unwrap();
+        drop(begin_change(id).unwrap());
+        let result = call_admitted(
+            id,
+            "jobs.start",
+            json!({"kind":"image"}),
+            "main",
+            std::time::SystemTime::now(),
+            &admission,
+        );
+        assert!(result.unwrap_err().to_string().contains("lifecycle change"));
+        assert!(CallLease::acquire_method(id, "jobs.start")
+            .unwrap()
+            .require_current(id)
+            .is_ok());
+    }
+    #[test]
+    fn explicit_change_can_take_over_a_durable_recovery_fence_without_reopening_admission() {
+        let id = "fixture.removal-recovery-takeover";
+        let previous = begin_change(id).unwrap();
+        previous.retain_for_recovery();
+        drop(previous);
+        assert!(CallLease::acquire(id).is_err());
+        let recovered = begin_change(id).unwrap();
+        assert!(CallLease::acquire(id).is_err());
+        drop(recovered);
+        assert!(CallLease::acquire(id).is_ok());
+    }
     #[test]
     fn failed_rollback_keeps_all_package_admissions_closed_after_the_owner_returns() {
         let package = "fixture.rollback-recovery-required";
@@ -1579,6 +1629,13 @@ impl Broker {
     }
 
     fn stop(&self) {
+        if !self.validation_only {
+            if let Ok(store) = super::service_host::store() {
+                if let Err(cause) = store.retire_generation(&self.generation()) {
+                    log::warn!("Plugin generation retirement deferred: {cause}");
+                }
+            }
+        }
         if self.validation_only {
             CANDIDATES
                 .get_or_init(Default::default)
@@ -1642,7 +1699,7 @@ pub(super) fn ensure(id: &str) -> Result<Arc<Broker>, AppError> {
                     .cloned(),
             )
         },
-        || {
+        |revision| {
             if !OWNERSHIP_READY.load(Ordering::Acquire) {
                 let installed = package::list(&root()?)?
                     .into_iter()
@@ -1654,7 +1711,7 @@ pub(super) fn ensure(id: &str) -> Result<Arc<Broker>, AppError> {
                 ));
                 }
             }
-            let broker = ensure_mode(id)?;
+            let broker = ensure_mode(id, revision)?;
             if !broker.is_active() {
                 broker.activate()?;
             }
@@ -1669,10 +1726,10 @@ pub(super) fn ensure(id: &str) -> Result<Arc<Broker>, AppError> {
 fn ensure_active_or_start<T>(
     id: &str,
     current: impl FnOnce() -> Result<Option<T>, AppError>,
-    start: impl FnOnce() -> Result<T, AppError>,
+    start: impl FnOnce(u64) -> Result<T, AppError>,
 ) -> Result<T, AppError> {
     // Startup/activation are owned before taking the package startup mutex.
-    // Mutation cannot fence a package whose handshake has already begun.
+    // A lifecycle change invalidates this revision even after its fence ends.
     let _startup_admission = {
         let _gate = super::read_lifecycle()?;
         // Retained controls need no startup lane. In particular an automatic
@@ -1682,7 +1739,7 @@ fn ensure_active_or_start<T>(
         }
         CallLease::acquire_direction(id, 3)?
     };
-    start()
+    start(_startup_admission.1)
 }
 static IMAGE_MIGRATION: AtomicBool = AtomicBool::new(false);
 fn spawn_image_migration(work: impl FnOnce() + Send + 'static) -> Result<bool, AppError> {
@@ -1863,18 +1920,27 @@ pub(super) struct DrainGuard {
     quiesced: AtomicBool,
 }
 pub(super) fn begin_drain(id: &str) -> Result<DrainGuard, AppError> {
+    begin_drain_with(id, false)
+}
+/// Explicit lifecycle changes close new admission even when AI calls are live.
+/// The caller retires the broker before modifying package state.
+pub(super) fn begin_change(id: &str) -> Result<DrainGuard, AppError> {
+    begin_drain_with(id, true)
+}
+fn begin_drain_with(id: &str, cancel_live: bool) -> Result<DrainGuard, AppError> {
     // The caller holds the short lifecycle write gate. Admission and fencing
     // share a mutex so even a caller without a Broker cannot cross this point.
     let mut admissions = crate::native_deadline::lock(
         CALLS.get_or_init(Default::default),
         "Plugin admission lock is unavailable",
     )?;
-    if admissions.fenced.contains(id)
-        || admissions.idle_fences.contains(id)
-        || admissions
-            .calls
-            .iter()
-            .any(|((package, _), count)| package == id && *count > 0)
+    if admissions.fenced.contains(id) && !(cancel_live && admissions.recovery_fences.contains(id))
+        || !cancel_live
+            && (admissions.idle_fences.contains(id)
+                || admissions
+                    .calls
+                    .iter()
+                    .any(|((package, _), count)| package == id && *count > 0))
     {
         // Typed busy: a queued upgrade racing a live call retries next launch.
         return Err(super::service_host::busy(
@@ -1899,6 +1965,10 @@ pub(super) fn begin_drain(id: &str) -> Result<DrainGuard, AppError> {
                 .map_err(|_| error("Plugin lifecycle state changed"))?;
         }
     }
+    if cancel_live {
+        admissions.recovery_fences.remove(id);
+        *admissions.revisions.entry(id.to_owned()).or_default() += 1;
+    }
     admissions.fenced.insert(id.to_owned());
     Ok(DrainGuard {
         id: id.to_owned(),
@@ -1908,6 +1978,9 @@ pub(super) fn begin_drain(id: &str) -> Result<DrainGuard, AppError> {
     })
 }
 impl DrainGuard {
+    pub(super) fn generation(&self) -> Option<crate::service_state::model::PackageGeneration> {
+        self.broker.as_ref().map(|broker| broker.generation())
+    }
     pub(super) fn retain_for_recovery(&self) {
         self.recovery_required.store(true, Ordering::Release);
     }
@@ -2031,6 +2104,13 @@ pub(super) fn release_job(owner: &crate::service_state::model::PackageGeneration
         broker.finish_job(job_id);
     }
 }
+pub(super) fn current_instance(id: &str) -> Option<Arc<Broker>> {
+    crate::native_deadline::lock(brokers(), "Plugin runtime lock is unavailable")
+        .ok()?
+        .get(id)
+        .filter(|broker| broker.is_active())
+        .cloned()
+}
 pub(super) fn active_instance(id: &str, digest: &str) -> Option<Arc<Broker>> {
     crate::native_deadline::lock(brokers(), "Plugin runtime lock is unavailable")
         .ok()?
@@ -2073,12 +2153,12 @@ pub(super) fn preflight_candidate(
     if installed.manifest.id != fence.id {
         return Err(error("Candidate does not own its package mutation fence"));
     }
-    let broker = start_broker(installed.clone(), data, true)?;
+    let broker = start_broker(installed.clone(), data, true, None)?;
     // Validation always ends in retirement, never activation of the copied DB.
     broker.stop();
     Ok(())
 }
-fn ensure_mode(id: &str) -> Result<Arc<Broker>, AppError> {
+fn ensure_mode(id: &str, revision: u64) -> Result<Arc<Broker>, AppError> {
     crate::native_deadline::check()?;
     let startup = crate::native_deadline::lock(
         STARTING.get_or_init(Default::default),
@@ -2091,21 +2171,22 @@ fn ensure_mode(id: &str) -> Result<Arc<Broker>, AppError> {
     if CLOSING.load(Ordering::Acquire) {
         return Err(error("Plugin host is shutting down"));
     }
-    let mut registry =
-        crate::native_deadline::lock(brokers(), "Plugin runtime lock is unavailable")?;
-    // Shutdown drains this same registry. Rechecking while holding it prevents
-    // publishing a child after that drain has completed.
-    if CLOSING.load(Ordering::Acquire) {
-        return Err(error("Plugin host is shutting down"));
-    }
-    if let Some(broker) = registry
-        .get(id)
-        .filter(|broker| broker.alive.load(Ordering::Acquire))
+    let previous = publish_startup(id, revision, || {
+        let registry =
+            crate::native_deadline::lock(brokers(), "Plugin runtime lock is unavailable")?;
+        if CLOSING.load(Ordering::Acquire) {
+            return Err(error("Plugin host is shutting down"));
+        }
+        Ok(registry.get(id).cloned())
+    })?;
+    if let Some(broker) = previous
+        .as_ref()
+        .filter(|b| b.alive.load(Ordering::Acquire))
     {
         return Ok(broker.clone());
     }
-    let previous = registry.remove(id);
-    drop(registry);
+    // Keep the dead generation discoverable by lifecycle until retirement
+    // durably fences its delayed creation workers.
     if let Some(old) = previous {
         old.stop();
     }
@@ -2134,12 +2215,29 @@ fn ensure_mode(id: &str) -> Result<Arc<Broker>, AppError> {
             fs::copy(source, destination)?;
         }
     }
-    start_broker(installed, data, false)
+    start_broker(installed, data, false, Some(revision))
+}
+fn publish_startup<T>(
+    id: &str,
+    revision: u64,
+    publish: impl FnOnce() -> Result<T, AppError>,
+) -> Result<T, AppError> {
+    let admissions = crate::native_deadline::lock(
+        CALLS.get_or_init(Default::default),
+        "Plugin admission lock is unavailable",
+    )?;
+    if admissions.fenced.contains(id)
+        || admissions.revisions.get(id).copied().unwrap_or(0) != revision
+    {
+        return Err(error("Plugin request was cancelled by a lifecycle change"));
+    }
+    publish()
 }
 fn start_broker(
     installed: package::Installed,
     data: PathBuf,
     validation_only: bool,
+    revision: Option<u64>,
 ) -> Result<Arc<Broker>, AppError> {
     crate::native_deadline::check()?;
     if CLOSING.load(Ordering::Acquire) {
@@ -2219,14 +2317,21 @@ fn start_broker(
     // Only ordinary startup enters the routable process map. The private
     // candidate is owned solely by this mutation and StartupGuard.
     if !validation_only {
-        let mut registry = brokers()
-            .lock()
-            .map_err(|_| error("Plugin runtime lock is unavailable"))?;
-        if CLOSING.load(Ordering::Acquire) {
-            drop(registry);
-            return Err(error("Plugin host is shutting down"));
-        }
-        registry.insert(id.to_owned(), broker.clone());
+        publish_startup(
+            id,
+            revision.ok_or_else(|| error("Plugin startup has no lifecycle admission"))?,
+            || {
+                let mut registry = brokers()
+                    .lock()
+                    .map_err(|_| error("Plugin runtime lock is unavailable"))?;
+                if CLOSING.load(Ordering::Acquire) {
+                    drop(registry);
+                    return Err(error("Plugin host is shutting down"));
+                }
+                registry.insert(id.to_owned(), broker.clone());
+                Ok(())
+            },
+        )?;
     } else {
         let mut candidates = CANDIDATES
             .get_or_init(Default::default)
@@ -2406,10 +2511,25 @@ mod deadline_tests {
 pub(super) fn call_with_origin(
     id: &str,
     method: &str,
-    mut params: Value,
+    params: Value,
     origin_label: &str,
     entered: std::time::SystemTime,
 ) -> Result<Value, AppError> {
+    let admission = {
+        let _gate = super::read_lifecycle()?;
+        CallLease::acquire_method(id, method)?
+    };
+    call_admitted(id, method, params, origin_label, entered, &admission)
+}
+pub(super) fn call_admitted(
+    id: &str,
+    method: &str,
+    mut params: Value,
+    origin_label: &str,
+    entered: std::time::SystemTime,
+    admission: &CallLease,
+) -> Result<Value, AppError> {
+    admission.require_current(id)?;
     let operation_deadline = operation_deadline_ms(entered);
     if !params.is_object() || method.len() > 128 {
         return Err(error("Invalid plugin request"));
@@ -2426,6 +2546,7 @@ pub(super) fn call_with_origin(
         return Err(error("Plugin method is owned by the host"));
     }
     let broker = ensure(id)?;
+    admission.require_current(id)?;
     let mut durable_job = None;
     let job = if method == "jobs.start" {
         let mut operation = [0u8; 16];
@@ -2512,49 +2633,6 @@ pub(super) fn call_with_origin(
         }
     }
     result
-}
-
-/// Job registration is presentation/acceptance ownership, not worker activity.
-/// A repair may carry those exact successful handoffs across quiescence; all
-/// calls, processes and other job registrations still block its admission.
-pub(super) fn busy_except_retained_jobs(id: &str, operations: &HashSet<String>) -> bool {
-    CALLS
-        .get_or_init(Default::default)
-        .lock()
-        .unwrap_or_else(|cause| cause.into_inner())
-        .calls
-        .iter()
-        .any(|((package, _), count)| package == id && *count > 0)
-        || !super::provenance::active_runs(id).is_empty()
-        || brokers()
-            .lock()
-            .unwrap_or_else(|cause| cause.into_inner())
-            .get(id)
-            .is_some_and(|broker| {
-                !broker
-                    .controls
-                    .lock()
-                    .unwrap_or_else(|cause| cause.into_inner())
-                    .is_empty()
-                    || broker
-                        .text_bridge
-                        .get()
-                        .is_some_and(|bridge| bridge.has_pending())
-                    || broker
-                        .reverse_pending
-                        .iter()
-                        .any(|count| count.load(Ordering::Acquire) > 0)
-                    || broker
-                        .jobs
-                        .lock()
-                        .unwrap_or_else(|cause| cause.into_inner())
-                        .values()
-                        .any(|job| !operations.contains(&job.operation_id))
-            })
-        || recovering()
-            .lock()
-            .unwrap_or_else(|cause| cause.into_inner())
-            .contains_key(id)
 }
 
 pub(super) fn retire(id: &str) {

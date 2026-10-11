@@ -133,9 +133,14 @@ fn bootstrap_services() -> Result<(), AppError> {
     // Reconstruct native metadata under this bootstrap gate so newly scheduled
     // reconciliation cannot race readiness. Service participants cannot have
     // started yet; no provider RPC or candidate handshake occurs under it.
-    let _bootstrap = write_lifecycle()?;
-    service_host::initialize(&profile)?;
+    {
+        let _bootstrap = write_lifecycle()?;
+        service_host::initialize(&profile)?;
+    }
+    // Journal recovery owns short lifecycle fences and may retire/join a
+    // surviving degraded broker. Never keep the global gate across that IO.
     lifecycle::recover(&root()?)?;
+    let _bootstrap = write_lifecycle()?;
     service_host::store()?.revisit_uncertain_settlements()?;
     service_bridge::recover_startup()?;
     ai_operations::settle_stopped_backlog(service_host::store()?)?;
@@ -316,7 +321,14 @@ pub async fn plugin_backend_invoke(
         }
         let _lease = backend::CallLease::acquire_method(&package_id, &method)?;
         drop(_guard);
-        backend::call_with_origin(&package_id, &method, params, &origin_label, entered)
+        backend::call_admitted(
+            &package_id,
+            &method,
+            params,
+            &origin_label,
+            entered,
+            &_lease,
+        )
     })
     .await
     .map_err(|error| AppError::WorkerFailed(error.to_string()))?

@@ -732,6 +732,7 @@ impl Store {
         }
         let spec = encode(&inputs)?;
         let cached = self.transaction(|tx| {
+            Self::generation_admitted(tx,caller)?;
             let old: Option<(String, String, Option<String>, Option<String>)> = tx
                 .query_row("SELECT owner,phase,capture_spec,captures FROM operations WHERE consumer=?1 AND operation=?2", params![caller.package_id, op], |r| {
                     Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?))
@@ -786,6 +787,7 @@ impl Store {
             .map(|h| self.lease(h))
             .collect::<Result<_>>()?;
         self.transaction(|tx| {
+            Self::generation_admitted(tx,caller)?;
             let existing: bool = tx
                 .query_row("SELECT EXISTS(SELECT 1 FROM operations WHERE consumer=?1 AND operation=?2)", params![caller.package_id, op], |r| r.get(0))
                 .map_err(sql)?;
@@ -1171,6 +1173,33 @@ impl Store {
             .map_err(sql)?;
             Ok(TransferReceipt { transfer_receipt: receipt })
         })
+    }
+    pub(super) fn acquired_output_path(&self, a: &Admission) -> Result<String> {
+        let conn = self.connect()?;
+        Self::verify_acquisition_at(
+            &conn,
+            a,
+            a.transfer_receipt
+                .as_deref()
+                .ok_or_else(|| reject("missing acquisition receipt"))?,
+        )?;
+        let (path, root): (String,String) = conn.query_row("SELECT e.path,r.path FROM evidence e JOIN roots r ON r.package=e.consumer WHERE e.consumer=?1 AND e.operation=?2", params![a.consumer.package_id,a.operation_id],|r|Ok((r.get(0)?,r.get(1)?))).map_err(sql)?;
+        let path = PathBuf::from(path);
+        no_links(&path)?;
+        let physical =
+            dunce::canonicalize(&path).map_err(|_| reject("consumer evidence unavailable"))?;
+        if !physical.starts_with(root) || physical.starts_with(&self.root) {
+            return Err(reject("consumer evidence escaped its storage root"));
+        }
+        let d = a
+            .output
+            .as_ref()
+            .ok_or_else(|| reject("missing acquired output"))?;
+        let bytes = bounded(&mut open_regular(&physical)?, d.byte_length)?;
+        if bytes.len() as u64 != d.byte_length || hex::encode(Sha256::digest(&bytes)) != d.sha256 {
+            return Err(reject("consumer copy does not match the sealed output"));
+        }
+        Ok(physical.to_string_lossy().into())
     }
     pub(super) fn collect_released(&self, consumer: &str, op: &str) -> Result<()> {
         let conn = self.connect()?;

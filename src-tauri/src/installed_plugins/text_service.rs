@@ -54,9 +54,6 @@ impl Drop for Pending {
     }
 }
 impl TextBridge {
-    pub(super) fn has_pending(&self) -> bool {
-        self.pending.load(Ordering::Acquire) > 0
-    }
     pub fn new(
         caller: String,
         package: String,

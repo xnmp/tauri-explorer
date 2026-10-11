@@ -411,6 +411,63 @@ impl Store {
         }
         Ok(Some(a))
     }
+    /// Fence the exact retired incarnation durably before its workers can
+    /// cross the final removal sweep. Existing records remain readable for
+    /// compatible recovery; old workers cannot create new custody or jobs.
+    pub fn retire_generation(&self, owner: &PackageGeneration) -> Result<()> {
+        generation(owner)?;
+        self.transaction(|tx| { tx.execute("INSERT OR IGNORE INTO retired_generations(package,digest,incarnation)VALUES(?1,?2,?3)",params![owner.package_id,owner.digest,owner.incarnation as i64]).map_err(sql)?; Ok(()) })
+    }
+    pub fn retire_package_generations(
+        &self,
+        package: &str,
+        native: Option<&PackageGeneration>,
+    ) -> Result<()> {
+        let mut generations = Vec::new();
+        if let Some(native) = native {
+            generation(native)?;
+            generations.push(native.clone());
+        }
+        let conn = self.connect()?;
+        let mut query = conn
+            .prepare("SELECT consumer,operation,owner FROM operations")
+            .map_err(sql)?;
+        let rows = query
+            .query_map([], |r| {
+                Ok((
+                    r.get::<_, String>(0)?,
+                    r.get::<_, String>(1)?,
+                    r.get::<_, String>(2)?,
+                ))
+            })
+            .map_err(sql)?
+            .collect::<std::result::Result<Vec<_>, _>>()
+            .map_err(sql)?;
+        for (consumer, op, owner) in rows {
+            generations.push(decode::<PackageGeneration>(&owner)?);
+            if let Some(a) = Self::record(&conn, &consumer, &op)? {
+                generations.extend([a.consumer, a.provider]);
+            }
+        }
+        generations.extend(self.jobs_in(&conn)?.into_iter().map(|j| j.owner));
+        drop(query);
+        drop(conn);
+        self.transaction(|tx| {
+            for owner in generations.iter().filter(|g|g.package_id == package) {
+                generation(owner)?;
+                tx.execute("INSERT OR IGNORE INTO retired_generations(package,digest,incarnation)VALUES(?1,?2,?3)",params![owner.package_id,owner.digest,owner.incarnation as i64]).map_err(sql)?;
+            }
+            Ok(())
+        })
+    }
+    pub(super) fn generation_admitted(conn: &Connection, owner: &PackageGeneration) -> Result<()> {
+        let retired: bool = conn.query_row("SELECT EXISTS(SELECT 1 FROM retired_generations WHERE package=?1 AND digest=?2 AND incarnation=?3)",params![owner.package_id,owner.digest,owner.incarnation as i64],|r|r.get(0)).map_err(sql)?;
+        if retired {
+            Err(reject("plugin incarnation was retired"))
+        } else {
+            Ok(())
+        }
+    }
     pub fn get(&self, consumer: &str, op: &str) -> Result<Option<Admission>> {
         if !identity(consumer) || !identity(op) {
             return Err(reject("invalid operation identity"));
@@ -500,6 +557,8 @@ impl Store {
                 }
                 return Ok(old);
             }
+            Self::generation_admitted(tx,&a.consumer)?;
+            Self::generation_admitted(tx,&a.provider)?;
             let owner: Option<String> = tx
                 .query_row("SELECT owner FROM operations WHERE consumer=?1 AND operation=?2", params![a.consumer.package_id, a.operation_id], |r| r.get(0))
                 .optional()
@@ -640,6 +699,8 @@ impl Store {
                     "preparation owner expired; create a new operation ID",
                 ));
             }
+            Self::generation_admitted(tx, &a.consumer)?;
+            Self::generation_admitted(tx, &a.provider)?;
             a.phase = AdmissionPhase::Forwarding;
             Self::persist(tx, &a)?;
             Ok((a, true))
@@ -809,6 +870,30 @@ impl Store {
         ).map_err(sql)?;
         Ok(!retained)
     }
+    /// Complete participant inventory for lifecycle changes and replacement
+    /// recovery, including Released admissions and execution-released rows.
+    pub fn package_operations(&self, package: &str) -> Result<Vec<Admission>> {
+        let conn = self.connect()?;
+        let mut query = conn
+            .prepare("SELECT consumer,operation FROM operations WHERE admission IS NOT NULL")
+            .map_err(sql)?;
+        let rows = query
+            .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))
+            .map_err(sql)?
+            .collect::<std::result::Result<Vec<_>, _>>()
+            .map_err(sql)?;
+        rows.into_iter()
+            .filter_map(|(consumer, op)| match Self::record(&conn, &consumer, &op) {
+                Ok(Some(a))
+                    if a.consumer.package_id == package || a.provider.package_id == package =>
+                {
+                    Some(Ok(a))
+                }
+                Err(e) => Some(Err(e)),
+                _ => None,
+            })
+            .collect()
+    }
     pub fn retained_operations(&self) -> Result<Vec<(Admission, u64, bool)>> {
         let conn = self.connect()?;
         let mut query=conn.prepare("SELECT consumer,operation,created_at_ms,exec_released FROM operations WHERE admission IS NOT NULL AND phase!='released' ORDER BY created_at_ms DESC LIMIT 128").map_err(sql)?;
@@ -935,53 +1020,6 @@ impl Store {
         let count: i64 = conn
             .query_row("SELECT count(*) FROM operations WHERE consumer=?1 AND admission IS NULL AND phase!='released'", [package], |r| r.get(0))
             .map_err(sql)?;
-        Ok(count > 0)
-    }
-    /// Retained success permits either participant's repair or explicit
-    /// removal. Live calls/workers are fenced separately by lifecycle.
-    pub fn output_delivery_pending(&self, a: &Admission) -> Result<bool> {
-        Ok(matches!(
-            a.phase,
-            AdmissionPhase::Forwarding | AdmissionPhase::Accepted | AdmissionPhase::Terminal
-        ) && self.success_known(a)?)
-    }
-    pub fn busy_for_delivery_repair(&self, package: &str) -> Result<bool> {
-        let claims = self.claims()?;
-        let recoverable = claims
-            .iter()
-            .filter(|a| a.consumer.package_id == package || a.provider.package_id == package)
-            .map(|a| {
-                self.output_delivery_pending(a).map(|pending| {
-                    (
-                        a.consumer.package_id.as_str(),
-                        a.operation_id.as_str(),
-                        pending,
-                    )
-                })
-            })
-            .collect::<Result<Vec<_>>>()?;
-        if claims.iter().any(|a| {
-            (a.provider.package_id == package || a.consumer.package_id == package)
-                && !recoverable.iter().any(|(consumer, op, pending)| {
-                    *consumer == a.consumer.package_id && *op == a.operation_id && *pending
-                })
-        }) {
-            return Ok(true);
-        }
-        if self.snapshot_jobs()?.jobs.iter().any(|j| {
-            j.owner.package_id == package
-                && !j.state.terminal()
-                && !matches!(
-                    j.phase.as_deref(),
-                    Some("stopped" | "provider_result_discarded")
-                )
-                && !recoverable.iter().any(|(consumer, op, pending)| {
-                    *consumer == j.owner.package_id && *op == j.operation_id && *pending
-                })
-        }) {
-            return Ok(true);
-        }
-        let count: i64 = self.connect()?.query_row("SELECT count(*) FROM operations WHERE consumer=?1 AND admission IS NULL AND phase!='released'", [package], |r| r.get(0)).map_err(sql)?;
         Ok(count > 0)
     }
     pub fn claims(&self) -> Result<Vec<Admission>> {

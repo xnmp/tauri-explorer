@@ -33,7 +33,7 @@ pub(super) fn pending_success_for_root(root: &Path) -> Result<PendingSuccess> {
 }
 pub(super) const RECEIPT_SCHEMA: i64 = 0x5445_4931;
 pub(super) const RECEIPT_TABLE: &str = "CREATE TABLE provider_receipts(consumer TEXT NOT NULL,operation TEXT NOT NULL,provider TEXT NOT NULL,revision INTEGER NOT NULL,status TEXT NOT NULL,digest TEXT NOT NULL,PRIMARY KEY(consumer,operation)); PRAGMA application_id=1413826865;";
-pub(super) const DISMISSAL_TABLE: &str = "CREATE TABLE IF NOT EXISTS dismissed_operations(consumer TEXT NOT NULL,operation TEXT NOT NULL,revision INTEGER NOT NULL,dismissed_at_ms INTEGER NOT NULL,PRIMARY KEY(consumer,operation)); CREATE TABLE IF NOT EXISTS consumer_removals(package TEXT PRIMARY KEY NOT NULL)";
+pub(super) const DISMISSAL_TABLE: &str = "CREATE TABLE IF NOT EXISTS dismissed_operations(consumer TEXT NOT NULL,operation TEXT NOT NULL,revision INTEGER NOT NULL,dismissed_at_ms INTEGER NOT NULL,PRIMARY KEY(consumer,operation)); CREATE TABLE IF NOT EXISTS consumer_removals(package TEXT PRIMARY KEY NOT NULL); CREATE TABLE IF NOT EXISTS retired_generations(package TEXT NOT NULL,digest TEXT NOT NULL,incarnation INTEGER NOT NULL,PRIMARY KEY(package,digest,incarnation)); CREATE TABLE IF NOT EXISTS removal_cancellations(consumer TEXT NOT NULL,operation TEXT NOT NULL,PRIMARY KEY(consumer,operation))";
 fn canonical(value: &Value) -> Value {
     match value {
         Value::Object(object) => {
@@ -188,6 +188,15 @@ impl Store {
         if !same_owner(&a.provider, provider) {
             return Err(reject("provider receipt owner does not match"));
         }
+        if a.phase == AdmissionPhase::Released
+            && a.disposition.as_deref() == Some("discarded")
+            && matches!(
+                status["delivery"]["state"].as_str(),
+                Some("available" | "unavailable")
+            )
+        {
+            return Err(reject("operation was explicitly discarded"));
+        }
         let status = super::receipt::validate(status, a)?;
         if status["execution"]["state"] == "succeeded"
             && matches!(
@@ -273,6 +282,45 @@ impl Store {
             .remove(&(consumer.into(), operation.into()));
         Ok(())
     }
+    pub fn queue_removal_cancellations(&self, admissions: &[Admission]) -> Result<()> {
+        self.transaction(|tx| {
+            for a in admissions {
+                tx.execute(
+                    "INSERT OR IGNORE INTO removal_cancellations(consumer,operation)VALUES(?1,?2)",
+                    params![a.consumer.package_id, a.operation_id],
+                )
+                .map_err(sql)?;
+            }
+            Ok(())
+        })
+    }
+    pub fn pending_removal_cancellations(&self) -> Result<Vec<Admission>> {
+        let conn = self.connect()?;
+        let mut query = conn
+            .prepare("SELECT consumer,operation FROM removal_cancellations")
+            .map_err(sql)?;
+        let rows = query
+            .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))
+            .map_err(sql)?
+            .collect::<std::result::Result<Vec<_>, _>>()
+            .map_err(sql)?;
+        rows.into_iter()
+            .map(|(consumer, op)| {
+                Self::record(&conn, &consumer, &op)?
+                    .ok_or_else(|| reject("cancellation admission disappeared"))
+            })
+            .collect()
+    }
+    pub fn finish_removal_cancellation(&self, a: &Admission) -> Result<()> {
+        self.transaction(|tx| {
+            tx.execute(
+                "DELETE FROM removal_cancellations WHERE consumer=?1 AND operation=?2",
+                params![a.consumer.package_id, a.operation_id],
+            )
+            .map_err(sql)?;
+            Ok(())
+        })
+    }
     pub fn prepare_consumer_removal(&self, package: &str) -> Result<()> {
         if !identity(package) {
             return Err(reject("invalid consumer package"));
@@ -313,59 +361,82 @@ impl Store {
             Ok(())
         })
     }
-    /// User-authorized removal of a successful operation's participant. This is
-    /// deliberately separate from automatic no-output settlement.
+    /// The common custody boundary for explicit removal and incompatible
+    /// replacement. Enumerate the ledger, never claims(): settled and acquired
+    /// admissions, preparations and presentation-only jobs are all included.
     pub fn abandon_package_outputs(&self, package: &str) -> Result<Vec<super::job::JobRecord>> {
-        let mut jobs = Vec::new();
-        for a in self
-            .claims()?
-            .into_iter()
-            .filter(|a| a.consumer.package_id == package || a.provider.package_id == package)
-        {
-            if !self.output_delivery_pending(&a)? {
-                continue;
-            }
-            let job = self.transaction(|tx| {
-                let mut current = Self::record(tx, &a.consumer.package_id, &a.operation_id)?
-                    .ok_or_else(|| reject("operation disappeared"))?;
-                if current.phase == AdmissionPhase::Released {
-                    return Ok(None);
-                }
-                if !matches!(
-                    current.phase,
-                    AdmissionPhase::Forwarding
-                        | AdmissionPhase::Accepted
-                        | AdmissionPhase::Terminal
-                ) {
-                    return Err(reject(
-                        "package removal cannot release unfinished execution",
-                    ));
-                }
-                current.phase = AdmissionPhase::Released;
-                current.disposition = Some("discarded".into());
-                current.transfer_receipt = None;
-                // Older hosts could commit the successful receipt before its
-                // terminal projection. Keep that descriptor in the tombstone
-                // so explicit removal remains valid on the next open.
-                if let Some(receipt) = Self::provider_receipt_at(tx, &current)? {
-                    if receipt["execution"]["state"] == "succeeded"
-                        && receipt["delivery"]["state"] == "available"
-                    {
-                        current.output = Some(
-                            serde_json::from_value(receipt["delivery"]["output"].clone())
-                                .map_err(|_| reject("invalid output descriptor"))?,
-                        );
-                    }
-                }
-                Self::persist(tx, &current)?;
-                self.report_undelivered_in(tx, &current)
-            })?;
-            if let Some(job) = job {
-                jobs.push(job);
-            }
-            self.forget_success(&a.consumer.package_id, &a.operation_id)?;
-            self.collect_released(&a.consumer.package_id, &a.operation_id)?;
+        self.abandon_package_operations(package, |_| false)
+    }
+    pub fn abandon_package_operations(
+        &self,
+        package: &str,
+        retain: impl Fn(&Admission) -> bool,
+    ) -> Result<Vec<super::job::JobRecord>> {
+        if !identity(package) {
+            return Err(reject("invalid package"));
         }
+        let (jobs, abandoned) = self.transaction(|tx| {
+            let mut query = tx.prepare("SELECT consumer,operation FROM operations").map_err(sql)?;
+            let rows = query.query_map([], |r| Ok((r.get::<_,String>(0)?,r.get::<_,String>(1)?)))
+                .map_err(sql)?.collect::<std::result::Result<Vec<_>,_>>().map_err(sql)?;
+            drop(query);
+            let mut jobs = Vec::new();
+            let mut abandoned = Vec::new();
+            let mut retained = std::collections::HashSet::new();
+            for (consumer, op) in rows {
+                let admission = Self::record(tx, &consumer, &op)?;
+                let affected = admission.as_ref().map_or(consumer == package, |a| a.consumer.package_id == package || a.provider.package_id == package);
+                if !affected { continue; }
+                if admission.as_ref().is_some_and(&retain) {
+                    // A new compatible participant must inspect all retained
+                    // phases again this session. Keep execution fenced against
+                    // replay while revoking only the old idle presentation.
+                    tx.execute("DELETE FROM dismissed_operations WHERE consumer=?1 AND operation=?2",params![consumer,op]).map_err(sql)?;
+                    retained.insert((consumer, op));
+                    continue;
+                }
+                if let Some(mut a) = admission {
+                    let success = a.output.is_some() || self.pending_success(&a)?.is_some()
+                        || Self::provider_receipt_at(tx, &a)?.is_some_and(|r| r["execution"]["state"] == "succeeded");
+                    let undelivered = success && a.disposition.as_deref() != Some("acquired")
+                        && a.disposition.as_deref() != Some("discarded");
+                    if a.phase != AdmissionPhase::Released {
+                        if let Some(receipt) = Self::provider_receipt_at(tx, &a)? {
+                            if receipt["delivery"]["state"] == "available" {
+                                a.output = Some(serde_json::from_value(receipt["delivery"]["output"].clone()).map_err(|_|reject("invalid output descriptor"))?);
+                            }
+                        }
+                        a.phase = AdmissionPhase::Released;
+                        a.disposition = Some("discarded".into());
+                        a.transfer_receipt = None;
+                        a.needs_attention = false;
+                        Self::persist(tx, &a)?;
+                    }
+                    if undelivered {
+                        if let Some(job) = self.report_undelivered_in(tx, &a, package)? { jobs.push(job); }
+                    }
+                } else {
+                    tx.execute("UPDATE operations SET phase='released' WHERE consumer=?1 AND operation=?2",params![consumer,op]).map_err(sql)?;
+                }
+                // Retire capacity in the same commit, even if an IO lease
+                // temporarily defers the post-commit byte collection.
+                tx.execute("UPDATE artifacts SET status='released',bytes=0 WHERE consumer=?1 AND operation=?2",params![consumer,op]).map_err(sql)?;
+                tx.execute("UPDATE operations SET exec_released=0 WHERE consumer=?1 AND operation=?2",params![consumer,op]).map_err(sql)?;
+                tx.execute("DELETE FROM dismissed_operations WHERE consumer=?1 AND operation=?2",params![consumer,op]).map_err(sql)?;
+                if let Some(job) = self.cancel_removed_job_in(tx, &consumer, &op)? { jobs.push(job); }
+                abandoned.push((consumer, op));
+            }
+            for job in self.jobs_in(tx)? {
+                if job.owner.package_id == package && !retained.contains(&(package.to_owned(),job.operation_id.clone())) {
+                    if let Some(job) = self.cancel_removed_job_in(tx, package, &job.operation_id)? { jobs.push(job); }
+                }
+            }
+            Ok((jobs, abandoned))
+        })?;
+        for (consumer, op) in abandoned {
+            self.forget_success(&consumer, &op)?;
+        }
+        self.gc()?;
         Ok(jobs)
     }
     pub(super) fn provider_receipt_at(
@@ -508,7 +579,7 @@ impl Store {
             ));
         }
         let reservation = self.idle_output_reservation(consumer, op)?;
-        self.transaction(|tx| {
+        let settled = self.transaction(|tx| {
             let a = Self::record(tx, consumer, op)?.ok_or_else(|| reject("operation is not admitted"))?;
             let receipt = observed(tx, &a)?;
             let status = receipt.as_ref().map(|r| &r.status);
@@ -529,7 +600,11 @@ impl Store {
             }
             tx.execute("INSERT INTO dismissed_operations(consumer,operation,revision,dismissed_at_ms)VALUES(?1,?2,?3,CAST(strftime('%s','now') AS INTEGER)*1000)ON CONFLICT(consumer,operation)DO UPDATE SET revision=excluded.revision,dismissed_at_ms=excluded.dismissed_at_ms", params![consumer, op, receipt.as_ref().map_or(0, |r| r.revision) as i64]).map_err(sql)?;
             self.settle_dismissed_job_in(tx, consumer, op, status.and_then(|r| r["execution"]["error"]["message"].as_str()))
-        })
+        })?;
+        if let Err(error) = self.gc() {
+            log::warn!("settled artifact sweep deferred: {error}");
+        }
+        Ok(settled)
     }
     pub(super) fn validate_execution_releases(&self) -> Result<()> {
         let conn = self.connect()?;
@@ -555,36 +630,11 @@ impl Store {
                 return Err(reject("invalid retained execution claim"));
             }
             let receipt = observed(&conn, &a)?;
-            if a.phase == AdmissionPhase::Terminal
-                && a.needs_attention
-                && a.output.is_none()
-                // Legacy explicit Stop predates durable provider receipts.
-                // Preserve that no-output proof, but a newer successful
-                // receipt must always restore original recovery ownership.
-                && receipt.as_ref().is_none_or(|r| {
-                    r.status["execution"]["state"] == "unknown"
-                        && r.status["delivery"]["state"] == "none"
-                })
-            {
-                let reservation = self.idle_output_reservation(&consumer, &op)?;
-                self.transaction(|tx| {
-                    if let Some((handle, bytes, _)) = &reservation {
-                        tx.execute(
-                            "UPDATE artifacts SET bytes=?2 WHERE handle=?1",
-                            params![handle, *bytes as i64],
-                        )
-                        .map_err(sql)?;
-                    }
-                    Ok(())
-                })?;
-                continue;
-            }
-            // Legacy Stop is unchanged. Other idle settlements require their
-            // transaction's marker and a policy-compatible provider receipt.
+            // Execution release is a durable no-replay fence. Presentation
+            // dismissal is independent: replacement or startup may re-arm
+            // inspection by removing that marker without revoking this fence.
             let status = receipt.as_ref().map(|r| &r.status);
-            let revision = receipt.as_ref().map_or(0, |r| r.revision);
             if a.output.is_some() && a.phase != AdmissionPhase::Released
-                || self.dismissed_revision(&consumer, &op)? != Some(revision)
                 || super::receipt::auto_settlement(
                     a.phase,
                     status

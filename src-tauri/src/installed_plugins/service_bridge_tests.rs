@@ -837,6 +837,9 @@ impl RecoveryPort for FakeRecovery {
     }
 }
 fn recover(store: &Store, port: &FakeRecovery, dead: &PackageGeneration, attempt: Duration) {
+    // Begin the bounded recovery clock after owning the shared action lane;
+    // another test's lifecycle matrix is not simulated provider latency.
+    let _action = super::ai_operations::action_guard().unwrap();
     let now = Instant::now();
     recover_owned(
         store,
@@ -2005,7 +2008,7 @@ fn review_success_witness_survives_a_write_transaction_admission_timeout() {
     .is_err());
     blocker.execute_batch("ROLLBACK").unwrap();
     assert_eq!(s.auto_settlement_operations().unwrap().len(), 1);
-    assert!(super::service_host::mutation_allowed_in(&s, "provider").is_ok());
+    assert!(super::lifecycle::drain_idle(&s, "provider").is_ok());
     super::ai_operations::auto_reconcile_in(&s, &super::ai_operations::LiveAutomatic).unwrap();
     assert_eq!(s.get("consumer", op).unwrap().unwrap().output, Some(d));
 }
@@ -2041,7 +2044,7 @@ fn review_provider_upgrade_recovers_fenced_unknown_after_session_witness_expires
     );
     success["revision"] = json!(3);
     assert!(reconcile_at(&s, &provider(), &a, &success).is_err());
-    assert!(super::service_host::mutation_allowed_in(&s, "provider").is_ok());
+    assert!(super::lifecycle::drain_idle(&s, "provider").is_ok());
     let manifest:super::package::Manifest=serde_json::from_value(json!({"formatVersion":1,"id":"provider","name":"Provider","description":"Provider","version":"2.0.0","sdkVersion":3,"svelteVersion":super::package::SVELTE_VERSION,"target":format!("{}-unknown-linux-gnu",std::env::consts::ARCH),"frontend":"index.js","styles":"index.css","backend":"worker","contributions":["provider"],"services":[{"id":"image-generation","major":1,"methods":["status","cancel","acknowledge"]}],"files":{}})).unwrap();
     let upgraded = generation("provider", 'd');
     drop(s);
@@ -2074,7 +2077,7 @@ fn review_explicit_provider_removal_preserves_legacy_partial_success_on_reopen()
     let db = rusqlite::Connection::open(root.path().join("service/ledger.sqlite")).unwrap();
     db.execute("UPDATE operations SET phase='accepted',admission=json_set(admission,'$.phase','accepted','$.output',NULL) WHERE operation=?1",[op]).unwrap();
     drop(db);
-    assert!(super::service_host::mutation_allowed_in(&s, "provider").is_ok());
+    assert!(super::lifecycle::drain_idle(&s, "provider").is_ok());
     let notices = s.abandon_package_outputs("provider").unwrap();
     assert_eq!(notices.len(), 1);
     assert!(s.abandon_package_outputs("provider").unwrap().is_empty());
@@ -2808,16 +2811,17 @@ fn automatic_recovery_obtains_retained_output_and_completes_without_discard_or_s
                 Ok(())
             }
         }
-        assert!(super::ai_operations::auto_reconcile_in(
+        let published = super::ai_operations::auto_reconcile_in(
             &s,
             &RecoverOutput {
                 store: &s,
                 descriptor: &descriptor,
-                copy: &copy
-            }
+                copy: &copy,
+            },
         )
-        .unwrap()
-        .is_empty());
+        .unwrap();
+        assert_eq!(published.len(), usize::from(acquired));
+        assert!(published.iter().all(|job| job.state == JobState::Completed));
         assert!(copy.is_file());
         let completed = s.job(&registered.job_key).unwrap().unwrap();
         assert_eq!(completed.state, JobState::Completed);
@@ -3168,7 +3172,10 @@ fn automatic_review_lifecycle_settles_dead_no_output_before_busy_check() {
         drain.is_ok(),
         "disable/uninstall/repair must settle dead terminal records before their busy check"
     );
-    assert!(s.execution_released(&a.consumer.package_id, op).unwrap());
+    assert!(
+        !s.execution_released(&a.consumer.package_id, op).unwrap(),
+        "lifecycle admission must preserve uncertain evidence without state-specific settlement"
+    );
 }
 
 #[test]
@@ -3366,56 +3373,6 @@ fn automatic_review_unknown_diagnostics_can_finalize_only_the_original_turn() {
 }
 
 #[test]
-fn automatic_review_repair_probes_a_retained_counterpart_without_starting_it() {
-    use crate::service_state::job::JobRecord;
-    for worker_active in [false, true] {
-        let (_root, s) = fixture();
-        let op = "review-live-counterpart";
-        start(&s, op);
-        let a = s.get("consumer", op).unwrap().unwrap();
-        let mut unknown = status(op, "unknown", json!({"state":"none"}));
-        unknown["revision"] = json!(2);
-        unknown["execution"]["error"] =
-            json!({"code":"interrupted","message":"Outcome unconfirmed","correlationId":null});
-        reconcile_at(&s, &provider(), &a, &unknown).unwrap();
-        struct Counterpart(bool);
-        impl super::ai_operations::AutomaticPort for Counterpart {
-            fn active(
-                &self,
-                a: &Admission,
-                _: Option<&JobRecord>,
-                _: bool,
-                _: &str,
-            ) -> Result<bool, AppError> {
-                let _status = super::backend::CallLease::acquire_method(
-                    &a.consumer.package_id,
-                    "jobs.status",
-                )?;
-                Ok(self.0)
-            }
-            fn recover(&self, _: &Admission, _: Option<&JobRecord>) -> Result<(), AppError> {
-                panic!("Unknown must never start or recover")
-            }
-        }
-        super::ai_operations::settle_terminal_backlog_in(
-            &s,
-            "provider",
-            &Counterpart(worker_active),
-        )
-        .unwrap();
-        assert_eq!(
-            s.execution_released("consumer", op).unwrap(),
-            !worker_active
-        );
-        assert_eq!(
-            super::service_host::mutation_allowed_in(&s, "provider").is_ok(),
-            !worker_active
-        );
-        assert_eq!(s.provider_receipt("consumer", op).unwrap(), Some(unknown));
-    }
-}
-
-#[test]
 fn review_settled_unknown_collects_nonempty_inputs_and_restores_capacity() {
     let root = tempfile::tempdir().unwrap();
     let input = root.path().join("input.png");
@@ -3451,9 +3408,8 @@ fn review_settled_unknown_collects_nonempty_inputs_and_restores_capacity() {
         json!({"code":"interrupted","message":"Unconfirmed","correlationId":null});
     let a = s.get("consumer", op).unwrap().unwrap();
     reconcile_at(&s, &provider(), &a, &unknown).unwrap();
-    // Real idle settlement transaction, then the production GC sweep.
+    // The settlement entry point must collect bytes during this session.
     s.auto_settle_operation("consumer", op, true).unwrap();
-    s.gc().unwrap();
     assert!(
         !Path::new(&artifact_path).exists(),
         "settled input was never collected"
@@ -3528,4 +3484,308 @@ fn review_automatic_settlement_keeps_successful_operation_inputs_and_output() {
         .is_ok());
     assert!(s.read(&consumer(), "consumer", op, &output).is_ok());
     assert!(!s.execution_released("consumer", op).unwrap());
+}
+
+fn recovery_manifest(id: &str) -> super::package::Manifest {
+    serde_json::from_value(json!({"formatVersion":1,"id":id,"name":"Recovery","description":"Recovery","version":"2.0.0","sdkVersion":3,"svelteVersion":super::package::SVELTE_VERSION,"target":format!("{}-unknown-linux-gnu",std::env::consts::ARCH),"frontend":"index.js","styles":"index.css","backend":"worker","contributions":["recovery"],"services":[{"id":"image-generation","major":1,"methods":["status","cancel","acknowledge"]}],"serviceDependencies":[{"packageId":"provider","serviceId":"image-generation","major":1}],"files":{}})).unwrap()
+}
+
+#[test]
+fn invariant_b_replacement_recovers_settled_accepted_and_running_after_restart() {
+    for execution in ["accepted", "running"] {
+        let (root, s) = fixture();
+        let op = "replacement-uncertain";
+        call(&s, "start", request(op), |_, _| {
+            Ok(status(op, execution, json!({"state":"none"})))
+        })
+        .unwrap();
+        s.auto_settle_operation("consumer", op, true).unwrap();
+        drop(s);
+        let s = Store::open(root.path().join("service"), Limits::default()).unwrap();
+        let authority = super::service_bridge::recovery_provider(
+            &s,
+            &recovery_manifest("provider"),
+            &generation("provider", 'd'),
+            "consumer",
+            op,
+        )
+        .expect("compatible replacement must inspect the original settled uncertain execution");
+        assert_eq!(authority, provider());
+        let a = s.get("consumer", op).unwrap().unwrap();
+        let _permit = s.output_recovery_guard(&a).unwrap();
+        let d = sealed(&s, op);
+        let mut success = status(op, "succeeded", json!({"state":"available","output":d}));
+        success["revision"] = json!(2);
+        reconcile_at(&s, &authority, &a, &success).unwrap();
+        assert!(s.read(&consumer(), "consumer", op, &d).is_ok());
+        call(&s, "start", request(op), |method, _| {
+            assert!(method.ends_with(".status"), "uncertain execution replayed");
+            Ok(success.clone())
+        })
+        .unwrap();
+    }
+}
+
+#[test]
+fn invariant_a_and_b_released_acquired_running_job_is_repairable_and_completes() {
+    use crate::service_state::job::{JobRecord, JobState};
+    let (root, s) = fixture();
+    let op = "acknowledged-unpublished";
+    let registered = s.register_job(job(op, 97)).unwrap();
+    s.update_job(
+        &consumer(),
+        &registered.job_key,
+        JobState::Running,
+        Some("running".into()),
+        None,
+        Some(17),
+        None,
+    )
+    .unwrap();
+    let d = ready(&s, op);
+    let data = root.path().join("consumer-data");
+    fs::create_dir(&data).unwrap();
+    s.register_consumer_root("consumer", data.clone()).unwrap();
+    let copy = data.join("acquired.png");
+    fs::copy(s.read(&consumer(), "consumer", op, &d).unwrap().path, &copy).unwrap();
+    let proof = s
+        .acquired(&consumer(), op, &d, copy.to_str().unwrap())
+        .unwrap();
+    call(&s, "acknowledge", json!({"operationId":op,"outputSha256":d.sha256,"disposition":"acquired","transferReceipt":proof.transfer_receipt}), |_, _| Ok(status(op, "succeeded", json!({"state":"acquired","transferReceipt":proof.transfer_receipt})))).unwrap();
+    // Crash before a consumer completion receipt. Only host acquisition and the
+    // previously pinned consumer run survive; no provider bytes remain.
+    drop(s);
+    let s = Store::open(root.path().join("service"), Limits::default()).unwrap();
+    for id in ["consumer", "provider"] {
+        drop(
+            super::lifecycle::drain_idle(&s, id)
+                .expect("acknowledged output must never block repair or removal"),
+        );
+    }
+    struct AcquiredOnly;
+    impl super::ai_operations::AutomaticPort for AcquiredOnly {
+        fn active(
+            &self,
+            _: &Admission,
+            _: Option<&JobRecord>,
+            _: bool,
+            _: &str,
+        ) -> Result<bool, AppError> {
+            Ok(false)
+        }
+        fn recover(&self, _: &Admission, _: Option<&JobRecord>) -> Result<(), AppError> {
+            Err(AppError::Other(
+                "provider has already released its output".into(),
+            ))
+        }
+    }
+    super::ai_operations::auto_reconcile_in(&s, &AcquiredOnly).unwrap();
+    let completed = s.job(&registered.job_key).unwrap().unwrap();
+    assert_eq!(completed.state, JobState::Completed);
+    assert_eq!(completed.output_path.as_deref(), copy.to_str());
+    assert_eq!(completed.run_id, Some(17));
+    assert!(copy.is_file());
+}
+
+#[test]
+fn invariant_b_self_owned_provider_replacement_needs_no_dependency_on_itself() {
+    let mut a = Admission {
+        consumer: provider(),
+        provider: provider(),
+        target: target(),
+        operation_id: "self-owned".into(),
+        fingerprint: "c".repeat(64),
+        phase: AdmissionPhase::Reserved,
+        inputs: vec![],
+        output: None,
+        needs_attention: false,
+        disposition: None,
+        transfer_receipt: None,
+    };
+    let mut manifest = recovery_manifest("provider");
+    manifest.service_dependencies.clear();
+    for phase in [
+        AdmissionPhase::Reserved,
+        AdmissionPhase::Forwarding,
+        AdmissionPhase::Accepted,
+        AdmissionPhase::Terminal,
+        AdmissionPhase::Released,
+    ] {
+        a.phase = phase;
+        assert!(super::ai_operations::replacement_recovers(&manifest, &a));
+    }
+    manifest.services.clear();
+    assert!(!super::ai_operations::replacement_recovers(&manifest, &a));
+}
+#[test]
+fn invariant_a_signals_counterpart_cancellation_before_releasing_all_phases() {
+    let (_root, s) = fixture();
+    for op in [
+        "cancel-reserved",
+        "cancel-accepted",
+        "cancel-settled",
+        "cancel-acquired",
+    ] {
+        if op == "cancel-reserved" {
+            s.reserve(Admission {
+                consumer: consumer(),
+                provider: provider(),
+                target: target(),
+                operation_id: op.into(),
+                fingerprint: "c".repeat(64),
+                phase: AdmissionPhase::Reserved,
+                inputs: vec![],
+                output: None,
+                needs_attention: false,
+                disposition: None,
+                transfer_receipt: None,
+            })
+            .unwrap();
+        } else {
+            start(&s, op);
+        }
+        if op == "cancel-settled" {
+            s.auto_settle_operation("consumer", op, true).unwrap();
+        }
+    }
+    struct Cancellation<'a> {
+        store: &'a Store,
+        cancelled: Mutex<Vec<String>>,
+    }
+    impl RecoveryPort for Cancellation<'_> {
+        fn closing(&self) -> bool {
+            false
+        }
+        fn signal_cancel(&self, a: &Admission) {
+            assert_ne!(
+                self.store
+                    .get(&a.consumer.package_id, &a.operation_id)
+                    .unwrap()
+                    .unwrap()
+                    .phase,
+                AdmissionPhase::Released
+            );
+            self.cancelled.lock().unwrap().push(a.operation_id.clone());
+        }
+        fn control(
+            &self,
+            _: &Admission,
+            _: &str,
+            _: &mut dyn FnMut(&PackageGeneration, &Value) -> Result<(), AppError>,
+        ) -> Result<Value, AppError> {
+            panic!("removal cannot wait for recovery")
+        }
+    }
+    let port = Cancellation {
+        store: &s,
+        cancelled: Mutex::new(vec![]),
+    };
+    super::service_bridge::signal_removal_cancellations_in(&s, "consumer", |_| false, &port)
+        .unwrap();
+    let mut cancelled = port.cancelled.lock().unwrap().clone();
+    cancelled.sort();
+    assert_eq!(
+        cancelled,
+        [
+            "cancel-accepted",
+            "cancel-acquired",
+            "cancel-reserved",
+            "cancel-settled"
+        ]
+    );
+    s.abandon_package_outputs("consumer").unwrap();
+    assert!(s.claims().unwrap().is_empty());
+}
+
+#[test]
+fn invariant_a_rejected_counterpart_cancellation_retries_after_release_and_restart() {
+    let (root, s) = fixture();
+    start(&s, "retry-cancel");
+    struct Queue(bool);
+    impl RecoveryPort for Queue {
+        fn closing(&self) -> bool {
+            false
+        }
+        fn signal_cancel(&self, _: &Admission) {}
+        fn try_signal_cancel(&self, _: &Admission) -> bool {
+            self.0
+        }
+        fn control(
+            &self,
+            _: &Admission,
+            _: &str,
+            _: &mut dyn FnMut(&PackageGeneration, &Value) -> Result<(), AppError>,
+        ) -> Result<Value, AppError> {
+            panic!("no replay")
+        }
+    }
+    super::service_bridge::signal_removal_cancellations_in(
+        &s,
+        "consumer",
+        |_| false,
+        &Queue(false),
+    )
+    .unwrap();
+    s.abandon_package_outputs("consumer").unwrap();
+    drop(s);
+    let reopened = Store::open(root.path().join("service"), Limits::default()).unwrap();
+    assert_eq!(reopened.pending_removal_cancellations().unwrap().len(), 1);
+    super::service_bridge::retry_removal_cancellations_in(&reopened, &Queue(true)).unwrap();
+    assert!(reopened.pending_removal_cancellations().unwrap().is_empty());
+    assert!(reopened.claims().unwrap().is_empty());
+}
+#[test]
+fn invariant_b_acquired_output_completes_all_nonterminal_jobs_with_or_without_a_run() {
+    use crate::service_state::job::JobState;
+    for state in [
+        JobState::Accepting,
+        JobState::Running,
+        JobState::Recovering,
+        JobState::NeedsAttention,
+    ] {
+        for run in [None, Some(17)] {
+            let (root, s) = fixture();
+            let op = "acquired-all-jobs";
+            let registered = s.register_job(job(op, 98)).unwrap();
+            if state != JobState::Accepting || run.is_some() {
+                s.update_job(
+                    &consumer(),
+                    &registered.job_key,
+                    state,
+                    Some("fixture".into()),
+                    None,
+                    run,
+                    None,
+                )
+                .unwrap();
+            }
+            let d = ready(&s, op);
+            let data = root.path().join("consumer-data");
+            fs::create_dir(&data).unwrap();
+            s.register_consumer_root("consumer", data.clone()).unwrap();
+            let copy = data.join("delivered.png");
+            fs::copy(s.read(&consumer(), "consumer", op, &d).unwrap().path, &copy).unwrap();
+            let proof = s
+                .acquired(&consumer(), op, &d, copy.to_str().unwrap())
+                .unwrap();
+            s.release(
+                &provider(),
+                "consumer",
+                op,
+                "acquired",
+                Some(&proof.transfer_receipt),
+            )
+            .unwrap();
+            drop(s);
+            let s = Store::open(root.path().join("service"), Limits::default()).unwrap();
+            // Run the production automatic decision, with only an idle proof.
+            // The provider already collected its bytes; recovery must publish
+            // completion from the acquired consumer output.
+            super::ai_operations::auto_reconcile_in(&s, &IdleAutomatic).unwrap();
+            let completed = s.job(&registered.job_key).unwrap().unwrap();
+            assert_eq!(completed.state, JobState::Completed, "{state:?}/{run:?}");
+            assert_eq!(completed.run_id, run);
+            assert_eq!(completed.output_path.as_deref(), copy.to_str());
+        }
+    }
 }

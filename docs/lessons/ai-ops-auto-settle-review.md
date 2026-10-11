@@ -20,18 +20,27 @@ fence. Provider status recovery may need to stage and seal a raw retained image;
 a scoped host output-recovery permit authorizes that original IO through the real
 reverse IPC workers without allowing another start or restoring disposed output.
 
-A retained successful consumer handoff may survive replacement. Negotiate using
+A retained or uncertain operation survives compatible replacement in every
+phase, including execution-released Accepted/Running and acquired Released
+admissions. Negotiate using
 the manifest's existing service dependency identity and major, and retain the
 original caller identity for provider RPC and artifact custody. Apply this rule
 to job status, resume, cancellation, and completion events too. Native job
-registration alone is not an active worker: the repair drain preserves all
-call/process/reverse-work checks, tolerates only the exact successful handoffs,
-and still requires the consumer's quiesce/checkpoint handshake.
+registration alone is not an active worker. AI admissions, claims, jobs and
+live calls never veto a lifecycle change; checkpointing is best effort before
+native retirement. The same phase-independent contract predicate controls both
+replacement retention and recovery authority. Clear previous probe budgets and
+presentation dismissal markers after repair, preserving the no-replay fence.
 
-Explicit consumer disable/uninstall authorizes releasing undelivered output and
-publishing an ordinary Failed job. A durable removal intent precedes the package
-index write; startup completes it only when the index shows removal/disable,
-otherwise retracting it. A late-success operation previously settled Unknown
+Explicit provider or consumer disable/uninstall releases every affected
+operation, input, output and quota, and terminalizes every nonterminal job.
+Undelivered success publishes at most one ordinary Failed notice naming the
+removed plugin. A durable removal intent precedes cancellation and the package
+index write; startup completes it even when the index still shows enabled.
+Incompatible replacement uses the same custody transaction. Transactional
+generation retirement rejects delayed capture, job registration and admission;
+call/startup revision fencing rejects requests that resume after re-enable.
+Counterpart cancellation queue rejection leaves a durable retry. A late-success operation previously settled Unknown
 can change from Discarded to that delivery-loss report in the frontend reducer.
 Automatic settlement never uses the explicit-removal path.
 
@@ -39,6 +48,13 @@ Settling inactive no-output work retires captured input custody and charges in
 the settlement transaction. GC collects those inputs independently of the
 operation's forensic admission and output reservation, which remain available
 for original-output recovery and Unknown no-replay enforcement.
+Run the same collector used on open immediately after the settlement commit.
+
+An acquired output can outlive its Running presentation job if the consumer
+crashes before completion. Verify the acquired copy's path, length and hash,
+then publish completion directly from durable evidence; a run ID is optional.
+Discovery must enumerate admissions rather than claims, which omit Released
+and execution-released rows.
 
 Regressions in `service_native_tests.rs` use actual package archives, brokers,
 activation, jobs.start ownership, status RPC, reverse artifact IO, upgraded
@@ -56,10 +72,10 @@ revision. Commit successful receipt and terminal custody projection together.
 
 Provider repair follows the consumer policy. Compatible replacements use the
 original pinned authority for status, reverse stage/seal and acknowledgement.
-A restart can erase an uncommitted session witness after an upgrade, so fenced
-Unknown also permits compatible unpaid provider recovery; its start fence stays
-intact. Explicit provider removal disables transitive required dependents in one
-index commit, after all affected packages pass live-work fences. Optional
+A restart can erase an uncommitted session witness after an upgrade; compatible
+unpaid provider recovery covers every phase while its start fence stays intact.
+Explicit provider removal or incompatible replacement disables transitive required dependents in one
+index commit. Optional
 consumers remain enabled. Release/report share a transaction, including legacy
 successful receipt rows whose terminal projection never committed.
 

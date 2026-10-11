@@ -252,7 +252,7 @@ fn native_startup_recovery_holds_readiness_and_shutdown_for_actual_io() {
     );
     for package in [CONSUMER, PROVIDER] {
         assert!(
-            super::super::service_host::mutation_allowed_in(
+            super::super::lifecycle::drain_idle(
                 super::super::service_host::store().unwrap(),
                 package
             )

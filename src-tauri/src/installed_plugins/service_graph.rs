@@ -105,6 +105,58 @@ pub(super) fn provider_recovers(
         })
 }
 
+/// Required consumers of removed service contracts follow uninstall semantics
+/// during replacement; compatible consumers remain enabled.
+pub(super) fn replacement_dependents(entries: &[Installed], next: &Installed) -> Vec<String> {
+    let affected = removal_packages(entries, &next.manifest.id);
+    let mut projected = entries.to_vec();
+    if let Some(old) = projected
+        .iter_mut()
+        .find(|p| p.manifest.id == next.manifest.id)
+    {
+        let enabled = old.enabled;
+        *old = next.clone();
+        old.enabled = enabled;
+    } else {
+        projected.push(next.clone());
+    }
+    let mut disabled = Vec::new();
+    loop {
+        let missing: Vec<_> = projected
+            .iter()
+            .filter(|p| {
+                p.enabled && p.manifest.id != next.manifest.id && affected.contains(&p.manifest.id)
+            })
+            .filter(|p| {
+                p.manifest
+                    .service_dependencies
+                    .iter()
+                    .filter(|d| !d.optional)
+                    .any(|d| {
+                        select(
+                            &projected,
+                            &p.manifest,
+                            &d.package_id,
+                            &d.service_id,
+                            d.major,
+                        )
+                        .is_err()
+                    })
+            })
+            .map(|p| p.manifest.id.clone())
+            .collect();
+        if missing.is_empty() {
+            break;
+        }
+        for p in &mut projected {
+            if missing.contains(&p.manifest.id) {
+                p.enabled = false;
+            }
+        }
+        disabled.extend(missing);
+    }
+    disabled
+}
 /// Required dependents cannot stay enabled after explicit provider removal.
 /// Optional dependencies retain their usual unavailable-service behavior.
 pub(super) fn removal_packages(entries: &[Installed], package: &str) -> Vec<String> {

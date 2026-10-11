@@ -315,6 +315,7 @@ impl Store {
         &self,
         conn: &Connection,
         a: &super::model::Admission,
+        plugin: &str,
     ) -> Result<Option<JobRecord>> {
         let old = conn
             .query_row(
@@ -326,7 +327,9 @@ impl Store {
             .map_err(sql)?
             .map(|raw| checked(raw, watermark(conn)?))
             .transpose()?;
-        if old.as_ref().is_some_and(|j| j.state == JobState::Completed) {
+        if old.as_ref().is_some_and(|j| {
+            j.state == JobState::Completed || j.phase.as_deref() == Some("consumer_removed")
+        }) {
             return Ok(None);
         }
         let timestamp = clock()?;
@@ -361,9 +364,7 @@ impl Store {
         };
         record.state = JobState::Error;
         record.phase = Some("consumer_removed".into());
-        record.error = Some(
-            "One image could not be delivered because a plugin was disabled or uninstalled".into(),
-        );
+        record.error = Some(format!("An image from {plugin} could not be delivered"));
         record.output_path = None;
         record.run_id = None;
         record.updated_at_ms = timestamp;
@@ -373,6 +374,79 @@ impl Store {
         conn.execute("INSERT INTO presentation_jobs(key,owner,operation,job_id,revision,record)VALUES(?1,?2,?3,?4,?5,?6)ON CONFLICT(key)DO UPDATE SET revision=excluded.revision,record=excluded.record", params![record.job_key,record.owner.package_id,record.operation_id,record.job_id as i64,record.revision as i64,serialized(&record)?]).map_err(sql)?;
         prune(conn)?;
         Ok(Some(record))
+    }
+    pub(super) fn jobs_in(&self, conn: &Connection) -> Result<Vec<JobRecord>> {
+        all(conn)
+    }
+    pub(super) fn cancel_removed_job_in(
+        &self,
+        conn: &Connection,
+        consumer: &str,
+        op: &str,
+    ) -> Result<Option<JobRecord>> {
+        let Some(mut job) = all(conn)?
+            .into_iter()
+            .find(|j| j.owner.package_id == consumer && j.operation_id == op)
+        else {
+            return Ok(None);
+        };
+        if job.state.terminal() {
+            return Ok(None);
+        }
+        let old = job.clone();
+        job.state = JobState::Cancelled;
+        job.phase = Some("consumer_removed".into());
+        job.output_path = None;
+        job.updated_at_ms = clock()?;
+        job.revision = next_revision(conn)?;
+        stamp_settled(&old, &mut job);
+        valid(&job, false)?;
+        persist(conn, &job)?;
+        Ok(Some(job))
+    }
+    /// Acknowledgement is durable delivery proof. Complete from the acquired
+    /// consumer copy and its already pinned run, without asking the provider
+    /// for bytes it has legitimately collected or inventing a consumer run.
+    pub fn complete_acquired_job(&self, consumer: &str, op: &str) -> Result<Option<JobRecord>> {
+        let Some(a) = self.get(consumer, op)? else {
+            return Ok(None);
+        };
+        if a.phase != super::model::AdmissionPhase::Released
+            || a.disposition.as_deref() != Some("acquired")
+        {
+            return Ok(None);
+        }
+        let Some(job) = self.job_for_operation(consumer, op)? else {
+            return Ok(None);
+        };
+        let recoverable = !job.state.terminal()
+            || matches!(
+                job.phase.as_deref(),
+                Some("stopped" | "delivery_failed" | "storage_full")
+            );
+        if !recoverable {
+            return Ok(None);
+        }
+        let path = self.acquired_output_path(&a)?;
+        self.transaction(|conn| {
+            let Some(mut current) = stored(conn, &job.job_key)? else {
+                return Ok(None);
+            };
+            if current != job || Self::record(conn, consumer, op)?.as_ref() != Some(&a) {
+                return Ok(None);
+            }
+            let old = current.clone();
+            current.state = JobState::Completed;
+            current.phase = Some("complete".into());
+            current.output_path = Some(path);
+            current.error = None;
+            current.updated_at_ms = clock()?;
+            current.revision = next_revision(conn)?;
+            stamp_settled(&old, &mut current);
+            valid(&current, false)?;
+            persist(conn, &current)?;
+            Ok(Some(current))
+        })
     }
     /// Presentation failure releases no execution or output custody. The
     /// caller holds the worker-idle fence; recheck success/unavailable in the
@@ -536,6 +610,7 @@ impl Store {
                 if !immutable(old, &record) { return Err(reject("job identity already belongs to another registration")); }
                 return Ok(old.clone());
             }
+            Self::generation_admitted(conn,&record.owner)?;
             if jobs.iter().filter(|r| !retained(r)).count() >= MAX_ACTIVE { return Err(reject("resolve active jobs before starting more")); }
             // Parked rows may have filled retained capacity; keep room for one more.
             prune(conn)?;

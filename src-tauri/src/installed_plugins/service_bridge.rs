@@ -635,18 +635,7 @@ pub(super) fn recovery_caller(
     if a.consumer.digest == current.digest {
         return Ok(current.clone());
     }
-    let success = store.success_known(&a)?;
-    if manifest.id != current.package_id
-        || !service_graph::consumer_recovers(manifest, &a.target)
-        || !success
-        || !matches!(
-            a.phase,
-            AdmissionPhase::Forwarding
-                | AdmissionPhase::Accepted
-                | AdmissionPhase::Terminal
-                | AdmissionPhase::Released
-        )
-    {
+    if !super::ai_operations::replacement_recovers(manifest, &a) {
         return Err(error(
             "Consumer package does not advertise the original recovery contract",
         ));
@@ -671,22 +660,7 @@ pub(super) fn recovery_provider(
     if a.provider.digest == current.digest {
         return Ok(current.clone());
     }
-    let settled_unknown = a.phase == AdmissionPhase::Terminal
-        && store.execution_released(consumer, operation)?
-        && store
-            .provider_receipt(consumer, operation)?
-            .is_none_or(|r| r["execution"]["state"] == "unknown");
-    if manifest.id != current.package_id
-        || !service_graph::provider_recovers(manifest, &a.target)
-        || !(store.success_known(&a)? || settled_unknown)
-        || !matches!(
-            a.phase,
-            AdmissionPhase::Forwarding
-                | AdmissionPhase::Accepted
-                | AdmissionPhase::Terminal
-                | AdmissionPhase::Released
-        )
-    {
+    if !super::ai_operations::replacement_recovers(manifest, &a) {
         return Err(error(
             "Provider package does not advertise the original recovery contract",
         ));
@@ -1044,6 +1018,11 @@ pub(super) trait RecoveryPort {
     /// Best-effort early cancellation to an already-live provider instance.
     /// Queue acceptance is not execution confirmation.
     fn signal_cancel(&self, admission: &Admission);
+    /// Removal retains a durable retry when the bounded control queue is full.
+    fn try_signal_cancel(&self, admission: &Admission) -> bool {
+        self.signal_cancel(admission);
+        true
+    }
     /// One authoritative control call to the admission's pinned provider
     /// package. `settle` runs while the provider call ownership is retained.
     fn control(
@@ -1068,14 +1047,23 @@ impl RecoveryPort for LiveRecovery {
         backend::is_closing()
     }
     fn signal_cancel(&self, admission: &Admission) {
-        if let Some(provider) =
-            backend::active_instance(&admission.provider.package_id, &admission.provider.digest)
+        let _ = self.try_signal_cancel(admission);
+    }
+    fn try_signal_cancel(&self, admission: &Admission) -> bool {
+        let Some(provider) = backend::current_instance(&admission.provider.package_id) else {
+            return true;
+        };
+        if provider.generation().digest != admission.provider.digest
+            && !super::ai_operations::replacement_recovers(provider.manifest(), admission)
         {
-            let _ = provider.notify_request(
+            return true;
+        }
+        provider
+            .notify_request(
                 &control_method(admission, "cancel"),
                 control_params(admission),
-            );
-        }
+            )
+            .is_ok()
     }
     fn control(
         &self,
@@ -1089,7 +1077,8 @@ impl RecoveryPort for LiveRecovery {
             if !entries.iter().any(|entry| {
                 entry.enabled
                     && entry.manifest.id == admission.provider.package_id
-                    && entry.digest == admission.provider.digest
+                    && (entry.digest == admission.provider.digest
+                        || super::ai_operations::replacement_recovers(&entry.manifest, admission))
             }) {
                 return Err(error("Recovery provider is unavailable"));
             }
@@ -1101,9 +1090,53 @@ impl RecoveryPort for LiveRecovery {
             &control_method(admission, method),
             control_params(admission),
         )?;
-        settle(&provider.generation(), &response)?;
+        let authority = recovery_provider(
+            service_host::store()?,
+            provider.manifest(),
+            &provider.generation(),
+            &admission.consumer.package_id,
+            &admission.operation_id,
+        )?;
+        settle(&authority, &response)?;
         Ok(response)
     }
+}
+pub(super) fn signal_removal_cancellations(
+    store: &crate::service_state::Store,
+    package: &str,
+    retain: impl Fn(&Admission) -> bool,
+) -> Result<(), AppError> {
+    signal_removal_cancellations_in(store, package, retain, &LiveRecovery)
+}
+pub(super) fn signal_removal_cancellations_in(
+    store: &crate::service_state::Store,
+    package: &str,
+    retain: impl Fn(&Admission) -> bool,
+    port: &impl RecoveryPort,
+) -> Result<(), AppError> {
+    let cancelled: Vec<_> = store
+        .package_operations(package)?
+        .into_iter()
+        .filter(|a| !retain(a))
+        .collect();
+    store.queue_removal_cancellations(&cancelled)?;
+    retry_removal_cancellations_in(store, port)
+}
+pub(super) fn retry_removal_cancellations(
+    store: &crate::service_state::Store,
+) -> Result<(), AppError> {
+    retry_removal_cancellations_in(store, &LiveRecovery)
+}
+pub(super) fn retry_removal_cancellations_in(
+    store: &crate::service_state::Store,
+    port: &impl RecoveryPort,
+) -> Result<(), AppError> {
+    for a in store.pending_removal_cancellations()? {
+        if port.try_signal_cancel(&a) {
+            store.finish_removal_cancellation(&a)?;
+        }
+    }
+    Ok(())
 }
 /// Recovery policy for one dead generation's durable claims. A dead consumer's
 /// live provider work is cancelled and reconciled; a dead provider's work is

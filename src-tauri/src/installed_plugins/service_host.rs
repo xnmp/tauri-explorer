@@ -42,52 +42,6 @@ pub(super) fn busy(message: &str) -> AppError {
 pub(super) fn is_busy(error: &AppError) -> bool {
     matches!(error, AppError::Service { code, .. } if code == PACKAGE_BUSY)
 }
-pub(super) fn mutation_allowed_in(store: &Store, package: &str) -> Result<(), AppError> {
-    if store.busy_for_delivery_repair(package)? {
-        return Err(busy(
-            "Package still owns AI work; wait for automatic recovery to finish",
-        ));
-    }
-    Ok(())
-}
-pub(super) fn native_mutation_busy_in(store: &Store, package: &str) -> Result<bool, AppError> {
-    let mut retained = std::collections::HashSet::new();
-    for a in store
-        .claims()?
-        .into_iter()
-        .filter(|a| a.consumer.package_id == package)
-    {
-        if store.output_delivery_pending(&a)? {
-            retained.insert(a.operation_id);
-        }
-    }
-    Ok(super::backend::busy_except_retained_jobs(
-        package, &retained,
-    ))
-}
-pub(super) fn mutation_allowed_at(
-    profile: &std::path::Path,
-    package: &str,
-) -> Result<(), AppError> {
-    mutation_allowed_in(
-        &Store::open(profile.join("service-state"), Limits::default())?,
-        package,
-    )
-}
-
-/// SDK1/2 consumers may reconcile shared uncertain runs as ordinary interrupted
-/// work. Refuse that downgrade independently of released execution claims.
-pub(super) fn candidate_state_allowed_at(
-    profile: &std::path::Path,
-    candidate: &super::package::Installed,
-) -> Result<(), AppError> {
-    mutation_allowed_at(profile, &candidate.manifest.id)?;
-    if candidate.manifest.sdk_version < 3 {
-        let store = Store::open(profile.join("service-state"), Limits::default())?;
-        require_legacy_consumer_compatible(&store, &candidate.manifest.id)?;
-    }
-    Ok(())
-}
 pub(super) fn require_legacy_consumer_compatible(
     store: &Store,
     package: &str,

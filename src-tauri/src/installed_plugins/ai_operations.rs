@@ -49,6 +49,16 @@ fn compatible(packages: &[package::Installed], generation: &PackageGeneration) -
             && p.manifest.sdk_version >= 3
     })
 }
+/// One phase-independent replacement policy for lifecycle and both recovery
+/// authorities. Original admission identities and the no-replay fence survive.
+pub(super) fn replacement_recovers(manifest: &package::Manifest, a: &Admission) -> bool {
+    (manifest.id != a.consumer.package_id
+        || a.consumer.package_id == a.provider.package_id
+        || super::service_graph::consumer_recovers(manifest, &a.target))
+        && (manifest.id != a.provider.package_id
+            || super::service_graph::provider_recovers(manifest, &a.target))
+        && (manifest.id == a.consumer.package_id || manifest.id == a.provider.package_id)
+}
 pub(super) fn snapshot() -> Result<Value, AppError> {
     let store = service_host::store()?;
     let packages = installed()?;
@@ -154,6 +164,7 @@ pub(super) fn auto_reconcile_in(
     store: &crate::service_state::Store,
     port: &impl AutomaticPort,
 ) -> Result<Vec<JobRecord>, AppError> {
+    service_bridge::retry_removal_cancellations(store)?;
     auto_reconcile_candidates(store, port, store.auto_settlement_operations()?)
 }
 fn auto_reconcile_candidates(
@@ -192,6 +203,12 @@ fn auto_reconcile_candidates(
                 if active
                     || service_bridge::dispatch_active(&a.consumer.package_id, &a.operation_id)?
                 {
+                    return Ok(());
+                }
+                if let Some(completed) =
+                    store.complete_acquired_job(&a.consumer.package_id, &a.operation_id)?
+                {
+                    settled.push(completed);
                     return Ok(());
                 }
                 // Probes/status can advance the receipt and admission. Decide
@@ -335,6 +352,15 @@ fn forget_reconciliation(a: &Admission) -> Result<(), AppError> {
         .lock()
         .map_err(|_| error("Provider reconciliation ownership is unavailable"))?
         .remove(&reconciliation_key(a));
+    Ok(())
+}
+pub(super) fn reset_replacement_reconciliation(
+    store: &crate::service_state::Store,
+    package: &str,
+) -> Result<(), AppError> {
+    for a in store.package_operations(package)? {
+        forget_reconciliation(&a)?;
+    }
     Ok(())
 }
 impl ReconciliationAttempt {
@@ -669,86 +695,6 @@ pub(super) fn settle_stopped_backlog(store: &crate::service_state::Store) -> Res
             {
                 backend::emit_job_event(json!({"type":"updated","job":job}));
             }
-        }
-    }
-    Ok(())
-}
-/// A user-requested lifecycle mutation gets the same scoped idle proof as
-/// automatic reconciliation, before taking the lifecycle write gate. Probe a
-/// retained live counterpart if needed; never start the broken package.
-pub(super) fn settle_terminal_backlog(
-    store: &crate::service_state::Store,
-    package: &str,
-) -> Result<(), AppError> {
-    settle_terminal_backlog_in(store, package, &LiveAutomatic)
-}
-pub(super) fn settle_terminal_backlog_in(
-    store: &crate::service_state::Store,
-    package: &str,
-    port: &impl AutomaticPort,
-) -> Result<(), AppError> {
-    let candidates = store
-        .auto_settlement_operations()?
-        .into_iter()
-        .filter_map(|row| {
-            let a = &row.0;
-            if a.consumer.package_id != package && a.provider.package_id != package
-                || a.output.is_some()
-            {
-                return None;
-            }
-            match store.provider_receipt(&a.consumer.package_id, &a.operation_id) {
-                Ok(Some(r))
-                    if matches!(
-                        r["execution"]["state"].as_str(),
-                        Some("unknown" | "failed" | "cancelled")
-                    ) && r["delivery"]["state"] == "none" =>
-                {
-                    Some(Ok(row))
-                }
-                Err(cause) => Some(Err(cause)),
-                _ => None,
-            }
-        })
-        .collect::<Result<Vec<_>, AppError>>()?;
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
-    for job in crate::native_deadline::scoped(deadline, || {
-        auto_reconcile_candidates(store, port, candidates)
-    })? {
-        backend::release_job(&job.owner, job.job_id);
-        backend::emit_job_event(json!({"type":"updated","job":job}));
-    }
-    Ok(())
-}
-/// Lifecycle repair cannot depend on restarting the package being repaired.
-/// The caller owns the lifecycle write gate; the package admission fence and
-/// verified native death remain held through each no-output settlement.
-pub(super) fn settle_dead_backlog(
-    store: &crate::service_state::Store,
-    package: &str,
-) -> Result<(), AppError> {
-    for (a, _, _) in store.auto_settlement_operations()? {
-        if a.consumer.package_id != package && a.provider.package_id != package {
-            continue;
-        }
-        if !output_free(store, &a)? {
-            continue;
-        }
-        let Ok(_fence) =
-            backend::IdleCallFence::acquire(&[&a.consumer.package_id, &a.provider.package_id])
-        else {
-            continue;
-        };
-        if !matches!(backend::settlement_broker(&a.consumer), Ok(None))
-            || !matches!(backend::settlement_broker(&a.provider), Ok(None))
-        {
-            continue;
-        }
-        if let Some(job) =
-            service_bridge::settle_idle_dispatch(store, &a.consumer.package_id, &a.operation_id)?
-        {
-            backend::release_job(&job.owner, job.job_id);
-            backend::emit_job_event(json!({"type":"updated","job":job}));
         }
     }
     Ok(())

@@ -14,8 +14,9 @@ import { isVirtualPath } from "./virtual-path";
 /** Filesystem comparisons for drop admission. Platform is explicit so POSIX
  * backslashes never become separators. This is lexical identity, not realpath:
  * unresolved `..` and drive-relative paths have no safe comparison key.
- * POSIX case stays literal; ordinary Windows paths fold case, except WSL's
- * Linux suffix. Filesystem-specific aliases remain the backend's responsibility. */
+ * Case stays literal below the root on every platform; on Windows only the drive
+ * or UNC/WSL root folds case. Case-insensitive aliases and other filesystem-specific
+ * aliases remain the backend's responsibility. */
 export function pathComparison(windows: boolean) {
   const key = (path: string): string | null => {
     if (!path || path.includes("\0")) return null;
@@ -40,8 +41,11 @@ export function pathComparison(windows: boolean) {
     const parts = tail.split("/").filter(part => part !== "" && part !== ".");
     const result = root + (root.endsWith("/") || !parts.length ? "" : "/") + parts.join("/");
     if (!windows) return result;
-    const wsl = result.match(/^(\/\/(?:wsl\$|wsl\.localhost))(?=\/|$)/i);
-    return wsl ? wsl[1].toLowerCase() + result.slice(wsl[1].length) : result.toLowerCase();
+    // Only the root folds case: drive letters and UNC/WSL hosts and shares are always case-insensitive,
+    // but a directory below can be case-sensitive (NTFS per-directory case sensitivity), so the tail
+    // stays literal and a case-only difference is left to the backend rather than suppressed here.
+    const folded = root.toLowerCase();
+    return folded + result.slice(root.length);
   };
   const same = (a: string, b: string): boolean => {
     const left = key(a);

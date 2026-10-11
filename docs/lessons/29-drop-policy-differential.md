@@ -594,3 +594,8 @@ Physical Linux rejected-start/automatic-Wry delivery remains a platform acceptan
 probe, not a claim of native reproduction. Native file-drop/drag-out acceptance
 on macOS and Windows also remains necessary. Use the private-display isolation
 rules in AGENTS.md; never automate the user's active desktop.
+
+The eleventh review found that folding case below the root on Windows suppressed
+real transfers between case-distinct directories (NTFS per-directory case
+sensitivity). Windows comparison keys now fold only the drive or UNC/WSL root;
+a case-only difference below it is passed to the backend, as on dev.

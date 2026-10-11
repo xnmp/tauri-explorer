@@ -52,6 +52,11 @@ jobs:
       - name: Startup bundle budget
         run: bun run check:bundle
 
+      # tests/tiles-folder-icon-size.test.ts measures rendered tile layout in
+      # Playwright's Chromium (#1049); the unit job needs the browser too.
+      - name: Install Playwright browser
+        run: npx playwright install --with-deps chromium
+
       - name: Unit tests
         run: bun run test
 

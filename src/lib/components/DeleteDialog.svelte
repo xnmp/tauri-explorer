@@ -157,13 +157,6 @@
     height: 48px;
     margin: 0 auto var(--spacing-lg);
     color: var(--system-critical-text, var(--system-critical));
-    animation: iconPulse 600ms ease-out;
-  }
-
-  @keyframes iconPulse {
-    0% { transform: scale(0.8); opacity: 0; }
-    50% { transform: scale(1.05); }
-    100% { transform: scale(1); opacity: 1; }
   }
 
   .dialog-content {

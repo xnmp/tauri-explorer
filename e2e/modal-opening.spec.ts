@@ -23,9 +23,9 @@ async function probe(page: Page): Promise<void> {
         }
       }
     };
-    // Inspect at insertion as well as each frame: WebKit may complete an
+    // Inspect at insertion and class changes as well as each frame: WebKit may complete an
     // entrance before dispatching animation events or the next rAF.
-    new MutationObserver(inspect).observe(document.body, { childList: true, subtree: true });
+    new MutationObserver(inspect).observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ["class", "style"] });
     const frame = () => { inspect(); requestAnimationFrame(frame); };
     requestAnimationFrame(frame);
   });

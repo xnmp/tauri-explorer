@@ -22,3 +22,7 @@ fn matroska_duration<R: Read + Seek>(_reader: &mut R) -> Option<f64> {
 fn parse_ffmpeg_duration(_stderr: &str) -> Option<f64> {
     None
 }
+
+#[cfg(test)]
+#[path = "../test_support/media_duration.rs"]
+mod tests;

@@ -16,6 +16,7 @@ const NATIVE_DECISION_KEY = "explorer-native-drag-decision";
 const HTML5_GESTURES_KEY = "explorer-html5-gestures";
 const HTML5_FLOOR_KEY = "explorer-html5-observation-floor";
 const REJECTED_FLOOR_KEY = "explorer-rejected-html5-observation-floor";
+const COMPLETED_GESTURES_KEY = "explorer-completed-drag-gestures";
 const GESTURE_SEQUENCE_KEY = "explorer-drag-gesture-sequence";
 const GESTURE_HISTORY_LIMIT = 8;
 let gestureSequence = 0;
@@ -114,6 +115,21 @@ export interface DragData {
 
 let current: DragData | null = $state.raw(null);
 const claimed = new Set<string>();
+// Completion is a receipt, not just an in-flight lock. Publish at admission so
+// a peer or a delayed pointer/native snapshot cannot repeat an async effect.
+let completionReceipts = new Map<string, number>();
+function readCompletionReceipts(): Map<string, number> {
+  const stored = loadPersisted<unknown>(COMPLETED_GESTURES_KEY, []);
+  if (Array.isArray(stored)) for (const receipt of stored.slice(-GESTURE_HISTORY_LIMIT)) {
+    if (Array.isArray(receipt) && typeof receipt[0] === "string" && validSequence(receipt[1])) {
+      completionReceipts.set(receipt[0], receipt[1]);
+    }
+  }
+  const floor = readGestureSequence() - GESTURE_HISTORY_LIMIT;
+  completionReceipts = new Map([...completionReceipts].filter(([, sequence]) => sequence > floor)
+    .sort((a, b) => a[1] - b[1]).slice(-GESTURE_HISTORY_LIMIT));
+  return completionReceipts;
+}
 const nativeLeases = new Map<string, { endRequested: boolean; ready: Promise<boolean>; settle(accepted: boolean): void }>();
 let nativeOwnedSession: string | undefined;
 const retained = new Map<string, number>();
@@ -353,8 +369,15 @@ export const dragState = {
     // External gestures have no Explorer session to retire.
     if (!data) return { finish: () => {} };
     const id = data?.sessionId;
-    if (id && (claimed.has(id) || readHtml5Gestures().some(item => item.data.sessionId === id && item.delivered))) return null;
-    if (id) claimed.add(id);
+    if (data.gestureSequence !== undefined && (!validSequence(data.gestureSequence)
+        || data.gestureSequence <= readGestureSequence() - GESTURE_HISTORY_LIMIT)) return null;
+    if (id && (claimed.has(id) || readCompletionReceipts().has(id) || readHtml5Gestures().some(item => item.data.sessionId === id && item.delivered))) return null;
+    if (id) {
+      claimed.add(id);
+      completionReceipts.set(id, data.gestureSequence ?? Math.max(1, readGestureSequence()));
+      savePersisted(COMPLETED_GESTURES_KEY, [...readCompletionReceipts()]);
+      updateHtml5Gesture(id, { delivered: true });
+    }
     return { finish: () => {
       if (id) claimed.delete(id);
       if (id) updateHtml5Gesture(id, { delivered: true });

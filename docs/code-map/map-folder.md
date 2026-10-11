@@ -189,11 +189,11 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `src/lib/state/html5-file-drag.svelte.ts` — listing/Miller filesystem source MIME and native handoff; Recent private link MIME without OS filesystem export; source lifetime protocol.
 - `src/lib/state/sidebar-navigation.ts` — sidebar mouse/keyboard navigation through the active pane's modal ownership gate.
 - `src/lib/state/file-drop-targets.svelte.ts` — plugin element registrations, terminal disabled/modal resolution and idempotent teardown.
-- `src/lib/state/dispatch-file-drop.ts` — synchronous plugin/blocked drop claims, immutable ordered delivery and gesture-scoped async cleanup.
+- `src/lib/state/dispatch-file-drop.ts` — shared native/DOM/pointer completion admission, immutable plugin delivery and gesture-scoped async cleanup.
 - `drop-operations.ts` — drop source-path extraction and dispatch to the copy or move session.
 - `conflict-resolver.svelte.ts` — paste conflict resolution state (overwrite/skip/cancel).
 - `clipboard.svelte.ts` — cross-pane/window revisioned file clipboard state and Cut ownership reconciliation.
-- `drag.svelte.ts` — shared drag state, cross-window gesture sequence, HTML5 observation history and native provenance expiry (dataTransfer is unreliable in Tauri).
+- `drag.svelte.ts` — shared drag state, cross-window gesture sequence, HTML5 observation history, bounded shared completion receipts and native provenance expiry (dataTransfer is unreliable in Tauri).
 - `undo.svelte.ts` — revisioned native-history projection; queued writes retain their receipts so Undo targets the entry captured at intent.
 - `undo-helpers.ts` — pure completion labels for renderer and native-only history actions.
 - `tests/state/undo-helpers.test.ts` — completion labels for native replacement history and recursive batch presentation; executable renderer input remains the separate UndoAction contract.

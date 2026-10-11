@@ -176,7 +176,13 @@ describe("scoped dialog ownership", () => {
     const fromPane = (paneId?: string) => ({ target: { closest: () => paneId ? { getAttribute: () => paneId } : null } }) as unknown as Event;
     expect(f.ownership.inputScope(fromPane("b"), "a")).toBeUndefined();
     expect(f.ownership.inputScope(fromPane("a"), "b")).toBe(f.scopeA);
-    expect(f.ownership.inputScope(fromPane(), "a")).toBe(f.scopeA);
+    const body = { closest: () => null };
+    vi.stubGlobal("document", { body });
+    try {
+      expect(f.ownership.inputScope({ target: body } as unknown as Event, "a")).toBe(f.scopeA);
+      expect(f.ownership.inputScope(new Event("keydown"), "a")).toBe(f.scopeA);
+      expect(f.ownership.inputScope(fromPane(), "a")).toBeUndefined();
+    } finally { vi.unstubAllGlobals(); }
     f.ownership.register(() => {});
     expect(f.ownership.inputScope(fromPane("b"), "b")).toBeNull();
   });

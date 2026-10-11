@@ -20,7 +20,7 @@ import { terminalPanelStore } from "$lib/state/terminal.svelte";
 import { handleFileDropMany } from "$lib/state/drop-operations";
 import { startExternalDrag } from "./use-external-drag.svelte";
 import { resolveDropTargetAtPoint, highlightTargetAtPoint, clearHighlights, captureHighlightCleanup } from "./use-native-drop-target.svelte";
-import { dispatchFileDrop } from "$lib/state/dispatch-file-drop";
+import { dispatchFileDrop, admitFileDrop } from "$lib/state/dispatch-file-drop";
 import { internalDragPaths } from "$lib/domain/file-drop";
 import { isWindows, isCopyModifier } from "$lib/domain/platform";
 import { getZoomFactor } from "$lib/domain/zoom";
@@ -182,7 +182,7 @@ export function usePointerDrag(deps: PointerDragDeps) {
     cleanup(false);
     const delivery = dispatchFileDrop(target, internalDragPaths(data, isWindows) ?? [], "pane", data);
     if (delivery) { await delivery; return; }
-    const lease = dragState.claim(data);
+    const lease = admitFileDrop(target, data);
     if (!lease) return;
     const clear = captureHighlightCleanup();
     const isCopy = !!isCopyModifier(event);

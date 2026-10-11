@@ -164,7 +164,7 @@ backend for E2E/browser).
 
 - `composables/use-pointer-drag.svelte.ts` — pointer-based drag, `createDragGhost`, multi-select ghost
 - `composables/use-pointer-intent.svelte.ts` — distinguish click vs drag start
-- `state/drag.svelte.ts` — `dragState` shared store, monotonic cross-window gesture sequence, observation-correlated HTML5 history and bounded native provenance expiry.
+- `state/drag.svelte.ts` — `dragState` shared store, monotonic cross-window gesture sequence, observation-correlated HTML5 history, bounded shared completion receipts published at admission, and native provenance expiry.
 - `composables/use-drop-target.svelte.ts` — dropzone highlight + accept logic
 - `src/lib/composables/use-dom-directory-drop.ts`, `src/lib/composables/use-sidebar-file-drop.ts` — component-used DOM destination seams exercised by the independent Cartesian drop policy in `tests/helpers/drop-policy.ts` and `tests/composables/drop-policy-differential.test.ts`.
 - `src/lib/state/sidebar-navigation.ts` — shared active-pane modality gate for sidebar click/Enter/Space navigation, including mounted drives and Recent folders.
@@ -176,7 +176,7 @@ backend for E2E/browser).
 
 ## External drag/drop (OS ↔ app)
 
-- `src/lib/domain/file-drop.ts`, `src/lib/state/file-drop-targets.svelte.ts`, `src/lib/state/dispatch-file-drop.ts` — fileDropTargets capability: verified internal and native external paths, plugin-first terminal routing, registration disposal, and gesture-scoped feedback cleanup. `src/lib/plugins/demo/DemoFileDropTarget.svelte` provides contributed acceptance receipts.
+- `src/lib/domain/file-drop.ts`, `src/lib/state/file-drop-targets.svelte.ts`, `src/lib/state/dispatch-file-drop.ts` — fileDropTargets capability: verified internal and native external paths, shared native/DOM/pointer completion admission, plugin-first terminal routing, registration disposal, and gesture-scoped feedback cleanup. `src/lib/plugins/demo/DemoFileDropTarget.svelte` provides contributed acceptance receipts.
 - `src/lib/state/html5-file-drag.svelte.ts` — common HTML5 source protocol used by file-list, Miller-column and Recent sources; Recent retains private Explorer link authority without filesystem URI export or outgoing native handoff.
 - Linux automatic Wry events after a rejected explicit start correlate only with the still-live HTML5 gesture and full path multiset. Backend observation times and bounded local/persisted intervals retain identity across IPC-delayed source-end. Expired/ambiguous observations cancel; explicit Rust identity wins. Consumer receipts prevent late duplicates, and ended/acknowledged gestures cannot lend identity to external files. Non-file and bookmark-only DOM payloads pass the file adapters unchanged; pending handoff decisions belong to the event's source session.
 - `src/lib/composables/use-sidebar-drag-end.ts` — document capture tracks the source gesture, so early/old dragend cannot erase a native or successor source.

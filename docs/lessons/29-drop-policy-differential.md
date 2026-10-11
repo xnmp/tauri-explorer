@@ -14,6 +14,9 @@ extend the static TSV with the event-producing gesture's policy.
 The eighth review adds 26 pending-start/window-modal orderings (file and folder
 sources across all thirteen target types) and ten outgoing Recent adapter rows
 in `outgoingRecentCases`, with explicit platform Link-effect mappings.
+The ninth review adds 2,457 delivery-order rows in `dropDeliveryCases` and 5,736
+live-modality/completion rows in `dropModalCompletionCases`; these extend the
+static TSV and run the real sidebar capture listener.
 
 Sources: listing file, listing folder, Miller file, Miller folder, Recent
 shortcut, sidebar bookmark reorder, external OS file, plain text,
@@ -381,6 +384,89 @@ Tests       7 passed (7)
 python3 docs/code-map/validate.py --coverage
 coverage: 747/747 source files in map-folder.md
 ```
+
+## Ninth review: completion receipts and keyboard target scope
+
+The failing-first expanded runner reproduced breadcrumb DOM completion followed
+by a second automatic native transfer, and sidebar capture pinning after a
+window-modal-blocked native drop. Shortcut target rows also failed for the tab
+strip's new-tab button, toolbar and sidebar. The initial focused run reported
+536 failures; most were newly exposed duplicate sidebar effects. Separate
+cross-renderer receipt probes then failed all six HTML5/pointer rows: HTML5
+receipt publication waited for the async handler, and pointer completion had no
+persistent receipt at all.
+
+Every file-drop completion now uses `dispatch-file-drop.ts::admitFileDrop`:
+native routing, plugin delivery, DOM directory destinations (including
+breadcrumbs), Quick Access DOM drops and capture-phase `dragend`, plus both
+pointer adapters. It consumes blocked/no-op completions too, rejects DOM
+completion during pending/accepted native handoff, and clears owned feedback
+when a blocked drop is consumed. Destination resolution reads live ownership
+immediately before admission. Sidebar capture additionally requires a connected
+Quick Access element still owned by the sidebar; cached hover cannot authorize
+a removed or newly registered plugin surface.
+
+`dragState.claim` publishes its receipt before any consumer runs, through a
+bounded shared history covering HTML5 and pointer gestures. Finish retires only
+that source; eight successor gestures expire old identities rather than making
+an evicted receipt eligible again. Existing HTML5 observation history retains
+its delivered marker for delayed automatic Wry provenance. Independent review
+found an introduced blocked-drop highlight cleanup regression; the shared
+admission path now clears that feedback, and the independent probe passes.
+
+Delivery order is an executable table dimension across all nine sources,
+thirteen targets and three platforms: native-first, DOM-first, native delivery
+after dragend, and DOM-only. Late delivery retains the actual pre-dragend
+observation timestamp. Accepted/rejected native starts are independent rows;
+DOM-only omits native start and delivery. Every row checks the complete effect
+list, so duplicate transfers, pins and plugin delivery fail. The new named
+`dom-first-pin-only-noop` difference makes one consequence explicit: a file's
+DOM-first completion on the pin-only Quick Access ancestor is a no-op, and its
+receipt prevents a late native event from turning it into a transfer.
+
+The modality table opens window, destination-pane or other-pane ownership
+between hover and completion. It covers seven file/reorder source classes on
+all platforms and each delivery order, with actual document capture dragend;
+three additional Quick Access rows complete through dragend alone. Pending
+native-start/modal rows likewise dispatch capture dragend before rejection.
+The runner keeps cached sidebar hover true during a blocked native completion
+to exercise the reported stale-hover failure. Outcome labeling distinguishes
+an uncovered pane from one covered by actual ownership instead of assuming the
+`covered-pane` fixture name means it is still covered.
+
+Keyboard scope now uses the marked pane for pane content, the active pane for
+body/no-element events, and window scope for remaining chrome. Pane dialogs
+therefore allow Ctrl+T from the new-tab button, toolbar and sidebar; window
+modals continue to block it. Seven target-class rows assert actual command
+execution under pane and window ownership. Existing background ownership tests
+now use an explicit body target.
+
+Independent adversarial verification passed 72 tests, including five probes:
+late breadcrumb/native admission, stale sidebar hover under live window
+ownership, retained pointer completion, blocked highlight cleanup, and stale
+capture after receipt expiry. Permanent regressions also cover disconnected,
+absent and re-owned Quick Access destinations. Physical native delivery remains
+a platform acceptance check; these are deterministic production-routing tests.
+
+Final ninth-review verification:
+
+```text
+bunx vitest run tests/state tests/plugins tests/composables tests/domain tests/api --maxWorkers=2
+Test Files  354 passed (354)
+Tests       16380 passed (16380)
+
+bun run check
+website/api/report.js:2:26 Cannot find module '@vercel/blob' or its corresponding type declarations.
+COMPLETED 1845 FILES 1 ERRORS 0 WARNINGS 1 FILES_WITH_PROBLEMS
+
+CARGO_TARGET_DIR=/var/tmp/te-wt2/target-pdlg cargo test --offline --manifest-path src-tauri/Cargo.toml native_file_drag
+test result: ok. 21 passed; 0 failed; 0 ignored; 0 measured; 2166 filtered out
+
+python3 docs/code-map/validate.py --coverage
+coverage: 747/747 source files in map-folder.md
+```
+
+No commits were created. The check failure remains the known missing dependency.
 
 ## Acceptance still to run
 

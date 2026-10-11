@@ -5,7 +5,7 @@ import { createModalOwnership } from "$lib/state/modal-ownership.svelte";
 
 const stops: (() => void)[] = [];
 beforeEach(() => keybindingsStore._clearForTesting());
-afterEach(() => { stops.splice(0).forEach((stop) => stop()); keybindingsStore._clearForTesting(); });
+afterEach(() => { stops.splice(0).forEach((stop) => stop()); keybindingsStore._clearForTesting(); vi.unstubAllGlobals(); });
 
 /** Minimal Element.matches behavior for comma-separated selector lists. */
 function matchesAny(...matchedSelectors: string[]): (selectorList: string) => boolean {
@@ -19,6 +19,7 @@ function fixture(terminalFocus = false, ancestors: readonly string[] = [], owner
   const target = new EventTarget();
   // Exercise real EventTarget dispatch and the production binding matcher.
   const closest = (selector: string) => terminalFocus || ancestors.includes(selector) ? target : null;
+  vi.stubGlobal("document", { body: target });
   Object.assign(target, { tagName: terminalFocus ? "TEXTAREA" : "DIV", closest });
   const executeCommand = vi.fn(async (_id: string) => {});
   const available = new Set<string>();
@@ -60,6 +61,25 @@ function fixture(terminalFocus = false, ancestors: readonly string[] = [], owner
 
 describe("pane dialog keyboard routing", () => {
   const scope = () => ({ paneId: "a", token: Symbol("pane") });
+  it.each(["pane-a", "pane-b", "body", "no-element", "tab-strip", "toolbar", "sidebar"] as const)("Ctrl+T routes by %s target with live pane/window ownership", targetClass => {
+    const ownership = createModalOwnership();
+    ownership.register(() => {}, undefined, { scope: scope() });
+    const f = fixture(false, [], ownership);
+    f.bind("tabs.newTab", "Ctrl+T");
+    if (targetClass !== "body") vi.stubGlobal("document", { body: new EventTarget() });
+    if (targetClass.startsWith("pane-")) Object.assign(f.target, {
+      closest: (selector: string) => selector === "[data-pane-id]" ? { getAttribute: () => targetClass === "pane-a" ? "a" : "b" } : null,
+    });
+    else if (targetClass === "no-element") Object.assign(f.target, { closest: undefined, tagName: undefined });
+    else if (targetClass === "tab-strip") Object.assign(f.target, { tagName: "BUTTON" });
+    const blocked = ["pane-a", "body", "no-element"].includes(targetClass);
+    f.press("t", { ctrlKey: true });
+    expect(f.executeCommand.mock.calls).toEqual(blocked ? [] : [["tabs.newTab"]]);
+    f.executeCommand.mockClear();
+    ownership.register(() => {});
+    f.press("t", { ctrlKey: true });
+    expect(f.executeCommand).not.toHaveBeenCalled();
+  });
   it("allows configured pane/tab navigation from inputs while retaining dialog control keys", () => {
     const ownership = createModalOwnership(), a = scope();
     ownership.register(() => {}, undefined, { scope: a });

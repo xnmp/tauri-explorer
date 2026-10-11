@@ -14,7 +14,7 @@ import { isCopyModifier as isCopyMod, isMac, isWindows } from "$lib/domain/platf
 import { bookmarksStore } from "$lib/state/bookmarks.svelte";
 import { terminalPanelStore } from "$lib/state/terminal.svelte";
 import { pathComparison } from "$lib/domain/path";
-import { dispatchFileDrop } from "$lib/state/dispatch-file-drop";
+import { dispatchFileDrop, admitFileDrop } from "$lib/state/dispatch-file-drop";
 import { internalDragPaths, sameDropPathSet, domDropPaths, domOwnsFileDrop, isFileTransfer, isExplorerFileTransfer } from "$lib/domain/file-drop";
 import { nativeDropPaths } from "$lib/domain/native-drop-paths";
 import { toastStore } from "$lib/state/toast.svelte";
@@ -84,7 +84,7 @@ export function useNativeDropHandler(deps: NativeDropDeps) {
     const delivery = dispatchFileDrop(target, sourcePaths, isInternalDrag ? "pane" : "external", isInternalDrag ? dragData : null);
     if (delivery) { await delivery; return; }
 
-    const lease = dragState.claim(isInternalDrag ? dragData : null);
+    const lease = admitFileDrop(target, isInternalDrag ? dragData : null);
     if (!lease) return;
     const clear = captureHighlightCleanup();
     try {

@@ -1,5 +1,5 @@
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-import { dropCases, dropBoundaryCases, dropCrossWindowCases, dropPathCases, dropTemporalCases, outgoingRecentCases, dropPlatforms, branchDropPolicy, devDropPolicy, nativeRoute, intendedDifferences, type DropCase, type Outcome } from "../helpers/drop-policy";
+import { dropCases, dropSources, dropTargets, dropDeliveryOrders, dropDeliveryCases, dropModalCompletionCases, dropBoundaryCases, dropCrossWindowCases, dropPathCases, dropTemporalCases, outgoingRecentCases, dropPlatforms, branchDropPolicy, devDropPolicy, nativeRoute, intendedDifferences, type DropCase, type Outcome } from "../helpers/drop-policy";
 import { dropElement } from "../helpers/drop-element";
 
 const io = vi.hoisted(() => ({ start: vi.fn(), listener: undefined as ((event: any) => void) | undefined,
@@ -22,6 +22,8 @@ let cleanup: (() => void)[];
 let sourcePath: string, destPath: string;
 let observationTime = 0;
 let matrixClock = 20_000_000_000_000;
+let sourceNode: HTMLElement;
+let sidebarOver = false;
 let sourceEnd: (() => void) | undefined;
 const flush = async () => { for (let i = 0; i < 15; i++) await Promise.resolve(); };
 function transfer(values: Record<string, string> = {}): DataTransfer {
@@ -70,6 +72,14 @@ async function domDestination(e: DragEvent, c: DropCase) {
     await directory.dropIntoDirectory(e, destPath, c.target === "covered-pane" ? "listing-background" : c.target, { onRefresh: () => {} });
   }
 }
+function openCompletionModal(c: DropCase): void {
+  if (!c.completionModal) return;
+  const scope = c.completionModal === "window" ? null : { paneId: c.completionModal === "destination-pane" ? "owner" : "other", token: Symbol() };
+  cleanup.push(modules.ownership.modalOwnership.registerSurface(() => {}, undefined, undefined, { scope }).release);
+  modules.dialogs.dialogStore.isPaneBlocked.mockRestore();
+}
+const blockedSurface = (c: DropCase) => ["plugin-view", "textarea"].includes(c.target)
+  || (c.target === "covered-pane" && (!c.completionModal || c.completionModal === "window" || c.completionModal === "destination-pane"));
 async function run(c: DropCase): Promise<Outcome[]> {
   if (c.pathPair) { sourcePath = c.pathPair.source; destPath = c.pathPair.destination; }
   const sourceModules = c.window === "cross-window" ? peer : modules;
@@ -85,9 +95,10 @@ async function run(c: DropCase): Promise<Outcome[]> {
     if (c.source === "recent") drag.handlePointerDown({ button: 0, preventDefault() {}, clientX: 10, clientY: 10 } as any, entry.path, entry.name);
     else drag.handlePointerDown({ button: 0, preventDefault() {}, clientX: 10, clientY: 10 } as any, entry, true);
     win.dispatchEvent(Object.assign(new Event("mousemove"), { clientX: 30, clientY: 40 }));
+    openCompletionModal(c);
     win.dispatchEvent(Object.assign(new Event("mouseup"), { clientX: 30, clientY: 40, ctrlKey: c.modifier === "ctrl", altKey: c.modifier === "option" }));
     await flush();
-    return (io.outcomes.length ? io.outcomes : ["plugin-view", "covered-pane", "textarea"].includes(c.target) ? ["blocked"] : ["ignored"]) as Outcome[];
+    return (io.outcomes.length ? io.outcomes : blockedSurface(c) ? ["blocked"] : ["ignored"]) as Outcome[];
   }
   if (fileSource && c.source !== "recent" && c.transport === "native-accepted" && c.platform !== "linux") {
     // Actual macOS/Windows source: pointer drag exits the client viewport and
@@ -103,7 +114,7 @@ async function run(c: DropCase): Promise<Outcome[]> {
     if (c.transport === "dom-only") delete (win as any).__TAURI_INTERNALS__;
     const drag = c.source.startsWith("listing-") && c.platform === "linux" ? sourceModules.items.useItemInteractions({ getExplorer: () => ({ getSelectedEntries: () => [entry], refresh() {} }) })
       : sourceModules.html.createHtml5FileDrag(() => {}, c.source === "recent" ? "link" : "modifier");
-    const start = event("dragstart", dt, c, dropElement());
+    const start = event("dragstart", dt, c, sourceNode);
     if (c.source.startsWith("listing-") && c.platform === "linux") drag.handleDragStart(start, entry, true);
     else drag.start(start, entry);
     sourceEnd = c.source.startsWith("listing-") && c.platform === "linux" ? drag.handleDragEnd : drag.end;
@@ -124,25 +135,40 @@ async function run(c: DropCase): Promise<Outcome[]> {
       observationTime += 2; successor.end();
     }
   }
-  if (nativeRoute(c)) {
-    const source = c.source === "external-file" || c.transport === "native-rejected" ? null : { ...sourceModules.drag.dragState.current };
-    native("enter", source, c, delayedObservation); native("drop", source, c, delayedObservation); await flush();
-  }
+  const source = c.source === "external-file" || c.transport === "native-rejected" ? null : { ...sourceModules.drag.dragState.current };
+  const capturedAt = delayedObservation ?? observationTime + 0.25;
+  const deliverNative = async () => {
+    if (nativeRoute(c)) { native("enter", source, c, capturedAt); native("drop", source, c, capturedAt); await flush(); }
+  };
   const over = event("dragover", dt, c); win.dispatchEvent(over);
-  const drop = event("drop", dt, c); win.dispatchEvent(drop);
-  if (c.source === "text" || c.source === "plugin-surface") {
-    expect(over.defaultPrevented).toBe(false); expect(drop.defaultPrevented).toBe(false); expect(drop.stopped).toBe(false);
-  }
-  if (!drop.stopped) {
-    const nonfile = c.source === "text" || c.source === "plugin-surface";
-    if (nonfile && ["plugin", "plugin-view"].includes(c.target)) io.outcomes.push("plugin:dom");
-    else if (nonfile && c.target === "textarea" && !drop.defaultPrevented && !over.defaultPrevented) io.outcomes.push("text-insertion");
-    else await domDestination(drop, c);
-  }
-  await flush();
-  if (!io.outcomes.length && ["plugin-view", "covered-pane", "textarea"].includes(c.target) && drop.stopped) io.outcomes.push("blocked");
+  sidebarOver = !!hit.closest(".quick-access");
+  openCompletionModal(c);
+  const end = () => {
+    observationTime += 2;
+    doc.dispatchEvent(event("dragend", transfer(), c, sourceNode));
+    sourceEnd?.(); sourceEnd = undefined;
+  };
+  const drop = event("drop", dt, c);
+  const deliverDom = async () => {
+    win.dispatchEvent(drop);
+    if (c.source === "text" || c.source === "plugin-surface") {
+      expect(over.defaultPrevented).toBe(false); expect(drop.defaultPrevented).toBe(false); expect(drop.stopped).toBe(false);
+    }
+    if (!drop.stopped) {
+      const nonfile = c.source === "text" || c.source === "plugin-surface";
+      if (nonfile && ["plugin", "plugin-view"].includes(c.target)) io.outcomes.push("plugin:dom");
+      else if (nonfile && c.target === "textarea" && !drop.defaultPrevented && !over.defaultPrevented) io.outcomes.push("text-insertion");
+      else await domDestination(drop, c);
+    }
+    await flush();
+  };
+  if (c.completionPath === "sidebar-dragend") end();
+  else if (c.deliveryOrder === "native-late-after-dragend") { await deliverDom(); end(); await deliverNative(); }
+  else if (c.deliveryOrder === "dom-first") { await deliverDom(); await deliverNative(); end(); }
+  else { await deliverNative(); await deliverDom(); end(); }
+  if (!io.outcomes.length && blockedSurface(c) && drop.stopped) io.outcomes.push("blocked");
   // A file's native/pointer blocked result has no DOM outcome to inspect.
-  if (!io.outcomes.length && nativeRoute(c) && ["plugin-view", "covered-pane", "textarea"].includes(c.target)) io.outcomes.push("blocked");
+  if (!io.outcomes.length && nativeRoute(c) && blockedSurface(c)) io.outcomes.push("blocked");
   if (!io.outcomes.length && modules.toast.toastStore.toasts.some((toast: {message: string}) => /gesture identity expired/.test(toast.message))) io.outcomes.push("blocked");
   if (!io.outcomes.length) io.outcomes.push("ignored");
   return io.outcomes as Outcome[];
@@ -153,7 +179,7 @@ describe.each(dropPlatforms)("differential drop outcomes: %s", platform => {
     localStorage.clear();
     vi.resetModules(); vi.stubGlobal("navigator", { platform: platform === "mac" ? "MacIntel" : platform === "windows" ? "Win32" : "Linux" });
     const names = {
-      native: "$lib/composables/use-native-drop-handler", html: "$lib/state/html5-file-drag.svelte", items: "$lib/composables/use-item-interactions.svelte",
+      dispatch: "$lib/state/dispatch-file-drop", native: "$lib/composables/use-native-drop-handler", html: "$lib/state/html5-file-drag.svelte", items: "$lib/composables/use-item-interactions.svelte",
       pointer: "$lib/composables/use-pointer-drag.svelte", external: "$lib/composables/use-external-drag.svelte", drag: "$lib/state/drag.svelte",
       sidebarPointer: "$lib/composables/use-sidebar-drag.svelte",
       sidebarEnd: "$lib/composables/use-sidebar-drag-end", targets: "$lib/state/file-drop-targets.svelte", dialogs: "$lib/state/dialogs.svelte", ownership: "$lib/state/modal-ownership.svelte",
@@ -165,7 +191,7 @@ describe.each(dropPlatforms)("differential drop outcomes: %s", platform => {
   beforeEach(async () => {
     observationTime = matrixClock += 100;
     vi.spyOn(Date, "now").mockImplementation(() => observationTime);
-    cleanup = []; sourceEnd = undefined; io.outcomes = []; io.records = []; io.callbacks.clear(); io.start.mockReset().mockResolvedValue(undefined);
+    cleanup = []; sourceEnd = undefined; sourceNode = dropElement(); sidebarOver = false; io.outcomes = []; io.records = []; io.callbacks.clear(); io.start.mockReset().mockResolvedValue(undefined);
     // Retain the shared gesture history between live peer modules. Clearing
     // storage alone would fabricate a quota-loss boundary while leaving one
     // peer's local ordinals ahead of the other, rather than a fresh window.
@@ -185,7 +211,12 @@ describe.each(dropPlatforms)("differential drop outcomes: %s", platform => {
     });
     vi.spyOn(modules.tabs.windowTabsManager, "getTabPath").mockImplementation(() => destPath);
     const service = modules.native.useNativeDropHandler({ getActiveExplorer: () => ({ currentPath: destPath }), refreshAllPanes() {} });
-    service.setup(); cleanup.push(service.cleanup); await flush();
+    service.setup(); cleanup.push(service.cleanup);
+    cleanup.push(modules.sidebarEnd.listenSidebarDragEnd({
+      quickAccess: () => hit?.closest(".quick-access") ?? undefined,
+      isDragOver: () => sidebarOver, reset: () => { sidebarOver = false; },
+    }));
+    await flush();
   });
   afterEach(async () => {
     sourceEnd?.();
@@ -199,7 +230,7 @@ describe.each(dropPlatforms)("differential drop outcomes: %s", platform => {
     peer.drag.dragState.finish(peer.drag.dragState.current, true);
     vi.restoreAllMocks();
   });
-  it.each([...dropCases, ...dropBoundaryCases, ...dropCrossWindowCases, ...dropPathCases].filter(c => c.platform === platform))("$source → $target / $modifier / $transport / $lifetime / $window / $pathPair.id", async c => {
+  it.each([...dropCases, ...dropDeliveryCases, ...dropBoundaryCases, ...dropCrossWindowCases, ...dropPathCases].filter(c => c.platform === platform))("$source → $target / $modifier / $transport / $deliveryOrder / $lifetime / $window / $pathPair.id", async c => {
     if (c.transport === "native-rejected") { io.start.mockRejectedValue("unavailable"); vi.spyOn(console, "warn").mockImplementation(() => {}); }
     const policy = branchDropPolicy(c);
     if (!policy.difference) expect(policy.outcome).toBe(devDropPolicy(c));
@@ -210,6 +241,29 @@ describe.each(dropPlatforms)("differential drop outcomes: %s", platform => {
       expect(record.paths).toEqual([sourcePath]);
       if (record.target) expect(record.target).toBe(destPath);
     }
+  });
+  it.each(["html5", "pointer"] as const)("%s completion receipt survives async delivery, finish, and a receiver-window change", async transport => {
+    modules.drag.dragState.start({ path: sourcePath, name: "item", kind: "file", html5: transport === "html5" });
+    const source = { ...modules.drag.dragState.current };
+    let settle!: () => void;
+    const pending = new Promise<void>(resolve => { settle = resolve; });
+    const handler = vi.fn(() => pending);
+    const registered = { type: "plugin", registration: { live: () => true, enabled: () => true, handler } };
+    const first = modules.dispatch.dispatchFileDrop(registered, [sourcePath], "pane", source);
+    const duplicate = peer.dispatch.dispatchFileDrop(registered, [sourcePath], "pane", source);
+    settle(); await Promise.all([first, duplicate]);
+    await modules.dispatch.dispatchFileDrop(registered, [sourcePath], "pane", source);
+    await peer.dispatch.dispatchFileDrop(registered, [sourcePath], "pane", source);
+    expect(handler).toHaveBeenCalledExactlyOnceWith([sourcePath], "pane");
+  });
+  it.each(dropModalCompletionCases.filter(c => c.platform === platform))("live modal: $completionModal / $source → $target / $deliveryOrder / $transport / $completionPath", async c => {
+    if (c.transport === "native-rejected") { io.start.mockRejectedValue("unavailable"); vi.spyOn(console, "warn").mockImplementation(() => {}); }
+    const outcomes = await run(c);
+    const covered = c.completionModal === "window" || (c.completionModal === "destination-pane" &&
+      ["folder", "breadcrumb", "covered-pane", "listing-background", "miller-background"].includes(c.target));
+    if (covered) expect(io.records).toEqual([]);
+    else expect(outcomes).toEqual([branchDropPolicy({ ...c, target: c.target === "covered-pane" ? "listing-background" : c.target }).outcome]);
+    expect(io.records.length).toBeLessThanOrEqual(1);
   });
   it.each(dropTemporalCases.filter(c => c.platform === platform))("temporal: $ordering / $reply / $successors / $completion / $source → $target", async c => {
     hit = target(c);
@@ -230,13 +284,16 @@ describe.each(dropPlatforms)("differential drop outcomes: %s", platform => {
       win.addEventListener("drop", e => { effects.push(domDestination(e as DragEvent, c)); });
       const source = modules.html.createHtml5FileDrag();
       const dt = transfer();
-      source.start(event("dragstart", dt, c), { ...entry, kind: c.source.endsWith("-folder") ? "directory" : "file" }); sourceEnd = source.end;
+      const start = event("dragstart", dt, c, sourceNode);
+      source.start(start, { ...entry, kind: c.source.endsWith("-folder") ? "directory" : "file" }); sourceEnd = source.end;
+      doc.dispatchEvent(start); sidebarOver = !!hit.closest(".quick-access");
       const drop = event("drop", dt, c); win.dispatchEvent(drop);
       expect(drop.stopped).toBe(true);
       expect(io.start).toHaveBeenCalledOnce();
       expect(io.outcomes).toEqual([]);
       cleanup.push(modules.ownership.modalOwnership.registerSurface(() => {}).release);
       expect(modules.dialogs.dialogStore.hasModalOpen).toBe(true);
+      doc.dispatchEvent(event("dragend", transfer(), c, sourceNode));
       source.end(); rejectStart("unavailable"); await flush();
       await Promise.all(effects);
       expect(redispatch).not.toHaveBeenCalled();
@@ -331,6 +388,12 @@ describe.each(dropPlatforms)("differential drop outcomes: %s", platform => {
 
 it("every declared difference has exercised rows, and the Cartesian matrix is complete", () => {
   expect(dropCases).toHaveLength(3159);
-  for (const difference of intendedDifferences) expect([...dropCases, ...dropBoundaryCases, ...dropCrossWindowCases, ...dropPathCases].some(c => branchDropPolicy(c).difference === difference.id)).toBe(true);
+  expect(dropDeliveryCases).toHaveLength(2457);
+  for (const platform of dropPlatforms) for (const target of dropTargets) for (const deliveryOrder of dropDeliveryOrders) {
+    const rows = dropDeliveryCases.filter(c => c.platform === platform && c.target === target && c.deliveryOrder === deliveryOrder);
+    expect(new Set(rows.map(c => c.source))).toEqual(new Set(dropSources));
+    expect(rows).toHaveLength(dropSources.length * (deliveryOrder === "dom-only" ? 1 : 2));
+  }
+  for (const difference of intendedDifferences) expect([...dropCases, ...dropDeliveryCases, ...dropBoundaryCases, ...dropCrossWindowCases, ...dropPathCases].some(c => branchDropPolicy(c).difference === difference.id)).toBe(true);
   expect(dropCrossWindowCases.length).toBeGreaterThan(0); expect(dropPathCases).toHaveLength(66);
 });

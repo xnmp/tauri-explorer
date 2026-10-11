@@ -1,3 +1,5 @@
+import { admitFileDrop } from "$lib/state/dispatch-file-drop";
+import { resolveDropTargetFromElement } from "./use-native-drop-target.svelte";
 import { dragState, type DragData } from "$lib/state/drag.svelte";
 import { bookmarksStore } from "$lib/state/bookmarks.svelte";
 import { isExplorerFileTransfer } from "$lib/domain/file-drop";
@@ -25,9 +27,15 @@ export function listenSidebarDragEnd(deps: {
     if (!overQuickAccess && quickAccess && event.clientX > 0 && event.clientY > 0) {
       overQuickAccess = quickAccess.contains(document.elementFromPoint(event.clientX, event.clientY));
     }
-    if (overQuickAccess && endedSource) {
-      const { kind, path, name } = endedSource;
-      if (kind === "directory" && path) bookmarksStore.addBookmark(path, name);
+    if (overQuickAccess && quickAccess?.isConnected && endedSource) {
+      const target = resolveDropTargetFromElement(quickAccess);
+      const receipt = admitFileDrop(target, endedSource, "dom");
+      if (receipt) {
+        try {
+          const { kind, path, name } = endedSource;
+          if (target?.type === "sidebar" && kind === "directory" && path) bookmarksStore.addBookmark(path, name);
+        } finally { receipt.finish(); }
+      }
     }
     deps.reset();
     dragState.finish(endedSource);

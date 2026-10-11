@@ -118,7 +118,7 @@ export function createModalOwnership() {
     onCallerClosed(callback: () => void, scope: ModalScope = null): () => void {
       return captureCaller(scope)?.onClosed(callback) ?? (() => {});
     },
-    /** Window first, then the event's surface/pane, then workspace background. */
+    /** Window first; pane content owns its pane, body-only fallback owns the active pane. */
     inputScope(event: Event, activePaneId: string): ModalScope | undefined {
       if (hasWindow()) return null;
       const target = event.target as HTMLElement | null;
@@ -126,7 +126,8 @@ export function createModalOwnership() {
         && typeof Node !== "undefined" && target instanceof Node && entry.element?.()?.contains(target));
       if (surface) return surface.scope;
       const pane = target?.closest?.("[data-pane-id]");
-      const paneId = pane ? pane.getAttribute("data-pane-id") : activePaneId;
+      const bodyTarget = !target?.closest || (typeof document !== "undefined" && target === document.body);
+      const paneId = pane ? pane.getAttribute("data-pane-id") : bodyTarget ? activePaneId : null;
       return currentEntries().find(entry => entry.scope?.paneId === paneId && available(entry))?.scope;
     },
     requestTopClose(event?: KeyboardEvent, scope: ModalScope = null): boolean {

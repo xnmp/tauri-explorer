@@ -6,10 +6,14 @@ export const dropSources = ["listing-file", "listing-folder", "miller-file", "mi
 export const dropTargets = ["folder", "breadcrumb", "tab", "bookmark", "quick-access", "sidebar-reorder", "plugin", "textarea", "covered-pane", "listing-background", "miller-background", "plugin-view", "terminal"] as const;
 export const dropModifiers = ["none", "ctrl", "option"] as const;
 export const dropTransports = ["native-accepted", "native-rejected", "dom-only"] as const;
+export const dropDeliveryOrders = ["native-first", "dom-first", "native-late-after-dragend", "dom-only"] as const;
 export const dropPlatforms = ["linux", "mac", "windows"] as const;
 export type DropCase = {
   source: typeof dropSources[number]; target: typeof dropTargets[number];
   modifier: typeof dropModifiers[number]; transport: typeof dropTransports[number]; platform: typeof dropPlatforms[number];
+  deliveryOrder?: typeof dropDeliveryOrders[number];
+  completionModal?: "window" | "destination-pane" | "other-pane";
+  completionPath?: "sidebar-dragend";
   lifetime?: "expired";
   window?: "cross-window";
   pathPair?: { id: string; source: string; destination: string; dev: Outcome; branch: Outcome; reason?: string };
@@ -52,6 +56,10 @@ export function devDropPolicy(c: DropCase): Outcome {
 export const intendedDifferences = [
   { id: "platform-path-semantics", reason: "Use literal POSIX names and Windows separator/case semantics; reject ambiguous parent/drive-relative paths before transfer.",
     when: (c: DropCase) => !!c.pathPair?.reason, outcome: (c: DropCase): Outcome => c.pathPair!.branch },
+  { id: "dom-first-pin-only-noop", reason: "A DOM-first file drop on the pin-only Quick Access ancestor completes as a no-op; its receipt consumes late automatic native delivery too.",
+    when: (c: DropCase) => c.platform === "linux" && c.transport === "native-rejected"
+      && ["dom-first", "native-late-after-dragend"].includes(c.deliveryOrder ?? "")
+      && c.source.endsWith("-file") && ["bookmark", "sidebar-reorder"].includes(c.target), outcome: (): Outcome => "ignored" },
   { id: "recent-plugin", reason: "Design29 permits Recent link-only shortcuts to deliver to registered plugin targets without mutating their folders.",
     when: (c: DropCase) => c.source === "recent" && c.target === "plugin", outcome: (): Outcome => "plugin:pane" },
   { id: "recent-bookmark-pointer", reason: "Specific bookmark rows now retain bookmark identity; Recent pins there just like on empty Quick Access, never transferring the folder.",
@@ -83,6 +91,21 @@ export function branchDropPolicy(c: DropCase): { outcome: Outcome; difference: s
   return { outcome: difference ? difference.outcome(c) : devDropPolicy(c), difference: difference?.id ?? null };
 }
 export const dropCases: DropCase[] = dropPlatforms.flatMap(platform => dropSources.flatMap(source => dropTargets.flatMap(target => dropModifiers.flatMap(modifier => dropTransports.map(transport => ({ platform, source, target, modifier, transport }))))));
+/** Delivery order is independent of destination. DOM-only rows omit native
+ * start as well as native delivery; late rows deliver pre-dragend observations. */
+export const dropDeliveryCases: DropCase[] = dropPlatforms.flatMap(platform =>
+  dropSources.flatMap(source =>
+    dropTargets.flatMap(target => dropDeliveryOrders.flatMap(deliveryOrder =>
+      (deliveryOrder === "dom-only" ? ["dom-only"] as const : ["native-accepted", "native-rejected"] as const).map(transport => ({
+        platform, source, target, deliveryOrder, transport, modifier: "none" as const,
+      }))))));
+export const dropModalCompletionCases: DropCase[] = dropDeliveryCases.filter(c => c.source.startsWith("listing-") || c.source.startsWith("miller-") || c.source === "recent" || c.source === "sidebar-bookmark" || c.source === "external-file")
+  .flatMap(c => (["window", "destination-pane", "other-pane"] as const).map(completionModal => ({ ...c, completionModal })))
+  .concat((["window", "destination-pane", "other-pane"] as const).map(completionModal => ({
+    platform: "linux" as const, source: "miller-folder" as const, target: "quick-access" as const,
+    modifier: "none" as const, transport: "dom-only" as const, deliveryOrder: "dom-only" as const,
+    completionModal, completionPath: "sidebar-dragend" as const,
+  })));
 export const dropBoundaryCases: DropCase[] = ["folder", "breadcrumb", "tab", "bookmark", "plugin", "covered-pane"].map(target => ({
   source: "miller-file", target: target as DropCase["target"], platform: "linux", transport: "native-rejected", modifier: "none", lifetime: "expired",
 }));

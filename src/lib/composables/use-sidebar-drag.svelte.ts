@@ -9,7 +9,7 @@ import { bookmarksStore } from "$lib/state/bookmarks.svelte";
 import { resolveDropTargetAtPoint, highlightTargetAtPoint, clearHighlights } from "./use-native-drop-target.svelte";
 import { createDragGhost } from "./use-pointer-drag.svelte";
 import { settingsStore } from "$lib/state/settings.svelte";
-import { dispatchFileDrop } from "$lib/state/dispatch-file-drop";
+import { dispatchFileDrop, admitFileDrop } from "$lib/state/dispatch-file-drop";
 import { internalDragPaths } from "$lib/domain/file-drop";
 import { isWindows } from "$lib/domain/platform";
 
@@ -88,12 +88,14 @@ export function useSidebarDrag() {
     const delivery = dispatchFileDrop(target, internalDragPaths(data, isWindows) ?? [], "pane", data);
     if (delivery) { await delivery; return; }
     clearHighlights();
+    const receipt = admitFileDrop(target, data);
+    if (!receipt) return;
+    try {
+      if (target?.type === "sidebar" || target?.type === "bookmark") {
+        bookmarksStore.addBookmark(path, name);
+      }
 
-    if (target?.type === "sidebar" || target?.type === "bookmark") {
-      bookmarksStore.addBookmark(path, name);
-    }
-
-    dragState.finish(data);
+    } finally { receipt.finish(); }
   }
 
   function onKeyDown(event: KeyboardEvent): void {

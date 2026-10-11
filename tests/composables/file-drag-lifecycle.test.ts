@@ -29,6 +29,7 @@ import { createExplorerState } from "$lib/state/explorer.svelte";
 import { windowTabsManager } from "$lib/state/window-tabs.svelte";
 import { dialogStore } from "$lib/state/dialogs.svelte";
 import { modalOwnership } from "$lib/state/modal-ownership.svelte";
+import { highlightTargetAtPoint } from "$lib/composables/use-native-drop-target.svelte";
 import { dropIntoDirectory } from "$lib/composables/use-dom-directory-drop";
 
 const paths = ["/source/z.png", "/source/a.png"];
@@ -749,4 +750,50 @@ it.each(["receiver", "local"])("replacing a rejected decision preserves the pred
   handler.mockClear();
   for (const type of ["enter", "drop"]) native.emit!({ payload: { type, paths: ["/external/fresh.png"], position: { x: 40, y: 60 }, source: null, observedAt: epoch + 30 } });
   await flush(); expect(handler).toHaveBeenCalledExactlyOnceWith(["/external/fresh.png"], "external");
+});
+
+
+it("a blocked completion clears its existing destination highlight without waiting for dragend", async () => {
+  dragState.start({ ...entry, nativeCopyPolicy: "modifier" });
+  highlightTargetAtPoint(20, 30);
+  expect(hit.classList.contains("drop-target")).toBe(true);
+  const release = modalOwnership.registerSurface(() => {}).release;
+  try {
+    emit("enter", [entry.path]); emit("drop", [entry.path]); await flush();
+    expect(hit.classList.contains("drop-target")).toBe(false);
+    expect(transferFiles).not.toHaveBeenCalled();
+  } finally { release(); }
+});
+
+it("sidebar capture cannot replay a completed source after the completion receipt expires", async () => {
+  const { bookmarksStore } = await import("$lib/state/bookmarks.svelte");
+  const pin = vi.spyOn(bookmarksStore, "addBookmark").mockImplementation(() => false);
+  hit = dropElement("quick-access");
+  cleanup.push(listenSidebarDragEnd({ quickAccess: () => hit, isDragOver: () => true, reset() {} }));
+  delete (win as any).__TAURI_INTERNALS__;
+  const source = createHtml5FileDrag(); const dt = payload();
+  source.start(event("dragstart", dt), { path: "/source/directory", name: "directory", kind: "directory" });
+  doc.dispatchEvent(event("dragstart", dt));
+  const completed = dragState.claim(dragState.current)!; completed.finish();
+  for (let i = 0; i < 8; i++) {
+    dragState.start({ path: `/successor/${i}`, name: "successor", kind: "directory" });
+    dragState.finish(dragState.current);
+  }
+  doc.dispatchEvent(event("dragend", payload(), false, sourceElements.get(dt))); source.end();
+  expect(pin).not.toHaveBeenCalled();
+});
+
+it.each(["absent", "disconnected", "reowned"] as const)("sidebar capture does not pin from stale hover when Quick Access is %s", async state => {
+  const { bookmarksStore } = await import("$lib/state/bookmarks.svelte");
+  const pin = vi.spyOn(bookmarksStore, "addBookmark").mockImplementation(() => false);
+  const access = dropElement("quick-access");
+  cleanup.push(listenSidebarDragEnd({ quickAccess: () => state === "absent" ? undefined : access, isDragOver: () => true, reset() {} }));
+  delete (win as any).__TAURI_INTERNALS__;
+  const source = createHtml5FileDrag(); const dt = payload();
+  source.start(event("dragstart", dt), { path: "/source/directory", name: "directory", kind: "directory" });
+  doc.dispatchEvent(event("dragstart", dt));
+  if (state === "reowned") cleanup.push(fileDropTargets.register(access, vi.fn()));
+  else if (state === "disconnected") Object.defineProperty(access, "isConnected", { value: false });
+  doc.dispatchEvent(event("dragend", payload(), false, sourceElements.get(dt))); source.end();
+  expect(pin).not.toHaveBeenCalled();
 });

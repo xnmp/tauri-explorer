@@ -40,9 +40,13 @@ is safe or even fully decodable.
 
 - Accept PNG/JPEG/GIF images and MP4/WebM/MOV videos. Frontend draft admission,
   native submission and the public relay independently enforce the media
-  allowlist, nonempty canonical base64 data, filename and count/byte bounds,
+  allowlist, nonempty canonical base64 data and count/byte bounds,
   and agreement between the declared type and the byte signature. The relay
   must not trust validation performed by the application.
+- Native submission and the relay additionally validate attachment names,
+  including nonempty trimmed names and a 120 UTF-16-unit limit. Frontend draft
+  admission does not validate filenames; those checks happen at the native
+  submission and relay boundaries.
 - PNG/JPEG/GIF admission checks their prefixes. WebM admission checks the EBML
   prefix; it does not parse the document type or prove that the payload is
   WebM. MP4/MOV admission requires a leading `ftyp` box whose declared length

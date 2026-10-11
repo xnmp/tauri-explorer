@@ -18,7 +18,7 @@
   `recording.mp4`.
 - Container headers are untrusted input (ADR 0028). Every per-level scan is
   capped at `MAX_SIBLINGS` and a value is read only from inside the payload
-  that declares it: a 4-byte `mvhd` or an Info child whose size crosses the end
+  that declares it: a 4-byte `mvhd`, an Info outside its Segment, or an Info child whose size crosses the end
   of Info would otherwise report a "duration" read from the next box. Exhausting
   the budget yields `None`, never "end of level". The ffmpeg fallback is killed
   after `FFMPEG_PROBE_TIMEOUT` with stderr drained on a thread and capped.

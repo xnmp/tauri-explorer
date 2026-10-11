@@ -27,10 +27,12 @@ load media data.
   budget yields no duration; it is never treated as "end of level".
 - A value is read only from inside the payload that declares it. An ISO-BMFF
   box must fit inside its parent, and `mvhd` must be long enough for its
-  version's timescale and duration fields. A Matroska Info child's header and
-  payload must end at or before the end of Info (clamped to the file length).
-  A child that crosses the boundary invalidates the Info scan; it is never
-  completed from a sibling's bytes.
+  version's timescale and duration fields. Every Matroska Segment child,
+  including Info, must end at or before the end of the Segment (its declared
+  size clamped to the file length; an unknown-size Segment runs to the end of
+  the file), and every Info child's header and payload must end at or before
+  the end of Info. A child that crosses either boundary invalidates the scan;
+  it is never completed from a sibling's bytes.
 - Matroska scanning stops at the first Cluster and rejects unknown-size
   elements other than the Segment itself, so a missing Info cannot turn into a
   scan of media data.

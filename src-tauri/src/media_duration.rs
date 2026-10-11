@@ -146,23 +146,33 @@ fn matroska_duration<R: Read + Seek>(reader: &mut R) -> Option<f64> {
     reader
         .seek(SeekFrom::Current(i64::try_from(size?).ok()?))
         .ok()?;
-    let (id, _) = ebml_element(reader)?;
+    let (id, size) = ebml_element(reader)?;
     if id != SEGMENT {
         return None;
     }
+    // Children must lie inside the Segment; an unknown-size Segment (live or
+    // streaming muxers) runs to the end of the file.
+    let segment_end = match size {
+        Some(size) => reader.stream_position().ok()?.checked_add(size)?.min(end),
+        None => end,
+    };
     // Segment children: skip to Info, never into media data.
     for _ in 0..MAX_SIBLINGS {
-        let (id, size) = ebml_element(reader)?;
-        if id == INFO {
-            let info_end = reader.stream_position().ok()?.checked_add(size?)?;
-            return matroska_info_duration(reader, info_end.min(end));
+        if reader.stream_position().ok()? >= segment_end {
+            return None;
         }
+        let (id, size) = ebml_element(reader)?;
         if id == CLUSTER {
             return None;
         }
-        reader
-            .seek(SeekFrom::Current(i64::try_from(size?).ok()?))
-            .ok()?;
+        let child_end = reader.stream_position().ok()?.checked_add(size?)?;
+        if child_end > segment_end {
+            return None;
+        }
+        if id == INFO {
+            return matroska_info_duration(reader, child_end);
+        }
+        reader.seek(SeekFrom::Start(child_end)).ok()?;
     }
     None
 }

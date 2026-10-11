@@ -10,6 +10,7 @@ use serde_json::Value;
 use sha2::{Digest, Sha256};
 pub(super) const RECEIPT_SCHEMA: i64 = 0x5445_4931;
 pub(super) const RECEIPT_TABLE: &str = "CREATE TABLE provider_receipts(consumer TEXT NOT NULL,operation TEXT NOT NULL,provider TEXT NOT NULL,revision INTEGER NOT NULL,status TEXT NOT NULL,digest TEXT NOT NULL,PRIMARY KEY(consumer,operation)); PRAGMA application_id=1413826865;";
+pub(super) const DISMISSAL_TABLE: &str = "CREATE TABLE IF NOT EXISTS dismissed_operations(consumer TEXT NOT NULL,operation TEXT NOT NULL,revision INTEGER NOT NULL,dismissed_at_ms INTEGER NOT NULL,PRIMARY KEY(consumer,operation))";
 fn canonical(value: &Value) -> Value {
     match value {
         Value::Object(object) => {
@@ -161,6 +162,54 @@ impl Store {
             evidence(self, tx, &admission, &status, true)?;
             tx.execute("INSERT INTO provider_receipts(consumer,operation,provider,revision,status,digest)VALUES(?1,?2,?3,?4,?5,?6)ON CONFLICT(consumer,operation)DO UPDATE SET revision=excluded.revision,status=excluded.status,digest=excluded.digest", params![consumer,op,encode(&admission.provider)?,revision as i64,raw,digest]).map_err(sql)?;
             Ok(status)
+        })
+    }
+    /// Records the user's acceptance of an unknown outcome. Receipts, evidence
+    /// and the admission are untouched; only a marker pinned to the current
+    /// receipt revision is added, so newer provider evidence resurfaces the
+    /// operation. A presentation job still parked by the earlier stop is
+    /// settled in the same transaction.
+    pub fn dismiss_operation(
+        &self,
+        consumer: &str,
+        op: &str,
+    ) -> Result<Option<super::job::JobRecord>> {
+        self.transaction(|tx| {
+            let a = Self::record(tx, consumer, op)?
+                .ok_or_else(|| reject("operation is not admitted"))?;
+            let stopped: i64 = tx
+                .query_row(
+                    "SELECT exec_released FROM operations WHERE consumer=?1 AND operation=?2",
+                    params![consumer, op],
+                    |r| r.get(0),
+                )
+                .map_err(sql)?;
+            let receipt = observed(tx, &a)?;
+            let state = |side: &str| {
+                receipt
+                    .as_ref()
+                    .and_then(|r| r.status[side]["state"].as_str())
+                    .map(str::to_owned)
+            };
+            let (execution, delivery) = (state("execution"), state("delivery"));
+            if a.phase == AdmissionPhase::Released
+                || !super::receipt::dismissable(
+                    stopped == 1,
+                    execution.as_deref().unwrap_or(""),
+                    delivery.as_deref().unwrap_or(""),
+                )
+            {
+                return Err(reject(
+                    "only a stopped operation with unknown execution and no retained output can be dismissed",
+                ));
+            }
+            let revision = receipt.map_or(0, |r| r.revision);
+            tx.execute(
+                "INSERT INTO dismissed_operations(consumer,operation,revision,dismissed_at_ms)VALUES(?1,?2,?3,CAST(strftime('%s','now') AS INTEGER)*1000)ON CONFLICT(consumer,operation)DO UPDATE SET revision=excluded.revision,dismissed_at_ms=excluded.dismissed_at_ms",
+                params![consumer, op, revision as i64],
+            )
+            .map_err(sql)?;
+            self.settle_dismissed_job_in(tx, consumer, op)
         })
     }
     pub(super) fn validate_receipts(&self) -> Result<()> {

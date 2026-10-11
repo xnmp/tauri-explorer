@@ -3,6 +3,27 @@ use super::model::{Admission, ArtifactDescriptor};
 use crate::error::AppError;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+/// A user may dismiss an operation only when nothing remains to recover:
+/// recovery was explicitly stopped, the provider's outcome is unknown and it
+/// holds no retained output. A succeeded execution keeps its bytes until
+/// discarded; an unstopped one is still recoverable.
+pub(crate) fn dismissable(stopped: bool, execution: &str, delivery: &str) -> bool {
+    stopped && execution == "unknown" && delivery == "none"
+}
+/// Whether a dismissal marker still hides an operation. The marker pins the
+/// provider receipt revision the user accepted; any newer provider evidence
+/// (for example a later success with retained bytes) or any change that makes
+/// the operation no longer dismissable brings it back.
+pub(crate) fn dismissal_holds(
+    marked_revision: Option<u64>,
+    receipt_revision: Option<u64>,
+    stopped: bool,
+    execution: &str,
+    delivery: &str,
+) -> bool {
+    matches!((marked_revision, receipt_revision), (Some(m), Some(r)) if m == r)
+        && dismissable(stopped, execution, delivery)
+}
 #[derive(Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct Receipt {
@@ -363,6 +384,78 @@ pub(crate) fn validate_transition(previous: &Value, next: &Value) -> Result<(), 
         return Err(reject());
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod dismissal_tests {
+    use super::{dismissable, dismissal_holds};
+    #[test]
+    fn only_stopped_unknown_with_no_delivery_is_dismissable() {
+        assert!(dismissable(true, "unknown", "none"));
+    }
+    #[test]
+    fn an_operation_that_is_not_stopped_is_not_dismissable() {
+        assert!(!dismissable(false, "unknown", "none"));
+    }
+    #[test]
+    fn a_succeeded_execution_is_discarded_not_dismissed() {
+        for delivery in ["available", "unavailable", "none"] {
+            assert!(!dismissable(true, "succeeded", delivery), "{delivery}");
+        }
+    }
+    #[test]
+    fn retained_delivery_is_never_dismissable() {
+        for delivery in ["available", "unavailable", "acquired", "discarded"] {
+            assert!(!dismissable(true, "unknown", delivery), "{delivery}");
+        }
+    }
+    #[test]
+    fn other_execution_states_are_not_dismissable() {
+        for execution in [
+            "accepted",
+            "running",
+            "failed",
+            "cancelled",
+            "unconfirmed",
+            "",
+        ] {
+            assert!(!dismissable(true, execution, "none"), "{execution}");
+        }
+    }
+    #[test]
+    fn a_marker_at_the_current_revision_hides_a_dismissable_operation() {
+        assert!(dismissal_holds(Some(2), Some(2), true, "unknown", "none"));
+    }
+    #[test]
+    fn no_marker_or_no_receipt_hides_nothing() {
+        assert!(!dismissal_holds(None, Some(2), true, "unknown", "none"));
+        assert!(!dismissal_holds(Some(2), None, true, "unknown", "none"));
+    }
+    #[test]
+    fn newer_provider_evidence_resurfaces_the_operation() {
+        assert!(!dismissal_holds(Some(2), Some(3), true, "unknown", "none"));
+    }
+    #[test]
+    fn output_arriving_later_resurfaces_the_operation_even_at_the_same_revision() {
+        assert!(!dismissal_holds(
+            Some(2),
+            Some(2),
+            true,
+            "succeeded",
+            "available"
+        ));
+        assert!(!dismissal_holds(
+            Some(2),
+            Some(2),
+            true,
+            "unknown",
+            "available"
+        ));
+    }
+    #[test]
+    fn a_marker_never_hides_an_operation_that_is_no_longer_stopped() {
+        assert!(!dismissal_holds(Some(2), Some(2), false, "unknown", "none"));
+    }
 }
 
 #[cfg(test)]

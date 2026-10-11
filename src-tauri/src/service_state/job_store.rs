@@ -295,6 +295,41 @@ fn indexes(conn: &Connection) -> Result<()> {
     Ok(())
 }
 impl Store {
+    /// A job parked by Stop settles to terminal `Discarded` once the user
+    /// dismisses its operation. It keeps the `stopped` phase so every
+    /// consumer-observation guard that skips stopped jobs still applies.
+    pub(super) fn settle_dismissed_job_in(
+        &self,
+        conn: &Connection,
+        consumer: &str,
+        operation: &str,
+    ) -> Result<Option<JobRecord>> {
+        let sequence = watermark(conn)?;
+        let Some(raw) = conn
+            .query_row(
+                &format!("{ROWS} WHERE owner=?1 AND operation=?2"),
+                params![consumer, operation],
+                row,
+            )
+            .optional()
+            .map_err(sql)?
+        else {
+            return Ok(None);
+        };
+        let mut record = checked(raw, sequence)?;
+        if record.state.terminal() || record.phase.as_deref() != Some("stopped") {
+            return Ok(None);
+        }
+        record.state = JobState::Discarded;
+        record.error = Some("Dismissed by the user; the execution outcome remains unknown".into());
+        record.output_path = None;
+        record.updated_at_ms = clock()?;
+        record.revision = next_revision(conn)?;
+        valid(&record, false)?;
+        persist(conn, &record)?;
+        prune(conn)?;
+        Ok(Some(record))
+    }
     pub(super) fn stop_job_in(
         &self,
         conn: &Connection,

@@ -181,6 +181,12 @@ SCM archive actions preserve each repo-relative path under `.archive/` and add
 
 ## Debugging
 
+PTY output and exit notifications come from independent threads. Native tests
+that inspect the complete transcript must wait for the output channel to close
+as well as for the child exit; an exit notification does not mean the last
+output callback has run. Keep those waits bounded and retain terminal cleanup
+on assertion failures.
+
 When a bug resists quick diagnosis: search `docs/lessons/` + the frozen `lessons_learnt.md` archive and commit history first, then add targeted logging/instrumentation before another fix attempt. Suite-wide test timeouts (~5 s) under parallel/CPU load are a known flake mode — rerun the failing files in isolation before treating them as regressions.
 
 For Windows native transfer waits, use one renderer-side observer through

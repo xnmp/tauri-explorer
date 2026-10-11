@@ -1233,3 +1233,7 @@ pub enum PrAction {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum PrMergeMethod { Merge, Squash, Rebase }
+
+#[cfg(all(test, unix))]
+#[path = "../test_support/github_pr_actions.rs"]
+mod pr_actions_tests;

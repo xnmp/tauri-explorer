@@ -1,4 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+vi.mock("$lib/state/drag-clock", async actual => ({ ...await actual<object>(), dragClock: {
+  initialize: async () => {}, ready: true,
+  stamp: () => ({ clockId: `browser:${performance.timeOrigin}`, at: Math.floor(performance.timeOrigin + performance.now()), uncertainty: 0 }),
+} }));
 const native = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
 vi.mock("$lib/api/native-file-drag", () => ({ startFileDrag: native }));
 import { createHtml5FileDrag } from "$lib/state/html5-file-drag.svelte";

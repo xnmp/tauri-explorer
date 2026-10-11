@@ -14,6 +14,6 @@ export type NativeFileDragEvent = (
   | { type: "enter" | "drop"; paths: string[]; position: { x: number; y: number }; source: DragData | null }
   | { type: "over"; position: { x: number; y: number } }
   | { type: "leave" }
-) & { copyModifier?: boolean | null; observedAt?: number;
+) & { copyModifier?: boolean | null; observedAt?: number; observationClock?: string;
   /** Captured at the platform event, independently of renderer completion IPC. */
   completedGestureSequence?: number };

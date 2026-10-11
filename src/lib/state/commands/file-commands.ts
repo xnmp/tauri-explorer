@@ -20,6 +20,7 @@ function selectedCropImage() {
 export const fileCommands: Command[] = [
   {
     id: "file.cropImage",
+    scope: "pane",
     label: "Crop Image…",
     category: "file",
     when: () => selectedCropImage() !== null,
@@ -30,6 +31,7 @@ export const fileCommands: Command[] = [
   },
   {
     id: "file.newFolder",
+    scope: "pane",
     label: "New Folder",
     category: "file",
     shortcut: "Ctrl+Shift+N",
@@ -39,6 +41,7 @@ export const fileCommands: Command[] = [
   },
   {
     id: "file.newFile",
+    scope: "pane",
     label: "New File",
     category: "file",
     shortcut: "Ctrl+Alt+N",
@@ -47,6 +50,7 @@ export const fileCommands: Command[] = [
   },
   {
     id: "file.rename",
+    scope: "pane",
     label: "Rename",
     category: "file",
     shortcut: "F2",
@@ -61,6 +65,7 @@ export const fileCommands: Command[] = [
   },
   {
     id: "file.bulkRename",
+    scope: "pane",
     label: "Bulk Rename...",
     category: "file",
     handler: () => {
@@ -74,6 +79,7 @@ export const fileCommands: Command[] = [
   },
   {
     id: "file.delete",
+    scope: "pane",
     label: "Delete",
     category: "file",
     shortcut: "Delete",
@@ -88,6 +94,7 @@ export const fileCommands: Command[] = [
   },
   {
     id: "file.permanentDelete",
+    scope: "pane",
     label: "Permanently Delete",
     category: "file",
     shortcut: "Shift+Delete",
@@ -102,6 +109,7 @@ export const fileCommands: Command[] = [
   },
   {
     id: "file.openSelected",
+    scope: "pane",
     label: "Open",
     category: "file",
     shortcut: "Enter",
@@ -133,6 +141,7 @@ export const fileCommands: Command[] = [
 export const editCommands: Command[] = [
   {
     id: "edit.copy",
+    scope: "pane",
     label: "Copy",
     category: "edit",
     shortcut: "Ctrl+C",
@@ -145,6 +154,7 @@ export const editCommands: Command[] = [
   },
   {
     id: "edit.cut",
+    scope: "pane",
     label: "Cut",
     category: "edit",
     shortcut: "Ctrl+X",
@@ -157,6 +167,7 @@ export const editCommands: Command[] = [
   },
   {
     id: "edit.paste",
+    scope: "pane",
     label: "Paste",
     category: "edit",
     shortcut: "Ctrl+V",
@@ -166,6 +177,7 @@ export const editCommands: Command[] = [
   },
   {
     id: "edit.undo",
+    scope: "pane",
     label: "Undo",
     category: "edit",
     shortcut: "Ctrl+Z",
@@ -176,6 +188,7 @@ export const editCommands: Command[] = [
   },
   {
     id: "gitGraph.undo",
+    scope: "pane",
     label: "Git Graph: Undo Last Operation",
     category: "edit",
     shortcut: "Ctrl+Z",
@@ -186,6 +199,7 @@ export const editCommands: Command[] = [
   },
   {
     id: "edit.redo",
+    scope: "pane",
     label: "Redo",
     category: "edit",
     shortcut: "Ctrl+Y",
@@ -196,6 +210,7 @@ export const editCommands: Command[] = [
   },
   {
     id: "edit.redo2",
+    scope: "pane",
     label: "Redo (Alt)",
     category: "edit",
     shortcut: "Ctrl+Shift+Z",
@@ -206,6 +221,7 @@ export const editCommands: Command[] = [
   },
   {
     id: "edit.pasteAsTextFile",
+    scope: "pane",
     label: "Paste Clipboard as Text File",
     category: "edit",
     handler: async () => {
@@ -226,6 +242,7 @@ export const editCommands: Command[] = [
   },
   {
     id: "edit.pasteImage",
+    scope: "pane",
     label: "Paste Image from Clipboard",
     category: "edit",
     shortcut: "Ctrl+Shift+V",
@@ -239,6 +256,7 @@ export const editCommands: Command[] = [
 export const selectionCommands: Command[] = [
   {
     id: "selection.selectAll",
+    scope: "pane",
     label: "Select All",
     category: "selection",
     shortcut: "Ctrl+A",
@@ -246,6 +264,7 @@ export const selectionCommands: Command[] = [
   },
   {
     id: "selection.clearSelection",
+    scope: "pane",
     label: "Clear Selection",
     category: "selection",
     shortcut: "Escape",

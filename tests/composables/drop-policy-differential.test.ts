@@ -1,4 +1,8 @@
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+vi.mock("$lib/state/drag-clock", async actual => ({ ...await actual<object>(), dragClock: {
+  initialize: async () => {}, ready: true,
+  stamp: () => ({ clockId: `browser:${performance.timeOrigin}`, at: Math.floor(performance.timeOrigin + performance.now()), uncertainty: 0 }),
+} }));
 import { dropCases, dropSources, dropTargets, dropDeliveryOrders, dropDeliveryCases, dropModalCompletionCases, dropBoundaryCases, dropCrossWindowCases, dropPathCases, dropTemporalCases, outgoingRecentCases, dropPlatforms, branchDropPolicy, devDropPolicy, nativeRoute, intendedDifferences, type DropCase, type Outcome } from "../helpers/drop-policy";
 import { dropElement } from "../helpers/drop-element";
 
@@ -191,6 +195,7 @@ describe.each(dropPlatforms)("differential drop outcomes: %s", platform => {
   beforeEach(async () => {
     observationTime = matrixClock += 100;
     vi.spyOn(Date, "now").mockImplementation(() => observationTime);
+    vi.stubGlobal("performance", { timeOrigin: matrixClock, now: () => observationTime - matrixClock });
     cleanup = []; sourceEnd = undefined; sourceNode = dropElement(); sidebarOver = false; io.outcomes = []; io.records = []; io.callbacks.clear(); io.start.mockReset().mockResolvedValue(undefined);
     // Retain the shared gesture history between live peer modules. Clearing
     // storage alone would fabricate a quota-loss boundary while leaving one

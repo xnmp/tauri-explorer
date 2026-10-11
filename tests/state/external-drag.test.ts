@@ -1,9 +1,14 @@
 /**
+
  * External drag-out: handleDragStart must initiate a native drag session and
  * populate HTML5 DataTransfer so both in-app drop targets and external apps work.
  * Issue: feat/drag-out-to-external-apps
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+vi.mock("$lib/state/drag-clock", async actual => ({ ...await actual<object>(), dragClock: {
+  initialize: async () => {}, ready: true,
+  stamp: () => ({ clockId: `browser:${performance.timeOrigin}`, at: Math.floor(performance.timeOrigin + performance.now()), uncertainty: 0 }),
+} }));
 
 const startDragMock = vi.fn();
 vi.mock("$lib/api/native-file-drag", () => ({

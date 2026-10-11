@@ -6,13 +6,18 @@
  * executed via command palette, keyboard shortcuts, or menus.
  */
 
+import { admitsCommandDestination, type CommandDestination } from "$lib/domain/command-admission";
+import { dialogStore } from "./dialogs.svelte";
+import { windowTabsManager } from "./window-tabs.svelte";
 import { createOwnedRegistry } from "./owned-registry";
 import { keybindingsStore } from "./keybindings.svelte";
 import { loadPersisted, savePersisted } from "./persisted";
 import { computeFrecencyScore } from "./frecency.svelte";
 
-export interface Command {
+export interface Command extends CommandDestination {
   id: string;
+  /** Workspace focus navigation may leave a pane dialog even from its input. */
+  allowInDialogInput?: boolean;
   label: string;
   category: CommandCategory;
   /** Default shortcut - actual binding comes from keybindingsStore */
@@ -176,7 +181,7 @@ export async function executeCommand(id: string): Promise<boolean> {
     return false;
   }
 
-  if (command.when && !command.when()) {
+  if (!admitsCommandDestination(command, windowTabsManager.activePaneId, dialogStore) || (command.when && !command.when())) {
     console.warn(`Command not available: ${id}`);
     return false;
   }

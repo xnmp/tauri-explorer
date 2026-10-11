@@ -468,6 +468,72 @@ coverage: 747/747 source files in map-folder.md
 
 No commits were created. The check failure remains the known missing dependency.
 
+## Tenth-review destination admission and clock corrections
+
+Window-chrome focus previously selected window admission even when a command's
+handler resolved a covered active pane. Commands now declare `scope` beside the
+handler; pane operations default to the active pane, and cross-pane transfers
+resolve the source plus their actual successor destination. Collapsing dual
+panes declares every affected pane. A shared domain predicate admits both
+keyboard routing (including fallback keys) and registry execution, so closing a
+window command palette cannot authorize a mutation beneath a pane dialog.
+
+Dialog input navigation eligibility also lives on each command declaration.
+Native buttons retain Enter/Space activation before pane-dialog matching. New
+Tab remains a window command: Ctrl+T from the tab strip works with a pane dialog
+open, while a window modal blocks it. The executable table covers command scope
+× seven focus targets × four modal states, plus the reported sidebar paste and
+new-folder failures, three-pane destinations, palette dispatch, fallback keys
+and rebound native-button activation.
+
+HTML5 timestamps and platform observations previously used adjustable wall
+clocks, with two persisted floors that could reject all fresh Linux external
+traffic after rollback. Rust now captures `Instant` elapsed time and a random
+process clock identity. Renderers sample that clock once against
+`performance.now()`, carrying the full request/response interval as endpoint
+uncertainty. No wall-clock comparison orders or expires a gesture. The
+[High Resolution Time specification](https://www.w3.org/TR/hr-time-3/) describes
+why monotonic clock realms must be correlated and cannot span separate runtimes.
+
+Stored cross-window history/floors have authority only under the exact current
+native process identity; legacy wall floors and prior-process records are
+ignored. Sequence order governs history eviction and DOM expiry, with sequence
+metadata replacing the DOM time stamp. Native listener setup waits for
+calibration and cannot install after its owner retires. A source starting before
+calibration cancels synchronously rather than exporting uncorrelated identity.
+
+Failing-first runs reproduced both reported classes: the keyboard table and
+sidebar regressions had 11 failures; the external plugin clock regressions had
+two failures. Clock tables cover backward/forward corrections, zero/nine prior
+gestures, and same-process/restarted receivers. Real calibration/admission tests
+also cover distinct renderer epochs, invalid samples, uncertainty, and old
+process observations. Independent review additionally reproduced and corrected
+dual-pane scope, palette execution admission, and native-button ownership;
+its final 194 tests passed. Independent clock probes exercised 0/80 ms IPC
+latency, delayed observations and bounded identity expiry. Physical native
+clock-correction delivery remains a platform acceptance check.
+
+Final tenth-review verification:
+
+```text
+bunx vitest run tests/state tests/plugins tests/composables tests/domain tests/api --maxWorkers=2
+Test Files  356 passed (356)
+Tests       16488 passed (16488)
+
+bun run check
+website/api/report.js:2:26 Cannot find module '@vercel/blob' or its corresponding type declarations.
+COMPLETED 1849 FILES 1 ERRORS 0 WARNINGS 1 FILES_WITH_PROBLEMS
+
+CARGO_TARGET_DIR=/var/tmp/te-wt2/target-pdlg cargo test --offline --manifest-path src-tauri/Cargo.toml native_file_drag
+test result: ok. 22 passed; 0 failed; 0 ignored; 0 measured; 2166 filtered out
+
+python3 docs/code-map/validate.py --coverage
+coverage: 747/747 tracked source files in map-folder.md
+```
+
+Both new source files are also explicitly mapped (the validator counts tracked
+files). No commits were created; the only check error is the known dependency.
+
 ## Acceptance still to run
 
 Local verification after the sixth-review fixes:

@@ -20,7 +20,7 @@ const fileEntry: FileEntry = {
 };
 
 function activate(ctx: PluginContext): void {
-  ctx.registerCommand({
+  ctx.registerCommand({ scope: "pane",
     id: "test.plugin.cmd",
     label: "Test Command",
     category: "plugins",

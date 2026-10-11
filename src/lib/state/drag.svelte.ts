@@ -8,6 +8,7 @@
  * localStorage.
  */
 
+import { dragClock } from "./drag-clock";
 import { loadPersisted, savePersisted, removePersisted } from "./persisted";
 import { observedDuringGesture, internalDragPaths, sameDropPathSet } from "$lib/domain/file-drop";
 
@@ -29,18 +30,27 @@ const readGestureSequence = (): number => {
     ...html5History.map(item => item.ordinal));
   return gestureSequence;
 };
-type Html5Gesture = { data: DragData; ordinal: number; startedAt: number; endedAt?: number; nativeAccepted?: boolean; delivered?: boolean };
+type Html5Gesture = { clockId: string; uncertainty: number; data: DragData; ordinal: number; startedAt: number; endedAt?: number; nativeAccepted?: boolean; delivered?: boolean };
 let html5History: Html5Gesture[] = [];
-let observationFloor: number | null = null;
+type ObservationFloor = { clockId: string; at: number; ordinal: number };
+let observationFloor: ObservationFloor | null = null;
+const readFloor = (key: string): ObservationFloor | null => {
+  const stored = loadPersisted<ObservationFloor | null>(key, null);
+  return stored?.clockId === dragClock.stamp().clockId && Number.isFinite(stored.at) && validSequence(stored.ordinal) ? stored : null;
+};
 // A bounded history admits delayed observations across source-end/replacement.
 // It is never eligible by path alone, and shares the existing window storage.
 const readHtml5Gestures = (): Html5Gesture[] => {
+  const clockId = dragClock.stamp().clockId;
+  html5History = html5History.filter(item => item.clockId === clockId);
+  if (observationFloor?.clockId !== clockId) observationFloor = null;
   const value = loadPersisted<unknown>(HTML5_GESTURES_KEY, []);
   const persisted = Array.isArray(value) ? value.slice(-GESTURE_HISTORY_LIMIT).filter((item): item is Html5Gesture => !!item && typeof item === "object"
+    && item.clockId === clockId && Number.isFinite(item.uncertainty) && item.uncertainty >= 0
     && Number.isFinite(item.startedAt) && typeof item.data?.sessionId === "string" && !!item.data.sessionId
     && item.data.html5 === true && Number.isSafeInteger(item.ordinal) && item.ordinal > 0) : [];
-  const storedFloor = loadPersisted<unknown>(HTML5_FLOOR_KEY, null);
-  if (typeof storedFloor === "number" && Number.isFinite(storedFloor)) observationFloor = Math.max(observationFloor ?? storedFloor, storedFloor);
+  const storedFloor = readFloor(HTML5_FLOOR_KEY);
+  if (storedFloor && (!observationFloor || storedFloor.ordinal > observationFloor.ordinal)) observationFloor = storedFloor;
   const merged = new Map(html5History.map(item => [item.data.sessionId!, item]));
   for (const item of persisted) {
     const local = merged.get(item.data.sessionId!);
@@ -52,16 +62,17 @@ const readHtml5Gestures = (): Html5Gesture[] => {
   retainHtml5Gestures([...merged.values()]);
   return html5History;
 };
-// Date.now and Rust SystemTime use the live wall clock. performance.timeOrigin
-// is origin-anchored and would diverge from Rust after an OS clock adjustment.
-const observedNow = () => Date.now();
+// Both platform and renderer timestamps now share one live process clock.
+const observedNow = () => dragClock.stamp().at;
 function retainHtml5Gestures(history: Html5Gesture[]): void {
-  // Sequence order survives wall-clock adjustments and stale storage copies.
-  history = history.filter(item => observationFloor === null || item.endedAt === undefined || item.endedAt > observationFloor)
-    .sort((a, b) => a.ordinal - b.ordinal || a.startedAt - b.startedAt);
+  // Retention/eviction is identity ordering, never time ordering.
+  history = history.filter(item => observationFloor === null || item.ordinal > observationFloor.ordinal)
+    .sort((a, b) => a.ordinal - b.ordinal);
   if (history.length > GESTURE_HISTORY_LIMIT) {
     const discarded = history.slice(0, -GESTURE_HISTORY_LIMIT);
-    observationFloor = Math.max(observationFloor ?? -Infinity, ...discarded.map(item => item.endedAt ?? item.startedAt));
+    observationFloor = { clockId: dragClock.stamp().clockId,
+      ordinal: Math.max(...discarded.map(item => item.ordinal)),
+      at: Math.max(observationFloor?.at ?? -Infinity, ...discarded.map(item => (item.endedAt ?? item.startedAt) + item.uncertainty)) };
     savePersisted(HTML5_FLOOR_KEY, observationFloor);
   }
   html5History = history.slice(-GESTURE_HISTORY_LIMIT);
@@ -76,22 +87,23 @@ const updateHtml5Gesture = (id: string, patch: Partial<Html5Gesture>): void => {
     history.map(item => item.data.sessionId === id ? { ...item, ...patch } : item));
 };
 const ambiguousObservation = (observedAt: number, history: readonly Html5Gesture[]): boolean =>
-  !Number.isFinite(observedAt) || history.some(item => item.endedAt !== undefined
-    && (Math.floor(observedAt) === item.endedAt
-      || (item.endedAt < item.startedAt && observedAt <= item.startedAt + 1)));
-type NativeDecision = { sessionId: string; accepted: boolean; html5StartedAt?: number; html5EndedAt?: number };
-const saveNativeDecision = (next: NativeDecision): void => {
+  !Number.isFinite(observedAt) || history.some(item =>
+    (item.uncertainty > 0 && observedAt >= item.startedAt && observedAt < item.startedAt + item.uncertainty)
+    || (item.endedAt !== undefined && observedAt >= item.endedAt && observedAt < item.endedAt + item.uncertainty + 1));
+type NativeDecision = { clockId: string; uncertainty?: number; ordinal?: number; sessionId: string; accepted: boolean; html5StartedAt?: number; html5EndedAt?: number };
+const saveNativeDecision = (next: Omit<NativeDecision, "clockId">): void => {
+  const clockId = dragClock.stamp().clockId;
   const previous = loadPersisted<NativeDecision | null>(NATIVE_DECISION_KEY, null);
-  if (previous && previous.sessionId !== next.sessionId && !previous.accepted && Number.isFinite(previous.html5StartedAt)) {
+  if (previous?.clockId === clockId && previous.sessionId !== next.sessionId && !previous.accepted && Number.isFinite(previous.html5StartedAt)) {
     // The small decision record may be the only cross-window evidence when
     // path-history writes fail. Publish cancellation authority before replacing
     // it; this floor does not evict locally/persistently proven source history.
-    const stored = loadPersisted<unknown>(REJECTED_FLOOR_KEY, null);
-    const floor = Math.max(typeof stored === "number" && Number.isFinite(stored) ? stored : -Infinity,
-      previous.html5StartedAt!, previous.html5EndedAt ?? next.html5StartedAt ?? observedNow());
-    savePersisted(REJECTED_FLOOR_KEY, floor);
+    const stored = readFloor(REJECTED_FLOOR_KEY);
+    if (previous.ordinal) savePersisted(REJECTED_FLOOR_KEY, { clockId, ordinal: previous.ordinal,
+      at: Math.max(stored?.at ?? -Infinity, previous.html5StartedAt!,
+        (previous.html5EndedAt ?? next.html5StartedAt ?? observedNow()) + (previous.uncertainty ?? 0)) });
   }
-  savePersisted(NATIVE_DECISION_KEY, next);
+  savePersisted(NATIVE_DECISION_KEY, { ...next, clockId });
 };
 
 export interface DragData {
@@ -111,6 +123,8 @@ export interface DragData {
    * still receive automatic Wry events when explicit native start rejects. */
   html5?: boolean;
   html5StartedAt?: number;
+  html5ClockId?: string;
+  html5Uncertainty?: number;
 }
 
 let current: DragData | null = $state.raw(null);
@@ -146,16 +160,16 @@ export const dragState = {
   get current() { return current; },
 
   start(data: DragData) {
-    const startedAt = observedNow();
+    const { at: startedAt, clockId, uncertainty } = dragClock.stamp();
     // Only one physical gesture is active. Replacement also retires an old
     // interval whose source component missed dragend during unmount.
     const history = readHtml5Gestures().map(item => item.endedAt === undefined ? { ...item, endedAt: startedAt } : item);
     const ordinal = Math.max(readGestureSequence(), ...history.map(item => item.ordinal)) + 1;
     gestureSequence = ordinal;
     savePersisted(GESTURE_SEQUENCE_KEY, ordinal);
-    current = { ...data, ...(data.html5 ? { html5StartedAt: startedAt } : {}), paths: data.paths ? [...data.paths] : undefined, sessionId: crypto.randomUUID(), gestureSequence: ordinal };
+    current = { ...data, ...(data.html5 ? { html5StartedAt: startedAt, html5ClockId: clockId, html5Uncertainty: uncertainty } : {}), paths: data.paths ? [...data.paths] : undefined, sessionId: crypto.randomUUID(), gestureSequence: ordinal };
     savePersisted(STORAGE_KEY, current);
-    writeHtml5Gestures(data.html5 ? [...history, { data: current, startedAt, ordinal }] : history);
+    writeHtml5Gestures(data.html5 ? [...history, { clockId, uncertainty, data: current, startedAt, ordinal }] : history);
   },
 
   clear(dataTransfer?: DataTransfer | null) {
@@ -179,26 +193,28 @@ export const dragState = {
     const persisted = this.readCrossWindow();
     if (persisted?.sessionId === data.sessionId) savePersisted(STORAGE_KEY, { ...persisted, html5: false });
     const decision = loadPersisted<NativeDecision | null>(NATIVE_DECISION_KEY, null);
-    if (decision?.sessionId === data.sessionId && !decision.accepted && data.html5StartedAt !== undefined) {
+    if (decision?.clockId === dragClock.stamp().clockId && decision.sessionId === data.sessionId && !decision.accepted && data.html5StartedAt !== undefined) {
       const endedAt = gesture?.endedAt ?? observedNow();
       savePersisted(NATIVE_DECISION_KEY, { ...decision, html5StartedAt: data.html5StartedAt,
         html5EndedAt: decision.html5EndedAt === undefined ? endedAt : Math.min(decision.html5EndedAt, endedAt) });
     }
   },
 
-  survivingHtml5Source(observedAt?: number, completedGestureSequence = 0): DragData | null {
+  survivingHtml5Source(observedAt?: number, completedGestureSequence = 0, observationClock?: string): DragData | null {
+    if (observationClock !== undefined && observationClock !== dragClock.stamp().clockId) return null;
     const data = this.latestSource();
     // Native completion may precede both start acknowledgement and dragend in
     // this renderer. The platform snapshot, not either IPC reply, fences reuse.
     const eligible = (sequence?: number) => !completedGestureSequence || (sequence !== undefined && sequence > completedGestureSequence);
     if (observedAt !== undefined) return [...readHtml5Gestures()].reverse().find(item => !item.nativeAccepted
       && eligible(item.ordinal)
-      && observedDuringGesture(observedAt, item.startedAt, item.endedAt))?.data
-      ?? (data?.html5 && eligible(data.gestureSequence) && data.transport !== "native" && observedDuringGesture(observedAt, data.html5StartedAt ?? NaN) ? data : null);
-    return data?.html5 && eligible(data.gestureSequence) && data.transport !== "native" ? data : null;
+      && observedDuringGesture(observedAt, item.startedAt + item.uncertainty, item.endedAt))?.data
+      ?? (data?.html5 && data.html5ClockId === dragClock.stamp().clockId && eligible(data.gestureSequence) && data.transport !== "native" && observedDuringGesture(observedAt, (data.html5StartedAt ?? NaN) + (data.html5Uncertainty ?? 0)) ? data : null);
+    return data?.html5 && data.html5ClockId === dragClock.stamp().clockId && eligible(data.gestureSequence) && data.transport !== "native" ? data : null;
   },
 
-  expiredNativeObservation(observedAt?: number, source?: DragData | null, inferred = false): boolean {
+  expiredNativeObservation(observedAt?: number, source?: DragData | null, inferred = false, observationClock?: string): boolean {
+    if (observationClock !== undefined && observationClock !== dragClock.stamp().clockId) return true;
     if (source?.gestureSequence !== undefined) {
       const history = readHtml5Gestures();
       return !validSequence(source.gestureSequence)
@@ -208,26 +224,26 @@ export const dragState = {
     if (observedAt === undefined) return false;
     const history = readHtml5Gestures();
     const decision = loadPersisted<NativeDecision | null>(NATIVE_DECISION_KEY, null);
-    const rejectedFloor = loadPersisted<unknown>(REJECTED_FLOOR_KEY, null);
+    const rejectedFloor = readFloor(REJECTED_FLOOR_KEY);
     // A small decision record survives history-only quota failures. A peer
     // lacking the source paths must cancel the original interval, never call
     // it external. Live source data/local history can still prove identity.
-    const missingRejectedHistory = decision && !decision.accepted && decision.html5StartedAt !== undefined
+    const missingRejectedHistory = decision?.clockId === dragClock.stamp().clockId && !decision.accepted && decision.html5StartedAt !== undefined
       && !history.some(item => item.data.sessionId === decision.sessionId)
-      && observedDuringGesture(observedAt, decision.html5StartedAt, decision.html5EndedAt === undefined ? undefined : decision.html5EndedAt + 1);
-    // JS wall time has millisecond precision. An observation in the source's
-    // end millisecond is ambiguous; fail closed rather than guess provenance.
+      && observedDuringGesture(observedAt, decision.html5StartedAt, decision.html5EndedAt === undefined ? undefined : decision.html5EndedAt + (decision.uncertainty ?? 0) + 1);
+    // Clock correlation and timer precision bound each endpoint. Observations
+    // inside that uncertainty are cancelled rather than guessing provenance.
     return ambiguousObservation(observedAt, history) || !!missingRejectedHistory
-      || (typeof rejectedFloor === "number" && Number.isFinite(rejectedFloor) && Math.floor(observedAt) <= rejectedFloor)
-      || (observationFloor !== null && Math.floor(observedAt) <= observationFloor);
+      || (rejectedFloor !== null && observedAt <= rejectedFloor.at)
+      || (observationFloor !== null && observedAt <= observationFloor.at);
   },
 
-  cancelledNativeSession(observedAt: number | undefined, paths: readonly string[], windows: boolean): string | undefined {
-    if (observedAt === undefined) return;
+  cancelledNativeSession(observedAt: number | undefined, paths: readonly string[], windows: boolean, observationClock?: string): string | undefined {
+    if (observedAt === undefined || (observationClock !== undefined && observationClock !== dragClock.stamp().clockId)) return;
     // A boundary observation is insufficient for delivery, but its complete
     // path match can suppress that retired gesture's possible DOM duplicate.
     return [...readHtml5Gestures()].reverse().find(item => item.endedAt !== undefined
-      && observedAt >= Math.min(item.startedAt, item.endedAt) && observedAt < Math.max(item.startedAt, item.endedAt) + 1
+      && observedAt >= Math.min(item.startedAt, item.endedAt) && observedAt < Math.max(item.startedAt, item.endedAt) + item.uncertainty + 1
       && sameDropPathSet(paths, internalDragPaths(item.data, windows) ?? [], windows))?.data.sessionId;
   },
 
@@ -235,8 +251,8 @@ export const dragState = {
     const history = readHtml5Gestures();
     const id = data?.sessionId || transfer?.getData("application/x-explorer-session");
     if (id && history.some(item => item.data.sessionId === id)) return false;
-    const stamp = data?.html5StartedAt ?? Number(transfer?.getData("application/x-explorer-observed-at") || NaN);
-    return Number.isFinite(stamp) && observationFloor !== null && stamp <= observationFloor;
+    const sequence = data?.gestureSequence ?? Number(transfer?.getData("application/x-explorer-sequence") || NaN);
+    return validSequence(sequence) && sequence <= readGestureSequence() - GESTURE_HISTORY_LIMIT;
   },
 
   domSource(dataTransfer: DataTransfer): DragData | null {
@@ -289,7 +305,7 @@ export const dragState = {
       failed: () => {
         nativeLeases.delete(id);
         saveNativeDecision({ sessionId: id, accepted: false,
-          html5StartedAt: data.html5StartedAt, html5EndedAt: readHtml5Gestures().find(item => item.data.sessionId === id)?.endedAt });
+          html5StartedAt: data.html5StartedAt, uncertainty: data.html5Uncertainty, ordinal: data.gestureSequence, html5EndedAt: readHtml5Gestures().find(item => item.data.sessionId === id)?.endedAt });
         updateTransport(data, undefined);
         if (lease.endRequested) this.finish(data);
         settle(false);

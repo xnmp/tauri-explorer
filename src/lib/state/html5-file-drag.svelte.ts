@@ -1,4 +1,5 @@
 import { dragState, type DragData } from "./drag.svelte";
+import { dragClock } from "./drag-clock";
 import { isTauri } from "$lib/api/common";
 import { isMac, isWindows } from "$lib/domain/platform";
 import { startExternalDrag } from "$lib/composables/use-external-drag.svelte";
@@ -10,6 +11,9 @@ export function createHtml5FileDrag(onEnd: () => void = () => {}, copyPolicy: "m
 
   function start(event: DragEvent, data: DragData, decorate?: () => void): void {
     if (!event.dataTransfer) return;
+    // DataTransfer is synchronous: do not launch an uncorrelated HTML5 source
+    // while the renderer is still acquiring the native monotonic clock.
+    if (!dragClock.ready) { event.preventDefault(); return; }
     const paths = data.paths ? [...data.paths] : [data.path];
     event.dataTransfer.setData("application/x-explorer-path", data.path);
     event.dataTransfer.setData("application/x-explorer-name", data.name);
@@ -23,7 +27,7 @@ export function createHtml5FileDrag(onEnd: () => void = () => {}, copyPolicy: "m
     source = dragState.current;
     dragState.bindDomSource(event.dataTransfer, source!);
     event.dataTransfer.setData("application/x-explorer-session", source!.sessionId!);
-    event.dataTransfer.setData("application/x-explorer-observed-at", String(source!.html5StartedAt));
+    event.dataTransfer.setData("application/x-explorer-sequence", String(source!.gestureSequence));
     decorate?.();
     if (copyPolicy !== "link" && !isMac && !isWindows && isTauri()) void startExternalDrag(paths);
   }

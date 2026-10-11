@@ -207,3 +207,9 @@ export const dropPathCases: DropCase[] = pathRows.flatMap(row => row.platforms.f
     dev: typeof row.dev === "function" ? row.dev(c) : row.dev, branch: row.branch,
     ...(row.reason && (typeof row.dev === "function" ? row.dev(c) : row.dev) !== row.branch ? { reason: row.reason } : {}) } };
 })));
+
+
+/** Clock correction is independent of the gesture-retention and renderer lifetime axes. */
+export const dropClockCases = (["backward", "forward"] as const).flatMap(direction =>
+  ([0, 9] as const).flatMap(priorGestures =>
+    [false, true].map(restart => ({ direction, priorGestures, restart }))));

@@ -193,6 +193,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `drop-operations.ts` — drop source-path extraction and dispatch to the copy or move session.
 - `conflict-resolver.svelte.ts` — paste conflict resolution state (overwrite/skip/cancel).
 - `clipboard.svelte.ts` — cross-pane/window revisioned file clipboard state and Cut ownership reconciliation.
+- `src/lib/state/drag-clock.ts` — native process clock calibration with renderer performance.now, IPC uncertainty bounds and runtime identity.
 - `drag.svelte.ts` — shared drag state, cross-window gesture sequence, HTML5 observation history, bounded shared completion receipts and native provenance expiry (dataTransfer is unreliable in Tauri).
 - `undo.svelte.ts` — revisioned native-history projection; queued writes retain their receipts so Undo targets the entry captured at intent.
 - `undo-helpers.ts` — pure completion labels for renderer and native-only history actions.
@@ -203,7 +204,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `context-menu.svelte.ts` — context menu open state + position.
 - `context-menu-items.svelte.ts` — registry for plugin-provided context-menu items.
 - `command-definitions.ts` — command palette command definitions (assembles command modules).
-- `commands.svelte.ts` — command registry + palette store.
+- `commands.svelte.ts` — command registry + palette store; required destination scope and optional affected-pane resolver govern execution and keyboard admission.
 - `commands/shared.ts` — shared helpers for command modules.
 - `commands/file-commands.ts` — file ops commands (new/rename/delete/copy...).
 - `commands/navigation-commands.ts` — navigation commands (back/fwd/up/goto).
@@ -925,7 +926,6 @@ TraceExplorer's image UI, provider adapters and SQLite journal are maintained in
 - `src/lib/state/native-plugin-jobs.ts` — subscribe-before-snapshot job reconciliation and origin-scoped notifications.
 - `src/test-support/modal/DirtyCloseDialog.svelte` — browser fixture for dirty nested modal ownership.
 - `src/test-support/modal/PaneTestDialog.svelte` — contributed pane-dialog acceptance fixture with persistent draft, guarded close and local submit behavior.
-- `src/lib/domain/pane-dialog-keys.ts` — exact command allowlist for pane/tab navigation from pane-dialog controls.
 
 - `src-tauri/src/installed_plugins/backend_native_tests.rs` — isolated actual Wry/production-broker fixture for held private validation, reverse quarantine, independent controls, rollback, retirement and publisher-aware shutdown.
 - `src-tauri/src/installed_plugins/backend_native_recovery_tests.rs` — actual Wry fixture seeding startup claims: readiness held until recovery, shutdown waits for in-flight recovery IO, no paid start.
@@ -934,3 +934,7 @@ TraceExplorer's image UI, provider adapters and SQLite journal are maintained in
 - `src-tauri/src/installed_plugins/service_native_tests.rs` — actual Wry fixture: per-consumer status timeouts, transport-loss recovery, reverse RPC correlation and routing without Trace.
 - `src-tauri/src/installed_plugins/service_native_kill_tests.rs` — actual Wry fixture: consumer SIGKILLed while the provider runs; both cancel/success gate orders settle once, without failure, replayed start or a retained artifact lease.
 - `src-tauri/src/installed_plugins/startup_native_tests.rs` — actual Wry fixtures: unreadable AI storage keeps legacy backends and retries; startup recovery errors degrade instead of failing setup; a process without the profile never recovers live claims.
+
+- `src/lib/domain/pane-dialog-keys.ts` — editable pane-dialog command input policy from registry declarations, independent of destination modality.
+
+- `src/lib/domain/command-admission.ts` — shared pane/window destination admission, consumed by registry execution and keyboard routing.

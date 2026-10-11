@@ -164,6 +164,7 @@ backend for E2E/browser).
 
 - `composables/use-pointer-drag.svelte.ts` — pointer-based drag, `createDragGhost`, multi-select ghost
 - `composables/use-pointer-intent.svelte.ts` — distinguish click vs drag start
+- `src/lib/state/drag-clock.ts`, `src-tauri/src/native_file_drag.rs` — process-scoped Instant clock sampled once per renderer against performance.now; bounded IPC uncertainty and clock identity fence history/floors across restarts and post-adjustment new windows.
 - `state/drag.svelte.ts` — `dragState` shared store, monotonic cross-window gesture sequence, observation-correlated HTML5 history, bounded shared completion receipts published at admission, and native provenance expiry.
 - `composables/use-drop-target.svelte.ts` — dropzone highlight + accept logic
 - `src/lib/composables/use-dom-directory-drop.ts`, `src/lib/composables/use-sidebar-file-drop.ts` — component-used DOM destination seams exercised by the independent Cartesian drop policy in `tests/helpers/drop-policy.ts` and `tests/composables/drop-policy-differential.test.ts`.
@@ -390,7 +391,7 @@ backend for E2E/browser).
 ## Command palette
 
 - `components/CommandPalette.svelte` — searchable command list
-- `state/commands.svelte.ts` — registry (`registerCommand`, `executeCommand`, frecency)
+- `src/lib/domain/command-admission.ts`, `state/commands.svelte.ts` — shared destination admission and registry (`registerCommand`, `executeCommand`, frecency); each command declares pane/window destination scope, and multi-pane operations resolve their actual affected panes. Registry execution and keyboard admission (including fallback surface keys) consume those declarations regardless of focus or launcher.
 - `state/command-definitions.ts` — command type/category defs
 - `state/commands/` — `file-commands.ts`, `view-commands.ts`, `navigation-commands.ts`, `pane-commands.ts`, `general-commands.ts`, `system-actions.ts`, `shared.ts`
 - `state/frecency.svelte.ts` — recency+frequency ranking
@@ -454,7 +455,7 @@ backend for E2E/browser).
 
 ## Toasts & dialogs
 
-- `src/lib/state/pane-dialogs.svelte.ts`, `state/modal-ownership.svelte.ts`, `src/lib/state/dialog-presentation-context.ts`, `src/lib/components/PluginDialogMount.svelte`, `src/lib/domain/pane-dialog-keys.ts` — SDK `paneDialogs` capability: window-local lifetime-bound captures, independent pane reservations/surfaces, private Modal context, retained DOM portals and narrow keyboard navigation exceptions. `ExplorerPane.svelte` hosts the overlay slot beside inert content; tab parking keeps the contributed component mounted with `open=true`.
+- `src/lib/state/pane-dialogs.svelte.ts`, `state/modal-ownership.svelte.ts`, `src/lib/state/dialog-presentation-context.ts`, `src/lib/components/PluginDialogMount.svelte`, `src/lib/domain/pane-dialog-keys.ts` — SDK `paneDialogs` capability: window-local lifetime-bound captures, independent pane reservations/surfaces, private Modal context, retained DOM portals and command-declared keyboard navigation exceptions. `ExplorerPane.svelte` hosts the overlay slot beside inert content; tab parking keeps the contributed component mounted with `open=true`.
 - FLOW: plugin `workspace.capturePane` → `dialog-registry.svelte.ts` validates host identity/reserves scope → `WindowDialogs.svelte` retains the keyed component → mount wrapper portals to ExplorerPane. `window-tabs.svelte.ts` pane/session retirement synchronously disposes dialogs and captures; physical slot registration survives failed native close while old handles remain invalid. `src/test-support/modal/PaneTestDialog.svelte` exercises the contract through a real plugin context in `e2e/pane-dialogs.spec.ts`.
 - `src/lib/state/modal-focus.ts` — tracks the latest DOM focus owner so pane dialog removal can restore the active owner after detachment without reclaiming focus moved to another surface. Modal registrations remain authoritative outside rune state: Svelte cleanup reads historical rune values, so reactive-array read/modify/write can resurrect a released reservation or discard a newly mounted window dialog.
 

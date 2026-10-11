@@ -1,11 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const native = vi.hoisted(() => ({ listen: vi.fn(), deliver: null as ((event: any) => void) | null }));
 vi.mock("@tauri-apps/api/webview", () => ({ getCurrentWebview: () => ({ listen: (_name: string, listener: (event: any) => void) => native.listen(listener) }) }));
+import { dragClock } from "$lib/state/drag-clock";
 import { useExternalDrop } from "$lib/composables/use-external-drop.svelte";
 
-const event = (type: string) => ({ payload: { type, position: { x: 200, y: 300 }, paths: ["/a.png", "/b.png"], copyModifier: true, observedAt: 1011.25, completedGestureSequence: 7 } });
+const event = (type: string) => ({ payload: { type, position: { x: 200, y: 300 }, paths: ["/a.png", "/b.png"], copyModifier: true, observedAt: 1011.25, observationClock: "process-clock", completedGestureSequence: 7 } });
 beforeEach(() => { native.listen.mockReset(); });
-afterEach(() => vi.restoreAllMocks());
+afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
 describe("native drop listener lifecycle", () => {
   it("passes native Enter paths through before hover, then lets claimed drop own cleanup", async () => {
@@ -13,11 +14,11 @@ describe("native drop listener lifecycle", () => {
     const callbacks = { onEnter: vi.fn(), onOver: vi.fn(), onDrop: vi.fn(), onLeave: vi.fn() };
     const service = useExternalDrop(callbacks); await service.setup();
     native.deliver!(event("enter"));
-    expect(callbacks.onEnter).toHaveBeenCalledWith(["/a.png", "/b.png"], { x: 200, y: 300 }, undefined, true, 1011.25, 7);
+    expect(callbacks.onEnter).toHaveBeenCalledWith(["/a.png", "/b.png"], { x: 200, y: 300 }, undefined, true, 1011.25, 7, "process-clock");
     expect(callbacks.onOver).toHaveBeenCalledWith({ x: 200, y: 300 }, true);
     expect(service.state.isDragging).toBe(true);
     native.deliver!(event("drop"));
-    expect(callbacks.onDrop).toHaveBeenCalledExactlyOnceWith(["/a.png", "/b.png"], { x: 200, y: 300 }, undefined, true, 1011.25, 7);
+    expect(callbacks.onDrop).toHaveBeenCalledExactlyOnceWith(["/a.png", "/b.png"], { x: 200, y: 300 }, undefined, true, 1011.25, 7, "process-clock");
     expect(callbacks.onLeave).not.toHaveBeenCalled(); expect(service.state.isDragging).toBe(false);
     service.cleanup();
   });
@@ -42,4 +43,16 @@ describe("native drop listener lifecycle", () => {
     expect(onDrop).toHaveBeenCalledOnce(); expect(oldUnlisten).toHaveBeenCalledOnce(); expect(currentUnlisten).not.toHaveBeenCalled();
     service.cleanup(); expect(currentUnlisten).toHaveBeenCalledOnce();
   });
+});
+
+
+it("a retired native listener cannot install after its monotonic calibration resolves", async () => {
+  vi.stubGlobal("window", { __TAURI_INTERNALS__: {} });
+  let calibrated!: () => void;
+  vi.spyOn(dragClock, "initialize").mockImplementation(() => new Promise(resolve => { calibrated = resolve; }));
+  const service = useExternalDrop({ onDrop: vi.fn() });
+  const setup = service.setup();
+  expect(native.listen).not.toHaveBeenCalled();
+  service.cleanup(); calibrated(); await setup;
+  expect(native.listen).not.toHaveBeenCalled();
 });

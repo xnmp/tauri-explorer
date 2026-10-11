@@ -19,7 +19,7 @@ export function isLinkOnlyFileTransfer(data: Pick<DataTransfer, "effectAllowed" 
     || data?.getData("application/x-explorer-effect") === "link";
 }
 
-/** Native observations use Unix milliseconds, captured before IPC delivery.
+/** Native observations use process-scoped monotonic milliseconds before IPC delivery.
  * End is exclusive: a later external gesture must not borrow retired identity. */
 export function observedDuringGesture(observedAt: number, startedAt: number, endedAt?: number): boolean {
   return Number.isFinite(observedAt) && Number.isFinite(startedAt)

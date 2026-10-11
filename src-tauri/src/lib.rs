@@ -312,6 +312,7 @@ pub fn run_with_process_entry(launch_dir: Option<String>, t_process_entry: std::
             // Launch info
             get_launch_cwd,
             native_file_drag::start_file_drag,
+            native_file_drag::native_file_drag_clock,
             get_log_dir,
             system::get_app_info,
             user_report::submit_user_report,

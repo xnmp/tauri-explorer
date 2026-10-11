@@ -22,12 +22,15 @@ function fixture(terminalFocus = false, ancestors: readonly string[] = [], owner
   vi.stubGlobal("document", { body: target });
   Object.assign(target, { tagName: terminalFocus ? "TEXTAREA" : "DIV", closest });
   const executeCommand = vi.fn(async (_id: string) => {});
-  const available = new Set<string>();
+  const available = new Set<string>(["view.toggleTerminal", "general.filterCurrentDir", "general.openJobsPanel", "general.openSettings", "view.toggleDualPane"]);
+  const affectedPanes = new Map<string, () => readonly string[]>();
+  const commandScopes = new Map<string, "pane" | "window">([["view.toggleTerminal", "pane"], ["general.filterCurrentDir", "pane"], ["general.openJobsPanel", "window"], ["general.openSettings", "window"], ["view.toggleDualPane", "pane"]]);
   let activePaneId = "a";
   const dialogs = {
     hasModalOpen: false, requestCloseTop: vi.fn(), openJobsPanel: vi.fn(), openSettings: vi.fn(),
     inputScope: (event: Event, paneId: string) => dialogs.hasModalOpen ? null : ownership?.inputScope(event, paneId),
     subscribeOwnership: ownership?.subscribe,
+    isPaneBlocked: (paneId: string) => dialogs.hasModalOpen || !!ownership?.hasOpen || !!ownership?.hasPaneOpen(paneId),
   };
   const terminal = { enabled: true, toggle: vi.fn() };
   const explorer = {
@@ -37,7 +40,7 @@ function fixture(terminalFocus = false, ancestors: readonly string[] = [], owner
   };
   const stop = startWindowKeyboard(target, {
     bindings: keybindingsStore,
-    getCommand: (id) => available.has(id) ? {} : undefined,
+    getCommand: (id) => available.has(id) ? { scope: commandScopes.get(id)!, paneIds: affectedPanes.get(id), allowInDialogInput: id === "view.switchPane" || id.startsWith("pane.focus") || /tabs\.(next|prev)Tab/.test(id) } : undefined,
     executeCommand,
     dialogs, terminal,
     toggleDualPane: vi.fn(),
@@ -45,7 +48,7 @@ function fixture(terminalFocus = false, ancestors: readonly string[] = [], owner
     getActivePaneId: () => activePaneId,
   });
   stops.push(stop);
-  const bind = (id: string, shortcut: string) => { available.add(id); keybindingsStore.registerDefault(id, shortcut); };
+  const bind = (id: string, shortcut: string, scope: "pane" | "window" = id.startsWith("tabs.") || id.startsWith("pane.focus") || id === "view.switchPane" ? "window" : "pane") => { available.add(id); commandScopes.set(id, scope); keybindingsStore.registerDefault(id, shortcut); };
   const press = (key: string, modifiers: Partial<KeyboardEvent> = {}, handledLocally = false) => {
     const event = new Event("keydown", { cancelable: true });
     Object.assign(event, { key, code: "", ctrlKey: false, metaKey: false, altKey: false, shiftKey: false, ...modifiers });
@@ -55,6 +58,7 @@ function fixture(terminalFocus = false, ancestors: readonly string[] = [], owner
     return event;
   };
   return { target, executeCommand, bind, press, stop, available, dialogs, terminal, explorer,
+    setAffectedPanes(id: string, panes: readonly string[]) { affectedPanes.set(id, () => panes); },
     setActivePane(id: string) { activePaneId = id; },
   };
 }
@@ -72,7 +76,7 @@ describe("pane dialog keyboard routing", () => {
     });
     else if (targetClass === "no-element") Object.assign(f.target, { closest: undefined, tagName: undefined });
     else if (targetClass === "tab-strip") Object.assign(f.target, { tagName: "BUTTON" });
-    const blocked = ["pane-a", "body", "no-element"].includes(targetClass);
+    const blocked = false;
     f.press("t", { ctrlKey: true });
     expect(f.executeCommand.mock.calls).toEqual(blocked ? [] : [["tabs.newTab"]]);
     f.executeCommand.mockClear();
@@ -610,4 +614,65 @@ it.each([false, true])("accepted media keys retire Explorer chords (pending: %s)
   expect(f.executeCommand).not.toHaveBeenCalled();
   f.press("p", { ctrlKey: true });
   expect(f.executeCommand).toHaveBeenCalledExactlyOnceWith("general.openQuickOpen");
+});
+
+
+describe("command destination admission", () => {
+  const rows = (["pane", "window"] as const).flatMap(scope =>
+    (["pane-a", "pane-b", "body", "no-element", "tab-strip", "toolbar", "sidebar"] as const).flatMap(focus =>
+      (["none", "active-pane", "other-pane", "window"] as const).map(modal => ({ scope, focus, modal }))));
+  it.each(rows)("$scope command from $focus under $modal modality", ({ scope, focus, modal }) => {
+    const ownership = createModalOwnership();
+    if (modal !== "none") ownership.register(() => {}, undefined, { scope: modal === "window" ? null : { paneId: modal === "active-pane" ? "a" : "b", token: Symbol() } });
+    const f = fixture(false, [], ownership);
+    if (focus !== "body") vi.stubGlobal("document", { body: new EventTarget() });
+    if (focus.startsWith("pane-")) Object.assign(f.target, { closest: (selector: string) => selector === "[data-pane-id]" ? { getAttribute: () => focus === "pane-a" ? "a" : "b" } : null });
+    else if (focus === "no-element") Object.assign(f.target, { closest: undefined, tagName: undefined });
+    else if (focus === "tab-strip") Object.assign(f.target, { tagName: "BUTTON" });
+    f.bind("destination.command", "Ctrl+V", scope);
+    f.press("v", { ctrlKey: true });
+    const blocked = modal === "window" || (scope === "pane" && modal === "active-pane");
+    expect(f.executeCommand.mock.calls).toEqual(blocked ? [] : [["destination.command"]]);
+  });
+  it.each([["edit.paste", "v", false], ["file.newFolder", "n", true]] as const)("covered active pane blocks %s from sidebar", (id, key, shiftKey) => {
+    const ownership = createModalOwnership();
+    ownership.register(() => {}, undefined, { scope: { paneId: "a", token: Symbol() } });
+    const f = fixture(false, [], ownership);
+    vi.stubGlobal("document", { body: new EventTarget() });
+    f.bind(id, shiftKey ? "Ctrl+Shift+N" : "Ctrl+V", "pane");
+    f.press(key, { ctrlKey: true, shiftKey });
+    expect(f.executeCommand).not.toHaveBeenCalled();
+  });
+});
+
+
+it.each(["a", "b", "c"])("cross-pane destination admission with a dialog on %s", coveredPane => {
+  const ownership = createModalOwnership();
+  ownership.register(() => {}, undefined, { scope: { paneId: coveredPane, token: Symbol() } });
+  const f = fixture(false, [], ownership);
+  vi.stubGlobal("document", { body: new EventTarget() });
+  f.bind("pane.moveToOther", "Ctrl+V", "pane");
+  f.setAffectedPanes("pane.moveToOther", ["a", "b"]);
+  f.press("v", { ctrlKey: true });
+  expect(f.executeCommand.mock.calls).toEqual(coveredPane === "c" ? [["pane.moveToOther"]] : []);
+});
+
+it.each(["f", "`"])("pane modal blocks fallback %s from window chrome using its command declaration", key => {
+  const ownership = createModalOwnership();
+  ownership.register(() => {}, undefined, { scope: { paneId: "a", token: Symbol() } });
+  const f = fixture(false, [], ownership);
+  vi.stubGlobal("document", { body: new EventTarget() });
+  f.press(key, { ctrlKey: true });
+  expect(f.explorer.openFilter).not.toHaveBeenCalled();
+  expect(f.terminal.toggle).not.toHaveBeenCalled();
+});
+
+it.each(["Enter", " "])("pane dialog native button retains %j despite a rebound window command", key => {
+  const ownership = createModalOwnership();
+  ownership.register(() => {}, undefined, { scope: { paneId: "a", token: Symbol() } });
+  const f = fixture(false, [], ownership);
+  Object.assign(f.target, { tagName: "BUTTON" });
+  f.bind("tabs.newTab", key === " " ? "Space" : key, "window");
+  expect(f.press(key).defaultPrevented).toBe(false);
+  expect(f.executeCommand).not.toHaveBeenCalled();
 });

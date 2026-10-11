@@ -50,6 +50,7 @@ export const demoPlugin: Plugin = {
 
   activate(ctx) {
     ctx.registerCommand({
+      scope: "pane",
       id: "plugin.demo.hello",
       label: "Demo: Hello",
       category: "plugins",
@@ -57,6 +58,7 @@ export const demoPlugin: Plugin = {
     });
 
     ctx.registerCommand({
+      scope: "pane",
       id: "plugin.demo.open",
       label: "Demo: Open Virtual Folder",
       category: "plugins",
@@ -103,6 +105,7 @@ export const demoPlugin: Plugin = {
     });
 
     ctx.registerCommand({
+      scope: "pane",
       id: "plugin.demo.toggle-cards",
       label: "Demo: Toggle Cards View",
       category: "plugins",

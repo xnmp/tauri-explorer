@@ -37,6 +37,8 @@ const h = vi.hoisted(() => {
     tabs: [{ id: "t1" }] as unknown[],
     canRestoreSurface: false,
     dualPaneEnabled: false,
+    activePaneId: "a",
+    activePaneIds: ["a", "b", "c"],
     activeTab: { kind: "explorer" } as { kind: string } | null,
     nextTab: vi.fn(),
     prevTab: vi.fn(),
@@ -351,4 +353,22 @@ describe("getAvailableCommands reflects live guards", () => {
     expect(availableMultiTab.has("tabs.nextTab")).toBe(true);
     expect(availableMultiTab.has("recent.clearHistory")).toBe(true);
   });
+});
+
+
+it.each([
+  ["edit.paste", "pane"], ["edit.cut", "pane"], ["file.newFolder", "pane"],
+  ["file.newFile", "pane"], ["file.rename", "pane"], ["file.delete", "pane"],
+  ["navigation.goBack", "pane"], ["navigation.focusAddressBar", "pane"],
+  ["view.toggleDualPane", "pane"], ["general.filterCurrentDir", "pane"], ["help.openLogs", "pane"],
+  ["tabs.newTab", "window"], ["window.newWindow", "window"], ["view.toggleSidebar", "window"],
+  ["view.switchPane", "window"], ["general.openSettings", "window"],
+] as const)("%s declares its %s destination for every invocation surface", (id, scope) => {
+  registerAllCommands();
+  expect(getCommand(id)?.scope).toBe(scope);
+});
+
+it.each(["pane.copyToOther", "pane.moveToOther"])("%s admits only the source and actual next destination, independently of a third pane", id => {
+  registerAllCommands();
+  expect(getCommand(id)?.paneIds?.()).toEqual(["a", "b"]);
 });

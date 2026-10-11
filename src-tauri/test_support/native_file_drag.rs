@@ -602,6 +602,7 @@ fn receiver_event_carries_drop_time_modifiers_independently_of_source_policy() {
             source: Some(source()),
             copy_modifier: Some(copying),
             observed_at: 1011.25,
+            observation_clock: "process-clock".into(),
             completed_gesture_sequence: 0,
         };
         let json = serde_json::to_value(event).unwrap();
@@ -763,4 +764,33 @@ fn automatic_html5_observation_survives_source_retirement_and_delayed_delivery()
         assert_eq!(payload["observedAt"], observed_at);
         assert_eq!(payload["copyModifier"], true);
     }
+}
+
+#[test]
+fn platform_observations_share_the_sampled_process_monotonic_clock() {
+    let mut registry = Registry::default();
+    let before = registry.clock_sample();
+    let native = wry::DragDropEvent::Enter {
+        paths: paths(),
+        position: (20, 30),
+    };
+    registry.capture(42, &native, false);
+    let after = registry.clock_sample();
+    let event = registry
+        .take(
+            42,
+            &tauri::DragDropEvent::Enter {
+                paths: paths(),
+                position: tauri::PhysicalPosition { x: 20.0, y: 30.0 },
+            },
+        )
+        .unwrap();
+    let json = serde_json::to_value(event).unwrap();
+    let observed = json["observedAt"].as_f64().unwrap();
+    assert!(observed >= before.now && observed <= after.now);
+    assert_eq!(json["observationClock"], before.id);
+    assert_eq!(before.id, after.id);
+    // A new runtime never gives authority to a prior runtime's time floor.
+    let restart = Registry::default().clock_sample();
+    assert_ne!(restart.id, after.id);
 }

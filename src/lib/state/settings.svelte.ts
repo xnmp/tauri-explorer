@@ -811,6 +811,7 @@ export const settingsStore = createSettingsStore();
 // --- Toggleable settings metadata for auto-registration in command palette ---
 
 export interface ToggleSettingMeta {
+  scope?: "pane" | "window";
   key: keyof Settings;
   id?: string;
   label: string;
@@ -827,6 +828,7 @@ export const TOGGLE_SETTINGS: ToggleSettingMeta[] = [
   { key: "showAddressBar", id: "view.toggleAddressBar", label: "Toggle Address Bar", shortcut: "Alt+M D" },
   {
     key: "showPreviewPane",
+    scope: "pane",
     id: "view.togglePreviewPane",
     label: "Toggle Preview Pane",
     shortcut: "Space",
@@ -861,6 +863,7 @@ export const TOGGLE_SETTINGS: ToggleSettingMeta[] = [
 export function generateToggleCommands(): Command[] {
   return TOGGLE_SETTINGS.map((meta) => ({
     id: meta.id ?? `setting.toggle.${meta.key}`,
+    scope: meta.scope ?? "window",
     label: meta.label,
     category: (meta.category ?? "view") as CommandCategory,
     shortcut: meta.shortcut,

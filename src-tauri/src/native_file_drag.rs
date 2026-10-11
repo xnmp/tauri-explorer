@@ -14,6 +14,43 @@ use tauri::{ipc::Channel, Emitter, Manager};
 
 const EVENT: &str = "explorer-native-file-drag";
 
+struct ObservationClock {
+    id: String,
+    origin: std::time::Instant,
+}
+impl Default for ObservationClock {
+    fn default() -> Self {
+        let mut identity = [0u8; 16];
+        getrandom::fill(&mut identity).expect("native drag clock identity unavailable");
+        Self {
+            id: base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(identity),
+            origin: std::time::Instant::now(),
+        }
+    }
+}
+impl ObservationClock {
+    fn now(&self) -> f64 {
+        self.origin.elapsed().as_secs_f64() * 1000.0
+    }
+}
+
+#[derive(Serialize)]
+pub struct ClockSample {
+    id: String,
+    now: f64,
+}
+
+#[tauri::command]
+pub async fn native_file_drag_clock(
+    sessions: tauri::State<'_, Sessions>,
+) -> Result<ClockSample, String> {
+    let registry = sessions
+        .registry
+        .lock()
+        .map_err(|_| "Native drag clock unavailable".to_owned())?;
+    Ok(registry.clock_sample())
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
 #[serde(rename_all = "lowercase")]
 enum CopyPolicy {
@@ -161,6 +198,7 @@ impl CapturedSource {
 
 #[derive(Default)]
 struct Registry {
+    clock: ObservationClock,
     active: Option<(u64, String, Option<CapturedSource>)>,
     completed_gesture_sequence: u64,
     receivers: HashMap<String, CapturedSource>,
@@ -169,6 +207,12 @@ struct Registry {
 }
 
 impl Registry {
+    fn clock_sample(&self) -> ClockSample {
+        ClockSample {
+            id: self.clock.id.clone(),
+            now: self.clock.now(),
+        }
+    }
     fn begin_prepared(
         &mut self,
         token: u64,
@@ -188,10 +232,7 @@ impl Registry {
         ));
     }
     fn capture(&mut self, window: usize, event: &wry::DragDropEvent, copying: bool) {
-        let observed_at = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|duration| duration.as_secs_f64() * 1000.0)
-            .unwrap_or(0.0);
+        let observed_at = self.clock.now();
         self.capture_at(window, event, copying, observed_at);
     }
     fn capture_at(
@@ -219,6 +260,7 @@ impl Registry {
                     source,
                     copy_modifier: Some(copying),
                     observed_at,
+                    observation_clock: self.clock.id.clone(),
                     completed_gesture_sequence: self.completed_gesture_sequence,
                 }
             }
@@ -237,6 +279,7 @@ impl Registry {
                     source,
                     copy_modifier: Some(copying),
                     observed_at,
+                    observation_clock: self.clock.id.clone(),
                     completed_gesture_sequence: self.completed_gesture_sequence,
                 }
             }
@@ -378,6 +421,7 @@ enum Event {
         source: Option<Source>,
         copy_modifier: Option<bool>,
         observed_at: f64,
+        observation_clock: String,
         completed_gesture_sequence: u64,
     },
     Over {
@@ -390,6 +434,7 @@ enum Event {
         source: Option<Source>,
         copy_modifier: Option<bool>,
         observed_at: f64,
+        observation_clock: String,
         completed_gesture_sequence: u64,
     },
     Leave,

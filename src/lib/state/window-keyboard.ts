@@ -1,16 +1,19 @@
+import { admitsCommandDestination } from "$lib/domain/command-admission";
 import { isModifierKey } from "$lib/domain/keyboard";
 import { getTerminalCommand } from "$lib/domain/terminal-keys";
-import { resolveWindowKey } from "$lib/domain/window-keys";
-import { isPaneDialogNavigationCommand } from "$lib/domain/pane-dialog-keys";
+import { allowsPaneDialogCommandInput } from "$lib/domain/pane-dialog-keys";
+import { resolveWindowKey, isNativeControlActivation } from "$lib/domain/window-keys";
+import type { Command } from "./commands.svelte";
 import type { ModalScope } from "./modal-ownership.svelte";
 import type { keybindingsStore as bindingsType } from "./keybindings.svelte";
 
 export interface WindowKeyboardDependencies {
   bindings: Pick<typeof bindingsType, "trackModifierKey" | "trackedMetaHeld" | "resetTrackedModifiers" | "matchesAnyBinding" | "matchesAnyChordPrefix" | "matchesChordPrefixForCommand" | "isChordActiveForCommand" | "isChordActive" | "cancelChord" | "findMatchingCommand">;
-  getCommand(id: string): { when?: () => boolean } | undefined;
+  getCommand(id: string): Pick<Command, "scope" | "paneIds" | "when" | "allowInDialogInput"> | undefined;
   executeCommand(id: string): Promise<unknown>;
   dialogs: {
     readonly hasModalOpen: boolean;
+    isPaneBlocked(paneId: string): boolean;
     inputScope?(event: Event, activePaneId: string): ModalScope | undefined;
     subscribeOwnership?(listener: () => void): () => void;
     requestCloseTop(event?: KeyboardEvent, scope?: ModalScope): void;
@@ -28,7 +31,9 @@ export function startWindowKeyboard(target: EventTarget, dependencies: WindowKey
   let disposed = false;
   const isAvailable = (id: string) => {
     const command = dependencies.getCommand(id);
-    return command !== undefined && (!command.when || command.when());
+    return command !== undefined
+      && admitsCommandDestination(command, dependencies.getActivePaneId?.() ?? "", dialogs)
+      && (!command.when || command.when());
   };
   const inputContext = (event: Event) => {
     const element = event.target as HTMLElement | null;
@@ -61,11 +66,14 @@ export function startWindowKeyboard(target: EventTarget, dependencies: WindowKey
     // Custom controls own keys they explicitly accept. Unhandled commands
     // keep normal routing; accepted local input retires an unfinished chord.
     if ((separator || customButton || grid || fileEntry || media || scope !== undefined) && event.defaultPrevented) { bindings.cancelChord(); return; }
+    if (isNativeControlActivation(event, { nativeButton, fileEntry, trackedMetaHeld: bindings.trackedMetaHeld })) {
+      bindings.cancelChord(); return;
+    }
     if (scope) {
       if (event.key === "Escape") {
         bindings.cancelChord(); event.preventDefault(); dialogs.requestCloseTop(event, scope); return;
       }
-      const eligible = (id: string) => isPaneDialogNavigationCommand(id) && isAvailable(id);
+      const eligible = (id: string) => isAvailable(id) && allowsPaneDialogCommandInput(dependencies.getCommand(id), input);
       if (bindings.matchesAnyBinding(event, eligible) || bindings.isChordActive) {
         const command = bindings.findMatchingCommand(event, eligible);
         if (command) {
@@ -120,13 +128,13 @@ export function startWindowKeyboard(target: EventTarget, dependencies: WindowKey
     bindings.cancelChord();
     event.preventDefault();
     switch (action) {
-      case "toggle-terminal": terminal.toggle(); break;
+      case "toggle-terminal": if (isAvailable("view.toggleTerminal")) terminal.toggle(); break;
       case "close-dialogs": dialogs.requestCloseTop(event); break;
-      case "open-filter": if (explorer && !explorer.showFilter) explorer.openFilter(); break;
-      case "close-filter": explorer?.closeFilter(); break;
-      case "open-jobs": dialogs.openJobsPanel(); break;
-      case "open-settings": dialogs.openSettings(); break;
-      case "toggle-dual-pane": dependencies.toggleDualPane(); break;
+      case "open-filter": if (isAvailable("general.filterCurrentDir") && explorer && !explorer.showFilter) explorer.openFilter(); break;
+      case "close-filter": if (isAvailable("general.filterCurrentDir")) explorer?.closeFilter(); break;
+      case "open-jobs": if (isAvailable("general.openJobsPanel")) dialogs.openJobsPanel(); break;
+      case "open-settings": if (isAvailable("general.openSettings")) dialogs.openSettings(); break;
+      case "toggle-dual-pane": if (isAvailable("view.toggleDualPane")) dependencies.toggleDualPane(); break;
     }
   }
 

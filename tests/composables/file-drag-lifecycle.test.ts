@@ -1,4 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { dropClockCases } from "../helpers/drop-policy";
+vi.mock("$lib/state/drag-clock", async actual => ({ ...await actual<object>(), dragClock: {
+  initialize: async () => {}, ready: true,
+  stamp: () => ({ clockId: `browser:${performance.timeOrigin}`, at: Math.floor(performance.timeOrigin + performance.now()), uncertainty: 0 }),
+} }));
 
 const native = vi.hoisted(() => ({ start: vi.fn(), listen: vi.fn(), emit: undefined as ((event: any) => void) | undefined,
   callbacks: new Map<number, (payload: unknown) => void>(), sequence: 0 }));
@@ -669,6 +674,7 @@ it("history persistence failure cannot erase a live or ended local HTML5 source"
 it("authoritative Rust source identity wins over an ambiguous HTML5 end millisecond", async () => {
   let tick = 10; const epoch = clockEpoch += 1000;
   vi.spyOn(Date, "now").mockImplementation(() => epoch + tick);
+  vi.stubGlobal("performance", { timeOrigin: epoch, now: () => tick });
   const handler = vi.fn(); cleanup.push(fileDropTargets.register(hit, handler));
   const { source } = begin(); await flush(); const captured = { ...dragState.current };
   tick = 12; source.end();
@@ -679,6 +685,7 @@ it("authoritative Rust source identity wins over an ambiguous HTML5 end millisec
 it("a backwards clock interval cannot poison later unrelated native drops", async () => {
   let tick = 10; const epoch = clockEpoch += 1000;
   vi.spyOn(Date, "now").mockImplementation(() => epoch + tick);
+  vi.stubGlobal("performance", { timeOrigin: epoch, now: () => tick });
   native.start.mockRejectedValue(new Error("unavailable")); vi.spyOn(console, "warn").mockImplementation(() => {});
   const old = begin(); await flush(); tick = 5; old.source.end();
   const handler = vi.fn(); cleanup.push(fileDropTargets.register(hit, handler));
@@ -689,6 +696,7 @@ it("a backwards clock interval cannot poison later unrelated native drops", asyn
 it("stale persisted history cannot evict a newer local gesture after quota failure", async () => {
   let tick = 10; const epoch = clockEpoch += 1000;
   vi.spyOn(Date, "now").mockImplementation(() => epoch + tick);
+  vi.stubGlobal("performance", { timeOrigin: epoch, now: () => tick });
   native.start.mockRejectedValue(new Error("unavailable")); vi.spyOn(console, "warn").mockImplementation(() => {});
   for (let i = 0; i < 8; i++) { tick = 10 + 2 * i; const old = begin(); await flush(); tick++; old.source.end(); }
   const setItem = localStorage.setItem.bind(localStorage);
@@ -706,6 +714,7 @@ it("stale persisted history cannot evict a newer local gesture after quota failu
 it.each(["live", "ended"])("a receiver without persisted history never treats a rejected HTML5 source as external (%s)", async phase => {
   let tick = 10; const epoch = clockEpoch += 1000;
   vi.spyOn(Date, "now").mockImplementation(() => epoch + tick);
+  vi.stubGlobal("performance", { timeOrigin: epoch, now: () => tick });
   const write = localStorage.setItem.bind(localStorage);
   vi.spyOn(localStorage, "setItem").mockImplementation((key, value) => { if (key !== "explorer-html5-gestures") write(key, value); });
   native.start.mockRejectedValue(new Error("unavailable")); vi.spyOn(console, "warn").mockImplementation(() => {});
@@ -728,6 +737,7 @@ it.each(["live", "ended"])("a receiver without persisted history never treats a 
 it.each(["receiver", "local"])("replacing a rejected decision preserves the predecessor's authority after history write failure (%s)", async route => {
   let tick = 10; const epoch = clockEpoch += 1000;
   vi.spyOn(Date, "now").mockImplementation(() => epoch + tick);
+  vi.stubGlobal("performance", { timeOrigin: epoch, now: () => tick });
   const write = localStorage.setItem.bind(localStorage);
   vi.spyOn(localStorage, "setItem").mockImplementation((key, value) => { if (key !== "explorer-html5-gestures") write(key, value); });
   native.start.mockRejectedValue(new Error("unavailable")); vi.spyOn(console, "warn").mockImplementation(() => {});
@@ -796,4 +806,38 @@ it.each(["absent", "disconnected", "reowned"] as const)("sidebar capture does no
   else if (state === "disconnected") Object.defineProperty(access, "isConnected", { value: false });
   doc.dispatchEvent(event("dragend", payload(), false, sourceElements.get(dt))); source.end();
   expect(pin).not.toHaveBeenCalled();
+});
+
+// External observations stay in the platform's monotonic domain while the
+// adjustable wall clock can jump. Include the first eviction and a new realm.
+it.each(dropClockCases)("fresh external plugin drops survive $direction correction after $priorGestures gestures (restart=$restart)", async ({ direction, priorGestures, restart }) => {
+  let tick = 10;
+  const epoch = clockEpoch += 1000;
+  let wall = epoch + 1_000_000;
+  vi.spyOn(Date, "now").mockImplementation(() => wall + tick);
+  vi.stubGlobal("performance", { timeOrigin: epoch, now: () => tick });
+  native.start.mockRejectedValue(new Error("unavailable"));
+  vi.spyOn(console, "warn").mockImplementation(() => {});
+  for (let i = 0; i < priorGestures; i++) { tick = 10 + 2 * i; const old = begin(); await flush(); tick++; old.source.end(); }
+  wall += direction === "backward" ? -2_000_000 : 2_000_000;
+  tick = 40;
+  const handler = vi.fn(); cleanup.push(fileDropTargets.register(hit, handler));
+  const externalPaths = ["/external/fresh.png"];
+  for (const type of ["enter", "drop"]) native.emit!({ payload: { type, paths: externalPaths, position: { x: 40, y: 60 }, source: null, observedAt: epoch + tick } });
+  await flush();
+  expect(handler).toHaveBeenCalledExactlyOnceWith(externalPaths, "external");
+  if (!restart) return;
+  cleanup[0](); vi.resetModules();
+  // A renderer/application restart gets a new clock origin. Persisted old
+  // timestamps have no authority in that domain, whichever way wall time moved.
+  const restartEpoch = wall;
+  vi.stubGlobal("performance", { timeOrigin: restartEpoch, now: () => tick });
+  const receiver = await import("$lib/composables/use-native-drop-handler");
+  const targets = await import("$lib/state/file-drop-targets.svelte");
+  const restartedHandler = vi.fn(); cleanup.push(targets.fileDropTargets.register(hit, restartedHandler));
+  const service = receiver.useNativeDropHandler({ getActiveExplorer: () => undefined, refreshAllPanes: vi.fn() });
+  service.setup(); cleanup.push(service.cleanup); await flush();
+  for (const type of ["enter", "drop"]) native.emit!({ payload: { type, paths: externalPaths, position: { x: 40, y: 60 }, source: null, observedAt: restartEpoch + tick } });
+  await flush();
+  expect(restartedHandler).toHaveBeenCalledExactlyOnceWith(externalPaths, "external");
 });

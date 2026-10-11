@@ -68,10 +68,51 @@ struct Admissions {
     calls: HashMap<(String, usize), usize>,
     fenced: HashSet<String>,
     recovery_fences: HashSet<String>,
+    idle_fences: HashSet<String>,
 }
 static CALLS: OnceLock<Mutex<Admissions>> = OnceLock::new();
 static ADMISSIONS_CHANGED: Condvar = Condvar::new();
 pub(super) struct CallLease((String, usize));
+/// Owns the admission gap between the worker-idle probes and their durable
+/// commit. Controls/callbacks can finish existing work; starts and activation
+/// cannot introduce new work, and lifecycle mutation cannot replace a broker.
+pub(super) struct IdleCallFence(Vec<String>);
+impl IdleCallFence {
+    pub(super) fn acquire(packages: &[&str]) -> Result<Self, AppError> {
+        let mut packages: Vec<_> = packages.iter().map(|p| (*p).to_owned()).collect();
+        packages.sort();
+        packages.dedup();
+        let mut admissions = crate::native_deadline::lock(
+            CALLS.get_or_init(Default::default),
+            "Plugin admission lock is unavailable",
+        )?;
+        if CLOSING.load(Ordering::Acquire)
+            || packages.iter().any(|package| {
+                admissions.fenced.contains(package)
+                    || admissions.idle_fences.contains(package)
+                    || admissions.calls.iter().any(|((p, lane), count)| {
+                        p == package && matches!(lane, 0 | 3) && *count != 0
+                    })
+            })
+        {
+            return Err(error("Plugin still owns startup or dispatch work"));
+        }
+        admissions.idle_fences.extend(packages.iter().cloned());
+        Ok(Self(packages))
+    }
+}
+impl Drop for IdleCallFence {
+    fn drop(&mut self) {
+        let mut admissions = CALLS
+            .get_or_init(Default::default)
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        for package in &self.0 {
+            admissions.idle_fences.remove(package);
+        }
+        ADMISSIONS_CHANGED.notify_all();
+    }
+}
 pub(super) fn control_method(method: &str) -> bool {
     matches!(
         method,
@@ -112,7 +153,9 @@ impl CallLease {
         if CLOSING.load(Ordering::Acquire) {
             return Err(error("Plugin host is shutting down"));
         }
-        if admissions.fenced.contains(package) {
+        if admissions.fenced.contains(package)
+            || matches!(lane, 0 | 3) && admissions.idle_fences.contains(package)
+        {
             return Err(error("Plugin package is draining for a lifecycle change"));
         }
         let calls = &mut admissions.calls;
@@ -1731,6 +1774,7 @@ pub(super) fn begin_drain(id: &str) -> Result<DrainGuard, AppError> {
         "Plugin admission lock is unavailable",
     )?;
     if admissions.fenced.contains(id)
+        || admissions.idle_fences.contains(id)
         || admissions
             .calls
             .iter()

@@ -161,6 +161,27 @@ impl Store {
             }
             evidence(self, tx, &admission, &status, true)?;
             tx.execute("INSERT INTO provider_receipts(consumer,operation,provider,revision,status,digest)VALUES(?1,?2,?3,?4,?5,?6)ON CONFLICT(consumer,operation)DO UPDATE SET revision=excluded.revision,status=excluded.status,digest=excluded.digest", params![consumer,op,encode(&admission.provider)?,revision as i64,raw,digest]).map_err(sql)?;
+            let released: bool = tx.query_row("SELECT exec_released FROM operations WHERE consumer=?1 AND operation=?2", params![consumer, op], |r| r.get(0)).map_err(sql)?;
+            if released && status["execution"]["state"] != "unknown" {
+                // Publication and settlement serialize on the same IMMEDIATE
+                // transaction. New evidence revokes the old idle disposition;
+                // a late success owns recovery before any publisher can crash.
+                tx.execute("UPDATE operations SET exec_released=0 WHERE consumer=?1 AND operation=?2", params![consumer, op]).map_err(sql)?;
+                tx.execute("DELETE FROM dismissed_operations WHERE consumer=?1 AND operation=?2", params![consumer, op]).map_err(sql)?;
+                if matches!(status["execution"]["state"].as_str(), Some("accepted" | "running" | "succeeded")) && admission.phase != AdmissionPhase::Released {
+                    tx.execute("UPDATE artifacts SET bytes=?3 WHERE consumer=?1 AND operation=?2 AND kind='output' AND status IN ('reserved','staged')", params![consumer, op, 100 * 1024 * 1024i64]).map_err(sql)?;
+                }
+                if status["delivery"]["state"] == "available" && admission.phase != AdmissionPhase::Released {
+                    let mut recovered = admission.clone();
+                    transition(recovered.phase, AdmissionPhase::Terminal)?;
+                    recovered.phase = AdmissionPhase::Terminal;
+                    recovered.output = Some(serde_json::from_value(status["delivery"]["output"].clone()).map_err(|_| reject("invalid provider output descriptor"))?);
+                    recovered.needs_attention = false;
+                    Self::persist(tx, &recovered)?;
+                }
+            } else if released && !(admission.phase == AdmissionPhase::Terminal && admission.needs_attention) {
+                tx.execute("UPDATE dismissed_operations SET revision=?3 WHERE consumer=?1 AND operation=?2", params![consumer, op, revision as i64]).map_err(sql)?;
+            }
             Ok(status)
         })
     }
@@ -220,6 +241,12 @@ impl Store {
         op: &str,
         no_live_worker: bool,
     ) -> Result<Option<super::job::JobRecord>> {
+        if !no_live_worker {
+            return Err(reject(
+                "automatic settlement requires idle workers and no recoverable output",
+            ));
+        }
+        let reservation = self.idle_output_reservation(consumer, op)?;
         self.transaction(|tx| {
             let a = Self::record(tx, consumer, op)?.ok_or_else(|| reject("operation is not admitted"))?;
             let receipt = observed(tx, &a)?;
@@ -230,6 +257,11 @@ impl Store {
                 return Err(reject("automatic settlement requires idle workers and no recoverable output"));
             }
             tx.execute("UPDATE operations SET exec_released=1 WHERE consumer=?1 AND operation=?2", params![consumer, op]).map_err(sql)?;
+            // The artifact identity is forensic evidence; an empty reservation
+            // is capacity, not evidence. Preserve sealed/staged original bytes.
+            if let Some((handle, bytes, _)) = &reservation {
+                tx.execute("UPDATE artifacts SET bytes=?4 WHERE handle=?1 AND consumer=?2 AND operation=?3", params![handle, consumer, op, *bytes as i64]).map_err(sql)?;
+            }
             tx.execute("INSERT INTO dismissed_operations(consumer,operation,revision,dismissed_at_ms)VALUES(?1,?2,?3,CAST(strftime('%s','now') AS INTEGER)*1000)ON CONFLICT(consumer,operation)DO UPDATE SET revision=excluded.revision,dismissed_at_ms=excluded.dismissed_at_ms", params![consumer, op, receipt.as_ref().map_or(0, |r| r.revision) as i64]).map_err(sql)?;
             self.settle_dismissed_job_in(tx, consumer, op, status.and_then(|r| r["execution"]["error"]["message"].as_str()))
         })
@@ -254,14 +286,21 @@ impl Store {
             let (consumer, op, flag) = row.map_err(sql)?;
             let a = Self::record(&conn, &consumer, &op)?
                 .ok_or_else(|| reject("invalid retained execution claim"))?;
-            if flag != 1
-                || a.output.is_some()
-                    && !(a.phase == AdmissionPhase::Released
-                        && a.disposition.as_deref() == Some("discarded"))
-            {
+            if flag != 1 {
                 return Err(reject("invalid retained execution claim"));
             }
-            if a.phase == AdmissionPhase::Terminal && a.needs_attention {
+            if a.phase == AdmissionPhase::Terminal && a.needs_attention && a.output.is_none() {
+                let reservation = self.idle_output_reservation(&consumer, &op)?;
+                self.transaction(|tx| {
+                    if let Some((handle, bytes, _)) = &reservation {
+                        tx.execute(
+                            "UPDATE artifacts SET bytes=?2 WHERE handle=?1",
+                            params![handle, *bytes as i64],
+                        )
+                        .map_err(sql)?;
+                    }
+                    Ok(())
+                })?;
                 continue;
             }
             // Legacy Stop is unchanged. Other idle settlements require their
@@ -269,7 +308,8 @@ impl Store {
             let receipt = observed(&conn, &a)?;
             let status = receipt.as_ref().map(|r| &r.status);
             let revision = receipt.as_ref().map_or(0, |r| r.revision);
-            if self.dismissed_revision(&consumer, &op)? != Some(revision)
+            if a.output.is_some() && a.phase != AdmissionPhase::Released
+                || self.dismissed_revision(&consumer, &op)? != Some(revision)
                 || super::receipt::auto_settlement(
                     a.phase,
                     status
@@ -281,7 +321,37 @@ impl Store {
                     false,
                 ) != super::receipt::AutoSettlement::Settle
             {
-                return Err(reject("invalid retained execution claim"));
+                // Older hosts could publish valid newer evidence after an idle
+                // settlement without revoking its flag. Retain and restore the
+                // claim instead of making the entire service store unopenable.
+                self.transaction(|tx| {
+                    tx.execute(
+                        "UPDATE operations SET exec_released=0 WHERE consumer=?1 AND operation=?2",
+                        params![consumer, op],
+                    )
+                    .map_err(sql)?;
+                    tx.execute(
+                        "DELETE FROM dismissed_operations WHERE consumer=?1 AND operation=?2",
+                        params![consumer, op],
+                    )
+                    .map_err(sql)?;
+                    if status.is_some_and(|r| matches!(r["execution"]["state"].as_str(), Some("accepted" | "running" | "succeeded"))) && a.phase != AdmissionPhase::Released {
+                        tx.execute("UPDATE artifacts SET bytes=?3 WHERE consumer=?1 AND operation=?2 AND kind='output' AND status IN ('reserved','staged')", params![consumer, op, 100 * 1024 * 1024i64]).map_err(sql)?;
+                    }
+                    Ok(())
+                })?;
+            } else {
+                let reservation = self.idle_output_reservation(&consumer, &op)?;
+                self.transaction(|tx| {
+                    if let Some((handle, bytes, _)) = &reservation {
+                        tx.execute(
+                            "UPDATE artifacts SET bytes=?2 WHERE handle=?1",
+                            params![handle, *bytes as i64],
+                        )
+                        .map_err(sql)?;
+                    }
+                    Ok(())
+                })?;
             }
         }
         Ok(())

@@ -35,11 +35,11 @@ pub(crate) fn auto_settlement(
     }
 }
 
-/// Missing/corrupt is permanent output loss. Storage unavailability can still
-/// finish the original local stage, so it remains recoverable.
-pub(crate) fn settlement_delivery(delivery: &Value) -> &str {
+/// Cached missing/corrupt evidence cannot authorize disposal. Only an original
+/// local recovery attempt plus fresh provider status can prove output loss.
+pub(crate) fn settlement_delivery(delivery: &Value, recovery_failed: bool) -> &str {
     match (delivery["state"].as_str(), delivery["reason"].as_str()) {
-        (Some("unavailable"), Some("missing" | "corrupt")) => "unrecoverable",
+        (Some("unavailable"), Some("missing" | "corrupt")) if recovery_failed => "unrecoverable",
         (Some(state), _) => state,
         _ => "none",
     }
@@ -614,22 +614,23 @@ mod settlement_delivery_tests {
                 auto_settlement(
                     AdmissionPhase::Terminal,
                     "succeeded",
-                    settlement_delivery(&delivery),
+                    settlement_delivery(&delivery, true),
                     false
                 ),
                 AutoSettlement::Settle
             );
+            assert_eq!(settlement_delivery(&delivery, false), "unavailable");
         }
         let delivery = json!({"state":"unavailable","reason":"storage_unavailable"});
         assert_eq!(
             auto_settlement(
                 AdmissionPhase::Terminal,
                 "succeeded",
-                settlement_delivery(&delivery),
+                settlement_delivery(&delivery, true),
                 false
             ),
             AutoSettlement::Recover
         );
-        assert_eq!(settlement_delivery(&Value::Null), "none");
+        assert_eq!(settlement_delivery(&Value::Null, false), "none");
     }
 }

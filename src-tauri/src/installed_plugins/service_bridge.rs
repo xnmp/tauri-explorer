@@ -52,6 +52,39 @@ impl Drop for StartDispatch {
         }
     }
 }
+// A lost settings.test reply does not end registration. Retain dispatch
+// ownership until an explicit provider update acknowledges registration or
+// the owning incarnation is proven dead; status alone cannot close this gap.
+static TEST_STARTS: std::sync::OnceLock<
+    std::sync::Mutex<std::collections::HashMap<DispatchKey, (PackageGeneration, StartDispatch)>>,
+> = std::sync::OnceLock::new();
+pub(super) fn test_registered(provider: &PackageGeneration, operation: &str) {
+    let mut pending = TEST_STARTS
+        .get_or_init(Default::default)
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    let key = (provider.package_id.clone(), operation.to_owned());
+    if pending
+        .get(&key)
+        .is_some_and(|(owner, _)| owner == provider)
+    {
+        pending.remove(&key);
+    }
+}
+fn test_owner_dead(provider: &PackageGeneration) {
+    TEST_STARTS
+        .get_or_init(Default::default)
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .retain(|_, (owner, _)| owner != provider);
+}
+pub(super) fn dispatch_active(consumer: &str, operation: &str) -> Result<bool, AppError> {
+    Ok(crate::native_deadline::lock(
+        STARTS.get_or_init(Default::default),
+        "AI dispatch ownership unavailable",
+    )?
+    .contains_key(&(consumer.to_owned(), operation.to_owned())))
+}
 pub(super) fn settle_idle_dispatch(
     store: &crate::service_state::Store,
     consumer: &str,
@@ -307,13 +340,12 @@ fn dispatch(broker: &Arc<Broker>, method: &str, params: Value) -> Result<Value, 
             let operation = text(&params["status"], "operationId")?;
             let admission = store.verify_provider(&caller, consumer, operation)?;
             let status = reconcile_receipt(store, &caller, &admission, &params["status"])?;
+            if consumer == caller.package_id {
+                test_registered(&caller, operation);
+            }
             Ok(json!({"updated":true,"consumerPackageId":consumer,"status":status}))
         }
         "host.services.test.begin" => {
-            let _admission = ADMISSION.lock().unwrap_or_else(|cause| cause.into_inner());
-            if !broker.can_recover() {
-                return Err(error("Connection test owner disconnected before admission"));
-            }
             test_provider(broker)?;
             let operation = text(&params, "operationId")?;
             let fingerprint = text(&params, "effectiveRecipeDigest")?;
@@ -321,41 +353,16 @@ fn dispatch(broker: &Arc<Broker>, method: &str, params: Value) -> Result<Value, 
             if !inputs.is_empty() {
                 return Err(error("Connection tests cannot capture input files"));
             }
-            let target = ServiceTarget {
-                package_id: caller.package_id.clone(),
-                service_id: "image-generation".into(),
-                major: 1,
-            };
-            let a = store.reserve(Admission {
-                consumer: caller.clone(),
-                provider: caller.clone(),
-                target,
-                operation_id: operation.into(),
-                fingerprint: fingerprint.into(),
-                phase: AdmissionPhase::Reserved,
-                inputs,
-                output: None,
-                needs_attention: false,
-                disposition: None,
-                transfer_receipt: None,
-            })?;
-            let winner = if a.phase == AdmissionPhase::Reserved {
-                store.claim_forwarding(&caller, operation)?.1
-            } else {
-                false
-            };
-            if !winner {
-                return Err(AppError::MutationUncertain("Connection test forwarding was already recorded; inspect the original operation before testing again".into()));
-            }
-            Ok(
-                json!({"accepted":true,"caller":{"packageId":caller.package_id,"packageDigest":caller.digest,"incarnation":caller.incarnation}}),
-            )
+            begin_test_in(store, &caller, operation, fingerprint, || {
+                broker.can_recover()
+            })
         }
         "host.services.test.update" => {
             test_provider(broker)?;
             let operation = text(&params, "operationId")?;
             let a = store.verify_provider(&caller, &caller.package_id, operation)?;
             reconcile(&caller, &a, &params["status"])?;
+            test_registered(&caller, operation);
             Ok(json!({"updated":true}))
         }
         "host.artifacts.capture" => {
@@ -419,6 +426,59 @@ fn dispatch(broker: &Arc<Broker>, method: &str, params: Value) -> Result<Value, 
         method if method.starts_with("host.credentials.") => credential(&caller, method, params),
         _ => Err(error("Unsupported plugin service request")),
     }
+}
+/// Durable connection-test admission, shared with the native registration fixture.
+pub(super) fn begin_test_in(
+    store: &crate::service_state::Store,
+    caller: &PackageGeneration,
+    operation: &str,
+    fingerprint: &str,
+    alive: impl Fn() -> bool,
+) -> Result<Value, AppError> {
+    let _admission =
+        crate::native_deadline::lock(&ADMISSION, "Connection test admission is unavailable")?;
+    if !alive() {
+        return Err(error("Connection test owner disconnected before admission"));
+    }
+    let dispatch = StartDispatch::acquire(&caller.package_id, operation)?;
+    let inputs = Vec::new();
+    let target = ServiceTarget {
+        package_id: caller.package_id.clone(),
+        service_id: "image-generation".into(),
+        major: 1,
+    };
+    let a = store.reserve(Admission {
+        consumer: caller.clone(),
+        provider: caller.clone(),
+        target,
+        operation_id: operation.into(),
+        fingerprint: fingerprint.into(),
+        phase: AdmissionPhase::Reserved,
+        inputs,
+        output: None,
+        needs_attention: false,
+        disposition: None,
+        transfer_receipt: None,
+    })?;
+    let winner = if a.phase == AdmissionPhase::Reserved {
+        store.claim_forwarding(&caller, operation)?.1
+    } else {
+        false
+    };
+    if !winner {
+        return Err(AppError::MutationUncertain("Connection test forwarding was already recorded; inspect the original operation before testing again".into()));
+    }
+    TEST_STARTS
+        .get_or_init(Default::default)
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .insert(
+            (caller.package_id.clone(), operation.to_owned()),
+            (caller.clone(), dispatch),
+        );
+    Ok(
+        json!({"accepted":true,"caller":{"packageId":caller.package_id,"packageDigest":caller.digest,"incarnation":caller.incarnation}}),
+    )
 }
 fn test_provider(broker: &Broker) -> Result<(), AppError> {
     if broker.manifest().id != "xnmp.image-generation"
@@ -762,9 +822,12 @@ pub(super) fn on_dead(generation: PackageGeneration) {
     // A dead broker without durable work cannot consume recovery capacity.
     // Admission/death share this lock, so a paid forwarding winner is visible.
     let retained = crate::native_deadline::scoped(deadline, || -> Result<bool, AppError> {
-        let store = service_host::store()?;
         let _admission =
             crate::native_deadline::lock(&ADMISSION, "Recovery admission lock is unavailable")?;
+        // A begin that passed liveness may still be publishing its forwarding
+        // ownership. Wait for that publication before retiring this incarnation.
+        test_owner_dead(&generation);
+        let store = service_host::store()?;
         Ok(store.list_preparations()?.contains(&generation)
             || store
                 .claims()?

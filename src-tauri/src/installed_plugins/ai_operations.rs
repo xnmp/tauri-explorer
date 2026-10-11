@@ -135,6 +135,30 @@ pub(super) trait AutomaticPort {
         stopped: bool,
         execution: &str,
     ) -> Result<bool, AppError>;
+    /// The callback runs while both worker proofs and their admission fence
+    /// remain owned. Implementations refresh authoritative provider status
+    /// before invoking it; recovery is driven after this fence is dropped.
+    fn with_activity(
+        &self,
+        admission: &Admission,
+        job: Option<&JobRecord>,
+        stopped: bool,
+        execution: &str,
+        apply: &mut dyn FnMut(bool) -> Result<(), AppError>,
+    ) -> Result<(), AppError> {
+        let _fence = backend::IdleCallFence::acquire(&[
+            &admission.consumer.package_id,
+            &admission.provider.package_id,
+        ])?;
+        apply(self.active(admission, job, stopped, execution)?)
+    }
+    fn refresh(
+        &self,
+        _store: &crate::service_state::Store,
+        _admission: &Admission,
+    ) -> Result<(), AppError> {
+        Err(error("Fresh original provider status is unavailable"))
+    }
     fn recover(&self, admission: &Admission, job: Option<&JobRecord>) -> Result<(), AppError>;
 }
 /// Run the same policy for live changes and startup backlog. Failure on one
@@ -164,38 +188,81 @@ pub(super) fn auto_reconcile_in(
                 .as_ref()
                 .and_then(|r| r["execution"]["state"].as_str())
                 .unwrap_or("unconfirmed");
-            let delivery = receipt
-                .as_ref()
-                .and_then(|r| r["delivery"]["state"].as_str())
-                .unwrap_or("none");
             let job = store.job_for_operation(&a.consumer.package_id, &a.operation_id)?;
             if a.phase == crate::service_state::model::AdmissionPhase::Released
                 && job.as_ref().is_some_and(|j| j.state == JobState::Completed)
             {
                 return Ok(());
             }
-            let active = port.active(&a, job.as_ref(), stopped, execution)?;
-            let classified_delivery = receipt
-                .as_ref()
-                .map(|r| settlement_delivery(&r["delivery"]))
-                .unwrap_or(delivery);
-            let unavailable = classified_delivery == "unrecoverable";
-            let decision = auto_settlement(a.phase, execution, classified_delivery, active);
-            match decision {
-                AutoSettlement::Leave => (),
-                AutoSettlement::Recover => port.recover(&a, job.as_ref())?,
-                AutoSettlement::Settle => {
-                    if unavailable {
-                        port.discard(&a)?;
-                    }
-                    if let Some(job) = service_bridge::settle_idle_dispatch(
-                        store,
-                        &a.consumer.package_id,
-                        &a.operation_id,
-                    )? {
-                        settled.push(job);
+            let mut recovery = None;
+            port.with_activity(&a, job.as_ref(), stopped, execution, &mut |active| {
+                if active
+                    || service_bridge::dispatch_active(&a.consumer.package_id, &a.operation_id)?
+                {
+                    return Ok(());
+                }
+                // Probes/status can advance the receipt and admission. Decide
+                // from that latest evidence, never the pre-probe snapshot.
+                let current = store
+                    .get(&a.consumer.package_id, &a.operation_id)?
+                    .ok_or_else(|| error("AI admission disappeared"))?;
+                let mut receipt =
+                    store.provider_receipt(&a.consumer.package_id, &a.operation_id)?;
+                let mut recovery_failed = false;
+                if current.phase != crate::service_state::model::AdmissionPhase::Released
+                    && receipt.as_ref().is_some_and(|r| {
+                        r["execution"]["state"] == "succeeded"
+                            && r["delivery"]["state"] == "unavailable"
+                    })
+                {
+                    if store
+                        .recover_original_output(
+                            &current.provider,
+                            &current.consumer.package_id,
+                            &current.operation_id,
+                        )?
+                        .is_none()
+                    {
+                        // Typed original-byte loss alone is insufficient. The
+                        // provider must still authoritatively report loss after
+                        // that recovery attempt, before any irreversible discard.
+                        port.refresh(store, &current)?;
+                        receipt =
+                            store.provider_receipt(&a.consumer.package_id, &a.operation_id)?;
+                        recovery_failed = true;
                     }
                 }
+                let current = store
+                    .get(&a.consumer.package_id, &a.operation_id)?
+                    .ok_or_else(|| error("AI admission disappeared"))?;
+                let execution = receipt
+                    .as_ref()
+                    .and_then(|r| r["execution"]["state"].as_str())
+                    .unwrap_or("unconfirmed");
+                let delivery = receipt
+                    .as_ref()
+                    .map(|r| settlement_delivery(&r["delivery"], recovery_failed))
+                    .unwrap_or("none");
+                match auto_settlement(current.phase, execution, delivery, false) {
+                    AutoSettlement::Leave => (),
+                    AutoSettlement::Recover => recovery = Some(current),
+                    AutoSettlement::Settle => {
+                        if delivery == "unrecoverable" {
+                            port.discard(&current)?;
+                        }
+                        if let Some(job) = service_bridge::settle_idle_dispatch(
+                            store,
+                            &a.consumer.package_id,
+                            &a.operation_id,
+                        )? {
+                            settled.push(job);
+                        }
+                    }
+                }
+                Ok(())
+            })?;
+            if let Some(a) = recovery {
+                port.recover(&a, job.as_ref())?;
             }
             Ok(())
         });
@@ -214,7 +281,8 @@ impl AutomaticPort for LiveAutomatic {
         backend::is_closing()
     }
     fn discard(&self, a: &Admission) -> Result<(), AppError> {
-        let broker = provider(a)?;
+        let broker = backend::active_instance(&a.provider.package_id, &a.provider.digest)
+            .ok_or_else(|| error("Original provider is unavailable"))?;
         let _lease = {
             let _gate = super::read_lifecycle()?;
             if !broker.is_active() {
@@ -231,60 +299,101 @@ impl AutomaticPort for LiveAutomatic {
     }
     fn active(
         &self,
+        _: &Admission,
+        _: Option<&JobRecord>,
+        _: bool,
+        _: &str,
+    ) -> Result<bool, AppError> {
+        Err(error("Live worker proofs require scoped ownership"))
+    }
+    fn refresh(&self, store: &crate::service_state::Store, a: &Admission) -> Result<(), AppError> {
+        let broker = backend::active_instance(&a.provider.package_id, &a.provider.digest)
+            .ok_or_else(|| error("Original provider is unavailable"))?;
+        let receipt = broker.call("services.image-generation.v1.status", json!({"caller":{"packageId":a.consumer.package_id,"packageDigest":a.consumer.digest,"incarnation":a.consumer.incarnation},"request":{"operationId":a.operation_id}}))?;
+        service_bridge::reconcile_at(store, &broker.generation(), a, &receipt)
+    }
+    fn with_activity(
+        &self,
         a: &Admission,
         job: Option<&JobRecord>,
         stopped: bool,
         execution: &str,
-    ) -> Result<bool, AppError> {
-        if stopped {
-            return Ok(false); // durable worker-termination proof from Stop
-        }
+        apply: &mut dyn FnMut(bool) -> Result<(), AppError>,
+    ) -> Result<(), AppError> {
         let packages = installed()?;
         if is_active(
             job.map(|j| j.state),
-            false,
+            stopped,
             compatible(&packages, &a.consumer) && compatible(&packages, &a.provider),
         ) && matches!(execution, "accepted" | "running" | "unconfirmed")
         {
-            return Ok(true);
+            return apply(true);
         }
-        // A terminal provider outcome does not prove the consumer's local
-        // publication has ended. Both proofs are held under call leases.
-        if compatible(&packages, &a.provider) {
-            let broker = provider(a)?;
-            let _lease = {
-                let _gate = super::read_lifecycle()?;
+        // Startup precedes fencing; every subsequent IO uses these exact
+        // active brokers. New activation/startup is excluded until the commit.
+        let provider = compatible(&packages, &a.provider)
+            .then(|| provider(a))
+            .transpose()?;
+        let consumer = (a.consumer.package_id != a.provider.package_id
+            && compatible(&packages, &a.consumer))
+        .then(|| backend::ensure(&a.consumer.package_id))
+        .transpose()?;
+        let _fence =
+            backend::IdleCallFence::acquire(&[&a.consumer.package_id, &a.provider.package_id])?;
+        let mut leases = Vec::new();
+        {
+            let _gate = super::read_lifecycle()?;
+            if let Some(broker) = &provider {
                 if !broker.is_active() {
-                    return Ok(true);
+                    return apply(true);
                 }
-                CallLease::acquire_method(&a.provider.package_id, "control.operationIdle")?
-            };
+                leases.push(CallLease::acquire_method(
+                    &a.provider.package_id,
+                    "control.operationIdle",
+                )?);
+            }
+            if let Some(broker) = &consumer {
+                if !broker.is_active() || broker.generation().digest != a.consumer.digest {
+                    return apply(true);
+                }
+                leases.push(CallLease::acquire_method(
+                    &a.consumer.package_id,
+                    "jobs.status",
+                )?);
+            }
+        }
+        if service_bridge::dispatch_active(&a.consumer.package_id, &a.operation_id)? {
+            return apply(true);
+        }
+        if let Some(broker) = &provider {
             let idle = broker.control_call(
                 "control.operationIdle",
                 json!({"consumerPackage":a.consumer.package_id,"operationId":a.operation_id}),
             )?;
             if idle["idle"] != true || !broker.owned_processes_idle() {
-                return Ok(true);
+                return apply(true);
             }
+            // Status performs the provider's original local read/seal recovery
+            // and reconciles a success whose separate publisher was delayed.
+            self.refresh(service_host::store()?, a)?;
         }
-        if a.consumer.package_id != a.provider.package_id && compatible(&packages, &a.consumer) {
-            let broker = backend::ensure(&a.consumer.package_id)?;
-            let _lease = {
-                let _gate = super::read_lifecycle()?;
-                if !broker.is_active() || broker.generation().digest != a.consumer.digest {
-                    return Ok(true);
-                }
-                CallLease::acquire_method(&a.consumer.package_id, "jobs.status")?
-            };
+        if let Some(broker) = &consumer {
             let status = broker.call("jobs.status", json!({"operationId":a.operation_id}))?;
             if !status.is_null()
                 && (status["operationId"].as_str() != Some(&a.operation_id)
                     || status["workerActive"] != false)
             {
-                return Ok(true);
+                return apply(true);
             }
         }
-        Ok(false)
+        if provider
+            .iter()
+            .chain(consumer.iter())
+            .any(|broker| !broker.is_active())
+        {
+            return apply(true);
+        }
+        apply(false)
     }
     fn recover(&self, a: &Admission, job: Option<&JobRecord>) -> Result<(), AppError> {
         if a.consumer.package_id == a.provider.package_id {

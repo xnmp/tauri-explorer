@@ -11,6 +11,8 @@ pub(crate) struct Store {
     pub(super) limits: Limits,
     #[cfg(test)]
     pub(super) fail_next_commit: std::sync::atomic::AtomicBool,
+    #[cfg(test)]
+    pub(super) fail_next_original_sync: std::sync::atomic::AtomicBool,
     #[cfg(all(test, unix))]
     pub(super) fail_evidence_sync_at: std::sync::Mutex<Option<PathBuf>>,
 }
@@ -61,6 +63,8 @@ impl Store {
             limits,
             #[cfg(test)]
             fail_next_commit: std::sync::atomic::AtomicBool::new(false),
+            #[cfg(test)]
+            fail_next_original_sync: std::sync::atomic::AtomicBool::new(false),
             #[cfg(all(test, unix))]
             fail_evidence_sync_at: std::sync::Mutex::new(None),
         };
@@ -320,6 +324,11 @@ impl Store {
     #[cfg(test)]
     pub(crate) fn fail_next_write(&self) {
         self.fail_next_commit
+            .store(true, std::sync::atomic::Ordering::Relaxed);
+    }
+    #[cfg(test)]
+    pub(crate) fn fail_next_original_sync(&self) {
+        self.fail_next_original_sync
             .store(true, std::sync::atomic::Ordering::Relaxed);
     }
     /// Holds an artifact's IO lease, as a concurrent reader would, so tests
@@ -602,6 +611,16 @@ impl Store {
                 .ok_or_else(|| reject("operation is not admitted"))?;
             if !same_owner(&a.consumer, caller) {
                 return Err(reject("operation owner does not match"));
+            }
+            let released: bool = tx
+                .query_row(
+                    "SELECT exec_released FROM operations WHERE consumer=?1 AND operation=?2",
+                    params![caller.package_id, op],
+                    |r| r.get(0),
+                )
+                .map_err(sql)?;
+            if released {
+                return Err(reject("settled execution cannot be forwarded"));
             }
             if a.phase != AdmissionPhase::Reserved {
                 return Ok((a, false));

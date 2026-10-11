@@ -13,7 +13,46 @@ use std::{
 const INPUT: u64 = 20 * 1024 * 1024;
 const TOTAL: u64 = 64 * 1024 * 1024;
 const OUTPUT: u64 = 50 * 1024 * 1024;
+struct OriginalOutput {
+    path: PathBuf,
+    bytes: Vec<u8>,
+    media_type: String,
+    width: u32,
+    height: u32,
+}
+fn original_output_bytes(path: &Path) -> Result<Vec<u8>> {
+    if matches!(fs::symlink_metadata(path), Err(e) if e.kind() == std::io::ErrorKind::NotFound) {
+        return Err(crate::error::AppError::Service {
+            code: "not_found".into(),
+            message: "Original output stage is missing".into(),
+        });
+    }
+    no_links(path)?;
+    let mut file = open_regular(path)?;
+    let mut bytes = Vec::new();
+    Read::by_ref(&mut file)
+        .take(OUTPUT + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|_| reject("original output stage is unreadable"))?;
+    if bytes.is_empty() || bytes.len() as u64 > OUTPUT {
+        return Err(crate::error::AppError::Service {
+            code: "corrupt".into(),
+            message: "Original output stage has an invalid length".into(),
+        });
+    }
+    Ok(bytes)
+}
 fn may_finish_stage(connection: &rusqlite::Connection, admission: &Admission) -> Result<bool> {
+    let settled: bool = connection
+        .query_row(
+            "SELECT exec_released FROM operations WHERE consumer=?1 AND operation=?2",
+            params![admission.consumer.package_id, admission.operation_id],
+            |r| r.get(0),
+        )
+        .map_err(sql)?;
+    if settled {
+        return Ok(false);
+    }
     if matches!(
         admission.phase,
         AdmissionPhase::Forwarding | AdmissionPhase::Accepted
@@ -237,6 +276,93 @@ impl Drop for ArtifactLease {
     }
 }
 impl Store {
+    /// Keep artifact identity separate from unused capacity. Hold the artifact
+    /// lease through settlement, reserving only retained original bytes. Work
+    /// cannot start sealing between this proof and releasing unused capacity.
+    pub(super) fn idle_output_reservation(
+        &self,
+        consumer: &str,
+        op: &str,
+    ) -> Result<Option<(String, u64, ArtifactLease)>> {
+        let handle: Option<String> = self
+            .connect()?
+            .query_row(
+                "SELECT handle FROM artifacts WHERE consumer=?1 AND operation=?2 AND kind='output'",
+                params![consumer, op],
+                |r| r.get(0),
+            )
+            .optional()
+            .map_err(sql)?;
+        let Some(handle) = handle else {
+            return Ok(None);
+        };
+        let lease = self.lease(&handle)?;
+        let mut bytes = 0u64;
+        for path in [
+            self.stage_path(&handle)?,
+            self.bytes_path(&handle)?,
+            self.pending_path(&handle)?,
+        ] {
+            regular_or_missing(&path)?;
+            match fs::symlink_metadata(&path) {
+                Ok(metadata) => {
+                    bytes = bytes
+                        .checked_add(metadata.len())
+                        .filter(|n| *n <= i64::MAX as u64)
+                        .ok_or_else(|| {
+                            reject("original output reservation exceeds accounting bound")
+                        })?
+                }
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => (),
+                Err(_) => return Err(reject("original output reservation is unreadable")),
+            }
+        }
+        Ok(Some((handle, bytes, lease)))
+    }
+    /// Retry only the operation's original artifact. A typed missing/corrupt
+    /// result proves loss; lease, IO, sync and malformed-stage errors defer
+    /// disposition. This never creates a new provider request or stage.
+    pub fn recover_original_output(
+        &self,
+        provider: &PackageGeneration,
+        consumer: &str,
+        op: &str,
+    ) -> Result<Option<ArtifactDescriptor>> {
+        let a = self.verify_provider(provider, consumer, op)?;
+        if !self.provider_receipt(consumer, op)?.is_some_and(|r| {
+            r["execution"]["state"] == "succeeded" && r["delivery"]["state"] == "unavailable"
+        }) {
+            return Err(reject(
+                "original output recovery requires proven success with unavailable delivery",
+            ));
+        }
+        let handle: String = self
+            .connect()?
+            .query_row(
+                "SELECT handle FROM artifacts WHERE consumer=?1 AND operation=?2 AND kind='output'",
+                params![consumer, op],
+                |r| r.get(0),
+            )
+            .map_err(sql)?;
+        match self.seal(provider, consumer, op, &handle, "image/png") {
+            Ok(output) => {
+                self.terminal(
+                    provider,
+                    consumer,
+                    op,
+                    Some(output.clone()),
+                    a.needs_attention,
+                )?;
+                Ok(Some(output))
+            }
+            Err(crate::error::AppError::Service { code, .. })
+                if matches!(code.as_str(), "not_found" | "corrupt") =>
+            {
+                Ok(None)
+            }
+            Err(cause) => Err(cause),
+        }
+    }
     fn bytes_path(&self, handle: &str) -> Result<PathBuf> {
         if !identity(handle) {
             return Err(reject("invalid artifact handle"));
@@ -372,6 +498,117 @@ impl Store {
             });
         }
         Ok(path)
+    }
+    /// A seal metadata commit can precede stage/pending cleanup. Rebuild only
+    /// the exact pinned descriptor, retaining the original copy through every
+    /// failed repair. The caller holds this artifact's exclusive IO lease.
+    fn restore_original_seal(
+        &self,
+        d: &ArtifactDescriptor,
+        loss: crate::error::AppError,
+    ) -> Result<()> {
+        let pending = self.pending_path(&d.handle)?;
+        for path in [self.stage_path(&d.handle)?, pending.clone()] {
+            let bytes = match original_output_bytes(&path) {
+                Ok(bytes) => bytes,
+                Err(crate::error::AppError::Service { code, .. })
+                    if matches!(code.as_str(), "not_found" | "corrupt") =>
+                {
+                    continue
+                }
+                Err(cause) => return Err(cause),
+            };
+            if bytes.len() as u64 != d.byte_length
+                || hex::encode(Sha256::digest(&bytes)) != d.sha256
+            {
+                continue;
+            }
+            self.publish_original_copy(&d.handle, &path, &bytes)?;
+            self.verify_bytes(d)?;
+            return Ok(());
+        }
+        Err(loss)
+    }
+    /// Before descriptor commitment, a valid immutable publication wins over
+    /// pending and stage copies that may have changed later. Check every
+    /// original before declaring loss; transient IO never authorizes discard.
+    fn original_output(&self, handle: &str) -> Result<OriginalOutput> {
+        let mut loss = crate::error::AppError::Service {
+            code: "not_found".into(),
+            message: "Original output copies are missing".into(),
+        };
+        for path in [
+            self.bytes_path(handle)?,
+            self.pending_path(handle)?,
+            self.stage_path(handle)?,
+        ] {
+            let bytes = match original_output_bytes(&path) {
+                Ok(bytes) => bytes,
+                Err(cause) => {
+                    if matches!(&cause, crate::error::AppError::Service { code, .. } if matches!(code.as_str(), "not_found" | "corrupt"))
+                    {
+                        loss = cause;
+                        continue;
+                    }
+                    return Err(cause);
+                }
+            };
+            if let Ok((media_type, width, height)) = image(&bytes, true) {
+                return Ok(OriginalOutput {
+                    path,
+                    bytes,
+                    media_type,
+                    width,
+                    height,
+                });
+            }
+            loss = crate::error::AppError::Service {
+                code: "corrupt".into(),
+                message: "Original output copy is not a valid PNG".into(),
+            };
+        }
+        Err(loss)
+    }
+    /// Caller owns the artifact lease and has validated this original copy.
+    /// Preserve the source until publication and directory sync succeed.
+    fn sync_original_copy(&self, path: &Path) -> Result<()> {
+        let file = open_regular(path)?;
+        #[cfg(test)]
+        if self
+            .fail_next_original_sync
+            .swap(false, std::sync::atomic::Ordering::Relaxed)
+        {
+            return Err(reject("original output candidate sync failed"));
+        }
+        sync_verified(&file, path).map_err(|_| reject("original output candidate sync failed"))
+    }
+    fn publish_original_copy(&self, handle: &str, source: &Path, bytes: &[u8]) -> Result<()> {
+        let target = self.bytes_path(handle)?;
+        let pending = self.pending_path(handle)?;
+        if source == pending {
+            // A prior write may have succeeded while its data flush failed.
+            // Retry that flush before changing either publication path.
+            self.sync_original_copy(&pending)?;
+        }
+        if source != target {
+            regular_or_missing(&target)?;
+            match fs::remove_file(&target) {
+                Ok(()) => sync_directory(target.parent().unwrap())?,
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => (),
+                Err(_) => return Err(reject("original sealed output repair is unavailable")),
+            }
+        }
+        if source == pending {
+            // Never truncate the sole surviving pending publication candidate.
+            fs::hard_link(&pending, &target)
+                .map_err(|_| reject("original sealed output publication failed"))?;
+            sync_directory(target.parent().unwrap())?;
+            fs::remove_file(&pending)
+                .map_err(|_| reject("original sealed output cleanup failed"))?;
+            sync_directory(target.parent().unwrap())
+        } else {
+            self.write_sealed(handle, bytes)
+        }
     }
     pub fn capture(
         &self,
@@ -603,7 +840,14 @@ impl Store {
                 ));
             }
             self.exact_artifact(&self.connect()?, consumer, op, &d, "output")?;
-            self.verify_bytes(&d)?;
+            if let Err(cause) = self.verify_bytes(&d) {
+                if matches!(&cause, crate::error::AppError::Service { code, .. } if matches!(code.as_str(), "not_found" | "corrupt"))
+                {
+                    self.restore_original_seal(&d, cause)?;
+                } else {
+                    return Err(cause);
+                }
+            }
             self.finalize_stage(handle, &d)?;
             let current = self.verify_provider(provider, consumer, op)?;
             if current.phase == AdmissionPhase::Released {
@@ -616,27 +860,23 @@ impl Store {
                 "staged output recovery requires durable proven success with unavailable delivery",
             ));
         }
-        let path = self.stage_path(handle)?;
-        no_links(&path)?;
-        let mut file = open_regular(&path)?;
-        let bytes = bounded(&mut file, OUTPUT)?;
-        let (actual, w, h) = image(&bytes, true)?;
-        if actual != media {
+        let original = self.original_output(handle)?;
+        if original.media_type != media {
             return Err(reject("output format does not match media type"));
         }
         let d = ArtifactDescriptor {
             handle: handle.into(),
-            sha256: hex::encode(Sha256::digest(&bytes)),
-            byte_length: bytes.len() as u64,
-            media_type: actual,
+            sha256: hex::encode(Sha256::digest(&original.bytes)),
+            byte_length: original.bytes.len() as u64,
+            media_type: original.media_type,
         };
-        self.write_sealed(handle, &bytes)?;
+        self.publish_original_copy(handle, &original.path, &original.bytes)?;
         self.transaction(|tx| {
             let current = Self::record(tx, consumer, op)?.ok_or_else(|| reject("admission disappeared"))?;
             if !may_finish_stage(tx,&current)? {
                 return Err(reject("admission ended during output sealing"));
             }
-            tx.execute("UPDATE artifacts SET status='sealed',descriptor=?2,width=?3,height=?4 WHERE handle=?1", params![handle, encode(&d)?, w, h])
+            tx.execute("UPDATE artifacts SET status='sealed',descriptor=?2,width=?3,height=?4 WHERE handle=?1", params![handle, encode(&d)?, original.width, original.height])
                 .map_err(sql)?;
             Ok(())
         })?;

@@ -1657,6 +1657,690 @@ impl super::ai_operations::AutomaticPort for IdleAutomatic {
     }
 }
 #[test]
+fn automatic_delayed_success_restores_recovery_ownership_across_restart() {
+    use crate::service_state::job::JobState;
+    for parked in [false, true] {
+        let (root, s) = fixture();
+        let op = "auto-delayed-success";
+        if parked {
+            let registered = s.register_job(job(op, 77)).unwrap();
+            s.update_job(
+                &registered.owner,
+                &registered.job_key,
+                JobState::NeedsAttention,
+                Some("needs_attention".into()),
+                None,
+                None,
+                Some("Lost reply".into()),
+            )
+            .unwrap();
+        }
+        start(&s, op);
+        let descriptor = sealed(&s, op);
+        super::ai_operations::auto_reconcile_in(&s, &IdleAutomatic).unwrap();
+        assert!(s.execution_released("consumer", op).unwrap());
+        // The separate host publisher arrives after the idle settlement.
+        let admission = s.get("consumer", op).unwrap().unwrap();
+        reconcile_at(
+            &s,
+            &provider(),
+            &admission,
+            &status(
+                op,
+                "succeeded",
+                json!({"state":"available","output":descriptor}),
+            ),
+        )
+        .unwrap();
+        drop(s);
+        let reopened = Store::open(root.path().join("service"), Limits::default()).unwrap();
+        assert!(!reopened.execution_released("consumer", op).unwrap());
+        assert_eq!(
+            reopened.get("consumer", op).unwrap().unwrap().output,
+            Some(descriptor.clone())
+        );
+        assert!(reopened
+            .read(&consumer(), "consumer", op, &descriptor)
+            .is_ok());
+        assert_eq!(reopened.auto_settlement_operations().unwrap().len(), 1);
+    }
+}
+
+#[test]
+fn automatic_delayed_failure_keeps_the_store_openable() {
+    let (root, s) = fixture();
+    let op = "auto-delayed-failure";
+    start(&s, op);
+    super::ai_operations::auto_reconcile_in(&s, &IdleAutomatic).unwrap();
+    let mut failed = status(op, "failed", json!({"state":"none"}));
+    failed["revision"] = json!(2);
+    failed["execution"]["error"] =
+        json!({"code":"rejected","message":"Provider rejected request","correlationId":null});
+    let a = s.get("consumer", op).unwrap().unwrap();
+    reconcile_at(&s, &provider(), &a, &failed).unwrap();
+    drop(s);
+    let reopened = Store::open(root.path().join("service"), Limits::default()).unwrap();
+    assert_eq!(
+        reopened.provider_receipt("consumer", op).unwrap(),
+        Some(failed)
+    );
+}
+
+#[test]
+fn automatic_late_success_publication_is_atomic_and_repairs_legacy_flags() {
+    for legacy in [false, true] {
+        let (root, s) = fixture();
+        let op = "auto-publication";
+        start(&s, op);
+        let d = sealed(&s, op);
+        if !legacy {
+            super::ai_operations::auto_reconcile_in(&s, &IdleAutomatic).unwrap();
+        }
+        let receipt = status(op, "succeeded", json!({"state":"available","output":d}));
+        if !legacy {
+            s.fail_next_write();
+            assert!(s
+                .observe_receipt(&provider(), "consumer", op, 2, receipt.clone())
+                .is_err());
+            assert!(s.execution_released("consumer", op).unwrap());
+            assert_eq!(
+                s.provider_receipt("consumer", op).unwrap().unwrap(),
+                running(op)
+            );
+        }
+        // Crash after publication but before the bridge's phase reconciliation.
+        s.observe_receipt(&provider(), "consumer", op, 2, receipt)
+            .unwrap();
+        if legacy {
+            let a = s.get("consumer", op).unwrap().unwrap();
+            s.terminal(&provider(), "consumer", op, Some(d.clone()), false)
+                .unwrap();
+            let db = rusqlite::Connection::open(root.path().join("service/ledger.sqlite")).unwrap();
+            db.execute(
+                "UPDATE operations SET exec_released=1 WHERE consumer='consumer' AND operation=?1",
+                [op],
+            )
+            .unwrap();
+            assert_eq!(a.operation_id, op);
+        }
+        drop(s);
+        let reopened = Store::open(root.path().join("service"), Limits::default()).unwrap();
+        assert!(!reopened.execution_released("consumer", op).unwrap());
+        assert!(reopened.read(&consumer(), "consumer", op, &d).is_ok());
+        assert_eq!(reopened.auto_settlement_operations().unwrap().len(), 1);
+    }
+}
+
+#[test]
+fn automatic_missing_output_recovers_restored_bytes_or_original_stage_before_discard() {
+    use crate::service_state::job::JobRecord;
+    for (finish_stage, refresh_to_available) in
+        [(false, false), (true, false), (false, true), (true, true)]
+    {
+        let (_root, s) = fixture();
+        let op = "auto-restored-missing";
+        start(&s, op);
+        let stage = s.stage(&provider(), "consumer", op).unwrap();
+        image::RgbaImage::from_pixel(2, 3, image::Rgba([12, 34, 56, 255]))
+            .save_with_format(&stage.path, image::ImageFormat::Png)
+            .unwrap();
+        let restored = if finish_stage {
+            None
+        } else {
+            let d = s
+                .seal(&provider(), "consumer", op, &stage.handle, "image/png")
+                .unwrap();
+            let path = s.read(&provider(), "consumer", op, &d).unwrap().path;
+            let bytes = fs::read(&path).unwrap();
+            fs::remove_file(&path).unwrap();
+            Some((path, bytes))
+        };
+        let admission = s.get("consumer", op).unwrap().unwrap();
+        reconcile_at(
+            &s,
+            &provider(),
+            &admission,
+            &status(
+                op,
+                "succeeded",
+                json!({"state":"unavailable","reason":"missing"}),
+            ),
+        )
+        .unwrap();
+        if let Some((path, bytes)) = restored {
+            fs::write(path, bytes).unwrap();
+        }
+        struct Restored<'a> {
+            store: &'a Store,
+            handle: &'a str,
+            refresh_to_available: bool,
+            recovered: std::cell::Cell<bool>,
+            discarded: std::cell::Cell<bool>,
+        }
+        impl super::ai_operations::AutomaticPort for Restored<'_> {
+            fn active(
+                &self,
+                a: &Admission,
+                _: Option<&JobRecord>,
+                _: bool,
+                _: &str,
+            ) -> Result<bool, AppError> {
+                if !self.refresh_to_available {
+                    return Ok(false);
+                }
+                // Authoritative status performs the original seal, without generation.
+                let d = self.store.seal(
+                    &provider(),
+                    "consumer",
+                    &a.operation_id,
+                    self.handle,
+                    "image/png",
+                )?;
+                let mut receipt = status(
+                    &a.operation_id,
+                    "succeeded",
+                    json!({"state":"available","output":d}),
+                );
+                receipt["revision"] = json!(3);
+                reconcile_at(self.store, &provider(), a, &receipt)?;
+                Ok(false)
+            }
+            fn recover(&self, a: &Admission, _: Option<&JobRecord>) -> Result<(), AppError> {
+                let d = a
+                    .output
+                    .as_ref()
+                    .expect("latest output must be used for recovery");
+                self.store
+                    .read(&consumer(), "consumer", &a.operation_id, d)?;
+                self.recovered.set(true);
+                Ok(())
+            }
+            fn discard(&self, _: &Admission) -> Result<(), AppError> {
+                self.discarded.set(true);
+                Err(AppError::Other(
+                    "recoverable original output was discarded".into(),
+                ))
+            }
+        }
+        let port = Restored {
+            store: &s,
+            handle: &stage.handle,
+            refresh_to_available,
+            recovered: std::cell::Cell::new(false),
+            discarded: std::cell::Cell::new(false),
+        };
+        super::ai_operations::auto_reconcile_in(&s, &port).unwrap();
+        assert!(
+            !port.discarded.get(),
+            "recoverable original output was discarded"
+        );
+        assert!(port.recovered.get());
+        assert!(!s.execution_released("consumer", op).unwrap());
+    }
+}
+
+#[test]
+fn automatic_original_stage_repairs_a_missing_or_corrupt_sealed_copy() {
+    for (corrupt, pending) in [(false, false), (true, false), (false, true), (true, true)] {
+        let (_root, s) = fixture();
+        let op = "auto-original-stage";
+        let descriptor = ready(&s, op);
+        let path = s
+            .read(&consumer(), "consumer", op, &descriptor)
+            .unwrap()
+            .path;
+        let bytes = fs::read(&path).unwrap();
+        // Retain the exact original copy as after interrupted seal cleanup.
+        let stage_path = if pending {
+            std::path::Path::new(&path).with_extension("pending")
+        } else {
+            std::path::Path::new(&path)
+                .parent()
+                .unwrap()
+                .parent()
+                .unwrap()
+                .join("stages")
+                .join(format!("{}.png", descriptor.handle))
+        };
+        fs::write(stage_path, bytes).unwrap();
+        if corrupt {
+            corrupt_in_place(&path);
+        } else {
+            fs::remove_file(&path).unwrap();
+        }
+        let mut receipt = status(
+            op,
+            "succeeded",
+            json!({"state":"unavailable","reason":if corrupt {"corrupt"} else {"missing"}}),
+        );
+        receipt["revision"] = json!(3);
+        let a = s.get("consumer", op).unwrap().unwrap();
+        reconcile_at(&s, &provider(), &a, &receipt).unwrap();
+        assert_eq!(
+            s.recover_original_output(&provider(), "consumer", op)
+                .unwrap(),
+            Some(descriptor.clone())
+        );
+        assert_eq!(
+            fs::read(
+                s.read(&consumer(), "consumer", op, &descriptor)
+                    .unwrap()
+                    .path
+            )
+            .unwrap()
+            .len() as u64,
+            descriptor.byte_length
+        );
+    }
+}
+
+#[test]
+fn automatic_unsealed_publication_recovers_every_original_copy() {
+    for case in 0..6 {
+        let immutable = matches!(case, 2..=4);
+        let (root, s) = fixture();
+        let op = "auto-unsealed-copy";
+        start(&s, op);
+        let stage = s.stage(&provider(), "consumer", op).unwrap();
+        image::RgbaImage::from_pixel(2, 3, image::Rgba([12, 34, 56, 255]))
+            .save_with_format(&stage.path, image::ImageFormat::Png)
+            .unwrap();
+        let bytes = fs::read(&stage.path).unwrap();
+        let copy = root.path().join("service/bytes").join(format!(
+            "{}.{}",
+            stage.handle,
+            if immutable { "bin" } else { "pending" }
+        ));
+        fs::write(&copy, &bytes).unwrap();
+        if case >= 4 {
+            // A valid committed candidate wins over a differing later stage.
+            image::RgbaImage::from_pixel(3, 2, image::Rgba([255, 0, 0, 255]))
+                .save_with_format(&stage.path, image::ImageFormat::Png)
+                .unwrap();
+            if case == 5 {
+                fs::write(
+                    root.path()
+                        .join("service/bytes")
+                        .join(format!("{}.bin", stage.handle)),
+                    b"interrupted corrupt publication",
+                )
+                .unwrap();
+            }
+        } else if case % 2 == 1 {
+            corrupt_in_place(&stage.path);
+        } else {
+            fs::remove_file(&stage.path).unwrap();
+        }
+        // Publication survived, but its descriptor transaction did not.
+        let a = s.get("consumer", op).unwrap().unwrap();
+        reconcile_at(
+            &s,
+            &provider(),
+            &a,
+            &status(
+                op,
+                "succeeded",
+                json!({"state":"unavailable","reason":"missing"}),
+            ),
+        )
+        .unwrap();
+        let descriptor = s
+            .recover_original_output(&provider(), "consumer", op)
+            .unwrap()
+            .expect("original publication must remain recoverable");
+        assert_eq!(
+            fs::read(
+                s.read(&consumer(), "consumer", op, &descriptor)
+                    .unwrap()
+                    .path
+            )
+            .unwrap(),
+            bytes
+        );
+    }
+}
+
+#[test]
+fn automatic_pending_copy_sync_failure_preserves_original_for_retry() {
+    let (root, s) = fixture();
+    let op = "auto-pending-sync";
+    start(&s, op);
+    let stage = s.stage(&provider(), "consumer", op).unwrap();
+    image::RgbaImage::from_pixel(2, 3, image::Rgba([12, 34, 56, 255]))
+        .save_with_format(&stage.path, image::ImageFormat::Png)
+        .unwrap();
+    let bytes = fs::read(&stage.path).unwrap();
+    let pending = root
+        .path()
+        .join("service/bytes")
+        .join(format!("{}.pending", stage.handle));
+    fs::write(&pending, &bytes).unwrap();
+    fs::remove_file(&stage.path).unwrap();
+    let a = s.get("consumer", op).unwrap().unwrap();
+    let receipt = status(
+        op,
+        "succeeded",
+        json!({"state":"unavailable","reason":"missing"}),
+    );
+    reconcile_at(&s, &provider(), &a, &receipt).unwrap();
+    s.fail_next_original_sync();
+    assert!(
+        s.recover_original_output(&provider(), "consumer", op)
+            .is_err(),
+        "pending data must be flushed before publishing its descriptor"
+    );
+    assert_eq!(fs::read(&pending).unwrap(), bytes);
+    assert_eq!(s.get("consumer", op).unwrap().unwrap().output, None);
+    assert_eq!(s.provider_receipt("consumer", op).unwrap(), Some(receipt));
+    let descriptor = s
+        .recover_original_output(&provider(), "consumer", op)
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        fs::read(
+            s.read(&consumer(), "consumer", op, &descriptor)
+                .unwrap()
+                .path
+        )
+        .unwrap(),
+        bytes
+    );
+}
+
+#[test]
+fn automatic_missing_original_stage_confirms_loss_before_discard() {
+    use crate::service_state::job::JobRecord;
+    let (_root, s) = fixture();
+    let op = "auto-absent-stage";
+    start(&s, op);
+    let a = s.get("consumer", op).unwrap().unwrap();
+    reconcile_at(
+        &s,
+        &provider(),
+        &a,
+        &status(
+            op,
+            "succeeded",
+            json!({"state":"unavailable","reason":"missing"}),
+        ),
+    )
+    .unwrap();
+    struct Missing<'a>(&'a Store, std::cell::RefCell<Vec<&'static str>>);
+    impl super::ai_operations::AutomaticPort for Missing<'_> {
+        fn active(
+            &self,
+            _: &Admission,
+            _: Option<&JobRecord>,
+            _: bool,
+            _: &str,
+        ) -> Result<bool, AppError> {
+            Ok(false)
+        }
+        fn refresh(&self, _: &Store, _: &Admission) -> Result<(), AppError> {
+            self.1.borrow_mut().push("status");
+            Ok(())
+        }
+        fn discard(&self, a: &Admission) -> Result<(), AppError> {
+            self.1.borrow_mut().push("discard");
+            reconcile_at(
+                self.0,
+                &provider(),
+                a,
+                &status(&a.operation_id, "succeeded", json!({"state":"discarded"})),
+            )
+        }
+        fn recover(&self, _: &Admission, _: Option<&JobRecord>) -> Result<(), AppError> {
+            Err(AppError::Other("missing output cannot be delivered".into()))
+        }
+    }
+    let port = Missing(&s, std::cell::RefCell::new(Vec::new()));
+    super::ai_operations::auto_reconcile_in(&s, &port).unwrap();
+    assert_eq!(*port.1.borrow(), ["status", "discard"]);
+    assert!(s.execution_released("consumer", op).unwrap());
+    assert_eq!(
+        s.get("consumer", op)
+            .unwrap()
+            .unwrap()
+            .disposition
+            .as_deref(),
+        Some("discarded")
+    );
+    start(&s, "after-absent-stage");
+}
+
+#[test]
+fn automatic_transient_artifact_ownership_defers_discard() {
+    let (root, s) = fixture();
+    let op = "auto-artifact-busy";
+    let descriptor = ready(&s, op);
+    let path = s
+        .read(&consumer(), "consumer", op, &descriptor)
+        .unwrap()
+        .path;
+    corrupt_in_place(&path);
+    let a = s.get("consumer", op).unwrap().unwrap();
+    let mut receipt = status(
+        op,
+        "succeeded",
+        json!({"state":"unavailable","reason":"corrupt"}),
+    );
+    receipt["revision"] = json!(3);
+    reconcile_at(&s, &provider(), &a, &receipt).unwrap();
+    let lease = fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(
+            root.path()
+                .join("service/leases")
+                .join(format!("{}.lock", descriptor.handle)),
+        )
+        .unwrap();
+    lease.try_lock().unwrap();
+    super::ai_operations::auto_reconcile_in(&s, &IdleAutomatic).unwrap();
+    assert!(!s.execution_released("consumer", op).unwrap());
+    assert_eq!(s.provider_receipt("consumer", op).unwrap(), Some(receipt));
+    assert!(std::path::Path::new(&path).is_file());
+}
+
+#[test]
+fn automatic_settlement_reclaims_empty_output_capacity_and_retains_unknown_evidence() {
+    for stage_bytes in [None, Some(false), Some(true)] {
+        let (root, s) = fixture();
+        for n in 0..24 {
+            let op = format!("auto-capacity-{n}");
+            start(&s, &op);
+            let stage = stage_bytes.map(|write| {
+                let stage = s.stage(&provider(), "consumer", &op).unwrap();
+                if write {
+                    image::RgbaImage::from_pixel(2, 3, image::Rgba([12, 34, 56, 255]))
+                        .save_with_format(&stage.path, image::ImageFormat::Png)
+                        .unwrap();
+                }
+                stage
+            });
+            let mut unknown = status(&op, "unknown", json!({"state":"none"}));
+            unknown["revision"] = json!(2);
+            unknown["execution"]["error"] = json!({"code":"interrupted","message":"Remote result is unconfirmed","correlationId":null});
+            let a = s.get("consumer", &op).unwrap().unwrap();
+            reconcile_at(&s, &provider(), &a, &unknown).unwrap();
+            super::ai_operations::auto_reconcile_in(&s, &IdleAutomatic).unwrap();
+            assert_eq!(s.provider_receipt("consumer", &op).unwrap(), Some(unknown));
+            assert!(s.get("consumer", &op).unwrap().is_some());
+            if let Some(stage) = stage {
+                assert!(std::path::Path::new(&stage.path).exists());
+            }
+            assert!(
+                matches!(call(&s, "start", request(&op), |_, _| panic!("Unknown replayed")),
+            Err(AppError::Service { ref code, .. }) if code == "recovery_stopped")
+            );
+        }
+        drop(s);
+        let reopened = Store::open(root.path().join("service"), Limits::default()).unwrap();
+        start(&reopened, "capacity-after-restart");
+    }
+}
+
+#[test]
+fn automatic_connection_test_registration_keeps_forwarding_owned() {
+    let (_root, s) = fixture();
+    let owner = generation("fixture.test-registration", 'b');
+    // The production frontend owns settings.test through test.begin and the
+    // provider's subsequent registration/reply, even without a presentation job.
+    let registering =
+        super::backend::CallLease::acquire_method(&owner.package_id, "settings.test").unwrap();
+    super::service_bridge::begin_test_in(
+        &s,
+        &owner,
+        "connection-registration",
+        &"c".repeat(64),
+        || true,
+    )
+    .unwrap();
+    super::ai_operations::auto_reconcile_in(&s, &IdleAutomatic).unwrap();
+    assert!(!s
+        .execution_released(&owner.package_id, "connection-registration")
+        .unwrap());
+    drop(registering);
+    // Timeout/lost acceptance ends the outer call before registration does.
+    super::ai_operations::auto_reconcile_in(&s, &IdleAutomatic).unwrap();
+    assert!(!s
+        .execution_released(&owner.package_id, "connection-registration")
+        .unwrap());
+    let mut receipt = status(
+        "connection-registration",
+        "unknown",
+        json!({"state":"none"}),
+    );
+    receipt["provider"]["packageId"] = json!(owner.package_id);
+    receipt["execution"]["error"] =
+        json!({"code":"interrupted","message":"Registration ended","correlationId":null});
+    let a = s
+        .get(&owner.package_id, "connection-registration")
+        .unwrap()
+        .unwrap();
+    reconcile_at(&s, &owner, &a, &receipt).unwrap();
+    super::service_bridge::test_registered(&owner, "connection-registration");
+    super::ai_operations::auto_reconcile_in(&s, &IdleAutomatic).unwrap();
+    assert!(s
+        .execution_released(&owner.package_id, "connection-registration")
+        .unwrap());
+}
+
+#[test]
+fn automatic_connection_test_death_waits_for_admitted_registration() {
+    use std::sync::mpsc;
+    use std::time::Duration;
+    let (_root, store) = fixture();
+    let store = Arc::new(store);
+    let owner = generation("fixture.registration-death", 'b');
+    let entered = Arc::new(Barrier::new(2));
+    let release = Arc::new(Barrier::new(2));
+    let begin = {
+        let store = store.clone();
+        let owner = owner.clone();
+        let entered = entered.clone();
+        let release = release.clone();
+        std::thread::spawn(move || {
+            super::service_bridge::begin_test_in(
+                &store,
+                &owner,
+                "registration-death",
+                &"c".repeat(64),
+                || {
+                    entered.wait();
+                    release.wait();
+                    true
+                },
+            )
+            .unwrap()
+        })
+    };
+    entered.wait();
+    let (ended, done) = mpsc::channel();
+    let dead = {
+        let owner = owner.clone();
+        std::thread::spawn(move || {
+            super::service_bridge::on_dead(owner);
+            ended.send(()).unwrap();
+        })
+    };
+    let retired_before_publication = done.recv_timeout(Duration::from_millis(200)).is_ok();
+    release.wait();
+    begin.join().unwrap();
+    dead.join().unwrap();
+    assert!(
+        !retired_before_publication,
+        "death retired ownership before the admitted begin finished"
+    );
+    assert!(
+        !super::service_bridge::dispatch_active(&owner.package_id, "registration-death").unwrap()
+    );
+    super::ai_operations::auto_reconcile_in(&store, &IdleAutomatic).unwrap();
+    assert!(store
+        .execution_released(&owner.package_id, "registration-death")
+        .unwrap());
+}
+
+#[test]
+fn automatic_idle_proof_fences_startup_and_lifecycle_until_commit() {
+    use crate::service_state::job::JobRecord;
+    let (_root, s) = fixture();
+    let owner = generation("fixture.auto-proof", 'b');
+    let a = Admission {
+        consumer: owner.clone(),
+        provider: owner.clone(),
+        target: ServiceTarget {
+            package_id: owner.package_id.clone(),
+            ..target()
+        },
+        operation_id: "proof-commit".into(),
+        fingerprint: "c".repeat(64),
+        phase: AdmissionPhase::Reserved,
+        inputs: vec![],
+        output: None,
+        needs_attention: false,
+        disposition: None,
+        transfer_receipt: None,
+    };
+    s.reserve(a).unwrap();
+    s.claim_forwarding(&owner, "proof-commit").unwrap();
+    struct Proof(std::cell::Cell<bool>);
+    impl super::ai_operations::AutomaticPort for Proof {
+        fn active(
+            &self,
+            a: &Admission,
+            _: Option<&JobRecord>,
+            _: bool,
+            _: &str,
+        ) -> Result<bool, AppError> {
+            self.0.set(
+                super::backend::CallLease::acquire_direction(&a.provider.package_id, 3).is_err()
+                    && super::backend::CallLease::acquire_method(
+                        &a.provider.package_id,
+                        "settings.test",
+                    )
+                    .is_err()
+                    && super::backend::begin_drain(&a.provider.package_id).is_err(),
+            );
+            Ok(false)
+        }
+        fn recover(&self, _: &Admission, _: Option<&JobRecord>) -> Result<(), AppError> {
+            panic!("no output")
+        }
+    }
+    let port = Proof(std::cell::Cell::new(false));
+    super::ai_operations::auto_reconcile_in(&s, &port).unwrap();
+    assert!(
+        port.0.get(),
+        "startup/lifecycle can invalidate the idle proof"
+    );
+    assert!(s
+        .execution_released(&owner.package_id, "proof-commit")
+        .unwrap());
+    assert!(super::backend::CallLease::acquire_direction(&owner.package_id, 3).is_ok());
+    assert!(super::backend::begin_drain(&owner.package_id).is_ok());
+}
+#[test]
 fn automatic_settlement_of_stopped_unknown_survives_restart_without_replay() {
     use crate::service_state::job::JobState;
     let (root, s) = fixture();
@@ -1986,6 +2670,11 @@ fn automatic_unavailable_corrupt_output_uses_provider_discard_not_generation() {
         }
         fn recover(&self, _: &Admission, _: Option<&JobRecord>) -> Result<(), AppError> {
             panic!("corrupt result cannot be recovered")
+        }
+        fn refresh(&self, _: &Store, _: &Admission) -> Result<(), AppError> {
+            // This fixture's original provider still authoritatively reports
+            // the same corrupt receipt after the local recovery attempt.
+            Ok(())
         }
         fn discard(&self, a: &Admission) -> Result<(), AppError> {
             let mut receipt = status(&a.operation_id, "succeeded", json!({"state":"discarded"}));

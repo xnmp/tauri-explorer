@@ -40,3 +40,6 @@ Containment evidence alone does not show that columns disappear and return.
 Capture each optional column's hidden and restored states after its behavioral
 assertion, while the menu is dismissed so it cannot cover the Size header.
 Keep these images mapped to the same acceptance criterion as edge containment.
+Headers and row cells render independently. Assert a nonempty set of mounted
+rows and each column's cell count before hiding, while hidden, and after
+restoring, before capturing its state.

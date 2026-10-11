@@ -106,10 +106,14 @@
   class:drop-target={interactions.isDropTarget(entry.path)}
   class:copy-drop={interactions.isCopyDrop(entry.path)}
   onfocus={(event) => {
-    // A wide Details row can make native tab focus reveal its trailing columns
-    // by scrolling an overflow-hidden ancestor. Reveal the outer row edge so
-    // its inset focus ring and the padded file identity both remain visible.
-    event.currentTarget.scrollIntoView({ block: "nearest", inline: "start" });
+    // Native keyboard entry can reveal trailing columns and clip the file
+    // identity. Pointer selection and cursor moves within the grid must retain
+    // the user's horizontal position and FileList's preventScroll choice.
+    const grid = event.currentTarget.closest('[role="grid"]');
+    const fromGrid = event.relatedTarget instanceof Node && grid?.contains(event.relatedTarget);
+    if (event.currentTarget.matches(":focus-visible") && !fromGrid) {
+      event.currentTarget.scrollIntoView({ block: "nearest", inline: "start" });
+    }
   }}
   onclick={handleClick}
   ondblclick={handleDoubleClick}

@@ -141,10 +141,14 @@ export function fixedMenuPosition(
   singleScale: boolean,
 ): { x: number; y: number } {
   const fixed = (value: number) => fixedFromClient(value, zoom, singleScale);
-  const pad = 8;
+  const pad = fixed(8);
+  // Menu sizes render with one zoom factor even on legacy WebKit, where
+  // fixed offsets scale twice. Convert the rendered extents into offset space.
+  const width = fixed(menu.width * zoom);
+  const height = fixed(menu.height * zoom);
   return {
-    x: Math.max(pad, Math.min(fixed(pointer.x), fixed(viewport.width) - menu.width - pad)),
-    y: Math.max(pad, Math.min(fixed(pointer.y), fixed(viewport.height) - menu.height - pad)),
+    x: Math.max(pad, Math.min(fixed(pointer.x), fixed(viewport.width) - width - pad)),
+    y: Math.max(pad, Math.min(fixed(pointer.y), fixed(viewport.height) - height - pad)),
   };
 }
 

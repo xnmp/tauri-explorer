@@ -1,5 +1,5 @@
 /** Clicking the video surface toggles fullscreen, as picture preview does (#1058). */
-import { test, expect, type Page } from "./fixtures";
+import { test, expect, type Locator, type Page } from "./fixtures";
 import { waitForEntries } from "./helpers";
 
 async function openVideo(page: Page) {
@@ -31,15 +31,27 @@ test("clicking the video enters fullscreen without starting playback, and a seco
   await page.screenshot({ path: "evidence/ac-2-video-click-exits-fullscreen.png" });
 });
 
-test("Play starts playback without fullscreen, and a video click then keeps playback running in fullscreen", async ({ page }) => {
-  const player = await openVideo(page);
-  const video = player.locator("video");
+async function playUntilTimeAdvances(player: Locator) {
   await player.getByRole("button", { name: "Play video", exact: true }).click();
-  await expect.poll(() => video.evaluate(v => (v as HTMLVideoElement).currentTime)).toBeGreaterThan(0.15);
+  await expect(player.getByLabel("Video time")).toHaveText(/^0:0[1-9] \//);
   await expect(player.getByRole("button", { name: "Pause video", exact: true })).toBeVisible();
+}
+
+test("Play starts playback in the docked pane", async ({ page }) => {
+  const player = await openVideo(page);
+  await playUntilTimeAdvances(player);
   await expect(page.locator(".preview-pane")).not.toHaveClass(/fullscreen/);
   await page.screenshot({ path: "evidence/ac-3-play-button-stays-docked.png" });
+});
+
+test("a video click during playback enters fullscreen and playback keeps running", async ({ page }) => {
+  const player = await openVideo(page);
+  const video = player.locator("video");
+  await playUntilTimeAdvances(player);
   await video.click();
   await expect(page.locator(".preview-pane")).toHaveClass(/fullscreen/);
+  await expect(player.getByRole("button", { name: "Pause video", exact: true })).toBeVisible();
   expect(await video.evaluate(v => (v as HTMLVideoElement).paused)).toBe(false);
+  await expect(player.getByLabel("Video time")).toHaveText(/^0:0[1-9] \//);
+  await page.screenshot({ path: "evidence/ac-4-video-click-during-playback.png" });
 });

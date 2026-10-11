@@ -96,6 +96,9 @@ Rules that bite:
   the GitHub issue. Production therefore needs `BLOB_READ_WRITE_TOKEN` as well
   as `GITHUB_ISSUE_TOKEN`. Keep the raw attachment total at or below 3 MiB so
   its base64 JSON request stays below Vercel's 4.5 MB function-body limit.
+- The root Vitest suite imports the report relay from `website/`; keep
+  `website` in the root package workspaces so a root install provides the
+  relay's runtime dependencies to those tests.
 
 ## Documentation
 

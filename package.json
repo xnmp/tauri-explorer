@@ -3,6 +3,9 @@
   "version": "1.11.6",
   "description": "A minimalistic, high-performance file explorer",
   "type": "module",
+  "workspaces": [
+    "website"
+  ],
   "scripts": {
     "dev": "bun run prepare:pdf && vite dev",
     "build": "bun run prepare:pdf && vite build",

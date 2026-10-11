@@ -128,6 +128,16 @@ pub(crate) fn identity(value: &str) -> bool {
             .bytes()
             .all(|b| b.is_ascii_alphanumeric() || b"._-".contains(&b))
 }
+/// An image adapter identifier such as `openai-images`, `codex-cli` or
+/// `gemini`: providers add adapters without a host change, so the host checks
+/// the identifier's shape rather than a fixed list.
+pub(crate) fn adapter(value: &str) -> bool {
+    (1..=64).contains(&value.len())
+        && value.as_bytes()[0].is_ascii_lowercase()
+        && value
+            .bytes()
+            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
+}
 fn bounded(value: &str, max: usize) -> bool {
     value.len() <= max && !value.chars().any(char::is_control)
 }
@@ -247,7 +257,7 @@ pub(crate) fn validate(value: &Value, admission: &Admission) -> Result<Value, Ap
     }
     match &receipt.execution {
         Execution::Succeeded { metadata } => {
-            if !matches!(metadata.adapter.as_str(), "openai-images" | "codex-cli")
+            if !adapter(&metadata.adapter)
                 || !bounded(&metadata.endpoint_identity, 8192)
                 || metadata.requested_model.as_ref().is_some_and(|v| !model(v))
                 || metadata.actual_model.as_ref().is_some_and(|v| !model(v))
@@ -353,4 +363,28 @@ pub(crate) fn validate_transition(previous: &Value, next: &Value) -> Result<(), 
         return Err(reject());
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod adapter_tests {
+    use super::adapter;
+    #[test]
+    fn adapter_identifiers_are_checked_by_shape() {
+        for ok in ["openai-images", "codex-cli", "gemini", "bfl", "a", "x2"] {
+            assert!(adapter(ok), "{ok}");
+        }
+        let long = "a".repeat(65);
+        for bad in [
+            "",
+            "Gemini",
+            "2fast",
+            "-x",
+            "open_ai",
+            "a b",
+            "é",
+            long.as_str(),
+        ] {
+            assert!(!adapter(bad), "{bad}");
+        }
+    }
 }

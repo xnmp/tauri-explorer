@@ -441,6 +441,7 @@ pub fn run_with_process_entry(launch_dir: Option<String>, t_process_entry: std::
             git_avatar::git_author_avatar,
             git_log::git_log,
             git_log::git_refs,
+            git_log::git_merge_base,
             git_log::git_commit_files,
             git_log::git_commit_file_diff,
             git_log::git_compare_commit_files,

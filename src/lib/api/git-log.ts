@@ -117,6 +117,13 @@ export async function gitRefs(repoPath: string): Promise<GitRefs> {
   return invoke<GitRefs>("git_refs", { repoPath });
 }
 
+export async function gitMergeBase(
+  repoPath: string, first: MergeBaseBranch, second: MergeBaseBranch,
+): Promise<string | null> {
+  const ref = (branch: MergeBaseBranch) => `refs/${branch.remote ? "remotes" : "heads"}/${branch.name}`;
+  return invoke<string | null>("git_merge_base", { repoPath, firstRef: ref(first), secondRef: ref(second) });
+}
+
 export interface CommitFile {
   path: string;
   /** Porcelain-style letter: A, M, D, R, C, T. */

@@ -758,6 +758,35 @@ pub async fn git_refs(repo_path: String) -> Result<GitRefs, AppError> {
     .await
 }
 
+/// Read the common ancestor from full repository history, never a loaded page.
+#[tauri::command]
+pub async fn git_merge_base(
+    repo_path: String,
+    first_ref: String,
+    second_ref: String,
+) -> Result<Option<String>, AppError> {
+    run_blocking(move |_cancel| {
+        let repo = open_repo(Path::new(&repo_path))?;
+        let resolve = |name: &str| -> Result<Oid, AppError> {
+            if !name.starts_with("refs/heads/") && !name.starts_with("refs/remotes/") {
+                return Err(AppError::Other("Select a local or remote branch".into()));
+            }
+            repo.find_reference(name)
+                .and_then(|reference| reference.peel_to_commit())
+                .map(|commit| commit.id())
+                .map_err(to_app_err)
+        };
+        let first = resolve(&first_ref)?;
+        let second = resolve(&second_ref)?;
+        match repo.merge_base(first, second) {
+            Ok(oid) => Ok(Some(oid.to_string())),
+            Err(error) if error.code() == git2::ErrorCode::NotFound => Ok(None),
+            Err(error) => Err(to_app_err(error)),
+        }
+    })
+    .await
+}
+
 /// One changed file in a commit (vs its first parent, or the empty tree for
 /// a root commit).
 #[derive(Debug, Clone, Serialize)]

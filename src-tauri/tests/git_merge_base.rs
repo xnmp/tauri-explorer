@@ -16,7 +16,10 @@ async fn returns_real_ancestor_for_local_and_remote_branches_without_moving_head
     let repo = Repository::init(dir.path()).unwrap();
     let root = commit(&repo, &[], "root");
     let fork = commit(&repo, &[root], "fork");
-    let left = commit(&repo, &[fork], "left");
+    let mut left = fork;
+    for n in 0..600 {
+        left = commit(&repo, &[left], &format!("left {n}"));
+    }
     let right = commit(&repo, &[fork], "right");
     repo.reference("refs/heads/left", left, true, "test").unwrap();
     repo.reference("refs/heads/right", right, true, "test").unwrap();

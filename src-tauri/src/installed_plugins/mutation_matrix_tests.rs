@@ -449,6 +449,509 @@ const JOB_STATES: [crate::service_state::job::JobState; 8] = {
         Discarded,
     ]
 };
+
+#[test]
+fn ninth_compatible_upgrade_retains_captured_accepting_preparation_without_admission() {
+    use crate::service_state::job::JobState;
+    let fx = Fixture::new("ninth-preparation");
+    fx.present(JobState::Accepting);
+    let input = fx.profile.path().join("input.png");
+    image::RgbaImage::from_pixel(2, 3, image::Rgba([12, 34, 56, 255]))
+        .save(&input)
+        .unwrap();
+    let spec = vec![CaptureInput {
+        path: input.to_string_lossy().into(),
+        expected_digest: None,
+    }];
+    let captured = fx
+        .store
+        .capture(&fx.generation(Role::Consumer), OP, spec.clone())
+        .unwrap();
+    assert!(fx.store.get(fx.id(Role::Consumer), OP).unwrap().is_none());
+    let original_path = fx
+        .store
+        .read(
+            &fx.generation(Role::Consumer),
+            fx.id(Role::Consumer),
+            OP,
+            &captured[0].artifact,
+        )
+        .unwrap()
+        .path;
+    let upgraded = upgrade(
+        &Profile {
+            root: &fx.root,
+            store: &fx.store,
+        },
+        &fx.next[Role::Consumer as usize],
+        &|_, _, _| Ok(()),
+    )
+    .unwrap();
+    assert_eq!(
+        fx.store
+            .job_for_operation(fx.id(Role::Consumer), OP)
+            .unwrap()
+            .unwrap()
+            .state,
+        JobState::Accepting,
+        "compatible upgrade cancelled captured work before service admission"
+    );
+    assert!(std::path::Path::new(&original_path).is_file());
+    let reopened = Store::open(fx.profile.path().join("service-state"), Limits::default()).unwrap();
+    reopened
+        .release_preparations(&fx.generation(Role::Consumer))
+        .unwrap();
+    let current = PackageGeneration {
+        package_id: upgraded.manifest.id.clone(),
+        digest: upgraded.digest.clone(),
+        incarnation: 2,
+    };
+    let caller =
+        super::super::service_bridge::recovery_caller(&reopened, &upgraded.manifest, &current, OP)
+            .unwrap();
+    assert_eq!(caller, current);
+    let recovered = reopened
+        .capture(&caller, OP, spec)
+        .expect("replacement must reuse the original captured snapshot");
+    assert_eq!(recovered[0].artifact, captured[0].artifact);
+    let mut admission = fx.admission();
+    admission.consumer = caller.clone();
+    admission.inputs = recovered.into_iter().map(|c| c.artifact).collect();
+    reopened
+        .reserve(admission)
+        .expect("retained preparation ID must remain admissible");
+    assert_eq!(
+        reopened
+            .job_for_operation(fx.id(Role::Consumer), OP)
+            .unwrap()
+            .unwrap()
+            .owner,
+        caller
+    );
+}
+
+#[test]
+fn ninth_incompatible_sdk2_upgrade_releases_custodyless_spool_without_admissions() {
+    let fx = Fixture::new("ninth-custodyless");
+    let owner = fx.generation(Role::Provider);
+    let (handle, path) = fx
+        .store
+        .reserve_host_spool(&owner, "host:standalone", 1024)
+        .unwrap();
+    fs::write(path.join("stdout"), b"paid original reply").unwrap();
+    fs::write(path.join("stderr"), []).unwrap();
+    fx.store.seal_host_spool(&owner, &handle, 0).unwrap();
+    assert!(fx
+        .store
+        .package_operations(fx.id(Role::Provider))
+        .unwrap()
+        .is_empty());
+    let archive =
+        package::tests::archive_named(&fx.profile.path().join("archives"), "sdk2.teplugin", |m| {
+            m.id = fx.id(Role::Provider).into();
+            m.version = "2.0.0".into();
+            m.sdk_version = 2;
+            m.contributions = vec![m.id.replace('.', "-")];
+        });
+    upgrade(
+        &Profile {
+            root: &fx.root,
+            store: &fx.store,
+        },
+        &archive,
+        &|_, _, _| Ok(()),
+    )
+    .unwrap();
+    assert!(
+        !path.exists(),
+        "incompatible replacement kept a custody-less paid spool"
+    );
+    let reopened = Store::open(fx.profile.path().join("service-state"), Limits::default()).unwrap();
+    reopened.sweep_host_spools(|_| true).unwrap();
+    assert!(reopened
+        .host_spool_result(&owner.package_id, "host:standalone")
+        .unwrap()
+        .is_none());
+    let conn =
+        rusqlite::Connection::open(fx.profile.path().join("service-state/ledger.sqlite")).unwrap();
+    let charged: i64 = conn
+        .query_row("SELECT coalesce(sum(bytes),0) FROM host_spools", [], |r| {
+            r.get(0)
+        })
+        .unwrap();
+    assert_eq!(
+        charged, 0,
+        "incompatible replacement must release durable quota"
+    );
+}
+#[test]
+fn ninth_compatible_upgrade_keeps_custodyless_original_without_admissions() {
+    let fx = Fixture::new("ninth-standalone-compatible");
+    let owner = fx.generation(Role::Provider);
+    let (handle, path) = fx
+        .store
+        .reserve_host_spool(&owner, "host:standalone", 1024)
+        .unwrap();
+    fs::write(path.join("stdout"), b"paid standalone reply").unwrap();
+    fs::write(path.join("stderr"), []).unwrap();
+    fx.store.seal_host_spool(&owner, &handle, 0).unwrap();
+    upgrade(
+        &Profile {
+            root: &fx.root,
+            store: &fx.store,
+        },
+        &fx.next[Role::Provider as usize],
+        &|_, _, _| Ok(()),
+    )
+    .unwrap();
+    let reopened = Store::open(fx.profile.path().join("service-state"), Limits::default()).unwrap();
+    reopened.sweep_host_spools(|_| false).unwrap();
+    let recovered = reopened
+        .host_spool_result(&owner.package_id, "host:standalone")
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        fs::read(recovered["stdout"].as_str().unwrap()).unwrap(),
+        b"paid standalone reply"
+    );
+    // SDK 2 temporary handles remain a harmless no-op, while that protocol can
+    // release the modern opaque handle through the same durable host boundary.
+    reopened
+        .release_host_spool_if_present(&owner.package_id, "host:temporary")
+        .unwrap();
+    assert!(path.exists());
+    reopened
+        .release_host_spool_if_present(&owner.package_id, &handle)
+        .unwrap();
+    assert!(!path.exists());
+}
+
+#[test]
+fn ninth_compatible_preparation_recovers_interrupted_capture_before_receipt() {
+    use crate::service_state::job::JobState;
+    let fx = Fixture::new("ninth-interrupted-capture");
+    fx.present(JobState::Accepting);
+    let input = fx.profile.path().join("input.png");
+    image::RgbaImage::from_pixel(2, 3, image::Rgba([12, 34, 56, 255]))
+        .save(&input)
+        .unwrap();
+    let spec = vec![CaptureInput {
+        path: input.to_string_lossy().into(),
+        expected_digest: None,
+    }];
+    let captured = fx
+        .store
+        .capture(&fx.generation(Role::Consumer), OP, spec.clone())
+        .unwrap();
+    // File publication precedes the single capture-receipt transaction. Keep
+    // its bytes but restore the ledger state at that real crash boundary.
+    let conn =
+        rusqlite::Connection::open(fx.profile.path().join("service-state/ledger.sqlite")).unwrap();
+    conn.execute(
+        "UPDATE operations SET captures=NULL WHERE consumer=?1 AND operation=?2",
+        rusqlite::params![fx.id(Role::Consumer), OP],
+    )
+    .unwrap();
+    conn.execute("UPDATE artifacts SET status='capturing',descriptor=NULL,source=NULL,width=NULL,height=NULL WHERE consumer=?1 AND operation=?2",rusqlite::params![fx.id(Role::Consumer),OP]).unwrap();
+    drop(conn);
+    let upgraded = upgrade(
+        &Profile {
+            root: &fx.root,
+            store: &fx.store,
+        },
+        &fx.next[Role::Consumer as usize],
+        &|_, _, _| Ok(()),
+    )
+    .unwrap();
+    let reopened = Store::open(fx.profile.path().join("service-state"), Limits::default()).unwrap();
+    let current = PackageGeneration {
+        package_id: upgraded.manifest.id.clone(),
+        digest: upgraded.digest,
+        incarnation: 2,
+    };
+    let caller =
+        super::super::service_bridge::recovery_caller(&reopened, &upgraded.manifest, &current, OP)
+            .unwrap();
+    assert!(
+        reopened
+            .capture(
+                &caller,
+                OP,
+                vec![CaptureInput {
+                    path: "another-input.png".into(),
+                    expected_digest: None
+                }]
+            )
+            .is_err(),
+        "recovery cannot change the original capture spec"
+    );
+    let recovered = reopened
+        .capture(&caller, OP, spec)
+        .expect("unreceipted capture must retry once old IO has gone");
+    assert_eq!(recovered[0].artifact.sha256, captured[0].artifact.sha256);
+    let mut admission = fx.admission();
+    admission.consumer = caller;
+    admission.inputs = recovered.into_iter().map(|c| c.artifact).collect();
+    reopened.reserve(admission).unwrap();
+}
+
+#[test]
+fn ninth_compatible_upgrade_keeps_presentation_before_first_capture() {
+    use crate::service_state::job::JobState;
+    let fx = Fixture::new("ninth-before-capture");
+    fx.present(JobState::Accepting);
+    let before = fx
+        .store
+        .job_for_operation(fx.id(Role::Consumer), OP)
+        .unwrap()
+        .unwrap();
+    let upgraded = upgrade(
+        &Profile {
+            root: &fx.root,
+            store: &fx.store,
+        },
+        &fx.next[Role::Consumer as usize],
+        &|_, _, _| Ok(()),
+    )
+    .unwrap();
+    let current = PackageGeneration {
+        package_id: upgraded.manifest.id.clone(),
+        digest: upgraded.digest.clone(),
+        incarnation: 2,
+    };
+    let after =
+        super::super::job_bridge::recovery_job(&fx.store, &upgraded.manifest, &current, &before)
+            .expect(
+                "a callback holding the original snapshot must adopt once and continue immediately",
+            );
+    assert_eq!(after.state, JobState::Accepting);
+    assert_eq!(after.owner, current);
+    assert_eq!(after.job_key, before.job_key);
+    assert_eq!(after.job_id, before.job_id);
+}
+
+#[test]
+fn ninth_dead_consumer_cleanup_cannot_collect_preparation_during_upgrade_preflight() {
+    use crate::service_state::job::JobState;
+    use std::time::{Duration, Instant};
+    let fx = Fixture::new("ninth-preflight-death");
+    fx.present(JobState::Accepting);
+    let input = fx.profile.path().join("input.png");
+    image::RgbaImage::from_pixel(2, 3, image::Rgba([12, 34, 56, 255]))
+        .save(&input)
+        .unwrap();
+    let spec = vec![CaptureInput {
+        path: input.to_string_lossy().into(),
+        expected_digest: None,
+    }];
+    let captured = fx
+        .store
+        .capture(&fx.generation(Role::Consumer), OP, spec.clone())
+        .unwrap();
+    let original = fx
+        .store
+        .read(
+            &fx.generation(Role::Consumer),
+            fx.id(Role::Consumer),
+            OP,
+            &captured[0].artifact,
+        )
+        .unwrap()
+        .path;
+    struct Unadmitted;
+    impl super::super::service_bridge::RecoveryPort for Unadmitted {
+        fn closing(&self) -> bool {
+            false
+        }
+        fn signal_cancel(&self, _: &Admission) {
+            panic!("preparation has no provider execution");
+        }
+        fn control(
+            &self,
+            _: &Admission,
+            _: &str,
+            _: &mut dyn FnMut(&PackageGeneration, &serde_json::Value) -> Result<(), AppError>,
+        ) -> Result<serde_json::Value, AppError> {
+            panic!("preparation has no provider execution");
+        }
+    }
+    let upgraded = std::thread::scope(|scope| {
+        let (start, ready) = std::sync::mpsc::channel();
+        let (done, completed) = std::sync::mpsc::channel();
+        let store = &fx.store;
+        let owner = fx.generation(Role::Consumer);
+        let worker = scope.spawn(move || {
+            ready.recv().unwrap();
+            let deadline = Instant::now() + Duration::from_millis(200);
+            let result = crate::native_deadline::scoped(deadline, || {
+                super::super::service_bridge::recover_owned(
+                    store,
+                    &Unadmitted,
+                    &owner,
+                    crate::recovery_actor::Mode::TailOnly,
+                    deadline,
+                    deadline,
+                )
+            });
+            done.send(result).unwrap();
+        });
+        let upgraded = upgrade(&Profile { root: &fx.root, store: &fx.store }, &fx.next[Role::Consumer as usize], &|_, _, _| {
+            // The broker is already retired here, while the old preparation
+            // still awaits the committed compatibility decision.
+            start.send(()).unwrap();
+            let result = completed.recv_timeout(Duration::from_secs(5)).unwrap();
+            assert!(std::path::Path::new(&original).is_file(), "dead-consumer cleanup discarded captured inputs before upgrade could retain them");
+            assert!(result.is_err(), "recovery must retain its budget rather than bypass the lifecycle custody decision");
+            Ok(())
+        }).unwrap();
+        worker.join().unwrap();
+        upgraded
+    });
+    let current = PackageGeneration {
+        package_id: upgraded.manifest.id.clone(),
+        digest: upgraded.digest,
+        incarnation: 2,
+    };
+    let caller =
+        super::super::service_bridge::recovery_caller(&fx.store, &upgraded.manifest, &current, OP)
+            .unwrap();
+    assert_eq!(
+        fx.store.capture(&caller, OP, spec).unwrap()[0].artifact,
+        captured[0].artifact
+    );
+}
+
+#[test]
+fn ninth_published_upgrade_journal_preserves_incomplete_preparation_before_grant() {
+    use crate::service_state::job::JobState;
+    let fx = Fixture::new("ninth-journal-preparation");
+    fx.present(JobState::Accepting);
+    let input = fx.profile.path().join("input.png");
+    image::RgbaImage::from_pixel(2, 3, image::Rgba([12, 34, 56, 255]))
+        .save(&input)
+        .unwrap();
+    let spec = vec![CaptureInput {
+        path: input.to_string_lossy().into(),
+        expected_digest: None,
+    }];
+    let captured = fx
+        .store
+        .capture(&fx.generation(Role::Consumer), OP, spec.clone())
+        .unwrap();
+    let original = fx
+        .store
+        .read(
+            &fx.generation(Role::Consumer),
+            fx.id(Role::Consumer),
+            OP,
+            &captured[0].artifact,
+        )
+        .unwrap()
+        .path;
+    super::crash_at_boundary("upgrade-published");
+    let result = upgrade(
+        &Profile {
+            root: &fx.root,
+            store: &fx.store,
+        },
+        &fx.next[Role::Consumer as usize],
+        &|_, _, _| {
+            // Restore an unfinished capture's ledger state after its file write,
+            // before the compatibility decision has published a replacement grant.
+            let conn =
+                rusqlite::Connection::open(fx.profile.path().join("service-state/ledger.sqlite"))
+                    .unwrap();
+            conn.execute(
+                "UPDATE operations SET captures=NULL WHERE consumer=?1 AND operation=?2",
+                rusqlite::params![fx.id(Role::Consumer), OP],
+            )
+            .unwrap();
+            conn.execute("UPDATE artifacts SET status='capturing',descriptor=NULL,source=NULL,width=NULL,height=NULL WHERE consumer=?1 AND operation=?2",rusqlite::params![fx.id(Role::Consumer),OP]).unwrap();
+            Ok(())
+        },
+    );
+    assert!(result
+        .unwrap_err()
+        .to_string()
+        .contains("injected lifecycle crash"));
+    assert!(fx.root.join("upgrade-pending/upgrade.json").is_file());
+    assert!(std::path::Path::new(&original).is_file());
+    let reopened = Store::open(fx.profile.path().join("service-state"), Limits::default()).unwrap();
+    assert!(std::path::Path::new(&original).is_file(), "Store startup collected retained preparation before forward journal recovery could grant it");
+    super::recover(&fx.root).unwrap();
+    let installed = fx.installed(Role::Consumer).unwrap();
+    let current = PackageGeneration {
+        package_id: installed.manifest.id.clone(),
+        digest: installed.digest,
+        incarnation: 2,
+    };
+    let caller =
+        super::super::service_bridge::recovery_caller(&reopened, &installed.manifest, &current, OP)
+            .unwrap();
+    assert_eq!(
+        reopened.capture(&caller, OP, spec).unwrap()[0]
+            .artifact
+            .sha256,
+        captured[0].artifact.sha256
+    );
+}
+
+#[test]
+fn ninth_compatible_upgrade_collects_orphaned_and_cancelled_preparations() {
+    use crate::service_state::job::JobState;
+    for with_cancelled_job in [false, true] {
+        let fx = Fixture::new(if with_cancelled_job {
+            "ninth-cancelled-prep"
+        } else {
+            "ninth-orphan-prep"
+        });
+        if with_cancelled_job {
+            fx.present(JobState::Cancelled);
+        }
+        let input = fx.profile.path().join("input.png");
+        image::RgbaImage::from_pixel(2, 3, image::Rgba([12, 34, 56, 255]))
+            .save(&input)
+            .unwrap();
+        let captured = fx
+            .store
+            .capture(
+                &fx.generation(Role::Consumer),
+                OP,
+                vec![CaptureInput {
+                    path: input.to_string_lossy().into(),
+                    expected_digest: None,
+                }],
+            )
+            .unwrap();
+        let original = fx
+            .store
+            .read(
+                &fx.generation(Role::Consumer),
+                fx.id(Role::Consumer),
+                OP,
+                &captured[0].artifact,
+            )
+            .unwrap()
+            .path;
+        let upgraded = upgrade(
+            &Profile {
+                root: &fx.root,
+                store: &fx.store,
+            },
+            &fx.next[Role::Consumer as usize],
+            &|_, _, _| Ok(()),
+        )
+        .unwrap();
+        assert!(!std::path::Path::new(&original).exists());
+        let current = PackageGeneration {
+            package_id: upgraded.manifest.id,
+            digest: upgraded.digest,
+            incarnation: 2,
+        };
+        assert!(!fx.store.adopt_preparation(&current, OP).unwrap());
+    }
+}
+
 impl Fixture {
     fn present(&self, state: crate::service_state::job::JobState) {
         use crate::service_state::job::*;

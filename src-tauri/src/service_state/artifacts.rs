@@ -899,6 +899,7 @@ impl Store {
             }
             return Ok(cached);
         }
+        self.restart_retained_capture(caller, op, &spec)?;
         // Open once and reserve the observed lengths before reading any image bytes.
         let mut files = Vec::new();
         let mut total = 0u64;
@@ -1002,6 +1003,52 @@ impl Store {
             let _ = self.release_unaccepted(caller, op);
         }
         result
+    }
+    /// A crash before the capture receipt left no immutable input snapshot.
+    /// Compatible recovery may retry the original spec only once its old IO
+    /// owners have gone; completed snapshots never enter this path.
+    fn restart_retained_capture(
+        &self,
+        caller: &PackageGeneration,
+        op: &str,
+        spec: &str,
+    ) -> Result<()> {
+        let conn = self.connect()?;
+        if !self.preparation_retained_in(&conn, &caller.package_id, op)? {
+            return Ok(());
+        }
+        let incomplete: bool = conn.query_row("SELECT EXISTS(SELECT 1 FROM operations WHERE consumer=?1 AND operation=?2 AND admission IS NULL AND phase='reserved' AND captures IS NULL AND capture_spec=?3 AND owner=?4)",params![caller.package_id,op,spec,encode(caller)?],|r|r.get(0)).map_err(sql)?;
+        if !incomplete {
+            return Ok(());
+        }
+        let mut query = conn
+            .prepare(
+                "SELECT handle FROM artifacts WHERE consumer=?1 AND operation=?2 AND kind='input'",
+            )
+            .map_err(sql)?;
+        let handles = query
+            .query_map(params![caller.package_id, op], |r| r.get::<_, String>(0))
+            .map_err(sql)?
+            .collect::<std::result::Result<Vec<_>, _>>()
+            .map_err(sql)?;
+        drop(query);
+        drop(conn);
+        let leases = handles
+            .iter()
+            .map(|handle| self.lease(handle))
+            .collect::<Result<Vec<_>>>()?;
+        let restarted = self.transaction(|tx| {
+            Self::generation_admitted(tx, caller)?;
+            if !self.preparation_retained_in(tx, &caller.package_id, op)? { return Ok(false); }
+            let changed = tx.execute("DELETE FROM operations WHERE consumer=?1 AND operation=?2 AND admission IS NULL AND phase='reserved' AND captures IS NULL AND capture_spec=?3 AND owner=?4",params![caller.package_id,op,spec,encode(caller)?]).map_err(sql)? > 0;
+            if changed { tx.execute("UPDATE artifacts SET status='released' WHERE consumer=?1 AND operation=?2 AND kind='input'",params![caller.package_id,op]).map_err(sql)?; }
+            Ok(changed)
+        })?;
+        drop(leases);
+        if restarted {
+            self.collect_released(&caller.package_id, op)?;
+        }
+        Ok(())
     }
     pub fn stage(
         &self,
@@ -1478,6 +1525,9 @@ impl Store {
                 if Self::preparation_owner(tx, &owner.package_id, &op)?.as_ref() != Some(owner) {
                     return Ok(false);
                 }
+                if self.preparation_retained_in(tx, &owner.package_id, &op)? {
+                    return Ok(false);
+                }
                 if let Some(mut a) = Self::record(tx, &owner.package_id, &op)? {
                     a.phase = AdmissionPhase::Released;
                     a.disposition = Some("never_forwarded".into());
@@ -1533,6 +1583,7 @@ impl Store {
             .collect::<Result<Vec<_>>>();
         if let Ok(leases) = leases {
             let changed = self.transaction(|tx| {
+                if self.live_preparation_job_in(tx, &owner.package_id, op)? { return Ok(false); }
                 Ok(tx
                     .execute(
                         "UPDATE operations SET phase='released' WHERE consumer=?1 AND operation=?2 AND phase='reserved' AND admission IS NULL AND captures IS NULL",

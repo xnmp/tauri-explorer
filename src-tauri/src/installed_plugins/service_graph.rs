@@ -105,6 +105,33 @@ pub(super) fn provider_recovers(
         })
 }
 
+/// Before service admission the consumer has not selected a durable target.
+/// Preserve its preparation only when every original declared contract still
+/// exists; lifecycle supplies the original manifest rather than guessing from
+/// a presentation kind or the current phase.
+pub(super) fn replacement_preserves_contracts(previous: &Manifest, next: &Manifest) -> bool {
+    previous.id == next.id
+        && previous.sdk_version >= 3
+        && next.sdk_version >= 3
+        && previous.service_dependencies.iter().all(|old| {
+            next.service_dependencies.iter().any(|new| {
+                old.package_id == new.package_id
+                    && old.service_id == new.service_id
+                    && old.major == new.major
+            })
+        })
+        && previous.services.iter().all(|old| {
+            next.services.iter().any(|new| {
+                old.id == new.id
+                    && old.major == new.major
+                    && old
+                        .methods
+                        .iter()
+                        .all(|method| new.methods.contains(method))
+            })
+        })
+}
+
 /// Required consumers of removed service contracts follow uninstall semantics
 /// during replacement; compatible consumers remain enabled.
 pub(super) fn replacement_dependents(entries: &[Installed], next: &Installed) -> Vec<String> {

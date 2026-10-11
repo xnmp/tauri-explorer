@@ -193,6 +193,30 @@ impl Drop for StatusWorker {
 pub(super) fn schedule_status(broker: Arc<Broker>, record: JobRecord) {
     schedule_reconcile(Some(broker), record);
 }
+/// Lifecycle may adopt a preparation while this callback holds an older job
+/// snapshot. Validate against the same durable row returned by adoption,
+/// before invoking a consumer control or applying its receipt.
+pub(super) fn recovery_job(
+    store: &Store,
+    manifest: &super::package::Manifest,
+    current: &PackageGeneration,
+    record: &JobRecord,
+) -> Result<JobRecord, AppError> {
+    let caller =
+        super::service_bridge::recovery_caller(store, manifest, current, &record.operation_id)?;
+    let recovered = store
+        .job(&record.job_key)?
+        .ok_or_else(|| error("Background operation is no longer retained"))?;
+    if caller.package_id != recovered.owner.package_id
+        || caller.digest != recovered.owner.digest
+        || recovered.operation_id != record.operation_id
+        || recovered.job_id != record.job_id
+    {
+        return Err(error("Consumer package changed"));
+    }
+    Ok(recovered)
+}
+
 fn schedule_reconcile(broker: Option<Arc<Broker>>, record: JobRecord) {
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
     let workers = STATUS_WORKERS.get_or_init(Default::default);
@@ -219,19 +243,12 @@ fn schedule_reconcile(broker: Option<Arc<Broker>>, record: JobRecord) {
                     }
                     CallLease::acquire_method(&record.owner.package_id, "jobs.status")?
                 };
-                let current = broker.generation();
-                if current.package_id != record.owner.package_id
-                    || super::service_bridge::recovery_caller(
-                        service_host::store()?,
-                        broker.manifest(),
-                        &current,
-                        &record.operation_id,
-                    )?
-                    .digest
-                        != record.owner.digest
-                {
-                    return Err(error("Consumer package changed"));
-                }
+                let record = recovery_job(
+                    service_host::store()?,
+                    broker.manifest(),
+                    &broker.generation(),
+                    &record,
+                )?;
                 let status =
                     broker.call("jobs.status", json!({"operationId":record.operation_id}))?;
                 if status.is_null() {
@@ -442,19 +459,12 @@ pub(super) fn cancel(key: &str) -> Result<Value, AppError> {
         ));
     }
     let broker = backend::ensure(&record.owner.package_id)?;
-    if super::service_bridge::recovery_caller(
+    let record = recovery_job(
         service_host::store()?,
         broker.manifest(),
         &broker.generation(),
-        &record.operation_id,
-    )?
-    .digest
-        != record.owner.digest
-    {
-        return Err(error(
-            "Enable the original consumer package before cancelling this operation",
-        ));
-    }
+        &record,
+    )?;
     let _lease = {
         let _gate = super::read_lifecycle()?;
         if !broker.is_active() {
@@ -487,19 +497,12 @@ pub(super) fn resume(key: &str) -> Result<Value, AppError> {
         return Err(error("Automatic recovery was explicitly stopped; its unknown execution evidence remains retained"));
     }
     let broker = backend::ensure(&record.owner.package_id)?;
-    if super::service_bridge::recovery_caller(
+    let record = recovery_job(
         service_host::store()?,
         broker.manifest(),
         &broker.generation(),
-        &record.operation_id,
-    )?
-    .digest
-        != record.owner.digest
-    {
-        return Err(error(
-            "Enable the original consumer package before recovering this operation",
-        ));
-    }
+        &record,
+    )?;
     let _lease = {
         let _gate = super::read_lifecycle()?;
         if !broker.is_active() {
@@ -600,7 +603,8 @@ fn settle(store: &Store, record: &JobRecord) -> Result<JobRecord, AppError> {
 fn admitted(store: &Store, record: &JobRecord) -> Result<bool, AppError> {
     Ok(store
         .get(&record.owner.package_id, &record.operation_id)?
-        .is_some())
+        .is_some()
+        || store.preparation_retained(&record.owner.package_id, &record.operation_id)?)
 }
 /// Settles a job its consumer authoritatively does not know. The consumer
 /// first fences the original operation ID, so no late or repeated start can
@@ -885,5 +889,31 @@ mod tests {
         assert!(!store.busy("xnmp.trace-explorer").unwrap());
         // Settling again is a no-op, never a second terminal transition.
         assert!(settle_unsent(&store, &record).unwrap().is_none());
+    }
+
+    #[test]
+    fn a_compatible_retained_preparation_is_not_settled_from_missing_consumer_status() {
+        let (_dir, store, record) = fixture();
+        store
+            .abandon_package_work_deferred(
+                &record.owner.package_id,
+                |_| false,
+                |_, _| Some("d".repeat(64)),
+            )
+            .unwrap();
+        let mut calls = vec![];
+        assert!(
+            settle_unaccepted(&store, &record, &Value::Null, &mut unknown(&mut calls))
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            calls.is_empty(),
+            "unknown status cannot cancel retained preparation custody"
+        );
+        assert_eq!(
+            store.job(&record.job_key).unwrap().unwrap().state,
+            JobState::Accepting
+        );
     }
 }

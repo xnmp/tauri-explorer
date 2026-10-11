@@ -311,7 +311,15 @@ pub(super) fn recover(root: &Path) -> Result<(), AppError> {
                         .join("service-state"),
                     crate::service_state::model::Limits::default(),
                 )?;
-                reconcile_replacement(&store, candidate)?;
+                reconcile_replacement(
+                    &store,
+                    candidate,
+                    upgrade
+                        .previous
+                        .iter()
+                        .find(|p| p.manifest.id == upgrade.package_id)
+                        .map(|p| &p.manifest),
+                )?;
                 for id in service_graph::replacement_dependents(&upgrade.previous, candidate) {
                     super::service_bridge::signal_removal_cancellations(&store, &id, |_| false)?;
                     report_consumer_removal(&store, &id)?;
@@ -448,27 +456,37 @@ fn remove_or_disable(profile: &Profile, id: &str, uninstall: bool) -> Result<(),
     checkpoint("removal-intent")?;
     finish_removal(profile.root, profile.store, &removal)
 }
-fn reconcile_replacement(store: &Store, candidate: &package::Installed) -> Result<(), AppError> {
-    let originals = store.package_operations(&candidate.manifest.id)?;
+fn reconcile_replacement(
+    store: &Store,
+    candidate: &package::Installed,
+    previous: Option<&package::Manifest>,
+) -> Result<(), AppError> {
+    let compatible = previous.is_some_and(|old| {
+        service_graph::replacement_preserves_contracts(old, &candidate.manifest)
+    });
     super::service_bridge::signal_removal_cancellations(store, &candidate.manifest.id, |a| {
         super::ai_operations::replacement_recovers(&candidate.manifest, a)
     })?;
     super::ai_operations::reset_replacement_reconciliation(store, &candidate.manifest.id)?;
-    for job in store.abandon_package_operations_deferred(&candidate.manifest.id, |a| {
-        super::ai_operations::replacement_recovers(&candidate.manifest, a)
-    })? {
+    for job in store.abandon_package_work_deferred(
+        &candidate.manifest.id,
+        |a| super::ai_operations::replacement_recovers(&candidate.manifest, a),
+        |owner, _| {
+            (compatible && owner.package_id == candidate.manifest.id)
+                .then(|| candidate.digest.clone())
+        },
+    )? {
         backend::release_job(&job.owner, job.job_id);
         backend::emit_job_event(serde_json::json!({"type":"updated","job":job}));
     }
     checkpoint("replacement-abandoned")?;
     store.gc()?;
     store.sweep_host_spools(|_| true)?;
-    if !originals.is_empty()
-        && originals
-            .iter()
-            .all(|a| !super::ai_operations::replacement_recovers(&candidate.manifest, a))
-    {
-        store.release_package_spools(&candidate.manifest.id)?;
+    if !compatible {
+        // A package may have successful custody-less replies without a single
+        // admission. Incompatible replacement always collects that custody;
+        // only independently compatible admitted originals are exempt.
+        store.release_unretained_package_spools(&candidate.manifest.id)?;
     }
     Ok(())
 }
@@ -668,7 +686,15 @@ fn install_with(
         upgrade.phase = Phase::Published;
         write_marker(&snapshot, &upgrade)?;
         checkpoint("upgrade-published")?;
-        reconcile_replacement(&store, &installed)?;
+        reconcile_replacement(
+            &store,
+            &installed,
+            upgrade
+                .previous
+                .iter()
+                .find(|p| p.manifest.id == upgrade.package_id)
+                .map(|p| &p.manifest),
+        )?;
         for id in &disabled {
             super::service_bridge::signal_removal_cancellations(&store, id, |_| false)?;
             report_consumer_removal(&store, id)?;

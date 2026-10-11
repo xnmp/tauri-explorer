@@ -221,6 +221,129 @@ mod tests {
         );
     }
     #[test]
+    fn missing_recorded_empty_stderr_recovers_verified_stdout_after_crash() {
+        let (root, store) = store();
+        let (_, path, writer) = store
+            .reserve_pinned_host_spool(&owner(), "host:missing-empty", 1024)
+            .unwrap();
+        store
+            .write_pinned_host_reply(&owner(), &writer, b"sole paid original", b"", 0)
+            .unwrap();
+        // The intent and stdout survived; the host died before creating stderr.
+        fs::remove_file(path.join("stderr")).unwrap();
+        drop(writer);
+        drop(store);
+        let reopened = Store::open(root.path().join("service-state"), Limits::default()).unwrap();
+        let reply = reopened
+            .host_spool_result(&owner().package_id, "host:missing-empty")
+            .unwrap()
+            .expect("verified original was collected for a missing empty stream");
+        assert_eq!(
+            fs::read(reply["stdout"].as_str().unwrap()).unwrap(),
+            b"sole paid original"
+        );
+        assert_eq!(fs::read(reply["stderr"].as_str().unwrap()).unwrap(), b"");
+        reopened.sweep_host_spools(|_| false).unwrap();
+        assert_eq!(charged(&reopened), b"sole paid original".len() as u64);
+    }
+
+    #[test]
+    fn verified_stdout_survives_unknown_settlement_when_nonempty_stderr_is_lost() {
+        let (_root, store) = store();
+        let consumer = "fixture.sibling-consumer";
+        let operation = "op-sibling";
+        forwarded(&store, consumer, operation);
+        let (_, path, writer) = store
+            .reserve_pinned_host_spool_with_custody(
+                &owner(),
+                "host:sibling",
+                64 * 1024,
+                Some((consumer, operation)),
+            )
+            .unwrap();
+        let original = include_bytes!("../../../static/favicon.png");
+        store
+            .write_pinned_host_reply(&owner(), &writer, original, b"nonempty diagnostic", 0)
+            .unwrap();
+        fs::remove_file(path.join("stderr")).unwrap();
+        drop(writer);
+        let receipt = json!({"version":1,"operationId":operation,"requestFingerprint":"d".repeat(64),"provider":{"packageId":owner().package_id,"serviceId":"image-generation","major":1},"revision":1,"execution":{"state":"unknown","error":{"code":"interrupted","message":"Host reply was lost","correlationId":null}},"delivery":{"state":"none"}});
+        store
+            .observe_receipt(&owner(), consumer, operation, 1, receipt)
+            .unwrap();
+        let _ = store.auto_settle_operation(consumer, operation, true);
+        store.sweep_host_spools(|_| false).unwrap();
+        assert_eq!(
+            fs::read(path.join("stdout")).unwrap(),
+            original,
+            "Unknown settlement collected verified stdout because stderr was incomplete"
+        );
+        assert!(store.has_bound_host_output(consumer, operation).unwrap());
+        assert!(
+            store
+                .has_removal_host_image_at(&store.connect().unwrap(), consumer, operation)
+                .unwrap(),
+            "explicit removal lost the original-image notice evidence"
+        );
+        assert!(
+            !matches!(
+                store.host_spool_result(&owner().package_id, "host:sibling"),
+                Ok(Some(_))
+            ),
+            "an incomplete diagnostic stream was advertised as a full reply"
+        );
+    }
+
+    #[test]
+    fn invalid_sibling_stream_never_authorizes_collecting_verified_bytes() {
+        for bad_stream in ["stdout", "stderr"] {
+            for missing in [false, true] {
+                let (root, store) = store();
+                let (_, path, writer) = store
+                    .reserve_pinned_host_spool(&owner(), "host:independent", 1024)
+                    .unwrap();
+                store
+                    .write_pinned_host_reply(
+                        &owner(),
+                        &writer,
+                        b"paid image",
+                        b"paid diagnostic",
+                        0,
+                    )
+                    .unwrap();
+                if missing {
+                    fs::remove_file(path.join(bad_stream)).unwrap();
+                } else {
+                    fs::write(path.join(bad_stream), b"partial").unwrap();
+                }
+                let (good_stream, expected) = if bad_stream == "stdout" {
+                    ("stderr", b"paid diagnostic".as_slice())
+                } else {
+                    ("stdout", b"paid image".as_slice())
+                };
+                drop(writer);
+                drop(store);
+                let reopened =
+                    Store::open(root.path().join("service-state"), Limits::default()).unwrap();
+                reopened.sweep_host_spools(|_| false).unwrap();
+                assert_eq!(
+                    fs::read(path.join(good_stream)).unwrap(),
+                    expected,
+                    "valid {good_stream} was discarded because {bad_stream} did not validate"
+                );
+                assert!(
+                    !matches!(
+                        reopened.host_spool_result(&owner().package_id, "host:independent"),
+                        Ok(Some(_))
+                    ),
+                    "damaged reply was advertised as complete"
+                );
+                assert!(charged(&reopened) >= expected.len() as u64);
+            }
+        }
+    }
+
+    #[test]
     fn reserved_completion_intent_recovers_only_exact_original_bytes() {
         for damaged in 0..3 {
             let (root, store) = store();
@@ -394,12 +517,7 @@ mod tests {
         let operation = "op-original";
         forwarded(&store, consumer, operation);
         let (original, original_path) = store
-            .reserve_host_spool_with_custody(
-                &owner(),
-                "host:1",
-                1024,
-                Some((consumer, operation)),
-            )
+            .reserve_host_spool_with_custody(&owner(), "host:1", 1024, Some((consumer, operation)))
             .unwrap();
         fs::write(original_path.join("stdout"), b"sole paid original").unwrap();
         fs::write(original_path.join("stderr"), []).unwrap();
@@ -1095,6 +1213,47 @@ pub(crate) struct HostSpoolWriter<'a> {
 }
 
 impl Store {
+    fn sync_host_spool_file(&self, path: &Path) -> Result<()> {
+        crate::durable_dir::sync_file(path)?;
+        #[cfg(test)]
+        self.test_fs.file_synced(path);
+        Ok(())
+    }
+
+    fn observe_host_spool_mutation(&self, path: &Path) {
+        #[cfg(test)]
+        self.test_fs.before_mutation(path);
+        #[cfg(not(test))]
+        let _ = path;
+    }
+
+    fn write_host_stream_observed(
+        &self,
+        path: &Path,
+        bytes: &[u8],
+        first: u8,
+        checkpoint: &mut impl FnMut(u8) -> Result<()>,
+    ) -> Result<()> {
+        self.observe_host_spool_mutation(path);
+        let mut options = fs::OpenOptions::new();
+        options.write(true).create(true).truncate(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(0o600);
+        }
+        let mut file = options.open(path)?;
+        checkpoint(first)?;
+        let middle = bytes.len() / 2;
+        file.write_all(&bytes[..middle])?;
+        checkpoint(first + 1)?;
+        file.write_all(&bytes[middle..])?;
+        file.flush()?;
+        checkpoint(first + 2)?;
+        self.sync_host_spool_file(path)?;
+        checkpoint(first + 3)
+    }
+
     fn sync_host_spool_directory(&self, path: &Path) -> Result<()> {
         #[cfg(test)]
         self.test_fs.sync(path)?;
@@ -1105,7 +1264,7 @@ impl Store {
     fn sync_complete_host_spool(&self, handle: &str) -> Result<()> {
         let directory = self.host_spool_path(handle)?;
         for name in ["stdout", "stderr"] {
-            crate::durable_dir::sync_file(&directory.join(name))?;
+            self.sync_host_spool_file(&directory.join(name))?;
         }
         // Repair old completed-pending rows as well as an interrupted manifest
         // publication. A status plus bounded durable bytes is still custody.
@@ -1115,7 +1274,7 @@ impl Store {
                 .ok_or_else(|| reject("host reply is incomplete"))?;
             self.write_host_completion(&directory, "completed.json", &completion)?;
         }
-        crate::durable_dir::sync_file(&directory.join("completed.json"))?;
+        self.sync_host_spool_file(&directory.join("completed.json"))?;
         self.sync_host_spool_directory(&directory)?;
         self.sync_host_spool_directory(directory.parent().unwrap())
     }
@@ -1126,6 +1285,16 @@ impl Store {
         name: &str,
         completion: &Completion,
     ) -> Result<()> {
+        self.write_host_completion_observed(directory, name, completion, &mut |_| Ok(()))
+    }
+
+    fn write_host_completion_observed(
+        &self,
+        directory: &Path,
+        name: &str,
+        completion: &Completion,
+        checkpoint: &mut impl FnMut(u8) -> Result<()>,
+    ) -> Result<()> {
         if name == "pending.json" {
             // First-publication evidence is immutable and keeps its name even
             // when flushing fails. A temporary-file Drop would delete the sole
@@ -1133,6 +1302,7 @@ impl Store {
             let raw = serde_json::to_vec(completion)
                 .map_err(|_| reject("host output manifest serialization failed"))?;
             let target = directory.join(name);
+            self.observe_host_spool_mutation(&target);
             let mut options = fs::OpenOptions::new();
             options.write(true).create_new(true);
             #[cfg(unix)]
@@ -1142,8 +1312,13 @@ impl Store {
             }
             match options.open(&target) {
                 Ok(mut file) => {
-                    file.write_all(&raw)?;
+                    checkpoint(2)?;
+                    let middle = raw.len() / 2;
+                    file.write_all(&raw[..middle])?;
+                    checkpoint(3)?;
+                    file.write_all(&raw[middle..])?;
                     file.flush()?;
+                    checkpoint(4)?;
                 }
                 Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
                     if spool_bytes(&target, 4096)? != raw {
@@ -1152,19 +1327,48 @@ impl Store {
                 }
                 Err(e) => return Err(e.into()),
             }
-            crate::durable_dir::sync_file(&target)?;
-            return self.sync_host_spool_directory(directory);
+            self.sync_host_spool_file(&target)?;
+            checkpoint(5)?;
+            self.sync_host_spool_directory(directory)?;
+            return checkpoint(6);
         }
         let mut stage = tempfile::NamedTempFile::new_in(directory)?;
-        serde_json::to_writer(&mut stage, completion)
+        #[cfg(test)]
+        self.test_fs.created(stage.path());
+        if let Err(cause) = checkpoint(1) {
+            let _ = stage.keep();
+            return Err(cause);
+        }
+        let raw = serde_json::to_vec(completion)
             .map_err(|_| reject("host output manifest serialization failed"))?;
+        let middle = raw.len() / 2;
+        stage.write_all(&raw[..middle])?;
+        if let Err(cause) = checkpoint(2) {
+            let _ = stage.keep();
+            return Err(cause);
+        }
+        stage.write_all(&raw[middle..])?;
         stage.flush()?;
-        crate::durable_dir::sync_file(stage.path())?;
+        if let Err(cause) = checkpoint(3) {
+            let _ = stage.keep();
+            return Err(cause);
+        }
+        self.sync_host_spool_file(stage.path())?;
+        if let Err(cause) = checkpoint(4) {
+            let _ = stage.keep();
+            return Err(cause);
+        }
+        #[cfg(test)]
+        self.test_fs
+            .before_rename(stage.path(), &directory.join(name));
         stage
             .persist(directory.join(name))
             .map_err(|e| crate::error::AppError::from(e.error))?;
-        crate::durable_dir::sync_file(&directory.join(name))?;
-        self.sync_host_spool_directory(directory)
+        checkpoint(5)?;
+        self.sync_host_spool_file(&directory.join(name))?;
+        checkpoint(6)?;
+        self.sync_host_spool_directory(directory)?;
+        checkpoint(7)
     }
     fn host_spool_path(&self, handle: &str) -> Result<PathBuf> {
         if handle.len() != 48
@@ -1264,6 +1468,7 @@ impl Store {
             Ok(())
         })?;
         if let Err(cause) = (|| {
+            self.observe_host_spool_mutation(&path);
             fs::create_dir(&path).map_err(|_| reject("host output directory creation failed"))?;
             private_directory(&path)?;
             self.sync_host_spool_directory(path.parent().unwrap())?;
@@ -1325,10 +1530,7 @@ impl Store {
             .collect::<std::result::Result<Vec<_>, _>>()
             .map_err(sql)?;
         for handle in handles {
-            if self
-                .completion_evidence(&handle)?
-                .is_some_and(|c| c.status == 0 && c.stdout_length > 0)
-            {
+            if self.has_verified_successful_stdout(&handle)? {
                 let bytes = spool_bytes(&self.host_spool_path(&handle)?.join("stdout"), MAX_SPOOL)?;
                 if super::artifacts::image(&bytes, true).is_ok() {
                     return Ok(true);
@@ -1354,10 +1556,7 @@ impl Store {
             .collect::<std::result::Result<Vec<_>, _>>()
             .map_err(sql)?;
         for handle in handles {
-            if self
-                .completion_evidence(&handle)?
-                .is_some_and(|completion| completion.status == 0 && completion.stdout_length > 0)
-            {
+            if self.has_verified_successful_stdout(&handle)? {
                 return Ok(true);
             }
         }
@@ -1376,10 +1575,7 @@ impl Store {
             .collect::<std::result::Result<Vec<_>, _>>()
             .map_err(sql)?;
         for handle in handles {
-            if self
-                .completion_evidence(&handle)?
-                .is_some_and(|c| c.status == 0 && c.stdout_length > 0)
-            {
+            if self.has_verified_successful_stdout(&handle)? {
                 return Ok(true);
             }
         }
@@ -1410,10 +1606,7 @@ impl Store {
             .collect::<std::result::Result<Vec<_>, _>>()
             .map_err(sql)?;
         for handle in handles {
-            if self
-                .completion_evidence(&handle)?
-                .is_some_and(|c| c.status == 0 && c.stdout_length > 0)
-            {
+            if self.has_verified_successful_stdout(&handle)? {
                 return Ok(true);
             }
         }
@@ -1491,7 +1684,7 @@ impl Store {
         }
         let path = self.host_spool_path(&writer.handle)?;
         for name in ["stdout", "stderr"] {
-            crate::durable_dir::sync_file(&path.join(name))?;
+            self.sync_host_spool_file(&path.join(name))?;
         }
         self.sync_host_spool_directory(&path)?;
         self.sync_host_spool_directory(path.parent().unwrap())
@@ -1503,10 +1696,20 @@ impl Store {
         writer: &HostSpoolWriter<'_>,
         status: i64,
     ) -> Result<()> {
+        self.publish_pinned_host_manifest_observed(owner, writer, status, |_| Ok(()))
+    }
+
+    pub(crate) fn publish_pinned_host_manifest_observed(
+        &self,
+        owner: &PackageGeneration,
+        writer: &HostSpoolWriter<'_>,
+        status: i64,
+        mut checkpoint: impl FnMut(u8) -> Result<()>,
+    ) -> Result<()> {
         if !std::ptr::eq(self, writer.store) {
             return Err(reject("host output writer belongs to another store"));
         }
-        self.publish_host_spool_manifest(owner, &writer.handle, status)
+        self.publish_host_spool_manifest_observed(owner, &writer.handle, status, &mut checkpoint)
     }
 
     pub fn commit_pinned_host_seal(
@@ -1532,7 +1735,7 @@ impl Store {
         // A pending commit never advertises a reply held only in memory.
         let path = self.host_spool_path(&writer.handle)?;
         for name in ["stdout", "stderr"] {
-            crate::durable_dir::sync_file(&path.join(name))?;
+            self.sync_host_spool_file(&path.join(name))?;
         }
         self.sync_host_spool_directory(&path)?;
         let completion = completion_for(
@@ -1556,6 +1759,20 @@ impl Store {
         stdout: &[u8],
         stderr: &[u8],
         status: i64,
+    ) -> Result<()> {
+        self.write_pinned_host_reply_observed(owner, writer, stdout, stderr, status, |_| Ok(()))
+    }
+
+    /// The ordinary persistence path, observed at individual filesystem and
+    /// transaction boundaries by crash tests. Observers never supply reply IO.
+    pub(crate) fn write_pinned_host_reply_observed(
+        &self,
+        owner: &PackageGeneration,
+        writer: &HostSpoolWriter<'_>,
+        stdout: &[u8],
+        stderr: &[u8],
+        status: i64,
+        mut checkpoint: impl FnMut(u8) -> Result<()>,
     ) -> Result<()> {
         if !std::ptr::eq(self, writer.store) {
             return Err(reject("host output writer belongs to another store"));
@@ -1587,18 +1804,29 @@ impl Store {
             Ok(true) => (),
             Err(cause) => log::warn!("Host reply intent deferred to its file witness: {cause}"),
         }
-        let metadata = self.write_host_completion(&path, "pending.json", &completion);
-        fs::write(path.join("stdout"), stdout)?;
-        fs::write(path.join("stderr"), stderr)?;
-        for name in ["stdout", "stderr"] {
-            crate::durable_dir::sync_file(&path.join(name))?;
+        checkpoint(1)?;
+        let mut observer_failed = false;
+        let metadata =
+            self.write_host_completion_observed(&path, "pending.json", &completion, &mut |point| {
+                let result = checkpoint(point);
+                observer_failed |= result.is_err();
+                result
+            });
+        // Metadata IO can fall back to the ledger, but a stopped execution
+        // must not perform another mutation beyond its observed crash point.
+        if observer_failed {
+            return metadata;
         }
+        self.write_host_stream_observed(&path.join("stdout"), stdout, 7, &mut checkpoint)?;
+        self.write_host_stream_observed(&path.join("stderr"), stderr, 11, &mut checkpoint)?;
         // Retry a refused witness barrier before the separate ledger attempt.
         // Its named evidence survives both metadata and transaction failures.
-        let witness_barrier = crate::durable_dir::sync_file(&path.join("pending.json"))
-            .map_err(crate::error::AppError::from);
+        let witness_barrier = self.sync_host_spool_file(&path.join("pending.json"));
+        checkpoint(15)?;
         self.sync_host_spool_directory(&path)?;
+        checkpoint(16)?;
         self.sync_host_spool_directory(path.parent().unwrap())?;
+        checkpoint(17)?;
         // A metadata publication failure cannot erase already durable bytes.
         // Persist the legacy-compatible completion witness before returning
         // that error, so a healthy sweep cannot misclassify this as abandoned.
@@ -1627,6 +1855,16 @@ impl Store {
         handle: &str,
         status: i64,
     ) -> Result<()> {
+        self.publish_host_spool_manifest_observed(owner, handle, status, &mut |_| Ok(()))
+    }
+
+    fn publish_host_spool_manifest_observed(
+        &self,
+        owner: &PackageGeneration,
+        handle: &str,
+        status: i64,
+        checkpoint: &mut impl FnMut(u8) -> Result<()>,
+    ) -> Result<()> {
         let (raw, state, limit): (String, String, i64) = self
             .connect()?
             .query_row(
@@ -1646,12 +1884,13 @@ impl Store {
             return Err(reject("host output exceeds reservation"));
         }
         for name in ["stdout", "stderr"] {
-            crate::durable_dir::sync_file(&path.join(name))?;
+            self.sync_host_spool_file(&path.join(name))?;
         }
         let completion = completion_for(status, &stdout, &stderr);
-        self.write_host_completion(&path, "completed.json", &completion)?;
+        self.write_host_completion_observed(&path, "completed.json", &completion, checkpoint)?;
         self.sync_host_spool_directory(&path)?;
-        self.sync_host_spool_directory(path.parent().unwrap())
+        self.sync_host_spool_directory(path.parent().unwrap())?;
+        checkpoint(8)
     }
 
     fn commit_host_spool_seal(&self, owner: &PackageGeneration, handle: &str) -> Result<()> {
@@ -1671,19 +1910,128 @@ impl Store {
     fn validate_host_completion(&self, path: &Path, raw: &[u8]) -> Result<Completion> {
         let c: Completion =
             serde_json::from_slice(raw).map_err(|_| reject("invalid host output manifest"))?;
+        let mut complete = true;
         for (name, length, sha) in [
             ("stdout", c.stdout_length, &c.stdout_sha256),
             ("stderr", c.stderr_length, &c.stderr_sha256),
         ] {
-            if length > MAX_SPOOL {
-                return Err(reject("invalid host output length"));
-            }
-            let bytes = spool_bytes(&path.join(name), MAX_SPOOL)?;
-            if bytes.len() as u64 != length || hex::encode(Sha256::digest(&bytes)) != *sha {
-                return Err(reject("host output no longer matches completion"));
-            }
+            // Each stream stands on its own witness. Only a recorded empty
+            // stream can be reconstructed; no missing nonempty bytes are guessed.
+            complete &= self.host_stream_matches(path, name, length, sha, true)?;
+        }
+        if !complete {
+            return Err(reject("host output no longer matches completion"));
         }
         Ok(c)
+    }
+
+    fn host_stream_matches(
+        &self,
+        directory: &Path,
+        name: &str,
+        length: u64,
+        sha: &str,
+        repair_empty: bool,
+    ) -> Result<bool> {
+        if length > MAX_SPOOL {
+            return Ok(false);
+        }
+        let path = directory.join(name);
+        let bytes = match spool_bytes(&path, MAX_SPOOL) {
+            Ok(bytes) => bytes,
+            Err(crate::error::AppError::NotFound(_))
+                if repair_empty && length == 0 && sha == hex::encode(Sha256::digest([])) =>
+            {
+                self.observe_host_spool_mutation(&path);
+                let mut options = fs::OpenOptions::new();
+                options.write(true).create_new(true);
+                #[cfg(unix)]
+                {
+                    use std::os::unix::fs::OpenOptionsExt;
+                    options.mode(0o600);
+                }
+                options.open(&path)?;
+                self.sync_host_spool_file(&path)?;
+                self.sync_host_spool_directory(directory)?;
+                Vec::new()
+            }
+            Err(crate::error::AppError::NotFound(_) | crate::error::AppError::Other(_)) => {
+                return Ok(false)
+            }
+            Err(cause) => return Err(cause),
+        };
+        Ok(bytes.len() as u64 == length && hex::encode(Sha256::digest(&bytes)) == sha)
+    }
+
+    fn recorded_host_completions(&self, handle: &str) -> Result<Vec<Completion>> {
+        let path = self.host_spool_path(handle)?;
+        let mut records = Vec::new();
+        for name in ["completed.json", "pending.json"] {
+            match spool_bytes(&path.join(name), 4096) {
+                Ok(raw) => records.push(raw),
+                Err(crate::error::AppError::NotFound(_) | crate::error::AppError::Other(_)) => (),
+                Err(cause) => return Err(cause),
+            }
+        }
+        let raw: Option<String> = self
+            .connect()?
+            .query_row(
+                "SELECT completion FROM host_spools WHERE handle=?1",
+                [handle],
+                |r| r.get(0),
+            )
+            .map_err(sql)?;
+        if let Some(raw) = raw {
+            records.push(raw.into_bytes());
+        }
+        Ok(records
+            .into_iter()
+            .filter_map(|raw| serde_json::from_slice(&raw).ok())
+            .collect())
+    }
+
+    /// Incomplete replies may still own a verified original stream. The
+    /// collector must inspect every independent identity before releasing one.
+    fn has_verified_host_stream(&self, handle: &str) -> Result<bool> {
+        let path = self.host_spool_path(handle)?;
+        for c in self.recorded_host_completions(handle)? {
+            for (name, length, sha) in [
+                ("stdout", c.stdout_length, c.stdout_sha256),
+                ("stderr", c.stderr_length, c.stderr_sha256),
+            ] {
+                if length > 0 && self.host_stream_matches(&path, name, length, &sha, false)? {
+                    return Ok(true);
+                }
+            }
+        }
+        Ok(false)
+    }
+
+    /// Successful stdout remains output custody even if a diagnostic stream
+    /// cannot be reconstructed. This does not advertise an incomplete reply.
+    fn has_verified_successful_stdout(&self, handle: &str) -> Result<bool> {
+        if self
+            .completion_evidence(handle)?
+            .is_some_and(|c| c.status == 0 && c.stdout_length > 0)
+        {
+            return Ok(true);
+        }
+        let path = self.host_spool_path(handle)?;
+        for c in self.recorded_host_completions(handle)? {
+            if c.status == 0
+                && c.stdout_length > 0
+                && self.host_stream_matches(
+                    &path,
+                    "stdout",
+                    c.stdout_length,
+                    &c.stdout_sha256,
+                    false,
+                )?
+            {
+                return Ok(true);
+            }
+        }
+        Ok(false)
     }
 
     fn host_completion(&self, handle: &str) -> Result<Option<Completion>> {
@@ -1728,9 +2076,8 @@ impl Store {
 
     fn completion_evidence(&self, handle: &str) -> Result<Option<Completion>> {
         match self.host_completion(handle) {
-            // Missing names, malformed metadata and mismatching bytes prove
-            // that this path is not a complete reply. Transient storage
-            // errors defer disposition rather than erase custody.
+            // This classifies a complete reply, never ownership of individual
+            // streams. Collection separately protects every verified stream.
             Err(crate::error::AppError::NotFound(_) | crate::error::AppError::Other(_)) => Ok(None),
             result => result,
         }
@@ -1885,6 +2232,50 @@ impl Store {
         Ok(())
     }
 
+    /// Legacy SDK 2 handles name temporary replies; modern handles can still
+    /// be released by a legacy replacement. Check durable ownership before
+    /// resolving a path so either protocol can use the same release boundary.
+    pub fn release_host_spool_if_present(&self, package: &str, handle: &str) -> Result<()> {
+        if !identity(package) {
+            return Err(reject("invalid host output owner"));
+        }
+        let exists: bool = self
+            .connect()?
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM host_spools WHERE package=?1 AND handle=?2)",
+                params![package, handle],
+                |r| r.get(0),
+            )
+            .map_err(sql)?;
+        if exists {
+            self.release_host_spool(package, handle)?;
+        }
+        Ok(())
+    }
+
+    /// An incompatible package contract releases standalone and abandoned
+    /// replies even when package_operations is empty. A multi-service upgrade
+    /// can retain a compatible admission: preserve only its original custody,
+    /// including uncertain execution that released its execution slot.
+    pub fn release_unretained_package_spools(&self, package: &str) -> Result<()> {
+        if !identity(package) {
+            return Err(reject("invalid host output owner"));
+        }
+        let conn = self.connect()?;
+        let mut query = conn.prepare("SELECT h.handle FROM host_spools h WHERE h.package=?1 AND NOT EXISTS(SELECT 1 FROM operations o WHERE o.admission IS NOT NULL AND (o.phase!='released' OR coalesce(json_extract(o.admission,'$.disposition'),'') NOT IN ('discarded','acquired','never_forwarded')) AND ((h.consumer=o.consumer AND h.operation=o.operation) OR EXISTS(SELECT 1 FROM host_spool_admissions s WHERE s.handle=h.handle AND s.consumer=o.consumer AND s.operation=o.operation)))").map_err(sql)?;
+        let handles = query
+            .query_map([package], |r| r.get::<_, String>(0))
+            .map_err(sql)?
+            .collect::<std::result::Result<Vec<_>, _>>()
+            .map_err(sql)?;
+        drop(query);
+        drop(conn);
+        for handle in handles {
+            self.release_host_spool(package, &handle)?;
+        }
+        Ok(())
+    }
+
     fn collect_host_spool(&self, handle: &str) -> Result<()> {
         let released = |conn: &rusqlite::Connection| -> Result<bool> {
             conn.query_row(
@@ -2004,6 +2395,10 @@ impl Store {
                     self.transaction(|tx|{tx.execute("UPDATE host_spools SET status='sealed',bytes=?2,process_status=?3 WHERE handle=?1 AND status!='released'",params![handle,(c.stdout_length+c.stderr_length) as i64,c.status]).map_err(sql)?;Ok(())})?;
                 }
                 Ok(None) if state == "reserved" => {
+                    match self.has_verified_host_stream(&handle) {
+                        Ok(false) => (),
+                        Ok(true) | Err(_) => continue,
+                    }
                     drop(lease);
                     self.release_host_spool(&package, &handle)?;
                     continue;

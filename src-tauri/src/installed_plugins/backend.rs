@@ -1609,10 +1609,8 @@ impl Broker {
                 }
                 "host.process.release" => {
                     if let Some(handle) = frame["params"]["handle"].as_str() {
-                        if self.installed.manifest.sdk_version >= 3 {
-                            super::service_host::store()?
-                                .release_host_spool(&self.package_id, handle)?;
-                        }
+                        super::service_host::store()?
+                            .release_host_spool_if_present(&self.package_id, handle)?;
                         self.spools
                             .lock()
                             .unwrap_or_else(|cause| cause.into_inner())

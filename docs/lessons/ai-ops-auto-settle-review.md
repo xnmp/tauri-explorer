@@ -251,3 +251,39 @@ include delayed lower/equal conflicting receipts, nonzero and unbound replies,
 and multiple consumers. Deep runs fail if any of the 80 required families has fewer than
 three observed hits, or if acknowledgment-crash never executes. A directed,
 precondition-valid campaign supplements randomized shrinking to enforce coverage.
+
+## Ninth review: independent streams and pre-admission custody, 2026-10-12
+
+A completion intent describes each stream independently. Reconstruct a missing
+stream only when its recorded length and hash prove empty contents. A damaged
+sibling cannot authorize collection of verified stdout, including through automatic
+Unknown settlement or removal classification. Full reply recovery still requires
+both streams to validate; successful verified stdout separately proves retained
+output and, when it is a valid PNG, a possible undelivered image.
+
+Process exit does not mean the reader threads ran. Retire capture by draining the
+queued-byte snapshot before closing pipes; use nonblocking reads/PeekNamedPipe so
+an escaped pipe holder cannot require future writes or a wall-clock drain deadline.
+Always join output readers rather than detaching a thread that still owns unread
+original bytes.
+
+Presentation exists before capture and service admission. Compatible lifecycle
+retention must therefore include admission=NULL preparations and pre-capture jobs.
+Durable replacement authorization covers adoption of those original IDs and input
+receipts; job controls must reload presentation after adoption. Interrupted input
+capture can retry its original spec only after old IO leases have ended. Startup
+must not collect it before pending upgrade-journal reconciliation.
+
+Broker retirement queues death recovery before preflight commits compatibility.
+Preparation cleanup must share the lifecycle action lane at its local transaction,
+including retry cleanup, while avoiding that lane during provider IO. Reverse IO
+callbacks must not create another implicit dead-preparation cleanup path.
+
+Incompatible replacement owns every package spool, including custody-less calls
+without admissions. Legacy SDK release must reach durable storage too. Selective
+mixed-contract cleanup preserves independently compatible admitted originals.
+
+Crash models need actual creation/write/flush/rename checkpoints. Count native
+work and consumer run/delivery effects independently of .start and deterministic
+output filenames. Durable acquisition proof can make acknowledgement retry
+idempotent; a file's existence cannot establish that protocol identity.

@@ -316,10 +316,12 @@ fn dispatch(broker: &Arc<Broker>, method: &str, params: Value) -> Result<Value, 
         return Err(error("Service owner disconnected before native IO"));
     }
     let store = service_host::store()?;
-    let caller = if matches!(method, "host.artifacts.read" | "host.artifacts.acquired")
-        && params["consumerPackageId"]
-            .as_str()
-            .is_none_or(|id| id == broker.manifest().id)
+    let caller = if matches!(
+        method,
+        "host.artifacts.read" | "host.artifacts.acquired" | "host.artifacts.capture"
+    ) && params["consumerPackageId"]
+        .as_str()
+        .is_none_or(|id| id == broker.manifest().id)
     {
         recovery_caller(
             store,
@@ -427,7 +429,9 @@ fn dispatch(broker: &Arc<Broker>, method: &str, params: Value) -> Result<Value, 
             let request: Capture = decode(params)?;
             let inputs = store.capture(&caller, &request.operation_id, request.inputs)?;
             if !broker.can_recover() {
-                let _ = store.release_preparations(&caller);
+                // The death actor owns implicit cleanup. A lifecycle change
+                // may still be deciding compatible retention, so this callback
+                // must not discard its completed capture ahead of that choice.
                 return Err(error("Capture owner disconnected"));
             }
             Ok(json!({"inputs":inputs}))
@@ -650,6 +654,7 @@ pub(super) fn recovery_caller(
     operation: &str,
 ) -> Result<PackageGeneration, AppError> {
     let Some(a) = store.get(&current.package_id, operation)? else {
+        store.adopt_preparation(current, operation)?;
         return Ok(current.clone());
     };
     if a.consumer.digest == current.digest {
@@ -971,7 +976,7 @@ pub(super) fn on_dead(generation: PackageGeneration) {
         // ownership. Wait for that publication before retiring this incarnation.
         test_owner_dead(&generation);
         let store = service_host::store()?;
-        Ok(store.list_preparations()?.contains(&generation)
+        Ok(store.list_releasable_preparations()?.contains(&generation)
             || store
                 .claims()?
                 .iter()
@@ -1178,8 +1183,12 @@ pub(super) fn recover_owned(
     if mode == Mode::Expired {
         return Ok(());
     }
-    let _ = store.release_preparations(generation);
     let claims = {
+        // Retirement may enqueue this actor before upgrade preflight commits
+        // its compatibility decision. Serialize local custody changes with
+        // that decision, without keeping the action lane across provider IO.
+        let _action = super::ai_operations::action_guard()?;
+        let _ = store.release_preparations(generation);
         let _admission =
             crate::native_deadline::lock(&ADMISSION, "Recovery admission lock is unavailable")?;
         store.claims()?
@@ -1279,9 +1288,12 @@ pub(super) fn recover_owned(
     }
     while !port.closing()
         && Instant::now() < aggregate_deadline
-        && store.list_preparations()?.contains(generation)
+        && store.list_releasable_preparations()?.contains(generation)
     {
-        let _ = store.release_preparations(generation);
+        {
+            let _action = super::ai_operations::action_guard()?;
+            let _ = store.release_preparations(generation);
+        }
         std::thread::sleep(Duration::from_millis(50));
     }
     Ok(())
@@ -1315,7 +1327,7 @@ pub(super) fn recover_startup() -> Result<(), AppError> {
 pub(super) fn startup_owners(
     store: &crate::service_state::Store,
 ) -> Result<Vec<PackageGeneration>, AppError> {
-    let mut owners = store.list_preparations()?;
+    let mut owners = store.list_releasable_preparations()?;
     owners.extend(
         store
             .claims()?

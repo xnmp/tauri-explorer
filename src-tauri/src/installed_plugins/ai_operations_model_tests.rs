@@ -40,6 +40,13 @@ enum Outcome {
 #[derive(Clone, Copy, Debug)]
 enum Command {
     Admit(u8, bool),
+    Register(u8),
+    Capture(u8),
+    Dispatch(u8),
+    CancelPreparation(u8),
+    CustodylessReserve(u8),
+    CustodylessReply(u8, u8),
+    CustodylessRelease(u8),
     Stage(u8, bool, bool),
     RecoveryWriterGc(u8),
     CrashMidWrite(u8),
@@ -70,9 +77,11 @@ enum Command {
     SharedConsumerAdmit,
     SpoolReserve(u8, bool, bool),
     SpoolReply(u8),
+    SpoolReplyStep(u8, u8),
     SpoolPending(u8),
     SpoolFsync(u8),
     SpoolManifest(u8),
+    SpoolManifestStep(u8, u8),
     SpoolSeal(u8),
     SettlementCrash(u8),
     SpoolCrash(u8, u8),
@@ -83,6 +92,13 @@ impl Command {
     fn family(&self) -> &'static str {
         match self {
             Self::Admit(..) => "admit",
+            Self::Register(_) => "presentation-register",
+            Self::Capture(_) => "preparation-capture",
+            Self::Dispatch(_) => "service-dispatch",
+            Self::CancelPreparation(_) => "preparation-cancel",
+            Self::CustodylessReserve(_) => "custodyless-reserve",
+            Self::CustodylessReply(_, _) => "custodyless-reply-boundary",
+            Self::CustodylessRelease(_) => "custodyless-release",
             Self::Stage(_, true, true) => "stage-durable",
             Self::Stage(_, true, false) => "stage-unsynced",
             Self::Stage(_, false, _) => "stage-partial",
@@ -131,17 +147,19 @@ impl Command {
             Self::SpoolReserve(_, true, false) => "bound-spool-reserve",
             Self::SpoolReserve(_, false, false) => "unbound-spool-reserve",
             Self::SpoolReserve(_, _, true) => "nonzero-spool-reserve",
-            Self::SpoolReply(_) => "spool-reply-persist",
+            Self::SpoolReply(_) => "spool-intent-commit",
+            Self::SpoolReplyStep(_, point) => reply_boundary(*point),
             Self::SpoolPending(_) => "spool-pending-commit",
             Self::SpoolFsync(_) => "spool-output-fsync",
-            Self::SpoolManifest(_) => "spool-manifest-publish",
+            Self::SpoolManifest(_) => "spool-manifest-temp-create",
+            Self::SpoolManifestStep(_, point) => manifest_boundary(*point),
             Self::SpoolSeal(_) => "spool-seal-commit",
             Self::SettlementCrash(_) => "settlement-crash-before-collection",
             Self::SpoolCrash(_, 1) => "crash-after-spool-reserve",
-            Self::SpoolCrash(_, 2) => "crash-after-spool-reply",
-            Self::SpoolCrash(_, 3) => "crash-after-spool-pending",
-            Self::SpoolCrash(_, 4) => "crash-after-spool-fsync",
-            Self::SpoolCrash(_, 5) => "crash-after-spool-manifest",
+            Self::SpoolCrash(_, 2..=18) => "crash-within-reply-persistence",
+            Self::SpoolCrash(_, 19) => "crash-after-spool-pending",
+            Self::SpoolCrash(_, 20) => "crash-after-spool-fsync",
+            Self::SpoolCrash(_, 21..=28) => "crash-within-spool-manifest",
             Self::SpoolCrash(..) => "crash-after-spool-seal",
             Self::LifecycleCrash(_, 0) => "crash-lifecycle-intent",
             Self::LifecycleCrash(_, 1) => "crash-lifecycle-index",
@@ -166,11 +184,69 @@ impl Command {
         }
     }
 }
+fn reply_boundary(point: u8) -> &'static str {
+    [
+        "spool-intent-commit",
+        "spool-pending-create",
+        "spool-pending-partial",
+        "spool-pending-full",
+        "spool-pending-file-sync",
+        "spool-pending-directory-sync",
+        "spool-stdout-create",
+        "spool-stdout-partial",
+        "spool-stdout-full",
+        "spool-stdout-file-sync",
+        "spool-stderr-create",
+        "spool-stderr-partial",
+        "spool-stderr-full",
+        "spool-stderr-file-sync",
+        "spool-witness-file-sync",
+        "spool-directory-sync",
+        "spool-parent-directory-sync",
+    ][usize::from(point - 1)]
+}
+fn manifest_boundary(point: u8) -> &'static str {
+    [
+        "spool-manifest-temp-create",
+        "spool-manifest-partial",
+        "spool-manifest-full",
+        "spool-manifest-temp-sync",
+        "spool-manifest-rename",
+        "spool-manifest-target-sync",
+        "spool-manifest-directory-sync",
+        "spool-manifest-parent-sync",
+    ][usize::from(point - 1)]
+}
+fn manifest_commands(slot: u8) -> Vec<Command> {
+    std::iter::once(Command::SpoolManifest(slot))
+        .chain((2..=8).map(|p| Command::SpoolManifestStep(slot, p)))
+        .collect()
+}
+fn reply_commands(slot: u8) -> Vec<Command> {
+    std::iter::once(Command::SpoolReply(slot))
+        .chain((2..=17).map(|point| Command::SpoolReplyStep(slot, point)))
+        .collect()
+}
+fn completion_commands(slot: u8) -> Vec<Command> {
+    reply_commands(slot)
+        .into_iter()
+        .chain([Command::SpoolPending(slot), Command::SpoolFsync(slot)])
+        .chain(manifest_commands(slot))
+        .chain([Command::SpoolSeal(slot)])
+        .collect()
+}
 fn commands(max_steps: usize) -> impl Strategy<Value = Vec<Command>> {
     let slot = 0u8..SLOTS as u8;
     proptest::collection::vec(
         prop_oneof![
             5 => (slot.clone(), any::<bool>()).prop_map(|(s,i)| Command::Admit(s,i)),
+            4 => slot.clone().prop_map(Command::Register),
+            4 => slot.clone().prop_map(Command::Capture),
+            4 => slot.clone().prop_map(Command::Dispatch),
+            2 => slot.clone().prop_map(Command::CancelPreparation),
+            3 => slot.clone().prop_map(Command::CustodylessReserve),
+            3 => (slot.clone(), 1u8..=28).prop_map(|(s,p)| Command::CustodylessReply(s,p)),
+            2 => slot.clone().prop_map(Command::CustodylessRelease),
             6 => (slot.clone(), any::<bool>(), any::<bool>()).prop_map(|(s,c,d)| Command::Stage(s,c,d)),
             2 => slot.clone().prop_map(Command::RecoveryWriterGc),
             2 => slot.clone().prop_map(Command::CrashMidWrite),
@@ -197,12 +273,14 @@ fn commands(max_steps: usize) -> impl Strategy<Value = Vec<Command>> {
             2 => Just(Command::SharedConsumerAdmit),
             3 => (slot.clone(), any::<bool>(), any::<bool>()).prop_map(|(s,b,n)| Command::SpoolReserve(s,b,n)),
             3 => slot.clone().prop_map(Command::SpoolReply),
+            4 => (slot.clone(), 2u8..=17).prop_map(|(s,p)| Command::SpoolReplyStep(s,p)),
             3 => slot.clone().prop_map(Command::SpoolPending),
             3 => slot.clone().prop_map(Command::SpoolFsync),
             3 => slot.clone().prop_map(Command::SpoolManifest),
+            3 => (slot.clone(), 2u8..=8).prop_map(|(s,p)| Command::SpoolManifestStep(s,p)),
             3 => slot.clone().prop_map(Command::SpoolSeal),
             2 => slot.clone().prop_map(Command::SettlementCrash),
-            3 => (slot.clone(), 1u8..=6).prop_map(|(s,p)| Command::SpoolCrash(s,p)),
+            3 => (slot.clone(), 1u8..=29).prop_map(|(s,p)| Command::SpoolCrash(s,p)),
             3 => (any::<bool>(), 0u8..=7).prop_map(|(r,p)| Command::LifecycleCrash(r,p)),
             3 => (slot.clone(), 0u8..=2, 0u8..=3).prop_map(|(s,k,a)| Command::PausedMutation(s,k,a)),
         ],
@@ -249,15 +327,108 @@ impl SpoolActor {
                 return;
             }
             while let Ok(Some(phase)) = incoming.recv() {
-                let result = match phase {
-                    1 => store.write_pinned_host_reply(&provider, &writer, &bytes, b"", status),
-                    2 => store
+                if phase == 1 {
+                    let mut next = 1;
+                    let mut cancelled = false;
+                    let completed = store.write_pinned_host_reply_observed(
+                        &provider,
+                        &writer,
+                        &bytes,
+                        b"",
+                        status,
+                        |point| {
+                            if point != next {
+                                return Err(AppError::Other(
+                                    "fixture reply checkpoint out of order".into(),
+                                ));
+                            }
+                            if responses.send(Ok(())).is_err() {
+                                return Err(AppError::Other(
+                                    "fixture reply checkpoint receiver dropped".into(),
+                                ));
+                            }
+                            // The write is paused after the real mutation/barrier. Dropping
+                            // the actor unwinds here, before the next production mutation.
+                            match incoming.recv() {
+                                Ok(Some(value)) if point < 17 && value == point + 1 => {
+                                    next = value;
+                                    Ok(())
+                                }
+                                Ok(Some(18)) if point == 17 => {
+                                    next = 18;
+                                    Ok(())
+                                }
+                                _ => {
+                                    cancelled = true;
+                                    Err(AppError::Other("fixture crash at reply checkpoint".into()))
+                                }
+                            }
+                        },
+                    );
+                    if completed.is_err() {
+                        // Checkpoint cancellation is a crash, not a second phase reply.
+                        if !cancelled {
+                            let _ = responses.send(completed);
+                        }
+                        return;
+                    }
+                    let result = store
                         .retain_pinned_host_execution(&provider, &writer, status)
-                        .map(|_| ()),
-                    3 => store.sync_pinned_host_reply(&writer),
-                    4 => store.publish_pinned_host_manifest(&provider, &writer, status),
-                    5 => store.commit_pinned_host_seal(&provider, &writer),
-                    _ => unreachable!(),
+                        .map(|_| ());
+                    if responses.send(result).is_err() {
+                        return;
+                    }
+                    continue;
+                }
+                if phase == 20 {
+                    let mut next = 20;
+                    let mut cancelled = false;
+                    let completed = store.publish_pinned_host_manifest_observed(
+                        &provider,
+                        &writer,
+                        status,
+                        |point| {
+                            if next != 19 + point {
+                                return Err(AppError::Other(
+                                    "fixture manifest checkpoint out of order".into(),
+                                ));
+                            }
+                            if responses.send(Ok(())).is_err() {
+                                return Err(AppError::Other(
+                                    "fixture manifest checkpoint receiver dropped".into(),
+                                ));
+                            }
+                            match incoming.recv() {
+                                Ok(Some(value)) if value == 20 + point => {
+                                    next = value;
+                                    Ok(())
+                                }
+                                _ => {
+                                    cancelled = true;
+                                    Err(AppError::Other(
+                                        "fixture crash at manifest checkpoint".into(),
+                                    ))
+                                }
+                            }
+                        },
+                    );
+                    if completed.is_err() {
+                        if !cancelled {
+                            let _ = responses.send(completed);
+                        }
+                        return;
+                    }
+                    let result = store.commit_pinned_host_seal(&provider, &writer);
+                    if responses.send(result).is_err() {
+                        return;
+                    }
+                    continue;
+                }
+                let result = match phase {
+                    19 => store.sync_pinned_host_reply(&writer),
+                    _ => Err(AppError::Other(
+                        "fixture completion checkpoint out of order".into(),
+                    )),
                 };
                 if responses.send(result).is_err() {
                     return;
@@ -295,6 +466,16 @@ impl Drop for SpoolActor {
 #[derive(Debug)]
 struct Operation {
     id: String,
+    dispatched: bool,
+    captured_inputs: Vec<ArtifactDescriptor>,
+    request: Value,
+    recovery_native_starts: Cell<usize>,
+    native_paid_starts: Cell<usize>,
+    native_local_repairs: Cell<usize>,
+    native_context: NativeContext,
+    native_intent: NativeIntent,
+    resume_calls: Cell<usize>,
+    consumer_runs: Cell<usize>,
     consumer: PackageGeneration,
     provider: PackageGeneration,
     outcome: Outcome,
@@ -367,6 +548,33 @@ impl Operation {
         )
     }
 }
+#[derive(Clone, Copy, Debug)]
+enum NativeContext {
+    InitialDispatch,
+    Recovery,
+}
+#[derive(Clone, Copy, Debug)]
+enum NativeIntent {
+    PaidGeneration,
+    LocalReconstruction,
+}
+/// Meter the fixture's native-work invocation independently of service .start.
+/// Intent is an explicit fake-provider recipe, never inferred from a custody
+/// release decision. Real executable admission is checked in native tests.
+fn native_work_started(op: &Operation, context: NativeContext, intent: NativeIntent) {
+    match intent {
+        NativeIntent::PaidGeneration => {
+            op.native_paid_starts.set(op.native_paid_starts.get() + 1);
+            if matches!(context, NativeContext::Recovery) {
+                op.recovery_native_starts
+                    .set(op.recovery_native_starts.get() + 1);
+            }
+        }
+        NativeIntent::LocalReconstruction => op
+            .native_local_repairs
+            .set(op.native_local_repairs.get() + 1),
+    }
+}
 struct ProfileFixture {
     profile: tempfile::TempDir,
     root: PathBuf,
@@ -389,6 +597,17 @@ impl ProfileFixture {
             .find(|p| p.manifest.id == self.id(role))
     }
 }
+struct CustodylessSpool {
+    owner: PackageGeneration,
+    handle: String,
+    original: Vec<u8>,
+    phase: u8,
+    writer: Option<SpoolActor>,
+    removed: bool,
+    released: bool,
+    valid: bool,
+    durable: bool,
+}
 struct Machine {
     limits: Limits,
     coverage: BTreeMap<&'static str, u64>,
@@ -403,6 +622,8 @@ struct Machine {
     incarnation: u64,
     provider_incarnation: u64,
     dirty_writes: BTreeMap<PathBuf, Vec<u8>>,
+    custodyless: Vec<CustodylessSpool>,
+    raw_slots: [Option<usize>; SLOTS],
     jobs: BTreeMap<String, JobRecord>,
     notices: BTreeMap<String, usize>,
     applied: usize,
@@ -411,6 +632,9 @@ impl Drop for Machine {
     fn drop(&mut self) {
         // Native writers must relinquish locks before TempDir removes the
         // profile, especially on Windows.
+        for spool in &mut self.custodyless {
+            spool.writer.take();
+        }
         for operation in self.operations.get_mut() {
             operation.writer.take();
         }
@@ -512,6 +736,8 @@ impl Machine {
             incarnation: 10,
             provider_incarnation: 10,
             dirty_writes: BTreeMap::new(),
+            custodyless: vec![],
+            raw_slots: [None; SLOTS],
             jobs: BTreeMap::new(),
             notices: BTreeMap::new(),
             applied: 0,
@@ -573,7 +799,7 @@ impl Machine {
     fn request(op: &Operation) -> Value {
         json!({"operationId":op.id,"connectionId":"model-profile","expectedConnectionRevision":"revision-1","model":null,"prompt":"model test","inputs":[],"options":{"size":"1024x1024","resolution":null,"aspectRatio":null,"quality":"low","background":"auto"},"preparationToken":"local-token","effectiveRecipeDigest":"b".repeat(64)})
     }
-    fn admit(&mut self, slot: u8, input: bool) -> Result<(), TestCaseError> {
+    fn register(&mut self, slot: u8) -> Result<(), TestCaseError> {
         let consumer = if slot as usize == SLOTS - 1 {
             package::list(&self.fixture.root)
                 .unwrap()
@@ -612,11 +838,12 @@ impl Machine {
             let ops = self.operations.borrow();
             let op = &ops[index];
             if !op.removed
-                && !op.acknowledged
-                && !self
-                    .store()
-                    .execution_released(&op.consumer.package_id, &op.id)
-                    .unwrap()
+                && (!op.dispatched
+                    || !op.acknowledged
+                        && !self
+                            .store()
+                            .execution_released(&op.consumer.package_id, &op.id)
+                            .unwrap())
             {
                 return Ok(());
             }
@@ -630,6 +857,16 @@ impl Machine {
         let provider = self.generation(Role::Provider).unwrap();
         let op = Operation {
             id: id.clone(),
+            dispatched: false,
+            captured_inputs: vec![],
+            request: Value::Null,
+            recovery_native_starts: Cell::new(0),
+            native_paid_starts: Cell::new(0),
+            native_local_repairs: Cell::new(0),
+            native_context: NativeContext::InitialDispatch,
+            native_intent: NativeIntent::PaidGeneration,
+            resume_calls: Cell::new(0),
+            consumer_runs: Cell::new(0),
             consumer: consumer.clone(),
             provider: provider.clone(),
             outcome: Outcome::Running,
@@ -670,55 +907,6 @@ impl Machine {
             stopped: Cell::new(false),
             delivery_effects: Cell::new(0),
         };
-        let mut request = Self::request(&op);
-        if input {
-            let path = self.fixture.profile.path().join(format!("{id}-input.png"));
-            fs::write(&path, &op.original).unwrap();
-            let captures = match self.store().capture(
-                &consumer,
-                &id,
-                vec![CaptureInput {
-                    path: path.to_string_lossy().into(),
-                    expected_digest: None,
-                }],
-            ) {
-                Ok(captures) => captures,
-                Err(error) if expected_capacity(&error) => return Ok(()),
-                Err(error) => {
-                    return Err(fail(format!("unexpected input capture rejection: {error}")))
-                }
-            };
-            request["inputs"] = json!(captures.into_iter().map(|c| c.artifact).collect::<Vec<_>>());
-        }
-        let target = ServiceTarget {
-            package_id: provider.package_id.clone(),
-            service_id: "image-generation".into(),
-            major: 1,
-        };
-        let started = service_bridge::image_call(
-            self.store(),
-            &consumer,
-            &provider,
-            &target,
-            "start",
-            request,
-            || true,
-            |method, _| {
-                if method.ends_with(".start") {
-                    op.starts.set(op.starts.get() + 1)
-                }
-                Ok(op.receipt(json!({"state":"none"})))
-            },
-        );
-        if let Err(error) = started {
-            if expected_capacity(&error) {
-                return Ok(());
-            }
-            return Err(fail(format!("unexpected admission rejection: {error}")));
-        }
-        if op.starts.get() != 1 {
-            return Err(fail("admission did not execute exactly once"));
-        }
         let job = JobRecord {
             job_key: format!("{:048x}", index + 1),
             owner: consumer,
@@ -742,6 +930,164 @@ impl Machine {
         checked(self.store().register_job(job))?;
         self.operations.borrow_mut().push(op);
         self.slots[slot as usize] = Some(index);
+        self.applied += 1;
+        Ok(())
+    }
+    fn admit(&mut self, slot: u8, input: bool) -> Result<(), TestCaseError> {
+        self.register(slot)?;
+        if input {
+            self.capture(slot)?;
+        }
+        self.dispatch(slot)
+    }
+    fn preparation_callback_owner(
+        &self,
+        op: &Operation,
+    ) -> Result<PackageGeneration, TestCaseError> {
+        let installed = package::list(&self.fixture.root)
+            .unwrap()
+            .into_iter()
+            .find(|p| p.manifest.id == op.consumer.package_id && p.enabled)
+            .ok_or_else(|| fail("consumer callback has no enabled package"))?;
+        let current = if op.consumer.package_id == self.fixture.id(Role::Consumer) {
+            self.generation(Role::Consumer)
+                .ok_or_else(|| fail("consumer callback has no current generation"))?
+        } else {
+            op.consumer.clone()
+        };
+        let job = checked(
+            self.store()
+                .job_for_operation(&op.consumer.package_id, &op.id),
+        )?
+        .ok_or_else(|| fail("consumer callback lost its presentation"))?;
+        Ok(checked(job_bridge::recovery_job(
+            self.store(),
+            &installed.manifest,
+            &current,
+            &job,
+        ))?
+        .owner)
+    }
+    fn capture(&mut self, slot: u8) -> Result<(), TestCaseError> {
+        let Some(index) = self.index(slot) else {
+            return Ok(());
+        };
+        let mut ops = self.operations.borrow_mut();
+        let op = &mut ops[index];
+        if op.removed || op.dispatched || !op.captured_inputs.is_empty() {
+            return Ok(());
+        }
+        op.consumer = self.preparation_callback_owner(op)?;
+        let path = self
+            .fixture
+            .profile
+            .path()
+            .join(format!("{}-input.png", op.id));
+        fs::write(&path, &op.original).unwrap();
+        match self.store().capture(
+            &op.consumer,
+            &op.id,
+            vec![CaptureInput {
+                path: path.to_string_lossy().into(),
+                expected_digest: None,
+            }],
+        ) {
+            Ok(captures) => {
+                op.captured_inputs = captures.into_iter().map(|c| c.artifact).collect();
+                self.applied += 1;
+            }
+            Err(error) if expected_capacity(&error) || self.sync_failure || self.unlink_failure => {
+            }
+            Err(error) => return Err(fail(format!("unexpected input capture rejection: {error}"))),
+        }
+        Ok(())
+    }
+    fn dispatch(&mut self, slot: u8) -> Result<(), TestCaseError> {
+        let Some(index) = self.index(slot) else {
+            return Ok(());
+        };
+        let mut ops = self.operations.borrow_mut();
+        let op = &mut ops[index];
+        if op.removed || op.dispatched {
+            return Ok(());
+        }
+        let consumer = self.preparation_callback_owner(op)?;
+        let Some(provider) = self.generation(Role::Provider) else {
+            return Ok(());
+        };
+        let target = ServiceTarget {
+            package_id: provider.package_id.clone(),
+            service_id: "image-generation".into(),
+            major: 1,
+        };
+        if !self
+            .fixture
+            .installed(Role::Provider)
+            .is_some_and(|p| service_graph::provider_recovers(&p.manifest, &target))
+        {
+            return Ok(());
+        }
+        let mut request = Self::request(op);
+        request["inputs"] = json!(op.captured_inputs);
+        let target = ServiceTarget {
+            package_id: provider.package_id.clone(),
+            service_id: "image-generation".into(),
+            major: 1,
+        };
+        match service_bridge::image_call(
+            self.store(),
+            &consumer,
+            &provider,
+            &target,
+            "start",
+            request.clone(),
+            || true,
+            |method, _| {
+                if method.ends_with(".start") {
+                    op.starts.set(op.starts.get() + 1);
+                }
+                Ok(op.receipt(json!({"state":"none"})))
+            },
+        ) {
+            Ok(_) => {
+                op.dispatched = true;
+                op.consumer = consumer;
+                op.provider = provider;
+                op.request = request;
+                self.applied += 1;
+            }
+            Err(error) if expected_capacity(&error) || self.sync_failure || self.unlink_failure => {
+            }
+            Err(error) => return Err(fail(format!("unexpected admission rejection: {error}"))),
+        }
+        Ok(())
+    }
+    fn cancel_preparation(&mut self, slot: u8) -> Result<(), TestCaseError> {
+        let Some(index) = self.index(slot) else {
+            return Ok(());
+        };
+        let mut ops = self.operations.borrow_mut();
+        let op = &mut ops[index];
+        if op.dispatched || op.removed {
+            return Ok(());
+        }
+        let caller = self.preparation_callback_owner(op)?;
+        let _ = checked(self.store().release_unaccepted(&caller, &op.id))?;
+        let job = checked(
+            self.store()
+                .job_for_operation(&op.consumer.package_id, &op.id),
+        )?
+        .unwrap();
+        checked(self.store().update_job(
+            &job.owner,
+            &job.job_key,
+            JobState::Cancelled,
+            Some("not_accepted".into()),
+            None,
+            None,
+            None,
+        ))?;
+        op.removed = true;
         self.applied += 1;
         Ok(())
     }
@@ -891,6 +1237,7 @@ impl Machine {
         let source = self
             .store()
             .read(&op.consumer, &op.consumer.package_id, &op.id, d)?;
+        op.consumer_runs.set(op.consumer_runs.get() + 1);
         fs::copy(source.path, &op.copy)?;
         op.delivery_effects.set(op.delivery_effects.get() + 1);
         op.transfer = Some(
@@ -960,7 +1307,7 @@ impl Machine {
                     |m| {
                         m.id = id.clone();
                         m.version = "3.0.0".into();
-                        m.sdk_version = 3;
+                        m.sdk_version = 2;
                         m.contributions = vec![id.replace('.', "-")];
                     },
                 )
@@ -975,7 +1322,7 @@ impl Machine {
         for op in self.operations.borrow_mut().iter_mut() {
             if (remove || !compatible)
                 && !op.removed
-                && (op.consumer.package_id == id || op.provider.package_id == id)
+                && (op.consumer.package_id == id || op.dispatched && op.provider.package_id == id)
             {
                 op.removed = true;
                 op.provider_live = false;
@@ -984,6 +1331,11 @@ impl Machine {
                 op.provider_live = false;
             } else if op.consumer.package_id == id {
                 op.consumer_live = false;
+            }
+        }
+        for spool in &mut self.custodyless {
+            if spool.owner.package_id == id && (remove || !compatible) {
+                spool.removed = true;
             }
         }
         self.incarnation += 1;
@@ -998,10 +1350,24 @@ impl Machine {
         for op in self.operations.borrow_mut().iter_mut() {
             op.provider_live = false;
             op.consumer_live = false;
+            if op.spool_phase < 10
+                && op.writer.is_some()
+                && op.descriptor.is_none()
+                && op.stage.is_none()
+            {
+                op.valid_original = false;
+            }
             op.writer.take();
             if op.spool.is_some() {
-                op.spool_phase = 7;
+                op.spool_phase = 30;
             }
+        }
+        for spool in &mut self.custodyless {
+            spool.writer.take();
+            if power_loss && !spool.durable {
+                spool.valid = false;
+            }
+            spool.phase = 30;
         }
         if power_loss {
             for op in self.operations.borrow_mut().iter_mut() {
@@ -1037,9 +1403,11 @@ impl Machine {
         let slot = match command {
             Command::SpoolReserve(s, ..)
             | Command::SpoolReply(s)
+            | Command::SpoolReplyStep(s, _)
             | Command::SpoolPending(s)
             | Command::SpoolFsync(s)
             | Command::SpoolManifest(s)
+            | Command::SpoolManifestStep(s, _)
             | Command::SpoolSeal(s) => s,
             _ => unreachable!(),
         };
@@ -1057,6 +1425,15 @@ impl Machine {
                 self.store()
                     .execution_released(&op.consumer.package_id, &op.id),
             )?;
+            // A normal native dispatch belongs to the still-live original
+            // execution. Recovery may invoke only an explicitly unpaid recipe;
+            // custody-less process support does not authorize a new paid turn.
+            if matches!(op.native_intent, NativeIntent::PaidGeneration)
+                && (execution_released
+                    || self.generation(Role::Provider).as_ref() != Some(&op.provider))
+            {
+                return Ok(());
+            }
             if op.provider_rejected()
                 || op.spool.is_some()
                 || if bound {
@@ -1101,7 +1478,9 @@ impl Machine {
                     ))?);
                     op.spool = Some(handle);
                     op.spool_owner = Some(owner);
-                    op.unpaid_repair = execution_released;
+                    op.unpaid_repair =
+                        matches!(op.native_intent, NativeIntent::LocalReconstruction);
+                    native_work_started(op, op.native_context, op.native_intent);
                     op.spool_phase = 1;
                     self.applied += 1;
                 }
@@ -1124,10 +1503,12 @@ impl Machine {
         }
         let expected = match command {
             Command::SpoolReply(_) => 1,
-            Command::SpoolPending(_) => 2,
-            Command::SpoolFsync(_) => 3,
-            Command::SpoolManifest(_) => 4,
-            Command::SpoolSeal(_) => 5,
+            Command::SpoolReplyStep(_, point) => point,
+            Command::SpoolPending(_) => 18,
+            Command::SpoolFsync(_) => 19,
+            Command::SpoolManifest(_) => 20,
+            Command::SpoolManifestStep(_, point) => 19 + point,
+            Command::SpoolSeal(_) => 28,
             _ => unreachable!(),
         };
         if op.spool_phase != expected {
@@ -1150,15 +1531,28 @@ impl Machine {
         match result {
             Ok(()) => {
                 op.spool_phase += 1;
-                if expected == 5 {
+                if expected == 28 {
                     op.writer.take();
                 }
-                if expected == 1 && op.valid_original {
+                if expected == 16 && op.valid_original {
                     op.durable_original = true;
                 }
                 self.applied += 1;
             }
-            Err(_) if self.sync_failure || self.unlink_failure => {}
+            Err(_) if self.sync_failure || self.unlink_failure => {
+                op.writer.take();
+                op.spool_phase = 30;
+                if op.stage.is_none() && op.descriptor.is_none() {
+                    let path = self
+                        .fixture
+                        .profile
+                        .path()
+                        .join("service-state/host-spools")
+                        .join(op.spool.as_ref().unwrap())
+                        .join("stdout");
+                    op.valid_original &= fs::read(path).ok().as_ref() == Some(&op.original);
+                }
+            }
             Err(error)
                 if op.provider_rejected()
                     && error
@@ -1171,7 +1565,7 @@ impl Machine {
                 // It was never an approved image; relinquish the live permit
                 // so healthy cleanup can release every charged byte.
                 op.writer.take();
-                op.spool_phase = 7;
+                op.spool_phase = 30;
                 self.applied += 1;
             }
             Err(error) => {
@@ -1183,15 +1577,152 @@ impl Machine {
         Ok(())
     }
     fn complete_spool(&mut self, slot: u8, bound: bool) -> Result<(), TestCaseError> {
-        for phase in [
-            Command::SpoolReserve(slot, bound, false),
-            Command::SpoolReply(slot),
-            Command::SpoolPending(slot),
-            Command::SpoolFsync(slot),
-            Command::SpoolManifest(slot),
-            Command::SpoolSeal(slot),
-        ] {
+        for phase in std::iter::once(Command::SpoolReserve(slot, bound, false))
+            .chain(completion_commands(slot))
+        {
             self.spool_phase(phase)?;
+        }
+        Ok(())
+    }
+    fn custodyless_reserve(&mut self, slot: u8) -> Result<(), TestCaseError> {
+        if self.raw_slots[usize::from(slot)]
+            .is_some_and(|i| !self.custodyless[i].released && !self.custodyless[i].removed)
+        {
+            return Ok(());
+        }
+        let Some(owner) = self.generation(Role::Provider) else {
+            return Ok(());
+        };
+        // This surface is supported independently of image-service admission.
+        if !checked(self.store().package_operations(&owner.package_id))?.is_empty() {
+            return Ok(());
+        }
+        let original = image_bytes(200 + slot);
+        let request = format!(
+            "custodyless-{}-{}",
+            self.incarnation,
+            self.custodyless.len()
+        );
+        let handle = match self.store().reserve_host_spool(&owner, &request, 4096) {
+            Ok((handle, _)) => handle,
+            Err(error) if expected_capacity(&error) || self.sync_failure || self.unlink_failure => {
+                return Ok(())
+            }
+            Err(error) => return Err(fail(format!("custodyless reserve rejected: {error}"))),
+        };
+        let writer = checked(SpoolActor::new(
+            self.fixture.profile.path().join("service-state"),
+            self.limits,
+            owner.clone(),
+            handle.clone(),
+            original.clone(),
+            0,
+        ))?;
+        self.raw_slots[usize::from(slot)] = Some(self.custodyless.len());
+        self.custodyless.push(CustodylessSpool {
+            owner,
+            handle,
+            original,
+            phase: 1,
+            writer: Some(writer),
+            removed: false,
+            released: false,
+            valid: false,
+            durable: false,
+        });
+        self.applied += 1;
+        Ok(())
+    }
+    fn custodyless_reply(&mut self, slot: u8, phase: u8) -> Result<(), TestCaseError> {
+        let Some(index) = self.raw_slots[usize::from(slot)] else {
+            return Ok(());
+        };
+        let spool = &mut self.custodyless[index];
+        if spool.removed || spool.released || spool.phase != phase {
+            return Ok(());
+        }
+        let Some(writer) = &spool.writer else {
+            return Ok(());
+        };
+        match writer.phase(phase) {
+            Ok(()) => {
+                spool.phase += 1;
+                spool.valid |= phase >= 9;
+                spool.durable |= phase >= 16;
+                if phase == 28 {
+                    spool.writer.take();
+                }
+                self.applied += 1;
+            }
+            Err(_) if self.sync_failure || self.unlink_failure => {
+                spool.writer.take();
+                spool.phase = 30;
+                let path = self
+                    .fixture
+                    .profile
+                    .path()
+                    .join("service-state/host-spools")
+                    .join(&spool.handle)
+                    .join("stdout");
+                spool.valid = fs::read(path).ok().as_ref() == Some(&spool.original);
+            }
+            Err(error) => return Err(fail(format!("custodyless completion failed: {error}"))),
+        }
+        Ok(())
+    }
+    fn custodyless_release(&mut self, slot: u8) -> Result<(), TestCaseError> {
+        let Some(index) = self.raw_slots[usize::from(slot)] else {
+            return Ok(());
+        };
+        let spool = &mut self.custodyless[index];
+        if spool.removed || spool.released {
+            return Ok(());
+        }
+        spool.writer.take();
+        checked(
+            self.store
+                .as_ref()
+                .unwrap()
+                .release_host_spool(&spool.owner.package_id, &spool.handle),
+        )?;
+        spool.released = true;
+        self.applied += 1;
+        Ok(())
+    }
+    fn custodyless_invariants(&self, clean: bool) -> Result<(), TestCaseError> {
+        let conn = rusqlite::Connection::open(
+            self.fixture
+                .profile
+                .path()
+                .join("service-state/ledger.sqlite"),
+        )
+        .unwrap();
+        for spool in &self.custodyless {
+            let path = self
+                .fixture
+                .profile
+                .path()
+                .join("service-state/host-spools")
+                .join(&spool.handle);
+            if spool.valid
+                && !spool.removed
+                && !spool.released
+                && fs::read(path.join("stdout")).ok().as_ref() != Some(&spool.original)
+            {
+                return Err(fail("custodyless verified original disappeared"));
+            }
+            if clean && (spool.removed || spool.released) {
+                let count: i64 = conn
+                    .query_row(
+                        "SELECT count(*) FROM host_spools WHERE handle=?1",
+                        [&spool.handle],
+                        |r| r.get(0),
+                    )
+                    .unwrap();
+                if count != 0 || path.exists() {
+                    return Err(fail(format!("incompatible replacement retained custodyless spool or quota: {}, rows={count}", spool.handle)));
+                }
+            }
         }
         Ok(())
     }
@@ -1207,7 +1738,7 @@ impl Machine {
             let op = &ops[index];
             if op.removed
                 || op.acknowledged
-                || op.spool_phase != 6
+                || op.spool_phase != 29
                 || !op.extra_spools.is_empty()
                 || op.spool_owner.as_ref().unwrap().digest == owner.digest
                 || self.sync_failure
@@ -1244,7 +1775,7 @@ impl Machine {
             image_bytes(251),
             0,
         ))?;
-        for phase in 1..=5 {
+        for phase in 1..=28 {
             checked(actor.phase(phase))?;
         }
         drop(actor);
@@ -1329,7 +1860,8 @@ impl Machine {
                 }
             }
             1 => {
-                if admission.output.is_none() {
+                if admission.output.is_none() || self.operations.borrow()[index].transfer.is_some()
+                {
                     return Ok(());
                 }
                 let d = admission.output.as_ref().unwrap();
@@ -1340,9 +1872,12 @@ impl Machine {
                     let ops = self.operations.borrow();
                     (ops[index].copy.clone(), ops[index].removed)
                 };
-                if !copy.exists() {
-                    fs::write(&copy, &source_bytes).map_err(|e| fail(e.to_string()))?;
+                fs::write(&copy, &source_bytes).map_err(|e| fail(e.to_string()))?;
+                {
                     let ops = self.operations.borrow();
+                    ops[index]
+                        .consumer_runs
+                        .set(ops[index].consumer_runs.get() + 1);
                     ops[index]
                         .delivery_effects
                         .set(ops[index].delivery_effects.get() + 1);
@@ -1389,7 +1924,7 @@ impl Machine {
                     let mut ops = self.operations.borrow_mut();
                     let op = &mut ops[index];
                     op.durable_original |= op.valid_original;
-                    op.spool_phase = 2;
+                    op.spool_phase = 18;
                 }
                 drop(writer);
                 checked(held.sweep_host_spools(|_| false))?;
@@ -1412,6 +1947,15 @@ impl Machine {
             ops.iter().map(|o| u64::from(o.spool_phase)).sum(),
             ops.iter().filter(|o| o.captured_process_reply).count() as u64,
             ops.iter().map(|o| o.native_attempts).sum(),
+            ops.iter().map(|o| o.native_paid_starts.get() as u64).sum(),
+            ops.iter()
+                .map(|o| o.native_local_repairs.get() as u64)
+                .sum(),
+            ops.iter()
+                .map(|o| o.recovery_native_starts.get() as u64)
+                .sum(),
+            ops.iter().map(|o| o.consumer_runs.get() as u64).sum(),
+            ops.iter().map(|o| o.resume_calls.get() as u64).sum(),
             ops.iter().filter(|o| o.transfer.is_some()).count() as u64,
             ops.iter().filter(|o| o.acknowledged).count() as u64,
             ops.iter()
@@ -1422,6 +1966,13 @@ impl Machine {
                 .map_or(0, |s| s.snapshot_jobs().unwrap().watermark),
             self.store.as_ref().map_or(0, |_| self.charges() as u64),
             self.disk_bytes(),
+            self.custodyless.iter().map(|s| u64::from(s.phase)).sum(),
+            self.custodyless
+                .iter()
+                .filter(|s| s.released || s.removed)
+                .count() as u64,
+            ops.iter().map(|o| o.captured_inputs.len() as u64).sum(),
+            ops.iter().filter(|o| o.dispatched).count() as u64,
         ]
     }
     fn observe_events(&mut self, events: Vec<Value>) -> Result<(), TestCaseError> {
@@ -1465,8 +2016,52 @@ impl Machine {
                 _ => return Ok(()),
             }
         }
+        let requires_admission = match command {
+            Command::Stage(s, ..)
+            | Command::RecoveryWriterGc(s)
+            | Command::CrashMidWrite(s)
+            | Command::Seal(s)
+            | Command::ProviderComplete(s)
+            | Command::Publish(s, ..)
+            | Command::Spool(s)
+            | Command::UnboundRepair(s)
+            | Command::ReplacementSpool(s)
+            | Command::AmbiguousSpool(s)
+            | Command::ReplacementCollision(s)
+            | Command::WorkerActive(s, ..)
+            | Command::Acquire(s)
+            | Command::Ack(s, ..)
+            | Command::ConsumerReceive(s, ..)
+            | Command::Replay(s)
+            | Command::DelayedReceipt(s, ..)
+            | Command::SpoolReserve(s, ..)
+            | Command::SpoolReply(s)
+            | Command::SpoolReplyStep(s, _)
+            | Command::SpoolPending(s)
+            | Command::SpoolFsync(s)
+            | Command::SpoolManifest(s)
+            | Command::SpoolManifestStep(s, _)
+            | Command::SpoolSeal(s)
+            | Command::SettlementCrash(s)
+            | Command::SpoolCrash(s, _)
+            | Command::PausedMutation(s, ..) => Some(s),
+            _ => None,
+        };
+        if requires_admission.is_some_and(|slot| {
+            self.index(slot)
+                .is_some_and(|i| !self.operations.borrow()[i].dispatched)
+        }) {
+            return self.invariants();
+        }
         match command {
             Command::Admit(s, i) => self.admit(s, i)?,
+            Command::Register(s) => self.register(s)?,
+            Command::Capture(s) => self.capture(s)?,
+            Command::Dispatch(s) => self.dispatch(s)?,
+            Command::CancelPreparation(s) => self.cancel_preparation(s)?,
+            Command::CustodylessReserve(s) => self.custodyless_reserve(s)?,
+            Command::CustodylessReply(s, p) => self.custodyless_reply(s, p)?,
+            Command::CustodylessRelease(s) => self.custodyless_release(s)?,
             Command::Stage(s, c, d) => self.stage(s, c, d)?,
             Command::RecoveryWriterGc(s) => self.recovery_writer_gc(s)?,
             Command::CrashMidWrite(s) => {
@@ -1553,6 +2148,11 @@ impl Machine {
                         )
                     };
                     if checked(self.store().execution_released(&consumer, &operation))? {
+                        {
+                            let mut ops = self.operations.borrow_mut();
+                            ops[index].native_context = NativeContext::Recovery;
+                            ops[index].native_intent = NativeIntent::LocalReconstruction;
+                        }
                         self.complete_spool(s, false)?;
                     }
                 }
@@ -1562,6 +2162,13 @@ impl Machine {
                     if self.generation(Role::Provider).is_some_and(|owner| {
                         owner.digest != self.operations.borrow()[index].provider.digest
                     }) {
+                        // This replacement reconstructs the original cached
+                        // reply locally; it never repeats the paid generation.
+                        {
+                            let mut ops = self.operations.borrow_mut();
+                            ops[index].native_context = NativeContext::Recovery;
+                            ops[index].native_intent = NativeIntent::LocalReconstruction;
+                        }
                         self.complete_spool(s, false)?;
                     }
                 }
@@ -1594,9 +2201,11 @@ impl Machine {
             Command::ReplacementCollision(s) => self.replacement_collision(s)?,
             Command::SpoolReserve(..)
             | Command::SpoolReply(_)
+            | Command::SpoolReplyStep(_, _)
             | Command::SpoolPending(_)
             | Command::SpoolFsync(_)
             | Command::SpoolManifest(_)
+            | Command::SpoolManifestStep(_, _)
             | Command::SpoolSeal(_) => self.spool_phase(command)?,
             Command::SettlementCrash(slot) => {
                 if let Some(index) = self.index(slot) {
@@ -1684,7 +2293,7 @@ impl Machine {
                         &op.provider,
                         &target,
                         "start",
-                        Self::request(op),
+                        op.request.clone(),
                         || true,
                         |method, _| {
                             if method.ends_with(".start") {
@@ -1762,8 +2371,19 @@ impl Machine {
                         self.restart(false)?;
                         let installed = package::list(&self.fixture.root).unwrap();
                         for op in self.operations.borrow_mut().iter_mut() {
-                            let a = checked(self.store().get(&op.consumer.package_id, &op.id))?
-                                .unwrap();
+                            let Some(a) =
+                                checked(self.store().get(&op.consumer.package_id, &op.id))?
+                            else {
+                                if checked(
+                                    self.store()
+                                        .job_for_operation(&op.consumer.package_id, &op.id),
+                                )?
+                                .is_some_and(|j| j.state.terminal())
+                                {
+                                    op.removed = true;
+                                }
+                                continue;
+                            };
                             if [&op.consumer.package_id, &op.provider.package_id]
                                 .into_iter()
                                 .any(|id| {
@@ -1939,7 +2559,7 @@ impl Machine {
         let mut live_reservations = 0u64;
         let mut reserved_output_bytes = 0u64;
         for op in self.operations.borrow().iter() {
-            if op.delivery_effects.get() > 1 {
+            if op.consumer_runs.get() > 1 || op.delivery_effects.get() > 1 {
                 return Err(fail(format!(
                     "duplicate delivery effects: {}, count={}",
                     op.id,
@@ -1952,10 +2572,50 @@ impl Machine {
                     op.id
                 )));
             }
-            if op.starts.get() != 1 {
+            if op.starts.get() != usize::from(op.dispatched)
+                || op.recovery_native_starts.get() != 0
+                || op.native_paid_starts.get() > 1
+            {
                 return Err(fail(format!("paid execution replayed: {}", op.id)));
             }
-            let a = checked(self.store().get(&op.consumer.package_id, &op.id))?.unwrap();
+            let admission = checked(self.store().get(&op.consumer.package_id, &op.id))?;
+            if !op.dispatched {
+                let job = checked(
+                    self.store()
+                        .job_for_operation(&op.consumer.package_id, &op.id),
+                )?
+                .unwrap();
+                if op.removed {
+                    if !job.state.terminal() {
+                        return Err(fail("removed preparation retained Accepting presentation"));
+                    }
+                } else {
+                    if job.state != JobState::Accepting {
+                        return Err(fail(format!(
+                            "compatible replacement discarded accepting preparation: {}",
+                            op.id
+                        )));
+                    }
+                    let root = self.fixture.profile.path().join("service-state/bytes");
+                    for input in &op.captured_inputs {
+                        if fs::read(root.join(format!("{}.bin", input.handle)))
+                            .ok()
+                            .as_ref()
+                            != Some(&op.original)
+                        {
+                            return Err(fail(format!(
+                                "retained preparation lost captured bytes: {}",
+                                op.id
+                            )));
+                        }
+                    }
+                    if admission.is_some() {
+                        return Err(fail("presentation phase unexpectedly dispatched service"));
+                    }
+                }
+                continue;
+            }
+            let a = admission.ok_or_else(|| fail("dispatched operation lost admission"))?;
             let execution_released = checked(
                 self.store()
                     .execution_released(&op.consumer.package_id, &op.id),
@@ -2025,6 +2685,7 @@ impl Machine {
                 return Err(fail("acknowledged original lost"));
             }
         }
+        self.custodyless_invariants(false)?;
         let charge = self.charges();
         let restored_excess: u64 = restored
             .iter()
@@ -2131,11 +2792,17 @@ impl Machine {
         if self.store.is_none() {
             self.restart(false)?
         }
+        for slot in 0..SLOTS as u8 {
+            self.dispatch(slot)?;
+            self.cancel_preparation(slot)?;
+        }
         for op in self.operations.borrow_mut().iter_mut() {
-            if !op.removed && op.spool_phase == 1 && op.paid_success {
+            if !op.removed && op.spool_phase <= 17 && op.paid_success {
                 if let Some(writer) = &op.writer {
-                    checked(writer.phase(1))?;
-                    op.spool_phase = 2;
+                    for point in op.spool_phase..=17 {
+                        checked(writer.phase(point))?;
+                    }
+                    op.spool_phase = 18;
                     op.durable_original |= op.valid_original;
                 }
             }
@@ -2146,13 +2813,31 @@ impl Machine {
                 op.outcome = Outcome::Unknown
             }
         }
+        for spool in &mut self.custodyless {
+            // Quiescence is a proven-dead native worker. Relinquish its real
+            // permit before evaluating lifecycle collection completion.
+            spool.writer.take();
+        }
         for _ in 0..4 {
             let _ = self.sweep();
             checked(self.store().gc())?;
             checked(self.store().sweep_host_spools(|_| false))?;
         }
         self.invariants()?;
+        self.custodyless_invariants(true)?;
+        for slot in 0..SLOTS as u8 {
+            self.custodyless_release(slot)?;
+        }
+        checked(self.store().gc())?;
+        checked(self.store().sweep_host_spools(|_| false))?;
+        self.custodyless_invariants(true)?;
         for op in self.operations.borrow().iter() {
+            if !op.dispatched {
+                if op.removed {
+                    self.assert_removed_clean(op)?;
+                }
+                continue;
+            }
             let a = self
                 .store()
                 .get(&op.consumer.package_id, &op.id)
@@ -2245,6 +2930,11 @@ impl FixtureRpc<'_> {
             )? {
                 if spool["status"] == 0 {
                     op.paid_success = true;
+                    native_work_started(
+                        op,
+                        NativeContext::Recovery,
+                        NativeIntent::LocalReconstruction,
+                    );
                     let stage = m
                         .store()
                         .stage(&op.provider, &op.consumer.package_id, &op.id)?;
@@ -2292,6 +2982,7 @@ impl FixtureRpc<'_> {
         // receives the original operation identity, independent of UI slots.
         let mut ops = m.operations.borrow_mut();
         let op = &mut ops[index];
+        op.resume_calls.set(op.resume_calls.get() + 1);
         if op.removed || op.acknowledged {
             return Ok(());
         }
@@ -2299,16 +2990,27 @@ impl FixtureRpc<'_> {
         let Some(d) = current.output.as_ref() else {
             return Ok(());
         };
-        if fs::read(&op.copy).ok().as_ref() != Some(&op.original) {
+        let proof = if let Some(transfer) = &op.transfer {
+            m.store()
+                .verify_acquisition(&op.consumer, &op.id, &d.sha256, transfer)?;
+            TransferReceipt {
+                transfer_receipt: transfer.clone(),
+            }
+        } else {
             let source = m
                 .store()
                 .read(&op.consumer, &op.consumer.package_id, &op.id, d)?;
+            op.consumer_runs.set(op.consumer_runs.get() + 1);
+            op.copy = op.copy.parent().unwrap().join(format!(
+                "{}-consumer-run-{}.png",
+                op.id,
+                op.consumer_runs.get()
+            ));
             fs::copy(source.path, &op.copy)?;
             op.delivery_effects.set(op.delivery_effects.get() + 1);
-        }
-        let proof = m
-            .store()
-            .acquired(&op.consumer, &op.id, d, op.copy.to_str().unwrap())?;
+            m.store()
+                .acquired(&op.consumer, &op.id, d, op.copy.to_str().unwrap())?
+        };
         op.transfer = Some(proof.transfer_receipt.clone());
         m.store().release(
             &op.provider,
@@ -2486,6 +3188,13 @@ impl ai_operations::AutomaticPort for Transport<'_> {
 const MIN_DEEP_TRANSITION_HITS: u64 = 3;
 const REQUIRED_TRANSITIONS: &[&str] = &[
     "admit",
+    "presentation-register",
+    "preparation-capture",
+    "service-dispatch",
+    "preparation-cancel",
+    "custodyless-reserve",
+    "custodyless-reply-boundary",
+    "custodyless-release",
     "stage-durable",
     "stage-unsynced",
     "stage-partial",
@@ -2533,16 +3242,39 @@ const REQUIRED_TRANSITIONS: &[&str] = &[
     "bound-spool-reserve",
     "unbound-spool-reserve",
     "nonzero-spool-reserve",
-    "spool-reply-persist",
+    "spool-intent-commit",
+    "spool-pending-create",
+    "spool-pending-partial",
+    "spool-pending-full",
+    "spool-pending-file-sync",
+    "spool-pending-directory-sync",
+    "spool-stdout-create",
+    "spool-stdout-partial",
+    "spool-stdout-full",
+    "spool-stdout-file-sync",
+    "spool-stderr-create",
+    "spool-stderr-partial",
+    "spool-stderr-full",
+    "spool-stderr-file-sync",
+    "spool-witness-file-sync",
+    "spool-directory-sync",
+    "spool-parent-directory-sync",
     "spool-pending-commit",
     "spool-output-fsync",
-    "spool-manifest-publish",
+    "spool-manifest-temp-create",
+    "spool-manifest-partial",
+    "spool-manifest-full",
+    "spool-manifest-temp-sync",
+    "spool-manifest-rename",
+    "spool-manifest-target-sync",
+    "spool-manifest-directory-sync",
+    "spool-manifest-parent-sync",
     "spool-seal-commit",
     "crash-after-spool-reserve",
-    "crash-after-spool-reply",
+    "crash-within-reply-persistence",
     "crash-after-spool-pending",
     "crash-after-spool-fsync",
-    "crash-after-spool-manifest",
+    "crash-within-spool-manifest",
     "crash-after-spool-seal",
     "settlement-crash-before-collection",
     "crash-lifecycle-intent",
@@ -2572,10 +3304,14 @@ fn collect_trace(
 ) -> Result<(), TestCaseError> {
     let mut machine = Machine::new();
     machine.admit(0, false)?;
-    for command in trace {
-        machine.apply(command)?;
+    for command in &trace {
+        machine
+            .apply(*command)
+            .map_err(|cause| fail(format!("trace={trace:?}, at={command:?}: {cause}")))?;
     }
-    machine.quiesce()?;
+    machine
+        .quiesce()
+        .map_err(|cause| fail(format!("trace={trace:?}, quiesce: {cause}")))?;
     for (family, hits) in std::mem::take(&mut machine.coverage) {
         *totals.entry(family).or_default() += hits;
     }
@@ -2586,6 +3322,39 @@ fn collect_trace(
 /// same transitions. A missing/inert transition is a failing deep run.
 fn coverage_campaign(totals: &mut BTreeMap<&'static str, u64>) -> Result<(), TestCaseError> {
     for _ in 0..MIN_DEEP_TRANSITION_HITS {
+        collect_trace(
+            vec![
+                Command::Register(1),
+                Command::Capture(1),
+                Command::CancelPreparation(1),
+            ],
+            totals,
+        )?;
+        collect_trace(
+            vec![
+                Command::Register(1),
+                Command::Capture(1),
+                Command::Upgrade(false, true, false),
+                Command::Dispatch(1),
+            ],
+            totals,
+        )?;
+        for incompatible in [false, true] {
+            let mut machine = Machine::new();
+            machine.apply(Command::CustodylessReserve(0))?;
+            for point in 1..=28 {
+                machine.apply(Command::CustodylessReply(0, point))?;
+            }
+            if incompatible {
+                machine.apply(Command::Upgrade(true, false, false))?;
+            } else {
+                machine.apply(Command::CustodylessRelease(0))?;
+            }
+            machine.quiesce()?;
+            for (family, hits) in std::mem::take(&mut machine.coverage) {
+                *totals.entry(family).or_default() += hits;
+            }
+        }
         collect_trace(vec![Command::Sweep, Command::UnboundRepair(0)], totals)?;
         collect_trace(
             vec![Command::SharedConsumerAdmit, Command::AmbiguousSpool(0)],
@@ -2607,14 +3376,37 @@ fn coverage_campaign(totals: &mut BTreeMap<&'static str, u64>) -> Result<(), Tes
             ],
             totals,
         )?;
-        for phase in 1..=6 {
+        for phase in 1..=29 {
             let mut trace = vec![Command::SpoolReserve(0, true, false)];
             trace.extend(
                 [
                     Command::SpoolReply(0),
+                    Command::SpoolReplyStep(0, 2),
+                    Command::SpoolReplyStep(0, 3),
+                    Command::SpoolReplyStep(0, 4),
+                    Command::SpoolReplyStep(0, 5),
+                    Command::SpoolReplyStep(0, 6),
+                    Command::SpoolReplyStep(0, 7),
+                    Command::SpoolReplyStep(0, 8),
+                    Command::SpoolReplyStep(0, 9),
+                    Command::SpoolReplyStep(0, 10),
+                    Command::SpoolReplyStep(0, 11),
+                    Command::SpoolReplyStep(0, 12),
+                    Command::SpoolReplyStep(0, 13),
+                    Command::SpoolReplyStep(0, 14),
+                    Command::SpoolReplyStep(0, 15),
+                    Command::SpoolReplyStep(0, 16),
+                    Command::SpoolReplyStep(0, 17),
                     Command::SpoolPending(0),
                     Command::SpoolFsync(0),
                     Command::SpoolManifest(0),
+                    Command::SpoolManifestStep(0, 2),
+                    Command::SpoolManifestStep(0, 3),
+                    Command::SpoolManifestStep(0, 4),
+                    Command::SpoolManifestStep(0, 5),
+                    Command::SpoolManifestStep(0, 6),
+                    Command::SpoolManifestStep(0, 7),
+                    Command::SpoolManifestStep(0, 8),
                     Command::SpoolSeal(0),
                 ]
                 .into_iter()
@@ -2628,9 +3420,32 @@ fn coverage_campaign(totals: &mut BTreeMap<&'static str, u64>) -> Result<(), Tes
                 vec![
                     Command::SpoolReserve(0, bound, true),
                     Command::SpoolReply(0),
+                    Command::SpoolReplyStep(0, 2),
+                    Command::SpoolReplyStep(0, 3),
+                    Command::SpoolReplyStep(0, 4),
+                    Command::SpoolReplyStep(0, 5),
+                    Command::SpoolReplyStep(0, 6),
+                    Command::SpoolReplyStep(0, 7),
+                    Command::SpoolReplyStep(0, 8),
+                    Command::SpoolReplyStep(0, 9),
+                    Command::SpoolReplyStep(0, 10),
+                    Command::SpoolReplyStep(0, 11),
+                    Command::SpoolReplyStep(0, 12),
+                    Command::SpoolReplyStep(0, 13),
+                    Command::SpoolReplyStep(0, 14),
+                    Command::SpoolReplyStep(0, 15),
+                    Command::SpoolReplyStep(0, 16),
+                    Command::SpoolReplyStep(0, 17),
                     Command::SpoolPending(0),
                     Command::SpoolFsync(0),
                     Command::SpoolManifest(0),
+                    Command::SpoolManifestStep(0, 2),
+                    Command::SpoolManifestStep(0, 3),
+                    Command::SpoolManifestStep(0, 4),
+                    Command::SpoolManifestStep(0, 5),
+                    Command::SpoolManifestStep(0, 6),
+                    Command::SpoolManifestStep(0, 7),
+                    Command::SpoolManifestStep(0, 8),
                     Command::SpoolSeal(0),
                     Command::Publish(0, 2, false),
                     Command::SettlementCrash(0),
@@ -2641,9 +3456,32 @@ fn coverage_campaign(totals: &mut BTreeMap<&'static str, u64>) -> Result<(), Tes
                 vec![
                     Command::SpoolReserve(0, bound, false),
                     Command::SpoolReply(0),
+                    Command::SpoolReplyStep(0, 2),
+                    Command::SpoolReplyStep(0, 3),
+                    Command::SpoolReplyStep(0, 4),
+                    Command::SpoolReplyStep(0, 5),
+                    Command::SpoolReplyStep(0, 6),
+                    Command::SpoolReplyStep(0, 7),
+                    Command::SpoolReplyStep(0, 8),
+                    Command::SpoolReplyStep(0, 9),
+                    Command::SpoolReplyStep(0, 10),
+                    Command::SpoolReplyStep(0, 11),
+                    Command::SpoolReplyStep(0, 12),
+                    Command::SpoolReplyStep(0, 13),
+                    Command::SpoolReplyStep(0, 14),
+                    Command::SpoolReplyStep(0, 15),
+                    Command::SpoolReplyStep(0, 16),
+                    Command::SpoolReplyStep(0, 17),
                     Command::SpoolPending(0),
                     Command::SpoolFsync(0),
                     Command::SpoolManifest(0),
+                    Command::SpoolManifestStep(0, 2),
+                    Command::SpoolManifestStep(0, 3),
+                    Command::SpoolManifestStep(0, 4),
+                    Command::SpoolManifestStep(0, 5),
+                    Command::SpoolManifestStep(0, 6),
+                    Command::SpoolManifestStep(0, 7),
+                    Command::SpoolManifestStep(0, 8),
                     Command::SpoolSeal(0),
                     Command::Enable(false, false),
                 ],
@@ -2754,10 +3592,8 @@ fn run(cases: u32, steps: usize) {
     runner
         .run(&commands(steps), |commands| {
             let mut m = Machine::new();
-            m.admit(0, false)?;
-            if m.operations.borrow().len() != 1 {
-                return Err(fail("seed admission did not apply"));
-            }
+            // Start empty so no-admission schedules are reproducible while
+            // shrinking; admission is a generated command, not global case parity.
             for command in commands {
                 m.apply(command)?
             }
@@ -2990,7 +3826,8 @@ fn model_refused_native_attempt_uses_fresh_reverse_call_identity() {
     let first_request = m.operations.borrow()[index].spool_request.clone();
     assert!(m.operations.borrow()[index].spool.is_none());
     assert!(!m.operations.borrow()[index].captured_process_reply);
-    m.apply(Command::PowerLoss).unwrap();
+    m.apply(Command::DirectorySyncFailure(false)).unwrap();
+    m.apply(Command::Gc).unwrap();
     m.apply(Command::Spool(2)).unwrap();
     assert_ne!(m.operations.borrow()[index].spool_request, first_request);
     m.quiesce().unwrap();
@@ -3008,9 +3845,32 @@ fn model_terminal_provider_rejects_late_reserved_reply() {
             m.apply(Command::Publish(0, outcome, true)).unwrap();
             for phase in [
                 Command::SpoolReply(0),
+                Command::SpoolReplyStep(0, 2),
+                Command::SpoolReplyStep(0, 3),
+                Command::SpoolReplyStep(0, 4),
+                Command::SpoolReplyStep(0, 5),
+                Command::SpoolReplyStep(0, 6),
+                Command::SpoolReplyStep(0, 7),
+                Command::SpoolReplyStep(0, 8),
+                Command::SpoolReplyStep(0, 9),
+                Command::SpoolReplyStep(0, 10),
+                Command::SpoolReplyStep(0, 11),
+                Command::SpoolReplyStep(0, 12),
+                Command::SpoolReplyStep(0, 13),
+                Command::SpoolReplyStep(0, 14),
+                Command::SpoolReplyStep(0, 15),
+                Command::SpoolReplyStep(0, 16),
+                Command::SpoolReplyStep(0, 17),
                 Command::SpoolPending(0),
                 Command::SpoolFsync(0),
                 Command::SpoolManifest(0),
+                Command::SpoolManifestStep(0, 2),
+                Command::SpoolManifestStep(0, 3),
+                Command::SpoolManifestStep(0, 4),
+                Command::SpoolManifestStep(0, 5),
+                Command::SpoolManifestStep(0, 6),
+                Command::SpoolManifestStep(0, 7),
+                Command::SpoolManifestStep(0, 8),
                 Command::SpoolSeal(0),
             ] {
                 m.apply(phase).unwrap();
@@ -3090,9 +3950,32 @@ fn model_host_only_unknown_success_emits_one_removal_notice() {
         for command in [
             Command::SpoolReserve(0, bound, false),
             Command::SpoolReply(0),
+            Command::SpoolReplyStep(0, 2),
+            Command::SpoolReplyStep(0, 3),
+            Command::SpoolReplyStep(0, 4),
+            Command::SpoolReplyStep(0, 5),
+            Command::SpoolReplyStep(0, 6),
+            Command::SpoolReplyStep(0, 7),
+            Command::SpoolReplyStep(0, 8),
+            Command::SpoolReplyStep(0, 9),
+            Command::SpoolReplyStep(0, 10),
+            Command::SpoolReplyStep(0, 11),
+            Command::SpoolReplyStep(0, 12),
+            Command::SpoolReplyStep(0, 13),
+            Command::SpoolReplyStep(0, 14),
+            Command::SpoolReplyStep(0, 15),
+            Command::SpoolReplyStep(0, 16),
+            Command::SpoolReplyStep(0, 17),
             Command::SpoolPending(0),
             Command::SpoolFsync(0),
             Command::SpoolManifest(0),
+            Command::SpoolManifestStep(0, 2),
+            Command::SpoolManifestStep(0, 3),
+            Command::SpoolManifestStep(0, 4),
+            Command::SpoolManifestStep(0, 5),
+            Command::SpoolManifestStep(0, 6),
+            Command::SpoolManifestStep(0, 7),
+            Command::SpoolManifestStep(0, 8),
             Command::SpoolSeal(0),
             Command::Publish(0, 1, false),
             Command::Enable(false, false),
@@ -3163,4 +4046,245 @@ fn model_presealed_original_is_recovered_through_rpc() {
     m.apply(Command::Seal(0)).unwrap();
     m.quiesce().unwrap();
     assert_eq!(m.operations.borrow()[0].delivery_effects.get(), 1);
+}
+
+#[test]
+fn model_complete_stdout_survives_crash_before_empty_stderr() {
+    for power_loss in [false, true] {
+        let mut m = Machine::new();
+        m.admit(0, false).unwrap();
+        m.apply(Command::SpoolReserve(0, true, false)).unwrap();
+        let last = if power_loss { 16 } else { 10 };
+        for command in reply_commands(0).into_iter().take(last) {
+            m.apply(command).unwrap();
+        }
+        m.apply(if power_loss {
+            Command::PowerLoss
+        } else {
+            Command::Restart
+        })
+        .unwrap();
+        m.quiesce().unwrap();
+        let ops = m.operations.borrow();
+        assert_eq!(fs::read(&ops[0].copy).unwrap(), ops[0].original);
+        assert_eq!(ops[0].delivery_effects.get(), 1);
+    }
+}
+
+#[test]
+fn model_accepting_preparation_is_reused_after_compatible_replacement() {
+    let mut m = Machine::new();
+    m.apply(Command::Register(0)).unwrap();
+    m.apply(Command::Capture(0)).unwrap();
+    let captured = m.operations.borrow()[0].captured_inputs.clone();
+    assert!(m
+        .store()
+        .get(
+            &m.operations.borrow()[0].consumer.package_id,
+            &m.operations.borrow()[0].id
+        )
+        .unwrap()
+        .is_none());
+    m.apply(Command::Upgrade(false, true, false)).unwrap();
+    m.apply(Command::Restart).unwrap();
+    m.apply(Command::Dispatch(0)).unwrap();
+    assert_eq!(m.operations.borrow()[0].captured_inputs, captured);
+    assert_eq!(m.operations.borrow()[0].starts.get(), 1);
+    m.quiesce().unwrap();
+}
+
+#[test]
+fn model_incompatible_sdk2_replacement_cleans_custodyless_reply() {
+    let mut m = Machine::new();
+    m.apply(Command::CustodylessReserve(0)).unwrap();
+    assert!(m
+        .store()
+        .package_operations(m.fixture.id(Role::Provider))
+        .unwrap()
+        .is_empty());
+    for point in 1..=28 {
+        m.apply(Command::CustodylessReply(0, point)).unwrap();
+    }
+    m.apply(Command::Restart).unwrap();
+    m.apply(Command::Upgrade(true, false, false)).unwrap();
+    m.quiesce().unwrap();
+    assert_eq!(m.charges(), 0);
+    assert_eq!(m.disk_bytes(), 0);
+}
+
+#[test]
+fn model_delivery_oracle_rejects_a_second_run_even_when_first_copy_exists() {
+    let mut m = Machine::new();
+    m.admit(0, false).unwrap();
+    m.apply(Command::ProviderComplete(0)).unwrap();
+    m.apply(Command::Acquire(0)).unwrap();
+    let a = m
+        .store()
+        .get(
+            &m.operations.borrow()[0].consumer.package_id,
+            &m.operations.borrow()[0].id,
+        )
+        .unwrap()
+        .unwrap();
+    m.operations.borrow_mut()[0].transfer = None;
+    let _ = FixtureRpc { machine: &m }.consumer_resume(&a);
+    assert_eq!(m.operations.borrow()[0].delivery_effects.get(), 2);
+    assert!(m
+        .invariants()
+        .unwrap_err()
+        .to_string()
+        .contains("duplicate delivery effects"));
+}
+
+#[test]
+fn model_recovery_paid_native_work_is_counted_separately_from_service_start() {
+    struct PaidRecovery<'a>(&'a Machine);
+    impl ai_operations::RecoveryPort for PaidRecovery<'_> {
+        fn provider_status(
+            &self,
+            store: &Store,
+            a: &Admission,
+        ) -> Result<(PackageGeneration, Value), AppError> {
+            let ops = self.0.operations.borrow();
+            let op = ops.iter().find(|o| o.id == a.operation_id).unwrap();
+            native_work_started(op, NativeContext::Recovery, NativeIntent::PaidGeneration);
+            drop(ops);
+            FixtureRpc { machine: self.0 }.provider_status(store, a)
+        }
+        fn resume(&self, store: &Store, a: &Admission, job: &JobRecord) -> Result<(), AppError> {
+            let ops = self.0.operations.borrow();
+            let op = ops.iter().find(|o| o.id == a.operation_id).unwrap();
+            native_work_started(op, NativeContext::Recovery, NativeIntent::PaidGeneration);
+            drop(ops);
+            FixtureRpc { machine: self.0 }.resume(store, a, job)
+        }
+        fn terminal_resume(
+            &self,
+            _: &Store,
+            _: &Admission,
+            _: Option<&JobRecord>,
+        ) -> Result<(), AppError> {
+            Ok(())
+        }
+    }
+    let mut m = Machine::new();
+    m.admit(0, false).unwrap();
+    let (consumer, id) = {
+        let ops = m.operations.borrow();
+        (ops[0].consumer.package_id.clone(), ops[0].id.clone())
+    };
+    let a = m.store().get(&consumer, &id).unwrap().unwrap();
+    let job = m.store().job_for_operation(&consumer, &id).unwrap();
+    let _ = ai_operations::recover_in(m.store(), &a, job.as_ref(), &PaidRecovery(&m));
+    assert_eq!(m.operations.borrow()[0].starts.get(), 1);
+    assert_eq!(m.operations.borrow()[0].recovery_native_starts.get(), 1);
+    assert!(m
+        .invariants()
+        .unwrap_err()
+        .to_string()
+        .contains("paid execution replayed"));
+}
+
+#[test]
+fn model_pending_create_crash_stops_before_stdout_is_created() {
+    let mut m = Machine::new();
+    m.admit(0, false).unwrap();
+    m.apply(Command::SpoolReserve(0, true, false)).unwrap();
+    m.apply(Command::SpoolReply(0)).unwrap();
+    m.apply(Command::SpoolReplyStep(0, 2)).unwrap();
+    let path = m
+        .fixture
+        .profile
+        .path()
+        .join("service-state/host-spools")
+        .join(m.operations.borrow()[0].spool.as_ref().unwrap());
+    m.operations.borrow_mut()[0].writer.take();
+    assert!(path.join("pending.json").exists());
+    assert!(!path.join("stdout").exists());
+    assert!(!path.join("stderr").exists());
+}
+
+#[test]
+fn model_acquired_proof_resumes_acknowledgement_without_a_second_consumer_run() {
+    let mut m = Machine::new();
+    m.admit(0, false).unwrap();
+    m.apply(Command::ProviderComplete(0)).unwrap();
+    m.apply(Command::PausedMutation(0, 1, 2)).unwrap();
+    m.quiesce().unwrap();
+    assert_eq!(m.operations.borrow()[0].delivery_effects.get(), 1);
+    assert_eq!(m.operations.borrow()[0].consumer_runs.get(), 1);
+    assert!(m.operations.borrow()[0].acknowledged);
+}
+
+#[test]
+fn model_removed_custodyless_writer_relinquishes_its_permit_before_collection() {
+    let mut m = Machine::new();
+    m.apply(Command::CustodylessReserve(1)).unwrap();
+    m.apply(Command::Enable(true, false)).unwrap();
+    m.quiesce().unwrap();
+    assert_eq!(m.charges(), 0);
+    assert_eq!(m.disk_bytes(), 0);
+}
+
+#[test]
+fn model_idle_fenced_operation_cannot_create_a_fresh_paid_native_dispatch() {
+    let mut m = Machine::new();
+    m.apply(Command::SharedConsumerAdmit).unwrap();
+    m.apply(Command::SettlementCrash(2)).unwrap();
+    m.apply(Command::Upgrade(false, false, false)).unwrap();
+    let index = m.index(2).unwrap();
+    let charge = m.charges();
+    let disk = m.disk_bytes();
+    let before_starts = m.operations.borrow()[index].native_paid_starts.get();
+    m.apply(Command::SpoolReserve(2, false, false)).unwrap();
+    let ops = m.operations.borrow();
+    assert!(ops[index].writer.is_none());
+    assert!(ops[index].spool.is_none());
+    assert_eq!(ops[index].native_paid_starts.get(), before_starts);
+    assert_eq!(m.charges(), charge);
+    assert_eq!(m.disk_bytes(), disk);
+    drop(ops);
+    m.quiesce().unwrap();
+}
+
+#[test]
+fn model_restart_cannot_synthesize_initial_paid_work_in_a_new_provider_generation() {
+    let mut m = Machine::new();
+    m.admit(0, false).unwrap();
+    let original = m.operations.borrow()[0].provider.clone();
+    m.apply(Command::Restart).unwrap();
+    assert_ne!(m.generation(Role::Provider).unwrap(), original);
+    let charge = m.charges();
+    m.apply(Command::SpoolReserve(0, true, false)).unwrap();
+    m.apply(Command::SpoolReserve(0, false, false)).unwrap();
+    let ops = m.operations.borrow();
+    assert!(ops[0].writer.is_none());
+    assert_eq!(ops[0].native_paid_starts.get(), 0);
+    assert_eq!(ops[0].native_attempts, 0);
+    assert_eq!(m.charges(), charge);
+    drop(ops);
+    m.quiesce().unwrap();
+}
+
+#[test]
+fn model_same_digest_upgrade_adopts_a_new_consumer_incarnation_in_every_preparation_phase() {
+    for capture in [false, true] {
+        let mut m = Machine::new();
+        m.apply(Command::Upgrade(false, true, false)).unwrap();
+        m.apply(Command::Register(0)).unwrap();
+        if capture {
+            m.apply(Command::Capture(0)).unwrap();
+        }
+        let original = m.operations.borrow()[0].consumer.clone();
+        let descriptors = m.operations.borrow()[0].captured_inputs.clone();
+        m.apply(Command::Upgrade(false, true, false)).unwrap();
+        let current = m.generation(Role::Consumer).unwrap();
+        assert_eq!(current.digest, original.digest);
+        assert_ne!(current.incarnation, original.incarnation);
+        m.apply(Command::Dispatch(0)).unwrap();
+        assert_eq!(m.operations.borrow()[0].consumer, current);
+        assert_eq!(m.operations.borrow()[0].captured_inputs, descriptors);
+        assert_eq!(m.operations.borrow()[0].starts.get(), 1);
+        m.quiesce().unwrap();
+    }
 }

@@ -7,16 +7,16 @@
 //!
 //! Use: `Command::new("git").no_console().args(...)`. No-op on non-Windows.
 
-use std::io::{Read, Write};
+use std::io::Write;
 use std::process::{Command, Output, Stdio};
-use std::sync::{
-    atomic::{AtomicBool, Ordering},
-    Arc, Mutex,
-};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 use crate::error::{AppError, ProcessRunError};
+#[path = "process_ext/pipe_capture.rs"]
+pub(crate) mod pipe_capture;
 #[cfg(windows)]
+#[path = "process_ext/windows_job.rs"]
 mod windows_job;
 
 /// Mark a `Command` so it does not pop a console window on Windows.
@@ -241,33 +241,23 @@ fn supervise(
     cancel_message: &'static str,
     completion: Completion,
 ) -> Result<Output, AppError> {
-    let mut stdout = child
+    let stdout = child
         .stdout
         .take()
         .ok_or_else(|| AppError::Other("child stdout pipe unavailable".into()))?;
-    let mut stderr = child
+    let stderr = child
         .stderr
         .take()
         .ok_or_else(|| AppError::Other("child stderr pipe unavailable".into()))?;
     let overflow = std::sync::Arc::new(AtomicBool::new(false));
-    let capture = || {
-        (completion == Completion::ChildExited)
-            .then(|| Arc::new(Mutex::new(CapturedOutput::default())))
+    let mut readers = match pipe_capture::Readers::new(stdout, stderr, limits, overflow.clone()) {
+        Ok(readers) => readers,
+        Err(error) => {
+            terminate(child);
+            let _ = child.wait();
+            return Err(error.into());
+        }
     };
-    let stdout_capture = capture();
-    let stderr_capture = capture();
-    let stdout_pending = stdout_capture.clone();
-    let stderr_pending = stderr_capture.clone();
-    let stdout_overflow = overflow.clone();
-    let stderr_overflow = overflow.clone();
-    let stdout_reader = std::thread::spawn(move || match stdout_pending {
-        Some(capture) => read_captured(&mut stdout, limits.0, &stdout_overflow, &capture),
-        None => read_bounded(&mut stdout, limits.0, &stdout_overflow),
-    });
-    let stderr_reader = std::thread::spawn(move || match stderr_pending {
-        Some(capture) => read_captured(&mut stderr, limits.1, &stderr_overflow, &capture),
-        None => read_bounded(&mut stderr, limits.1, &stderr_overflow),
-    });
 
     let mut exited = None;
     loop {
@@ -277,7 +267,6 @@ fn supervise(
         {
             terminate(child);
             let _ = child.wait();
-            drain_readers(stdout_reader, stderr_reader);
             return Err(AppError::Other(
                 if overflow.load(Ordering::Relaxed) {
                     "Child output exceeded its limit"
@@ -294,6 +283,7 @@ fn supervise(
                     launcher_exited();
                     if completion == Completion::ChildExited {
                         terminate(child);
+                        readers.retire();
                     }
                     exited = Some(Instant::now());
                 }
@@ -301,27 +291,17 @@ fn supervise(
                 Err(error) => {
                     terminate(child);
                     let _ = child.wait();
-                    drain_readers(stdout_reader, stderr_reader);
                     return Err(AppError::from(error));
                 }
             }
         }
         if let Some(since) = exited {
-            if stdout_reader.is_finished() && stderr_reader.is_finished() {
+            if completion == Completion::ChildExited || readers.is_finished() {
                 // Kill redirected descendants before reaping the launcher.
                 // WNOWAIT keeps its PID/group identity reserved through cleanup.
                 terminate(child);
                 let status = child.wait()?;
-                let stdout = stdout_reader
-                    .join()
-                    .map_err(|_| AppError::Other("child stdout reader panicked".into()))?
-                    .map_err(AppError::from)?;
-                let stdout = stdout_capture.as_ref().map_or(stdout, |c| close_capture(c));
-                let stderr = stderr_reader
-                    .join()
-                    .map_err(|_| AppError::Other("child stderr reader panicked".into()))?
-                    .map_err(AppError::from)?;
-                let stderr = stderr_capture.as_ref().map_or(stderr, |c| close_capture(c));
+                let (stdout, stderr) = readers.finish()?;
                 if overflow.load(Ordering::Relaxed) {
                     return Err(AppError::Other("Child output exceeded its limit".into()));
                 }
@@ -333,31 +313,9 @@ fn supervise(
             }
             // The launcher may exit while a descendant retains its pipes.
             // Continue observing cancellation until EOF, then bound that drain.
-            let drain_limit = if completion == Completion::ChildExited {
-                Duration::from_secs(1)
-            } else {
-                Duration::from_secs(5)
-            };
-            if since.elapsed() >= drain_limit {
+            if since.elapsed() >= Duration::from_secs(5) {
                 terminate(child);
-                let status = child.wait()?;
-                if let (Some(stdout), Some(stderr)) = (&stdout_capture, &stderr_capture) {
-                    // The owned leaf already exited. A detached pipe holder
-                    // cannot revoke that exit or its captured original reply.
-                    // Close capture before detaching any blocked readers.
-                    let stdout = close_capture(stdout);
-                    let stderr = close_capture(stderr);
-                    drain_readers(stdout_reader, stderr_reader);
-                    if overflow.load(Ordering::Relaxed) {
-                        return Err(AppError::Other("Child output exceeded its limit".into()));
-                    }
-                    return Ok(Output {
-                        status,
-                        stdout,
-                        stderr,
-                    });
-                }
-                drain_readers(stdout_reader, stderr_reader);
+                let _ = child.wait();
                 return Err(AppError::Other(
                     "Child output pipes remained open after exit".into(),
                 ));
@@ -366,48 +324,9 @@ fn supervise(
         if cancellation && !(completion == Completion::ChildExited && exited.is_some()) {
             terminate(child);
             let _ = child.wait();
-            drain_readers(stdout_reader, stderr_reader);
             return Err(AppError::Other(cancel_message.into()));
         }
         std::thread::sleep(Duration::from_millis(10));
-    }
-}
-
-#[derive(Default)]
-struct CapturedOutput {
-    bytes: Vec<u8>,
-    closed: bool,
-}
-fn close_capture(capture: &Mutex<CapturedOutput>) -> Vec<u8> {
-    let mut capture = capture.lock().unwrap_or_else(|cause| cause.into_inner());
-    capture.closed = true;
-    std::mem::take(&mut capture.bytes)
-}
-fn read_captured(
-    reader: &mut impl Read,
-    limit: usize,
-    overflow: &AtomicBool,
-    capture: &Mutex<CapturedOutput>,
-) -> std::io::Result<Vec<u8>> {
-    let mut chunk = [0u8; 8192];
-    loop {
-        let count = reader.read(&mut chunk)?;
-        let mut capture = capture.lock().unwrap_or_else(|cause| cause.into_inner());
-        if capture.closed {
-            return Ok(Vec::new());
-        }
-        if count == 0 {
-            // Keep captured bytes until the host closes the snapshot, even if
-            // this reader reaches EOF before the other pipe's drain deadline.
-            return Ok(Vec::new());
-        }
-        let remaining = limit.saturating_sub(capture.bytes.len());
-        capture
-            .bytes
-            .extend_from_slice(&chunk[..count.min(remaining)]);
-        if count > remaining {
-            overflow.store(true, Ordering::Relaxed);
-        }
     }
 }
 
@@ -439,12 +358,6 @@ fn exited_without_reaping(child: &mut std::process::Child) -> std::io::Result<bo
     Ok(child.try_wait()?.is_some())
 }
 
-/// Never join a blocked pipe reader after termination: an independently
-/// detached descendant can hold a pipe even after the owned group is killed.
-fn drain_readers<T>(stdout: std::thread::JoinHandle<T>, stderr: std::thread::JoinHandle<T>) {
-    finish_workers([stdout, stderr]);
-}
-
 fn finish_workers<T, const N: usize>(workers: [std::thread::JoinHandle<T>; N]) {
     let deadline = Instant::now() + Duration::from_secs(1);
     while !workers.iter().all(|worker| worker.is_finished()) && Instant::now() < deadline {
@@ -453,26 +366,6 @@ fn finish_workers<T, const N: usize>(workers: [std::thread::JoinHandle<T>; N]) {
     for worker in workers {
         if worker.is_finished() {
             let _ = worker.join();
-        }
-    }
-}
-
-fn read_bounded(
-    reader: &mut impl Read,
-    limit: usize,
-    overflow: &AtomicBool,
-) -> std::io::Result<Vec<u8>> {
-    let mut bytes = Vec::new();
-    let mut chunk = [0u8; 8192];
-    loop {
-        let count = reader.read(&mut chunk)?;
-        if count == 0 {
-            return Ok(bytes);
-        }
-        let remaining = limit.saturating_sub(bytes.len());
-        bytes.extend_from_slice(&chunk[..count.min(remaining)]);
-        if count > remaining {
-            overflow.store(true, Ordering::Relaxed);
         }
     }
 }
@@ -599,6 +492,30 @@ mod tests {
     use std::sync::atomic::AtomicBool;
     use std::sync::Arc;
     use std::time::{Duration, Instant};
+
+    #[cfg(unix)]
+    #[test]
+    fn completed_png_remains_captured_when_close_wins_reader_scheduling() {
+        use std::io::Write;
+        use std::os::unix::net::UnixStream;
+        let png = include_bytes!("../../static/favicon.png");
+        let (output, mut writer) = UnixStream::pair().unwrap();
+        writer.write_all(png).unwrap();
+        drop(writer);
+        let overflow = Arc::new(AtomicBool::new(false));
+        // A successful child has exited but its output reader has not run.
+        let bytes = super::pipe_capture::spawn(
+            output,
+            png.len(),
+            overflow,
+            Arc::new(AtomicBool::new(true)),
+        )
+        .unwrap()
+        .join()
+        .unwrap()
+        .unwrap();
+        assert_eq!(bytes, png);
+    }
 
     #[test]
     fn cancellation_terminates_a_running_child_promptly() {

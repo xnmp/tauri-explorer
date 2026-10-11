@@ -33,7 +33,103 @@ pub(super) fn pending_success_for_root(root: &Path) -> Result<PendingSuccess> {
 }
 pub(super) const RECEIPT_SCHEMA: i64 = 0x5445_4931;
 pub(super) const RECEIPT_TABLE: &str = "CREATE TABLE provider_receipts(consumer TEXT NOT NULL,operation TEXT NOT NULL,provider TEXT NOT NULL,revision INTEGER NOT NULL,status TEXT NOT NULL,digest TEXT NOT NULL,PRIMARY KEY(consumer,operation)); PRAGMA application_id=1413826865;";
-pub(super) const DISMISSAL_TABLE: &str = "CREATE TABLE IF NOT EXISTS dismissed_operations(consumer TEXT NOT NULL,operation TEXT NOT NULL,revision INTEGER NOT NULL,dismissed_at_ms INTEGER NOT NULL,PRIMARY KEY(consumer,operation)); CREATE TABLE IF NOT EXISTS consumer_removals(package TEXT PRIMARY KEY NOT NULL); CREATE TABLE IF NOT EXISTS retired_generations(package TEXT NOT NULL,digest TEXT NOT NULL,incarnation INTEGER NOT NULL,PRIMARY KEY(package,digest,incarnation)); CREATE TABLE IF NOT EXISTS removal_cancellations(consumer TEXT NOT NULL,operation TEXT NOT NULL,PRIMARY KEY(consumer,operation))";
+pub(super) const DISMISSAL_TABLE: &str = "CREATE TABLE IF NOT EXISTS dismissed_operations(consumer TEXT NOT NULL,operation TEXT NOT NULL,revision INTEGER NOT NULL,dismissed_at_ms INTEGER NOT NULL,PRIMARY KEY(consumer,operation)); CREATE TABLE IF NOT EXISTS consumer_removals(package TEXT PRIMARY KEY NOT NULL); CREATE TABLE IF NOT EXISTS retired_generations(package TEXT NOT NULL,digest TEXT NOT NULL,incarnation INTEGER NOT NULL,PRIMARY KEY(package,digest,incarnation)); CREATE TABLE IF NOT EXISTS removal_cancellations(consumer TEXT NOT NULL,operation TEXT NOT NULL,PRIMARY KEY(consumer,operation)); CREATE TABLE IF NOT EXISTS preparation_replacements(consumer TEXT NOT NULL,operation TEXT NOT NULL,digest TEXT NOT NULL,PRIMARY KEY(consumer,operation))";
+
+fn preparation_job_live(job: &super::job::JobRecord) -> bool {
+    !job.state.terminal()
+        && !matches!(
+            job.phase.as_deref(),
+            Some("stopped" | "provider_result_discarded")
+        )
+}
+fn retain_preparation_in(
+    conn: &Connection,
+    consumer: &str,
+    operation: &str,
+    replacement: &str,
+) -> Result<()> {
+    if !digest(replacement) {
+        return Err(reject("invalid preparation replacement digest"));
+    }
+    conn.execute("INSERT INTO preparation_replacements(consumer,operation,digest)VALUES(?1,?2,?3)ON CONFLICT(consumer,operation)DO UPDATE SET digest=excluded.digest", params![consumer,operation,replacement]).map_err(sql)?;
+    Ok(())
+}
+
+impl Store {
+    /// Startup may open the ledger before forwarding a committed lifecycle
+    /// journal. Presentation is durable evidence that an unfinished capture
+    /// belongs to retained work; only dead-generation or explicit lifecycle
+    /// policy may decide to release it.
+    pub(super) fn live_preparation_job_in(
+        &self,
+        conn: &Connection,
+        consumer: &str,
+        operation: &str,
+    ) -> Result<bool> {
+        Ok(self.jobs_in(conn)?.iter().any(|job| {
+            job.owner.package_id == consumer
+                && job.operation_id == operation
+                && preparation_job_live(job)
+        }))
+    }
+    pub fn preparation_retained(&self, consumer: &str, operation: &str) -> Result<bool> {
+        if !identity(consumer) || !identity(operation) {
+            return Err(reject("invalid preparation identity"));
+        }
+        self.preparation_retained_in(&self.connect()?, consumer, operation)
+    }
+    pub(super) fn preparation_retained_in(
+        &self,
+        conn: &Connection,
+        consumer: &str,
+        operation: &str,
+    ) -> Result<bool> {
+        let granted: bool = conn.query_row("SELECT EXISTS(SELECT 1 FROM preparation_replacements WHERE consumer=?1 AND operation=?2)",params![consumer,operation],|r|r.get(0)).map_err(sql)?;
+        let stored_phase: Option<String> = conn
+            .query_row(
+                "SELECT phase FROM operations WHERE consumer=?1 AND operation=?2",
+                params![consumer, operation],
+                |r| r.get(0),
+            )
+            .optional()
+            .map_err(sql)?;
+        Ok(granted
+            && stored_phase
+                .as_deref()
+                .is_none_or(|phase| phase == "reserved")
+            && Self::record(conn, consumer, operation)?.is_none()
+            && self.live_preparation_job_in(conn, consumer, operation)?)
+    }
+    /// Only a committed lifecycle decision can authorize a new generation to
+    /// resume a preparation. The adoption is atomic with presentation, before
+    /// the first paid admission; original descriptors and job IDs survive.
+    pub fn adopt_preparation(&self, current: &PackageGeneration, operation: &str) -> Result<bool> {
+        generation(current)?;
+        if !identity(operation) {
+            return Err(reject("invalid preparation identity"));
+        }
+        self.transaction(|tx| {
+            let replacement: Option<String> = tx.query_row("SELECT digest FROM preparation_replacements WHERE consumer=?1 AND operation=?2",params![current.package_id,operation],|r|r.get(0)).optional().map_err(sql)?;
+            if replacement.as_deref() != Some(&current.digest) || !self.preparation_retained_in(tx, &current.package_id, operation)? { return Ok(false); }
+            Self::generation_admitted(tx, current)?;
+            tx.execute("UPDATE operations SET owner=?3 WHERE consumer=?1 AND operation=?2 AND admission IS NULL AND phase='reserved'",params![current.package_id,operation,encode(current)?]).map_err(sql)?;
+            self.adopt_preparation_job_in(tx, current, operation)?;
+            Ok(true)
+        })
+    }
+    pub fn list_releasable_preparations(&self) -> Result<Vec<PackageGeneration>> {
+        let conn = self.connect()?;
+        let mut owners = Vec::new();
+        for (operation, owner) in self.preparation_rows()? {
+            if !self.preparation_retained_in(&conn, &owner.package_id, &operation)?
+                && !owners.contains(&owner)
+            {
+                owners.push(owner);
+            }
+        }
+        Ok(owners)
+    }
+}
 fn canonical(value: &Value) -> Value {
     match value {
         Value::Object(object) => {
@@ -382,6 +478,17 @@ impl Store {
         package: &str,
         retain: impl Fn(&Admission) -> bool,
     ) -> Result<Vec<super::job::JobRecord>> {
+        self.abandon_package_work_deferred(package, retain, |_, _| None)
+    }
+    /// Retention includes captured preparations and presentation-only jobs.
+    /// The replacement digest is a durable authorization to adopt unadmitted
+    /// work; admitted identities remain pinned and are never rewritten.
+    pub fn abandon_package_work_deferred(
+        &self,
+        package: &str,
+        retain: impl Fn(&Admission) -> bool,
+        retain_preparation: impl Fn(&PackageGeneration, &super::job::JobRecord) -> Option<String>,
+    ) -> Result<Vec<super::job::JobRecord>> {
         if !identity(package) {
             return Err(reject("invalid package"));
         }
@@ -393,11 +500,21 @@ impl Store {
             let mut jobs = Vec::new();
             let mut abandoned = Vec::new();
             let mut retained = std::collections::HashSet::new();
+            let original_jobs = self.jobs_in(tx)?;
             for (consumer, op) in rows {
                 let admission = Self::record(tx, &consumer, &op)?;
                 let affected = admission.as_ref().map_or(consumer == package, |a| a.consumer.package_id == package || a.provider.package_id == package);
                 if !affected { continue; }
-                if admission.as_ref().is_some_and(&retain) {
+                let preparation_digest = if admission.is_none() {
+                    Self::preparation_owner(tx, &consumer, &op)?
+                        .and_then(|owner| original_jobs.iter().find(|job| job.owner == owner && job.operation_id == op)
+                            .filter(|job| preparation_job_live(job))
+                            .and_then(|job| retain_preparation(&owner, job)))
+                } else { None };
+                if let Some(replacement) = &preparation_digest {
+                    retain_preparation_in(tx, &consumer, &op, replacement)?;
+                }
+                if admission.as_ref().is_some_and(&retain) || preparation_digest.is_some() {
                     // A new compatible participant must inspect all retained
                     // phases again this session. Keep execution fenced against
                     // replay while revoking only the old idle presentation.
@@ -443,11 +560,21 @@ impl Store {
                 Self::release_operation_spools_in(tx, &consumer, &op, true)?;
                 tx.execute("UPDATE operations SET exec_released=0 WHERE consumer=?1 AND operation=?2",params![consumer,op]).map_err(sql)?;
                 tx.execute("DELETE FROM dismissed_operations WHERE consumer=?1 AND operation=?2",params![consumer,op]).map_err(sql)?;
+                tx.execute("DELETE FROM preparation_replacements WHERE consumer=?1 AND operation=?2",params![consumer,op]).map_err(sql)?;
                 if let Some(job) = self.cancel_removed_job_in(tx, &consumer, &op)? { jobs.push(job); }
                 abandoned.push((consumer, op));
             }
             for job in self.jobs_in(tx)? {
                 if job.owner.package_id == package && !retained.contains(&(package.to_owned(),job.operation_id.clone())) {
+                    // Production registers presentation before capture. Keep
+                    // compatible jobs even when the first capture has not run.
+                    if preparation_job_live(&job) && Self::record(tx, package, &job.operation_id)?.is_none() {
+                        if let Some(replacement) = retain_preparation(&job.owner, &job) {
+                            retain_preparation_in(tx, package, &job.operation_id, &replacement)?;
+                            continue;
+                        }
+                    }
+                    tx.execute("DELETE FROM preparation_replacements WHERE consumer=?1 AND operation=?2",params![package,job.operation_id]).map_err(sql)?;
                     if let Some(job) = self.cancel_removed_job_in(tx, package, &job.operation_id)? { jobs.push(job); }
                 }
             }

@@ -3,6 +3,7 @@
 //! output spools, shell wrapping, or supervisor-owned output reader is involved.
 #![cfg(unix)]
 use crate::error::{AppError, ProcessRunError};
+use crate::process_ext::pipe_capture;
 use std::{
     io::{self, Read, Write},
     os::{
@@ -15,7 +16,7 @@ use std::{
         Arc,
     },
     thread::JoinHandle,
-    time::{Duration, Instant},
+    time::Duration,
 };
 const MARKER: &str = "--te-owned-process-supervisor-v1";
 const HELLO: &[u8; 8] = b"TEPS1\0\0\0";
@@ -315,44 +316,12 @@ fn writer(
         })
 }
 fn reader(
-    mut pipe: impl Read + Send + 'static,
+    pipe: impl pipe_capture::OutputPipe,
     limit: usize,
     overflow: Arc<AtomicBool>,
     stop: Arc<AtomicBool>,
 ) -> io::Result<JoinHandle<io::Result<Vec<u8>>>> {
-    std::thread::Builder::new()
-        .name("owned-process-output".into())
-        .spawn(move || {
-            let mut bytes = Vec::new();
-            let mut buffer = [0u8; 8192];
-            loop {
-                if stop.load(Ordering::Acquire) {
-                    // A completed leaf can leave an independently detached
-                    // helper holding this pipe. Retain every captured original
-                    // byte when the bounded drain stops; cancellation/error
-                    // paths discard this result at their own caller boundary.
-                    return Ok(bytes);
-                }
-                match pipe.read(&mut buffer) {
-                    Ok(0) => return Ok(bytes),
-                    Ok(count) => {
-                        let available = limit.saturating_sub(bytes.len());
-                        bytes.extend_from_slice(&buffer[..count.min(available)]);
-                        if count > available {
-                            overflow.store(true, Ordering::Release);
-                        }
-                    }
-                    Err(e) if e.kind() == io::ErrorKind::Interrupted => {}
-                    Err(e) if e.kind() == io::ErrorKind::WouldBlock => {
-                        if stop.load(Ordering::Acquire) {
-                            return Ok(bytes);
-                        }
-                        std::thread::sleep(Duration::from_millis(5));
-                    }
-                    Err(e) => return Err(e),
-                }
-            }
-        })
+    pipe_capture::spawn(pipe, limit, overflow, stop)
 }
 /// SDK3 owned process path. Original args/env/cwd stay on the original
 /// Command. With `input`, stdin is a pipe that receives exactly those bytes and
@@ -439,8 +408,6 @@ fn supervise(
         )),
         None => None,
     };
-    nonblocking(stdout.as_raw_fd())?;
-    nonblocking(stderr.as_raw_fd())?;
     let overflow = Arc::new(AtomicBool::new(false));
     let stop = Arc::new(AtomicBool::new(false));
     let mut readers = Readers {
@@ -466,18 +433,10 @@ fn supervise(
         if exited(owned.leaf.as_mut().expect("owned leaf"))? {
             owned.stop();
             let status = owned.leaf.as_mut().expect("owned leaf").wait()?;
-            // Kill inherited pipe holders immediately after leaf exit, then drain
-            // original pipes to EOF. No reader thread is detached on any path.
-            let deadline = Instant::now() + Duration::from_secs(1);
-            while !(readers.stdout.as_ref().unwrap().is_finished()
-                && readers.stderr.as_ref().unwrap().is_finished())
-            {
-                if Instant::now() >= deadline {
-                    readers.stop.store(true, Ordering::Release);
-                    break;
-                }
-                std::thread::sleep(Duration::from_millis(5));
-            }
+            // Exit closes the leaf's write ends. Each sole reader drains its
+            // queued bytes even if first scheduled after this decision. An
+            // escaped pipe holder cannot extend that finite drain indefinitely.
+            readers.stop.store(true, Ordering::Release);
             let stdout = readers
                 .stdout
                 .take()
@@ -510,5 +469,29 @@ fn supervise(
             ));
         }
         std::thread::sleep(Duration::from_millis(5));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn stopped_reader_drains_a_completed_png_already_queued_in_its_pipe() {
+        let png = include_bytes!("../../static/favicon.png");
+        let (output, mut writer) = UnixStream::pair().unwrap();
+        writer.write_all(png).unwrap();
+        drop(writer);
+        nonblocking(output.as_raw_fd()).unwrap();
+        let overflow = Arc::new(AtomicBool::new(false));
+        // The reader was descheduled until after its owner's exit decision.
+        let stop = Arc::new(AtomicBool::new(true));
+        let bytes = reader(output, png.len(), overflow.clone(), stop)
+            .unwrap()
+            .join()
+            .unwrap()
+            .unwrap();
+        assert_eq!(bytes, png);
+        assert!(!overflow.load(Ordering::Acquire));
     }
 }

@@ -378,6 +378,26 @@ impl Store {
     pub(super) fn jobs_in(&self, conn: &Connection) -> Result<Vec<JobRecord>> {
         all(conn)
     }
+    pub(super) fn adopt_preparation_job_in(
+        &self,
+        conn: &Connection,
+        owner: &PackageGeneration,
+        operation: &str,
+    ) -> Result<()> {
+        let Some(mut job) = all(conn)?
+            .into_iter()
+            .find(|job| job.owner.package_id == owner.package_id && job.operation_id == operation)
+        else {
+            return Err(reject("retained preparation job disappeared"));
+        };
+        if job.owner != *owner {
+            job.owner = owner.clone();
+            job.revision = next_revision(conn)?;
+            valid(&job, false)?;
+            persist(conn, &job)?;
+        }
+        Ok(())
+    }
     pub(super) fn cancel_removed_job_in(
         &self,
         conn: &Connection,

@@ -29,6 +29,9 @@ describe("native compiler metadata reuse", () => {
       const changed = check();
       expect(changed.status).not.toBe(0);
       expect(changed.stdout + changed.stderr).toContain("not assignable to type 'string'");
+      writeFileSync(join(dir, "contract.ts"), 'export const value: string = "repaired";\n');
+      const repaired = check();
+      expect(repaired.status, repaired.stdout + repaired.stderr).toBe(0);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

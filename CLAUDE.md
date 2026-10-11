@@ -275,3 +275,8 @@ A native scroll notification can arrive after the click for positioning that
 already happened. Compare positions rather than dismissing on every delivery;
 inherit the snapshot into scoped actions and focus with preventScroll. Subsequent
 vertical or horizontal movement still dismisses the anchored menu (#1082).
+
+The native suite's public TypeScript command uses incremental compiler metadata
+under node_modules/.cache. Repeated typechecks must still validate changed imported
+contracts and recover after errors; do not alter the existing five-second test
+deadline to compensate for host load. Metadata is disposable, not acceptance proof.

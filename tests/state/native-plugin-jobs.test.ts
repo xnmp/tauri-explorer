@@ -170,3 +170,12 @@ describe("settled recovery presentation", () => {
     expect(jobDuration(active, 121_000)).toBe(120_000);
   });
 });
+
+it("publishes the delivery-loss report when a settled Unknown later succeeds and its consumer is explicitly removed", () => {
+  const stopped = { ...record(1, 2, "discarded"), phase: "stopped" };
+  const before = mergeNativeJobEvent(emptyNativeJobs(), { type: "updated", job: stopped });
+  const removed = { ...stopped, revision: 3, state: "error" as const, phase: "consumer_removed", error: "One image could not be delivered because its consumer plugin was disabled or uninstalled" };
+  const next = mergeNativeJobEvent(before, { type: "updated", job: removed });
+  expect(next.jobs.get(stopped.jobKey)).toEqual(removed);
+  expect(mergeNativeJobEvent(next, { type: "updated", job: stopped }).jobs.get(stopped.jobKey)).toEqual(removed);
+});

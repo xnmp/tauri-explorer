@@ -2514,7 +2514,10 @@ pub(super) fn call_with_origin(
     result
 }
 
-pub(super) fn busy(id: &str) -> bool {
+/// Job registration is presentation/acceptance ownership, not worker activity.
+/// A repair may carry those exact successful handoffs across quiescence; all
+/// calls, processes and other job registrations still block its admission.
+pub(super) fn busy_except_retained_jobs(id: &str, operations: &HashSet<String>) -> bool {
     CALLS
         .get_or_init(Default::default)
         .lock()
@@ -2541,11 +2544,12 @@ pub(super) fn busy(id: &str) -> bool {
                         .reverse_pending
                         .iter()
                         .any(|count| count.load(Ordering::Acquire) > 0)
-                    || !broker
+                    || broker
                         .jobs
                         .lock()
                         .unwrap_or_else(|cause| cause.into_inner())
-                        .is_empty()
+                        .values()
+                        .any(|job| !operations.contains(&job.operation_id))
             })
         || recovering()
             .lock()

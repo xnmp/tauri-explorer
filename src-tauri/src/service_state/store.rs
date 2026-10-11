@@ -9,6 +9,8 @@ use std::{
 pub(crate) struct Store {
     pub(super) root: PathBuf,
     pub(super) limits: Limits,
+    pub(super) output_recovery:
+        std::sync::Mutex<std::collections::HashMap<(String, String), usize>>,
     #[cfg(test)]
     pub(super) fail_next_commit: std::sync::atomic::AtomicBool,
     #[cfg(test)]
@@ -61,6 +63,7 @@ impl Store {
             root: dunce::canonicalize(&root)
                 .map_err(|_| reject("service directory is unreadable"))?,
             limits,
+            output_recovery: Default::default(),
             #[cfg(test)]
             fail_next_commit: std::sync::atomic::AtomicBool::new(false),
             #[cfg(test)]
@@ -902,6 +905,52 @@ impl Store {
         let count: i64 = conn
             .query_row("SELECT count(*) FROM operations WHERE consumer=?1 AND admission IS NULL AND phase!='released'", [package], |r| r.get(0))
             .map_err(sql)?;
+        Ok(count > 0)
+    }
+    /// A retained successful handoff may survive consumer replacement or an
+    /// explicit removal. Provider ownership and unfinished execution still
+    /// block mutation; live work is fenced separately by the lifecycle layer.
+    pub fn consumer_delivery_pending(&self, a: &Admission) -> Result<bool> {
+        Ok(a.consumer.package_id != a.provider.package_id
+            && a.phase == AdmissionPhase::Terminal
+            && (a.output.is_some()
+                || self
+                    .provider_receipt(&a.consumer.package_id, &a.operation_id)?
+                    .is_some_and(|r| r["execution"]["state"] == "succeeded")))
+    }
+    pub fn busy_for_consumer_repair(&self, package: &str) -> Result<bool> {
+        let claims = self.claims()?;
+        let recoverable = claims
+            .iter()
+            .filter(|a| a.consumer.package_id == package)
+            .map(|a| {
+                self.consumer_delivery_pending(a)
+                    .map(|pending| (a.operation_id.as_str(), pending))
+            })
+            .collect::<Result<Vec<_>>>()?;
+        if claims.iter().any(|a| {
+            a.provider.package_id == package
+                || a.consumer.package_id == package
+                    && !recoverable
+                        .iter()
+                        .any(|(op, pending)| *op == a.operation_id && *pending)
+        }) {
+            return Ok(true);
+        }
+        if self.snapshot_jobs()?.jobs.iter().any(|j| {
+            j.owner.package_id == package
+                && !j.state.terminal()
+                && !matches!(
+                    j.phase.as_deref(),
+                    Some("stopped" | "provider_result_discarded")
+                )
+                && !recoverable
+                    .iter()
+                    .any(|(op, pending)| *op == j.operation_id && *pending)
+        }) {
+            return Ok(true);
+        }
+        let count: i64 = self.connect()?.query_row("SELECT count(*) FROM operations WHERE consumer=?1 AND admission IS NULL AND phase!='released'", [package], |r| r.get(0)).map_err(sql)?;
         Ok(count > 0)
     }
     pub fn claims(&self) -> Result<Vec<Admission>> {

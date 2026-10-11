@@ -2322,6 +2322,13 @@ fn automatic_settlement_of_stopped_unknown_survives_restart_without_replay() {
     let unknown = stopped_unknown(&s, op);
     // Actual bootstrap path, without any user action or plugin IO.
     super::ai_operations::settle_stopped_backlog(&s).unwrap();
+    assert_eq!(
+        s.job(&registered.job_key).unwrap().unwrap().state,
+        JobState::NeedsAttention
+    );
+    // After bootstrap, the actual live policy can prove this fixture's
+    // provider package is gone; stopped evidence alone cannot prove no result.
+    super::ai_operations::auto_reconcile_in(&s, &super::ai_operations::LiveAutomatic).unwrap();
     let settled = s.job(&registered.job_key).unwrap().unwrap();
     assert_eq!(settled.state, JobState::Discarded);
     assert_eq!(
@@ -2520,6 +2527,7 @@ fn automatic_settlement_backlog_is_not_hidden_behind_already_settled_rows() {
         stopped_unknown(&s, &op);
     }
     super::ai_operations::settle_stopped_backlog(&s).unwrap();
+    super::ai_operations::auto_reconcile_in(&s, &super::ai_operations::LiveAutomatic).unwrap();
     assert!(s.auto_settlement_operations().unwrap().is_empty());
     assert!(s.claims().unwrap().is_empty());
 }
@@ -3088,4 +3096,119 @@ fn automatic_review_repair_probes_a_retained_counterpart_without_starting_it() {
         );
         assert_eq!(s.provider_receipt("consumer", op).unwrap(), Some(unknown));
     }
+}
+
+#[test]
+fn review_settled_unknown_collects_nonempty_inputs_and_restores_capacity() {
+    let root = tempfile::tempdir().unwrap();
+    let input = root.path().join("input.png");
+    image::RgbaImage::from_pixel(2, 3, image::Rgba([12, 34, 56, 255]))
+        .save(&input)
+        .unwrap();
+    let limits = Limits {
+        disk_bytes: 100 * 1024 * 1024 + fs::metadata(&input).unwrap().len(),
+        ..Limits::default()
+    };
+    let s = Store::open(root.path().join("service"), limits).unwrap();
+    let op = "review-input-capacity";
+    let captured = s
+        .capture(
+            &consumer(),
+            op,
+            vec![CaptureInput {
+                path: input.to_string_lossy().into(),
+                expected_digest: None,
+            }],
+        )
+        .unwrap();
+    let artifact_path = s
+        .read(&consumer(), "consumer", op, &captured[0].artifact)
+        .unwrap()
+        .path;
+    let mut req = request(op);
+    req["inputs"] = json!([captured[0].artifact]);
+    call(&s, "start", req.clone(), |_, _| Ok(running(op))).unwrap();
+    let mut unknown = status(op, "unknown", json!({"state":"none"}));
+    unknown["revision"] = json!(2);
+    unknown["execution"]["error"] =
+        json!({"code":"interrupted","message":"Unconfirmed","correlationId":null});
+    let a = s.get("consumer", op).unwrap().unwrap();
+    reconcile_at(&s, &provider(), &a, &unknown).unwrap();
+    // Real idle settlement transaction, then the production GC sweep.
+    s.auto_settle_operation("consumer", op, true).unwrap();
+    s.gc().unwrap();
+    assert!(
+        !Path::new(&artifact_path).exists(),
+        "settled input was never collected"
+    );
+    assert_eq!(
+        s.provider_receipt("consumer", op).unwrap(),
+        Some(unknown.clone())
+    );
+    drop(s);
+    let s = Store::open(root.path().join("service"), limits).unwrap();
+    assert!(call(&s, "start", req, |_, _| panic!("Unknown replayed")).is_err());
+    let next = "review-next-input";
+    let captured = s
+        .capture(
+            &consumer(),
+            next,
+            vec![CaptureInput {
+                path: input.to_string_lossy().into(),
+                expected_digest: None,
+            }],
+        )
+        .unwrap();
+    let mut req = request(next);
+    req["inputs"] = json!([captured[0].artifact]);
+    call(&s, "start", req, |_, _| Ok(running(next)))
+        .expect("settled input capacity must be reusable");
+}
+
+#[test]
+fn review_automatic_settlement_keeps_successful_operation_inputs_and_output() {
+    let (root, s) = fixture();
+    let input = root.path().join("input.png");
+    image::RgbaImage::from_pixel(2, 3, image::Rgba([12, 34, 56, 255]))
+        .save(&input)
+        .unwrap();
+    let op = "review-success-inputs";
+    let captured = s
+        .capture(
+            &consumer(),
+            op,
+            vec![CaptureInput {
+                path: input.to_string_lossy().into(),
+                expected_digest: None,
+            }],
+        )
+        .unwrap();
+    let original = s
+        .read(&consumer(), "consumer", op, &captured[0].artifact)
+        .unwrap()
+        .path;
+    let mut req = request(op);
+    req["inputs"] = json!([captured[0].artifact]);
+    call(&s, "start", req, |_, _| Ok(running(op))).unwrap();
+    let output = sealed(&s, op);
+    let a = s.get("consumer", op).unwrap().unwrap();
+    reconcile_at(
+        &s,
+        &provider(),
+        &a,
+        &status(
+            op,
+            "succeeded",
+            json!({"state":"available","output":output}),
+        ),
+    )
+    .unwrap();
+    assert!(s.auto_settle_operation("consumer", op, true).is_err());
+    s.gc().unwrap();
+    assert!(Path::new(&original).exists());
+    assert!(s
+        .read(&consumer(), "consumer", op, &captured[0].artifact)
+        .is_ok());
+    assert!(s.read(&consumer(), "consumer", op, &output).is_ok());
+    assert!(!s.execution_released("consumer", op).unwrap());
 }

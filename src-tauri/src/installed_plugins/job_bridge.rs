@@ -221,7 +221,14 @@ fn schedule_reconcile(broker: Option<Arc<Broker>>, record: JobRecord) {
                 };
                 let current = broker.generation();
                 if current.package_id != record.owner.package_id
-                    || current.digest != record.owner.digest
+                    || super::service_bridge::recovery_caller(
+                        service_host::store()?,
+                        broker.manifest(),
+                        &current,
+                        &record.operation_id,
+                    )?
+                    .digest
+                        != record.owner.digest
                 {
                     return Err(error("Consumer package changed"));
                 }
@@ -262,13 +269,19 @@ fn schedule_reconcile(broker: Option<Arc<Broker>>, record: JobRecord) {
     }
 }
 pub(super) fn event(broker: Arc<Broker>, name: &str, payload: &Value) -> Result<(), AppError> {
-    event_in(
-        service_host::store()?,
-        &broker.generation(),
-        name,
-        payload,
-        |record| schedule_status(broker.clone(), record),
-    )
+    let store = service_host::store()?;
+    let owner = match payload["operationId"].as_str() {
+        Some(operation) => super::service_bridge::recovery_caller(
+            store,
+            broker.manifest(),
+            &broker.generation(),
+            operation,
+        )?,
+        None => broker.generation(),
+    };
+    event_in(store, &owner, name, payload, |record| {
+        schedule_status(broker.clone(), record)
+    })
 }
 pub(super) fn event_in(
     store: &Store,
@@ -429,7 +442,15 @@ pub(super) fn cancel(key: &str) -> Result<Value, AppError> {
         ));
     }
     let broker = backend::ensure(&record.owner.package_id)?;
-    if broker.generation().digest != record.owner.digest {
+    if super::service_bridge::recovery_caller(
+        service_host::store()?,
+        broker.manifest(),
+        &broker.generation(),
+        &record.operation_id,
+    )?
+    .digest
+        != record.owner.digest
+    {
         return Err(error(
             "Enable the original consumer package before cancelling this operation",
         ));
@@ -460,7 +481,15 @@ pub(super) fn resume(key: &str) -> Result<Value, AppError> {
         return Err(error("Automatic recovery was explicitly stopped; its unknown execution evidence remains retained"));
     }
     let broker = backend::ensure(&record.owner.package_id)?;
-    if broker.generation().digest != record.owner.digest {
+    if super::service_bridge::recovery_caller(
+        service_host::store()?,
+        broker.manifest(),
+        &broker.generation(),
+        &record.operation_id,
+    )?
+    .digest
+        != record.owner.digest
+    {
         return Err(error(
             "Enable the original consumer package before recovering this operation",
         ));

@@ -76,6 +76,20 @@ pub(super) fn select<'a>(
     Ok((provider, export))
 }
 
+/// Negotiate recovery using the same declared service identity/major as normal
+/// routing. Package release versions and digests do not define the contract.
+pub(super) fn consumer_recovers(
+    manifest: &Manifest,
+    target: &crate::service_state::model::ServiceTarget,
+) -> bool {
+    manifest.sdk_version >= 3
+        && manifest.service_dependencies.iter().any(|dep| {
+            dep.package_id == target.package_id
+                && dep.service_id == target.service_id
+                && dep.major == target.major
+        })
+}
+
 /// Call-time routing: the caller must declare the exact dependency and the
 /// selected provider generation must export the requested method.
 pub(super) fn route<'a>(

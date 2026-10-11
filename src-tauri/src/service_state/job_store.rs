@@ -309,6 +309,69 @@ fn indexes(conn: &Connection) -> Result<()> {
     Ok(())
 }
 impl Store {
+    /// Explicit consumer removal is a delivery outcome, including for clients
+    /// that did not register presentation. Commit its report with disposition.
+    pub(super) fn report_undelivered_in(
+        &self,
+        conn: &Connection,
+        a: &super::model::Admission,
+    ) -> Result<Option<JobRecord>> {
+        let old = conn
+            .query_row(
+                &format!("{ROWS} WHERE owner=?1 AND operation=?2"),
+                params![a.consumer.package_id, a.operation_id],
+                row,
+            )
+            .optional()
+            .map_err(sql)?
+            .map(|raw| checked(raw, watermark(conn)?))
+            .transpose()?;
+        if old.as_ref().is_some_and(|j| j.state == JobState::Completed) {
+            return Ok(None);
+        }
+        let timestamp = clock()?;
+        let mut record = match old {
+            Some(record) => record,
+            None => {
+                let mut bytes = [0u8; 32];
+                getrandom::fill(&mut bytes)
+                    .map_err(|_| reject("could not allocate delivery report"))?;
+                JobRecord {
+                    job_key: hex::encode(&bytes[..24]),
+                    job_id: (u64::from_le_bytes(bytes[24..].try_into().unwrap()) & ((1 << 51) - 1))
+                        | (1 << 51),
+                    owner: a.consumer.clone(),
+                    operation_id: a.operation_id.clone(),
+                    kind: "openai-image".into(),
+                    label: "AI image".into(),
+                    origin_window: "host.delivery".into(),
+                    revision: 0,
+                    source_revision: 0,
+                    created_at_ms: timestamp,
+                    updated_at_ms: timestamp,
+                    settled_at_ms: None,
+                    estimate_key: None,
+                    state: JobState::Accepting,
+                    phase: None,
+                    output_path: None,
+                    run_id: None,
+                    error: None,
+                }
+            }
+        };
+        record.state = JobState::Error;
+        record.phase = Some("consumer_removed".into());
+        record.error = Some("One image could not be delivered because its consumer plugin was disabled or uninstalled".into());
+        record.output_path = None;
+        record.run_id = None;
+        record.updated_at_ms = timestamp;
+        record.settled_at_ms = Some(timestamp);
+        record.revision = next_revision(conn)?;
+        valid(&record, false)?;
+        conn.execute("INSERT INTO presentation_jobs(key,owner,operation,job_id,revision,record)VALUES(?1,?2,?3,?4,?5,?6)ON CONFLICT(key)DO UPDATE SET revision=excluded.revision,record=excluded.record", params![record.job_key,record.owner.package_id,record.operation_id,record.job_id as i64,record.revision as i64,serialized(&record)?]).map_err(sql)?;
+        prune(conn)?;
+        Ok(Some(record))
+    }
     /// Presentation failure releases no execution or output custody. The
     /// caller holds the worker-idle fence; recheck success/unavailable in the
     /// same transaction so a newer handoff cannot be graded as delivery loss.

@@ -136,6 +136,7 @@ fn bootstrap_services() -> Result<(), AppError> {
     let _bootstrap = write_lifecycle()?;
     service_host::initialize(&profile)?;
     lifecycle::recover(&root()?)?;
+    service_host::store()?.revisit_uncertain_settlements()?;
     service_bridge::recover_startup()?;
     ai_operations::settle_stopped_backlog(service_host::store()?)?;
     job_bridge::initialize()?;

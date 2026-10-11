@@ -268,6 +268,86 @@ fn auto_reconcile_candidates(
     Ok(settled)
 }
 pub(super) struct LiveAutomatic;
+const RECONCILIATION_ATTEMPTS: usize = 3;
+type ReconciliationKey = (String, String, String);
+#[derive(Clone, Default)]
+struct ReconciliationAttempt {
+    startup_failures: usize,
+    status_failures: usize,
+    status_incarnation: Option<u64>,
+    pending_success: Option<Value>,
+}
+#[derive(Clone, Copy)]
+enum ReconciliationPhase {
+    Startup,
+    Status,
+}
+static RECONCILIATION_FAILURES: std::sync::LazyLock<
+    std::sync::Mutex<std::collections::HashMap<ReconciliationKey, ReconciliationAttempt>>,
+> = std::sync::LazyLock::new(Default::default);
+fn reconciliation_key(a: &Admission) -> ReconciliationKey {
+    (
+        a.consumer.package_id.clone(),
+        a.operation_id.clone(),
+        a.provider.digest.clone(),
+    )
+}
+fn reconciliation_attempt(a: &Admission) -> Result<ReconciliationAttempt, AppError> {
+    Ok(RECONCILIATION_FAILURES
+        .lock()
+        .map_err(|_| error("Provider reconciliation ownership is unavailable"))?
+        .get(&reconciliation_key(a))
+        .cloned()
+        .unwrap_or_default())
+}
+fn update_reconciliation(
+    a: &Admission,
+    update: impl FnOnce(&mut ReconciliationAttempt),
+) -> Result<(), AppError> {
+    // Completion must be recorded even when the RPC exhausted its deadline.
+    // This mutex protects only bounded in-memory bookkeeping, never IO.
+    let mut failures = RECONCILIATION_FAILURES
+        .lock()
+        .map_err(|_| error("Provider reconciliation ownership is unavailable"))?;
+    update(failures.entry(reconciliation_key(a)).or_default());
+    Ok(())
+}
+fn reconciliation_failed(a: &Admission, phase: ReconciliationPhase) -> Result<usize, AppError> {
+    let mut result = 0;
+    update_reconciliation(a, |attempt| {
+        let count = match phase {
+            ReconciliationPhase::Startup => &mut attempt.startup_failures,
+            ReconciliationPhase::Status => &mut attempt.status_failures,
+        };
+        *count = count.saturating_add(1).min(RECONCILIATION_ATTEMPTS);
+        result = *count;
+    })?;
+    Ok(result)
+}
+fn forget_reconciliation(a: &Admission) -> Result<(), AppError> {
+    RECONCILIATION_FAILURES
+        .lock()
+        .map_err(|_| error("Provider reconciliation ownership is unavailable"))?
+        .remove(&reconciliation_key(a));
+    Ok(())
+}
+impl ReconciliationAttempt {
+    fn exhausted(&self) -> bool {
+        self.startup_failures >= RECONCILIATION_ATTEMPTS
+            || self.status_failures >= RECONCILIATION_ATTEMPTS
+    }
+}
+fn output_free(store: &crate::service_state::Store, a: &Admission) -> Result<bool, AppError> {
+    Ok(a.output.is_none()
+        && store
+            .provider_receipt(&a.consumer.package_id, &a.operation_id)?
+            .is_some_and(|r| {
+                matches!(
+                    r["execution"]["state"].as_str(),
+                    Some("failed" | "cancelled")
+                ) && r["delivery"]["state"] == "none"
+            }))
+}
 impl AutomaticPort for LiveAutomatic {
     fn closing(&self) -> bool {
         backend::is_closing()
@@ -290,14 +370,61 @@ impl AutomaticPort for LiveAutomatic {
         _execution: &str,
         apply: &mut dyn FnMut(bool) -> Result<(), AppError>,
     ) -> Result<(), AppError> {
-        // Probing never starts a package. Under this admission fence, an
-        // absent or verified terminated broker is an idle proof, including
-        // when its installed replacement cannot initialize or activate.
+        // A valid successful answer is custody evidence even when the host's
+        // receipt transaction failed. Retry that observation before any new
+        // unavailable-provider verdict; a storage error is not a failed answer.
+        if let Some(receipt) = reconciliation_attempt(a)?.pending_success {
+            if service_bridge::reconcile_at(store, &a.provider, a, &receipt).is_ok() {
+                forget_reconciliation(a)?;
+            }
+            // Unsealed or lost evidence can be repaired by the next status
+            // query. Keep the success witness until that repair commits.
+        }
+        // Native death proves inactivity, never absence of a retained result.
+        // Start only the original provider's unpaid recovery before fencing
+        // admission (activation cannot run while an IdleCallFence is held).
+        let uncertain = !output_free(store, a)?;
+        let installed_provider = if uncertain {
+            installed()?
+                .into_iter()
+                .find(|p| p.manifest.id == a.provider.package_id)
+        } else {
+            None
+        };
+        let provider_present = installed_provider.is_some();
+        let attempt = reconciliation_attempt(a)?;
+        if provider_present && (!attempt.exhausted() || attempt.pending_success.is_some()) {
+            if !installed_provider
+                .as_ref()
+                .is_some_and(|p| p.enabled && p.digest == a.provider.digest)
+                || backend::ensure(&a.provider.package_id).is_err()
+            {
+                reconciliation_failed(a, ReconciliationPhase::Startup)?;
+            }
+        }
         let _fence =
             backend::IdleCallFence::acquire(&[&a.consumer.package_id, &a.provider.package_id])?;
         let provider = backend::settlement_broker(&a.provider)?;
+        if provider.is_none() && provider_present && !reconciliation_attempt(a)?.exhausted() {
+            return apply(true);
+        }
         let consumer = if a.consumer.package_id != a.provider.package_id {
-            backend::settlement_broker(&a.consumer)?
+            let mut owner = a.consumer.clone();
+            if let Some(p) = installed()?
+                .into_iter()
+                .find(|p| p.enabled && p.manifest.id == owner.package_id)
+            {
+                let current = PackageGeneration {
+                    digest: p.digest.clone(),
+                    ..owner.clone()
+                };
+                if service_bridge::recovery_caller(store, &p.manifest, &current, &a.operation_id)
+                    .is_ok()
+                {
+                    owner = current;
+                }
+            }
+            backend::settlement_broker(&owner)?
         } else {
             None
         };
@@ -314,7 +441,7 @@ impl AutomaticPort for LiveAutomatic {
                 )?);
             }
             if let Some(broker) = &consumer {
-                if !broker.is_active() || broker.generation().digest != a.consumer.digest {
+                if !broker.is_active() {
                     return apply(true);
                 }
                 leases.push(CallLease::acquire_method(
@@ -336,8 +463,62 @@ impl AutomaticPort for LiveAutomatic {
             }
             // Status performs the provider's original local read/seal recovery
             // and reconciles a success whose separate publisher was delayed.
-            let receipt = broker.call("services.image-generation.v1.status", json!({"caller":{"packageId":a.consumer.package_id,"packageDigest":a.consumer.digest,"incarnation":a.consumer.incarnation},"request":{"operationId":a.operation_id}}))?;
-            service_bridge::reconcile_at(store, &broker.generation(), a, &receipt)?;
+            let attempt = reconciliation_attempt(a)?;
+            let incarnation = broker.generation().incarnation;
+            if attempt.status_failures < RECONCILIATION_ATTEMPTS
+                || attempt.status_incarnation != Some(incarnation)
+                || attempt.pending_success.is_some()
+            {
+                let _output_recovery = store.output_recovery_guard(a)?;
+                let mut sent = false;
+                let status = broker.call_reporting("services.image-generation.v1.status", json!({"caller":{"packageId":a.consumer.package_id,"packageDigest":a.consumer.digest,"incarnation":a.consumer.incarnation},"request":{"operationId":a.operation_id}}), &mut sent)
+                    .and_then(|receipt| crate::service_state::receipt::validate(&receipt, a));
+                if sent {
+                    update_reconciliation(a, |attempt| {
+                        attempt.status_incarnation = Some(incarnation)
+                    })?;
+                }
+                match status {
+                    Ok(receipt) => {
+                        if let Some(previous) = &attempt.pending_success {
+                            if receipt["revision"].as_u64() < previous["revision"].as_u64()
+                                || receipt["execution"]["state"] != "succeeded"
+                            {
+                                return apply(true);
+                            }
+                            if receipt["revision"] == previous["revision"] {
+                                if &receipt != previous {
+                                    return Err(error(
+                                        "Provider success conflicts at the same revision",
+                                    ));
+                                }
+                            } else {
+                                crate::service_state::receipt::validate_transition(
+                                    previous, &receipt,
+                                )?;
+                            }
+                        }
+                        if receipt["execution"]["state"] == "succeeded" {
+                            update_reconciliation(a, |attempt| {
+                                attempt.pending_success = Some(receipt.clone())
+                            })?;
+                        }
+                        service_bridge::reconcile_at(store, &broker.generation(), a, &receipt)?;
+                        forget_reconciliation(a)?;
+                    }
+                    Err(cause) => {
+                        if !sent
+                            || reconciliation_failed(a, ReconciliationPhase::Status)?
+                                < RECONCILIATION_ATTEMPTS
+                        {
+                            return Err(cause);
+                        }
+                    }
+                }
+            }
+        }
+        if reconciliation_attempt(a)?.pending_success.is_some() {
+            return apply(true);
         }
         if let Some(broker) = &consumer {
             let status = broker.call("jobs.status", json!({"operationId":a.operation_id}))?;
@@ -355,7 +536,11 @@ impl AutomaticPort for LiveAutomatic {
         {
             return apply(true);
         }
-        apply(false)
+        apply(false)?;
+        if store.execution_released(&a.consumer.package_id, &a.operation_id)? {
+            forget_reconciliation(a)?;
+        }
+        Ok(())
     }
     fn recover(&self, a: &Admission, job: Option<&JobRecord>) -> Result<(), AppError> {
         if a.consumer.package_id == a.provider.package_id {
@@ -385,7 +570,16 @@ impl AutomaticPort for LiveAutomatic {
             let broker = backend::ensure(&a.consumer.package_id)?;
             let _lease = {
                 let _gate = super::read_lifecycle()?;
-                if !broker.is_active() || broker.generation().digest != a.consumer.digest {
+                if !broker.is_active()
+                    || service_bridge::recovery_caller(
+                        service_host::store()?,
+                        broker.manifest(),
+                        &broker.generation(),
+                        &a.operation_id,
+                    )?
+                    .digest
+                        != a.consumer.digest
+                {
                     return Err(error("Original consumer is unavailable for local recovery"));
                 }
                 CallLease::acquire_method(&a.consumer.package_id, "jobs.resumeOperation")?
@@ -413,11 +607,11 @@ pub(super) fn auto_reconcile() {
         }
     }
 }
-/// Bootstrap holds the lifecycle write gate: stopped records already carry
-/// durable termination proof, so settle them without spawning plugin RPC.
+/// Bootstrap holds the lifecycle write gate. Only definitive output-free
+/// terminal evidence can settle here; uncertain outcomes await provider RPC.
 pub(super) fn settle_stopped_backlog(store: &crate::service_state::Store) -> Result<(), AppError> {
     for (a, _, stopped) in store.auto_settlement_operations()? {
-        if stopped {
+        if stopped && output_free(store, &a)? {
             if let Some(job) =
                 store.auto_settle_operation(&a.consumer.package_id, &a.operation_id, true)?
             {
@@ -485,15 +679,7 @@ pub(super) fn settle_dead_backlog(
         if a.consumer.package_id != package && a.provider.package_id != package {
             continue;
         }
-        let receipt = store.provider_receipt(&a.consumer.package_id, &a.operation_id)?;
-        if a.output.is_some()
-            || !receipt.as_ref().is_some_and(|r| {
-                matches!(
-                    r["execution"]["state"].as_str(),
-                    Some("unknown" | "failed" | "cancelled")
-                ) && r["delivery"]["state"] == "none"
-            })
-        {
+        if !output_free(store, &a)? {
             continue;
         }
         let Ok(_fence) =

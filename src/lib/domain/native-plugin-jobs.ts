@@ -84,7 +84,9 @@ export function mergeNativeJobEvent(old: NativeJobView, event: NativeJobEvent): 
     const recoveredSettlement = (previous?.state === "discarded" && previous.phase === "stopped"
       || previous?.state === "error" && previous.phase === "delivery_failed")
       && event.job.state === "completed" && !!event.job.outputPath && safe(event.job.runId, true);
-    if (previous && (!sameIdentity(previous, event.job) || nativeJobTerminal(previous.state) && previous.state !== event.job.state && !recoveredSettlement)) return old;
+    const consumerRemoval = previous?.state !== "completed" && event.job.state === "error"
+      && event.job.phase === "consumer_removed" && !!event.job.error;
+    if (previous && (!sameIdentity(previous, event.job) || nativeJobTerminal(previous.state) && previous.state !== event.job.state && !recoveredSettlement && !consumerRemoval)) return old;
     if ([...jobs.values()].some((r) => r.jobKey !== jobKey && (r.jobId === event.job.jobId || r.owner.packageId === event.job.owner.packageId && r.operationId === event.job.operationId))) return old;
     if (!previous && !nativeJobSettled(event.job) && [...jobs.values()].filter((r) => !nativeJobSettled(r)).length >= 128) return old;
     jobs.set(jobKey, event.job);

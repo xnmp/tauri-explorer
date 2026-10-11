@@ -299,8 +299,21 @@ fn dispatch(broker: &Arc<Broker>, method: &str, params: Value) -> Result<Value, 
     if !broker.can_recover() {
         return Err(error("Service owner disconnected before native IO"));
     }
-    let caller = broker.generation();
     let store = service_host::store()?;
+    let caller = if matches!(method, "host.artifacts.read" | "host.artifacts.acquired")
+        && params["consumerPackageId"]
+            .as_str()
+            .is_none_or(|id| id == broker.manifest().id)
+    {
+        recovery_caller(
+            store,
+            broker.manifest(),
+            &broker.generation(),
+            text(&params, "operationId")?,
+        )?
+    } else {
+        broker.generation()
+    };
     match method {
         "host.services.describe" => {
             let target: ServiceTarget = decode(params)?;
@@ -529,7 +542,19 @@ fn invoke(consumer: &Arc<Broker>, request: Invocation) -> Result<Value, AppError
         return Err(error("Unsupported service ownership protocol"));
     }
     let store = service_host::store()?;
-    let caller = consumer.generation();
+    let caller = if matches!(
+        request.method.as_str(),
+        "start" | "status" | "cancel" | "acknowledge"
+    ) {
+        recovery_caller(
+            store,
+            consumer.manifest(),
+            &consumer.generation(),
+            text(&request.params, "operationId")?,
+        )?
+    } else {
+        consumer.generation()
+    };
     let provider = backend.generation();
     let target = ServiceTarget {
         package_id: request.package_id,
@@ -546,6 +571,35 @@ fn invoke(consumer: &Arc<Broker>, request: Invocation) -> Result<Value, AppError
         || consumer.can_recover() && backend.can_recover(),
         |method, params| backend.call(method, params),
     )
+}
+/// A compatible upgrade can deliver the original result using its original
+/// provider identity. This grants local recovery only, never a new execution.
+pub(super) fn recovery_caller(
+    store: &crate::service_state::Store,
+    manifest: &package::Manifest,
+    current: &PackageGeneration,
+    operation: &str,
+) -> Result<PackageGeneration, AppError> {
+    let Some(a) = store.get(&current.package_id, operation)? else {
+        return Ok(current.clone());
+    };
+    if a.consumer.digest == current.digest {
+        return Ok(current.clone());
+    }
+    let success = a.output.is_some()
+        || store
+            .provider_receipt(&current.package_id, operation)?
+            .is_some_and(|r| r["execution"]["state"] == "succeeded");
+    if manifest.id != current.package_id
+        || !service_graph::consumer_recovers(manifest, &a.target)
+        || !success
+        || !matches!(a.phase, AdmissionPhase::Terminal | AdmissionPhase::Released)
+    {
+        return Err(error(
+            "Consumer package does not advertise the original recovery contract",
+        ));
+    }
+    Ok(a.consumer)
 }
 /// Durable business boundary shared by the real broker and native protocol
 /// fixtures. Transport and lifecycle admission remain outside this function.
@@ -947,6 +1001,7 @@ impl RecoveryPort for LiveRecovery {
             backend::CallLease::acquire_lane(&admission.provider.package_id, true)?
         };
         let provider = backend::ensure(&admission.provider.package_id)?;
+        let _output_recovery = service_host::store()?.output_recovery_guard(admission)?;
         let response = provider.call(
             &control_method(admission, method),
             control_params(admission),

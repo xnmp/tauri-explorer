@@ -43,12 +43,27 @@ pub(super) fn is_busy(error: &AppError) -> bool {
     matches!(error, AppError::Service { code, .. } if code == PACKAGE_BUSY)
 }
 pub(super) fn mutation_allowed_in(store: &Store, package: &str) -> Result<(), AppError> {
-    if store.busy(package)? {
+    if store.busy_for_consumer_repair(package)? {
         return Err(busy(
             "Package still owns AI work; wait for automatic recovery to finish",
         ));
     }
     Ok(())
+}
+pub(super) fn native_mutation_busy_in(store: &Store, package: &str) -> Result<bool, AppError> {
+    let mut retained = std::collections::HashSet::new();
+    for a in store
+        .claims()?
+        .into_iter()
+        .filter(|a| a.consumer.package_id == package)
+    {
+        if store.consumer_delivery_pending(&a)? {
+            retained.insert(a.operation_id);
+        }
+    }
+    Ok(super::backend::busy_except_retained_jobs(
+        package, &retained,
+    ))
 }
 pub(super) fn mutation_allowed_at(
     profile: &std::path::Path,

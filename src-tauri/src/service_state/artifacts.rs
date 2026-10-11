@@ -42,7 +42,65 @@ fn original_output_bytes(path: &Path) -> Result<Vec<u8>> {
     }
     Ok(bytes)
 }
-fn may_finish_stage(connection: &rusqlite::Connection, admission: &Admission) -> Result<bool> {
+pub(crate) struct OutputRecoveryGuard<'a> {
+    store: &'a Store,
+    key: (String, String),
+}
+impl Drop for OutputRecoveryGuard<'_> {
+    fn drop(&mut self) {
+        let mut permits = self
+            .store
+            .output_recovery
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        if let Some(count) = permits.get_mut(&self.key) {
+            *count -= 1;
+            if *count == 0 {
+                permits.remove(&self.key);
+            }
+        }
+    }
+}
+impl Store {
+    /// Unpaid provider reconciliation may publish its retained original copy
+    /// even after Unknown was fenced. This grants stage/seal only; it never
+    /// revokes the execution fence or allows a disposed output to reappear.
+    pub fn output_recovery_guard(&self, a: &Admission) -> Result<OutputRecoveryGuard<'_>> {
+        let key = (a.consumer.package_id.clone(), a.operation_id.clone());
+        let mut permits = self
+            .output_recovery
+            .lock()
+            .map_err(|_| reject("output recovery ownership is unavailable"))?;
+        *permits.entry(key.clone()).or_default() += 1;
+        Ok(OutputRecoveryGuard { store: self, key })
+    }
+}
+fn may_finish_stage(
+    store: &Store,
+    connection: &rusqlite::Connection,
+    admission: &Admission,
+) -> Result<bool> {
+    if matches!(
+        admission.phase,
+        AdmissionPhase::Forwarding | AdmissionPhase::Accepted | AdmissionPhase::Terminal
+    ) && admission.output.is_none()
+        && Store::provider_receipt_at(connection, admission)?.is_none_or(|r| {
+            !matches!(
+                r["execution"]["state"].as_str(),
+                Some("failed" | "cancelled")
+            )
+        })
+        && store
+            .output_recovery
+            .lock()
+            .map_err(|_| reject("output recovery ownership is unavailable"))?
+            .contains_key(&(
+                admission.consumer.package_id.clone(),
+                admission.operation_id.clone(),
+            ))
+    {
+        return Ok(true);
+    }
     let settled: bool = connection
         .query_row(
             "SELECT exec_released FROM operations WHERE consumer=?1 AND operation=?2",
@@ -782,7 +840,7 @@ impl Store {
         op: &str,
     ) -> Result<OutputStage> {
         let a = self.verify_provider(provider, consumer, op)?;
-        if !may_finish_stage(&self.connect()?, &a)? {
+        if !may_finish_stage(self, &self.connect()?, &a)? {
             return Err(reject("output staging requires a forwarded admission"));
         }
         let handle: String = self
@@ -814,7 +872,7 @@ impl Store {
         self.transaction(|tx| {
             let current = Self::record(tx, consumer, op)?
                 .ok_or_else(|| reject("stage admission disappeared"))?;
-            if !may_finish_stage(tx, &current)? {
+            if !may_finish_stage(self, tx, &current)? {
                 return Err(reject("output staging disposition changed"));
             }
             tx.execute(
@@ -885,7 +943,7 @@ impl Store {
             }
             return Ok(d);
         }
-        if !may_finish_stage(&self.connect()?, &a)? {
+        if !may_finish_stage(self, &self.connect()?, &a)? {
             return Err(reject(
                 "staged output recovery requires durable proven success with unavailable delivery",
             ));
@@ -903,7 +961,7 @@ impl Store {
         self.publish_original_copy(handle, &original.path, &original.bytes)?;
         self.transaction(|tx| {
             let current = Self::record(tx, consumer, op)?.ok_or_else(|| reject("admission disappeared"))?;
-            if !may_finish_stage(tx,&current)? {
+            if !may_finish_stage(self,tx,&current)? {
                 return Err(reject("admission ended during output sealing"));
             }
             tx.execute("UPDATE artifacts SET status='sealed',descriptor=?2,width=?3,height=?4 WHERE handle=?1", params![handle, encode(&d)?, original.width, original.height])
@@ -936,7 +994,7 @@ impl Store {
     pub fn gc(&self) -> Result<()> {
         let conn = self.connect()?;
         let mut query = conn
-            .prepare("SELECT consumer,operation FROM operations WHERE phase='released'")
+            .prepare("SELECT consumer,operation FROM operations WHERE phase='released' OR EXISTS(SELECT 1 FROM artifacts a WHERE a.consumer=operations.consumer AND a.operation=operations.operation AND a.kind='input' AND a.status='released')")
             .map_err(sql)?;
         let released = query
             .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))
@@ -1092,7 +1150,7 @@ impl Store {
     pub(super) fn collect_released(&self, consumer: &str, op: &str) -> Result<()> {
         let conn = self.connect()?;
         let mut q = conn
-            .prepare("SELECT handle FROM artifacts WHERE consumer=?1 AND operation=?2 AND EXISTS(SELECT 1 FROM operations WHERE consumer=?1 AND operation=?2 AND phase='released')")
+            .prepare("SELECT handle FROM artifacts WHERE consumer=?1 AND operation=?2 AND ((kind='input' AND status='released') OR EXISTS(SELECT 1 FROM operations WHERE consumer=?1 AND operation=?2 AND phase='released'))")
             .map_err(sql)?;
         let handles = q
             .query_map(params![consumer, op], |r| r.get::<_, String>(0))
@@ -1131,7 +1189,7 @@ impl Store {
             }
             self.transaction(|tx| {
                 tx.execute(
-                    "DELETE FROM artifacts WHERE handle=?1 AND EXISTS(SELECT 1 FROM operations WHERE consumer=?2 AND operation=?3 AND phase='released')",
+                    "DELETE FROM artifacts WHERE handle=?1 AND consumer=?2 AND operation=?3 AND ((kind='input' AND status='released') OR EXISTS(SELECT 1 FROM operations WHERE consumer=?2 AND operation=?3 AND phase='released'))",
                     params![handle, consumer, op],
                 )
                 .map_err(sql)?;

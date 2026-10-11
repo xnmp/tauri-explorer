@@ -10,7 +10,7 @@ use serde_json::Value;
 use sha2::{Digest, Sha256};
 pub(super) const RECEIPT_SCHEMA: i64 = 0x5445_4931;
 pub(super) const RECEIPT_TABLE: &str = "CREATE TABLE provider_receipts(consumer TEXT NOT NULL,operation TEXT NOT NULL,provider TEXT NOT NULL,revision INTEGER NOT NULL,status TEXT NOT NULL,digest TEXT NOT NULL,PRIMARY KEY(consumer,operation)); PRAGMA application_id=1413826865;";
-pub(super) const DISMISSAL_TABLE: &str = "CREATE TABLE IF NOT EXISTS dismissed_operations(consumer TEXT NOT NULL,operation TEXT NOT NULL,revision INTEGER NOT NULL,dismissed_at_ms INTEGER NOT NULL,PRIMARY KEY(consumer,operation))";
+pub(super) const DISMISSAL_TABLE: &str = "CREATE TABLE IF NOT EXISTS dismissed_operations(consumer TEXT NOT NULL,operation TEXT NOT NULL,revision INTEGER NOT NULL,dismissed_at_ms INTEGER NOT NULL,PRIMARY KEY(consumer,operation)); CREATE TABLE IF NOT EXISTS consumer_removals(package TEXT PRIMARY KEY NOT NULL)";
 fn canonical(value: &Value) -> Value {
     match value {
         Value::Object(object) => {
@@ -131,6 +131,84 @@ fn evidence(
     Ok(())
 }
 impl Store {
+    pub fn prepare_consumer_removal(&self, package: &str) -> Result<()> {
+        if !identity(package) {
+            return Err(reject("invalid consumer package"));
+        }
+        self.transaction(|tx| {
+            tx.execute(
+                "INSERT OR IGNORE INTO consumer_removals(package)VALUES(?1)",
+                [package],
+            )
+            .map_err(sql)?;
+            Ok(())
+        })
+    }
+    pub fn pending_consumer_removals(&self) -> Result<Vec<String>> {
+        let conn = self.connect()?;
+        let mut query = conn
+            .prepare("SELECT package FROM consumer_removals")
+            .map_err(sql)?;
+        let removals = query
+            .query_map([], |r| r.get(0))
+            .map_err(sql)?
+            .collect::<std::result::Result<Vec<_>, _>>()
+            .map_err(sql)?;
+        Ok(removals)
+    }
+    pub fn finish_consumer_removal(&self, package: &str) -> Result<()> {
+        self.transaction(|tx| {
+            tx.execute("DELETE FROM consumer_removals WHERE package=?1", [package])
+                .map_err(sql)?;
+            Ok(())
+        })
+    }
+    /// An old settlement marker may predate provider reconciliation. Startup
+    /// rechecks uncertain outcomes without revoking the no-replay fence.
+    pub fn revisit_uncertain_settlements(&self) -> Result<()> {
+        self.transaction(|tx| {
+            tx.execute("DELETE FROM dismissed_operations WHERE EXISTS(SELECT 1 FROM operations o LEFT JOIN provider_receipts r ON r.consumer=o.consumer AND r.operation=o.operation WHERE o.consumer=dismissed_operations.consumer AND o.operation=dismissed_operations.operation AND o.phase NOT IN('released','reserved') AND coalesce(json_extract(r.status,'$.execution.state'),'unconfirmed') NOT IN('failed','cancelled'))", []).map_err(sql)?;
+            Ok(())
+        })
+    }
+    /// User-authorized removal of a successful operation's consumer. This is
+    /// deliberately separate from automatic no-output settlement.
+    pub fn abandon_consumer_outputs(&self, package: &str) -> Result<Vec<super::job::JobRecord>> {
+        let mut jobs = Vec::new();
+        for a in self
+            .claims()?
+            .into_iter()
+            .filter(|a| a.consumer.package_id == package)
+        {
+            if !self.consumer_delivery_pending(&a)? {
+                continue;
+            }
+            let job = self.transaction(|tx| {
+                let mut current = Self::record(tx, package, &a.operation_id)?
+                    .ok_or_else(|| reject("operation disappeared"))?;
+                if current.phase == AdmissionPhase::Released {
+                    return Ok(None);
+                }
+                if current.phase != AdmissionPhase::Terminal
+                    || current.provider.package_id == package
+                {
+                    return Err(reject(
+                        "consumer removal cannot release unfinished execution",
+                    ));
+                }
+                current.phase = AdmissionPhase::Released;
+                current.disposition = Some("discarded".into());
+                current.transfer_receipt = None;
+                Self::persist(tx, &current)?;
+                self.report_undelivered_in(tx, &current)
+            })?;
+            if let Some(job) = job {
+                jobs.push(job);
+            }
+            self.collect_released(package, &a.operation_id)?;
+        }
+        Ok(jobs)
+    }
     pub(super) fn provider_receipt_at(
         conn: &Connection,
         admission: &Admission,
@@ -263,6 +341,10 @@ impl Store {
                 return Err(reject("automatic settlement requires idle workers and no recoverable output"));
             }
             tx.execute("UPDATE operations SET exec_released=1 WHERE consumer=?1 AND operation=?2", params![consumer, op]).map_err(sql)?;
+            // Inactive no-output operations cannot need their captured inputs
+            // again: Unknown is fenced against replay. Keep descriptors in the
+            // admission as evidence, but retire custody and capacity atomically.
+            tx.execute("UPDATE artifacts SET status='released',bytes=0 WHERE consumer=?1 AND operation=?2 AND kind='input'", params![consumer, op]).map_err(sql)?;
             // The artifact identity is forensic evidence; an empty reservation
             // is capacity, not evidence. Preserve sealed/staged original bytes.
             if let Some((handle, bytes, _)) = &reservation {
@@ -359,6 +441,7 @@ impl Store {
             } else {
                 let reservation = self.idle_output_reservation(&consumer, &op)?;
                 self.transaction(|tx| {
+                    tx.execute("UPDATE artifacts SET status='released',bytes=0 WHERE consumer=?1 AND operation=?2 AND kind='input'", params![consumer, op]).map_err(sql)?;
                     if let Some((handle, bytes, _)) = &reservation {
                         tx.execute(
                             "UPDATE artifacts SET bytes=?2 WHERE handle=?1",

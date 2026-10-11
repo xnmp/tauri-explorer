@@ -270,7 +270,9 @@ fn each_role_mutation_waits_for_claims_and_live_work_then_commits_safely() {
                 let preflights = Cell::new(0);
                 let leases = fx.enter(phase);
                 let before = fx.index();
-                if phase != Phase::Released {
+                if phase != Phase::Released
+                    && !(matches!(role, Role::Consumer) && phase == Phase::SucceededUnacknowledged)
+                {
                     let result = fx.act(&fx.store, action, role, &preflights);
                     fx.assert_refused(result, role, &before, &name);
                     assert_eq!(preflights.get(), 0, "{name}: preflight ran while owned");
@@ -378,4 +380,99 @@ fn cold_start_keeps_both_queued_upgrades_until_claims_recover() {
     }
     assert!(queued.iter().all(|path| !path.exists()));
     assert!(!queue.join("failed").exists());
+}
+
+#[test]
+fn review_successful_consumer_can_upgrade_disable_and_uninstall_without_losing_automatic_output() {
+    for action in [Action::Upgrade, Action::Disable, Action::Remove] {
+        let fx = Fixture::new(&format!("consumer-repair-{action:?}").to_lowercase());
+        fx.enter(Phase::SucceededUnacknowledged);
+        let output = fx
+            .store
+            .get(fx.id(Role::Consumer), OP)
+            .unwrap()
+            .unwrap()
+            .output
+            .unwrap();
+        let path = fx
+            .store
+            .read(
+                &fx.generation(Role::Consumer),
+                fx.id(Role::Consumer),
+                OP,
+                &output,
+            )
+            .unwrap()
+            .path;
+        let preflights = Cell::new(0);
+        fx.act(&fx.store, action, Role::Consumer, &preflights)
+            .expect("retained success must permit explicit consumer repair/removal");
+        let a = fx.store.get(fx.id(Role::Consumer), OP).unwrap().unwrap();
+        match action {
+            Action::Upgrade => {
+                assert_eq!(a.phase, AdmissionPhase::Terminal);
+                assert_eq!(a.output, Some(output));
+                assert!(std::path::Path::new(&path).exists());
+            }
+            Action::Disable | Action::Remove => {
+                assert_eq!(a.phase, AdmissionPhase::Released);
+                assert!(!std::path::Path::new(&path).exists());
+                let report = fx
+                    .store
+                    .job_for_operation(fx.id(Role::Consumer), OP)
+                    .unwrap()
+                    .unwrap();
+                assert_eq!(report.state, crate::service_state::job::JobState::Error);
+                assert!(report
+                    .error
+                    .unwrap()
+                    .contains("One image could not be delivered"));
+            }
+        }
+    }
+}
+
+#[test]
+fn review_consumer_removal_recovers_each_durable_index_commit_order() {
+    for committed in [false, true] {
+        let fx = Fixture::new(&format!("removal-crash-{committed}"));
+        fx.enter(Phase::SucceededUnacknowledged);
+        let consumer = fx.id(Role::Consumer);
+        fx.store.prepare_consumer_removal(consumer).unwrap();
+        if committed {
+            let mut index = package::list(&fx.root).unwrap();
+            index
+                .iter_mut()
+                .find(|p| p.manifest.id == consumer)
+                .unwrap()
+                .enabled = false;
+            package::write_index(&fx.root, &index).unwrap();
+        }
+        // Crash after intention, either side of the actual index commit.
+        super::recover(&fx.root).unwrap();
+        let recovered =
+            Store::open(fx.profile.path().join("service-state"), Limits::default()).unwrap();
+        assert!(recovered.pending_consumer_removals().unwrap().is_empty());
+        let a = recovered.get(consumer, OP).unwrap().unwrap();
+        assert_eq!(
+            a.phase,
+            if committed {
+                AdmissionPhase::Released
+            } else {
+                AdmissionPhase::Terminal
+            }
+        );
+        let report = recovered.job_for_operation(consumer, OP).unwrap();
+        if committed {
+            assert!(report
+                .unwrap()
+                .error
+                .unwrap()
+                .contains("One image could not be delivered"));
+        } else {
+            assert!(report.is_none());
+        }
+        super::recover(&fx.root).unwrap();
+        assert_eq!(recovered.get(consumer, OP).unwrap().unwrap(), a);
+    }
 }

@@ -246,6 +246,7 @@ fn restore(root: &Path, snapshot: &Path, upgrade: &mut Upgrade) -> Result<(), Ap
     Ok(())
 }
 pub(super) fn recover(root: &Path) -> Result<(), AppError> {
+    recover_consumer_removals(root)?;
     let snapshot = root.join("upgrade-pending");
     if !snapshot.exists() {
         return Ok(());
@@ -295,7 +296,7 @@ pub(super) fn drain_idle(store: &Store, id: &str) -> Result<backend::DrainGuard,
     let _guard = super::write_lifecycle()?;
     super::ai_operations::settle_dead_backlog(store, id)?;
     service_host::mutation_allowed_in(store, id)?;
-    if backend::busy(id) {
+    if service_host::native_mutation_busy_in(store, id)? {
         return Err(service_host::busy(
             "Finish active plugin operations before changing this package",
         ));
@@ -330,7 +331,36 @@ pub(super) fn uninstall(profile: &Profile, id: &str) -> Result<(), AppError> {
     let _lifecycle = super::LIFECYCLE
         .write()
         .map_err(|_| invalid("Plugin lifecycle lock is unavailable"))?;
-    package::uninstall(profile.root, id)
+    profile.store.prepare_consumer_removal(id)?;
+    package::uninstall(profile.root, id)?;
+    report_consumer_removal(profile.store, id)
+}
+fn report_consumer_removal(store: &Store, id: &str) -> Result<(), AppError> {
+    for job in store.abandon_consumer_outputs(id)? {
+        backend::release_job(&job.owner, job.job_id);
+        backend::emit_job_event(serde_json::json!({"type":"updated","job":job}));
+    }
+    store.finish_consumer_removal(id)
+}
+fn recover_consumer_removals(root: &Path) -> Result<(), AppError> {
+    let ledger = root
+        .parent()
+        .ok_or_else(|| invalid("Plugin profile is unavailable"))?
+        .join("service-state");
+    if !ledger.exists() {
+        return Ok(());
+    }
+    let store = Store::open(ledger, crate::service_state::model::Limits::default())?;
+    let entries = package::list(root)?;
+    for id in store.pending_consumer_removals()? {
+        if entries.iter().any(|p| p.manifest.id == id && p.enabled) {
+            // Crash before the package-index commit: there was no removal.
+            store.finish_consumer_removal(&id)?;
+        } else {
+            report_consumer_removal(&store, &id)?;
+        }
+    }
+    Ok(())
 }
 pub(super) fn set_enabled(profile: &Profile, id: &str, enabled: bool) -> Result<(), AppError> {
     let _mutation = super::mutation_lock()?;
@@ -369,13 +399,15 @@ pub(super) fn set_enabled(profile: &Profile, id: &str, enabled: bool) -> Result<
     }
     if !enabled {
         service_host::mutation_allowed_in(profile.store, id)?;
-        if backend::busy(id) {
+        if service_host::native_mutation_busy_in(profile.store, id)? {
             return Err(service_host::busy(
                 "Finish active plugin operations before changing this package",
             ));
         }
     } else if profile.store.claims()?.iter().any(|a| {
-        (a.consumer.package_id == id && a.consumer.digest != current.digest)
+        (a.consumer.package_id == id
+            && a.consumer.digest != current.digest
+            && !profile.store.consumer_delivery_pending(a).unwrap_or(false))
             || (a.provider.package_id == id && a.provider.digest != current.digest)
     }) {
         return Err(invalid(
@@ -388,7 +420,14 @@ pub(super) fn set_enabled(profile: &Profile, id: &str, enabled: bool) -> Result<
         .ok_or_else(|| invalid("Plugin package is not installed"))?;
     entry.enabled = enabled;
     service_graph::validate_enabled(&entries)?;
-    package::write_index(profile.root, &entries)
+    if !enabled {
+        profile.store.prepare_consumer_removal(id)?;
+    }
+    package::write_index(profile.root, &entries)?;
+    if !enabled {
+        report_consumer_removal(profile.store, id)?;
+    }
+    Ok(())
 }
 /// The broker-preflight entry used by the native candidate fixture.
 #[cfg(all(test, target_os = "linux"))]
@@ -411,7 +450,13 @@ fn install_with(
             .ok_or_else(|| invalid("Plugin profile root is unavailable"))?,
         &next,
     )?;
-    if backend::busy(&next.manifest.id) {
+    let store = Store::open(
+        root.parent()
+            .ok_or_else(|| invalid("Plugin profile is unavailable"))?
+            .join("service-state"),
+        crate::service_state::model::Limits::default(),
+    )?;
+    if service_host::native_mutation_busy_in(&store, &next.manifest.id)? {
         return Err(service_host::busy(
             "Finish active plugin operations before upgrading",
         ));

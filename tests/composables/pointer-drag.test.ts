@@ -13,15 +13,13 @@ vi.mock("$lib/state/settings.svelte", () => ({
   settingsStore: { zoomLevel: 100 },
 }));
 
-vi.mock("$lib/state/drag.svelte", () => ({
-  dragState: {
-    current: null,
-    finish: vi.fn(),
-    claim: () => ({ finish: vi.fn() }),
-    start: vi.fn(),
-    clear: vi.fn(),
-  },
-}));
+vi.mock("$lib/state/drag.svelte", async original => {
+  const module = await original<typeof import("$lib/state/drag.svelte")>();
+  vi.spyOn(module.dragState, "start");
+  vi.spyOn(module.dragState, "clear");
+  vi.spyOn(module.dragState, "finish");
+  return module;
+});
 
 vi.mock("$lib/state/bookmarks.svelte", () => ({
   bookmarksStore: { addBookmark: vi.fn() },

@@ -38,6 +38,14 @@ depends directly on the same patched Wry version; keep `Cargo.toml`'s direct
 dependency aligned when upgrading. Targeted host regressions are in
 `src-tauri/test_support/native_file_drag.rs`.
 
+GTK's deferred Leave uses weak references to the original WebView and top-level
+window. Both must remain alive and attached before `dispatch_deferred` admits
+the original receiver ID. A raw GTK address can be reused after Destroyed, so a
+deferred callback must never look up a replacement receiver by that address.
+The host also records native-ID-to-label mappings before queued delivery and
+clears all mapped queues/receiver identity by label at Destroyed, when Tauri's
+runtime no longer exposes the native handle.
+
 ## Guard
 
 `src-tauri/tests/vendored_wry_patch.rs` fails when `Cargo.lock` resolves `wry`

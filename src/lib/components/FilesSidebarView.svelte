@@ -29,7 +29,7 @@
   import { getBookmarkDropHint, getEffectiveDragKind } from "$lib/domain/bookmark-drop-feedback";
   import { isExplorerFileTransfer } from "$lib/domain/file-drop";
 
-  const recentDrag = createHtml5FileDrag();
+  const recentDrag = createHtml5FileDrag(() => {}, "link");
   const sidebarDrag = usesPointerDrag ? useSidebarDrag() : null;
 
   // Window-global surface: navigates whichever pane is active.

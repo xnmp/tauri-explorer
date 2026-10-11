@@ -25,7 +25,9 @@ vi.mock("$lib/composables/use-native-drop-target.svelte", () => ({
   captureHighlightCleanup: () => vi.fn(),
 }));
 vi.mock("$lib/state/drag.svelte", () => ({
-  dragState: { get current() { return state.dragData; }, finish: vi.fn(), claim: () => ({ finish: vi.fn() }), start: vi.fn(), readCrossWindow: () => null, clear: vi.fn(), expiredNativeObservation: () => false },
+  dragState: { get current() { return state.dragData; }, finish: vi.fn(), claim: () => ({ finish: vi.fn() }),
+    start: vi.fn((data: NonNullable<typeof state.dragData>) => { state.dragData = data; }),
+    readCrossWindow: () => null, clear: vi.fn(), expiredNativeObservation: () => false },
 }));
 vi.mock("$lib/state/drop-operations", () => ({ handleFileDropMany: transfer }));
 vi.mock("$lib/state/bookmarks.svelte", () => ({ bookmarksStore: bookmarks }));
@@ -33,13 +35,6 @@ vi.mock("$lib/state/terminal.svelte", () => ({ terminalPanelStore: { insertPaths
 vi.mock("$lib/domain/platform", () => ({ isCopyModifier: () => false, isWindows: false }));
 vi.mock("$lib/domain/zoom", () => ({ getZoomFactor: () => 1 }));
 vi.mock("$lib/composables/use-external-drag.svelte", () => ({ startExternalDrag: vi.fn() }));
-vi.mock("$lib/domain/path", () => ({
-  parentDir: (path: string) => path.slice(0, path.lastIndexOf("/")),
-  basename: (path: string) => path.slice(path.lastIndexOf("/") + 1),
-  isInsideDir: () => false,
-  samePath: (left: string, right: string) => left === right,
-  splitFlattenedUriList: (path: string) => [path],
-}));
 
 import { useNativeDropHandler } from "$lib/composables/use-native-drop-handler";
 import { usePointerDrag } from "$lib/composables/use-pointer-drag.svelte";

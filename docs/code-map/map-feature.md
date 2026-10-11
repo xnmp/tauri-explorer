@@ -106,7 +106,7 @@ backend for E2E/browser).
 - `components/NavigationHistoryMenu.svelte` — back/fwd history dropdown
 - `domain/autocomplete.ts` — `parsePathInput`, `filterDirectorySuggestions`
 - `domain/breadcrumb-truncation.ts` — collapse long crumb chains
-- `domain/path.ts` — path parsing/join/parent (`parentDir`), WSL/UNC handling
+- `domain/path.ts` — path parsing/join/parent (`parentDir`), WSL/UNC handling; pure `pathComparison(windows)` gives drop equality/parent/containment explicit platform semantics and rejects unresolved parent/drive-relative identities.
 - `state/navigation.ts` — history stack, navigate/back/forward
 - FLOW: navigate mutates explorer.currentPath + history; breadcrumbs derived from currentPath; autocomplete lists dirs via `listDirectory`.
 
@@ -177,10 +177,11 @@ backend for E2E/browser).
 ## External drag/drop (OS ↔ app)
 
 - `src/lib/domain/file-drop.ts`, `src/lib/state/file-drop-targets.svelte.ts`, `src/lib/state/dispatch-file-drop.ts` — fileDropTargets capability: verified internal and native external paths, plugin-first terminal routing, registration disposal, and gesture-scoped feedback cleanup. `src/lib/plugins/demo/DemoFileDropTarget.svelte` provides contributed acceptance receipts.
-- `src/lib/state/html5-file-drag.svelte.ts` — common HTML5 source protocol used by file-list, Miller-column and Recent sources.
+- `src/lib/state/html5-file-drag.svelte.ts` — common HTML5 source protocol used by file-list, Miller-column and Recent sources; Recent carries link-only authority across DOM, storage and native start/receivers.
 - Linux automatic Wry events after a rejected explicit start correlate only with the still-live HTML5 gesture and full path multiset. Backend observation times and bounded local/persisted intervals retain identity across IPC-delayed source-end. Expired/ambiguous observations cancel; explicit Rust identity wins. Consumer receipts prevent late duplicates, and ended/acknowledged gestures cannot lend identity to external files. Non-file and bookmark-only DOM payloads pass the file adapters unchanged; pending handoff decisions belong to the event's source session.
 - `src/lib/composables/use-sidebar-drag-end.ts` — document capture tracks the source gesture, so early/old dragend cannot erase a native or successor source.
 - `src/lib/api/native-file-drag.ts`, `src-tauri/src/native_file_drag.rs`, `src-tauri/test_support/native_file_drag.rs` — native main-thread source lease and per-receiver snapshots. Vendored Wry captures copy intent/source identity at platform callbacks before Tauri queues events. Receiver FIFO admission checks original event identity; verified Windows link transports retain original source paths. Vendored drag prepares Windows transport paths once and starts them without resolving links again. GTK completes at dnd-finished after selection transfer.
+- Native snapshot callbacks register numeric receiver IDs against stable labels before delivery; Destroyed clears receiver state by that mapping without a native getter. GTK deferred Leave retains weak original view/window identity and checks it before observer/handler dispatch, preventing address reuse from poisoning a replacement receiver.
 - Native ownership follows successful handoff; rejected starts retain DOM authority. Pending DOM drops capture destination ancestry/path, pane explorer/navigation lease and registration identity before awaiting that decision; stale destinations are discarded with a notice. Implicit native destinations obey pane modality even when inert hit testing exposes a workspace wrapper. Miller/Recent retain their former DOM target/modifier policies; Linux listings retain native move semantics. Pointer owns macOS/Windows same-window drags.
 
 - `composables/use-external-drag.svelte.ts` — start OS drag-out of files

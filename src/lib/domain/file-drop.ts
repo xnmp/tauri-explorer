@@ -11,6 +11,14 @@ export function isFileTransfer(data: Pick<DataTransfer, "types"> | null | undefi
   return isExplorerFileTransfer(data) || !!data?.types.includes("Files");
 }
 
+/** Link-only shortcuts carry their restriction in both DOM transport and
+ * source provenance; a receiver must never treat them as mutable files. */
+export function isLinkOnlyFileTransfer(data: Pick<DataTransfer, "effectAllowed" | "getData"> | null | undefined,
+  source?: { nativeCopyPolicy?: string } | null): boolean {
+  return source?.nativeCopyPolicy === "link" || data?.effectAllowed === "link"
+    || data?.getData("application/x-explorer-effect") === "link";
+}
+
 /** Native observations use Unix milliseconds, captured before IPC delivery.
  * End is exclusive: a later external gesture must not borrow retired identity. */
 export function observedDuringGesture(observedAt: number, startedAt: number, endedAt?: number): boolean {

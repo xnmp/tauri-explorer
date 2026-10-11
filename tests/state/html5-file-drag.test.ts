@@ -14,6 +14,15 @@ beforeEach(() => { dragState.clear(); native.mockClear(); });
 afterEach(() => { for (const call of native.mock.calls) call[1]?.({ result: "Cancelled" }); dragState.clear(); vi.unstubAllGlobals(); });
 
 describe("shared HTML5 filesystem source protocol", () => {
+  it("Recent exposes only link and retains that restriction through native start", () => {
+    vi.stubGlobal("window", { __TAURI_INTERNALS__: {} });
+    const payload = transfer();
+    const source = createHtml5FileDrag(() => {}, "link");
+    source.start({ dataTransfer: payload } as DragEvent, { path: "/work/project", name: "project", kind: "directory" });
+    expect(payload.effectAllowed).toBe("link");
+    expect(native.mock.calls[0][2].nativeCopyPolicy).toBe("link");
+    source.end();
+  });
   it("publishes ordered MIME, absolute URI paths and a live gesture for browser drops", () => {
     vi.stubGlobal("window", {}); const payload = transfer(); const onEnd = vi.fn(); const source = createHtml5FileDrag(onEnd);
     source.start({ dataTransfer: payload } as DragEvent, data);

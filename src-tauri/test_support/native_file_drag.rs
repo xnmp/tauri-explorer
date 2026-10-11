@@ -1,5 +1,219 @@
 use super::*;
 
+// The observer is process-global; native dispatch probes must not install or
+// invoke it concurrently with another probe's callback assertions.
+static OBSERVER_TEST_LOCK: Mutex<()> = Mutex::new(());
+
+#[test]
+fn deferred_platform_leave_does_not_reach_a_reused_native_receiver() {
+    let _observer_guard = OBSERVER_TEST_LOCK.lock().unwrap();
+    use std::{cell::RefCell, rc::Rc};
+    let original = Rc::new(42usize);
+    let weak_original = Rc::downgrade(&original);
+    let events = RefCell::new(Vec::new());
+    let handler = |event| {
+        events.borrow_mut().push(event);
+        true
+    };
+    drop(original);
+    let replacement = Rc::new(42usize);
+    // The numeric handle matches, but the callback belongs to the original
+    // runtime object; it must reach neither observer nor queued handler.
+    assert!(!wry::drag_drop_snapshot::dispatch_deferred(
+        *replacement,
+        false,
+        wry::DragDropEvent::Leave,
+        || weak_original.upgrade().map(|window| *window),
+        &handler
+    ));
+    assert!(events.borrow().is_empty());
+    let weak_replacement = Rc::downgrade(&replacement);
+    assert!(wry::drag_drop_snapshot::dispatch_deferred(
+        *replacement,
+        false,
+        wry::DragDropEvent::Leave,
+        || weak_replacement.upgrade().map(|window| *window),
+        &handler
+    ));
+    assert!(matches!(
+        events.borrow().as_slice(),
+        [wry::DragDropEvent::Leave]
+    ));
+}
+
+#[test]
+fn recent_native_start_allows_only_link_on_every_platform() {
+    let recent = Source {
+        native_copy_policy: Some(CopyPolicy::Link),
+        ..source()
+    };
+    assert!(matches!(
+        native_drag_options(Some(&recent)).mode,
+        drag::DragMode::Link
+    ));
+    for policy in [None, Some(CopyPolicy::Modifier), Some(CopyPolicy::Move)] {
+        let ordinary = Source {
+            native_copy_policy: policy,
+            ..source()
+        };
+        assert!(matches!(
+            native_drag_options(Some(&ordinary)).mode,
+            drag::DragMode::Copy
+        ));
+    }
+    assert!(matches!(
+        native_drag_options(None).mode,
+        drag::DragMode::Copy
+    ));
+}
+
+#[test]
+fn snapshot_only_receiver_is_cleaned_by_label_without_affecting_other_windows() {
+    let mut registry = Registry::default();
+    registry.begin(1, "source-window".into(), Some(source()));
+    // Same registration used by the platform observer before Tauri enqueues
+    // the first receiver event, which need never reach the destroyed window.
+    for (id, label) in [(42, "closing-receiver"), (43, "live-receiver")] {
+        registry.register_window(id, label);
+        registry.capture(
+            id,
+            &wry::DragDropEvent::Enter {
+                paths: paths(),
+                position: (20, 30),
+            },
+            false,
+        );
+    }
+    registry.window_event("closing-receiver", &tauri::WindowEvent::Destroyed, || {
+        panic!("Destroyed cannot retrieve its native handle")
+    });
+    registry.complete(1);
+    registry.capture(
+        42,
+        &wry::DragDropEvent::Drop {
+            paths: paths(),
+            position: (20, 30),
+        },
+        false,
+    );
+    let replacement = registry
+        .take(
+            42,
+            &tauri::DragDropEvent::Drop {
+                paths: paths(),
+                position: tauri::PhysicalPosition { x: 20.0, y: 30.0 },
+            },
+        )
+        .unwrap();
+    assert_eq!(
+        serde_json::to_value(replacement).unwrap()["source"],
+        serde_json::Value::Null
+    );
+    let live = registry
+        .take(
+            43,
+            &tauri::DragDropEvent::Enter {
+                paths: paths(),
+                position: tauri::PhysicalPosition { x: 20.0, y: 30.0 },
+            },
+        )
+        .unwrap();
+    assert_eq!(
+        serde_json::to_value(live).unwrap()["source"]["sessionId"],
+        "first"
+    );
+    registry.capture(
+        43,
+        &wry::DragDropEvent::Drop {
+            paths: paths(),
+            position: (20, 30),
+        },
+        false,
+    );
+    let live_drop = registry
+        .take(
+            43,
+            &tauri::DragDropEvent::Drop {
+                paths: paths(),
+                position: tauri::PhysicalPosition { x: 20.0, y: 30.0 },
+            },
+        )
+        .unwrap();
+    assert_eq!(
+        serde_json::to_value(live_drop).unwrap()["source"]["sessionId"],
+        "first"
+    );
+}
+
+#[test]
+fn destroyed_receiver_with_unavailable_runtime_handle_cannot_poison_reused_native_id() {
+    // Tauri's runtime removes the native window before emitting Destroyed.
+    struct FakeRuntimeWindow {
+        handle: Option<usize>,
+    }
+    impl FakeRuntimeWindow {
+        fn native_handle(&self) -> Option<usize> {
+            self.handle
+        }
+    }
+    let mut window = FakeRuntimeWindow { handle: Some(42) };
+    let mut registry = Registry::default();
+    registry.begin(1, "source-window".into(), Some(source()));
+    // A live runtime event exposes the id before any receiver dispatch.
+    registry.window_event("old-receiver", &tauri::WindowEvent::Focused(true), || {
+        window.native_handle()
+    });
+    registry.capture(
+        42,
+        &wry::DragDropEvent::Enter {
+            paths: paths(),
+            position: (20, 30),
+        },
+        false,
+    );
+    window.handle = None;
+    registry.window_event("old-receiver", &tauri::WindowEvent::Destroyed, || {
+        window.native_handle()
+    });
+    registry.complete(1);
+    // The OS reuses 42. A source-less Drop must not inherit the dead receiver.
+    window.handle = Some(42);
+    registry.window_event("replacement", &tauri::WindowEvent::Focused(true), || {
+        window.native_handle()
+    });
+    registry.capture(
+        42,
+        &wry::DragDropEvent::Drop {
+            paths: paths(),
+            position: (20, 30),
+        },
+        false,
+    );
+    let delivered = registry
+        .window_event(
+            "replacement",
+            &tauri::WindowEvent::DragDrop(tauri::DragDropEvent::Drop {
+                paths: paths(),
+                position: tauri::PhysicalPosition { x: 20.0, y: 30.0 },
+            }),
+            || window.native_handle(),
+        )
+        .expect("replacement drop has its own snapshot");
+    assert_eq!(
+        serde_json::to_value(delivered).unwrap()["source"],
+        serde_json::Value::Null
+    );
+    registry.capture(42, &wry::DragDropEvent::Leave, false);
+    assert!(matches!(
+        registry.window_event(
+            "replacement",
+            &tauri::WindowEvent::DragDrop(tauri::DragDropEvent::Leave),
+            || window.native_handle()
+        ),
+        Some(Event::Leave)
+    ));
+}
+
 #[test]
 fn prepared_windows_link_transport_survives_link_deletion_or_retargeting() {
     let linked = Source {
@@ -20,6 +234,7 @@ fn prepared_windows_link_transport_survives_link_deletion_or_retargeting() {
 
 #[test]
 fn platform_callback_captures_copy_before_delayed_dispatch_and_ctrl_release() {
+    let _observer_guard = OBSERVER_TEST_LOCK.lock().unwrap();
     use std::sync::Arc;
     use wry::{drag_drop_snapshot, DragDropEvent};
     let registry = Arc::new(Mutex::new(Registry::default()));
@@ -237,7 +452,7 @@ fn paths() -> Vec<PathBuf> {
 
 #[test]
 fn native_source_round_trip_preserves_source_copy_policy() {
-    for policy in ["move", "modifier"] {
+    for policy in ["move", "modifier", "link"] {
         let mut json = serde_json::to_value(source()).unwrap();
         json["nativeCopyPolicy"] = policy.into();
         let restored: Source = serde_json::from_value(json).unwrap();

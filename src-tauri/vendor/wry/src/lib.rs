@@ -2315,6 +2315,22 @@ pub mod drag_drop_snapshot {
     }
     handler(event)
   }
+
+  /// Deferred platform callbacks must check the original receiver's lifetime
+  /// before using its recyclable native ID. The platform supplies identity
+  /// from weak references to the original view and top-level window.
+  pub fn dispatch_deferred(
+    window: usize,
+    copy_modifier: bool,
+    event: DragDropEvent,
+    original_receiver: impl FnOnce() -> Option<usize>,
+    handler: &dyn Fn(DragDropEvent) -> bool,
+  ) -> bool {
+    if original_receiver() != Some(window) {
+      return false;
+    }
+    dispatch(window, copy_modifier, event, handler)
+  }
 }
 
 /// An event describing drag and drop operations on the webview.

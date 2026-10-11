@@ -13,7 +13,7 @@
 import { onDestroy } from "svelte";
 import type { FileEntry } from "$lib/domain/file";
 import type { ExplorerInstance } from "$lib/state/explorer.svelte";
-import { parentDir, basename, isInsideDir, samePath } from "$lib/domain/path";
+import { basename, pathComparison } from "$lib/domain/path";
 import { dragState } from "$lib/state/drag.svelte";
 import { bookmarksStore } from "$lib/state/bookmarks.svelte";
 import { terminalPanelStore } from "$lib/state/terminal.svelte";
@@ -33,6 +33,7 @@ export interface PointerDragDeps {
 }
 
 const THRESHOLD_PX = 5;
+const pathsForPlatform = pathComparison(isWindows);
 
 /**
  * A drop that would change nothing and should be ignored (no highlight, no
@@ -41,9 +42,8 @@ const THRESHOLD_PX = 5;
  * of it (can't move a folder into itself).
  */
 function isNoOpDropPath(targetDir: string, source: string): boolean {
-  // samePath (not ===) because parentDir emits forward slashes while targetDir
-  // comes from a DOM data-path (native backslashes on Windows).
-  return samePath(parentDir(source), targetDir) || isInsideDir(targetDir, source);
+  return pathsForPlatform.key(targetDir) === null
+    || pathsForPlatform.sameParent(source, targetDir) || pathsForPlatform.contains(targetDir, source);
 }
 
 export function usePointerDrag(deps: PointerDragDeps) {
@@ -175,9 +175,9 @@ export function usePointerDrag(deps: PointerDragDeps) {
 
     if (ghostEl) ghostEl.style.display = "none";
     const target = resolveDropTargetAtPoint(event.clientX, event.clientY);
-    const paths = [...dragPaths];
     const kind = entryData?.kind;
     const data = dragState.current;
+    const paths = internalDragPaths(data, isWindows) ?? [];
     // Release gesture listeners and the ghost before awaiting any consumer.
     cleanup(false);
     const delivery = dispatchFileDrop(target, internalDragPaths(data, isWindows) ?? [], "pane", data);
@@ -188,6 +188,7 @@ export function usePointerDrag(deps: PointerDragDeps) {
     const isCopy = !!isCopyModifier(event);
     const explorer = deps.getExplorer();
     try {
+      if (!paths.length) return;
       if (target?.type === "terminal") {
         // Type the paths into the shell prompt (#265).
         terminalPanelStore.insertPaths(paths);
@@ -213,11 +214,10 @@ export function usePointerDrag(deps: PointerDragDeps) {
         return;
       } else if (target?.type === "background") {
         const destPath = target.path || explorer.currentPath;
-        const sourceDir = paths[0] ? parentDir(paths[0]) : undefined;
-        if (sourceDir !== undefined && !samePath(sourceDir, destPath)) {
+        if (pathsForPlatform.key(destPath) !== null && !pathsForPlatform.sameParent(paths[0], destPath)) {
           // Background drops are move-only, and a multi-item drop is one
           // ordered native session with one undoable history entry (#163, #685).
-          const movable = paths.filter((sourcePath) => !samePath(parentDir(sourcePath), destPath));
+          const movable = paths.filter(sourcePath => !pathsForPlatform.sameParent(sourcePath, destPath));
           await handleFileDropMany(movable, destPath, false, { onRefresh: refreshPanes });
           return;
         }

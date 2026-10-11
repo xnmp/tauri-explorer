@@ -13,7 +13,7 @@ import { handleFileDropMany } from "$lib/state/drop-operations";
 import { isCopyModifier as isCopyMod, isMac, isWindows } from "$lib/domain/platform";
 import { bookmarksStore } from "$lib/state/bookmarks.svelte";
 import { terminalPanelStore } from "$lib/state/terminal.svelte";
-import { parentDir, isInsideDir, samePath } from "$lib/domain/path";
+import { pathComparison } from "$lib/domain/path";
 import { dispatchFileDrop } from "$lib/state/dispatch-file-drop";
 import { internalDragPaths, sameDropPathSet, domDropPaths, domOwnsFileDrop, isFileTransfer, isExplorerFileTransfer } from "$lib/domain/file-drop";
 import { nativeDropPaths } from "$lib/domain/native-drop-paths";
@@ -25,6 +25,7 @@ export interface NativeDropDeps {
   getActiveExplorer: () => ExplorerInstance | undefined;
   refreshAllPanes: () => void;
 }
+const pathsForPlatform = pathComparison(isWindows);
 
 export function useNativeDropHandler(deps: NativeDropDeps) {
   let copyModifierHeld = false;
@@ -90,11 +91,15 @@ export function useNativeDropHandler(deps: NativeDropDeps) {
       // covered content. An implicit destination must still obey pane modality.
       if ((!target || (target.type === "background" && !target.path))
           && dialogStore.isPaneBlocked(windowTabsManager.activePaneId)) return;
-      // Miller/Recent retain their former DOM target rules. Linux listings
+      // Miller retains its former DOM target rules. Linux listings
       // keep the native move-only routing and cross-window refresh policy.
       const domSource = isInternalDrag && dragData?.nativeCopyPolicy === "modifier";
       if (domSource && (!target || (target.type === "background" && target.domDisabled))) return;
       const isCopy = (copyModifier ?? copyModifierHeld) && (!isInternalDrag || dragData?.nativeCopyPolicy !== "move");
+      // Recent is a shortcut source, not authority to mutate its folder or
+      // insert its path into a terminal. Plugin delivery was resolved above.
+      if (isInternalDrag && dragData?.nativeCopyPolicy === "link"
+          && target?.type !== "sidebar" && target?.type !== "bookmark") return;
 
       // Terminal drop: type the paths into the shell prompt (#265).
       if (target?.type === "terminal") {
@@ -131,17 +136,21 @@ export function useNativeDropHandler(deps: NativeDropDeps) {
       if (target?.type === "folder" || target?.type === "bookmark" || target?.type === "tab") {
         // Skip dropping onto self or into one's own descendant; multi-item
         // drops are a single undoable batch (#163).
-        const valid = sourcePaths.filter((sourcePath) => !isInsideDir(target.path, sourcePath));
+        if (pathsForPlatform.key(target.path) === null) return;
+        const valid = sourcePaths.filter(sourcePath => !pathsForPlatform.contains(target.path, sourcePath)
+          && !(isInternalDrag && dragData?.nativeCopyPolicy !== "move" && target.type === "tab"
+            && pathsForPlatform.sameParent(sourcePath, target.path)));
         await handleFileDropMany(valid, target.path, domSource && target.type === "folder" && target.domMoveOnly ? false : isCopy, dropOptions);
         return;
       }
 
       // Background drop — move/copy to the target pane's directory
       const destDir = (target?.type === "background" ? target.path : undefined) || explorer.currentPath;
+      if (pathsForPlatform.key(destDir) === null) return;
 
       const millerDomBackground = domSource && target?.type === "background" && target.miller;
       const movable = sourcePaths.filter(path => millerDomBackground
-        ? !isInsideDir(destDir, path) : !samePath(parentDir(path), destDir));
+        ? !pathsForPlatform.contains(destDir, path) : !pathsForPlatform.sameParent(path, destDir));
       await handleFileDropMany(movable, destDir, domSource && !millerDomBackground ? false : isCopy, dropOptions);
     } finally {
       clear();
@@ -160,7 +169,7 @@ export function useNativeDropHandler(deps: NativeDropDeps) {
           const destDir = target.path || explorer.currentPath;
           const paths = internalDragPaths(dragData, isWindows);
           const sameDirectoryCopy = target.miller && dragData.nativeCopyPolicy === "modifier" && copyModifierHeld;
-          if (!sameDirectoryCopy && paths?.every((p) => samePath(parentDir(p), destDir))) {
+          if (!sameDirectoryCopy && paths?.every(p => pathsForPlatform.sameParent(p, destDir))) {
             clearHighlights();
             clearNativeHighlights = captureHighlightCleanup();
             return;

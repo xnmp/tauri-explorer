@@ -140,13 +140,23 @@ pub(crate) fn connect_drag_event(webview: &WebView, handler: Box<dyn Fn(DragDrop
       controller.leaving();
       let controller = controller.clone();
       let window = window_id(webview);
+      let original_view = webview.downgrade();
+      let original_window = webview.toplevel().map(|window| window.downgrade());
       gtk::glib::idle_add_local_once(move || {
         if controller.state() == DragControllerState::Leaving {
           controller.leave();
-          crate::drag_drop_snapshot::dispatch(
+          crate::drag_drop_snapshot::dispatch_deferred(
             window,
             false,
             DragDropEvent::Leave,
+            || {
+              let view = original_view.upgrade()?;
+              let original_window = original_window.as_ref()?.upgrade()?;
+              // A destroyed/reparented view cannot attribute a delayed Leave
+              // to a new top-level window reusing the old GTK address.
+              (view.toplevel().as_ref() == Some(&original_window))
+                .then_some(original_window.as_ptr() as usize)
+            },
             &*controller.handler,
           );
         }

@@ -59,7 +59,7 @@ export function useSidebarDrag() {
     if (!dragActive) {
       if (Math.sqrt(dx * dx + dy * dy) < THRESHOLD_PX) return;
       dragActive = true;
-      dragState.start({ path: dragPath, name: dragName, kind: "directory" });
+      dragState.start({ path: dragPath, name: dragName, kind: "directory", nativeCopyPolicy: "link" });
       ghostEl = createDragGhost(sourceEl, dragName);
     }
 
@@ -70,7 +70,7 @@ export function useSidebarDrag() {
 
     highlightTargetAtPoint(event.clientX, event.clientY);
     const target = resolveDropTargetAtPoint(event.clientX, event.clientY);
-    document.body.style.cursor = target?.type === "sidebar" || target?.type === "plugin" ? "copy" : "not-allowed";
+    document.body.style.cursor = target?.type === "sidebar" || target?.type === "bookmark" || target?.type === "plugin" ? "copy" : "not-allowed";
   }
 
   async function onMouseUp(event: MouseEvent): Promise<void> {
@@ -89,7 +89,7 @@ export function useSidebarDrag() {
     if (delivery) { await delivery; return; }
     clearHighlights();
 
-    if (target?.type === "sidebar") {
+    if (target?.type === "sidebar" || target?.type === "bookmark") {
       bookmarksStore.addBookmark(path, name);
     }
 

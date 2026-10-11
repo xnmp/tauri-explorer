@@ -86,7 +86,7 @@ export interface DragData {
   /** Host-issued gesture identity, also carried across windows. */
   sessionId?: string;
   /** Source policy survives native handoff; modifier intent is read at drop. */
-  nativeCopyPolicy?: "modifier" | "move";
+  nativeCopyPolicy?: "modifier" | "move" | "link";
   transport?: "native-pending" | "native";
   /** True only while this source's original HTML5 gesture is alive. Linux can
    * still receive automatic Wry events when explicit native start rejects. */

@@ -19,6 +19,18 @@ const EVENT: &str = "explorer-native-file-drag";
 enum CopyPolicy {
     Modifier,
     Move,
+    Link,
+}
+
+fn native_drag_options(source: Option<&Source>) -> drag::Options {
+    drag::Options {
+        mode: if source.is_some_and(|source| source.native_copy_policy == Some(CopyPolicy::Link)) {
+            drag::DragMode::Link
+        } else {
+            drag::DragMode::default()
+        },
+        ..Default::default()
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
@@ -151,6 +163,7 @@ struct Registry {
     active: Option<(u64, String, Option<CapturedSource>)>,
     receivers: HashMap<String, CapturedSource>,
     pending: HashMap<usize, VecDeque<(wry::DragDropEvent, Event)>>,
+    native_labels: HashMap<usize, String>,
 }
 
 impl Registry {
@@ -284,8 +297,48 @@ impl Registry {
     }
     fn destroyed(&mut self, owner: &str) {
         self.receivers.remove(owner);
+        let ids: Vec<_> = self
+            .native_labels
+            .iter()
+            .filter_map(|(id, label)| (label == owner).then_some(*id))
+            .collect();
+        for id in ids {
+            self.native_labels.remove(&id);
+            self.pending.remove(&id);
+            self.leave(&id.to_string());
+        }
         if self.active.as_ref().is_some_and(|active| active.1 == owner) {
             self.active = None;
+        }
+    }
+    fn register_window(&mut self, id: usize, label: &str) {
+        if self
+            .native_labels
+            .get(&id)
+            .is_some_and(|previous| previous != label)
+        {
+            self.pending.remove(&id);
+            self.leave(&id.to_string());
+        }
+        self.native_labels.insert(id, label.into());
+    }
+    fn window_event(
+        &mut self,
+        label: &str,
+        event: &tauri::WindowEvent,
+        native_id: impl FnOnce() -> Option<usize>,
+    ) -> Option<Event> {
+        // The runtime has already removed the native window at Destroyed.
+        // Use the identity recorded during live events/platform observation.
+        if matches!(event, tauri::WindowEvent::Destroyed) {
+            self.destroyed(label);
+            return None;
+        }
+        let id = native_id()?;
+        self.register_window(id, label);
+        match event {
+            tauri::WindowEvent::DragDrop(delivered) => self.take(id, delivered),
+            _ => None,
         }
     }
 }
@@ -329,11 +382,23 @@ enum Event {
 pub fn install_snapshots(app: tauri::AppHandle) {
     wry::drag_drop_snapshot::set_observer(Some(std::sync::Arc::new(
         move |window, event, copying| {
-            app.state::<Sessions>()
+            // A window can close before Tauri delivers its first queued drag
+            // event. Associate the receiver at the platform callback itself.
+            let label = app
+                .webview_windows()
+                .values()
+                .find(|candidate| native_window_id(&candidate.as_ref().window()) == Some(window))
+                .map(|candidate| candidate.label().to_owned());
+            let Some(label) = label else {
+                return;
+            };
+            let sessions = app.state::<Sessions>();
+            let mut registry = sessions
                 .registry
                 .lock()
-                .unwrap_or_else(|poison| poison.into_inner())
-                .capture(window, event, copying);
+                .unwrap_or_else(|poison| poison.into_inner());
+            registry.register_window(window, &label);
+            registry.capture(window, event, copying);
         },
     )));
 }
@@ -412,26 +477,12 @@ pub fn on_window_event(window: &tauri::Window, event: &tauri::WindowEvent) {
         .registry
         .lock()
         .unwrap_or_else(|poison| poison.into_inner());
-    let event = match event {
-        tauri::WindowEvent::DragDrop(delivered) => {
-            let event = native_window_id(window).and_then(|id| registry.take(id, delivered));
-            if event.is_none() {
-                log::warn!("Discarding native drop event without its platform snapshot");
-            }
-            event
-        }
-        tauri::WindowEvent::Destroyed => {
-            if let Some(id) = native_window_id(window) {
-                registry.pending.remove(&id);
-                registry.leave(&id.to_string());
-            }
-            registry.destroyed(window.label());
-            None
-        }
-        _ => None,
-    };
+    let captured = registry.window_event(window.label(), event, || native_window_id(window));
+    if matches!(event, tauri::WindowEvent::DragDrop(_)) && captured.is_none() {
+        log::warn!("Discarding native drop event without its platform snapshot");
+    }
     drop(registry);
-    if let Some(event) = event {
+    if let Some(event) = captured {
         let _ = window.emit_to(
             tauri::EventTarget::Webview {
                 label: window.label().into(),
@@ -491,6 +542,7 @@ pub async fn start_file_drag(
         let result = native_window
             .map_err(|error| error.to_string())
             .and_then(|native_window| {
+                let options = native_drag_options(source.as_ref());
                 window
                     .state::<Sessions>()
                     .registry
@@ -539,7 +591,7 @@ pub async fn start_file_drag(
                             log::warn!("Could not queue native drag completion");
                         }
                     },
-                    drag::Options::default(),
+                    options,
                 )
                 .map_err(|error| error.to_string())
             });

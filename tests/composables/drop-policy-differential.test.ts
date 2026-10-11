@@ -1,5 +1,5 @@
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-import { dropCases, dropBoundaryCases, dropPlatforms, branchDropPolicy, devDropPolicy, nativeRoute, intendedDifferences, type DropCase, type Outcome } from "../helpers/drop-policy";
+import { dropCases, dropBoundaryCases, dropCrossWindowCases, dropPathCases, dropPlatforms, branchDropPolicy, devDropPolicy, nativeRoute, intendedDifferences, type DropCase, type Outcome } from "../helpers/drop-policy";
 import { dropElement } from "../helpers/drop-element";
 
 const io = vi.hoisted(() => ({ start: vi.fn(), listener: undefined as ((event: any) => void) | undefined,
@@ -12,8 +12,11 @@ vi.mock("$lib/state/copy-operations", () => ({ copyFiles: vi.fn(async (paths: st
 vi.mock("$lib/state/bookmarks.svelte", () => ({ bookmarksStore: {
   addBookmark: vi.fn((path: string) => { io.outcomes.push("pin"); io.records.push({paths: [path]}); }), reorderBookmarks: vi.fn(() => io.outcomes.push("reorder")),
 } }));
+vi.mock("$lib/state/terminal.svelte", () => ({ terminalPanelStore: { insertPaths: (paths: readonly string[]) => {
+  io.outcomes.push("terminal-insertion"); io.records.push({ paths: [...paths] });
+} } }));
 
-let modules: any;
+let modules: any, peer: any;
 let win: EventTarget, doc: EventTarget, hit: HTMLElement;
 let cleanup: (() => void)[];
 let sourcePath: string, destPath: string;
@@ -53,6 +56,7 @@ function target(c: DropCase) {
     "listing-background": dropElement("content", { "data-current-path": destPath }, pane),
     "miller-background": dropElement("miller-col", { "data-path": destPath }, pane),
     "plugin-view": dropElement("plugin-file-view"),
+    terminal: dropElement("terminal-panel"),
   };
   return targets[c.target];
 }
@@ -67,41 +71,44 @@ async function domDestination(e: DragEvent, c: DropCase) {
   }
 }
 async function run(c: DropCase): Promise<Outcome[]> {
+  if (c.pathPair) { sourcePath = c.pathPair.source; destPath = c.pathPair.destination; }
+  const sourceModules = c.window === "cross-window" ? peer : modules;
   hit = target(c);
   vi.spyOn(modules.dialogs.dialogStore, "isPaneBlocked").mockReturnValue(c.target === "covered-pane");
   const handler = vi.fn((paths: readonly string[], kind: string) => { io.outcomes.push(`plugin:${kind}`); io.records.push({paths: [...paths]}); });
   if (c.target === "plugin") cleanup.push(modules.targets.fileDropTargets.register(hit, handler));
   let dt = transfer();
-  const fileSource = c.source.startsWith("listing-") || c.source.startsWith("miller-");
-  const entry = { path: sourcePath, name: "item", kind: c.source.endsWith("-folder") ? "directory" : "file", size: 1, modified: "" };
+  const fileSource = c.source.startsWith("listing-") || c.source.startsWith("miller-") || c.source === "recent";
+  const entry = { path: sourcePath, name: "item", kind: c.source.endsWith("-folder") || c.source === "recent" ? "directory" : "file", size: 1, modified: "" };
   if (fileSource && c.transport === "dom-only" && c.platform !== "linux") {
-    const drag = modules.pointer.usePointerDrag({ getExplorer: () => ({ getSelectedEntries: () => [entry], currentPath: destPath }) });
-    drag.handlePointerDown({ button: 0, preventDefault() {}, clientX: 10, clientY: 10 } as any, entry, true);
+    const drag = c.source === "recent" ? sourceModules.sidebarPointer.useSidebarDrag() : sourceModules.pointer.usePointerDrag({ getExplorer: () => ({ getSelectedEntries: () => [entry], currentPath: destPath }) });
+    if (c.source === "recent") drag.handlePointerDown({ button: 0, preventDefault() {}, clientX: 10, clientY: 10 } as any, entry.path, entry.name);
+    else drag.handlePointerDown({ button: 0, preventDefault() {}, clientX: 10, clientY: 10 } as any, entry, true);
     win.dispatchEvent(Object.assign(new Event("mousemove"), { clientX: 30, clientY: 40 }));
     win.dispatchEvent(Object.assign(new Event("mouseup"), { clientX: 30, clientY: 40, ctrlKey: c.modifier === "ctrl", altKey: c.modifier === "option" }));
     await flush();
     return (io.outcomes.length ? io.outcomes : ["plugin-view", "covered-pane", "textarea"].includes(c.target) ? ["blocked"] : ["ignored"]) as Outcome[];
   }
-  if (fileSource && c.transport === "native-accepted" && c.platform !== "linux") {
+  if (fileSource && c.source !== "recent" && c.transport === "native-accepted" && c.platform !== "linux") {
     // Actual macOS/Windows source: pointer drag exits the client viewport and
     // hands the same gesture to the native source boundary.
-    const drag = modules.pointer.usePointerDrag({ getExplorer: () => ({ getSelectedEntries: () => [entry], currentPath: destPath }) });
+    const drag = sourceModules.pointer.usePointerDrag({ getExplorer: () => ({ getSelectedEntries: () => [entry], currentPath: destPath }) });
     drag.handlePointerDown({ button: 0, preventDefault() {}, clientX: 10, clientY: 10 } as any, entry, true);
     win.dispatchEvent(Object.assign(new Event("mousemove"), { clientX: -10, clientY: 40 }));
     await flush();
-    const source = modules.drag.dragState.current;
+    const source = sourceModules.drag.dragState.current;
     dt = transfer({ "application/x-explorer-path": sourcePath, "application/x-explorer-kind": entry.kind,
       "application/x-explorer-session": source.sessionId });
   } else   if (fileSource) {
     if (c.transport === "dom-only") delete (win as any).__TAURI_INTERNALS__;
-    const drag = c.source.startsWith("listing-") && c.platform === "linux" ? modules.items.useItemInteractions({ getExplorer: () => ({ getSelectedEntries: () => [entry], refresh() {} }) })
-      : modules.html.createHtml5FileDrag();
+    const drag = c.source.startsWith("listing-") && c.platform === "linux" ? sourceModules.items.useItemInteractions({ getExplorer: () => ({ getSelectedEntries: () => [entry], refresh() {} }) })
+      : sourceModules.html.createHtml5FileDrag(() => {}, c.source === "recent" ? "link" : "modifier");
     const start = event("dragstart", dt, c, dropElement());
     if (c.source.startsWith("listing-") && c.platform === "linux") drag.handleDragStart(start, entry, true);
     else drag.start(start, entry);
     sourceEnd = c.source.startsWith("listing-") && c.platform === "linux" ? drag.handleDragEnd : drag.end;
     doc.dispatchEvent(start);
-    if (c.transport !== "dom-only" && c.platform !== "linux") void modules.external.startExternalDrag([sourcePath]);
+    if (c.transport !== "dom-only" && c.platform !== "linux") void sourceModules.external.startExternalDrag([sourcePath]);
     await flush();
   } else if (c.source === "sidebar-bookmark") dt = transfer({ "application/x-bookmark-index": "0" });
   else if (c.source === "external-file") dt = transfer({ Files: "" });
@@ -118,7 +125,7 @@ async function run(c: DropCase): Promise<Outcome[]> {
     }
   }
   if (nativeRoute(c)) {
-    const source = c.source === "external-file" || c.transport === "native-rejected" ? null : { ...modules.drag.dragState.current };
+    const source = c.source === "external-file" || c.transport === "native-rejected" ? null : { ...sourceModules.drag.dragState.current };
     native("enter", source, c, delayedObservation); native("drop", source, c, delayedObservation); await flush();
   }
   const over = event("dragover", dt, c); win.dispatchEvent(over);
@@ -143,20 +150,26 @@ async function run(c: DropCase): Promise<Outcome[]> {
 
 describe.each(dropPlatforms)("differential drop outcomes: %s", platform => {
   beforeAll(async () => {
+    localStorage.clear();
     vi.resetModules(); vi.stubGlobal("navigator", { platform: platform === "mac" ? "MacIntel" : platform === "windows" ? "Win32" : "Linux" });
     const names = {
       native: "$lib/composables/use-native-drop-handler", html: "$lib/state/html5-file-drag.svelte", items: "$lib/composables/use-item-interactions.svelte",
       pointer: "$lib/composables/use-pointer-drag.svelte", external: "$lib/composables/use-external-drag.svelte", drag: "$lib/state/drag.svelte",
+      sidebarPointer: "$lib/composables/use-sidebar-drag.svelte",
       sidebarEnd: "$lib/composables/use-sidebar-drag-end", targets: "$lib/state/file-drop-targets.svelte", dialogs: "$lib/state/dialogs.svelte",
       toast: "$lib/state/toast.svelte", tabs: "$lib/state/window-tabs.svelte", directory: "$lib/composables/use-dom-directory-drop", sidebar: "$lib/composables/use-sidebar-file-drop", folder: "$lib/composables/use-drop-target.svelte",
     };
-    modules = Object.fromEntries(await Promise.all(Object.entries(names).map(async ([key, name]) => [key, await import(name)])));
+    const load = async () => Object.fromEntries(await Promise.all(Object.entries(names).map(async ([key, name]) => [key, await import(name)])));
+    peer = await load(); vi.resetModules(); modules = await load();
   });
   beforeEach(async () => {
     observationTime = matrixClock += 100;
     vi.spyOn(Date, "now").mockImplementation(() => observationTime);
     cleanup = []; sourceEnd = undefined; io.outcomes = []; io.records = []; io.callbacks.clear(); io.start.mockReset().mockResolvedValue(undefined);
-    localStorage.clear(); modules.drag.dragState.clear(); modules.toast.toastStore.clear();
+    // Retain the shared gesture history between live peer modules. Clearing
+    // storage alone would fabricate a quota-loss boundary while leaving one
+    // peer's local ordinals ahead of the other, rather than a fresh window.
+    modules.drag.dragState.clear(); peer.drag.dragState.clear(); modules.toast.toastStore.clear();
     win = new EventTarget(); doc = new EventTarget();
     sourcePath = platform === "windows" ? "C:/source/item" : "/source/item";
     destPath = platform === "windows" ? "C:/destination" : "/destination";
@@ -165,20 +178,23 @@ describe.each(dropPlatforms)("differential drop outcomes: %s", platform => {
     } }));
     vi.stubGlobal("document", Object.assign(doc, { elementFromPoint: () => hit, documentElement: { style: {} },
       createElement: () => ({ style: {}, remove() {} }), body: { appendChild() {}, style: {} } }));
-    vi.spyOn(modules.tabs.windowTabsManager, "getTabPath").mockReturnValue(destPath);
+    vi.spyOn(modules.tabs.windowTabsManager, "getTabPath").mockImplementation(() => destPath);
     const service = modules.native.useNativeDropHandler({ getActiveExplorer: () => ({ currentPath: destPath }), refreshAllPanes() {} });
     service.setup(); cleanup.push(service.cleanup); await flush();
   });
-  afterEach(() => {
+  afterEach(async () => {
     sourceEnd?.();
     for (const args of io.start.mock.calls) {
       const callback = io.callbacks.get(args[0].onEvent.id);
       callback?.({ index: 0, message: { result: "Cancelled" } });
     }
-    cleanup.reverse().forEach(fn => fn()); modules.drag.dragState.finish(modules.drag.dragState.current, true);
+    cleanup.reverse().forEach(fn => fn());
+    await flush();
+    modules.drag.dragState.finish(modules.drag.dragState.current, true);
+    peer.drag.dragState.finish(peer.drag.dragState.current, true);
     vi.restoreAllMocks();
   });
-  it.each([...dropCases, ...dropBoundaryCases].filter(c => c.platform === platform))("$source → $target / $modifier / $transport / $lifetime", async c => {
+  it.each([...dropCases, ...dropBoundaryCases, ...dropCrossWindowCases, ...dropPathCases].filter(c => c.platform === platform))("$source → $target / $modifier / $transport / $lifetime / $window / $pathPair.id", async c => {
     if (c.transport === "native-rejected") { io.start.mockRejectedValue("unavailable"); vi.spyOn(console, "warn").mockImplementation(() => {}); }
     const policy = branchDropPolicy(c);
     if (!policy.difference) expect(policy.outcome).toBe(devDropPolicy(c));
@@ -193,6 +209,7 @@ describe.each(dropPlatforms)("differential drop outcomes: %s", platform => {
 });
 
 it("every declared difference has exercised rows, and the Cartesian matrix is complete", () => {
-  expect(dropCases).toHaveLength(2592);
-  for (const difference of intendedDifferences) expect([...dropCases, ...dropBoundaryCases].some(c => branchDropPolicy(c).difference === difference.id)).toBe(true);
+  expect(dropCases).toHaveLength(3159);
+  for (const difference of intendedDifferences) expect([...dropCases, ...dropBoundaryCases, ...dropCrossWindowCases, ...dropPathCases].some(c => branchDropPolicy(c).difference === difference.id)).toBe(true);
+  expect(dropCrossWindowCases.length).toBeGreaterThan(0); expect(dropPathCases).toHaveLength(66);
 });

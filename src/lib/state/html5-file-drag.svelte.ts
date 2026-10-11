@@ -5,7 +5,7 @@ import { startExternalDrag } from "$lib/composables/use-external-drag.svelte";
 
 /** One HTML5 source protocol for listings, Miller columns and Recent. Linux
  * app gestures hand off to native; browser gestures retain DOM authority. */
-export function createHtml5FileDrag(onEnd: () => void = () => {}, copyPolicy: "modifier" | "move" = "modifier") {
+export function createHtml5FileDrag(onEnd: () => void = () => {}, copyPolicy: "modifier" | "move" | "link" = "modifier") {
   let source: DragData | null = null;
 
   function start(event: DragEvent, data: DragData, decorate?: () => void): void {
@@ -16,7 +16,8 @@ export function createHtml5FileDrag(onEnd: () => void = () => {}, copyPolicy: "m
     event.dataTransfer.setData("application/x-explorer-kind", data.kind);
     if (paths.length > 1) event.dataTransfer.setData("application/x-explorer-paths", JSON.stringify(paths));
     event.dataTransfer.setData("text/uri-list", paths.map(path => "file://" + encodeURI(path)).join("\r\n"));
-    event.dataTransfer.effectAllowed = "all";
+    event.dataTransfer.effectAllowed = copyPolicy === "link" ? "link" : "all";
+    event.dataTransfer.setData("application/x-explorer-effect", copyPolicy === "link" ? "link" : "all");
     dragState.start({ ...data, paths: paths.length > 1 ? paths : undefined,
       nativeCopyPolicy: copyPolicy, html5: true });
     source = dragState.current;

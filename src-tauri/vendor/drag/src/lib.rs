@@ -166,6 +166,7 @@ pub enum DragItem {
 pub enum DragMode {
     #[default]
     Copy = 1, // NSDragOperationCopy
+    Link = 2,  // NSDragOperationLink
     Move = 16, // NSDragOperationMove
 }
 
@@ -175,6 +176,7 @@ impl From<DragMode> for objc2_app_kit::NSDragOperation {
         match value {
             DragMode::Copy => objc2_app_kit::NSDragOperation::Copy,
             DragMode::Move => objc2_app_kit::NSDragOperation::Move,
+            DragMode::Link => objc2_app_kit::NSDragOperation::Link,
         }
     }
 }

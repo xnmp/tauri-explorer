@@ -22,7 +22,8 @@ use windows::{
         System::Memory::*,
         System::Ole::{DoDragDrop, OleInitialize},
         System::Ole::{
-            IDropSource, IDropSource_Impl, CF_HDROP, DROPEFFECT, DROPEFFECT_COPY, DROPEFFECT_MOVE,
+            IDropSource, IDropSource_Impl, CF_HDROP, DROPEFFECT, DROPEFFECT_COPY, DROPEFFECT_LINK,
+            DROPEFFECT_MOVE,
         },
         System::SystemServices::{MK_LBUTTON, MODIFIERKEYS_FLAGS},
         UI::{
@@ -294,6 +295,7 @@ fn start_drag_impl<W: HasWindowHandle, F: Fn(DragResult, CursorPosition) + Send 
                     let effect = match options.mode {
                         DragMode::Copy => DROPEFFECT_COPY,
                         DragMode::Move => DROPEFFECT_MOVE,
+                        DragMode::Link => DROPEFFECT_LINK,
                     };
 
                     let drop_result =

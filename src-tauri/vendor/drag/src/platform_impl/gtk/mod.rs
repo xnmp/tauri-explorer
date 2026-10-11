@@ -31,6 +31,7 @@ pub fn start_drag<F: Fn(DragResult, CursorPosition) + Send + 'static>(
     let drag_action = match options.mode {
         DragMode::Copy => gdk::DragAction::COPY,
         DragMode::Move => gdk::DragAction::MOVE,
+        DragMode::Link => gdk::DragAction::LINK,
     };
 
     log::debug!("Setting drag source with action: {:?}", drag_action);

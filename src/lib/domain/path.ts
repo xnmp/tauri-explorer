@@ -2,13 +2,69 @@
  * Path normalization helpers.
  * Pure functions — no framework or filesystem deps.
  *
- * Separator policy: these helpers accept either `/` or `\` on input (Windows
+ * Legacy separator policy: most helpers accept either `/` or `\` on input (Windows
  * backends emit backslash-separated paths) and emit `/`-separated results.
  * Forward slashes round-trip correctly through the Windows APIs the backend
- * uses, so callers can stay separator-agnostic.
+ * uses, so callers can stay separator-agnostic. Admission comparisons use the
+ * explicit platform semantics in `pathComparison` instead.
  */
 
 import { isVirtualPath } from "./virtual-path";
+
+/** Filesystem comparisons for drop admission. Platform is explicit so POSIX
+ * backslashes never become separators. This is lexical identity, not realpath:
+ * unresolved `..` and drive-relative paths have no safe comparison key.
+ * POSIX case stays literal; ordinary Windows paths fold case, except WSL's
+ * Linux suffix. Filesystem-specific aliases remain the backend's responsibility. */
+export function pathComparison(windows: boolean) {
+  const key = (path: string): string | null => {
+    if (!path || path.includes("\0")) return null;
+    const normalized = windows ? toForwardSlashes(path) : path;
+    if (normalized.split("/").includes("..")) return null;
+    let root: string;
+    let tail: string;
+    if (windows) {
+      const drive = normalized.match(/^([A-Za-z]:)\/(.*)$/);
+      const unc = normalized.match(/^(\/\/[^/?\.][^/]*\/[^/]+)(?:\/(.*))?$/);
+      const extended = normalized.match(/^\/\/\?\/(?:([A-Za-z]:)\/(.*)|UNC\/([^/]+\/[^/]+)(?:\/(.*))?)$/i);
+      if (drive) { root = drive[1] + "/"; tail = drive[2]; }
+      else if (unc) { root = unc[1]; tail = unc[2] ?? ""; }
+      else if (extended) { root = extended[1] ? extended[1] + "/" : "//" + extended[3]; tail = (extended[1] ? extended[2] : extended[4]) ?? ""; }
+      else return null;
+    } else {
+      if (!normalized.startsWith("/")) return null;
+      // Exactly two leading slashes can have implementation-defined meaning.
+      root = normalized.startsWith("//") && !normalized.startsWith("///") ? "//" : "/";
+      tail = normalized.slice(root.length);
+    }
+    const parts = tail.split("/").filter(part => part !== "" && part !== ".");
+    const result = root + (root.endsWith("/") || !parts.length ? "" : "/") + parts.join("/");
+    if (!windows) return result;
+    const wsl = result.match(/^(\/\/(?:wsl\$|wsl\.localhost))(?=\/|$)/i);
+    return wsl ? wsl[1].toLowerCase() + result.slice(wsl[1].length) : result.toLowerCase();
+  };
+  const same = (a: string, b: string): boolean => {
+    const left = key(a);
+    return left !== null && left === key(b);
+  };
+  const contains = (child: string, parent: string): boolean => {
+    const c = key(child), p = key(parent);
+    return c !== null && p !== null && (c === p || c.startsWith(p.endsWith("/") ? p : p + "/"));
+  };
+  const parent = (path: string): string | null => {
+    const p = key(path);
+    if (p === null) return null;
+    const root = windows ? p.match(/^(?:[a-z]:\/|\/\/[^/]+\/[^/]+)/)?.[0] : p.startsWith("//") ? "//" : "/";
+    if (!root || p === root) return p;
+    const index = p.lastIndexOf("/");
+    return index < root.length ? root : p.slice(0, index);
+  };
+  const sameParent = (source: string, directory: string): boolean => {
+    const p = parent(source);
+    return p !== null && same(p, directory);
+  };
+  return { key, same, contains, parent, sameParent };
+}
 
 const BARE_DRIVE_LETTER = /^([A-Za-z]):$/;
 /** A Windows drive prefix capturing the letter and the remainder, e.g. `C:/Users`. */

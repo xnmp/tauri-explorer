@@ -2,8 +2,8 @@
  * Do not import production routing: this table is the differential contract.
  * Rows are ordered; dimensions never silently omit unsupported transports.
  */
-export const dropSources = ["listing-file", "listing-folder", "miller-file", "miller-folder", "sidebar-bookmark", "external-file", "text", "plugin-surface"] as const;
-export const dropTargets = ["folder", "breadcrumb", "tab", "bookmark", "quick-access", "sidebar-reorder", "plugin", "textarea", "covered-pane", "listing-background", "miller-background", "plugin-view"] as const;
+export const dropSources = ["listing-file", "listing-folder", "miller-file", "miller-folder", "recent", "sidebar-bookmark", "external-file", "text", "plugin-surface"] as const;
+export const dropTargets = ["folder", "breadcrumb", "tab", "bookmark", "quick-access", "sidebar-reorder", "plugin", "textarea", "covered-pane", "listing-background", "miller-background", "plugin-view", "terminal"] as const;
 export const dropModifiers = ["none", "ctrl", "option"] as const;
 export const dropTransports = ["native-accepted", "native-rejected", "dom-only"] as const;
 export const dropPlatforms = ["linux", "mac", "windows"] as const;
@@ -11,8 +11,10 @@ export type DropCase = {
   source: typeof dropSources[number]; target: typeof dropTargets[number];
   modifier: typeof dropModifiers[number]; transport: typeof dropTransports[number]; platform: typeof dropPlatforms[number];
   lifetime?: "expired";
+  window?: "cross-window";
+  pathPair?: { id: string; source: string; destination: string; dev: Outcome; branch: Outcome; reason?: string };
 };
-export type Outcome = "move" | "copy" | "pin" | "reorder" | "plugin:pane" | "plugin:external" | "plugin:dom" | "text-insertion" | "blocked" | "ignored";
+export type Outcome = "move" | "copy" | "pin" | "reorder" | "plugin:pane" | "plugin:external" | "plugin:dom" | "text-insertion" | "terminal-insertion" | "blocked" | "ignored";
 const explorer = (c: DropCase) => c.source.startsWith("listing-") || c.source.startsWith("miller-");
 const folder = (c: DropCase) => c.source.endsWith("-folder");
 const nonfile = (c: DropCase) => c.source === "text" || c.source === "plugin-surface";
@@ -26,9 +28,12 @@ const pointer = (c: DropCase) => c.transport === "dom-only" && c.platform !== "l
 export const devPolicyRows: readonly { id: string; when(c: DropCase): boolean; outcome(c: DropCase): Outcome }[] = [
   { id: "non-file", when: nonfile, outcome: c => ["plugin", "plugin-view"].includes(c.target) ? "plugin:dom" : "ignored" }, // dev's global adapter cancels browser default
   { id: "bookmark-reorder", when: c => c.source === "sidebar-bookmark", outcome: c => c.target === "sidebar-reorder" ? "reorder" : "ignored" },
+  { id: "recent-link-only", when: c => c.source === "recent", outcome: c => ["quick-access", "sidebar-reorder", "bookmark"].includes(c.target)
+    && !(c.platform !== "linux" && c.transport === "dom-only" && c.target !== "quick-access") ? "pin" : "ignored" },
   { id: "dom-os-paths-unavailable", when: c => c.source === "external-file" && !nativeRoute(c), outcome: () => "ignored" },
   { id: "folder-pin", when: c => folder(c) && ["bookmark", "quick-access", "sidebar-reorder"].includes(c.target), outcome: () => "pin" },
   { id: "quick-access-file", when: c => c.target === "quick-access", outcome: () => "ignored" },
+  { id: "terminal-paths", when: c => c.target === "terminal", outcome: c => nativeRoute(c) || pointer(c) ? "terminal-insertion" : "ignored" },
   { id: "native-transfer", when: nativeRoute, outcome: c => explorer(c) || !copy(c) ? "move" : "copy" },
   { id: "pointer-plugin-surface", when: c => pointer(c) && ["plugin", "plugin-view", "textarea"].includes(c.target), outcome: () => "ignored" },
   { id: "pointer-listing-background", when: c => pointer(c) && ["listing-background", "miller-background", "covered-pane"].includes(c.target), outcome: () => "move" },
@@ -38,12 +43,21 @@ export const devPolicyRows: readonly { id: string; when(c: DropCase): boolean; o
   { id: "dom-unhandled", when: () => true, outcome: () => "ignored" },
 ];
 export function devDropPolicy(c: DropCase): Outcome {
+  if (c.pathPair) return c.pathPair.dev;
   return devPolicyRows.find(row => row.when(c))!.outcome(c);
 }
 
 /** Every deliberate difference is named and justified, never inferred from
  * production output. All other combinations must equal the dev policy. */
 export const intendedDifferences = [
+  { id: "platform-path-semantics", reason: "Use literal POSIX names and Windows separator/case semantics; reject ambiguous parent/drive-relative paths before transfer.",
+    when: (c: DropCase) => !!c.pathPair?.reason, outcome: (c: DropCase): Outcome => c.pathPair!.branch },
+  { id: "recent-plugin", reason: "Design29 permits Recent link-only shortcuts to deliver to registered plugin targets without mutating their folders.",
+    when: (c: DropCase) => c.source === "recent" && c.target === "plugin", outcome: (): Outcome => "plugin:pane" },
+  { id: "recent-bookmark-pointer", reason: "Specific bookmark rows now retain bookmark identity; Recent pins there just like on empty Quick Access, never transferring the folder.",
+    when: (c: DropCase) => c.source === "recent" && c.platform !== "linux" && c.transport === "dom-only" && ["bookmark", "sidebar-reorder"].includes(c.target), outcome: (): Outcome => "pin" },
+  { id: "recent-modality", reason: "Recent follows the same pane and plugin ownership admission as other Explorer file sources.",
+    when: (c: DropCase) => c.source === "recent" && ["covered-pane", "textarea", "plugin-view"].includes(c.target), outcome: (): Outcome => "blocked" },
   { id: "expired-gesture", reason: "An evicted source observation or retired DOM gesture must cancel instead of becoming an external file operation; bounded identity retention cannot guess old provenance.",
     when: (c: DropCase) => c.lifetime === "expired" && ((explorer(c) && c.platform === "linux" && c.transport === "native-rejected")
       || (c.source === "external-file" && nativeRoute(c))), outcome: (): Outcome => "blocked" },
@@ -64,6 +78,7 @@ export const intendedDifferences = [
       : c.platform === "linux" && c.source.startsWith("miller-") && ["breadcrumb", "listing-background"].includes(c.target) ? "move" : copy(c) ? "copy" : "move" },
 ] as const;
 export function branchDropPolicy(c: DropCase): { outcome: Outcome; difference: string | null } {
+  if (c.pathPair) return { outcome: c.pathPair.branch, difference: c.pathPair.reason ? "platform-path-semantics" : null };
   const difference = intendedDifferences.find(row => row.when(c));
   return { outcome: difference ? difference.outcome(c) : devDropPolicy(c), difference: difference?.id ?? null };
 }
@@ -71,3 +86,54 @@ export const dropCases: DropCase[] = dropPlatforms.flatMap(platform => dropSourc
 export const dropBoundaryCases: DropCase[] = ["folder", "breadcrumb", "tab", "bookmark", "plugin", "covered-pane"].map(target => ({
   source: "miller-file", target: target as DropCase["target"], platform: "linux", transport: "native-rejected", modifier: "none", lifetime: "expired",
 }));
+
+/** Explicit receiver-window cases. Source and receiver have distinct module
+ * state; only transport provenance/shared storage can recover the source. */
+export const dropCrossWindowCases: DropCase[] = dropCases.filter(c =>
+  ["listing-file", "listing-folder", "miller-file", "miller-folder", "recent"].includes(c.source)
+  && (c.transport !== "dom-only" || c.platform === "linux")
+).concat(dropBoundaryCases).map(c => ({ ...c, window: "cross-window" }));
+
+/** Adversarial pairs have literal expectations, independent of production
+ * path normalization. Expand each across the actual transport variants. */
+const pathRows: { platforms: readonly DropCase["platform"][]; target: DropCase["target"]; source: string; destination: string;
+  id: string; dev: Outcome | ((c: DropCase) => Outcome); branch: Outcome; reason?: string }[] = [
+  { id: "posix-backslash-distinct", platforms: ["linux", "mac"], target: "breadcrumb", source: "/tmp/a\\b", destination: "/tmp/a/b",
+    dev: c => c.platform === "linux" && c.transport === "dom-only" ? "move" : "ignored", branch: "move", reason: "Backslash is a literal POSIX filename character." },
+  { id: "posix-backslash-parent", platforms: ["linux", "mac"], target: "tab", source: "/tmp/a\\b/item", destination: "/tmp/a\\b",
+    dev: c => c.platform === "mac" && c.transport === "dom-only" ? "ignored" : "move", branch: "ignored", reason: "A literal POSIX parent remains the same directory; native Miller retains the DOM tab no-op rule." },
+  { id: "posix-case-distinct", platforms: ["linux", "mac"], target: "tab", source: "/tmp/Case/item", destination: "/tmp/case",
+    dev: "move", branch: "move" },
+  { id: "posix-trailing-parent", platforms: ["linux", "mac"], target: "tab", source: "/tmp/source/item/", destination: "/tmp/source/",
+    dev: c => c.platform === "mac" && c.transport === "dom-only" ? "ignored" : "move", branch: "ignored", reason: "Trailing directory separators do not change parent identity." },
+  { id: "windows-backslash-equivalent", platforms: ["windows"], target: "tab", source: "C:\\source\\item", destination: "C:/source/",
+    dev: c => c.transport === "dom-only" ? "ignored" : "move", branch: "ignored", reason: "Windows separator variants identify the same parent." },
+  { id: "windows-case-parent", platforms: ["windows"], target: "tab", source: "C:/Source/item", destination: "c:/source",
+    dev: "move", branch: "ignored", reason: "Ordinary Windows paths compare without case; WSL suffixes remain case-sensitive." },
+  { id: "windows-case-self", platforms: ["windows"], target: "breadcrumb", source: "C:/Source/Item", destination: "c:/source/item/child",
+    dev: "move", branch: "ignored", reason: "Windows self/descendant checks use the same identity as equality." },
+  { id: "windows-unc-parent", platforms: ["windows"], target: "tab", source: "\\\\server\\share\\source\\item", destination: "//server/share/source/",
+    dev: c => c.transport === "dom-only" ? "ignored" : "move", branch: "ignored", reason: "UNC share roots and trailing separators retain parent identity." },
+  { id: "windows-unc-distinct-share", platforms: ["windows"], target: "tab", source: "\\\\server\\shareA\\source\\item", destination: "//server/shareB/source",
+    dev: "move", branch: "move" },
+  { id: "windows-wsl-case-distinct", platforms: ["windows"], target: "tab", source: "\\\\wsl.localhost\\Ubuntu\\Case\\item", destination: "//wsl.localhost/Ubuntu/case",
+    dev: "move", branch: "move" },
+  { id: "windows-drive-relative-source", platforms: ["windows"], target: "tab", source: "C:source/item", destination: "C:/destination",
+    dev: "move", branch: "ignored", reason: "Drive-relative sources lack an absolute filesystem identity." },
+  { id: "windows-drive-relative-target", platforms: ["windows"], target: "tab", source: "C:/source/item", destination: "C:destination",
+    dev: "move", branch: "ignored", reason: "Drive-relative targets depend on hidden per-drive current-directory state." },
+  { id: "posix-parent-source", platforms: ["linux", "mac"], target: "tab", source: "/tmp/source/../item", destination: "/tmp/destination",
+    dev: c => nativeRoute(c) ? "ignored" : "move", branch: "ignored", reason: "Parent components are not safe lexical aliases through symlinks; existing source admission rejects them." },
+  { id: "posix-parent-target", platforms: ["linux", "mac"], target: "tab", source: "/tmp/source/item", destination: "/tmp/a/../destination",
+    dev: "move", branch: "ignored", reason: "Ambiguous parent-component targets need filesystem resolution, not a guessed lexical identity." },
+  { id: "windows-parent-source", platforms: ["windows"], target: "tab", source: "C:/source/../item", destination: "C:/destination",
+    dev: c => nativeRoute(c) ? "ignored" : "move", branch: "ignored", reason: "Source admission rejects parent components." },
+  { id: "windows-parent-target", platforms: ["windows"], target: "tab", source: "C:/source/item", destination: "C:/a/../destination",
+    dev: "move", branch: "ignored", reason: "Target admission rejects unresolved parent components." },
+];
+export const dropPathCases: DropCase[] = pathRows.flatMap(row => row.platforms.flatMap(platform => dropTransports.map(transport => {
+  const c: DropCase = { platform, transport, source: "miller-folder", target: row.target, modifier: "none" };
+  return { ...c, pathPair: { id: row.id, source: row.source, destination: row.destination,
+    dev: typeof row.dev === "function" ? row.dev(c) : row.dev, branch: row.branch,
+    ...(row.reason && (typeof row.dev === "function" ? row.dev(c) : row.dev) !== row.branch ? { reason: row.reason } : {}) } };
+})));

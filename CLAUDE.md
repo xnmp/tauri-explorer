@@ -260,3 +260,8 @@ Rust subprocess fixtures cover the production argv/cwd and CLI error boundary.
 See ADR 0005 and ADR 0006.
 
 GitHub PR mutations (#1082): keep `--repo github.com/owner/name` explicit. Pending work belongs to `git-pr-mutations.svelte.ts`, not a mounted graph session; Rust admission spans windows/worktrees of the same target. After gh starts, a failure may follow remote acceptance: invalidate badges, retain the uncertain warning, and require an explicit GitHub check before retrying (ADR 0006).
+
+Long registry churn tests should keep every cycle and lifecycle assertion while
+avoiding repeated matcher wrappers and stack capture for an identical fixture
+fault. Strict Node assertions preserve synchronous failures; do not reduce churn
+counts or loosen timeouts to accommodate full-suite contention (#1082).

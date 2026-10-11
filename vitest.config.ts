@@ -15,14 +15,15 @@ export default defineConfig({
     // The 5,001-activation lifecycle regression has no timing assertion, but
     // competing transforms can exhaust its unchanged five-second deadline.
     // Ordered projects keep the file in every full run, before parallel unit
-    // work starts. CLI worker overrides and all existing deadlines still apply.
+    // work starts. Positive orders avoid Vitest's special trailing group for
+    // order zero when maxWorkers=1. CLI overrides and deadlines still apply.
     projects: [
       {
         extends: true,
         test: {
           name: "registry-churn",
           include: ["tests/plugins/registry-churn.test.ts"],
-          sequence: { groupOrder: 0 },
+          sequence: { groupOrder: 1 },
         },
       },
       {
@@ -31,7 +32,7 @@ export default defineConfig({
           name: "unit",
           include: ["tests/**/*.test.ts", "tests/**/*.bench.ts"],
           exclude: ["tests/plugins/registry-churn.test.ts"],
-          sequence: { groupOrder: 1 },
+          sequence: { groupOrder: 2 },
         },
       },
     ],

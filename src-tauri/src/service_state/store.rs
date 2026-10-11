@@ -967,6 +967,7 @@ impl Store {
                 && dismissed
                 && !self.retained_output_at(&conn, &consumer, &operation)?
                 && !self.has_unbound_host_output(&a.provider)?
+                && !self.has_operation_unbound_host_output(&consumer, &operation)?
             {
                 continue;
             }

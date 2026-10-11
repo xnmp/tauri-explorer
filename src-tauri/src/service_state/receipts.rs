@@ -372,6 +372,16 @@ impl Store {
         package: &str,
         retain: impl Fn(&Admission) -> bool,
     ) -> Result<Vec<super::job::JobRecord>> {
+        let jobs = self.abandon_package_operations_deferred(package, retain)?;
+        self.gc()?;
+        self.sweep_host_spools(|_| true)?;
+        Ok(jobs)
+    }
+    pub fn abandon_package_operations_deferred(
+        &self,
+        package: &str,
+        retain: impl Fn(&Admission) -> bool,
+    ) -> Result<Vec<super::job::JobRecord>> {
         if !identity(package) {
             return Err(reject("invalid package"));
         }
@@ -397,6 +407,14 @@ impl Store {
                 }
                 if let Some(mut a) = admission {
                     let success = a.output.is_some() || self.pending_success(&a)?.is_some()
+                        || self.has_removal_host_image_at(tx, &consumer, &op).unwrap_or_else(|cause| {
+                            // Reading a potential original cannot veto explicit
+                            // removal. Report possible delivery loss and commit
+                            // custody release; collection can unlink unreadable
+                            // files or retain its charge while retrying failures.
+                            log::warn!("Removed host output could not be inspected: {cause}");
+                            true
+                        })
                         || tx.query_row("SELECT EXISTS(SELECT 1 FROM artifacts WHERE consumer=?1 AND operation=?2 AND kind='output' AND status='sealed')", params![consumer,op], |r| r.get::<_,bool>(0)).map_err(sql)?
                         || Self::provider_receipt_at(tx, &a)?.is_some_and(|r| r["execution"]["state"] == "succeeded");
                     let undelivered = success && a.disposition.as_deref() != Some("acquired")
@@ -422,6 +440,7 @@ impl Store {
                 // Custody ends in this commit. The durable artifact row keeps
                 // charging pending collection until the files are gone.
                 tx.execute("UPDATE artifacts SET status='released' WHERE consumer=?1 AND operation=?2",params![consumer,op]).map_err(sql)?;
+                Self::release_operation_spools_in(tx, &consumer, &op, true)?;
                 tx.execute("UPDATE operations SET exec_released=0 WHERE consumer=?1 AND operation=?2",params![consumer,op]).map_err(sql)?;
                 tx.execute("DELETE FROM dismissed_operations WHERE consumer=?1 AND operation=?2",params![consumer,op]).map_err(sql)?;
                 if let Some(job) = self.cancel_removed_job_in(tx, &consumer, &op)? { jobs.push(job); }
@@ -437,7 +456,6 @@ impl Store {
         for (consumer, op) in abandoned {
             self.forget_success(&consumer, &op)?;
         }
-        self.gc()?;
         Ok(jobs)
     }
     pub(super) fn provider_receipt_at(
@@ -592,6 +610,7 @@ impl Store {
                 return Err(reject("automatic settlement requires idle workers and no recoverable output"));
             }
             tx.execute("UPDATE operations SET exec_released=1 WHERE consumer=?1 AND operation=?2", params![consumer, op]).map_err(sql)?;
+            Self::release_operation_spools_in(tx, consumer, op, false)?;
             // Inactive no-output operations cannot need their captured inputs
             // again: Unknown is fenced against replay. Keep descriptors in the
             // admission as evidence, but retire custody and capacity atomically.
@@ -605,7 +624,7 @@ impl Store {
             self.settle_dismissed_job_in(tx, consumer, op, status.and_then(|r| r["execution"]["error"]["message"].as_str()))
         })?;
         drop(reservation);
-        if let Err(error) = self.release_operation_spools(consumer, op) {
+        if let Err(error) = self.sweep_host_spools(|_| true) {
             log::warn!("settled host output sweep deferred: {error}");
         }
         if let Err(error) = self.gc() {

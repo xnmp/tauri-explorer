@@ -856,37 +856,49 @@ fn review_archive(root: &Path, p: &package::Installed) -> PathBuf {
 #[test]
 #[ignore = "requires a private native display/profile; execute via dedicated subprocess"]
 fn native_review_compatible_provider_upgrade_recovers_host_spool_after_quiesce_refusal() {
-    review_host_spool_upgrade(true, false, false);
+    review_host_spool_upgrade(true, false, false, false);
 }
 
 #[test]
 #[ignore = "requires a private native display/profile; execute via dedicated subprocess"]
 fn native_review_compatible_consumer_upgrade_recovers_host_spool() {
-    review_host_spool_upgrade(false, false, false);
+    review_host_spool_upgrade(false, false, false, false);
 }
 
 #[test]
 #[ignore = "requires a private native display/profile; execute via dedicated subprocess"]
 fn native_review_compatible_provider_upgrade_recovers_bound_host_success_after_lost_reply() {
-    review_host_spool_upgrade(true, true, false);
+    review_host_spool_upgrade(true, true, false, false);
 }
 
 #[test]
 #[ignore = "requires a private native display/profile; execute via dedicated subprocess"]
 fn native_review_compatible_consumer_upgrade_recovers_bound_host_success_after_lost_reply() {
-    review_host_spool_upgrade(false, true, false);
+    review_host_spool_upgrade(false, true, false, false);
 }
 
 #[test]
 #[ignore = "requires a private native display/profile; execute via dedicated subprocess"]
 fn native_review_unbound_host_success_delivers_after_exhausted_status_outage_without_restart() {
-    review_host_spool_upgrade(false, true, true);
+    review_host_spool_upgrade(false, true, true, false);
+}
+
+#[test]
+#[ignore = "requires a private native display/profile; execute via dedicated subprocess"]
+fn native_review_pending_host_reply_without_manifest_recovers_through_real_rpc() {
+    review_host_spool_upgrade(true, true, false, true);
+}
+#[test]
+#[ignore = "requires a private native display/profile; execute via dedicated subprocess"]
+fn native_review_unbound_pending_host_reply_recovers_after_status_outage() {
+    review_host_spool_upgrade(false, true, true, true);
 }
 
 fn review_host_spool_upgrade(
     upgrade_provider: bool,
     initially_unknown: bool,
     unbound_outage: bool,
+    pending: bool,
 ) {
     use crate::service_state::{job::*, model::*, Store};
     require_private_fixture();
@@ -998,12 +1010,12 @@ fn review_host_spool_upgrade(
         .write_to(&mut original, image::ImageFormat::Png)
         .unwrap();
     let original = original.into_inner();
-    let spool = backend::fixture_completed_bound_process_spool(
-        PROVIDER,
-        &original,
-        (!unbound_outage).then_some((id, op)),
-    )
-    .unwrap();
+    let spool_fixture = if pending {
+        backend::fixture_pending_process_spool
+    } else {
+        backend::fixture_completed_bound_process_spool
+    };
+    let spool = spool_fixture(PROVIDER, &original, (!unbound_outage).then_some((id, op))).unwrap();
     fs::write(
         data(PROVIDER).join("original-host-spool"),
         spool.to_string_lossy().as_bytes(),

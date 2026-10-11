@@ -43,7 +43,7 @@ impl TestFs {
             .unwrap()
             .removed
             .iter()
-            .filter(|(p, _)| p.file_name().is_none_or(|n| n != "completed.json"))
+            .filter(|(p, _)| p.extension().is_none_or(|n| n != "json"))
             .map(|(p, v)| (p.clone(), v.len() as u64))
             .collect()
     }
@@ -53,7 +53,7 @@ impl TestFs {
             .unwrap()
             .removed
             .iter()
-            .any(|(p, v)| p.file_name().is_none_or(|n| n != "completed.json") && v == bytes)
+            .any(|(p, v)| p.extension().is_none_or(|n| n != "json") && v == bytes)
     }
     pub fn faults(&self, unlink: bool, sync: bool) {
         let mut state = self.0.lock().unwrap();

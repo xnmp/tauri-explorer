@@ -507,29 +507,64 @@ pub(super) fn resume(key: &str) -> Result<Value, AppError> {
         }
         CallLease::acquire_method(&record.owner.package_id, "jobs.resumeOperation")?
     };
-    broker.call(
-        "jobs.resumeOperation",
-        json!({"operationId":record.operation_id}),
-    )?;
-    // A legacy stop is retained presentation, not an active-capacity slot.
-    // Keep it parked until the original handoff is acknowledged and status
-    // proves completion; that terminal correction needs no new job admission.
-    let updated = if record.phase.as_deref() == Some("stopped") {
-        record.clone()
+    let updated = resume_in(service_host::store()?, &record, || {
+        broker
+            .call(
+                "jobs.resumeOperation",
+                json!({"operationId":record.operation_id}),
+            )
+            .map(|_| ())
+    })?;
+    schedule_status(broker, updated.clone());
+    Ok(json!(updated))
+}
+
+/// Resume the original consumer protocol, retaining the durable stop guard
+/// and presentation update in the host path used by both RPC transports.
+pub(super) fn resume_in(
+    store: &Store,
+    record: &JobRecord,
+    invoke: impl FnOnce() -> Result<(), AppError>,
+) -> Result<JobRecord, AppError> {
+    let current = store
+        .job(&record.job_key)?
+        .ok_or_else(|| error("Background operation is no longer retained"))?;
+    if current.state.terminal() {
+        return Ok(current);
+    }
+    if current.phase.as_deref() == Some("stopped")
+        && !store
+            .get(&current.owner.package_id, &current.operation_id)?
+            .map(|a| store.success_known(&a))
+            .transpose()?
+            .unwrap_or(false)
+    {
+        return Err(error("Automatic recovery was explicitly stopped; its unknown execution evidence remains retained"));
+    }
+    invoke()?;
+    // A synchronous consumer can acknowledge during the RPC. Re-read its
+    // durable result before updating presentation, rather than regressing it.
+    let current = store
+        .job(&record.job_key)?
+        .ok_or_else(|| error("Background operation is no longer retained"))?;
+    if current.state.terminal() {
+        return Ok(current);
+    }
+    let updated = if current.phase.as_deref() == Some("stopped") {
+        current
     } else {
-        service_host::store()?.update_job(
-            &record.owner,
-            &record.job_key,
+        store.update_job(
+            &current.owner,
+            &current.job_key,
             JobState::Recovering,
             Some("recovering".into()),
             None,
-            record.run_id,
+            current.run_id,
             None,
         )?
     };
     emit(&updated);
-    schedule_status(broker, updated.clone());
-    Ok(json!(updated))
+    Ok(updated)
 }
 
 /// The consumer never acknowledged this operation: no receipt revision was

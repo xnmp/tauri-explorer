@@ -13,6 +13,29 @@ use std::{
 const MAX_STATE: u64 = 512 * 1024 * 1024;
 // Two bounded installed indexes plus snapshot metadata and future-safe slack.
 const MAX_JOURNAL: u64 = 4 * 1024 * 1024;
+#[cfg(test)]
+thread_local! {
+    static CRASH_BOUNDARY: std::cell::Cell<Option<&'static str>> = const { std::cell::Cell::new(None) };
+}
+#[cfg(test)]
+pub(super) fn crash_at_boundary(name: &'static str) {
+    CRASH_BOUNDARY.with(|boundary| boundary.set(Some(name)));
+}
+fn checkpoint(name: &str) -> Result<(), AppError> {
+    #[cfg(test)]
+    if CRASH_BOUNDARY.with(|boundary| {
+        if boundary.get() == Some(name) {
+            boundary.set(None);
+            true
+        } else {
+            false
+        }
+    }) {
+        return Err(invalid("injected lifecycle crash"));
+    }
+    let _ = name;
+    Ok(())
+}
 #[derive(Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 enum Phase {
@@ -99,14 +122,7 @@ fn snapshot_file(source: &Path, target: &Path) -> Result<Content, AppError> {
     copy_state(source, &mut options.open(target)?)
 }
 fn sync_directory(path: &Path) -> Result<(), AppError> {
-    #[cfg(unix)]
-    {
-        fs::File::open(path)?.sync_all()?;
-    }
-    #[cfg(not(unix))]
-    {
-        let _ = path;
-    }
+    crate::durable_dir::sync(path)?;
     Ok(())
 }
 fn write_marker(snapshot: &Path, upgrade: &Upgrade) -> Result<(), AppError> {
@@ -371,7 +387,7 @@ fn write_removal(root: &Path, removal: &Removal) -> Result<(), AppError> {
     }
     let mut stage = tempfile::NamedTempFile::new_in(root)?;
     stage.write_all(&bytes)?;
-    stage.as_file().sync_all()?;
+    crate::durable_dir::sync_file(stage.path())?;
     stage
         .persist(root.join("removal-pending.json"))
         .map_err(|e| AppError::from(e.error))?;
@@ -382,7 +398,7 @@ fn finish_removal(root: &Path, store: &Store, removal: &Removal) -> Result<(), A
     package::validate_index(&removal.entries)?;
     service_graph::validate_enabled(&removal.entries)?;
     let mut drains = Vec::new();
-    let result = (|| {
+    let result: Result<(), AppError> = (|| {
         // Repeat native retirement during both restart and same-session replay;
         // a failed earlier sweep may have left an admitted/live publisher.
         for id in &removal.packages {
@@ -396,6 +412,7 @@ fn finish_removal(root: &Path, store: &Store, removal: &Removal) -> Result<(), A
         }
         let _lifecycle = super::write_lifecycle()?;
         package::write_index(root, &removal.entries)?;
+        checkpoint("removal-index")?;
         for id in &removal.packages {
             report_consumer_removal(store, id)?;
         }
@@ -428,16 +445,24 @@ fn remove_or_disable(profile: &Profile, id: &str, uninstall: bool) -> Result<(),
         packages: ids,
     };
     write_removal(profile.root, &removal)?;
+    checkpoint("removal-intent")?;
     finish_removal(profile.root, profile.store, &removal)
 }
 fn reconcile_replacement(store: &Store, candidate: &package::Installed) -> Result<(), AppError> {
     let originals = store.package_operations(&candidate.manifest.id)?;
-    for a in originals
-        .iter()
-        .filter(|a| !super::ai_operations::replacement_recovers(&candidate.manifest, a))
-    {
-        store.release_operation_spools(&a.consumer.package_id, &a.operation_id)?;
+    super::service_bridge::signal_removal_cancellations(store, &candidate.manifest.id, |a| {
+        super::ai_operations::replacement_recovers(&candidate.manifest, a)
+    })?;
+    super::ai_operations::reset_replacement_reconciliation(store, &candidate.manifest.id)?;
+    for job in store.abandon_package_operations_deferred(&candidate.manifest.id, |a| {
+        super::ai_operations::replacement_recovers(&candidate.manifest, a)
+    })? {
+        backend::release_job(&job.owner, job.job_id);
+        backend::emit_job_event(serde_json::json!({"type":"updated","job":job}));
     }
+    checkpoint("replacement-abandoned")?;
+    store.gc()?;
+    store.sweep_host_spools(|_| true)?;
     if !originals.is_empty()
         && originals
             .iter()
@@ -445,28 +470,20 @@ fn reconcile_replacement(store: &Store, candidate: &package::Installed) -> Resul
     {
         store.release_package_spools(&candidate.manifest.id)?;
     }
-    super::service_bridge::signal_removal_cancellations(store, &candidate.manifest.id, |a| {
-        super::ai_operations::replacement_recovers(&candidate.manifest, a)
-    })?;
-    super::ai_operations::reset_replacement_reconciliation(store, &candidate.manifest.id)?;
-    for job in store.abandon_package_operations(&candidate.manifest.id, |a| {
-        super::ai_operations::replacement_recovers(&candidate.manifest, a)
-    })? {
-        backend::release_job(&job.owner, job.job_id);
-        backend::emit_job_event(serde_json::json!({"type":"updated","job":job}));
-    }
     Ok(())
 }
 fn report_consumer_removal(store: &Store, id: &str) -> Result<(), AppError> {
-    for a in store.package_operations(id)? {
-        store.release_operation_spools(&a.consumer.package_id, &a.operation_id)?;
-    }
-    for job in store.abandon_package_outputs(id)? {
+    for job in store.abandon_package_operations_deferred(id, |_| false)? {
         backend::release_job(&job.owner, job.job_id);
         backend::emit_job_event(serde_json::json!({"type":"updated","job":job}));
     }
+    checkpoint("removal-abandoned")?;
+    store.gc()?;
+    store.sweep_host_spools(|_| true)?;
+    store.release_package_spools(id)?;
+    checkpoint("removal-cleanup")?;
     store.finish_consumer_removal(id)?;
-    store.release_package_spools(id)
+    Ok(())
 }
 fn recover_consumer_removals(root: &Path) -> Result<(), AppError> {
     let ledger = root
@@ -594,7 +611,7 @@ fn install_with(
         committed_index: None,
         files: vec![],
     };
-    let result = (|| {
+    let result: Result<package::Installed, AppError> = (|| {
         let data = data_root(root, &next.manifest.id)?;
         for name in names {
             let source = data.join(&name);
@@ -607,6 +624,7 @@ fn install_with(
         }
         write_marker(&snapshot, &upgrade)?;
         sync_directory(root)?;
+        checkpoint("upgrade-prepared")?;
         let validation = snapshot.join("validation");
         fs::create_dir(&validation)?;
         #[cfg(unix)]
@@ -640,6 +658,7 @@ fn install_with(
         upgrade.phase = Phase::Committed;
         upgrade.committed_index = Some(proposed.clone());
         write_marker(&snapshot, &upgrade)?;
+        checkpoint("upgrade-committed")?;
         {
             let _gate = super::LIFECYCLE
                 .write()
@@ -648,6 +667,7 @@ fn install_with(
         }
         upgrade.phase = Phase::Published;
         write_marker(&snapshot, &upgrade)?;
+        checkpoint("upgrade-published")?;
         reconcile_replacement(&store, &installed)?;
         for id in &disabled {
             super::service_bridge::signal_removal_cancellations(&store, id, |_| false)?;
@@ -664,6 +684,14 @@ fn install_with(
             Ok(installed)
         }
         Err(cause) => {
+            #[cfg(test)]
+            if cause.to_string().contains("injected lifecycle crash") {
+                fence.retain_for_recovery();
+                for drain in &dependent_drains {
+                    drain.retain_for_recovery();
+                }
+                return Err(cause);
+            }
             if matches!(upgrade.phase, Phase::Committed | Phase::Published) {
                 // The marker replacement/flush may have succeeded. Retain its
                 // decision and close admission until forward recovery settles.

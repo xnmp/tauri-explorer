@@ -443,7 +443,8 @@ impl AutomaticPort for LiveAutomatic {
             .job_for_operation(&a.consumer.package_id, &a.operation_id)?
             .is_some_and(|j| j.phase.as_deref() == Some("storage_full"));
         let retained_output = store.has_retained_output(&a.consumer.package_id, &a.operation_id)?
-            || store.has_unbound_host_output(&a.provider)?;
+            || store.has_unbound_host_output(&a.provider)?
+            || store.has_operation_unbound_host_output(&a.consumer.package_id, &a.operation_id)?;
         let mut provider_owner = a.provider.clone();
         let provider_compatible = installed_provider.as_ref().is_some_and(|p| {
             let current = PackageGeneration {
@@ -645,64 +646,120 @@ impl AutomaticPort for LiveAutomatic {
         Ok(())
     }
     fn recover(&self, a: &Admission, job: Option<&JobRecord>) -> Result<(), AppError> {
-        if a.consumer.package_id == a.provider.package_id {
-            let broker = provider(a)?;
-            let _lease = {
-                let _gate = super::read_lifecycle()?;
-                if !broker.is_active() {
-                    return Err(error("Original provider is unavailable"));
-                }
-                CallLease::acquire_method(
-                    &a.provider.package_id,
-                    "services.image-generation.v1.status",
-                )?
-            };
-            let receipt = broker.call("services.image-generation.v1.status", json!({"caller":{"packageId":a.consumer.package_id,"packageDigest":a.consumer.digest,"incarnation":a.consumer.incarnation},"request":{"operationId":a.operation_id}}))?;
-            service_bridge::reconcile_at(
-                service_host::store()?,
-                &service_bridge::recovery_provider(
-                    service_host::store()?,
+        recover_in(service_host::store()?, a, job, &LiveRecovery)
+    }
+}
+
+/// Recovery routing shared by the native RPC adapter and the model transport.
+/// The adapter owns only the provider/consumer protocol; admission/receipt
+/// reconciliation and the selected recovery route remain host decisions.
+pub(super) trait RecoveryPort {
+    fn provider_status(
+        &self,
+        store: &crate::service_state::Store,
+        a: &Admission,
+    ) -> Result<(PackageGeneration, Value), AppError>;
+    fn resume(
+        &self,
+        store: &crate::service_state::Store,
+        a: &Admission,
+        job: &JobRecord,
+    ) -> Result<(), AppError>;
+    fn terminal_resume(
+        &self,
+        store: &crate::service_state::Store,
+        a: &Admission,
+        job: Option<&JobRecord>,
+    ) -> Result<(), AppError>;
+}
+pub(super) fn recover_in(
+    store: &crate::service_state::Store,
+    a: &Admission,
+    job: Option<&JobRecord>,
+    port: &impl RecoveryPort,
+) -> Result<(), AppError> {
+    if a.consumer.package_id == a.provider.package_id {
+        let (owner, receipt) = port.provider_status(store, a)?;
+        service_bridge::reconcile_at(store, &owner, a, &receipt)?;
+    } else if let Some(job) = job.filter(|j| !j.state.terminal()) {
+        port.resume(store, a, job)?;
+    } else {
+        port.terminal_resume(store, a, job)?;
+    }
+    Ok(())
+}
+struct LiveRecovery;
+impl RecoveryPort for LiveRecovery {
+    fn provider_status(
+        &self,
+        store: &crate::service_state::Store,
+        a: &Admission,
+    ) -> Result<(PackageGeneration, Value), AppError> {
+        let broker = provider(a)?;
+        let _lease = {
+            let _gate = super::read_lifecycle()?;
+            if !broker.is_active() {
+                return Err(error("Original provider is unavailable"));
+            }
+            CallLease::acquire_method(
+                &a.provider.package_id,
+                "services.image-generation.v1.status",
+            )?
+        };
+        let receipt = broker.call("services.image-generation.v1.status", json!({"caller":{"packageId":a.consumer.package_id,"packageDigest":a.consumer.digest,"incarnation":a.consumer.incarnation},"request":{"operationId":a.operation_id}}))?;
+        let authority = service_bridge::recovery_provider(
+            store,
+            broker.manifest(),
+            &broker.generation(),
+            &a.consumer.package_id,
+            &a.operation_id,
+        )?;
+        Ok((authority, receipt))
+    }
+    fn resume(
+        &self,
+        _: &crate::service_state::Store,
+        _: &Admission,
+        job: &JobRecord,
+    ) -> Result<(), AppError> {
+        job_bridge::resume(&job.job_key).map(|_| ())
+    }
+    fn terminal_resume(
+        &self,
+        store: &crate::service_state::Store,
+        a: &Admission,
+        job: Option<&JobRecord>,
+    ) -> Result<(), AppError> {
+        // A finished presentation can still have an unacknowledged output.
+        // Drive the original handoff while preserving its terminal job outcome.
+        let broker = backend::ensure(&a.consumer.package_id)?;
+        let _lease = {
+            let _gate = super::read_lifecycle()?;
+            if !broker.is_active()
+                || service_bridge::recovery_caller(
+                    store,
                     broker.manifest(),
                     &broker.generation(),
-                    &a.consumer.package_id,
                     &a.operation_id,
-                )?,
-                a,
-                &receipt,
-            )?;
-        } else if let Some(job) = job.filter(|j| !j.state.terminal()) {
-            job_bridge::resume(&job.job_key)?;
-        } else {
-            // A finished presentation can still have an unacknowledged output.
-            // Drive the original handoff while preserving its terminal job outcome.
-            let broker = backend::ensure(&a.consumer.package_id)?;
-            let _lease = {
-                let _gate = super::read_lifecycle()?;
-                if !broker.is_active()
-                    || service_bridge::recovery_caller(
-                        service_host::store()?,
-                        broker.manifest(),
-                        &broker.generation(),
-                        &a.operation_id,
-                    )?
-                    .digest
-                        != a.consumer.digest
-                {
-                    return Err(error("Original consumer is unavailable for local recovery"));
-                }
-                CallLease::acquire_method(&a.consumer.package_id, "jobs.resumeOperation")?
-            };
-            broker.call(
-                "jobs.resumeOperation",
-                json!({"operationId":a.operation_id}),
-            )?;
-            if let Some(job) = job {
-                job_bridge::schedule_status(broker, job.clone());
+                )?
+                .digest
+                    != a.consumer.digest
+            {
+                return Err(error("Original consumer is unavailable for local recovery"));
             }
+            CallLease::acquire_method(&a.consumer.package_id, "jobs.resumeOperation")?
+        };
+        broker.call(
+            "jobs.resumeOperation",
+            json!({"operationId":a.operation_id}),
+        )?;
+        if let Some(job) = job {
+            job_bridge::schedule_status(broker, job.clone());
         }
         Ok(())
     }
 }
+
 pub(super) fn auto_reconcile() {
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
     let result = crate::native_deadline::scoped(deadline, || {

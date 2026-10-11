@@ -24,12 +24,23 @@ pub(super) fn initialize(conn: &rusqlite::Connection) -> Result<()> {
         .collect::<std::result::Result<Vec<_>, _>>()
         .map_err(sql)?;
     drop(q);
-    for name in ["consumer", "operation"] {
+    for name in ["consumer", "operation", "completion"] {
         if !columns.iter().any(|c| c == name) {
             conn.execute_batch(&format!("ALTER TABLE host_spools ADD COLUMN {name} TEXT"))
                 .map_err(sql)?;
         }
     }
+    if !columns.iter().any(|c| c == "custody_recorded") {
+        conn.execute_batch(
+            "ALTER TABLE host_spools ADD COLUMN custody_recorded INTEGER NOT NULL DEFAULT 0",
+        )
+        .map_err(sql)?;
+    }
+    // Legacy calls do not name their operation. Capture their possible owners
+    // once, rather than transferring custody to a later provider admission.
+    conn.execute_batch("CREATE TABLE IF NOT EXISTS host_spool_admissions(handle TEXT NOT NULL,consumer TEXT NOT NULL,operation TEXT NOT NULL,PRIMARY KEY(handle,consumer,operation));
+        INSERT OR IGNORE INTO host_spool_admissions SELECT h.handle,o.consumer,o.operation FROM host_spools h JOIN operations o ON json_extract(o.admission,'$.provider.packageId')=h.package WHERE h.custody_recorded=0 AND (h.consumer IS NULL OR h.consumer=o.consumer AND h.operation=o.operation);
+        UPDATE host_spools SET custody_recorded=1 WHERE custody_recorded=0;").map_err(sql)?;
     Ok(())
 }
 const MAX_SPOOL: u64 = 17 * 1024 * 1024;
@@ -42,6 +53,16 @@ struct Completion {
     stderr_length: u64,
     stdout_sha256: String,
     stderr_sha256: String,
+}
+
+fn completion_for(status: i64, stdout: &[u8], stderr: &[u8]) -> Completion {
+    Completion {
+        status,
+        stdout_length: stdout.len() as u64,
+        stderr_length: stderr.len() as u64,
+        stdout_sha256: hex::encode(Sha256::digest(stdout)),
+        stderr_sha256: hex::encode(Sha256::digest(stderr)),
+    }
 }
 
 #[cfg(test)]
@@ -74,6 +95,531 @@ mod tests {
         fs::write(path.join("stderr"), []).unwrap();
         store.seal_host_spool(&owner(), &handle, 0).unwrap();
         (handle, path)
+    }
+    #[test]
+    fn sealing_and_recovery_use_writable_file_flushes_on_every_os() {
+        let (_root, store) = store();
+        crate::durable_dir::take_file_syncs();
+        let (_, path) = complete(&store, "host:flush-mode");
+        let synced = crate::durable_dir::take_file_syncs();
+        for name in ["stdout", "stderr", "completed.json"] {
+            assert!(
+                synced.contains(&path.join(name)),
+                "sealing bypassed the portable file flush for {name}"
+            );
+        }
+        store
+            .host_spool_result(&owner().package_id, "host:flush-mode")
+            .unwrap()
+            .unwrap();
+        let synced = crate::durable_dir::take_file_syncs();
+        for name in ["stdout", "stderr", "completed.json"] {
+            assert!(
+                synced.contains(&path.join(name)),
+                "recovery bypassed the portable file flush for {name}"
+            );
+        }
+    }
+    #[test]
+    fn pending_success_without_manifest_recovers_and_cannot_be_settled() {
+        let (root, store) = store();
+        forwarded(&store, "fixture.pending-consumer", "op-pending");
+        let (handle, path, writer) = store
+            .reserve_pinned_host_spool(&owner(), "host:pending", 1024)
+            .unwrap();
+        store
+            .bind_host_spool(&owner(), &handle, "fixture.pending-consumer", "op-pending")
+            .unwrap();
+        fs::write(path.join("stdout"), b"original paid CLI output").unwrap();
+        fs::write(path.join("stderr"), []).unwrap();
+        crate::durable_dir::sync_file(&path.join("stdout")).unwrap();
+        crate::durable_dir::sync_file(&path.join("stderr")).unwrap();
+        store
+            .retain_pinned_host_execution(&owner(), &writer, 0)
+            .unwrap();
+        drop(writer);
+        drop(store);
+        let reopened = Store::open(root.path().join("service-state"), Limits::default()).unwrap();
+        assert!(
+            reopened
+                .has_bound_host_output("fixture.pending-consumer", "op-pending")
+                .unwrap(),
+            "durable pending success disappeared without a manifest"
+        );
+        assert!(reopened
+            .auto_settle_operation("fixture.pending-consumer", "op-pending", true)
+            .is_err());
+        let recovered = reopened
+            .host_spool_result(&owner().package_id, "host:pending")
+            .unwrap()
+            .unwrap();
+        assert_eq!(recovered["status"], 0);
+        assert_eq!(
+            fs::read(recovered["stdout"].as_str().unwrap()).unwrap(),
+            b"original paid CLI output"
+        );
+    }
+    #[test]
+    fn partial_pending_manifest_cannot_mask_committed_completion() {
+        let (root, store) = store();
+        forwarded(&store, "fixture.partial-pending", "op-partial");
+        let (handle, path, writer) = store
+            .reserve_pinned_host_spool(&owner(), "host:partial-pending", 1024)
+            .unwrap();
+        store
+            .bind_host_spool(&owner(), &handle, "fixture.partial-pending", "op-partial")
+            .unwrap();
+        fs::write(path.join("stdout"), b"sole paid original").unwrap();
+        fs::write(path.join("stderr"), []).unwrap();
+        fs::write(path.join("pending.json"), b"{\"status\":").unwrap();
+        store
+            .retain_pinned_host_execution(&owner(), &writer, 0)
+            .unwrap();
+        drop(writer);
+        drop(store);
+        let reopened = Store::open(root.path().join("service-state"), Limits::default()).unwrap();
+        assert!(
+            reopened
+                .has_bound_host_output("fixture.partial-pending", "op-partial")
+                .unwrap(),
+            "partial witness masked committed original"
+        );
+        assert!(reopened
+            .auto_settle_operation("fixture.partial-pending", "op-partial", true)
+            .is_err());
+        let reply = reopened
+            .host_spool_result(&owner().package_id, "host:partial-pending")
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            fs::read(reply["stdout"].as_str().unwrap()).unwrap(),
+            b"sole paid original"
+        );
+    }
+    #[test]
+    fn partial_pending_and_commit_failure_cannot_discard_fsynced_original() {
+        let (root, store) = store();
+        let (_handle, path, writer) = store
+            .reserve_pinned_host_spool(&owner(), "host:partial-and-ledger", 1024)
+            .unwrap();
+        fs::write(path.join("pending.json"), b"{\"status\":").unwrap();
+        store.fail_next_write();
+        assert!(store
+            .write_pinned_host_reply(&owner(), &writer, b"sole paid original", b"", 0)
+            .is_err());
+        drop(writer);
+        drop(store);
+        let reopened = Store::open(root.path().join("service-state"), Limits::default()).unwrap();
+        reopened.sweep_host_spools(|_| false).unwrap();
+        let reply = reopened
+            .host_spool_result(&owner().package_id, "host:partial-and-ledger")
+            .unwrap()
+            .expect("compound witness faults discarded fsynced original");
+        assert_eq!(
+            fs::read(reply["stdout"].as_str().unwrap()).unwrap(),
+            b"sole paid original"
+        );
+    }
+    #[test]
+    fn reserved_completion_intent_recovers_only_exact_original_bytes() {
+        for damaged in 0..3 {
+            let (root, store) = store();
+            let (_handle, path, writer) = store
+                .reserve_pinned_host_spool(&owner(), "host:intent-only", 1024)
+                .unwrap();
+            store
+                .write_pinned_host_reply(&owner(), &writer, b"sole paid original", b"", 0)
+                .unwrap();
+            // No pending or seal commit ran. A short witness cannot mask the
+            // earlier reserved intent, nor can that intent excuse damaged bytes.
+            fs::write(path.join("pending.json"), b"{\"status\":").unwrap();
+            if damaged == 1 {
+                fs::write(path.join("stdout"), b"partial").unwrap();
+            }
+            if damaged == 2 {
+                fs::remove_file(path.join("stdout")).unwrap();
+            }
+            drop(writer);
+            drop(store);
+            let reopened =
+                Store::open(root.path().join("service-state"), Limits::default()).unwrap();
+            let reply = reopened.host_spool_result(&owner().package_id, "host:intent-only");
+            if damaged == 0 {
+                let reply = reply
+                    .unwrap()
+                    .expect("reserved completion intent lost original");
+                assert_eq!(
+                    fs::read(reply["stdout"].as_str().unwrap()).unwrap(),
+                    b"sole paid original"
+                );
+            } else {
+                assert!(
+                    !matches!(reply, Ok(Some(_))),
+                    "intent accepted damaged original bytes"
+                );
+            }
+        }
+    }
+    #[test]
+    fn ambiguous_unbound_custody_is_refused_before_reserving_output() {
+        let (_root, store) = store();
+        forwarded(&store, "fixture.first", "op-first");
+        forwarded(&store, "fixture.second", "op-second");
+        assert!(
+            store
+                .reserve_host_spool(&owner(), "host:ambiguous", 1024)
+                .is_err(),
+            "ambiguous unbound process admitted without an owner"
+        );
+        assert_eq!(charged(&store), 0);
+        assert_eq!(
+            fs::read_dir(store.root.join("host-spools"))
+                .unwrap()
+                .count(),
+            0
+        );
+    }
+    #[test]
+    fn compatible_replacement_unbound_reply_stays_tied_to_fenced_admission() {
+        let (_root, store) = store();
+        let consumer = "fixture.replacement-custody";
+        let operation = "op-replacement";
+        forwarded(&store, consumer, operation);
+        let receipt = json!({"version":1,"operationId":operation,"requestFingerprint":"d".repeat(64),"provider":{"packageId":owner().package_id,"serviceId":"image-generation","major":1},"revision":1,"execution":{"state":"unknown","error":{"code":"interrupted","message":"Lost reply","correlationId":null}},"delivery":{"state":"none"}});
+        store
+            .observe_receipt(&owner(), consumer, operation, 1, receipt)
+            .unwrap();
+        store
+            .auto_settle_operation(consumer, operation, true)
+            .unwrap();
+        let replacement = PackageGeneration {
+            digest: "a".repeat(64),
+            incarnation: 12,
+            ..owner()
+        };
+        let (handle, path) = store
+            .reserve_host_spool(&replacement, "host:unpaid-repair", 1024)
+            .unwrap();
+        fs::write(path.join("stdout"), b"unpaid original recovery").unwrap();
+        fs::write(path.join("stderr"), []).unwrap();
+        store.seal_host_spool(&replacement, &handle, 0).unwrap();
+        assert!(
+            store
+                .has_operation_unbound_host_output(consumer, operation)
+                .unwrap(),
+            "replacement reply escaped original admission"
+        );
+        let reply = store
+            .host_spool_result_for_operation(
+                &owner().package_id,
+                "host:unpaid-repair",
+                consumer,
+                operation,
+                Some(&replacement),
+            )
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            fs::read(reply["stdout"].as_str().unwrap()).unwrap(),
+            b"unpaid original recovery"
+        );
+        store.abandon_package_outputs(consumer).unwrap();
+        store.sweep_host_spools(|_| true).unwrap();
+        assert!(!path.exists());
+        assert_eq!(charged(&store), 0);
+    }
+    #[test]
+    fn operation_recovery_cannot_cross_request_id_collisions() {
+        let (_root, store) = store();
+        forwarded(&store, "fixture.collision", "op-a");
+        forwarded(&store, "fixture.collision", "op-b");
+        let (a, a_path) = store
+            .reserve_host_spool_with_custody(
+                &owner(),
+                "host:1",
+                1024,
+                Some(("fixture.collision", "op-a")),
+            )
+            .unwrap();
+        fs::write(a_path.join("stdout"), b"original A").unwrap();
+        fs::write(a_path.join("stderr"), []).unwrap();
+        store.seal_host_spool(&owner(), &a, 0).unwrap();
+        let replacement = PackageGeneration {
+            incarnation: 12,
+            ..owner()
+        };
+        let (b, b_path) = store
+            .reserve_host_spool_with_custody(
+                &replacement,
+                "host:1",
+                1024,
+                Some(("fixture.collision", "op-b")),
+            )
+            .unwrap();
+        fs::write(b_path.join("stdout"), b"original B").unwrap();
+        fs::write(b_path.join("stderr"), []).unwrap();
+        store.seal_host_spool(&replacement, &b, 0).unwrap();
+        let reply = store
+            .host_spool_result_for_operation(
+                &owner().package_id,
+                "host:1",
+                "fixture.collision",
+                "op-b",
+                None,
+            )
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            fs::read(reply["stdout"].as_str().unwrap()).unwrap(),
+            b"original B"
+        );
+        assert!(
+            store
+                .host_spool_result_for_operation(
+                    &owner().package_id,
+                    "host:1",
+                    "fixture.collision",
+                    "op-b",
+                    Some(&owner())
+                )
+                .unwrap()
+                .is_none(),
+            "explicit owner escaped operation custody"
+        );
+    }
+    #[test]
+    fn original_custody_wins_replacement_request_counter_collision() {
+        let (_root, store) = store();
+        let consumer = "fixture.original-collision";
+        let operation = "op-original";
+        forwarded(&store, consumer, operation);
+        let (original, original_path) = store
+            .reserve_host_spool_with_custody(
+                &owner(),
+                "host:1",
+                1024,
+                Some((consumer, operation)),
+            )
+            .unwrap();
+        fs::write(original_path.join("stdout"), b"sole paid original").unwrap();
+        fs::write(original_path.join("stderr"), []).unwrap();
+        store.seal_host_spool(&owner(), &original, 0).unwrap();
+        let replacement = PackageGeneration {
+            digest: "a".repeat(64),
+            incarnation: 12,
+            ..owner()
+        };
+        let (other, other_path) = store
+            .reserve_host_spool(&replacement, "host:1", 1024)
+            .unwrap();
+        fs::write(other_path.join("stdout"), b"unrelated replacement output").unwrap();
+        fs::write(other_path.join("stderr"), []).unwrap();
+        store.seal_host_spool(&replacement, &other, 0).unwrap();
+        let reply = store
+            .host_spool_result_for_operation(
+                &owner().package_id,
+                "host:1",
+                consumer,
+                operation,
+                None,
+            )
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            fs::read(reply["stdout"].as_str().unwrap()).unwrap(),
+            b"sole paid original"
+        );
+    }
+    #[test]
+    fn reply_survives_failure_before_pending_metadata_publication() {
+        let (root, store) = store();
+        let (handle, path, writer) = store
+            .reserve_pinned_host_spool(&owner(), "host:metadata-failure", 1024)
+            .unwrap();
+        crate::durable_dir::fail_next_file_sync();
+        assert!(store
+            .write_pinned_host_reply(&owner(), &writer, b"sole paid original", b"", 0)
+            .is_err());
+        assert!(path.join("pending.json").exists());
+        drop(writer);
+        drop(store);
+        let reopened = Store::open(root.path().join("service-state"), Limits::default()).unwrap();
+        reopened.sweep_host_spools(|_| false).unwrap();
+        let recovered = reopened
+            .host_spool_result(&owner().package_id, "host:metadata-failure")
+            .unwrap()
+            .expect("metadata publication failure discarded durable original");
+        assert_eq!(
+            fs::read(recovered["stdout"].as_str().unwrap()).unwrap(),
+            b"sole paid original"
+        );
+        assert_eq!(recovered["status"], 0);
+        assert_eq!(charged(&reopened), 18);
+        reopened
+            .release_host_spool(&owner().package_id, &handle)
+            .unwrap();
+    }
+    #[test]
+    fn reply_survives_combined_metadata_and_pending_commit_failure() {
+        let (root, store) = store();
+        let (_handle, _path, writer) = store
+            .reserve_pinned_host_spool(&owner(), "host:combined-failure", 1024)
+            .unwrap();
+        crate::durable_dir::fail_next_file_sync();
+        store.fail_next_write();
+        assert!(store
+            .write_pinned_host_reply(&owner(), &writer, b"sole paid original", b"", 0)
+            .is_err());
+        drop(writer);
+        drop(store);
+        let reopened = Store::open(root.path().join("service-state"), Limits::default()).unwrap();
+        reopened.sweep_host_spools(|_| false).unwrap();
+        let recovered = reopened
+            .host_spool_result(&owner().package_id, "host:combined-failure")
+            .unwrap()
+            .expect("combined metadata faults discarded durable original");
+        assert_eq!(
+            fs::read(recovered["stdout"].as_str().unwrap()).unwrap(),
+            b"sole paid original"
+        );
+        assert_eq!(recovered["status"], 0);
+    }
+    #[test]
+    fn sweeper_discovers_settled_spool_even_if_release_commit_was_lost() {
+        let (root, store) = store();
+        let path = bound(
+            &store,
+            "fixture.settled-consumer",
+            "op-settled",
+            "host:settled",
+            0,
+        );
+        // Old-host crash image: the settlement committed but its separate
+        // spool release did not. No recovery candidate is needed for cleanup.
+        store
+            .transaction(|tx| {
+                tx.execute(
+                    "UPDATE operations SET exec_released=1 WHERE consumer=?1 AND operation=?2",
+                    params!["fixture.settled-consumer", "op-settled"],
+                )
+                .map_err(sql)?;
+                tx.execute(
+                    "INSERT INTO dismissed_operations VALUES(?1,?2,0,0)",
+                    params!["fixture.settled-consumer", "op-settled"],
+                )
+                .map_err(sql)?;
+                Ok(())
+            })
+            .unwrap();
+        let receipt = json!({"version":1,"operationId":"op-settled","requestFingerprint":"d".repeat(64),"provider":{"packageId":owner().package_id,"serviceId":"image-generation","major":1},"revision":1,"execution":{"state":"failed","error":{"code":"invalid_output","message":"Rejected","correlationId":null}},"delivery":{"state":"none"}});
+        store
+            .observe_receipt(
+                &owner(),
+                "fixture.settled-consumer",
+                "op-settled",
+                1,
+                receipt,
+            )
+            .unwrap();
+        let reopened = Store::open(root.path().join("service-state"), Limits::default()).unwrap();
+        reopened.sweep_host_spools(|_| false).unwrap();
+        assert_eq!(
+            charged(&reopened),
+            0,
+            "settled spool is permanently charged"
+        );
+        assert!(!path.exists());
+    }
+    #[test]
+    fn removal_releases_unbound_spools_reachable_from_admissions() {
+        let (_root, store) = store();
+        forwarded(&store, "fixture.legacy-consumer", "op-legacy");
+        let (_, path) = complete(&store, "host:unbound-removal");
+        store
+            .abandon_package_outputs("fixture.legacy-consumer")
+            .unwrap();
+        store.sweep_host_spools(|_| true).unwrap();
+        assert_eq!(
+            charged(&store),
+            0,
+            "removed consumer retained provider-owned output"
+        );
+        assert!(!path.exists());
+    }
+    #[test]
+    fn removal_collects_unbound_reply_from_restarted_same_digest_provider() {
+        let (_root, store) = store();
+        forwarded(&store, "fixture.reincarnated-consumer", "op-reincarnated");
+        let restarted = PackageGeneration {
+            incarnation: owner().incarnation + 1,
+            ..owner()
+        };
+        let (handle, path) = store
+            .reserve_host_spool(&restarted, "host:reincarnated", 1024)
+            .unwrap();
+        fs::write(path.join("stdout"), b"restarted provider original").unwrap();
+        fs::write(path.join("stderr"), []).unwrap();
+        store.seal_host_spool(&restarted, &handle, 0).unwrap();
+        store
+            .abandon_package_outputs("fixture.reincarnated-consumer")
+            .unwrap();
+        store.sweep_host_spools(|_| true).unwrap();
+        assert_eq!(
+            charged(&store),
+            0,
+            "same-owner reincarnation escaped consumer removal"
+        );
+        assert!(!path.exists());
+    }
+    #[cfg(unix)]
+    #[test]
+    fn unreadable_original_cannot_veto_explicit_consumer_removal() {
+        use std::os::unix::fs::PermissionsExt;
+        if unsafe { libc::geteuid() } == 0 {
+            return;
+        }
+        let (_root, store) = store();
+        let path = bound(
+            &store,
+            "fixture.unreadable-removal",
+            "op-unreadable",
+            "host:unreadable-removal",
+            0,
+        );
+        fs::set_permissions(path.join("stdout"), fs::Permissions::from_mode(0)).unwrap();
+        store
+            .abandon_package_outputs("fixture.unreadable-removal")
+            .expect("unreadable stdout vetoed explicit removal");
+        store.sweep_host_spools(|_| true).unwrap();
+        assert_eq!(charged(&store), 0);
+        assert!(!path.exists());
+    }
+    #[test]
+    fn rejected_unbound_reply_does_not_leak_after_settlement() {
+        let (_root, store) = store();
+        let consumer = "fixture.nonzero-consumer";
+        let operation = "op-nonzero";
+        forwarded(&store, consumer, operation);
+        let (handle, path) = store
+            .reserve_host_spool(&owner(), "host:nonzero", 1024)
+            .unwrap();
+        fs::write(path.join("stdout"), b"nonzero CLI output").unwrap();
+        fs::write(path.join("stderr"), b"diagnostic").unwrap();
+        store.seal_host_spool(&owner(), &handle, 1).unwrap();
+        let receipt = json!({"version":1,"operationId":operation,"requestFingerprint":"d".repeat(64),"provider":{"packageId":owner().package_id,"serviceId":"image-generation","major":1},"revision":1,"execution":{"state":"failed","error":{"code":"cli_error","message":"Failed","correlationId":null}},"delivery":{"state":"none"}});
+        store
+            .observe_receipt(&owner(), consumer, operation, 1, receipt)
+            .unwrap();
+        store
+            .auto_settle_operation(consumer, operation, true)
+            .unwrap();
+        store.sweep_host_spools(|_| true).unwrap();
+        assert_eq!(
+            charged(&store),
+            0,
+            "settled nonzero unbound reply leaked quota"
+        );
+        assert!(!path.exists());
     }
     #[test]
     fn complete_reply_is_recoverable_after_retirement_and_reopen_without_reexecution() {
@@ -293,11 +839,13 @@ mod tests {
         status: i64,
     ) -> PathBuf {
         forwarded(store, consumer, operation);
-        let (handle, path, writer) = store
-            .reserve_pinned_host_spool(&owner(), request, 1024)
-            .unwrap();
-        store
-            .bind_host_spool(&owner(), &handle, consumer, operation)
+        let (_handle, path, writer) = store
+            .reserve_pinned_host_spool_with_custody(
+                &owner(),
+                request,
+                1024,
+                Some((consumer, operation)),
+            )
             .unwrap();
         fs::write(path.join("stdout"), b"original paid CLI output").unwrap();
         fs::write(path.join("stderr"), []).unwrap();
@@ -309,6 +857,7 @@ mod tests {
     #[test]
     fn consumer_removal_collects_only_its_bound_output_and_preserves_other_originals() {
         let (_root, store) = store();
+        let (_, unrelated) = complete(&store, "host:unrelated");
         let first = bound(
             &store,
             "fixture.first-consumer",
@@ -323,7 +872,6 @@ mod tests {
             "host:second",
             0,
         );
-        let (_, unrelated) = complete(&store, "host:unrelated");
         store
             .release_operation_spools("fixture.first-consumer", "op-first")
             .unwrap();
@@ -556,12 +1104,67 @@ impl Store {
     }
     fn sync_complete_host_spool(&self, handle: &str) -> Result<()> {
         let directory = self.host_spool_path(handle)?;
-        for name in ["stdout", "stderr", "completed.json"] {
-            let file = fs::File::open(directory.join(name))?;
-            file.sync_all()?;
+        for name in ["stdout", "stderr"] {
+            crate::durable_dir::sync_file(&directory.join(name))?;
         }
+        // Repair old completed-pending rows as well as an interrupted manifest
+        // publication. A status plus bounded durable bytes is still custody.
+        if !directory.join("completed.json").try_exists()? {
+            let completion = self
+                .host_completion(handle)?
+                .ok_or_else(|| reject("host reply is incomplete"))?;
+            self.write_host_completion(&directory, "completed.json", &completion)?;
+        }
+        crate::durable_dir::sync_file(&directory.join("completed.json"))?;
         self.sync_host_spool_directory(&directory)?;
         self.sync_host_spool_directory(directory.parent().unwrap())
+    }
+
+    fn write_host_completion(
+        &self,
+        directory: &Path,
+        name: &str,
+        completion: &Completion,
+    ) -> Result<()> {
+        if name == "pending.json" {
+            // First-publication evidence is immutable and keeps its name even
+            // when flushing fails. A temporary-file Drop would delete the sole
+            // status/hash witness while the reply bytes are being persisted.
+            let raw = serde_json::to_vec(completion)
+                .map_err(|_| reject("host output manifest serialization failed"))?;
+            let target = directory.join(name);
+            let mut options = fs::OpenOptions::new();
+            options.write(true).create_new(true);
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::OpenOptionsExt;
+                options.mode(0o600);
+            }
+            match options.open(&target) {
+                Ok(mut file) => {
+                    file.write_all(&raw)?;
+                    file.flush()?;
+                }
+                Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+                    if spool_bytes(&target, 4096)? != raw {
+                        return Err(reject("host reply completion is immutable"));
+                    }
+                }
+                Err(e) => return Err(e.into()),
+            }
+            crate::durable_dir::sync_file(&target)?;
+            return self.sync_host_spool_directory(directory);
+        }
+        let mut stage = tempfile::NamedTempFile::new_in(directory)?;
+        serde_json::to_writer(&mut stage, completion)
+            .map_err(|_| reject("host output manifest serialization failed"))?;
+        stage.flush()?;
+        crate::durable_dir::sync_file(stage.path())?;
+        stage
+            .persist(directory.join(name))
+            .map_err(|e| crate::error::AppError::from(e.error))?;
+        crate::durable_dir::sync_file(&directory.join(name))?;
+        self.sync_host_spool_directory(directory)
     }
     fn host_spool_path(&self, handle: &str) -> Result<PathBuf> {
         if handle.len() != 48
@@ -584,16 +1187,55 @@ impl Store {
         Ok((handle, path))
     }
 
+    pub fn reserve_host_spool_with_custody(
+        &self,
+        owner: &PackageGeneration,
+        request_id: &str,
+        limit: u64,
+        custody: Option<(&str, &str)>,
+    ) -> Result<(String, PathBuf)> {
+        let (handle, path, _writer) =
+            self.reserve_pinned_host_spool_with_custody(owner, request_id, limit, custody)?;
+        Ok((handle, path))
+    }
+
     pub fn reserve_pinned_host_spool(
         &self,
         owner: &PackageGeneration,
         request_id: &str,
         limit: u64,
     ) -> Result<(String, PathBuf, HostSpoolWriter<'_>)> {
+        self.reserve_pinned_host_spool_with_custody(owner, request_id, limit, None)
+    }
+
+    /// Explicit custody and its reservation are one decision. A custody-less
+    /// call is safe only when at most one admission can own its original bytes.
+    pub fn reserve_pinned_host_spool_with_custody(
+        &self,
+        owner: &PackageGeneration,
+        request_id: &str,
+        limit: u64,
+        custody: Option<(&str, &str)>,
+    ) -> Result<(String, PathBuf, HostSpoolWriter<'_>)> {
         generation(owner)?;
         if !identity(request_id) || limit > MAX_SPOOL {
             return Err(reject("invalid host output reservation"));
         }
+        let admission = custody
+            .map(|(consumer, operation)| {
+                let a = self.verify_provider(owner, consumer, operation)?;
+                if !matches!(
+                    a.phase,
+                    AdmissionPhase::Forwarding | AdmissionPhase::Accepted
+                ) || self.execution_released(consumer, operation)?
+                {
+                    return Err(reject(
+                        "host process requires an active forwarded admission",
+                    ));
+                }
+                Ok(a)
+            })
+            .transpose()?;
         let mut random = [0u8; 24];
         getrandom::fill(&mut random).map_err(|_| reject("host output identity unavailable"))?;
         let handle = hex::encode(random);
@@ -603,8 +1245,22 @@ impl Store {
         let writer = self.pin_host_spool(&handle)?;
         self.transaction(|tx| {
             Self::generation_admitted(tx,owner)?;
+            let candidates = if let Some(a) = &admission {
+                let current = Self::record(tx,&a.consumer.package_id,&a.operation_id)?.ok_or_else(|| reject("host process admission disappeared"))?;
+                let released: bool = tx.query_row("SELECT exec_released FROM operations WHERE consumer=?1 AND operation=?2", params![a.consumer.package_id,a.operation_id], |r| r.get(0)).map_err(sql)?;
+                if current != *a || released { return Err(reject("host process admission changed before execution")); }
+                vec![(a.consumer.package_id.clone(), a.operation_id.clone())]
+            } else {
+                let mut q = tx.prepare("SELECT consumer,operation FROM operations WHERE json_extract(admission,'$.provider.packageId')=?1 AND phase!='released'").map_err(sql)?;
+                let candidates = q.query_map([&owner.package_id], |r| Ok((r.get::<_,String>(0)?,r.get::<_,String>(1)?))).map_err(sql)?.collect::<std::result::Result<Vec<_>,_>>().map_err(sql)?;
+                if candidates.len() > 1 { return Err(reject("host output custody is ambiguous; supply consumer and operation")); }
+                candidates
+            };
             self.quota(tx,&owner.package_id,limit,false)?;
-            tx.execute("INSERT INTO host_spools(handle,package,owner,request_id,limit_bytes,bytes,status) VALUES(?1,?2,?3,?4,?5,?5,'reserved')",params![handle,owner.package_id,encode(owner)?,request_id,limit as i64]).map_err(sql)?;
+            tx.execute("INSERT INTO host_spools(handle,package,owner,request_id,limit_bytes,bytes,status,custody_recorded,consumer,operation) VALUES(?1,?2,?3,?4,?5,?5,'reserved',1,?6,?7)",params![handle,owner.package_id,encode(owner)?,request_id,limit as i64,custody.map(|c| c.0),custody.map(|c| c.1)]).map_err(sql)?;
+            for (consumer, operation) in candidates {
+                tx.execute("INSERT INTO host_spool_admissions VALUES(?1,?2,?3)", params![handle,consumer,operation]).map_err(sql)?;
+            }
             Ok(())
         })?;
         if let Err(cause) = (|| {
@@ -643,12 +1299,43 @@ impl Store {
             Self::generation_admitted(tx,owner)?;
             let changed=tx.execute("UPDATE host_spools SET consumer=?3,operation=?4 WHERE handle=?1 AND owner=?2 AND status='reserved' AND consumer IS NULL AND operation IS NULL",params![handle,encode(owner)?,consumer,operation]).map_err(sql)?;
             if changed!=1{return Err(reject("host process output binding is unavailable"))}
+            tx.execute("DELETE FROM host_spool_admissions WHERE handle=?1", [handle]).map_err(sql)?;
+            tx.execute("INSERT INTO host_spool_admissions VALUES(?1,?2,?3)", params![handle,consumer,operation]).map_err(sql)?;
             Ok(())
         })
     }
 
     pub fn has_bound_host_output(&self, consumer: &str, operation: &str) -> Result<bool> {
         self.has_bound_host_output_at(&self.connect()?, consumer, operation)
+    }
+
+    /// Removal notices require a valid original image, rather than treating
+    /// arbitrary raw CLI stdout as a successful image-service result.
+    pub(super) fn has_removal_host_image_at(
+        &self,
+        conn: &rusqlite::Connection,
+        consumer: &str,
+        operation: &str,
+    ) -> Result<bool> {
+        if conn.query_row("SELECT EXISTS(SELECT 1 FROM provider_receipts WHERE consumer=?1 AND operation=?2 AND json_extract(status,'$.execution.state') IN ('failed','cancelled'))", params![consumer,operation], |r| r.get::<_,bool>(0)).map_err(sql)? { return Ok(false); }
+        let mut query = conn.prepare("SELECT h.handle FROM host_spools h WHERE h.status!='released' AND (h.consumer=?1 AND h.operation=?2 OR EXISTS(SELECT 1 FROM host_spool_admissions s WHERE s.handle=h.handle AND s.consumer=?1 AND s.operation=?2))").map_err(sql)?;
+        let handles = query
+            .query_map(params![consumer, operation], |r| r.get::<_, String>(0))
+            .map_err(sql)?
+            .collect::<std::result::Result<Vec<_>, _>>()
+            .map_err(sql)?;
+        for handle in handles {
+            if self
+                .completion_evidence(&handle)?
+                .is_some_and(|c| c.status == 0 && c.stdout_length > 0)
+            {
+                let bytes = spool_bytes(&self.host_spool_path(&handle)?.join("stdout"), MAX_SPOOL)?;
+                if super::artifacts::image(&bytes, true).is_ok() {
+                    return Ok(true);
+                }
+            }
+        }
+        Ok(false)
     }
 
     /// Legacy process calls lack an operation binding. Their exact original
@@ -670,6 +1357,28 @@ impl Store {
             if self
                 .completion_evidence(&handle)?
                 .is_some_and(|completion| completion.status == 0 && completion.stdout_length > 0)
+            {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+    pub fn has_operation_unbound_host_output(
+        &self,
+        consumer: &str,
+        operation: &str,
+    ) -> Result<bool> {
+        let conn = self.connect()?;
+        let mut query = conn.prepare("SELECT h.handle FROM host_spools h JOIN host_spool_admissions s ON s.handle=h.handle WHERE s.consumer=?1 AND s.operation=?2 AND h.consumer IS NULL AND h.status!='released'").map_err(sql)?;
+        let handles = query
+            .query_map(params![consumer, operation], |r| r.get::<_, String>(0))
+            .map_err(sql)?
+            .collect::<std::result::Result<Vec<_>, _>>()
+            .map_err(sql)?;
+        for handle in handles {
+            if self
+                .completion_evidence(&handle)?
+                .is_some_and(|c| c.status == 0 && c.stdout_length > 0)
             {
                 return Ok(true);
             }
@@ -712,21 +1421,31 @@ impl Store {
     }
 
     pub fn release_operation_spools(&self, consumer: &str, operation: &str) -> Result<()> {
-        let conn = self.connect()?;
-        let mut q = conn
-            .prepare("SELECT handle,package FROM host_spools WHERE consumer=?1 AND operation=?2")
+        self.transaction(|tx| Self::release_operation_spools_in(tx, consumer, operation, true))?;
+        self.sweep_host_spools(|_| true)
+    }
+
+    /// The release intent shares the admission's transaction; only physical
+    /// unlink and its durability barriers are deferred. Ambiguous unbound
+    /// custody belongs to the surviving admissions until the last one leaves.
+    pub(super) fn release_operation_spools_in(
+        tx: &rusqlite::Connection,
+        consumer: &str,
+        operation: &str,
+        unbound: bool,
+    ) -> Result<()> {
+        tx.execute(
+            "UPDATE host_spools SET status='released' WHERE consumer=?1 AND operation=?2",
+            params![consumer, operation],
+        )
+        .map_err(sql)?;
+        if unbound {
+            tx.execute("UPDATE host_spools SET status='released' WHERE consumer IS NULL AND EXISTS(SELECT 1 FROM host_spool_admissions s WHERE s.handle=host_spools.handle AND s.consumer=?1 AND s.operation=?2) AND NOT EXISTS(SELECT 1 FROM host_spool_admissions s WHERE s.handle=host_spools.handle AND (s.consumer!=?1 OR s.operation!=?2))", params![consumer,operation]).map_err(sql)?;
+            tx.execute(
+                "DELETE FROM host_spool_admissions WHERE consumer=?1 AND operation=?2",
+                params![consumer, operation],
+            )
             .map_err(sql)?;
-        let rows = q
-            .query_map(params![consumer, operation], |r| {
-                Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
-            })
-            .map_err(sql)?
-            .collect::<std::result::Result<Vec<_>, _>>()
-            .map_err(sql)?;
-        drop(q);
-        drop(conn);
-        for (handle, package) in rows {
-            self.release_host_spool(&package, &handle)?;
         }
         Ok(())
     }
@@ -762,7 +1481,43 @@ impl Store {
         if !std::ptr::eq(self, writer.store) {
             return Err(reject("host output writer belongs to another store"));
         }
-        self.seal_host_spool_inner(owner, &writer.handle, status)
+        self.publish_pinned_host_manifest(owner, writer, status)?;
+        self.commit_pinned_host_seal(owner, writer)
+    }
+
+    pub fn sync_pinned_host_reply(&self, writer: &HostSpoolWriter<'_>) -> Result<()> {
+        if !std::ptr::eq(self, writer.store) {
+            return Err(reject("host output writer belongs to another store"));
+        }
+        let path = self.host_spool_path(&writer.handle)?;
+        for name in ["stdout", "stderr"] {
+            crate::durable_dir::sync_file(&path.join(name))?;
+        }
+        self.sync_host_spool_directory(&path)?;
+        self.sync_host_spool_directory(path.parent().unwrap())
+    }
+
+    pub fn publish_pinned_host_manifest(
+        &self,
+        owner: &PackageGeneration,
+        writer: &HostSpoolWriter<'_>,
+        status: i64,
+    ) -> Result<()> {
+        if !std::ptr::eq(self, writer.store) {
+            return Err(reject("host output writer belongs to another store"));
+        }
+        self.publish_host_spool_manifest(owner, &writer.handle, status)
+    }
+
+    pub fn commit_pinned_host_seal(
+        &self,
+        owner: &PackageGeneration,
+        writer: &HostSpoolWriter<'_>,
+    ) -> Result<()> {
+        if !std::ptr::eq(self, writer.store) {
+            return Err(reject("host output writer belongs to another store"));
+        }
+        self.commit_host_spool_seal(owner, &writer.handle)
     }
 
     pub fn retain_pinned_host_execution(
@@ -774,13 +1529,99 @@ impl Store {
         if !std::ptr::eq(self, writer.store) {
             return Err(reject("host output writer belongs to another store"));
         }
+        // A pending commit never advertises a reply held only in memory.
+        let path = self.host_spool_path(&writer.handle)?;
+        for name in ["stdout", "stderr"] {
+            crate::durable_dir::sync_file(&path.join(name))?;
+        }
+        self.sync_host_spool_directory(&path)?;
+        let completion = completion_for(
+            status,
+            &spool_bytes(&path.join("stdout"), MAX_SPOOL)?,
+            &spool_bytes(&path.join("stderr"), MAX_SPOOL)?,
+        );
         self.transaction(|tx| {
-            let changed=tx.execute("UPDATE host_spools SET status='completed-pending',process_status=?3 WHERE handle=?1 AND owner=?2 AND status!='released'",params![writer.handle,encode(owner)?,status]).map_err(sql)?;
+            let changed=tx.execute("UPDATE host_spools SET status='completed-pending',process_status=?3,completion=?4 WHERE handle=?1 AND owner=?2 AND status!='released'",params![writer.handle,encode(owner)?,status,encode(&completion)?]).map_err(sql)?;
             Ok(changed==1)
         })
     }
 
+    /// Persist the original reply and its independently durable completion
+    /// identity before committing completed-pending. The pending metadata is
+    /// also usable when that commit fails or completed.json is never published.
+    pub fn write_pinned_host_reply(
+        &self,
+        owner: &PackageGeneration,
+        writer: &HostSpoolWriter<'_>,
+        stdout: &[u8],
+        stderr: &[u8],
+        status: i64,
+    ) -> Result<()> {
+        if !std::ptr::eq(self, writer.store) {
+            return Err(reject("host output writer belongs to another store"));
+        }
+        let path = self.host_spool_path(&writer.handle)?;
+        let (raw, state, limit): (String, String, i64) = self
+            .connect()?
+            .query_row(
+                "SELECT owner,status,limit_bytes FROM host_spools WHERE handle=?1",
+                [&writer.handle],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            )
+            .map_err(sql)?;
+        if decode::<PackageGeneration>(&raw)? != *owner || state == "released" {
+            return Err(reject("host output reservation was cancelled"));
+        }
+        if limit < 0 || stdout.len().saturating_add(stderr.len()) as u64 > limit as u64 {
+            return Err(reject("host output exceeds reservation"));
+        }
+        let completion = completion_for(status, stdout, stderr);
+        // Keep a second durable identity before touching either output name.
+        // This is an intent, not completed-pending: recovery must still validate
+        // the exact full bytes and retry their barriers. A failed intent commit
+        // can instead be covered by the independent named witness below.
+        match self.transaction(|tx| {
+            tx.execute("UPDATE host_spools SET process_status=?3,completion=?4 WHERE handle=?1 AND owner=?2 AND status!='released'", params![writer.handle,encode(owner)?,status,encode(&completion)?]).map(|changed| changed == 1).map_err(sql)
+        }) {
+            Ok(false) => return Err(reject("host output reservation was cancelled")),
+            Ok(true) => (),
+            Err(cause) => log::warn!("Host reply intent deferred to its file witness: {cause}"),
+        }
+        let metadata = self.write_host_completion(&path, "pending.json", &completion);
+        fs::write(path.join("stdout"), stdout)?;
+        fs::write(path.join("stderr"), stderr)?;
+        for name in ["stdout", "stderr"] {
+            crate::durable_dir::sync_file(&path.join(name))?;
+        }
+        // Retry a refused witness barrier before the separate ledger attempt.
+        // Its named evidence survives both metadata and transaction failures.
+        let witness_barrier = crate::durable_dir::sync_file(&path.join("pending.json"))
+            .map_err(crate::error::AppError::from);
+        self.sync_host_spool_directory(&path)?;
+        self.sync_host_spool_directory(path.parent().unwrap())?;
+        // A metadata publication failure cannot erase already durable bytes.
+        // Persist the legacy-compatible completion witness before returning
+        // that error, so a healthy sweep cannot misclassify this as abandoned.
+        if let Err(cause) = metadata.and(witness_barrier) {
+            if !self.retain_pinned_host_execution(owner, writer, status)? {
+                return Err(reject("host output reservation was cancelled"));
+            }
+            return Err(cause);
+        }
+        Ok(())
+    }
+
     fn seal_host_spool_inner(
+        &self,
+        owner: &PackageGeneration,
+        handle: &str,
+        status: i64,
+    ) -> Result<()> {
+        self.publish_host_spool_manifest(owner, handle, status)?;
+        self.commit_host_spool_seal(owner, handle)
+    }
+
+    fn publish_host_spool_manifest(
         &self,
         owner: &PackageGeneration,
         handle: &str,
@@ -805,48 +1646,31 @@ impl Store {
             return Err(reject("host output exceeds reservation"));
         }
         for name in ["stdout", "stderr"] {
-            let file = fs::OpenOptions::new().read(true).open(path.join(name))?;
-            if !file.metadata()?.is_file() {
-                return Err(reject("host output is not a regular file"));
-            }
-            file.sync_all()?;
+            crate::durable_dir::sync_file(&path.join(name))?;
         }
-        let completion = Completion {
-            status,
-            stdout_length: stdout.len() as u64,
-            stderr_length: stderr.len() as u64,
-            stdout_sha256: hex::encode(Sha256::digest(&stdout)),
-            stderr_sha256: hex::encode(Sha256::digest(&stderr)),
-        };
-        let mut stage = tempfile::NamedTempFile::new_in(&path)?;
-        serde_json::to_writer(&mut stage, &completion)
-            .map_err(|_| reject("host output manifest serialization failed"))?;
-        stage.flush()?;
-        stage.as_file().sync_all()?;
-        stage
-            .persist(path.join("completed.json"))
-            .map_err(|e| crate::error::AppError::from(e.error))?;
+        let completion = completion_for(status, &stdout, &stderr);
+        self.write_host_completion(&path, "completed.json", &completion)?;
         self.sync_host_spool_directory(&path)?;
-        self.sync_host_spool_directory(path.parent().unwrap())?;
+        self.sync_host_spool_directory(path.parent().unwrap())
+    }
+
+    fn commit_host_spool_seal(&self, owner: &PackageGeneration, handle: &str) -> Result<()> {
+        let completion = self
+            .host_completion(handle)?
+            .ok_or_else(|| reject("host reply is incomplete"))?;
+        self.sync_complete_host_spool(handle)?;
+        let bytes = completion.stdout_length + completion.stderr_length;
+        let status = completion.status;
         self.transaction(|tx| {
-            let changed=tx.execute("UPDATE host_spools SET status='sealed',bytes=?2,process_status=?3 WHERE handle=?1 AND status!='released'",params![handle,bytes as i64,status]).map_err(sql)?;
+            let changed=tx.execute("UPDATE host_spools SET status='sealed',bytes=?2,process_status=?3 WHERE handle=?1 AND owner=?4 AND status!='released'",params![handle,bytes as i64,status,encode(owner)?]).map_err(sql)?;
             if changed!=1 { return Err(reject("host output reservation was cancelled during completion")); }
             Ok(())
         })
     }
 
-    fn host_completion(&self, handle: &str) -> Result<Option<Completion>> {
-        let path = self.host_spool_path(handle)?;
-        let raw = match spool_bytes(&path.join("completed.json"), 4096) {
-            Ok(raw) => raw,
-            Err(crate::error::AppError::NotFound(_)) => return Ok(None),
-            Err(e) => return Err(e),
-        };
-        if raw.len() > 4096 {
-            return Err(reject("invalid host output manifest"));
-        }
+    fn validate_host_completion(&self, path: &Path, raw: &[u8]) -> Result<Completion> {
         let c: Completion =
-            serde_json::from_slice(&raw).map_err(|_| reject("invalid host output manifest"))?;
+            serde_json::from_slice(raw).map_err(|_| reject("invalid host output manifest"))?;
         for (name, length, sha) in [
             ("stdout", c.stdout_length, &c.stdout_sha256),
             ("stderr", c.stderr_length, &c.stderr_sha256),
@@ -854,13 +1678,52 @@ impl Store {
             if length > MAX_SPOOL {
                 return Err(reject("invalid host output length"));
             }
-            let file = path.join(name);
-            let bytes = spool_bytes(&file, MAX_SPOOL)?;
+            let bytes = spool_bytes(&path.join(name), MAX_SPOOL)?;
             if bytes.len() as u64 != length || hex::encode(Sha256::digest(&bytes)) != *sha {
                 return Err(reject("host output no longer matches completion"));
             }
         }
-        Ok(Some(c))
+        Ok(c)
+    }
+
+    fn host_completion(&self, handle: &str) -> Result<Option<Completion>> {
+        let path = self.host_spool_path(handle)?;
+        match spool_bytes(&path.join("completed.json"), 4096) {
+            Ok(raw) => return self.validate_host_completion(&path, &raw).map(Some),
+            Err(crate::error::AppError::NotFound(_)) => {}
+            Err(e) => return Err(e),
+        }
+        let pending = spool_bytes(&path.join("pending.json"), 4096)
+            .and_then(|raw| self.validate_host_completion(&path, &raw));
+        match pending {
+            Ok(completion) => return Ok(Some(completion)),
+            // A short witness write must not mask the independently committed
+            // completion identity. Actual storage failures still defer recovery.
+            Err(crate::error::AppError::NotFound(_) | crate::error::AppError::Other(_)) => {}
+            Err(e) => return Err(e),
+        }
+        use rusqlite::OptionalExtension;
+        let pending: Option<(i64,i64,Option<String>)> = self.connect()?.query_row(
+            "SELECT process_status,limit_bytes,completion FROM host_spools WHERE handle=?1 AND process_status IS NOT NULL AND (status='completed-pending' OR status='reserved' AND completion IS NOT NULL)", [handle], |r| Ok((r.get(0)?,r.get(1)?,r.get(2)?))
+        ).optional().map_err(sql)?;
+        let Some((status, limit, recorded)) = pending else {
+            return Ok(None);
+        };
+        if let Some(raw) = recorded {
+            let completion = self.validate_host_completion(&path, raw.as_bytes())?;
+            if completion.status != status {
+                return Err(reject("host completion status conflicts with its ledger"));
+            }
+            return Ok(Some(completion));
+        }
+        // Earlier versions persisted status without hashes. Preserve their
+        // bounded fsynced originals when publication was interrupted.
+        let stdout = spool_bytes(&path.join("stdout"), MAX_SPOOL)?;
+        let stderr = spool_bytes(&path.join("stderr"), MAX_SPOOL)?;
+        if limit < 0 || stdout.len().saturating_add(stderr.len()) as u64 > limit as u64 {
+            return Err(reject("host output exceeds reservation"));
+        }
+        Ok(Some(completion_for(status, &stdout, &stderr)))
     }
 
     fn completion_evidence(&self, handle: &str) -> Result<Option<Completion>> {
@@ -877,6 +1740,68 @@ impl Store {
     /// this never starts the process again or changes its execution result.
     pub fn host_spool_result(&self, package: &str, request_id: &str) -> Result<Option<Value>> {
         self.host_spool_result_for_owner(package, request_id, None)
+    }
+    pub fn host_spool_result_for_operation(
+        &self,
+        package: &str,
+        request: &str,
+        consumer: &str,
+        operation: &str,
+        explicit: Option<&PackageGeneration>,
+    ) -> Result<Option<Value>> {
+        let a = self
+            .get(consumer, operation)?
+            .ok_or_else(|| reject("original host process admission is unavailable"))?;
+        if a.provider.package_id != package
+            || explicit.is_some_and(|owner| owner.package_id != package)
+        {
+            return Err(reject(
+                "original host process owner conflicts with its admission",
+            ));
+        }
+        if let Some(owner) = explicit {
+            generation(owner)?;
+        }
+        let legacy = match explicit {
+            Some(owner) if same_owner(owner, &a.provider) => Some(encode(owner)?),
+            Some(_) => None,
+            None => Some(encode(&a.provider)?),
+        };
+        // Every operation-scoped lookup checks custody, including an exact
+        // original owner. Incarnations can reuse request IDs for other work.
+        // Original admission custody wins a replacement's reset request counter,
+        // but only after filtering by the requested operation. Other collisions
+        // remain ambiguous until the caller names an owner.
+        let conn = self.connect()?;
+        let mut query = conn.prepare("SELECT h.owner FROM host_spools h WHERE h.package=?1 AND h.request_id=?2 AND h.status!='released' AND (?5 IS NULL OR h.owner=?5) AND (h.consumer=?3 AND h.operation=?4 OR EXISTS(SELECT 1 FROM host_spool_admissions s WHERE s.handle=h.handle AND s.consumer=?3 AND s.operation=?4) OR h.custody_recorded=0 AND h.consumer IS NULL AND h.owner=?6)").map_err(sql)?;
+        let owners = query
+            .query_map(
+                params![
+                    package,
+                    request,
+                    consumer,
+                    operation,
+                    explicit.map(encode).transpose()?,
+                    legacy
+                ],
+                |r| r.get::<_, String>(0),
+            )
+            .map_err(sql)?
+            .collect::<std::result::Result<Vec<_>, _>>()
+            .map_err(sql)?;
+        let original = encode(&a.provider)?;
+        if explicit.is_none() && owners.contains(&original) {
+            return self.host_spool_result_for_owner(package, request, Some(&a.provider));
+        }
+        if owners.len() > 1 {
+            return Err(reject(
+                "original host request ID is ambiguous; supply its original owner",
+            ));
+        }
+        let Some(raw) = owners.first() else {
+            return Ok(None);
+        };
+        self.host_spool_result_for_owner(package, request, Some(&decode::<PackageGeneration>(raw)?))
     }
 
     pub fn host_spool_result_for_owner(
@@ -1018,11 +1943,23 @@ impl Store {
                 [handle],
             )
             .map_err(sql)?;
+            tx.execute("DELETE FROM host_spool_admissions WHERE handle=?1 AND NOT EXISTS(SELECT 1 FROM host_spools WHERE handle=?1)", [handle]).map_err(sql)?;
             Ok(())
         })
     }
 
     pub fn sweep_host_spools(&self, live: impl Fn(&PackageGeneration) -> bool) -> Result<()> {
+        // Upgrade compatibility/recovery candidates do not govern cleanup.
+        // Reconstruct release intent for old hosts whose separate release
+        // transaction was lost after a completed settlement.
+        self.transaction(|tx| {
+            let mut query = tx.prepare("SELECT DISTINCT s.consumer,s.operation FROM host_spool_admissions s JOIN operations o ON o.consumer=s.consumer AND o.operation=s.operation WHERE o.phase='released' AND json_extract(o.admission,'$.disposition') IN ('discarded','acquired') OR (o.exec_released=1 OR o.phase='released') AND EXISTS(SELECT 1 FROM provider_receipts r WHERE r.consumer=o.consumer AND r.operation=o.operation AND json_extract(r.status,'$.execution.state') IN ('failed','cancelled'))").map_err(sql)?;
+            let removed = query.query_map([], |r| Ok((r.get::<_,String>(0)?,r.get::<_,String>(1)?))).map_err(sql)?.collect::<std::result::Result<Vec<_>,_>>().map_err(sql)?;
+            drop(query);
+            for (consumer, operation) in removed { Self::release_operation_spools_in(tx, &consumer, &operation, true)?; }
+            tx.execute("UPDATE host_spools SET status='released' WHERE consumer IS NOT NULL AND EXISTS(SELECT 1 FROM operations o WHERE o.consumer=host_spools.consumer AND o.operation=host_spools.operation AND (o.phase='released' AND json_extract(o.admission,'$.disposition')='discarded' OR o.exec_released=1 AND EXISTS(SELECT 1 FROM dismissed_operations d WHERE d.consumer=o.consumer AND d.operation=o.operation) AND EXISTS(SELECT 1 FROM provider_receipts r WHERE r.consumer=o.consumer AND r.operation=o.operation AND json_extract(r.status,'$.execution.state') IN ('failed','cancelled'))))", []).map_err(sql)?;
+            Ok(())
+        })?;
         let conn = self.connect()?;
         let mut q = conn
             .prepare("SELECT handle,package,owner,status FROM host_spools")
@@ -1051,6 +1988,16 @@ impl Store {
             };
             match self.completion_evidence(&handle) {
                 Ok(Some(c)) => {
+                    if c.status != 0 || c.stdout_length == 0 {
+                        let disposable = self.transaction(|tx| {
+                            tx.query_row("SELECT EXISTS(SELECT 1 FROM host_spool_admissions WHERE handle=?1) AND NOT EXISTS(SELECT 1 FROM host_spool_admissions s JOIN operations o ON o.consumer=s.consumer AND o.operation=s.operation WHERE s.handle=?1 AND o.phase!='released' AND o.exec_released=0)", [&handle], |r| r.get::<_,bool>(0)).map_err(sql)
+                        })?;
+                        if disposable {
+                            drop(lease);
+                            self.release_host_spool(&package, &handle)?;
+                            continue;
+                        }
+                    }
                     if self.sync_complete_host_spool(&handle).is_err() {
                         continue;
                     }

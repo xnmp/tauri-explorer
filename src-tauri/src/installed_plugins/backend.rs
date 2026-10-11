@@ -298,15 +298,17 @@ struct ProcessSpool {
     _temporary: Option<tempfile::TempDir>,
 }
 impl ProcessSpool {
-    fn reserve(
+    fn reserve_with_custody(
         owner: &crate::service_state::model::PackageGeneration,
         request: &str,
         limit: u64,
         durable: bool,
+        custody: Option<(&str, &str)>,
     ) -> Result<Self, AppError> {
         if durable {
             let store = super::service_host::store()?;
-            let (handle, path, writer) = store.reserve_pinned_host_spool(owner, request, limit)?;
+            let (handle, path, writer) =
+                store.reserve_pinned_host_spool_with_custody(owner, request, limit, custody)?;
             Ok(Self {
                 handle,
                 path,
@@ -342,6 +344,15 @@ impl ProcessSpool {
             // Preserve evidence even if writing, publication, the provider or
             // the reply transport fails after the CLI has completed.
             self.retain.store(true, Ordering::Release);
+            store.write_pinned_host_reply(
+                owner,
+                writer
+                    .as_ref()
+                    .ok_or_else(|| error("Plugin spool writer was released"))?,
+                stdout,
+                stderr,
+                status,
+            )?;
             match store.retain_pinned_host_execution(
                 owner,
                 writer
@@ -359,10 +370,11 @@ impl ProcessSpool {
         }
         let stdout_path = self.path().join("stdout");
         let stderr_path = self.path().join("stderr");
-        fs::write(&stdout_path, stdout)?;
-        fs::write(&stderr_path, stderr)?;
         if let Some((store, owner)) = &self.durable {
             store.seal_pinned_host_spool(owner, writer.as_ref().unwrap(), status)?;
+        } else {
+            fs::write(&stdout_path, stdout)?;
+            fs::write(&stderr_path, stderr)?;
         }
         Ok(json!({"handle":self.handle,"status":status,"stdout":stdout_path,"stderr":stderr_path}))
     }
@@ -447,23 +459,42 @@ pub(super) fn fixture_completed_bound_process_spool(
     bytes: &[u8],
     custody: Option<(&str, &str)>,
 ) -> Result<PathBuf, AppError> {
+    fixture_process_spool(package_id, bytes, custody, false)
+}
+#[cfg(test)]
+pub(super) fn fixture_pending_process_spool(
+    package_id: &str,
+    bytes: &[u8],
+    custody: Option<(&str, &str)>,
+) -> Result<PathBuf, AppError> {
+    fixture_process_spool(package_id, bytes, custody, true)
+}
+#[cfg(test)]
+fn fixture_process_spool(
+    package_id: &str,
+    bytes: &[u8],
+    custody: Option<(&str, &str)>,
+    pending: bool,
+) -> Result<PathBuf, AppError> {
     let broker = ensure(package_id)?;
-    let spool = Arc::new(ProcessSpool::reserve(
+    let spool = Arc::new(ProcessSpool::reserve_with_custody(
         &broker.generation(),
         "host:fixture-completed",
         bytes.len() as u64,
         true,
+        custody,
     )?);
-    if let Some((consumer, operation)) = custody {
-        super::service_host::store()?.bind_host_spool(
-            &broker.generation(),
-            &spool.handle,
-            consumer,
-            operation,
-        )?;
-    }
-    let result = spool.complete(bytes, &[], 0)?;
-    let path = PathBuf::from(result["stdout"].as_str().unwrap());
+    let path = if pending {
+        let store = super::service_host::store()?;
+        let writer = spool.writer.lock().unwrap().take().unwrap();
+        spool.retain.store(true, Ordering::Release);
+        store.write_pinned_host_reply(&broker.generation(), &writer, bytes, &[], 0)?;
+        store.retain_pinned_host_execution(&broker.generation(), &writer, 0)?;
+        spool.path.join("stdout")
+    } else {
+        let result = spool.complete(bytes, &[], 0)?;
+        PathBuf::from(result["stdout"].as_str().unwrap())
+    };
     broker
         .spools
         .lock()
@@ -1593,39 +1624,33 @@ impl Broker {
                         .as_str()
                         .ok_or_else(|| error("Invalid original host process request ID"))?;
                     let store = super::service_host::store()?;
-                    let mut original =
-                        frame["params"]
-                            .get("owner")
-                            .map(|value| {
-                                serde_json::from_value::<
+                    let original = frame["params"]
+                        .get("owner")
+                        .map(|value| {
+                            serde_json::from_value::<
                                     crate::service_state::model::PackageGeneration,
                                 >(value.clone())
                                 .map_err(|_| error("Invalid original host process owner"))
-                            })
-                            .transpose()?;
-                    if let (Some(consumer), Some(operation)) = (
+                        })
+                        .transpose()?;
+                    let result = if let (Some(consumer), Some(operation)) = (
                         frame["params"]["consumerPackageId"].as_str(),
                         frame["params"]["operationId"].as_str(),
                     ) {
-                        let admission = store.get(consumer, operation)?.ok_or_else(|| {
-                            error("Original host process admission is unavailable")
-                        })?;
-                        if admission.provider.package_id != self.package_id
-                            || original
-                                .as_ref()
-                                .is_some_and(|owner| owner != &admission.provider)
-                        {
-                            return Err(error(
-                                "Original host process owner conflicts with its admission",
-                            ));
-                        }
-                        original = Some(admission.provider);
-                    }
-                    let result = store.host_spool_result_for_owner(
-                        &self.package_id,
-                        request,
-                        original.as_ref(),
-                    )?;
+                        store.host_spool_result_for_operation(
+                            &self.package_id,
+                            request,
+                            consumer,
+                            operation,
+                            original.as_ref(),
+                        )?
+                    } else {
+                        store.host_spool_result_for_owner(
+                            &self.package_id,
+                            request,
+                            original.as_ref(),
+                        )?
+                    };
                     self.send(&json!({"jsonrpc":"2.0","id":frame["id"],"result":result}))?;
                 }
                 _ => return Err(error("Unsupported plugin host service")),
@@ -1741,24 +1766,20 @@ impl Broker {
         let request = super::process_run::parse(&frame["params"])?;
         let control = JobControl::new();
         let spool = Arc::new(
-            ProcessSpool::reserve(
+            ProcessSpool::reserve_with_custody(
                 &self.generation(),
                 &id,
                 request.output_reservation(),
                 self.installed.manifest.sdk_version >= 3,
+                request.output_custody(),
             )
-            .map_err(|_| refusal(code::NOT_STARTED, "Plugin output spool is unavailable"))?,
+            .map_err(|_| {
+                refusal(
+                    code::NOT_STARTED,
+                    "Plugin output spool is unavailable or its custody is ambiguous",
+                )
+            })?,
         );
-        if let Some((consumer, operation)) = request.output_custody() {
-            super::service_host::store()?
-                .bind_host_spool(&self.generation(), &spool.handle, consumer, operation)
-                .map_err(|_| {
-                    refusal(
-                        code::NOT_STARTED,
-                        "Plugin output does not match an active original admission",
-                    )
-                })?;
-        }
         let lease = {
             let not_started = |cause: AppError| refusal(code::NOT_STARTED, &cause.to_string());
             let _gate = super::read_lifecycle().map_err(not_started)?;
@@ -2718,9 +2739,37 @@ pub(super) fn emit_operations_changed() {
     }
 }
 pub(super) fn emit_job_event(payload: Value) {
+    #[cfg(test)]
+    JOB_EVENTS.with(|events| {
+        if let Some(events) = &mut *events.borrow_mut() {
+            events.push(payload.clone());
+        }
+    });
     if let Some(app) = APP.get() {
         let _ = app.emit("plugin-jobs:changed", payload);
     }
+}
+#[cfg(test)]
+thread_local! {
+    static JOB_EVENTS: std::cell::RefCell<Option<Vec<Value>>> = const { std::cell::RefCell::new(None) };
+}
+#[cfg(test)]
+pub(super) fn capture_job_events<T>(run: impl FnOnce() -> T) -> (T, Vec<Value>) {
+    JOB_EVENTS.with(|events| {
+        assert!(events.borrow().is_none());
+        *events.borrow_mut() = Some(Vec::new());
+    });
+    struct Reset;
+    impl Drop for Reset {
+        fn drop(&mut self) {
+            JOB_EVENTS.with(|e| {
+                e.borrow_mut().take();
+            });
+        }
+    }
+    let _reset = Reset;
+    let result = run();
+    (result, JOB_EVENTS.with(|e| e.borrow_mut().take().unwrap()))
 }
 pub(super) fn call(id: &str, method: &str, params: Value) -> Result<Value, AppError> {
     call_with_origin(id, method, params, "native", std::time::SystemTime::now())

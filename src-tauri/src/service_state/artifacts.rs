@@ -344,7 +344,7 @@ fn bounded(file: &mut File, limit: u64) -> Result<Vec<u8>> {
     }
     Ok(bytes)
 }
-fn image(bytes: &[u8], output: bool) -> Result<(String, u32, u32)> {
+pub(super) fn image(bytes: &[u8], output: bool) -> Result<(String, u32, u32)> {
     let format = image::guess_format(bytes).map_err(|_| reject("unrecognized image format"))?;
     let media = match format {
         image::ImageFormat::Png => "image/png",
@@ -418,7 +418,9 @@ impl Store {
         consumer: &str,
         op: &str,
     ) -> Result<bool> {
-        if self.has_bound_host_output_at(conn, consumer, op)? { return Ok(true); }
+        if self.has_bound_host_output_at(conn, consumer, op)? {
+            return Ok(true);
+        }
         let artifact: Option<(String, String)> = conn.query_row(
             "SELECT a.handle,a.status FROM artifacts a JOIN operations o ON o.consumer=a.consumer AND o.operation=a.operation WHERE a.consumer=?1 AND a.operation=?2 AND a.kind='output' AND a.status!='released' AND o.phase!='released'",
             params![consumer, op], |r| Ok((r.get(0)?, r.get(1)?))).optional().map_err(sql)?;

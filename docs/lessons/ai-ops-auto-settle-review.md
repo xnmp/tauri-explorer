@@ -186,3 +186,68 @@ Native timeouts require retry bookkeeping without another deadline-bound store
 read first. An expired status RPC can otherwise repeatedly persist its incarnation
 while recording zero failed answers, defeating the bounded uncertainty budget.
 The next fresh pass still performs actual worker-idle proof before settlement.
+
+## Eighth review: process durability and removal oracles, 2026-10-12
+
+Use `durable_dir::sync_file` for every host-spool file barrier. Windows requires
+writable handles for FlushFileBuffers; a read-only verification handle cannot
+serve as a portable durability barrier. The shared helper opens writable on all
+platforms and its test build checks that mode, while spool tests observe that
+both sealing and recovery actually call it. The Windows-specific module also
+compiles independently for MSVC when dependency C builds block the full target.
+
+Persist an independently validated completion intent while the spool is still
+reserved, then stdout/stderr and their immutable pending identity before
+advertising completed-pending. A pending commit independently stores status, lengths and
+hashes; recovery validates those bytes and repairs a missing completion manifest.
+Legacy status-only pending rows also recover their bounded fsynced reply. A short
+pending-manifest write must not hide the authoritative database witness. Tests
+also cover metadata flush failure together with a pending transaction failure,
+and a partial manifest together with a failed fallback commit.
+
+Settlement and bound-spool release share the admission/job transaction. Physical
+unlink remains retryable, quota-visible work discovered directly from the spool
+ledger by startup and periodic sweeps. Reconstruct release intent for old-host
+crash images whose settlement committed before the former separate release step.
+Nonzero unbound replies cannot remain charged after all associated work settles.
+
+Commit explicit custody and the spool reservation in one transaction, before
+starting the process. Without custody fields, derive ownership from all nonreleased
+admissions for the provider package, including fenced admissions and compatible
+digest replacements. A unique admission is recorded; multiple possible admissions
+refuse the process before it starts and require explicit custody fields. Consumer
+removal releases its bound or uniquely inferred originals while other consumers
+sharing the provider retain theirs. Legacy ambiguous metadata cannot establish
+which consumer paid for the original; preserve it until its possible owners are
+resolved or all release it rather than delete another consumer's sole original.
+
+Operation recovery checks custody before considering the admission's original
+provider generation. An early exact-owner return can cross operations when SDK
+request counters reset. Conversely, rejecting every multi-owner request makes a
+compatible replacement's unrelated singleton-inferred spool block the original.
+After custody filtering, prefer the admission's original generation; otherwise
+require explicit disambiguation for multiple matching owners. Real reverse-RPC
+replacement tests reproduced this latter failure despite green Store/model suites.
+
+Removal notices inspect valid retained raw image replies before release. Transient
+read permission failures cannot veto explicit removal when cleanup can unlink the
+bytes; retain the conservative possible-delivery-loss notice and complete cleanup.
+
+The model's global charge==disk oracle was insufficient: a removed operation can
+leave both equally nonzero. Require per-operation and per-disabled/uninstalled
+plugin absence of custody, linked spool charge and raw files after healthy cleanup.
+Count actual consumer copy effects and emitted consumer_removed Error events;
+job revisions and the existence of one deterministic output path do not count
+those effects. Route model recovery through the shared production recover_in and
+resume_in paths, with injectable provider/consumer protocol endpoints. Native
+isolated tests separately exercise real reverse RPC and lost-manifest recovery.
+
+Split process spool durability into reservation, reply persistence, pending commit,
+file sync, manifest publication and seal commit. Crash each boundary. Lifecycle
+fault seams preserve intent/index/abandonment/cleanup and upgrade journal phases
+for real restart recovery. Pause invoked recovery callbacks, acquisition and real
+pinned writers across disable, uninstall and compatible/incompatible replacement;
+include delayed lower/equal conflicting receipts, nonzero and unbound replies,
+and multiple consumers. Deep runs fail if any of the 80 required families has fewer than
+three observed hits, or if acknowledgment-crash never executes. A directed,
+precondition-valid campaign supplements randomized shrinking to enforce coverage.

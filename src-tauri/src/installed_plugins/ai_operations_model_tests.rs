@@ -5,7 +5,9 @@
 use super::{Fixture, Role};
 use crate::{
     error::AppError,
-    installed_plugins::{ai_operations, backend, package, service_bridge},
+    installed_plugins::{
+        ai_operations, backend, job_bridge, package, service_bridge, service_graph,
+    },
     service_state::{
         job::{JobRecord, JobState},
         model::*,
@@ -45,6 +47,10 @@ enum Command {
     ProviderComplete(u8),
     Publish(u8, u8, bool),
     Spool(u8),
+    UnboundRepair(u8),
+    ReplacementSpool(u8),
+    AmbiguousSpool(u8),
+    ReplacementCollision(u8),
     Probe(bool),
     WorkerActive(u8, bool, bool),
     Acquire(u8),
@@ -60,6 +66,18 @@ enum Command {
     DirectorySyncFailure(bool),
     Restart,
     PowerLoss,
+    DelayedReceipt(u8, bool),
+    SharedConsumerAdmit,
+    SpoolReserve(u8, bool, bool),
+    SpoolReply(u8),
+    SpoolPending(u8),
+    SpoolFsync(u8),
+    SpoolManifest(u8),
+    SpoolSeal(u8),
+    SettlementCrash(u8),
+    SpoolCrash(u8, u8),
+    LifecycleCrash(bool, u8),
+    PausedMutation(u8, u8, u8),
 }
 impl Command {
     fn family(&self) -> &'static str {
@@ -79,6 +97,10 @@ impl Command {
             Self::Publish(_, 3, false) => "publish-cancelled",
             Self::Publish(..) => "publish",
             Self::Spool(_) => "host-spool",
+            Self::UnboundRepair(_) => "fenced-unbound-repair",
+            Self::ReplacementSpool(_) => "replacement-provider-unbound-spool",
+            Self::AmbiguousSpool(_) => "ambiguous-unbound-refusal",
+            Self::ReplacementCollision(_) => "provider-request-counter-collision",
             Self::Probe(true) => "healthy-probe",
             Self::Probe(false) => "unhealthy-probe",
             Self::WorkerActive(_, true, true) => "provider-active",
@@ -103,6 +125,44 @@ impl Command {
             Self::DirectorySyncFailure(_) => "directory-sync-fault",
             Self::Restart => "restart",
             Self::PowerLoss => "power-loss",
+            Self::DelayedReceipt(_, true) => "equal-conflicting-receipt",
+            Self::DelayedReceipt(_, false) => "delayed-lower-receipt",
+            Self::SharedConsumerAdmit => "shared-provider-consumers",
+            Self::SpoolReserve(_, true, false) => "bound-spool-reserve",
+            Self::SpoolReserve(_, false, false) => "unbound-spool-reserve",
+            Self::SpoolReserve(_, _, true) => "nonzero-spool-reserve",
+            Self::SpoolReply(_) => "spool-reply-persist",
+            Self::SpoolPending(_) => "spool-pending-commit",
+            Self::SpoolFsync(_) => "spool-output-fsync",
+            Self::SpoolManifest(_) => "spool-manifest-publish",
+            Self::SpoolSeal(_) => "spool-seal-commit",
+            Self::SettlementCrash(_) => "settlement-crash-before-collection",
+            Self::SpoolCrash(_, 1) => "crash-after-spool-reserve",
+            Self::SpoolCrash(_, 2) => "crash-after-spool-reply",
+            Self::SpoolCrash(_, 3) => "crash-after-spool-pending",
+            Self::SpoolCrash(_, 4) => "crash-after-spool-fsync",
+            Self::SpoolCrash(_, 5) => "crash-after-spool-manifest",
+            Self::SpoolCrash(..) => "crash-after-spool-seal",
+            Self::LifecycleCrash(_, 0) => "crash-lifecycle-intent",
+            Self::LifecycleCrash(_, 1) => "crash-lifecycle-index",
+            Self::LifecycleCrash(_, 2) => "crash-lifecycle-abandonment",
+            Self::LifecycleCrash(_, 3) => "crash-lifecycle-cleanup",
+            Self::LifecycleCrash(_, 4) => "crash-upgrade-prepared",
+            Self::LifecycleCrash(_, 5) => "crash-upgrade-committed",
+            Self::LifecycleCrash(_, 6) => "crash-upgrade-published",
+            Self::LifecycleCrash(..) => "crash-replacement-abandoned",
+            Self::PausedMutation(_, 0, 0) => "recovery-rpc-paused-disable",
+            Self::PausedMutation(_, 0, 1) => "recovery-rpc-paused-uninstall",
+            Self::PausedMutation(_, 0, 2) => "recovery-rpc-paused-compatible-upgrade",
+            Self::PausedMutation(_, 0, _) => "recovery-rpc-paused-incompatible-upgrade",
+            Self::PausedMutation(_, 1, 0) => "acquisition-paused-disable",
+            Self::PausedMutation(_, 1, 1) => "acquisition-paused-uninstall",
+            Self::PausedMutation(_, 1, 2) => "acquisition-paused-compatible-upgrade",
+            Self::PausedMutation(_, 1, _) => "acquisition-paused-incompatible-upgrade",
+            Self::PausedMutation(_, _, 0) => "native-writer-paused-disable",
+            Self::PausedMutation(_, _, 1) => "native-writer-paused-uninstall",
+            Self::PausedMutation(_, _, 2) => "native-writer-paused-compatible-upgrade",
+            Self::PausedMutation(..) => "native-writer-paused-incompatible-upgrade",
         }
     }
 }
@@ -118,20 +178,119 @@ fn commands(max_steps: usize) -> impl Strategy<Value = Vec<Command>> {
             4 => slot.clone().prop_map(Command::ProviderComplete),
             6 => (slot.clone(), 0u8..4, any::<bool>()).prop_map(|(s,o,f)| Command::Publish(s,o,f)),
             2 => slot.clone().prop_map(Command::Spool), 3 => any::<bool>().prop_map(Command::Probe),
+            2 => slot.clone().prop_map(Command::UnboundRepair),
+            2 => slot.clone().prop_map(Command::ReplacementSpool),
+            2 => slot.clone().prop_map(Command::AmbiguousSpool),
+            2 => slot.clone().prop_map(Command::ReplacementCollision),
             3 => (slot.clone(), any::<bool>(), any::<bool>()).prop_map(|(s,p,a)| Command::WorkerActive(s,p,a)),
             3 => slot.clone().prop_map(Command::Acquire),
             3 => (slot.clone(), any::<bool>()).prop_map(|(s,c)| Command::Ack(s,c)),
             3 => (slot.clone(), any::<bool>()).prop_map(|(s,c)| Command::ConsumerReceive(s,c)),
-            2 => slot.prop_map(Command::Replay),
+            2 => slot.clone().prop_map(Command::Replay),
             4 => (any::<bool>(),any::<bool>(),any::<bool>()).prop_map(|(r,c,q)| Command::Upgrade(r,c,q)),
             3 => (any::<bool>(),any::<bool>()).prop_map(|(r,e)| Command::Enable(r,e)),
             1 => any::<bool>().prop_map(Command::Uninstall), 5 => Just(Command::Sweep), 2 => Just(Command::Gc),
             2 => any::<bool>().prop_map(Command::UnlinkFailure),
             2 => any::<bool>().prop_map(Command::DirectorySyncFailure),
             3 => Just(Command::Restart), 3 => Just(Command::PowerLoss),
+            3 => (slot.clone(), any::<bool>()).prop_map(|(s,e)| Command::DelayedReceipt(s,e)),
+            2 => Just(Command::SharedConsumerAdmit),
+            3 => (slot.clone(), any::<bool>(), any::<bool>()).prop_map(|(s,b,n)| Command::SpoolReserve(s,b,n)),
+            3 => slot.clone().prop_map(Command::SpoolReply),
+            3 => slot.clone().prop_map(Command::SpoolPending),
+            3 => slot.clone().prop_map(Command::SpoolFsync),
+            3 => slot.clone().prop_map(Command::SpoolManifest),
+            3 => slot.clone().prop_map(Command::SpoolSeal),
+            2 => slot.clone().prop_map(Command::SettlementCrash),
+            3 => (slot.clone(), 1u8..=6).prop_map(|(s,p)| Command::SpoolCrash(s,p)),
+            3 => (any::<bool>(), 0u8..=7).prop_map(|(r,p)| Command::LifecycleCrash(r,p)),
+            3 => (slot.clone(), 0u8..=2, 0u8..=3).prop_map(|(s,k,a)| Command::PausedMutation(s,k,a)),
         ],
         1..=max_steps,
     )
+}
+/// A fake native process owns a *real* Store writer permit across model
+/// transitions. Messages pause at durability boundaries; a crash drops the
+/// owning thread and permit before reopening the host.
+#[derive(Debug)]
+struct SpoolActor {
+    commands: std::sync::mpsc::Sender<Option<u8>>,
+    replies: std::sync::mpsc::Receiver<Result<(), AppError>>,
+    worker: Option<std::thread::JoinHandle<()>>,
+}
+impl SpoolActor {
+    fn new(
+        root: PathBuf,
+        limits: Limits,
+        provider: PackageGeneration,
+        handle: String,
+        bytes: Vec<u8>,
+        status: i64,
+    ) -> Result<Self, AppError> {
+        let (commands, incoming) = std::sync::mpsc::channel();
+        let (responses, replies) = std::sync::mpsc::channel();
+        let worker = std::thread::spawn(move || {
+            let opened = Store::open(root, limits);
+            let store = match opened {
+                Ok(store) => store,
+                Err(error) => {
+                    let _ = responses.send(Err(error));
+                    return;
+                }
+            };
+            let writer = match store.pin_host_spool(&handle) {
+                Ok(writer) => writer,
+                Err(error) => {
+                    let _ = responses.send(Err(error));
+                    return;
+                }
+            };
+            if responses.send(Ok(())).is_err() {
+                return;
+            }
+            while let Ok(Some(phase)) = incoming.recv() {
+                let result = match phase {
+                    1 => store.write_pinned_host_reply(&provider, &writer, &bytes, b"", status),
+                    2 => store
+                        .retain_pinned_host_execution(&provider, &writer, status)
+                        .map(|_| ()),
+                    3 => store.sync_pinned_host_reply(&writer),
+                    4 => store.publish_pinned_host_manifest(&provider, &writer, status),
+                    5 => store.commit_pinned_host_seal(&provider, &writer),
+                    _ => unreachable!(),
+                };
+                if responses.send(result).is_err() {
+                    return;
+                }
+            }
+        });
+        let actor = Self {
+            commands,
+            replies,
+            worker: Some(worker),
+        };
+        actor
+            .replies
+            .recv()
+            .map_err(|_| AppError::Other("Fixture writer failed to start".into()))??;
+        Ok(actor)
+    }
+    fn phase(&self, phase: u8) -> Result<(), AppError> {
+        self.commands
+            .send(Some(phase))
+            .map_err(|_| AppError::Other("Fixture native writer died".into()))?;
+        self.replies
+            .recv()
+            .map_err(|_| AppError::Other("Fixture native writer lost phase reply".into()))?
+    }
+}
+impl Drop for SpoolActor {
+    fn drop(&mut self) {
+        let _ = self.commands.send(None);
+        if let Some(worker) = self.worker.take() {
+            worker.join().expect("fixture native writer panicked")
+        }
+    }
 }
 #[derive(Debug)]
 struct Operation {
@@ -139,6 +298,7 @@ struct Operation {
     consumer: PackageGeneration,
     provider: PackageGeneration,
     outcome: Outcome,
+    captured_process_reply: bool,
     paid_success: bool,
     valid_original: bool,
     durable_original: bool,
@@ -147,18 +307,30 @@ struct Operation {
     stage: Option<OutputStage>,
     descriptor: Option<ArtifactDescriptor>,
     spool: Option<String>,
+    spool_owner: Option<PackageGeneration>,
+    extra_spools: Vec<String>,
+    native_attempts: u64,
+    unpaid_repair: bool,
+    spool_phase: u8,
+    spool_status: i64,
+    spool_request: String,
+    writer: Option<SpoolActor>,
     transfer: Option<String>,
     copy: PathBuf,
     acknowledged: bool,
     provider_live: bool,
     consumer_live: bool,
     revision: Cell<u64>,
+    last_receipt: RefCell<Option<Value>>,
     starts: Cell<usize>,
     stopped: Cell<bool>,
+    delivery_effects: Cell<usize>,
 }
 impl Operation {
+    fn provider_rejected(&self) -> bool {
+        matches!(self.outcome, Outcome::Failed | Outcome::Cancelled)
+    }
     fn receipt(&self, delivery: Value) -> Value {
-        self.revision.set(self.revision.get() + 1);
         let execution = match self.outcome {
             Outcome::Running => json!({"state":"running"}),
             Outcome::Unknown => {
@@ -172,7 +344,15 @@ impl Operation {
                 json!({"state":"succeeded","metadata":{"adapter":"model-fixture","endpointIdentity":"https://fixture.test/images","requestedModel":null,"actualModel":null,"externalRequestId":null,"threadId":null,"options":{"size":"1024x1024","resolution":null,"aspectRatio":null,"quality":"low","background":"auto"},"remoteChargeUncertain":false}})
             }
         };
-        json!({"version":1,"operationId":self.id,"requestFingerprint":"b".repeat(64),"provider":{"packageId":self.provider.package_id,"serviceId":"image-generation","major":1},"revision":self.revision.get(),"execution":execution,"delivery":delivery})
+        if let Some(previous) = self.last_receipt.borrow().as_ref() {
+            if previous["execution"] == execution && previous["delivery"] == delivery {
+                return previous.clone();
+            }
+        }
+        self.revision.set(self.revision.get() + 1);
+        let receipt = json!({"version":1,"operationId":self.id,"requestFingerprint":"b".repeat(64),"provider":{"packageId":self.provider.package_id,"serviceId":"image-generation","major":1},"revision":self.revision.get(),"execution":execution,"delivery":delivery});
+        *self.last_receipt.borrow_mut() = Some(receipt.clone());
+        receipt
     }
     fn delivery(&self) -> Value {
         if self.outcome != Outcome::Succeeded {
@@ -192,6 +372,7 @@ struct ProfileFixture {
     root: PathBuf,
     consumer: package::Installed,
     provider: package::Installed,
+    second_consumer: package::Installed,
     next: [PathBuf; 2],
 }
 impl ProfileFixture {
@@ -220,9 +401,20 @@ struct Machine {
     unlink_failure: bool,
     sync_failure: bool,
     incarnation: u64,
+    provider_incarnation: u64,
     dirty_writes: BTreeMap<PathBuf, Vec<u8>>,
     jobs: BTreeMap<String, JobRecord>,
+    notices: BTreeMap<String, usize>,
     applied: usize,
+}
+impl Drop for Machine {
+    fn drop(&mut self) {
+        // Native writers must relinquish locks before TempDir removes the
+        // profile, especially on Windows.
+        for operation in self.operations.get_mut() {
+            operation.writer.take();
+        }
+    }
 }
 fn fail(message: impl Into<String>) -> TestCaseError {
     TestCaseError::fail(message.into())
@@ -265,11 +457,27 @@ impl Machine {
             "model-{}",
             NEXT_CASE.fetch_add(1, Ordering::Relaxed)
         ));
+        let second_id = format!("{}.second", consumer.manifest.id);
+        let second_archive = package::tests::archive_named(
+            &profile.path().join("archives"),
+            "second-consumer.teplugin",
+            |m| {
+                m.id = second_id.clone();
+                m.sdk_version = 3;
+                m.contributions = vec![second_id.replace('.', "-")];
+                m.service_dependencies = serde_json::from_value(json!([{
+                    "packageId":provider.manifest.id,"serviceId":"image-generation","major":1,"optional":true
+                }])).unwrap();
+            },
+        );
+        let second_consumer =
+            package::publish(&root, package::prepare(&root, &second_archive).unwrap()).unwrap();
         let fixture = ProfileFixture {
             profile,
             root,
             consumer,
             provider,
+            second_consumer,
             next,
         };
         let limits = Limits {
@@ -284,6 +492,11 @@ impl Machine {
         store
             .register_consumer_root(fixture.id(Role::Consumer), data)
             .unwrap();
+        let second_data = fixture.profile.path().join("second-consumer-data");
+        fs::create_dir(&second_data).unwrap();
+        store
+            .register_consumer_root(&fixture.second_consumer.manifest.id, second_data)
+            .unwrap();
         let oracle = store.test_fs.clone();
         Self {
             limits,
@@ -297,8 +510,10 @@ impl Machine {
             unlink_failure: false,
             sync_failure: false,
             incarnation: 10,
+            provider_incarnation: 10,
             dirty_writes: BTreeMap::new(),
             jobs: BTreeMap::new(),
+            notices: BTreeMap::new(),
             applied: 0,
         }
     }
@@ -321,11 +536,12 @@ impl Machine {
             .map(|p| PackageGeneration {
                 package_id: p.manifest.id,
                 digest: p.digest,
-                incarnation: self.incarnation,
+                incarnation: if matches!(role, Role::Provider) {
+                    self.provider_incarnation
+                } else {
+                    self.incarnation
+                },
             })
-    }
-    fn enabled(&self) -> bool {
-        self.generation(Role::Consumer).is_some() && self.generation(Role::Provider).is_some()
     }
     fn publish(&self, index: usize, failure: bool) -> Result<(), AppError> {
         let ops = self.operations.borrow();
@@ -349,13 +565,47 @@ impl Machine {
         result
     }
     fn sweep(&self) -> Result<(), AppError> {
-        ai_operations::auto_reconcile_in(self.store(), &Transport { machine: self }).map(|_| ())
+        for job in ai_operations::auto_reconcile_in(self.store(), &Transport { machine: self })? {
+            backend::emit_job_event(json!({"type":"updated","job":job}));
+        }
+        Ok(())
     }
     fn request(op: &Operation) -> Value {
         json!({"operationId":op.id,"connectionId":"model-profile","expectedConnectionRevision":"revision-1","model":null,"prompt":"model test","inputs":[],"options":{"size":"1024x1024","resolution":null,"aspectRatio":null,"quality":"low","background":"auto"},"preparationToken":"local-token","effectiveRecipeDigest":"b".repeat(64)})
     }
     fn admit(&mut self, slot: u8, input: bool) -> Result<(), TestCaseError> {
-        if !self.enabled() {
+        let consumer = if slot as usize == SLOTS - 1 {
+            package::list(&self.fixture.root)
+                .unwrap()
+                .into_iter()
+                .find(|p| p.manifest.id == self.fixture.second_consumer.manifest.id && p.enabled)
+                .map(|p| PackageGeneration {
+                    package_id: p.manifest.id,
+                    digest: p.digest,
+                    incarnation: self.incarnation + 1,
+                })
+        } else {
+            self.generation(Role::Consumer)
+        };
+        let Some(mut consumer) = consumer else {
+            return Ok(());
+        };
+        if self.generation(Role::Provider).is_none() {
+            return Ok(());
+        }
+        let target = ServiceTarget {
+            package_id: self.fixture.id(Role::Provider).to_owned(),
+            service_id: "image-generation".into(),
+            major: 1,
+        };
+        let installed = package::list(&self.fixture.root).unwrap();
+        if !installed.iter().any(|p| {
+            p.manifest.id == consumer.package_id
+                && service_graph::consumer_recovers(&p.manifest, &target)
+        }) || !installed.iter().any(|p| {
+            p.manifest.id == target.package_id
+                && service_graph::provider_recovers(&p.manifest, &target)
+        }) {
             return Ok(());
         }
         if let Some(index) = self.index(slot) {
@@ -376,13 +626,14 @@ impl Machine {
         // Rejected preparation also tombstones its request identity. Each
         // generated admission attempt therefore gets a fresh ID.
         let id = format!("model-operation-{}-{index}", self.incarnation);
-        let consumer = self.generation(Role::Consumer).unwrap();
+        consumer.incarnation = self.incarnation;
         let provider = self.generation(Role::Provider).unwrap();
         let op = Operation {
             id: id.clone(),
             consumer: consumer.clone(),
             provider: provider.clone(),
             outcome: Outcome::Running,
+            captured_process_reply: false,
             paid_success: false,
             valid_original: false,
             durable_original: false,
@@ -391,19 +642,33 @@ impl Machine {
             stage: None,
             descriptor: None,
             spool: None,
+            spool_owner: None,
+            extra_spools: vec![],
+            native_attempts: 0,
+            unpaid_repair: false,
+            spool_phase: 0,
+            spool_status: 0,
+            spool_request: id.clone(),
+            writer: None,
             transfer: None,
             copy: self
                 .fixture
                 .profile
                 .path()
-                .join("consumer-data")
+                .join(if slot as usize == SLOTS - 1 {
+                    "second-consumer-data"
+                } else {
+                    "consumer-data"
+                })
                 .join(format!("{id}.png")),
             acknowledged: false,
             provider_live: false,
             consumer_live: false,
             revision: Cell::new(0),
+            last_receipt: RefCell::new(None),
             starts: Cell::new(0),
             stopped: Cell::new(false),
+            delivery_effects: Cell::new(0),
         };
         let mut request = Self::request(&op);
         if input {
@@ -484,9 +749,6 @@ impl Machine {
         let Some(index) = self.index(slot) else {
             return Ok(());
         };
-        if !self.enabled() {
-            return Ok(());
-        }
         let mut ops = self.operations.borrow_mut();
         let op = &mut ops[index];
         if op.removed
@@ -522,12 +784,7 @@ impl Machine {
         )
         .unwrap();
         if synced {
-            fs::OpenOptions::new()
-                .read(true)
-                .open(&path)
-                .unwrap()
-                .sync_all()
-                .unwrap();
+            crate::durable_dir::sync_file(&path).unwrap();
             self.dirty_writes.remove(&path);
         }
         if complete {
@@ -635,6 +892,7 @@ impl Machine {
             .store()
             .read(&op.consumer, &op.consumer.package_id, &op.id, d)?;
         fs::copy(source.path, &op.copy)?;
+        op.delivery_effects.set(op.delivery_effects.get() + 1);
         op.transfer = Some(
             self.store()
                 .acquired(&op.consumer, &op.id, d, op.copy.to_str().unwrap())?
@@ -715,17 +973,23 @@ impl Machine {
         }
         drop(leases);
         for op in self.operations.borrow_mut().iter_mut() {
-            if (remove || !compatible) && !op.removed {
+            if (remove || !compatible)
+                && !op.removed
+                && (op.consumer.package_id == id || op.provider.package_id == id)
+            {
                 op.removed = true;
                 op.provider_live = false;
                 op.consumer_live = false;
-            } else if provider {
+            } else if op.provider.package_id == id {
                 op.provider_live = false;
-            } else {
+            } else if op.consumer.package_id == id {
                 op.consumer_live = false;
             }
         }
         self.incarnation += 1;
+        if provider {
+            self.provider_incarnation = self.incarnation;
+        }
         self.applied += 1;
         Ok(())
     }
@@ -734,6 +998,10 @@ impl Machine {
         for op in self.operations.borrow_mut().iter_mut() {
             op.provider_live = false;
             op.consumer_live = false;
+            op.writer.take();
+            if op.spool.is_some() {
+                op.spool_phase = 7;
+            }
         }
         if power_loss {
             for op in self.operations.borrow_mut().iter_mut() {
@@ -762,6 +1030,372 @@ impl Machine {
         assert!(std::sync::Arc::ptr_eq(&oracle, &self.store().test_fs));
         checked(super::super::recover(&self.fixture.root))?;
         self.incarnation += 1;
+        self.provider_incarnation = self.incarnation;
+        Ok(())
+    }
+    fn spool_phase(&mut self, command: Command) -> Result<(), TestCaseError> {
+        let slot = match command {
+            Command::SpoolReserve(s, ..)
+            | Command::SpoolReply(s)
+            | Command::SpoolPending(s)
+            | Command::SpoolFsync(s)
+            | Command::SpoolManifest(s)
+            | Command::SpoolSeal(s) => s,
+            _ => unreachable!(),
+        };
+        let Some(index) = self.index(slot) else {
+            return Ok(());
+        };
+        let mut ops = self.operations.borrow_mut();
+        let op = &mut ops[index];
+        if op.removed || op.acknowledged {
+            return Ok(());
+        }
+        if let Command::SpoolReserve(_, bound, nonzero) = command {
+            let admission = checked(self.store().get(&op.consumer.package_id, &op.id))?.unwrap();
+            let execution_released = checked(
+                self.store()
+                    .execution_released(&op.consumer.package_id, &op.id),
+            )?;
+            if op.provider_rejected()
+                || op.spool.is_some()
+                || if bound {
+                    !matches!(
+                        admission.phase,
+                        AdmissionPhase::Forwarding | AdmissionPhase::Accepted
+                    ) || execution_released
+                } else {
+                    admission.phase == AdmissionPhase::Released
+                }
+            {
+                return Ok(());
+            }
+            let owner = if bound {
+                op.provider.clone()
+            } else {
+                let Some(owner) = self.generation(Role::Provider) else {
+                    return Ok(());
+                };
+                owner
+            };
+            // Real SDK reverse-call identities advance on every attempt,
+            // including refusals before a process can start.
+            op.native_attempts += 1;
+            op.spool_request = format!("host:model-{}-{}", op.id, op.native_attempts);
+            let custody = bound.then_some((op.consumer.package_id.as_str(), op.id.as_str()));
+            match self.store().reserve_host_spool_with_custody(
+                &owner,
+                &op.spool_request,
+                4096,
+                custody,
+            ) {
+                Ok((handle, _)) => {
+                    op.spool_status = if nonzero { 17 } else { 0 };
+                    op.writer = Some(checked(SpoolActor::new(
+                        self.fixture.profile.path().join("service-state"),
+                        self.limits,
+                        owner.clone(),
+                        handle.clone(),
+                        op.original.clone(),
+                        op.spool_status,
+                    ))?);
+                    op.spool = Some(handle);
+                    op.spool_owner = Some(owner);
+                    op.unpaid_repair = execution_released;
+                    op.spool_phase = 1;
+                    self.applied += 1;
+                }
+                Err(error)
+                    if expected_capacity(&error)
+                        || self.sync_failure
+                        || self.unlink_failure
+                        || !bound
+                            && error
+                                .to_string()
+                                .contains("host output custody is ambiguous")
+                        || error.to_string().contains("plugin incarnation was retired") => {}
+                Err(error) => {
+                    return Err(fail(format!(
+                        "unexpected host spool reservation rejection: {error}"
+                    )))
+                }
+            }
+            return Ok(());
+        }
+        let expected = match command {
+            Command::SpoolReply(_) => 1,
+            Command::SpoolPending(_) => 2,
+            Command::SpoolFsync(_) => 3,
+            Command::SpoolManifest(_) => 4,
+            Command::SpoolSeal(_) => 5,
+            _ => unreachable!(),
+        };
+        if op.spool_phase != expected {
+            return Ok(());
+        }
+        let Some(writer) = &op.writer else {
+            return Ok(());
+        };
+        if expected == 1 {
+            // The process supplied its reply before host IO. A provider that
+            // already rejected this attempt still owns raw process output,
+            // but those bytes are not an approved image original.
+            op.captured_process_reply = true;
+            if op.spool_status == 0 && !op.provider_rejected() {
+                op.paid_success = true;
+                op.valid_original = true;
+            }
+        }
+        let result = writer.phase(expected);
+        match result {
+            Ok(()) => {
+                op.spool_phase += 1;
+                if expected == 5 {
+                    op.writer.take();
+                }
+                if expected == 1 && op.valid_original {
+                    op.durable_original = true;
+                }
+                self.applied += 1;
+            }
+            Err(_) if self.sync_failure || self.unlink_failure => {}
+            Err(error)
+                if op.provider_rejected()
+                    && error
+                        .to_string()
+                        .contains("host output reservation was cancelled")
+                    && checked(self.store().get(&op.consumer.package_id, &op.id))?
+                        .is_some_and(|a| a.phase == AdmissionPhase::Released) =>
+            {
+                // A durable provider rejection fences this late raw reply.
+                // It was never an approved image; relinquish the live permit
+                // so healthy cleanup can release every charged byte.
+                op.writer.take();
+                op.spool_phase = 7;
+                self.applied += 1;
+            }
+            Err(error) => {
+                return Err(fail(format!(
+                    "spool completion phase {command:?} rejected: {error}"
+                )))
+            }
+        }
+        Ok(())
+    }
+    fn complete_spool(&mut self, slot: u8, bound: bool) -> Result<(), TestCaseError> {
+        for phase in [
+            Command::SpoolReserve(slot, bound, false),
+            Command::SpoolReply(slot),
+            Command::SpoolPending(slot),
+            Command::SpoolFsync(slot),
+            Command::SpoolManifest(slot),
+            Command::SpoolSeal(slot),
+        ] {
+            self.spool_phase(phase)?;
+        }
+        Ok(())
+    }
+    fn replacement_collision(&mut self, slot: u8) -> Result<(), TestCaseError> {
+        let Some(index) = self.index(slot) else {
+            return Ok(());
+        };
+        let Some(owner) = self.generation(Role::Provider) else {
+            return Ok(());
+        };
+        let (consumer, operation, request, original) = {
+            let ops = self.operations.borrow();
+            let op = &ops[index];
+            if op.removed
+                || op.acknowledged
+                || op.spool_phase != 6
+                || !op.extra_spools.is_empty()
+                || op.spool_owner.as_ref().unwrap().digest == owner.digest
+                || self.sync_failure
+                || self.unlink_failure
+            {
+                return Ok(());
+            }
+            (
+                op.consumer.package_id.clone(),
+                op.id.clone(),
+                op.spool_request.clone(),
+                op.original.clone(),
+            )
+        };
+        // SDK reverse counters reset in a new broker. Its unrelated raw
+        // reply can share a request ID with the original paid process.
+        let (handle, _) = match self.store().reserve_host_spool(&owner, &request, 4096) {
+            Ok(reservation) => reservation,
+            Err(error)
+                if expected_capacity(&error)
+                    || error
+                        .to_string()
+                        .contains("host output custody is ambiguous") =>
+            {
+                return Ok(())
+            }
+            Err(error) => return Err(fail(error.to_string())),
+        };
+        let actor = checked(SpoolActor::new(
+            self.fixture.profile.path().join("service-state"),
+            self.limits,
+            owner.clone(),
+            handle.clone(),
+            image_bytes(251),
+            0,
+        ))?;
+        for phase in 1..=5 {
+            checked(actor.phase(phase))?;
+        }
+        drop(actor);
+        self.operations.borrow_mut()[index]
+            .extra_spools
+            .push(handle);
+        let result = checked(self.store().host_spool_result_for_operation(
+            &owner.package_id,
+            &request,
+            &consumer,
+            &operation,
+            None,
+        ))?
+        .ok_or_else(|| fail("request-counter collision hid the original reply"))?;
+        if fs::read(result["stdout"].as_str().unwrap()).ok().as_ref() != Some(&original) {
+            return Err(fail(
+                "request-counter collision selected unrelated replacement output",
+            ));
+        }
+        self.applied += 1;
+        Ok(())
+    }
+    fn paused_mutation(&mut self, slot: u8, kind: u8, action: u8) -> Result<(), TestCaseError> {
+        let Some(index) = self.index(slot) else {
+            return Ok(());
+        };
+        if self.operations.borrow()[index].removed
+            || self.operations.borrow()[index].acknowledged
+            || self.operations.borrow()[index].consumer.package_id
+                != self.fixture.id(Role::Consumer)
+        {
+            return Ok(());
+        }
+        // A separately opened Store shares the actual lease/fence registry,
+        // allowing its paused owner to outlive a lifecycle call on this host.
+        let held = match Store::open(
+            self.fixture.profile.path().join("service-state"),
+            self.limits,
+        ) {
+            Ok(store) => store,
+            Err(_) if self.sync_failure || self.unlink_failure => return Ok(()),
+            Err(error) => return Err(fail(error.to_string())),
+        };
+        let (consumer, operation) = {
+            let ops = self.operations.borrow();
+            (
+                ops[index].consumer.package_id.clone(),
+                ops[index].id.clone(),
+            )
+        };
+        let admission = checked(held.get(&consumer, &operation))?.unwrap();
+        let job = checked(held.job_for_operation(&consumer, &operation))?;
+        let mutation = match action {
+            0 => Command::Enable(false, false),
+            1 => Command::Uninstall(false),
+            2 => Command::Upgrade(false, true, false),
+            _ => Command::Upgrade(false, false, false),
+        };
+        match kind {
+            0 => {
+                let before = self.operations.borrow()[index].delivery_effects.get();
+                let port = PausedRecoveryRpc {
+                    machine: RefCell::new(&mut *self),
+                    mutation,
+                    entered: Cell::new(false),
+                    violation: RefCell::new(None),
+                };
+                let _ = ai_operations::recover_in(&held, &admission, job.as_ref(), &port);
+                let entered = port.entered.get();
+                let violation = port.violation.borrow_mut().take();
+                drop(port);
+                if let Some(message) = violation {
+                    return Err(fail(message));
+                }
+                if !entered {
+                    return Ok(());
+                }
+                if self.operations.borrow()[index].removed
+                    && self.operations.borrow()[index].delivery_effects.get() != before
+                {
+                    return Err(fail("in-flight recovery RPC delivered after removal"));
+                }
+            }
+            1 => {
+                if admission.output.is_none() {
+                    return Ok(());
+                }
+                let d = admission.output.as_ref().unwrap();
+                let source = checked(held.read(&admission.consumer, &consumer, &operation, d))?;
+                let source_bytes = fs::read(&source.path).map_err(|e| fail(e.to_string()))?;
+                self.mutation(mutation)?;
+                let (copy, removed) = {
+                    let ops = self.operations.borrow();
+                    (ops[index].copy.clone(), ops[index].removed)
+                };
+                if !copy.exists() {
+                    fs::write(&copy, &source_bytes).map_err(|e| fail(e.to_string()))?;
+                    let ops = self.operations.borrow();
+                    ops[index]
+                        .delivery_effects
+                        .set(ops[index].delivery_effects.get() + 1);
+                }
+                let acquired =
+                    held.acquired(&admission.consumer, &operation, d, copy.to_str().unwrap());
+                if removed && acquired.is_ok() {
+                    return Err(fail("paused acquisition revived removed custody"));
+                }
+                if let Ok(proof) = acquired {
+                    self.operations.borrow_mut()[index].transfer = Some(proof.transfer_receipt);
+                }
+            }
+            _ => {
+                if self.operations.borrow()[index].spool.is_none() {
+                    self.spool_phase(Command::SpoolReserve(slot, true, false))?;
+                }
+                let Some(handle) = self.operations.borrow()[index].spool.clone() else {
+                    return Ok(());
+                };
+                self.operations.borrow_mut()[index].writer.take();
+                let writer = checked(held.pin_host_spool(&handle))?;
+                self.mutation(mutation)?;
+                let mut ops = self.operations.borrow_mut();
+                let op = &mut ops[index];
+                op.captured_process_reply = true;
+                if !op.removed && !op.provider_rejected() {
+                    op.paid_success = true;
+                    op.valid_original = true;
+                }
+                let completed = held.write_pinned_host_reply(
+                    op.spool_owner.as_ref().unwrap_or(&op.provider),
+                    &writer,
+                    &op.original,
+                    b"",
+                    0,
+                );
+                if op.removed && completed.is_ok() {
+                    return Err(fail("paused native writer published after removal"));
+                }
+                let completed = completed.is_ok();
+                drop(ops);
+                if completed {
+                    let mut ops = self.operations.borrow_mut();
+                    let op = &mut ops[index];
+                    op.durable_original |= op.valid_original;
+                    op.spool_phase = 2;
+                }
+                drop(writer);
+                checked(held.sweep_host_spools(|_| false))?;
+            }
+        }
+        self.applied += 1;
         Ok(())
     }
     fn observable(&self) -> Vec<u64> {
@@ -774,6 +1408,10 @@ impl Machine {
             self.sync_failure as u64,
             ops.iter().map(|o| o.revision.get()).sum(),
             ops.iter().filter(|o| o.descriptor.is_some()).count() as u64,
+            ops.iter().filter(|o| o.stage.is_some()).count() as u64,
+            ops.iter().map(|o| u64::from(o.spool_phase)).sum(),
+            ops.iter().filter(|o| o.captured_process_reply).count() as u64,
+            ops.iter().map(|o| o.native_attempts).sum(),
             ops.iter().filter(|o| o.transfer.is_some()).count() as u64,
             ops.iter().filter(|o| o.acknowledged).count() as u64,
             ops.iter()
@@ -786,7 +1424,30 @@ impl Machine {
             self.disk_bytes(),
         ]
     }
+    fn observe_events(&mut self, events: Vec<Value>) -> Result<(), TestCaseError> {
+        for event in events {
+            if event["job"]["phase"] == "consumer_removed" && event["job"]["state"] == "error" {
+                let id = event["job"]["operationId"]
+                    .as_str()
+                    .ok_or_else(|| fail("notice has no operation identity"))?
+                    .to_owned();
+                let count = self.notices.entry(id.clone()).or_default();
+                *count += 1;
+                if *count > 1 {
+                    return Err(fail(format!(
+                        "duplicate emitted undelivered notice: {id}, count={count}"
+                    )));
+                }
+            }
+        }
+        Ok(())
+    }
     fn apply(&mut self, command: Command) -> Result<(), TestCaseError> {
+        let (result, events) = backend::capture_job_events(|| self.apply_inner(command));
+        self.observe_events(events)?;
+        result
+    }
+    fn apply_inner(&mut self, command: Command) -> Result<(), TestCaseError> {
         let before = self.observable();
         if self.store.is_none() {
             match command {
@@ -881,62 +1542,91 @@ impl Machine {
                     }
                 }
             }
-            Command::Spool(s) => {
-                if let Some(i) = self.index(s) {
-                    let mut ops = self.operations.borrow_mut();
-                    let op = &mut ops[i];
-                    let admission = checked(self.store().get(&op.consumer.package_id, &op.id))?
-                        .expect("model admission exists");
-                    if !op.removed
-                        && !op.acknowledged
-                        && op.spool.is_none()
-                        && !matches!(op.outcome, Outcome::Failed | Outcome::Cancelled)
-                        && matches!(
-                            admission.phase,
-                            AdmissionPhase::Forwarding | AdmissionPhase::Accepted
+            Command::Spool(s) => self.complete_spool(s, true)?,
+            Command::UnboundRepair(s) => {
+                if let Some(index) = self.index(s) {
+                    let (consumer, operation) = {
+                        let ops = self.operations.borrow();
+                        (
+                            ops[index].consumer.package_id.clone(),
+                            ops[index].id.clone(),
                         )
-                        && !checked(
-                            self.store()
-                                .execution_released(&op.consumer.package_id, &op.id),
-                        )?
-                    {
-                        match self.store().reserve_host_spool(&op.provider, &op.id, 4096) {
-                            Ok((handle, path)) => {
-                                checked(self.store().bind_host_spool(
-                                    &op.provider,
-                                    &handle,
-                                    &op.consumer.package_id,
-                                    &op.id,
-                                ))?;
-                                fs::write(path.join("stdout"), &op.original).unwrap();
-                                fs::write(path.join("stderr"), []).unwrap();
-                                op.spool = Some(handle.clone());
-                                op.paid_success = true;
-                                op.valid_original = true;
-                                match self.store().seal_host_spool(&op.provider, &handle, 0) {
-                                    Ok(()) => op.durable_original = true,
-                                    Err(_) if self.sync_failure || self.unlink_failure => {}
-                                    Err(error) => {
-                                        return Err(fail(format!(
-                                            "unexpected host spool sealing rejection: {error}"
-                                        )))
-                                    }
-                                }
-                                self.applied += 1
-                            }
-                            Err(error)
-                                if expected_capacity(&error)
-                                    || self.sync_failure
-                                    || self.unlink_failure
-                                    || error
-                                        .to_string()
-                                        .contains("plugin incarnation was retired") => {}
-                            Err(error) => {
-                                return Err(fail(format!(
-                                    "unexpected host spool reservation rejection: {error}"
-                                )))
-                            }
+                    };
+                    if checked(self.store().execution_released(&consumer, &operation))? {
+                        self.complete_spool(s, false)?;
+                    }
+                }
+            }
+            Command::ReplacementSpool(s) => {
+                if let Some(index) = self.index(s) {
+                    if self.generation(Role::Provider).is_some_and(|owner| {
+                        owner.digest != self.operations.borrow()[index].provider.digest
+                    }) {
+                        self.complete_spool(s, false)?;
+                    }
+                }
+            }
+            Command::AmbiguousSpool(s) => {
+                if let Some(index) = self.index(s) {
+                    let candidates = checked(
+                        self.store()
+                            .package_operations(self.fixture.id(Role::Provider)),
+                    )?
+                    .into_iter()
+                    .filter(|a| {
+                        a.provider.package_id == self.fixture.id(Role::Provider)
+                            && a.phase != AdmissionPhase::Released
+                    })
+                    .count();
+                    if candidates > 1 && self.operations.borrow()[index].spool.is_none() {
+                        let charge = self.charges();
+                        let disk = self.disk_bytes();
+                        self.spool_phase(Command::SpoolReserve(s, false, false))?;
+                        if self.operations.borrow()[index].spool.is_some()
+                            || self.charges() != charge
+                            || self.disk_bytes() != disk
+                        {
+                            return Err(fail("ambiguous unbound request created output or quota"));
                         }
+                    }
+                }
+            }
+            Command::ReplacementCollision(s) => self.replacement_collision(s)?,
+            Command::SpoolReserve(..)
+            | Command::SpoolReply(_)
+            | Command::SpoolPending(_)
+            | Command::SpoolFsync(_)
+            | Command::SpoolManifest(_)
+            | Command::SpoolSeal(_) => self.spool_phase(command)?,
+            Command::SettlementCrash(slot) => {
+                if let Some(index) = self.index(slot) {
+                    let operation = {
+                        let ops = self.operations.borrow();
+                        let op = &ops[index];
+                        (!op.removed && !op.paid_success)
+                            .then(|| (op.consumer.package_id.clone(), op.id.clone()))
+                    };
+                    if let Some((consumer, operation)) = operation {
+                        // Prevent physical collection so the simulated crash
+                        // lands after the durable decision while bytes and
+                        // quota are still present, rather than after cleanup.
+                        self.oracle.faults(true, self.sync_failure);
+                        match self
+                            .store()
+                            .auto_settle_operation(&consumer, &operation, true)
+                        {
+                            Ok(Some(job)) => {
+                                backend::emit_job_event(json!({"type":"updated","job":job}));
+                                self.applied += 1;
+                            }
+                            Ok(None) => {}
+                            Err(_) if self.sync_failure || self.unlink_failure => {}
+                            Err(error) => return Err(fail(error.to_string())),
+                        }
+                        self.oracle.faults(self.unlink_failure, self.sync_failure);
+                        // Physical collection has its own durability barriers;
+                        // the release decision is already in the transaction.
+                        self.restart(false)?;
                     }
                 }
             }
@@ -1003,6 +1693,7 @@ impl Machine {
                             Ok(op.receipt(op.delivery()))
                         },
                     );
+                    self.applied += 1;
                 }
             }
             Command::Upgrade(..) | Command::Uninstall(_) | Command::Enable(_, false) => {
@@ -1035,6 +1726,124 @@ impl Machine {
                 self.restart(true)?;
                 self.unlink_failure = false;
                 self.sync_failure = false
+            }
+            Command::SpoolCrash(slot, phase) => {
+                let reached = self
+                    .index(slot)
+                    .is_some_and(|index| self.operations.borrow()[index].spool_phase == phase);
+                if reached {
+                    self.restart(true)?;
+                }
+            }
+            Command::LifecycleCrash(provider, point) => {
+                let name = [
+                    "removal-intent",
+                    "removal-index",
+                    "removal-abandoned",
+                    "removal-cleanup",
+                    "upgrade-prepared",
+                    "upgrade-committed",
+                    "upgrade-published",
+                    "replacement-abandoned",
+                ][usize::from(point)];
+                if self.fixture.installed(role(provider)).is_some() {
+                    super::super::crash_at_boundary(name);
+                    let mutation = if point < 4 {
+                        Command::Enable(provider, false)
+                    } else {
+                        Command::Upgrade(provider, false, false)
+                    };
+                    let crashed = self.mutation(mutation);
+                    super::super::crash_at_boundary("__none__");
+                    if crashed
+                        .as_ref()
+                        .is_err_and(|cause| cause.to_string().contains("injected lifecycle crash"))
+                    {
+                        self.restart(false)?;
+                        let installed = package::list(&self.fixture.root).unwrap();
+                        for op in self.operations.borrow_mut().iter_mut() {
+                            let a = checked(self.store().get(&op.consumer.package_id, &op.id))?
+                                .unwrap();
+                            if [&op.consumer.package_id, &op.provider.package_id]
+                                .into_iter()
+                                .any(|id| {
+                                    installed.iter().find(|p| &p.manifest.id == id).is_none_or(
+                                        |p| {
+                                            !p.enabled
+                                                || (p.digest
+                                                    != if p.manifest.id == a.consumer.package_id {
+                                                        a.consumer.digest.clone()
+                                                    } else {
+                                                        a.provider.digest.clone()
+                                                    }
+                                                    && !ai_operations::replacement_recovers(
+                                                        &p.manifest,
+                                                        &a,
+                                                    ))
+                                        },
+                                    )
+                                })
+                            {
+                                op.removed = true;
+                            }
+                        }
+                        self.applied += 1;
+                    } else {
+                        crashed?;
+                    }
+                }
+            }
+            Command::PausedMutation(slot, kind, action) => {
+                self.paused_mutation(slot, kind, action)?
+            }
+            Command::SharedConsumerAdmit => {
+                self.admit(0, false)?;
+                self.admit((SLOTS - 1) as u8, false)?;
+                if self
+                    .operations
+                    .borrow()
+                    .iter()
+                    .any(|op| op.consumer.package_id == self.fixture.second_consumer.manifest.id)
+                {
+                    self.applied += 1;
+                }
+            }
+            Command::DelayedReceipt(slot, equal) => {
+                if let Some(index) = self.index(slot) {
+                    let ops = self.operations.borrow();
+                    let op = &ops[index];
+                    if let Some(latest) = checked(
+                        self.store()
+                            .provider_receipt(&op.consumer.package_id, &op.id),
+                    )? {
+                        let revision = latest["revision"].as_u64().unwrap();
+                        if equal || revision > 1 {
+                            let mut conflicting = latest.clone();
+                            conflicting["revision"] =
+                                json!(if equal { revision } else { revision - 1 });
+                            conflicting["execution"] = json!({"state":"failed","error":{"code":"late_conflict","message":"Delayed conflicting evidence","correlationId":null}});
+                            conflicting["delivery"] = json!({"state":"none"});
+                            let a = checked(self.store().get(&op.consumer.package_id, &op.id))?
+                                .unwrap();
+                            let _ = service_bridge::reconcile_at(
+                                self.store(),
+                                &op.provider,
+                                &a,
+                                &conflicting,
+                            );
+                            let after = checked(
+                                self.store()
+                                    .provider_receipt(&op.consumer.package_id, &op.id),
+                            )?;
+                            if after.as_ref() != Some(&latest) {
+                                return Err(fail(
+                                    "delayed/equal conflicting receipt replaced newer evidence",
+                                ));
+                            }
+                            self.applied += 1;
+                        }
+                    }
+                }
             }
         }
         if self.observable() != before {
@@ -1094,6 +1903,7 @@ impl Machine {
             .into_iter()
             .any(|p| fs::read(p).ok().as_ref() == Some(&op.original))
             || self.oracle.contains_unflushed_data(&op.original)
+            || (op.writer.is_some() && op.spool_phase >= 1 && op.paid_success && op.valid_original)
     }
     fn invariants(&mut self) -> Result<(), TestCaseError> {
         if self.store.is_none() {
@@ -1103,12 +1913,6 @@ impl Machine {
             if let Some(old) = self.jobs.get(&job.job_key) {
                 if job.revision < old.revision {
                     return Err(fail("job revision regressed"));
-                }
-                if old.phase.as_deref() == Some("consumer_removed")
-                    && job.phase == old.phase
-                    && job.revision != old.revision
-                {
-                    return Err(fail("undelivered image notice was republished"));
                 }
                 if old.state == JobState::Completed && job.state != JobState::Completed {
                     return Err(fail("acknowledged completion regressed"));
@@ -1135,6 +1939,19 @@ impl Machine {
         let mut live_reservations = 0u64;
         let mut reserved_output_bytes = 0u64;
         for op in self.operations.borrow().iter() {
+            if op.delivery_effects.get() > 1 {
+                return Err(fail(format!(
+                    "duplicate delivery effects: {}, count={}",
+                    op.id,
+                    op.delivery_effects.get()
+                )));
+            }
+            if op.acknowledged && op.delivery_effects.get() != 1 {
+                return Err(fail(format!(
+                    "acknowledged without exactly one delivery effect: {}",
+                    op.id
+                )));
+            }
             if op.starts.get() != 1 {
                 return Err(fail(format!("paid execution replayed: {}", op.id)));
             }
@@ -1181,7 +1998,9 @@ impl Machine {
             if !op.removed
                 && !op.acknowledged
                 && !op.paid_success
-                && (op.provider_live || op.consumer_live)
+                && (op.provider_live
+                    || op.consumer_live
+                    || op.writer.is_some() && !op.unpaid_repair)
                 && checked(
                     self.store()
                         .execution_released(&op.consumer.package_id, &op.id),
@@ -1221,7 +2040,90 @@ impl Machine {
         }
         Ok(())
     }
+    fn assert_removed_clean(&self, op: &Operation) -> Result<(), TestCaseError> {
+        self.assert_custody_clean(op, true)
+    }
+    fn assert_custody_clean(&self, op: &Operation, removal: bool) -> Result<(), TestCaseError> {
+        let conn = rusqlite::Connection::open(
+            self.fixture
+                .profile
+                .path()
+                .join("service-state/ledger.sqlite"),
+        )
+        .unwrap();
+        let custody: i64 = conn.query_row(
+            "SELECT (SELECT count(*) FROM artifacts WHERE consumer=?1 AND operation=?2 AND (?3 OR bytes>0))+(SELECT count(*) FROM host_spools WHERE consumer=?1 AND operation=?2)+(SELECT count(*) FROM host_spool_admissions WHERE consumer=?1 AND operation=?2)",
+            rusqlite::params![op.consumer.package_id, op.id, removal],
+            |row| row.get(0),
+        ).unwrap();
+        let root = self.fixture.profile.path().join("service-state");
+        let spool_exists = op
+            .spool
+            .iter()
+            .chain(op.extra_spools.iter())
+            .any(|h| root.join("host-spools").join(h).exists());
+        let artifact_exists = op.stage.as_ref().is_some_and(|stage| {
+            PathBuf::from(&stage.path).exists()
+                || ["bin", "pending"].into_iter().any(|ext| {
+                    root.join("bytes")
+                        .join(format!("{}.{ext}", stage.handle))
+                        .exists()
+                })
+        }) || op.descriptor.as_ref().is_some_and(|d| {
+            root.join("bytes")
+                .join(format!("{}.bin", d.handle))
+                .exists()
+        });
+        if custody != 0 || spool_exists || artifact_exists {
+            return Err(fail(format!("operation retained custody, charged rows or files after cleanup (removal={removal}): {}, rows={custody}, spool={spool_exists}, artifacts={artifact_exists}", op.id)));
+        }
+        Ok(())
+    }
+    fn assert_removed_plugins_clean(&self) -> Result<(), TestCaseError> {
+        let conn = rusqlite::Connection::open(
+            self.fixture
+                .profile
+                .path()
+                .join("service-state/ledger.sqlite"),
+        )
+        .unwrap();
+        let installed = package::list(&self.fixture.root).unwrap();
+        for package in [
+            self.fixture.id(Role::Consumer),
+            &self.fixture.second_consumer.manifest.id,
+            self.fixture.id(Role::Provider),
+        ] {
+            if installed
+                .iter()
+                .any(|p| p.manifest.id == package && p.enabled)
+            {
+                continue;
+            }
+            let charged: i64 = conn.query_row(
+                "SELECT (SELECT coalesce(sum(bytes),0) FROM artifacts WHERE consumer=?1)+(SELECT coalesce(sum(bytes),0) FROM host_spools WHERE package=?1 OR consumer=?1)",
+                [package], |row| row.get(0),
+            ).unwrap();
+            if charged != 0 {
+                return Err(fail(format!(
+                    "removed plugin retained charged custody: {package}, bytes={charged}"
+                )));
+            }
+            for op in
+                self.operations.borrow().iter().filter(|op| {
+                    op.consumer.package_id == package || op.provider.package_id == package
+                })
+            {
+                self.assert_removed_clean(op)?;
+            }
+        }
+        Ok(())
+    }
     fn quiesce(&mut self) -> Result<(), TestCaseError> {
+        let (result, events) = backend::capture_job_events(|| self.quiesce_inner());
+        self.observe_events(events)?;
+        result
+    }
+    fn quiesce_inner(&mut self) -> Result<(), TestCaseError> {
         self.healthy = true;
         self.unlink_failure = false;
         self.sync_failure = false;
@@ -1230,6 +2132,14 @@ impl Machine {
             self.restart(false)?
         }
         for op in self.operations.borrow_mut().iter_mut() {
+            if !op.removed && op.spool_phase == 1 && op.paid_success {
+                if let Some(writer) = &op.writer {
+                    checked(writer.phase(1))?;
+                    op.spool_phase = 2;
+                    op.durable_original |= op.valid_original;
+                }
+            }
+            op.writer.take();
             op.provider_live = false;
             op.consumer_live = false;
             if op.outcome == Outcome::Running {
@@ -1254,6 +2164,7 @@ impl Machine {
                 .unwrap()
                 .unwrap();
             if op.removed {
+                self.assert_removed_clean(op)?;
                 continue;
             }
             if op.paid_success
@@ -1263,6 +2174,16 @@ impl Machine {
                     || fs::read(&op.copy).ok().as_ref() != Some(&op.original))
             {
                 return Err(fail(format!("valid original never delivered: {}", op.id)));
+            }
+            if !op.valid_original
+                && job.state.terminal()
+                && (a.phase == AdmissionPhase::Released
+                    || self
+                        .store()
+                        .execution_released(&op.consumer.package_id, &op.id)
+                        .unwrap())
+            {
+                self.assert_custody_clean(op, false)?;
             }
             if !op.valid_original
                 && (!job.state.terminal()
@@ -1275,6 +2196,7 @@ impl Machine {
                 return Err(fail(format!("inactive operation never settled: {}, admission={a:?}, job={job:?}, receipt={:?}", op.id, self.store().provider_receipt(&op.consumer.package_id,&op.id))));
             }
         }
+        self.assert_removed_plugins_clean()?;
         if self.charges() as u64 != self.disk_bytes() {
             return Err(fail(format!(
                 "quiescent quota mismatch: charge={}, disk={}",
@@ -1291,17 +2213,14 @@ impl Machine {
         Ok(())
     }
 }
-struct Transport<'a> {
+/// Native process and RPC implementation for the fixture packages. The host
+/// routes recovery through the same RecoveryPort path used by LiveAutomatic;
+/// only the packages' status and resume RPC effects are simulated here.
+struct FixtureRpc<'a> {
     machine: &'a Machine,
 }
-impl ai_operations::AutomaticPort for Transport<'_> {
-    fn active(
-        &self,
-        a: &Admission,
-        _: Option<&JobRecord>,
-        _: bool,
-        _: &str,
-    ) -> Result<bool, AppError> {
+impl FixtureRpc<'_> {
+    fn status(&self, a: &Admission) -> Result<(), AppError> {
         let m = self.machine;
         if !m.healthy {
             return Err(AppError::Other(
@@ -1311,20 +2230,27 @@ impl ai_operations::AutomaticPort for Transport<'_> {
         let mut ops = m.operations.borrow_mut();
         let op = ops.iter_mut().find(|o| o.id == a.operation_id).unwrap();
         if op.removed || op.acknowledged {
-            return Ok(false);
+            return Ok(());
         }
-        if op.outcome == Outcome::Succeeded && op.descriptor.is_none() {
-            let _permit = m.store().output_recovery_guard(a)?;
-            if let Some(spool) = m
-                .store()
-                .host_spool_result(&op.provider.package_id, &op.id)?
-            {
-                let stage = m
-                    .store()
-                    .stage(&op.provider, &op.consumer.package_id, &op.id)?;
-                fs::copy(spool["stdout"].as_str().unwrap(), &stage.path)?;
-                op.stage = Some(stage);
-                op.outcome = Outcome::Succeeded;
+        // This is the fake provider's status RPC: it finds existing paid bytes
+        // and publishes its receipt. It cannot start paid work.
+        let _permit = m.store().output_recovery_guard(a)?;
+        if op.descriptor.is_none() && !op.provider_rejected() {
+            if let Some(spool) = m.store().host_spool_result_for_operation(
+                &op.provider.package_id,
+                &op.spool_request,
+                &op.consumer.package_id,
+                &op.id,
+                None,
+            )? {
+                if spool["status"] == 0 {
+                    op.paid_success = true;
+                    let stage = m
+                        .store()
+                        .stage(&op.provider, &op.consumer.package_id, &op.id)?;
+                    fs::copy(spool["stdout"].as_str().unwrap(), &stage.path)?;
+                    op.stage = Some(stage);
+                }
             }
             if let Some(stage) = &op.stage {
                 if let Ok(d) = m.store().seal(
@@ -1337,54 +2263,37 @@ impl ai_operations::AutomaticPort for Transport<'_> {
                     op.descriptor = Some(d);
                     op.valid_original = true;
                     op.durable_original = true;
+                    op.outcome = Outcome::Succeeded;
                 }
             }
         }
-        service_bridge::reconcile_at(m.store(), &op.provider, a, &op.receipt(op.delivery()))?;
-        Ok(op.provider_live || op.consumer_live)
+        if op.descriptor.is_some() {
+            op.paid_success = true;
+            op.outcome = Outcome::Succeeded;
+        }
+        let current = m.store().get(&op.consumer.package_id, &op.id)?.unwrap();
+        service_bridge::reconcile_at(
+            m.store(),
+            &op.provider,
+            &current,
+            &op.receipt(op.delivery()),
+        )
     }
-    fn recover(&self, a: &Admission, _: Option<&JobRecord>) -> Result<(), AppError> {
+    fn consumer_resume(&self, a: &Admission) -> Result<(), AppError> {
+        self.status(a)?;
         let m = self.machine;
+        let index = m
+            .operations
+            .borrow()
+            .iter()
+            .position(|o| o.id == a.operation_id)
+            .unwrap();
+        // Superseded slots remain real retained operations; their RPC still
+        // receives the original operation identity, independent of UI slots.
         let mut ops = m.operations.borrow_mut();
-        let op = ops.iter_mut().find(|o| o.id == a.operation_id).unwrap();
+        let op = &mut ops[index];
         if op.removed || op.acknowledged {
             return Ok(());
-        }
-        // Provider recovery can discover only original bytes. It publishes
-        // the success that those bytes establish; it never invokes start.
-        let _permit = m.store().output_recovery_guard(a)?;
-        if op.descriptor.is_none() {
-            if let Some(spool) = m
-                .store()
-                .host_spool_result(&op.provider.package_id, &op.id)?
-            {
-                let stage = m
-                    .store()
-                    .stage(&op.provider, &op.consumer.package_id, &op.id)?;
-                fs::copy(spool["stdout"].as_str().unwrap(), &stage.path)?;
-                op.stage = Some(stage);
-            }
-        }
-        if let Some(stage) = &op.stage {
-            if let Ok(d) = m.store().seal(
-                &op.provider,
-                &op.consumer.package_id,
-                &op.id,
-                &stage.handle,
-                "image/png",
-            ) {
-                op.descriptor = Some(d);
-                op.valid_original = true;
-                op.durable_original = true;
-                op.outcome = Outcome::Succeeded;
-                let current = m.store().get(&op.consumer.package_id, &op.id)?.unwrap();
-                service_bridge::reconcile_at(
-                    m.store(),
-                    &op.provider,
-                    &current,
-                    &op.receipt(op.delivery()),
-                )?;
-            }
         }
         let current = m.store().get(&op.consumer.package_id, &op.id)?.unwrap();
         let Some(d) = current.output.as_ref() else {
@@ -1395,6 +2304,7 @@ impl ai_operations::AutomaticPort for Transport<'_> {
                 .store()
                 .read(&op.consumer, &op.consumer.package_id, &op.id, d)?;
             fs::copy(source.path, &op.copy)?;
+            op.delivery_effects.set(op.delivery_effects.get() + 1);
         }
         let proof = m
             .store()
@@ -1419,8 +2329,422 @@ impl ai_operations::AutomaticPort for Transport<'_> {
         Ok(())
     }
 }
+impl ai_operations::RecoveryPort for FixtureRpc<'_> {
+    fn provider_status(
+        &self,
+        store: &Store,
+        a: &Admission,
+    ) -> Result<(PackageGeneration, Value), AppError> {
+        self.status(a)?;
+        Ok((
+            a.provider.clone(),
+            store
+                .provider_receipt(&a.consumer.package_id, &a.operation_id)?
+                .ok_or_else(|| AppError::Other("Fixture provider has no receipt".into()))?,
+        ))
+    }
+    fn resume(&self, store: &Store, a: &Admission, job: &JobRecord) -> Result<(), AppError> {
+        job_bridge::resume_in(store, job, || self.consumer_resume(a)).map(|_| ())
+    }
+    fn terminal_resume(
+        &self,
+        _: &Store,
+        a: &Admission,
+        _: Option<&JobRecord>,
+    ) -> Result<(), AppError> {
+        self.consumer_resume(a)
+    }
+}
+/// The fake RPC has been invoked and captured its response before the real
+/// lifecycle mutation executes. Reconciliation and handoff happen only after
+/// that mutation, exercising a response already in flight rather than merely
+/// a queued recovery snapshot.
+struct PausedRecoveryRpc<'a> {
+    machine: RefCell<&'a mut Machine>,
+    mutation: Command,
+    entered: Cell<bool>,
+    violation: RefCell<Option<String>>,
+}
+impl PausedRecoveryRpc<'_> {
+    fn fail(&self, message: &str) -> AppError {
+        *self.violation.borrow_mut() = Some(message.into());
+        AppError::Other(message.into())
+    }
+    fn response(
+        &self,
+        store: &Store,
+        a: &Admission,
+    ) -> Result<(PackageGeneration, Value), AppError> {
+        let mut machine = self.machine.borrow_mut();
+        let response = {
+            let ops = machine.operations.borrow();
+            let op = ops.iter().find(|op| op.id == a.operation_id).unwrap();
+            (op.provider.clone(), op.receipt(op.delivery()))
+        };
+        self.entered.set(true);
+        if let Err(error) = machine.mutation(self.mutation) {
+            return Err(self.fail(&error.to_string()));
+        }
+        let current = store.get(&a.consumer.package_id, &a.operation_id)?.unwrap();
+        if machine
+            .operations
+            .borrow()
+            .iter()
+            .find(|op| op.id == a.operation_id)
+            .unwrap()
+            .removed
+            && current.phase != AdmissionPhase::Released
+        {
+            return Err(self.fail("Lifecycle failed to fence in-flight recovery RPC"));
+        }
+        Ok(response)
+    }
+    fn invoke(&self, store: &Store, a: &Admission) -> Result<(), AppError> {
+        let (provider, receipt) = self.response(store, a)?;
+        // This response was captured before disable/uninstall/replacement.
+        // Submit it through the actual receipt projection and read grants.
+        let _ = service_bridge::reconcile_at(store, &provider, a, &receipt);
+        let machine = self.machine.borrow();
+        let removed = machine
+            .operations
+            .borrow()
+            .iter()
+            .find(|op| op.id == a.operation_id)
+            .unwrap()
+            .removed;
+        if removed {
+            let current = store.get(&a.consumer.package_id, &a.operation_id)?.unwrap();
+            if current.phase != AdmissionPhase::Released {
+                return Err(self.fail("Stale recovery RPC revived removed custody"));
+            }
+            if let Some(output) = a.output.as_ref() {
+                if store
+                    .read(&a.consumer, &a.consumer.package_id, &a.operation_id, output)
+                    .is_ok()
+                {
+                    return Err(self.fail("Stale recovery RPC retained its read grant"));
+                }
+            }
+            return Ok(());
+        }
+        FixtureRpc { machine: &machine }.consumer_resume(a)
+    }
+}
+impl ai_operations::RecoveryPort for PausedRecoveryRpc<'_> {
+    fn provider_status(
+        &self,
+        store: &Store,
+        a: &Admission,
+    ) -> Result<(PackageGeneration, Value), AppError> {
+        self.response(store, a)
+    }
+    fn resume(&self, store: &Store, a: &Admission, job: &JobRecord) -> Result<(), AppError> {
+        job_bridge::resume_in(store, job, || self.invoke(store, a)).map(|_| ())
+    }
+    fn terminal_resume(
+        &self,
+        store: &Store,
+        a: &Admission,
+        _: Option<&JobRecord>,
+    ) -> Result<(), AppError> {
+        self.invoke(store, a)
+    }
+}
+struct Transport<'a> {
+    machine: &'a Machine,
+}
+impl ai_operations::AutomaticPort for Transport<'_> {
+    fn active(
+        &self,
+        a: &Admission,
+        _: Option<&JobRecord>,
+        _: bool,
+        _: &str,
+    ) -> Result<bool, AppError> {
+        FixtureRpc {
+            machine: self.machine,
+        }
+        .status(a)?;
+        let ops = self.machine.operations.borrow();
+        let op = ops.iter().find(|o| o.id == a.operation_id).unwrap();
+        Ok(!op.removed
+            && !op.acknowledged
+            && (op.provider_live || op.consumer_live || op.writer.is_some()))
+    }
+    fn recover(&self, a: &Admission, job: Option<&JobRecord>) -> Result<(), AppError> {
+        ai_operations::recover_in(
+            self.machine.store(),
+            a,
+            job,
+            &FixtureRpc {
+                machine: self.machine,
+            },
+        )
+    }
+}
+
+const MIN_DEEP_TRANSITION_HITS: u64 = 3;
+const REQUIRED_TRANSITIONS: &[&str] = &[
+    "admit",
+    "stage-durable",
+    "stage-unsynced",
+    "stage-partial",
+    "active-recovery-writer-gc",
+    "crash-midwrite",
+    "seal",
+    "provider-complete",
+    "publication-failure",
+    "publish-success",
+    "publish-unknown",
+    "publish-failed",
+    "publish-cancelled",
+    "host-spool",
+    "fenced-unbound-repair",
+    "replacement-provider-unbound-spool",
+    "ambiguous-unbound-refusal",
+    "provider-request-counter-collision",
+    "healthy-probe",
+    "unhealthy-probe",
+    "provider-active",
+    "consumer-active",
+    "worker-idle",
+    "acquire",
+    "ack-crash",
+    "ack-complete",
+    "consumer-receive-crash",
+    "consumer-receive-complete",
+    "replay-fence",
+    "provider-compatible",
+    "consumer-compatible",
+    "provider-incompatible",
+    "consumer-incompatible",
+    "disable",
+    "reenable",
+    "uninstall",
+    "sweep",
+    "gc",
+    "unlink-fault",
+    "directory-sync-fault",
+    "restart",
+    "power-loss",
+    "equal-conflicting-receipt",
+    "delayed-lower-receipt",
+    "shared-provider-consumers",
+    "bound-spool-reserve",
+    "unbound-spool-reserve",
+    "nonzero-spool-reserve",
+    "spool-reply-persist",
+    "spool-pending-commit",
+    "spool-output-fsync",
+    "spool-manifest-publish",
+    "spool-seal-commit",
+    "crash-after-spool-reserve",
+    "crash-after-spool-reply",
+    "crash-after-spool-pending",
+    "crash-after-spool-fsync",
+    "crash-after-spool-manifest",
+    "crash-after-spool-seal",
+    "settlement-crash-before-collection",
+    "crash-lifecycle-intent",
+    "crash-lifecycle-index",
+    "crash-lifecycle-abandonment",
+    "crash-lifecycle-cleanup",
+    "crash-upgrade-prepared",
+    "crash-upgrade-committed",
+    "crash-upgrade-published",
+    "crash-replacement-abandoned",
+    "recovery-rpc-paused-disable",
+    "recovery-rpc-paused-uninstall",
+    "recovery-rpc-paused-compatible-upgrade",
+    "recovery-rpc-paused-incompatible-upgrade",
+    "acquisition-paused-disable",
+    "acquisition-paused-uninstall",
+    "acquisition-paused-compatible-upgrade",
+    "acquisition-paused-incompatible-upgrade",
+    "native-writer-paused-disable",
+    "native-writer-paused-uninstall",
+    "native-writer-paused-compatible-upgrade",
+    "native-writer-paused-incompatible-upgrade",
+];
+fn collect_trace(
+    trace: Vec<Command>,
+    totals: &mut BTreeMap<&'static str, u64>,
+) -> Result<(), TestCaseError> {
+    let mut machine = Machine::new();
+    machine.admit(0, false)?;
+    for command in trace {
+        machine.apply(command)?;
+    }
+    machine.quiesce()?;
+    for (family, hits) in std::mem::take(&mut machine.coverage) {
+        *totals.entry(family).or_default() += hits;
+    }
+    Ok(())
+}
+/// Directed schedules complement random exploration: every required boundary
+/// is reached with real preconditions, then random commands interleave those
+/// same transitions. A missing/inert transition is a failing deep run.
+fn coverage_campaign(totals: &mut BTreeMap<&'static str, u64>) -> Result<(), TestCaseError> {
+    for _ in 0..MIN_DEEP_TRANSITION_HITS {
+        collect_trace(vec![Command::Sweep, Command::UnboundRepair(0)], totals)?;
+        collect_trace(
+            vec![Command::SharedConsumerAdmit, Command::AmbiguousSpool(0)],
+            totals,
+        )?;
+        collect_trace(
+            vec![
+                Command::Spool(0),
+                Command::Upgrade(true, true, false),
+                Command::ReplacementCollision(0),
+            ],
+            totals,
+        )?;
+        collect_trace(
+            vec![
+                Command::Upgrade(true, true, false),
+                Command::ReplacementSpool(0),
+                Command::Enable(false, false),
+            ],
+            totals,
+        )?;
+        for phase in 1..=6 {
+            let mut trace = vec![Command::SpoolReserve(0, true, false)];
+            trace.extend(
+                [
+                    Command::SpoolReply(0),
+                    Command::SpoolPending(0),
+                    Command::SpoolFsync(0),
+                    Command::SpoolManifest(0),
+                    Command::SpoolSeal(0),
+                ]
+                .into_iter()
+                .take(usize::from(phase - 1)),
+            );
+            trace.push(Command::SpoolCrash(0, phase));
+            collect_trace(trace, totals)?;
+        }
+        for bound in [false, true] {
+            collect_trace(
+                vec![
+                    Command::SpoolReserve(0, bound, true),
+                    Command::SpoolReply(0),
+                    Command::SpoolPending(0),
+                    Command::SpoolFsync(0),
+                    Command::SpoolManifest(0),
+                    Command::SpoolSeal(0),
+                    Command::Publish(0, 2, false),
+                    Command::SettlementCrash(0),
+                ],
+                totals,
+            )?;
+            collect_trace(
+                vec![
+                    Command::SpoolReserve(0, bound, false),
+                    Command::SpoolReply(0),
+                    Command::SpoolPending(0),
+                    Command::SpoolFsync(0),
+                    Command::SpoolManifest(0),
+                    Command::SpoolSeal(0),
+                    Command::Enable(false, false),
+                ],
+                totals,
+            )?;
+        }
+        for point in 0..=7 {
+            collect_trace(
+                vec![Command::Spool(0), Command::LifecycleCrash(false, point)],
+                totals,
+            )?;
+        }
+        for kind in 0..=2 {
+            for action in 0..=3 {
+                let mut trace = if kind <= 1 {
+                    vec![Command::ProviderComplete(0)]
+                } else {
+                    vec![]
+                };
+                trace.push(Command::PausedMutation(0, kind, action));
+                collect_trace(trace, totals)?;
+            }
+        }
+        for (role, compatible) in [(true, true), (false, true), (true, false), (false, false)] {
+            collect_trace(
+                vec![Command::Spool(0), Command::Upgrade(role, compatible, false)],
+                totals,
+            )?;
+        }
+        for (complete, synced) in [(false, false), (true, false), (true, true)] {
+            collect_trace(
+                vec![Command::Stage(0, complete, synced), Command::Seal(0)],
+                totals,
+            )?;
+        }
+        collect_trace(
+            vec![Command::RecoveryWriterGc(0), Command::CrashMidWrite(0)],
+            totals,
+        )?;
+        for ack in [
+            Command::Ack(0, true),
+            Command::Ack(0, false),
+            Command::ConsumerReceive(0, true),
+            Command::ConsumerReceive(0, false),
+        ] {
+            collect_trace(
+                vec![
+                    Command::ProviderComplete(0),
+                    Command::Acquire(0),
+                    ack,
+                    Command::Restart,
+                ],
+                totals,
+            )?;
+        }
+        for outcome in 0..=3 {
+            collect_trace(
+                vec![
+                    Command::Publish(0, outcome, true),
+                    Command::Publish(0, outcome, false),
+                ],
+                totals,
+            )?;
+        }
+        collect_trace(
+            vec![
+                Command::SharedConsumerAdmit,
+                Command::Publish(0, 1, false),
+                Command::Publish(0, 1, false),
+                Command::DelayedReceipt(0, false),
+                Command::DelayedReceipt(0, true),
+                Command::Replay(0),
+                Command::WorkerActive(0, true, true),
+                Command::WorkerActive(0, false, true),
+                Command::Probe(true),
+                Command::WorkerActive(0, true, false),
+                Command::WorkerActive(0, false, false),
+                Command::Probe(false),
+                Command::Probe(true),
+                Command::UnlinkFailure(true),
+                Command::UnlinkFailure(false),
+                Command::DirectorySyncFailure(true),
+                Command::DirectorySyncFailure(false),
+                Command::Sweep,
+                Command::Gc,
+                Command::PowerLoss,
+                Command::Enable(false, false),
+                Command::Enable(false, true),
+                Command::Admit(1, true),
+                Command::Uninstall(false),
+            ],
+            totals,
+        )?;
+    }
+    Ok(())
+}
 fn run(cases: u32, steps: usize) {
     let totals = RefCell::new(BTreeMap::<&'static str, u64>::new());
+    if cases >= 1024 {
+        coverage_campaign(&mut totals.borrow_mut()).unwrap();
+    }
     let mut runner = TestRunner::new(Config {
         cases,
         max_shrink_iters: 10_000,
@@ -1438,16 +2762,28 @@ fn run(cases: u32, steps: usize) {
                 m.apply(command)?
             }
             m.quiesce()?;
-            for (family, n) in m.coverage {
+            for (family, n) in std::mem::take(&mut m.coverage) {
                 *totals.borrow_mut().entry(family).or_default() += n;
             }
             Ok(())
         })
         .unwrap();
-    println!(
-        "model applied transition coverage ({cases} cases): {:?}",
-        totals.into_inner()
-    );
+    let totals = totals.into_inner();
+    if cases >= 1024 {
+        let missing: Vec<_> = REQUIRED_TRANSITIONS
+            .iter()
+            .map(|name| (*name, totals.get(name).copied().unwrap_or(0)))
+            .filter(|(_, hits)| *hits < MIN_DEEP_TRANSITION_HITS)
+            .collect();
+        assert!(missing.is_empty(), "deep model requires >= {MIN_DEEP_TRANSITION_HITS} actual hits per transition; missing coverage: {missing:?}");
+        println!(
+            "model required coverage: {} transitions >= {} hits; ack-crash={}",
+            REQUIRED_TRANSITIONS.len(),
+            MIN_DEEP_TRANSITION_HITS,
+            totals["ack-crash"]
+        );
+    }
+    println!("model applied transition coverage ({cases} cases): {totals:?}");
 }
 #[test]
 fn ai_operations_reference_state_machine() {
@@ -1537,4 +2873,294 @@ fn model_live_unknown_waits_for_both_worker_proofs() {
 #[ignore = "deep property exploration; run explicitly for service/lifecycle changes"]
 fn ai_operations_reference_state_machine_deep() {
     run(1024, 100)
+}
+
+#[test]
+fn model_removal_cleans_unbound_provider_spool() {
+    let mut m = Machine::new();
+    m.admit(0, false).unwrap();
+    {
+        let mut ops = m.operations.borrow_mut();
+        let op = &mut ops[0];
+        let (handle, path) = m
+            .store()
+            .reserve_host_spool(&op.provider, "host:opaque", 4096)
+            .unwrap();
+        fs::write(path.join("stdout"), &op.original).unwrap();
+        fs::write(path.join("stderr"), []).unwrap();
+        m.store().seal_host_spool(&op.provider, &handle, 0).unwrap();
+        op.spool = Some(handle);
+        op.paid_success = true;
+        op.valid_original = true;
+        op.durable_original = true;
+    }
+    m.apply(Command::Enable(false, false)).unwrap();
+    m.quiesce().unwrap();
+}
+
+#[test]
+fn model_terminal_provider_outcome_cannot_start_native_writer() {
+    for outcome in [2, 3] {
+        let mut m = Machine::new();
+        m.admit(0, false).unwrap();
+        m.apply(Command::Publish(0, outcome, true)).unwrap();
+        m.apply(Command::Spool(0)).unwrap();
+        assert!(m.operations.borrow()[0].spool.is_none());
+        assert_eq!(m.operations.borrow()[0].starts.get(), 1);
+        m.quiesce().unwrap();
+    }
+}
+
+#[test]
+fn model_replacement_provider_unbound_reply_delivers_original() {
+    let mut m = Machine::new();
+    m.admit(0, false).unwrap();
+    m.apply(Command::Upgrade(true, true, false)).unwrap();
+    m.apply(Command::ReplacementSpool(0)).unwrap();
+    assert!(m.operations.borrow()[0].valid_original);
+    m.quiesce().unwrap();
+    let ops = m.operations.borrow();
+    let op = &ops[0];
+    assert_eq!(fs::read(&op.copy).unwrap(), op.original);
+    assert_eq!(op.starts.get(), 1);
+    assert_eq!(op.delivery_effects.get(), 1);
+    assert_eq!(m.charges(), 0);
+    assert_eq!(m.disk_bytes(), 0);
+}
+
+#[test]
+fn model_replacement_provider_unbound_reply_is_removed_with_consumer() {
+    let mut m = Machine::new();
+    m.admit(0, false).unwrap();
+    m.apply(Command::Upgrade(true, true, false)).unwrap();
+    m.apply(Command::ReplacementSpool(0)).unwrap();
+    let ops = m.operations.borrow();
+    let op = &ops[0];
+    assert!(op.spool.is_some());
+    assert_ne!(op.spool_owner.as_ref().unwrap().digest, op.provider.digest);
+    assert_eq!(op.starts.get(), 1);
+    drop(ops);
+    m.apply(Command::Enable(false, false)).unwrap();
+    m.quiesce().unwrap();
+    assert_eq!(m.charges(), 0);
+    assert_eq!(m.disk_bytes(), 0);
+}
+
+#[test]
+fn model_fenced_unknown_unbound_repair_conserves_original() {
+    let mut m = Machine::new();
+    m.admit(0, false).unwrap();
+    m.apply(Command::Sweep).unwrap();
+    let (consumer, operation) = {
+        let ops = m.operations.borrow();
+        (ops[0].consumer.package_id.clone(), ops[0].id.clone())
+    };
+    assert!(m.store().execution_released(&consumer, &operation).unwrap());
+    m.apply(Command::UnboundRepair(0)).unwrap();
+    assert!(m.operations.borrow()[0].unpaid_repair);
+    assert!(m.operations.borrow()[0].valid_original);
+    m.quiesce().unwrap();
+    assert_eq!(m.operations.borrow()[0].starts.get(), 1);
+    assert_eq!(m.operations.borrow()[0].delivery_effects.get(), 1);
+    assert_eq!(m.charges(), 0);
+    assert_eq!(m.disk_bytes(), 0);
+}
+
+#[test]
+fn model_fenced_unknown_unbound_repair_is_removed_with_consumer() {
+    let mut m = Machine::new();
+    m.admit(0, false).unwrap();
+    m.apply(Command::Sweep).unwrap();
+    m.apply(Command::UnboundRepair(0)).unwrap();
+    assert!(m.operations.borrow()[0].unpaid_repair);
+    m.apply(Command::Enable(false, false)).unwrap();
+    m.quiesce().unwrap();
+    assert_eq!(m.charges(), 0);
+    assert_eq!(m.disk_bytes(), 0);
+}
+
+#[test]
+fn model_refused_native_attempt_uses_fresh_reverse_call_identity() {
+    let mut m = Machine::new();
+    m.admit(0, false).unwrap();
+    m.apply(Command::SharedConsumerAdmit).unwrap();
+    let index = m.index(2).unwrap();
+    m.apply(Command::DirectorySyncFailure(true)).unwrap();
+    m.apply(Command::Spool(2)).unwrap();
+    let first_request = m.operations.borrow()[index].spool_request.clone();
+    assert!(m.operations.borrow()[index].spool.is_none());
+    assert!(!m.operations.borrow()[index].captured_process_reply);
+    m.apply(Command::PowerLoss).unwrap();
+    m.apply(Command::Spool(2)).unwrap();
+    assert_ne!(m.operations.borrow()[index].spool_request, first_request);
+    m.quiesce().unwrap();
+    assert_eq!(m.operations.borrow()[index].starts.get(), 1);
+    assert_eq!(m.operations.borrow()[index].delivery_effects.get(), 1);
+}
+
+#[test]
+fn model_terminal_provider_rejects_late_reserved_reply() {
+    for outcome in [2, 3] {
+        for bound in [false, true] {
+            let mut m = Machine::new();
+            m.admit(0, false).unwrap();
+            m.apply(Command::SpoolReserve(0, bound, false)).unwrap();
+            m.apply(Command::Publish(0, outcome, true)).unwrap();
+            for phase in [
+                Command::SpoolReply(0),
+                Command::SpoolPending(0),
+                Command::SpoolFsync(0),
+                Command::SpoolManifest(0),
+                Command::SpoolSeal(0),
+            ] {
+                m.apply(phase).unwrap();
+            }
+            assert!(!m.operations.borrow()[0].paid_success);
+            assert!(!m.operations.borrow()[0].valid_original);
+            assert!(m.operations.borrow()[0].captured_process_reply);
+            let ops = m.operations.borrow();
+            let op = &ops[0];
+            assert_eq!(
+                fs::read(
+                    m.fixture
+                        .profile
+                        .path()
+                        .join("service-state/host-spools")
+                        .join(op.spool.as_ref().unwrap())
+                        .join("stdout"),
+                )
+                .unwrap(),
+                op.original,
+            );
+            drop(ops);
+            m.quiesce().unwrap();
+            assert_eq!(m.charges(), 0);
+            assert_eq!(m.disk_bytes(), 0);
+        }
+    }
+}
+
+#[test]
+fn model_provider_rejection_fences_late_raw_native_reply() {
+    for outcome in [2, 3] {
+        let mut m = Machine::new();
+        m.admit(0, false).unwrap();
+        for command in [
+            Command::SpoolReserve(0, false, false),
+            Command::Publish(0, outcome, false),
+            Command::Sweep,
+            Command::Spool(0),
+        ] {
+            m.apply(command).unwrap();
+        }
+        assert!(m.operations.borrow()[0].captured_process_reply);
+        assert!(!m.operations.borrow()[0].paid_success);
+        assert!(!m.operations.borrow()[0].valid_original);
+        m.quiesce().unwrap();
+        assert_eq!(m.charges(), 0);
+        assert_eq!(m.disk_bytes(), 0);
+    }
+}
+
+#[test]
+fn model_replacement_request_counter_collision_delivers_pinned_original() {
+    for bound in [false, true] {
+        let mut m = Machine::new();
+        m.admit(0, false).unwrap();
+        m.complete_spool(0, bound).unwrap();
+        m.apply(Command::Upgrade(true, true, false)).unwrap();
+        m.apply(Command::ReplacementCollision(0)).unwrap();
+        assert_eq!(m.operations.borrow()[0].extra_spools.len(), 1);
+        m.quiesce().unwrap();
+        let ops = m.operations.borrow();
+        let op = &ops[0];
+        assert_eq!(fs::read(&op.copy).unwrap(), op.original);
+        assert_eq!(op.starts.get(), 1);
+        assert_eq!(op.delivery_effects.get(), 1);
+        assert_eq!(m.charges(), 0);
+        assert_eq!(m.disk_bytes(), 0);
+    }
+}
+
+#[test]
+fn model_host_only_unknown_success_emits_one_removal_notice() {
+    for bound in [false, true] {
+        let mut m = Machine::new();
+        m.admit(0, false).unwrap();
+        for command in [
+            Command::SpoolReserve(0, bound, false),
+            Command::SpoolReply(0),
+            Command::SpoolPending(0),
+            Command::SpoolFsync(0),
+            Command::SpoolManifest(0),
+            Command::SpoolSeal(0),
+            Command::Publish(0, 1, false),
+            Command::Enable(false, false),
+        ] {
+            m.apply(command).unwrap();
+        }
+        m.quiesce().unwrap();
+        let id = m.operations.borrow()[0].id.clone();
+        assert_eq!(
+            m.notices.get(&id),
+            Some(&1),
+            "durable original had no emitted undelivered notice (bound={bound})"
+        );
+    }
+}
+
+#[test]
+fn model_shared_provider_removal_preserves_only_surviving_custody() {
+    let mut m = Machine::new();
+    m.admit(0, false).unwrap();
+    m.admit((SLOTS - 1) as u8, false).unwrap();
+    m.apply(Command::Spool(0)).unwrap();
+    m.apply(Command::Spool((SLOTS - 1) as u8)).unwrap();
+    let (provider, first_handle, second_handle) = {
+        let ops = m.operations.borrow();
+        assert_eq!(
+            ops[0].provider, ops[1].provider,
+            "one native provider generation serves both consumers"
+        );
+        (
+            ops[0].provider.clone(),
+            ops[0].spool.clone().unwrap(),
+            ops[1].spool.clone().unwrap(),
+        )
+    };
+    let charge = m.charges();
+    let disk = m.disk_bytes();
+    let refusal = m
+        .store()
+        .reserve_host_spool(&provider, "opaque-shared-provider-reply", 4096)
+        .unwrap_err();
+    assert!(refusal
+        .to_string()
+        .contains("host output custody is ambiguous"));
+    assert_eq!(m.charges(), charge);
+    assert_eq!(m.disk_bytes(), disk);
+    m.apply(Command::Enable(false, false)).unwrap();
+    let root = m.fixture.profile.path().join("service-state/host-spools");
+    assert!(!root.join(first_handle).exists());
+    assert!(root.join(&second_handle).join("stdout").exists());
+    let second_id = m.fixture.second_consumer.manifest.id.clone();
+    let (result, events) =
+        backend::capture_job_events(|| super::super::set_enabled(&m.profile(), &second_id, false));
+    result.unwrap();
+    m.observe_events(events).unwrap();
+    for op in m.operations.borrow_mut().iter_mut() {
+        op.removed = true;
+    }
+    m.quiesce().unwrap();
+    assert!(!root.join(second_handle).exists());
+}
+
+#[test]
+fn model_presealed_original_is_recovered_through_rpc() {
+    let mut m = Machine::new();
+    m.admit(0, false).unwrap();
+    m.apply(Command::Stage(0, true, false)).unwrap();
+    m.apply(Command::Seal(0)).unwrap();
+    m.quiesce().unwrap();
+    assert_eq!(m.operations.borrow()[0].delivery_effects.get(), 1);
 }

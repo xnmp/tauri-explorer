@@ -271,3 +271,7 @@ pub async fn get_media_durations(paths: Vec<String>) -> Result<Vec<Option<f64>>,
 #[cfg(test)]
 #[path = "../test_support/media_duration.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "../test_support/media_duration_bounds.rs"]
+mod bounds_tests;

@@ -1,13 +1,14 @@
 /**
- * E2E: each right-click gesture mounts the context menu exactly once (#1062).
+ * E2E: each right-click gesture shows the context menu once, without motion
+ * (#1062).
  *
- * The `menuIn` entrance animation restarts whenever the `.context-menu`
- * element is recreated, so a gesture that opens the menu twice is visible as
- * the menu fading in a second time. We count `.context-menu` insertions and
- * `menuIn` animation starts per gesture. The menu is mounted `visibility:
- * hidden` for one measuring frame, so the entrance animation must also start
- * only once it is revealed: an animation spent while hidden is replayed (or
- * skipped) by the engine at reveal, which reads as a second fade-in.
+ * The reported "menu loads twice" was WebKitGTK dropping the menu's
+ * backdrop-filter surface for one frame when its entrance animation ended, so
+ * the menu blinked see-through ~100 ms after opening. Chromium cannot render
+ * that glitch, so this suite pins the contract that prevents it: menu
+ * surfaces (`.context-menu`, `.submenu`) and their contents run no animations
+ * and are fully opaque from their first visible frame, and each gesture
+ * mounts the menu exactly once.
  */
 import { test, expect, type Locator, type Page } from "./fixtures";
 import { ALL_VIEW_MODES, pressShortcut, seedSettings, waitForEntries, type ViewMode } from "./helpers";
@@ -17,12 +18,14 @@ const START_PATH = "/home/user/Pictures";
 /** Layouts: bare, and the reported one (preview pane on, two panes). */
 const LAYOUTS = ["single pane", "preview pane + two panes"] as const;
 
-type Probe = { inserted: number; animations: number; animationsWhileHidden: number };
+type Probe = { inserted: number; animations: number; translucentFrames: number };
+
+const MENU_SURFACE = ".context-menu, .submenu";
 
 async function installProbe(page: Page): Promise<void> {
-  await page.evaluate(() => {
+  await page.evaluate((surface) => {
     const w = window as unknown as { __ctxProbe: Probe };
-    w.__ctxProbe = { inserted: 0, animations: 0, animationsWhileHidden: 0 };
+    w.__ctxProbe = { inserted: 0, animations: 0, translucentFrames: 0 };
     new MutationObserver((records) => {
       for (const record of records) {
         for (const node of record.addedNodes) {
@@ -34,14 +37,22 @@ async function installProbe(page: Page): Promise<void> {
     document.addEventListener(
       "animationstart",
       (e) => {
-        if ((e.target as HTMLElement).classList?.contains("context-menu") && e.animationName.includes("menuIn")) {
-          w.__ctxProbe.animations++;
-          if (getComputedStyle(e.target as HTMLElement).visibility === "hidden") w.__ctxProbe.animationsWhileHidden++;
-        }
+        if ((e.target as Element).closest?.(surface)) w.__ctxProbe.animations++;
       },
       true,
     );
-  });
+    // Every frame, any visible menu surface must already be fully opaque.
+    const sample = () => {
+      for (const el of document.querySelectorAll<HTMLElement>(surface)) {
+        const style = getComputedStyle(el);
+        if (style.visibility !== "hidden" && el.offsetParent !== null && style.opacity !== "1") {
+          w.__ctxProbe.translucentFrames++;
+        }
+      }
+      requestAnimationFrame(sample);
+    };
+    requestAnimationFrame(sample);
+  }, MENU_SURFACE);
 }
 
 async function resetProbe(page: Page): Promise<void> {
@@ -49,7 +60,7 @@ async function resetProbe(page: Page): Promise<void> {
     const w = window as unknown as { __ctxProbe: Probe };
     w.__ctxProbe.inserted = 0;
     w.__ctxProbe.animations = 0;
-    w.__ctxProbe.animationsWhileHidden = 0;
+    w.__ctxProbe.translucentFrames = 0;
   });
 }
 
@@ -101,7 +112,7 @@ for (const layout of LAYOUTS) {
         await waitForEntries(page);
         await resetProbe(page);
         await rows(page).nth(0).click({ button: "right" });
-        expect(await settledCounts(page)).toEqual({ inserted: 1, animations: 1, animationsWhileHidden: 0 });
+        expect(await settledCounts(page)).toEqual({ inserted: 1, animations: 0, translucentFrames: 0 });
       });
 
       test("right-click on another entry while a menu is open replaces it with one mount", async ({ page }) => {
@@ -115,7 +126,7 @@ for (const layout of LAYOUTS) {
         await resetProbe(page);
         await page.mouse.click(x, y, { button: "right" });
         await expect(second).toHaveClass(/selected/);
-        expect(await settledCounts(page)).toEqual({ inserted: 1, animations: 1, animationsWhileHidden: 0 });
+        expect(await settledCounts(page)).toEqual({ inserted: 1, animations: 0, translucentFrames: 0 });
         // The menu moved to the new target rather than staying on the old one.
         await expect(page.locator(".file-list").first().locator(".entry-item.selected")).toHaveAttribute("data-path", secondPath!);
       });
@@ -127,8 +138,26 @@ for (const layout of LAYOUTS) {
         await resetProbe(page);
         const box = (await page.locator(".file-list").first().boundingBox())!;
         await page.mouse.click(box.x + 6, box.y + box.height - 6, { button: "right" });
-        expect(await settledCounts(page)).toEqual({ inserted: 1, animations: 1, animationsWhileHidden: 0 });
+        expect(await settledCounts(page)).toEqual({ inserted: 1, animations: 0, translucentFrames: 0 });
       });
     });
   }
 }
+
+test("submenus open without an entrance animation", async ({ page }) => {
+  await page.goto(`/?path=${encodeURIComponent(START_PATH)}`);
+  await waitForEntries(page);
+  await installProbe(page);
+  const box = (await page.locator(".file-list").first().boundingBox())!;
+  await page.mouse.click(box.x + 6, box.y + box.height - 6, { button: "right" });
+  await expect(page.locator(".context-menu")).toBeVisible();
+  await resetProbe(page);
+  const trigger = page.locator(".context-menu .submenu-wrapper").first();
+  await trigger.hover();
+  await expect(trigger.locator(".submenu")).toBeVisible();
+  await page.waitForTimeout(300);
+  expect(await page.evaluate(() => (window as unknown as { __ctxProbe: Probe }).__ctxProbe)).toMatchObject({
+    animations: 0,
+    translucentFrames: 0,
+  });
+});

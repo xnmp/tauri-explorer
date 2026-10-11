@@ -357,8 +357,8 @@
     // zoom-adjusted. The rAF callback below converts to CSS pixels.
 
     // Measure after layout, clamp, then reveal.
-    // Use offsetWidth/offsetHeight instead of getBoundingClientRect — the latter
-    // returns the animated (scaled-down) size due to the menuIn animation.
+    // Use offsetWidth/offsetHeight (layout size, untransformed) rather than
+    // getBoundingClientRect.
     requestAnimationFrame(async () => {
       if (!menuEl) return;
       // With CSS zoom, position:fixed coordinates are in CSS pixels but the
@@ -425,7 +425,6 @@
   <div
     bind:this={menuEl}
     class="context-menu"
-    class:revealed={menuVisible}
     style="left: {clampedX}px; top: {clampedY}px; visibility: {menuVisible ? 'visible' : 'hidden'};"
     role="menu"
     tabindex="-1"
@@ -864,26 +863,13 @@
     border: 1px solid var(--surface-stroke-flyout);
     border-radius: var(--radius-lg);
     box-shadow: var(--shadow-flyout);
-  }
-  /* The menu is mounted hidden for one measuring frame (see the clamp effect).
-     Start the entrance only once it is revealed: an animation begun while
-     hidden is spent or replayed by the engine at reveal, so the menu appeared
-     to fade in a second time (#1062). */
-  .context-menu.revealed {
-    animation: menuIn 100ms cubic-bezier(0, 0, 0, 1);
+    /* No entrance animation, here or on .submenu. WebKitGTK drops a
+       backdrop-filter surface for one frame whenever a composited animation
+       inside or on it ends, so the menu blinked see-through ~100 ms after
+       opening (#1062). Native context menus with blur (macOS, GTK) also
+       appear instantly. */
   }
   .menu-item:focus-visible { outline: 2px solid var(--focus-stroke-outer); outline-offset: -2px; }
-
-  @keyframes menuIn {
-    from {
-      opacity: 0;
-      transform: scale(0.95) translateY(-4px);
-    }
-    to {
-      opacity: 1;
-      transform: scale(1) translateY(0);
-    }
-  }
 
   .menu-item {
     display: flex;
@@ -978,7 +964,6 @@
     border: 1px solid var(--surface-stroke-flyout);
     border-radius: var(--radius-lg);
     box-shadow: var(--shadow-flyout);
-    animation: menuIn 100ms cubic-bezier(0, 0, 0, 1);
   }
 
   .ai-submenu {

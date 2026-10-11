@@ -1,26 +1,35 @@
-# 1062 — context menu appeared to fade in twice
+# 1062 — context menu appeared to load twice (blinked after opening)
 
-**Symptom:** after a right-click (most visibly while another menu was open) the
-menu faded in, became fully visible, then faded in again ~100 ms later (the
-length of `menuIn`).
+**Symptom:** on Linux, right-clicking showed the menu, then ~100 ms later it
+flickered as if it had loaded a second time.
 
-**What was ruled out:** a double mount. A MutationObserver on `.context-menu`
-insertions and an `animationstart` counter show exactly one insertion and one
-`menuIn` per gesture in Chromium and Playwright WebKit, in Details/List/Tiles,
-with the preview pane on and two panes. The backdrop's close + rAF re-dispatch
-produces one `open`, not two.
+**What was ruled out:** a double mount or a replayed animation. Instrumenting
+the real WebKitGTK app (store open/close with stacks, a MutationObserver on the
+menu, `animationstart`/`animationend`, per-frame computed style) showed one
+open, one insertion, one reveal, one `menuIn` run, and constant style
+afterwards. A first fix that only started the animation at reveal (and a
+`will-change` layer-retention attempt) did not change the recording.
 
-**Cause:** `ContextMenu.svelte` mounts the `.context-menu` element
-`visibility: hidden` for one measuring frame (clamp effect), but `menuIn` was
-bound to the element itself, so the animation started at mount, while hidden.
-The reveal lands one or more frames later (>100 ms under load, in WebKit the
-whole animation can elapse hidden), and the engine then spends or replays the
-entrance at reveal, which reads as a second fade-in. The in-repo harness cannot
-reproduce the visual replay itself, only that the animation starts while hidden
-(it did in 6 of 9 single-pane cases before the fix).
+**Cause:** a WebKitGTK compositor glitch. Off-screen 60 fps recordings
+(`wf-recorder` on a headless Hyprland output, frame-diffed) show one frame
+~117 ms after opening where the menu's `backdrop-filter` surface is missing —
+the menu turns see-through and unblurred — exactly when the 100 ms `menuIn`
+animation ends. Variants isolated it: removing the animation or removing
+`backdrop-filter` each eliminated the blink; an opacity-only animation still
+blinked; animating only the menu's children kept the backdrop but flashed the
+children instead. Any composited animation ending on or inside a
+backdrop-filter element drops a frame.
 
-**Fix:** the entrance is gated on `.context-menu.revealed` (`menuVisible`), so
-the animation starts exactly when the menu becomes visible.
+**Fix:** `.context-menu` and `.submenu` keep their acrylic blur and appear
+without an entrance animation — matching native blurred menus (macOS, GTK),
+which also appear instantly.
 
-**Test:** `e2e/context-menu-single-open.spec.ts` asserts one insertion, one
-`menuIn` start, and none while hidden, per gesture.
+**Test:** `e2e/context-menu-single-open.spec.ts` asserts one insertion per
+gesture, no animation on any menu surface or its contents, and full opacity
+from the first visible frame (it fails with `menuIn` restored). Chromium cannot
+render the glitch itself; verify visual changes to blurred surfaces with a
+frame-diffed recording of the real app.
+
+**General rule:** don't animate elements that carry `backdrop-filter` (or
+their descendants) in a way whose end WebKitGTK can composite late; either
+drop the motion or drop the blur on that surface.

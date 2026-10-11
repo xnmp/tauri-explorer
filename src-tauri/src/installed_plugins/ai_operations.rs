@@ -257,7 +257,12 @@ mod active_tests {
     }
     #[test]
     fn terminal_jobs_are_not_active() {
-        for s in [JobState::Completed, JobState::Error, JobState::Cancelled, JobState::Discarded] {
+        for s in [
+            JobState::Completed,
+            JobState::Error,
+            JobState::Cancelled,
+            JobState::Discarded,
+        ] {
             assert!(!is_active(Some(s), false, true), "{s:?}");
         }
     }

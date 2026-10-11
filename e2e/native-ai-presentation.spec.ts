@@ -130,3 +130,30 @@ test("progress panel shows the unresolved indicator only when AI operations are 
   const dialog = page.getByRole("dialog", { name: "Unresolved AI operations", exact: true });
   await expect(dialog.getByText("Original output retained")).toBeVisible();
 });
+
+test("an actively running AI operation is not counted as unresolved", async ({ page }) => {
+  await page.goto(HOME_URL); await waitForEntries(page);
+  await page.evaluate(async () => {
+    const { jobsStore } = await import("/src/lib/state/jobs.svelte.ts");
+    jobsStore.addJob(4322, "plain.png", "Running job", "openai-image", "image");
+  });
+  const progress = page.getByRole("region", { name: "Background progress" });
+  await expect(progress.getByText("Running job", { exact: true })).toBeVisible();
+  const seed = (rows: { id: string; active: boolean }[]) => page.evaluate(async (rows) => {
+    const { getMockControl } = await import("/src/lib/api/mock-control.ts");
+    const operations = rows.map(({ id, active }) => ({ operationId: id, consumerPackage: "xnmp.trace-explorer", providerPackage: "xnmp.image-generation", createdAtMs: Date.now(), execution: "running", delivery: "none", reason: `Reason ${id}`, canResume: true, canDiscard: false, canStop: false, active }));
+    getMockControl().nativeAiPresentation!.seed({ originWindow: "mock-window", watermark: 0, jobs: [] }, { version: 1, operations });
+  }, rows);
+
+  await seed([{ id: "op-active", active: true }]);
+  await expect(progress.getByText(/unresolved/)).toHaveCount(0);
+  await expect(progress.getByRole("button", { name: /Unresolved AI/ })).toHaveCount(0);
+
+  await seed([{ id: "op-active", active: true }, { id: "op-stuck", active: false }]);
+  const button = progress.getByRole("button", { name: "Unresolved AI operations: 1" });
+  await expect(button).toHaveText("1 unresolved");
+  await button.click();
+  const dialog = page.getByRole("dialog", { name: "Unresolved AI operations", exact: true });
+  await expect(dialog.locator('[data-operation-id="op-active"]').getByText("In progress")).toBeVisible();
+  await expect(dialog.locator('[data-operation-id="op-stuck"]').getByText("In progress")).toHaveCount(0);
+});

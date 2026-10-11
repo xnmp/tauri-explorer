@@ -48,7 +48,7 @@
       {:else if view.snapshot}
         <ul>{#each view.snapshot.operations as operation (aiOperationKey(operation))}
           <li data-operation-id={operation.operationId}>
-            <strong>{operation.operationId}</strong><div class="packages">{operation.consumerPackage} → {operation.providerPackage}</div><div class="age">{age(operation.createdAtMs)}</div>
+            <strong>{operation.operationId}</strong>{#if operation.active} <em class="in-progress">In progress</em>{/if}<div class="packages">{operation.consumerPackage} → {operation.providerPackage}</div><div class="age">{age(operation.createdAtMs)}</div>
             <dl><dt>Execution</dt><dd>{operation.execution}</dd><dt>Delivery</dt><dd>{operation.delivery}</dd></dl><p>{operation.reason}</p>
             <div class="actions">
               {#if operation.canResume}<button disabled={!!view.busyKey} onclick={() => controller.resolve(operation, "resume")}>Resume original recovery</button>{/if}
@@ -65,6 +65,7 @@
 <style>
   .operations { width: 640px; max-width: calc(100vw - 32px); max-height: calc(100dvh - 32px); box-sizing: border-box; padding: 20px; display: flex; flex-direction: column; gap: 12px; }
   header { display: flex; align-items: center; justify-content: space-between; gap: 12px; } h2 { margin: 0; font-size: 18px; }
+  .in-progress { font-style: normal; font-size: 12px; color: var(--text-secondary); }
   .intro, p { margin: 0; font-size: 13px; line-height: 1.5; overflow-wrap: anywhere; } .intro, .age, .packages { color: var(--text-secondary); }
   .toolbar, .actions { display: flex; flex-wrap: wrap; gap: 8px; } .content { overflow: auto; min-height: 0; } ul { list-style: none; padding: 0; margin: 0; display: grid; gap: 12px; }
   li { border: 1px solid var(--surface-stroke); border-radius: var(--radius-sm); padding: 12px; display: grid; gap: 8px; overflow-wrap: anywhere; } strong { font-size: 13px; } .packages, .age { font-size: 12px; }

@@ -3,6 +3,8 @@ export type AiResolution = "resume" | "discard" | "stop";
 export interface UnresolvedAiOperation {
   operationId: string; consumerPackage: string; providerPackage: string; createdAtMs: number | null;
   execution: string; delivery: string; reason: string; canResume: boolean; canDiscard: boolean; canStop: boolean;
+  /** True while a live job still drives the operation (in progress, nothing for the user to resolve). Absent in older snapshots. */
+  active?: boolean;
 }
 export interface AiOperationsSnapshot {
   version: 1; operations: UnresolvedAiOperation[]; migration?: { state: "pending" | "complete" | "absent"; error?: string };
@@ -19,12 +21,15 @@ export function validAiOperations(value: unknown): value is AiOperationsSnapshot
       || typeof r.operationId !== "string" || !/^[A-Za-z0-9._-]{1,128}$/.test(r.operationId)
       || r.createdAtMs !== null && (!Number.isSafeInteger(r.createdAtMs) || r.createdAtMs < 0)
       || !bounded(r.execution, 128) || !bounded(r.delivery, 128) || !bounded(r.reason, 2048)
-      || ![r.canResume, r.canDiscard, r.canStop].every((v) => typeof v === "boolean") || keys.has(aiOperationKey(r))) return false;
+      || ![r.canResume, r.canDiscard, r.canStop].every((v) => typeof v === "boolean") || r.active !== undefined && typeof r.active !== "boolean" || keys.has(aiOperationKey(r))) return false;
     keys.add(aiOperationKey(r));
   }
   return s.migration === undefined || !!s.migration && ["pending", "complete", "absent"].includes(s.migration.state)
     && (s.migration.error === undefined || bounded(s.migration.error, 2048));
 }
+/** Rows that need the user's attention: everything not actively in progress. */
+export const needsAttentionCount = (snapshot: { operations: readonly { active?: boolean }[] }): number =>
+  snapshot.operations.filter((r) => r.active !== true).length;
 export const resolutionAvailable = (r: UnresolvedAiOperation, action: AiResolution): boolean =>
   action === "resume" ? r.canResume : action === "discard" ? r.canDiscard : r.canStop;
 export function resolutionCopy(r: UnresolvedAiOperation, action: "discard" | "stop"): { title: string; body: string; button: string } {

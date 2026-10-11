@@ -1581,10 +1581,20 @@ mod tests {
         let canonical = dir.path().canonicalize().unwrap();
         let (tx, rx) = mpsc::channel::<String>();
         let (exit_tx, exit_rx) = mpsc::channel::<Option<u32>>();
-        // Output and exit are delivered by independent threads. Hold the first
-        // output callback until the test has observed exit to exercise that order.
+        let (pty_tx, pty_rx) = mpsc::channel::<String>();
+        let (ready_tx, ready_rx) = mpsc::channel::<()>();
+        // Delay only test-side delivery until exit. Blocking the production
+        // reader itself can fill the PTY buffer and prevent the shell exiting.
         let (release_output, output_gate) = mpsc::channel::<()>();
-        let output_gate = Mutex::new(Some(output_gate));
+        let forwarder = std::thread::spawn(move || {
+            if output_gate.recv().is_ok() {
+                for chunk in pty_rx {
+                    if tx.send(chunk).is_err() {
+                        break;
+                    }
+                }
+            }
+        });
 
         let (id, token) = reserve_started("test-window");
         let id = spawn_shell_with(
@@ -1596,10 +1606,8 @@ mod tests {
             80,
             24,
             move |chunk| {
-                if let Some(gate) = output_gate.lock().unwrap().take() {
-                    let _ = gate.recv_timeout(Duration::from_secs(10));
-                }
-                let _ = tx.send(chunk);
+                let _ = ready_tx.send(());
+                let _ = pty_tx.send(chunk);
             },
             move |code| {
                 let _ = exit_tx.send(code);
@@ -1608,6 +1616,13 @@ mod tests {
         )
         .expect("spawn failed")
         .id;
+
+        // This test covers cwd/output/exit, not startup typeahead. Wait for the
+        // shell's initial output before sending input to its interactive prompt.
+        ready_rx
+            .recv_timeout(Duration::from_secs(10))
+            .expect("shell never produced initial output");
+        drop(ready_rx);
 
         // Exceed a PTY buffer so a blocked output reader prevents shell exit
         // even on platforms that can exit with a short final output pending.
@@ -1639,7 +1654,12 @@ mod tests {
                 }
             }
         }
+        forwarder.join().expect("output forwarder panicked");
 
+        assert!(
+            output.contains(&" ".repeat(65536)),
+            "the large output payload should be delivered completely"
+        );
         assert!(
             output.contains(&*canonical.to_string_lossy()),
             "pwd output should contain the spawn cwd; got: {output}"

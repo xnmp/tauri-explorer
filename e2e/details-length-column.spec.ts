@@ -35,6 +35,18 @@ test("video rows show m:ss / h:mm:ss; non-video rows stay blank", async ({ page 
   await expect(lengthCell(page, "soundtrack.mp3")).toHaveText("");
   await expect(lengthCell(page, "unreadable.avi")).toHaveText("");
   await expect(page.locator(".details-view .length-cell").filter({ hasText: /0:00|NaN/ })).toHaveCount(0);
+});
+
+test("directories and documents keep an empty Length cell", async ({ page }) => {
+  await seedSettings(page, { zoomLevel: 100 }, { replace: true });
+  await page.setViewportSize({ width: 1440, height: 700 });
+  await page.goto("/?path=/home/user/Documents&viewMode=details");
+  const cells = page.locator(".details-view .entry-item .length-cell");
+  await expect(page.locator(".details-view .entry-item").first()).toBeVisible();
+  await expect(cells.first()).toBeAttached();
+  await expect(page.locator(".details-view .column-header.length-column")).toBeVisible();
+  expect(await cells.count()).toBeGreaterThanOrEqual(5);
+  for (const text of await cells.allTextContents()) expect(text.trim()).toBe("");
   await page.locator(".details-view").screenshot({ path: `${EVIDENCE}/ac-5-blank-for-non-video.png` });
 });
 

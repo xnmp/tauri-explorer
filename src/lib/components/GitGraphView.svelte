@@ -262,8 +262,15 @@
     await pending;
   }
 
-  const beginComparison = detailSession.beginComparison;
-  const exitComparison = detailSession.exitComparison;
+  function beginComparison(): void {
+    branchSession.cancelMergeBase();
+    detailSession.beginComparison();
+  }
+
+  function exitComparison(): Promise<void> {
+    branchSession.cancelMergeBase();
+    return detailSession.exitComparison();
+  }
 
   /** Expand/collapse one file's diff below its row. */
   async function toggleFileDiff(file: DetailFile): Promise<void> {

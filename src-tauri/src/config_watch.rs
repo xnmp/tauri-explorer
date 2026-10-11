@@ -649,15 +649,38 @@ mod tests {
     #[cfg(unix)]
     use super::THEMES_DIR;
     use super::{
-        map_event_paths, pending, reconcile_watch_plan, settings_path, watched_config_name,
-        ConfigWatchHarness, PhaseRecorder, Registrations, ShutdownError, StopSignal, WatchPlan,
-        WatchRegistration, WorkerPhase, BOOKMARKS_FILE, FOLDER_VIEWS_FILE, SETTINGS_FILE,
+        emit_config_file_changed, map_event_paths, pending, reconcile_watch_plan, settings_path,
+        watched_config_name, ConfigWatchHarness, PhaseRecorder, Registrations, ShutdownError,
+        StopSignal, WatchPlan, WatchRegistration, WorkerPhase, BOOKMARKS_FILE, FOLDER_VIEWS_FILE,
+        SETTINGS_FILE,
     };
     use notify::{RecommendedWatcher, RecursiveMode, Watcher};
     use std::collections::{HashMap, HashSet};
     use std::path::{Path, PathBuf};
     use std::sync::{mpsc, Arc, Mutex};
     use std::time::{Duration, Instant};
+
+    #[test]
+    fn config_file_changed_event_carries_an_object_payload_the_listener_can_read() {
+        // The listener reads `payload.filename`; a bare string payload made it
+        // throw on every launch (#1056).
+        use tauri::Listener;
+        let app = tauri::test::mock_app();
+        let (sender, received) = mpsc::channel();
+        app.listen_any("config-file-changed", move |event| {
+            let _ = sender.send(event.payload().to_owned());
+        });
+
+        emit_config_file_changed(app.handle(), "plugin.openai-image.json");
+
+        let payload = received
+            .recv_timeout(Duration::from_secs(5))
+            .expect("config-file-changed was emitted");
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&payload).unwrap(),
+            serde_json::json!({"filename": "plugin.openai-image.json"})
+        );
+    }
 
     #[derive(Default)]
     struct RecordingWatcher {

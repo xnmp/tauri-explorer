@@ -132,6 +132,22 @@ export function fixedFromClient(
   return chromium ? clientCoord / zoom : clientCoord / zoom ** 2;
 }
 
+/** Place a pointer menu in fixed CSS coordinates using its layout dimensions. */
+export function fixedMenuPosition(
+  pointer: { x: number; y: number },
+  viewport: { width: number; height: number },
+  menu: { width: number; height: number },
+  zoom: number,
+  singleScale: boolean,
+): { x: number; y: number } {
+  const fixed = (value: number) => fixedFromClient(value, zoom, singleScale);
+  const pad = 8;
+  return {
+    x: Math.max(pad, Math.min(fixed(pointer.x), fixed(viewport.width) - menu.width - pad)),
+    y: Math.max(pad, Math.min(fixed(pointer.y), fixed(viewport.height) - menu.height - pad)),
+  };
+}
+
 export function fixedFromRect(
   rectCoord: number,
   zoom: number,

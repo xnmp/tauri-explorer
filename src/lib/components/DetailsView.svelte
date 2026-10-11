@@ -11,7 +11,7 @@
   import { settingsStore } from "$lib/state/settings.svelte";
   import { useColumnResize } from "$lib/composables/use-column-resize.svelte";
   import { DETAIL_COLUMNS, type ColumnKey } from "$lib/domain/detail-columns";
-  import { fixedFromClient, getZoomFactor } from "$lib/domain/zoom";
+  import { fixedMenuPosition, getZoomFactor } from "$lib/domain/zoom";
   import FileItem from "./FileItem.svelte";
   import VirtualList from "./VirtualList.svelte";
   import InlineNewFolder, { NEW_FOLDER_SENTINEL, isNewFolderSentinel } from "./InlineNewFolder.svelte";
@@ -64,7 +64,6 @@
     if (!columnMenuPos) return;
     // The pointer, viewport and measured menu must share fixed-CSS space.
     // offset sizes avoid the engine-specific rect coordinate differences.
-    const pad = 8;
     // New WebKit versions scale fixed offsets once, while native versions
     // covered by fixedFromClient scale them twice. Measure offset scaling relative
     // to size scaling so both viewport-space and older CSS-space rects work.
@@ -77,11 +76,11 @@
     const scale = zoom * (probe.left - origin.left) / 100
       / (probe.width / node.offsetWidth);
     const singleScale = Math.abs(scale - zoom) <= Math.abs(scale - zoom ** 2);
-    const fixed = (value: number) => fixedFromClient(value, zoom, singleScale);
-    const x = fixed(columnMenuPos.x);
-    const y = fixed(columnMenuPos.y);
-    node.style.left = `${Math.max(pad, Math.min(x, fixed(window.innerWidth) - node.offsetWidth - pad))}px`;
-    node.style.top = `${Math.max(pad, Math.min(y, fixed(window.innerHeight) - node.offsetHeight - pad))}px`;
+    const position = fixedMenuPosition(columnMenuPos,
+      { width: window.innerWidth, height: window.innerHeight },
+      { width: node.offsetWidth, height: node.offsetHeight }, zoom, singleScale);
+    node.style.left = `${position.x}px`;
+    node.style.top = `${position.y}px`;
   }
 </script>
 

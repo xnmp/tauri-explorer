@@ -1,3 +1,7 @@
+import type { OpenPr, PrAction } from "./git-log";
+let mockCreatedPr: OpenPr | null = null;
+const mockMergedPrs = new Set<number>();
+const mockApprovedPrs = new Set<number>();
 import { createMockTextConnections } from "./mock-text-connections";
 import { createMockAiPresentation } from "./mock-ai-presentation";
 import type { AiResolution } from "$lib/domain/ai-operations";
@@ -2391,6 +2395,19 @@ if (typeof window !== "undefined") {
   // in e2e. #7 exercises a passing/approved/commented PR, #12 a failing draft
   // (draft styling wins over CI color), #15 the tokenless case (all status
   // fields null → plain purple badge, pending kept for label coverage).
+  git_pr_context: () => ({ repoSlug: "mock/project", headBranch: mockDetached ? null : (MOCK_GRAPH_REFS[mockHeadOid()] ?? []).find(ref => ref.kind === "LocalBranch")?.name ?? null }),
+
+  git_pr_action: (args: Record<string, unknown>) => {
+    const request = args.request as PrAction;
+    if (request.action === "create") {
+      mockCreatedPr = { number: 99, title: request.title, headRef: request.headBranch, baseRef: request.base, htmlUrl: "https://github.com/mock/project/pull/99", draft: false, ciStatus: null, reviewDecision: null, commentCount: 0, body: request.body };
+      return mockCreatedPr.htmlUrl;
+    }
+    if (request.action === "merge" && !new URLSearchParams(window.location.search).has("gitPrMergeQueued")) mockMergedPrs.add(request.prNumber);
+    else if (request.action === "approve") mockApprovedPrs.add(request.prNumber);
+    return "";
+  },
+
   git_open_prs: (args: Record<string, unknown>) => {
     const repoRoot = (args.repoRoot as string) ?? "";
     if (!repoRoot.startsWith("/home/user/Documents/project")) return [];
@@ -2501,7 +2518,8 @@ if (typeof window !== "undefined") {
         comments: [],
         reviewThreads: null,
       },
-    ];
+      ...(mockCreatedPr ? [mockCreatedPr] : []),
+    ].filter(pr => !mockMergedPrs.has(pr.number)).map(pr => mockApprovedPrs.has(pr.number) ? { ...pr, reviewDecision: "approved" } : pr);
   },
 
   git_failed_ci_checks: (args: Record<string, unknown>) => {

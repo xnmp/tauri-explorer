@@ -3,7 +3,7 @@
 use base64::Engine;
 use serde::{Deserialize, Serialize};
 use std::{
-    collections::HashMap,
+    collections::{HashMap, VecDeque},
     path::PathBuf,
     sync::{
         atomic::{AtomicU64, Ordering},
@@ -34,15 +34,23 @@ pub struct Source {
     native_copy_policy: Option<CopyPolicy>,
 }
 
-fn path_key(path: &str) -> String {
-    if cfg!(target_os = "windows") {
-        path.replace('\\', "/")
-    } else {
-        path.to_owned()
-    }
+fn matches(source: &Source, paths: &[PathBuf]) -> bool {
+    matches_with(source, paths, cfg!(target_os = "windows"), |path| {
+        dunce::canonicalize(path)
+            .unwrap_or_else(|_| PathBuf::from(path))
+            .to_string_lossy()
+            .into_owned()
+    })
 }
 
-fn matches(source: &Source, paths: &[PathBuf]) -> bool {
+// Filesystem resolution is injected so Windows transport rules can be tested
+// on every host OS without interpreting Windows paths as POSIX paths.
+fn matches_with(
+    source: &Source,
+    paths: &[PathBuf],
+    windows: bool,
+    canonicalize: impl Fn(&str) -> String,
+) -> bool {
     let source_paths = source
         .paths
         .as_deref()
@@ -52,29 +60,55 @@ fn matches(source: &Source, paths: &[PathBuf]) -> bool {
         || !source_paths.contains(&source.path)
         || source_paths.iter().any(|path| {
             path.contains('\0')
-                || !PathBuf::from(path).is_absolute()
-                || PathBuf::from(path)
-                    .components()
-                    .any(|part| matches!(part, std::path::Component::ParentDir))
+                || if windows {
+                    !(path.starts_with("\\\\")
+                        || (path.as_bytes().get(1) == Some(&b':')
+                            && matches!(path.as_bytes().get(2), Some(b'\\' | b'/'))))
+                        || path.split(['\\', '/']).any(|part| part == "..")
+                } else {
+                    !PathBuf::from(path).is_absolute()
+                        || PathBuf::from(path)
+                            .components()
+                            .any(|part| matches!(part, std::path::Component::ParentDir))
+                }
         })
     {
         return false;
     }
-    let mut expected: Vec<_> = source_paths.iter().map(|path| path_key(path)).collect();
+    // Match vendor/drag's Windows Files transport: dunce resolves drive-path
+    // links and keeps ordinary C:\ paths, while UNC paths pass through.
+    let key = |path: &str| {
+        if windows {
+            let path = if path.starts_with("\\\\") {
+                path.to_owned()
+            } else {
+                canonicalize(path)
+            };
+            path.replace('\\', "/")
+        } else {
+            path.to_owned()
+        }
+    };
+    let mut expected: Vec<_> = source_paths.iter().map(|path| key(path)).collect();
     let mut actual: Vec<_> = paths
         .iter()
-        .map(|path| path_key(&path.to_string_lossy()))
+        .map(|path| key(&path.to_string_lossy()))
         .collect();
     expected.sort();
     actual.sort();
     !expected.is_empty() && expected == actual
 }
 
-fn receiver_paths(paths: &[PathBuf]) -> bool {
+fn receiver_paths(paths: &[PathBuf], windows: bool) -> bool {
     paths.iter().all(|path| {
-        if cfg!(target_os = "windows") {
-            path.components()
-                .any(|part| matches!(part, std::path::Component::Normal(_)))
+        if windows {
+            let path = path.to_string_lossy().replace('\\', "/");
+            if path.starts_with("//") {
+                path.split('/').filter(|part| !part.is_empty()).count() > 2
+            } else {
+                path.get(3..)
+                    .is_some_and(|tail| tail.split('/').any(|part| !part.is_empty() && part != "."))
+            }
         } else {
             path.to_string_lossy()
                 .chars()
@@ -83,15 +117,128 @@ fn receiver_paths(paths: &[PathBuf]) -> bool {
     })
 }
 
+#[derive(Clone)]
+struct CapturedSource {
+    original: Source,
+    transport: Vec<String>,
+    windows: bool,
+}
+
+fn transport_keys(paths: &[PathBuf], windows: bool) -> Vec<String> {
+    let mut keys: Vec<_> = paths
+        .iter()
+        .map(|path| {
+            let path = path.to_string_lossy();
+            if windows {
+                path.replace('\\', "/")
+            } else {
+                path.into_owned()
+            }
+        })
+        .collect();
+    keys.sort();
+    keys
+}
+
+impl CapturedSource {
+    fn matches(&self, paths: &[PathBuf]) -> bool {
+        !self.transport.is_empty() && self.transport == transport_keys(paths, self.windows)
+    }
+}
+
 #[derive(Default)]
 struct Registry {
-    active: Option<(u64, String, Option<Source>)>,
-    receivers: HashMap<String, Source>,
+    active: Option<(u64, String, Option<CapturedSource>)>,
+    receivers: HashMap<String, CapturedSource>,
+    pending: HashMap<usize, VecDeque<(wry::DragDropEvent, Event)>>,
 }
 
 impl Registry {
+    fn begin_prepared(
+        &mut self,
+        token: u64,
+        owner: String,
+        source: Option<Source>,
+        transport: &[PathBuf],
+        windows: bool,
+    ) {
+        self.active = Some((
+            token,
+            owner,
+            source.map(|original| CapturedSource {
+                original,
+                transport: transport_keys(transport, windows),
+                windows,
+            }),
+        ));
+    }
+    fn capture(&mut self, window: usize, event: &wry::DragDropEvent, copying: bool) {
+        let native = event.clone();
+        let receiver = window.to_string();
+        let position = |(x, y): (i32, i32)| tauri::PhysicalPosition {
+            x: x as f64,
+            y: y as f64,
+        };
+        let event = match event {
+            wry::DragDropEvent::Enter {
+                paths,
+                position: point,
+            } => {
+                let source = self.enter(&receiver, paths);
+                Event::Enter {
+                    paths: receiver_event_paths(paths, source.as_ref()),
+                    position: position(*point),
+                    source,
+                    copy_modifier: Some(copying),
+                }
+            }
+            wry::DragDropEvent::Over { position: point } => Event::Over {
+                position: position(*point),
+                copy_modifier: Some(copying),
+            },
+            wry::DragDropEvent::Drop {
+                paths,
+                position: point,
+            } => {
+                let source = self.receive_drop(&receiver, paths);
+                Event::Drop {
+                    paths: receiver_event_paths(paths, source.as_ref()),
+                    position: position(*point),
+                    source,
+                    copy_modifier: Some(copying),
+                }
+            }
+            wry::DragDropEvent::Leave => {
+                self.leave(&receiver);
+                Event::Leave
+            }
+            _ => return,
+        };
+        self.pending
+            .entry(window)
+            .or_default()
+            .push_back((native, event));
+    }
+    fn take(&mut self, window: usize, delivered: &tauri::DragDropEvent) -> Option<Event> {
+        let (native, event) = self.pending.get_mut(&window)?.pop_front()?;
+        if self.pending.get(&window).is_some_and(VecDeque::is_empty) {
+            self.pending.remove(&window);
+        }
+        same_receiver_event(&native, delivered).then_some(event)
+    }
+    #[cfg(test)]
     fn begin(&mut self, token: u64, owner: String, source: Option<Source>) {
-        self.active = Some((token, owner, source));
+        let transport = source
+            .as_ref()
+            .map(|source| receiver_event_paths(&[], Some(source)))
+            .unwrap_or_default();
+        self.begin_prepared(
+            token,
+            owner,
+            source,
+            &transport,
+            cfg!(target_os = "windows"),
+        );
     }
     fn complete(&mut self, token: u64) {
         if self.active.as_ref().is_some_and(|active| active.0 == token) {
@@ -103,18 +250,19 @@ impl Registry {
             .active
             .as_ref()
             .and_then(|active| active.2.as_ref())
-            .filter(|source| receiver_paths(paths) && matches(source, paths))
+            .filter(|source| receiver_paths(paths, source.windows) && source.matches(paths))
             .cloned();
         self.receivers.remove(receiver);
         if let Some(source) = &source {
             self.receivers.insert(receiver.into(), source.clone());
         }
-        source
+        source.map(|source| source.original)
     }
     fn receive_drop(&mut self, receiver: &str, paths: &[PathBuf]) -> Option<Source> {
         self.receivers
             .remove(receiver)
-            .filter(|source| matches(source, paths))
+            .filter(|source| source.matches(paths))
+            .map(|source| source.original)
     }
     fn leave(&mut self, receiver: &str) {
         self.receivers.remove(receiver);
@@ -159,32 +307,86 @@ enum Event {
     Leave,
 }
 
-// Native drag sessions can consume key events before they reach the webview.
-// Snapshot the platform state at the receiver event, before IPC delivery.
-#[cfg(target_os = "linux")]
-fn current_copy_modifier(window: &tauri::Window) -> Option<bool> {
-    use gtk::prelude::WidgetExt;
-    let display = window.gtk_window().ok()?.display();
-    let keymap = gtk::gdk::Keymap::for_display(&display)?;
-    Some(keymap.modifier_state() & gtk::gdk::ModifierType::CONTROL_MASK.bits() != 0)
+// Copy intent and source identity are snapshotted at the platform callback,
+// before Wry/Tao enqueue delivery. Never query keyboard state during dispatch.
+pub fn install_snapshots(app: tauri::AppHandle) {
+    wry::drag_drop_snapshot::set_observer(Some(std::sync::Arc::new(
+        move |window, event, copying| {
+            app.state::<Sessions>()
+                .registry
+                .lock()
+                .unwrap_or_else(|poison| poison.into_inner())
+                .capture(window, event, copying);
+        },
+    )));
 }
 
-#[cfg(target_os = "windows")]
-fn current_copy_modifier(_window: &tauri::Window) -> Option<bool> {
-    use windows::Win32::UI::Input::KeyboardAndMouse::{GetAsyncKeyState, VK_CONTROL};
-    // The high bit reflects the current held state, independent of focus.
-    Some(unsafe { GetAsyncKeyState(VK_CONTROL.0 as i32) } < 0)
+fn native_window_id(window: &tauri::Window) -> Option<usize> {
+    #[cfg(target_os = "linux")]
+    {
+        use gtk::prelude::*;
+        window
+            .gtk_window()
+            .ok()
+            .map(|window| window.as_ptr() as usize)
+    }
+    #[cfg(target_os = "windows")]
+    {
+        window.hwnd().ok().map(|window| window.0 as usize)
+    }
+    #[cfg(target_os = "macos")]
+    {
+        window.ns_window().ok().map(|window| window as usize)
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "windows", target_os = "macos")))]
+    {
+        let _ = window;
+        None
+    }
 }
 
-#[cfg(target_os = "macos")]
-fn current_copy_modifier(_window: &tauri::Window) -> Option<bool> {
-    use objc2_app_kit::{NSEvent, NSEventModifierFlags};
-    Some(NSEvent::modifierFlags_class().contains(NSEventModifierFlags::Option))
+fn receiver_event_paths(paths: &[PathBuf], source: Option<&Source>) -> Vec<PathBuf> {
+    // The native transport may resolve a Windows directory link. Once the
+    // entire transport set is verified, carry original paths alongside source
+    // metadata so the frontend's multiset admission preserves link identity.
+    source
+        .map(|source| {
+            source
+                .paths
+                .as_deref()
+                .unwrap_or(std::slice::from_ref(&source.path))
+                .iter()
+                .map(PathBuf::from)
+                .collect()
+        })
+        .unwrap_or_else(|| paths.to_vec())
 }
 
-#[cfg(not(any(target_os = "linux", target_os = "windows", target_os = "macos")))]
-fn current_copy_modifier(_window: &tauri::Window) -> Option<bool> {
-    None
+fn same_receiver_event(native: &wry::DragDropEvent, delivered: &tauri::DragDropEvent) -> bool {
+    let position_matches = |(x, y): (i32, i32), point: &tauri::PhysicalPosition<f64>| {
+        point.x == x as f64 && point.y == y as f64
+    };
+    match (native, delivered) {
+        (
+            wry::DragDropEvent::Enter { paths: a, position },
+            tauri::DragDropEvent::Enter {
+                paths: b,
+                position: point,
+            },
+        )
+        | (
+            wry::DragDropEvent::Drop { paths: a, position },
+            tauri::DragDropEvent::Drop {
+                paths: b,
+                position: point,
+            },
+        ) => a == b && position_matches(*position, point),
+        (wry::DragDropEvent::Over { position }, tauri::DragDropEvent::Over { position: point }) => {
+            position_matches(*position, point)
+        }
+        (wry::DragDropEvent::Leave, tauri::DragDropEvent::Leave) => true,
+        _ => false,
+    }
 }
 
 pub fn on_window_event(window: &tauri::Window, event: &tauri::WindowEvent) {
@@ -194,33 +396,18 @@ pub fn on_window_event(window: &tauri::Window, event: &tauri::WindowEvent) {
         .lock()
         .unwrap_or_else(|poison| poison.into_inner());
     let event = match event {
-        tauri::WindowEvent::DragDrop(tauri::DragDropEvent::Enter { paths, position }) => {
-            Some(Event::Enter {
-                paths: paths.clone(),
-                position: *position,
-                source: registry.enter(window.label(), paths),
-                copy_modifier: current_copy_modifier(window),
-            })
-        }
-        tauri::WindowEvent::DragDrop(tauri::DragDropEvent::Over { position }) => {
-            Some(Event::Over {
-                position: *position,
-                copy_modifier: current_copy_modifier(window),
-            })
-        }
-        tauri::WindowEvent::DragDrop(tauri::DragDropEvent::Drop { paths, position }) => {
-            Some(Event::Drop {
-                paths: paths.clone(),
-                position: *position,
-                source: registry.receive_drop(window.label(), paths),
-                copy_modifier: current_copy_modifier(window),
-            })
-        }
-        tauri::WindowEvent::DragDrop(tauri::DragDropEvent::Leave) => {
-            registry.leave(window.label());
-            Some(Event::Leave)
+        tauri::WindowEvent::DragDrop(delivered) => {
+            let event = native_window_id(window).and_then(|id| registry.take(id, delivered));
+            if event.is_none() {
+                log::warn!("Discarding native drop event without its platform snapshot");
+            }
+            event
         }
         tauri::WindowEvent::Destroyed => {
+            if let Some(id) = native_window_id(window) {
+                registry.pending.remove(&id);
+                registry.leave(&id.to_string());
+            }
             registry.destroyed(window.label());
             None
         }
@@ -263,6 +450,7 @@ pub async fn start_file_drag(
     {
         return Err("Drag source does not match the native files".into());
     }
+    let item = drag::prepare_file_paths(item).map_err(|error| error.to_string())?;
     let image = if let Some(data) = image.strip_prefix("data:image/png;base64,") {
         drag::Image::Raw(
             base64::engine::general_purpose::STANDARD
@@ -291,10 +479,24 @@ pub async fn start_file_drag(
                     .registry
                     .lock()
                     .unwrap_or_else(|poison| poison.into_inner())
-                    .begin(token, window.label().into(), source);
-                drag::start_drag(
+                    .begin_prepared(
+                        token,
+                        window.label().into(),
+                        source,
+                        &item,
+                        cfg!(target_os = "windows"),
+                    );
+                #[cfg(target_os = "windows")]
+                let native_item = item;
+                #[cfg(not(target_os = "windows"))]
+                let native_item = drag::DragItem::Files(item);
+                #[cfg(target_os = "windows")]
+                let start_drag = drag::start_drag_prepared;
+                #[cfg(not(target_os = "windows"))]
+                let start_drag = drag::start_drag;
+                start_drag(
                     &native_window,
-                    drag::DragItem::Files(item),
+                    native_item,
                     image,
                     move |result, cursor_pos| {
                         let app = callback_app.clone();

@@ -530,6 +530,7 @@ pub fn run_with_process_entry(launch_dir: Option<String>, t_process_entry: std::
             terminal::terminal_status,
         ])
         .setup(move |app| {
+            native_file_drag::install_snapshots(app.handle().clone());
             let t_setup = std::time::Instant::now();
             // First in setup: portal mode returns early below, and a renderer
             // crash after window creation is exactly when this line matters.

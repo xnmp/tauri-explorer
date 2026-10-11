@@ -6,10 +6,10 @@ patch was `a819957a01b3119af85e638a38d242af76dbc87d130dca67bfd0441072e21ff0`.
 The published archive records upstream Git revision
 `792d0359ba6501a4fc360ece17de2ae42329a47c` in `.cargo_vcs_info.json`.
 All files match the published 0.57.0 crate except this provenance document,
-the weak-capture change below, and one trailing-space cleanup in `SECURITY.md`; the callback retains 0.57.0's fallible
+the weak-capture and drag snapshot changes below, and one trailing-space cleanup in `SECURITY.md`; the IPC callback retains 0.57.0's fallible
 request construction and missing-URI handling.
 
-The sole code change is in `src/webkitgtk/mod.rs`:
+The IPC ownership change is in `src/webkitgtk/mod.rs`:
 `InnerWebView::attach_ipc_handler` captures a `glib::WeakRef<WebView>` rather
 than a strong `WebView`. A WebView owns its `UserContentManager`, so the old
 manager signal closure's strong capture kept both GObjects alive after native
@@ -17,9 +17,26 @@ window destruction. On Linux the app retained one `WebKitSharedMemory`
 descriptor per closed child window; its main renderer disappeared after the
 399th close in the qualification fixture.
 
-Remove the local patch after an upstream Wry release includes the equivalent
+Remove the IPC ownership change after an upstream Wry release includes the equivalent
 fix and a native Linux window-churn run confirms bounded descriptors and a
-responsive main renderer beyond 399 child closes.
+responsive main renderer beyond 399 child closes. The drag snapshot bridge also
+needs an upstream replacement before the vendored crate can be removed.
+
+## Drag callback snapshots (TraceExplorer #29)
+
+`drag_drop_snapshot` observes each platform callback before its ordinary Wry
+handler queues a Tauri event. It carries the top-level native window identity
+and callback-time copy modifier: COM `grfKeyState`/Ctrl on Windows, GDK Ctrl on
+Linux, and AppKit Option on macOS. The host captures source metadata and keeps
+a per-window FIFO; later Tauri delivery must match the original event before
+the enriched payload is published. Missing/mismatched snapshots are discarded.
+Never replace this with a keyboard query during queued Tauri dispatch: Windows
+`DoDragDrop` buffers those events until the drag loop returns.
+
+The bridge lives in `src/lib.rs` and each platform's `drag_drop.rs`. The host
+depends directly on the same patched Wry version; keep `Cargo.toml`'s direct
+dependency aligned when upgrading. Targeted host regressions are in
+`src-tauri/test_support/native_file_drag.rs`.
 
 ## Guard
 
@@ -34,11 +51,13 @@ missing from `attach_ipc_handler` (#864).
 When a Tauri upgrade requires a newer Wry:
 
 1. Check whether that upstream release already captures the WebView weakly in
-   `attach_ipc_handler`. If so, delete this directory and the
-   `[patch.crates-io] wry` entry, and drop the guard test.
+   `attach_ipc_handler`. If so, the local IPC change and its guard can be
+   retired after qualification. Retain the vendor
+   and drag snapshot bridge until an equivalent callback-time metadata API exists.
 2. Otherwise replace this directory with the new published crate
    (`cargo download`/registry source), re-apply the `downgrade()`/`upgrade()`
-   change, record the new pre-patch checksum above, and run the guard test.
+   change and the drag snapshot bridge, update the host's direct Wry dependency,
+   record the new pre-patch checksum above, and run both the guard and native drag tests.
 3. Either way, confirm with a native Linux window-churn run beyond 399 child
    closes before release.
 

@@ -70,10 +70,32 @@ resolve registered ancestors before blocking the remaining dialog surface.
 
 Keep a source's copy policy separate from modifier intent. Native receiver events
 snapshot platform modifiers before IPC; DOM fallback reads the actual drop event.
-The Rust source serializer must retain the policy across windows. Linux listing
+The Rust source serializer must retain the policy across windows. Snapshot at
+the platform callback, before Wry queues Tauri delivery; Windows DoDragDrop can
+buffer receiver events until after Ctrl is released. Vendored Wry's observer
+provides Ctrl from the COM callback, GDK Ctrl, or AppKit Option, and the host
+admits only FIFO deliveries matching the original native event. Linux listing
 sources remain move-only, and Miller backgrounds permit same-directory copies.
 A delayed DOM replay retains its original event modifiers without overwriting a
 successor gesture's live modifier state.
+
+Windows drag resolves drive-path links through dunce while preserving ordinary
+UNC paths. Prepare that native transport once, freeze its multiset in the source
+lease, and skip a second resolution during OS drag initiation. Enter/Drop must
+compare the captured transport without resolving the original link again: it can
+be deleted or retargeted mid-drag. After verification, publish original paths
+with source metadata so frontend path-set admission retains directory pinning.
+
+Deferred DOM fallback captures destination ancestry/path, the pane explorer's
+navigation lease (including away-and-back), and the exact registration object.
+Discard and report any stale destination instead of redispatching into reused
+DOM or a replacement handler. Cleanup owns only the original hover revision.
+
+All pane-owned content participates in shared inert registration, including
+Miller columns hoisted into an island. Inert hit testing can expose a surrounding
+wrapper, so native resolution must also reject covered hit-pane ownership and
+covered implicit destinations. Fullscreen entry uses the same pane blocking
+predicate; opening a dialog while fullscreen exits the viewer before paint.
 
 Dialog instance creation owns plugin close authority. Reusing an existing pane
 dialog only observes its result for another plugin; its handle and disposal must

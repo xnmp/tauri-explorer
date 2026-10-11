@@ -7,7 +7,7 @@
 
 import type { ExplorerInstance } from "$lib/state/explorer.svelte";
 import { useExternalDrop } from "$lib/composables/use-external-drop.svelte";
-import { resolveDropTarget, resolveDropTargetFromElement, highlightTarget, highlightTargetAtPoint, clearHighlights, captureHighlightCleanup } from "$lib/composables/use-native-drop-target.svelte";
+import { resolveDropTarget, resolveDropTargetFromElement, captureDropDestination, highlightTarget, highlightTargetAtPoint, clearHighlights, captureHighlightCleanup } from "$lib/composables/use-native-drop-target.svelte";
 import { dragState, type DragData } from "$lib/state/drag.svelte";
 import { handleFileDropMany } from "$lib/state/drop-operations";
 import { isCopyModifier as isCopyMod, isWindows } from "$lib/domain/platform";
@@ -17,6 +17,9 @@ import { parentDir, isInsideDir, samePath } from "$lib/domain/path";
 import { dispatchFileDrop } from "$lib/state/dispatch-file-drop";
 import { internalDragPaths, sameDropPathSet, domDropPaths, domOwnsFileDrop } from "$lib/domain/file-drop";
 import { nativeDropPaths } from "$lib/domain/native-drop-paths";
+import { toastStore } from "$lib/state/toast.svelte";
+import { dialogStore } from "$lib/state/dialogs.svelte";
+import { windowTabsManager } from "$lib/state/window-tabs.svelte";
 
 export interface NativeDropDeps {
   getActiveExplorer: () => ExplorerInstance | undefined;
@@ -62,6 +65,10 @@ export function useNativeDropHandler(deps: NativeDropDeps) {
       if (!sourcePaths.length) return;
       const explorer = deps.getActiveExplorer();
       if (!explorer) return;
+      // Inert hit testing can expose a workspace wrapper rather than the
+      // covered content. An implicit destination must still obey pane modality.
+      if ((!target || (target.type === "background" && !target.path))
+          && dialogStore.isPaneBlocked(windowTabsManager.activePaneId)) return;
       // Miller/Recent retain their former DOM target rules. Linux listings
       // keep the native move-only routing and cross-window refresh policy.
       const domSource = isInternalDrag && dragData?.nativeCopyPolicy === "modifier";
@@ -181,6 +188,8 @@ export function useNativeDropHandler(deps: NativeDropDeps) {
       for (const type of event.dataTransfer!.types) dataTransfer.setData(type, event.dataTransfer!.getData(type));
       dataTransfer.effectAllowed = event.dataTransfer!.effectAllowed;
       let targetElement = event.target;
+      const destinationCurrent = captureDropDestination(targetElement as Element | null, deps.getActiveExplorer());
+      const clearDeferredHighlights = captureHighlightCleanup();
       const replay = new DragEvent("drop", { bubbles: true, cancelable: true, dataTransfer,
         clientX: event.clientX, clientY: event.clientY, ctrlKey: event.ctrlKey, altKey: event.altKey,
         shiftKey: event.shiftKey, metaKey: event.metaKey });
@@ -191,6 +200,11 @@ export function useNativeDropHandler(deps: NativeDropDeps) {
       void pending.result.then(accepted => {
         try {
           if (!accepted && owner === domGeneration) {
+            if (!destinationCurrent()) {
+              toastStore.show("Drop cancelled because the destination changed. Drop the files again.");
+              clearDeferredHighlights();
+              return;
+            }
             if (source) deferredDomSources.set(replay, source);
             if (source) dragState.bindDomSource(dataTransfer, source);
             targetElement?.dispatchEvent(replay);

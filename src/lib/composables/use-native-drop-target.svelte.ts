@@ -9,6 +9,8 @@
 import { getZoomFactor } from "$lib/domain/zoom";
 import { windowTabsManager } from "$lib/state/window-tabs.svelte";
 import { fileDropTargets, type RegisteredDropTarget } from "$lib/state/file-drop-targets.svelte";
+import type { ExplorerInstance } from "$lib/state/explorer.svelte";
+import { dialogStore } from "$lib/state/dialogs.svelte";
 
 export type DropTargetResult =
   | RegisteredDropTarget
@@ -43,6 +45,11 @@ export function adjustForPointerZoom(pos: { x: number; y: number }): { x: number
 
 export function resolveDropTargetFromElement(el: Element | null): DropTargetResult {
   if (!el) return null;
+  // Inert descendants can expose their owning wrapper during native hit
+  // testing. Ownership still blocks base content wherever it was rendered.
+  const paneId = el.closest?.("[data-pane-id]")?.getAttribute("data-pane-id");
+  if (paneId && !el.closest?.(".modal-overlay, .pane-dialog-container")
+      && dialogStore.isPaneBlocked(paneId)) return { type: "blocked" };
   const registered = fileDropTargets.resolve(el);
   if (registered) return registered;
 
@@ -112,6 +119,32 @@ export function resolveDropTargetFromElement(el: Element | null): DropTargetResu
   return null;
 }
 
+/** A delayed DOM fallback belongs to the surface and resources at drop time. */
+export function captureDropDestination(element: Element | null, fallbackExplorer?: ExplorerInstance): () => boolean {
+  const target = resolveDropTargetFromElement(element);
+  const ancestors: { node: Element; parent: Element | null; attributes: (string | null)[] }[] = [];
+  const names = ["data-pane-id", "data-current-path", "data-path", "data-tab-id"];
+  for (let node = element; node; node = node.parentElement) {
+    ancestors.push({ node, parent: node.parentElement, attributes: names.map(name => node!.getAttribute(name)) });
+  }
+  const paneId = element?.closest("[data-pane-id]")?.getAttribute("data-pane-id");
+  const explorer = paneId ? windowTabsManager.getExplorer(paneId)
+    : (!target || (target.type === "background" && !target.path)) ? fallbackExplorer : undefined;
+  const lease = explorer?.captureMutation();
+  // Exact registration identity is its generation; replacement on the same
+  // DOM node cannot receive a previous registration's gesture.
+  const sameTarget = (current: DropTargetResult) => {
+    if (!target || !current) return target === current;
+    if (target.type === "plugin") return current.type === "plugin" && current.registration === target.registration && target.registration.live();
+    return current.type === target.type && JSON.stringify(current) === JSON.stringify(target);
+  };
+  return () => !!element?.isConnected
+    && ancestors.every(({ node, parent, attributes }) => node.parentElement === parent && names.every((name, i) => node.getAttribute(name) === attributes[i]))
+    && (!paneId || windowTabsManager.getExplorer(paneId) === explorer)
+    && (!lease || lease.current())
+    && sameTarget(resolveDropTargetFromElement(element));
+}
+
 /** Resolve drop target from onDragDropEvent position (physical pixels). */
 export function resolveDropTarget(position: { x: number; y: number }): DropTargetResult {
   const adjusted = adjustForHitTest(position);
@@ -145,8 +178,8 @@ function highlightAtCoords(cx: number, cy: number): void {
     notifyBookmarkDropTarget(false);
     return;
   }
-  const registered = fileDropTargets.resolve(el);
-  if (registered) {
+  const registered = resolveDropTargetFromElement(el);
+  if (registered?.type === "plugin" || registered?.type === "blocked") {
     clearSidebarHighlight();
     notifyBookmarkDropTarget(false);
     setHighlightedElement(registered.type === "plugin" ? registered.registration.element : null);

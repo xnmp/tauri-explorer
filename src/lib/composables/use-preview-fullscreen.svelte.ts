@@ -63,6 +63,7 @@ export function createPreviewFullscreen(options: PreviewFullscreenOptions = {}) 
   }
 
   function toggle(): void {
+    if (!active && options.keysBlocked?.()) return;
     options.onToggle?.();
     active = !active;
     resetZoom();
@@ -166,7 +167,11 @@ export type PreviewFullscreen = ReturnType<typeof createPreviewFullscreen>;
 
 /** `createPreviewFullscreen` plus its window listener and chrome-hiding attribute. */
 export function usePreviewFullscreen(options: PreviewFullscreenOptions = {}): PreviewFullscreen {
-  const fullscreen = createPreviewFullscreen({ keysBlocked: () => dialogStore.isPaneBlocked(windowTabsManager.activePaneId), ...options });
+  const keysBlocked = () => dialogStore.isPaneBlocked(windowTabsManager.activePaneId) || !!options.keysBlocked?.();
+  const fullscreen = createPreviewFullscreen({ ...options, keysBlocked });
+
+  // A dialog opened after entry must be visible before its first painted frame.
+  $effect(() => { if (fullscreen.active && keysBlocked()) fullscreen.exit(); });
 
   // Capture phase + stopImmediatePropagation so the viewer's keys win over the
   // global keyboard handler in +page.svelte.

@@ -123,6 +123,68 @@ for (const mode of modes) {
       await expect(b.locator(".pane-base-content")).not.toHaveAttribute("inert", "");
     });
 
+    test("hoisted Miller columns cannot navigate their covered owner", async ({ page }) => {
+      await page.evaluate(async () => {
+        // @ts-expect-error Vite serves test source modules.
+        const { settingsStore } = await import("/src/lib/state/settings.svelte.ts");
+        // @ts-expect-error Vite serves test source modules.
+        const { windowTabsManager: manager } = await import("/src/lib/state/window-tabs.svelte.ts");
+        settingsStore.update({ floatingIslands: true, showSidebar: false });
+        manager.getActiveExplorer().setMillerLayers(2);
+      });
+      await install(page);
+      const columns = page.locator(".miller-island .miller-columns");
+      await expect(columns).toHaveAttribute("inert", "");
+      const before = await pane(page, 0).locator(".content").getAttribute("data-current-path");
+      const entry = columns.locator('.col-entry[data-kind="directory"]').first();
+      const bounds = await entry.boundingBox();
+      if (!bounds) throw new Error("Hoisted Miller entry is missing");
+      await page.mouse.click(bounds.x + bounds.width / 2, bounds.y + bounds.height / 2);
+      await expect(pane(page, 0).locator(".content")).toHaveAttribute("data-current-path", before!);
+      await expect(dialog(page)).toBeVisible();
+      await page.getByRole("button", { name: "Close test dialog" }).click();
+      await expect(columns).not.toHaveAttribute("inert", "");
+      await entry.click();
+      await expect(pane(page, 0).locator(".content")).not.toHaveAttribute("data-current-path", before!);
+    });
+
+    test("covered pane preview cannot obscure the dialog and Escape closes the visible surface", async ({ page }) => {
+      await page.evaluate(async () => {
+        // @ts-expect-error Vite serves test source modules.
+        const { settingsStore } = await import("/src/lib/state/settings.svelte.ts");
+        settingsStore.update({ showPreviewPane: true });
+      });
+      await pane(page, 0).locator('.entry-item[data-path="/home/user/Pictures/photo1.jpg"]').click();
+      const image = page.locator(".preview-image");
+      await expect(image).toBeVisible();
+      await install(page);
+      await image.click();
+      await expect(page.locator(".preview-pane")).not.toHaveClass(/fullscreen/);
+      await expect(dialog(page)).toBeVisible();
+      await page.keyboard.press("Escape");
+      await expect(dialog(page)).toHaveCount(0);
+      await image.click();
+      await expect(page.locator(".preview-pane")).toHaveClass(/fullscreen/);
+      await page.keyboard.press("Escape");
+      await expect(page.locator(".preview-pane")).not.toHaveClass(/fullscreen/);
+    });
+
+    test("opening a pane dialog exits an already active preview fullscreen", async ({ page }) => {
+      await page.evaluate(async () => {
+        // @ts-expect-error Vite serves test source modules.
+        const { settingsStore } = await import("/src/lib/state/settings.svelte.ts");
+        settingsStore.update({ showPreviewPane: true });
+      });
+      await pane(page, 0).locator('.entry-item[data-path="/home/user/Pictures/photo1.jpg"]').click();
+      await page.locator(".preview-image").click();
+      await expect(page.locator(".preview-pane")).toHaveClass(/fullscreen/);
+      await install(page);
+      await expect(page.locator(".preview-pane")).not.toHaveClass(/fullscreen/);
+      await expect(dialog(page)).toBeVisible();
+      await page.keyboard.press("Escape");
+      await expect(dialog(page)).toHaveCount(0);
+    });
+
     test("pane navigation works from the editor and returns focus to its dialog", async ({ page }) => {
       await install(page);
       await draft(page).fill("Submit locally");

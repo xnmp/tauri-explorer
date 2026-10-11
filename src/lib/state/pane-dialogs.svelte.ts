@@ -59,6 +59,14 @@ export function createPaneDialogHost(dependencies: {
   }
 
   const host = {
+    /** Owned content may render outside the pane (for example Miller islands). */
+    registerContent(paneId: string, element: HTMLElement): () => void {
+      const previous = element.inert;
+      const update = () => { element.inert = previous || dependencies.ownership.hasPaneOpen(paneId); };
+      const unsubscribe = dependencies.ownership.subscribe(update);
+      update();
+      return () => { unsubscribe(); element.inert = previous; };
+    },
     capture(paneId = dependencies.activePaneId()): PluginDialogPane | null {
       const identity = dependencies.readPane(paneId);
       if (!identity || identity.tab !== dependencies.activeTab()) return null;

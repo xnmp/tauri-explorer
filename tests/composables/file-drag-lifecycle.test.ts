@@ -24,6 +24,10 @@ import { useDropTarget } from "$lib/composables/use-drop-target.svelte";
 import { dragState } from "$lib/state/drag.svelte";
 import { fileDropTargets } from "$lib/state/file-drop-targets.svelte";
 import { dropElement } from "../helpers/drop-element";
+import { toastStore } from "$lib/state/toast.svelte";
+import { createExplorerState } from "$lib/state/explorer.svelte";
+import { windowTabsManager } from "$lib/state/window-tabs.svelte";
+import { dialogStore } from "$lib/state/dialogs.svelte";
 
 const paths = ["/source/z.png", "/source/a.png"];
 const entry = { path: paths[1], name: "a.png", kind: "file", size: 1, modified: "" } as const;
@@ -31,7 +35,7 @@ let hit: HTMLElement;
 let win: EventTarget;
 let doc: EventTarget;
 let sourceElements: WeakMap<DataTransfer, HTMLElement>;
-const cleanup: (() => void)[] = [];
+const cleanup: (() => void | Promise<void>)[] = [];
 const flush = async () => { for (let i = 0; i < 10; i++) await Promise.resolve(); };
 function payload(): DataTransfer {
   const values = new Map<string, string>();
@@ -74,17 +78,100 @@ beforeEach(async () => {
     return Object.assign(new Event(type, { bubbles, cancelable }), data);
   });
   hit.dispatchEvent = value => { Object.defineProperty(value, "target", { value: hit }); return win.dispatchEvent(value); };
-  const service = useNativeDropHandler({ getActiveExplorer: () => ({ currentPath: "/destination" }) as any, refreshAllPanes: vi.fn() });
+  const service = useNativeDropHandler({ getActiveExplorer: () => ({ currentPath: "/destination", captureMutation: () => ({ current: () => true }) }) as any, refreshAllPanes: vi.fn() });
   service.setup(); cleanup.push(service.cleanup);
   cleanup.push(listenSidebarDragEnd({ quickAccess: () => undefined, isDragOver: () => false, reset: vi.fn() }));
   await flush();
 });
-afterEach(() => {
+afterEach(async () => {
   for (const call of native.start.mock.calls) call[1]?.({ result: "Cancelled" });
-  cleanup.splice(0).reverse().forEach(dispose => dispose()); dragState.clear(); vi.unstubAllGlobals(); vi.restoreAllMocks();
+  for (const dispose of cleanup.splice(0).reverse()) await dispose();
+  dragState.clear(); toastStore.clear(); vi.unstubAllGlobals(); vi.restoreAllMocks();
 });
 
 describe("filesystem source to registered native/DOM listener lifecycle", () => {
+  it("does not transfer an external drop through the inert Miller island into its covered pane", async () => {
+    hit = dropElement("miller-island");
+    vi.spyOn(dialogStore, "isPaneBlocked").mockReturnValue(true);
+    emit("enter", ["/external/image.png"]); emit("drop", ["/external/image.png"]); await flush();
+    expect(transferFiles).not.toHaveBeenCalled();
+  });
+  it("does not redirect a drop on covered pane A's exposed wrapper into active pane B", async () => {
+    hit = dropElement("explorer-pane", { "data-pane-id": "a" });
+    vi.spyOn(windowTabsManager, "activePaneId", "get").mockReturnValue("b");
+    vi.spyOn(dialogStore, "isPaneBlocked").mockImplementation(paneId => paneId === "a");
+    emit("enter", ["/external/image.png"]); emit("drop", ["/external/image.png"]); await flush();
+    expect(transferFiles).not.toHaveBeenCalled();
+  });
+  it.each(["path", "pane", "registration", "detached"])("discards a deferred drop when destination %s changes", async change => {
+    let reject!: (error: Error) => void;
+    native.start.mockImplementationOnce(() => new Promise<void>((_resolve, fail) => { reject = fail; }));
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    const attrs = { "data-current-path": "/destination", "data-pane-id": "b" };
+    hit = dropElement("content", attrs);
+    hit.dispatchEvent = value => { Object.defineProperty(value, "target", { value: hit }); return win.dispatchEvent(value); };
+    const original = vi.fn(), replacement = vi.fn();
+    const dispose = fileDropTargets.register(hit, original); cleanup.push(dispose);
+    win.addEventListener("drop", e => {
+      if (!e.defaultPrevented) return;
+      const folder = useDropTarget({ onRefresh: vi.fn() });
+      void folder.handleDrop(e as DragEvent, { ...entry, kind: "directory", path: attrs["data-current-path"] });
+    });
+    const { source, dt } = begin(); win.dispatchEvent(event("drop", dt)); source.end();
+    if (change === "path") attrs["data-current-path"] = "/other";
+    if (change === "pane") attrs["data-pane-id"] = "replacement";
+    if (change === "registration") { dispose(); cleanup.push(fileDropTargets.register(hit, replacement)); }
+    if (change === "detached") Object.defineProperty(hit, "isConnected", { value: false });
+    reject(new Error("native unavailable")); await flush();
+    expect(original).not.toHaveBeenCalled(); expect(replacement).not.toHaveBeenCalled();
+    expect(transferFiles).not.toHaveBeenCalled();
+    expect(toastStore.toasts.some(toast => /drop.*cancel|destination.*chang/i.test(toast.message))).toBe(true);
+  });
+
+  it("does not replay a deferred listing drop into the pane's new directory", async () => {
+    let reject!: (error: Error) => void;
+    native.start.mockImplementationOnce(() => new Promise<void>((_resolve, fail) => { reject = fail; }));
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    const attrs = { "data-current-path": "/destination" };
+    hit = dropElement("content", attrs);
+    hit.dispatchEvent = value => { Object.defineProperty(value, "target", { value: hit }); return win.dispatchEvent(value); };
+    const folder = useDropTarget({ onRefresh: vi.fn() });
+    win.addEventListener("drop", e => { void folder.handleDrop(e as DragEvent, { ...entry, kind: "directory", path: attrs["data-current-path"] }); });
+    const { source, dt } = begin(); win.dispatchEvent(event("drop", dt)); source.end();
+    attrs["data-current-path"] = "/other";
+    reject(new Error("native unavailable")); await flush();
+    expect(transferFiles).not.toHaveBeenCalled();
+    expect(toastStore.toasts.some(toast => /drop.*cancel|destination.*chang/i.test(toast.message))).toBe(true);
+  });
+
+  it.each(["round-trip navigation", "pane replacement", "reparenting", "modality"])("rejects deferred delivery after %s even when the destination path is unchanged", async change => {
+    let reject!: (error: Error) => void;
+    native.start.mockImplementationOnce(() => new Promise<void>((_resolve, fail) => { reject = fail; }));
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    const explorer = createExplorerState();
+    await explorer.navigateTo("/home/user/Documents");
+    cleanup.push(() => explorer.destroy());
+    const lookup = vi.spyOn(windowTabsManager, "getExplorer").mockReturnValue(explorer);
+    const attrs: Record<string, string> = { "data-pane-id": "b" };
+    const owner = dropElement("explorer-pane", attrs);
+    hit = dropElement("content", { "data-current-path": explorer.currentPath }, owner);
+    hit.dispatchEvent = value => { Object.defineProperty(value, "target", { value: hit }); return win.dispatchEvent(value); };
+    const handler = vi.fn(); cleanup.push(fileDropTargets.register(hit, handler));
+    const { source, dt } = begin(); win.dispatchEvent(event("drop", dt)); source.end();
+    if (change === "round-trip navigation") {
+      await explorer.navigateTo("/home/user/Pictures");
+      await explorer.navigateTo("/home/user/Documents");
+    }
+    if (change === "pane replacement") {
+      const replacement = createExplorerState(); lookup.mockReturnValue(replacement);
+      cleanup.push(() => replacement.destroy());
+    }
+    if (change === "reparenting") Object.assign(hit, { parentElement: dropElement("explorer-pane", { "data-pane-id": "b" }) });
+    if (change === "modality") attrs.inert = "";
+    reject(new Error("native unavailable")); await flush();
+    expect(handler).not.toHaveBeenCalled(); expect(transferFiles).not.toHaveBeenCalled();
+    expect(toastStore.toasts.some(toast => /drop.*cancel|destination.*chang/i.test(toast.message))).toBe(true);
+  });
   it.each([
     ["breadcrumb", "crumb", false], ["listing background", "content", false], ["Miller background", "miller-col", true],
   ] as const)("preserves dev's copy policy on a %s for a former DOM source", async (_name, classes, copy) => {

@@ -2284,6 +2284,39 @@ impl WebView {
   }
 }
 
+/// LOCAL PATCH: preserve platform callback metadata before Tauri queues events.
+/// The observer does not replace the ordinary Wry drag/drop handler.
+pub mod drag_drop_snapshot {
+  use super::DragDropEvent;
+  use std::sync::{Arc, Mutex};
+
+  /// Native top-level window ID, event, and callback-time copy modifier.
+  pub type Observer = Arc<dyn Fn(usize, &DragDropEvent, bool) + Send + Sync>;
+  static OBSERVER: Mutex<Option<Observer>> = Mutex::new(None);
+
+  /// Install the host observer before creating webviews.
+  pub fn set_observer(observer: Option<Observer>) {
+    *OBSERVER.lock().unwrap_or_else(|poison| poison.into_inner()) = observer;
+  }
+
+  /// Invoke a platform event's observer before the normal queued handler.
+  pub fn dispatch(
+    window: usize,
+    copy_modifier: bool,
+    event: DragDropEvent,
+    handler: &dyn Fn(DragDropEvent) -> bool,
+  ) -> bool {
+    let observer = OBSERVER
+      .lock()
+      .unwrap_or_else(|poison| poison.into_inner())
+      .clone();
+    if let Some(observer) = observer {
+      observer(window, &event, copy_modifier);
+    }
+    handler(event)
+  }
+}
+
 /// An event describing drag and drop operations on the webview.
 #[non_exhaustive]
 #[derive(Debug, Clone)]

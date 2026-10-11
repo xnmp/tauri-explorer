@@ -19,7 +19,6 @@
 import ScmPanel from "./ScmPanel.svelte";
   import DeleteDialog from "./DeleteDialog.svelte";
   import { dialogStore } from "$lib/state/dialogs.svelte";
-  import { modalOwnership } from "$lib/state/modal-ownership.svelte";
   import { settingsStore } from "$lib/state/settings.svelte";
   import { gitStatusStore } from "$lib/state/git-status.svelte";
   import { gitWarmer } from "$lib/state/git-warm";
@@ -47,7 +46,9 @@ import { nextRemovableRoot } from "$lib/domain/drives";
   // directory its entry is rendered in.
   setPaneIdContext(untrack(() => paneId));
   const mountedPaneId = untrack(() => paneId);
-  const paneDialogCovered = $derived(modalOwnership.hasPaneOpen(mountedPaneId));
+  function paneContent(element: HTMLElement) {
+    return { destroy: windowTabsManager.paneDialogs.registerContent(mountedPaneId, element) };
+  }
   function dialogSlot(slot: HTMLElement) {
     return { destroy: windowTabsManager.paneDialogs.registerSlot(mountedPaneId, slot, () => {
       focusFirstAccepting([
@@ -336,7 +337,7 @@ import { nextRemovableRoot } from "$lib/domain/drives";
   ondragstartcapture={() => { pointerFocus.end(); handleFocus(); }}
   onclick={handlePaneClick}
 >
-  <div class="pane-base-content" inert={paneDialogCovered}>
+  <div class="pane-base-content" use:paneContent>
   {#if paneGitGraph}
     <div class="pane-content">
       <!-- Same gating as the explorer branch below: the SCM panel stays
@@ -374,7 +375,7 @@ import { nextRemovableRoot } from "$lib/domain/drives";
            keyed off the single `islandMode` derived — not one platform's flag —
            or the columns double-mount inline AND as the island (#434). -->
       {#if paneExplorer.millerLayers > 0 && !millerHoistedToIsland}
-        <MillerColumns explorer={paneExplorer} {reserveInlineWidth} />
+        <MillerColumns explorer={paneExplorer} {paneId} {reserveInlineWidth} />
       {/if}
       <!-- SCM panel sits between the Miller columns and the file list (#227);
            per pane (#334, #434) — each pane's panel follows its own explorer

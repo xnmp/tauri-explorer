@@ -37,11 +37,20 @@
   const panelId = $props.id();
 
   interface Props {
+    paneId?: string;
     reserveInlineWidth?: ReserveInlineWidth;
     explorer: ExplorerInstance;
   }
 
-  let { explorer, reserveInlineWidth }: Props = $props();
+  let { explorer, paneId, reserveInlineWidth }: Props = $props();
+  function paneContent(element: HTMLElement) {
+    const destroy = $effect.root(() => {
+      $effect(() => {
+        if (paneId) return windowTabsManager.paneDialogs.registerContent(paneId, element);
+      });
+    });
+    return { destroy };
+  }
 
   interface MillerColumn {
     path: string;
@@ -308,7 +317,7 @@
 </script>
 
 {#if columns.length > 0}
-  <div id={panelId} class="miller-columns" class:resizing={resize.isResizing} style="width: {resize.value}px">
+  <div id={panelId} class="miller-columns" data-pane-id={paneId} use:paneContent class:resizing={resize.isResizing} style="width: {resize.value}px">
     {#each columns as column (column.path)}
       <!-- svelte-ignore a11y_no_static_element_interactions -->
       <div

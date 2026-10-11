@@ -85,6 +85,32 @@ use std::path::PathBuf;
 
 mod platform_impl;
 pub use platform_impl::start_drag;
+#[cfg(target_os = "windows")]
+pub use platform_impl::start_drag_prepared;
+
+/// LOCAL PATCH: prepare the exact filesystem paths once, before handing them
+/// to the OS and capturing the host's immutable source/transport association.
+pub fn prepare_file_paths(files: Vec<PathBuf>) -> Result<Vec<PathBuf>> {
+    #[cfg(target_os = "windows")]
+    {
+        files
+            .into_iter()
+            .map(|path| {
+                // The shell needs ordinary UNC paths; dunce's extended UNC form
+                // is rejected by the shell item APIs. Drive links use dunce.
+                if path.to_string_lossy().starts_with("\\\\") {
+                    Ok(path)
+                } else {
+                    dunce::canonicalize(path).map_err(Error::from)
+                }
+            })
+            .collect()
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        Ok(files)
+    }
+}
 
 pub type Result<T> = std::result::Result<T, Error>;
 

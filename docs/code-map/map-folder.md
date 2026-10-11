@@ -42,7 +42,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `src/lib/components/EntrySymlinkBadge.svelte` — shared file symlink indicator for EntryCell and FileTile, hidden during rename.
 - `FileTiles.svelte` — the SDK module `ui/file-tiles`: non-virtualized Tiles-view tiles for plugin sections, callbacks for select/open/menu, own-width columns, roving focus; size from the `size` prop, else the enclosing plugin view's context, else the global setting.
 - `VirtualList.svelte` — variable-height windowed scroller with persistent extent canvas; publishes scroll/layout settlement for marquee hit testing and cursor reveal. Perf-critical.
-- `MillerColumns.svelte` — column/Miller-columns browsing mode.
+- `MillerColumns.svelte` — column/Miller-columns browsing mode; owner identity and pane-content modality follow both inline and hoisted rendering.
 - `FileItem.svelte` — single entry row/tile (icon, name, badges, selection state).
 - `EntryCell.svelte` — shared List/Tiles gridcell with roving focus, selection semantics and drag-drop interactions.
 - `EntryName.svelte` — shared inline rename input/display across all views.
@@ -138,7 +138,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `ordered-registry.ts` — owned contributions sorted by plugin list position, then registration; shared by context-menu items and plugin settings sections.
 - `modal-ownership.svelte.ts` — shared input ownership for mounted and contributed modals; closing releases only the corresponding registration.
 - `src/lib/state/modal-focus.ts` — pane dialog focus restoration tracks actual focus ownership across DOM detachment and releases listeners on cleanup; shared modal focus eligibility.
-- `src/lib/state/pane-dialogs.svelte.ts` — host-private pane capture handles, transient scope retirement, identity-bound overlay slots and retained portal mounts.
+- `src/lib/state/pane-dialogs.svelte.ts` — host-private pane capture handles, transient scope retirement, identity-bound overlay slots, retained portal mounts and shared inert registration for pane-owned content.
 - `src/lib/state/dialog-presentation-context.ts` — private scope/visibility/focus context inherited by the shared SDK Modal.
 - `run-after-close.ts` — runs a command chosen from a modal launcher (the command palette) only after the launcher has released the top modal surface, so the dialog it opens is not closed as the caller.
 - `open-with.svelte.ts` — captured application-choice sessions, late-result rejection and single launch lifecycle.

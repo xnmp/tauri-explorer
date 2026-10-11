@@ -232,26 +232,48 @@ pub fn start_drag<W: HasWindowHandle, F: Fn(DragResult, CursorPosition) + Send +
     on_drop_callback: F,
     options: Options,
 ) -> crate::Result<()> {
+    start_drag_impl(handle, item, image, on_drop_callback, options, false)
+}
+
+/// Files prepared by `prepare_file_paths`; do not resolve their links again.
+pub fn start_drag_prepared<
+    W: HasWindowHandle,
+    F: Fn(DragResult, CursorPosition) + Send + 'static,
+>(
+    handle: &W,
+    files: Vec<PathBuf>,
+    image: Image,
+    on_drop_callback: F,
+    options: Options,
+) -> crate::Result<()> {
+    start_drag_impl(
+        handle,
+        DragItem::Files(files),
+        image,
+        on_drop_callback,
+        options,
+        true,
+    )
+}
+
+fn start_drag_impl<W: HasWindowHandle, F: Fn(DragResult, CursorPosition) + Send + 'static>(
+    handle: &W,
+    item: DragItem,
+    image: Image,
+    on_drop_callback: F,
+    options: Options,
+    prepared: bool,
+) -> crate::Result<()> {
     if let Ok(RawWindowHandle::Win32(_w)) = handle.window_handle().map(|h| h.as_raw()) {
         match item {
             DragItem::Files(files) => {
                 init_ole();
 
-                let mut paths = Vec::new();
-                for f in files {
-                    // LOCAL PATCH: dunce::canonicalize on a UNC path like
-                    // \\wsl.localhost\... returns the NT extended-length
-                    // form \\?\UNC\wsl.localhost\..., which neither
-                    // ILCreateFromPathW nor SHCreateItemFromParsingName
-                    // accept (E_INVALIDARG). The shell wants the original
-                    // \\server\share\... form, so don't canonicalize UNC
-                    // paths — they're already absolute by construction.
-                    if f.to_string_lossy().starts_with("\\\\") {
-                        paths.push(f);
-                    } else {
-                        paths.push(dunce::canonicalize(&f)?);
-                    }
-                }
+                let paths = if prepared {
+                    files
+                } else {
+                    crate::prepare_file_paths(files)?
+                };
 
                 let data_object: IDataObject = match get_file_data_object(&paths) {
                     Some(obj) => obj,
@@ -397,7 +419,11 @@ fn get_shell_item_array(paths: &[PathBuf]) -> Option<IShellItemArray> {
             .iter()
             .filter_map(|path| {
                 let id = get_file_item_id(path);
-                if id.is_null() { None } else { Some(id.cast_const()) }
+                if id.is_null() {
+                    None
+                } else {
+                    Some(id.cast_const())
+                }
             })
             .collect();
         if list.is_empty() {

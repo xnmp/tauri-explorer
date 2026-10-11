@@ -80,6 +80,21 @@ describe("pane capture and retirement", () => {
 });
 
 describe("scoped dialog ownership", () => {
+  it("makes local and hoisted content inert only for their covered owner and restores it on close", () => {
+    const f = fixture();
+    const local = { inert: false } as HTMLElement;
+    const hoisted = { inert: false } as HTMLElement;
+    const other = { inert: false } as HTMLElement;
+    const dispose = [f.host.registerContent("a", local), f.host.registerContent("a", hoisted), f.host.registerContent("b", other)];
+    f.registry.register({ id: "dialog", component });
+    f.registry.open("dialog", {}, { scope: "pane", pane: f.a });
+    expect([local.inert, hoisted.inert, other.inert]).toEqual([true, true, false]);
+    f.registry.close("dialog");
+    expect([local.inert, hoisted.inert, other.inert]).toEqual([false, false, false]);
+    dispose.forEach(call => call());
+    f.registry.open("dialog", {}, { scope: "pane", pane: f.a });
+    expect([local.inert, hoisted.inert, other.inert]).toEqual([false, false, false]);
+  });
   it("does not attach a background caller to an unrelated pane's surface", async () => {
     const f = fixture(); f.registry.register({ id: "child", component });
     const unrelated = f.ownership.registerSurface(() => {}, undefined, undefined, { scope: f.scopeB });

@@ -97,7 +97,9 @@ Rules that bite:
   its base64 JSON request stays below Vercel's 4.5 MB function-body limit.
   Video reports support MP4/WebM/MOV within the existing 2 MiB/file cap. Clipboard
   attachments use the ordered file snapshot and require one copied video file;
-  retain the image-read fallback if file-list tooling fails. Check container
+  retain image-data fallback for non-video paths and failed file-list discovery,
+  preserving image validation/read errors. Clipboard routing and availability
+  share `clipboard/content.rs`; test mixed image/file clipboard owners. Check container
   signatures in frontend draft admission, native submission and the relay, and
   deploy the relay alongside the app. See `docs/lessons/1059-report-video-attachments.md`.
 

@@ -94,8 +94,10 @@ DOM or a replacement handler. Cleanup owns only the original hover revision.
 All pane-owned content participates in shared inert registration, including
 Miller columns hoisted into an island. Inert hit testing can expose a surrounding
 wrapper, so native resolution must also reject covered hit-pane ownership and
-covered implicit destinations. Fullscreen entry uses the same pane blocking
-predicate; opening a dialog while fullscreen exits the viewer before paint.
+covered implicit destinations. Fullscreen entry and automatic exit use pane-only
+ownership: a dialog covering the preview's pane exits the viewer before paint.
+Window modals block preview keyboard input while preserving fullscreen underneath;
+`isPaneBlocked` includes window modals and must not drive fullscreen exit.
 
 Dialog instance creation owns plugin close authority. Reusing an existing pane
 dialog only observes its result for another plugin; its handle and disposal must

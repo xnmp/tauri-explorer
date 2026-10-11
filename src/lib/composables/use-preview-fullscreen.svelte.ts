@@ -27,6 +27,7 @@ import {
   type ZoomView,
 } from "$lib/domain/image-viewer-zoom";
 import { dialogStore } from "$lib/state/dialogs.svelte";
+import { modalOwnership } from "$lib/state/modal-ownership.svelte";
 import { windowTabsManager } from "$lib/state/window-tabs.svelte";
 
 /** The parts of a DOM event the handlers read, so tests can pass plain objects. */
@@ -167,11 +168,13 @@ export type PreviewFullscreen = ReturnType<typeof createPreviewFullscreen>;
 
 /** `createPreviewFullscreen` plus its window listener and chrome-hiding attribute. */
 export function usePreviewFullscreen(options: PreviewFullscreenOptions = {}): PreviewFullscreen {
-  const keysBlocked = () => dialogStore.isPaneBlocked(windowTabsManager.activePaneId) || !!options.keysBlocked?.();
+  const paneCovered = () => modalOwnership.hasPaneOpen(windowTabsManager.activePaneId);
+  const keysBlocked = () => paneCovered() || !!options.keysBlocked?.();
   const fullscreen = createPreviewFullscreen({ ...options, keysBlocked });
 
-  // A dialog opened after entry must be visible before its first painted frame.
-  $effect(() => { if (fullscreen.active && keysBlocked()) fullscreen.exit(); });
+  // Pane dialogs need the preview out of their way before paint. Window modals
+  // own keys while open, but preserve the fullscreen viewer underneath.
+  $effect(() => { if (fullscreen.active && paneCovered()) fullscreen.exit(); });
 
   // Capture phase + stopImmediatePropagation so the viewer's keys win over the
   // global keyboard handler in +page.svelte.

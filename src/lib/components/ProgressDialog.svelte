@@ -11,7 +11,7 @@
   import { isJobActive, jobsStore } from "$lib/state/jobs.svelte";
   import { retryJobAndRefocus } from "$lib/composables/use-job-retry";
   import { formatSize } from "$lib/domain/file";
-  import { imageJobProgress, formatJobDuration, isTimingSettled } from "$lib/domain/image-job-progress";
+  import { imageJobProgress, imageJobEstimateLabel, formatJobDuration, isTimingSettled } from "$lib/domain/image-job-progress";
   import { jobStateLabel, nativeJobTerminal } from "$lib/domain/native-plugin-jobs";
   import { unresolvedIndicator } from "$lib/domain/ai-operations";
   import { unresolvedAiCount } from "$lib/state/ai-operations.svelte";
@@ -237,15 +237,16 @@
               <div class="operation-details">
                 <div class="operation-name"><span class="file-name">{job.label}</span></div>
                 <p class="job-prompt">{job.detail}</p>
-                {#if job.status === "running" && !job.jobKey}
-                  <div class="progress-bar-container" role="progressbar" aria-label="Estimated image generation progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow={timing.percent} aria-valuetext={`${timing.percent}% estimated`}>
+                {#if job.status === "running"}
+                  <div class="progress-bar-container" role="progressbar" aria-label="Estimated image generation progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow={timing.percent} aria-valuetext={imageJobEstimateLabel(timing)}>
                     <div class="progress-bar" style:width={`${timing.percent}%`}></div>
                   </div>
-                  <div class="progress-text">~{timing.percent}% estimated · {timing.overdue ? "Taking longer than estimated" : `~${formatJobDuration(timing.remainingMs)} remaining`}</div>
+                  <div class="progress-text">{imageJobEstimateLabel(timing)}</div>
+                  {#if job.jobKey}<div class="status-text" role="status">{job.phase ?? jobStateLabel(job.status)}{job.cancelRequested ? " · cancellation requested" : ""}</div>{/if}
                 {:else}
-                  <div class="status-text" role="status">{job.jobKey ? (job.status === "running" || job.status === "accepting" ? job.phase ?? jobStateLabel(job.status) : jobStateLabel(job.status)) : job.status === "completed" ? "Complete" : job.error}{job.cancelRequested ? " · cancellation requested" : ""}</div>
-                  {#if job.jobKey && job.error}<div class="error-text">{job.error}</div>{/if}
+                  <div class="status-text" role="status">{job.jobKey ? (job.status === "accepting" ? job.phase ?? jobStateLabel(job.status) : jobStateLabel(job.status)) : job.status === "completed" ? "Complete" : job.error}{job.cancelRequested ? " · cancellation requested" : ""}</div>
                 {/if}
+                {#if job.jobKey && job.error}<div class="error-text">{job.error}</div>{/if}
                 {#if job.controlError}<div class="error-text" role="alert">{job.controlError}</div>{/if}
                 {#if timing.elapsedMs !== null}<div class="status-text">{formatJobDuration(timing.elapsedMs)} elapsed</div>{/if}
               </div>

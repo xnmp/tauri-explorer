@@ -13,6 +13,15 @@ const record = (n = 1, revision = 1, state: NativeJobRecord["state"] = "running"
 function deferred<T>() { let resolve!: (v: T) => void; const promise = new Promise<T>((done) => { resolve=done; }); return { promise, resolve }; }
 afterEach(() => { jobsStore.applyNative([]); jobsStore.configureNativeControls(null); for (const j of [...jobsStore.jobs]) jobsStore.removeJob(j.id); });
 describe("native job revisions and ownership", () => {
+  it("adopts a prepared estimate key once and rejects a changed cohort", () => {
+    let state = mergeNativeJobEvent(emptyNativeJobs(), {type:"updated",job:record()});
+    const pinned = {...record(1,2),estimateKey:"image-v1:fast"};
+    state = mergeNativeJobEvent(state,{type:"updated",job:pinned});
+    expect(state.jobs.get(pinned.jobKey)?.estimateKey).toBe("image-v1:fast");
+    expect(mergeNativeJobEvent(state,{type:"updated",job:{...pinned,revision:3,estimateKey:"different"}})).toBe(state);
+    expect(validNativeJob({...pinned,estimateKey:"x".repeat(128)})).toBe(true);
+    for(const estimateKey of ["", "x".repeat(129),"has space","雪",1]) expect(validNativeJob({...pinned,estimateKey})).toBe(false);
+  });
   it("ignores stale progress, duplicate events and identity changes after completion", () => {
     let state = mergeNativeJobEvent(emptyNativeJobs(), { type:"updated",job:record() });
     state = mergeNativeJobEvent(state, { type:"updated",job:record(1,3,"completed") });

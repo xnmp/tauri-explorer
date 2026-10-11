@@ -2,6 +2,7 @@
 export type NativeJobState = "accepting" | "running" | "recovering" | "needs_attention" | "completed" | "error" | "cancelled" | "discarded";
 export interface NativeJobRecord {
   jobKey: string; owner: { packageId: string; digest: string; incarnation: number }; operationId: string; jobId: number;
+  estimateKey?: string | null;
   kind: string; label: string; originWindow: string; revision: number; sourceRevision?: number;
   createdAtMs: number; updatedAtMs: number;
   /** When the host first settled the job; absent while active and on jobs settled before it was recorded. */
@@ -32,6 +33,7 @@ export function validNativeJob(value: unknown): value is NativeJobRecord {
     && id(r.operationId) && id(r.kind) && safe(r.jobId, true) && safe(r.revision, true)
     && (r.sourceRevision === undefined || safe(r.sourceRevision)) && safe(r.createdAtMs) && safe(r.updatedAtMs)
     && (r.settledAtMs == null || safe(r.settledAtMs))
+    && (r.estimateKey == null || typeof r.estimateKey === "string" && /^[!-~]{1,128}$/.test(r.estimateKey))
     && typeof r.label === "string" && !!r.label && Array.from(r.label).length <= 256 && !/\p{Cc}/u.test(r.label)
     && windowLabel(r.originWindow) && states.has(r.state)
     && (r.phase == null || bytes(r.phase, 128)) && (r.error == null || bytes(r.error, 2048))
@@ -64,6 +66,7 @@ export function adoptNativeSnapshot(old: NativeJobView, snapshot: NativeJobSnaps
 function sameIdentity(a: NativeJobRecord, b: NativeJobRecord): boolean {
   return a.jobKey === b.jobKey && a.jobId === b.jobId && a.kind === b.kind && a.operationId === b.operationId
     && a.owner.packageId === b.owner.packageId && a.owner.digest === b.owner.digest && a.owner.incarnation === b.owner.incarnation
+    && (a.estimateKey == null || a.estimateKey === b.estimateKey)
     && a.originWindow === b.originWindow && a.createdAtMs === b.createdAtMs;
 }
 export function mergeNativeJobEvent(old: NativeJobView, event: NativeJobEvent): NativeJobView {

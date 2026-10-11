@@ -67,6 +67,9 @@ fn valid(record: &JobRecord, registering: bool) -> Result<()> {
         || record.origin_window.is_empty()
         || record.origin_window.len() > 128
         || !record.origin_window.bytes().all(|b| b.is_ascii_graphic())
+        || record.estimate_key.as_ref().is_some_and(|s| {
+            s.is_empty() || s.len() > 128 || !s.bytes().all(|b| b.is_ascii_graphic())
+        })
         || record.phase.as_ref().is_some_and(|s| !text(s, 128))
         || record.error.as_ref().is_some_and(|s| !text(s, 2048))
         || record
@@ -200,6 +203,7 @@ fn immutable(a: &JobRecord, b: &JobRecord) -> bool {
         && a.job_id == b.job_id
         && a.kind == b.kind
         && a.label == b.label
+        && (b.estimate_key.is_none() || a.estimate_key == b.estimate_key)
         && a.origin_window == b.origin_window
         && a.created_at_ms == b.created_at_ms
 }
@@ -454,6 +458,7 @@ impl Store {
             run_id,
             error,
             None,
+            None,
         )
     }
     #[allow(clippy::too_many_arguments)]
@@ -467,6 +472,7 @@ impl Store {
         output_path: Option<String>,
         run_id: Option<i64>,
         error: Option<String>,
+        estimate_key: Option<String>,
     ) -> Result<JobRecord> {
         if source_revision == 0 || source_revision > SAFE {
             return Err(reject("invalid consumer job revision"));
@@ -480,6 +486,7 @@ impl Store {
             run_id,
             error,
             Some(source_revision),
+            estimate_key,
         )
     }
     #[allow(clippy::too_many_arguments)]
@@ -493,6 +500,7 @@ impl Store {
         run_id: Option<i64>,
         error: Option<String>,
         source_revision: Option<u64>,
+        estimate_key: Option<String>,
     ) -> Result<JobRecord> {
         generation(owner)?;
         if !key(job_key) {
@@ -516,7 +524,16 @@ impl Store {
             if old.run_id.is_some() && old.run_id != run_id {
                 return Err(reject("job receipt changed its pinned consumer run"));
             }
+            if old
+                .estimate_key
+                .as_ref()
+                .zip(estimate_key.as_ref())
+                .is_some_and(|(a, b)| a != b)
+            {
+                return Err(reject("job receipt changed its pinned estimate key"));
+            }
             let mut next = JobRecord {
+                estimate_key: old.estimate_key.clone().or(estimate_key.clone()),
                 source_revision: source_revision.unwrap_or(old.source_revision),
                 state,
                 phase,
@@ -619,6 +636,7 @@ mod tests {
             created_at_ms: 1,
             updated_at_ms: 1,
             settled_at_ms: None,
+            estimate_key: None,
             state: JobState::Accepting,
             phase: None,
             output_path: None,
@@ -956,6 +974,7 @@ mod tests {
                 None,
                 Some(run),
                 None,
+                None,
             )
         };
         let running = observe(4, JobState::Running, 7).unwrap();
@@ -966,6 +985,52 @@ mod tests {
         let attention = observe(5, JobState::NeedsAttention, 7).unwrap();
         assert!(attention.revision > running.revision);
         assert_eq!(attention.run_id, Some(7));
+    }
+    #[test]
+    fn estimate_keys_are_optional_bounded_pinned_and_durable() {
+        let (root, store) = fixture();
+        let accepted = store.register_job(record(1)).unwrap();
+        assert!(accepted.estimate_key.is_none());
+        let observe = |revision, key: Option<&str>| {
+            store.observe_job(
+                &accepted.owner,
+                &accepted.job_key,
+                revision,
+                JobState::Running,
+                None,
+                None,
+                Some(7),
+                None,
+                key.map(str::to_owned),
+            )
+        };
+        for invalid in ["", "has space", "line\nbreak", "雪", &"x".repeat(129)] {
+            assert!(observe(1, Some(invalid)).is_err());
+        }
+        let pinned = observe(1, Some("image-v1:fast")).unwrap();
+        assert_eq!(pinned.estimate_key.as_deref(), Some("image-v1:fast"));
+        assert_eq!(store.register_job(record(1)).unwrap(), pinned);
+        let mut conflicting = record(1);
+        conflicting.estimate_key = Some("different".into());
+        assert!(store.register_job(conflicting).is_err());
+        // A stale receipt has no authority, including over metadata.
+        assert_eq!(observe(1, Some("different")).unwrap(), pinned);
+        assert!(observe(2, Some("different")).is_err());
+        // A consumer downgrade omits the additive field, preserving its identity.
+        assert_eq!(observe(2, None).unwrap().estimate_key, pinned.estimate_key);
+        drop(store);
+        let reopened = Store::open(root.path().join("services"), Limits::default()).unwrap();
+        assert_eq!(
+            reopened
+                .job(&accepted.job_key)
+                .unwrap()
+                .unwrap()
+                .estimate_key,
+            pinned.estimate_key
+        );
+        let mut maximum = record(2);
+        maximum.estimate_key = Some("x".repeat(128));
+        assert!(reopened.register_job(maximum).is_ok());
     }
     #[test]
     fn autonomous_receipts_cannot_undo_explicit_stop_or_discard_policy() {
@@ -993,6 +1058,7 @@ mod tests {
                     None,
                     None,
                     None,
+                    None,
                 )
                 .unwrap();
             assert_eq!(late, policy);
@@ -1003,6 +1069,7 @@ mod tests {
                 &accepted.job_key,
                 11,
                 JobState::Discarded,
+                None,
                 None,
                 None,
                 None,

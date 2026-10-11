@@ -74,6 +74,118 @@ fn output(s: &Store, op: &str) -> ArtifactDescriptor {
     d
 }
 #[test]
+fn review_removal_fences_seal_paused_before_capacity_reservation() {
+    use std::sync::{Arc, Barrier};
+    let (_root, s) = store();
+    let s = Arc::new(s);
+    s.reserve(admission("late-seal", vec![])).unwrap();
+    s.forwarding(&owner("consumer", 1), "late-seal").unwrap();
+    let stage = s
+        .stage(&owner("provider", 1), "consumer", "late-seal")
+        .unwrap();
+    png(Path::new(&stage.path));
+    let entered = Arc::new(Barrier::new(2));
+    let resume = Arc::new(Barrier::new(2));
+    *s.pause_output_reservation.lock().unwrap() = Some((entered.clone(), resume.clone()));
+    let worker = {
+        let s = s.clone();
+        let handle = stage.handle.clone();
+        std::thread::spawn(move || {
+            s.seal(
+                &owner("provider", 1),
+                "consumer",
+                "late-seal",
+                &handle,
+                "image/png",
+            )
+        })
+    };
+    entered.wait();
+    s.abandon_package_outputs("consumer").unwrap();
+    resume.wait();
+    let rejected = worker.join().unwrap().unwrap_err().to_string();
+    assert!(
+        rejected.contains("output capacity requires an undisposed admitted artifact"),
+        "reservation must reject removal before byte publication: {rejected}"
+    );
+    assert!(
+        !Path::new(&stage.path).exists(),
+        "lease drop must collect retired stage"
+    );
+    assert!(
+        !s.root
+            .join("bytes")
+            .join(format!("{}.bin", stage.handle))
+            .exists(),
+        "removed work must not publish bytes"
+    );
+    assert_eq!(
+        s.connect()
+            .unwrap()
+            .query_row("SELECT coalesce(sum(bytes),0) FROM artifacts", [], |r| r
+                .get::<_, i64>(0))
+            .unwrap(),
+        0
+    );
+}
+
+#[test]
+fn review_removal_keeps_held_bytes_charged_until_lease_drop() {
+    let (root, _) = store();
+    let s = Store::open(
+        root.path().join("limited"),
+        Limits {
+            disk_bytes: 100 * 1024 * 1024,
+            ..Limits::default()
+        },
+    )
+    .unwrap();
+    let d = output(&s, "held-output");
+    let path = s.root.join("bytes").join(format!("{}.bin", d.handle));
+    let lease = s.hold_artifact_io(&d.handle).unwrap();
+    s.abandon_package_outputs("consumer").unwrap();
+    assert!(path.exists());
+    assert!(
+        matches!(s.reserve(admission("next", vec![])), Err(crate::error::AppError::Service { code, .. }) if code == "storage_full"),
+        "bytes still on disk consume quota"
+    );
+    drop(lease);
+    assert!(
+        !path.exists(),
+        "lease drop retries collection without a restart"
+    );
+    s.reserve(admission("next", vec![]))
+        .expect("deleted bytes release quota");
+}
+
+#[test]
+fn review_unremovable_output_keeps_quota_and_next_sweep_retries() {
+    let (root, _) = store();
+    let s = Store::open(
+        root.path().join("limited"),
+        Limits {
+            disk_bytes: 100 * 1024 * 1024,
+            ..Limits::default()
+        },
+    )
+    .unwrap();
+    let d = output(&s, "unremovable");
+    let path = s.root.join("bytes").join(format!("{}.bin", d.handle));
+    // A portable deletion failure, including when tests run as root.
+    fs::remove_file(&path).unwrap();
+    fs::create_dir(&path).unwrap();
+    fs::write(path.join("held"), b"image").unwrap();
+    s.abandon_package_outputs("consumer").unwrap();
+    assert!(
+        matches!(s.reserve(admission("next", vec![])), Err(crate::error::AppError::Service { code, .. }) if code == "storage_full")
+    );
+    fs::remove_dir_all(&path).unwrap();
+    fs::write(&path, b"image").unwrap();
+    s.gc().unwrap();
+    assert!(!path.exists());
+    s.reserve(admission("next", vec![])).unwrap();
+}
+#[test]
 fn durable_admission_idempotency_and_forwarding_never_reverts() {
     let (root, s) = store();
     let a = admission("op", vec![]);

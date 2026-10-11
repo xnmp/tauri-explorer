@@ -66,9 +66,29 @@ impl Store {
     /// Settlement releases unused capacity, not the artifact's identity.
     /// Acquire the same stage + seal budget as initial admission before any
     /// writable path or new publication can consume it again.
-    fn reserve_output_capacity(&self, consumer: &str, op: &str, handle: &str) -> Result<()> {
+    fn reserve_output_capacity(
+        &self,
+        provider: &PackageGeneration,
+        consumer: &str,
+        op: &str,
+        handle: &str,
+    ) -> Result<()> {
+        #[cfg(test)]
+        {
+            let pause = self.pause_output_reservation.lock().unwrap().take();
+            if let Some((entered, resume)) = pause {
+                entered.wait();
+                resume.wait();
+            }
+        }
         let result=self.transaction(|tx| {
-            let bytes:i64=tx.query_row("SELECT bytes FROM artifacts WHERE handle=?1 AND consumer=?2 AND operation=?3 AND kind='output'",params![handle,consumer,op],|r| r.get(0)).map_err(sql)?;
+            let current = Self::record(tx, consumer, op)?.ok_or_else(|| reject("output admission disappeared"))?;
+            let (status, bytes):(String,i64)=tx.query_row("SELECT status,bytes FROM artifacts WHERE handle=?1 AND consumer=?2 AND operation=?3 AND kind='output'",params![handle,consumer,op],|r| Ok((r.get(0)?,r.get(1)?))).map_err(sql)?;
+            if !same_owner(&current.provider, provider) || status == "released"
+                || current.phase == AdmissionPhase::Released
+                || (status != "sealed" && !may_finish_stage(self, tx, &current)?) {
+                return Err(reject("output capacity requires an undisposed admitted artifact"));
+            }
             let bytes=u64::try_from(bytes).map_err(|_|reject("negative artifact reservation"))?;
             if bytes < OUTPUT_RESERVATION {
                 self.quota(tx,consumer,OUTPUT_RESERVATION-bytes,false)?;
@@ -347,15 +367,68 @@ fn sync_directory(path: &Path) -> Result<()> {
 /// and exec) still has a duplicate descriptor, which made a following seal,
 /// read or collection fail with "artifact IO is already owned".
 /// A forked child's copy never unlocks the still-live parent's lease.
-pub(crate) struct ArtifactLease(File, u32);
-impl Drop for ArtifactLease {
+pub(crate) struct ArtifactLease<'a> {
+    file: File,
+    pid: u32,
+    collection: Option<(&'a Store, String)>,
+}
+impl Drop for ArtifactLease<'_> {
     fn drop(&mut self) {
-        if std::process::id() == self.1 {
-            let _ = self.0.unlock();
+        if std::process::id() == self.pid {
+            let _ = self.file.unlock();
+            if let Some((store, handle)) = &self.collection {
+                if let Err(error) = store.collect_artifact(handle) {
+                    log::warn!("artifact lease cleanup deferred to the next sweep: {error}");
+                }
+            }
         }
     }
 }
 impl Store {
+    /// Custody is evidence independently of provider receipt publication. A
+    /// sealed descriptor, or original bytes awaiting sealing, keeps unpaid
+    /// status recovery alive even after an older dismissal marker.
+    pub(super) fn retained_output_at(
+        &self,
+        conn: &rusqlite::Connection,
+        consumer: &str,
+        op: &str,
+    ) -> Result<bool> {
+        let artifact: Option<(String, String)> = conn.query_row(
+            "SELECT a.handle,a.status FROM artifacts a JOIN operations o ON o.consumer=a.consumer AND o.operation=a.operation WHERE a.consumer=?1 AND a.operation=?2 AND a.kind='output' AND a.status!='released' AND o.phase!='released'",
+            params![consumer, op], |r| Ok((r.get(0)?, r.get(1)?))).optional().map_err(sql)?;
+        let Some((handle, status)) = artifact else {
+            return Ok(false);
+        };
+        if status == "sealed" {
+            return Ok(true);
+        }
+        Ok(self.artifact_disk_bytes(&handle)? > 0)
+    }
+    pub fn has_retained_output(&self, consumer: &str, op: &str) -> Result<bool> {
+        self.retained_output_at(&self.connect()?, consumer, op)
+    }
+    fn artifact_disk_bytes(&self, handle: &str) -> Result<u64> {
+        let mut bytes = 0u64;
+        for path in [
+            self.stage_path(handle)?,
+            self.bytes_path(handle)?,
+            self.pending_path(handle)?,
+        ] {
+            regular_or_missing(&path)?;
+            match fs::symlink_metadata(&path) {
+                Ok(metadata) => {
+                    bytes = bytes
+                        .checked_add(metadata.len())
+                        .filter(|n| *n <= i64::MAX as u64)
+                        .ok_or_else(|| reject("artifact bytes exceed accounting bound"))?
+                }
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => (),
+                Err(_) => return Err(reject("artifact bytes are unreadable")),
+            }
+        }
+        Ok(bytes)
+    }
     /// Keep artifact identity separate from unused capacity. Hold the artifact
     /// lease through settlement, reserving only retained original bytes. Work
     /// cannot start sealing between this proof and releasing unused capacity.
@@ -363,7 +436,7 @@ impl Store {
         &self,
         consumer: &str,
         op: &str,
-    ) -> Result<Option<(String, u64, ArtifactLease)>> {
+    ) -> Result<Option<(String, u64, ArtifactLease<'_>)>> {
         let handle: Option<String> = self
             .connect()?
             .query_row(
@@ -377,26 +450,7 @@ impl Store {
             return Ok(None);
         };
         let lease = self.lease(&handle)?;
-        let mut bytes = 0u64;
-        for path in [
-            self.stage_path(&handle)?,
-            self.bytes_path(&handle)?,
-            self.pending_path(&handle)?,
-        ] {
-            regular_or_missing(&path)?;
-            match fs::symlink_metadata(&path) {
-                Ok(metadata) => {
-                    bytes = bytes
-                        .checked_add(metadata.len())
-                        .filter(|n| *n <= i64::MAX as u64)
-                        .ok_or_else(|| {
-                            reject("original output reservation exceeds accounting bound")
-                        })?
-                }
-                Err(e) if e.kind() == std::io::ErrorKind::NotFound => (),
-                Err(_) => return Err(reject("original output reservation is unreadable")),
-            }
-        }
+        let bytes = self.artifact_disk_bytes(&handle)?;
         Ok(Some((handle, bytes, lease)))
     }
     /// Retry only the operation's original artifact. Missing/corrupt bytes
@@ -459,7 +513,10 @@ impl Store {
         private_directory(&parent)?;
         Ok(parent.join(format!("{handle}.png")))
     }
-    pub(super) fn lease(&self, handle: &str) -> Result<ArtifactLease> {
+    pub(super) fn lease(&self, handle: &str) -> Result<ArtifactLease<'_>> {
+        self.artifact_lease(handle, true)
+    }
+    fn artifact_lease(&self, handle: &str, collect_on_drop: bool) -> Result<ArtifactLease<'_>> {
         if handle.len() != 48
             || !handle
                 .bytes()
@@ -496,7 +553,11 @@ impl Store {
         }
         file.try_lock()
             .map_err(|_| reject("artifact IO is already owned"))?;
-        Ok(ArtifactLease(file, std::process::id()))
+        Ok(ArtifactLease {
+            file,
+            pid: std::process::id(),
+            collection: collect_on_drop.then(|| (self, handle.to_owned())),
+        })
     }
     fn pending_path(&self, handle: &str) -> Result<PathBuf> {
         Ok(self.bytes_path(handle)?.with_extension("pending"))
@@ -876,7 +937,7 @@ impl Store {
             )
             .map_err(sql)?;
         let _lease = self.lease(&handle)?;
-        self.reserve_output_capacity(consumer, op, &handle)?;
+        self.reserve_output_capacity(provider, consumer, op, &handle)?;
         let path = self.stage_path(&handle)?;
         regular_or_missing(&path)?;
         if !path.exists() {
@@ -956,7 +1017,7 @@ impl Store {
             if let Err(cause) = self.verify_bytes(&d) {
                 if matches!(&cause, crate::error::AppError::Service { code, .. } if matches!(code.as_str(), "not_found" | "corrupt"))
                 {
-                    self.reserve_output_capacity(consumer, op, handle)?;
+                    self.reserve_output_capacity(provider, consumer, op, handle)?;
                     self.restore_original_seal(&a, &d, cause)?;
                 } else {
                     return Err(cause);
@@ -974,7 +1035,7 @@ impl Store {
                 "staged output recovery requires durable proven success with unavailable delivery",
             ));
         }
-        self.reserve_output_capacity(consumer, op, handle)?;
+        self.reserve_output_capacity(provider, consumer, op, handle)?;
         let original = self.original_output(handle)?;
         if original.media_type != media {
             return Err(reject("output format does not match media type"));
@@ -1021,17 +1082,17 @@ impl Store {
     pub fn gc(&self) -> Result<()> {
         let conn = self.connect()?;
         let mut query = conn
-            .prepare("SELECT consumer,operation FROM operations WHERE phase='released' OR EXISTS(SELECT 1 FROM artifacts a WHERE a.consumer=operations.consumer AND a.operation=operations.operation AND a.kind='input' AND a.status='released')")
+            .prepare("SELECT a.handle FROM artifacts a JOIN operations o ON o.consumer=a.consumer AND o.operation=a.operation WHERE a.status='released' OR o.phase='released'")
             .map_err(sql)?;
-        let released = query
-            .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))
+        let handles = query
+            .query_map([], |r| r.get::<_, String>(0))
             .map_err(sql)?
             .collect::<std::result::Result<Vec<_>, _>>()
             .map_err(sql)?;
         drop(query);
         drop(conn);
-        for (consumer, operation) in released {
-            self.collect_released(&consumer, &operation)?;
+        for handle in handles {
+            self.collect_artifact(&handle)?;
         }
         Ok(())
     }
@@ -1214,44 +1275,61 @@ impl Store {
         drop(q);
         drop(conn);
         for handle in handles {
-            let Ok(lease) = self.lease(&handle) else {
-                continue;
-            };
-            // The Released commit already happened. Byte removal is best-effort:
-            // on failure the artifact row stays, so a later sweep retries it.
-            let mut collected = true;
-            for path in [
-                self.bytes_path(&handle)?,
-                self.pending_path(&handle)?,
-                self.stage_path(&handle)?,
-            ] {
-                match fs::remove_file(&path) {
-                    Ok(()) => {
-                        if sync_directory(path.parent().unwrap()).is_err() {
-                            collected = false;
-                        }
-                    }
-                    Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
-                    Err(error) => {
-                        log::warn!("released artifact cleanup deferred for a later sweep: {error}");
+            self.collect_artifact(&handle)?;
+        }
+        Ok(())
+    }
+    fn collect_artifact(&self, handle: &str) -> Result<()> {
+        let collectable = |conn: &rusqlite::Connection| -> Result<bool> {
+            conn.query_row("SELECT EXISTS(SELECT 1 FROM artifacts a JOIN operations o ON o.consumer=a.consumer AND o.operation=a.operation WHERE a.handle=?1 AND (a.status='released' OR o.phase='released'))", [handle], |r| r.get(0)).map_err(sql)
+        };
+        if !collectable(&self.connect()?)? {
+            return Ok(());
+        }
+        // Collector leases do not recursively schedule their own collection.
+        let Ok(_lease) = self.artifact_lease(handle, false) else {
+            return Ok(());
+        };
+        if !collectable(&self.connect()?)? {
+            return Ok(());
+        }
+        // The Released commit already happened. Byte removal is best-effort:
+        // on failure the artifact row stays, so a later sweep retries it.
+        let mut collected = true;
+        for path in [
+            self.bytes_path(&handle)?,
+            self.pending_path(&handle)?,
+            self.stage_path(&handle)?,
+        ] {
+            match fs::remove_file(&path) {
+                Ok(()) => {
+                    if sync_directory(path.parent().unwrap()).is_err() {
                         collected = false;
                     }
                 }
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+                Err(error) => {
+                    log::warn!("released artifact cleanup deferred for a later sweep: {error}");
+                    collected = false;
+                }
             }
-            if !collected {
-                continue;
-            }
-            self.transaction(|tx| {
+        }
+        self.transaction(|tx| {
+            if collected {
+                tx.execute("DELETE FROM artifacts WHERE handle=?1", [handle])
+                    .map_err(sql)?;
+            } else if let Ok(bytes) = self.artifact_disk_bytes(handle) {
+                // Retired reservations become exact pending-collection
+                // charges only under the IO lease. Failed deletion never
+                // hides surviving disk bytes from the quota ledger.
                 tx.execute(
-                    "DELETE FROM artifacts WHERE handle=?1 AND consumer=?2 AND operation=?3 AND ((kind='input' AND status='released') OR EXISTS(SELECT 1 FROM operations WHERE consumer=?2 AND operation=?3 AND phase='released'))",
-                    params![handle, consumer, op],
+                    "UPDATE artifacts SET bytes=?2 WHERE handle=?1",
+                    params![handle, bytes as i64],
                 )
                 .map_err(sql)?;
-                Ok(())
-            })?;
-            drop(lease);
-        }
-        Ok(())
+            }
+            Ok(())
+        })
     }
 }
 impl Store {

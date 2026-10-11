@@ -164,6 +164,9 @@ pub(super) fn auto_reconcile_in(
     store: &crate::service_state::Store,
     port: &impl AutomaticPort,
 ) -> Result<Vec<JobRecord>, AppError> {
+    // Pending collection remains quota-visible and is retried by the existing
+    // two-second automatic sweep even when no recovery candidates remain.
+    store.gc()?;
     service_bridge::retry_removal_cancellations(store)?;
     auto_reconcile_candidates(store, port, store.auto_settlement_operations()?)
 }
@@ -371,6 +374,7 @@ impl ReconciliationAttempt {
 }
 fn output_free(store: &crate::service_state::Store, a: &Admission) -> Result<bool, AppError> {
     Ok(a.output.is_none()
+        && !store.has_retained_output(&a.consumer.package_id, &a.operation_id)?
         && store
             .provider_receipt(&a.consumer.package_id, &a.operation_id)?
             .is_some_and(|r| {
@@ -427,6 +431,7 @@ impl AutomaticPort for LiveAutomatic {
         let storage_blocked = store
             .job_for_operation(&a.consumer.package_id, &a.operation_id)?
             .is_some_and(|j| j.phase.as_deref() == Some("storage_full"));
+        let retained_output = store.has_retained_output(&a.consumer.package_id, &a.operation_id)?;
         let mut provider_owner = a.provider.clone();
         let provider_compatible = installed_provider.as_ref().is_some_and(|p| {
             let current = PackageGeneration {
@@ -450,7 +455,11 @@ impl AutomaticPort for LiveAutomatic {
             }
         });
         let attempt = reconciliation_attempt(a)?;
-        if provider_present && (!attempt.exhausted() || store.success_known(a)? || storage_blocked)
+        if provider_present
+            && (!attempt.exhausted()
+                || store.success_known(a)?
+                || retained_output
+                || storage_blocked)
         {
             if !provider_compatible || backend::ensure(&a.provider.package_id).is_err() {
                 reconciliation_failed(a, ReconciliationPhase::Startup)?;
@@ -522,6 +531,7 @@ impl AutomaticPort for LiveAutomatic {
             if attempt.status_failures < RECONCILIATION_ATTEMPTS
                 || attempt.status_incarnation != Some(incarnation)
                 || store.success_known(a)?
+                || retained_output
                 || storage_blocked
             {
                 let _output_recovery = store.output_recovery_guard(a)?;

@@ -103,6 +103,200 @@ fn ready(store: &Store, op: &str) -> ArtifactDescriptor {
     d
 }
 #[test]
+fn review_sealed_unpublished_success_never_settles_and_recovers_next_healthy_status() {
+    use crate::service_state::job::{JobRecord, JobState};
+    for legacy_marker in [false, true] {
+        let (root, s) = fixture();
+        let op = "sealed-unpublished";
+        let registered = s.register_job(job(op, 911)).unwrap();
+        start(&s, op);
+        let d = sealed(&s, op);
+        if legacy_marker {
+            let db = rusqlite::Connection::open(root.path().join("service/ledger.sqlite")).unwrap();
+            db.execute(
+                "UPDATE operations SET exec_released=1 WHERE consumer='consumer' AND operation=?1",
+                [op],
+            )
+            .unwrap();
+            db.execute("INSERT INTO dismissed_operations(consumer,operation,revision,dismissed_at_ms)VALUES('consumer',?1,1,1)", [op]).unwrap();
+        }
+        // Sealing committed, but the provider's success publisher never reached
+        // the host. No session success witness exists; idle proofs still pass.
+        for _ in 0..5 {
+            super::ai_operations::auto_reconcile_in(&s, &IdleAutomatic).unwrap();
+        }
+        assert_eq!(
+            s.dismissed_revision("consumer", op).unwrap(),
+            legacy_marker.then_some(1)
+        );
+        assert_eq!(s.auto_settlement_operations().unwrap().len(), 1);
+        assert!(s.auto_settle_operation("consumer", op, true).is_err());
+        let data = root.path().join("consumer-data");
+        fs::create_dir(&data).unwrap();
+        s.register_consumer_root("consumer", data.clone()).unwrap();
+        struct Healthy<'a> {
+            store: &'a Store,
+            descriptor: &'a ArtifactDescriptor,
+            copy: std::path::PathBuf,
+        }
+        impl super::ai_operations::AutomaticPort for Healthy<'_> {
+            fn active(
+                &self,
+                a: &Admission,
+                _: Option<&JobRecord>,
+                _: bool,
+                _: &str,
+            ) -> Result<bool, AppError> {
+                reconcile_at(
+                    self.store,
+                    &provider(),
+                    a,
+                    &status(
+                        &a.operation_id,
+                        "succeeded",
+                        json!({"state":"available","output":self.descriptor}),
+                    ),
+                )?;
+                Ok(false)
+            }
+            fn recover(&self, a: &Admission, _: Option<&JobRecord>) -> Result<(), AppError> {
+                fs::copy(
+                    self.store
+                        .read(&consumer(), "consumer", &a.operation_id, self.descriptor)?
+                        .path,
+                    &self.copy,
+                )
+                .unwrap();
+                let transfer = self.store.acquired(
+                    &consumer(),
+                    &a.operation_id,
+                    self.descriptor,
+                    self.copy.to_str().unwrap(),
+                )?;
+                call(
+                    self.store,
+                    "acknowledge",
+                    json!({"operationId":a.operation_id,"outputSha256":self.descriptor.sha256,"disposition":"acquired","transferReceipt":transfer.transfer_receipt}),
+                    |method, _| {
+                        assert!(
+                            method.ends_with(".acknowledge"),
+                            "never replay an execution"
+                        );
+                        Ok(status(
+                            &a.operation_id,
+                            "succeeded",
+                            json!({"state":"acquired","transferReceipt":transfer.transfer_receipt}),
+                        ))
+                    },
+                )?;
+                self.store
+                    .complete_acquired_job("consumer", &a.operation_id)?;
+                Ok(())
+            }
+        }
+        let healthy = Healthy {
+            store: &s,
+            descriptor: &d,
+            copy: data.join("recovered.png"),
+        };
+        super::ai_operations::auto_reconcile_in(&s, &healthy).unwrap();
+        assert_eq!(
+            s.job(&registered.job_key).unwrap().unwrap().state,
+            JobState::Completed
+        );
+        assert_eq!(fs::metadata(&healthy.copy).unwrap().len(), d.byte_length);
+        assert_eq!(
+            s.get("consumer", op)
+                .unwrap()
+                .unwrap()
+                .disposition
+                .as_deref(),
+            Some("acquired")
+        );
+    }
+}
+
+#[test]
+fn review_removal_at_exact_journal_limits_evicts_history_and_commits_once() {
+    use crate::service_state::job::JobState;
+    let (root, s) = fixture();
+    for n in 1..=384 {
+        let mut record = job(&format!("unrelated-{n}"), n);
+        record.owner = generation("unrelated", 'd');
+        let record = s.register_job(record).unwrap();
+        if n <= 256 {
+            s.update_job(
+                &record.owner,
+                &record.job_key,
+                JobState::Cancelled,
+                None,
+                None,
+                None,
+                None,
+            )
+            .unwrap();
+        }
+    }
+    let d = ready(&s, "unpresented-success");
+    assert_eq!(s.snapshot_jobs().unwrap().jobs.len(), 384);
+    let notices = s
+        .abandon_package_outputs("provider")
+        .expect("history capacity never vetoes removal");
+    assert_eq!(notices.len(), 1);
+    assert_eq!(notices[0].state, JobState::Error);
+    assert_eq!(
+        s.get("consumer", "unpresented-success")
+            .unwrap()
+            .unwrap()
+            .phase,
+        AdmissionPhase::Released
+    );
+    assert!(s.abandon_package_outputs("provider").unwrap().is_empty());
+    assert!(!root
+        .path()
+        .join("service/bytes")
+        .join(format!("{}.bin", d.handle))
+        .exists());
+    let snapshot = s.snapshot_jobs().unwrap();
+    assert_eq!(
+        snapshot.jobs.iter().filter(|j| !j.state.terminal()).count(),
+        128
+    );
+    assert_eq!(
+        snapshot.jobs.iter().filter(|j| j.state.terminal()).count(),
+        256
+    );
+    drop(s);
+    let reopened = Store::open(root.path().join("service"), Limits::default()).unwrap();
+    assert!(reopened
+        .abandon_package_outputs("provider")
+        .unwrap()
+        .is_empty());
+}
+#[test]
+fn review_automatic_sweep_collects_pending_bytes_without_recovery_candidates() {
+    let (root, s) = fixture();
+    let d = ready(&s, "pending-collection");
+    let path = root
+        .path()
+        .join("service/bytes")
+        .join(format!("{}.bin", d.handle));
+    fs::remove_file(&path).unwrap();
+    fs::create_dir(&path).unwrap();
+    fs::write(path.join("held"), b"image").unwrap();
+    s.abandon_package_outputs("provider").unwrap();
+    assert!(s.auto_settlement_operations().unwrap().is_empty());
+    fs::remove_dir_all(&path).unwrap();
+    fs::write(&path, b"image").unwrap();
+    // Run exactly the entry point used by the existing periodic worker.
+    super::ai_operations::auto_reconcile_in(&s, &IdleAutomatic).unwrap();
+    assert!(
+        !path.exists(),
+        "timer sweeps retry deletion even with no AI work"
+    );
+}
+
+#[test]
 fn simultaneous_same_id_dispatches_start_once_and_reconciles_other_calls() {
     let (_root, s) = fixture();
     let s = Arc::new(s);
@@ -1681,8 +1875,8 @@ fn automatic_delayed_success_restores_recovery_ownership_across_restart() {
         start(&s, op);
         let descriptor = sealed(&s, op);
         super::ai_operations::auto_reconcile_in(&s, &IdleAutomatic).unwrap();
-        assert!(s.execution_released("consumer", op).unwrap());
-        // The separate host publisher arrives after the idle settlement.
+        assert!(!s.execution_released("consumer", op).unwrap());
+        // The separate host publisher arrives after unsuccessful idle probes.
         let admission = s.get("consumer", op).unwrap().unwrap();
         reconcile_at(
             &s,
@@ -1745,7 +1939,7 @@ fn automatic_late_success_publication_is_atomic_and_repairs_legacy_flags() {
             assert!(s
                 .observe_receipt(&provider(), "consumer", op, 2, receipt.clone())
                 .is_err());
-            assert!(s.execution_released("consumer", op).unwrap());
+            assert!(!s.execution_released("consumer", op).unwrap());
             assert_eq!(
                 s.provider_receipt("consumer", op).unwrap().unwrap(),
                 running(op)
@@ -1787,7 +1981,8 @@ fn review_failed_late_success_publication_remains_in_automatic_recovery() {
         json!({"code":"interrupted","message":"Unconfirmed","correlationId":null});
     reconcile_at(&s, &provider(), &a, &unknown).unwrap();
     super::ai_operations::auto_reconcile_in(&s, &IdleAutomatic).unwrap();
-    assert!(s.auto_settlement_operations().unwrap().is_empty());
+    assert_eq!(s.auto_settlement_operations().unwrap().len(), 1);
+    assert_eq!(s.dismissed_revision("consumer", op).unwrap(), None);
     let mut success = status(
         op,
         "succeeded",
@@ -1835,11 +2030,6 @@ fn review_settled_output_recovery_obeys_quota_and_retries_after_capacity_release
         let registered = s.register_job(job(op, 93)).unwrap();
         start(&s, op);
         let stage = s.stage(&provider(), "consumer", op).unwrap();
-        if original_stage {
-            image::RgbaImage::from_pixel(2, 3, image::Rgba([12, 34, 56, 255]))
-                .save_with_format(&stage.path, image::ImageFormat::Png)
-                .unwrap();
-        }
         let a = s.get("consumer", op).unwrap().unwrap();
         let mut unknown = status(op, "unknown", json!({"state":"none"}));
         unknown["revision"] = json!(2);
@@ -1847,6 +2037,12 @@ fn review_settled_output_recovery_obeys_quota_and_retries_after_capacity_release
             json!({"code":"interrupted","message":"Unconfirmed","correlationId":null});
         reconcile_at(&s, &provider(), &a, &unknown).unwrap();
         s.auto_settle_operation("consumer", op, true).unwrap();
+        if original_stage {
+            // The provider's original late copy arrives after empty settlement.
+            image::RgbaImage::from_pixel(2, 3, image::Rgba([12, 34, 56, 255]))
+                .save_with_format(&stage.path, image::ImageFormat::Png)
+                .unwrap();
+        }
         start(&s, "occupies-capacity");
         let _recovery = s.output_recovery_guard(&a).unwrap();
         let denied = if original_stage {
@@ -2036,7 +2232,9 @@ fn review_provider_upgrade_recovers_fenced_unknown_after_session_witness_expires
     unknown["execution"]["error"] =
         json!({"code":"interrupted","message":"Unconfirmed","correlationId":null});
     reconcile_at(&s, &provider(), &a, &unknown).unwrap();
+    fs::remove_file(&stage.path).unwrap();
     s.auto_settle_operation("consumer", op, true).unwrap();
+    fs::write(&stage.path, bytes).unwrap();
     let mut success = status(
         op,
         "succeeded",
@@ -2437,7 +2635,7 @@ fn automatic_transient_artifact_ownership_defers_discard() {
 
 #[test]
 fn automatic_settlement_reclaims_empty_output_capacity_and_retains_unknown_evidence() {
-    for stage_bytes in [None, Some(false), Some(true)] {
+    for stage_bytes in [None, Some(false)] {
         let (root, s) = fixture();
         for n in 0..24 {
             let op = format!("auto-capacity-{n}");
@@ -3192,6 +3390,18 @@ fn automatic_review_late_success_corrects_settled_unknown_job_with_output() {
     unknown["execution"]["error"] =
         json!({"code":"interrupted","message":"Remote result is unconfirmed","correlationId":null});
     reconcile_at(&s, &provider(), &a, &unknown).unwrap();
+    // Persist a legacy host's stopped presentation. New settlement must never
+    // manufacture this state while the sealed original is retained.
+    s.update_job(
+        &registered.owner,
+        &registered.job_key,
+        JobState::Discarded,
+        Some("stopped".into()),
+        None,
+        None,
+        None,
+    )
+    .unwrap();
     super::ai_operations::auto_reconcile_in(&s, &IdleAutomatic).unwrap();
     assert_eq!(
         s.job(&registered.job_key).unwrap().unwrap().state,

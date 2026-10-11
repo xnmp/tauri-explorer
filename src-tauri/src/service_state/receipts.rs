@@ -397,6 +397,7 @@ impl Store {
                 }
                 if let Some(mut a) = admission {
                     let success = a.output.is_some() || self.pending_success(&a)?.is_some()
+                        || tx.query_row("SELECT EXISTS(SELECT 1 FROM artifacts WHERE consumer=?1 AND operation=?2 AND kind='output' AND status='sealed')", params![consumer,op], |r| r.get::<_,bool>(0)).map_err(sql)?
                         || Self::provider_receipt_at(tx, &a)?.is_some_and(|r| r["execution"]["state"] == "succeeded");
                     let undelivered = success && a.disposition.as_deref() != Some("acquired")
                         && a.disposition.as_deref() != Some("discarded");
@@ -418,9 +419,9 @@ impl Store {
                 } else {
                     tx.execute("UPDATE operations SET phase='released' WHERE consumer=?1 AND operation=?2",params![consumer,op]).map_err(sql)?;
                 }
-                // Retire capacity in the same commit, even if an IO lease
-                // temporarily defers the post-commit byte collection.
-                tx.execute("UPDATE artifacts SET status='released',bytes=0 WHERE consumer=?1 AND operation=?2",params![consumer,op]).map_err(sql)?;
+                // Custody ends in this commit. The durable artifact row keeps
+                // charging pending collection until the files are gone.
+                tx.execute("UPDATE artifacts SET status='released' WHERE consumer=?1 AND operation=?2",params![consumer,op]).map_err(sql)?;
                 tx.execute("UPDATE operations SET exec_released=0 WHERE consumer=?1 AND operation=?2",params![consumer,op]).map_err(sql)?;
                 tx.execute("DELETE FROM dismissed_operations WHERE consumer=?1 AND operation=?2",params![consumer,op]).map_err(sql)?;
                 if let Some(job) = self.cancel_removed_job_in(tx, &consumer, &op)? { jobs.push(job); }
@@ -585,14 +586,14 @@ impl Store {
             let status = receipt.as_ref().map(|r| &r.status);
             let execution = status.and_then(|r| r["execution"]["state"].as_str()).unwrap_or("unconfirmed");
             let delivery = status.and_then(|r| r["delivery"]["state"].as_str()).unwrap_or("none");
-            if self.pending_success(&a)?.is_some() || super::receipt::auto_settlement(a.phase, execution, delivery, !no_live_worker) != super::receipt::AutoSettlement::Settle || a.output.is_some() && !(a.phase == AdmissionPhase::Released && a.disposition.as_deref() == Some("discarded")) {
+            if self.pending_success(&a)?.is_some() || self.retained_output_at(tx, consumer, op)? || super::receipt::auto_settlement(a.phase, execution, delivery, !no_live_worker) != super::receipt::AutoSettlement::Settle || a.output.is_some() && !(a.phase == AdmissionPhase::Released && a.disposition.as_deref() == Some("discarded")) {
                 return Err(reject("automatic settlement requires idle workers and no recoverable output"));
             }
             tx.execute("UPDATE operations SET exec_released=1 WHERE consumer=?1 AND operation=?2", params![consumer, op]).map_err(sql)?;
             // Inactive no-output operations cannot need their captured inputs
             // again: Unknown is fenced against replay. Keep descriptors in the
             // admission as evidence, but retire custody and capacity atomically.
-            tx.execute("UPDATE artifacts SET status='released',bytes=0 WHERE consumer=?1 AND operation=?2 AND kind='input'", params![consumer, op]).map_err(sql)?;
+            tx.execute("UPDATE artifacts SET status='released' WHERE consumer=?1 AND operation=?2 AND kind='input'", params![consumer, op]).map_err(sql)?;
             // The artifact identity is forensic evidence; an empty reservation
             // is capacity, not evidence. Preserve sealed/staged original bytes.
             if let Some((handle, bytes, _)) = &reservation {
@@ -665,7 +666,7 @@ impl Store {
             } else {
                 let reservation = self.idle_output_reservation(&consumer, &op)?;
                 self.transaction(|tx| {
-                    tx.execute("UPDATE artifacts SET status='released',bytes=0 WHERE consumer=?1 AND operation=?2 AND kind='input'", params![consumer, op]).map_err(sql)?;
+                    tx.execute("UPDATE artifacts SET status='released' WHERE consumer=?1 AND operation=?2 AND kind='input'", params![consumer, op]).map_err(sql)?;
                     if let Some((handle, bytes, _)) = &reservation {
                         tx.execute(
                             "UPDATE artifacts SET bytes=?2 WHERE handle=?1",

@@ -256,9 +256,6 @@ fn prune(conn: &Connection) -> Result<()> {
         .map_err(sql)?
         .map(|r| checked(r.map_err(sql)?, sequence))
         .collect::<Result<Vec<_>>>()?;
-    if records.len() > MAX_ACTIVE + MAX_TERMINAL {
-        return Err(reject("durable jobs exceed retained capacity"));
-    }
     let settled: Vec<_> = records.iter().filter(|r| retained(r)).collect();
     for record in settled
         .iter()
@@ -269,6 +266,9 @@ fn prune(conn: &Connection) -> Result<()> {
             [&record.job_key],
         )
         .map_err(sql)?;
+    }
+    if records.len() - settled.len().saturating_sub(MAX_TERMINAL) > MAX_ACTIVE + MAX_TERMINAL {
+        return Err(reject("durable jobs exceed retained capacity"));
     }
     Ok(())
 }

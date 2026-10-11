@@ -16,6 +16,13 @@ pub(crate) struct Store {
     pub(super) fail_next_commit: std::sync::atomic::AtomicBool,
     #[cfg(test)]
     pub(super) fail_next_original_sync: std::sync::atomic::AtomicBool,
+    #[cfg(test)]
+    pub(super) pause_output_reservation: std::sync::Mutex<
+        Option<(
+            std::sync::Arc<std::sync::Barrier>,
+            std::sync::Arc<std::sync::Barrier>,
+        )>,
+    >,
     #[cfg(all(test, unix))]
     pub(super) fail_evidence_sync_at: std::sync::Mutex<Option<PathBuf>>,
 }
@@ -71,6 +78,8 @@ impl Store {
             fail_next_commit: std::sync::atomic::AtomicBool::new(false),
             #[cfg(test)]
             fail_next_original_sync: std::sync::atomic::AtomicBool::new(false),
+            #[cfg(test)]
+            pause_output_reservation: Default::default(),
             #[cfg(all(test, unix))]
             fail_evidence_sync_at: std::sync::Mutex::new(None),
         };
@@ -340,7 +349,10 @@ impl Store {
     /// Holds an artifact's IO lease, as a concurrent reader would, so tests
     /// can observe deferred byte collection.
     #[cfg(test)]
-    pub(crate) fn hold_artifact_io(&self, handle: &str) -> Result<super::artifacts::ArtifactLease> {
+    pub(crate) fn hold_artifact_io(
+        &self,
+        handle: &str,
+    ) -> Result<super::artifacts::ArtifactLease<'_>> {
         self.lease(handle)
     }
     pub(super) fn connect(&self) -> Result<Connection> {
@@ -921,7 +933,7 @@ impl Store {
     }
     pub fn auto_settlement_operations(&self) -> Result<Vec<(Admission, u64, bool)>> {
         let conn = self.connect()?;
-        let mut query=conn.prepare("SELECT consumer,operation,created_at_ms,exec_released FROM operations WHERE admission IS NOT NULL AND (phase!='released' OR EXISTS(SELECT 1 FROM presentation_jobs j WHERE j.owner=operations.consumer AND j.operation=operations.operation AND (json_extract(j.record,'$.state') IN ('accepting','running','recovering','needs_attention') OR (json_extract(j.record,'$.state')='error' AND json_extract(j.record,'$.error') IS NULL) OR (json_extract(j.record,'$.state') IN ('discarded','error') AND json_extract(j.record,'$.phase') IN ('stopped','delivery_failed','storage_full') AND json_extract(operations.admission,'$.disposition')='acquired')))) AND NOT EXISTS(SELECT 1 FROM dismissed_operations d WHERE d.consumer=operations.consumer AND d.operation=operations.operation AND d.revision=coalesce((SELECT revision FROM provider_receipts p WHERE p.consumer=operations.consumer AND p.operation=operations.operation),0) AND exec_released=1) ORDER BY created_at_ms ASC").map_err(sql)?;
+        let mut query=conn.prepare("SELECT consumer,operation,created_at_ms,exec_released FROM operations WHERE admission IS NOT NULL AND (phase!='released' OR EXISTS(SELECT 1 FROM presentation_jobs j WHERE j.owner=operations.consumer AND j.operation=operations.operation AND (json_extract(j.record,'$.state') IN ('accepting','running','recovering','needs_attention') OR (json_extract(j.record,'$.state')='error' AND json_extract(j.record,'$.error') IS NULL) OR (json_extract(j.record,'$.state') IN ('discarded','error') AND json_extract(j.record,'$.phase') IN ('stopped','delivery_failed','storage_full') AND json_extract(operations.admission,'$.disposition')='acquired')))) ORDER BY created_at_ms ASC").map_err(sql)?;
         let rows = query
             .query_map([], |r| {
                 Ok((
@@ -940,6 +952,13 @@ impl Store {
             }
             let a = Self::record(&conn, &consumer, &operation)?
                 .ok_or_else(|| reject("missing retained operation"))?;
+            let dismissed: bool = conn.query_row("SELECT EXISTS(SELECT 1 FROM dismissed_operations d WHERE d.consumer=?1 AND d.operation=?2 AND d.revision=coalesce((SELECT revision FROM provider_receipts p WHERE p.consumer=?1 AND p.operation=?2),0))", params![consumer, operation], |r| r.get(0)).map_err(sql)?;
+            if released != 0
+                && dismissed
+                && !self.retained_output_at(&conn, &consumer, &operation)?
+            {
+                continue;
+            }
             result.push((a, created as u64, released != 0));
         }
         // An authoritative success can precede a failed receipt transaction.

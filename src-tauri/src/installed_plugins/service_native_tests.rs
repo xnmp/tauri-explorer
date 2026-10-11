@@ -856,40 +856,64 @@ fn review_archive(root: &Path, p: &package::Installed) -> PathBuf {
 #[test]
 #[ignore = "requires a private native display/profile; execute via dedicated subprocess"]
 fn native_review_compatible_upgrade_delivers_original_success_through_real_reverse_rpc() {
-    review_consumer_upgrade("broken");
+    review_consumer_upgrade("broken", false);
+}
+
+#[test]
+#[ignore = "requires a private native display/profile; execute via dedicated subprocess"]
+fn native_review_incompatible_consumer_upgrade_releases_original_success_once() {
+    review_consumer_upgrade("broken", true);
+}
+
+#[test]
+#[ignore = "requires a private native display/profile; execute via dedicated subprocess"]
+fn native_review_incompatible_provider_upgrade_releases_original_success_once() {
+    review_consumer_upgrade("provider-repair", true);
+}
+
+#[test]
+#[ignore = "requires a private native display/profile; execute via dedicated subprocess"]
+fn native_review_sealed_unpublished_output_recovers_after_status_outage_without_restart() {
+    review_consumer_upgrade("sealed-status-outage", false);
+}
+
+#[test]
+#[ignore = "requires a private native display/profile; execute via dedicated subprocess"]
+fn native_review_compatible_provider_upgrade_delivers_sealed_unpublished_output() {
+    review_consumer_upgrade("sealed-status-upgrade", false);
 }
 
 #[test]
 #[ignore = "requires a private native display/profile; execute via dedicated subprocess"]
 fn native_review_live_failed_delivery_does_not_pin_consumer_job_ownership() {
-    review_consumer_upgrade("delivery-fails");
+    review_consumer_upgrade("delivery-fails", false);
 }
 
 #[test]
 #[ignore = "requires a private native display/profile; execute via dedicated subprocess"]
 fn native_review_legacy_stopped_job_delivers_authoritative_success() {
-    review_consumer_upgrade("legacy-stopped");
+    review_consumer_upgrade("legacy-stopped", false);
 }
 
 #[test]
 #[ignore = "requires a private native display/profile; execute via dedicated subprocess"]
 fn native_review_broken_provider_upgrade_recovers_original_success() {
-    review_consumer_upgrade("provider-repair");
+    review_consumer_upgrade("provider-repair", false);
 }
 
 #[test]
 #[ignore = "requires a private native display/profile; execute via dedicated subprocess"]
 fn native_review_failed_late_publication_survives_provider_upgrade_without_replay() {
-    review_consumer_upgrade("late-provider-repair");
+    review_consumer_upgrade("late-provider-repair", false);
 }
 
 #[test]
 #[ignore = "requires a private native display/profile; execute via dedicated subprocess"]
 fn native_review_storage_full_survives_recovery_budget_and_delivers_after_release() {
-    review_consumer_upgrade("quota-recovery");
+    review_consumer_upgrade("quota-recovery", false);
 }
 
-fn review_consumer_upgrade(old_role: &str) {
+fn review_consumer_upgrade(old_role: &str, incompatible_upgrade: bool) {
     use crate::service_state::{job::*, model::*};
     require_private_fixture();
     let app = tauri::Builder::<tauri::Wry>::default()
@@ -904,6 +928,8 @@ fn review_consumer_upgrade(old_role: &str) {
     let provider_repair = matches!(old_role, "provider-repair" | "late-provider-repair");
     let late = old_role == "late-provider-repair";
     let quota = old_role == "quota-recovery";
+    let sealed_upgrade = old_role == "sealed-status-upgrade";
+    let sealed_outage = matches!(old_role, "sealed-status-outage" | "sealed-status-upgrade");
     let deps = json!([{"packageId":PROVIDER,"serviceId":"image-generation","major":1,"optional":provider_repair}]);
     let provider_source = REVIEW_RECOVERY_BACKEND.replace(
         "%ROLE%",
@@ -913,7 +939,12 @@ fn review_consumer_upgrade(old_role: &str) {
             "provider"
         },
     );
-    let provider_source = if quota {
+    let provider_source = if sealed_outage {
+        provider_source.replace(
+            "  elif m=='services.image-generation.v1.status': r=json.loads((root/'retained.json').read_text())",
+            "  elif m=='services.image-generation.v1.status':\n   if (root/'fail-status').exists(): raise RuntimeError('status publisher unavailable')\n   r=json.loads((root/'retained.json').read_text())",
+        )
+    } else if quota {
         provider_source.replace(
         "  elif m=='services.image-generation.v1.status': r=json.loads((root/'retained.json').read_text())",
         r#"  elif m=='services.image-generation.v1.status':
@@ -936,7 +967,7 @@ fn review_consumer_upgrade(old_role: &str) {
     let old = package_from(
         &root,
         id,
-        &REVIEW_RECOVERY_BACKEND.replace("%ROLE%", old_role),
+        &REVIEW_RECOVERY_BACKEND.replace("%ROLE%", if sealed_outage { "fixed" } else { old_role }),
         json!([]),
         deps.clone(),
     );
@@ -1031,12 +1062,17 @@ fn review_consumer_upgrade(old_role: &str) {
     let success = json!({"version":1,"operationId":op,"requestFingerprint":a.fingerprint,"provider":{"packageId":PROVIDER,"serviceId":"image-generation","major":1},"revision":1,"execution":{"state":"succeeded","metadata":{"adapter":"openai-images","endpointIdentity":"fixture","requestedModel":null,"actualModel":null,"externalRequestId":null,"threadId":null,"options":{"size":"1024x1024","resolution":null,"aspectRatio":null,"quality":"low","background":"auto"},"remoteChargeUncertain":false}},"delivery":{"state":"available","output":artifact}});
     let mut success = success;
     if late || quota {
+        // Model late original bytes arriving after an empty Unknown was fenced.
+        // A currently retained original is no longer eligible for settlement.
+        let original_bytes = fs::read(&stage.path).unwrap();
+        fs::remove_file(&stage.path).unwrap();
         let mut unknown = success.clone();
         unknown["execution"] = json!({"state":"unknown","error":{"code":"interrupted","message":"Unconfirmed","correlationId":null}});
         unknown["delivery"] = json!({"state":"none"});
         super::reconcile_at(store, &provider, &a, &unknown).unwrap();
         store.auto_settle_operation(id, op, true).unwrap();
         assert!(store.auto_settlement_operations().unwrap().is_empty());
+        fs::write(&stage.path, original_bytes).unwrap();
         success["revision"] = json!(2);
         if late {
             assert!(
@@ -1051,6 +1087,12 @@ fn review_consumer_upgrade(old_role: &str) {
         } else {
             store.revisit_uncertain_settlements().unwrap();
         }
+    } else if sealed_outage {
+        let mut running = success.clone();
+        running["execution"] = json!({"state":"running"});
+        running["delivery"] = json!({"state":"none"});
+        super::reconcile_at(store, &provider, &a, &running).unwrap();
+        success["revision"] = json!(2);
     } else {
         super::reconcile_at(store, &provider, &a, &success).unwrap();
     }
@@ -1082,6 +1124,74 @@ fn review_consumer_upgrade(old_role: &str) {
         serde_json::to_vec(&json!({"jobId":job.job_id,"operationId":op})).unwrap(),
     )
     .unwrap();
+    if sealed_outage {
+        fs::write(data(PROVIDER).join("fail-status"), b"").unwrap();
+        for _ in 0..6 {
+            super::super::ai_operations::auto_reconcile_in(
+                store,
+                &super::super::ai_operations::LiveAutomatic,
+            )
+            .unwrap();
+        }
+        assert_eq!(store.dismissed_revision(id, op).unwrap(), None);
+        assert_eq!(store.auto_settlement_operations().unwrap().len(), 1);
+        assert!(!store.job(&job.job_key).unwrap().unwrap().state.terminal());
+        assert!(
+            fs::read_to_string(data(PROVIDER).join("methods"))
+                .unwrap()
+                .lines()
+                .filter(|m| *m == "services.image-generation.v1.status")
+                .count()
+                >= 6,
+            "retained output retries beyond the uncertainty budget"
+        );
+        fs::remove_file(data(PROVIDER).join("fail-status")).unwrap();
+        if sealed_upgrade {
+            let replacement = package_from(
+                &root,
+                PROVIDER,
+                &REVIEW_RECOVERY_BACKEND.replace("%ROLE%", "fixed-provider"),
+                json!([{"id":"image-generation","major":1,"methods":["status","cancel","acknowledge"]}]),
+                json!([]),
+            );
+            let profile = super::super::lifecycle::Profile { root: &root, store };
+            let upgraded = super::super::lifecycle::upgrade(
+                &profile,
+                &review_archive(&root, &replacement),
+                &backend::preflight_candidate,
+            )
+            .expect("compatible replacement must recover unpublished sealed output");
+            assert_ne!(upgraded.digest, p.digest);
+        }
+        super::super::ai_operations::auto_reconcile_in(
+            store,
+            &super::super::ai_operations::LiveAutomatic,
+        )
+        .unwrap();
+        wait_until(
+            "healthy status delivers retained original",
+            Duration::from_secs(15),
+            || store.job(&job.job_key).unwrap().unwrap().state == JobState::Completed,
+        );
+        let completed = store.job(&job.job_key).unwrap().unwrap();
+        assert_eq!(
+            hex::encode(Sha256::digest(
+                fs::read(completed.output_path.unwrap()).unwrap()
+            )),
+            artifact.sha256
+        );
+        assert_eq!(
+            store.get(id, op).unwrap().unwrap().disposition.as_deref(),
+            Some("acquired")
+        );
+        for package in [id, PROVIDER] {
+            assert!(!fs::read_to_string(data(package).join("methods"))
+                .unwrap()
+                .contains(".start"));
+        }
+        backend::shutdown();
+        return;
+    }
     if quota {
         fs::write(
             data(PROVIDER).join("raw.png"),
@@ -1176,33 +1286,34 @@ fn review_consumer_upgrade(old_role: &str) {
     }
     if provider_repair {
         let profile = super::super::lifecycle::Profile { root: &root, store };
-        let incompatible = package_from(
-            &root,
-            PROVIDER,
-            &REVIEW_RECOVERY_BACKEND.replace("%ROLE%", "incompatible-provider"),
-            json!([{"id":"image-generation","major":2,"methods":["status","cancel","acknowledge"]}]),
-            json!([]),
-        );
-        super::super::lifecycle::upgrade(
-            &profile,
-            &review_archive(&root, &incompatible),
-            &backend::preflight_candidate,
-        )
-        .expect("broken provider must be repairable");
-        super::super::ai_operations::auto_reconcile_in(
-            store,
-            &super::super::ai_operations::LiveAutomatic,
-        )
-        .unwrap();
-        assert_ne!(
-            store.job(&job.job_key).unwrap().unwrap().state,
-            JobState::Completed,
-            "incompatible provider must not acquire original recovery authority"
-        );
-        assert_ne!(
-            store.get(id, op).unwrap().unwrap().phase,
-            AdmissionPhase::Released
-        );
+        if incompatible_upgrade {
+            let incompatible = package_from(
+                &root,
+                PROVIDER,
+                &REVIEW_RECOVERY_BACKEND.replace("%ROLE%", "incompatible-provider"),
+                json!([{"id":"image-generation","major":2,"methods":["status","cancel","acknowledge"]}]),
+                json!([]),
+            );
+            super::super::lifecycle::upgrade(
+                &profile,
+                &review_archive(&root, &incompatible),
+                &backend::preflight_candidate,
+            )
+            .expect("broken provider must be repairable");
+            super::super::ai_operations::auto_reconcile_in(
+                store,
+                &super::super::ai_operations::LiveAutomatic,
+            )
+            .unwrap();
+            assert_ne!(
+                store.job(&job.job_key).unwrap().unwrap().state,
+                JobState::Completed,
+                "incompatible provider must not acquire original recovery authority"
+            );
+            assert_incompatible_upgrade_released(store, id, op, &job, &artifact, PROVIDER);
+            backend::shutdown();
+            return;
+        }
         let source=REVIEW_RECOVERY_BACKEND.replace("%ROLE%","fixed-provider").replace(
             "  elif m=='services.image-generation.v1.status': r=json.loads((root/'retained.json').read_text())",
             r#"  elif m=='services.image-generation.v1.status':
@@ -1291,42 +1402,43 @@ fn review_consumer_upgrade(old_role: &str) {
     // Same release version, different package digest: capability negotiation,
     // rather than version comparison, must permit local handoff.
     let profile = super::super::lifecycle::Profile { root: &root, store };
-    let resume_count = fs::read_to_string(data(id).join("methods"))
-        .unwrap()
-        .lines()
-        .filter(|m| *m == "jobs.resumeOperation")
-        .count();
-    let incompatible = package_from(
-        &root,
-        id,
-        &REVIEW_RECOVERY_BACKEND.replace("%ROLE%", "incompatible"),
-        json!([]),
-        json!([{"packageId":PROVIDER,"serviceId":"image-generation","major":2,"optional":true}]),
-    );
-    super::super::lifecycle::upgrade(
-        &profile,
-        &review_archive(&root, &incompatible),
-        &backend::preflight_candidate,
-    )
-    .unwrap();
-    super::super::ai_operations::auto_reconcile_in(
-        store,
-        &super::super::ai_operations::LiveAutomatic,
-    )
-    .unwrap();
-    assert_eq!(
-        store.get(id, op).unwrap().unwrap().phase,
-        AdmissionPhase::Terminal
-    );
-    assert_eq!(
-        fs::read_to_string(data(id).join("methods"))
+    if incompatible_upgrade {
+        let resume_count = fs::read_to_string(data(id).join("methods"))
             .unwrap()
             .lines()
             .filter(|m| *m == "jobs.resumeOperation")
-            .count(),
-        resume_count,
-        "incompatible feature must not resume recovery"
-    );
+            .count();
+        let incompatible = package_from(
+            &root,
+            id,
+            &REVIEW_RECOVERY_BACKEND.replace("%ROLE%", "incompatible"),
+            json!([]),
+            json!([{"packageId":PROVIDER,"serviceId":"image-generation","major":2,"optional":true}]),
+        );
+        super::super::lifecycle::upgrade(
+            &profile,
+            &review_archive(&root, &incompatible),
+            &backend::preflight_candidate,
+        )
+        .unwrap();
+        super::super::ai_operations::auto_reconcile_in(
+            store,
+            &super::super::ai_operations::LiveAutomatic,
+        )
+        .unwrap();
+        assert_incompatible_upgrade_released(store, id, op, &job, &artifact, id);
+        assert_eq!(
+            fs::read_to_string(data(id).join("methods"))
+                .unwrap()
+                .lines()
+                .filter(|m| *m == "jobs.resumeOperation")
+                .count(),
+            resume_count,
+            "incompatible feature must not resume recovery"
+        );
+        backend::shutdown();
+        return;
+    }
     let next = package_from(
         &root,
         id,
@@ -1366,6 +1478,45 @@ fn review_consumer_upgrade(old_role: &str) {
         );
     }
     backend::shutdown();
+}
+
+fn assert_incompatible_upgrade_released(
+    store: &crate::service_state::Store,
+    consumer: &str,
+    op: &str,
+    job: &crate::service_state::job::JobRecord,
+    artifact: &crate::service_state::model::ArtifactDescriptor,
+    removed: &str,
+) {
+    use crate::service_state::{job::JobState, model::AdmissionPhase};
+    let admission = store.get(consumer, op).unwrap().unwrap();
+    assert_eq!(admission.phase, AdmissionPhase::Released);
+    assert_eq!(admission.disposition.as_deref(), Some("discarded"));
+    let notice = store.job(&job.job_key).unwrap().unwrap();
+    assert_eq!(notice.state, JobState::Error);
+    assert_eq!(notice.phase.as_deref(), Some("consumer_removed"));
+    assert!(notice.error.as_deref().unwrap().contains(removed));
+    assert!(
+        store.abandon_package_outputs(removed).unwrap().is_empty(),
+        "report once"
+    );
+    let private = config::config_dir().unwrap().join("service-state");
+    assert!(!private
+        .join("bytes")
+        .join(format!("{}.bin", artifact.handle))
+        .exists());
+    assert!(!private
+        .join("stages")
+        .join(format!("{}.png", artifact.handle))
+        .exists());
+    let reopened =
+        crate::service_state::Store::open(private, crate::service_state::model::Limits::default())
+            .unwrap();
+    assert!(reopened
+        .abandon_package_outputs(removed)
+        .unwrap()
+        .is_empty());
+    assert_eq!(reopened.job(&job.job_key).unwrap().unwrap(), notice);
 }
 
 #[test]

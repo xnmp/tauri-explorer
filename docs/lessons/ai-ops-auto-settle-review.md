@@ -44,8 +44,9 @@ Counterpart cancellation queue rejection leaves a durable retry. A late-success 
 can change from Discarded to that delivery-loss report in the frontend reducer.
 Automatic settlement never uses the explicit-removal path.
 
-Settling inactive no-output work retires captured input custody and charges in
-the settlement transaction. GC collects those inputs independently of the
+Settling inactive no-output work retires captured input custody in the
+settlement transaction. Artifact rows retain their quota charge until the
+collector actually deletes the files. GC collects those inputs independently of the
 operation's forensic admission and output reservation, which remain available
 for original-output recovery and Unknown no-replay enforcement.
 Run the same collector used on open immediately after the settlement commit.
@@ -93,3 +94,29 @@ finite uncertainty budget; existing recovery passes retry after capacity release
 The real-broker regression fills normal reservations, refuses six original raw
 image recovery passes, releases one reservation and checks original image bytes
 and completed job history without another start.
+
+Sealed output is durable custody evidence even when the provider success
+publisher never reaches the host. Nonempty original stages also keep automatic
+recovery eligible. Check retained custody in the settlement transaction, override
+old matching dismissal markers during discovery, and keep querying unpaid status
+beyond the uncertainty budget while original output exists. The native outage
+regression fails six status probes and then completes delivery from a healthy
+status without a restart, upgrade, or new execution.
+
+Output reservation revalidates the current admission, pinned provider authority,
+and artifact status in its own transaction. Earlier validation does not authorize
+a callback that resumes after removal. A normal IO lease retries collection when
+it drops; collector leases suppress recursive collection. Removed artifact rows
+are durable pending-collection records and remain quota-visible until deletion.
+The existing automatic worker retries these rows every sweep, independently of
+recovery candidates. Enumerate pending artifacts directly, rather than visiting
+every historical released operation, so forensic tombstones cannot consume the
+recovery deadline. This applies to input settlement and every removal path.
+
+Presentation pruning must evict excess terminal history before enforcing the
+total bound. Exactly 128 active plus 256 terminal rows is valid input to explicit
+removal; one synthetic delivery-loss report can temporarily create row 385 in
+the same transaction. Incompatible native upgrades now assert Released/discarded
+custody, one failed notice, deleted bytes, and durable reopening. Compatible
+consumer and provider replacements run separately and assert the recovered
+file hash, acquired receipt, Completed job, and absence of another start.

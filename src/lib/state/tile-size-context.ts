@@ -1,6 +1,6 @@
 /**
  * The tile size of the pane a component renders in, as Svelte context.
- * `PluginFileView` provides it, so `ui/file-tiles` inside a plugin view
+ * `PluginFileView` provides it, so `ui/file-tiles`/`ui/file-tile` in a plugin view
  * follows the folder's size even when the plugin passes no `size` (plugins
  * share the host's Svelte runtime, so context crosses the plugin boundary).
  * The reader is a function: calling it inside a derivation tracks changes.

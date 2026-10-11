@@ -4,12 +4,13 @@
  */
 import { expect, it } from "vitest";
 import { exposePluginSDK } from "$lib/plugins/runtime-sdk";
+import { tileGridMetrics } from "$lib/domain/tile-layout";
 
 interface Sdk {
   sdkVersion: number;
   apiVersion: number;
   capabilities: readonly string[];
-  modules: Record<string, { default?: unknown }>;
+  modules: Record<string, { default?: unknown; tileGridMetrics?: typeof tileGridMetrics }>;
 }
 
 it("announces the file-tiles module and pane tile sizes alongside the existing SDK 2 contract", () => {
@@ -18,9 +19,11 @@ it("announces the file-tiles module and pane tile sizes alongside the existing S
   expect(sdk.sdkVersion).toBe(1);
   expect(sdk.apiVersion).toBe(3);
   expect(sdk.capabilities).toEqual(expect.arrayContaining(["fileViews", "previewInfo", "previewTargets", "blobWorkers", "fileTiles", "tileSize", "jobRetry", "textGeneration", "pluginServices", "serviceArtifacts", "settingsActions", "modalNavigation", "combinedSelection"]));
-  for (const name of ["ui/modal", "ui/image-editor", "ui/file-tiles"]) {
+  expect(sdk.capabilities).toContain("fileTile");
+  for (const name of ["ui/modal", "ui/image-editor", "ui/file-tiles", "ui/file-tile"]) {
     expect(typeof sdk.modules[name]?.default, name).toBe("function");
   }
+  expect(sdk.modules["ui/file-tile"].tileGridMetrics?.("large")).toEqual(tileGridMetrics("large"));
   expect(Object.isFrozen(sdk.capabilities)).toBe(true);
   // Exposing twice keeps the first, frozen binding.
   exposePluginSDK();

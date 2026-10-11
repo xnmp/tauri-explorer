@@ -156,6 +156,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `directory-events.ts` — shared native directory event subscription with explicit readiness, retry and late-listener retirement.
 - `directory-listing.ts` — complete directory snapshots, queued-request supersession, teardown and observation transfer.
 - `navigation.ts` — pure back/forward history utilities.
+- `src/lib/state/pane-pointer-focus.ts` — pointer gesture focus ownership without cancelling native drag acquisition.
 - `selection.ts` — pure selection math (range/toggle/anchor).
 - `sort-prefs.ts` — per-directory sort preference persistence.
 - `refresh-manager.ts` — dedupe/debounce/rate-limit directory refresh requests.
@@ -330,6 +331,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 
 - `src/lib/domain/file-recovery.ts` — recovery snapshot, choice and native-port contracts with bounded lossless decimal-counter validation/ordering; inspection returns an ordered snapshot. Also formats retained sizes and summarizes storage against both retention budgets (`tests/domain/file-recovery-retention.test.ts`), and owns the confirmation copy for irreversible choices, including Forget for a stranded move discard (`tests/file-recovery-confirmation.test.ts`).
 
+- `src/lib/domain/workspace-selection.ts` — pure cross-pane click focus policy and focused-first, path-deduplicated active-tab selection.
 - `file-list-navigation.ts` — independent path cursor and pure keyboard movement/selection intents for all file-list views.
 
 - `window-keys.ts` — pure ordered window-key routing policy for native button activation, terminal, modal, editable and filter contexts.

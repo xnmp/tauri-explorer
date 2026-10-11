@@ -124,6 +124,10 @@ export interface PluginWorkspace {
   /** Entries selected in the active pane. Empty when nothing is selected or
    *  there is no active explorer pane. */
   getSelection(): FileEntry[];
+  /** Selected entries in this window's active explorer tab: focused pane first,
+   * then other panes in visual order, preserving each pane's selection order
+   * and deduplicating by path. */
+  getCombinedSelection?(): FileEntry[];
   /** Entries currently listed in the active pane (after sort/filter). Used to
    *  gather in-context candidates such as sibling folders. */
   getVisibleEntries(): FileEntry[];
@@ -460,6 +464,7 @@ export function createPluginContext(
         }));
       },
       getSelection: () => windowTabsManager.getActiveExplorer()?.getSelectedEntries() ?? [],
+      getCombinedSelection: () => windowTabsManager.getCombinedSelection(),
       getVisibleEntries: () => windowTabsManager.getActiveExplorer()?.displayEntries ?? [],
       navigate: async (path) => {
         await windowTabsManager.getActiveExplorer()?.navigateTo(path);

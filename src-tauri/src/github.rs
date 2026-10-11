@@ -1220,3 +1220,16 @@ mod tests {
         assert_eq!(PrInfo::from(pull).body, None);
     }
 }
+
+/// Explicit GitHub mutation request; strings are passed as argv, never a shell.
+#[derive(Debug, Deserialize)]
+#[serde(tag = "action", rename_all = "camelCase", rename_all_fields = "camelCase")]
+pub enum PrAction {
+    Create { head_branch: String, title: String, body: String, base: String },
+    Merge { pr_number: u64, method: PrMergeMethod },
+    Approve { pr_number: u64 },
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum PrMergeMethod { Merge, Squash, Rebase }

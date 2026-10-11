@@ -408,3 +408,9 @@ export async function gitFailedCiCheckLog(
 ): Promise<FailedCiCheckLog> {
   return invoke<FailedCiCheckLog>("git_failed_ci_check_log", { repoRoot: repoPath, check });
 }
+
+/** Explicit GitHub mutation, confirmed by the user in the graph pane. */
+export type PrAction =
+  | { action: "create"; headBranch: string; title: string; body: string; base: string }
+  | { action: "merge"; prNumber: number; method: "merge" | "squash" | "rebase" }
+  | { action: "approve"; prNumber: number };

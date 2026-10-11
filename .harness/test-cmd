@@ -1,0 +1,1 @@
+bunx vitest run tests/state/git-pr-actions.test.ts && cargo test --manifest-path src-tauri/Cargo.toml pr_actions && bunx playwright test e2e/git-graph-pr-actions.spec.ts

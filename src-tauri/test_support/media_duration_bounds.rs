@@ -182,3 +182,9 @@ fn ffmpeg_probe_reads_the_duration_of_a_child_that_exits() {
     let seconds = ffmpeg_probe(&ffmpeg, Path::new("clip.avi"), Duration::from_secs(10)).unwrap();
     assert!((seconds - 62.5).abs() < 1e-9);
 }
+
+#[test]
+fn ffmpeg_duration_ignores_duration_text_in_paths_and_tags() {
+    let stderr = "Input #0, avi, from 'Duration: 09:00:00.00, x.avi':\n  Metadata:\n    title           : Duration: 05:00:00.00\n  Duration: 00:00:42.00, start: 0.000000, bitrate: 1 kb/s\n";
+    assert_eq!(parse_ffmpeg_duration(stderr), Some(42.0));
+}

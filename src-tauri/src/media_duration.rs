@@ -295,9 +295,14 @@ fn ffmpeg_probe(ffmpeg: &Path, path: &Path, timeout: Duration) -> Option<f64> {
     parse_ffmpeg_duration(&String::from_utf8_lossy(&text))
 }
 
-/// Parses the `Duration: HH:MM:SS.ff` line ffmpeg prints for its input.
+/// Parses the `Duration: HH:MM:SS.ff` line ffmpeg prints for its input. Only a
+/// line that starts with `Duration:` counts: the input path and metadata tags
+/// are printed earlier and may contain the same text.
 fn parse_ffmpeg_duration(stderr: &str) -> Option<f64> {
-    let rest = stderr.split("Duration:").nth(1)?.trim_start();
+    let rest = stderr
+        .lines()
+        .find_map(|line| line.trim_start().strip_prefix("Duration:"))?
+        .trim_start();
     let stamp = rest.split(|c: char| c == ',' || c.is_whitespace()).next()?;
     let mut parts = stamp.split(':');
     let hours: f64 = parts.next()?.parse().ok()?;

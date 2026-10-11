@@ -309,6 +309,45 @@ fn indexes(conn: &Connection) -> Result<()> {
     Ok(())
 }
 impl Store {
+    /// Presentation failure releases no execution or output custody. The
+    /// caller holds the worker-idle fence; recheck success/unavailable in the
+    /// same transaction so a newer handoff cannot be graded as delivery loss.
+    pub fn fail_output_delivery(&self, job: &JobRecord) -> Result<Option<JobRecord>> {
+        self.transaction(|conn| {
+            let Some(old) = stored(conn, &job.job_key)? else {
+                return Ok(None);
+            };
+            if old.state.terminal() {
+                return Ok(None);
+            }
+            let Some(a) = Self::record(conn, &old.owner.package_id, &old.operation_id)? else {
+                return Ok(None);
+            };
+            let receipt = Self::provider_receipt_at(conn, &a)?;
+            if !receipt.is_some_and(|r| {
+                r["execution"]["state"] == "succeeded" && r["delivery"]["state"] == "unavailable"
+            }) {
+                return Ok(None);
+            }
+            let mut next = JobRecord {
+                state: JobState::Error,
+                phase: Some("delivery_failed".into()),
+                output_path: None,
+                error: Some(
+                    "Original output could not be delivered; recovery will retry automatically"
+                        .into(),
+                ),
+                revision: next_revision(conn)?,
+                updated_at_ms: clock()?,
+                ..old.clone()
+            };
+            stamp_settled(&old, &mut next);
+            valid(&next, false)?;
+            persist(conn, &next)?;
+            prune(conn)?;
+            Ok(Some(next))
+        })
+    }
     /// Settle presentation while keeping the stopped observation fence and original reason.
     pub(super) fn settle_dismissed_job_in(
         &self,
@@ -532,10 +571,28 @@ impl Store {
             if source_revision.is_some_and(|revision| revision <= old.source_revision) {
                 return Ok(old);
             }
+            // A host-settled Unknown is a no-replay fence, not proof that a
+            // delayed success has no output. Correct only that presentation,
+            // after the original handoff is durably acknowledged and a newer
+            // consumer receipt reports its completed output and Trace run.
+            let recovered_settlement = (old.state == JobState::Discarded
+                && old.phase.as_deref() == Some("stopped")
+                || old.state == JobState::Error && old.phase.as_deref() == Some("delivery_failed"))
+                && source_revision.is_some()
+                && state == JobState::Completed
+                && output_path.as_ref().is_some_and(|p| !p.is_empty())
+                && run_id.is_some_and(|id| id > 0)
+                && Self::record(conn, &old.owner.package_id, &old.operation_id)?.is_some_and(|a| {
+                    a.phase == super::model::AdmissionPhase::Released
+                        && a.disposition.as_deref() == Some("acquired")
+                        && a.output.is_some()
+                        && a.transfer_receipt.is_some()
+                });
             if source_revision.is_some()
                 && (old.phase.as_deref() == Some("stopped")
                     || old.phase.as_deref() == Some("provider_result_discarded")
                         && state != JobState::Discarded)
+                && !recovered_settlement
             {
                 return Ok(old);
             }
@@ -573,7 +630,7 @@ impl Store {
             {
                 return Ok(old);
             }
-            if old.state.terminal() {
+            if old.state.terminal() && !recovered_settlement {
                 return Err(reject("a terminal job outcome is immutable"));
             }
             // Parked rows do not count toward active capacity, so they may
@@ -584,7 +641,9 @@ impl Store {
                     "a stopped or discarded job cannot become active again",
                 ));
             }
-            transition(old.state, state)?;
+            if !recovered_settlement {
+                transition(old.state, state)?;
+            }
             next.revision = next_revision(conn)?;
             next.updated_at_ms = clock()?;
             stamp_settled(&old, &mut next);

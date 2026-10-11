@@ -79,7 +79,12 @@ export function mergeNativeJobEvent(old: NativeJobView, event: NativeJobEvent): 
     jobs.delete(jobKey); tombstones.set(jobKey, revision);
   } else {
     const previous = jobs.get(jobKey);
-    if (previous && (!sameIdentity(previous, event.job) || nativeJobTerminal(previous.state) && previous.state !== event.job.state)) return old;
+    // The native ledger may correct a host-settled Unknown after its original
+    // output is acknowledged. Keep every other terminal outcome immutable.
+    const recoveredSettlement = (previous?.state === "discarded" && previous.phase === "stopped"
+      || previous?.state === "error" && previous.phase === "delivery_failed")
+      && event.job.state === "completed" && !!event.job.outputPath && safe(event.job.runId, true);
+    if (previous && (!sameIdentity(previous, event.job) || nativeJobTerminal(previous.state) && previous.state !== event.job.state && !recoveredSettlement)) return old;
     if ([...jobs.values()].some((r) => r.jobKey !== jobKey && (r.jobId === event.job.jobId || r.owner.packageId === event.job.owner.packageId && r.operationId === event.job.operationId))) return old;
     if (!previous && !nativeJobSettled(event.job) && [...jobs.values()].filter((r) => !nativeJobSettled(r)).length >= 128) return old;
     jobs.set(jobKey, event.job);

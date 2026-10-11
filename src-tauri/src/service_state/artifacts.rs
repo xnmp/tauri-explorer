@@ -319,9 +319,9 @@ impl Store {
         }
         Ok(Some((handle, bytes, lease)))
     }
-    /// Retry only the operation's original artifact. A typed missing/corrupt
-    /// result proves loss; lease, IO, sync and malformed-stage errors defer
-    /// disposition. This never creates a new provider request or stage.
+    /// Retry only the operation's original artifact. Missing/corrupt bytes
+    /// defer delivery, never authorize automatic discard. This never creates
+    /// a new provider request or stage.
     pub fn recover_original_output(
         &self,
         provider: &PackageGeneration,
@@ -504,28 +504,58 @@ impl Store {
     /// failed repair. The caller holds this artifact's exclusive IO lease.
     fn restore_original_seal(
         &self,
+        admission: &Admission,
         d: &ArtifactDescriptor,
         loss: crate::error::AppError,
     ) -> Result<()> {
         let pending = self.pending_path(&d.handle)?;
-        for path in [self.stage_path(&d.handle)?, pending.clone()] {
-            let bytes = match original_output_bytes(&path) {
+        let restore = |path: &Path| -> Result<bool> {
+            let bytes = match original_output_bytes(path) {
                 Ok(bytes) => bytes,
                 Err(crate::error::AppError::Service { code, .. })
                     if matches!(code.as_str(), "not_found" | "corrupt") =>
                 {
-                    continue
+                    return Ok(false)
                 }
                 Err(cause) => return Err(cause),
             };
             if bytes.len() as u64 != d.byte_length
                 || hex::encode(Sha256::digest(&bytes)) != d.sha256
             {
-                continue;
+                return Ok(false);
             }
-            self.publish_original_copy(&d.handle, &path, &bytes)?;
+            self.publish_original_copy(&d.handle, path, &bytes)?;
             self.verify_bytes(d)?;
-            return Ok(());
+            Ok(true)
+        };
+        for path in [self.stage_path(&d.handle)?, pending] {
+            if restore(&path)? {
+                return Ok(());
+            }
+        }
+        // Acquisition may commit before provider acknowledgement. Validate its
+        // pinned copy only if host copies could not restore the original seal.
+        let evidence: Option<(String, String, String)> = self.connect()?.query_row(
+            "SELECT e.descriptor,e.path,r.path FROM evidence e JOIN roots r ON r.package=e.consumer WHERE e.consumer=?1 AND e.operation=?2",
+            params![admission.consumer.package_id, admission.operation_id],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+        ).optional().map_err(sql)?;
+        if let Some((descriptor, path, root)) = evidence {
+            let path = PathBuf::from(path);
+            if decode::<ArtifactDescriptor>(&descriptor)? != *d
+                || !path.is_absolute()
+                || !path.starts_with(Path::new(&root))
+                || path.starts_with(&self.root)
+            {
+                return Err(reject(
+                    "consumer recovery evidence conflicts with its original output",
+                ));
+            }
+            // The read rejects links in every path component and is bounded;
+            // SHA and length are checked on every retry, without altering custody.
+            if restore(&path)? {
+                return Ok(());
+            }
         }
         Err(loss)
     }
@@ -843,7 +873,7 @@ impl Store {
             if let Err(cause) = self.verify_bytes(&d) {
                 if matches!(&cause, crate::error::AppError::Service { code, .. } if matches!(code.as_str(), "not_found" | "corrupt"))
                 {
-                    self.restore_original_seal(&d, cause)?;
+                    self.restore_original_seal(&a, &d, cause)?;
                 } else {
                     return Err(cause);
                 }

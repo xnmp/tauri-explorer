@@ -17,21 +17,20 @@ export function createMockAiPresentation(emit: (name: string, value: unknown) =>
       if (active || operation.delivery === "delivered") { retained.push(operation); continue; }
       // Only successful original output can be driven. Unknown execution is
       // never resumed, even when a malformed fixture claims it canResume.
-      const permanentlyUnavailable = operation.execution === "succeeded" && operation.delivery === "unavailable"
-        && ["missing", "corrupt"].includes(operation.deliveryReason ?? "");
-      const recoverable = operation.execution === "succeeded" && ["available", "unavailable", "acquired"].includes(operation.delivery) && !permanentlyUnavailable;
+      // Success keeps its original output and evidence for every delivery
+      // state. Missing/corrupt delivery is retried silently on later passes.
+      const recoverable = operation.execution === "succeeded";
       if (recoverable) {
+        const deliveryFailed = operation.delivery === "unavailable" && ["missing", "corrupt"].includes(operation.deliveryReason ?? "");
+        if (deliveryFailed) jobs = jobs.map(r => linked.includes(r) && !nativeJobTerminal(r.state)
+          ? { ...r, revision: ++watermark, updatedAtMs: Date.now(), settledAtMs: r.settledAtMs ?? Date.now(), state: "error", phase: "delivery_failed", error: r.error || "Original output could not be delivered; recovery will retry automatically" } : r);
         if (!operation.canResume) { retained.push(operation); continue; }
         calls.push({ command: "resume", identity: aiOperationKey(operation) });
-        retained.push({ ...operation, active: true });
+        retained.push({ ...operation, active: !deliveryFailed });
         jobs = jobs.map(r => linked.includes(r) && !nativeJobTerminal(r.state)
           ? { ...r, revision: ++watermark, updatedAtMs: Date.now(), settledAtMs: undefined, state: "recovering", phase: "acquiring", error: undefined } : r);
       } else {
-        // A permanent missing/corrupt result uses provider Discard so its
-        // original ownership is released. Without that provider capability,
-        // retain the evidence until the pinned package can perform it.
-        if (permanentlyUnavailable && !operation.canDiscard) { retained.push(operation); continue; }
-        calls.push({ command: "auto-settle", identity: aiOperationKey(operation), action: permanentlyUnavailable ? "discard" : "dismiss" });
+        calls.push({ command: "auto-settle", identity: aiOperationKey(operation), action: "dismiss" });
         jobs = jobs.map(r => {
           if (!linked.includes(r)) return r;
           if (!nativeJobTerminal(r.state)) return { ...r, revision: ++watermark, updatedAtMs: Date.now(), settledAtMs: r.settledAtMs ?? Date.now(), state: "discarded", phase: "stopped", error: r.error || operation.reason };

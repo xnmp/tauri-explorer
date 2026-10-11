@@ -342,6 +342,16 @@ fn join_io_workers(workers: &Mutex<Vec<std::thread::JoinHandle<()>>>) {
 }
 
 /// A partially started backend must never survive an error return.
+fn activation_result<T>(
+    activate: impl FnOnce() -> Result<T, AppError>,
+    stop: impl FnOnce(),
+) -> Result<T, AppError> {
+    let result = activate();
+    if result.is_err() {
+        stop();
+    }
+    result
+}
 struct StartupGuard(Option<Arc<Broker>>);
 impl Drop for StartupGuard {
     fn drop(&mut self) {
@@ -372,6 +382,60 @@ fn terminate_owned_tree(child: &mut Child, stopped: &AtomicBool) {
 #[cfg(test)]
 mod admission_tests {
     use super::*;
+    #[cfg(unix)]
+    #[test]
+    fn automatic_review_failed_activation_terminates_the_owned_backend() {
+        use std::os::unix::process::CommandExt;
+        for message in ["activation refused", "Plugin activation protocol mismatch"] {
+            let child = std::cell::RefCell::new(
+                Command::new("sh")
+                    .args(["-c", "sleep 30"])
+                    .process_group(0)
+                    .spawn()
+                    .unwrap(),
+            );
+            let stopped = AtomicBool::new(false);
+            let result = activation_result(
+                || Err::<(), _>(error(message)),
+                || {
+                    let mut child = child.borrow_mut();
+                    terminate_owned_tree(&mut child, &stopped);
+                    child.wait().unwrap();
+                },
+            );
+            let exited = child.borrow_mut().try_wait().unwrap().is_some();
+            // Always clean up, including when reproducing the pre-fix failure.
+            if !exited {
+                let mut child = child.borrow_mut();
+                terminate_owned_tree(&mut child, &stopped);
+                child.wait().unwrap();
+            }
+            assert!(result.is_err());
+            assert!(
+                exited,
+                "a rejected activation must not leave its backend alive"
+            );
+        }
+    }
+    #[test]
+    fn automatic_review_idle_probe_keeps_existing_controls_routable() {
+        let package = "fixture.review-existing-controls";
+        let _fence = IdleCallFence::acquire(&[package]).unwrap();
+        for method in [
+            "jobs.cancelOperation",
+            "jobs.status",
+            "services.image-generation.v1.acknowledge",
+        ] {
+            let _control = CallLease::acquire_method(package, method).unwrap();
+            let routed = ensure_active_or_start(
+                package,
+                || Ok(Some("active broker")),
+                || panic!("an existing active broker must not start again"),
+            );
+            assert_eq!(routed.unwrap(), "active broker");
+        }
+        assert!(ensure_active_or_start(package, || Ok(None::<()>), || Ok(())).is_err());
+    }
     #[test]
     fn a_package_without_a_broker_is_fenced_while_unrelated_controls_remain_usable() {
         let package = "fixture.absent-mutation";
@@ -792,10 +856,16 @@ impl Broker {
             return Err(error("Plugin package is draining for a lifecycle change"));
         }
         self.phase.store(ACTIVATING_PHASE, Ordering::Release);
-        let result = self.call("lifecycle.activate", json!({}))?;
-        if self.installed.manifest.sdk_version >= 3 && result["ready"] != true {
-            return Err(error("Plugin activation protocol mismatch"));
-        }
+        activation_result(
+            || {
+                let result = self.call("lifecycle.activate", json!({}))?;
+                if self.installed.manifest.sdk_version >= 3 && result["ready"] != true {
+                    return Err(error("Plugin activation protocol mismatch"));
+                }
+                Ok(())
+            },
+            || self.stop(),
+        )?;
         self.phase.store(ACTIVE_PHASE, Ordering::Release);
         Ok(())
     }
@@ -1562,31 +1632,57 @@ impl Broker {
 }
 
 pub(super) fn ensure(id: &str) -> Result<Arc<Broker>, AppError> {
-    // Startup/activation are owned before taking the package startup mutex.
-    // Mutation cannot fence a package whose handshake has already begun.
-    let _startup_admission = {
-        let _gate = super::read_lifecycle()?;
-        if !OWNERSHIP_READY.load(Ordering::Acquire) {
-            let installed = package::list(&root()?)?
-                .into_iter()
-                .find(|entry| entry.manifest.id == id && entry.enabled)
-                .ok_or_else(|| error("Plugin package is disabled or removed"))?;
-            if !super::degraded_backend_allowed(&installed)? {
-                return Err(error(
+    let broker = ensure_active_or_start(
+        id,
+        || {
+            Ok(
+                crate::native_deadline::lock(brokers(), "Plugin runtime lock is unavailable")?
+                    .get(id)
+                    .filter(|broker| broker.is_active())
+                    .cloned(),
+            )
+        },
+        || {
+            if !OWNERSHIP_READY.load(Ordering::Acquire) {
+                let installed = package::list(&root()?)?
+                    .into_iter()
+                    .find(|entry| entry.manifest.id == id && entry.enabled)
+                    .ok_or_else(|| error("Plugin package is disabled or removed"))?;
+                if !super::degraded_backend_allowed(&installed)? {
+                    return Err(error(
                     "Plugin AI services are unavailable in this process; this plugin waits for their recovery",
                 ));
+                }
             }
-        }
-        CallLease::acquire_direction(id, 3)?
-    };
-    let broker = ensure_mode(id)?;
-    if !broker.is_active() {
-        broker.activate()?;
-    }
+            let broker = ensure_mode(id)?;
+            if !broker.is_active() {
+                broker.activate()?;
+            }
+            Ok(broker)
+        },
+    )?;
     if matches!(id, "xnmp.trace-explorer" | "xnmp.image-generation") {
         schedule_image_migration();
     }
     Ok(broker)
+}
+fn ensure_active_or_start<T>(
+    id: &str,
+    current: impl FnOnce() -> Result<Option<T>, AppError>,
+    start: impl FnOnce() -> Result<T, AppError>,
+) -> Result<T, AppError> {
+    // Startup/activation are owned before taking the package startup mutex.
+    // Mutation cannot fence a package whose handshake has already begun.
+    let _startup_admission = {
+        let _gate = super::read_lifecycle()?;
+        // Retained controls need no startup lane. In particular an automatic
+        // idle fence must leave status, cancel and acknowledge immediately usable.
+        if let Some(broker) = current()? {
+            return Ok(broker);
+        }
+        CallLease::acquire_direction(id, 3)?
+    };
+    start()
 }
 static IMAGE_MIGRATION: AtomicBool = AtomicBool::new(false);
 fn spawn_image_migration(work: impl FnOnce() + Send + 'static) -> Result<bool, AppError> {
@@ -1941,6 +2037,33 @@ pub(super) fn active_instance(id: &str, digest: &str) -> Option<Arc<Broker>> {
         .get(id)
         .filter(|broker| broker.is_active() && broker.installed.digest == digest)
         .cloned()
+}
+/// Must be called under an IdleCallFence (or lifecycle drain). Never interpret
+/// a lock error or a half-terminated broker as death. A new incarnation with
+/// the same digest can own recovery of the recorded operation, so it is probed.
+pub(super) fn settlement_broker(
+    owner: &crate::service_state::model::PackageGeneration,
+) -> Result<Option<Arc<Broker>>, AppError> {
+    let broker = crate::native_deadline::lock(brokers(), "Plugin runtime lock is unavailable")?
+        .get(&owner.package_id)
+        .cloned();
+    let Some(broker) = broker else {
+        return Ok(None);
+    };
+    if !broker.alive.load(Ordering::Acquire) {
+        let mut child =
+            crate::native_deadline::lock(&broker.child, "Plugin process lock is unavailable")?;
+        if broker.tree_stopped.load(Ordering::Acquire) && matches!(child.try_wait(), Ok(Some(_))) {
+            return Ok(None);
+        }
+        return Err(error("Plugin termination is not yet verified"));
+    }
+    if !broker.is_active() || broker.installed.digest != owner.digest {
+        return Err(error(
+            "Original plugin worker is not available for an idle proof",
+        ));
+    }
+    Ok(Some(broker))
 }
 pub(super) fn preflight_candidate(
     installed: &package::Installed,

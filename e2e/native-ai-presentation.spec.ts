@@ -99,3 +99,25 @@ test("Plugins has no unresolved operations entry", async ({ page }) => {
   await expect(plugins.getByRole("textbox", { name: "Filter plugins" })).toBeVisible();
   await expect(plugins.getByRole("button", { name: /Unresolved AI/i })).toHaveCount(0);
 });
+
+test("late acknowledged success replaces settled history with its output without reload", async ({ page }) => {
+  await page.goto(HOME_URL); await waitForEntries(page);
+  await page.evaluate(async () => {
+    const { createNativePluginJobsController } = await import("/src/lib/state/native-plugin-jobs.ts");
+    const { jobsStore } = await import("/src/lib/state/jobs.svelte.ts");
+    const stopped = { jobKey: "d".repeat(48), owner: { packageId: "consumer", digest: "b".repeat(64), incarnation: 1 }, operationId: "late-original", jobId: 99003, kind: "openai-image", label: "original.png", originWindow: "fixture-window", revision: 1, createdAtMs: Date.now() - 3000, updatedAtMs: Date.now(), state: "discarded" as const, phase: "stopped", settledAtMs: Date.now() };
+    let receive: (event: unknown) => void = () => {};
+    const observer = createNativePluginJobsController({ watch: async callback => { receive = callback; return () => {}; }, snapshot: async () => ({ originWindow: "fixture-window", watermark: 1, jobs: [stopped] }), apply: records => jobsStore.applyNative(records), toast: () => { throw Error("Late recovery must be silent"); }, error: () => {} });
+    await observer.init();
+    (window as any).deliverLateOriginal = () => receive({ type: "updated", job: { ...stopped, revision: 2, state: "completed", phase: "complete", outputPath: "/recovered/late-delivered.png", runId: 17, error: null } });
+  });
+  const progress = page.getByRole("region", { name: "Background progress" });
+  await expect(progress.getByText("Discarded", { exact: true })).toBeVisible();
+  await page.evaluate(() => (window as any).deliverLateOriginal());
+  await expect(progress.getByText("Complete", { exact: true })).toBeVisible();
+  await expect(progress.getByText("Discarded", { exact: true })).toHaveCount(0);
+  await page.keyboard.press("Control+j");
+  const jobs = page.getByRole("dialog", { name: "Background Jobs", exact: true });
+  await expect(jobs.getByText("late-delivered.png", { exact: true })).toBeVisible();
+  await expect(jobs.getByText("Discarded", { exact: true })).toHaveCount(0);
+});

@@ -291,7 +291,9 @@ pub(super) type Preflight<'a> =
     &'a dyn Fn(&package::Installed, PathBuf, &backend::DrainGuard) -> Result<(), AppError>;
 /// Close admission for a package that has no durable claim or live native work.
 pub(super) fn drain_idle(store: &Store, id: &str) -> Result<backend::DrainGuard, AppError> {
+    super::ai_operations::settle_terminal_backlog(store, id)?;
     let _guard = super::write_lifecycle()?;
+    super::ai_operations::settle_dead_backlog(store, id)?;
     service_host::mutation_allowed_in(store, id)?;
     if backend::busy(id) {
         return Err(service_host::busy(

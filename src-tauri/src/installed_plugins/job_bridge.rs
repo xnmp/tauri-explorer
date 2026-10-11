@@ -102,6 +102,13 @@ fn emit(record: &JobRecord) {
     backend::emit_job_event(json!({"type":"updated","job":record}));
 }
 fn observe(record: &JobRecord, status: &Value) -> Result<JobRecord, AppError> {
+    observe_in(service_host::store()?, record, status)
+}
+pub(super) fn observe_in(
+    store: &Store,
+    record: &JobRecord,
+    status: &Value,
+) -> Result<JobRecord, AppError> {
     if status["jobId"].as_u64() != Some(record.job_id)
         || status["operationId"].as_str() != Some(&record.operation_id)
     {
@@ -115,13 +122,18 @@ fn observe(record: &JobRecord, status: &Value) -> Result<JobRecord, AppError> {
         {
             JobState::Completed
         }
-        Some("failed") if status["providerExecution"]["state"] == "failed" => JobState::Error,
+        Some("failed") => JobState::Error,
         Some("cancelled") => JobState::Cancelled,
         Some("discarded") => JobState::Discarded,
         Some("running") if phase != "needs_attention" => JobState::Running,
         Some("pending") => JobState::Accepting,
         _ if phase == "needs_attention" => JobState::NeedsAttention,
         _ => JobState::Recovering,
+    };
+    let phase = if state == JobState::Error && status["providerExecution"]["state"] == "succeeded" {
+        "delivery_failed"
+    } else {
+        phase
     };
     let output = if state == JobState::Completed {
         status["outputPath"].as_str().map(str::to_owned)
@@ -132,10 +144,10 @@ fn observe(record: &JobRecord, status: &Value) -> Result<JobRecord, AppError> {
         .as_str()
         .or_else(|| status["providerExecution"]["error"]["message"].as_str())
         .map(str::to_owned);
-    let current = service_host::store()?
+    let current = store
         .job(&record.job_key)?
         .ok_or_else(|| error("Background job is not retained"))?;
-    if current.phase.as_deref() == Some("stopped")
+    if current.phase.as_deref() == Some("stopped") && state != JobState::Completed
         || current.phase.as_deref() == Some("provider_result_discarded")
             && state != JobState::Discarded
     {
@@ -144,7 +156,7 @@ fn observe(record: &JobRecord, status: &Value) -> Result<JobRecord, AppError> {
     if current.run_id.is_some() && current.run_id != status["runId"].as_i64() {
         return Err(error("Consumer job receipt changed its original Trace run"));
     }
-    service_host::store()?.observe_job(
+    store.observe_job(
         &record.owner,
         &record.job_key,
         status["revision"]
@@ -250,12 +262,25 @@ fn schedule_reconcile(broker: Option<Arc<Broker>>, record: JobRecord) {
     }
 }
 pub(super) fn event(broker: Arc<Broker>, name: &str, payload: &Value) -> Result<(), AppError> {
+    event_in(
+        service_host::store()?,
+        &broker.generation(),
+        name,
+        payload,
+        |record| schedule_status(broker.clone(), record),
+    )
+}
+pub(super) fn event_in(
+    store: &Store,
+    owner: &PackageGeneration,
+    name: &str,
+    payload: &Value,
+    mut probe: impl FnMut(JobRecord),
+) -> Result<(), AppError> {
     let Some(operation) = payload["operationId"].as_str() else {
         return Ok(());
     };
-    let owner = broker.generation();
-    let Some(record) = service_host::store()?.job_for_operation(&owner.package_id, operation)?
-    else {
+    let Some(record) = store.job_for_operation(&owner.package_id, operation)? else {
         return Ok(());
     };
     if owner.digest != record.owner.digest
@@ -270,17 +295,17 @@ pub(super) fn event(broker: Arc<Broker>, name: &str, payload: &Value) -> Result<
     {
         return Err(error("Plugin event does not match its durable native job"));
     }
-    if record.phase.as_deref() == Some("stopped") {
+    if record.phase.as_deref() == Some("stopped") && !name.ends_with("-complete") {
         return Ok(());
     }
     if name.ends_with("-progress") {
         if record.state.terminal() {
             return Ok(());
         }
-        let updated = observe(&record, payload)?;
+        let updated = observe_in(store, &record, payload)?;
         emit(&updated);
     } else {
-        schedule_status(broker, record);
+        probe(record);
     }
     Ok(())
 }

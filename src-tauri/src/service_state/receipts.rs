@@ -131,6 +131,12 @@ fn evidence(
     Ok(())
 }
 impl Store {
+    pub(super) fn provider_receipt_at(
+        conn: &Connection,
+        admission: &Admission,
+    ) -> Result<Option<Value>> {
+        Ok(observed(conn, admission)?.map(|receipt| receipt.status))
+    }
     pub fn provider_receipt(&self, consumer: &str, operation: &str) -> Result<Option<Value>> {
         let conn = self.connect()?;
         let Some(a) = Self::record(&conn, consumer, operation)? else {
@@ -289,7 +295,18 @@ impl Store {
             if flag != 1 {
                 return Err(reject("invalid retained execution claim"));
             }
-            if a.phase == AdmissionPhase::Terminal && a.needs_attention && a.output.is_none() {
+            let receipt = observed(&conn, &a)?;
+            if a.phase == AdmissionPhase::Terminal
+                && a.needs_attention
+                && a.output.is_none()
+                // Legacy explicit Stop predates durable provider receipts.
+                // Preserve that no-output proof, but a newer successful
+                // receipt must always restore original recovery ownership.
+                && receipt.as_ref().is_none_or(|r| {
+                    r.status["execution"]["state"] == "unknown"
+                        && r.status["delivery"]["state"] == "none"
+                })
+            {
                 let reservation = self.idle_output_reservation(&consumer, &op)?;
                 self.transaction(|tx| {
                     if let Some((handle, bytes, _)) = &reservation {
@@ -305,7 +322,6 @@ impl Store {
             }
             // Legacy Stop is unchanged. Other idle settlements require their
             // transaction's marker and a policy-compatible provider receipt.
-            let receipt = observed(&conn, &a)?;
             let status = receipt.as_ref().map(|r| &r.status);
             let revision = receipt.as_ref().map_or(0, |r| r.revision);
             if a.output.is_some() && a.phase != AdmissionPhase::Released

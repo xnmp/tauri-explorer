@@ -8,9 +8,7 @@ use crate::{
     service_state::{
         job::{JobRecord, JobState},
         model::{Admission, PackageGeneration},
-        receipt::{
-            auto_settlement, dismissable, dismissal_holds, settlement_delivery, AutoSettlement,
-        },
+        receipt::{auto_settlement, dismissable, dismissal_holds, AutoSettlement},
     },
 };
 use serde_json::{json, Value};
@@ -123,11 +121,6 @@ pub(super) trait AutomaticPort {
     fn closing(&self) -> bool {
         false
     }
-    fn discard(&self, _admission: &Admission) -> Result<(), AppError> {
-        Err(error(
-            "Original provider is unavailable for output disposition",
-        ))
-    }
     fn active(
         &self,
         admission: &Admission,
@@ -140,6 +133,7 @@ pub(super) trait AutomaticPort {
     /// before invoking it; recovery is driven after this fence is dropped.
     fn with_activity(
         &self,
+        _store: &crate::service_state::Store,
         admission: &Admission,
         job: Option<&JobRecord>,
         stopped: bool,
@@ -152,13 +146,6 @@ pub(super) trait AutomaticPort {
         ])?;
         apply(self.active(admission, job, stopped, execution)?)
     }
-    fn refresh(
-        &self,
-        _store: &crate::service_state::Store,
-        _admission: &Admission,
-    ) -> Result<(), AppError> {
-        Err(error("Fresh original provider status is unavailable"))
-    }
     fn recover(&self, admission: &Admission, job: Option<&JobRecord>) -> Result<(), AppError>;
 }
 /// Run the same policy for live changes and startup backlog. Failure on one
@@ -167,8 +154,14 @@ pub(super) fn auto_reconcile_in(
     store: &crate::service_state::Store,
     port: &impl AutomaticPort,
 ) -> Result<Vec<JobRecord>, AppError> {
+    auto_reconcile_candidates(store, port, store.auto_settlement_operations()?)
+}
+fn auto_reconcile_candidates(
+    store: &crate::service_state::Store,
+    port: &impl AutomaticPort,
+    mut candidates: Vec<(Admission, u64, bool)>,
+) -> Result<Vec<JobRecord>, AppError> {
     let mut settled = Vec::new();
-    let mut candidates = store.auto_settlement_operations()?;
     // A slow or unavailable original package must not monopolize each pass.
     static NEXT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
     if !candidates.is_empty() {
@@ -195,7 +188,7 @@ pub(super) fn auto_reconcile_in(
                 return Ok(());
             }
             let mut recovery = None;
-            port.with_activity(&a, job.as_ref(), stopped, execution, &mut |active| {
+            port.with_activity(store, &a, job.as_ref(), stopped, execution, &mut |active| {
                 if active
                     || service_bridge::dispatch_active(&a.consumer.package_id, &a.operation_id)?
                 {
@@ -206,15 +199,16 @@ pub(super) fn auto_reconcile_in(
                 let current = store
                     .get(&a.consumer.package_id, &a.operation_id)?
                     .ok_or_else(|| error("AI admission disappeared"))?;
-                let mut receipt =
-                    store.provider_receipt(&a.consumer.package_id, &a.operation_id)?;
-                let mut recovery_failed = false;
+                let receipt = store.provider_receipt(&a.consumer.package_id, &a.operation_id)?;
                 if current.phase != crate::service_state::model::AdmissionPhase::Released
                     && receipt.as_ref().is_some_and(|r| {
                         r["execution"]["state"] == "succeeded"
                             && r["delivery"]["state"] == "unavailable"
                     })
                 {
+                    // Recover any validated original copy, including acquired
+                    // consumer evidence. Loss only defers delivery; success can
+                    // never authorize automatic discard.
                     if store
                         .recover_original_output(
                             &current.provider,
@@ -223,13 +217,11 @@ pub(super) fn auto_reconcile_in(
                         )?
                         .is_none()
                     {
-                        // Typed original-byte loss alone is insufficient. The
-                        // provider must still authoritatively report loss after
-                        // that recovery attempt, before any irreversible discard.
-                        port.refresh(store, &current)?;
-                        receipt =
-                            store.provider_receipt(&a.consumer.package_id, &a.operation_id)?;
-                        recovery_failed = true;
+                        if let Some(job) = job.as_ref() {
+                            if let Some(failed) = store.fail_output_delivery(job)? {
+                                settled.push(failed);
+                            }
+                        }
                     }
                 }
                 let current = store
@@ -241,15 +233,12 @@ pub(super) fn auto_reconcile_in(
                     .unwrap_or("unconfirmed");
                 let delivery = receipt
                     .as_ref()
-                    .map(|r| settlement_delivery(&r["delivery"], recovery_failed))
+                    .and_then(|r| r["delivery"]["state"].as_str())
                     .unwrap_or("none");
                 match auto_settlement(current.phase, execution, delivery, false) {
                     AutoSettlement::Leave => (),
                     AutoSettlement::Recover => recovery = Some(current),
                     AutoSettlement::Settle => {
-                        if delivery == "unrecoverable" {
-                            port.discard(&current)?;
-                        }
                         if let Some(job) = service_bridge::settle_idle_dispatch(
                             store,
                             &a.consumer.package_id,
@@ -262,6 +251,9 @@ pub(super) fn auto_reconcile_in(
                 Ok(())
             })?;
             if let Some(a) = recovery {
+                // An unavailable delivery may have just finished its job as
+                // Failed. Use that presentation to drive terminal handoff too.
+                let job = store.job_for_operation(&a.consumer.package_id, &a.operation_id)?;
                 port.recover(&a, job.as_ref())?;
             }
             Ok(())
@@ -275,27 +267,10 @@ pub(super) fn auto_reconcile_in(
     }
     Ok(settled)
 }
-struct LiveAutomatic;
+pub(super) struct LiveAutomatic;
 impl AutomaticPort for LiveAutomatic {
     fn closing(&self) -> bool {
         backend::is_closing()
-    }
-    fn discard(&self, a: &Admission) -> Result<(), AppError> {
-        let broker = backend::active_instance(&a.provider.package_id, &a.provider.digest)
-            .ok_or_else(|| error("Original provider is unavailable"))?;
-        let _lease = {
-            let _gate = super::read_lifecycle()?;
-            if !broker.is_active() {
-                return Err(error("Original provider is unavailable"));
-            }
-            CallLease::acquire_method(&a.provider.package_id, "control.discardOperation")?
-        };
-        let receipt = broker.control_call(
-            "control.discardOperation",
-            json!({"consumerPackage":a.consumer.package_id,"operationId":a.operation_id}),
-        )?;
-        service_bridge::reconcile_at(service_host::store()?, &broker.generation(), a, &receipt)?;
-        Ok(())
     }
     fn active(
         &self,
@@ -306,40 +281,26 @@ impl AutomaticPort for LiveAutomatic {
     ) -> Result<bool, AppError> {
         Err(error("Live worker proofs require scoped ownership"))
     }
-    fn refresh(&self, store: &crate::service_state::Store, a: &Admission) -> Result<(), AppError> {
-        let broker = backend::active_instance(&a.provider.package_id, &a.provider.digest)
-            .ok_or_else(|| error("Original provider is unavailable"))?;
-        let receipt = broker.call("services.image-generation.v1.status", json!({"caller":{"packageId":a.consumer.package_id,"packageDigest":a.consumer.digest,"incarnation":a.consumer.incarnation},"request":{"operationId":a.operation_id}}))?;
-        service_bridge::reconcile_at(store, &broker.generation(), a, &receipt)
-    }
     fn with_activity(
         &self,
+        store: &crate::service_state::Store,
         a: &Admission,
-        job: Option<&JobRecord>,
-        stopped: bool,
-        execution: &str,
+        _job: Option<&JobRecord>,
+        _stopped: bool,
+        _execution: &str,
         apply: &mut dyn FnMut(bool) -> Result<(), AppError>,
     ) -> Result<(), AppError> {
-        let packages = installed()?;
-        if is_active(
-            job.map(|j| j.state),
-            stopped,
-            compatible(&packages, &a.consumer) && compatible(&packages, &a.provider),
-        ) && matches!(execution, "accepted" | "running" | "unconfirmed")
-        {
-            return apply(true);
-        }
-        // Startup precedes fencing; every subsequent IO uses these exact
-        // active brokers. New activation/startup is excluded until the commit.
-        let provider = compatible(&packages, &a.provider)
-            .then(|| provider(a))
-            .transpose()?;
-        let consumer = (a.consumer.package_id != a.provider.package_id
-            && compatible(&packages, &a.consumer))
-        .then(|| backend::ensure(&a.consumer.package_id))
-        .transpose()?;
+        // Probing never starts a package. Under this admission fence, an
+        // absent or verified terminated broker is an idle proof, including
+        // when its installed replacement cannot initialize or activate.
         let _fence =
             backend::IdleCallFence::acquire(&[&a.consumer.package_id, &a.provider.package_id])?;
+        let provider = backend::settlement_broker(&a.provider)?;
+        let consumer = if a.consumer.package_id != a.provider.package_id {
+            backend::settlement_broker(&a.consumer)?
+        } else {
+            None
+        };
         let mut leases = Vec::new();
         {
             let _gate = super::read_lifecycle()?;
@@ -375,7 +336,8 @@ impl AutomaticPort for LiveAutomatic {
             }
             // Status performs the provider's original local read/seal recovery
             // and reconciles a success whose separate publisher was delayed.
-            self.refresh(service_host::store()?, a)?;
+            let receipt = broker.call("services.image-generation.v1.status", json!({"caller":{"packageId":a.consumer.package_id,"packageDigest":a.consumer.digest,"incarnation":a.consumer.incarnation},"request":{"operationId":a.operation_id}}))?;
+            service_bridge::reconcile_at(store, &broker.generation(), a, &receipt)?;
         }
         if let Some(broker) = &consumer {
             let status = broker.call("jobs.status", json!({"operationId":a.operation_id}))?;
@@ -432,6 +394,9 @@ impl AutomaticPort for LiveAutomatic {
                 "jobs.resumeOperation",
                 json!({"operationId":a.operation_id}),
             )?;
+            if let Some(job) = job {
+                job_bridge::schedule_status(broker, job.clone());
+            }
         }
         Ok(())
     }
@@ -458,6 +423,94 @@ pub(super) fn settle_stopped_backlog(store: &crate::service_state::Store) -> Res
             {
                 backend::emit_job_event(json!({"type":"updated","job":job}));
             }
+        }
+    }
+    Ok(())
+}
+/// A user-requested lifecycle mutation gets the same scoped idle proof as
+/// automatic reconciliation, before taking the lifecycle write gate. Probe a
+/// retained live counterpart if needed; never start the broken package.
+pub(super) fn settle_terminal_backlog(
+    store: &crate::service_state::Store,
+    package: &str,
+) -> Result<(), AppError> {
+    settle_terminal_backlog_in(store, package, &LiveAutomatic)
+}
+pub(super) fn settle_terminal_backlog_in(
+    store: &crate::service_state::Store,
+    package: &str,
+    port: &impl AutomaticPort,
+) -> Result<(), AppError> {
+    let candidates = store
+        .auto_settlement_operations()?
+        .into_iter()
+        .filter_map(|row| {
+            let a = &row.0;
+            if a.consumer.package_id != package && a.provider.package_id != package
+                || a.output.is_some()
+            {
+                return None;
+            }
+            match store.provider_receipt(&a.consumer.package_id, &a.operation_id) {
+                Ok(Some(r))
+                    if matches!(
+                        r["execution"]["state"].as_str(),
+                        Some("unknown" | "failed" | "cancelled")
+                    ) && r["delivery"]["state"] == "none" =>
+                {
+                    Some(Ok(row))
+                }
+                Err(cause) => Some(Err(cause)),
+                _ => None,
+            }
+        })
+        .collect::<Result<Vec<_>, AppError>>()?;
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    for job in crate::native_deadline::scoped(deadline, || {
+        auto_reconcile_candidates(store, port, candidates)
+    })? {
+        backend::release_job(&job.owner, job.job_id);
+        backend::emit_job_event(json!({"type":"updated","job":job}));
+    }
+    Ok(())
+}
+/// Lifecycle repair cannot depend on restarting the package being repaired.
+/// The caller owns the lifecycle write gate; the package admission fence and
+/// verified native death remain held through each no-output settlement.
+pub(super) fn settle_dead_backlog(
+    store: &crate::service_state::Store,
+    package: &str,
+) -> Result<(), AppError> {
+    for (a, _, _) in store.auto_settlement_operations()? {
+        if a.consumer.package_id != package && a.provider.package_id != package {
+            continue;
+        }
+        let receipt = store.provider_receipt(&a.consumer.package_id, &a.operation_id)?;
+        if a.output.is_some()
+            || !receipt.as_ref().is_some_and(|r| {
+                matches!(
+                    r["execution"]["state"].as_str(),
+                    Some("unknown" | "failed" | "cancelled")
+                ) && r["delivery"]["state"] == "none"
+            })
+        {
+            continue;
+        }
+        let Ok(_fence) =
+            backend::IdleCallFence::acquire(&[&a.consumer.package_id, &a.provider.package_id])
+        else {
+            continue;
+        };
+        if !matches!(backend::settlement_broker(&a.consumer), Ok(None))
+            || !matches!(backend::settlement_broker(&a.provider), Ok(None))
+        {
+            continue;
+        }
+        if let Some(job) =
+            service_bridge::settle_idle_dispatch(store, &a.consumer.package_id, &a.operation_id)?
+        {
+            backend::release_job(&job.owner, job.job_id);
+            backend::emit_job_event(json!({"type":"updated","job":job}));
         }
     }
     Ok(())

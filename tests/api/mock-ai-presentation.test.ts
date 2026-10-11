@@ -32,7 +32,7 @@ describe("native presentation mock outcomes", () => {
     const settled = mock.snapshot(); mock.seed(settled);
     expect(mock.snapshot()).toEqual(settled);
   });
-  it.each(["available", "unavailable", "acquired"])("drives succeeded %s output without fabricating completion", delivery => {
+  it.each(["none", "available", "unavailable", "acquired", "discarded"])("drives succeeded %s output without fabricating completion", delivery => {
     const mock = createMockAiPresentation(() => {});
     mock.seed({ originWindow: "mock-window", watermark: 1, jobs: [job("needs_attention")] }, { version: 1, operations: [{ ...operation, execution: "succeeded", delivery, canDiscard: true, active: false }] });
     expect(mock.snapshot().jobs[0]).toMatchObject({ state: "recovering", phase: "acquiring" });
@@ -57,12 +57,15 @@ describe("native presentation mock outcomes", () => {
     expect(mock.calls.map(call => call.command)).toEqual(["auto-settle"]);
     expect(mock.calls[0].action).toBe("dismiss");
   });
-  it.each(["missing", "corrupt"])("automatically discards a permanently %s result", deliveryReason => {
+  it.each(["missing", "corrupt"])("retains and retries a successful %s result", deliveryReason => {
     const mock = createMockAiPresentation(() => {});
     mock.seed({ originWindow: "mock-window", watermark: 1, jobs: [job("recovering")] }, { version: 1, operations: [{ ...operation, execution: "succeeded", delivery: "unavailable", deliveryReason, reason: `Original output ${deliveryReason}`, canDiscard: true, active: false }] });
-    expect(mock.snapshot().jobs[0]).toMatchObject({ state: "discarded", error: `Original output ${deliveryReason}` });
-    expect(mock.operationSnapshot().operations).toEqual([]);
-    expect(mock.calls.map(call => [call.command, call.action])).toEqual([["auto-settle", "discard"]]);
+    expect(mock.snapshot().jobs[0]).toMatchObject({ state: "error", phase: "delivery_failed" });
+    expect(mock.operationSnapshot().operations).toHaveLength(1);
+    expect(mock.calls.map(call => [call.command, call.action])).toEqual([["resume", undefined]]);
+    const failed = mock.snapshot(); mock.seed(failed);
+    expect(mock.snapshot().jobs).toEqual(failed.jobs);
+    expect(mock.calls.map(call => call.command)).toEqual(["resume", "resume"]);
   });
   it("recovers original output when storage is temporarily unavailable", () => {
     const mock = createMockAiPresentation(() => {});
@@ -71,12 +74,12 @@ describe("native presentation mock outcomes", () => {
     expect(mock.operationSnapshot().operations[0].active).toBe(true);
     expect(mock.calls.map(call => call.command)).toEqual(["resume"]);
   });
-  it("retains permanently missing output when the original provider cannot release it", () => {
+  it("recovers missing output regardless of explicit discard capability", () => {
     const mock = createMockAiPresentation(() => {});
     mock.seed({ originWindow: "mock-window", watermark: 1, jobs: [job("needs_attention")] }, { version: 1, operations: [{ ...operation, execution: "succeeded", delivery: "unavailable", deliveryReason: "missing", canDiscard: false, active: false }] });
     expect(mock.operationSnapshot().operations).toHaveLength(1);
-    expect(mock.snapshot().jobs[0].state).toBe("needs_attention");
-    expect(mock.calls).toEqual([]);
+    expect(mock.snapshot().jobs[0].state).toBe("error");
+    expect(mock.calls.map(call => call.command)).toEqual(["resume"]);
   });
   it("retains successful output when its original package cannot drive it", () => {
     const mock = createMockAiPresentation(() => {});

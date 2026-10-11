@@ -11,37 +11,21 @@ pub(crate) enum AutoSettlement {
     Leave,
 }
 pub(crate) fn auto_settlement(
-    state: AdmissionPhase,
+    _state: AdmissionPhase,
     execution: &str,
-    delivery: &str,
+    _delivery: &str,
     active: bool,
 ) -> AutoSettlement {
     if active {
         return AutoSettlement::Leave;
     }
-    if state == AdmissionPhase::Released {
-        return if execution == "succeeded" && delivery == "acquired" {
-            AutoSettlement::Recover
-        } else if delivery == "discarded" || execution != "succeeded" {
-            AutoSettlement::Settle
-        } else {
-            AutoSettlement::Leave
-        };
-    }
-    if execution == "succeeded" && matches!(delivery, "available" | "unavailable" | "acquired") {
+    // A successful execution is never automatically discarded, even when
+    // delivery is missing, corrupt, or already explicitly disposed. Only the
+    // original handoff/recovery may advance it; later passes silently retry.
+    if execution == "succeeded" {
         AutoSettlement::Recover
     } else {
         AutoSettlement::Settle
-    }
-}
-
-/// Cached missing/corrupt evidence cannot authorize disposal. Only an original
-/// local recovery attempt plus fresh provider status can prove output loss.
-pub(crate) fn settlement_delivery(delivery: &Value, recovery_failed: bool) -> &str {
-    match (delivery["state"].as_str(), delivery["reason"].as_str()) {
-        (Some("unavailable"), Some("missing" | "corrupt")) if recovery_failed => "unrecoverable",
-        (Some(state), _) => state,
-        _ => "none",
     }
 }
 
@@ -388,13 +372,20 @@ pub(crate) fn validate(value: &Value, admission: &Admission) -> Result<Value, Ap
 }
 pub(crate) fn validate_transition(previous: &Value, next: &Value) -> Result<(), AppError> {
     let reject = || AppError::Other("Image receipt conflicts with its durable outcome".into());
+    // Unknown fences replay; it does not disprove a delayed original result.
+    // Only authoritative success can refine it, never a new execution start.
+    let late_success =
+        previous["execution"]["state"] == "unknown" && next["execution"]["state"] == "succeeded";
     if let Some(d) = previous.get("diagnostics") {
         let n = &next["diagnostics"];
         if d["kind"] != n["kind"]
             || d["threadId"] != n["threadId"]
-            || (d["explanation"].is_object() && d["explanation"] != n["explanation"])
+            || (!late_success
+                && d["explanation"].is_object()
+                && d["explanation"] != n["explanation"])
             || (previous["execution"]["state"] != "running"
                 && previous["execution"]["state"] != "accepted"
+                && !late_success
                 && d != n)
         {
             return Err(reject());
@@ -405,7 +396,8 @@ pub(crate) fn validate_transition(previous: &Value, next: &Value) -> Result<(), 
     if matches!(
         before,
         Some("succeeded" | "failed" | "cancelled" | "unknown")
-    ) && previous["execution"] != next["execution"]
+    ) && !late_success
+        && previous["execution"] != next["execution"]
     {
         return Err(reject());
     }
@@ -569,68 +561,14 @@ mod auto_settlement_tests {
                             "Unknown must never be replayed"
                         );
                     }
-                    match decision {
-                        AutoSettlement::Recover => {
-                            assert!(phase != AdmissionPhase::Released || delivery == "acquired");
-                            assert_eq!(execution, "succeeded");
-                            assert!(matches!(delivery, "available" | "unavailable" | "acquired"));
-                        }
-                        AutoSettlement::Leave => {
-                            assert_eq!(phase, AdmissionPhase::Released);
-                            assert_eq!(execution, "succeeded");
-                            assert!(!matches!(delivery, "discarded" | "acquired"));
-                        }
-                        AutoSettlement::Settle => {
-                            assert!(
-                                phase != AdmissionPhase::Released
-                                    || delivery == "discarded"
-                                    || execution != "succeeded"
-                            );
-                            assert!(
-                                execution != "succeeded"
-                                    || !matches!(
-                                        delivery,
-                                        "available" | "unavailable" | "acquired"
-                                    )
-                                    || phase == AdmissionPhase::Released
-                            );
-                        }
+                    if execution == "succeeded" {
+                        assert_eq!(decision, AutoSettlement::Recover,
+                            "successful output must be retained for every delivery state: {phase:?}/{delivery}");
+                    } else {
+                        assert_eq!(decision, AutoSettlement::Settle);
                     }
                 }
             }
         }
-    }
-}
-
-#[cfg(test)]
-mod settlement_delivery_tests {
-    use super::*;
-    use serde_json::json;
-    #[test]
-    fn unavailable_reason_preserves_only_recoverable_local_delivery() {
-        for reason in ["missing", "corrupt"] {
-            let delivery = json!({"state":"unavailable","reason":reason});
-            assert_eq!(
-                auto_settlement(
-                    AdmissionPhase::Terminal,
-                    "succeeded",
-                    settlement_delivery(&delivery, true),
-                    false
-                ),
-                AutoSettlement::Settle
-            );
-            assert_eq!(settlement_delivery(&delivery, false), "unavailable");
-        }
-        let delivery = json!({"state":"unavailable","reason":"storage_unavailable"});
-        assert_eq!(
-            auto_settlement(
-                AdmissionPhase::Terminal,
-                "succeeded",
-                settlement_delivery(&delivery, true),
-                false
-            ),
-            AutoSettlement::Recover
-        );
-        assert_eq!(settlement_delivery(&Value::Null, false), "none");
     }
 }

@@ -13,6 +13,24 @@ const record = (n = 1, revision = 1, state: NativeJobRecord["state"] = "running"
 function deferred<T>() { let resolve!: (v: T) => void; const promise = new Promise<T>((done) => { resolve=done; }); return { promise, resolve }; }
 afterEach(() => { jobsStore.applyNative([]); jobsStore.configureNativeControls(null); for (const j of [...jobsStore.jobs]) jobsStore.removeJob(j.id); });
 describe("native job revisions and ownership", () => {
+  it("corrects a settled Unknown to its late output without reopening other terminal outcomes", () => {
+    const stopped = { ...record(1, 2, "discarded"), phase: "stopped", settledAtMs: 2 };
+    const before = mergeNativeJobEvent(emptyNativeJobs(), { type: "updated", job: stopped });
+    const completed = { ...record(1, 3, "completed"), phase: "complete", settledAtMs: 2 };
+    const corrected = mergeNativeJobEvent(before, { type: "updated", job: completed });
+    expect(corrected.jobs.get(stopped.jobKey)).toMatchObject({ state: "completed", outputPath: "/generated/image.png", runId: 8 });
+    const deliveryFailed = mergeNativeJobEvent(emptyNativeJobs(), { type: "updated", job: { ...stopped, state: "error", phase: "delivery_failed" } });
+    expect(mergeNativeJobEvent(deliveryFailed, { type: "updated", job: completed }).jobs.get(stopped.jobKey)?.state).toBe("completed");
+    for (const job of [record(1, 4), { ...completed, outputPath: undefined }, { ...completed, runId: undefined }, { ...completed, owner: { ...completed.owner, packageId: "provider" } }]) {
+      expect(mergeNativeJobEvent(before, { type: "updated", job })).toBe(before);
+    }
+    for (const state of ["error", "cancelled", "completed"] as const) {
+      const retained = mergeNativeJobEvent(emptyNativeJobs(), { type: "updated", job: { ...stopped, state } });
+      expect(mergeNativeJobEvent(retained, { type: "updated", job: { ...completed, state: "discarded" } })).toBe(retained);
+    }
+    const explicit = mergeNativeJobEvent(emptyNativeJobs(), { type: "updated", job: { ...stopped, phase: "provider_result_discarded" } });
+    expect(mergeNativeJobEvent(explicit, { type: "updated", job: completed })).toBe(explicit);
+  });
   it("adopts a prepared estimate key once and rejects a changed cohort", () => {
     let state = mergeNativeJobEvent(emptyNativeJobs(), {type:"updated",job:record()});
     const pinned = {...record(1,2),estimateKey:"image-v1:fast"};
@@ -42,6 +60,19 @@ describe("native job revisions and ownership", () => {
   });
 });
 describe("owned native subscription",()=>{
+  it("shows a late acknowledged output in live history silently, without reload", async () => {
+    let receive!: (value: unknown) => void;
+    const stopped = { ...record(1, 2, "discarded"), phase: "stopped", settledAtMs: 2 };
+    const toast = vi.fn();
+    const controller = createNativePluginJobsController({ watch: async fn => { receive = fn; return () => {}; }, snapshot: async () => ({ originWindow: "main", watermark: 2, jobs: [stopped] }), apply: records => jobsStore.applyNative(records), toast, error: () => {} });
+    await controller.init();
+    receive({ type: "updated", job: { ...record(1, 3, "completed"), phase: "complete", settledAtMs: 2 } });
+    expect(jobsStore.jobs[0]).toMatchObject({ status: "completed", outputPath: "/generated/image.png" });
+    expect(toast).not.toHaveBeenCalled();
+    receive({ type: "updated", job: record(1, 4) });
+    expect(jobsStore.jobs[0].status).toBe("completed");
+    controller.dispose();
+  });
   it("subscribes before snapshot, merges the pending fresh completion and toasts once only in its origin window",async()=>{
     const read=deferred<{originWindow:string;watermark:number;jobs:NativeJobRecord[]}>();let receive!:(v:unknown)=>void;const calls:string[]=[],toasts:NativeJobRecord[]=[],applied:NativeJobRecord[][]=[];
     const controller=createNativePluginJobsController({watch:async(fn)=>{calls.push("watch");receive=fn;return()=>{};},snapshot:async()=>{calls.push("snapshot");return read.promise;},apply:(v)=>applied.push([...v]),toast:(v)=>toasts.push(v),error:()=>{}});

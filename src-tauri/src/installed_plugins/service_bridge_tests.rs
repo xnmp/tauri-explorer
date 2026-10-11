@@ -1772,7 +1772,7 @@ fn automatic_late_success_publication_is_atomic_and_repairs_legacy_flags() {
 }
 
 #[test]
-fn automatic_missing_output_recovers_restored_bytes_or_original_stage_before_discard() {
+fn automatic_missing_output_recovers_restored_bytes_or_original_stage() {
     use crate::service_state::job::JobRecord;
     for (finish_stage, refresh_to_available) in
         [(false, false), (true, false), (false, true), (true, true)]
@@ -1815,7 +1815,6 @@ fn automatic_missing_output_recovers_restored_bytes_or_original_stage_before_dis
             handle: &'a str,
             refresh_to_available: bool,
             recovered: std::cell::Cell<bool>,
-            discarded: std::cell::Cell<bool>,
         }
         impl super::ai_operations::AutomaticPort for Restored<'_> {
             fn active(
@@ -1855,25 +1854,14 @@ fn automatic_missing_output_recovers_restored_bytes_or_original_stage_before_dis
                 self.recovered.set(true);
                 Ok(())
             }
-            fn discard(&self, _: &Admission) -> Result<(), AppError> {
-                self.discarded.set(true);
-                Err(AppError::Other(
-                    "recoverable original output was discarded".into(),
-                ))
-            }
         }
         let port = Restored {
             store: &s,
             handle: &stage.handle,
             refresh_to_available,
             recovered: std::cell::Cell::new(false),
-            discarded: std::cell::Cell::new(false),
         };
         super::ai_operations::auto_reconcile_in(&s, &port).unwrap();
-        assert!(
-            !port.discarded.get(),
-            "recoverable original output was discarded"
-        );
         assert!(port.recovered.get());
         assert!(!s.execution_released("consumer", op).unwrap());
     }
@@ -2048,7 +2036,7 @@ fn automatic_pending_copy_sync_failure_preserves_original_for_retry() {
 }
 
 #[test]
-fn automatic_missing_original_stage_confirms_loss_before_discard() {
+fn automatic_missing_original_stage_retains_success_and_retries_recovery() {
     use crate::service_state::job::JobRecord;
     let (_root, s) = fixture();
     let op = "auto-absent-stage";
@@ -2065,8 +2053,8 @@ fn automatic_missing_original_stage_confirms_loss_before_discard() {
         ),
     )
     .unwrap();
-    struct Missing<'a>(&'a Store, std::cell::RefCell<Vec<&'static str>>);
-    impl super::ai_operations::AutomaticPort for Missing<'_> {
+    struct Missing(std::cell::Cell<usize>);
+    impl super::ai_operations::AutomaticPort for Missing {
         fn active(
             &self,
             _: &Admission,
@@ -2076,36 +2064,21 @@ fn automatic_missing_original_stage_confirms_loss_before_discard() {
         ) -> Result<bool, AppError> {
             Ok(false)
         }
-        fn refresh(&self, _: &Store, _: &Admission) -> Result<(), AppError> {
-            self.1.borrow_mut().push("status");
-            Ok(())
-        }
-        fn discard(&self, a: &Admission) -> Result<(), AppError> {
-            self.1.borrow_mut().push("discard");
-            reconcile_at(
-                self.0,
-                &provider(),
-                a,
-                &status(&a.operation_id, "succeeded", json!({"state":"discarded"})),
-            )
-        }
         fn recover(&self, _: &Admission, _: Option<&JobRecord>) -> Result<(), AppError> {
-            Err(AppError::Other("missing output cannot be delivered".into()))
+            self.0.set(self.0.get() + 1);
+            Err(AppError::Other("original output is still missing".into()))
         }
     }
-    let port = Missing(&s, std::cell::RefCell::new(Vec::new()));
-    super::ai_operations::auto_reconcile_in(&s, &port).unwrap();
-    assert_eq!(*port.1.borrow(), ["status", "discard"]);
-    assert!(s.execution_released("consumer", op).unwrap());
-    assert_eq!(
-        s.get("consumer", op)
+    let port = Missing(std::cell::Cell::new(0));
+    for _ in 0..2 {
+        assert!(super::ai_operations::auto_reconcile_in(&s, &port)
             .unwrap()
-            .unwrap()
-            .disposition
-            .as_deref(),
-        Some("discarded")
-    );
-    start(&s, "after-absent-stage");
+            .is_empty());
+    }
+    assert_eq!(port.0.get(), 2, "later passes must retry original recovery");
+    assert!(!s.execution_released("consumer", op).unwrap());
+    assert_eq!(s.get("consumer", op).unwrap().unwrap().disposition, None);
+    assert_eq!(s.auto_settlement_operations().unwrap().len(), 1);
 }
 
 #[test]
@@ -2600,9 +2573,19 @@ fn automatic_discarded_provider_output_settles_and_survives_restart() {
     let original = s.get("consumer", op).unwrap().unwrap();
     let receipt = status(op, "succeeded", json!({"state":"discarded"}));
     super::ai_operations::commit_discard(&s, &provider(), &original, &receipt).unwrap();
-    let settled = super::ai_operations::auto_reconcile_in(&s, &IdleAutomatic).unwrap();
-    assert_eq!(settled.len(), 1);
-    assert_eq!(settled[0].state, JobState::Discarded);
+    let settled = super::job_bridge::observe_in(
+        &s,
+        &registered,
+        &json!({
+            "jobId": registered.job_id, "operationId":op, "revision":1,
+            "status":"discarded", "recoveryState":"discarded"
+        }),
+    )
+    .unwrap();
+    assert_eq!(settled.state, JobState::Discarded);
+    assert!(super::ai_operations::auto_reconcile_in(&s, &IdleAutomatic)
+        .unwrap()
+        .is_empty());
     assert!(s.claims().unwrap().is_empty());
     drop(s);
     let reopened = Store::open(root.path().join("service"), Limits::default()).unwrap();
@@ -2638,7 +2621,7 @@ fn automatic_unknown_with_live_worker_is_left_untouched() {
     assert_eq!(s.dismissed_revision("consumer", op).unwrap(), None);
 }
 #[test]
-fn automatic_unavailable_corrupt_output_uses_provider_discard_not_generation() {
+fn automatic_unavailable_corrupt_output_retains_success_for_later_recovery() {
     use crate::service_state::job::{JobRecord, JobState};
     let (_root, s) = fixture();
     let op = "auto-corrupt";
@@ -2657,8 +2640,8 @@ fn automatic_unavailable_corrupt_output_uses_provider_discard_not_generation() {
     );
     unavailable["revision"] = json!(3);
     reconcile_at(&s, &provider(), &original, &unavailable).unwrap();
-    struct Discard<'a>(&'a Store);
-    impl super::ai_operations::AutomaticPort for Discard<'_> {
+    struct Retry;
+    impl super::ai_operations::AutomaticPort for Retry {
         fn active(
             &self,
             _: &Admission,
@@ -2669,31 +2652,21 @@ fn automatic_unavailable_corrupt_output_uses_provider_discard_not_generation() {
             Ok(false)
         }
         fn recover(&self, _: &Admission, _: Option<&JobRecord>) -> Result<(), AppError> {
-            panic!("corrupt result cannot be recovered")
-        }
-        fn refresh(&self, _: &Store, _: &Admission) -> Result<(), AppError> {
-            // This fixture's original provider still authoritatively reports
-            // the same corrupt receipt after the local recovery attempt.
-            Ok(())
-        }
-        fn discard(&self, a: &Admission) -> Result<(), AppError> {
-            let mut receipt = status(&a.operation_id, "succeeded", json!({"state":"discarded"}));
-            receipt["revision"] = json!(4);
-            reconcile_at(self.0, &provider(), a, &receipt)
+            Err(AppError::Other("original output is still corrupt".into()))
         }
     }
-    let settled = super::ai_operations::auto_reconcile_in(&s, &Discard(&s)).unwrap();
+    let settled = super::ai_operations::auto_reconcile_in(&s, &Retry).unwrap();
     assert_eq!(settled.len(), 1);
-    assert_eq!(settled[0].state, JobState::Discarded);
     assert_eq!(
-        s.get("consumer", op)
-            .unwrap()
-            .unwrap()
-            .disposition
-            .as_deref(),
-        Some("discarded")
+        s.job_for_operation("consumer", op).unwrap().unwrap().state,
+        JobState::Error
     );
-    assert!(s.claims().unwrap().is_empty());
+    assert_eq!(s.get("consumer", op).unwrap().unwrap().disposition, None);
+    assert!(!s.claims().unwrap().is_empty());
+    assert!(
+        Path::new(&path).is_file(),
+        "actual bytes must remain retained"
+    );
 }
 
 #[test]
@@ -2737,4 +2710,382 @@ fn automatic_settlement_fills_missing_terminal_error_reason_without_changing_out
         reopened.job(&registered.job_key).unwrap(),
         Some(settled[0].clone())
     );
+}
+
+#[test]
+fn automatic_review_consumer_evidence_recovers_interrupted_acknowledgement() {
+    use crate::service_state::job::JobRecord;
+    let (root, s) = fixture();
+    let op = "review-consumer-evidence";
+    let d = ready(&s, op);
+    let data = root.path().join("consumer-data");
+    fs::create_dir(&data).unwrap();
+    s.register_consumer_root("consumer", data.clone()).unwrap();
+    let copy = data.join("original.png");
+    let original = s.read(&consumer(), "consumer", op, &d).unwrap().path;
+    fs::copy(&original, &copy).unwrap();
+    let transfer = s
+        .acquired(&consumer(), op, &d, copy.to_str().unwrap())
+        .unwrap();
+    fs::remove_file(&original).unwrap();
+    let a = s.get("consumer", op).unwrap().unwrap();
+    let mut unavailable = status(
+        op,
+        "succeeded",
+        json!({"state":"unavailable","reason":"missing"}),
+    );
+    unavailable["revision"] = json!(3);
+    reconcile_at(&s, &provider(), &a, &unavailable).unwrap();
+    struct Original<'a>(&'a Store, std::cell::Cell<bool>);
+    impl super::ai_operations::AutomaticPort for Original<'_> {
+        fn active(
+            &self,
+            _: &Admission,
+            _: Option<&JobRecord>,
+            _: bool,
+            _: &str,
+        ) -> Result<bool, AppError> {
+            Ok(false)
+        }
+        fn recover(&self, a: &Admission, _: Option<&JobRecord>) -> Result<(), AppError> {
+            self.0.read(
+                &consumer(),
+                "consumer",
+                &a.operation_id,
+                a.output.as_ref().unwrap(),
+            )?;
+            self.1.set(true);
+            Ok(())
+        }
+    }
+    let port = Original(&s, std::cell::Cell::new(false));
+    super::ai_operations::auto_reconcile_in(&s, &port).unwrap();
+    assert!(
+        port.1.get(),
+        "validated consumer evidence must recover the original output"
+    );
+    assert!(!s.execution_released("consumer", op).unwrap());
+    assert_eq!(fs::read(&original).unwrap(), fs::read(&copy).unwrap());
+    let mut acquired = status(
+        op,
+        "succeeded",
+        json!({"state":"acquired","transferReceipt":transfer.transfer_receipt}),
+    );
+    acquired["revision"] = json!(4);
+    call(&s, "acknowledge", json!({"operationId":op,"outputSha256":d.sha256,"disposition":"acquired","transferReceipt":transfer.transfer_receipt}), |_, _| Ok(acquired.clone())).unwrap();
+    assert_eq!(
+        s.get("consumer", op)
+            .unwrap()
+            .unwrap()
+            .disposition
+            .as_deref(),
+        Some("acquired")
+    );
+    assert!(copy.is_file());
+}
+
+// Native admission is process-wide; each lifecycle fixture needs private
+// package IDs so unrelated parallel tests cannot own its control leases.
+fn dead_unknown_fixture(op: &str) -> (tempfile::TempDir, Store, Admission) {
+    let (root, store) = fixture();
+    let consumer = generation(&format!("fixture.{op}.consumer"), 'a');
+    let provider = generation(&format!("fixture.{op}.provider"), 'b');
+    let a = store
+        .reserve(Admission {
+            consumer: consumer.clone(),
+            provider: provider.clone(),
+            target: ServiceTarget {
+                package_id: provider.package_id.clone(),
+                ..target()
+            },
+            operation_id: op.into(),
+            fingerprint: "c".repeat(64),
+            phase: AdmissionPhase::Reserved,
+            inputs: vec![],
+            output: None,
+            needs_attention: false,
+            disposition: None,
+            transfer_receipt: None,
+        })
+        .unwrap();
+    store.claim_forwarding(&consumer, op).unwrap();
+    let mut unknown = status(op, "unknown", json!({"state":"none"}));
+    unknown["provider"]["packageId"] = json!(provider.package_id);
+    unknown["revision"] = json!(2);
+    unknown["execution"]["error"] =
+        json!({"code":"interrupted","message":"Remote result is unconfirmed","correlationId":null});
+    reconcile_at(&store, &provider, &a, &unknown).unwrap();
+    (root, store, a)
+}
+
+#[test]
+fn automatic_review_dead_no_output_settles_without_restarting_packages() {
+    let op = "review-dead-unknown";
+    let (_root, s, a) = dead_unknown_fixture(op);
+    super::ai_operations::auto_reconcile_in(&s, &super::ai_operations::LiveAutomatic).unwrap();
+    assert!(
+        s.execution_released(&a.consumer.package_id, op).unwrap(),
+        "dead packages must not need startup to prove inactivity"
+    );
+    assert!(s.claims().unwrap().is_empty());
+    for package in [&*a.consumer.package_id, &*a.provider.package_id] {
+        let drain = super::lifecycle::drain_idle(&s, package).unwrap();
+        drop(drain);
+    }
+}
+
+#[test]
+fn automatic_review_lifecycle_settles_dead_no_output_before_busy_check() {
+    let op = "review-repair-dead";
+    let (_root, s, a) = dead_unknown_fixture(op);
+    let drain = super::lifecycle::drain_idle(&s, &a.provider.package_id);
+    assert!(
+        drain.is_ok(),
+        "disable/uninstall/repair must settle dead terminal records before their busy check"
+    );
+    assert!(s.execution_released(&a.consumer.package_id, op).unwrap());
+}
+
+#[test]
+fn automatic_review_late_success_corrects_settled_unknown_job_with_output() {
+    use crate::service_state::job::JobState;
+    let (root, s) = fixture();
+    let op = "review-late-output";
+    let registered = s.register_job(job(op, 88)).unwrap();
+    start(&s, op);
+    let d = sealed(&s, op);
+    let a = s.get("consumer", op).unwrap().unwrap();
+    let mut unknown = status(op, "unknown", json!({"state":"none"}));
+    unknown["revision"] = json!(2);
+    unknown["execution"]["error"] =
+        json!({"code":"interrupted","message":"Remote result is unconfirmed","correlationId":null});
+    reconcile_at(&s, &provider(), &a, &unknown).unwrap();
+    super::ai_operations::auto_reconcile_in(&s, &IdleAutomatic).unwrap();
+    assert_eq!(
+        s.job(&registered.job_key).unwrap().unwrap().state,
+        JobState::Discarded
+    );
+    let mut success = status(op, "succeeded", json!({"state":"available","output":d}));
+    success["revision"] = json!(3);
+    reconcile_at(&s, &provider(), &a, &success).unwrap();
+    let data = root.path().join("consumer-data");
+    fs::create_dir(&data).unwrap();
+    s.register_consumer_root("consumer", data.clone()).unwrap();
+    let copy = data.join("late.png");
+    fs::copy(s.read(&consumer(), "consumer", op, &d).unwrap().path, &copy).unwrap();
+    let transfer = s
+        .acquired(&consumer(), op, &d, copy.to_str().unwrap())
+        .unwrap();
+    let premature = super::job_bridge::observe_in(&s, &registered, &json!({
+        "jobId":registered.job_id, "operationId":op, "revision":4,
+        "status":"succeeded", "recoveryState":"complete", "outputPath":copy.to_str().unwrap(), "runId":17
+    })).unwrap();
+    assert_eq!(
+        premature.state,
+        JobState::Discarded,
+        "completion before acknowledgement must not override settlement"
+    );
+    let mut acquired = status(
+        op,
+        "succeeded",
+        json!({"state":"acquired","transferReceipt":transfer.transfer_receipt}),
+    );
+    acquired["revision"] = json!(4);
+    call(&s, "acknowledge", json!({"operationId":op,"outputSha256":d.sha256,"disposition":"acquired","transferReceipt":transfer.transfer_receipt}), |_, _| Ok(acquired.clone())).unwrap();
+    assert_eq!(
+        s.auto_settlement_operations().unwrap().len(),
+        1,
+        "acknowledgement before a completion event must remain discoverable"
+    );
+    let completed = super::job_bridge::observe_in(&s, &registered, &json!({
+        "jobId":registered.job_id, "operationId":op, "revision":5,
+        "status":"succeeded", "recoveryState":"complete", "outputPath":copy.to_str().unwrap(), "runId":17
+    })).unwrap();
+    assert_eq!(
+        completed.state,
+        JobState::Completed,
+        "late acknowledged success must replace the host's earlier no-output settlement"
+    );
+    assert_eq!(completed.output_path.as_deref(), copy.to_str());
+    drop(s);
+    let reopened = Store::open(root.path().join("service"), Limits::default()).unwrap();
+    assert_eq!(reopened.job(&registered.job_key).unwrap(), Some(completed));
+}
+
+#[test]
+fn automatic_review_late_completion_event_probes_a_settled_job() {
+    let (_root, s) = fixture();
+    let op = "review-complete-event";
+    let registered = s.register_job(job(op, 89)).unwrap();
+    stopped_unknown(&s, op);
+    super::ai_operations::auto_reconcile_in(&s, &IdleAutomatic).unwrap();
+    let mut probed = Vec::new();
+    super::job_bridge::event_in(
+        &s,
+        &consumer(),
+        "openai-image-complete",
+        &json!({"jobId":registered.job_id,"operationId":op}),
+        |job| probed.push(job.job_key),
+    )
+    .unwrap();
+    assert_eq!(probed, [registered.job_key]);
+}
+
+#[test]
+fn automatic_review_local_delivery_failure_is_ordinary_history_with_retained_recovery() {
+    use crate::service_state::job::JobState;
+    let (_root, s) = fixture();
+    let op = "review-failed-delivery";
+    let registered = s.register_job(job(op, 90)).unwrap();
+    let d = ready(&s, op);
+    let original = s.get("consumer", op).unwrap().unwrap();
+    let mut unavailable = status(
+        op,
+        "succeeded",
+        json!({"state":"unavailable","reason":"missing"}),
+    );
+    unavailable["revision"] = json!(3);
+    reconcile_at(&s, &provider(), &original, &unavailable).unwrap();
+    let observed = super::job_bridge::observe_in(&s, &registered, &json!({
+        "jobId":registered.job_id, "operationId":op, "revision":4,
+        "status":"failed", "recoveryState":"needs_attention", "providerExecution":{"state":"succeeded"},
+        "error":"Original output delivery failed"
+    })).unwrap();
+    assert_eq!(
+        observed.state,
+        JobState::Error,
+        "local delivery failure belongs in ordinary failed history"
+    );
+    assert_eq!(
+        observed.error.as_deref(),
+        Some("Original output delivery failed")
+    );
+    assert_eq!(s.get("consumer", op).unwrap().unwrap().output, Some(d));
+    assert!(!s.execution_released("consumer", op).unwrap());
+    assert_eq!(s.auto_settlement_operations().unwrap().len(), 1);
+}
+
+#[test]
+fn automatic_review_restart_restores_legacy_stopped_success_with_original_stage() {
+    let (root, s) = fixture();
+    let op = "review-legacy-unavailable";
+    start(&s, op);
+    let stage = s.stage(&provider(), "consumer", op).unwrap();
+    image::RgbaImage::from_pixel(2, 3, image::Rgba([12, 34, 56, 255]))
+        .save_with_format(&stage.path, image::ImageFormat::Png)
+        .unwrap();
+    let a = s.get("consumer", op).unwrap().unwrap();
+    reconcile_at(
+        &s,
+        &provider(),
+        &a,
+        &status(
+            op,
+            "succeeded",
+            json!({"state":"unavailable","reason":"missing"}),
+        ),
+    )
+    .unwrap();
+    let db = rusqlite::Connection::open(root.path().join("service/ledger.sqlite")).unwrap();
+    db.execute(
+        "UPDATE operations SET exec_released=1 WHERE consumer='consumer' AND operation=?1",
+        [op],
+    )
+    .unwrap();
+    db.execute("UPDATE operations SET admission=json_set(admission,'$.needsAttention',json('true')) WHERE consumer='consumer' AND operation=?1", [op]).unwrap();
+    drop(db);
+    drop(s);
+    let reopened = Store::open(root.path().join("service"), Limits::default()).unwrap();
+    assert!(
+        !reopened.execution_released("consumer", op).unwrap(),
+        "new success must override legacy stopped ownership"
+    );
+    assert!(reopened
+        .recover_original_output(&provider(), "consumer", op)
+        .unwrap()
+        .is_some());
+}
+
+#[test]
+fn automatic_review_unknown_diagnostics_can_finalize_only_the_original_turn() {
+    let (_root, s) = fixture();
+    let op = "review-late-diagnostics";
+    start(&s, op);
+    let d = sealed(&s, op);
+    let a = s.get("consumer", op).unwrap().unwrap();
+    let thread = "12345678-1234-1234-1234-123456789abc";
+    let mut unknown = status(op, "unknown", json!({"state":"none"}));
+    unknown["revision"] = json!(2);
+    unknown["execution"]["error"] =
+        json!({"code":"interrupted","message":"Outcome unconfirmed","correlationId":null});
+    unknown["diagnostics"] = json!({"kind":"codex_image_turn","threadId":thread,"turnState":"incomplete","usage":{"inputTokens":null,"cachedInputTokens":null,"outputTokens":null},"explanation":{"kind":"error","text":"Local result was interrupted","truncated":false}});
+    reconcile_at(&s, &provider(), &a, &unknown).unwrap();
+    let mut success = status(op, "succeeded", json!({"state":"available","output":d}));
+    success["revision"] = json!(3);
+    success["diagnostics"] = json!({"kind":"codex_image_turn","threadId":thread,"turnState":"completed","usage":{"inputTokens":5,"cachedInputTokens":0,"outputTokens":3},"explanation":null});
+    let mut foreign = success.clone();
+    foreign["diagnostics"]["threadId"] = json!("abcdefab-1234-1234-1234-123456789abc");
+    assert!(reconcile_at(&s, &provider(), &a, &foreign).is_err());
+    let mut replay = unknown.clone();
+    replay["revision"] = json!(3);
+    replay["execution"] = json!({"state":"running"});
+    assert!(
+        reconcile_at(&s, &provider(), &a, &replay).is_err(),
+        "uncertainty must never reopen paid execution"
+    );
+    reconcile_at(&s, &provider(), &a, &success).unwrap();
+    assert_eq!(
+        s.provider_receipt("consumer", op).unwrap().unwrap()["diagnostics"]["threadId"],
+        thread
+    );
+}
+
+#[test]
+fn automatic_review_repair_probes_a_retained_counterpart_without_starting_it() {
+    use crate::service_state::job::JobRecord;
+    for worker_active in [false, true] {
+        let (_root, s) = fixture();
+        let op = "review-live-counterpart";
+        start(&s, op);
+        let a = s.get("consumer", op).unwrap().unwrap();
+        let mut unknown = status(op, "unknown", json!({"state":"none"}));
+        unknown["revision"] = json!(2);
+        unknown["execution"]["error"] =
+            json!({"code":"interrupted","message":"Outcome unconfirmed","correlationId":null});
+        reconcile_at(&s, &provider(), &a, &unknown).unwrap();
+        struct Counterpart(bool);
+        impl super::ai_operations::AutomaticPort for Counterpart {
+            fn active(
+                &self,
+                a: &Admission,
+                _: Option<&JobRecord>,
+                _: bool,
+                _: &str,
+            ) -> Result<bool, AppError> {
+                let _status = super::backend::CallLease::acquire_method(
+                    &a.consumer.package_id,
+                    "jobs.status",
+                )?;
+                Ok(self.0)
+            }
+            fn recover(&self, _: &Admission, _: Option<&JobRecord>) -> Result<(), AppError> {
+                panic!("Unknown must never start or recover")
+            }
+        }
+        super::ai_operations::settle_terminal_backlog_in(
+            &s,
+            "provider",
+            &Counterpart(worker_active),
+        )
+        .unwrap();
+        assert_eq!(
+            s.execution_released("consumer", op).unwrap(),
+            !worker_active
+        );
+        assert_eq!(
+            super::service_host::mutation_allowed_in(&s, "provider").is_ok(),
+            !worker_active
+        );
+        assert_eq!(s.provider_receipt("consumer", op).unwrap(), Some(unknown));
+    }
 }

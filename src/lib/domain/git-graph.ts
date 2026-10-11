@@ -1095,3 +1095,13 @@ export function detachedHeadIndicator(
     title: `HEAD is detached${at} — new commits belong to no branch and can be lost. Check out a branch to reattach.`,
   };
 }
+
+/** Bind graph PR actions to the repository identity in the displayed snapshot. */
+export function prRepositorySlug(pr: { htmlUrl: string; number: number }): string | null {
+  try {
+    const url = new URL(pr.htmlUrl);
+    const parts = url.pathname.split("/");
+    if (url.protocol !== "https:" || url.host !== "github.com" || url.username || url.password || parts.length !== 5 || !parts[1] || !parts[2] || parts[3] !== "pull" || parts[4] !== String(pr.number)) return null;
+    return `${parts[1]}/${parts[2]}`;
+  } catch { return null; }
+}

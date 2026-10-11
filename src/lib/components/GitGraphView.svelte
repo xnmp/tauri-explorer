@@ -36,11 +36,12 @@
     gitCheckoutTracking,
     gitSyncLocalBranches,
     type ResetMode,
+    type PrAction,
   } from "$lib/api/git-log";
   import {
     releaseGitSummaryConsumer,
   } from "$lib/state/git-summary-cache";
-  import { assignLayout, baseUpdateMergeOids, branchPath, detachedHeadIndicator, groupRefChips, prBadgePresentation, ciStatusLabel, reviewDecisionLabel, prDescription, prDetailComments, shouldMuteBaseUpdateMerge, sliceBranchLine, stepOnBranchLine, scrollTopToReveal, traceGraphLineage, remoteOnlyBranchNames, GRAPH_PALETTE, type GraphLayout, type BranchLine, type BranchLineDirection, type RefChips, type RemoteRefChip, type BranchListEntry } from "$lib/domain/git-graph";
+  import { assignLayout, prRepositorySlug, baseUpdateMergeOids, branchPath, detachedHeadIndicator, groupRefChips, prBadgePresentation, ciStatusLabel, reviewDecisionLabel, prDescription, prDetailComments, shouldMuteBaseUpdateMerge, sliceBranchLine, stepOnBranchLine, scrollTopToReveal, traceGraphLineage, remoteOnlyBranchNames, GRAPH_PALETTE, type GraphLayout, type BranchLine, type BranchLineDirection, type RefChips, type RemoteRefChip, type BranchListEntry } from "$lib/domain/git-graph";
   import { openExternalUrl } from "$lib/api/crash";
   import {
     cancelActiveGitNetworkOperation,
@@ -962,6 +963,29 @@
     void openExternalUrl(pr.htmlUrl);
   }
 
+  let prDialog = $state<PrAction | null>(null);
+  const prActionBusy = $derived(prSession.actionBusy);
+  const prActionResult = $derived(prSession.actionResult);
+  const prActionError = $derived(prSession.actionError);
+  async function createPrDialog(): Promise<void> {
+    if (!headBranch || prActionBusy) return;
+    prDialog = await prSession.prepareCreate(headBranch);
+  }
+  function openPrAction(action: "merge" | "approve", pr: PrSnapshot): void {
+    if (prActionBusy) return;
+    const repoSlug = prRepositorySlug(pr);
+    if (!repoSlug) { toastStore.error("Cannot determine this PR's GitHub repository"); return; }
+    prSession.clearActionStatus();
+    prDialog = action === "merge"
+      ? { action, repoSlug, prNumber: pr.number, method: "squash" }
+      : { action, repoSlug, prNumber: pr.number };
+  }
+  async function submitPrAction(): Promise<void> {
+    if (!prDialog || prActionBusy) return;
+    await prSession.performAction({ ...prDialog });
+    if (!prSession.actionError) prDialog = null;
+  }
+
   // ----- Commit context menu (VSCode "Git Graph"-parity actions) -----
 
   interface MenuAnchor {
@@ -1432,6 +1456,18 @@
   {#if error}
     <div class="graph-status error">{error}</div>
   {:else}
+    <div class="pr-actions-toolbar">
+      <button type="button" class="prompt-btn" disabled={!headBranch || prActionBusy || prsByBranch.has(headBranch)} onclick={createPrDialog} title={headBranch ? `Create a PR for ${headBranch}` : "Check out a branch to create a PR"}>Create PR</button>
+      {#if prActionBusy}<span role="status">GitHub PR action in progress…</span>{/if}
+      {#if prActionResult && !prActionBusy}
+        <span role="status" class="pr-actions-status">
+          {#if prActionResult.action === "create"}PR created: {prActionResult.output}
+          {:else if prActionResult.action === "merge"}Merge requested for PR #{prActionResult.prNumber}; GitHub may queue it.
+          {:else}PR #{prActionResult.prNumber} approved{/if}
+        </span>
+      {/if}
+      {#if prActionError && !prDialog}<span role="alert" class="pr-detail-error">{prActionError}</span>{/if}
+    </div>
     {#if detachedIndicator}
       <!-- Standing detached-HEAD banner (#524): outside the header row so it
            never disturbs column layout, and outside every menu so it lasts as
@@ -2177,6 +2213,8 @@
                   <button type="button" class="pr-detail-open" onclick={() => openPrExternal(pr)}>
                     Open on GitHub ↗
                   </button>
+                  <button type="button" class="prompt-btn" disabled={prActionBusy || pr.draft} onclick={() => openPrAction("merge", pr)}>Merge PR</button>
+                  <button type="button" class="prompt-btn" disabled={prActionBusy || pr.draft} onclick={() => openPrAction("approve", pr)}>Approve PR</button>
                 </div>
                 {#if description}
                   <p class="pr-detail-description" data-testid="git-graph-pr-detail-body">{description}</p>
@@ -2560,6 +2598,34 @@
     {/if}
   {/if}
 
+  <Modal open={prDialog !== null} label={prDialog?.action === "create" ? "Create pull request" : prDialog?.action === "merge" ? "Merge pull request" : "Approve pull request"} onClose={() => { if (!prActionBusy) prDialog = null; }} canClose={() => !prActionBusy}>
+    {#if prDialog}
+      <form class="modal-card pr-action-card" onsubmit={(event) => { event.preventDefault(); void submitPrAction(); }}>
+        <div class="dialog-header">
+          <h2>{prDialog.action === "create" ? "Create pull request" : prDialog.action === "merge" ? "Merge pull request" : "Approve pull request"}</h2>
+          <p class="dialog-subtitle">Repository: {prDialog.repoSlug}</p>
+          <p class="dialog-subtitle">{prDialog.action === "create" ? `Current branch: ${prDialog.headBranch}` : `PR #${prDialog.prNumber} · ${repoPath}`}</p>
+        </div>
+        {#if prDialog.action === "create"}
+          <div class="form-field"><label for="pr-title">Title</label><input id="pr-title" data-autofocus required bind:value={prDialog.title} disabled={prActionBusy} /></div>
+          <div class="form-field"><label for="pr-base">Base branch</label><input id="pr-base" required placeholder="e.g. main" bind:value={prDialog.base} disabled={prActionBusy} /></div>
+          <div class="form-field"><label for="pr-body">Description</label><textarea id="pr-body" rows="4" bind:value={prDialog.body} disabled={prActionBusy}></textarea></div>
+          <p class="dialog-subtitle">Push the branch before creating a PR. This creates it on the repository's selected GitHub remote.</p>
+        {:else if prDialog.action === "merge"}
+          <div class="form-field"><label for="pr-method">Merge method</label><select id="pr-method" bind:value={prDialog.method} disabled={prActionBusy}><option value="squash">Squash</option><option value="merge">Merge commit</option><option value="rebase">Rebase</option></select></div>
+          <p class="dialog-subtitle">This merges the PR on GitHub. Local branches are kept. GitHub permissions and branch protection still apply.</p>
+        {:else}
+          <p>Submit an approving review for this PR on GitHub?</p>
+        {/if}
+        {#if prActionError}<p class="error-message" role="alert">{prActionError}</p>{/if}
+        <div class="dialog-actions">
+          <button type="button" class="btn secondary" disabled={prActionBusy} onclick={() => (prDialog = null)}>Cancel</button>
+          <button type="submit" class="btn primary" disabled={prActionBusy || (prDialog.action === "create" && (!prDialog.title.trim() || !prDialog.base.trim()))}>{prActionBusy ? "Working…" : prDialog.action === "create" ? "Create PR" : prDialog.action === "merge" ? "Merge PR" : "Approve PR"}</button>
+        </div>
+      </form>
+    {/if}
+  </Modal>
+
   <Modal
     open={undoConfirmation !== null}
     onClose={() => (undoConfirmation = null)}
@@ -2584,6 +2650,13 @@
 </div>
 
 <style>
+  .pr-actions-toolbar { display: flex; align-items: center; gap: var(--spacing-md); padding: var(--spacing-sm) var(--spacing-md); border-bottom: 1px solid var(--surface-stroke); font-size: var(--font-size-caption); }
+  .pr-actions-status { overflow-wrap: anywhere; }
+  .pr-action-card .form-field { margin-top: var(--spacing-md); }
+  .pr-action-card textarea, .pr-action-card select { width: 100%; box-sizing: border-box; padding: var(--spacing-sm); border: 1px solid var(--control-stroke); border-radius: var(--radius-sm); background: var(--control-fill); color: var(--text-primary); font: inherit; }
+  .pr-action-card textarea:focus, .pr-action-card select:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+  .pr-action-card textarea { resize: vertical; }
+
   .git-graph-view {
     flex: 1;
     display: flex;

@@ -14,13 +14,14 @@
 use std::collections::HashMap;
 use std::path::Path;
 use std::process::Command;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{LazyLock, Mutex};
 use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
 
 use crate::error::AppError;
-use crate::git_common::open_repo;
+use crate::git_common::{open_repo, to_app_err};
 use crate::process_ext::NoConsole;
 
 /// One open pull request, as surfaced to the frontend. camelCase over IPC
@@ -197,6 +198,9 @@ struct CacheEntry {
 const POSITIVE_TTL: Duration = Duration::from_secs(120);
 const NEGATIVE_TTL: Duration = Duration::from_secs(60);
 
+// A bounded global revision prevents in-flight pre-mutation responses from
+// repopulating an evicted cache. Unrelated repositories merely skip one cache fill.
+static PR_CACHE_REVISION: AtomicU64 = AtomicU64::new(0);
 static PR_CACHE: LazyLock<Mutex<HashMap<String, CacheEntry>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
 
@@ -212,12 +216,20 @@ fn cache_get(key: &str) -> Option<Vec<PrInfo>> {
     })
 }
 
+#[cfg(test)]
 fn cache_put(key: String, state: CacheState) {
+    cache_put_if_current(key, state, PR_CACHE_REVISION.load(Ordering::Relaxed));
+}
+
+fn cache_put_if_current(key: String, state: CacheState, revision: u64) {
     let ttl = match state {
         CacheState::Hit(_) => POSITIVE_TTL,
         CacheState::Failed => NEGATIVE_TTL,
     };
     let mut cache = PR_CACHE.lock().unwrap();
+    if PR_CACHE_REVISION.load(Ordering::Relaxed) != revision {
+        return;
+    }
     cache.insert(
         key,
         CacheEntry {
@@ -790,6 +802,7 @@ pub async fn git_open_prs(repo_root: String) -> Result<Vec<PrInfo>, AppError> {
             return Ok(Vec::new());
         };
         let key = format!("{owner}/{name}");
+        let revision = PR_CACHE_REVISION.load(Ordering::Relaxed);
         if let Some(mut cached) = cache_get(&key) {
             for pr in &mut cached {
                 pr.base_remote = Some(remote.clone());
@@ -801,12 +814,12 @@ pub async fn git_open_prs(repo_root: String) -> Result<Vec<PrInfo>, AppError> {
                 for pr in &mut prs {
                     pr.base_remote = Some(remote.clone());
                 }
-                cache_put(key, CacheState::Hit(prs.clone()));
+                cache_put_if_current(key, CacheState::Hit(prs.clone()), revision);
                 Ok(prs)
             }
             Err(e) => {
                 log::debug!("git_open_prs: fetch failed for {owner}/{name}: {e}");
-                cache_put(key, CacheState::Failed);
+                cache_put_if_current(key, CacheState::Failed, revision);
                 Ok(Vec::new())
             }
         }
@@ -1223,17 +1236,187 @@ mod tests {
 
 /// Explicit GitHub mutation request; strings are passed as argv, never a shell.
 #[derive(Debug, Deserialize)]
-#[serde(tag = "action", rename_all = "camelCase", rename_all_fields = "camelCase")]
+#[serde(
+    tag = "action",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
 pub enum PrAction {
-    Create { head_branch: String, title: String, body: String, base: String },
-    Merge { pr_number: u64, method: PrMergeMethod },
-    Approve { pr_number: u64 },
+    Create {
+        repo_slug: String,
+        head_branch: String,
+        title: String,
+        body: String,
+        base: String,
+    },
+    Merge {
+        repo_slug: String,
+        pr_number: u64,
+        method: PrMergeMethod,
+    },
+    Approve {
+        repo_slug: String,
+        pr_number: u64,
+    },
 }
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "lowercase")]
-pub enum PrMergeMethod { Merge, Squash, Rebase }
+pub enum PrMergeMethod {
+    Merge,
+    Squash,
+    Rebase,
+}
 
 #[cfg(all(test, unix))]
 #[path = "../test_support/github_pr_actions.rs"]
 mod pr_actions_tests;
+
+/// Runs a confirmed mutation against the same selected remote used by badges.
+/// The executable parameter isolates subprocess tests without global PATH edits.
+fn execute_pr_action(
+    repo_root: &str,
+    request: PrAction,
+    executable: &Path,
+) -> Result<String, AppError> {
+    let slug = github_repo_slug(repo_root)?;
+    let expected_slug = match &request {
+        PrAction::Create { repo_slug, .. }
+        | PrAction::Merge { repo_slug, .. }
+        | PrAction::Approve { repo_slug, .. } => repo_slug,
+    };
+    if &slug != expected_slug {
+        return Err(AppError::Other(
+            "GitHub remote changed; reopen the PR dialog after refreshing the graph".into(),
+        ));
+    }
+    let mut args = vec!["pr".to_string()];
+    match request {
+        PrAction::Create {
+            repo_slug: _,
+            head_branch,
+            title,
+            body,
+            base,
+        } => {
+            let repo = open_repo(Path::new(repo_root))?;
+            if repo.head_detached().map_err(to_app_err)?
+                || repo
+                    .head()
+                    .map_err(to_app_err)?
+                    .shorthand()
+                    .map_err(to_app_err)?
+                    != head_branch
+            {
+                return Err(AppError::Other(
+                    "Current branch changed or HEAD is detached; reopen the create PR dialog"
+                        .into(),
+                ));
+            }
+            if title.trim().is_empty() || base.trim().is_empty() {
+                return Err(AppError::Other(
+                    "PR title and base branch are required".into(),
+                ));
+            }
+            args.extend([
+                "create".into(),
+                "--repo".into(),
+                slug.clone(),
+                "--head".into(),
+                head_branch,
+                "--base".into(),
+                base,
+                "--title".into(),
+                title,
+                "--body".into(),
+                body,
+            ]);
+        }
+        PrAction::Merge {
+            pr_number, method, ..
+        } => {
+            let flag = match method {
+                PrMergeMethod::Merge => "--merge",
+                PrMergeMethod::Squash => "--squash",
+                PrMergeMethod::Rebase => "--rebase",
+            };
+            args.extend([
+                "merge".into(),
+                pr_number.to_string(),
+                "--repo".into(),
+                slug.clone(),
+                flag.into(),
+            ]);
+        }
+        PrAction::Approve { pr_number, .. } => {
+            args.extend([
+                "review".into(),
+                pr_number.to_string(),
+                "--repo".into(),
+                slug.clone(),
+                "--approve".into(),
+            ]);
+        }
+    }
+    let mut command = Command::new(executable);
+    command
+        .no_console()
+        .args(&args)
+        .current_dir(repo_root)
+        .stdin(std::process::Stdio::null());
+    let result = command.output().map_err(gh_command_error);
+    // A remote may have accepted work even when the client reports an error.
+    // Evict cached badges on either outcome so the next fetch reconciles truth.
+    {
+        let mut cache = PR_CACHE.lock().unwrap();
+        PR_CACHE_REVISION.fetch_add(1, Ordering::Relaxed);
+        cache.remove(&slug);
+    }
+    let output = result?;
+    if !output.status.success() {
+        let message = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        return Err(AppError::Other(if message.is_empty() {
+            "GitHub CLI PR action failed".into()
+        } else {
+            message
+        }));
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+}
+
+#[tauri::command]
+pub async fn git_pr_action(repo_root: String, request: PrAction) -> Result<String, AppError> {
+    tokio::task::spawn_blocking(move || execute_pr_action(&repo_root, request, Path::new("gh")))
+        .await
+        .map_err(|e| AppError::Other(format!("Task join error: {e}")))?
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PrContext {
+    repo_slug: String,
+    head_branch: Option<String>,
+}
+
+fn pr_context(repo_root: &str) -> Result<PrContext, AppError> {
+    let repo_slug = github_repo_slug(repo_root)?;
+    let repo = open_repo(Path::new(repo_root))?;
+    let head_branch = if repo.head_detached().map_err(to_app_err)? {
+        None
+    } else {
+        repo.head()
+            .ok()
+            .and_then(|head| head.shorthand().ok().map(str::to_string))
+    };
+    Ok(PrContext {
+        repo_slug,
+        head_branch,
+    })
+}
+
+#[tauri::command]
+pub async fn git_pr_context(repo_root: String) -> Result<PrContext, AppError> {
+    tokio::task::spawn_blocking(move || pr_context(&repo_root))
+        .await
+        .map_err(|e| AppError::Other(format!("Task join error: {e}")))?
+}

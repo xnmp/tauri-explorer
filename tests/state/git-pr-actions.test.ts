@@ -3,7 +3,7 @@ import { createGitPrSession } from "$lib/state/git-pr-session.svelte";
 import type { OpenPr } from "$lib/api/git-log";
 
 const pr: OpenPr = { number: 7, title: "Feature", headRef: "feature", baseRef: "main", htmlUrl: "https://github.com/o/r/pull/7", draft: false, ciStatus: null, reviewDecision: "approved", commentCount: 0 };
-const action = { action: "approve", prNumber: 7 } as const;
+const action = { repoSlug: "o/r", action: "approve", prNumber: 7 } as const;
 function fixture(mutate = vi.fn(async () => "")) {
   const openPrs = vi.fn(async () => [pr]);
   const session = createGitPrSession("/repo", { openPrs, failedChecks: async () => [], checkLog: async () => ({ checkName: "", log: "" }), mutate });
@@ -13,7 +13,7 @@ function fixture(mutate = vi.fn(async () => "")) {
 describe("graph PR actions", () => {
   it("reports creation URL and refreshes badges after success", async () => {
     const f = fixture(vi.fn(async () => pr.htmlUrl));
-    await f.session.performAction({ action: "create", headBranch: "feature", title: "Feature", body: "Details", base: "main" });
+    await f.session.performAction({ repoSlug: "o/r", action: "create", headBranch: "feature", title: "Feature", body: "Details", base: "main" });
     expect(f.session.actionResult).toEqual({ action: "create", output: pr.htmlUrl });
     expect(f.session.prsByBranch.get("feature")?.number).toBe(7);
     expect(f.openPrs).toHaveBeenCalledWith("/repo");
@@ -48,7 +48,7 @@ describe("graph PR actions", () => {
     await f.session.performAction(action);
     expect(f.session.prDetail?.pr.reviewDecision).toBe("approved");
     f.openPrs.mockResolvedValue([]);
-    await f.session.performAction({ action: "merge", prNumber: 7, method: "squash" });
+    await f.session.performAction({ repoSlug: "o/r", action: "merge", prNumber: 7, method: "squash" });
     expect(f.session.prsByBranch.size).toBe(0);
     expect(f.session.prDetail).toBeNull();
   });
@@ -62,4 +62,26 @@ describe("graph PR actions", () => {
     expect(f.session.actionResult).toBeNull();
     expect(f.openPrs).not.toHaveBeenCalled();
   });
+});
+
+
+describe("create PR confirmation identity", () => {
+  it("captures repository and displayed branch before opening confirmation", async () => {
+    const context = vi.fn(async () => ({ repoSlug: "owner/A", headBranch: "feature" }));
+    const session = createGitPrSession("/repo", { context, openPrs: async () => [], failedChecks: async () => [], checkLog: async () => ({ checkName: "", log: "" }) });
+    expect(await session.prepareCreate("feature")).toEqual({ repoSlug: "owner/A", action: "create", headBranch: "feature", title: "", base: "", body: "" });
+    context.mockResolvedValue({ repoSlug: "owner/A", headBranch: "other" });
+    expect(await session.prepareCreate("feature")).toBeNull();
+    expect(session.actionError).toContain("branch changed");
+  });
+});
+
+it("shows native structured error messages for actions and context loading", async () => {
+  const error = { kind: "other", message: "GitHub CLI (`gh`) is not installed" };
+  const f = fixture(vi.fn(async () => { throw error; }));
+  await f.session.performAction(action);
+  expect(f.session.actionError).toBe(error.message);
+  const session = createGitPrSession("/repo", { context: async () => { throw error; }, openPrs: async () => [], failedChecks: async () => [], checkLog: async () => ({ checkName: "", log: "" }) });
+  expect(await session.prepareCreate("feature")).toBeNull();
+  expect(session.actionError).toBe(error.message);
 });

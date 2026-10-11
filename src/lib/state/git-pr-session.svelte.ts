@@ -1,7 +1,12 @@
+import { extractError } from "$lib/api/common";
 import {
   gitFailedCiCheckLog,
   gitFailedCiChecks,
   gitOpenPrs,
+  gitPrAction,
+  gitPrContext,
+  type PrContext,
+  type PrAction,
   type FailedCiCheck,
   type FailedCiCheckLog,
   type OpenPr,
@@ -40,6 +45,8 @@ export type PrSnapshot = Readonly<
 >;
 
 interface GitPrSessionDependencies {
+  context?(repoPath: string): Promise<PrContext>;
+  mutate?(repoPath: string, request: PrAction): Promise<string>;
   openPrs(repoPath: string): Promise<OpenPr[]>;
   failedChecks(repoPath: string, prNumber: number): Promise<FailedCiCheck[]>;
   checkLog(repoPath: string, check: FailedCiCheck): Promise<FailedCiCheckLog>;
@@ -84,6 +91,52 @@ export function createGitPrSession(
   let checksRequest = 0;
   let logRequest = 0;
   let disposed = false;
+  let actionBusy = $state(false);
+  let actionError = $state<string | null>(null);
+  let actionResult = $state.raw<{ action: PrAction["action"]; output: string; prNumber?: number } | null>(null);
+
+  async function prepareCreate(expectedBranch: string): Promise<PrAction | null> {
+    if (disposed || actionBusy) return null;
+    actionBusy = true;
+    actionError = null;
+    actionResult = null;
+    try {
+      const context = await (dependencies.context ?? gitPrContext)(repoPath);
+      if (disposed) return null;
+      if (context.headBranch !== expectedBranch) throw new Error("Current branch changed; refresh the graph before creating a PR");
+      return { action: "create", repoSlug: context.repoSlug, headBranch: expectedBranch, title: "", body: "", base: "" };
+    } catch (error) {
+      if (!disposed) actionError = extractError(error);
+      return null;
+    } finally {
+      if (!disposed) actionBusy = false;
+    }
+  }
+
+  async function performAction(request: PrAction): Promise<void> {
+    if (disposed || actionBusy) return;
+    actionBusy = true;
+    actionError = null;
+    actionResult = null;
+    try {
+      const output = await (dependencies.mutate ?? gitPrAction)(repoPath, request);
+      if (disposed) return;
+      actionResult = { action: request.action, output, prNumber: "prNumber" in request ? request.prNumber : undefined };
+    } catch (error) {
+      if (!disposed) actionError = extractError(error);
+    } finally {
+      if (!disposed) {
+        await reloadBadges();
+        if (prDetail) {
+          const updated = [...prsByBranch.values()].find(pr => pr.number === prDetail?.pr.number);
+          if (updated) prDetail = Object.freeze({ oid: prDetail.oid, pr: updated });
+          else closeDetail();
+        }
+        actionBusy = false;
+      }
+    }
+  }
+
 
   const detailIsCurrent = (request: number, prNumber: number) =>
     !disposed && checksRequest === request && prDetail?.pr.number === prNumber;
@@ -185,6 +238,12 @@ export function createGitPrSession(
     get failedCiChecks() { return failedCiChecks; },
     get failedCiChecksLoading() { return failedCiChecksLoading; },
     get ciCheckLog() { return ciCheckLog; },
+    get actionBusy() { return actionBusy; },
+    get actionError() { return actionError; },
+    get actionResult() { return actionResult; },
+    performAction,
+    prepareCreate,
+    clearActionStatus(): void { if (!actionBusy) { actionError = null; actionResult = null; } },
     reloadBadges,
     openDetail,
     closeDetail,

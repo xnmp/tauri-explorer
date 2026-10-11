@@ -1,3 +1,4 @@
+import type { Locator } from "@playwright/test";
 import { test, expect, type Page } from "./fixtures";
 
 const pane = (page: Page, index: number) => page.locator(".explorer-pane").nth(index);
@@ -5,6 +6,35 @@ const file = (page: Page, index: number, path: string) => pane(page, index).loca
 const pictures = "/home/user/Pictures";
 const photo1 = `${pictures}/photo1.jpg`, photo2 = `${pictures}/photo2.jpg`;
 const beach = `${pictures}/vacation/beach.jpg`, sunset = `${pictures}/vacation/sunset.png`;
+
+const isActive = /(?:^|\s)active(?:\s|$)/;
+
+/** A real mouse drag (HTML5 DnD) from `source` onto `target`, with optional held keys. */
+async function dragBetween(page: Page, source: Locator, target: Locator, keys: readonly string[] = []): Promise<void> {
+  const from = await source.boundingBox();
+  const to = await target.boundingBox();
+  if (!from || !to) throw new Error("Drag source or target is not visible");
+  for (const key of keys) await page.keyboard.down(key);
+  try {
+    await page.mouse.move(from.x + from.width / 2, from.y + from.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(from.x + from.width / 2 + 15, from.y + from.height / 2, { steps: 5 });
+    await page.mouse.move(to.x + to.width / 2, to.y + to.height / 2, { steps: 15 });
+    await page.mouse.up();
+  } finally { for (const key of [...keys].reverse()) await page.keyboard.up(key); }
+}
+
+/** Which pane element contains DOM focus (-1 for none). */
+const focusedPaneIndex = (page: Page) => page.evaluate(() =>
+  [...document.querySelectorAll(".explorer-pane")].findIndex((pane) => pane.contains(document.activeElement)));
+
+async function navigatePane(page: Page, index: number, path: string): Promise<void> {
+  await page.evaluate(async ({ index, path }) => {
+    // @ts-expect-error Vite serves source modules for browser tests.
+    const { windowTabsManager: manager } = await import("/src/lib/state/window-tabs.svelte.ts");
+    await manager.getExplorer(manager.activePaneIds[index]).navigateTo(path);
+  }, { index, path });
+}
 
 async function combinedPaths(page: Page): Promise<string[]> {
   return page.evaluate(async () => {
@@ -115,28 +145,131 @@ for (const mode of ["details", "list", "tiles"] as const) {
     });
 
     test("Ctrl-drag from the other pane still copies into a folder", async ({ page }) => {
-      await page.evaluate(async () => {
-        // @ts-expect-error Vite serves source modules for browser tests.
-        const { windowTabsManager: manager } = await import("/src/lib/state/window-tabs.svelte.ts");
-        await manager.getExplorer(manager.activePaneIds[0]).navigateTo("/home/user");
-      });
+      await navigatePane(page, 0, "/home/user");
       const documents = file(page, 0, "/home/user/Documents");
       await expect(documents).toBeVisible();
       await file(page, 1, beach).click({ modifiers: ["Control"] });
-      const source = await file(page, 1, beach).boundingBox();
-      const target = await documents.boundingBox();
-      if (!source || !target) throw new Error("Drag source or target is not visible");
-      await page.keyboard.down("Control");
-      try {
-        await page.mouse.move(source.x + source.width / 2, source.y + source.height / 2);
-        await page.mouse.down();
-        await page.mouse.move(source.x + source.width / 2 + 15, source.y + source.height / 2, { steps: 5 });
-        await page.mouse.move(target.x + target.width / 2, target.y + target.height / 2, { steps: 15 });
-        await page.mouse.up();
-      } finally { await page.keyboard.up("Control"); }
+      await dragBetween(page, file(page, 1, beach), documents, ["Control"]);
+      await expect(page.locator(".toast").first()).toContainText("Copied 1 item to Documents");
       await documents.dblclick();
       await expect(file(page, 0, "/home/user/Documents/beach.jpg")).toBeVisible();
       await expect(file(page, 1, beach)).toBeVisible();
     });
+
+    test("dragging a multi-selection built in the other pane moves every file, and keys follow the focused pane", async ({ page }) => {
+      await navigatePane(page, 0, "/home/user");
+      const documents = file(page, 0, "/home/user/Documents");
+      await expect(documents).toBeVisible();
+      await file(page, 1, beach).click({ modifiers: ["Control"] });
+      await file(page, 1, sunset).click({ modifiers: ["Control"] });
+      await expect(pane(page, 0)).toHaveClass(isActive);
+      await dragBetween(page, file(page, 1, beach), documents);
+      await expect(page.locator(".toast").first()).toContainText("Moved 2 items to Documents");
+      await expect(file(page, 1, beach)).toHaveCount(0);
+      await expect(file(page, 1, sunset)).toHaveCount(0);
+      await expect(pane(page, 1).locator(".entry-item")).toHaveCount(1);
+      await navigatePane(page, 0, "/home/user/Documents");
+      await expect(file(page, 0, "/home/user/Documents/beach.jpg")).toBeVisible();
+      await expect(file(page, 0, "/home/user/Documents/sunset.png")).toBeVisible();
+      // The drag activated the pane it started in; keys go there and nowhere else.
+      // (The moved files' focused row is gone, so DOM focus has nothing to land on.)
+      const active = 1;
+      await expect(pane(page, active)).toHaveClass(isActive);
+      const before = await pane(page, 1 - active).locator('.entry-item[aria-selected="true"]').count();
+      await page.keyboard.press("Control+a");
+      await expect(pane(page, active).locator('.entry-item[aria-selected="true"]'))
+        .toHaveCount(await pane(page, active).locator(".entry-item").count());
+      expect(await pane(page, 1 - active).locator('.entry-item[aria-selected="true"]').count()).toBe(before);
+    });
+
+    test("restores focus to the focused pane when the previous focus owner was document.body", async ({ page }) => {
+      // Clicking inert status text leaves nothing focused while pane A stays active.
+      await page.locator(".status-bar .status-item").first().click();
+      expect(await page.evaluate(() => document.activeElement === document.body)).toBe(true);
+      await file(page, 1, beach).click({ modifiers: ["Control"] });
+      await expect(file(page, 1, beach)).toHaveAttribute("aria-selected", "true");
+      await expect(pane(page, 0)).toHaveClass(isActive);
+      expect(await focusedPaneIndex(page)).toBe(0);
+      // Keyboard input reaches the focused pane and leaves the other alone.
+      await page.keyboard.press("Control+a");
+      await expect(pane(page, 0).locator('.entry-item[aria-selected="true"]')).toHaveCount(4);
+      await expect(file(page, 1, sunset)).toHaveAttribute("aria-selected", "false");
+    });
   });
 }
+
+test.describe("Cross-pane selection in a plugin file view (SDK file tiles)", () => {
+  const viewId = "e2e-cross-pane-tiles";
+
+  test.beforeEach(async ({ page }) => {
+    await page.goto(`/?path=${pictures}`);
+    await expect(file(page, 0, photo1)).toBeVisible();
+    await page.keyboard.press("Control+\\");
+    await expect(pane(page, 1)).toBeVisible();
+    await page.evaluate(async (viewId) => {
+      // @ts-expect-error Vite serves source modules for browser tests.
+      const { windowTabsManager: manager } = await import("/src/lib/state/window-tabs.svelte.ts");
+      // @ts-expect-error Vite serves source modules for browser tests.
+      const { fileViewRegistry } = await import("/src/lib/plugins/file-view-registry.svelte.ts");
+      // @ts-expect-error Vite serves source modules for browser tests.
+      const { exposePluginSDK } = await import("/src/lib/plugins/runtime-sdk.ts");
+      exposePluginSDK();
+      const sdk = (window as any).__TAURI_EXPLORER_PLUGIN_SDK__;
+      const { mount } = sdk.modules["svelte"];
+      const FileTiles = sdk.modules["ui/file-tiles"].default;
+      // A precompiled plugin view: a component function that mounts the SDK
+      // tiles and forwards click modifiers to pane.select, as plugins do.
+      const component = (anchor: Comment, props: { pane: any }) => {
+        const host = document.createElement("div");
+        anchor.parentNode!.insertBefore(host, anchor);
+        mount(FileTiles, { target: host, props: {
+          get entries() { return props.pane.entries; },
+          get selected() { return new Set(props.pane.selection.map((entry: { path: string }) => entry.path)); },
+          label: "E2E tiles",
+          onselect: (entry: unknown, event: MouseEvent) =>
+            props.pane.select(entry, { ctrlKey: event.ctrlKey || event.metaKey, shiftKey: event.shiftKey }),
+          onopen: (entry: unknown) => props.pane.open(entry),
+          onmenu: (entry: unknown, event: MouseEvent) => props.pane.contextMenu(event, entry),
+        } });
+      };
+      fileViewRegistry.register("e2e-plugin", { id: viewId, title: "E2E tiles", component });
+      const ids = manager.activePaneIds;
+      await manager.getExplorer(ids[1]).navigateTo("/home/user/Pictures/vacation");
+      manager.getExplorer(ids[1]).clearSelection();
+      manager.setPaneFileView(ids[1], viewId);
+    }, viewId);
+    await expect(pane(page, 1).locator(`.file-tiles-grid [data-entry-path="${beach}"]`)).toBeVisible();
+    await file(page, 0, photo2).click();
+    await file(page, 0, photo1).click({ modifiers: ["Control"] });
+    await expect(pane(page, 0)).toHaveClass(isActive);
+  });
+
+  const tile = (page: Page, path: string) => pane(page, 1).locator(`.file-tiles-grid [data-entry-path="${path}"]`);
+
+  test("Ctrl-click in the plugin view toggles its selection without taking focus", async ({ page }) => {
+    const originalFocus = await page.evaluate(() => (document.activeElement as HTMLElement)?.dataset.path);
+    await tile(page, sunset).click({ modifiers: ["Control"] });
+    await tile(page, beach).click({ modifiers: ["Control"] });
+    await expect(tile(page, beach)).toHaveAttribute("aria-selected", "true");
+    await expect(tile(page, sunset)).toHaveAttribute("aria-selected", "true");
+    await expect(pane(page, 0)).toHaveClass(isActive);
+    expect(await page.evaluate(() => (document.activeElement as HTMLElement)?.dataset.path)).toBe(originalFocus);
+    expect(await combinedPaths(page)).toEqual([photo1, photo2, beach, sunset]);
+    await tile(page, beach).click({ modifiers: ["Control"] });
+    await expect(tile(page, beach)).toHaveAttribute("aria-selected", "false");
+    expect(await combinedPaths(page)).toEqual([photo1, photo2, sunset]);
+    // Keys still go to the focused pane.
+    await page.keyboard.press("Control+a");
+    await expect(pane(page, 0).locator('.entry-item[aria-selected="true"]')).toHaveCount(4);
+    await expect(tile(page, sunset)).toHaveAttribute("aria-selected", "true");
+    await expect(tile(page, beach)).toHaveAttribute("aria-selected", "false");
+  });
+
+  test("a plain click in the plugin view focuses its pane, DOM focus included", async ({ page }) => {
+    await tile(page, sunset).click();
+    await expect(pane(page, 1)).toHaveClass(isActive);
+    await expect(tile(page, sunset)).toHaveAttribute("aria-selected", "true");
+    expect(await focusedPaneIndex(page)).toBe(1);
+    expect(await combinedPaths(page)).toEqual([sunset, photo1, photo2]);
+  });
+});

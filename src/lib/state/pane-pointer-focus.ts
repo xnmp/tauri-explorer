@@ -1,14 +1,38 @@
 /** Pointer focus belongs to the gesture's pane intent, independently of drag
- * acquisition. Never cancel mousedown: HTML5 drag needs its default action. */
+ * acquisition. Never cancel mousedown, and never move focus during it: HTML5
+ * drag needs mousedown's default action, and Chromium abandons the drag when
+ * focus is moved while the button is still down. The previous owner gets focus
+ * back on release instead. */
 export function createPanePointerFocus() {
   let restore: (() => void) | null = null;
   return {
     begin(restoreFocus: (() => void) | null): void { restore = restoreFocus; },
-    restore(): boolean {
-      if (!restore) return false;
-      restore();
-      return true;
+    /** True while a gesture that must not activate its pane is in progress. */
+    get active(): boolean { return restore !== null; },
+    /** Ends the gesture, then runs its restore. Returns whether one was pending. */
+    release(): boolean {
+      const pending = restore;
+      restore = null;
+      pending?.();
+      return pending !== null;
     },
     end(): void { restore = null; },
   };
+}
+
+export interface Focusable { focus(options?: FocusOptions): void }
+
+/** Focuses the first candidate that actually takes focus. A candidate can be
+ * gone, hidden or unfocusable (or `document.body`), in which case `focus()`
+ * silently does nothing, so success is judged by where focus landed. */
+export function focusFirstAccepting(
+  candidates: readonly (Focusable | null | undefined)[],
+  currentFocus: () => unknown,
+): boolean {
+  for (const candidate of candidates) {
+    if (!candidate) continue;
+    candidate.focus({ preventScroll: true });
+    if (currentFocus() === candidate) return true;
+  }
+  return false;
 }

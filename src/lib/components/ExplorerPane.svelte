@@ -5,7 +5,7 @@
 -->
 <script lang="ts">
   import { clickSelectionEffect } from "$lib/domain/workspace-selection";
-  import { createPanePointerFocus } from "$lib/state/pane-pointer-focus";
+  import { createPanePointerFocus, focusFirstAccepting } from "$lib/state/pane-pointer-focus";
   import { resolveFileListMove } from "$lib/domain/file-list-navigation";
   import { tick, untrack } from "svelte";
   import { setPaneIdContext } from "$lib/state/pane-context";
@@ -209,15 +209,18 @@ import { nextRemovableRoot } from "$lib/domain/drives";
   }
 
   const pointerFocus = createPanePointerFocus();
+  /** Rows and SDK file tiles: the surfaces whose selection is click-owned. */
+  const ENTRY_SURFACE = '.entry-item, .file-tiles-grid [role="gridcell"]';
 
   function handleFocusIn(): void {
-    if (!pointerFocus.restore()) handleFocus();
+    // Focus the pointer moved here during an additive gesture is returned on release.
+    if (!pointerFocus.active) handleFocus();
   }
 
   function keepsPaneFocus(event: MouseEvent): boolean {
     const target = event.target;
     // Editors and other pane chrome keep their normal focus behavior.
-    return target instanceof Element && !!target.closest(".entry-item")
+    return target instanceof Element && !!target.closest(ENTRY_SURFACE)
       && !target.closest("input, textarea, button, a, [contenteditable]")
       && !clickSelectionEffect(event, paneId, windowTabsManager.activePaneId).focusPane;
   }
@@ -226,16 +229,26 @@ import { nextRemovableRoot } from "$lib/domain/drives";
     const previousFocus = document.activeElement;
     const focusedPane = windowTabsManager.activePaneId;
     pointerFocus.begin(keepsPaneFocus(event) ? () => {
-      if (windowTabsManager.activePaneId === focusedPane
-        && previousFocus instanceof HTMLElement && previousFocus.isConnected) {
-        previousFocus.focus({ preventScroll: true });
-      }
+      if (windowTabsManager.activePaneId !== focusedPane) return;
+      const owner = document.querySelector<HTMLElement>(`[data-pane-id="${CSS.escape(focusedPane)}"]`);
+      // The previous owner may be document.body or no longer focusable; the
+      // focused pane must still own DOM focus so keyboard input follows it.
+      focusFirstAccepting([
+        previousFocus instanceof HTMLElement && previousFocus.isConnected ? previousFocus : null,
+        owner?.querySelector<HTMLElement>('.entry-item[tabindex="0"], [role="gridcell"][tabindex="0"]'),
+        owner,
+      ], () => document.activeElement);
     } : null);
   }
 
   function handlePaneClick(event: MouseEvent): void {
     pointerFocus.end();
-    if (!keepsPaneFocus(event)) handleFocus();
+    if (keepsPaneFocus(event)) return;
+    handleFocus();
+    // A view that owns selection (SDK tiles) may have activated this pane
+    // itself; DOM focus must follow the active pane, as FileList does for rows.
+    const cell = event.target instanceof Element ? event.target.closest<HTMLElement>(ENTRY_SURFACE) : null;
+    if (cell && !paneRef?.contains(document.activeElement)) cell.focus({ preventScroll: true });
   }
 
   /** Select an entry and ask FileList's active virtualized view to reveal it. */
@@ -288,7 +301,7 @@ import { nextRemovableRoot } from "$lib/domain/drives";
 <svelte:window
   onpointerdowncapture={() => pointerFocus.end()}
   onpointercancel={() => pointerFocus.end()}
-  onmouseup={() => pointerFocus.end()}
+  onmouseup={() => pointerFocus.release()}
   onkeydowncapture={() => pointerFocus.end()}
   onblur={() => pointerFocus.end()}
 />
@@ -303,6 +316,7 @@ import { nextRemovableRoot } from "$lib/domain/drives";
   class:inactive={isInactive}
   aria-label="file browser pane"
   tabindex="0"
+  data-pane-id={paneId}
   onfocusincapture={handleFocusIn}
   onmousedowncapture={handleMouseDown}
   ondragstartcapture={() => { pointerFocus.end(); handleFocus(); }}

@@ -18,6 +18,14 @@ in each project rather than inheriting the full unit glob into the churn
 project. The new runner-configuration integration test resolves the real Vitest
 projects and checks exhaustive, non-overlapping file selection, scheduling order,
 single-file commands, unchanged deadlines and worker-override propagation. Run
-the complete unit and performance suites before publication. This removes
+the complete unit and performance suites before publication.
+
+Resolved group numbers alone do not prove execution order. The independent
+review found that Vitest sends isolated order-zero projects to a trailing group
+when `maxWorkers=1`. Use positive ordered groups. The execution regression binds
+lightweight real worker modules to the production-selected projects and journals
+module admission and churn completion for one- and two-worker runs; it exercises
+the actual scheduler without repeating 5,001 activations inside a parallel unit
+test. This removes
 contention between the test projects; it cannot promise immunity to unrelated
 host load.

@@ -265,4 +265,6 @@ The unchanged 5,001-activation registry churn file runs in the first Vitest
 project group, before parallel unit files. Keep both projects exhaustive and
 non-overlapping; inherited include arrays concatenate, so define each project's
 include explicitly instead of inheriting the unit glob. Keep existing test
-assertions, deadlines and CLI worker overrides intact (#1082).
+assertions, deadlines and CLI worker overrides intact. Use positive group orders:
+Vitest puts isolated order-zero projects last with `maxWorkers=1`. Verify actual
+worker admission as well as resolved config (#1082).

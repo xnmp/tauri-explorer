@@ -144,6 +144,10 @@ clock-exact debounce coverage in fake-timer domain tests: an E2E runner may stal
 between synthetic keystrokes for longer than the debounce and legitimately
 start an intermediate query, so contract-level final-query tests should update
 the input atomically.
+Playwright `page.clock.install()` still advances with real time. Tests that
+assert exact elapsed or remaining labels must install a fixed time and pause
+after page readiness, then advance only with `runFor()`; otherwise flooring
+can turn an expected 20s remaining into 19s without any application defect.
 Real-watcher timing tests must also wait for the backend watch and frontend
 listener to be ready, then acknowledge every filesystem write at the
 application-side watcher callback before attributing listing counts to it. A
@@ -266,3 +270,5 @@ Keep the avatar decoration out of Git Graph's table minimum width: at narrow
 sizes it should borrow from the message cell, not widen inline commit details.
 Native graph fixtures must wait for the reset view's `.file-list` before their
 repository is deleted, because reset navigation completes asynchronously.
+
+- Files grid width updates must render within ResizeObserver delivery (`flushSync`); deferred row chunking can expose tracks from the fullscreen preview width on exit (#1061). See `docs/lessons/1061-tile-layout-delivery.md`.

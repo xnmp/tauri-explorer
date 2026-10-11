@@ -31,12 +31,20 @@ pub(crate) struct JobRecord {
     pub job_id: u64,
     pub kind: String,
     pub label: String,
+    /// Opaque timing cohort, pinned by the first prepared consumer receipt.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub estimate_key: Option<String>,
     pub origin_window: String,
     pub revision: u64,
     #[serde(default)]
     pub source_revision: u64,
     pub created_at_ms: u64,
     pub updated_at_ms: u64,
+    /// When the row first became retained (terminal or parked). Unlike
+    /// `updated_at_ms` it never moves afterwards, so it is the end of the
+    /// job's duration. Absent on rows settled before it existed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub settled_at_ms: Option<u64>,
     pub state: JobState,
     pub phase: Option<String>,
     pub output_path: Option<String>,

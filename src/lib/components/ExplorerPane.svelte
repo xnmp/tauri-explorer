@@ -4,6 +4,8 @@
   Issue: tauri-explorer-auj, tauri-explorer-ldfx (window-level tabs)
 -->
 <script lang="ts">
+  import { clickSelectionEffect } from "$lib/domain/workspace-selection";
+  import { createPanePointerFocus, focusFirstAccepting } from "$lib/state/pane-pointer-focus";
   import { resolveFileListMove } from "$lib/domain/file-list-navigation";
   import { tick, untrack } from "svelte";
   import { setPaneIdContext } from "$lib/state/pane-context";
@@ -206,6 +208,53 @@ import { nextRemovableRoot } from "$lib/domain/drives";
     windowTabsManager.setActivePane(paneId);
   }
 
+  const pointerFocus = createPanePointerFocus();
+  /** Rows and SDK file tiles: the surfaces whose selection is click-owned. */
+  const ENTRY_SURFACE = '.entry-item, .file-tiles-grid [role="gridcell"]';
+
+  function handleFocusIn(): void {
+    // Focus the pointer moved here during an additive gesture is returned on release.
+    if (!pointerFocus.active) handleFocus();
+  }
+
+  function keepsPaneFocus(event: MouseEvent): boolean {
+    const target = event.target;
+    // Editors and other pane chrome keep their normal focus behavior.
+    return target instanceof Element && !!target.closest(ENTRY_SURFACE)
+      && !target.closest("input, textarea, button, a, [contenteditable]")
+      && !clickSelectionEffect(event, paneId, windowTabsManager.activePaneId).focusPane;
+  }
+
+  function handleMouseDown(event: MouseEvent): void {
+    const previousFocus = document.activeElement;
+    const focusedPane = windowTabsManager.activePaneId;
+    pointerFocus.begin(keepsPaneFocus(event) ? () => {
+      if (windowTabsManager.activePaneId !== focusedPane) return;
+      const owner = document.querySelector<HTMLElement>(`[data-pane-id="${CSS.escape(focusedPane)}"]`);
+      // The previous focus owner only counts when it lies inside the pane that
+      // was active: stale focus left in another pane (e.g. after a keyboard pane
+      // switch) must never be restored, or that pane would become active. It may
+      // also be document.body or unfocusable, so fall back to the pane's own
+      // row/tile, then the pane element, which keeps keyboard input with it.
+      focusFirstAccepting([
+        previousFocus instanceof HTMLElement && previousFocus.isConnected && owner?.contains(previousFocus)
+          ? previousFocus : null,
+        owner?.querySelector<HTMLElement>('.entry-item[tabindex="0"], [role="gridcell"][tabindex="0"]'),
+        owner,
+      ], () => document.activeElement);
+    } : null);
+  }
+
+  function handlePaneClick(event: MouseEvent): void {
+    pointerFocus.end();
+    if (keepsPaneFocus(event)) return;
+    handleFocus();
+    // A view that owns selection (SDK tiles) may have activated this pane
+    // itself; DOM focus must follow the active pane, as FileList does for rows.
+    const cell = event.target instanceof Element ? event.target.closest<HTMLElement>(ENTRY_SURFACE) : null;
+    if (cell && !paneRef?.contains(document.activeElement)) cell.focus({ preventScroll: true });
+  }
+
   /** Select an entry and ask FileList's active virtualized view to reveal it. */
   function selectAndReveal(
     entry: import("$lib/domain/file").FileEntry,
@@ -253,6 +302,14 @@ import { nextRemovableRoot } from "$lib/domain/drives";
   // Note: Tab initialization is handled at page level by windowTabsManager
 </script>
 
+<svelte:window
+  onpointerdowncapture={() => pointerFocus.end()}
+  onpointercancel={() => pointerFocus.end()}
+  onmouseup={() => pointerFocus.release()}
+  onkeydowncapture={() => pointerFocus.end()}
+  onblur={() => pointerFocus.end()}
+/>
+
 <!-- svelte-ignore a11y_no_noninteractive_element_interactions -- pane-level click-to-focus delegation; keyboard users get the same activation via Tab + onfocus below -->
 <!-- svelte-ignore a11y_click_events_have_key_events -- onclick mirrors onfocus, so Tab already provides the keyboard equivalent -->
 <!-- svelte-ignore a11y_no_noninteractive_tabindex -- tabindex=0 is required so keyboard users can Tab into the pane, mirroring the click handler -->
@@ -263,8 +320,11 @@ import { nextRemovableRoot } from "$lib/domain/drives";
   class:inactive={isInactive}
   aria-label="file browser pane"
   tabindex="0"
-  onfocusin={handleFocus}
-  onclick={handleFocus}
+  data-pane-id={paneId}
+  onfocusincapture={handleFocusIn}
+  onmousedowncapture={handleMouseDown}
+  ondragstartcapture={() => { pointerFocus.end(); handleFocus(); }}
+  onclick={handlePaneClick}
 >
   {#if paneGitGraph}
     <div class="pane-content">

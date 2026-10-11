@@ -29,3 +29,11 @@ closes. Attachments remain memory-only; only report text survives app restart.
 [ADR 0028](../adr/0028-report-attachment-admission-and-hosting.md) governs the
 copied-file and public-hosting boundaries, including signature-check limits,
 disclosure, submission uncertainty and best-effort cleanup.
+
+The later Chromium/WebKit aggregate CI failures came from the native image
+estimate test introduced on the integration base, not report attachment code.
+The plain Playwright clock kept advancing in real time alongside `runFor()`,
+so its exact remaining-time assertion failed. Integrating dev's #1092 fixed
+clock/pause correction preserves every estimate, overdue, cancellation and
+completion assertion. Reverting only that clock correction reproduced the
+same failure locally; application timing behavior requires no change.

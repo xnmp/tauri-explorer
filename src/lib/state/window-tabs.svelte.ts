@@ -10,6 +10,7 @@
  * workspace.
  */
 
+import { combinedSelection } from "$lib/domain/workspace-selection";
 import { SvelteMap } from "svelte/reactivity";
 import { createWindowClose, type NativeCloseSource } from "./window-close";
 import { createPaneActivationQueue, type PaneActivationScheduler } from "./pane-activation";
@@ -1004,6 +1005,16 @@ function createWindowTabsManager(options: {
     return sessions.values();
   }
 
+  /** Selection from this window's active explorer tab only. */
+  function getCombinedSelection() {
+    const tab = activeTab;
+    if (tab?.kind !== "explorer") return [];
+    return combinedSelection(leafIds(tab.layout).map((id) => ({
+      id,
+      entries: getExplorer(id)?.getSelectedEntries() ?? [],
+    })), tab.activePaneId);
+  }
+
   /** Get the active explorer (active tab's active pane) */
   function getActiveExplorer(): ExplorerInstance | undefined {
     const tab = activeTab;
@@ -1326,6 +1337,7 @@ function createWindowTabsManager(options: {
     getExplorer,
     isPaneReady: (paneId: PaneId): boolean => paneReadiness.get(paneId) === true,
     getActiveExplorer,
+    getCombinedSelection,
     getAllExplorers,
     refreshAllPanes,
 

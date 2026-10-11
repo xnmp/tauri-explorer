@@ -16,13 +16,13 @@
 //! `WEBKIT_FORCE_DMABUF_RENDERER` is set; forcing it is safe here because
 //! shared memory never uses the hardware buffer path.
 //!
-//! Hosts with no GPU render node (VMs, CI runners, containers) would otherwise
-//! composite and paint through software GL (llvmpipe). Measured under llvmpipe,
-//! that path left a 12-step selection walk with 1 repainted frame and stalled
-//! input for 150–450 ms (the Linux CI resize specs, #1057). WebKitGTK 2.46+
-//! can keep compositing while painting with Skia on the CPU, which was as
-//! smooth there as the non-composited path (59 changed frames, ≤84 ms gaps);
-//! older WebKitGTK gets the non-composited workaround.
+//! Hosts with software GL (no GPU render node: VMs, CI runners, containers)
+//! keep the non-composited path they had before #1057. Composited through
+//! llvmpipe, a 12-step selection walk repainted 1 frame and drag input stalled
+//! for 150–450 ms. Skia CPU painting (`cpu`) was as smooth as non-composited for
+//! selection locally, but on the 4-vCPU Linux CI runner a pointer drag still
+//! skipped the frame between two moves (the native preview-resize spec failed
+//! on dev with it), while non-composited passed every run (#1071).
 //!
 //! NVIDIA's proprietary driver and GPU-less hosts are the only cases known to
 //! need any of this, so other GPUs keep WebKit's own defaults — the
@@ -73,6 +73,7 @@ pub(crate) enum RendererMode {
     /// Composited DMABuf renderer over shared-memory buffers.
     SharedMemory,
     /// Composited, with Skia painting tiles on the CPU instead of through GL.
+    /// Only chosen by the `cpu` override (see the module docs, #1071).
     CpuPainting,
     /// DMABuf renderer and compositing disabled (non-composited painting).
     Legacy,
@@ -203,13 +204,7 @@ pub(crate) fn plan(
     let software_gl = forced_software_gl(&get)
         .or_else(|| (!gpu_render_node()).then_some("no accessible GPU render node"));
     let (mode, why) = match software_gl {
-        Some(cause) if host.webkit >= SKIA_CPU_MIN_VERSION => {
-            (RendererMode::CpuPainting, format!("{cause} (software GL)"))
-        }
-        Some(cause) => (
-            RendererMode::Legacy,
-            format!("{cause} (software GL), WebKitGTK predates Skia"),
-        ),
+        Some(cause) => (RendererMode::Legacy, format!("{cause} (software GL)")),
         None => (
             RendererMode::Native,
             "GPU without NVIDIA proprietary driver".to_string(),
@@ -357,33 +352,18 @@ mod tests {
     }
 
     #[test]
-    fn hosts_without_a_gpu_paint_on_the_cpu_but_keep_compositing() {
-        let plan = without_gpu(NO_GPU, env(&[]));
-        assert_eq!(plan.mode, RendererMode::CpuPainting);
-        assert!(sets(&plan, "WEBKIT_SKIA_ENABLE_CPU_RENDERING"));
-        assert!(!sets(&plan, "WEBKIT_DISABLE_COMPOSITING_MODE"));
-        assert!(
-            plan.reason.contains("no accessible GPU render node"),
-            "{}",
-            plan.reason
-        );
-    }
-
-    #[test]
-    fn hosts_without_a_gpu_on_pre_skia_webkit_use_the_legacy_workaround() {
-        for webkit in [(2, 45), (2, 44), (2, 40)] {
+    fn hosts_without_a_gpu_keep_the_non_composited_path() {
+        for webkit in [(2, 54), (2, 46), (2, 44), (2, 40)] {
             let plan = without_gpu(Host { webkit, ..NO_GPU }, env(&[]));
             assert_eq!(plan.mode, RendererMode::Legacy, "{webkit:?}");
             assert!(sets(&plan, "WEBKIT_DISABLE_COMPOSITING_MODE"));
+            assert!(sets(&plan, "WEBKIT_DISABLE_DMABUF_RENDERER"));
+            assert!(
+                plan.reason.contains("no accessible GPU render node"),
+                "{}",
+                plan.reason
+            );
         }
-        let first_skia = Host {
-            webkit: (2, 46),
-            ..NO_GPU
-        };
-        assert_eq!(
-            without_gpu(first_skia, env(&[])).mode,
-            RendererMode::CpuPainting
-        );
     }
 
     #[test]
@@ -403,7 +383,7 @@ mod tests {
         );
         assert_eq!(
             plan(MESA, env(&[("LIBGL_ALWAYS_SOFTWARE", "1")]), probe).mode,
-            RendererMode::CpuPainting
+            RendererMode::Legacy
         );
     }
 
@@ -416,7 +396,7 @@ mod tests {
             ("GALLIUM_DRIVER", " Softpipe "),
         ] {
             let plan = with_gpu(MESA, env(&[(var, value)]));
-            assert_eq!(plan.mode, RendererMode::CpuPainting, "{var}={value:?}");
+            assert_eq!(plan.mode, RendererMode::Legacy, "{var}={value:?}");
             assert!(plan.reason.contains(var), "{}", plan.reason);
         }
         for (var, value) in [

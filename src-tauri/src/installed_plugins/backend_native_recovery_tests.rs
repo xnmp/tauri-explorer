@@ -136,6 +136,8 @@ fn seed(config: &Path, consumer: &PackageGeneration, provider: &PackageGeneratio
             source_revision: 0,
             created_at_ms: timestamp,
             updated_at_ms: timestamp,
+            settled_at_ms: None,
+            estimate_key: None,
             state: JobState::Accepting,
             phase: Some("preparing".into()),
             output_path: None,

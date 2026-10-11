@@ -7,6 +7,7 @@
   import { basename } from "$lib/domain/path";
   import Modal from "./Modal.svelte";
   import AiOperationsDialog from "./AiOperationsDialog.svelte";
+  import { formatJobDuration, isTimingSettled, jobDuration } from "$lib/domain/image-job-progress";
   import { jobStateLabel } from "$lib/domain/native-plugin-jobs";
 
   interface Props {
@@ -19,22 +20,21 @@
   let panel: HTMLElement | undefined = $state();
   let unresolvedOpen = $state(false);
 
-  // Live elapsed time counter for running jobs
+  // Live elapsed time counter. Only unsettled jobs have a moving duration;
+  // a settled job's is frozen, so it never needs a tick.
   let now = $state(Date.now());
+  const ticking = $derived(open && jobsStore.jobs.some((job) => !isTimingSettled(job)));
 
   $effect(() => {
-    if (!open || !jobsStore.hasRunningJobs) return;
+    if (!ticking) return;
+    now = Date.now();
     const intervalId = setInterval(() => { now = Date.now(); }, 1000);
     return () => clearInterval(intervalId);
   });
 
   function formatElapsed(job: Job): string {
-    const end = job.endTime ?? now;
-    const seconds = Math.floor((end - job.startTime) / 1000);
-    if (seconds < 60) return `${seconds}s`;
-    const minutes = Math.floor(seconds / 60);
-    const secs = seconds % 60;
-    return `${minutes}m ${secs}s`;
+    const duration = jobDuration(job, now);
+    return duration === null ? "" : formatJobDuration(duration);
   }
 
   function truncateDetail(detail: string, maxLen: number = 60): string {
@@ -139,13 +139,10 @@
     box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25);
     display: flex;
     flex-direction: column;
-    animation: slideUp 150ms cubic-bezier(0, 0, 0, 1);
+    animation: modal-card-in 150ms cubic-bezier(0, 0, 0, 1);
   }
 
-  @keyframes slideUp {
-    from { opacity: 0; transform: translateY(20px) scale(0.98); }
-    to { opacity: 1; transform: translateY(0) scale(1); }
-  }
+  @media (prefers-reduced-motion: reduce) { .panel { animation: none; } }
 
   .panel-header {
     display: flex;

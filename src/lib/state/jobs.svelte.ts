@@ -19,6 +19,7 @@ export interface Job {
   /** Origin of the job: "app" for built-in flows, or a plugin id. */
   source: string;
   presentation?: "image";
+  estimateKey?: string;
   status: JobStatus;
   error?: string;
   startTime: number;
@@ -120,8 +121,8 @@ function createJobsStore() {
       const previous = jobs.find((job) => job.jobKey === r.jobKey || !job.jobKey && job.id === r.jobId && job.source === r.kind && job.nativePackageOwner === r.owner.packageId);
       const terminal = nativeJobSettled(r);
       return { id: r.jobId, jobKey: r.jobKey, revision: r.revision, owner: previous?.owner ?? r.owner.packageId, nativePackageOwner: r.owner.packageId, source: r.kind, label: r.label,
-        detail: previous?.detail ?? "", presentation: "image", status: r.state, startTime: r.createdAtMs,
-        ...(terminal ? { endTime: r.updatedAtMs } : {}), outputPath: r.outputPath ?? undefined, error: r.error ?? undefined, phase: r.phase ?? undefined,
+        detail: previous?.detail ?? "", presentation: "image", estimateKey: r.estimateKey ?? undefined, status: r.state, startTime: r.createdAtMs,
+        ...(terminal && r.settledAtMs != null ? { endTime: r.settledAtMs } : {}), outputPath: r.outputPath ?? undefined, error: r.error ?? undefined, phase: r.phase ?? undefined,
         retry: previous?.retry, retrying: previous?.retrying,
         controlPending: terminal ? undefined : previous?.controlPending, controlError: previous?.controlError,
         cancelRequested: terminal ? false : previous?.cancelRequested };

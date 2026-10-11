@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { emptyNativeJobs, mergeNativeJobEvent, adoptNativeSnapshot, validNativeJob, type NativeJobRecord } from "$lib/domain/native-plugin-jobs";
 import { createNativePluginJobsController } from "$lib/state/native-plugin-jobs";
 import { jobsStore, isJobActive } from "$lib/state/jobs.svelte";
+import { jobDuration } from "$lib/domain/image-job-progress";
 import { createPluginJobsController, windowJobSink } from "$lib/state/plugin-jobs";
 vi.mock("$lib/plugins/installed", async (original) => ({ ...await original<object>(), installedPackages: () => [{ manifest: { id: "consumer", contributions: ["image-contribution"] } }] }));
 const record = (n = 1, revision = 1, state: NativeJobRecord["state"] = "running"): NativeJobRecord => ({
@@ -12,6 +13,15 @@ const record = (n = 1, revision = 1, state: NativeJobRecord["state"] = "running"
 function deferred<T>() { let resolve!: (v: T) => void; const promise = new Promise<T>((done) => { resolve=done; }); return { promise, resolve }; }
 afterEach(() => { jobsStore.applyNative([]); jobsStore.configureNativeControls(null); for (const j of [...jobsStore.jobs]) jobsStore.removeJob(j.id); });
 describe("native job revisions and ownership", () => {
+  it("adopts a prepared estimate key once and rejects a changed cohort", () => {
+    let state = mergeNativeJobEvent(emptyNativeJobs(), {type:"updated",job:record()});
+    const pinned = {...record(1,2),estimateKey:"image-v1:fast"};
+    state = mergeNativeJobEvent(state,{type:"updated",job:pinned});
+    expect(state.jobs.get(pinned.jobKey)?.estimateKey).toBe("image-v1:fast");
+    expect(mergeNativeJobEvent(state,{type:"updated",job:{...pinned,revision:3,estimateKey:"different"}})).toBe(state);
+    expect(validNativeJob({...pinned,estimateKey:"x".repeat(128)})).toBe(true);
+    for(const estimateKey of ["", "x".repeat(129),"has space","雪",1]) expect(validNativeJob({...pinned,estimateKey})).toBe(false);
+  });
   it("ignores stale progress, duplicate events and identity changes after completion", () => {
     let state = mergeNativeJobEvent(emptyNativeJobs(), { type:"updated",job:record() });
     state = mergeNativeJobEvent(state, { type:"updated",job:record(1,3,"completed") });
@@ -113,5 +123,19 @@ describe("settled recovery presentation", () => {
     expect(jobsStore.hasRunningJobs).toBe(true);
     jobsStore.clearCompleted();
     await vi.waitFor(() => expect(dismissed).toEqual([parked(1, 1, "stopped").jobKey]));
+  });
+  it("a settled job's duration is its host-recorded settled time, not its last update, and does not move with the clock", () => {
+    // Updated (e.g. dismissed) long after it settled at t=39s.
+    jobsStore.applyNative([
+      { ...record(1, 1, "completed"), createdAtMs: 1_000, settledAtMs: 39_000, updatedAtMs: 900_000 },
+      { ...record(2, 2, "completed"), createdAtMs: 1_000, updatedAtMs: 900_000 },
+      { ...record(3, 3, "running"), createdAtMs: 1_000 },
+    ]);
+    const [settled, legacy, active] = jobsStore.jobs;
+    expect(jobDuration(settled, 39_000)).toBe(38_000);
+    expect(jobDuration(settled, 5_000_000)).toBe(38_000);
+    expect(jobDuration(legacy, 5_000_000)).toBeNull();
+    expect(jobDuration(active, 61_000)).toBe(60_000);
+    expect(jobDuration(active, 121_000)).toBe(120_000);
   });
 });

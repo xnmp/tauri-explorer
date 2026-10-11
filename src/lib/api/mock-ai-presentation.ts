@@ -38,7 +38,7 @@ export function createMockAiPresentation(emit: (name: string, value: unknown) =>
       } else if (action !== "resume") {
         operations = { ...operations, operations: action === "discard" ? operations.operations.filter(r => r !== current) : operations.operations.map(r => r === current ? { ...r, active: false, canStop: false, canResume: false, canDismiss: current.execution === "unknown" && current.delivery === "none", reason: "Active recovery stopped. Unknown outcome evidence remains retained." } : r) };
         jobs = jobs.map(r => r.owner.packageId === consumerPackage && r.operationId === operationId && !nativeJobTerminal(r.state)
-          ? { ...r, revision: ++watermark, updatedAtMs: Date.now(), state: "needs_attention", phase: action === "discard" ? "provider_result_discarded" : "stopped" } : r);
+          ? { ...r, revision: ++watermark, updatedAtMs: Date.now(), settledAtMs: Date.now(), state: "needs_attention", phase: action === "discard" ? "provider_result_discarded" : "stopped" } : r);
         for (const r of jobs.filter(r => r.owner.packageId === consumerPackage && r.operationId === operationId && !nativeJobTerminal(r.state))) emit("plugin-jobs:changed", { type: "updated", job: structuredClone(r) });
       }
       emit("ai:operations-changed", null); return operationSnapshot();

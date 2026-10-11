@@ -60,12 +60,16 @@ fn valid(record: &JobRecord, registering: bool) -> Result<()> {
         || record.job_id > SAFE
         || record.created_at_ms > SAFE
         || record.updated_at_ms > SAFE
+        || record.settled_at_ms.is_some_and(|n| n > SAFE)
         || record.label.is_empty()
         || record.label.chars().count() > 256
         || record.label.chars().any(char::is_control)
         || record.origin_window.is_empty()
         || record.origin_window.len() > 128
         || !record.origin_window.bytes().all(|b| b.is_ascii_graphic())
+        || record.estimate_key.as_ref().is_some_and(|s| {
+            s.is_empty() || s.len() > 128 || !s.bytes().all(|b| b.is_ascii_graphic())
+        })
         || record.phase.as_ref().is_some_and(|s| !text(s, 128))
         || record.error.as_ref().is_some_and(|s| !text(s, 2048))
         || record
@@ -199,8 +203,18 @@ fn immutable(a: &JobRecord, b: &JobRecord) -> bool {
         && a.job_id == b.job_id
         && a.kind == b.kind
         && a.label == b.label
+        && (b.estimate_key.is_none() || a.estimate_key == b.estimate_key)
         && a.origin_window == b.origin_window
         && a.created_at_ms == b.created_at_ms
+}
+/// Stamp the moment a row first becomes retained; a later change to a
+/// retained row (dismissal, terminal outcome after parking) keeps it.
+fn stamp_settled(old: &JobRecord, next: &mut JobRecord) {
+    next.settled_at_ms = match (retained(old), retained(next)) {
+        (true, _) => old.settled_at_ms,
+        (false, true) => Some(next.updated_at_ms),
+        (false, false) => None,
+    };
 }
 fn transition(from: JobState, to: JobState) -> Result<()> {
     if from.terminal() || from != JobState::Accepting && to == JobState::Accepting {
@@ -353,12 +367,14 @@ impl Store {
             return Ok(None);
         }
         transition(record.state, JobState::NeedsAttention)?;
+        let before = record.clone();
         record.state = JobState::NeedsAttention;
         record.phase = Some("stopped".into());
         record.error =
             Some("Automatic recovery stopped; unknown execution evidence is retained".into());
         record.output_path = None;
         record.updated_at_ms = clock()?;
+        stamp_settled(&before, &mut record);
         record.revision = next_revision(conn)?;
         valid(&record, false)?;
         persist(conn, &record)?;
@@ -442,6 +458,7 @@ impl Store {
             run_id,
             error,
             None,
+            None,
         )
     }
     #[allow(clippy::too_many_arguments)]
@@ -455,6 +472,7 @@ impl Store {
         output_path: Option<String>,
         run_id: Option<i64>,
         error: Option<String>,
+        estimate_key: Option<String>,
     ) -> Result<JobRecord> {
         if source_revision == 0 || source_revision > SAFE {
             return Err(reject("invalid consumer job revision"));
@@ -468,6 +486,7 @@ impl Store {
             run_id,
             error,
             Some(source_revision),
+            estimate_key,
         )
     }
     #[allow(clippy::too_many_arguments)]
@@ -481,6 +500,7 @@ impl Store {
         run_id: Option<i64>,
         error: Option<String>,
         source_revision: Option<u64>,
+        estimate_key: Option<String>,
     ) -> Result<JobRecord> {
         generation(owner)?;
         if !key(job_key) {
@@ -504,7 +524,16 @@ impl Store {
             if old.run_id.is_some() && old.run_id != run_id {
                 return Err(reject("job receipt changed its pinned consumer run"));
             }
+            if old
+                .estimate_key
+                .as_ref()
+                .zip(estimate_key.as_ref())
+                .is_some_and(|(a, b)| a != b)
+            {
+                return Err(reject("job receipt changed its pinned estimate key"));
+            }
             let mut next = JobRecord {
+                estimate_key: old.estimate_key.clone().or(estimate_key.clone()),
                 source_revision: source_revision.unwrap_or(old.source_revision),
                 state,
                 phase,
@@ -540,6 +569,7 @@ impl Store {
             transition(old.state, state)?;
             next.revision = next_revision(conn)?;
             next.updated_at_ms = clock()?;
+            stamp_settled(&old, &mut next);
             persist(conn, &next)?;
             prune(conn)?;
             Ok(next)
@@ -605,6 +635,8 @@ mod tests {
             source_revision: 0,
             created_at_ms: 1,
             updated_at_ms: 1,
+            settled_at_ms: None,
+            estimate_key: None,
             state: JobState::Accepting,
             phase: None,
             output_path: None,
@@ -942,6 +974,7 @@ mod tests {
                 None,
                 Some(run),
                 None,
+                None,
             )
         };
         let running = observe(4, JobState::Running, 7).unwrap();
@@ -952,6 +985,52 @@ mod tests {
         let attention = observe(5, JobState::NeedsAttention, 7).unwrap();
         assert!(attention.revision > running.revision);
         assert_eq!(attention.run_id, Some(7));
+    }
+    #[test]
+    fn estimate_keys_are_optional_bounded_pinned_and_durable() {
+        let (root, store) = fixture();
+        let accepted = store.register_job(record(1)).unwrap();
+        assert!(accepted.estimate_key.is_none());
+        let observe = |revision, key: Option<&str>| {
+            store.observe_job(
+                &accepted.owner,
+                &accepted.job_key,
+                revision,
+                JobState::Running,
+                None,
+                None,
+                Some(7),
+                None,
+                key.map(str::to_owned),
+            )
+        };
+        for invalid in ["", "has space", "line\nbreak", "雪", &"x".repeat(129)] {
+            assert!(observe(1, Some(invalid)).is_err());
+        }
+        let pinned = observe(1, Some("image-v1:fast")).unwrap();
+        assert_eq!(pinned.estimate_key.as_deref(), Some("image-v1:fast"));
+        assert_eq!(store.register_job(record(1)).unwrap(), pinned);
+        let mut conflicting = record(1);
+        conflicting.estimate_key = Some("different".into());
+        assert!(store.register_job(conflicting).is_err());
+        // A stale receipt has no authority, including over metadata.
+        assert_eq!(observe(1, Some("different")).unwrap(), pinned);
+        assert!(observe(2, Some("different")).is_err());
+        // A consumer downgrade omits the additive field, preserving its identity.
+        assert_eq!(observe(2, None).unwrap().estimate_key, pinned.estimate_key);
+        drop(store);
+        let reopened = Store::open(root.path().join("services"), Limits::default()).unwrap();
+        assert_eq!(
+            reopened
+                .job(&accepted.job_key)
+                .unwrap()
+                .unwrap()
+                .estimate_key,
+            pinned.estimate_key
+        );
+        let mut maximum = record(2);
+        maximum.estimate_key = Some("x".repeat(128));
+        assert!(reopened.register_job(maximum).is_ok());
     }
     #[test]
     fn autonomous_receipts_cannot_undo_explicit_stop_or_discard_policy() {
@@ -979,6 +1058,7 @@ mod tests {
                     None,
                     None,
                     None,
+                    None,
                 )
                 .unwrap();
             assert_eq!(late, policy);
@@ -989,6 +1069,7 @@ mod tests {
                 &accepted.job_key,
                 11,
                 JobState::Discarded,
+                None,
                 None,
                 None,
                 None,
@@ -1046,6 +1127,53 @@ mod tests {
                 .is_none());
         }
         assert!(store.job(&attention.job_key).unwrap().is_some());
+    }
+    #[test]
+    fn settlement_time_is_stamped_once_and_survives_later_changes_and_restart() {
+        let (root, store) = fixture();
+        let wait = || std::thread::sleep(std::time::Duration::from_millis(5));
+        let active = store.register_job(record(1)).unwrap();
+        assert_eq!(active.settled_at_ms, None);
+        wait();
+        let running = change(&store, &active, JobState::Running).unwrap();
+        assert_eq!(running.settled_at_ms, None);
+        // Parking settles; the later terminal outcome does not move the end.
+        wait();
+        let parked = park(&store, &running, "stopped");
+        assert_eq!(parked.settled_at_ms, Some(parked.updated_at_ms));
+        wait();
+        let discarded = change(&store, &parked, JobState::Discarded).unwrap();
+        assert!(discarded.updated_at_ms > parked.updated_at_ms);
+        assert_eq!(discarded.settled_at_ms, parked.settled_at_ms);
+        // A directly terminal job is settled when it became terminal.
+        let done = change(
+            &store,
+            &store.register_job(record(2)).unwrap(),
+            JobState::Completed,
+        )
+        .unwrap();
+        assert_eq!(done.settled_at_ms, Some(done.updated_at_ms));
+        drop(store);
+        let store = Store::open(root.path().join("services"), Limits::default()).unwrap();
+        assert_eq!(
+            store
+                .job(&discarded.job_key)
+                .unwrap()
+                .unwrap()
+                .settled_at_ms,
+            parked.settled_at_ms
+        );
+    }
+    #[test]
+    fn rows_stored_before_settlement_time_existed_decode_without_inventing_one() {
+        let mut legacy = serde_json::to_value(record(1)).unwrap();
+        assert!(legacy
+            .as_object_mut()
+            .unwrap()
+            .remove("settledAtMs")
+            .is_none());
+        let decoded: JobRecord = serde_json::from_value(legacy).unwrap();
+        assert_eq!(decoded.settled_at_ms, None);
     }
     #[test]
     fn parked_jobs_never_exhaust_active_capacity_or_fail_the_journal_closed() {

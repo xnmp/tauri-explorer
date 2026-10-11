@@ -383,6 +383,8 @@ fn stop_recovery_commits_execution_release_and_presentation_policy_together() {
             source_revision: 0,
             created_at_ms: 1,
             updated_at_ms: 1,
+            settled_at_ms: None,
+            estimate_key: None,
             state: JobState::Accepting,
             phase: None,
             output_path: None,

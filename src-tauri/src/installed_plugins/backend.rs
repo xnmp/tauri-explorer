@@ -2159,7 +2159,7 @@ fn start_broker(
     };
     let initialized = broker.call(
         "initialize",
-        json!({"protocolVersion":1,"activeRunIds":if validation_only {vec![]} else {super::provenance::active_runs(id)},"processService":true,"processStdin":super::process_run::stdin_capability(),"textService":{"version":1},"serviceService":{"version":1},"artifactService":{"version":1},"credentialService":{"version":1},"jobService":{"version":1},"hostControl":{"token":broker.control_token},"validationOnly":validation_only,"deferRecovery":deferred}),
+        json!({"protocolVersion":1,"activeRunIds":if validation_only {vec![]} else {super::provenance::active_runs(id)},"processService":true,"processStdin":super::process_run::stdin_capability(),"textService":{"version":1},"serviceService":{"version":1},"artifactService":{"version":1},"credentialService":{"version":1},"jobService":{"version":1,"estimateKey":true},"hostControl":{"token":broker.control_token},"validationOnly":validation_only,"deferRecovery":deferred}),
     );
     // Legacy reconciliation serialization must not survive into failure cleanup.
     drop(ownership);

@@ -6,7 +6,8 @@ export const USER_REPORT_IMAGE_TYPES = [
   "image/gif",
 ] as const;
 export type UserReportImageType = (typeof USER_REPORT_IMAGE_TYPES)[number];
-export type UserReportMediaType = UserReportImageType | "video/mp4" | "video/webm" | "video/quicktime";
+export const USER_REPORT_MEDIA_TYPES = [...USER_REPORT_IMAGE_TYPES, "video/mp4", "video/webm", "video/quicktime"] as const;
+export type UserReportMediaType = (typeof USER_REPORT_MEDIA_TYPES)[number];
 
 // Mirrors the native boundary and the relay; all three assert these against
 // tests/contract/fixtures/report_relay.json.
@@ -58,16 +59,18 @@ export function validateUserReportAttachmentFiles(
   existing: UserReportAttachmentUsage = { count: 0, bytes: 0 },
 ): string | null {
   if (existing.count + files.length > MAX_USER_REPORT_ATTACHMENTS) {
-    return `Attach up to ${MAX_USER_REPORT_ATTACHMENTS} images.`;
+    return `Attach up to ${MAX_USER_REPORT_ATTACHMENTS} images and videos.`;
   }
   let addedBytes = 0;
   for (const file of files) {
-    if (!(USER_REPORT_IMAGE_TYPES as readonly string[]).includes(file.type)) {
-      return "Attachments must be PNG, JPEG, or GIF images.";
+    if (!(USER_REPORT_MEDIA_TYPES as readonly string[]).includes(file.type)) {
+      return "Attachments must be PNG, JPEG, GIF, MP4, WebM, or MOV.";
     }
-    if (file.size === 0) return `${file.name || "The selected image"} is empty.`;
+    if (file.size === 0) return `${file.name || "The selected attachment"} is empty.`;
     if (file.size > MAX_USER_REPORT_ATTACHMENT_BYTES) {
-      return `${file.name || "Each image"} must be 2 MiB or smaller.`;
+      return file.type.startsWith("video/")
+        ? `${file.name || "The clip"} is too large (2 MiB maximum). Try a shorter clip or a recording at lower quality.`
+        : `${file.name || "Each image"} must be 2 MiB or smaller.`;
     }
     addedBytes += file.size;
   }
@@ -122,15 +125,15 @@ export function userReportFallbackNotice(kind: UserReportErrorKind | undefined):
 export function userReportAttachmentFailureMessage(
   kind: UserReportErrorKind | undefined,
 ): string {
-  const retry = "Your text is saved; images remain available until this window closes.";
+  const retry = "Your text is saved; images and videos remain available until this window closes.";
   if (kind === "attachment_uploader_unavailable") {
-    return `Could not reach an image uploader. ${retry}`;
+    return `Could not reach an attachment uploader. ${retry}`;
   }
   if (kind === "attachment_upload_failed") {
-    return `Could not upload the image. ${retry}`;
+    return `Could not upload the attachment. ${retry}`;
   }
   if (kind === "malformed_input") {
-    return `One of your attached images is not valid. ${retry} Reopen Report Issue, remove it, and try again.`;
+    return `One of your attached images or videos is not valid. ${retry} Reopen Report Issue, remove it, and try again.`;
   }
   if (kind === "daily_cap") {
     return `Reports are temporarily unavailable. ${retry}`;
@@ -180,4 +183,38 @@ export function userReportFallbackUrl(draft: UserReportDraft): string | null {
     body,
     draft.kind === "bug" ? "bug" : "enhancement",
   );
+}
+
+/** Validate the decoded bytes at the draft admission seam, before displaying or submitting them. */
+export function validateUserReportAttachments(
+  attachments: readonly UserReportAttachment[],
+  existing: UserReportAttachmentUsage = { count: 0, bytes: 0 },
+): string | null {
+  for (const attachment of attachments) {
+    try {
+      const binary = atob(attachment.data);
+      if (btoa(binary) !== attachment.data || !validUserReportMediaMagic(attachment.mediaType, Uint8Array.from(binary, (char) => char.charCodeAt(0)))) {
+        return `${attachment.name} is invalid: its bytes do not match its media type.`;
+      }
+    } catch { return `${attachment.name} has invalid attachment data.`; }
+  }
+  return validateUserReportAttachmentFiles(attachments.map((attachment) => ({
+    name: attachment.name,
+    type: attachment.mediaType,
+    size: userReportAttachmentBytes(attachment.data),
+  })), existing);
+}
+
+function validUserReportMediaMagic(type: string, bytes: Uint8Array): boolean {
+  const starts = (signature: number[]) => signature.every((value, index) => bytes[index] === value);
+  if (type === "image/png") return starts([137, 80, 78, 71, 13, 10, 26, 10]);
+  if (type === "image/jpeg") return starts([255, 216, 255]);
+  if (type === "image/gif") return ["GIF87a", "GIF89a"].includes(String.fromCharCode(...bytes.subarray(0, 6)));
+  if (type === "video/webm") return starts([26, 69, 223, 163]);
+  if (type !== "video/mp4" && type !== "video/quicktime") return false;
+  if (bytes.length < 16 || String.fromCharCode(...bytes.subarray(4, 8)) !== "ftyp") return false;
+  const boxSize = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength).getUint32(0);
+  if (boxSize < 16 || boxSize > bytes.length) return false;
+  const brand = String.fromCharCode(...bytes.subarray(8, 12));
+  return type === "video/quicktime" ? brand === "qt  " : ["isom", "iso2", "iso3", "iso4", "iso5", "iso6", "iso8", "iso9", "avc1", "mp41", "mp42", "M4V ", "MSNV", "dash"].includes(brand);
 }

@@ -22,3 +22,13 @@ it("cleans up videos if issue creation definitely fails", async () => {
   await expect(processReport(report(...clips[0]), "ip", createInMemoryRateLimitStore(), async () => { throw new ReportError("server_rejected", "No"); }, { upload: async () => "https://blob.example/clip", remove })).rejects.toMatchObject({ code: "server_rejected" });
   expect(remove).toHaveBeenCalledWith(["https://blob.example/clip"]);
 });
+it("keeps all upload limits for videos and rejects MOV declared as MP4", () => {
+  const input = report(...clips[0]);
+  expect(() => validateReport({ ...input, attachments: Array(4).fill(input.attachments[0]) })).toThrow(/3/);
+  const large = Buffer.alloc(2097153); Buffer.from(clips[0][1], "hex").copy(large);
+  expect(() => validateReport({ ...input, attachments: [{ ...input.attachments[0], data: large.toString("base64") }] })).toThrow(/invalid/);
+  const atLimit = { ...input.attachments[0], data: large.subarray(0, 2097152).toString("base64") };
+  expect(validateReport({ ...input, attachments: [atLimit] }).attachments[0].bytes).toHaveLength(2097152);
+  expect(() => validateReport({ ...input, attachments: [atLimit, atLimit] })).toThrow(/3 MiB/);
+  expect(() => validateReport(report("video/mp4", clips[1][1]))).toThrow(/invalid/);
+});

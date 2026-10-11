@@ -4,9 +4,9 @@ import type {
   UserReportKind,
 } from "$lib/domain/user-report";
 import {
-  userReportAttachmentBytes,
   userReportAttachmentUsage,
   validateUserReportAttachmentFiles,
+  validateUserReportAttachments,
 } from "$lib/domain/user-report";
 import { createCoalescedPersister, loadPersisted } from "./persisted";
 
@@ -141,21 +141,21 @@ export function createUserReportDraftStore() {
       const next = await readAll();
       if (!isReadCurrent(read)) return null;
       // Concurrent reads validate against the latest shared selection.
-      const currentError = validateUserReportAttachmentFiles(files, currentUsage());
+      const currentError = validateUserReportAttachments(next, currentUsage());
       if (currentError) return currentError;
       attachments = [...attachments, ...next.map((entry) => ({ ...entry }))];
       revision += 1;
       return null;
     } catch {
       return isReadCurrent(read)
-        ? "Could not read the selected images. Try selecting them again."
+        ? "Could not read the selected attachments. Try selecting them again."
         : null;
     } finally {
       finishAttachmentRead(read);
     }
   }
 
-  /** Same sequence as `attachFiles`, for the single clipboard image. */
+  /** Same sequence as `attachFiles`, for a single clipboard attachment. */
   async function attachClipboard(
     readImage: () => Promise<UserReportAttachment>,
   ): Promise<string | null> {
@@ -164,23 +164,17 @@ export function createUserReportDraftStore() {
     try {
       const image = await readImage();
       if (!isReadCurrent(read)) return null;
-      const error = validateUserReportAttachmentFiles(
-        [{
-          name: image.name,
-          type: image.mediaType,
-          size: userReportAttachmentBytes(image.data),
-        }],
-        currentUsage(),
-      );
+      const error = validateUserReportAttachments([image], currentUsage());
       if (error) return error;
       attachments = [...attachments, image];
       clipboardAttachmentData = image.data;
       revision += 1;
       return null;
-    } catch {
-      return isReadCurrent(read)
-        ? "Could not read the clipboard image. Try saving it and selecting the file."
-        : null;
+    } catch (error) {
+      if (!isReadCurrent(read)) return null;
+      if (typeof error === "object" && error !== null
+        && "message" in error && typeof error.message === "string") return error.message;
+      return "Could not read the clipboard attachment. Try saving it and selecting the file.";
     } finally {
       finishAttachmentRead(read);
     }

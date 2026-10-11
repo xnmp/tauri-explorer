@@ -362,7 +362,7 @@ test("clipboard action stays visible but disabled when the clipboard has no imag
   const clipboardButton = dialog.getByRole("button", { name: "Attach from clipboard" });
   await expect(clipboardButton).toBeVisible();
   await expect(clipboardButton).toBeDisabled();
-  await expect(clipboardButton).toHaveAttribute("title", "No image in clipboard");
+  await expect(clipboardButton).toHaveAttribute("title", "No image or copied file in clipboard");
   await page.screenshot({
     path: evidencePath("issue-587-disabled-clipboard-action.png"),
     animations: "disabled",
@@ -382,7 +382,7 @@ test("invalid image keeps the report draft and existing attachments", async ({ p
     name: "not-an-image.txt", mimeType: "text/plain", buffer: Buffer.from("text"),
   });
 
-  await expect(dialog.getByRole("alert")).toContainText("PNG, JPEG, or GIF");
+  await expect(dialog.getByRole("alert")).toContainText("PNG, JPEG, GIF, MP4, WebM, or MOV");
   await expect(dialog.getByLabel("Title")).toHaveValue("Keep this title");
   await expect(dialog.getByLabel("Description")).toHaveValue("Keep this description");
   await expect(dialog.getByText("valid.png")).toBeVisible();
@@ -519,8 +519,8 @@ for (const [kind, message] of [
   ["daily_cap", "Reports are temporarily unavailable"],
   ["rate_limited", "Too many reports"],
   ["malformed_input", "not valid"],
-  ["attachment_uploader_unavailable", "Could not reach an image uploader"],
-  ["attachment_upload_failed", "Could not upload the image"],
+  ["attachment_uploader_unavailable", "Could not reach an attachment uploader"],
+  ["attachment_upload_failed", "Could not upload the attachment"],
 ] as const) {
   test(`${kind} optimistic attachment failure is explained by a toast`, async ({
     page,

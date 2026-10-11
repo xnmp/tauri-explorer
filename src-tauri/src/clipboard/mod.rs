@@ -97,6 +97,45 @@ pub async fn clipboard_read_report_image(
     )
 }
 
+/// Report attachments include clipboard screenshots and copied video files.
+#[tauri::command]
+pub async fn clipboard_has_report_attachment() -> Result<bool, AppError> {
+    if let Ok(snapshot) = clipboard_snapshot().await {
+        if !snapshot.paths.is_empty() {
+            return Ok(true);
+        }
+    }
+    clipboard_has_image().await
+}
+
+#[tauri::command]
+pub async fn clipboard_read_report_attachment(
+) -> Result<crate::user_report::ReportAttachment, crate::user_report::SubmitReportError> {
+    let paths = match clipboard_snapshot().await {
+        Ok(snapshot) => snapshot.paths,
+        Err(error) => {
+            // Screenshot reading must remain available if file-list tooling fails.
+            return clipboard_read_report_image().await.map_err(|_| {
+                crate::user_report::SubmitReportError::new(
+                    "clipboard_unavailable",
+                    error.to_string(),
+                )
+            });
+        }
+    };
+    if paths.is_empty() {
+        return clipboard_read_report_image().await;
+    }
+    tokio::task::spawn_blocking(move || crate::user_report::attachment_from_clipboard_files(&paths))
+        .await
+        .map_err(|error| {
+            crate::user_report::SubmitReportError::new(
+                "clipboard_unavailable",
+                format!("Clipboard task failed: {error}"),
+            )
+        })?
+}
+
 /// Paste clipboard image data to a file in the given directory.
 /// Returns the path of the created file, or an error.
 #[tauri::command]

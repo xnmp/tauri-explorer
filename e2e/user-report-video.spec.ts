@@ -24,7 +24,7 @@ test("picker video survives close and failed submission, retries and submits", a
   await expect(page.locator(".toast.error")).toContainText("Your text is saved");
   dialog = await openReport(page);
   await expect(dialog.getByText("recording.mp4", { exact: true })).toBeVisible();
-  await dialog.screenshot({ path: process.env.CAPTURE_EVIDENCE ? "evidence/ac-1-picker-video.png" : "test-results/ac-1-picker-video.png" });
+  await dialog.screenshot({ path: process.env.CAPTURE_EVIDENCE ? "evidence/ac-1-picker-video.png" : "test-results/ac-1-picker-video.png", animations: "disabled" });
   await page.evaluate((key) => localStorage.removeItem(key), MOCK_LOCAL_KEYS.reportError);
   await dialog.getByRole("button", { name: "Submit", exact: true }).click();
   await expect(page.locator(".toast.success")).toContainText("Report submitted");
@@ -40,7 +40,7 @@ test("copied video enables Attach from clipboard and supports removal", async ({
   await dialog.getByRole("button", { name: "Attach from clipboard" }).click();
   await expect(dialog.getByText("Copied video.mp4", { exact: true })).toBeVisible();
   await expect(dialog.getByRole("img", { name: "Video attachment" })).toBeVisible();
-  await dialog.screenshot({ path: process.env.CAPTURE_EVIDENCE ? "evidence/ac-2-clipboard-video.png" : "test-results/ac-2-clipboard-video.png" });
+  await dialog.screenshot({ path: process.env.CAPTURE_EVIDENCE ? "evidence/ac-2-clipboard-video.png" : "test-results/ac-2-clipboard-video.png", animations: "disabled" });
   await dialog.getByRole("button", { name: "Remove Copied video.mp4" }).click();
   await expect(dialog.getByText("Copied video.mp4", { exact: true })).toHaveCount(0);
 });

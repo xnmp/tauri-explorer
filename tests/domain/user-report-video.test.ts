@@ -30,3 +30,20 @@ it("explains how to reduce an oversized video and keeps count/total caps", () =>
   expect(validateUserReportAttachmentFiles([{ ...file, size: 2097152 }], { count: 1, bytes: 2097152 })).toMatch(/3 MiB/);
   expect(validateUserReportAttachmentFiles([{ ...file, type: "video/avi", size: 12 }])).toMatch(/MP4/);
 });
+it.each([
+  ["video/mp4", clips[1][1]], ["video/quicktime", clips[0][1]],
+  ["video/mp4", Buffer.from("00000010667479706d69663100000000", "hex")],
+  ["video/mp4", Buffer.from("000001006674797069736f6d00000000", "hex")],
+] as const)("rejects the wrong container brand or truncated box for %s", async (type, bytes) => {
+  const store = createUserReportDraftStore();
+  try {
+    expect(await store.attachClipboard(async () => ({ name: "fake", mediaType: type, data: bytes.toString("base64") }))).toMatch(/invalid/);
+    expect(store.attachments).toHaveLength(0);
+  } finally { store.dispose(); }
+});
+it("surfaces the native oversized clipboard-video explanation", async () => {
+  const store = createUserReportDraftStore();
+  try {
+    expect(await store.attachClipboard(async () => { throw { kind: "clipboard_unavailable", message: "Clipboard video is too large. Try a shorter clip." }; })).toBe("Clipboard video is too large. Try a shorter clip.");
+  } finally { store.dispose(); }
+});

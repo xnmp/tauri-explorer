@@ -58,10 +58,22 @@ fn mp4_reads_mvhd_v1_duration_after_a_64_bit_box() {
 
 #[test]
 fn mp4_without_a_usable_duration_is_none() {
-    assert_eq!(mp4_duration(&mut Cursor::new(mp4_file(mvhd_v0(0, 10)))), None);
-    assert_eq!(mp4_duration(&mut Cursor::new(mp4_file(mvhd_v0(1000, 0)))), None);
-    assert_eq!(mp4_duration(&mut Cursor::new(mp4_file(mvhd_v0(1000, u32::MAX)))), None);
-    assert_eq!(mp4_duration(&mut Cursor::new(b"not an mp4 at all".to_vec())), None);
+    assert_eq!(
+        mp4_duration(&mut Cursor::new(mp4_file(mvhd_v0(0, 10)))),
+        None
+    );
+    assert_eq!(
+        mp4_duration(&mut Cursor::new(mp4_file(mvhd_v0(1000, 0)))),
+        None
+    );
+    assert_eq!(
+        mp4_duration(&mut Cursor::new(mp4_file(mvhd_v0(1000, u32::MAX)))),
+        None
+    );
+    assert_eq!(
+        mp4_duration(&mut Cursor::new(b"not an mp4 at all".to_vec())),
+        None
+    );
     // A box claiming to be smaller than its own header must not loop forever.
     let mut corrupt = 4u32.to_be_bytes().to_vec();
     corrupt.extend_from_slice(b"free");
@@ -74,7 +86,9 @@ fn ebml_header() -> Vec<u8> {
 
 fn segment(children: &[u8]) -> Vec<u8> {
     // Unknown-size segment, as written by live/streaming muxers.
-    let mut out = vec![0x18, 0x53, 0x80, 0x67, 0x01, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF];
+    let mut out = vec![
+        0x18, 0x53, 0x80, 0x67, 0x01, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+    ];
     out.extend_from_slice(children);
     out
 }
@@ -118,16 +132,25 @@ fn matroska_without_info_duration_is_none() {
     let mut bytes = ebml_header();
     bytes.extend(segment(&info(&[0x2A, 0xD7, 0xB1, 0x83, 0x0F, 0x42, 0x40])));
     assert_eq!(matroska_duration(&mut Cursor::new(bytes)), None);
-    assert_eq!(matroska_duration(&mut Cursor::new(b"RIFF....AVI ".to_vec())), None);
+    assert_eq!(
+        matroska_duration(&mut Cursor::new(b"RIFF....AVI ".to_vec())),
+        None
+    );
 }
 
 #[test]
 fn ffmpeg_duration_line_is_parsed() {
     let stderr = "Input #0, avi, from 'clip.avi':\n  Duration: 01:02:05.50, start: 0.000000, bitrate: 1234 kb/s\n";
     assert_eq!(parse_ffmpeg_duration(stderr), Some(3725.5));
-    assert_eq!(parse_ffmpeg_duration("  Duration: 00:12:34.00, start"), Some(754.0));
+    assert_eq!(
+        parse_ffmpeg_duration("  Duration: 00:12:34.00, start"),
+        Some(754.0)
+    );
     assert_eq!(parse_ffmpeg_duration("  Duration: N/A, bitrate: N/A"), None);
-    assert_eq!(parse_ffmpeg_duration("clip.avi: Invalid data found when processing input"), None);
+    assert_eq!(
+        parse_ffmpeg_duration("clip.avi: Invalid data found when processing input"),
+        None
+    );
 }
 
 #[test]
@@ -142,4 +165,44 @@ fn probe_reads_supported_video_files_only() {
     assert_eq!(probe_duration(&text), None);
     assert_eq!(probe_duration(dir.path()), None);
     assert_eq!(probe_duration(&dir.path().join("missing.mp4")), None);
+}
+
+/// Real encoder output, when ffmpeg is installed: native MP4/WebM parsing and
+/// the AVI ffmpeg fallback agree with the encoded 3.5 s length.
+#[test]
+fn probe_reads_real_encoded_files_when_ffmpeg_is_available() {
+    let Some(ffmpeg) = crate::thumbnails::ffmpeg_path() else {
+        eprintln!("ffmpeg unavailable; skipping real-file duration probe");
+        return;
+    };
+    let dir = tempfile::tempdir().unwrap();
+    for name in ["clip.mp4", "clip.webm", "clip.mkv", "clip.avi"] {
+        let path = dir.path().join(name);
+        let status = std::process::Command::new(&ffmpeg)
+            .args([
+                "-hide_banner",
+                "-loglevel",
+                "error",
+                "-f",
+                "lavfi",
+                "-i",
+                "testsrc=duration=3.5:size=64x64:rate=10",
+            ])
+            .arg(&path)
+            .status()
+            .unwrap();
+        assert!(status.success(), "ffmpeg could not encode {name}");
+        let seconds = probe_duration(&path).unwrap_or_else(|| panic!("no duration for {name}"));
+        assert!((seconds - 3.5).abs() < 0.2, "{name}: {seconds}");
+        let mut file = std::fs::File::open(&path).unwrap();
+        let native = match name {
+            "clip.mp4" => mp4_duration(&mut file),
+            "clip.webm" | "clip.mkv" => matroska_duration(&mut file),
+            _ => continue,
+        };
+        assert!(
+            native.is_some_and(|n| (n - 3.5).abs() < 0.2),
+            "{name} native: {native:?}"
+        );
+    }
 }

@@ -33,7 +33,7 @@ test("video rows show m:ss / h:mm:ss; non-video rows stay blank", async ({ page 
   await expect(lengthCell(page, "tutorial.mkv")).toHaveText("1:02:05");
   await page.locator(".details-view").screenshot({ path: `${EVIDENCE}/ac-4-video-durations.png` });
   await expect(lengthCell(page, "soundtrack.mp3")).toHaveText("");
-  await expect(lengthCell(page, "broken.avi")).toHaveText("");
+  await expect(lengthCell(page, "unreadable.avi")).toHaveText("");
   await expect(page.locator(".details-view .length-cell").filter({ hasText: /0:00|NaN/ })).toHaveCount(0);
   await page.locator(".details-view").screenshot({ path: `${EVIDENCE}/ac-5-blank-for-non-video.png` });
 });
@@ -43,6 +43,8 @@ test("column menu toggles the Length column", async ({ page }) => {
   await page.locator(".details-view .column-headers").click({ button: "right" });
   const item = page.locator(".column-menu-item", { hasText: "Length" });
   await expect(item).toContainText("✓");
+  // The header owns its right-click: the folder background menu stays closed.
+  await expect(page.locator(".context-menu")).toHaveCount(0);
   await page.screenshot({ path: `${EVIDENCE}/ac-2-column-menu-length.png` });
   await item.click();
   await expect(page.locator(".details-view .column-header.length-column")).toHaveCount(0);

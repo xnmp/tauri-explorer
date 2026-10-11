@@ -397,6 +397,7 @@ pub fn run_with_process_entry(launch_dir: Option<String>, t_process_entry: std::
             thumbnails::get_thumbnail_data,
             thumbnails::get_micro_thumbnail,
             thumbnails::get_video_thumbnail_data,
+            media_duration::get_media_durations,
             thumbnails::get_folder_preview,
             thumbnails::set_ffmpeg_path,
             thumbnails::clear_thumbnail_cache,

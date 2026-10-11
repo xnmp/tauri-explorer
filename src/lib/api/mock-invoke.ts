@@ -125,6 +125,11 @@ function mockBatch(paths: string[], operation: (path: string) => void): FileBatc
 }
 
 
+const MOCK_MEDIA_DURATIONS: Record<string, number> = {
+  "/home/user/Videos/recording.mp4": 754.4,
+  "/home/user/Videos/tutorial.mkv": 3725.2,
+};
+
 if (typeof window !== "undefined") {
   const control = getMockControl();
   control.previewRevision = (path) => {
@@ -1224,6 +1229,11 @@ const mockCommands: Record<string, CommandHandler> = {
   warm_pool_shutdown: () => undefined,
 
   list_directory: (args) => mockDirectoryListing(args.path as string),
+
+  // Details Length column (#995): fixed durations so views render stable text;
+  // `unreadable.avi` models a video whose container metadata cannot be read.
+  get_media_durations: (args) =>
+    (args.paths as string[]).map((path) => MOCK_MEDIA_DURATIONS[path] ?? null),
 
   is_directory_empty: (args) => {
     const path = args.path as string;

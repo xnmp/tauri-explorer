@@ -1160,7 +1160,7 @@ fn resolve_ffmpeg_path() -> Option<PathBuf> {
 
 /// Locate a working `ffmpeg` binary (configured path → PATH → install locations).
 /// Result is cached until `set_ffmpeg_path` invalidates it.
-fn ffmpeg_path() -> Option<PathBuf> {
+pub(crate) fn ffmpeg_path() -> Option<PathBuf> {
     let cell = ffmpeg_resolved();
     let mut guard = cell.lock().unwrap_or_else(|e| e.into_inner());
     if let Some(ref resolved) = *guard {

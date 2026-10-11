@@ -61,9 +61,19 @@
   }: Props = $props();
 
   let overlayRef = $state<HTMLElement | null>(null);
+  let ownership = $state.raw<ReturnType<typeof modalOwnership.registerSurface> | null>(null);
+  const top = $derived(ownership?.isTop() ?? false);
+  let lastFocused: HTMLElement | null = null;
 
   $effect(() => {
-    if (open) return untrack(() => modalOwnership.register(() => onClose(), canClose));
+    if (!open) return;
+    const owner = untrack(() => modalOwnership.registerSurface((event) => {
+      if (event) handleKeydown(event);
+      else if (canClose()) onClose();
+      focusOwnedSurface();
+    }, () => canClose(), focusOwnedSurface));
+    ownership = owner;
+    return () => { owner.release(); ownership=null; };
   });
 
   // `:not([tabindex="-1"])` on every clause so an element opted out of the tab
@@ -106,10 +116,11 @@
   }
 
   function handleKeydown(event: KeyboardEvent): void {
+    if (!ownership?.isTop()) return;
     if (event.key === "Escape" && closeOnEscape) {
       event.preventDefault();
       event.stopPropagation();
-      onClose();
+      if (canClose()) onClose();
       return;
     }
     if (event.key === "Tab") {
@@ -120,7 +131,8 @@
   }
 
   function handleBackdropClick(event: MouseEvent): void {
-    if (closeOnBackdrop && event.target === event.currentTarget) {
+    if (!ownership?.isTop()) return;
+    if (canClose() && closeOnBackdrop && event.target === event.currentTarget) {
       onClose();
     }
   }
@@ -131,13 +143,6 @@
     if (!open || !overlayRef) return;
     const ref = overlayRef;
     const previous = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-    queueMicrotask(() => {
-      if (ref.isConnected && !ref.contains(document.activeElement)) {
-        const target =
-          ref.querySelector<HTMLElement>("[autofocus], [data-autofocus]") ?? ref;
-        target.focus();
-      }
-    });
     return () => {
       if (previous && canRestoreFocus(previous)) {
         previous.focus();
@@ -148,6 +153,25 @@
       }
     };
   });
+  // A global key may arrive while focus is on the document (e.g. after a
+  // disabled control lost focus). Restore the owning surface after a veto.
+  function focusOwnedSurface(): void {
+    const ref = overlayRef;
+    if (!ref) return;
+    queueMicrotask(() => {
+      if (!ownership?.isTop() || !ref.isConnected || ref.contains(document.activeElement)) return;
+      const remembered = lastFocused;
+      const preferred = ref.querySelector<HTMLElement>("[autofocus], [data-autofocus]");
+      const target = remembered && ref.contains(remembered) && canRestoreFocus(remembered)
+        ? remembered
+        : preferred && canRestoreFocus(preferred) ? preferred : ref;
+      target.focus();
+    });
+  }
+
+  $effect(() => {
+    if (open && overlayRef && top) focusOwnedSurface();
+  });
 </script>
 
 {#if open}
@@ -156,21 +180,26 @@
     bind:this={overlayRef}
     class="modal-overlay {overlayClass}"
     class:top-aligned={align === "top"}
+    class:suspended={!top}
     style:--modal-top-offset={topOffset}
     {role}
-    aria-modal="true"
+    aria-modal={top ? "true" : undefined}
+    aria-hidden={!top ? "true" : undefined}
+    inert={!top}
     aria-label={label}
     aria-labelledby={labelledby}
     aria-describedby={describedby}
     tabindex="-1"
     onkeydown={handleKeydown}
     onclick={handleBackdropClick}
+    onfocusin={(event)=>{ if(top && event.target instanceof HTMLElement) lastFocused=event.target; }}
   >
     {@render children()}
   </div>
 {/if}
 
 <style>
+  .modal-overlay.suspended { visibility:hidden; pointer-events:none; }
   .modal-overlay {
     position: fixed;
     inset: 0;
@@ -180,8 +209,15 @@
     align-items: center;
     justify-content: center;
     z-index: var(--z-modal, 1000);
-    animation: modal-overlay-in 150ms cubic-bezier(0, 0, 0, 1);
     outline: none;
+  }
+
+  /* Keep the blurred backdrop static. Ending opacity/transform animations on
+     it or its contents can drop a WebKitGTK surface for a frame (#1080).
+     Installed plugins may ship older entrance CSS; the modal owns their safe
+     entrance without requiring every plugin to ship a matching fix. */
+  .modal-overlay > :global(.plugin-dialog) {
+    animation: modal-card-in 150ms cubic-bezier(0, 0, 0, 1);
   }
 
   .modal-overlay.top-aligned {
@@ -194,13 +230,8 @@
     animation: none;
   }
 
-  @keyframes modal-overlay-in {
-    from {
-      opacity: 0;
-    }
-    to {
-      opacity: 1;
-    }
+  @media (prefers-reduced-motion: reduce) {
+    .modal-overlay > :global(.plugin-dialog) { animation: none; }
   }
 
   @media (prefers-color-scheme: dark) {

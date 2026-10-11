@@ -5,7 +5,7 @@
   import { extractError } from "$lib/api/common";
   import { dialogStore } from "$lib/state/dialogs.svelte";
   import { keybindingsStore } from "$lib/state/keybindings.svelte";
-  import { mediaTime, seekTime, videoKeyAction } from "$lib/domain/video-preview";
+  import { mediaTime, seekTime, videoClickAction, videoKeyAction } from "$lib/domain/video-preview";
   import type { VideoSource } from "$lib/state/video-preview-lifetime";
   let { path, name, fullscreen, ontogglefullscreen }: {path:string;name:string;fullscreen:boolean;ontogglefullscreen:()=>void} = $props();
   let video = $state<HTMLVideoElement | null>(null);
@@ -88,6 +88,11 @@
       ? "This video format or codec is not supported by your system."
       : "Cannot load this video. It may have changed or become unavailable.");
   }
+  function onStageClick(event: MouseEvent) {
+    const target = event.target as HTMLElement;
+    const control = target instanceof HTMLVideoElement ? "surface" : target.closest("button") ? "button" : "message";
+    if (videoClickAction(control) === "fullscreen") ontogglefullscreen();
+  }
   async function openExternal() {
     const result = await openFile(path);
     if (!result.ok && !disposed) error = `Cannot open video: ${result.error}`;
@@ -96,7 +101,8 @@
 
 <!-- svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_noninteractive_element_interactions -- focusable media group owns playback shortcuts; its controls retain native input behavior. -->
 <div class="video-preview" role="group" aria-label="Video player for {name}" tabindex="0" onkeydown={onKey}>
-  <div class="video-stage" class:failed={!!error}>
+  <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -- pointer shortcut; the focusable group's F key and the fullscreen button are the keyboard path. -->
+  <div class="video-stage" class:failed={!!error} onclick={onStageClick}>
     <video bind:this={video} src={source?.url} preload="metadata" playsinline aria-label="Video preview of {name}"
       onloadedmetadata={sync} onloadeddata={sync} ondurationchange={sync} ontimeupdate={sync}
       onplay={sync} onpause={sync} onended={sync} onvolumechange={sync} onseeked={sync} onerror={mediaFailed}>

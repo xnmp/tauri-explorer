@@ -37,7 +37,7 @@ test("a failing plugin action reports its error while another plugin still works
   // it under the plugin's name.
   await setFailure(page, "extract_palette", "palette service unavailable");
   let menu = await contextMenuOn(page, "image.png");
-  await menu.locator(".menu-item", { hasText: "Create Theme from Image" }).click();
+  await (await aiMenuItem(menu, "Create Theme from Image")).click();
   // Error toasts dismiss after 3 s, so assert and capture it before anything slower.
   const failure = page.locator(".toast.error");
   await expect(failure).toHaveText("Theme from Image: palette service unavailable");
@@ -59,7 +59,7 @@ test("a failing plugin action reports its error while another plugin still works
   // its backend recovers.
   await setFailure(page, "extract_palette", null);
   menu = await contextMenuOn(page, "image.png");
-  await menu.locator(".menu-item", { hasText: "Create Theme from Image" }).click();
+  await (await aiMenuItem(menu, "Create Theme from Image")).click();
   await expect
     .poll(() => page.evaluate(() => document.documentElement.getAttribute("data-theme")))
     .toMatch(/^img-/);

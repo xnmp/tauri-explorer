@@ -7,7 +7,7 @@ export interface WindowKeyboardDependencies {
   bindings: Pick<typeof bindingsType, "trackModifierKey" | "trackedMetaHeld" | "resetTrackedModifiers" | "matchesAnyBinding" | "matchesAnyChordPrefix" | "matchesChordPrefixForCommand" | "isChordActiveForCommand" | "isChordActive" | "cancelChord" | "findMatchingCommand">;
   getCommand(id: string): { when?: () => boolean } | undefined;
   executeCommand(id: string): Promise<unknown>;
-  dialogs: { readonly hasModalOpen: boolean; closeAll(): void; openJobsPanel(): void; openSettings(): void };
+  dialogs: { readonly hasModalOpen: boolean; requestCloseTop(event?: KeyboardEvent): void; openJobsPanel(): void; openSettings(): void };
   terminal: { readonly enabled: boolean; toggle(): void };
   toggleDualPane(): void;
   getActiveExplorer(): { readonly showFilter: boolean; openFilter(): void; closeFilter(): void } | undefined;
@@ -29,6 +29,9 @@ export function startWindowKeyboard(target: EventTarget, dependencies: WindowKey
       input: element?.tagName === "INPUT" || element?.tagName === "TEXTAREA" || !!element?.isContentEditable,
       terminal: !!element?.closest?.(".terminal-panel"),
       customButton: !!element?.closest?.('[role="button"]'),
+      // Composite widgets (e.g. a plugin's ui/file-tiles grid) move focus with
+      // arrow keys themselves; the pane's own grid is matched by fileEntry.
+      grid: !!element?.closest?.('[role="grid"]'),
       separator: !!element?.closest?.('[role="separator"]'),
       media: !!element?.closest?.('.video-preview'),
     };
@@ -40,10 +43,10 @@ export function startWindowKeyboard(target: EventTarget, dependencies: WindowKey
     const event = raw as KeyboardEvent;
     // WebKitGTK reports Super separately from metaKey; track before routing.
     bindings.trackModifierKey(event, true);
-    const { input, nativeButton, fileEntry, terminal: terminalFocus, separator, customButton, media } = inputContext(event);
+    const { input, nativeButton, fileEntry, terminal: terminalFocus, separator, customButton, grid, media } = inputContext(event);
     // Custom controls own keys they explicitly accept. Unhandled commands
     // keep normal routing; accepted local input retires an unfinished chord.
-    if ((separator || customButton || fileEntry || media) && event.defaultPrevented) { bindings.cancelChord(); return; }
+    if ((separator || customButton || grid || fileEntry || media || dialogs.hasModalOpen) && event.defaultPrevented) { bindings.cancelChord(); return; }
     const terminalCommand = terminalFocus ? getTerminalCommand(event, bindings, isAvailable) : undefined;
     const explorer = dependencies.getActiveExplorer();
     const chord = terminalFocus
@@ -86,7 +89,7 @@ export function startWindowKeyboard(target: EventTarget, dependencies: WindowKey
     event.preventDefault();
     switch (action) {
       case "toggle-terminal": terminal.toggle(); break;
-      case "close-dialogs": dialogs.closeAll(); break;
+      case "close-dialogs": dialogs.requestCloseTop(event); break;
       case "open-filter": if (explorer && !explorer.showFilter) explorer.openFilter(); break;
       case "close-filter": explorer?.closeFilter(); break;
       case "open-jobs": dialogs.openJobsPanel(); break;

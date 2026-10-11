@@ -37,3 +37,46 @@ test("a plugin editor opens directly without crop controls or tool-switch tabs",
   await expect(dialog.getByRole('slider',{name:'Right crop edge'})).toHaveCount(0);
   await expect(dialog.getByRole('button',{name:'Save copy',exact:true})).toHaveCount(0);
 });
+
+test("a plugin opens the image editor directly in its own tool and learns when it closes",async({page})=>{
+  await page.goto("/?path=/home/user/Pictures");await waitForEntries(page);
+  await page.evaluate(async()=>{
+    const load=new Function("path","return import(path)");
+    const {exposePluginSDK}=await load('/src/lib/plugins/runtime-sdk.ts');exposePluginSDK();
+    const {default:Panel}=await load('/src/lib/components/InstalledPluginSettings.svelte');
+    const {pluginRegistry}=await load('/src/lib/plugins/registry.svelte.ts');
+    const w=window as any;w.__editorEvents=[];
+    await pluginRegistry.registerInstalled([{id:"fixture-editor",name:"Fixture editor",description:"Editor entry fixture",
+      activate(ctx:any){ctx.registerImageEditorTool({id:"fixture.ai-edit",title:"AI edit",component:Panel,when:()=>true});w.__editorCtx=ctx;}}]);
+    const ctx=w.__editorCtx;
+    const settle=(name:string,promise:Promise<void>)=>promise.then(()=>w.__editorEvents.push(`${name}:closed`),(error:Error)=>w.__editorEvents.push(`${name}:${error.message}`));
+    settle("first",ctx.presentation.openImageEditor({path:"/home/user/Pictures/screenshot.png",tool:"fixture.ai-edit"}));
+    settle("second",ctx.presentation.openImageEditor({path:"/home/user/Pictures/screenshot.png",tool:"fixture.ai-edit"}));
+    settle("foreign",ctx.presentation.openImageEditor({path:"/home/user/Pictures/screenshot.png",tool:"crop"}));
+    settle("relative",ctx.presentation.openImageEditor({path:"screenshot.png",tool:"fixture.ai-edit"}));
+  });
+  const dialog=page.getByRole("dialog",{name:"AI edit",exact:true});
+  await expect(dialog.getByRole("region",{name:"AI edit",exact:true})).toBeVisible();
+  await expect(dialog.getByRole("slider",{name:"Right crop edge"})).toHaveCount(0);
+  await expect(dialog.getByRole("button",{name:"Save copy",exact:true})).toHaveCount(0);
+  const events=()=>page.evaluate(()=>[...(window as any).__editorEvents].sort());
+  await expect.poll(events).toEqual(["foreign:Image editor tool is not registered by this plugin","relative:Image editor path must be an absolute file path","second:Close the open image editor first"]);
+  await dialog.getByRole("button",{name:"Close image editor"}).click();
+  await expect(dialog).toBeHidden();
+  await expect.poll(events).toContain("first:closed");
+  // An editor opened over another dialog would steal its focus and Escape.
+  await page.evaluate(async()=>{
+    const load=new Function("path","return import(path)");const {dialogStore}=await load('/src/lib/state/dialogs.svelte.ts');
+    const w=window as any;dialogStore.openSettings();
+    await w.__editorCtx.presentation.openImageEditor({path:"/home/user/Pictures/screenshot.png",tool:"fixture.ai-edit"}).catch((error:Error)=>w.__editorEvents.push(`over-settings:${error.message}`));
+    dialogStore.closeSettings();
+  });
+  await expect.poll(events).toContain("over-settings:Close the open dialog first");
+  await expect(dialog).toBeHidden();
+  // Disabling the plugin closes the editor it opened and settles its request.
+  await page.evaluate(()=>{const w=window as any;w.__editorCtx.presentation.openImageEditor({path:"/home/user/Pictures/screenshot.png",tool:"fixture.ai-edit"}).then(()=>w.__editorEvents.push("third:closed"));});
+  await expect(dialog).toBeVisible();
+  await page.evaluate(async()=>{const load=new Function("path","return import(path)");const {pluginRegistry}=await load('/src/lib/plugins/registry.svelte.ts');await pluginRegistry.setEnabled("fixture-editor",false);});
+  await expect(dialog).toBeHidden();
+  await expect.poll(events).toContain("third:closed");
+});

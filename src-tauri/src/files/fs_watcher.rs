@@ -23,8 +23,10 @@ use tauri::{AppHandle, Emitter, Runtime};
 
 use super::dir_listing::invalidate_dir_cache_sync;
 use super::directory_watches::{DirectoryWatches, Lease, Observer};
+use super::search_observation::SearchObservation;
 use super::watch_observation::{Callback, Factory, Mode, Notice, Observation};
 use crate::error::AppError;
+use crate::load_diagnostics::{Phase, TraceHandle};
 use crate::renderer_owner::{self, Owner};
 use crate::search::{invalidate_search_cache_for_change, invalidate_search_cache_root};
 
@@ -94,7 +96,7 @@ impl CacheInvalidation for GlobalSearchCache {
 /// Native observation and recursive cache coverage shared by directory leases.
 struct NativeObserver<C: CacheInvalidation> {
     direct: Observation,
-    search: Observation,
+    search: SearchObservation,
     cache: C,
 }
 
@@ -147,14 +149,34 @@ pub(crate) fn ensure_search_cache_watched(path: &Path) -> bool {
         return true;
     }
 
-    let path_string = path.to_string_lossy().to_string();
-    let Some(mut watcher) = FS_WATCHER.get().and_then(|watcher| watcher.lock().ok()) else {
+    let Some(watcher) = FS_WATCHER.get() else {
         return false;
     };
-    if !watcher.covered(&path_string) {
+    ensure_search_watch(watcher, path)
+}
+
+fn ensure_search_watch<C: CacheInvalidation>(
+    watcher: &Mutex<DirectoryWatches<NativeObserver<C>>>,
+    path: &Path,
+) -> bool {
+    let path_string = path.to_string_lossy().to_string();
+    let registration = {
+        let Ok(watcher) = watcher.lock() else {
+            return false;
+        };
+        if !watcher.covered(&path_string) {
+            return false;
+        }
+        watcher.observer.search.prepare(path)
+    };
+    // Recursive registration can traverse millions of directories. Never
+    // retain the direct lease mutex while waiting for its independent worker.
+    if !registration.wait() {
         return false;
     }
-    watcher.observer.search.add(path, true).is_ok()
+    watcher
+        .lock()
+        .is_ok_and(|watcher| watcher.covered(&path_string) && watcher.observer.search.healthy(path))
 }
 
 pub(crate) fn is_search_cache_watched(path: &Path) -> bool {
@@ -275,7 +297,11 @@ impl<C: CacheInvalidation> NativeObserver<C> {
     fn with_cache(cache: C, factory: impl Fn(Mode) -> Factory) -> Self {
         Self {
             direct: observation(Mode::Direct, factory(Mode::Direct), cache.clone()),
-            search: observation(Mode::Recursive, factory(Mode::Recursive), cache.clone()),
+            search: SearchObservation::new(observation(
+                Mode::Recursive,
+                factory(Mode::Recursive),
+                cache.clone(),
+            )),
             cache,
         }
     }
@@ -283,16 +309,9 @@ impl<C: CacheInvalidation> NativeObserver<C> {
         if self.direct.next_work_at(now).is_some_and(|at| at <= now) {
             self.direct.maintain(now);
         }
-        if self.search.next_work_at(now).is_some_and(|at| at <= now) {
-            self.search.maintain(now);
-        }
     }
     fn next_work_at(&self, now: Instant) -> Option<Instant> {
-        self.direct
-            .next_work_at(now)
-            .into_iter()
-            .chain(self.search.next_work_at(now))
-            .min()
+        self.direct.next_work_at(now)
     }
 }
 
@@ -313,7 +332,7 @@ impl<C: CacheInvalidation> Observer for NativeObserver<C> {
         self.direct.reset(paths)
     }
     fn uncovered(&mut self, path: &str) {
-        let _ = self.search.remove(Path::new(path));
+        self.search.remove(Path::new(path));
         self.cache.root(Path::new(path));
     }
 }
@@ -431,7 +450,7 @@ impl Drop for PendingLease {
 /// Registration runs off the async executor. An undelivered result reclaims
 /// its lease even if cancellation races the command's reply.
 pub(crate) async fn acquire_directory(owner: Owner, path: String) -> Result<Lease, AppError> {
-    acquire_pending_directory(owner, path, false)
+    acquire_pending_directory(owner, path, false, TraceHandle::none())
         .await
         .map(PendingLease::take)
 }
@@ -439,19 +458,29 @@ pub(crate) async fn acquire_directory(owner: Owner, path: String) -> Result<Leas
 pub(super) async fn observe_directory(
     owner: Owner,
     path: String,
+    trace: TraceHandle,
 ) -> Result<PendingLease, AppError> {
-    acquire_pending_directory(owner, path, true).await
+    acquire_pending_directory(owner, path, true, trace).await
 }
 
+/// Watch registration holds the process-wide watcher lock across the OS
+/// registration call, so a mount that blocks `inotify_add_watch` delays every
+/// pane's navigation. The trace separates waiting for that lock from the
+/// registration itself (#1022).
 async fn acquire_pending_directory(
     owner: Owner,
     path: String,
     observed: bool,
+    trace: TraceHandle,
 ) -> Result<PendingLease, AppError> {
     let (send, receive) = tokio::sync::oneshot::channel();
+    trace.enter(Phase::BlockingQueue);
     tauri::async_runtime::spawn_blocking(move || {
+        trace.enter(Phase::ResolvePath);
         let path = super::directory_identity::resolve(&path);
+        trace.enter(Phase::WatchLock);
         let result = with_watcher(|watcher| {
+            trace.enter(Phase::WatchRegister);
             if observed {
                 watcher.observe(&owner, path)
             } else {

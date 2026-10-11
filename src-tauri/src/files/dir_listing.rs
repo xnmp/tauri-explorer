@@ -10,6 +10,8 @@ use std::time::Instant;
 use super::directory_cache::{DirectoryCache, Lookup, PreparedSnapshot};
 use super::{metadata_to_entry_with_git_repo_probe, DirectoryListing, FileEntry, FileKind};
 use crate::error::AppError;
+use crate::load_diagnostics::{self, Phase, TraceHandle, TracedReply};
+use crate::renderer_owner::Owner;
 
 // ===================
 // Directory Listing Cache
@@ -202,8 +204,16 @@ impl ScanDiagnostics {
 type ScanResult = Result<(Vec<FileEntry>, ScanDiagnostics), AppError>;
 
 fn scan_directory_with_diagnostics(dir_path: &PathBuf) -> ScanResult {
+    scan_directory_traced(dir_path, &TraceHandle::none())
+}
+
+/// [`scan_directory_with_diagnostics`] that records each phase on a slow-load
+/// trace (#1022), so a stuck scan can say whether it is waiting on the
+/// directory's own stat, enumeration, or an individual entry.
+fn scan_directory_traced(dir_path: &PathBuf, trace: &TraceHandle) -> ScanResult {
     // This entire boundary runs on the blocking pool, including root metadata.
     // Read errors stay typed; a missing/unreadable root is not an empty folder.
+    trace.enter(Phase::RootMetadata);
     let metadata = fs::metadata(dir_path).map_err(|error| {
         std::io::Error::new(error.kind(), format!("{}: {error}", dir_path.display()))
     })?;
@@ -213,7 +223,7 @@ fn scan_directory_with_diagnostics(dir_path: &PathBuf) -> ScanResult {
             dir_path.display()
         )));
     }
-    scan_directory_parallel_for_listing(dir_path, dir_path)
+    scan_directory_parallel_for_listing(dir_path, dir_path, trace)
 }
 
 /// Network and WSL UNC paths may turn each file stat into a remote round trip.
@@ -227,10 +237,16 @@ fn should_probe_git_repos(dir_path: &Path) -> bool {
 /// Scan a readable directory using the policy for its user-visible listing
 /// root. Keeping the root separate makes the UNC policy testable without a
 /// live network share while production passes the same path for both values.
-fn scan_directory_parallel_for_listing(dir_path: &PathBuf, listing_root: &Path) -> ScanResult {
+fn scan_directory_parallel_for_listing(
+    dir_path: &PathBuf,
+    listing_root: &Path,
+    trace: &TraceHandle,
+) -> ScanResult {
     let probe_git_repos = should_probe_git_repos(listing_root);
     use rayon::prelude::*;
     let mut diagnostics = ScanDiagnostics::default();
+    trace.git_repo_probe(probe_git_repos);
+    trace.enter(Phase::ReadDir);
 
     // jwalk parallelizes readdir, but the per-entry symlink_metadata stat would
     // otherwise serialize on the consuming thread. Collect the child paths first,
@@ -259,18 +275,28 @@ fn scan_directory_parallel_for_listing(dir_path: &PathBuf, listing_root: &Path) 
         }
     }
 
-    let (mut entries, metadata_diagnostics) = paths
+    // Shared (not cloned) with the trace so a stalled entry can be named.
+    let paths: Arc<[PathBuf]> = paths.into();
+    trace.listed(&paths);
+    trace.enter(Phase::EntryMetadata);
+    let (mut entries, metadata_diagnostics) = (0..paths.len())
         .into_par_iter()
         .fold(
             || (Vec::new(), ScanDiagnostics::default()),
-            |(mut entries, mut diagnostics), path| {
-                match fs::symlink_metadata(&path) {
-                    Ok(metadata) => entries.push(metadata_to_entry_with_git_repo_probe(
-                        &path,
-                        &metadata,
-                        probe_git_repos,
-                    )),
+            |(mut entries, mut diagnostics), index| {
+                let path = &paths[index];
+                let mut probe = trace.entry(index);
+                match fs::symlink_metadata(path) {
+                    Ok(metadata) => {
+                        probe.statted(metadata.file_type().is_symlink());
+                        entries.push(metadata_to_entry_with_git_repo_probe(
+                            path,
+                            &metadata,
+                            probe_git_repos,
+                        ))
+                    }
                     Err(error) => {
+                        probe.stat_failed();
                         diagnostics
                             .record(format!("metadata error for {}: {error}", path.display()));
                     }
@@ -288,6 +314,7 @@ fn scan_directory_parallel_for_listing(dir_path: &PathBuf, listing_root: &Path) 
         );
 
     diagnostics.merge(metadata_diagnostics);
+    trace.enter(Phase::Sort);
     sort_entries(&mut entries);
     Ok((entries, diagnostics))
 }
@@ -296,15 +323,41 @@ fn scan_directory_parallel_for_listing(dir_path: &PathBuf, listing_root: &Path) 
 /// Scanning already materializes and sorts the entire directory. Returning that
 /// snapshot directly avoids paced transport batches and partial-success states.
 #[tauri::command]
-pub async fn list_directory_fresh(path: String) -> Result<DirectoryListing, AppError> {
-    let path = super::run_blocking(move || Ok(super::directory_identity::resolve(&path))).await?;
-    list_directory_for_lease(path).await
+pub async fn list_directory_fresh(
+    app: tauri::AppHandle,
+    path: String,
+    trace_id: Option<String>,
+    trace_watched: Option<bool>,
+) -> Result<TracedReply<DirectoryListing>, AppError> {
+    let scope = load_diagnostics::begin_listing(
+        Some(&app),
+        trace_id,
+        &path,
+        trace_watched.unwrap_or(false),
+    );
+    let trace = scope.handle();
+    TracedReply::wrap(scope, fresh_listing(path, trace).await)
+}
+
+async fn fresh_listing(path: String, trace: TraceHandle) -> Result<DirectoryListing, AppError> {
+    // Waiting for a blocking-pool thread is distinct from resolving itself.
+    trace.enter(Phase::BlockingQueue);
+    let resolve_trace = trace.clone();
+    let path = super::run_blocking(move || {
+        resolve_trace.enter(Phase::ResolvePath);
+        Ok(super::directory_identity::resolve(&path))
+    })
+    .await?;
+    list_directory_for_lease(path, trace).await
 }
 
 // Scan the identity admitted by a watch without resolving filesystem spelling
 // again: a case-only rename between registration and scanning must not split
 // the returned listing path from its lease/event path.
-async fn list_directory_for_lease(path: String) -> Result<DirectoryListing, AppError> {
+async fn list_directory_for_lease(
+    path: String,
+    trace: TraceHandle,
+) -> Result<DirectoryListing, AppError> {
     let started_at = Instant::now();
     log::info!("navigation list_directory_fresh requested: path={path:?}");
     let dir_path = PathBuf::from(&path);
@@ -312,8 +365,10 @@ async fn list_directory_for_lease(path: String) -> Result<DirectoryListing, AppE
     #[cfg(debug_assertions)]
     let t_scan_start = Instant::now();
     // jwalk + per-entry stat calls are blocking work; keep them off the async executor.
+    trace.enter(Phase::BlockingQueue);
+    let scan_trace = trace.clone();
     let (all_entries, scan_diagnostics) =
-        super::run_blocking(move || scan_directory_with_diagnostics(&dir_path))
+        super::run_blocking(move || scan_directory_traced(&dir_path, &scan_trace))
             .await
             .inspect_err(|error| {
                 log::warn!("navigation list_directory_fresh failed: path={path:?}, error={error}");
@@ -358,6 +413,21 @@ pub struct ObservedDirectoryListing {
     watch_lease: super::directory_watches::Lease,
 }
 
+/// A watch lease admitted for a directory but not yet handed to the webview.
+trait AdmittedLease {
+    fn path(&self) -> &str;
+    fn take(self) -> super::directory_watches::Lease;
+}
+
+impl AdmittedLease for super::fs_watcher::PendingLease {
+    fn path(&self) -> &str {
+        super::fs_watcher::PendingLease::path(self)
+    }
+    fn take(self) -> super::directory_watches::Lease {
+        super::fs_watcher::PendingLease::take(self)
+    }
+}
+
 /// Establish owned observation before scanning. The pending lease remains
 /// guarded across the scan, so failed or canceled reads cannot leak demand.
 /// The frontend retains its old directory lease until it accepts this result.
@@ -366,10 +436,41 @@ pub async fn start_observed_directory(
     window: tauri::Window,
     path: String,
     session_id: String,
-) -> Result<ObservedDirectoryListing, AppError> {
-    let owner = crate::renderer_owner::acquire_owner(&window, &session_id)?;
-    let pending = super::fs_watcher::observe_directory(owner.clone(), path).await?;
-    let listing = list_directory_for_lease(pending.path().to_owned()).await?;
+    trace_id: Option<String>,
+    trace_watched: Option<bool>,
+) -> Result<TracedReply<ObservedDirectoryListing>, AppError> {
+    use tauri::Manager;
+    let scope = load_diagnostics::begin_listing(
+        Some(window.app_handle()),
+        trace_id,
+        &path,
+        trace_watched.unwrap_or(false),
+    );
+    let trace = scope.handle();
+    let result = observed_listing(
+        trace,
+        || crate::renderer_owner::acquire_owner(&window, &session_id),
+        |owner, trace| super::fs_watcher::observe_directory(owner, path, trace),
+    )
+    .await;
+    TracedReply::wrap(scope, result)
+}
+
+/// The observed-listing sequence, with ownership and watch registration
+/// injected so its phase order is testable without a window or watcher.
+async fn observed_listing<L, F>(
+    trace: TraceHandle,
+    acquire: impl FnOnce() -> Result<Owner, AppError>,
+    observe: impl FnOnce(Owner, TraceHandle) -> F,
+) -> Result<ObservedDirectoryListing, AppError>
+where
+    L: AdmittedLease,
+    F: std::future::Future<Output = Result<L, AppError>>,
+{
+    trace.enter(Phase::OwnerAcquire);
+    let owner = acquire()?;
+    let pending = observe(owner.clone(), trace.clone()).await?;
+    let listing = list_directory_for_lease(pending.path().to_owned(), trace).await?;
     if !owner.active() {
         return Err(AppError::Other(
             "Native resource renderer was replaced".into(),
@@ -399,8 +500,11 @@ mod tests {
             .join("Folder")
             .to_string_lossy()
             .into_owned();
-        let listing =
-            tauri::async_runtime::block_on(list_directory_for_lease(admitted.clone())).unwrap();
+        let listing = tauri::async_runtime::block_on(list_directory_for_lease(
+            admitted.clone(),
+            TraceHandle::none(),
+        ))
+        .unwrap();
         assert_eq!(listing.path, admitted);
         assert_eq!(listing.entries.len(), 1);
         assert_eq!(listing.entries[0].name, "entry.txt");
@@ -415,8 +519,11 @@ mod tests {
         fs::write(directory.join("entry.txt"), "observed contents").unwrap();
         let admitted = super::super::directory_identity::resolve(&directory.to_string_lossy());
         fs::rename(&directory, root.path().join("FOLDER")).unwrap();
-        let listing =
-            tauri::async_runtime::block_on(list_directory_for_lease(admitted.clone())).unwrap();
+        let listing = tauri::async_runtime::block_on(list_directory_for_lease(
+            admitted.clone(),
+            TraceHandle::none(),
+        ))
+        .unwrap();
         assert_eq!(listing.path, admitted);
         assert_eq!(listing.entries.len(), 1);
         assert_eq!(listing.entries[0].name, "entry.txt");

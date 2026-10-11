@@ -3,12 +3,12 @@ import {invoke,extractError,isTauri} from "$lib/api/common";
 import {convertFileSrc} from "@tauri-apps/api/core";
 const SVELTE_ABI="5.56.3";
 /** SDK versions this host runs; must match SDK_VERSIONS in installed_plugins/package.rs. */
-export const SUPPORTED_SDK_VERSIONS:readonly number[]=[1,2];
+export const SUPPORTED_SDK_VERSIONS:readonly number[]=[1,2,3];
 
 export interface InstalledPackage {
   digest:string;
   enabled:boolean;
-  manifest:{id:string;name:string;description:string;version:string;sdkVersion:number;svelteVersion:string;frontend:string;styles:string;contributions:string[]};
+  manifest:{id:string;name:string;description:string;version:string;sdkVersion:number;svelteVersion:string;frontend:string;styles:string;contributions:string[];services?:{id:string;major:number;methods:string[]}[];serviceDependencies?:{packageId:string;serviceId:string;major:number;optional?:boolean}[]};
 }
 export interface PackageRegistry {registerInstalled(plugins:Plugin[]):Promise<void>;removeInstalled(ids:readonly string[]):Promise<void>}
 let current:InstalledPackage[]=[];

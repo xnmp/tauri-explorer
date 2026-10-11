@@ -3,7 +3,7 @@
   Issue: tauri-explorer-iw0, tauri-explorer-x25, tauri-explorer-as45, tauri-explorer-1k9k, tauri-explorer-im3m, tauri-explorer-9djf.5
 -->
 <script lang="ts">
-  import { tick, onDestroy } from "svelte";
+  import { flushSync, tick, onDestroy } from "svelte";
   import { setFileListFocusReturn } from "$lib/state/file-list-focus-context";
   import { createDeferredFocusRequest, type DeferredFocusRequest } from "$lib/state/deferred-focus";
   import type { ExplorerInstance } from "$lib/state/explorer.svelte";
@@ -26,6 +26,7 @@
   import PluginFileView from "./PluginFileView.svelte";
   import { fileViewRegistry } from "$lib/plugins/file-view-registry.svelte";
   import { getPaneIdContext } from "$lib/state/pane-context";
+  import { clickSelectionEffect } from "$lib/domain/workspace-selection";
 
   import type { FileEntry } from "$lib/domain/file";
 
@@ -101,7 +102,10 @@
     if (!contentRef) return;
     const observer = new ResizeObserver((entries) => {
       const width = entries[0]?.contentRect.width ?? 0;
-      contentWidth = width;
+      // ResizeObserver runs after layout and before paint. Commit both the
+      // column count and row chunking in this delivery, so a restored preview
+      // dock cannot paint rows sized for the previous (fullscreen) width.
+      flushSync(() => { contentWidth = width; });
       if (cachedDragRect) {
         cachedDragRect = contentRef!.getBoundingClientRect();
       }
@@ -218,15 +222,13 @@
   }
 
   function handleClick(entry: FileEntry, event: MouseEvent): void {
+    const effect = clickSelectionEffect(event, paneId ?? "", windowTabsManager.activePaneId);
     retainCursorReveal(entry);
-    explorer.selectEntry(entry, {
-      ctrlKey: event.ctrlKey || event.metaKey,
-      shiftKey: event.shiftKey,
-    });
+    explorer.selectEntry(entry, effect.selectionModifiers);
     // Windows/macOS pointer-drag acquisition prevents mousedown's default
     // action, so those engines do not focus the clicked gridcell themselves.
     // Keep DOM focus aligned with the cursor regardless of drag backend.
-    (event.currentTarget as HTMLElement | null)?.focus({ preventScroll: true });
+    if (effect.focusPane) (event.currentTarget as HTMLElement | null)?.focus({ preventScroll: true });
   }
 
   async function handleDoubleClick(entry: FileEntry): Promise<void> {
@@ -277,7 +279,7 @@
   }
 
   function handleKeydown(event: KeyboardEvent): void {
-    if (pluginView) return;
+    if (pluginView || windowTabsManager.getActiveExplorer() !== explorer) return;
     typeAhead.handleKeydown(event);
   }
 

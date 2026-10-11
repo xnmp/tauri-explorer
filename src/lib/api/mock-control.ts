@@ -44,6 +44,8 @@ import type { Drive } from "./drives";
 import type { GitFileEntry, GitOpState } from "./git";
 import type { ImageCropCapture, ImageCropSave } from "./image-crop";
 import type { FileMutationReceipt } from "$lib/domain/file";
+import type { PreviewImageSource } from "$lib/domain/preview-rendition";
+import type { MockAiPresentation } from "./mock-ai-presentation";
 
 export interface MockGitState {
   branch: string;
@@ -63,11 +65,15 @@ export interface MockGitCommit {
 }
 
 export interface MockControl {
+  /** Private native-receipt fixtures; no provider execution or durable custody simulation. */
+  nativeAiPresentation?: MockAiPresentation;
   // ----- Preview / thumbnails: fixture overrides + action hooks -----
   /** Overrides `read_text_file` for the path under test. */
   previewReadText?: (path: string) => string | Promise<string>;
   /** Overrides `read_image_data_url` for the path under test. */
   previewReadImage?: (path: string) => string | Promise<string>;
+  /** Overrides `get_preview_image` (default: every image is its own original). */
+  previewImageSource?: (path: string, maxEdge: number) => PreviewImageSource | Promise<PreviewImageSource>;
   imageCropCapture?: (path: string) => ImageCropCapture | Promise<ImageCropCapture>;
   imageCropSave?: (request: ImageCropSave) => FileMutationReceipt | Promise<FileMutationReceipt>;
   /** Overrides filename collision checks for slow storage responses. */

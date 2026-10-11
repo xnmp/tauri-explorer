@@ -1,6 +1,7 @@
 //! Tauri Explorer app entry point.
 //! Issue: tauri-explorer-nv2y, tauri-explorer-hgt6, tauri-explorer-im3m, tauri-explorer-bo8l, tauri-explorer-yclf
 
+pub(crate) mod ai;
 mod ai_organize;
 mod ai_rename;
 mod archive;
@@ -18,6 +19,7 @@ mod file_picker;
 mod shared_history;
 // pub: criterion benches (src-tauri/benches/) call into
 // files::dir_listing::{scan_directory_parallel, sort_entries} directly.
+mod durable_dir;
 pub mod files;
 mod gemini;
 pub mod git;
@@ -33,6 +35,23 @@ mod github;
 mod image_crop;
 mod image_operation;
 mod installed_plugins;
+mod native_deadline;
+#[cfg(unix)]
+mod process_supervisor;
+mod recovery_actor;
+
+/// Dispatch the private process anchor before initializing the application.
+pub fn run_process_supervisor() -> Option<i32> {
+    #[cfg(unix)]
+    {
+        process_supervisor::early_mode()
+    }
+    #[cfg(not(unix))]
+    {
+        None
+    }
+}
+mod load_diagnostics;
 mod nano_banana;
 mod palette;
 mod platform;
@@ -45,9 +64,12 @@ mod renderer_owner;
 #[cfg(all(target_os = "linux", feature = "e2e-renderer-recovery"))]
 #[path = "../test_support/renderer_recovery.rs"]
 mod renderer_recovery;
+mod service_state;
 mod update_check;
 mod upscale;
 mod user_report;
+#[cfg(target_os = "linux")]
+mod webkit_renderer;
 mod window_launch;
 /// Non-Linux stub so the command registry stays platform-independent.
 #[cfg(not(target_os = "linux"))]
@@ -145,12 +167,10 @@ pub fn run_with_process_entry(launch_dir: Option<String>, t_process_entry: std::
         .map(|duration| duration.as_secs_f64() * 1000.0)
         .unwrap_or(f64::NAN);
 
-    // Fix webkit2gtk Wayland protocol errors on Linux compositors (Hyprland, Sway, etc.)
+    // Avoid WebKitGTK's DMABuf Wayland protocol errors without giving up
+    // composited painting (#1057); see webkit_renderer.
     #[cfg(target_os = "linux")]
-    {
-        std::env::set_var("WEBKIT_DISABLE_COMPOSITING_MODE", "1");
-        std::env::set_var("WEBKIT_DISABLE_DMABUF_RENDERER", "1");
-    }
+    let renderer_plan = webkit_renderer::apply();
 
     let home_dir = dirs::home_dir()
         .unwrap_or_else(|| std::path::PathBuf::from("/"))
@@ -266,6 +286,7 @@ pub fn run_with_process_entry(launch_dir: Option<String>, t_process_entry: std::
                 installed_plugins::notify_pending_errors(window);
             }
             if matches!(event, tauri::WindowEvent::Destroyed) {
+                ai::cancel_caller(&format!("settings:{}", window.label()));
                 renderer_owner::on_window_destroyed(window);
             }
         })
@@ -277,11 +298,20 @@ pub fn run_with_process_entry(launch_dir: Option<String>, t_process_entry: std::
             }
         })
         .invoke_handler(tauri::generate_handler![
+            ai::ai_connections_read,
+            ai::ai_connections_save,
+            ai::ai_connection_set_credential,
+            ai::ai_connection_clear_credential,
+            ai::ai_connection_check,
+            ai::ai_connection_test,
+            ai::ai_connection_cancel_test,
             // Launch info
             get_launch_cwd,
             get_log_dir,
             system::get_app_info,
             user_report::submit_user_report,
+            load_diagnostics::record_slow_load,
+            load_diagnostics::recent_slow_loads,
             crash_report::take_crash_report,
             crash_report::log_frontend_error,
             crash_report::record_frontend_crash,
@@ -370,6 +400,7 @@ pub fn run_with_process_entry(launch_dir: Option<String>, t_process_entry: std::
             thumbnails::set_ffmpeg_path,
             thumbnails::clear_thumbnail_cache,
             thumbnails::get_thumbnail_cache_stats,
+            thumbnails::preview_rendition::get_preview_image,
             // Archive operations
             archive::compress_to_zip,
             archive::cancel_compress,
@@ -466,6 +497,12 @@ pub fn run_with_process_entry(launch_dir: Option<String>, t_process_entry: std::
             installed_plugins::uninstall_plugin,
             installed_plugins::set_plugin_package_enabled,
             installed_plugins::plugin_backend_invoke,
+            installed_plugins::plugin_jobs_snapshot,
+            installed_plugins::plugin_job_cancel,
+            installed_plugins::plugin_job_resume,
+            installed_plugins::plugin_job_dismiss,
+            installed_plugins::ai_operations_snapshot,
+            installed_plugins::ai_operation_resolve,
             // Window appearance
             set_window_theme,
             // Pre-warmed window pool
@@ -486,6 +523,19 @@ pub fn run_with_process_entry(launch_dir: Option<String>, t_process_entry: std::
         ])
         .setup(move |app| {
             let t_setup = std::time::Instant::now();
+            // First in setup: portal mode returns early below, and a renderer
+            // crash after window creation is exactly when this line matters.
+            #[cfg(target_os = "linux")]
+            log::info!(
+                "Renderer(webkit): mode={:?} set={:?} unset={:?} reason={}",
+                renderer_plan.mode,
+                renderer_plan.set,
+                renderer_plan.unset,
+                renderer_plan.reason,
+            );
+            // Before any window: the asset scope must serve Preview renditions
+            // from the cache (its `$HOME/**/*` glob skips dot-dirs, #1054).
+            thumbnails::preview_rendition::allow_rendition_assets(app);
             installed_plugins::initialize(app.handle().clone())?;
 
             // Before any window exists, so every mutation command can admit.
@@ -665,7 +715,7 @@ pub fn run_with_process_entry(launch_dir: Option<String>, t_process_entry: std::
         .build(tauri::generate_context!())
         .expect("error while running tauri application")
         .run(|app, event| {
-            if matches!(&event,tauri::RunEvent::Exit){installed_plugins::shutdown();}
+            if matches!(&event,tauri::RunEvent::Exit){ai::cancel_all();installed_plugins::shutdown();}
             // Portal mode has no persistent window: closing a picker window
             // must not exit the service, or the D-Bus name would drop.
             if portal::is_portal_mode() {

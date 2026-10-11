@@ -104,7 +104,7 @@ describe("pane persistence and SDK versions", () => {
     }
   });
 
-  it("runs SDK 1 and SDK 2 packages", () => {
-    expect(SUPPORTED_SDK_VERSIONS).toEqual([1, 2]);
+  it("runs SDK 1, SDK 2 and SDK 3 packages", () => {
+    expect(SUPPORTED_SDK_VERSIONS).toEqual([1, 2, 3]);
   });
 });

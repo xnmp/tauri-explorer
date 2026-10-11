@@ -1,0 +1,107 @@
+<!--
+  FileTiles - The Tiles view's tiles for plugin-owned surfaces (SDK module
+  `ui/file-tiles`). The plugin supplies the entries and selection and handles
+  every interaction through callbacks; selection remains plugin-owned.
+  Each FileTile reads shared host appearance and pane-owned inline rename.
+  Tiles render through TileSurface and TileVisual, the same chrome,
+  thumbnails, names and size setting as the built-in Tiles view: the `size`
+  a plugin passes from `pane.tileSize`, else the size of the plugin file
+  view it renders in, else the global setting.
+
+  NOT virtualized: every tile is in the DOM. It serves plugin sections of
+  modest size; a whole-directory listing belongs in TilesView.
+-->
+<script lang="ts">
+  import type { FileEntry } from "$lib/domain/file";
+  import { autoFillColumns, chunkIntoRows } from "$lib/domain/virtual-layout";
+  import { gridFocusStep, isThumbnailSize, tileLayout, TILE_GRID_PAD_X } from "$lib/domain/tile-layout";
+  import { settingsStore } from "$lib/state/settings.svelte";
+  import { getTileSizeContext } from "$lib/state/tile-size-context";
+  import TileSurface from "./TileSurface.svelte";
+  import FileTile from "./FileTile.svelte";
+  import type { FileTilesProps } from "$lib/plugins/api";
+
+  let { entries, selected, onselect, onopen, onmenu, label = "Files", size }: FileTilesProps = $props();
+
+  // Precedence: explicit `size`, then the enclosing pane's folder size
+  // (PluginFileView's context), then the global setting.
+  const paneSize = getTileSizeContext();
+  const layout = $derived(tileLayout(isThumbnailSize(size) ? size : (paneSize?.() ?? settingsStore.thumbnailSize)));
+  let width = $state(0);
+  // Same column math as TilesView, against this component's own width (less
+  // the grid's 8px side padding). The width comes from a zero-height probe:
+  // observing the grid itself would re-notify when new columns change its
+  // height, a ResizeObserver loop.
+  const columns = $derived(autoFillColumns(width - TILE_GRID_PAD_X, layout.gridMinWidth, layout.gap));
+  const rows = $derived(chunkIntoRows(entries, columns));
+
+  // Roving tab stop: the last focused tile while it is still listed, else the
+  // first. One Tab enters the grid; arrows move within it.
+  let focusedPath = $state<string | null>(null);
+  const tabStop = $derived(
+    focusedPath !== null && entries.some((entry) => entry.path === focusedPath) ? focusedPath : (entries[0]?.path ?? null),
+  );
+
+  // Retain failed-video fallback by path across row rechunking/remounts.
+  let unavailable = $state<ReadonlySet<string>>(new Set());
+  function markUnavailable(path: string): void {
+    if (!unavailable.has(path)) unavailable = new Set([...unavailable, path]);
+  }
+
+  let gridEl: HTMLDivElement | undefined = $state();
+  function onkeydown(event: KeyboardEvent, entry: FileEntry, index: number): void {
+    if (event.key === "Enter" && !event.repeat) {
+      event.preventDefault();
+      onopen(entry);
+      return;
+    }
+    const next = gridFocusStep(index, entries.length, columns, event.key);
+    if (next === null) return;
+    event.preventDefault();
+    const path = entries[next].path;
+    focusedPath = path;
+    gridEl?.querySelector<HTMLElement>(`[data-entry-path="${CSS.escape(path)}"]`)?.focus();
+  }
+</script>
+
+<TileSurface class="file-tiles" {layout}>
+  <div class="width-probe" aria-hidden="true" bind:clientWidth={width}></div>
+  <div bind:this={gridEl} class="file-tiles-grid" role="grid" aria-label={label} aria-multiselectable={true}
+    aria-rowcount={rows.length} aria-colcount={columns}>
+    {#each rows as row, rowIndex (row.startIndex)}
+      <div role="row" aria-rowindex={rowIndex + 1} class="tile-row" style="grid-template-columns: repeat({columns}, minmax(0, 1fr)); gap: var(--tile-gap);">
+        {#each row.items as entry, col (entry.path)}
+          <FileTile {entry} selected={selected.has(entry.path)} focused={entry.path === tabStop}
+            size={layout.size} column={col + 1} {onselect} {onopen} {onmenu}
+            videoUnavailable={unavailable.has(entry.path)} onvideounavailable={() => markUnavailable(entry.path)}
+            onfocus={() => (focusedPath = entry.path)}
+            onkeydown={(event) => onkeydown(event, entry, row.startIndex + col)} />
+        {/each}
+      </div>
+    {/each}
+  </div>
+</TileSurface>
+
+<style>
+  .width-probe {
+    height: 0;
+  }
+
+  .file-tiles-grid {
+    display: flex;
+    flex-direction: column;
+    gap: var(--tile-gap);
+    /* The Tiles view's viewport padding. */
+    padding: 8px;
+  }
+
+  /* Mirrors the pane's file-list focus ring: tiles put the selected
+     indicator on their bottom edge. The role qualifier outranks
+     TileSurface's `.tile-item:focus { outline: none }` regardless of
+     stylesheet order. */
+  .file-tiles-grid :global([role="gridcell"].tile-item:focus-visible) {
+    outline: 2px solid var(--focus-stroke-outer);
+    outline-offset: -2px;
+    border-bottom-color: var(--focus-stroke-outer);
+  }
+</style>

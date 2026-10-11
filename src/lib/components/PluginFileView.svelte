@@ -6,10 +6,13 @@
 <script lang="ts">
   import { onDestroy, untrack } from "svelte";
   import type { ExplorerInstance } from "$lib/state/explorer.svelte";
+  import { clickSelectionEffect } from "$lib/domain/workspace-selection";
   import { windowTabsManager } from "$lib/state/window-tabs.svelte";
   import type { FileEntry } from "$lib/domain/file";
   import type { FileViewPane, RegisteredFileView } from "$lib/plugins/file-view-registry.svelte";
   import { logFrontendError } from "$lib/api/crash";
+  import { folderPaneTileSize, folderTileSize } from "$lib/state/folder-tile-size";
+  import { setTileSizeContext } from "$lib/state/tile-size-context";
 
   interface Props {
     explorer: ExplorerInstance;
@@ -36,9 +39,13 @@
       const current = explorer.previewTarget;
       return current?.owner === owner ? current.target : null;
     },
+    get tileSize() { return folderPaneTileSize(explorer.currentPath); },
     select(entry, modifiers = {}) {
-      windowTabsManager.setActivePane(paneId);
-      explorer.selectEntry(entry, { ctrlKey: !!modifiers.ctrlKey, shiftKey: !!modifiers.shiftKey });
+      // Same policy as the built-in views: Ctrl-clicking in an unfocused pane
+      // toggles its selection without taking focus.
+      const effect = clickSelectionEffect(modifiers, paneId, windowTabsManager.activePaneId);
+      if (effect.focusPane) windowTabsManager.setActivePane(paneId);
+      explorer.selectEntry(entry, effect.selectionModifiers);
     },
     setSelection(paths, focus = null) {
       windowTabsManager.setActivePane(paneId);
@@ -63,6 +70,10 @@
     },
     exitView() { windowTabsManager.setPaneFileView(paneId, null); },
   };
+
+  // `ui/file-tiles` in this view follows the folder's size even when the
+  // plugin passes no `size` (e.g. plugins built before "tileSize").
+  setTileSizeContext(() => folderTileSize(explorer.currentPath));
 
   // A Preview target belongs to the view that showed it; it never outlives it
   // (toggle, built-in mode, unavailable folder, plugin disable).

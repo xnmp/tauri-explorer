@@ -1,0 +1,42 @@
+Native test evidence: plugin profile ownership release
+
+Base source: 231b75f66e76058585947aefa3c931548ba0caed
+Reviewed patch SHA-256: 9a6cdd5e71803449085da7934d0e3cf2372f8190ab978b47a0e484ad36659ee3
+
+The same final native regressions were compiled against (a) the exact original
+production acquire implementation and (b) the fixed production module. The
+counterfactual uses the unchanged original production prefix with an identical
+test body. The lock/acquire implementation is not transcribed or mocked.
+
+Original implementation:
+  owner_drop_releases_while_an_inherited_descriptor_is_still_open ... FAILED
+  Actual reacquisition error: plugin profile lock operation would block.
+  Native suite: 5 passed, 3 failed, 1 existing internal child test ignored.
+  Exit code: 101.
+
+Fixed implementation:
+  owner_drop_releases_while_an_inherited_descriptor_is_still_open ... ok
+  inherited_owner_drop_cannot_unlock_the_live_parent ... ok
+  inherited_child_is_released_and_reaped_when_an_assertion_unwinds ... ok
+  observing_an_exited_child_reaps_it_before_unwind_cleanup ... ok
+  Native suite: 8 passed, 0 failed, 1 existing internal child test ignored.
+  Exit code: 0. No ignored tests were added.
+
+The release case acknowledges a forked child, verifies it remains alive, drops
+the parent owner, and reacquires the profile before releasing that child. The
+exclusion case first drops the child's inherited owner and verifies that the
+live parent still excludes a new owner. Normal child exits are checked;
+assertion-unwind and already-exited-child cases verify reaping.
+
+Full production Rust validation:
+  cargo test --quiet: exit 0.
+  Main library group: 1806 passed, 0 failed, 46 existing ignored tests.
+  Other reported groups also passed; printed groups include nested child runs.
+  cargo fmt --all -- --check: exit 0.
+
+The fix keeps the lease file, nonblocking exclusion, no-follow open, close-on-exec
+flag, regular-file check, and 0600 creation mode. Its private ownership guard
+explicitly unlocks only when dropped by the process that acquired it.
+
+This is native test evidence, not an application UI screenshot. The exact actor
+in the earlier full-suite failure remains unknown.

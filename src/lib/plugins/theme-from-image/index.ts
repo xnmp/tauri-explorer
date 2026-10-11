@@ -51,6 +51,7 @@ export const themeFromImagePlugin: Plugin = {
     ctx.registerContextMenuItem({
       id: "theme-from-image.create",
       label: "Create Theme from Image",
+      group: "ai",
       when: (entries) =>
         entries.length === 1 && isImageFile(entries[0]) && !isVirtualPath(entries[0].path),
       handler: (entries) => createThemeFrom(ctx, entries[0].path),

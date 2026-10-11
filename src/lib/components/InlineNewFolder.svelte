@@ -246,6 +246,7 @@
 
   /* Scale the SVG to match the current tile size */
   .tile-icon > :global(svg) {
+    flex-shrink: 0;
     transform: scale(var(--tile-icon-scale, 1));
   }
 

@@ -3,11 +3,17 @@
   Issue: tauri-explorer-2c6b, tauri-explorer-xago, tauri-explorer-osjq
 -->
 <script lang="ts">
-  import { onDestroy } from "svelte";
+  import { onDestroy, untrack } from "svelte";
   import { useControlledSize } from "$lib/composables/use-controlled-size.svelte";
   import { previewResizeSpec } from "$lib/domain/preview-size";
   import { windowTabsManager } from "$lib/state/window-tabs.svelte";
-  import { readTextFile, fetchDirectory, readImageAsBlobUrl } from "$lib/api/files";
+  import { readTextFile, fetchDirectory } from "$lib/api/files";
+  import { decodeImage, loadPreviewImage, type PreviewImageOptions } from "$lib/state/preview-image";
+  import { createFullResolutionUpgrade } from "$lib/state/preview-resolution";
+  import { needsFullResolution, renditionMaxEdge } from "$lib/domain/preview-rendition";
+  import { createLatestOnlyRunner } from "$lib/domain/latest-only";
+  import { usePreviewFullscreen } from "$lib/composables/use-preview-fullscreen.svelte";
+  import PreviewImageSurface from "./PreviewImageSurface.svelte";
 import { gitDiff } from "$lib/api/git";
 import { listArchiveContents } from "$lib/api/archive";
 import { openFile } from "$lib/api/open";
@@ -15,12 +21,11 @@ import { openFile } from "$lib/api/open";
   import { isImageFile, isSvgFile, isTextFile, isPdfFile, isVideoFile, isVideoMediaFile, isZipFile, getFileType, formatDate } from "$lib/domain/file-types";
   import VideoIndicator from "./VideoIndicator.svelte";
   import { formatSize, isSystemHidden, type FileEntry } from "$lib/domain/file";
-  import { isTauri, extractError } from "$lib/api/common";
+  import { extractError } from "$lib/api/common";
   import { highlightCode, highlightDiffLine } from "$lib/domain/syntax-highlight";
   import { renderMarkdown } from "$lib/domain/markdown";
   import { settingsStore } from "$lib/state/settings.svelte";
   import { frecencyStore } from "$lib/state/frecency.svelte";
-  import { getFileIconColor } from "$lib/domain/file-types";
   import { getScmStore } from "$lib/state/scm.svelte";
   import { gitCommitFileDiff, gitCompareCommitFileDiff } from "$lib/api/git-log";
   import { logFrontendDiagnostic } from "$lib/api/frontend-log";
@@ -35,7 +40,6 @@ import { openFile } from "$lib/api/open";
     if (selectedFile && directories.includes(parentDir(selectedFile.path))) localPreviewRevision++;
   });
   onDestroy(unsubscribePreviewChanges);
-  import { dialogStore } from "$lib/state/dialogs.svelte";
 
   // Window-global surface: the preview's SCM diff follows the ACTIVE pane's
   // store (#334) — reactive through windowTabsManager.activePaneId.
@@ -51,7 +55,7 @@ import { openFile } from "$lib/api/open";
     return paneScmStore;
   });
   import { parseUnifiedDiff, type ParsedDiff, type DiffLine } from "$lib/domain/diff";
-  import FileIcon from "./FileIcon.svelte";
+  import PreviewFolderList from "./PreviewFolderList.svelte";
   import PluginPreviewTarget from "./PluginPreviewTarget.svelte";
   import { previewInfoRegistry, type PreviewSubject } from "$lib/plugins/preview-registry.svelte";
   /** Detect if the current theme uses a light color scheme.
@@ -82,50 +86,26 @@ import { openFile } from "$lib/api/open";
   }, () => readSizeSpec().options);
 
   // --- Fullscreen preview (double-click to toggle, Esc to exit) ---
-  // The image fits the screen (object-fit: contain). Zoom with +/- or Ctrl+wheel;
-  // when zoomed, arrows pan. At base zoom, Left/Right step to the previous/next
-  // previewable sibling file. The window tab bar hides while fullscreen.
-  let fullscreen = $state(false);
-  const MIN_ZOOM = 1;
-  const MAX_ZOOM = 8;
-  let zoom = $state(1);
-  let panX = $state(0);
-  let panY = $state(0);
-
-  const imageTransform = $derived(
-    fullscreen && zoom !== 1
-      ? `translate(${panX}px, ${panY}px) scale(${zoom})`
-      : fullscreen
-        ? "scale(1)"
-        : "",
-  );
-
-  function resetZoom(): void {
-    zoom = 1;
-    panX = 0;
-    panY = 0;
-  }
-
-  function setZoom(next: number): void {
-    zoom = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, next));
-    if (zoom === 1) {
-      panX = 0;
-      panY = 0;
-    }
-  }
-
-  function toggleFullscreen(): void {
-    resize.cancel();
-    fullscreen = !fullscreen;
-    resetZoom();
-  }
+  // One controller for file images and plugin Preview targets (#1033); see
+  // use-preview-fullscreen. At base zoom, Left/Right step to the previous/next
+  // previewable sibling file; a plugin target has no siblings, so they do nothing.
+  const fullscreen = usePreviewFullscreen({
+    onToggle: () => resize.cancel(),
+    navigate: (delta) => navigateSibling(delta),
+    // PDF and video previews own their keys in fullscreen; only Esc stays ours.
+    subjectOwnsKeys: () => !!selectedFile && (isPdfFile(selectedFile) || isVideoMediaFile(selectedFile)),
+  });
 
   function handlePaneDoubleClick(event: MouseEvent): void {
     const target = event.target;
     if (!(target instanceof Element) || target.closest(
       'button, a, input, textarea, select, [contenteditable], [role="separator"], .preview-image-container, .pdf-preview, .video-preview, video, audio, iframe',
     )) return;
-    toggleFullscreen();
+    // A plugin target is fullscreen-able only as an image (a diff, when open,
+    // is shown instead of the target). Leaving fullscreen is always allowed.
+    const showsTarget = pluginTarget && !activeDiff && !commitDiff;
+    if (!fullscreen.active && showsTarget && !pluginTarget.target.imagePath) return;
+    fullscreen.toggle();
   }
 
   /** Step to the previous/next previewable (non-directory) sibling file. */
@@ -138,136 +118,8 @@ import { openFile } from "$lib/api/open";
     if (idx < 0) return;
     const next = files[(idx + delta + files.length) % files.length];
     explorer.selectEntry(next);
-    resetZoom();
+    fullscreen.resetZoom();
   }
-
-  /** Zoom keeping the image point under the cursor fixed (standard image-
-   *  viewer behavior). The transform is `translate(pan) scale(zoom)` around
-   *  the container center, so for a cursor at offset c from that center the
-   *  point stays put when pan' = c - (c - pan) * zoom'/zoom. */
-  let imageContainerEl = $state<HTMLElement | null>(null);
-
-  function zoomAtPoint(next: number, clientX: number, clientY: number): void {
-    const prev = zoom;
-    setZoom(next);
-    if (zoom === prev || zoom === 1 || !imageContainerEl) return;
-    const rect = imageContainerEl.getBoundingClientRect();
-    const cx = clientX - (rect.left + rect.width / 2);
-    const cy = clientY - (rect.top + rect.height / 2);
-    panX = cx - ((cx - panX) * zoom) / prev;
-    panY = cy - ((cy - panY) * zoom) / prev;
-  }
-
-  function handleFullscreenWheel(event: WheelEvent): void {
-    if (!fullscreen) return;
-    event.preventDefault();
-    const factor = event.deltaY < 0 ? 1.15 : 1 / 1.15;
-    zoomAtPoint(zoom * factor, event.clientX, event.clientY);
-  }
-
-  // --- Drag-to-pan while zoomed (#236) ---
-  let panning = $state(false);
-  let panMoved = false;
-  let lastPointerX = 0;
-  let lastPointerY = 0;
-
-  function handleImagePointerDown(event: PointerEvent): void {
-    if (!fullscreen || zoom <= 1 || event.button !== 0) return;
-    panning = true;
-    panMoved = false;
-    lastPointerX = event.clientX;
-    lastPointerY = event.clientY;
-    try {
-      (event.currentTarget as HTMLElement).setPointerCapture(event.pointerId);
-    } catch {
-      // Pointer already released (or synthetic event) — pan still works, the
-      // capture is just a nicety for drags that leave the container.
-    }
-  }
-
-  function handleImagePointerMove(event: PointerEvent): void {
-    if (!panning) return;
-    const dx = event.clientX - lastPointerX;
-    const dy = event.clientY - lastPointerY;
-    if (Math.abs(dx) + Math.abs(dy) > 2) panMoved = true;
-    panX += dx;
-    panY += dy;
-    lastPointerX = event.clientX;
-    lastPointerY = event.clientY;
-  }
-
-  function handleImagePointerUp(): void {
-    panning = false;
-  }
-
-  /** Click toggles fullscreen only for a clean click at fit zoom — a drag
-   *  release or a click while zoomed must not exit. */
-  function handleImageClick(event: MouseEvent): void {
-    event.stopPropagation();
-    if (panMoved) {
-      panMoved = false;
-      return;
-    }
-    if (fullscreen && zoom > 1) return;
-    toggleFullscreen();
-  }
-
-  // While fullscreen: Esc exits; +/- and 0 zoom; arrows pan when zoomed,
-  // else step between sibling files. Capture phase + stopImmediatePropagation
-  // so this wins over the global keyboard handler in +page.svelte.
-  $effect(() => {
-    if (!fullscreen) return;
-    const PAN = 60;
-    const onKey = (event: KeyboardEvent) => {
-      if (dialogStore.hasModalOpen) return;
-      const k = event.key;
-      if (selectedFile && (isPdfFile(selectedFile) || isVideoMediaFile(selectedFile)) && k !== "Escape") return;
-      const stop = () => {
-        event.preventDefault();
-        event.stopImmediatePropagation();
-      };
-      if (k === "Escape") {
-        stop();
-        fullscreen = false;
-        resetZoom();
-      } else if (k === "+" || k === "=") {
-        stop();
-        setZoom(zoom * 1.25);
-      } else if (k === "-" || k === "_") {
-        stop();
-        setZoom(zoom / 1.25);
-      } else if (k === "0") {
-        stop();
-        resetZoom();
-      } else if (k === "ArrowLeft") {
-        stop();
-        if (zoom > 1) panX += PAN;
-        else navigateSibling(-1);
-      } else if (k === "ArrowRight") {
-        stop();
-        if (zoom > 1) panX -= PAN;
-        else navigateSibling(1);
-      } else if (k === "ArrowUp" && zoom > 1) {
-        stop();
-        panY += PAN;
-      } else if (k === "ArrowDown" && zoom > 1) {
-        stop();
-        panY -= PAN;
-      }
-    };
-    window.addEventListener("keydown", onKey, { capture: true });
-    return () => window.removeEventListener("keydown", onKey, { capture: true });
-  });
-
-  // Hide the window tab bar (and other chrome) while a preview is fullscreen,
-  // via a document attribute that global CSS keys off (the tab bar lives far up
-  // the tree, outside this component).
-  $effect(() => {
-    if (fullscreen) {
-      document.documentElement.setAttribute("data-preview-fullscreen", "");
-      return () => document.documentElement.removeAttribute("data-preview-fullscreen");
-    }
-  });
 
   /** Currently selected file from the active explorer */
   const selectedFile = $derived.by((): FileEntry | null => {
@@ -299,7 +151,19 @@ import { openFile } from "$lib/api/open";
 
   // Preview content state
   let previewImageUrl = $state<string | null>(null);
+  // True while `previewImageUrl` is the previous file's image, kept on screen
+  // while the next image loads and decodes. Blanking it in between left the
+  // content empty for the decode and re-laid out the pane for those frames.
+  let previewImageHeld = $state(false);
   let previewImageNote = $state<string | null>(null);
+  // Large images show a display-sized rendition (#1054); fullscreen and zoom
+  // swap in the original (state/preview-resolution). The runner keeps skipped
+  // selections from queueing rendition decodes in the backend.
+  let previewShowsRendition = $state(false);
+  let previewContentWidth = $state(0);
+  let previewContentHeight = $state(0);
+  const renditionRunner = createLatestOnlyRunner();
+  const fullResolution = createFullResolutionUpgrade();
   let previewText = $state<string | null>(null);
   let previewHighlightedHtml = $state<string | null>(null);
   let previewMarkdownHtml = $state<string | null>(null);
@@ -547,7 +411,9 @@ import { openFile } from "$lib/api/open";
       previewLifetime.clearBlob();
       lastPreviewKey = null;
       previewImageUrl = null;
+      previewImageHeld = false;
       previewImageNote = null;
+      showingRendition(null);
       previewText = null;
       previewHighlightedHtml = null;
       previewMarkdownHtml = null;
@@ -566,21 +432,70 @@ import { openFile } from "$lib/api/open";
     loadPreview(file);
   });
 
-  /** Decode an image off the main thread so selection/animation aren't blocked */
-  async function decodeImage(url: string): Promise<string> {
-    const img = new Image();
-    img.src = url;
-    await img.decode();
-    return url;
+  /** Shows a decoded image. A held image's blob is released here unless the
+   * new image already adopted a blob in its place (which released it). */
+  function showImage(url: string): void {
+    if (!url.startsWith("blob:")) previewLifetime.clearBlob();
+    previewImageUrl = url;
+    previewImageHeld = false;
+  }
+
+  function showingRendition(rendition: Parameters<typeof fullResolution.showing>[0]): void {
+    fullResolution.showing(rendition);
+    previewShowsRendition = rendition !== null;
+  }
+
+  // Fullscreen or zoom needs the original: decode it off-screen while the
+  // rendition stays up, then swap it in (#1054).
+  const wantsFullResolution = () => needsFullResolution({ fullscreen: fullscreen.active, zoom: fullscreen.zoom });
+  $effect(() => {
+    if (!previewShowsRendition || !wantsFullResolution()) return;
+    void fullResolution.upgrade(wantsFullResolution).then((image) => {
+      // Re-checked at the swap: leaving fullscreen or moving to another file
+      // while the original decoded must keep what is on screen.
+      if (!image || !previewShowsRendition || !wantsFullResolution()) return;
+      showImage(image.url);
+      previewShowsRendition = false;
+    });
+  });
+
+  /** The image request for `file`: a rendition sized for the surface, or the
+   * original while the viewer needs full resolution. Read untracked: the
+   * load effect must not re-run when the pane resizes or zooms. */
+  function imageLoadOptions(): PreviewImageOptions {
+    return untrack(() => {
+      if (needsFullResolution({ fullscreen: fullscreen.active, zoom: fullscreen.zoom })) return {};
+      const maxEdge = renditionMaxEdge({
+        width: previewContentWidth,
+        height: previewContentHeight,
+        devicePixelRatio: window.devicePixelRatio,
+        zoom: settingsStore.zoomLevel / 100,
+      });
+      return { rendition: { maxEdge, runner: renditionRunner } };
+    });
+  }
+
+  /** Whether loadPreview shows this file as a plain image (its image branch). */
+  function rendersAsImage(file: FileEntry): boolean {
+    return file.kind !== "directory" && !isZipFile(file) && !isPdfFile(file) && !isVideoMediaFile(file)
+      && (isImageFile(file) || isSvgFile(file));
   }
 
   async function loadPreview(file: FileEntry): Promise<void> {
     const request = previewLifetime.begin(`${file.path}|${file.modified}|${file.size}`);
-    // Release any object-URL from a previous backend-fallback image so the
-    // bytes aren't pinned in memory across navigations.
-    previewLifetime.clearBlob();
-    previewImageUrl = null;
+    // Image to image keeps the current image until the next one is decoded;
+    // its blob (if any) is released when the next image is adopted or shown
+    // (showImage), or below if that load fails. Otherwise release any
+    // object-URL from a previous backend-fallback image now so the bytes
+    // aren't pinned in memory across navigations.
+    const holdImage = previewImageUrl !== null && rendersAsImage(file);
+    if (!holdImage) {
+      previewLifetime.clearBlob();
+      previewImageUrl = null;
+    }
+    previewImageHeld = holdImage;
     previewImageNote = null;
+    showingRendition(null);
     previewText = null;
     previewHighlightedHtml = null;
     previewMarkdownHtml = null;
@@ -654,7 +569,7 @@ import { openFile } from "$lib/api/open";
 
     // Cache-busting suffix derived from mtime+size — same value as previewKey,
     // ensures the webview re-fetches when the on-disk file changes.
-    const bust = encodeURIComponent(`${file.modified}-${file.size}-${localPreviewRevision}`);
+    const bust = `${file.modified}-${file.size}-${localPreviewRevision}`;
 
     if (isPdfFile(file)) {
       try {
@@ -686,67 +601,22 @@ import { openFile } from "$lib/api/open";
     }
 
     if (isImageFile(file) || isSvgFile(file)) {
-      // Pull the bytes through the backend. Used when the asset: protocol
-      // can't stream a file — notably cloud-mounted images (Google Drive,
-      // OneDrive) whose placeholder paths it fails to read (the read forces
-      // the cloud client to hydrate the file) — and as the only path in
-      // browser/E2E mode, where the mock serves a data URI.
-      const loadViaBackend = async () => {
-        const fallback = await readImageAsBlobUrl(file.path);
-        if (!previewLifetime.isCurrent(request)) {
-          previewLifetime.adoptBlob(request, fallback.ok ? fallback.data : "");
-          return;
-        }
-        if (fallback.ok) {
-          if (!previewLifetime.adoptBlob(request, fallback.data)) return;
-          try {
-            await decodeImage(fallback.data);
-            if (!previewLifetime.isCurrent(request)) return;
-            previewImageUrl = fallback.data;
-            previewImageNote = /\.avif$/i.test(file.name) ? "AVIF fallback preview shows the first frame." : null;
-          } catch (error) {
-            if (!previewLifetime.isCurrent(request)) return;
-            previewLifetime.releaseBlob(request, fallback.data);
-            console.warn("[preview] backend image decode failed", { path: file.path, error });
-            logFrontendDiagnostic("preview backend image decode failed", {
-              path: file.path,
-              error: error instanceof Error ? error.message : String(error),
-            });
-            previewError = "Cannot preview image";
-          }
-        } else {
-          console.warn("[preview] backend image read failed", { path: file.path, error: fallback.error });
-          logFrontendDiagnostic("preview backend image read failed", {
-            path: file.path,
-            error: fallback.error,
-          });
-          previewError = "Cannot preview image";
-        }
+      // A display-sized rendition for large images, else the original: asset
+      // protocol first, then the backend read (cloud placeholders, and the
+      // only path in browser/E2E mode); see state/preview-image.
+      const owner = {
+        isCurrent: () => previewLifetime.isCurrent(request),
+        adoptBlob: (url: string) => previewLifetime.adoptBlob(request, url),
+        releaseBlob: (url: string) => previewLifetime.releaseBlob(request, url),
       };
-
-      if (isTauri()) {
-        try {
-          const { convertFileSrc } = await import("@tauri-apps/api/core");
-          if (!previewLifetime.isCurrent(request)) return; // Stale
-          const url = `${convertFileSrc(file.path)}?v=${bust}`;
-          // Decode off-screen — spinner stays visible until ready
-          await decodeImage(url);
-          if (!previewLifetime.isCurrent(request)) return; // Stale after decode
-          previewImageUrl = url;
-        } catch (assetErr) {
-          if (!previewLifetime.isCurrent(request)) return;
-          console.warn("[preview] asset image decode failed; using backend fallback", {
-            path: file.path,
-            error: assetErr,
-          });
-          logFrontendDiagnostic("preview asset image decode failed", {
-            path: file.path,
-            error: assetErr instanceof Error ? assetErr.message : String(assetErr),
-          });
-          await loadViaBackend();
-        }
+      const image = await loadPreviewImage(file.path, bust, owner, imageLoadOptions());
+      if (image.status === "stale") return;
+      if (image.status === "ready") {
+        showImage(image.url);
+        if (image.resolution === "rendition") showingRendition({ path: file.path, cacheBust: bust, owner });
+        previewImageNote = image.viaBackend && /\.avif$/i.test(file.name) ? "AVIF fallback preview shows the first frame." : null;
       } else {
-        await loadViaBackend();
+        previewError = "Cannot preview image";
       }
     } else if (isVideoFile(file)) {
       // Audio cover art retains the independent ffmpeg-backed preview seam.
@@ -760,7 +630,7 @@ import { openFile } from "$lib/api/open";
         try {
           await decodeImage(result.data);
           if (!previewLifetime.isCurrent(request)) return;
-          previewImageUrl = result.data;
+          showImage(result.data);
         } catch (error) {
           if (!previewLifetime.isCurrent(request)) return;
           previewLifetime.releaseBlob(request, result.data);
@@ -827,7 +697,15 @@ import { openFile } from "$lib/api/open";
     }
 
     // A superseded request must not hide the current selection's spinner.
-    if (previewLifetime.isCurrent(request)) previewLoading = false;
+    if (previewLifetime.isCurrent(request)) {
+      // The next image failed: drop the previous one so the error shows.
+      if (previewImageHeld) {
+        previewImageHeld = false;
+        previewImageUrl = null;
+        previewLifetime.clearBlob();
+      }
+      previewLoading = false;
+    }
   }
 
   onDestroy(() => {
@@ -840,7 +718,7 @@ import { openFile } from "$lib/api/open";
   id={paneId}
   class="preview-pane"
   class:resizing={resize.isResizing}
-  class:fullscreen
+  class:fullscreen={fullscreen.active}
   class:vertical={isVertical}
   class:dock-bottom={position === "bottom"}
   class:dock-top={position === "top"}
@@ -849,7 +727,7 @@ import { openFile } from "$lib/api/open";
     : `width: ${resize.value}px; --preview-font-size: ${settingsStore.previewFontSize}px;`}
   ondblclick={handlePaneDoubleClick}
 >
-  {#if !fullscreen}
+  {#if !fullscreen.active}
     <!-- svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_noninteractive_element_interactions -- WAI movable separator is an interactive range. -->
     <div class="resize-handle" role="separator" tabindex="0" aria-label="Resize preview"
       aria-orientation={isVertical ? "horizontal" : "vertical"} aria-controls={paneId}
@@ -859,8 +737,8 @@ import { openFile } from "$lib/api/open";
       onpointercancel={resize.cancelPointer} onlostpointercapture={resize.cancelPointer}
       onkeydown={resize.keydown}></div>
   {/if}
-  {#if fullscreen}
-    <button class="fullscreen-exit" onclick={(e) => { e.stopPropagation(); fullscreen = false; }} title="Exit full screen (Esc)" aria-label="Exit full screen">
+  {#if fullscreen.active}
+    <button class="fullscreen-exit" onclick={(e) => { e.stopPropagation(); fullscreen.exit(); }} title="Exit full screen (Esc)" aria-label="Exit full screen">
       <svg width="14" height="14" viewBox="0 0 16 16" fill="none">
         <path d="M3 3L13 13M13 3L3 13" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
       </svg>
@@ -949,7 +827,7 @@ import { openFile } from "$lib/api/open";
     </div>
   {:else if pluginTarget}
     {#key pluginTarget.target.id}
-      <PluginPreviewTarget target={pluginTarget.target} showInfo={settingsStore.showPreviewInfo}>
+      <PluginPreviewTarget target={pluginTarget.target} showInfo={settingsStore.showPreviewInfo} {fullscreen}>
         {#snippet sections()}{@render previewSections()}{/snippet}
       </PluginPreviewTarget>
     {/key}
@@ -972,11 +850,12 @@ import { openFile } from "$lib/api/open";
     {/if}
 
     <!-- svelte-ignore a11y_no_noninteractive_tabindex -- a scrollable region must be keyboard-focusable (WCAG 2.1.1, #797). -->
-    <div class="preview-content" role="region" aria-label="Preview of {selectedFile.name}{isVideoMediaFile(selectedFile) ? ' (video)' : ''}" tabindex="0">
+    <div class="preview-content" role="region" aria-label="Preview of {selectedFile.name}{isVideoMediaFile(selectedFile) ? ' (video)' : ''}" aria-busy={previewLoading} tabindex="0"
+      bind:clientWidth={previewContentWidth} bind:clientHeight={previewContentHeight}>
       {#if isVideoMediaFile(selectedFile)}
         <span class="video-preview-marker"><VideoIndicator /></span>
       {/if}
-      {#if previewLoading}
+      {#if previewLoading && !previewImageHeld}
         {#if showPreviewSpinner}
           <div class="preview-loading">
             <div class="spinner"></div>
@@ -984,61 +863,22 @@ import { openFile } from "$lib/api/open";
         {/if}
       {:else if previewPdf && PdfPreview}
         {#key previewPdf.key}
-          <PdfPreview path={previewPdf.path} name={selectedFile.name} {fullscreen}
-            ontogglefullscreen={toggleFullscreen} onnavigate={navigateSibling} />
+          <PdfPreview path={previewPdf.path} name={selectedFile.name} fullscreen={fullscreen.active}
+            ontogglefullscreen={fullscreen.toggle} onnavigate={navigateSibling} />
         {/key}
       {:else if previewVideo && VideoPreview}
         {#key previewVideo.key}
-          <VideoPreview path={previewVideo.path} name={previewVideo.name} {fullscreen} ontogglefullscreen={toggleFullscreen} />
+          <VideoPreview path={previewVideo.path} name={previewVideo.name} fullscreen={fullscreen.active} ontogglefullscreen={fullscreen.toggle} />
         {/key}
       {:else if previewImageUrl}
-        <!-- This surface owns click/pan/zoom; the pane's double-click policy
-             leaves it alone. Clicking at fit zoom toggles fullscreen (#219). -->
-        <!-- svelte-ignore a11y_no_static_element_interactions, a11y_click_events_have_key_events -->
-        <div
-          class="preview-image-container"
-          class:panning
-          bind:this={imageContainerEl}
-          onwheel={handleFullscreenWheel}
-          onclick={handleImageClick}
-          onpointerdown={handleImagePointerDown}
-          onpointermove={handleImagePointerMove}
-          onpointerup={handleImagePointerUp}
-          onpointercancel={handleImagePointerUp}
-        >
-          <img
-            src={previewImageUrl}
-            alt={selectedFile.name}
-            class="preview-image"
-            class:zoomed={fullscreen && zoom > 1}
-            style:transform={imageTransform}
-            draggable="false"
-          />
+        <PreviewImageSurface src={previewImageUrl} alt={selectedFile.name} {fullscreen}>
           {#if previewImageNote}<p class="image-preview-note">{previewImageNote}</p>{/if}
-          {#if fullscreen}
-            <div class="fs-zoom-indicator">{Math.round(zoom * 100)}%</div>
+          {#if previewImageHeld && showPreviewSpinner}
+            <div class="preview-loading preview-loading-over-image"><div class="spinner"></div></div>
           {/if}
-        </div>
+        </PreviewImageSurface>
       {:else if previewFolderChildren.length > 0}
-        <div class="preview-folder-list">
-          {#if previewCollapsedRoot}
-            <div class="collapsed-root-indicator" title="Showing the contents of the only folder inside">
-              <svg class="collapsed-root-icon" width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-                <path d="M2 4C2 3.45 2.45 3 3 3H6L7.5 4.5H13C13.55 4.5 14 4.95 14 5.5V12C14 12.55 13.55 13 13 13H3C2.45 13 2 12.55 2 12V4Z" fill="currentColor" fill-opacity="0.2" stroke="currentColor" stroke-width="1.1"/>
-              </svg>
-              <span class="collapsed-root-name">{previewCollapsedRoot}/</span>
-              <span class="collapsed-root-note">{previewCollapsedNote}</span>
-            </div>
-          {/if}
-          {#each previewFolderChildren as child}
-            <div class="folder-item" class:is-directory={child.kind === "directory"}>
-              <span class="folder-item-icon" style:color={child.kind !== "directory" ? getFileIconColor(child) : undefined}>
-                <FileIcon entry={child} size="small" />
-              </span>
-              <span class="folder-item-name">{child.name}</span>
-            </div>
-          {/each}
-        </div>
+        <PreviewFolderList entries={previewFolderChildren} collapsedRoot={previewCollapsedRoot} collapsedNote={previewCollapsedNote} />
       {:else if previewCsv !== null}
         <div class="preview-csv" role="table" aria-label="CSV preview">
           <div class="preview-csv-table" style={`--csv-column-template: ${csvColumnTemplate(previewCsv)};`}>
@@ -1127,6 +967,10 @@ import { openFile } from "$lib/api/open";
     border-left: 1px solid var(--divider);
     background: var(--background-card-secondary);
     overflow: hidden;
+    /* Horizontal inset of the Preview chrome and info rows. Plugin
+       Preview-info sections inherit it so their rows line up with the host's
+       (SDK: PreviewInfoContribution). */
+    --preview-info-inset: 16px;
   }
 
   .preview-pane.resizing {
@@ -1150,20 +994,33 @@ import { openFile } from "$lib/api/open";
      The header column takes what the name and badge need, capped at 65% of
      the pane or everything but 16rem, whichever is larger. The metadata
      column takes the rest and ellipsizes. Neither can squeeze the other to
-     nothing, however long the name or a diff's path. */
+     nothing, however long the name or a diff's path.
+     Plugin Preview-info sections get their own full-width row above the
+     content, as tall as their content. The content row keeps a floor (96px,
+     or 40% of a very short dock) and the sections row yields first: only
+     when the dock cannot fit both does the section scroll. The sizing lives
+     on the tracks, not on the item: a percentage max-height on an item in an
+     auto row resolves against that row after it was sized to the item's full
+     height, which clipped the section behind a scrollbar and left the
+     clipped-off height as dead space above the image.
+     PluginPreviewTarget renders the same chrome classes as direct children of
+     this pane, so the placement rules below match them with :global — this
+     component owns the dock layout for both kinds of subject. */
   .preview-pane.vertical:not(.fullscreen) {
+    --preview-info-inset: 12px;
     display: grid;
     grid-template-columns: fit-content(max(65%, 100% - 16rem)) minmax(0, 1fr);
-    grid-template-rows: auto auto minmax(0, 1fr);
+    grid-template-rows: auto auto minmax(0, max-content) minmax(min(96px, 40%), 1fr);
     grid-template-areas:
       "header info"
       "actions actions"
+      "sections sections"
       "content content";
   }
 
   /* The name has priority over the type badge: the badge gives up width
      first, down to its first few letters, before the name truncates. */
-  .preview-pane.vertical:not(.fullscreen) > .preview-header {
+  .preview-pane.vertical:not(.fullscreen) > :global(.preview-header) {
     grid-area: header;
     display: grid;
     grid-template-columns: minmax(0, max-content) minmax(3.5rem, 1fr);
@@ -1171,10 +1028,10 @@ import { openFile } from "$lib/api/open";
     gap: 8px;
     min-width: 0;
     overflow: hidden;
-    padding: 8px 12px;
+    padding: 8px var(--preview-info-inset);
   }
 
-  .preview-pane.vertical:not(.fullscreen) > .preview-header .preview-type-badge {
+  .preview-pane.vertical:not(.fullscreen) > :global(.preview-header) :global(.preview-type-badge) {
     display: block;
     align-self: center;
     justify-self: start;
@@ -1184,17 +1041,23 @@ import { openFile } from "$lib/api/open";
     white-space: nowrap;
   }
 
-  .preview-pane.vertical:not(.fullscreen) > .diff-actions {
+  .preview-pane.vertical:not(.fullscreen) > :global(:is(.diff-actions, .target-actions-area)) {
     grid-area: actions;
   }
 
-  .preview-pane.vertical:not(.fullscreen) > .preview-content {
+  .preview-pane.vertical:not(.fullscreen) > .preview-sections {
+    grid-area: sections;
+    max-height: none;
+    min-height: 0;
+  }
+
+  .preview-pane.vertical:not(.fullscreen) > :global(.preview-content) {
     grid-area: content;
   }
 
   /* Each metadata field keeps its own row beside the header. A shared
      ellipsis can hide the entire Modified field in a narrow window. */
-  .preview-pane.vertical:not(.fullscreen) > .preview-info {
+  .preview-pane.vertical:not(.fullscreen) > :global(.preview-info) {
     grid-area: info;
     display: flex;
     flex-direction: column;
@@ -1202,14 +1065,14 @@ import { openFile } from "$lib/api/open";
     gap: 2px;
     min-width: 0;
     overflow: hidden;
-    padding: 8px 12px;
+    padding: 8px var(--preview-info-inset);
     font-size: var(--font-size-caption);
     white-space: nowrap;
     border-top: none;
     border-bottom: 1px solid var(--divider);
   }
 
-  .preview-pane.vertical:not(.fullscreen) > .preview-info .info-row {
+  .preview-pane.vertical:not(.fullscreen) > :global(.preview-info) :global(.info-row) {
     display: flex;
     gap: 8px;
     min-width: 0;
@@ -1217,11 +1080,11 @@ import { openFile } from "$lib/api/open";
     border-bottom: none;
   }
 
-  .preview-pane.vertical:not(.fullscreen) > .preview-info .info-label {
+  .preview-pane.vertical:not(.fullscreen) > :global(.preview-info) :global(.info-label) {
     flex-shrink: 0;
   }
 
-  .preview-pane.vertical:not(.fullscreen) > .preview-info .info-value {
+  .preview-pane.vertical:not(.fullscreen) > :global(.preview-info) :global(.info-value) {
     min-width: 0;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -1342,7 +1205,7 @@ import { openFile } from "$lib/api/open";
     display: flex;
     flex-direction: column;
     gap: 6px;
-    padding: 16px 16px 14px;
+    padding: 16px var(--preview-info-inset) 14px;
     border-bottom: 1px solid var(--divider);
     flex-shrink: 0;
   }
@@ -1393,66 +1256,29 @@ import { openFile } from "$lib/api/open";
     right: 12px;
   }
 
-  /* Fullscreen: image fills the whole screen symmetrically — hide the header
-     and info bar (which created an asymmetric top margin) and drop the image
-     container padding and the image's rounded corners. */
+  /* Fullscreen: image fills the whole screen symmetrically — hide the header,
+     info bar and plugin Preview-info sections (which took space from the
+     image). PreviewImageSurface drops its padding and rounded corners. */
   .preview-pane.fullscreen .preview-header,
-  .preview-pane.fullscreen .preview-info {
+  .preview-pane.fullscreen .preview-info,
+  .preview-pane.fullscreen .preview-sections {
     display: none;
   }
   .preview-pane.fullscreen .preview-content {
     overflow: hidden;
   }
-  .preview-pane.fullscreen .preview-image-container {
-    /* Fill the whole fullscreen pane and centre the image both ways,
-       independent of the flex chain. */
-    position: absolute;
-    inset: 0;
-    min-height: 0;
+  /* PluginPreviewTarget renders its chrome as direct children of this pane
+     (see the dock layout above); fullscreen hides it like the file chrome. */
+  .preview-pane.fullscreen > :global(:is(.preview-header, .preview-info, .target-actions-area)) {
+    display: none;
+  }
+  .preview-pane.fullscreen > :global(.target-content) {
     overflow: hidden;
-    padding: 0;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-  }
-  .preview-pane.fullscreen .preview-image {
-    border-radius: 0;
-    box-shadow: none;
-  }
-  .preview-pane.fullscreen .preview-image {
-    transition: transform 80ms ease-out;
-    cursor: zoom-in;
-  }
-  .preview-pane.fullscreen .preview-image.zoomed {
-    cursor: grab;
-    transition: none;
-    /* Pan and wheel-zoom update this transform for every pointer event. Keep
-       the active image on its own compositor layer instead of repainting the
-       preview surface on each update (#635). */
-    will-change: transform;
-  }
-  .preview-pane.fullscreen .preview-image-container.panning,
-  .preview-pane.fullscreen .preview-image-container.panning .preview-image {
-    cursor: grabbing;
   }
 
   /* Hide the window tab bar / title bar while a preview is fullscreen. */
   :global(html[data-preview-fullscreen] .titlebar) {
     display: none !important;
-  }
-
-  .fs-zoom-indicator {
-    position: absolute;
-    bottom: 16px;
-    left: 50%;
-    transform: translateX(-50%);
-    padding: 4px 12px;
-    border-radius: var(--radius-pill, 999px);
-    background: rgba(0, 0, 0, 0.55);
-    color: #fff;
-    font-size: 12px;
-    font-variant-numeric: tabular-nums;
-    pointer-events: none;
   }
 
   .preview-loading {
@@ -1461,6 +1287,14 @@ import { openFile } from "$lib/api/open";
     justify-content: center;
     flex: 1;
     padding: 24px;
+  }
+
+  /* A slow next image: the previous one stays, with the spinner over it. */
+  .preview-loading-over-image {
+    position: absolute;
+    inset: 0;
+    padding: 0;
+    pointer-events: none;
   }
 
   .spinner {
@@ -1478,36 +1312,6 @@ import { openFile } from "$lib/api/open";
 
 
   .image-preview-note { position: absolute; bottom: 8px; left: 8px; right: 8px; margin: 0; padding: 4px 8px; background: var(--background-solid); color: var(--text-secondary); font-size: var(--font-size-caption); pointer-events: none; }
-
-  .preview-image-container {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    flex: 1;
-    /* Let the image shrink to the content area's available height instead of
-       expanding this flex item and forcing the preview pane to scroll. */
-    min-height: 0;
-    padding: 20px;
-    /* Click toggles front-and-center (#219). */
-    cursor: zoom-in;
-    background:
-      repeating-conic-gradient(
-        rgba(255, 255, 255, 0.03) 0% 25%,
-        transparent 0% 50%
-      ) 50% / 12px 12px;
-  }
-
-  .preview-pane.fullscreen .preview-image-container {
-    cursor: zoom-out;
-  }
-
-  .preview-image {
-    max-width: 100%;
-    max-height: 100%;
-    object-fit: contain;
-    border-radius: var(--radius-sm);
-    box-shadow: var(--shadow-card);
-  }
 
   .preview-text {
     padding: 16px;
@@ -1796,7 +1600,7 @@ import { openFile } from "$lib/api/open";
   }
 
   .preview-section-error {
-    margin: 8px 16px;
+    margin: 8px var(--preview-info-inset);
     font-size: var(--font-size-caption);
     color: var(--text-tertiary);
   }
@@ -1816,7 +1620,7 @@ import { openFile } from "$lib/api/open";
     align-items: center;
     gap: 8px;
     font-size: var(--font-size-caption);
-    padding: 8px 16px;
+    padding: 8px var(--preview-info-inset);
     border-bottom: 1px solid var(--divider);
   }
 
@@ -1832,74 +1636,6 @@ import { openFile } from "$lib/api/open";
   .info-value {
     color: var(--text-secondary);
     text-align: right;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  .preview-folder-list {
-    flex: 1;
-    overflow: auto;
-    padding: 4px 0;
-  }
-
-  .collapsed-root-indicator {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    margin: 2px 8px 6px;
-    padding: 5px 8px;
-    background: var(--subtle-fill-secondary);
-    border: 1px solid var(--divider);
-    border-radius: var(--radius-sm);
-    font-size: 12px;
-    color: var(--text-secondary);
-  }
-
-  .collapsed-root-icon {
-    color: var(--accent-text, var(--accent));
-    flex-shrink: 0;
-  }
-
-  .collapsed-root-name {
-    font-weight: 600;
-    color: var(--text-primary);
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  .collapsed-root-note {
-    margin-left: auto;
-    color: var(--text-tertiary);
-    font-size: 11px;
-    flex-shrink: 0;
-  }
-
-  .folder-item {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    padding: 4px 16px;
-    font-size: 13px;
-    color: var(--text-secondary);
-  }
-
-  .folder-item.is-directory .folder-item-name {
-    font-weight: 500;
-    color: var(--text-primary);
-  }
-
-  .folder-item-icon {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    width: 16px;
-    height: 16px;
-    flex-shrink: 0;
-  }
-
-  .folder-item-name {
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;

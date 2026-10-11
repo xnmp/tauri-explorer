@@ -258,3 +258,5 @@ failures; the mounted PR session refreshes badges and keeps duplicate submission
 blocked through that refresh. Browser screenshots simulate GitHub, while isolated
 Rust subprocess fixtures cover the production argv/cwd and CLI error boundary.
 See ADR 0005 and ADR 0006.
+
+GitHub PR mutations (#1082): keep `--repo github.com/owner/name` explicit. Pending work belongs to `git-pr-mutations.svelte.ts`, not a mounted graph session; Rust admission spans windows/worktrees of the same target. After gh starts, a failure may follow remote acceptance: invalidate badges, retain the uncertain warning, and require an explicit GitHub check before retrying (ADR 0006).

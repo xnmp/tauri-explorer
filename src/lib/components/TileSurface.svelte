@@ -160,6 +160,10 @@
   .tile-surface :global(.tile-icon > .folder-thumb > svg:not(.folder-layer)),
   .tile-surface :global(.tile-icon > .folder-thumb > .icon-cat),
   .tile-surface :global(.tile-icon > .folder-thumb > .nf-icon-badge) {
+    /* Never flex-shrink: the glyphs are 64px and `transform` supplies the
+       scaling, so shrinking first (a bare folder SVG in the 48px small tile)
+       scales twice and leaves it smaller than every other icon (#1044). */
+    flex-shrink: 0;
     transform: scale(var(--tile-icon-scale, 1));
   }
 

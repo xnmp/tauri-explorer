@@ -34,6 +34,6 @@ for (const [preset, px] of Object.entries(SIZES)) {
     expect(linkedBox.height).toBeCloseTo(realBox.height, 0);
     expect(realBox.width).toBeCloseTo(px, 0);
     expect(linkedBox.width).toBeCloseTo(px, 0);
-    await page.screenshot({ path: `evidence/ac-${preset === "small" ? "1-small" : "2-" + preset}-tile-linked-folder.png` });
+    if (preset === "small") await page.screenshot({ path: "evidence/ac-1-small-tile-folders.png" });
   });
 }

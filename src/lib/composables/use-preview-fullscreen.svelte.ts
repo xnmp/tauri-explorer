@@ -27,6 +27,7 @@ import {
   type ZoomView,
 } from "$lib/domain/image-viewer-zoom";
 import { dialogStore } from "$lib/state/dialogs.svelte";
+import { windowTabsManager } from "$lib/state/window-tabs.svelte";
 
 /** The parts of a DOM event the handlers read, so tests can pass plain objects. */
 type KeyInput = Pick<KeyboardEvent, "key" | "preventDefault" | "stopImmediatePropagation">;
@@ -165,13 +166,15 @@ export type PreviewFullscreen = ReturnType<typeof createPreviewFullscreen>;
 
 /** `createPreviewFullscreen` plus its window listener and chrome-hiding attribute. */
 export function usePreviewFullscreen(options: PreviewFullscreenOptions = {}): PreviewFullscreen {
-  const fullscreen = createPreviewFullscreen({ keysBlocked: () => dialogStore.hasModalOpen, ...options });
+  const fullscreen = createPreviewFullscreen({ keysBlocked: () => dialogStore.isPaneBlocked(windowTabsManager.activePaneId), ...options });
 
   // Capture phase + stopImmediatePropagation so the viewer's keys win over the
   // global keyboard handler in +page.svelte.
   $effect(() => {
     if (!fullscreen.active) return;
-    const onKey = (event: KeyboardEvent) => fullscreen.handleKey(event);
+    const onKey = (event: KeyboardEvent) => {
+      if (!dialogStore.isInputBlocked(event, windowTabsManager.activePaneId)) fullscreen.handleKey(event);
+    };
     window.addEventListener("keydown", onKey, { capture: true });
     return () => window.removeEventListener("keydown", onKey, { capture: true });
   });

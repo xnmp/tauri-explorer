@@ -97,7 +97,7 @@ export function startWindowSession(options: WindowSessionOptions) {
     const tab = windowTabsManager.init(plan.initialPath, plan.skipRestore, plan.overridePath);
     const initialExplorer = windowTabsManager.getActiveExplorer();
     const launchFocus = launchRequest(window.location.search, "focusAddressBar") === "1"
-      ? createDeferredFocusRequest(window, () => !dialogStore.hasModalOpen
+      ? createDeferredFocusRequest(window, () => !dialogStore.isPaneBlocked(windowTabsManager.activePaneId)
         && windowTabsManager.getActiveExplorer() === initialExplorer)
       : null;
     if (launchFocus) stops.push(launchFocus.cancel);
@@ -167,6 +167,7 @@ export function startWindowSession(options: WindowSessionOptions) {
       bindings: keybindingsStore, getCommand, executeCommand, dialogs: dialogStore,
       terminal: { get enabled() { return settingsStore.enableTerminal; }, toggle: () => terminalPanelStore.toggle() },
       toggleDualPane: () => windowTabsManager.toggleDualPane(), getActiveExplorer,
+      getActivePaneId: () => windowTabsManager.activePaneId,
     }));
     windowSizeStore.sync();
     window.addEventListener("resize", windowSizeStore.sync, { signal: lifetime.signal });

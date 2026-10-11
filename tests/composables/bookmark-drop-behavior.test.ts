@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const state = vi.hoisted(() => ({
   nativeDrop: undefined as undefined | ((paths: string[], position: { x: number; y: number }) => Promise<void>),
-  target: { type: "sidebar" } as { type: "sidebar" } | { type: "folder"; path: string } | { type: "bookmark"; path: string },
+  target: { type: "sidebar" } as { type: "blocked" } | { type: "sidebar" } | { type: "folder"; path: string } | { type: "bookmark"; path: string },
   pointerTarget: { type: "sidebar" } as { type: "sidebar" } | { type: "folder"; path: string } | { type: "bookmark"; path: string },
   dragData: { path: "/home/user/report.txt", name: "report.txt", kind: "file" } as { path: string; name: string; kind: string } | null,
 }));
@@ -22,9 +22,10 @@ vi.mock("$lib/composables/use-native-drop-target.svelte", () => ({
   highlightTarget: vi.fn(),
   highlightTargetAtPoint: vi.fn(),
   clearHighlights: vi.fn(),
+  captureHighlightCleanup: () => vi.fn(),
 }));
 vi.mock("$lib/state/drag.svelte", () => ({
-  dragState: { get current() { return state.dragData; }, start: vi.fn(), readCrossWindow: () => null, clear: vi.fn() },
+  dragState: { get current() { return state.dragData; }, finish: vi.fn(), claim: () => ({ finish: vi.fn() }), start: vi.fn(), readCrossWindow: () => null, clear: vi.fn() },
 }));
 vi.mock("$lib/state/drop-operations", () => ({ handleFileDropMany: transfer }));
 vi.mock("$lib/state/bookmarks.svelte", () => ({ bookmarksStore: bookmarks }));
@@ -57,6 +58,13 @@ describe("native bookmark drops", () => {
 
     expect(bookmarks.addBookmark).not.toHaveBeenCalled();
     expect(transfer).not.toHaveBeenCalled();
+  });
+
+  it("a covered pane drop never falls through to the active directory", async () => {
+    state.target = { type: "blocked" };
+    await state.nativeDrop!(["/outside/image.png"], { x: 10, y: 10 });
+    expect(transfer).not.toHaveBeenCalled();
+    expect(bookmarks.addBookmark).not.toHaveBeenCalled();
   });
 
   it("ignores thumbnail blob URLs instead of creating a failed file move", async () => {

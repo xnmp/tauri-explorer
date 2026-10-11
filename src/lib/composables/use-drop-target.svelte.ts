@@ -69,7 +69,7 @@ export function useDropTarget(deps: DropTargetDeps) {
 
     const isCopy = isCopyModifier(event);
 
-    dragState.clear();
+    dragState.clear(event.dataTransfer);
 
     // Skip dropping onto self or into one's own descendant; a multi-item
     // drop transfers as a single undoable batch (#163).

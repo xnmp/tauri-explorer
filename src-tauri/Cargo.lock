@@ -5411,6 +5411,7 @@ dependencies = [
  "criterion",
  "dbus-secret-service",
  "dirs",
+ "drag",
  "dunce",
  "explorer-avif",
  "futures-util",

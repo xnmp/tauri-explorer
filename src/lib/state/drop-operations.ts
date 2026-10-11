@@ -9,6 +9,8 @@
  */
 
 import { dragState } from "./drag.svelte";
+import { domDropPaths, internalDragPaths } from "$lib/domain/file-drop";
+import { isWindows } from "$lib/domain/platform";
 
 export interface DropOptions {
   /** Refresh callback after drop completes */
@@ -22,12 +24,9 @@ export interface DropOptions {
  * then falling back to cross-window drag state.
  */
 export function getDropSourcePath(dataTransfer: DataTransfer): string | null {
-  let sourcePath = dataTransfer.getData("application/x-explorer-path");
-  if (!sourcePath) {
-    const crossWindow = dragState.readCrossWindow();
-    if (crossWindow) sourcePath = crossWindow.path;
-  }
-  return sourcePath || null;
+  const paths = getDropSourcePaths(dataTransfer);
+  const primary = dataTransfer.getData("application/x-explorer-path");
+  return paths.includes(primary) ? primary : paths[0] ?? null;
 }
 
 /**
@@ -35,20 +34,13 @@ export function getDropSourcePath(dataTransfer: DataTransfer): string | null {
  * Falls back to single path if multi-paths data is not available.
  */
 export function getDropSourcePaths(dataTransfer: DataTransfer): string[] {
-  const multiPaths = dataTransfer.getData("application/x-explorer-paths");
-  if (multiPaths) {
-    try {
-      const parsed = JSON.parse(multiPaths);
-      if (Array.isArray(parsed) && parsed.length > 0) return parsed;
-    } catch { /* ignore parse errors */ }
+  if (dataTransfer.getData("application/x-explorer-paths") || dataTransfer.getData("application/x-explorer-path")) {
+    return domDropPaths(dataTransfer, isWindows) ?? [];
   }
-  // Check dragState for multi-paths (cross-window internal drags)
-  const crossWindow = dragState.readCrossWindow();
-  if (crossWindow?.paths && crossWindow.paths.length > 0) return crossWindow.paths;
-
-  // Fallback to single path
-  const single = getDropSourcePath(dataTransfer);
-  return single ? [single] : [];
+  // Only an Explorer MIME marker permits the cross-window fallback. External
+  // DOM files have no authoritative paths, even during an unrelated drag.
+  if (!dataTransfer.getData("application/x-explorer-kind")) return [];
+  return internalDragPaths(dragState.domSource(dataTransfer), isWindows) ?? [];
 }
 
 /**

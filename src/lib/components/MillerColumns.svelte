@@ -19,6 +19,7 @@
   import { createDirectoryWatch } from "$lib/state/directory-watch";
   import FileIcon from "./FileIcon.svelte";
   import EntryName from "./EntryName.svelte";
+  import { createHtml5FileDrag } from "$lib/state/html5-file-drag.svelte";
   import { dragState } from "$lib/state/drag.svelte";
   import { windowTabsManager } from "$lib/state/window-tabs.svelte";
   import { useDropTarget } from "$lib/composables/use-drop-target.svelte";
@@ -247,19 +248,9 @@
     explorer.openContextMenu(event.clientX, event.clientY, entry);
   }
 
-  function handleDragStart(event: DragEvent, entry: FileEntry): void {
-    if (!event.dataTransfer) return;
-    event.dataTransfer.setData("application/x-explorer-path", entry.path);
-    event.dataTransfer.setData("application/x-explorer-name", entry.name);
-    event.dataTransfer.setData("application/x-explorer-kind", entry.kind);
-    event.dataTransfer.effectAllowed = "all";
-    dragState.start({ path: entry.path, name: entry.name, kind: entry.kind });
-  }
-
-  function handleDragEnd(): void {
-    dragState.clear();
-    windowTabsManager.refreshAllPanes();
-  }
+  const fileDrag = createHtml5FileDrag(() => windowTabsManager.refreshAllPanes());
+  const handleDragStart = (event: DragEvent, entry: FileEntry) => fileDrag.start(event, entry);
+  const handleDragEnd = fileDrag.end;
 
   // Shared drop-target behavior
   const dropTarget = useDropTarget({ onRefresh: () => windowTabsManager.refreshAllPanes() });
@@ -298,7 +289,7 @@
 
     const isCopy = isCopyModifier(event);
 
-    dragState.clear();
+    dragState.clear(event.dataTransfer);
     const valid = sourcePaths.filter(
       (sourcePath) => sourcePath !== columnPath && !columnPath.startsWith(sourcePath + "/"),
     );

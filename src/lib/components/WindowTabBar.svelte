@@ -433,7 +433,7 @@
     if (sourcePaths.length === 0) return;
 
     const isCopy = isCopyModifier(event);
-    dragState.clear();
+    dragState.clear(event.dataTransfer);
     const onRefresh = () => {
       for (const explorer of windowTabsManager.getAllExplorers()) {
         explorer.refresh({ silent: true });

@@ -174,6 +174,12 @@ backend for E2E/browser).
 
 ## External drag/drop (OS ↔ app)
 
+- `src/lib/domain/file-drop.ts`, `src/lib/state/file-drop-targets.svelte.ts`, `src/lib/state/dispatch-file-drop.ts` — fileDropTargets capability: verified internal and native external paths, plugin-first terminal routing, registration disposal, and gesture-scoped feedback cleanup. `src/lib/plugins/demo/DemoFileDropTarget.svelte` provides contributed acceptance receipts.
+- `src/lib/state/html5-file-drag.svelte.ts` — common HTML5 source protocol used by file-list, Miller-column and Recent sources.
+- `src/lib/composables/use-sidebar-drag-end.ts` — document capture tracks the source gesture, so early/old dragend cannot erase a native or successor source.
+- `src/lib/api/native-file-drag.ts`, `src-tauri/src/native_file_drag.rs`, `src-tauri/test_support/native_file_drag.rs` — native main-thread source lease and per-receiver snapshots; one enriched event stream retains identity despite frontend source-result/Enter/Drop IPC reordering. Retirement queues behind native receiver events. GTK completes at dnd-finished after selection transfer.
+- Native ownership follows successful handoff; rejected starts retain DOM authority, and pending DOM drops await that decision. Miller/Recent retain their former DOM target/modifier policies; Linux listings retain native move semantics. Pointer owns macOS/Windows same-window drags.
+
 - `composables/use-external-drag.svelte.ts` — start OS drag-out of files
 - `composables/use-external-drop.svelte.ts`, `use-native-drop-target.svelte.ts`, `use-native-drop-handler.ts` — accept OS file drops
 - `api/activate.ts` — window focus/activate on drop
@@ -443,6 +449,10 @@ backend for E2E/browser).
 - FLOW: derived from active pane's entries + selectedPaths; live op status from operationsManager.
 
 ## Toasts & dialogs
+
+- `src/lib/state/pane-dialogs.svelte.ts`, `state/modal-ownership.svelte.ts`, `src/lib/state/dialog-presentation-context.ts`, `src/lib/components/PluginDialogMount.svelte`, `src/lib/domain/pane-dialog-keys.ts` — SDK `paneDialogs` capability: window-local lifetime-bound captures, independent pane reservations/surfaces, private Modal context, retained DOM portals and narrow keyboard navigation exceptions. `ExplorerPane.svelte` hosts the overlay slot beside inert content; tab parking keeps the contributed component mounted with `open=true`.
+- FLOW: plugin `workspace.capturePane` → `dialog-registry.svelte.ts` validates host identity/reserves scope → `WindowDialogs.svelte` retains the keyed component → mount wrapper portals to ExplorerPane. `window-tabs.svelte.ts` pane/session retirement synchronously disposes dialogs and captures; physical slot registration survives failed native close while old handles remain invalid. `src/test-support/modal/PaneTestDialog.svelte` exercises the contract through a real plugin context in `e2e/pane-dialogs.spec.ts`.
+- `src/lib/state/modal-focus.ts` — tracks the latest DOM focus owner so pane dialog removal can restore the active owner after detachment without reclaiming focus moved to another surface. Modal registrations remain authoritative outside rune state: Svelte cleanup reads historical rune values, so reactive-array read/modify/write can resurrect a released reservation or discard a newly mounted window dialog.
 
 - `components/ToastOverlay.svelte`, `state/toast.svelte.ts` — `toastStore` transient notices
 - `state/dialogs.svelte.ts` — `dialogStore` generic dialog orchestration

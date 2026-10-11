@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { keybindingsStore } from "$lib/state/keybindings.svelte";
 import { startWindowKeyboard } from "$lib/state/window-keyboard";
+import { createModalOwnership } from "$lib/state/modal-ownership.svelte";
 
 const stops: (() => void)[] = [];
 beforeEach(() => keybindingsStore._clearForTesting());
@@ -14,14 +15,19 @@ function matchesAny(...matchedSelectors: string[]): (selectorList: string) => bo
     .some((selector) => matched.has(selector.trim()));
 }
 
-function fixture(terminalFocus = false, ancestors: readonly string[] = []) {
+function fixture(terminalFocus = false, ancestors: readonly string[] = [], ownership?: ReturnType<typeof createModalOwnership>) {
   const target = new EventTarget();
   // Exercise real EventTarget dispatch and the production binding matcher.
   const closest = (selector: string) => terminalFocus || ancestors.includes(selector) ? target : null;
   Object.assign(target, { tagName: terminalFocus ? "TEXTAREA" : "DIV", closest });
   const executeCommand = vi.fn(async (_id: string) => {});
   const available = new Set<string>();
-  const dialogs = { hasModalOpen: false, requestCloseTop: vi.fn(), openJobsPanel: vi.fn(), openSettings: vi.fn() };
+  let activePaneId = "a";
+  const dialogs = {
+    hasModalOpen: false, requestCloseTop: vi.fn(), openJobsPanel: vi.fn(), openSettings: vi.fn(),
+    inputScope: (event: Event, paneId: string) => dialogs.hasModalOpen ? null : ownership?.inputScope(event, paneId),
+    subscribeOwnership: ownership?.subscribe,
+  };
   const terminal = { enabled: true, toggle: vi.fn() };
   const explorer = {
     showFilter: false,
@@ -35,6 +41,7 @@ function fixture(terminalFocus = false, ancestors: readonly string[] = []) {
     dialogs, terminal,
     toggleDualPane: vi.fn(),
     getActiveExplorer: () => explorer,
+    getActivePaneId: () => activePaneId,
   });
   stops.push(stop);
   const bind = (id: string, shortcut: string) => { available.add(id); keybindingsStore.registerDefault(id, shortcut); };
@@ -46,8 +53,90 @@ function fixture(terminalFocus = false, ancestors: readonly string[] = []) {
     target.dispatchEvent(event);
     return event;
   };
-  return { target, executeCommand, bind, press, stop, available, dialogs, terminal, explorer };
+  return { target, executeCommand, bind, press, stop, available, dialogs, terminal, explorer,
+    setActivePane(id: string) { activePaneId = id; },
+  };
 }
+
+describe("pane dialog keyboard routing", () => {
+  const scope = () => ({ paneId: "a", token: Symbol("pane") });
+  it("allows configured pane/tab navigation from inputs while retaining dialog control keys", () => {
+    const ownership = createModalOwnership(), a = scope();
+    ownership.register(() => {}, undefined, { scope: a });
+    const f = fixture(false, [], ownership);
+    Object.assign(f.target, { tagName: "TEXTAREA" });
+    f.bind("plugin.conflict", "Alt+Right");
+    f.bind("view.switchPane", "Alt+Right");
+    f.bind("tabs.nextTab", "Ctrl+Tab");
+    f.bind("file.openSelected", "Ctrl+Enter");
+    expect(f.press("ArrowRight", { altKey: true }).defaultPrevented).toBe(true);
+    expect(f.press("Tab", { ctrlKey: true }).defaultPrevented).toBe(true);
+    expect(f.press("Tab").defaultPrevented).toBe(false);
+    expect(f.press("Enter", { ctrlKey: true }).defaultPrevented).toBe(false);
+    expect(f.executeCommand.mock.calls.map(call => call[0])).toEqual(["view.switchPane", "tabs.nextTab"]);
+  });
+  it("eligible chords cannot admit unrelated commands sharing their prefix and suffix", () => {
+    const ownership = createModalOwnership(); ownership.register(() => {}, undefined, { scope: scope() });
+    const f = fixture(false, [], ownership);
+    Object.assign(f.target, { tagName: "INPUT" });
+    f.bind("file.delete", "Alt+M Ctrl+T"); f.bind("pane.focusRight", "Alt+M Ctrl+T");
+    f.press("m", { altKey: true }); f.press("Control", { ctrlKey: true }); f.press("t", { ctrlKey: true });
+    expect(f.executeCommand).toHaveBeenCalledExactlyOnceWith("pane.focusRight");
+  });
+  it("Escape in B leaves A open, while background Escape targets active A", () => {
+    const ownership = createModalOwnership(), a = scope();
+    ownership.register(() => {}, undefined, { scope: a });
+    const f = fixture(false, [], ownership);
+    Object.assign(f.target, { closest: (selector: string) => selector === "[data-pane-id]" ? { getAttribute: () => "b" } : null });
+    expect(f.press("Escape").defaultPrevented).toBe(false);
+    expect(f.dialogs.requestCloseTop).not.toHaveBeenCalled();
+    Object.assign(f.target, { closest: () => null });
+    f.press("Escape");
+    expect(f.dialogs.requestCloseTop).toHaveBeenCalledExactlyOnceWith(expect.any(Event), a);
+  });
+  it("Escape in uncovered B retains its normal Clear Selection command while A stays open", () => {
+    const ownership = createModalOwnership(), a = scope();
+    ownership.register(() => {}, undefined, { scope: a });
+    const f = fixture(false, [], ownership);
+    f.setActivePane("b");
+    Object.assign(f.target, { closest: (selector: string) => selector === "[data-pane-id]" ? { getAttribute: () => "b" } : null });
+    f.bind("selection.clearSelection", "Escape");
+    expect(f.press("Escape").defaultPrevented).toBe(true);
+    expect(f.executeCommand).toHaveBeenCalledExactlyOnceWith("selection.clearSelection");
+    expect(f.dialogs.requestCloseTop).not.toHaveBeenCalled();
+    expect(ownership.hasPaneOpen("a")).toBe(true);
+  });
+  it("window ownership blocks pane navigation even from an uncovered event surface", () => {
+    const ownership = createModalOwnership(); ownership.register(() => {}, undefined, { scope: scope() });
+    ownership.register(() => {});
+    const f = fixture(false, [], ownership);
+    Object.assign(f.target, { closest: (selector: string) => selector === "[data-pane-id]" ? { getAttribute: () => "b" } : null });
+    f.bind("pane.focusRight", "Alt+Right");
+    expect(f.press("ArrowRight", { altKey: true }).defaultPrevented).toBe(false);
+    expect(f.executeCommand).not.toHaveBeenCalled();
+    f.press("Escape"); expect(f.dialogs.requestCloseTop).toHaveBeenCalledOnce();
+  });
+  it("ownership reservations immediately retire an in-progress Explorer chord", () => {
+    const ownership = createModalOwnership(), f = fixture(false, [], ownership);
+    f.bind("file.delete", "Alt+M T"); f.press("m", { altKey: true });
+    const release = ownership.register(() => {}, undefined, { scope: scope() });
+    release(); f.press("t");
+    expect(f.executeCommand).not.toHaveBeenCalled();
+  });
+  it("window Escape wins over a formerly focused terminal surface", () => {
+    const ownership = createModalOwnership(); ownership.register(() => {});
+    const f = fixture(true, [], ownership);
+    f.press("Escape"); expect(f.dialogs.requestCloseTop).toHaveBeenCalledOnce();
+  });
+  it("unavailable pane navigation leaves its binding with the dialog", () => {
+    const ownership = createModalOwnership(); ownership.register(() => {}, undefined, { scope: scope() });
+    const f = fixture(false, [], ownership);
+    f.bind("pane.focusRight", "Alt+M T"); f.available.delete("pane.focusRight");
+    expect(f.press("m", { altKey: true }).defaultPrevented).toBe(false);
+    expect(f.press("t").defaultPrevented).toBe(false);
+    expect(f.executeCommand).not.toHaveBeenCalled();
+  });
+});
 
 describe("window keyboard ownership", () => {
   it.each([

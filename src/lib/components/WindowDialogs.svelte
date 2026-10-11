@@ -11,6 +11,7 @@
   import ProgressDialog from "./ProgressDialog.svelte";
   import ToastOverlay from "./ToastOverlay.svelte";
   import { openWithStore } from "$lib/state/open-with.svelte";
+  import PluginDialogMount from "./PluginDialogMount.svelte";
 
   let { pickerInfo = null, recovery = null, onFilesChanged }: {
     pickerInfo?: PickerInfo | null;
@@ -202,7 +203,9 @@
 {#each dialogRegistry.openDialogs as d (d.instanceId)}
   {@const DialogComponent = d.component}
   <svelte:boundary onerror={dialogCrash(d.id, () => dialogRegistry.closeInstance(d.id,d.instanceId))}>
-    <DialogComponent {...d.props} open={true} onClose={() => dialogRegistry.closeInstance(d.id,d.instanceId)} />
+    <PluginDialogMount dialog={d}>
+      <DialogComponent {...d.props} open={true} onClose={() => dialogRegistry.closeInstance(d.id,d.instanceId)} />
+    </PluginDialogMount>
   </svelte:boundary>
 {/each}
 {#if JobsPanel.component}

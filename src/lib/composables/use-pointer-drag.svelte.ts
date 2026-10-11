@@ -19,7 +19,10 @@ import { bookmarksStore } from "$lib/state/bookmarks.svelte";
 import { terminalPanelStore } from "$lib/state/terminal.svelte";
 import { handleFileDropMany } from "$lib/state/drop-operations";
 import { startExternalDrag } from "./use-external-drag.svelte";
-import { resolveDropTargetAtPoint, highlightTargetAtPoint, clearHighlights } from "./use-native-drop-target.svelte";
+import { resolveDropTargetAtPoint, highlightTargetAtPoint, clearHighlights, captureHighlightCleanup } from "./use-native-drop-target.svelte";
+import { dispatchFileDrop } from "$lib/state/dispatch-file-drop";
+import { internalDragPaths } from "$lib/domain/file-drop";
+import { isWindows, isCopyModifier } from "$lib/domain/platform";
 import { getZoomFactor } from "$lib/domain/zoom";
 
 export interface PointerDragDeps {
@@ -160,7 +163,8 @@ export function usePointerDrag(deps: PointerDragDeps) {
     dragActive = false;
     dragPaths = [];
     entryData = null;
-    void startExternalDrag(paths);
+    const gesture = dragState.current;
+    void startExternalDrag(paths).finally(() => dragState.finish(gesture));
   }
 
   async function onMouseUp(event: MouseEvent): Promise<void> {
@@ -169,52 +173,60 @@ export function usePointerDrag(deps: PointerDragDeps) {
       return;
     }
 
-    clearHighlights();
     if (ghostEl) ghostEl.style.display = "none";
     const target = resolveDropTargetAtPoint(event.clientX, event.clientY);
-    const isCopy = event.altKey;
+    const paths = [...dragPaths];
+    const kind = entryData?.kind;
+    const data = dragState.current;
+    // Release gesture listeners and the ghost before awaiting any consumer.
+    cleanup(false);
+    const delivery = dispatchFileDrop(target, internalDragPaths(data, isWindows) ?? [], "pane", data);
+    if (delivery) { await delivery; return; }
+    const lease = dragState.claim(data);
+    if (!lease) return;
+    const clear = captureHighlightCleanup();
+    const isCopy = !!isCopyModifier(event);
     const explorer = deps.getExplorer();
-
-    if (target?.type === "terminal") {
-      // Type the paths into the shell prompt (#265).
-      terminalPanelStore.insertPaths([...dragPaths]);
-    } else if (target?.type === "sidebar") {
-      // Empty Bookmarks space pins folders only. A file dropped onto a
-      // particular bookmark resolves as its folder destination instead.
-      if (entryData?.kind === "directory") {
-        for (const p of dragPaths) {
-          bookmarksStore.addBookmark(p);
+    try {
+      if (target?.type === "terminal") {
+        // Type the paths into the shell prompt (#265).
+        terminalPanelStore.insertPaths(paths);
+      } else if (target?.type === "sidebar") {
+        // Empty Bookmarks space pins folders only. A file dropped onto a
+        // particular bookmark resolves as its folder destination instead.
+        if (kind === "directory") {
+          for (const p of paths) {
+            bookmarksStore.addBookmark(p);
+          }
+        }
+      } else if (target?.type === "bookmark" && kind === "directory") {
+        for (const path of paths) {
+          bookmarksStore.addBookmark(path);
+        }
+      } else if (target?.type === "folder" || target?.type === "bookmark" || target?.type === "tab") {
+        const targetPath = target.path;
+        // Skip no-op drops (already in this folder, or onto self/descendant) so
+        // they don't trigger a spurious "already exists" conflict dialog. A
+        // multi-item drop is one undoable batch (#163).
+        const valid = paths.filter((sourcePath) => !isNoOpDropPath(targetPath, sourcePath));
+        await handleFileDropMany(valid, targetPath, isCopy, { onRefresh: refreshPanes });
+        return;
+      } else if (target?.type === "background") {
+        const destPath = target.path || explorer.currentPath;
+        const sourceDir = paths[0] ? parentDir(paths[0]) : undefined;
+        if (sourceDir !== undefined && !samePath(sourceDir, destPath)) {
+          // Background drops are move-only, and a multi-item drop is one
+          // ordered native session with one undoable history entry (#163, #685).
+          const movable = paths.filter((sourcePath) => !samePath(parentDir(sourcePath), destPath));
+          await handleFileDropMany(movable, destPath, false, { onRefresh: refreshPanes });
+          return;
         }
       }
-    } else if (target?.type === "bookmark" && entryData?.kind === "directory") {
-      for (const path of dragPaths) {
-        bookmarksStore.addBookmark(path);
-      }
-    } else if (target?.type === "folder" || target?.type === "bookmark" || target?.type === "tab") {
-      const paths = [...dragPaths];
-      const targetPath = target.path;
-      cleanup(true);
-      // Skip no-op drops (already in this folder, or onto self/descendant) so
-      // they don't trigger a spurious "already exists" conflict dialog. A
-      // multi-item drop is one undoable batch (#163).
-      const valid = paths.filter((sourcePath) => !isNoOpDropPath(targetPath, sourcePath));
-      await handleFileDropMany(valid, targetPath, isCopy, { onRefresh: refreshPanes });
-      return;
-    } else if (target?.type === "background") {
-      const destPath = target.path || explorer.currentPath;
-      const sourceDir = dragPaths[0] ? parentDir(dragPaths[0]) : undefined;
-      if (sourceDir !== undefined && !samePath(sourceDir, destPath)) {
-        const paths = [...dragPaths];
-        cleanup(true);
-        // Background drops are move-only, and a multi-item drop is one
-        // ordered native session with one undoable history entry (#163, #685).
-        const movable = paths.filter((sourcePath) => !samePath(parentDir(sourcePath), destPath));
-        await handleFileDropMany(movable, destPath, false, { onRefresh: refreshPanes });
-        return;
-      }
-    }
 
-    cleanup(true);
+    } finally {
+      clear();
+      lease.finish();
+    }
   }
 
   function onKeyDown(event: KeyboardEvent): void {

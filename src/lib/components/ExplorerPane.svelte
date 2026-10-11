@@ -19,6 +19,7 @@
 import ScmPanel from "./ScmPanel.svelte";
   import DeleteDialog from "./DeleteDialog.svelte";
   import { dialogStore } from "$lib/state/dialogs.svelte";
+  import { modalOwnership } from "$lib/state/modal-ownership.svelte";
   import { settingsStore } from "$lib/state/settings.svelte";
   import { gitStatusStore } from "$lib/state/git-status.svelte";
   import { gitWarmer } from "$lib/state/git-warm";
@@ -46,6 +47,15 @@ import { nextRemovableRoot } from "$lib/domain/drives";
   // directory its entry is rendered in.
   setPaneIdContext(untrack(() => paneId));
   const mountedPaneId = untrack(() => paneId);
+  const paneDialogCovered = $derived(modalOwnership.hasPaneOpen(mountedPaneId));
+  function dialogSlot(slot: HTMLElement) {
+    return { destroy: windowTabsManager.paneDialogs.registerSlot(mountedPaneId, slot, () => {
+      focusFirstAccepting([
+        paneRef?.querySelector<HTMLElement>('.entry-item[tabindex="0"], [role="gridcell"][tabindex="0"]'),
+        paneRef,
+      ], () => document.activeElement);
+    }) };
+  }
   const reserveInlineWidth = () => windowTabsManager.paneViewport.reserveInlineWidth(mountedPaneId);
 
   // Repo whose commit graph this pane shows instead of the file listing
@@ -76,7 +86,7 @@ import { nextRemovableRoot } from "$lib/domain/drives";
     function onWindowKeydown(e: KeyboardEvent) {
       const tag = (e.target as HTMLElement)?.tagName;
       if (tag === "INPUT" || tag === "TEXTAREA" || (e.target as HTMLElement)?.closest?.('[role="separator"]')) return;
-      if (dialogStore.hasModalOpen) return;
+      if (dialogStore.isPaneBlocked(paneId) || dialogStore.isInputBlocked(e, paneId)) return;
       handleKeydown(e);
     }
     window.addEventListener("keydown", onWindowKeydown);
@@ -272,7 +282,7 @@ import { nextRemovableRoot } from "$lib/domain/drives";
 
   function handleKeydown(event: KeyboardEvent): void {
     // A plugin file view owns keyboard navigation within its own content.
-    if (event.defaultPrevented || dialogStore.hasModalOpen || paneGitGraph || pluginViewActive) return;
+    if (event.defaultPrevented || dialogStore.isPaneBlocked(paneId) || dialogStore.isInputBlocked(event, paneId) || paneGitGraph || pluginViewActive) return;
     const target = event.target as HTMLElement | null;
     if (!target || target.isContentEditable || target.closest('input, textarea, select, [contenteditable="true"]')) return;
     // File navigation belongs to the collection. Ordinary controls, Miller
@@ -326,6 +336,7 @@ import { nextRemovableRoot } from "$lib/domain/drives";
   ondragstartcapture={() => { pointerFocus.end(); handleFocus(); }}
   onclick={handlePaneClick}
 >
+  <div class="pane-base-content" inert={paneDialogCovered}>
   {#if paneGitGraph}
     <div class="pane-content">
       <!-- Same gating as the explorer branch below: the SCM panel stays
@@ -375,6 +386,10 @@ import { nextRemovableRoot } from "$lib/domain/drives";
       <FileList explorer={paneExplorer} bind:scrollToEntry={fileListScrollToEntry} />
     </div>
     <ContextMenu explorer={paneExplorer} />
+  {/if}
+  </div>
+  <div class="pane-dialog-slot" use:dialogSlot></div>
+  {#if paneExplorer}
     <DeleteDialog explorer={paneExplorer} />
   {/if}
 </section>
@@ -409,6 +424,7 @@ import { nextRemovableRoot } from "$lib/domain/drives";
   }
 
   .explorer-pane {
+    position: relative;
     display: flex;
     flex-direction: column;
     flex: 1;
@@ -445,6 +461,29 @@ import { nextRemovableRoot } from "$lib/domain/drives";
     flex: 1;
     min-height: 0;
     overflow: hidden;
+  }
+
+  .pane-base-content {
+    display: flex;
+    flex-direction: column;
+    flex: 1;
+    min-height: 0;
+    min-width: 0;
+    overflow: hidden;
+  }
+
+  .pane-dialog-slot {
+    /* Retain the portal/focus registration without covering listing cells
+       when no dialog is mounted. DOM portals update :empty synchronously. */
+    display: contents;
+  }
+
+  .pane-dialog-slot:not(:empty) {
+    display: block;
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    z-index: var(--z-modal, 1000);
   }
 
   /* Vibrancy: flatten inside the island */

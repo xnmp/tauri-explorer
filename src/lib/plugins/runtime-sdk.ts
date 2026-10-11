@@ -16,7 +16,11 @@ export function exposePluginSDK():void {
   Object.defineProperty(target,"__TAURI_EXPLORER_PLUGIN_SDK__",{value:Object.freeze({
     // sdkVersion stays 1: SDK 1 packages require exactly that value. Newer
     // capabilities are announced through apiVersion and the capability list.
-    sdkVersion:1,apiVersion:3,capabilities:Object.freeze(["fileViews","previewInfo","previewTargets","blobWorkers","fileTiles","fileTile","tileSize","jobRetry","textGeneration","pluginServices","serviceArtifacts","settingsActions","modalNavigation","combinedSelection"]),svelteVersion:SVELTE_ABI,
+    // Capability "paneDialogs": lifetime-bound workspace.capturePane handles,
+    // pane-scoped openDialog/presentation.openDialog and shared ui/modal behavior.
+    // "fileDropTargets": workspace element registration, host hover feedback,
+    // ordered paths from verified Explorer drags and Tauri-native OS drops.
+    sdkVersion:1,apiVersion:3,capabilities:Object.freeze(["fileViews","previewInfo","previewTargets","blobWorkers","fileTiles","fileTile","tileSize","jobRetry","textGeneration","pluginServices","serviceArtifacts","settingsActions","modalNavigation","combinedSelection","paneDialogs","fileDropTargets"]),svelteVersion:SVELTE_ABI,
     modules:Object.freeze({"svelte":svelte,"svelte/internal/client":client,"ui/modal":{default:Modal},"ui/image-editor":{default:ImageEditor},
       // Built-in Tiles view tiles (FileTilesProps in api.ts); capability "fileTiles".
       // Capability "tileSize": FileViewPane.tileSize and file-tiles' `size` prop.

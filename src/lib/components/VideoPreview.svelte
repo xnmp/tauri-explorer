@@ -4,6 +4,7 @@
   import { openFile } from "$lib/api/open";
   import { extractError } from "$lib/api/common";
   import { dialogStore } from "$lib/state/dialogs.svelte";
+  import { windowTabsManager } from "$lib/state/window-tabs.svelte";
   import { keybindingsStore } from "$lib/state/keybindings.svelte";
   import { mediaTime, seekTime, videoClickAction, videoKeyAction } from "$lib/domain/video-preview";
   import type { VideoSource } from "$lib/state/video-preview-lifetime";
@@ -63,7 +64,7 @@
   function setVolume(value: number) { if (video) {video.volume = Math.max(0,Math.min(1,value));if (value > 0) video.muted = false;} }
   function toggleMute() { if (video) video.muted = !video.muted; }
   function onKey(event: KeyboardEvent) {
-    if (dialogStore.hasModalOpen) return;
+    if (dialogStore.isInputBlocked(event, windowTabsManager.activePaneId)) return;
     const target = event.target as HTMLElement;
     const action = videoKeyAction(event,target.tagName === "INPUT" ? "range" : target.closest("button") ? "button" : "surface", keybindingsStore.trackedMetaHeld);
     if (!action) return;

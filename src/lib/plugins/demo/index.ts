@@ -93,7 +93,7 @@ export const demoPlugin: Plugin = {
       id: DEMO_FILE_VIEW,
       title: "Demo Cards",
       component: DemoFileView,
-      props: { onGreet: () => ctx.toast.show("Greetings from the virtual card", "success") },
+      props: { registerFileDropTarget: ctx.workspace.registerFileDropTarget, onGreet: () => ctx.toast.show("Greetings from the virtual card", "success") },
     });
 
     ctx.registerPreviewInfo?.({

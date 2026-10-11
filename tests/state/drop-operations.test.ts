@@ -15,9 +15,10 @@ vi.mock("$lib/state/copy-operations", () => ({ copyFiles }));
 vi.mock("$lib/state/move-operations", () => ({ moveFiles }));
 vi.mock("$lib/state/undo.svelte", () => ({ undoStore: undo }));
 
-import { handleFileDropMany } from "$lib/state/drop-operations";
+import { dragState } from "$lib/state/drag.svelte";
+import { handleFileDropMany, getDropSourcePaths, getDropSourcePath } from "$lib/state/drop-operations";
 
-beforeEach(() => vi.clearAllMocks());
+beforeEach(() => { vi.clearAllMocks(); dragState.clear(); });
 
 const opts = () => ({ onRefresh: vi.fn() });
 
@@ -74,5 +75,29 @@ describe("handleFileDropMany", () => {
     expect(moveFiles).not.toHaveBeenCalled();
     expect(copyFiles).not.toHaveBeenCalled();
     expect(undo.push).not.toHaveBeenCalled();
+  });
+});
+
+
+describe("DOM drop path admission", () => {
+  const transfer = (payload: Record<string, string>) => ({ getData: (type: string) => payload[type] ?? "" }) as DataTransfer;
+
+  it("preserves batch order while retaining the primary-path helper contract", () => {
+    const payload = transfer({ "application/x-explorer-path": "/b.png", "application/x-explorer-paths": '["/a.png","/b.png"]' });
+    expect(getDropSourcePaths(payload)).toEqual(["/a.png", "/b.png"]);
+    expect(getDropSourcePath(payload)).toBe("/b.png");
+  });
+
+  it("rejects malformed arrays without substituting a persisted live selection", () => {
+    dragState.start({ path: "/old.png", name: "old.png", kind: "file", paths: ["/old.png", "/other.png"] });
+    const payload = transfer({ "application/x-explorer-path": "/a.png", "application/x-explorer-paths": '["/a.png", null]' });
+    expect(getDropSourcePaths(payload)).toEqual([]); expect(getDropSourcePath(payload)).toBeNull();
+  });
+
+  it("requires an Explorer MIME marker for the cross-window fallback", () => {
+    dragState.start({ path: "/a.png", name: "a.png", kind: "file", paths: ["/a.png", "/b.png"] });
+    expect(getDropSourcePaths(transfer({}))).toEqual([]);
+    expect(getDropSourcePaths(transfer({ "application/x-explorer-kind": "file" }))).toEqual(["/a.png", "/b.png"]);
+    dragState.clear();
   });
 });

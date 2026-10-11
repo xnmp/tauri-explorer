@@ -11,6 +11,8 @@
 
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import type { UnlistenFn } from "@tauri-apps/api/event";
+import type { NativeFileDragEvent } from "$lib/api/native-file-drag";
+import type { DragData } from "$lib/state/drag.svelte";
 
 export interface ExternalDropState {
   isDragging: boolean;
@@ -18,8 +20,9 @@ export interface ExternalDropState {
 }
 
 export interface ExternalDropCallbacks {
-  onDrop: (paths: string[], position: { x: number; y: number }) => void;
-  onOver?: (position: { x: number; y: number }) => void;
+  onDrop: (paths: string[], position: { x: number; y: number }, source?: DragData | null, copyModifier?: boolean | null) => void | Promise<void>;
+  onEnter?: (paths: string[], position: { x: number; y: number }, source?: DragData | null, copyModifier?: boolean | null) => void;
+  onOver?: (position: { x: number; y: number }, copyModifier?: boolean | null) => void;
   onLeave?: () => void;
 }
 
@@ -36,37 +39,39 @@ export function useExternalDrop(callbacks: ExternalDropCallbacks) {
   let unlisten: UnlistenFn | null = null;
   // Guards against cleanup() racing the async listener registration:
   // if cleanup runs before registration resolves, unlisten on arrival.
-  let disposed = false;
+  let generation = 0;
 
   async function setup(): Promise<void> {
-    disposed = false;
+    const owner = ++generation;
+    unlisten?.();
+    unlisten = null;
     try {
       const webview = getCurrentWebview();
-      const fn = await webview.onDragDropEvent((event) => {
+      const fn = await webview.listen<NativeFileDragEvent>("explorer-native-file-drag", (event) => {
+        if (owner !== generation) return;
         const eventType = event.payload.type;
-        if (eventType === "over") {
+        if (eventType === "over" || eventType === "enter") {
           state.isDragging = true;
           state.dropPosition = event.payload.position;
-          callbacks.onOver?.(event.payload.position);
+          if (eventType === "enter") callbacks.onEnter?.(event.payload.paths, event.payload.position, event.payload.source, event.payload.copyModifier);
+          callbacks.onOver?.(event.payload.position, event.payload.copyModifier);
         } else if (eventType === "drop") {
           state.isDragging = false;
 
           const paths = event.payload.paths;
           const position = event.payload.position;
 
-          if (paths && paths.length > 0) {
-            callbacks.onDrop(paths, position);
-          }
-
           state.dropPosition = null;
-          callbacks.onLeave?.();
+          // Drop routing owns cleanup in finally. A leave callback here would
+          // erase feedback for a gesture started by a synchronous consumer.
+          void callbacks.onDrop(paths, position, event.payload.source, event.payload.copyModifier);
         } else {
           state.isDragging = false;
           state.dropPosition = null;
           callbacks.onLeave?.();
         }
       });
-      if (disposed) {
+      if (owner !== generation) {
         fn();
         return;
       }
@@ -77,7 +82,7 @@ export function useExternalDrop(callbacks: ExternalDropCallbacks) {
   }
 
   function cleanup(): void {
-    disposed = true;
+    generation++;
     if (unlisten) {
       unlisten();
       unlisten = null;

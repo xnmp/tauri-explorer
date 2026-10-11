@@ -1,6 +1,6 @@
 /**
  * Lightweight pointer-drag for sidebar items (Recent, etc.) on macOS.
- * Only supports dragging to the Bookmarks section (sidebar drop target).
+ * Supports Bookmarks and registered plugin file drop targets.
  */
 
 import { onDestroy } from "svelte";
@@ -9,6 +9,9 @@ import { bookmarksStore } from "$lib/state/bookmarks.svelte";
 import { resolveDropTargetAtPoint, highlightTargetAtPoint, clearHighlights } from "./use-native-drop-target.svelte";
 import { createDragGhost } from "./use-pointer-drag.svelte";
 import { settingsStore } from "$lib/state/settings.svelte";
+import { dispatchFileDrop } from "$lib/state/dispatch-file-drop";
+import { internalDragPaths } from "$lib/domain/file-drop";
+import { isWindows } from "$lib/domain/platform";
 
 const THRESHOLD_PX = 5;
 
@@ -67,24 +70,30 @@ export function useSidebarDrag() {
 
     highlightTargetAtPoint(event.clientX, event.clientY);
     const target = resolveDropTargetAtPoint(event.clientX, event.clientY);
-    document.body.style.cursor = target?.type === "sidebar" ? "copy" : "not-allowed";
+    document.body.style.cursor = target?.type === "sidebar" || target?.type === "plugin" ? "copy" : "not-allowed";
   }
 
-  function onMouseUp(event: MouseEvent): void {
+  async function onMouseUp(event: MouseEvent): Promise<void> {
     if (!dragActive) {
       cleanup(false);
       return;
     }
 
-    clearHighlights();
     if (ghostEl) ghostEl.style.display = "none";
     const target = resolveDropTargetAtPoint(event.clientX, event.clientY);
+    const data = dragState.current;
+    const path = dragPath;
+    const name = dragName;
+    cleanup(false);
+    const delivery = dispatchFileDrop(target, internalDragPaths(data, isWindows) ?? [], "pane", data);
+    if (delivery) { await delivery; return; }
+    clearHighlights();
 
     if (target?.type === "sidebar") {
-      bookmarksStore.addBookmark(dragPath, dragName);
+      bookmarksStore.addBookmark(path, name);
     }
 
-    cleanup(true);
+    dragState.finish(data);
   }
 
   function onKeyDown(event: KeyboardEvent): void {

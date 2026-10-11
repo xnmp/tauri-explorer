@@ -397,7 +397,7 @@
     if (validPaths.length === 0) return;
 
     event.preventDefault();
-    dragState.clear();
+    dragState.clear(event.dataTransfer);
 
     // Multi-item background drops are one ordered native session (#163, #685),
     // which inspects the real destination per item rather than a name snapshot.

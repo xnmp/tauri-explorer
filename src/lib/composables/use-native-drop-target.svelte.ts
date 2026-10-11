@@ -2,23 +2,26 @@
  * Position-based drop target detection.
  *
  * Two coordinate spaces:
- * - onDragDropEvent (Tauri): physical pixels → divide by DPR and zoom
- * - PointerEvent.clientX/Y: CSS viewport pixels → divide by zoom only
+ * - onDragDropEvent (Tauri): physical pixels → divide by DPR once
+ * - PointerEvent.clientX/Y: client pixels → use directly for hit testing
  */
 
 import { getZoomFactor } from "$lib/domain/zoom";
 import { windowTabsManager } from "$lib/state/window-tabs.svelte";
+import { fileDropTargets, type RegisteredDropTarget } from "$lib/state/file-drop-targets.svelte";
 
 export type DropTargetResult =
-  | { type: "folder"; path: string }
+  | RegisteredDropTarget
+  | { type: "folder"; path: string; domMoveOnly?: true }
   | { type: "bookmark"; path: string }
   | { type: "tab"; tabId: string; path: string }
-  | { type: "background"; path?: string }
+  | { type: "background"; path?: string; miller?: true; domDisabled?: true }
   | { type: "sidebar" }
   | { type: "terminal" }
   | null;
 
 let highlightedElement: HTMLElement | null = null;
+let highlightRevision = 0;
 
 function notifyBookmarkDropTarget(isBookmarkTarget: boolean): void {
   if (typeof document === "undefined" || typeof document.dispatchEvent !== "function" || typeof CustomEvent === "undefined") return;
@@ -38,8 +41,10 @@ export function adjustForPointerZoom(pos: { x: number; y: number }): { x: number
   return { x: pos.x / zoom, y: pos.y / zoom };
 }
 
-function resolveFromElement(el: Element | null): DropTargetResult {
+export function resolveDropTargetFromElement(el: Element | null): DropTargetResult {
   if (!el) return null;
+  const registered = fileDropTargets.resolve(el);
+  if (registered) return registered;
 
   // Embedded terminal: dropping types the paths into the shell prompt (#265).
   const terminal = (el as HTMLElement).closest?.(".terminal-panel");
@@ -63,7 +68,7 @@ function resolveFromElement(el: Element | null): DropTargetResult {
   const crumb = (el as HTMLElement).closest?.(".crumb[data-path]");
   if (crumb) {
     const path = crumb.getAttribute("data-path");
-    if (path) return { type: "folder", path };
+    if (path) return { type: "folder", path, domMoveOnly: true };
   }
 
   // Preserve bookmark identity: files move into its folder, while folders pin.
@@ -90,16 +95,18 @@ function resolveFromElement(el: Element | null): DropTargetResult {
   const millerCol = (el as HTMLElement).closest?.(".miller-col[data-path]");
   if (millerCol) {
     const path = millerCol.getAttribute("data-path") || undefined;
-    return { type: "background", path };
+    return { type: "background", path, miller: true,
+      ...((el as HTMLElement).closest?.(".col-entry") ? { domDisabled: true as const } : {}) };
   }
 
   // Plugin file views own their surface: no implicit move into the folder.
-  if ((el as HTMLElement).closest?.(".plugin-file-view")) return null;
+  if ((el as HTMLElement).closest?.(".plugin-file-view")) return { type: "blocked" };
 
   const fileList = (el as HTMLElement).closest?.(".content");
   if (fileList) {
     const path = fileList.getAttribute("data-current-path") || undefined;
-    return { type: "background", path };
+    return { type: "background", path,
+      ...((el as HTMLElement).closest?.(".entry-item") ? { domDisabled: true as const } : {}) };
   }
 
   return null;
@@ -109,13 +116,13 @@ function resolveFromElement(el: Element | null): DropTargetResult {
 export function resolveDropTarget(position: { x: number; y: number }): DropTargetResult {
   const adjusted = adjustForHitTest(position);
   const el = document.elementFromPoint(adjusted.x, adjusted.y);
-  return resolveFromElement(el);
+  return resolveDropTargetFromElement(el);
 }
 
 /** Resolve drop target from pointer event coordinates (CSS viewport pixels). */
 export function resolveDropTargetAtPoint(x: number, y: number): DropTargetResult {
   const el = document.elementFromPoint(x, y);
-  return resolveFromElement(el);
+  return resolveDropTargetFromElement(el);
 }
 
 /** Highlight target from onDragDropEvent position (physical pixels). */
@@ -130,11 +137,19 @@ export function highlightTargetAtPoint(x: number, y: number): void {
 }
 
 function highlightAtCoords(cx: number, cy: number): void {
+  highlightRevision++;
   const el = document.elementFromPoint(cx, cy);
   if (!el) {
     clearHighlights();
     clearSidebarHighlight();
     notifyBookmarkDropTarget(false);
+    return;
+  }
+  const registered = fileDropTargets.resolve(el);
+  if (registered) {
+    clearSidebarHighlight();
+    notifyBookmarkDropTarget(false);
+    setHighlightedElement(registered.type === "plugin" ? registered.registration.element : null);
     return;
   }
 
@@ -149,22 +164,22 @@ function highlightAtCoords(cx: number, cy: number): void {
   const targetEl = terminalEl || folderEntry || millerEntry || tabEl || crumbEl || bookmarkEl || millerCol || (!sidebarEl ? (el as HTMLElement).closest?.(".content") as HTMLElement | null : null);
 
   if (sidebarEl) {
-    if (targetEl !== highlightedElement) {
-      if (highlightedElement) highlightedElement.classList.remove("drop-target");
-      highlightedElement = targetEl;
-      if (highlightedElement) highlightedElement.classList.add("drop-target");
-    }
+    setHighlightedElement(targetEl);
     setSidebarHighlight(sidebarEl);
     notifyBookmarkDropTarget(bookmarkEl !== null);
   } else {
     clearSidebarHighlight();
     notifyBookmarkDropTarget(false);
-    if (targetEl !== highlightedElement) {
-      if (highlightedElement) highlightedElement.classList.remove("drop-target");
-      highlightedElement = targetEl;
-      if (highlightedElement) highlightedElement.classList.add("drop-target");
-    }
+    setHighlightedElement(targetEl);
   }
+}
+
+function setHighlightedElement(element: HTMLElement | null): void {
+  if (element !== highlightedElement) {
+    highlightedElement?.classList.remove("drop-target");
+    highlightedElement = element;
+  }
+  if (element && !element.classList.contains("drop-target")) element.classList.add("drop-target");
 }
 
 let highlightedSidebar: HTMLElement | null = null;
@@ -184,10 +199,17 @@ function clearSidebarHighlight(): void {
 }
 
 export function clearHighlights(): void {
+  highlightRevision++;
   if (highlightedElement) {
     highlightedElement.classList.remove("drop-target");
     highlightedElement = null;
   }
   clearSidebarHighlight();
   notifyBookmarkDropTarget(false);
+}
+
+/** An async drop only owns the feedback present when it was claimed. */
+export function captureHighlightCleanup(): () => void {
+  const revision = highlightRevision;
+  return () => { if (revision === highlightRevision) clearHighlights(); };
 }

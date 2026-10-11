@@ -1,14 +1,15 @@
 /**
- * E2E: each right-click gesture shows the context menu once, without motion
+ * E2E: each right-click gesture shows the context menu once, without a blink
  * (#1062).
  *
  * The reported "menu loads twice" was WebKitGTK dropping the menu's
- * backdrop-filter surface for one frame when its entrance animation ended, so
- * the menu blinked see-through ~100 ms after opening. Chromium cannot render
- * that glitch, so this suite pins the contract that prevents it: menu
- * surfaces (`.context-menu`, `.submenu`) and their contents run no animations
- * and are fully opaque from their first visible frame, and each gesture
- * mounts the menu exactly once.
+ * backdrop-filter surface for one frame when a composited (opacity/transform)
+ * entrance animation ended, so the menu blinked see-through ~100 ms after
+ * opening. Chromium cannot render that glitch, so this suite pins the contract
+ * that prevents it: menu surfaces (`.context-menu`, `.submenu`) and their
+ * contents never run composited animations and are fully opaque on every
+ * visible frame; the main menu's entrance starts once, only after its hidden
+ * measuring frame; and each gesture mounts the menu exactly once.
  */
 import { test, expect, type Locator, type Page } from "./fixtures";
 import { ALL_VIEW_MODES, pressShortcut, seedSettings, waitForEntries, type ViewMode } from "./helpers";
@@ -18,14 +19,24 @@ const START_PATH = "/home/user/Pictures";
 /** Layouts: bare, and the reported one (preview pane on, two panes). */
 const LAYOUTS = ["single pane", "preview pane + two panes"] as const;
 
-type Probe = { inserted: number; animations: number; translucentFrames: number };
+type Probe = {
+  inserted: number;
+  animations: number;
+  animationsWhileHidden: number;
+  compositedAnimations: number;
+  translucentFrames: number;
+};
+
+const ZERO = { animationsWhileHidden: 0, compositedAnimations: 0, translucentFrames: 0 };
 
 const MENU_SURFACE = ".context-menu, .submenu";
 
 async function installProbe(page: Page): Promise<void> {
   await page.evaluate((surface) => {
     const w = window as unknown as { __ctxProbe: Probe };
-    w.__ctxProbe = { inserted: 0, animations: 0, translucentFrames: 0 };
+    w.__ctxProbe = { inserted: 0, animations: 0, animationsWhileHidden: 0, compositedAnimations: 0, translucentFrames: 0 };
+    // Properties WebKit animates on the compositor (layer torn down at the end).
+    const COMPOSITED = ["opacity", "transform", "translate", "scale", "rotate", "filter", "backdropFilter"];
     new MutationObserver((records) => {
       for (const record of records) {
         for (const node of record.addedNodes) {
@@ -37,7 +48,15 @@ async function installProbe(page: Page): Promise<void> {
     document.addEventListener(
       "animationstart",
       (e) => {
-        if ((e.target as Element).closest?.(surface)) w.__ctxProbe.animations++;
+        const target = e.target as HTMLElement;
+        if (!target.closest?.(surface)) return;
+        for (const animation of target.getAnimations()) {
+          const keyframes = (animation.effect as KeyframeEffect).getKeyframes();
+          if (keyframes.some((frame) => COMPOSITED.some((prop) => prop in frame))) w.__ctxProbe.compositedAnimations++;
+        }
+        if (!target.classList.contains("context-menu")) return;
+        w.__ctxProbe.animations++;
+        if (getComputedStyle(target).visibility === "hidden") w.__ctxProbe.animationsWhileHidden++;
       },
       true,
     );
@@ -60,6 +79,8 @@ async function resetProbe(page: Page): Promise<void> {
     const w = window as unknown as { __ctxProbe: Probe };
     w.__ctxProbe.inserted = 0;
     w.__ctxProbe.animations = 0;
+    w.__ctxProbe.animationsWhileHidden = 0;
+    w.__ctxProbe.compositedAnimations = 0;
     w.__ctxProbe.translucentFrames = 0;
   });
 }
@@ -112,7 +133,7 @@ for (const layout of LAYOUTS) {
         await waitForEntries(page);
         await resetProbe(page);
         await rows(page).nth(0).click({ button: "right" });
-        expect(await settledCounts(page)).toEqual({ inserted: 1, animations: 0, translucentFrames: 0 });
+        expect(await settledCounts(page)).toEqual({ inserted: 1, animations: 1, ...ZERO });
       });
 
       test("right-click on another entry while a menu is open replaces it with one mount", async ({ page }) => {
@@ -126,7 +147,7 @@ for (const layout of LAYOUTS) {
         await resetProbe(page);
         await page.mouse.click(x, y, { button: "right" });
         await expect(second).toHaveClass(/selected/);
-        expect(await settledCounts(page)).toEqual({ inserted: 1, animations: 0, translucentFrames: 0 });
+        expect(await settledCounts(page)).toEqual({ inserted: 1, animations: 1, ...ZERO });
         // The menu moved to the new target rather than staying on the old one.
         await expect(page.locator(".file-list").first().locator(".entry-item.selected")).toHaveAttribute("data-path", secondPath!);
       });
@@ -138,13 +159,13 @@ for (const layout of LAYOUTS) {
         await resetProbe(page);
         const box = (await page.locator(".file-list").first().boundingBox())!;
         await page.mouse.click(box.x + 6, box.y + box.height - 6, { button: "right" });
-        expect(await settledCounts(page)).toEqual({ inserted: 1, animations: 0, translucentFrames: 0 });
+        expect(await settledCounts(page)).toEqual({ inserted: 1, animations: 1, ...ZERO });
       });
     });
   }
 }
 
-test("submenus open without an entrance animation", async ({ page }) => {
+test("submenus reveal without composited animation", async ({ page }) => {
   await page.goto(`/?path=${encodeURIComponent(START_PATH)}`);
   await waitForEntries(page);
   await installProbe(page);
@@ -156,8 +177,8 @@ test("submenus open without an entrance animation", async ({ page }) => {
   await trigger.hover();
   await expect(trigger.locator(".submenu")).toBeVisible();
   await page.waitForTimeout(300);
-  expect(await page.evaluate(() => (window as unknown as { __ctxProbe: Probe }).__ctxProbe)).toMatchObject({
-    animations: 0,
-    translucentFrames: 0,
-  });
+  const probe = await page.evaluate(() => (window as unknown as { __ctxProbe: Probe }).__ctxProbe);
+  expect(probe).toMatchObject({ compositedAnimations: 0, translucentFrames: 0 });
+  // The submenu does animate in (motion is kept, just not composited).
+  expect(await trigger.locator(".submenu").evaluate((el) => getComputedStyle(el).animationName)).toContain("menuReveal");
 });

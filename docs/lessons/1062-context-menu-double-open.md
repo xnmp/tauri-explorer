@@ -20,16 +20,26 @@ blinked; animating only the menu's children kept the backdrop but flashed the
 children instead. Any composited animation ending on or inside a
 backdrop-filter element drops a frame.
 
-**Fix:** `.context-menu` and `.submenu` keep their acrylic blur and appear
-without an entrance animation — matching native blurred menus (macOS, GTK),
-which also appear instantly.
+**Fix:** `.context-menu` and `.submenu` keep their acrylic blur and enter
+with a `clip-path` downward reveal plus a 6 px `margin-top` slide. WebKit
+repaints those on the main thread instead of compositing them, so no layer is
+torn down when the reveal ends, and the real-app recordings show the wipe with
+no see-through frame. (Removing the animation entirely also fixed it, but the
+motion was wanted.) The main menu's reveal stays gated on `.revealed` because
+the menu is mounted hidden for one measuring frame. `prefers-reduced-motion`
+disables it.
 
-**Test:** `e2e/context-menu-single-open.spec.ts` asserts one insertion per
-gesture, no animation on any menu surface or its contents, and full opacity
-from the first visible frame (it fails with `menuIn` restored). Chromium cannot
-render the glitch itself; verify visual changes to blurred surfaces with a
-frame-diffed recording of the real app.
+**Test:** `e2e/context-menu-single-open.spec.ts` asserts, per gesture:
+- one insertion;
+- one entrance animation, none while hidden;
+- no opacity/transform/filter animation on any menu surface or its contents;
+- full opacity on every visible frame.
 
-**General rule:** don't animate elements that carry `backdrop-filter` (or
-their descendants) in a way whose end WebKitGTK can composite late; either
-drop the motion or drop the blur on that surface.
+It fails with the old `menuIn` (`compositedAnimations: 1, translucentFrames: 2`).
+Chromium cannot render the glitch itself; verify visual changes to blurred
+surfaces with a frame-diffed recording of the real app.
+
+**General rule:** on an element carrying `backdrop-filter`, or inside one,
+animate only non-composited properties (clip-path, margin/inset, size).
+Opacity, transform and filter animations make WebKitGTK drop the backdrop for
+a frame when they end.

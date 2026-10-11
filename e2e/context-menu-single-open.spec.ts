@@ -12,7 +12,7 @@
  * measuring frame; and each gesture mounts the menu exactly once.
  */
 import { test, expect, type Locator, type Page } from "./fixtures";
-import { ALL_VIEW_MODES, pressShortcut, seedSettings, waitForEntries, type ViewMode } from "./helpers";
+import { ALL_VIEW_MODES, seedSettings, waitForEntries, type ViewMode } from "./helpers";
 
 const START_PATH = "/home/user/Pictures";
 
@@ -119,7 +119,7 @@ for (const layout of LAYOUTS) {
         await page.goto(`/?path=${encodeURIComponent(START_PATH)}&viewMode=${viewMode}`);
         await waitForEntries(page);
         if (layout !== LAYOUTS[0]) {
-          if (!(await page.locator(".preview-pane").isVisible())) await pressShortcut(page, " ", {});
+          // Seeded on; toggling here races the pane's first render.
           await expect(page.locator(".preview-pane")).toBeVisible();
           await page.keyboard.press("Control+\\");
           await expect(page.locator(".explorer-pane")).toHaveCount(2);

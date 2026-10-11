@@ -17,6 +17,51 @@ pub(super) fn read_report_image(reader: &dyn ClipboardReader) -> Option<(Vec<u8>
     })
 }
 
+/// Build the screenshot attachment without touching the filesystem.
+pub(super) fn read_report_image_attachment(
+    reader: &dyn ClipboardReader,
+) -> Result<crate::user_report::ReportAttachment, crate::user_report::SubmitReportError> {
+    let (bytes, media_type) = read_report_image(reader).ok_or_else(|| {
+        crate::user_report::SubmitReportError::new(
+            "clipboard_unavailable",
+            "No image data in clipboard",
+        )
+    })?;
+    let extension = if media_type == "image/jpeg" {
+        "jpg"
+    } else {
+        "png"
+    };
+    crate::user_report::attachment_from_image_bytes(
+        format!("Clipboard screenshot.{extension}"),
+        media_type,
+        bytes,
+    )
+}
+
+/// Shared admission seam for the report command and native regression tests.
+pub(super) fn read_report_attachment(
+    paths: &[String],
+    reader: &dyn ClipboardReader,
+) -> Result<crate::user_report::ReportAttachment, crate::user_report::SubmitReportError> {
+    if paths.is_empty() {
+        read_report_image_attachment(reader)
+    } else {
+        crate::user_report::attachment_from_clipboard_files(paths)
+    }
+}
+
+pub(super) fn has_report_attachment(
+    paths: &[String],
+    reader: &dyn ClipboardReader,
+) -> Result<bool, AppError> {
+    if !paths.is_empty() {
+        Ok(true)
+    } else {
+        reader.has_image_result()
+    }
+}
+
 /// Save the clipboard's PNG image into `directory` under a timestamped name
 /// that never overwrites an existing file. Returns the created path.
 pub(super) fn paste_image(

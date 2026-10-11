@@ -70,42 +70,30 @@ pub async fn clipboard_has_image() -> Result<bool, AppError> {
 #[tauri::command]
 pub async fn clipboard_read_report_image(
 ) -> Result<crate::user_report::ReportAttachment, crate::user_report::SubmitReportError> {
-    let (bytes, media_type) =
-        tokio::task::spawn_blocking(|| content::read_report_image(platform::reader().as_ref()))
-            .await
-            .map_err(|error| {
-                crate::user_report::SubmitReportError::new(
-                    "clipboard_unavailable",
-                    format!("Clipboard task failed: {error}"),
-                )
-            })?
-            .ok_or_else(|| {
-                crate::user_report::SubmitReportError::new(
-                    "clipboard_unavailable",
-                    "No image data in clipboard",
-                )
-            })?;
-    let extension = if media_type == "image/jpeg" {
-        "jpg"
-    } else {
-        "png"
-    };
-    crate::user_report::attachment_from_image_bytes(
-        format!("Clipboard screenshot.{extension}"),
-        media_type,
-        bytes,
-    )
+    tokio::task::spawn_blocking(|| {
+        content::read_report_image_attachment(platform::reader().as_ref())
+    })
+    .await
+    .map_err(|error| {
+        crate::user_report::SubmitReportError::new(
+            "clipboard_unavailable",
+            format!("Clipboard task failed: {error}"),
+        )
+    })?
 }
 
 /// Report attachments include clipboard screenshots and copied video files.
 #[tauri::command]
 pub async fn clipboard_has_report_attachment() -> Result<bool, AppError> {
-    if let Ok(snapshot) = clipboard_snapshot().await {
-        if !snapshot.paths.is_empty() {
-            return Ok(true);
-        }
-    }
-    clipboard_has_image().await
+    let paths = clipboard_snapshot()
+        .await
+        .map(|snapshot| snapshot.paths)
+        .unwrap_or_default();
+    tokio::task::spawn_blocking(move || {
+        content::has_report_attachment(&paths, platform::reader().as_ref())
+    })
+    .await
+    .map_err(|error| AppError::Other(format!("Clipboard task failed: {error}")))?
 }
 
 #[tauri::command]
@@ -114,7 +102,6 @@ pub async fn clipboard_read_report_attachment(
     let paths = match clipboard_snapshot().await {
         Ok(snapshot) => snapshot.paths,
         Err(error) => {
-            // Screenshot reading must remain available if file-list tooling fails.
             return clipboard_read_report_image().await.map_err(|_| {
                 crate::user_report::SubmitReportError::new(
                     "clipboard_unavailable",
@@ -123,17 +110,16 @@ pub async fn clipboard_read_report_attachment(
             });
         }
     };
-    if paths.is_empty() {
-        return clipboard_read_report_image().await;
-    }
-    tokio::task::spawn_blocking(move || crate::user_report::attachment_from_clipboard_files(&paths))
-        .await
-        .map_err(|error| {
-            crate::user_report::SubmitReportError::new(
-                "clipboard_unavailable",
-                format!("Clipboard task failed: {error}"),
-            )
-        })?
+    tokio::task::spawn_blocking(move || {
+        content::read_report_attachment(&paths, platform::reader().as_ref())
+    })
+    .await
+    .map_err(|error| {
+        crate::user_report::SubmitReportError::new(
+            "clipboard_unavailable",
+            format!("Clipboard task failed: {error}"),
+        )
+    })?
 }
 
 /// Paste clipboard image data to a file in the given directory.

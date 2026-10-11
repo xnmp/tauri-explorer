@@ -25,12 +25,12 @@ test("image generation shows elapsed time and an explicitly estimated progress",
 });
 
 test("native image estimates use the matching cohort and stay overdue until a result arrives", async ({ page }) => {
-  await page.clock.install();
+  await page.clock.install({ time: new Date("2024-06-01T12:00:00Z") });
   await page.goto(HOME_URL);
   await waitForEntries(page);
   // Keep the exact remaining-time assertion independent of browser/CI work
   // between creating the cohort and advancing the simulated clock.
-  await page.clock.pauseAt(new Date(Date.now() + 1000));
+  await page.clock.pauseAt(await page.evaluate(() => Date.now() + 1000));
   await page.evaluate(async () => {
     const { jobsStore } = await import("/src/lib/state/jobs.svelte.ts");
     const now = Date.now();

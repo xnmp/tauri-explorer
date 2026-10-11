@@ -20,6 +20,7 @@ tauri-build = { version = "2", features = [] }
 
 [dev-dependencies]
 criterion = "0.8"
+proptest = "1.11"
 tauri = { version = "2", features = ["test"] }
 
 [[bench]]

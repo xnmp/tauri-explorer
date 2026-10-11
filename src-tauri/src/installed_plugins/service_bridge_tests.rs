@@ -32,10 +32,61 @@ fn target() -> ServiceTarget {
         major: 1,
     }
 }
-fn fixture() -> (tempfile::TempDir, Store) {
-    let root = tempfile::tempdir().unwrap();
+// These business fixtures share the host's process-wide package admission
+// identities. Keep unrelated private profiles out of each other's fences;
+// threads inside one fixture still exercise the real interleavings.
+static FIXTURE_PROFILES: Mutex<()> = Mutex::new(());
+struct FixtureRoot {
+    directory: tempfile::TempDir,
+    _profile: std::sync::MutexGuard<'static, ()>,
+}
+impl FixtureRoot {
+    fn path(&self) -> &Path {
+        self.directory.path()
+    }
+}
+fn fixture_root() -> FixtureRoot {
+    let profile = FIXTURE_PROFILES
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    FixtureRoot {
+        directory: tempfile::tempdir().unwrap(),
+        _profile: profile,
+    }
+}
+fn fixture() -> (FixtureRoot, Store) {
+    let root = fixture_root();
     let store = Store::open(root.path().join("service"), Limits::default()).unwrap();
     (root, store)
+}
+
+#[test]
+fn lifecycle_change_releases_cancelled_service_capacity_without_releasing_live_ownership() {
+    use super::backend::{begin_change, CallLease, IdleCallFence};
+    let id = "fixture.cancelled-service-capacity";
+    let old = (0..16)
+        .map(|_| CallLease::acquire_lane(id, false).unwrap())
+        .collect::<Vec<_>>();
+    assert!(CallLease::acquire_lane(id, false).is_err());
+    drop(begin_change(id).unwrap());
+    // Cancelling eligibility must not assert that existing workers/callbacks
+    // finished: the old owners still prevent an automatic idle proof.
+    assert!(IdleCallFence::acquire(&[id]).is_err());
+    let fresh = (0..16)
+        .map(|_| {
+            CallLease::acquire_lane(id, false)
+                .expect("cancelled service admissions still consume replacement capacity")
+        })
+        .collect::<Vec<_>>();
+    assert!(CallLease::acquire_lane(id, false).is_err());
+    drop(old);
+    assert!(
+        CallLease::acquire_lane(id, false).is_err(),
+        "a stale lease drop released a current admission"
+    );
+    assert!(IdleCallFence::acquire(&[id]).is_err());
+    drop(fresh);
+    let _idle = IdleCallFence::acquire(&[id]).unwrap();
 }
 fn request(op: &str) -> Value {
     json!({"operationId":op,"connectionId":"fixture-profile","expectedConnectionRevision":"fixture-revision","model":null,"prompt":"test","inputs":[],"options":{"size":"1024x1024","resolution":null,"aspectRatio":null,"quality":"low","background":"auto"},"preparationToken":"fake-local-token","effectiveRecipeDigest":"c".repeat(64)})
@@ -81,13 +132,14 @@ fn start(store: &Store, op: &str) {
     call(store, "start", request(op), |_, _| Ok(running(op))).unwrap();
 }
 fn sealed(store: &Store, op: &str) -> ArtifactDescriptor {
-    let stage = store.stage(&provider(), "consumer", op).unwrap();
+    try_sealed(store, op).unwrap()
+}
+fn try_sealed(store: &Store, op: &str) -> Result<ArtifactDescriptor, AppError> {
+    let stage = store.stage(&provider(), "consumer", op)?;
     image::RgbaImage::from_pixel(2, 3, image::Rgba([12, 34, 56, 255]))
         .save_with_format(&stage.path, image::ImageFormat::Png)
-        .unwrap();
-    store
-        .seal(&provider(), "consumer", op, &stage.handle, "image/png")
-        .unwrap()
+        .map_err(|error| AppError::Other(error.to_string()))?;
+    store.seal(&provider(), "consumer", op, &stage.handle, "image/png")
 }
 fn ready(store: &Store, op: &str) -> ArtifactDescriptor {
     start(store, op);
@@ -1850,7 +1902,10 @@ impl super::ai_operations::AutomaticPort for IdleAutomatic {
         _: &Admission,
         _: Option<&crate::service_state::job::JobRecord>,
     ) -> Result<(), AppError> {
-        panic!("An Unknown operation must never reach recovery")
+        // Validated original bytes can arrive while provider knowledge is
+        // still Unknown. This port defers their unpaid handoff; paid replay is
+        // rejected by the production start path exercised by these tests.
+        Ok(())
     }
 }
 #[test]
@@ -2017,7 +2072,7 @@ fn review_failed_late_success_publication_remains_in_automatic_recovery() {
 fn review_settled_output_recovery_obeys_quota_and_retries_after_capacity_release() {
     use crate::service_state::job::{JobRecord, JobState};
     for original_stage in [false, true] {
-        let root = tempfile::tempdir().unwrap();
+        let root = fixture_root();
         let s = Store::open(
             root.path().join("service"),
             Limits {
@@ -2077,12 +2132,15 @@ fn review_settled_output_recovery_obeys_quota_and_retries_after_capacity_release
                 Ok(a.operation_id == "occupies-capacity")
             }
             fn recover(&self, a: &Admission, job: Option<&JobRecord>) -> Result<(), AppError> {
-                let d = self
+                let output = self
                     .0
                     .get(&a.consumer.package_id, &a.operation_id)?
                     .unwrap()
-                    .output
-                    .unwrap_or_else(|| sealed(self.0, &a.operation_id));
+                    .output;
+                let d = match output {
+                    Some(output) => output,
+                    None => try_sealed(self.0, &a.operation_id)?,
+                };
                 let mut receipt = status(
                     &a.operation_id,
                     "succeeded",
@@ -2594,7 +2652,12 @@ fn automatic_missing_original_stage_retains_success_and_retries_recovery() {
             .is_empty());
     }
     assert_eq!(port.0.get(), 2, "later passes must retry original recovery");
-    assert!(!s.execution_released("consumer", op).unwrap());
+    assert!(s.execution_released("consumer", op).unwrap());
+    assert!(s.claims().unwrap().is_empty());
+    assert_eq!(
+        s.provider_receipt("consumer", op).unwrap().unwrap()["execution"]["state"],
+        "succeeded"
+    );
     assert_eq!(s.get("consumer", op).unwrap().unwrap().disposition, None);
     assert_eq!(s.auto_settlement_operations().unwrap().len(), 1);
 }
@@ -2657,8 +2720,13 @@ fn automatic_settlement_reclaims_empty_output_capacity_and_retains_unknown_evide
             super::ai_operations::auto_reconcile_in(&s, &IdleAutomatic).unwrap();
             assert_eq!(s.provider_receipt("consumer", &op).unwrap(), Some(unknown));
             assert!(s.get("consumer", &op).unwrap().is_some());
+            assert!(s.execution_released("consumer", &op).unwrap());
+            assert!(s.claims().unwrap().is_empty());
             if let Some(stage) = stage {
-                assert!(std::path::Path::new(&stage.path).exists());
+                assert!(
+                    !std::path::Path::new(&stage.path).exists(),
+                    "inactive empty stage bytes should be collected"
+                );
             }
             assert!(
                 matches!(call(&s, "start", request(&op), |_, _| panic!("Unknown replayed")),
@@ -3030,7 +3098,7 @@ fn automatic_recovery_obtains_retained_output_and_completes_without_discard_or_s
 }
 #[test]
 fn automatic_settlement_backlog_is_not_hidden_behind_already_settled_rows() {
-    let root = tempfile::tempdir().unwrap();
+    let root = fixture_root();
     // Unknown forensic reservations are intentionally retained by Dismiss;
     // raise only this fixture's byte budget to exercise >128-row backlog.
     let s = Store::open(
@@ -3313,7 +3381,7 @@ fn automatic_review_consumer_evidence_recovers_interrupted_acknowledgement() {
 
 // Native admission is process-wide; each lifecycle fixture needs private
 // package IDs so unrelated parallel tests cannot own its control leases.
-fn dead_unknown_fixture(op: &str) -> (tempfile::TempDir, Store, Admission) {
+fn dead_unknown_fixture(op: &str) -> (FixtureRoot, Store, Admission) {
     let (root, store) = fixture();
     let consumer = generation(&format!("fixture.{op}.consumer"), 'a');
     let provider = generation(&format!("fixture.{op}.provider"), 'b');
@@ -3539,9 +3607,10 @@ fn automatic_review_restart_restores_legacy_stopped_success_with_original_stage(
     drop(s);
     let reopened = Store::open(root.path().join("service"), Limits::default()).unwrap();
     assert!(
-        !reopened.execution_released("consumer", op).unwrap(),
-        "new success must override legacy stopped ownership"
+        reopened.execution_released("consumer", op).unwrap(),
+        "original recovery must preserve the no-replay fence"
     );
+    assert!(reopened.claims().unwrap().is_empty());
     assert!(reopened
         .recover_original_output(&provider(), "consumer", op)
         .unwrap()
@@ -3584,7 +3653,7 @@ fn automatic_review_unknown_diagnostics_can_finalize_only_the_original_turn() {
 
 #[test]
 fn review_settled_unknown_collects_nonempty_inputs_and_restores_capacity() {
-    let root = tempfile::tempdir().unwrap();
+    let root = fixture_root();
     let input = root.path().join("input.png");
     image::RgbaImage::from_pixel(2, 3, image::Rgba([12, 34, 56, 255]))
         .save(&input)

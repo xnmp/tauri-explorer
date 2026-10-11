@@ -905,6 +905,7 @@ TraceExplorer's image UI, provider adapters and SQLite journal are maintained in
 - `src-tauri/src/process_supervisor.rs` — Unix parent-death process group anchor and bounded owned CLI output.
 - `src-tauri/src/recovery_actor.rs` — fixed-worker generation recovery ownership, queue limits and original deadlines.
 - `src-tauri/src/service_state/artifacts.rs` — captured inputs, reserved output stages, sealing, acquisition proof and retained artifact custody.
+- `src-tauri/src/service_state/host_spools.rs` — durable complete CLI stdout/stderr custody, generation-scoped original reply recovery, live writer pins and quota-visible collection.
 - `src-tauri/src/service_state/intents.rs` — immutable semantic admission identities and replay-conflict validation.
 - `src-tauri/src/service_state/job.rs` — durable host job presentation and snapshot wire records.
 - `src-tauri/src/service_state/job_store.rs` — transactional job revisions, acquired-output completion, participant-removal terminalization, quota-full delivery presentation, recovery and pruning.
@@ -916,6 +917,7 @@ TraceExplorer's image UI, provider adapters and SQLite journal are maintained in
 - `src-tauri/src/service_state/rules.rs` — pure service ownership, phase, identity and quota rules.
 - `src-tauri/src/service_state/store.rs` — SQLite service ownership transactions, all-phase participant inventory, durable generation retirement, retention and execution claims.
 - `src-tauri/src/service_state/tests.rs` — private native ledger, custody, restart, corruption and commit-failure fixtures.
+- `src-tauri/src/service_state/test_fs.rs` — per-ledger unlink/fsync faults and retained directory-entry power-loss oracle for state-machine and durability tests.
 - `src/lib/api/mock-ai-presentation.ts` — mock command parity for native jobs and automatic AI settlement.
 - `src/lib/api/native-plugin-jobs.ts` — native job snapshots, events and immutable-key controls.
 - `src/lib/domain/ai-operations.ts` — native AI operation fixture metadata validation and action capabilities.
@@ -927,6 +929,7 @@ TraceExplorer's image UI, provider adapters and SQLite journal are maintained in
 - `src-tauri/src/installed_plugins/backend_native_tests.rs` — isolated actual Wry/production-broker fixture for held private validation, reverse quarantine, independent controls, rollback, retirement and publisher-aware shutdown.
 - `src-tauri/src/installed_plugins/backend_native_recovery_tests.rs` — actual Wry fixture seeding startup claims: readiness held until recovery, shutdown waits for in-flight recovery IO, no paid start.
 - `src-tauri/src/installed_plugins/mutation_matrix_tests.rs` — provider/consumer × lifecycle action × every phase/job state invariants, crash recovery, late workers and incompatible required dependencies.
+- `src-tauri/src/installed_plugins/ai_operations_model_tests.rs` — shrinking Proptest reference machine over real admission, artifact, job, recovery and package lifecycle transitions; independent paid-output and quota oracle.
 - `src-tauri/src/installed_plugins/mutation_native_tests.rs` — actual Wry fixture: explicit removal cancels active work and releases custody without an AI veto.
 - `src-tauri/src/installed_plugins/service_native_tests.rs` — actual Wry fixture: per-consumer status timeouts, transport-loss recovery, reverse RPC correlation and routing without Trace.
 - `src-tauri/src/installed_plugins/service_native_kill_tests.rs` — actual Wry fixture: consumer SIGKILLed while the provider runs; both cancel/success gate orders settle once, without failure, replayed start or a retained artifact lease.

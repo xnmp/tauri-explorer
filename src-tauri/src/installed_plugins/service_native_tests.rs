@@ -855,6 +855,329 @@ fn review_archive(root: &Path, p: &package::Installed) -> PathBuf {
 
 #[test]
 #[ignore = "requires a private native display/profile; execute via dedicated subprocess"]
+fn native_review_compatible_provider_upgrade_recovers_host_spool_after_quiesce_refusal() {
+    review_host_spool_upgrade(true, false, false);
+}
+
+#[test]
+#[ignore = "requires a private native display/profile; execute via dedicated subprocess"]
+fn native_review_compatible_consumer_upgrade_recovers_host_spool() {
+    review_host_spool_upgrade(false, false, false);
+}
+
+#[test]
+#[ignore = "requires a private native display/profile; execute via dedicated subprocess"]
+fn native_review_compatible_provider_upgrade_recovers_bound_host_success_after_lost_reply() {
+    review_host_spool_upgrade(true, true, false);
+}
+
+#[test]
+#[ignore = "requires a private native display/profile; execute via dedicated subprocess"]
+fn native_review_compatible_consumer_upgrade_recovers_bound_host_success_after_lost_reply() {
+    review_host_spool_upgrade(false, true, false);
+}
+
+#[test]
+#[ignore = "requires a private native display/profile; execute via dedicated subprocess"]
+fn native_review_unbound_host_success_delivers_after_exhausted_status_outage_without_restart() {
+    review_host_spool_upgrade(false, true, true);
+}
+
+fn review_host_spool_upgrade(
+    upgrade_provider: bool,
+    initially_unknown: bool,
+    unbound_outage: bool,
+) {
+    use crate::service_state::{job::*, model::*, Store};
+    require_private_fixture();
+    let app = tauri::Builder::<tauri::Wry>::default()
+        .any_thread()
+        .build(tauri::test::mock_context(tauri::test::noop_assets()))
+        .unwrap();
+    backend::initialize(app.handle().clone());
+    let config = config::config_dir().unwrap();
+    let store = super::super::service_host::initialize(&config).unwrap();
+    backend::finish_initialize();
+    let root = root().unwrap();
+    let id = "fixture.host-spool-consumer";
+    let services =
+        json!([{"id":"image-generation","major":1,"methods":["status","cancel","acknowledge"]}]);
+    let deps =
+        json!([{"packageId":PROVIDER,"serviceId":"image-generation","major":1,"optional":true}]);
+    let provider_source = REVIEW_RECOVERY_BACKEND.replace("%ROLE%", "provider").replace(
+        "  elif m=='services.image-generation.v1.status': r=json.loads((root/'retained.json').read_text())",
+        r#"  elif m=='services.image-generation.v1.status':
+   if (root/'fail-status').exists(): raise RuntimeError('original status publisher unavailable')
+   r=json.loads((root/'retained.json').read_text())
+   if r['delivery']['state'] in ('unavailable','none'):
+    op=p['request']['operationId'];consumer=p['caller']['packageId']
+    stage=rpc('host.artifacts.stage',{'consumerPackageId':consumer,'operationId':op})
+    completed=rpc('host.process.recover',{'requestId':'host:fixture-completed','consumerPackageId':consumer,'operationId':op})
+    assert completed['status']==0
+    original=pathlib.Path(completed['stdout'])
+    pathlib.Path(stage['path']).write_bytes(original.read_bytes())
+    artifact=rpc('host.artifacts.seal',{'consumerPackageId':consumer,'operationId':op,'handle':stage['handle'],'mediaType':'image/png'})
+    r['revision']+=1;r['execution']=json.loads((root/'original-success-execution').read_text());r['delivery']={'state':'available','output':artifact}
+    (root/'retained.json').write_text(json.dumps(r))
+    send({'jsonrpc':'2.0','method':'host.process.release','params':{'handle':completed['handle']}})"#,
+    ).replace(
+        "  elif m=='lifecycle.quiesce': r={'ready':False,'idle':True,'checkpoint':True}",
+        "  elif m=='lifecycle.quiesce':\n   r=rpc('host.artifacts.stage',{'consumerPackageId':'fixture.host-spool-consumer','operationId':'host-spool-paid'})",
+    );
+    let provider_source = if unbound_outage {
+        provider_source.replace(
+            "{'requestId':'host:fixture-completed','consumerPackageId':consumer,'operationId':op}",
+            "{'requestId':'host:fixture-completed','owner':json.loads((root/'original-host-owner').read_text())}",
+        )
+    } else {
+        provider_source
+    };
+    let provider = package_from(
+        &root,
+        PROVIDER,
+        &provider_source,
+        services.clone(),
+        json!([]),
+    );
+    let consumer = package_from(
+        &root,
+        id,
+        &REVIEW_RECOVERY_BACKEND.replace("%ROLE%", "fixed"),
+        json!([]),
+        deps.clone(),
+    );
+    package::write_index(&root, &[provider.clone(), consumer.clone()]).unwrap();
+    let p = backend::ensure(PROVIDER).unwrap().generation();
+    let c = backend::ensure(id).unwrap().generation();
+    let op = "host-spool-paid";
+    let admission = store
+        .reserve(Admission {
+            consumer: c.clone(),
+            provider: p.clone(),
+            target: ServiceTarget {
+                package_id: PROVIDER.into(),
+                service_id: "image-generation".into(),
+                major: 1,
+            },
+            operation_id: op.into(),
+            fingerprint: "d".repeat(64),
+            phase: AdmissionPhase::Reserved,
+            inputs: vec![],
+            output: None,
+            needs_attention: false,
+            disposition: None,
+            transfer_receipt: None,
+        })
+        .unwrap();
+    store.claim_forwarding(&c, op).unwrap();
+    store.accepted(&p, id, op).unwrap();
+    let job = store
+        .register_job(JobRecord {
+            job_key: "d".repeat(48),
+            owner: c.clone(),
+            operation_id: op.into(),
+            job_id: (1 << 51) | 63,
+            kind: "openai-image".into(),
+            label: "AI image".into(),
+            origin_window: "main.fixture".into(),
+            revision: 0,
+            source_revision: 0,
+            created_at_ms: 1,
+            updated_at_ms: 1,
+            settled_at_ms: None,
+            estimate_key: None,
+            state: JobState::Accepting,
+            phase: None,
+            output_path: None,
+            run_id: None,
+            error: None,
+        })
+        .unwrap();
+    let mut original = std::io::Cursor::new(Vec::new());
+    image::RgbaImage::from_pixel(2, 3, image::Rgba([12, 34, 56, 255]))
+        .write_to(&mut original, image::ImageFormat::Png)
+        .unwrap();
+    let original = original.into_inner();
+    let spool = backend::fixture_completed_bound_process_spool(
+        PROVIDER,
+        &original,
+        (!unbound_outage).then_some((id, op)),
+    )
+    .unwrap();
+    fs::write(
+        data(PROVIDER).join("original-host-spool"),
+        spool.to_string_lossy().as_bytes(),
+    )
+    .unwrap();
+    fs::write(
+        data(PROVIDER).join("original-host-owner"),
+        serde_json::to_vec(&p).unwrap(),
+    )
+    .unwrap();
+    fs::write(
+        data(id).join("binding.json"),
+        serde_json::to_vec(&json!({"jobId":job.job_id,"operationId":op})).unwrap(),
+    )
+    .unwrap();
+    let success = json!({"version":1,"operationId":op,"requestFingerprint":admission.fingerprint,"provider":{"packageId":PROVIDER,"serviceId":"image-generation","major":1},"revision":1,"execution":{"state":"succeeded","metadata":{"adapter":"openai-images","endpointIdentity":"fixture","requestedModel":null,"actualModel":null,"externalRequestId":null,"threadId":null,"options":{"size":"1024x1024","resolution":null,"aspectRatio":null,"quality":"low","background":"auto"},"remoteChargeUncertain":false}},"delivery":{"state":"unavailable","reason":"storage_unavailable"}});
+    fs::write(
+        data(PROVIDER).join("original-success-execution"),
+        serde_json::to_vec(&success["execution"]).unwrap(),
+    )
+    .unwrap();
+    let success = if initially_unknown {
+        let mut unknown = success.clone();
+        unknown["execution"] = json!({"state":"unknown","error":{"code":"interrupted","message":"Original CLI reply was lost","correlationId":null}});
+        unknown["delivery"] = json!({"state":"none"});
+        unknown
+    } else {
+        success
+    };
+    fs::write(
+        data(PROVIDER).join("retained.json"),
+        serde_json::to_vec(&success).unwrap(),
+    )
+    .unwrap();
+    super::reconcile_at(store, &p, &admission, &success).unwrap();
+    if initially_unknown && !unbound_outage {
+        assert!(
+            store.auto_settle_operation(id, op, true).is_err(),
+            "provider Unknown cannot settle a known completed original host execution"
+        );
+    }
+    if unbound_outage {
+        assert!(store.has_unbound_host_output(&p).unwrap());
+        assert!(!store.has_bound_host_output(id, op).unwrap());
+        fs::write(data(PROVIDER).join("fail-status"), []).unwrap();
+        for _ in 0..6 {
+            super::super::ai_operations::auto_reconcile_in(
+                store,
+                &super::super::ai_operations::LiveAutomatic,
+            )
+            .unwrap();
+        }
+        assert!(store.execution_released(id, op).unwrap());
+        assert!(store.claims().unwrap().is_empty());
+        assert!(store.job(&job.job_key).unwrap().unwrap().state.terminal());
+        assert_eq!(
+            store.auto_settlement_operations().unwrap().len(),
+            1,
+            "an unbound original reply disappeared behind the stopped-job dismissal"
+        );
+        assert_eq!(fs::read(&spool).unwrap(), original);
+        assert!(
+            fs::read_to_string(data(PROVIDER).join("methods"))
+                .unwrap()
+                .lines()
+                .filter(|method| *method == "services.image-generation.v1.status")
+                .count()
+                >= 6,
+            "unbound original replies require status probes after the uncertainty budget"
+        );
+        fs::remove_file(data(PROVIDER).join("fail-status")).unwrap();
+        super::super::ai_operations::auto_reconcile_in(
+            store,
+            &super::super::ai_operations::LiveAutomatic,
+        )
+        .unwrap();
+        wait_until(
+            "healthy provider delivers journalled unbound reply",
+            Duration::from_secs(20),
+            || store.job(&job.job_key).unwrap().unwrap().state == JobState::Completed,
+        );
+        let completed = store.job(&job.job_key).unwrap().unwrap();
+        assert_eq!(fs::read(completed.output_path.unwrap()).unwrap(), original);
+        assert_eq!(
+            store.get(id, op).unwrap().unwrap().disposition.as_deref(),
+            Some("acquired")
+        );
+        for package in [id, PROVIDER] {
+            assert!(
+                !fs::read_to_string(data(package).join("methods"))
+                    .unwrap()
+                    .lines()
+                    .any(|method| method.ends_with(".start")),
+                "outage recovery repeated paid work"
+            );
+        }
+        backend::shutdown();
+        return;
+    }
+    let replacement = if upgrade_provider {
+        package_from(
+            &root,
+            PROVIDER,
+            &format!("{provider_source}\n# compatible replacement"),
+            services,
+            json!([]),
+        )
+    } else {
+        package_from(
+            &root,
+            id,
+            &REVIEW_RECOVERY_BACKEND.replace("%ROLE%", "fixed-after-upgrade"),
+            json!([]),
+            deps,
+        )
+    };
+    let profile = super::super::lifecycle::Profile { root: &root, store };
+    super::super::lifecycle::upgrade(
+        &profile,
+        &review_archive(&root, &replacement),
+        &backend::preflight_candidate,
+    )
+    .unwrap();
+    assert!(
+        spool.exists(),
+        "compatible retirement deleted the sole complete original output"
+    );
+    assert_eq!(fs::read(&spool).unwrap(), original);
+    if upgrade_provider {
+        // SDK reverse request counters can reset in the replacement. Its
+        // unrelated completed output must not replace original custody.
+        backend::fixture_completed_process_spool(PROVIDER, b"unrelated replacement output")
+            .unwrap();
+    }
+    let reopened = Store::open(config.join("service-state"), Limits::default()).unwrap();
+    assert_eq!(reopened.get(id, op).unwrap().unwrap().provider, p);
+    assert_eq!(
+        reopened
+            .host_spool_result_for_owner(PROVIDER, "host:fixture-completed", Some(&p))
+            .unwrap()
+            .unwrap()["stdout"],
+        spool.to_string_lossy().as_ref()
+    );
+    super::super::ai_operations::auto_reconcile_in(
+        store,
+        &super::super::ai_operations::LiveAutomatic,
+    )
+    .unwrap();
+    wait_until(
+        "replacement delivery of complete host-spooled output",
+        Duration::from_secs(20),
+        || store.job(&job.job_key).unwrap().unwrap().state == JobState::Completed,
+    );
+    let completed = store.job(&job.job_key).unwrap().unwrap();
+    assert_eq!(fs::read(completed.output_path.unwrap()).unwrap(), original);
+    assert_eq!(
+        store.get(id, op).unwrap().unwrap().disposition.as_deref(),
+        Some("acquired")
+    );
+    for package in [id, PROVIDER] {
+        assert!(
+            !fs::read_to_string(data(package).join("methods"))
+                .unwrap()
+                .lines()
+                .any(|m| m.ends_with(".start")),
+            "replacement replayed paid execution"
+        );
+    }
+    backend::shutdown();
+    drop(app);
+}
+
+#[test]
+#[ignore = "requires a private native display/profile; execute via dedicated subprocess"]
 fn native_review_compatible_upgrade_delivers_original_success_through_real_reverse_rpc() {
     review_consumer_upgrade("broken", false);
 }
@@ -1203,11 +1526,16 @@ fn review_consumer_upgrade(old_role: &str, incompatible_upgrade: bool) {
             digest: "f".repeat(64),
             incarnation: 1,
         };
+        let mut capacity_workers = Vec::new();
         for i in 0..20 {
             let c = PackageGeneration {
                 package_id: format!("fixture.capacity-{i}"),
                 ..consumer.clone()
             };
+            // These reservations represent live admitted recovery work. A
+            // succeeded/missing row with no worker is now correctly reclaimed
+            // by the same sweep and cannot be used to manufacture a full disk.
+            capacity_workers.push(backend::CallLease::acquire(&c.package_id).unwrap());
             let occupied = store
                 .reserve(Admission {
                     consumer: c.clone(),
@@ -1281,6 +1609,7 @@ fn review_consumer_upgrade(old_role: &str, incompatible_upgrade: bool) {
                 >= 7
         );
         assert!(!methods.contains(".start"));
+        drop(capacity_workers);
         backend::shutdown();
         return;
     }
@@ -1609,6 +1938,17 @@ fn native_review_uncertain_settlement_bounds_real_status_failures_and_timeouts()
                 )
                 .unwrap();
             });
+            if case == "timeout" {
+                let methods = fs::read_to_string(data(PROVIDER).join("methods")).unwrap();
+                assert_eq!(
+                    methods[before.len()..]
+                        .lines()
+                        .filter(|m| *m == "services.image-generation.v1.status")
+                        .count(),
+                    n + 1,
+                    "timeout did not reach the provider on pass {n}"
+                );
+            }
             if n < 2 {
                 assert!(
                     !store.execution_released(&consumer.package_id, &op).unwrap(),
@@ -1639,6 +1979,16 @@ fn native_review_uncertain_settlement_bounds_real_status_failures_and_timeouts()
             3,
             "unbounded provider attempts: {case}"
         );
+        if case == "timeout" {
+            assert_eq!(
+                calls
+                    .iter()
+                    .filter(|m| **m == "control.operationIdle")
+                    .count(),
+                4,
+                "fresh timeout settlement skipped its own inactivity proof"
+            );
+        }
         assert!(!calls
             .iter()
             .any(|m| m.ends_with(".start") || m.ends_with(".cancel")));
@@ -1648,4 +1998,75 @@ fn native_review_uncertain_settlement_bounds_real_status_failures_and_timeouts()
             .is_some());
     }
     backend::shutdown();
+}
+
+#[test]
+#[ignore = "requires a private native display/profile; execute via dedicated subprocess"]
+fn native_service_admission_before_disable_cannot_start_after_reenable() {
+    require_private_fixture();
+    let app = tauri::Builder::<tauri::Wry>::default()
+        .any_thread()
+        .build(tauri::test::mock_context(tauri::test::noop_assets()))
+        .unwrap();
+    super::super::initialize(app.handle().clone()).unwrap();
+    let root = root().unwrap();
+    fs::create_dir_all(&root).unwrap();
+    let provider = package(
+        &root,
+        PROVIDER,
+        json!([{"id":"image-generation","major":1,"methods":["describe","prepare","start","status","cancel","acknowledge"]}]),
+        json!([]),
+    );
+    let consumer = package(
+        &root,
+        FIRST,
+        json!([]),
+        json!([{"packageId":PROVIDER,"serviceId":"image-generation","major":1,"optional":true}]),
+    );
+    package::write_index(&root, &[provider.clone(), consumer]).unwrap();
+    let consumer = backend::ensure(FIRST).unwrap();
+    let request = super::Invocation {
+        package_id: PROVIDER.into(),
+        service_id: "image-generation".into(),
+        major: 1,
+        method: "start".into(),
+        params: start_request("late-service-admission"),
+    };
+    // This is the production invoke boundary after routing and lease
+    // acquisition, before ensure. The provider has no Broker yet.
+    let lease = {
+        let _gate = super::super::read_lifecycle().unwrap();
+        backend::CallLease::acquire_lane(PROVIDER, false).unwrap()
+    };
+    let store = super::super::service_host::store().unwrap();
+    let profile = super::super::lifecycle::Profile { root: &root, store };
+    super::super::lifecycle::set_enabled(&profile, PROVIDER, false).unwrap();
+    assert!(
+        package::list(&root)
+            .unwrap()
+            .iter()
+            .find(|entry| entry.manifest.id == FIRST)
+            .unwrap()
+            .enabled
+    );
+    assert!(consumer.can_recover());
+    super::super::lifecycle::set_enabled(&profile, PROVIDER, true).unwrap();
+    let result = super::invoke_admitted(&consumer, request, &provider, &lease);
+    let paid_starts = provider_calls("start");
+    backend::shutdown();
+    assert!(
+        result.is_err(),
+        "cancelled service admission reached replacement provider: result={result:?}, paid_starts={paid_starts:?}"
+    );
+    assert!(
+        paid_starts.is_empty(),
+        "cancelled admission dispatched paid start"
+    );
+    assert!(
+        store
+            .get(FIRST, "late-service-admission")
+            .unwrap()
+            .is_none(),
+        "cancelled admission created new durable work"
+    );
 }

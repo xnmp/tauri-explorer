@@ -69,6 +69,7 @@ function sameIdentity(a: NativeJobRecord, b: NativeJobRecord): boolean {
     && a.originWindow === b.originWindow && a.createdAtMs === b.createdAtMs;
 }
 export function mergeNativeJobEvent(old: NativeJobView, event: NativeJobEvent): NativeJobView {
+  if (!validNativeEvent(event)) return old;
   const jobKey = event.type === "updated" ? event.job.jobKey : event.jobKey;
   const revision = event.type === "updated" ? event.job.revision : event.revision;
   if (revision <= old.baseline || revision <= (old.tombstones.get(jobKey) ?? 0) || revision <= (old.jobs.get(jobKey)?.revision ?? 0)) return old;
@@ -80,10 +81,12 @@ export function mergeNativeJobEvent(old: NativeJobView, event: NativeJobEvent): 
   } else {
     const previous = jobs.get(jobKey);
     // The native ledger may correct a host-settled Unknown after its original
-    // output is acknowledged. Keep every other terminal outcome immutable.
+    // output is acknowledged. The consumer may have crashed before publishing
+    // its run ID, so a completed host receipt needs only its acquired path.
+    // Keep every other terminal outcome immutable.
     const recoveredSettlement = (previous?.state === "discarded" && previous.phase === "stopped"
       || previous?.state === "error" && (previous.phase === "delivery_failed" || previous.phase === "storage_full"))
-      && event.job.state === "completed" && !!event.job.outputPath && safe(event.job.runId, true);
+      && event.job.state === "completed" && !!event.job.outputPath;
     const consumerRemoval = previous?.state !== "completed" && event.job.state === "error"
       && event.job.phase === "consumer_removed" && !!event.job.error;
     if (previous && (!sameIdentity(previous, event.job) || nativeJobTerminal(previous.state) && previous.state !== event.job.state && !recoveredSettlement && !consumerRemoval)) return old;

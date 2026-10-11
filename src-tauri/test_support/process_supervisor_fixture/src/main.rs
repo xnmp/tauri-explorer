@@ -15,6 +15,13 @@ mod error {
         NotStarted(AppError),
         Started(AppError),
     }
+    impl ProcessRunError {
+        pub fn into_error(self) -> AppError {
+            match self {
+                Self::NotStarted(error) | Self::Started(error) => error,
+            }
+        }
+    }
     impl std::fmt::Display for AppError {
         fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
             match self {
@@ -24,6 +31,8 @@ mod error {
         }
     }
 }
+#[path = "../../../src/process_ext.rs"]
+mod process_ext;
 #[path = "../../../src/process_supervisor.rs"]
 mod process_supervisor;
 use std::{
@@ -31,6 +40,13 @@ use std::{
     process::{Command, Stdio},
     time::{Duration, Instant},
 };
+// A complete decoded 2x3 RGBA PNG, including its IEND and all CRCs.
+const ORIGINAL_PNG: &[u8] = &[
+    137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13, 73, 72, 68, 82, 0, 0, 0, 2, 0, 0, 0, 3, 8, 6, 0,
+    0, 0, 185, 234, 222, 129, 0, 0, 0, 17, 73, 68, 65, 84, 120, 156, 99, 16, 50, 9, 251, 15, 194,
+    12, 24, 12, 0, 121, 107, 9, 163, 84, 185, 59, 165, 0, 0, 0, 0, 73, 69, 78, 68, 174, 66, 96,
+    130,
+];
 fn main() {
     if let Some(code) = process_supervisor::early_mode() {
         std::process::exit(code)
@@ -96,22 +112,84 @@ fn main() {
         )
     });
     let backend_dead = || {
-        backend.as_ref().is_some_and(|backend| {
-            !matches!(backend.lock().unwrap().try_wait(), Ok(None))
-        })
+        backend
+            .as_ref()
+            .is_some_and(|backend| !matches!(backend.lock().unwrap().try_wait(), Ok(None)))
     };
     let begin = Instant::now();
-    let result = process_supervisor::run(
-        &mut command,
-        || {
-            (matches!(args[0].as_str(), "cancel" | "stdin-unread-cancel")
-                && begin.elapsed() > Duration::from_millis(150))
-                || backend_dead()
-        },
-        (65536, 65536),
-        "fixture cancelled",
-        input,
-    );
+    #[cfg(target_os = "linux")]
+    let polls = std::cell::Cell::new(0);
+    let cancellation = || {
+        #[cfg(target_os = "linux")]
+        if args[0].starts_with("cancel-after-") {
+            polls.set(polls.get() + 1);
+            if polls.get() <= 2 {
+                return false;
+            }
+            // Both pre-spawn checks passed. Pause the first supervision
+            // poll until the original leaf has exited, without reaping it.
+            let deadline = Instant::now() + Duration::from_secs(3);
+            loop {
+                if let Ok(pid) = std::fs::read_to_string(&args[1])
+                    .and_then(|pid| pid.trim().parse::<i32>().map_err(std::io::Error::other))
+                {
+                    if std::fs::read_to_string(format!("/proc/{pid}/stat")).is_ok_and(|stat| {
+                        stat.rsplit_once(')')
+                            .unwrap()
+                            .1
+                            .trim_start()
+                            .starts_with('Z')
+                    }) {
+                        let mut info = std::mem::MaybeUninit::<libc::siginfo_t>::zeroed();
+                        assert_eq!(
+                            unsafe {
+                                libc::waitid(
+                                    libc::P_PID,
+                                    pid as libc::id_t,
+                                    info.as_mut_ptr(),
+                                    libc::WEXITED | libc::WNOHANG | libc::WNOWAIT,
+                                )
+                            },
+                            0
+                        );
+                        let info = unsafe { info.assume_init() };
+                        assert_eq!(info.si_code, libc::CLD_EXITED);
+                        assert_eq!(
+                            unsafe { info.si_status() },
+                            if args[0] == "cancel-after-success" {
+                                0
+                            } else {
+                                23
+                            }
+                        );
+                        return true;
+                    }
+                }
+                assert!(Instant::now() < deadline, "fixture leaf did not exit");
+                std::thread::sleep(Duration::from_millis(1));
+            }
+        }
+        (matches!(args[0].as_str(), "cancel" | "stdin-unread-cancel")
+            && begin.elapsed() > Duration::from_millis(150))
+            || backend_dead()
+    };
+    let result = if args[0].starts_with("fallback-") {
+        process_ext::output_with_input(
+            &mut command,
+            cancellation,
+            (65536, 65536),
+            "fixture cancelled",
+            input,
+        )
+    } else {
+        process_supervisor::run(
+            &mut command,
+            cancellation,
+            (65536, 65536),
+            "fixture cancelled",
+            input,
+        )
+    };
     if args[0] == "reuse" {
         let first = result.unwrap();
         let second = process_supervisor::run(
@@ -129,10 +207,24 @@ fn main() {
         return;
     }
     match result {
+        Ok(output) if args[0].ends_with("detached-output-exit") => {
+            println!("status={}", output.status.code().unwrap_or(-1));
+            println!("original-png-match={}", output.stdout == ORIGINAL_PNG);
+            if args[0].contains("partial-") {
+                println!(
+                    "partial-capture-match={}",
+                    output.stdout == ORIGINAL_PNG[..ORIGINAL_PNG.len() / 2]
+                );
+            }
+            println!("stderr={}", String::from_utf8_lossy(&output.stderr));
+        }
         Ok(output) if args[0] == "stdin-digest" => {
             println!("status={}", output.status.code().unwrap_or(-1));
             let echoed = String::from_utf8_lossy(&output.stdout);
-            println!("digest-match={}", Some(echoed.trim()) == expected.as_deref());
+            println!(
+                "digest-match={}",
+                Some(echoed.trim()) == expected.as_deref()
+            );
         }
         Ok(output) => {
             println!("status={}", output.status.code().unwrap_or(-1));
@@ -159,6 +251,58 @@ fn digest(bytes: &[u8]) -> String {
 }
 fn leaf(args: &[String]) {
     match args[0].as_str() {
+        "detached-output-exit"
+        | "fallback-detached-output-exit"
+        | "stderr-held-detached-output-exit"
+        | "fallback-stderr-held-detached-output-exit"
+        | "stdout-held-detached-output-exit"
+        | "fallback-stdout-held-detached-output-exit"
+        | "partial-detached-output-exit"
+        | "fallback-partial-detached-output-exit" => unsafe {
+            let (mut parent, mut peer) = std::os::unix::net::UnixStream::pair().unwrap();
+            let child = libc::fork();
+            assert!(child >= 0);
+            if child == 0 {
+                drop(parent);
+                assert!(libc::setsid() > 0);
+                if args[0].contains("stderr-held") {
+                    libc::close(libc::STDOUT_FILENO);
+                }
+                if args[0].contains("stdout-held") {
+                    libc::close(libc::STDERR_FILENO);
+                }
+                peer.write_all(&[1]).unwrap();
+                drop(peer);
+                // The detached helper never writes output; it only retains
+                // inherited pipes after the original paid reply is complete.
+                loop {
+                    libc::pause();
+                }
+            }
+            drop(peer);
+            parent.read_exact(&mut [0]).unwrap();
+            drop(parent);
+            std::fs::write(&args[1], format!("{} {child} {child}", libc::getpid())).unwrap();
+            let bytes = if args[0].contains("partial-") {
+                &ORIGINAL_PNG[..ORIGINAL_PNG.len() / 2]
+            } else {
+                ORIGINAL_PNG
+            };
+            std::io::stdout().write_all(bytes).unwrap();
+            std::io::stdout().flush().unwrap();
+            std::io::stderr().write_all(b"completed-stderr").unwrap();
+            std::io::stderr().flush().unwrap();
+        },
+        "cancel-after-success" | "cancel-after-nonzero" => {
+            std::fs::write(&args[1], std::process::id().to_string()).unwrap();
+            print!("completed-paid-output");
+            eprint!("completed-stderr");
+            std::process::exit(if args[0] == "cancel-after-success" {
+                0
+            } else {
+                23
+            });
+        }
         "stdin-digest" => {
             let mut bytes = Vec::new();
             std::io::stdin().read_to_end(&mut bytes).unwrap();

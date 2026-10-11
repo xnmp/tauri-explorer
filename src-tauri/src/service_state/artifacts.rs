@@ -14,6 +14,23 @@ const INPUT: u64 = 20 * 1024 * 1024;
 const TOTAL: u64 = 64 * 1024 * 1024;
 const OUTPUT: u64 = 50 * 1024 * 1024;
 const OUTPUT_RESERVATION: u64 = 2 * OUTPUT;
+type RecoveryCounts = std::sync::Mutex<std::collections::HashMap<(String, String), usize>>;
+pub(super) type OutputRecoveries = std::sync::Arc<RecoveryCounts>;
+pub(super) fn output_recovery_for_root(root: &Path) -> OutputRecoveries {
+    use std::{
+        collections::HashMap,
+        sync::{Arc, Mutex, OnceLock, Weak},
+    };
+    static ROOTS: OnceLock<Mutex<HashMap<PathBuf, Weak<RecoveryCounts>>>> = OnceLock::new();
+    let mut roots = ROOTS.get_or_init(Default::default).lock().unwrap();
+    roots.retain(|_, x| x.strong_count() > 0);
+    if let Some(counts) = roots.get(root).and_then(Weak::upgrade) {
+        return counts;
+    }
+    let counts = Arc::new(RecoveryCounts::default());
+    roots.insert(root.into(), Arc::downgrade(&counts));
+    counts
+}
 struct OriginalOutput {
     path: PathBuf,
     bytes: Vec<u8>,
@@ -63,6 +80,13 @@ impl Drop for OutputRecoveryGuard<'_> {
     }
 }
 impl Store {
+    pub(super) fn original_writer_active(&self, consumer: &str, op: &str) -> Result<bool> {
+        Ok(self
+            .output_recovery
+            .lock()
+            .map_err(|_| reject("output recovery ownership is unavailable"))?
+            .contains_key(&(consumer.into(), op.into())))
+    }
     /// Settlement releases unused capacity, not the artifact's identity.
     /// Acquire the same stage + seal budget as initial admission before any
     /// writable path or new publication can consume it again.
@@ -394,16 +418,49 @@ impl Store {
         consumer: &str,
         op: &str,
     ) -> Result<bool> {
+        if self.has_bound_host_output_at(conn, consumer, op)? { return Ok(true); }
         let artifact: Option<(String, String)> = conn.query_row(
             "SELECT a.handle,a.status FROM artifacts a JOIN operations o ON o.consumer=a.consumer AND o.operation=a.operation WHERE a.consumer=?1 AND a.operation=?2 AND a.kind='output' AND a.status!='released' AND o.phase!='released'",
             params![consumer, op], |r| Ok((r.get(0)?, r.get(1)?))).optional().map_err(sql)?;
         let Some((handle, status)) = artifact else {
             return Ok(false);
         };
-        if status == "sealed" {
-            return Ok(true);
+        let descriptor: Option<ArtifactDescriptor> = if status == "sealed" {
+            let raw: String = conn
+                .query_row(
+                    "SELECT descriptor FROM artifacts WHERE handle=?1",
+                    [&handle],
+                    |r| r.get(0),
+                )
+                .map_err(sql)?;
+            Some(decode(&raw)?)
+        } else {
+            None
+        };
+        for path in [
+            self.bytes_path(&handle)?,
+            self.pending_path(&handle)?,
+            self.stage_path(&handle)?,
+        ] {
+            let bytes = match original_output_bytes(&path) {
+                Ok(bytes) => bytes,
+                Err(crate::error::AppError::Service { code, .. })
+                    if matches!(code.as_str(), "not_found" | "corrupt") =>
+                {
+                    continue
+                }
+                Err(cause) => return Err(cause),
+            };
+            if image(&bytes, true).is_ok()
+                && descriptor.as_ref().is_none_or(|d| {
+                    d.byte_length == bytes.len() as u64
+                        && d.sha256 == hex::encode(Sha256::digest(&bytes))
+                })
+            {
+                return Ok(true);
+            }
         }
-        Ok(self.artifact_disk_bytes(&handle)? > 0)
+        Ok(false)
     }
     pub fn has_retained_output(&self, consumer: &str, op: &str) -> Result<bool> {
         self.retained_output_at(&self.connect()?, consumer, op)
@@ -450,6 +507,10 @@ impl Store {
             return Ok(None);
         };
         let lease = self.lease(&handle)?;
+        // Missing paths are only evidence of absence after directory removals
+        // are durable. This also closes crash/reopen before a GC retry.
+        self.sync_artifact_directory(&self.root.join("bytes"))?;
+        self.sync_artifact_directory(&self.root.join("stages"))?;
         let bytes = self.artifact_disk_bytes(&handle)?;
         Ok(Some((handle, bytes, lease)))
     }
@@ -470,6 +531,7 @@ impl Store {
                 "original output recovery requires proven success with unavailable delivery",
             ));
         }
+        let _recovery = self.output_recovery_guard(&a)?;
         let handle: String = self
             .connect()?
             .query_row(
@@ -492,6 +554,21 @@ impl Store {
             Err(crate::error::AppError::Service { code, .. })
                 if matches!(code.as_str(), "not_found" | "corrupt") =>
             {
+                // Both workers are idle at this recovery boundary. Retain the
+                // success and original identity, but release execution/input
+                // capacity and reserve only remaining physical copies.
+                let reservation = self.idle_output_reservation(consumer, op)?;
+                self.transaction(|tx| {
+                    let current = Self::record(tx, consumer, op)?.ok_or_else(|| reject("admission disappeared"))?;
+                    if current.phase != AdmissionPhase::Released && Self::provider_receipt_at(tx, &current)?.is_some_and(|r| r["execution"]["state"] == "succeeded" && r["delivery"]["state"] == "unavailable") {
+                        tx.execute("UPDATE operations SET exec_released=1 WHERE consumer=?1 AND operation=?2", params![consumer,op]).map_err(sql)?;
+                        tx.execute("UPDATE artifacts SET status='released' WHERE consumer=?1 AND operation=?2 AND kind='input'", params![consumer,op]).map_err(sql)?;
+                        if let Some((handle, bytes, _)) = &reservation { tx.execute("UPDATE artifacts SET bytes=?2 WHERE handle=?1", params![handle,*bytes as i64]).map_err(sql)?; }
+                    }
+                    Ok(())
+                })?;
+                drop(reservation);
+                self.gc()?;
                 Ok(None)
             }
             Err(cause) => Err(cause),
@@ -665,6 +742,12 @@ impl Store {
             {
                 return Ok(false);
             }
+            self.reserve_output_capacity(
+                &admission.provider,
+                &admission.consumer.package_id,
+                &admission.operation_id,
+                &d.handle,
+            )?;
             self.publish_original_copy(&d.handle, path, &bytes)?;
             self.verify_bytes(d)?;
             Ok(true)
@@ -953,7 +1036,7 @@ impl Store {
                 .map_err(|_| reject("output stage creation failed"))?;
             file.sync_all()
                 .map_err(|_| reject("output stage sync failed"))?;
-            sync_directory(path.parent().unwrap())?;
+            self.sync_artifact_directory(path.parent().unwrap())?;
         }
         self.transaction(|tx| {
             let current = Self::record(tx, consumer, op)?
@@ -1017,7 +1100,6 @@ impl Store {
             if let Err(cause) = self.verify_bytes(&d) {
                 if matches!(&cause, crate::error::AppError::Service { code, .. } if matches!(code.as_str(), "not_found" | "corrupt"))
                 {
-                    self.reserve_output_capacity(provider, consumer, op, handle)?;
                     self.restore_original_seal(&a, &d, cause)?;
                 } else {
                     return Err(cause);
@@ -1035,8 +1117,8 @@ impl Store {
                 "staged output recovery requires durable proven success with unavailable delivery",
             ));
         }
-        self.reserve_output_capacity(provider, consumer, op, handle)?;
         let original = self.original_output(handle)?;
+        self.reserve_output_capacity(provider, consumer, op, handle)?;
         if original.media_type != media {
             return Err(reject("output format does not match media type"));
         }
@@ -1061,8 +1143,8 @@ impl Store {
     }
     fn finalize_stage(&self, handle: &str, d: &ArtifactDescriptor) -> Result<()> {
         let path = self.stage_path(handle)?;
-        match fs::remove_file(&path) {
-            Ok(()) => sync_directory(path.parent().unwrap())?,
+        match self.unlink_artifact_file(&path) {
+            Ok(()) => {}
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
             Err(_) => {
                 return Err(reject(
@@ -1070,6 +1152,7 @@ impl Store {
                 ))
             }
         }
+        self.sync_artifact_directory(path.parent().unwrap())?;
         self.transaction(|tx| {
             tx.execute(
                 "UPDATE artifacts SET bytes=?2 WHERE handle=?1 AND status='sealed'",
@@ -1082,7 +1165,7 @@ impl Store {
     pub fn gc(&self) -> Result<()> {
         let conn = self.connect()?;
         let mut query = conn
-            .prepare("SELECT a.handle FROM artifacts a JOIN operations o ON o.consumer=a.consumer AND o.operation=a.operation WHERE a.status='released' OR o.phase='released'")
+            .prepare("SELECT a.handle FROM artifacts a JOIN operations o ON o.consumer=a.consumer AND o.operation=a.operation WHERE a.status='released' OR o.phase='released' OR (a.kind='output' AND o.exec_released=1)")
             .map_err(sql)?;
         let handles = query
             .query_map([], |r| r.get::<_, String>(0))
@@ -1281,7 +1364,17 @@ impl Store {
     }
     fn collect_artifact(&self, handle: &str) -> Result<()> {
         let collectable = |conn: &rusqlite::Connection| -> Result<bool> {
-            conn.query_row("SELECT EXISTS(SELECT 1 FROM artifacts a JOIN operations o ON o.consumer=a.consumer AND o.operation=a.operation WHERE a.handle=?1 AND (a.status='released' OR o.phase='released'))", [handle], |r| r.get(0)).map_err(sql)
+            let row: Option<(String,String,bool,bool)> = conn.query_row("SELECT a.consumer,a.operation,(a.status='released' OR o.phase='released'),(a.kind='output' AND o.exec_released=1) FROM artifacts a JOIN operations o ON o.consumer=a.consumer AND o.operation=a.operation WHERE a.handle=?1", [handle], |r| Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?))).optional().map_err(sql)?;
+            match row {
+                Some((_, _, true, _)) => Ok(true),
+                Some((consumer, op, false, true)) => {
+                    if self.original_writer_active(&consumer, &op)? {
+                        return Ok(false);
+                    }
+                    Ok(!self.retained_output_at(conn, &consumer, &op)?)
+                }
+                _ => Ok(false),
+            }
         };
         if !collectable(&self.connect()?)? {
             return Ok(());
@@ -1301,35 +1394,53 @@ impl Store {
             self.pending_path(&handle)?,
             self.stage_path(&handle)?,
         ] {
-            match fs::remove_file(&path) {
-                Ok(()) => {
-                    if sync_directory(path.parent().unwrap()).is_err() {
-                        collected = false;
-                    }
-                }
+            let removed = self.unlink_artifact_file(&path);
+            match removed {
+                Ok(()) => {}
                 Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
                 Err(error) => {
                     log::warn!("released artifact cleanup deferred for a later sweep: {error}");
                     collected = false;
                 }
             }
+            // NotFound after a failed/unfinished earlier unlink still requires
+            // the durability barrier before retiring its inventory and charge.
+            if self
+                .sync_artifact_directory(path.parent().unwrap())
+                .is_err()
+            {
+                collected = false;
+            }
         }
         self.transaction(|tx| {
             if collected {
-                tx.execute("DELETE FROM artifacts WHERE handle=?1", [handle])
+                tx.execute("DELETE FROM artifacts WHERE handle=?1 AND (status='released' OR EXISTS(SELECT 1 FROM operations o WHERE o.consumer=artifacts.consumer AND o.operation=artifacts.operation AND o.phase='released'))", [handle])
                     .map_err(sql)?;
-            } else if let Ok(bytes) = self.artifact_disk_bytes(handle) {
-                // Retired reservations become exact pending-collection
-                // charges only under the IO lease. Failed deletion never
-                // hides surviving disk bytes from the quota ledger.
-                tx.execute(
-                    "UPDATE artifacts SET bytes=?2 WHERE handle=?1",
-                    params![handle, bytes as i64],
-                )
-                .map_err(sql)?;
+                // Settled identity remains eligible for late original success.
+                tx.execute("UPDATE artifacts SET bytes=0 WHERE handle=?1", [handle]).map_err(sql)?;
             }
+            // Failed barriers retain the previous charge: an unflushed unlink
+            // can return on power loss even when stat currently says missing.
             Ok(())
         })
+    }
+
+    fn unlink_artifact_file(&self, path: &Path) -> std::io::Result<()> {
+        #[cfg(test)]
+        {
+            self.test_fs.unlink(path)
+        }
+        #[cfg(not(test))]
+        {
+            fs::remove_file(path)
+        }
+    }
+    fn sync_artifact_directory(&self, path: &Path) -> Result<()> {
+        #[cfg(test)]
+        let result = self.test_fs.sync(path);
+        #[cfg(not(test))]
+        let result = crate::durable_dir::sync(path);
+        result.map_err(|_| reject("artifact directory sync failed"))
     }
 }
 impl Store {

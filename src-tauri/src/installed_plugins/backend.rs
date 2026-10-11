@@ -65,7 +65,9 @@ static CANDIDATES: OnceLock<Mutex<HashMap<u64, Arc<Broker>>>> = OnceLock::new();
 static STARTING: OnceLock<Mutex<HashMap<String, Arc<Mutex<()>>>>> = OnceLock::new();
 #[derive(Default)]
 struct Admissions {
-    calls: HashMap<(String, usize), usize>,
+    // Retain every live owner's revision for idle proofs and shutdown. Only
+    // the current revision consumes admission capacity after cancellation.
+    calls: HashMap<(String, usize, u64), usize>,
     fenced: HashSet<String>,
     recovery_fences: HashSet<String>,
     idle_fences: HashSet<String>,
@@ -91,7 +93,7 @@ impl IdleCallFence {
             || packages.iter().any(|package| {
                 admissions.fenced.contains(package)
                     || admissions.idle_fences.contains(package)
-                    || admissions.calls.iter().any(|((p, lane), count)| {
+                    || admissions.calls.iter().any(|((p, lane, _), count)| {
                         p == package && matches!(lane, 0 | 3) && *count != 0
                     })
             })
@@ -129,7 +131,7 @@ pub(super) fn control_method(method: &str) -> bool {
         || method.ends_with(".acknowledge")
 }
 impl CallLease {
-    fn require_current(&self, package: &str) -> Result<(), AppError> {
+    pub(super) fn require_current(&self, package: &str) -> Result<(), AppError> {
         if self.0 .0 != package {
             return Err(error("Plugin call admission belongs to another package"));
         }
@@ -165,21 +167,24 @@ impl CallLease {
         {
             return Err(error("Plugin package is draining for a lifecycle change"));
         }
-        let calls = &mut admissions.calls;
-        let key = (package.to_owned(), lane);
-        if calls
+        let revision = admissions.revisions.get(package).copied().unwrap_or(0);
+        let key = (package.to_owned(), lane, revision);
+        if admissions
+            .calls
             .iter()
-            .filter(|((_, direction), _)| *direction == lane)
+            .filter(|((owner, direction, revision), _)| {
+                *direction == lane
+                    && admissions.revisions.get(owner).copied().unwrap_or(0) == *revision
+            })
             .map(|(_, count)| count)
             .sum::<usize>()
             >= [64, 16, 32, 16][lane]
-            || calls.get(&key).copied().unwrap_or(0) >= [16, 8, 16, 4][lane]
+            || admissions.calls.get(&key).copied().unwrap_or(0) >= [16, 8, 16, 4][lane]
         {
             return Err(error("Plugin call capacity reached"));
         }
-        *calls.entry(key.clone()).or_default() += 1;
-        let revision = admissions.revisions.get(package).copied().unwrap_or(0);
-        Ok(Self(key, revision))
+        *admissions.calls.entry(key.clone()).or_default() += 1;
+        Ok(Self((key.0, key.1), revision))
     }
 }
 impl Drop for CallLease {
@@ -188,10 +193,11 @@ impl Drop for CallLease {
             .get_or_init(Default::default)
             .lock()
             .unwrap_or_else(|cause| cause.into_inner());
-        if let Some(count) = calls.calls.get_mut(&self.0) {
+        let key = (self.0 .0.clone(), self.0 .1, self.1);
+        if let Some(count) = calls.calls.get_mut(&key) {
             *count -= 1;
             if *count == 0 {
-                calls.calls.remove(&self.0);
+                calls.calls.remove(&key);
             }
         }
         ADMISSIONS_CHANGED.notify_all();
@@ -216,6 +222,16 @@ const DEAD_PHASE: u8 = 4;
 const DRAINING_PHASE: u8 = 5;
 fn brokers() -> &'static Mutex<HashMap<String, Arc<Broker>>> {
     BROKERS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+pub(super) fn generation_live(generation: &crate::service_state::model::PackageGeneration) -> bool {
+    brokers()
+        .lock()
+        .unwrap_or_else(|cause| cause.into_inner())
+        .get(&generation.package_id)
+        .is_some_and(|broker| {
+            broker.generation() == *generation && broker.alive.load(Ordering::Acquire)
+        })
 }
 pub(super) fn initialize(app: AppHandle) {
     let _ = APP.set(app);
@@ -264,8 +280,196 @@ pub(super) struct Broker {
     pending: Mutex<HashMap<u64, Waiter>>,
     jobs: Mutex<HashMap<u64, Job>>,
     controls: Mutex<HashMap<String, JobControl>>,
-    spools: Mutex<HashMap<String, Arc<tempfile::TempDir>>>,
+    spools: Mutex<HashMap<String, Arc<ProcessSpool>>>,
     io_workers: Mutex<Vec<std::thread::JoinHandle<()>>>,
+}
+
+/// A running writer is pinned independently of its broker. Complete output
+/// belongs to the durable store until the provider explicitly releases it.
+struct ProcessSpool {
+    handle: String,
+    path: PathBuf,
+    durable: Option<(
+        &'static crate::service_state::Store,
+        crate::service_state::model::PackageGeneration,
+    )>,
+    writer: Mutex<Option<crate::service_state::HostSpoolWriter<'static>>>,
+    retain: AtomicBool,
+    _temporary: Option<tempfile::TempDir>,
+}
+impl ProcessSpool {
+    fn reserve(
+        owner: &crate::service_state::model::PackageGeneration,
+        request: &str,
+        limit: u64,
+        durable: bool,
+    ) -> Result<Self, AppError> {
+        if durable {
+            let store = super::service_host::store()?;
+            let (handle, path, writer) = store.reserve_pinned_host_spool(owner, request, limit)?;
+            Ok(Self {
+                handle,
+                path,
+                durable: Some((store, owner.clone())),
+                writer: Mutex::new(Some(writer)),
+                retain: AtomicBool::new(false),
+                _temporary: None,
+            })
+        } else {
+            let temp = tempfile::Builder::new()
+                .prefix("tauri-explorer-plugin-output-")
+                .tempdir()?;
+            Ok(Self {
+                handle: request.into(),
+                path: temp.path().into(),
+                durable: None,
+                writer: Mutex::new(None),
+                retain: AtomicBool::new(false),
+                _temporary: Some(temp),
+            })
+        }
+    }
+    fn path(&self) -> &std::path::Path {
+        &self.path
+    }
+    fn complete(&self, stdout: &[u8], stderr: &[u8], status: i64) -> Result<Value, AppError> {
+        let writer = self
+            .writer
+            .lock()
+            .map_err(|_| error("Plugin spool writer is unavailable"))?
+            .take();
+        if let Some((store, owner)) = &self.durable {
+            // Preserve evidence even if writing, publication, the provider or
+            // the reply transport fails after the CLI has completed.
+            self.retain.store(true, Ordering::Release);
+            match store.retain_pinned_host_execution(
+                owner,
+                writer
+                    .as_ref()
+                    .ok_or_else(|| error("Plugin spool writer was released"))?,
+                status,
+            ) {
+                Ok(true) => (),
+                Ok(false) => return Err(error("Plugin output reservation was cancelled")),
+                // The reservation still supplies durable identity and quota.
+                // A failed metadata commit cannot prevent publication of the
+                // original bytes and their independently durable manifest.
+                Err(cause) => log::debug!("Pending CLI completion update deferred: {cause}"),
+            }
+        }
+        let stdout_path = self.path().join("stdout");
+        let stderr_path = self.path().join("stderr");
+        fs::write(&stdout_path, stdout)?;
+        fs::write(&stderr_path, stderr)?;
+        if let Some((store, owner)) = &self.durable {
+            store.seal_pinned_host_spool(owner, writer.as_ref().unwrap(), status)?;
+        }
+        Ok(json!({"handle":self.handle,"status":status,"stdout":stdout_path,"stderr":stderr_path}))
+    }
+}
+impl Drop for ProcessSpool {
+    fn drop(&mut self) {
+        self.writer
+            .get_mut()
+            .unwrap_or_else(|e| e.into_inner())
+            .take();
+        if !self.retain.load(Ordering::Acquire) {
+            if let Some((store, owner)) = &self.durable {
+                if let Err(cause) = store.release_host_spool(&owner.package_id, &self.handle) {
+                    log::warn!("Plugin output cleanup deferred: {cause}")
+                }
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod process_spool_tests {
+    use super::*;
+
+    #[test]
+    fn paid_stdout_survives_failed_pending_marker_commit_and_retirement() {
+        use crate::service_state::{
+            model::{Limits, PackageGeneration},
+            Store,
+        };
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("service-state");
+        let store = Box::leak(Box::new(
+            Store::open(path.clone(), Limits::default()).unwrap(),
+        ));
+        let owner = PackageGeneration {
+            package_id: "fixture.paid-spool".into(),
+            digest: "a".repeat(64),
+            incarnation: 1,
+        };
+        let (handle, directory, writer) = store
+            .reserve_pinned_host_spool(&owner, "host:paid-output", 1024)
+            .unwrap();
+        let spool = ProcessSpool {
+            handle,
+            path: directory,
+            durable: Some((store, owner.clone())),
+            writer: Mutex::new(Some(writer)),
+            retain: AtomicBool::new(false),
+            _temporary: None,
+        };
+        store.fail_next_write();
+        let _reply = spool.complete(b"sole completed paid output", &[], 0);
+        drop(spool);
+        store.retire_generation(&owner).unwrap();
+        let reopened = Store::open(path, Limits::default()).unwrap();
+        reopened.sweep_host_spools(|_| false).unwrap();
+        let recovered = reopened
+            .host_spool_result_for_owner(&owner.package_id, "host:paid-output", Some(&owner))
+            .unwrap()
+            .expect("the metadata failure discarded the sole paid output");
+        assert_eq!(recovered["status"], 0);
+        assert_eq!(
+            fs::read(recovered["stdout"].as_str().unwrap()).unwrap(),
+            b"sole completed paid output"
+        );
+    }
+}
+
+/// Completed process output fixture; uses the broker's actual output custody.
+/// The lib harness cannot launch its own Unix supervisor executable.
+#[cfg(test)]
+pub(super) fn fixture_completed_process_spool(
+    package_id: &str,
+    bytes: &[u8],
+) -> Result<PathBuf, AppError> {
+    fixture_completed_bound_process_spool(package_id, bytes, None)
+}
+#[cfg(test)]
+pub(super) fn fixture_completed_bound_process_spool(
+    package_id: &str,
+    bytes: &[u8],
+    custody: Option<(&str, &str)>,
+) -> Result<PathBuf, AppError> {
+    let broker = ensure(package_id)?;
+    let spool = Arc::new(ProcessSpool::reserve(
+        &broker.generation(),
+        "host:fixture-completed",
+        bytes.len() as u64,
+        true,
+    )?);
+    if let Some((consumer, operation)) = custody {
+        super::service_host::store()?.bind_host_spool(
+            &broker.generation(),
+            &spool.handle,
+            consumer,
+            operation,
+        )?;
+    }
+    let result = spool.complete(bytes, &[], 0)?;
+    let path = PathBuf::from(result["stdout"].as_str().unwrap());
+    broker
+        .spools
+        .lock()
+        .map_err(|_| error("Plugin spool lock is unavailable"))?
+        .insert("host:fixture-completed".into(), spool);
+    Ok(path)
 }
 /// Captured before spawning, so rejected workers and panics release ownership.
 struct WorkerCleanup<F: FnOnce()>(Option<F>);
@@ -284,9 +488,9 @@ impl<F: FnOnce()> Drop for WorkerCleanup<F> {
 
 /// Fields drop in order, including when Builder rejects the closure: remove
 /// registry references, finish final spool unlink IO, then release admission.
-struct ProcessAdmission<F: FnOnce()> {
+struct ProcessAdmission<T, F: FnOnce()> {
     _cleanup: WorkerCleanup<F>,
-    spool: Arc<tempfile::TempDir>,
+    spool: Arc<T>,
     _lease: CallLease,
 }
 
@@ -313,9 +517,9 @@ pub(super) fn spawn_worker(
     std::thread::Builder::new().name(name.into()).spawn(work)
 }
 
-fn cleanup_process_resources(
+fn cleanup_process_resources<T>(
     controls: &Mutex<HashMap<String, JobControl>>,
-    spools: &Mutex<HashMap<String, Arc<tempfile::TempDir>>>,
+    spools: &Mutex<HashMap<String, Arc<T>>>,
     id: &str,
     control: &JobControl,
     keep_spool: bool,
@@ -1360,19 +1564,69 @@ impl Broker {
                         {
                             control.cancel();
                         }
-                        self.spools
+                        let mut spools = self
+                            .spools
                             .lock()
-                            .unwrap_or_else(|cause| cause.into_inner())
-                            .remove(id);
+                            .unwrap_or_else(|cause| cause.into_inner());
+                        if spools
+                            .get(id)
+                            .is_some_and(|spool| !spool.retain.load(Ordering::Acquire))
+                        {
+                            spools.remove(id);
+                        }
                     }
                 }
                 "host.process.release" => {
                     if let Some(handle) = frame["params"]["handle"].as_str() {
+                        if self.installed.manifest.sdk_version >= 3 {
+                            super::service_host::store()?
+                                .release_host_spool(&self.package_id, handle)?;
+                        }
                         self.spools
                             .lock()
                             .unwrap_or_else(|cause| cause.into_inner())
-                            .remove(handle);
+                            .retain(|_, spool| spool.handle != handle);
                     }
+                }
+                "host.process.recover" => {
+                    let request = frame["params"]["requestId"]
+                        .as_str()
+                        .ok_or_else(|| error("Invalid original host process request ID"))?;
+                    let store = super::service_host::store()?;
+                    let mut original =
+                        frame["params"]
+                            .get("owner")
+                            .map(|value| {
+                                serde_json::from_value::<
+                                    crate::service_state::model::PackageGeneration,
+                                >(value.clone())
+                                .map_err(|_| error("Invalid original host process owner"))
+                            })
+                            .transpose()?;
+                    if let (Some(consumer), Some(operation)) = (
+                        frame["params"]["consumerPackageId"].as_str(),
+                        frame["params"]["operationId"].as_str(),
+                    ) {
+                        let admission = store.get(consumer, operation)?.ok_or_else(|| {
+                            error("Original host process admission is unavailable")
+                        })?;
+                        if admission.provider.package_id != self.package_id
+                            || original
+                                .as_ref()
+                                .is_some_and(|owner| owner != &admission.provider)
+                        {
+                            return Err(error(
+                                "Original host process owner conflicts with its admission",
+                            ));
+                        }
+                        original = Some(admission.provider);
+                    }
+                    let result = store.host_spool_result_for_owner(
+                        &self.package_id,
+                        request,
+                        original.as_ref(),
+                    )?;
+                    self.send(&json!({"jsonrpc":"2.0","id":frame["id"],"result":result}))?;
                 }
                 _ => return Err(error("Unsupported plugin host service")),
             }
@@ -1487,11 +1741,24 @@ impl Broker {
         let request = super::process_run::parse(&frame["params"])?;
         let control = JobControl::new();
         let spool = Arc::new(
-            tempfile::Builder::new()
-                .prefix("tauri-explorer-plugin-output-")
-                .tempdir()
-                .map_err(|_| refusal(code::NOT_STARTED, "Plugin output spool is unavailable"))?,
+            ProcessSpool::reserve(
+                &self.generation(),
+                &id,
+                request.output_reservation(),
+                self.installed.manifest.sdk_version >= 3,
+            )
+            .map_err(|_| refusal(code::NOT_STARTED, "Plugin output spool is unavailable"))?,
         );
+        if let Some((consumer, operation)) = request.output_custody() {
+            super::service_host::store()?
+                .bind_host_spool(&self.generation(), &spool.handle, consumer, operation)
+                .map_err(|_| {
+                    refusal(
+                        code::NOT_STARTED,
+                        "Plugin output does not match an active original admission",
+                    )
+                })?;
+        }
         let lease = {
             let not_started = |cause: AppError| refusal(code::NOT_STARTED, &cause.to_string());
             let _gate = super::read_lifecycle().map_err(not_started)?;
@@ -1553,13 +1820,6 @@ impl Broker {
                     cfg!(unix) && modern,
                 )?;
                 let started = ProcessRunError::Started;
-                if !owner.alive.load(Ordering::Acquire) || control.check().is_err() {
-                    return Err(started(error("Plugin process cancelled")));
-                }
-                let stdout = spool.path().join("stdout");
-                let stderr = spool.path().join("stderr");
-                fs::write(&stdout, output.stdout).map_err(|cause| started(cause.into()))?;
-                fs::write(&stderr, output.stderr).map_err(|cause| started(cause.into()))?;
                 #[cfg(unix)]
                 let status = {
                     use std::os::unix::process::ExitStatusExt;
@@ -1575,21 +1835,9 @@ impl Broker {
                             as u32,
                     )
                 };
-                {
-                    let spools = owner
-                        .spools
-                        .lock()
-                        .map_err(|_| started(error("Plugin spool lock is unavailable")))?;
-                    if !owner.alive.load(Ordering::Acquire)
-                        || !spools.contains_key(&id)
-                        || control.check().is_err()
-                    {
-                        return Err(started(error("Plugin process cancelled")));
-                    }
-                }
-                Ok::<_, ProcessRunError>(
-                    json!({"handle":id,"status":status,"stdout":stdout,"stderr":stderr}),
-                )
+                // A completed paid execution survives retirement and reply
+                // loss. Lifecycle cancellation cannot discard returned bytes.
+                spool.complete(&output.stdout,&output.stderr,status).map_err(started)
             })();
             let completed = result.is_ok();
             let response = match result {
@@ -1940,7 +2188,7 @@ fn begin_drain_with(id: &str, cancel_live: bool) -> Result<DrainGuard, AppError>
                 || admissions
                     .calls
                     .iter()
-                    .any(|((package, _), count)| package == id && *count > 0))
+                    .any(|((package, _, _), count)| package == id && *count > 0))
     {
         // Typed busy: a queued upgrade racing a live call retries next launch.
         return Err(super::service_host::busy(
@@ -1967,6 +2215,8 @@ fn begin_drain_with(id: &str, cancel_live: bool) -> Result<DrainGuard, AppError>
     }
     if cancel_live {
         admissions.recovery_fences.remove(id);
+        // Invalidated owners no longer occupy the replacement's capacity,
+        // but keep their old keys until Drop proves that their work ended.
         *admissions.revisions.entry(id.to_owned()).or_default() += 1;
     }
     admissions.fenced.insert(id.to_owned());
@@ -2072,7 +2322,7 @@ pub(super) fn release_recovered_fence(id: &str) -> Result<(), AppError> {
     if admissions
         .calls
         .iter()
-        .any(|((package, _), count)| package == id && *count > 0)
+        .any(|((package, _, _), count)| package == id && *count > 0)
         || brokers()
             .lock()
             .map_err(|_| error("Plugin runtime lock is unavailable"))?
@@ -2431,7 +2681,7 @@ fn start_broker(
     };
     let initialized = broker.call(
         "initialize",
-        json!({"protocolVersion":1,"activeRunIds":if validation_only {vec![]} else {super::provenance::active_runs(id)},"processService":true,"processStdin":super::process_run::stdin_capability(),"textService":{"version":1},"serviceService":{"version":1},"artifactService":{"version":1},"credentialService":{"version":1},"jobService":{"version":1,"estimateKey":true},"hostControl":{"token":broker.control_token},"validationOnly":validation_only,"deferRecovery":deferred}),
+        json!({"protocolVersion":1,"activeRunIds":if validation_only {vec![]} else {super::provenance::active_runs(id)},"processService":true,"processStdin":super::process_run::stdin_capability(),"processRecovery":{"version":1,"owner":broker.generation()},"textService":{"version":1},"serviceService":{"version":1},"artifactService":{"version":1},"credentialService":{"version":1},"jobService":{"version":1,"estimateKey":true},"hostControl":{"token":broker.control_token},"validationOnly":validation_only,"deferRecovery":deferred}),
     );
     // Legacy reconciliation serialization must not survive into failure cleanup.
     drop(ownership);

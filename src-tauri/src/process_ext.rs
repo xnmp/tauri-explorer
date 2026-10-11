@@ -9,7 +9,10 @@
 
 use std::io::{Read, Write};
 use std::process::{Command, Output, Stdio};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc, Mutex,
+};
 use std::time::{Duration, Instant};
 
 use crate::error::{AppError, ProcessRunError};
@@ -79,13 +82,15 @@ pub(crate) fn output_with_stdin(
         limits,
         cancel_message,
         Input::Stdio(stdin),
+        Completion::OutputClosed,
     )
     .map_err(ProcessRunError::into_error)
 }
 
 /// Owned run for plugin processes. With `input`, stdin is a pipe that receives
 /// exactly those bytes and is then closed; without it, stdin is null. Failures
-/// are classified by whether the program could have executed.
+/// are classified by whether the program could have executed. A completed
+/// child's original exit and output remain authoritative after cancellation.
 pub(crate) fn output_with_input(
     command: &mut Command,
     cancelled: impl Fn() -> bool,
@@ -97,12 +102,28 @@ pub(crate) fn output_with_input(
         Some(bytes) => Input::Bytes(bytes),
         None => Input::Stdio(Stdio::null()),
     };
-    run(command, cancelled, limits, cancel_message, input)
+    run(
+        command,
+        cancelled,
+        limits,
+        cancel_message,
+        input,
+        Completion::ChildExited,
+    )
 }
 
 enum Input {
     Stdio(Stdio),
     Bytes(Vec<u8>),
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Completion {
+    // Generic scans remain cancellable while descendants hold their pipes.
+    OutputClosed,
+    // An owned plugin CLI's exit is authoritative. Retire descendants and
+    // retain completed bytes even when its owner concurrently retires.
+    ChildExited,
 }
 
 fn run(
@@ -111,6 +132,7 @@ fn run(
     limits: (usize, usize),
     cancel_message: &'static str,
     input: Input,
+    completion: Completion,
 ) -> Result<Output, ProcessRunError> {
     use ProcessRunError::{NotStarted, Started};
     if cancelled() {
@@ -187,6 +209,7 @@ fn run(
         cancelled,
         limits,
         cancel_message,
+        completion,
     );
     if let Some(writer) = writer {
         // Termination closed every reader of stdin, so a blocked write fails
@@ -216,6 +239,7 @@ fn supervise(
     cancelled: impl Fn() -> bool,
     limits: (usize, usize),
     cancel_message: &'static str,
+    completion: Completion,
 ) -> Result<Output, AppError> {
     let mut stdout = child
         .stdout
@@ -226,16 +250,31 @@ fn supervise(
         .take()
         .ok_or_else(|| AppError::Other("child stderr pipe unavailable".into()))?;
     let overflow = std::sync::Arc::new(AtomicBool::new(false));
+    let capture = || {
+        (completion == Completion::ChildExited)
+            .then(|| Arc::new(Mutex::new(CapturedOutput::default())))
+    };
+    let stdout_capture = capture();
+    let stderr_capture = capture();
+    let stdout_pending = stdout_capture.clone();
+    let stderr_pending = stderr_capture.clone();
     let stdout_overflow = overflow.clone();
     let stderr_overflow = overflow.clone();
-    let stdout_reader =
-        std::thread::spawn(move || read_bounded(&mut stdout, limits.0, &stdout_overflow));
-    let stderr_reader =
-        std::thread::spawn(move || read_bounded(&mut stderr, limits.1, &stderr_overflow));
+    let stdout_reader = std::thread::spawn(move || match stdout_pending {
+        Some(capture) => read_captured(&mut stdout, limits.0, &stdout_overflow, &capture),
+        None => read_bounded(&mut stdout, limits.0, &stdout_overflow),
+    });
+    let stderr_reader = std::thread::spawn(move || match stderr_pending {
+        Some(capture) => read_captured(&mut stderr, limits.1, &stderr_overflow, &capture),
+        None => read_bounded(&mut stderr, limits.1, &stderr_overflow),
+    });
 
     let mut exited = None;
     loop {
-        if cancelled() || overflow.load(Ordering::Relaxed) {
+        let cancellation = cancelled();
+        if overflow.load(Ordering::Relaxed)
+            || (cancellation && completion == Completion::OutputClosed)
+        {
             terminate(child);
             let _ = child.wait();
             drain_readers(stdout_reader, stderr_reader);
@@ -253,6 +292,9 @@ fn supervise(
             match exited_without_reaping(child) {
                 Ok(true) => {
                     launcher_exited();
+                    if completion == Completion::ChildExited {
+                        terminate(child);
+                    }
                     exited = Some(Instant::now());
                 }
                 Ok(false) => {}
@@ -274,10 +316,12 @@ fn supervise(
                     .join()
                     .map_err(|_| AppError::Other("child stdout reader panicked".into()))?
                     .map_err(AppError::from)?;
+                let stdout = stdout_capture.as_ref().map_or(stdout, |c| close_capture(c));
                 let stderr = stderr_reader
                     .join()
                     .map_err(|_| AppError::Other("child stderr reader panicked".into()))?
                     .map_err(AppError::from)?;
+                let stderr = stderr_capture.as_ref().map_or(stderr, |c| close_capture(c));
                 if overflow.load(Ordering::Relaxed) {
                     return Err(AppError::Other("Child output exceeded its limit".into()));
                 }
@@ -289,16 +333,81 @@ fn supervise(
             }
             // The launcher may exit while a descendant retains its pipes.
             // Continue observing cancellation until EOF, then bound that drain.
-            if since.elapsed() >= Duration::from_secs(5) {
+            let drain_limit = if completion == Completion::ChildExited {
+                Duration::from_secs(1)
+            } else {
+                Duration::from_secs(5)
+            };
+            if since.elapsed() >= drain_limit {
                 terminate(child);
-                let _ = child.wait();
+                let status = child.wait()?;
+                if let (Some(stdout), Some(stderr)) = (&stdout_capture, &stderr_capture) {
+                    // The owned leaf already exited. A detached pipe holder
+                    // cannot revoke that exit or its captured original reply.
+                    // Close capture before detaching any blocked readers.
+                    let stdout = close_capture(stdout);
+                    let stderr = close_capture(stderr);
+                    drain_readers(stdout_reader, stderr_reader);
+                    if overflow.load(Ordering::Relaxed) {
+                        return Err(AppError::Other("Child output exceeded its limit".into()));
+                    }
+                    return Ok(Output {
+                        status,
+                        stdout,
+                        stderr,
+                    });
+                }
                 drain_readers(stdout_reader, stderr_reader);
                 return Err(AppError::Other(
                     "Child output pipes remained open after exit".into(),
                 ));
             }
         }
+        if cancellation && !(completion == Completion::ChildExited && exited.is_some()) {
+            terminate(child);
+            let _ = child.wait();
+            drain_readers(stdout_reader, stderr_reader);
+            return Err(AppError::Other(cancel_message.into()));
+        }
         std::thread::sleep(Duration::from_millis(10));
+    }
+}
+
+#[derive(Default)]
+struct CapturedOutput {
+    bytes: Vec<u8>,
+    closed: bool,
+}
+fn close_capture(capture: &Mutex<CapturedOutput>) -> Vec<u8> {
+    let mut capture = capture.lock().unwrap_or_else(|cause| cause.into_inner());
+    capture.closed = true;
+    std::mem::take(&mut capture.bytes)
+}
+fn read_captured(
+    reader: &mut impl Read,
+    limit: usize,
+    overflow: &AtomicBool,
+    capture: &Mutex<CapturedOutput>,
+) -> std::io::Result<Vec<u8>> {
+    let mut chunk = [0u8; 8192];
+    loop {
+        let count = reader.read(&mut chunk)?;
+        let mut capture = capture.lock().unwrap_or_else(|cause| cause.into_inner());
+        if capture.closed {
+            return Ok(Vec::new());
+        }
+        if count == 0 {
+            // Keep captured bytes until the host closes the snapshot, even if
+            // this reader reaches EOF before the other pipe's drain deadline.
+            return Ok(Vec::new());
+        }
+        let remaining = limit.saturating_sub(capture.bytes.len());
+        capture
+            .bytes
+            .extend_from_slice(&chunk[..count.min(remaining)]);
+        if count > remaining {
+            overflow.store(true, Ordering::Relaxed);
+        }
     }
 }
 
@@ -546,6 +655,71 @@ mod tests {
 
         assert!(output.status.success());
         assert_eq!(String::from_utf8_lossy(&output.stdout), "observable-output");
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn completed_plugin_output_survives_cancellation_before_exit_is_observed() {
+        let root = tempfile::tempdir().unwrap();
+        let pid_file = root.path().join("pid");
+        let mut command = Command::new("sh");
+        command.args([
+            "-c",
+            "echo $$ > \"$1\"; printf completed-paid-output; exit 0",
+            "fixture",
+        ]);
+        command.arg(&pid_file);
+        let calls = std::cell::Cell::new(0);
+        let output = super::output_with_input(
+            &mut command,
+            || {
+                calls.set(calls.get() + 1);
+                if calls.get() == 1 {
+                    return false;
+                }
+                // Hold the host's first poll until the child has finished; do
+                // not reap it, so production still owns the exit observation.
+                let deadline = Instant::now() + Duration::from_secs(3);
+                loop {
+                    if let Ok(pid) = std::fs::read_to_string(&pid_file)
+                        .and_then(|pid| pid.trim().parse::<i32>().map_err(std::io::Error::other))
+                    {
+                        if std::fs::read_to_string(format!("/proc/{pid}/stat")).is_ok_and(|stat| {
+                            stat.rsplit_once(')')
+                                .unwrap()
+                                .1
+                                .trim_start()
+                                .starts_with('Z')
+                        }) {
+                            let mut info = std::mem::MaybeUninit::<libc::siginfo_t>::zeroed();
+                            assert_eq!(
+                                unsafe {
+                                    libc::waitid(
+                                        libc::P_PID,
+                                        pid as libc::id_t,
+                                        info.as_mut_ptr(),
+                                        libc::WEXITED | libc::WNOHANG | libc::WNOWAIT,
+                                    )
+                                },
+                                0
+                            );
+                            let info = unsafe { info.assume_init() };
+                            assert_eq!(info.si_code, libc::CLD_EXITED);
+                            assert_eq!(unsafe { info.si_status() }, 0);
+                            return true;
+                        }
+                    }
+                    assert!(Instant::now() < deadline, "fixture child did not exit");
+                    std::thread::sleep(Duration::from_millis(1));
+                }
+            },
+            (1024, 1024),
+            "plugin retired",
+            None,
+        )
+        .expect("completed paid execution must retain its original output");
+        assert!(output.status.success());
+        assert_eq!(output.stdout, b"completed-paid-output");
     }
 
     #[cfg(unix)]

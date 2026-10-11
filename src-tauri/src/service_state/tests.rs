@@ -35,6 +35,233 @@ fn png(path: &Path) {
     let image = image::RgbaImage::from_pixel(2, 3, image::Rgba([12, 34, 56, 255]));
     image.save(path).unwrap();
 }
+fn charged(s: &Store) -> u64 {
+    s.connect()
+        .unwrap()
+        .query_row("SELECT coalesce(sum(bytes),0) FROM artifacts", [], |r| {
+            r.get::<_, i64>(0)
+        })
+        .unwrap() as u64
+}
+#[test]
+fn review_partial_stage_unknown_settles_and_releases_capacity() {
+    let (_root, s) = store();
+    let captured = capture(&s, _root.path(), "partial");
+    s.reserve(admission(
+        "partial",
+        captured.into_iter().map(|x| x.artifact).collect(),
+    ))
+    .unwrap();
+    s.forwarding(&owner("consumer", 1), "partial").unwrap();
+    let stage = s
+        .stage(&owner("provider", 1), "consumer", "partial")
+        .unwrap();
+    fs::write(&stage.path, b"\x89PNG\r\n\x1a\npartial").unwrap();
+    let mut r = provider_receipt("partial", 1, None);
+    r["execution"] = serde_json::json!({"state":"unknown","error":{"code":"interrupted","message":"crashed","correlationId":null}});
+    s.observe_receipt(&owner("provider", 1), "consumer", "partial", 1, r)
+        .unwrap();
+    s.auto_settle_operation("consumer", "partial", true)
+        .unwrap();
+    s.gc().unwrap();
+    assert!(s.claims().unwrap().is_empty());
+    assert_eq!(charged(&s), 0);
+    assert!(!Path::new(&stage.path).exists());
+    assert!(s
+        .claim_forwarding(&owner("consumer", 1), "partial")
+        .is_err());
+}
+#[test]
+fn review_missing_succeeded_output_retires_unused_capacity_without_restart() {
+    let (_root, s) = store();
+    s.reserve(admission("missing-success", vec![])).unwrap();
+    s.forwarding(&owner("consumer", 1), "missing-success")
+        .unwrap();
+    let mut r = provider_receipt(
+        "missing-success",
+        1,
+        Some(ArtifactDescriptor {
+            handle: "a".repeat(48),
+            sha256: "a".repeat(64),
+            byte_length: 1,
+            media_type: "image/png".into(),
+        }),
+    );
+    r["delivery"] = serde_json::json!({"state":"unavailable","reason":"storage_unavailable"});
+    s.observe_receipt(&owner("provider", 1), "consumer", "missing-success", 1, r)
+        .unwrap();
+    for _ in 0..3 {
+        assert!(s
+            .recover_original_output(&owner("provider", 1), "consumer", "missing-success")
+            .unwrap()
+            .is_none());
+        s.gc().unwrap();
+        assert_eq!(charged(&s), 0);
+    }
+    assert!(s
+        .provider_receipt("consumer", "missing-success")
+        .unwrap()
+        .is_some_and(|r| r["execution"]["state"] == "succeeded"));
+}
+#[test]
+fn review_gc_notfound_retry_flushes_unlink_before_deleting_accounting() {
+    let (_root, s) = store();
+    let d = output(&s, "unlink-sync");
+    let bytes = s.root.join("bytes").join(format!("{}.bin", d.handle));
+    s.test_fs.faults(false, true);
+    s.release(
+        &owner("provider", 1),
+        "consumer",
+        "unlink-sync",
+        "discarded",
+        None,
+    )
+    .unwrap();
+    // First unlink succeeds without a durable directory-entry removal. Retry
+    // encounters NotFound, but must still establish the missing barrier.
+    s.test_fs.faults(false, false);
+    s.gc().unwrap();
+    s.test_fs.power_loss();
+    assert!(
+        !bytes.exists(),
+        "unaccounted artifact returned after power loss"
+    );
+    assert_eq!(charged(&s), 0);
+}
+#[test]
+fn model_regression_seal_retry_flushes_missing_stage_before_shrinking_quota() {
+    let (_root, s) = store();
+    s.reserve(admission("seal-sync", vec![])).unwrap();
+    s.forwarding(&owner("consumer", 1), "seal-sync").unwrap();
+    let stage = s
+        .stage(&owner("provider", 1), "consumer", "seal-sync")
+        .unwrap();
+    png(Path::new(&stage.path));
+    s.test_fs.faults(false, true);
+    assert!(s
+        .seal(
+            &owner("provider", 1),
+            "consumer",
+            "seal-sync",
+            &stage.handle,
+            "image/png"
+        )
+        .is_err());
+    assert!(s.test_fs.unflushed_bytes() > 0);
+    s.test_fs.faults(false, false);
+    let d = s
+        .seal(
+            &owner("provider", 1),
+            "consumer",
+            "seal-sync",
+            &stage.handle,
+            "image/png",
+        )
+        .unwrap();
+    s.test_fs.power_loss();
+    assert!(
+        !Path::new(&stage.path).exists(),
+        "duplicate stage returned after quota retirement"
+    );
+    assert_eq!(charged(&s), d.byte_length);
+}
+#[test]
+fn model_regression_missing_sealed_unpublished_bytes_do_not_pin_unknown() {
+    let (_root, s) = store();
+    s.reserve(admission("lost-unpublished", vec![])).unwrap();
+    s.forwarding(&owner("consumer", 1), "lost-unpublished")
+        .unwrap();
+    let stage = s
+        .stage(&owner("provider", 1), "consumer", "lost-unpublished")
+        .unwrap();
+    png(Path::new(&stage.path));
+    let d = s
+        .seal(
+            &owner("provider", 1),
+            "consumer",
+            "lost-unpublished",
+            &stage.handle,
+            "image/png",
+        )
+        .unwrap();
+    let path = s.root.join("bytes").join(format!("{}.bin", d.handle));
+    fs::remove_file(path).unwrap();
+    crate::durable_dir::sync(&s.root.join("bytes")).unwrap();
+    let mut r = provider_receipt("lost-unpublished", 1, None);
+    r["execution"] = serde_json::json!({"state":"unknown","error":{"code":"interrupted","message":"unconfirmed","correlationId":null}});
+    s.observe_receipt(&owner("provider", 1), "consumer", "lost-unpublished", 1, r)
+        .unwrap();
+    s.auto_settle_operation("consumer", "lost-unpublished", true)
+        .unwrap();
+    assert!(s.claims().unwrap().is_empty());
+    assert_eq!(charged(&s), 0);
+}
+#[test]
+fn model_regression_missing_success_releases_input_and_operation_capacity() {
+    let (root, s) = store();
+    let captures = capture(&s, root.path(), "lost-paid");
+    s.reserve(admission(
+        "lost-paid",
+        captures.into_iter().map(|x| x.artifact).collect(),
+    ))
+    .unwrap();
+    s.forwarding(&owner("consumer", 1), "lost-paid").unwrap();
+    let mut r = provider_receipt(
+        "lost-paid",
+        1,
+        Some(ArtifactDescriptor {
+            handle: "a".repeat(48),
+            sha256: "a".repeat(64),
+            byte_length: 1,
+            media_type: "image/png".into(),
+        }),
+    );
+    r["delivery"] = serde_json::json!({"state":"unavailable","reason":"storage_unavailable"});
+    s.observe_receipt(&owner("provider", 1), "consumer", "lost-paid", 1, r)
+        .unwrap();
+    assert!(s
+        .recover_original_output(&owner("provider", 1), "consumer", "lost-paid")
+        .unwrap()
+        .is_none());
+    assert_eq!(charged(&s), 0);
+    assert!(s.claims().unwrap().is_empty());
+    drop(s);
+    let s = Store::open(
+        root.path().join("service"),
+        Limits {
+            operations: 1,
+            per_consumer: 1,
+            ..Limits::default()
+        },
+    )
+    .unwrap();
+    s.reserve(admission("next-paid", vec![]))
+        .expect("inactive delivery failure cannot occupy an operation slot");
+    assert!(s
+        .provider_receipt("consumer", "lost-paid")
+        .unwrap()
+        .is_some_and(|r| r["execution"]["state"] == "succeeded"));
+}
+#[test]
+fn model_regression_gc_cannot_collect_an_active_original_recovery_writer() {
+    let (root, s) = store();
+    s.reserve(admission("original-writer", vec![])).unwrap();
+    s.forwarding(&owner("consumer", 1), "original-writer").unwrap();
+    let mut r = provider_receipt("original-writer", 1, None);
+    r["execution"] = serde_json::json!({"state":"unknown","error":{"code":"interrupted","message":"unconfirmed","correlationId":null}});
+    s.observe_receipt(&owner("provider", 1), "consumer", "original-writer", 1, r).unwrap();
+    s.auto_settle_operation("consumer", "original-writer", true).unwrap();
+    let a = s.get("consumer", "original-writer").unwrap().unwrap();
+    let _permit = s.output_recovery_guard(&a).unwrap();
+    let stage = s.stage(&owner("provider", 1), "consumer", "original-writer").unwrap();
+    fs::write(&stage.path, b"partial original").unwrap();
+    // Another ledger handle must respect the writer admitted by this one.
+    let other = Store::open(root.path().join("service"), Limits::default()).unwrap();
+    other.gc().unwrap();
+    assert_eq!(fs::read(&stage.path).unwrap(), b"partial original");
+    png(Path::new(&stage.path));
+    s.seal(&owner("provider", 1), "consumer", "original-writer", &stage.handle, "image/png").expect("original writer lost its reserved publication");
+}
 fn capture(s: &Store, root: &Path, op: &str) -> Vec<CapturedArtifact> {
     let path = root.join(format!("{op}.png"));
     png(&path);

@@ -553,7 +553,10 @@ fn invariant_a_disable_and_uninstall_release_every_phase_and_job_state() {
     }
 }
 #[test]
-fn invariant_b_upgrade_preserves_all_compatible_phases_and_releases_incompatible_ones() {
+fn upgrade_preserves_compatible_custody_and_authority_and_releases_incompatible_phases() {
+    // This matrix checks durable custody and authority, not recovery IO. The
+    // native compatible upgrade tests execute LiveAutomatic through real
+    // replacement brokers, artifact callbacks, acquisition and completion.
     let mut case = 0;
     for role in [Role::Consumer, Role::Provider] {
         for compatible in [true, false] {
@@ -671,6 +674,179 @@ fn invariant_b_upgrade_preserves_all_compatible_phases_and_releases_incompatible
                     drop(leases);
                 }
             }
+        }
+    }
+}
+
+#[test]
+fn compatible_upgrade_recovers_or_settles_every_original_phase_without_new_paid_work() {
+    use super::super::ai_operations::{auto_reconcile_in, AutomaticPort};
+    use crate::service_state::job::{JobRecord, JobState};
+    struct ReplacementDelivery<'a> {
+        fx: &'a Fixture,
+        recovered: Cell<usize>,
+    }
+    impl AutomaticPort for ReplacementDelivery<'_> {
+        fn active(
+            &self,
+            a: &Admission,
+            _: Option<&JobRecord>,
+            _: bool,
+            _: &str,
+        ) -> Result<bool, AppError> {
+            let installed = package::list(&self.fx.root)?;
+            for role in [Role::Consumer, Role::Provider] {
+                let p = installed
+                    .iter()
+                    .find(|p| p.manifest.id == self.fx.id(role))
+                    .unwrap();
+                let current = PackageGeneration {
+                    package_id: p.manifest.id.clone(),
+                    digest: p.digest.clone(),
+                    incarnation: if p.digest == self.fx.generation(role).digest {
+                        1
+                    } else {
+                        2
+                    },
+                };
+                let original = match role {
+                    Role::Consumer => super::super::service_bridge::recovery_caller(
+                        &self.fx.store,
+                        &p.manifest,
+                        &current,
+                        &a.operation_id,
+                    )?,
+                    Role::Provider => super::super::service_bridge::recovery_provider(
+                        &self.fx.store,
+                        &p.manifest,
+                        &current,
+                        &a.consumer.package_id,
+                        &a.operation_id,
+                    )?,
+                };
+                assert_eq!(original, self.fx.generation(role));
+            }
+            Ok(false)
+        }
+        fn recover(&self, a: &Admission, job: Option<&JobRecord>) -> Result<(), AppError> {
+            let job = job.expect("every recoverable original has a presentation job");
+            let artifact = a
+                .output
+                .as_ref()
+                .expect("production reconciliation recovered original bytes");
+            let source = self.fx.store.read(
+                &a.consumer,
+                &a.consumer.package_id,
+                &a.operation_id,
+                artifact,
+            )?;
+            let data = self.fx.profile.path().join("replacement-delivery");
+            fs::create_dir_all(&data)?;
+            self.fx
+                .store
+                .register_consumer_root(&a.consumer.package_id, data.clone())?;
+            let target = data.join("original.png");
+            fs::copy(&source.path, &target)?;
+            let acquired = self.fx.store.acquired(
+                &a.consumer,
+                &a.operation_id,
+                artifact,
+                target.to_str().unwrap(),
+            )?;
+            self.fx.store.release(
+                &a.provider,
+                &a.consumer.package_id,
+                &a.operation_id,
+                "acquired",
+                Some(&acquired.transfer_receipt),
+            )?;
+            let completed = self
+                .fx
+                .store
+                .complete_acquired_job(&a.consumer.package_id, &a.operation_id)?
+                .expect("acknowledged original must complete");
+            assert_eq!(completed.job_key, job.job_key);
+            self.recovered.set(self.recovered.get() + 1);
+            Ok(())
+        }
+    }
+    for role in [Role::Consumer, Role::Provider] {
+        for phase in PHASES {
+            let fx = Fixture::new(&format!("recovery-{role:?}-{phase:?}").to_lowercase());
+            let leases = fx.enter(phase);
+            fx.present(if phase == Phase::Prepared {
+                JobState::Accepting
+            } else if phase == Phase::Released {
+                JobState::Discarded
+            } else {
+                JobState::Running
+            });
+            let original = fx.store.get(fx.id(Role::Consumer), OP).unwrap().unwrap();
+            let expects_delivery = !matches!(phase, Phase::Prepared | Phase::Released);
+            if expects_delivery && phase != Phase::Acquired && original.output.is_none() {
+                // This is a late original status, never another provider start.
+                let success = serde_json::json!({"version":1,"operationId":OP,"requestFingerprint":original.fingerprint,"provider":{"packageId":original.provider.package_id,"serviceId":"image-generation","major":1},"revision":2,"execution":{"state":"succeeded","metadata":{"adapter":"openai-images","endpointIdentity":"fixture","requestedModel":null,"actualModel":null,"externalRequestId":null,"threadId":null,"options":{"size":"1024x1024","resolution":null,"aspectRatio":null,"quality":"low","background":"auto"},"remoteChargeUncertain":false}},"delivery":{"state":"unavailable","reason":"storage_unavailable"}});
+                super::super::service_bridge::reconcile_at(
+                    &fx.store,
+                    &original.provider,
+                    &original,
+                    &success,
+                )
+                .unwrap();
+                let current = fx.store.get(fx.id(Role::Consumer), OP).unwrap().unwrap();
+                let _permit = fx.store.output_recovery_guard(&current).unwrap();
+                let stage = fx
+                    .store
+                    .stage(&original.provider, &original.consumer.package_id, OP)
+                    .unwrap();
+                image::RgbaImage::from_pixel(2, 3, image::Rgba([12, 34, 56, 255]))
+                    .save_with_format(stage.path, image::ImageFormat::Png)
+                    .unwrap();
+            }
+            fx.act(&fx.store, Action::Upgrade, role, &Cell::new(0))
+                .unwrap();
+            drop(leases);
+            let port = ReplacementDelivery {
+                fx: &fx,
+                recovered: Cell::new(0),
+            };
+            for _ in 0..2 {
+                auto_reconcile_in(&fx.store, &port).unwrap();
+            }
+            let after = fx.store.get(fx.id(Role::Consumer), OP).unwrap().unwrap();
+            let job = fx
+                .store
+                .job_for_operation(fx.id(Role::Consumer), OP)
+                .unwrap()
+                .unwrap();
+            if phase == Phase::Prepared {
+                assert!(fx
+                    .store
+                    .execution_released(fx.id(Role::Consumer), OP)
+                    .unwrap());
+            } else {
+                assert_eq!(after.phase, AdmissionPhase::Released, "{role:?}/{phase:?}");
+            }
+            if expects_delivery {
+                assert_eq!(
+                    after.disposition.as_deref(),
+                    Some("acquired"),
+                    "{role:?}/{phase:?}"
+                );
+                assert_eq!(job.state, JobState::Completed, "{role:?}/{phase:?}");
+                let delivered = image::open(job.output_path.unwrap()).unwrap().to_rgba8();
+                assert_eq!(
+                    delivered,
+                    image::RgbaImage::from_pixel(2, 3, image::Rgba([12, 34, 56, 255]))
+                );
+                assert_eq!(port.recovered.get(), usize::from(phase != Phase::Acquired));
+            } else {
+                assert!(job.state.terminal(), "{role:?}/{phase:?}");
+                assert_eq!(port.recovered.get(), 0);
+            }
+            assert_eq!(after.consumer, original.consumer);
+            assert_eq!(after.provider, original.provider);
+            assert!(fx.store.claims().unwrap().is_empty());
         }
     }
 }
@@ -897,3 +1073,6 @@ fn invariant_b_incompatible_provider_upgrade_disables_required_consumers_and_rec
     super::recover(&fx.root).unwrap();
     assert_eq!(fx.store.snapshot_jobs().unwrap().jobs.len(), 1);
 }
+
+#[path = "ai_operations_model_tests.rs"]
+mod model_tests;

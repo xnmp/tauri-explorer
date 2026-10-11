@@ -70,6 +70,20 @@ pub(super) struct ProcessRequest {
     /// means stdin is null.
     #[serde(default)]
     stdin: Option<String>,
+    #[serde(default)]
+    consumer_package_id: Option<String>,
+    #[serde(default)]
+    operation_id: Option<String>,
+}
+impl ProcessRequest {
+    pub(super) fn output_reservation(&self) -> u64 {
+        self.stdout_limit as u64 + self.stderr_limit as u64
+    }
+    pub(super) fn output_custody(&self) -> Option<(&str, &str)> {
+        self.consumer_package_id
+            .as_deref()
+            .zip(self.operation_id.as_deref())
+    }
 }
 
 /// Validate a request before any admission or process work.
@@ -86,6 +100,16 @@ pub(super) fn parse(params: &Value) -> Result<ProcessRequest, AppError> {
             .stdin
             .as_ref()
             .is_some_and(|stdin| stdin.len() > STDIN_MAX_BYTES)
+        || request.consumer_package_id.is_some() != request.operation_id.is_some()
+        || request.output_custody().is_some_and(|(consumer, op)| {
+            [consumer, op].iter().any(|value| {
+                value.is_empty()
+                    || value.len() > 256
+                    || !value
+                        .bytes()
+                        .all(|b| b.is_ascii_alphanumeric() || b"._-:".contains(&b))
+            })
+        })
     {
         return Err(refusal(
             code::INVALID_REQUEST,
@@ -97,13 +121,13 @@ pub(super) fn parse(params: &Value) -> Result<ProcessRequest, AppError> {
 
 /// Register a process under the broker's maps; the caller holds both locks.
 /// A refusal leaves both maps unchanged.
-pub(super) fn admit(
+pub(super) fn admit<T>(
     controls: &mut HashMap<String, JobControl>,
-    spools: &mut HashMap<String, Arc<tempfile::TempDir>>,
+    spools: &mut HashMap<String, Arc<T>>,
     alive: bool,
     id: &str,
     control: &JobControl,
-    spool: &Arc<tempfile::TempDir>,
+    spool: &Arc<T>,
 ) -> Result<(), AppError> {
     if controls.contains_key(id) {
         return Err(refusal(

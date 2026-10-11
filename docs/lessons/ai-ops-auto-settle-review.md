@@ -95,8 +95,8 @@ The real-broker regression fills normal reservations, refuses six original raw
 image recovery passes, releases one reservation and checks original image bytes
 and completed job history without another start.
 
-Sealed output is durable custody evidence even when the provider success
-publisher never reaches the host. Nonempty original stages also keep automatic
+Validated sealed output is durable custody evidence even when the provider success
+publisher never reaches the host. Complete valid original stages also keep automatic
 recovery eligible. Check retained custody in the settlement transaction, override
 old matching dismissal markers during discovery, and keep querying unpaid status
 beyond the uncertainty budget while original output exists. The native outage
@@ -120,3 +120,69 @@ the same transaction. Incompatible native upgrades now assert Released/discarded
 custody, one failed notice, deleted bytes, and durable reopening. Compatible
 consumer and provider replacements run separately and assert the recovered
 file hash, acquired receipt, Completed job, and absence of another start.
+
+## Shrinking reference-model review, 2026-10-12
+
+Example matrices missed interleavings between recovery IO, lifecycle mutation,
+and physical accounting. A hand-written Proptest reference state machine now
+drives the real Store, service bridge, automatic worker and lifecycle code. Its
+oracle keeps paid outcomes and original bytes independent of provider receipts.
+Shrunk production counterexamples are persisted and have deterministic tests:
+
+- Admission → sweep → original stage write: a lease-drop collector deleted the
+  stage while an unpaid original writer still held its permit. Recovery ownership
+  is shared across handles of the canonical ledger root; reopening and collection
+  preserve that writer's full reservation.
+- Admission → sweep → directory-sync failure → incompatible consumer upgrade:
+  physical cleanup failure blocked Store opening and therefore explicit mutation.
+  Defer cleanup with its conservative charge instead of making it an admission
+  gate.
+- Admission → valid stage, provider still Unknown: the scheduler only selected
+  recovery for Succeeded receipts. Valid retained originals independently require
+  unpaid recovery, even if success publication was lost.
+- Admission → sweep → compatible consumer upgrade → directory-sync failure →
+  healthy cached Running status: publication revoked the durable idle/no-replay
+  capacity fence. Only new original success can restore custody; cached work
+  statuses cannot resurrect execution.
+
+Retained output means decoded complete PNG bytes with matching pinned length/hash,
+or a complete validated host CLI reply. A truncated stage, missing sealed copy,
+failed CLI reply, or provider-rejected reply cannot indefinitely pin inactive
+Unknown/Failed/Cancelled work. Missing succeeded originals preserve the success
+and original identity but release input/execution capacity and shrink reservations
+to physical copies. Validate source bytes before reserving recovery capacity.
+
+Unlink NotFound is not proof of durability. GC and stage finalization must sync
+the parent directory on every retry before shrinking or deleting accounting;
+failed barriers retain the prior charge. The power-loss oracle restores unflushed
+removals and drops dirty stage writes. Real SQLite FULL-synchronous transactions
+remain in use; this does not simulate arbitrary controller or database corruption.
+
+Complete CLI replies have a durable host-spool ledger and synced manifest before
+provider staging. Broker retirement releases memory ownership rather than deleting
+the sole original. Pin before exposing the writable path, charge reservations and
+physical bytes, repair manifest-before-ledger completion, retain unreadable replies
+as unavailable IO rather than absence, and scope recovery by original generation.
+Optional consumer/operation binding supports precise removal; legacy unbound
+original-owner replies keep unpaid status discovery eligible without guessing an
+operation association.
+
+Lifecycle revisions also belong to service admissions and their capacity counts.
+A cancelled lease cannot acquire a new incarnation after disable/re-enable or
+occupy replacement capacity indefinitely. It still represents actual worker
+ownership until it drops. Completed paid subprocess exit/output wins concurrent
+owner cancellation; generic Git cancellation semantics remain separate.
+An independently detached descendant can also hold stdout/stderr after the paid
+leaf exits. Bounded owned-process draining preserves already captured bytes and
+the authoritative exit rather than returning a pipe-timeout error that discards
+the sole reply. Raw captured bytes still require the provider's normal image
+validation; EOF is not substituted for image validity.
+
+Frontend late completion may legitimately have no run ID. Accept a newer validated
+same-identity Completed correction with a delivered path after stopped or delivery
+failure, and keep unrelated/stale terminal corrections rejected.
+
+Native timeouts require retry bookkeeping without another deadline-bound store
+read first. An expired status RPC can otherwise repeatedly persist its incarnation
+while recording zero failed answers, defeating the bounded uncertainty budget.
+The next fresh pass still performs actual worker-idle proof before settlement.

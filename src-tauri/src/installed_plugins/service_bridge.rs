@@ -554,7 +554,7 @@ fn invoke(consumer: &Arc<Broker>, request: Invocation) -> Result<Value, AppError
     {
         return Err(error("Unsupported service ownership protocol"));
     }
-    let (provider, _lease) = {
+    let (provider, lease) = {
         let _gate = super::read_lifecycle()?;
         let entries = package::list(&super::root()?)?;
         let (provider, _) = service_graph::route(
@@ -573,7 +573,20 @@ fn invoke(consumer: &Arc<Broker>, request: Invocation) -> Result<Value, AppError
             )?,
         )
     };
+    invoke_admitted(consumer, request, &provider, &lease)
+}
+/// Continue the routed invocation after the lifecycle read gate is released.
+/// The original lease must survive startup; an optional consumer can remain
+/// live when the provider is disabled and enabled again.
+fn invoke_admitted(
+    consumer: &Arc<Broker>,
+    request: Invocation,
+    provider: &package::Installed,
+    lease: &backend::CallLease,
+) -> Result<Value, AppError> {
+    lease.require_current(&provider.manifest.id)?;
     let backend = backend::ensure(&provider.manifest.id)?;
+    lease.require_current(&provider.manifest.id)?;
     if backend.generation().digest != provider.digest {
         return Err(error("Provider generation changed"));
     }
@@ -617,8 +630,15 @@ fn invoke(consumer: &Arc<Broker>, request: Invocation) -> Result<Value, AppError
         &target,
         &request.method,
         request.params,
-        || consumer.can_recover() && backend.can_recover(),
-        |method, params| backend.call(method, params),
+        || {
+            lease.require_current(&backend.manifest().id).is_ok()
+                && consumer.can_recover()
+                && backend.can_recover()
+        },
+        |method, params| {
+            lease.require_current(&backend.manifest().id)?;
+            backend.call(method, params)
+        },
     )
 }
 /// A compatible upgrade can deliver the original result using its original
@@ -1071,7 +1091,7 @@ impl RecoveryPort for LiveRecovery {
         method: &str,
         settle: &mut dyn FnMut(&PackageGeneration, &Value) -> Result<(), AppError>,
     ) -> Result<Value, AppError> {
-        let _lease = {
+        let lease = {
             let _gate = super::read_lifecycle()?;
             let entries = package::list(&super::root()?)?;
             if !entries.iter().any(|entry| {
@@ -1084,8 +1104,11 @@ impl RecoveryPort for LiveRecovery {
             }
             backend::CallLease::acquire_lane(&admission.provider.package_id, true)?
         };
+        lease.require_current(&admission.provider.package_id)?;
         let provider = backend::ensure(&admission.provider.package_id)?;
+        lease.require_current(&admission.provider.package_id)?;
         let _output_recovery = service_host::store()?.output_recovery_guard(admission)?;
+        lease.require_current(&admission.provider.package_id)?;
         let response = provider.call(
             &control_method(admission, method),
             control_params(admission),

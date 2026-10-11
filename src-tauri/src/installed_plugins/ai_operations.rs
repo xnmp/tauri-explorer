@@ -167,6 +167,7 @@ pub(super) fn auto_reconcile_in(
     // Pending collection remains quota-visible and is retried by the existing
     // two-second automatic sweep even when no recovery candidates remain.
     store.gc()?;
+    store.sweep_host_spools(backend::generation_live)?;
     service_bridge::retry_removal_cancellations(store)?;
     auto_reconcile_candidates(store, port, store.auto_settlement_operations()?)
 }
@@ -255,6 +256,16 @@ fn auto_reconcile_candidates(
                     .as_ref()
                     .and_then(|r| r["delivery"]["state"].as_str())
                     .unwrap_or("none");
+                if current.phase != crate::service_state::model::AdmissionPhase::Released
+                    && store
+                        .has_retained_output(&current.consumer.package_id, &current.operation_id)?
+                {
+                    // A validated original can precede receipt delivery.
+                    // Drive only its original unpaid handoff; Unknown never
+                    // authorizes another paid start.
+                    recovery = Some(current);
+                    return Ok(());
+                }
                 match auto_settlement(current.phase, execution, delivery, false) {
                     AutoSettlement::Leave => (),
                     AutoSettlement::Recover => recovery = Some(current),
@@ -431,7 +442,8 @@ impl AutomaticPort for LiveAutomatic {
         let storage_blocked = store
             .job_for_operation(&a.consumer.package_id, &a.operation_id)?
             .is_some_and(|j| j.phase.as_deref() == Some("storage_full"));
-        let retained_output = store.has_retained_output(&a.consumer.package_id, &a.operation_id)?;
+        let retained_output = store.has_retained_output(&a.consumer.package_id, &a.operation_id)?
+            || store.has_unbound_host_output(&a.provider)?;
         let mut provider_owner = a.provider.clone();
         let provider_compatible = installed_provider.as_ref().is_some_and(|p| {
             let current = PackageGeneration {
@@ -574,10 +586,21 @@ impl AutomaticPort for LiveAutomatic {
                         forget_reconciliation(a)?;
                     }
                     Err(cause) => {
+                        let storage_full = storage_blocked
+                            || matches!(&cause,AppError::Service { code,.. } if code=="storage_full");
+                        // A sent RPC may consume its entire deadline. Record
+                        // that completed attempt before deadline-bound store
+                        // reads, so a fresh pass can prove inactivity without
+                        // issuing an unbounded series of timed-out status RPCs.
+                        let failures = if sent && !storage_full {
+                            reconciliation_failed(a, ReconciliationPhase::Status)?
+                        } else {
+                            0
+                        };
                         // A quota refusal is local delivery backpressure, not
                         // evidence that the original remote result is absent.
                         // Keep using the existing recovery passes after release.
-                        if matches!(&cause,AppError::Service { code,.. } if code=="storage_full")
+                        if storage_full
                             || store
                                 .job_for_operation(&a.consumer.package_id, &a.operation_id)?
                                 .is_some_and(|j| j.phase.as_deref() == Some("storage_full"))
@@ -589,10 +612,7 @@ impl AutomaticPort for LiveAutomatic {
                                         .into(),
                             });
                         }
-                        if !sent
-                            || reconciliation_failed(a, ReconciliationPhase::Status)?
-                                < RECONCILIATION_ATTEMPTS
-                        {
+                        if !sent || failures < RECONCILIATION_ATTEMPTS {
                             return Err(cause);
                         }
                     }

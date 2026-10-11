@@ -13,6 +13,22 @@ const record = (n = 1, revision = 1, state: NativeJobRecord["state"] = "running"
 function deferred<T>() { let resolve!: (v: T) => void; const promise = new Promise<T>((done) => { resolve=done; }); return { promise, resolve }; }
 afterEach(() => { jobsStore.applyNative([]); jobsStore.configureNativeControls(null); for (const j of [...jobsStore.jobs]) jobsStore.removeJob(j.id); });
 describe("native job revisions and ownership", () => {
+  it.each([
+    ["discarded", "stopped"],
+    ["error", "delivery_failed"],
+    ["error", "storage_full"],
+  ] as const)("accepts acknowledged completion without an observed run from %s/%s", (state, phase) => {
+    const settled = { ...record(1, 2, state), phase, runId: null, settledAtMs: 2 };
+    const before = mergeNativeJobEvent(emptyNativeJobs(), { type: "updated", job: settled });
+    const completed = { ...record(1, 3, "completed"), phase: "complete", runId: null, settledAtMs: 2 };
+    expect(mergeNativeJobEvent(before, { type: "updated", job: completed }).jobs.get(settled.jobKey)).toEqual(completed);
+    for (const invalid of [
+      { ...completed, outputPath: undefined },
+      { ...completed, runId: 0 },
+      { ...completed, runId: Number.MAX_SAFE_INTEGER + 1 },
+      { ...completed, owner: { ...completed.owner, incarnation: 4 } },
+    ]) expect(mergeNativeJobEvent(before, { type: "updated", job: invalid })).toBe(before);
+  });
   it("corrects a settled Unknown to its late output without reopening other terminal outcomes", () => {
     const stopped = { ...record(1, 2, "discarded"), phase: "stopped", settledAtMs: 2 };
     const before = mergeNativeJobEvent(emptyNativeJobs(), { type: "updated", job: stopped });
@@ -21,7 +37,7 @@ describe("native job revisions and ownership", () => {
     expect(corrected.jobs.get(stopped.jobKey)).toMatchObject({ state: "completed", outputPath: "/generated/image.png", runId: 8 });
     const deliveryFailed = mergeNativeJobEvent(emptyNativeJobs(), { type: "updated", job: { ...stopped, state: "error", phase: "delivery_failed" } });
     expect(mergeNativeJobEvent(deliveryFailed, { type: "updated", job: completed }).jobs.get(stopped.jobKey)?.state).toBe("completed");
-    for (const job of [record(1, 4), { ...completed, outputPath: undefined }, { ...completed, runId: undefined }, { ...completed, owner: { ...completed.owner, packageId: "provider" } }]) {
+    for (const job of [record(1, 4), { ...completed, outputPath: undefined }, { ...completed, runId: 0 }, { ...completed, owner: { ...completed.owner, packageId: "provider" } }]) {
       expect(mergeNativeJobEvent(before, { type: "updated", job })).toBe(before);
     }
     for (const state of ["error", "cancelled", "completed"] as const) {
@@ -62,11 +78,11 @@ describe("native job revisions and ownership", () => {
 describe("owned native subscription",()=>{
   it("shows a late acknowledged output in live history silently, without reload", async () => {
     let receive!: (value: unknown) => void;
-    const stopped = { ...record(1, 2, "discarded"), phase: "stopped", settledAtMs: 2 };
+    const stopped = { ...record(1, 2, "discarded"), phase: "stopped", runId: null, settledAtMs: 2 };
     const toast = vi.fn();
     const controller = createNativePluginJobsController({ watch: async fn => { receive = fn; return () => {}; }, snapshot: async () => ({ originWindow: "main", watermark: 2, jobs: [stopped] }), apply: records => jobsStore.applyNative(records), toast, error: () => {} });
     await controller.init();
-    receive({ type: "updated", job: { ...record(1, 3, "completed"), phase: "complete", settledAtMs: 2 } });
+    receive({ type: "updated", job: { ...record(1, 3, "completed"), phase: "complete", runId: null, settledAtMs: 2 } });
     expect(jobsStore.jobs[0]).toMatchObject({ status: "completed", outputPath: "/generated/image.png" });
     expect(toast).not.toHaveBeenCalled();
     receive({ type: "updated", job: record(1, 4) });

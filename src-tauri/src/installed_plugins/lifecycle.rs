@@ -431,6 +431,20 @@ fn remove_or_disable(profile: &Profile, id: &str, uninstall: bool) -> Result<(),
     finish_removal(profile.root, profile.store, &removal)
 }
 fn reconcile_replacement(store: &Store, candidate: &package::Installed) -> Result<(), AppError> {
+    let originals = store.package_operations(&candidate.manifest.id)?;
+    for a in originals
+        .iter()
+        .filter(|a| !super::ai_operations::replacement_recovers(&candidate.manifest, a))
+    {
+        store.release_operation_spools(&a.consumer.package_id, &a.operation_id)?;
+    }
+    if !originals.is_empty()
+        && originals
+            .iter()
+            .all(|a| !super::ai_operations::replacement_recovers(&candidate.manifest, a))
+    {
+        store.release_package_spools(&candidate.manifest.id)?;
+    }
     super::service_bridge::signal_removal_cancellations(store, &candidate.manifest.id, |a| {
         super::ai_operations::replacement_recovers(&candidate.manifest, a)
     })?;
@@ -444,11 +458,15 @@ fn reconcile_replacement(store: &Store, candidate: &package::Installed) -> Resul
     Ok(())
 }
 fn report_consumer_removal(store: &Store, id: &str) -> Result<(), AppError> {
+    for a in store.package_operations(id)? {
+        store.release_operation_spools(&a.consumer.package_id, &a.operation_id)?;
+    }
     for job in store.abandon_package_outputs(id)? {
         backend::release_job(&job.owner, job.job_id);
         backend::emit_job_event(serde_json::json!({"type":"updated","job":job}));
     }
-    store.finish_consumer_removal(id)
+    store.finish_consumer_removal(id)?;
+    store.release_package_spools(id)
 }
 fn recover_consumer_removals(root: &Path) -> Result<(), AppError> {
     let ledger = root

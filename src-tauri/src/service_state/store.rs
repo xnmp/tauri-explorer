@@ -9,9 +9,10 @@ use std::{
 pub(crate) struct Store {
     pub(super) root: PathBuf,
     pub(super) limits: Limits,
-    pub(super) output_recovery:
-        std::sync::Mutex<std::collections::HashMap<(String, String), usize>>,
+    pub(super) output_recovery: super::artifacts::OutputRecoveries,
     pub(super) pending_success: super::receipts::PendingSuccess,
+    #[cfg(test)]
+    pub(crate) test_fs: std::sync::Arc<super::test_fs::TestFs>,
     #[cfg(test)]
     pub(super) fail_next_commit: std::sync::atomic::AtomicBool,
     #[cfg(test)]
@@ -70,10 +71,12 @@ impl Store {
         let root =
             dunce::canonicalize(&root).map_err(|_| reject("service directory is unreadable"))?;
         let store = Self {
+            output_recovery: super::artifacts::output_recovery_for_root(&root),
+            #[cfg(test)]
+            test_fs: super::test_fs::for_root(&root),
             pending_success: super::receipts::pending_success_for_root(&root)?,
             root,
             limits,
-            output_recovery: Default::default(),
             #[cfg(test)]
             fail_next_commit: std::sync::atomic::AtomicBool::new(false),
             #[cfg(test)]
@@ -213,6 +216,7 @@ impl Store {
         connection
             .execute_batch(super::receipts::DISMISSAL_TABLE)
             .map_err(sql)?;
+        super::host_spools::initialize(&connection)?;
         let integrity: String = connection
             .query_row("PRAGMA quick_check", [], |r| r.get(0))
             .map_err(sql)?;
@@ -220,7 +224,7 @@ impl Store {
             return Err(reject("durable ledger is corrupt"));
         }
         drop(connection);
-        for name in ["bytes", "stages", "leases"] {
+        for name in ["bytes", "stages", "leases", "host-spools"] {
             let path = store.root.join(name);
             if !path.exists() {
                 fs::create_dir(&path)
@@ -278,15 +282,16 @@ impl Store {
         for entry in entries {
             let name = entry.file_name();
             let name = name.to_string_lossy();
-            let inert = matches!(
-                name.as_ref(),
-                ".initialize.lock"
-                    | "ledger.sqlite"
-                    | "ledger.sqlite-wal"
-                    | "ledger.sqlite-shm"
-                    | "ledger.sqlite-journal"
-            ) || (matches!(name.as_ref(), "bytes" | "stages" | "leases")
-                && fs::read_dir(entry.path()).is_ok_and(|mut d| d.next().is_none()));
+            let inert =
+                matches!(
+                    name.as_ref(),
+                    ".initialize.lock"
+                        | "ledger.sqlite"
+                        | "ledger.sqlite-wal"
+                        | "ledger.sqlite-shm"
+                        | "ledger.sqlite-journal"
+                ) || (matches!(name.as_ref(), "bytes" | "stages" | "leases" | "host-spools")
+                    && fs::read_dir(entry.path()).is_ok_and(|mut d| d.next().is_none()));
             if !inert {
                 return Ok(false);
             }
@@ -340,6 +345,11 @@ impl Store {
     pub(crate) fn fail_next_write(&self) {
         self.fail_next_commit
             .store(true, std::sync::atomic::Ordering::Relaxed);
+    }
+    #[cfg(test)]
+    pub(crate) fn clear_write_failure(&self) {
+        self.fail_next_commit
+            .store(false, std::sync::atomic::Ordering::Relaxed);
     }
     #[cfg(test)]
     pub(crate) fn fail_next_original_sync(&self) {
@@ -508,7 +518,7 @@ impl Store {
         new_operation: bool,
     ) -> Result<()> {
         let bytes: i64 = conn
-            .query_row("SELECT coalesce(sum(bytes),0) FROM artifacts", [], |r| {
+            .query_row("SELECT (SELECT coalesce(sum(bytes),0) FROM artifacts)+(SELECT coalesce(sum(bytes),0) FROM host_spools)", [], |r| {
                 r.get(0)
             })
             .map_err(sql)?;
@@ -956,6 +966,7 @@ impl Store {
             if released != 0
                 && dismissed
                 && !self.retained_output_at(&conn, &consumer, &operation)?
+                && !self.has_unbound_host_output(&a.provider)?
             {
                 continue;
             }

@@ -327,10 +327,11 @@ fn reader(
             let mut buffer = [0u8; 8192];
             loop {
                 if stop.load(Ordering::Acquire) {
-                    return Err(io::Error::new(
-                        io::ErrorKind::TimedOut,
-                        "Owned output drain stopped",
-                    ));
+                    // A completed leaf can leave an independently detached
+                    // helper holding this pipe. Retain every captured original
+                    // byte when the bounded drain stops; cancellation/error
+                    // paths discard this result at their own caller boundary.
+                    return Ok(bytes);
                 }
                 match pipe.read(&mut buffer) {
                     Ok(0) => return Ok(bytes),
@@ -344,10 +345,7 @@ fn reader(
                     Err(e) if e.kind() == io::ErrorKind::Interrupted => {}
                     Err(e) if e.kind() == io::ErrorKind::WouldBlock => {
                         if stop.load(Ordering::Acquire) {
-                            return Err(io::Error::new(
-                                io::ErrorKind::TimedOut,
-                                "Owned output pipes did not close",
-                            ));
+                            return Ok(bytes);
                         }
                         std::thread::sleep(Duration::from_millis(5));
                     }
@@ -457,23 +455,14 @@ fn supervise(
         readers.stdin = Some(writer(pipe, input, stop)?);
     }
     loop {
-        if cancelled() || overflow.load(Ordering::Acquire) {
+        let cancellation = cancelled();
+        if overflow.load(Ordering::Acquire) {
             owned.stop();
-            return Err(AppError::Other(
-                if overflow.load(Ordering::Acquire) {
-                    "Child output exceeded its limit"
-                } else {
-                    cancel_message
-                }
-                .into(),
-            ));
+            return Err(AppError::Other("Child output exceeded its limit".into()));
         }
-        if exited(&mut owned.anchor)? {
-            owned.stop();
-            return Err(AppError::Other(
-                "Owned process supervision was interrupted".into(),
-            ));
-        }
+        // The original, unreaped CLI may have completed before cancellation
+        // retired its owner. Observe that exit after the predicate so its
+        // authoritative status and bytes survive the owner's retirement.
         if exited(owned.leaf.as_mut().expect("owned leaf"))? {
             owned.stop();
             let status = owned.leaf.as_mut().expect("owned leaf").wait()?;
@@ -509,6 +498,16 @@ fn supervise(
                 stdout,
                 stderr,
             });
+        }
+        if cancellation {
+            owned.stop();
+            return Err(AppError::Other(cancel_message.into()));
+        }
+        if exited(&mut owned.anchor)? {
+            owned.stop();
+            return Err(AppError::Other(
+                "Owned process supervision was interrupted".into(),
+            ));
         }
         std::thread::sleep(Duration::from_millis(5));
     }

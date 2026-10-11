@@ -492,10 +492,12 @@ impl Store {
                 Self::persist(tx,&recovered)?;
             }
             let released: bool = tx.query_row("SELECT exec_released FROM operations WHERE consumer=?1 AND operation=?2", params![consumer, op], |r| r.get(0)).map_err(sql)?;
-            if released && status["execution"]["state"] != "unknown" {
+            if released && status["execution"]["state"] == "succeeded" {
                 // Publication and settlement serialize on the same IMMEDIATE
                 // transaction. New evidence revokes the old idle disposition;
                 // a late success owns recovery before any publisher can crash.
+                // Cached Accepted/Running or terminal failure observations do
+                // not introduce live work or revoke the original idle fence.
                 tx.execute("UPDATE operations SET exec_released=0 WHERE consumer=?1 AND operation=?2", params![consumer, op]).map_err(sql)?;
                 tx.execute("DELETE FROM dismissed_operations WHERE consumer=?1 AND operation=?2", params![consumer, op]).map_err(sql)?;
             } else if released && !(admission.phase == AdmissionPhase::Terminal && admission.needs_attention) {
@@ -602,6 +604,10 @@ impl Store {
             tx.execute("INSERT INTO dismissed_operations(consumer,operation,revision,dismissed_at_ms)VALUES(?1,?2,?3,CAST(strftime('%s','now') AS INTEGER)*1000)ON CONFLICT(consumer,operation)DO UPDATE SET revision=excluded.revision,dismissed_at_ms=excluded.dismissed_at_ms", params![consumer, op, receipt.as_ref().map_or(0, |r| r.revision) as i64]).map_err(sql)?;
             self.settle_dismissed_job_in(tx, consumer, op, status.and_then(|r| r["execution"]["error"]["message"].as_str()))
         })?;
+        drop(reservation);
+        if let Err(error) = self.release_operation_spools(consumer, op) {
+            log::warn!("settled host output sweep deferred: {error}");
+        }
         if let Err(error) = self.gc() {
             log::warn!("settled artifact sweep deferred: {error}");
         }
@@ -631,21 +637,31 @@ impl Store {
                 return Err(reject("invalid retained execution claim"));
             }
             let receipt = observed(&conn, &a)?;
+            // A second handle can reopen while the first owns unpaid original
+            // IO. Keep its full reservation and input custody until that
+            // writer finishes; a no-replay fence does not prove IO inactivity.
+            if self.original_writer_active(&consumer, &op)? {
+                continue;
+            }
             // Execution release is a durable no-replay fence. Presentation
             // dismissal is independent: replacement or startup may re-arm
             // inspection by removing that marker without revoking this fence.
             let status = receipt.as_ref().map(|r| &r.status);
-            if a.output.is_some() && a.phase != AdmissionPhase::Released
-                || super::receipt::auto_settlement(
-                    a.phase,
-                    status
-                        .and_then(|r| r["execution"]["state"].as_str())
-                        .unwrap_or("unconfirmed"),
-                    status
-                        .and_then(|r| r["delivery"]["state"].as_str())
-                        .unwrap_or("none"),
-                    false,
-                ) != super::receipt::AutoSettlement::Settle
+            let idle_success = status.is_some_and(|r| {
+                r["execution"]["state"] == "succeeded" && r["delivery"]["state"] == "unavailable"
+            });
+            if !idle_success
+                && (a.output.is_some() && a.phase != AdmissionPhase::Released
+                    || super::receipt::auto_settlement(
+                        a.phase,
+                        status
+                            .and_then(|r| r["execution"]["state"].as_str())
+                            .unwrap_or("unconfirmed"),
+                        status
+                            .and_then(|r| r["delivery"]["state"].as_str())
+                            .unwrap_or("none"),
+                        false,
+                    ) != super::receipt::AutoSettlement::Settle)
             {
                 // Older hosts could publish valid newer evidence after an idle
                 // settlement without revoking its flag. Retain and restore the
@@ -664,7 +680,16 @@ impl Store {
                     Ok(())
                 })?;
             } else {
-                let reservation = self.idle_output_reservation(&consumer, &op)?;
+                let reservation = match self.idle_output_reservation(&consumer, &op) {
+                    Ok(reservation) => reservation,
+                    Err(error) => {
+                        // An unfinished physical cleanup cannot veto opening
+                        // the ledger or a user's lifecycle decision. Keep its
+                        // conservative charge until a later durable sweep.
+                        log::warn!("inactive reservation reconciliation deferred: {error}");
+                        continue;
+                    }
+                };
                 self.transaction(|tx| {
                     tx.execute("UPDATE artifacts SET status='released' WHERE consumer=?1 AND operation=?2 AND kind='input'", params![consumer, op]).map_err(sql)?;
                     if let Some((handle, bytes, _)) = &reservation {

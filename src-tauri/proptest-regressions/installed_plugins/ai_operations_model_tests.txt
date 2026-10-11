@@ -1,0 +1,10 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc b626f92daa87519bf21044f6b426d1e771aac6dc0d3dc36a88c102b90acb8923 # shrinks to [Sweep, Stage(0, false, false)]
+cc c1d8007605327086a779edc000a6d4623ef29af6a64468fbac8e4c67f129f7b9 # shrinks to [Sweep, DirectorySyncFailure(true), Upgrade(false, false, false)]
+cc 06762e602dc503f5b475e47c8079fcd5aa3eaa0f10db8c0d902df1caaadc9a1a # shrinks to [Stage(0, true, false)]
+cc 23c5fad21d91b6794780c477d61360cb7addeb31c90b6dda001a7a4a6b60e890 # shrinks to [Sweep, Upgrade(false, true, false), DirectorySyncFailure(true), Probe(true)]

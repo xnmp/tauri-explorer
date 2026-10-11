@@ -20,7 +20,6 @@
 //!   and whether a write is in flight, so it decides; here we just report.
 
 use notify::{Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
-use serde::Serialize;
 use std::collections::HashMap;
 use std::fmt::Display;
 use std::path::{Path, PathBuf};
@@ -46,17 +45,11 @@ const AI_CONNECTIONS_FILE: &str = "ai-connections.json";
 /// User theme CSS lives one level down, in `<config>/themes/`.
 const THEMES_DIR: &str = "themes";
 
-#[derive(Clone, Serialize)]
-struct ConfigChangedPayload {
-    /// Config-dir-relative name, always forward-slashed: `settings.json` or
-    /// `themes/<name>.css`.
-    filename: String,
-}
-
 /// The single constructor for every `config-file-changed` payload; the
-/// frontend listener reads `payload.filename`.
+/// frontend listener reads `payload.filename`, a config-dir-relative name,
+/// always forward-slashed: `settings.json` or `themes/<name>.css`.
 pub(crate) fn config_changed_payload(filename: &str) -> serde_json::Value {
-    serde_json::Value::String(filename.to_string())
+    serde_json::json!({ "filename": filename })
 }
 
 /// The filesystem locations that must be watched to observe reloadable config.
@@ -559,12 +552,7 @@ fn spawn_flush_thread(app: AppHandle) {
                 }
             }
             log::debug!("config-file-changed: {filename}");
-            if let Err(error) = app.emit(
-                "config-file-changed",
-                ConfigChangedPayload {
-                    filename: filename.clone(),
-                },
-            ) {
+            if let Err(error) = app.emit("config-file-changed", config_changed_payload(&filename)) {
                 log::warn!("Failed to emit config-file-changed for {filename}: {error}");
             }
         }
@@ -649,9 +637,10 @@ mod tests {
     #[cfg(unix)]
     use super::THEMES_DIR;
     use super::{
-        config_changed_payload, map_event_paths, pending, reconcile_watch_plan, settings_path, watched_config_name,
-        ConfigWatchHarness, PhaseRecorder, Registrations, ShutdownError, StopSignal, WatchPlan,
-        WatchRegistration, WorkerPhase, BOOKMARKS_FILE, FOLDER_VIEWS_FILE, SETTINGS_FILE,
+        config_changed_payload, map_event_paths, pending, reconcile_watch_plan, settings_path,
+        watched_config_name, ConfigWatchHarness, PhaseRecorder, Registrations, ShutdownError,
+        StopSignal, WatchPlan, WatchRegistration, WorkerPhase, BOOKMARKS_FILE, FOLDER_VIEWS_FILE,
+        SETTINGS_FILE,
     };
     use notify::{RecommendedWatcher, RecursiveMode, Watcher};
     use std::collections::{HashMap, HashSet};

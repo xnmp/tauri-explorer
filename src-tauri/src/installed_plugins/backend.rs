@@ -2227,12 +2227,10 @@ fn schedule_image_migration() {
                 code: error.code.into(),
                 message: error.message,
             })?;
-            let _ = trace
-                .app
-                .emit(
-                    "config-file-changed",
-                    crate::config_watch::config_changed_payload("plugin.openai-image.json"),
-                );
+            let _ = trace.app.emit(
+                "config-file-changed",
+                crate::config_watch::config_changed_payload("plugin.openai-image.json"),
+            );
             let _ = trace
                 .app
                 .emit("ai:image-migration-changed", json!({"state":"complete"}));

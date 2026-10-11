@@ -1580,6 +1580,10 @@ mod tests {
         let canonical = dir.path().canonicalize().unwrap();
         let (tx, rx) = mpsc::channel::<String>();
         let (exit_tx, exit_rx) = mpsc::channel::<Option<u32>>();
+        // Output and exit are delivered by independent threads. Hold the first
+        // output callback until the test has observed exit to exercise that order.
+        let (_release_output, output_gate) = mpsc::channel::<()>();
+        let output_gate = Mutex::new(Some(output_gate));
 
         let (id, token) = reserve_started("test-window");
         let id = spawn_shell_with(
@@ -1591,6 +1595,9 @@ mod tests {
             80,
             24,
             move |chunk| {
+                if let Some(gate) = output_gate.lock().unwrap().take() {
+                    let _ = gate.recv_timeout(Duration::from_secs(10));
+                }
                 let _ = tx.send(chunk);
             },
             move |code| {

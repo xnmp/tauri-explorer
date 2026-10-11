@@ -400,6 +400,7 @@ pub fn run_with_process_entry(launch_dir: Option<String>, t_process_entry: std::
             thumbnails::set_ffmpeg_path,
             thumbnails::clear_thumbnail_cache,
             thumbnails::get_thumbnail_cache_stats,
+            thumbnails::preview_rendition::get_preview_image,
             // Archive operations
             archive::compress_to_zip,
             archive::cancel_compress,

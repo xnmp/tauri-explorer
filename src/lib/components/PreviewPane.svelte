@@ -3,12 +3,15 @@
   Issue: tauri-explorer-2c6b, tauri-explorer-xago, tauri-explorer-osjq
 -->
 <script lang="ts">
-  import { onDestroy } from "svelte";
+  import { onDestroy, untrack } from "svelte";
   import { useControlledSize } from "$lib/composables/use-controlled-size.svelte";
   import { previewResizeSpec } from "$lib/domain/preview-size";
   import { windowTabsManager } from "$lib/state/window-tabs.svelte";
   import { readTextFile, fetchDirectory } from "$lib/api/files";
-  import { decodeImage, loadPreviewImage } from "$lib/state/preview-image";
+  import { decodeImage, loadPreviewImage, type PreviewImageOptions } from "$lib/state/preview-image";
+  import { createFullResolutionUpgrade } from "$lib/state/preview-resolution";
+  import { needsFullResolution, renditionMaxEdge } from "$lib/domain/preview-rendition";
+  import { createLatestOnlyRunner } from "$lib/domain/latest-only";
   import { usePreviewFullscreen } from "$lib/composables/use-preview-fullscreen.svelte";
   import PreviewImageSurface from "./PreviewImageSurface.svelte";
 import { gitDiff } from "$lib/api/git";
@@ -153,6 +156,14 @@ import { openFile } from "$lib/api/open";
   // content empty for the decode and re-laid out the pane for those frames.
   let previewImageHeld = $state(false);
   let previewImageNote = $state<string | null>(null);
+  // Large images show a display-sized rendition (#1054); fullscreen and zoom
+  // swap in the original (state/preview-resolution). The runner keeps skipped
+  // selections from queueing rendition decodes in the backend.
+  let previewShowsRendition = $state(false);
+  let previewContentWidth = $state(0);
+  let previewContentHeight = $state(0);
+  const renditionRunner = createLatestOnlyRunner();
+  const fullResolution = createFullResolutionUpgrade();
   let previewText = $state<string | null>(null);
   let previewHighlightedHtml = $state<string | null>(null);
   let previewMarkdownHtml = $state<string | null>(null);
@@ -402,6 +413,7 @@ import { openFile } from "$lib/api/open";
       previewImageUrl = null;
       previewImageHeld = false;
       previewImageNote = null;
+      showingRendition(null);
       previewText = null;
       previewHighlightedHtml = null;
       previewMarkdownHtml = null;
@@ -428,6 +440,38 @@ import { openFile } from "$lib/api/open";
     previewImageHeld = false;
   }
 
+  function showingRendition(rendition: Parameters<typeof fullResolution.showing>[0]): void {
+    fullResolution.showing(rendition);
+    previewShowsRendition = rendition !== null;
+  }
+
+  // Fullscreen or zoom needs the original: decode it off-screen while the
+  // rendition stays up, then swap it in (#1054).
+  $effect(() => {
+    if (!previewShowsRendition || !needsFullResolution({ fullscreen: fullscreen.active, zoom: fullscreen.zoom })) return;
+    void fullResolution.upgrade().then((image) => {
+      if (!image) return;
+      showImage(image.url);
+      previewShowsRendition = false;
+    });
+  });
+
+  /** The image request for `file`: a rendition sized for the surface, or the
+   * original while the viewer needs full resolution. Read untracked: the
+   * load effect must not re-run when the pane resizes or zooms. */
+  function imageLoadOptions(): PreviewImageOptions {
+    return untrack(() => {
+      if (needsFullResolution({ fullscreen: fullscreen.active, zoom: fullscreen.zoom })) return {};
+      const maxEdge = renditionMaxEdge({
+        width: previewContentWidth,
+        height: previewContentHeight,
+        devicePixelRatio: window.devicePixelRatio,
+        zoom: settingsStore.zoomLevel / 100,
+      });
+      return { rendition: { maxEdge, runner: renditionRunner } };
+    });
+  }
+
   /** Whether loadPreview shows this file as a plain image (its image branch). */
   function rendersAsImage(file: FileEntry): boolean {
     return file.kind !== "directory" && !isZipFile(file) && !isPdfFile(file) && !isVideoMediaFile(file)
@@ -448,6 +492,7 @@ import { openFile } from "$lib/api/open";
     }
     previewImageHeld = holdImage;
     previewImageNote = null;
+    showingRendition(null);
     previewText = null;
     previewHighlightedHtml = null;
     previewMarkdownHtml = null;
@@ -553,16 +598,19 @@ import { openFile } from "$lib/api/open";
     }
 
     if (isImageFile(file) || isSvgFile(file)) {
-      // Asset protocol first, then the backend read (cloud placeholders, and
-      // the only path in browser/E2E mode); see state/preview-image.
-      const image = await loadPreviewImage(file.path, bust, {
+      // A display-sized rendition for large images, else the original: asset
+      // protocol first, then the backend read (cloud placeholders, and the
+      // only path in browser/E2E mode); see state/preview-image.
+      const owner = {
         isCurrent: () => previewLifetime.isCurrent(request),
-        adoptBlob: (url) => previewLifetime.adoptBlob(request, url),
-        releaseBlob: (url) => previewLifetime.releaseBlob(request, url),
-      });
+        adoptBlob: (url: string) => previewLifetime.adoptBlob(request, url),
+        releaseBlob: (url: string) => previewLifetime.releaseBlob(request, url),
+      };
+      const image = await loadPreviewImage(file.path, bust, owner, imageLoadOptions());
       if (image.status === "stale") return;
       if (image.status === "ready") {
         showImage(image.url);
+        if (image.resolution === "rendition") showingRendition({ path: file.path, cacheBust: bust, owner });
         previewImageNote = image.viaBackend && /\.avif$/i.test(file.name) ? "AVIF fallback preview shows the first frame." : null;
       } else {
         previewError = "Cannot preview image";
@@ -799,7 +847,8 @@ import { openFile } from "$lib/api/open";
     {/if}
 
     <!-- svelte-ignore a11y_no_noninteractive_tabindex -- a scrollable region must be keyboard-focusable (WCAG 2.1.1, #797). -->
-    <div class="preview-content" role="region" aria-label="Preview of {selectedFile.name}{isVideoMediaFile(selectedFile) ? ' (video)' : ''}" aria-busy={previewLoading} tabindex="0">
+    <div class="preview-content" role="region" aria-label="Preview of {selectedFile.name}{isVideoMediaFile(selectedFile) ? ' (video)' : ''}" aria-busy={previewLoading} tabindex="0"
+      bind:clientWidth={previewContentWidth} bind:clientHeight={previewContentHeight}>
       {#if isVideoMediaFile(selectedFile)}
         <span class="video-preview-marker"><VideoIndicator /></span>
       {/if}

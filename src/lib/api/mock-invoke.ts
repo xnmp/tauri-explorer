@@ -1577,6 +1577,14 @@ const mockCommands: Record<string, CommandHandler> = {
   },
   open_pdf_link: (args) => { getMockControl().openedPdfUrl = String(args.url); },
 
+  get_preview_image: (args) => {
+    // Browser/E2E mode has no rendition generator; every image is shown as
+    // its own original (through `read_image_data_url`) unless a test says so.
+    const hook = getMockControl().previewImageSource;
+    if (hook) return hook((args.path as string) ?? "", Number(args.maxEdge));
+    return { kind: "original" };
+  },
+
   read_image_data_url: (args) => {
     const hook = getMockControl().previewReadImage;
     if (hook) return hook((args.path as string) ?? "");

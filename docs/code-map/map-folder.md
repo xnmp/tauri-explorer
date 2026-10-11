@@ -124,7 +124,8 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `git-graph-coverage.ts` — repository observation leases shared by pending graph reads and retained snapshots; listener/watch acknowledgement precedes reads, final release drains acquisition, and UNC polling roots stay uncached.
 - `directory-watch.ts` — generic ordered path-lease ownership plus the directory adapter; retains exact release authority across failed teardown and drains late acquisition; reused by Git, thumbnails, Miller columns and drives.
 - `preview-lifetime.ts` — full-revision preview request and object-URL ownership; stale results cannot publish or revoke a replacement.
-- `preview-image.ts` — full-resolution Preview image load for files and plugin targets: asset protocol + off-screen decode, then the backend `read_image_data_url` fallback (paths outside the asset scope, cloud placeholders; the only path in browser mode); blob ownership through the caller's lifetime (#1033).
+- `preview-image.ts` — Preview image load for files and plugin targets: optional display-sized rendition first (`get_preview_image`, any failure falls back to the original, #1054), then asset protocol + off-screen decode, then the backend `read_image_data_url` fallback (paths outside the asset scope, cloud placeholders; the only path in browser mode); blob ownership through the caller's lifetime (#1033).
+- `preview-resolution.ts` — full resolution on demand: loads the shown rendition's original once, off-screen, and hands it back only while that rendition is still shown (#1054).
 - `terminal-key-handler.ts` — xterm key adapter: eligible command ownership precedes clipboard/readline effects, with modifier tracking and chord retirement.
 - `pdf-preview.svelte.ts` — latest-document/page intent and detached-canvas render lifetimes; releases departed pages and cancels owned PDF workers (#728–#730).
 - `terminal-session.ts` — frontend terminal reservation/listener/spawn lifetime; drains late resources and serializes restart/stop. Owns the session's only input path (`domain/terminal-input-queue.ts`): opened at start/restart so typeahead is kept, attached at reservation, closed on stop/exit; `insert` builds text (path insertions) in the spawned shell's dialect and holds it across an exited shell for the next start (#709, #882).
@@ -408,6 +409,8 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `terminal-command.ts` — shell command construction/quoting for terminal.
 - `terminal-cwd-sync.ts` — "terminal follows explorer" cwd decision (#149).
 - `terminal-keys.ts` — terminal vs app key-ownership rules (#249/#260).
+- `preview-rendition.ts` — Preview rendition policy: surface CSS size × devicePixelRatio × app zoom → 1024/2048/3072 edge buckets; fullscreen/zoom need the original (#1054).
+- `latest-only.ts` — one task in flight, only the newest waiting task runs next; skipped Preview selections never queue rendition decodes (#1054).
 - `ordered-writer.ts` — one-in-flight, coalescing ordered stream over an IPC transport that does not preserve call order; PTY input (#709).
 - `terminal-input-queue.ts` — the terminal's one input queue: strings and promises (paste reads, insertions) in call order, held until the terminal has an id, sent through an ordered writer with gap-free `terminal_write` sequence numbers; unsent input never crosses to a successor stream (#882).
 - `terminal-paste.ts` — per-platform paste source order with injected browser/native readers, and xterm-equivalent paste bytes (CR line endings, bracketed paste) (#732, #882).
@@ -471,7 +474,8 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `search_cache.rs` — bounded five-second cache of completed recursive Quick Open listings for watched roots; per-root invalidation revisions prevent an in-flight cold walk from republishing stale entries without discarding unrelated roots, and incomplete/cancelled walks are never published (#651).
 - `wsl.rs` — WSL UNC path parsing (`\\wsl.localhost\<distro>\…` → distro + Linux path), shared by terminal/search/git delegation.
 - `content_search.rs` — grep-across-files (ripgrep/grep crate).
-- `thumbnails.rs` — image/video thumbnail generation + cache; `with_decode_gate` clamps concurrent decodes to `cores/4` (2-8, override `TAURI_EXPLORER_DECODE_PERMITS`, 0=off) and lowers decode-thread priority to avoid starving the webview compositor; `diag` module logs slow (`>100ms`) requests + rolling aggregates (#593). Hot.
+- `thumbnails.rs` — image/video thumbnail generation + cache; `with_decode_gate` clamps concurrent decodes to `cores/4` (2-8, override `TAURI_EXPLORER_DECODE_PERMITS`, 0=off) and lowers decode-thread priority to avoid starving the webview compositor; `diag` module logs slow (`>100ms`) requests + rolling aggregates (#593); disk-cache pruning by write count or bytes written. Hot.
+- `thumbnails/preview_rendition.rs` — `get_preview_image`: header-only check, then a cached display-sized JPEG/PNG rendition of large still rasters in the thumbnail cache (namespaced key, inflight lock, decode gate); small/animated/GIF/AVIF/SVG/rotated non-JPEG stay originals (#1054).
 - `palette.rs` — dominant-color extraction for themes (#203).
 - `src-tauri/src/platform.rs` — host capabilities that shape recorded history: `TRASH_RESTORE_SUPPORTED` and the `TrashRestore` value passed to history admission (macOS has no trash restore).
 - `wallpaper.rs` — set desktop wallpaper (mac/Linux/Windows).
@@ -565,6 +569,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `src-tauri/src/files/recovery/private_storage/windows.rs` — Windows protected ACL, kind/reparse, hardlink and delete-pending evidence checks through retained handles.
 - `src-tauri/test_support/recovery_private_storage.rs` — real filesystem policy outcomes for retained files, hardlinks, retirement and widened permissions.
 - `src-tauri/test_support/native_directory_contract.rs` — cross-platform real filesystem contracts for retained anchors, exclusive creation/rename, removal kinds, existence and invalid-name rejection.
+- `src-tauri/test_support/preview_rendition.rs` — rendition sizing, encoding (alpha → PNG), EXIF orientation, originals kept, cache hit/mtime keying and single decode under concurrency (#1054).
 - `src-tauri/test_support/case_only_rename.rs` — runtime case-sensitivity contracts for rename, move, ordered-session conflicts and physical identity, shared by native-directory and recovery admission tests.
 
 - `mod.rs` — files module root + re-exports; `FileEntry` incl. `is_git_repo` and `metadata_to_entry`'s one-stat-per-directory git-repo-root detection (#463).

@@ -18,6 +18,8 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 
+pub(crate) mod preview_rendition;
+
 /// Default thumbnail size (width and height in pixels)
 const THUMBNAIL_SIZE: u32 = 128;
 
@@ -85,11 +87,20 @@ const CACHE_VERSION: u8 = 3;
 /// Generate a cache key (hash) for a file path + modification time (secs + nanos)
 /// + file length + thumbnail size + cache version.
 fn generate_cache_key(path: &Path, size: u32) -> Option<String> {
+    generate_namespaced_cache_key(b"", path, size)
+}
+
+/// As `generate_cache_key`, with `namespace` hashed first so another product
+/// (the Preview pane's renditions, #1054) can share the cache directory without
+/// colliding with a tile thumbnail of the same file and size. The empty
+/// namespace reproduces the tile-thumbnail keys exactly.
+fn generate_namespaced_cache_key(namespace: &[u8], path: &Path, size: u32) -> Option<String> {
     let metadata = fs::metadata(path).ok()?;
     let modified = metadata.modified().ok()?;
     let modified_dur = modified.duration_since(std::time::UNIX_EPOCH).ok()?;
 
     let mut hasher = Sha256::new();
+    hasher.update(namespace);
     hasher.update(path.to_string_lossy().as_bytes());
     hasher.update(modified_dur.as_secs().to_le_bytes());
     hasher.update(modified_dur.subsec_nanos().to_le_bytes());
@@ -163,7 +174,7 @@ fn save_to_cache(cache_key: &str, data: &[u8]) {
         let _ = fs::create_dir_all(&cache_dir);
         let cache_path = cache_dir.join(format!("{}.jpg", cache_key));
         let _ = write_file_atomic(&cache_path, data);
-        maybe_prune_disk_cache(&cache_dir);
+        maybe_prune_disk_cache(&cache_dir, data.len() as u64);
     }
 }
 
@@ -175,17 +186,34 @@ const MAX_DISK_CACHE_BYTES: u64 = 500 * 1024 * 1024;
 /// Prune at most every N cache writes to keep the directory scan cheap.
 const PRUNE_EVERY_N_WRITES: u64 = 256;
 
-static CACHE_WRITE_COUNT: AtomicU64 = AtomicU64::new(0);
+/// ...or once this many bytes were written since the last prune. Tile
+/// thumbnails are a few KB, so the write count alone bounded the overshoot;
+/// Preview renditions (#1054) are up to several MB each, and 256 of them
+/// would overshoot the cap by gigabytes before the next scan.
+const PRUNE_EVERY_N_BYTES: u64 = 32 * 1024 * 1024;
 
-/// Every `PRUNE_EVERY_N_WRITES` writes (including the first of a session),
-/// evict oldest-mtime entries until the cache fits under the size cap.
-/// Callers are already on a blocking thread (spawn_blocking), so the
-/// directory scan never runs on the async runtime.
-fn maybe_prune_disk_cache(cache_dir: &Path) {
+static CACHE_WRITE_COUNT: AtomicU64 = AtomicU64::new(0);
+static CACHE_BYTES_SINCE_PRUNE: AtomicU64 = AtomicU64::new(0);
+
+/// Whether the write numbered `write_index` (0-based), bringing the bytes
+/// written since the last prune to `bytes_since_prune`, should trigger a prune.
+fn prune_due(write_index: u64, bytes_since_prune: u64) -> bool {
+    write_index.is_multiple_of(PRUNE_EVERY_N_WRITES) || bytes_since_prune >= PRUNE_EVERY_N_BYTES
+}
+
+/// Every `PRUNE_EVERY_N_WRITES` writes (including the first of a session), or
+/// every `PRUNE_EVERY_N_BYTES` written, evict oldest-mtime entries until the
+/// cache fits under the size cap. Callers are already on a blocking thread
+/// (spawn_blocking), so the directory scan never runs on the async runtime.
+fn maybe_prune_disk_cache(cache_dir: &Path, written: u64) {
     let count = CACHE_WRITE_COUNT.fetch_add(1, Ordering::Relaxed);
-    if !count.is_multiple_of(PRUNE_EVERY_N_WRITES) {
+    let bytes = CACHE_BYTES_SINCE_PRUNE
+        .fetch_add(written, Ordering::Relaxed)
+        .saturating_add(written);
+    if !prune_due(count, bytes) {
         return;
     }
+    CACHE_BYTES_SINCE_PRUNE.store(0, Ordering::Relaxed);
     prune_disk_cache(cache_dir, MAX_DISK_CACHE_BYTES);
 }
 
@@ -749,7 +777,7 @@ fn generate_and_cache_thumbnail(
         .map_err(|e| AppError::Other(format!("Failed to encode thumbnail: {}", e)))?;
     write_file_atomic(&cache_path, buffer.get_ref())
         .map_err(|e| AppError::Other(format!("Failed to save thumbnail: {}", e)))?;
-    maybe_prune_disk_cache(&cache_dir);
+    maybe_prune_disk_cache(&cache_dir, buffer.get_ref().len() as u64);
 
     Ok(cache_path)
 }
@@ -1973,6 +2001,20 @@ mod tests {
         let key2 = generate_cache_key(&file_path, THUMBNAIL_SIZE).unwrap();
 
         assert_ne!(key1, key2, "modifying a file must invalidate the cache key");
+    }
+
+    #[test]
+    fn prune_is_due_by_write_count_or_by_bytes_written() {
+        assert!(prune_due(0, 0), "the first write of a session prunes");
+        assert!(
+            !prune_due(1, 4096),
+            "small tile thumbnails wait for the write count"
+        );
+        assert!(prune_due(PRUNE_EVERY_N_WRITES, 4096));
+        // A few multi-megabyte Preview renditions (#1054) must not wait for
+        // 256 writes, or the cache overshoots its cap by gigabytes.
+        assert!(prune_due(7, PRUNE_EVERY_N_BYTES));
+        assert!(!prune_due(7, PRUNE_EVERY_N_BYTES - 1));
     }
 
     #[test]

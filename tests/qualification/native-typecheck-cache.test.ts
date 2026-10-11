@@ -1,12 +1,15 @@
 import { spawnSync } from "node:child_process";
 import { mkdtempSync, writeFileSync, readFileSync, existsSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
+import { createRequire } from "node:module";
 import { join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import { createVitest } from "vitest/node";
 
 describe("native compiler metadata reuse", () => {
   it("persists successful checks and still rejects a changed imported contract", () => {
+    // Worktree checks can inherit dependencies from a parent installation.
+    const compiler = createRequire(import.meta.url).resolve("typescript/bin/tsc");
     const dir = mkdtempSync(join(tmpdir(), "native-typecheck-cache-"));
     try {
       const config = join(dir, "tsconfig.json");
@@ -18,7 +21,7 @@ describe("native compiler metadata reuse", () => {
       }));
       writeFileSync(join(dir, "contract.ts"), 'export const value: string = "valid";\n');
       writeFileSync(join(dir, "consumer.ts"), 'import { value } from "./contract"; export const result: string = value;\n');
-      const check = () => spawnSync("bun", [resolve("node_modules/typescript/bin/tsc"), "--noEmit", "-p", config], { encoding: "utf8" });
+      const check = () => spawnSync("bun", [compiler, "--noEmit", "-p", config], { encoding: "utf8" });
       const cold = check();
       expect(cold.status, cold.stdout + cold.stderr).toBe(0);
       expect(existsSync(cache)).toBe(true);

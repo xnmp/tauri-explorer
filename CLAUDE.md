@@ -282,3 +282,8 @@ contracts and recover after errors; do not alter the existing five-second test
 deadline to compensate for host load. Metadata is disposable, not acceptance proof.
 
 The new native cache contract probe also runs before parallel unit transforms, in its own ordered project after the unchanged public compiler check. Preserve exhaustive selection and worker overrides.
+
+Compiler regression probes resolve TypeScript's CLI through Node package
+resolution from the test module. Review checkouts may inherit dependencies from
+an ancestor; a checkout-relative node_modules/typescript path is not portable.
+Keep the real compiler and every cold/warm/error/recovery assertion intact.

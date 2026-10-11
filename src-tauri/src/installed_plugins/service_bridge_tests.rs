@@ -1636,3 +1636,416 @@ fn corrupted_sealed_output_keeps_success_and_distinguishes_unavailable_from_acqu
     );
     assert_eq!(starts(&log), 2);
 }
+
+struct IdleAutomatic;
+impl super::ai_operations::AutomaticPort for IdleAutomatic {
+    fn active(
+        &self,
+        _: &Admission,
+        _: Option<&crate::service_state::job::JobRecord>,
+        _: bool,
+        _: &str,
+    ) -> Result<bool, AppError> {
+        Ok(false)
+    }
+    fn recover(
+        &self,
+        _: &Admission,
+        _: Option<&crate::service_state::job::JobRecord>,
+    ) -> Result<(), AppError> {
+        panic!("An Unknown operation must never reach recovery")
+    }
+}
+#[test]
+fn automatic_settlement_of_stopped_unknown_survives_restart_without_replay() {
+    use crate::service_state::job::JobState;
+    let (root, s) = fixture();
+    let op = "auto-stopped";
+    let registered = s.register_job(job(op, 71)).unwrap();
+    let unknown = stopped_unknown(&s, op);
+    // Actual bootstrap path, without any user action or plugin IO.
+    super::ai_operations::settle_stopped_backlog(&s).unwrap();
+    let settled = s.job(&registered.job_key).unwrap().unwrap();
+    assert_eq!(settled.state, JobState::Discarded);
+    assert_eq!(
+        settled.error.as_deref(),
+        Some("Remote result is unconfirmed")
+    );
+    assert!(settled.settled_at_ms.is_some());
+    assert!(s.auto_settlement_operations().unwrap().is_empty());
+    assert!(s.claims().unwrap().is_empty());
+    drop(s);
+    let reopened = Store::open(root.path().join("service"), Limits::default()).unwrap();
+    super::ai_operations::settle_stopped_backlog(&reopened).unwrap();
+    assert_eq!(reopened.job(&registered.job_key).unwrap(), Some(settled));
+    assert_eq!(
+        reopened.provider_receipt("consumer", op).unwrap(),
+        Some(unknown)
+    );
+    assert!(
+        matches!(call(&reopened,"start",request(op),|_,_|panic!("automatic settlement replayed Unknown")),Err(AppError::Service{ref code,..}) if code=="recovery_stopped")
+    );
+}
+#[test]
+fn automatic_settlement_preserves_idle_failed_reason_and_requires_worker_proof() {
+    use crate::service_state::job::JobState;
+    let (root, s) = fixture();
+    let op = "auto-failed";
+    let registered = s.register_job(job(op, 72)).unwrap();
+    start(&s, op);
+    let mut failed = status(op, "failed", json!({"state":"none"}));
+    failed["revision"] = json!(2);
+    failed["execution"]["error"] = json!({"code":"rejected","message":"Provider rejected the image dimensions","correlationId":null});
+    call(&s, "status", json!({"operationId":op}), |_, _| {
+        Ok(failed.clone())
+    })
+    .unwrap();
+    assert!(s.auto_settle_operation("consumer", op, false).is_err());
+    assert_eq!(
+        s.job(&registered.job_key).unwrap().unwrap().state,
+        JobState::Accepting
+    );
+    s.fail_next_write();
+    assert!(s.auto_settle_operation("consumer", op, true).is_err());
+    assert!(!s.execution_released("consumer", op).unwrap());
+    assert_eq!(s.dismissed_revision("consumer", op).unwrap(), None);
+    let settled = super::ai_operations::auto_reconcile_in(&s, &IdleAutomatic).unwrap();
+    assert_eq!(settled.len(), 1);
+    assert_eq!(settled[0].state, JobState::Discarded);
+    assert_eq!(
+        settled[0].error.as_deref(),
+        Some("Provider rejected the image dimensions")
+    );
+    assert!(super::ai_operations::auto_reconcile_in(&s, &IdleAutomatic)
+        .unwrap()
+        .is_empty());
+    assert_eq!(
+        call(&s, "status", json!({"operationId":op}), |_, _| panic!(
+            "settled status should use retained receipt"
+        ))
+        .unwrap(),
+        failed
+    );
+    drop(s);
+    let reopened = Store::open(root.path().join("service"), Limits::default()).unwrap();
+    assert_eq!(
+        reopened.job(&registered.job_key).unwrap(),
+        Some(settled[0].clone())
+    );
+}
+#[test]
+fn automatic_recovery_obtains_retained_output_and_completes_without_discard_or_start() {
+    use crate::service_state::job::{JobRecord, JobState};
+    for acquired in [false, true] {
+        let (root, s) = fixture();
+        let op = "auto-output";
+        let registered = s.register_job(job(op, 73)).unwrap();
+        let descriptor = ready(&s, op);
+        s.update_job(
+            &registered.owner,
+            &registered.job_key,
+            JobState::NeedsAttention,
+            Some("needs_attention".into()),
+            None,
+            None,
+            Some("Lost consumer reply".into()),
+        )
+        .unwrap();
+        let data = root.path().join("consumer-data");
+        fs::create_dir(&data).unwrap();
+        s.register_consumer_root("consumer", data.clone()).unwrap();
+        let copy = data.join("recovered.png");
+        if acquired {
+            fs::copy(
+                s.read(&consumer(), "consumer", op, &descriptor)
+                    .unwrap()
+                    .path,
+                &copy,
+            )
+            .unwrap();
+            let transfer = s
+                .acquired(&consumer(), op, &descriptor, copy.to_str().unwrap())
+                .unwrap();
+            call(&s,"acknowledge",json!({"operationId":op,"outputSha256":descriptor.sha256,"disposition":"acquired","transferReceipt":transfer.transfer_receipt}),|_,_| Ok(status(op,"succeeded",json!({"state":"acquired","transferReceipt":transfer.transfer_receipt})))).unwrap();
+        }
+        struct RecoverOutput<'a> {
+            store: &'a Store,
+            descriptor: &'a ArtifactDescriptor,
+            copy: &'a Path,
+        }
+        impl super::ai_operations::AutomaticPort for RecoverOutput<'_> {
+            fn active(
+                &self,
+                _: &Admission,
+                _: Option<&JobRecord>,
+                _: bool,
+                _: &str,
+            ) -> Result<bool, AppError> {
+                Ok(false)
+            }
+            fn recover(&self, a: &Admission, job: Option<&JobRecord>) -> Result<(), AppError> {
+                let d = self.descriptor;
+                // Exercise the real local read/acquisition/acknowledgement path.
+                if a.phase != AdmissionPhase::Released {
+                    fs::copy(
+                        self.store
+                            .read(&consumer(), "consumer", &a.operation_id, d)?
+                            .path,
+                        self.copy,
+                    )
+                    .unwrap();
+                }
+                let receipt = self.store.acquired(
+                    &consumer(),
+                    &a.operation_id,
+                    d,
+                    self.copy.to_str().unwrap(),
+                )?;
+                call(
+                    self.store,
+                    "acknowledge",
+                    json!({"operationId":a.operation_id,"outputSha256":d.sha256,"disposition":"acquired","transferReceipt":receipt.transfer_receipt}),
+                    |method, _| {
+                        assert!(method.ends_with(".acknowledge"));
+                        Ok(status(
+                            &a.operation_id,
+                            "succeeded",
+                            json!({"state":"acquired","transferReceipt":receipt.transfer_receipt}),
+                        ))
+                    },
+                )?;
+                let job = job.unwrap();
+                self.store.update_job(
+                    &job.owner,
+                    &job.job_key,
+                    JobState::Completed,
+                    Some("complete".into()),
+                    Some(self.copy.to_str().unwrap().into()),
+                    Some(17),
+                    None,
+                )?;
+                Ok(())
+            }
+        }
+        assert!(super::ai_operations::auto_reconcile_in(
+            &s,
+            &RecoverOutput {
+                store: &s,
+                descriptor: &descriptor,
+                copy: &copy
+            }
+        )
+        .unwrap()
+        .is_empty());
+        assert!(copy.is_file());
+        let completed = s.job(&registered.job_key).unwrap().unwrap();
+        assert_eq!(completed.state, JobState::Completed);
+        assert_eq!(completed.output_path.as_deref(), copy.to_str());
+        assert_eq!(s.dismissed_revision("consumer", op).unwrap(), None);
+        assert!(s.claims().unwrap().is_empty());
+    }
+}
+#[test]
+fn automatic_settlement_backlog_is_not_hidden_behind_already_settled_rows() {
+    let root = tempfile::tempdir().unwrap();
+    // Unknown forensic reservations are intentionally retained by Dismiss;
+    // raise only this fixture's byte budget to exercise >128-row backlog.
+    let s = Store::open(
+        root.path().join("service"),
+        Limits {
+            disk_bytes: 32 * 1024 * 1024 * 1024,
+            ..Limits::default()
+        },
+    )
+    .unwrap();
+    for n in 0..140 {
+        let op = format!("backlog-{n}");
+        stopped_unknown(&s, &op);
+    }
+    super::ai_operations::settle_stopped_backlog(&s).unwrap();
+    assert!(s.auto_settlement_operations().unwrap().is_empty());
+    assert!(s.claims().unwrap().is_empty());
+}
+
+#[test]
+fn automatic_settlement_cannot_cross_a_paid_start_already_in_flight() {
+    let (_root, store) = fixture();
+    let store = Arc::new(store);
+    let entered = Arc::new(Barrier::new(2));
+    let release = Arc::new(Barrier::new(2));
+    let s = store.clone();
+    let e = entered.clone();
+    let r = release.clone();
+    let worker = std::thread::spawn(move || {
+        call(&s, "start", request("auto-dispatch"), |_, _| {
+            e.wait();
+            r.wait();
+            Ok(running("auto-dispatch"))
+        })
+        .unwrap()
+    });
+    entered.wait();
+    let settled = super::ai_operations::auto_reconcile_in(&store, &IdleAutomatic).unwrap();
+    assert!(settled.is_empty());
+    assert!(!store
+        .execution_released("consumer", "auto-dispatch")
+        .unwrap());
+    assert_eq!(
+        store
+            .dismissed_revision("consumer", "auto-dispatch")
+            .unwrap(),
+        None
+    );
+    release.wait();
+    worker.join().unwrap();
+    assert_eq!(
+        store
+            .provider_receipt("consumer", "auto-dispatch")
+            .unwrap()
+            .unwrap()["execution"]["state"],
+        "running"
+    );
+}
+#[test]
+fn automatic_discarded_provider_output_settles_and_survives_restart() {
+    use crate::service_state::job::JobState;
+    let (root, s) = fixture();
+    let op = "auto-discarded";
+    let registered = s.register_job(job(op, 74)).unwrap();
+    ready(&s, op);
+    let original = s.get("consumer", op).unwrap().unwrap();
+    let receipt = status(op, "succeeded", json!({"state":"discarded"}));
+    super::ai_operations::commit_discard(&s, &provider(), &original, &receipt).unwrap();
+    let settled = super::ai_operations::auto_reconcile_in(&s, &IdleAutomatic).unwrap();
+    assert_eq!(settled.len(), 1);
+    assert_eq!(settled[0].state, JobState::Discarded);
+    assert!(s.claims().unwrap().is_empty());
+    drop(s);
+    let reopened = Store::open(root.path().join("service"), Limits::default()).unwrap();
+    assert_eq!(
+        reopened.job(&registered.job_key).unwrap().unwrap().state,
+        JobState::Discarded
+    );
+}
+#[test]
+fn automatic_unknown_with_live_worker_is_left_untouched() {
+    use crate::service_state::job::JobRecord;
+    let (_root, s) = fixture();
+    let op = "auto-live";
+    stopped_unknown(&s, op);
+    struct Active;
+    impl super::ai_operations::AutomaticPort for Active {
+        fn active(
+            &self,
+            _: &Admission,
+            _: Option<&JobRecord>,
+            _: bool,
+            _: &str,
+        ) -> Result<bool, AppError> {
+            Ok(true)
+        }
+        fn recover(&self, _: &Admission, _: Option<&JobRecord>) -> Result<(), AppError> {
+            panic!("active operation recovered")
+        }
+    }
+    assert!(super::ai_operations::auto_reconcile_in(&s, &Active)
+        .unwrap()
+        .is_empty());
+    assert_eq!(s.dismissed_revision("consumer", op).unwrap(), None);
+}
+#[test]
+fn automatic_unavailable_corrupt_output_uses_provider_discard_not_generation() {
+    use crate::service_state::job::{JobRecord, JobState};
+    let (_root, s) = fixture();
+    let op = "auto-corrupt";
+    s.register_job(job(op, 75)).unwrap();
+    let descriptor = ready(&s, op);
+    let path = s
+        .read(&consumer(), "consumer", op, &descriptor)
+        .unwrap()
+        .path;
+    corrupt_in_place(&path);
+    let original = s.get("consumer", op).unwrap().unwrap();
+    let mut unavailable = status(
+        op,
+        "succeeded",
+        json!({"state":"unavailable","reason":"corrupt"}),
+    );
+    unavailable["revision"] = json!(3);
+    reconcile_at(&s, &provider(), &original, &unavailable).unwrap();
+    struct Discard<'a>(&'a Store);
+    impl super::ai_operations::AutomaticPort for Discard<'_> {
+        fn active(
+            &self,
+            _: &Admission,
+            _: Option<&JobRecord>,
+            _: bool,
+            _: &str,
+        ) -> Result<bool, AppError> {
+            Ok(false)
+        }
+        fn recover(&self, _: &Admission, _: Option<&JobRecord>) -> Result<(), AppError> {
+            panic!("corrupt result cannot be recovered")
+        }
+        fn discard(&self, a: &Admission) -> Result<(), AppError> {
+            let mut receipt = status(&a.operation_id, "succeeded", json!({"state":"discarded"}));
+            receipt["revision"] = json!(4);
+            reconcile_at(self.0, &provider(), a, &receipt)
+        }
+    }
+    let settled = super::ai_operations::auto_reconcile_in(&s, &Discard(&s)).unwrap();
+    assert_eq!(settled.len(), 1);
+    assert_eq!(settled[0].state, JobState::Discarded);
+    assert_eq!(
+        s.get("consumer", op)
+            .unwrap()
+            .unwrap()
+            .disposition
+            .as_deref(),
+        Some("discarded")
+    );
+    assert!(s.claims().unwrap().is_empty());
+}
+
+#[test]
+fn automatic_settlement_fills_missing_terminal_error_reason_without_changing_outcome() {
+    use crate::service_state::job::JobState;
+    let (root, s) = fixture();
+    let op = "auto-error-reason";
+    let registered = s.register_job(job(op, 76)).unwrap();
+    start(&s, op);
+    let mut failed = status(op, "failed", json!({"state":"none"}));
+    failed["revision"] = json!(2);
+    failed["execution"]["error"] =
+        json!({"code":"rejected","message":"Provider rejected dimensions","correlationId":null});
+    call(&s, "status", json!({"operationId":op}), |_, _| {
+        Ok(failed.clone())
+    })
+    .unwrap();
+    s.update_job(
+        &registered.owner,
+        &registered.job_key,
+        JobState::Error,
+        Some("failed".into()),
+        None,
+        None,
+        None,
+    )
+    .unwrap();
+    let settled = super::ai_operations::auto_reconcile_in(&s, &IdleAutomatic).unwrap();
+    assert_eq!(settled.len(), 1);
+    assert_eq!(settled[0].state, JobState::Error);
+    assert_eq!(
+        settled[0].error.as_deref(),
+        Some("Provider rejected dimensions")
+    );
+    assert!(super::ai_operations::auto_reconcile_in(&s, &IdleAutomatic)
+        .unwrap()
+        .is_empty());
+    drop(s);
+    let reopened = Store::open(root.path().join("service"), Limits::default()).unwrap();
+    assert_eq!(
+        reopened.job(&registered.job_key).unwrap(),
+        Some(settled[0].clone())
+    );
+}

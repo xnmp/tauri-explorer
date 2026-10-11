@@ -209,8 +209,82 @@ impl Store {
                 params![consumer, op, revision as i64],
             )
             .map_err(sql)?;
-            self.settle_dismissed_job_in(tx, consumer, op)
+            self.settle_dismissed_job_in(tx, consumer, op, None)
         })
+    }
+    /// Host-only settlement after both workers are proven idle. The receipt
+    /// stays provider-owned; releasing execution fences every future start.
+    pub fn auto_settle_operation(
+        &self,
+        consumer: &str,
+        op: &str,
+        no_live_worker: bool,
+    ) -> Result<Option<super::job::JobRecord>> {
+        self.transaction(|tx| {
+            let a = Self::record(tx, consumer, op)?.ok_or_else(|| reject("operation is not admitted"))?;
+            let receipt = observed(tx, &a)?;
+            let status = receipt.as_ref().map(|r| &r.status);
+            let execution = status.and_then(|r| r["execution"]["state"].as_str()).unwrap_or("unconfirmed");
+            let delivery = status.and_then(|r| r["delivery"]["state"].as_str()).unwrap_or("none");
+            if super::receipt::auto_settlement(a.phase, execution, delivery, !no_live_worker) != super::receipt::AutoSettlement::Settle || a.output.is_some() && !(a.phase == AdmissionPhase::Released && a.disposition.as_deref() == Some("discarded")) {
+                return Err(reject("automatic settlement requires idle workers and no recoverable output"));
+            }
+            tx.execute("UPDATE operations SET exec_released=1 WHERE consumer=?1 AND operation=?2", params![consumer, op]).map_err(sql)?;
+            tx.execute("INSERT INTO dismissed_operations(consumer,operation,revision,dismissed_at_ms)VALUES(?1,?2,?3,CAST(strftime('%s','now') AS INTEGER)*1000)ON CONFLICT(consumer,operation)DO UPDATE SET revision=excluded.revision,dismissed_at_ms=excluded.dismissed_at_ms", params![consumer, op, receipt.as_ref().map_or(0, |r| r.revision) as i64]).map_err(sql)?;
+            self.settle_dismissed_job_in(tx, consumer, op, status.and_then(|r| r["execution"]["error"]["message"].as_str()))
+        })
+    }
+    pub(super) fn validate_execution_releases(&self) -> Result<()> {
+        let conn = self.connect()?;
+        let mut query = conn
+            .prepare(
+                "SELECT consumer,operation,exec_released FROM operations WHERE exec_released!=0",
+            )
+            .map_err(sql)?;
+        let rows = query
+            .query_map([], |r| {
+                Ok((
+                    r.get::<_, String>(0)?,
+                    r.get::<_, String>(1)?,
+                    r.get::<_, i64>(2)?,
+                ))
+            })
+            .map_err(sql)?;
+        for row in rows {
+            let (consumer, op, flag) = row.map_err(sql)?;
+            let a = Self::record(&conn, &consumer, &op)?
+                .ok_or_else(|| reject("invalid retained execution claim"))?;
+            if flag != 1
+                || a.output.is_some()
+                    && !(a.phase == AdmissionPhase::Released
+                        && a.disposition.as_deref() == Some("discarded"))
+            {
+                return Err(reject("invalid retained execution claim"));
+            }
+            if a.phase == AdmissionPhase::Terminal && a.needs_attention {
+                continue;
+            }
+            // Legacy Stop is unchanged. Other idle settlements require their
+            // transaction's marker and a policy-compatible provider receipt.
+            let receipt = observed(&conn, &a)?;
+            let status = receipt.as_ref().map(|r| &r.status);
+            let revision = receipt.as_ref().map_or(0, |r| r.revision);
+            if self.dismissed_revision(&consumer, &op)? != Some(revision)
+                || super::receipt::auto_settlement(
+                    a.phase,
+                    status
+                        .and_then(|r| r["execution"]["state"].as_str())
+                        .unwrap_or("unconfirmed"),
+                    status
+                        .and_then(|r| r["delivery"]["state"].as_str())
+                        .unwrap_or("none"),
+                    false,
+                ) != super::receipt::AutoSettlement::Settle
+            {
+                return Err(reject("invalid retained execution claim"));
+            }
+        }
+        Ok(())
     }
     pub(super) fn validate_receipts(&self) -> Result<()> {
         let conn = self.connect()?;

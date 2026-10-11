@@ -221,10 +221,7 @@ impl Store {
         }
         // Deserialization is part of startup reconciliation, before claims advertised.
         store.claims()?;
-        let invalid_execution:i64=store.connect()?.query_row("SELECT count(*) FROM operations WHERE exec_released NOT IN(0,1) OR (exec_released=1 AND (phase!='terminal' OR admission IS NULL OR json_extract(admission,'$.output') IS NOT NULL OR json_extract(admission,'$.needsAttention') IS NOT 1))",[],|r|r.get(0)).map_err(sql)?;
-        if invalid_execution != 0 {
-            return Err(reject("invalid retained execution claim"));
-        }
+        store.validate_execution_releases()?;
         store.validate_receipts()?;
         store.validate_intents()?;
         store.validate_jobs()?;
@@ -447,7 +444,9 @@ impl Store {
             if global >= self.limits.operations as i64 || local >= self.limits.per_consumer as i64 {
                 // A terminal unknown outcome keeps its execution claim, and so its
                 // slot, until the user stops its recovery (plan §7.3, §21).
-                return Err(reject("operation capacity reached; wait for running AI work or resolve unconfirmed operations in AI Operations"));
+                return Err(reject(
+                    "operation capacity reached; wait for running AI work to finish",
+                ));
             }
         }
         Ok(())
@@ -784,6 +783,31 @@ impl Store {
     pub fn retained_operations(&self) -> Result<Vec<(Admission, u64, bool)>> {
         let conn = self.connect()?;
         let mut query=conn.prepare("SELECT consumer,operation,created_at_ms,exec_released FROM operations WHERE admission IS NOT NULL AND phase!='released' ORDER BY created_at_ms DESC LIMIT 128").map_err(sql)?;
+        let rows = query
+            .query_map([], |r| {
+                Ok((
+                    r.get::<_, String>(0)?,
+                    r.get::<_, String>(1)?,
+                    r.get::<_, i64>(2)?,
+                    r.get::<_, i64>(3)?,
+                ))
+            })
+            .map_err(sql)?;
+        let mut result = Vec::new();
+        for row in rows {
+            let (consumer, operation, created, released) = row.map_err(sql)?;
+            if created < 0 || !matches!(released, 0 | 1) {
+                return Err(reject("invalid operation retention metadata"));
+            }
+            let a = Self::record(&conn, &consumer, &operation)?
+                .ok_or_else(|| reject("missing retained operation"))?;
+            result.push((a, created as u64, released != 0));
+        }
+        Ok(result)
+    }
+    pub fn auto_settlement_operations(&self) -> Result<Vec<(Admission, u64, bool)>> {
+        let conn = self.connect()?;
+        let mut query=conn.prepare("SELECT consumer,operation,created_at_ms,exec_released FROM operations WHERE admission IS NOT NULL AND (phase!='released' OR EXISTS(SELECT 1 FROM presentation_jobs j WHERE j.owner=operations.consumer AND j.operation=operations.operation AND (json_extract(j.record,'$.state') IN ('accepting','running','recovering','needs_attention') OR (json_extract(j.record,'$.state')='error' AND json_extract(j.record,'$.error') IS NULL)))) AND NOT EXISTS(SELECT 1 FROM dismissed_operations d WHERE d.consumer=operations.consumer AND d.operation=operations.operation AND d.revision=coalesce((SELECT revision FROM provider_receipts p WHERE p.consumer=operations.consumer AND p.operation=operations.operation),0) AND exec_released=1) ORDER BY created_at_ms ASC").map_err(sql)?;
         let rows = query
             .query_map([], |r| {
                 Ok((

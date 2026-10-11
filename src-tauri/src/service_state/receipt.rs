@@ -1,8 +1,50 @@
 //! Pure structural validation before a provider receipt can change ownership.
-use super::model::{Admission, ArtifactDescriptor};
+use super::model::{Admission, AdmissionPhase, ArtifactDescriptor};
 use crate::error::AppError;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+/// Host policy never starts a request. Recovery only drives an existing result.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum AutoSettlement {
+    Recover,
+    Settle,
+    Leave,
+}
+pub(crate) fn auto_settlement(
+    state: AdmissionPhase,
+    execution: &str,
+    delivery: &str,
+    active: bool,
+) -> AutoSettlement {
+    if active {
+        return AutoSettlement::Leave;
+    }
+    if state == AdmissionPhase::Released {
+        return if execution == "succeeded" && delivery == "acquired" {
+            AutoSettlement::Recover
+        } else if delivery == "discarded" || execution != "succeeded" {
+            AutoSettlement::Settle
+        } else {
+            AutoSettlement::Leave
+        };
+    }
+    if execution == "succeeded" && matches!(delivery, "available" | "unavailable" | "acquired") {
+        AutoSettlement::Recover
+    } else {
+        AutoSettlement::Settle
+    }
+}
+
+/// Missing/corrupt is permanent output loss. Storage unavailability can still
+/// finish the original local stage, so it remains recoverable.
+pub(crate) fn settlement_delivery(delivery: &Value) -> &str {
+    match (delivery["state"].as_str(), delivery["reason"].as_str()) {
+        (Some("unavailable"), Some("missing" | "corrupt")) => "unrecoverable",
+        (Some(state), _) => state,
+        _ => "none",
+    }
+}
+
 /// A user may dismiss an operation only when nothing remains to recover:
 /// recovery was explicitly stopped, the provider's outcome is unknown and it
 /// holds no retained output. A succeeded execution keeps its bytes until
@@ -479,5 +521,115 @@ mod adapter_tests {
         ] {
             assert!(!adapter(bad), "{bad}");
         }
+    }
+}
+
+#[cfg(test)]
+mod auto_settlement_tests {
+    use super::*;
+    #[test]
+    fn every_state_execution_delivery_and_activity_combination() {
+        for phase in [
+            AdmissionPhase::Reserved,
+            AdmissionPhase::Forwarding,
+            AdmissionPhase::Accepted,
+            AdmissionPhase::Terminal,
+            AdmissionPhase::Released,
+        ] {
+            for execution in [
+                "accepted",
+                "running",
+                "succeeded",
+                "failed",
+                "cancelled",
+                "unknown",
+                "unconfirmed",
+                "",
+                "malformed",
+            ] {
+                for delivery in [
+                    "none",
+                    "available",
+                    "unavailable",
+                    "acquired",
+                    "discarded",
+                    "",
+                    "malformed",
+                    "unrecoverable",
+                ] {
+                    assert_eq!(
+                        auto_settlement(phase, execution, delivery, true),
+                        AutoSettlement::Leave
+                    );
+                    let decision = auto_settlement(phase, execution, delivery, false);
+                    if execution == "unknown" {
+                        assert_ne!(
+                            decision,
+                            AutoSettlement::Recover,
+                            "Unknown must never be replayed"
+                        );
+                    }
+                    match decision {
+                        AutoSettlement::Recover => {
+                            assert!(phase != AdmissionPhase::Released || delivery == "acquired");
+                            assert_eq!(execution, "succeeded");
+                            assert!(matches!(delivery, "available" | "unavailable" | "acquired"));
+                        }
+                        AutoSettlement::Leave => {
+                            assert_eq!(phase, AdmissionPhase::Released);
+                            assert_eq!(execution, "succeeded");
+                            assert!(!matches!(delivery, "discarded" | "acquired"));
+                        }
+                        AutoSettlement::Settle => {
+                            assert!(
+                                phase != AdmissionPhase::Released
+                                    || delivery == "discarded"
+                                    || execution != "succeeded"
+                            );
+                            assert!(
+                                execution != "succeeded"
+                                    || !matches!(
+                                        delivery,
+                                        "available" | "unavailable" | "acquired"
+                                    )
+                                    || phase == AdmissionPhase::Released
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod settlement_delivery_tests {
+    use super::*;
+    use serde_json::json;
+    #[test]
+    fn unavailable_reason_preserves_only_recoverable_local_delivery() {
+        for reason in ["missing", "corrupt"] {
+            let delivery = json!({"state":"unavailable","reason":reason});
+            assert_eq!(
+                auto_settlement(
+                    AdmissionPhase::Terminal,
+                    "succeeded",
+                    settlement_delivery(&delivery),
+                    false
+                ),
+                AutoSettlement::Settle
+            );
+        }
+        let delivery = json!({"state":"unavailable","reason":"storage_unavailable"});
+        assert_eq!(
+            auto_settlement(
+                AdmissionPhase::Terminal,
+                "succeeded",
+                settlement_delivery(&delivery),
+                false
+            ),
+            AutoSettlement::Recover
+        );
+        assert_eq!(settlement_delivery(&Value::Null), "none");
     }
 }

@@ -35,6 +35,7 @@ fn opaque(bytes: usize) -> Result<String, AppError> {
 }
 static BOOT: OnceLock<String> = OnceLock::new();
 static RECONCILER: Mutex<Option<std::thread::JoinHandle<()>>> = Mutex::new(None);
+static AUTO_RECONCILER: Mutex<Option<std::thread::JoinHandle<()>>> = Mutex::new(None);
 pub(super) fn origin(label: &str) -> Result<String, AppError> {
     if label.len() > 64
         || !label
@@ -127,7 +128,10 @@ fn observe(record: &JobRecord, status: &Value) -> Result<JobRecord, AppError> {
     } else {
         None
     };
-    let message = status["error"].as_str().map(str::to_owned);
+    let message = status["error"]
+        .as_str()
+        .or_else(|| status["providerExecution"]["error"]["message"].as_str())
+        .map(str::to_owned);
     let current = service_host::store()?
         .job(&record.job_key)?
         .ok_or_else(|| error("Background job is not retained"))?;
@@ -311,12 +315,28 @@ pub(super) fn initialize() -> Result<(), AppError> {
         emit(&record)
     }
     // Snapshot/status reconciliation is unpaid and owns at most eight workers.
-    // Attention records remain retained until an explicit recovery action.
+    // Inactive shared operations recover or settle without user intervention.
     let mut reconciler = RECONCILER
         .lock()
         .map_err(|_| error("Background operation worker ownership is unavailable"))?;
     if reconciler.is_some() {
         return Ok(());
+    }
+    let mut automatic = AUTO_RECONCILER
+        .lock()
+        .map_err(|_| error("Automatic AI worker ownership is unavailable"))?;
+    if automatic.is_none() {
+        *automatic = Some(
+            std::thread::Builder::new()
+                .name("native-ai-settlement".into())
+                .spawn(|| {
+                    while !backend::is_closing() {
+                        super::ai_operations::auto_reconcile();
+                        std::thread::sleep(std::time::Duration::from_secs(2));
+                    }
+                })
+                .map_err(|_| error("Automatic AI worker could not start"))?,
+        );
     }
     let worker = std::thread::Builder::new().name("native-job-reconciler".into()).spawn(|| {
         while !backend::is_closing() {
@@ -334,7 +354,7 @@ pub(super) fn initialize() -> Result<(), AppError> {
                         continue;
                     }
                     if now().saturating_sub(record.created_at_ms)>600_000 {
-                        if let Ok(updated)=service_host::store().and_then(|s|s.update_job(&record.owner,&record.job_key,JobState::NeedsAttention,Some("needs_attention".into()),None,record.run_id,Some("Recovery requires attention; the original operation has not been replayed".into()))) {emit(&updated);}
+                        if let Ok(updated)=service_host::store().and_then(|s|s.update_job(&record.owner,&record.job_key,JobState::NeedsAttention,Some("needs_attention".into()),None,record.run_id,Some("Recovery ended without a confirmed result; the original operation has not been replayed".into()))) {emit(&updated);}
                         continue;
                     }
                     schedule_reconcile(None,record);
@@ -347,6 +367,13 @@ pub(super) fn initialize() -> Result<(), AppError> {
     Ok(())
 }
 pub(super) fn shutdown() {
+    let automatic = AUTO_RECONCILER
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .take();
+    if let Some(worker) = automatic {
+        let _ = worker.join();
+    }
     let worker = {
         RECONCILER
             .lock()

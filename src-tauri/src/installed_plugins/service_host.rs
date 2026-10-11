@@ -44,7 +44,9 @@ pub(super) fn is_busy(error: &AppError) -> bool {
 }
 pub(super) fn mutation_allowed_in(store: &Store, package: &str) -> Result<(), AppError> {
     if store.busy(package)? {
-        return Err(busy("Package has unresolved AI operations; open Unresolved AI operations before changing it"));
+        return Err(busy(
+            "Package still owns AI work; wait for automatic recovery to finish",
+        ));
     }
     Ok(())
 }
@@ -76,7 +78,7 @@ pub(super) fn require_legacy_consumer_compatible(
     package: &str,
 ) -> Result<(), AppError> {
     if !store.legacy_consumer_compatible(package)? {
-        return Err(AppError::Other("This legacy package cannot preserve retained shared AI history, including operations dismissed from Unresolved AI operations (their evidence is kept); keep a compatible package enabled".into()));
+        return Err(AppError::Other("This legacy package cannot preserve retained shared AI history, including automatically settled operations (their evidence is kept); keep a compatible package enabled".into()));
     }
     Ok(())
 }

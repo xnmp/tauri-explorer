@@ -355,7 +355,7 @@ fn unknown_outcomes_hold_operation_capacity_until_recovery_is_stopped() {
         .unwrap_err()
         .to_string();
     assert!(refused.contains("operation capacity reached"), "{refused}");
-    assert!(refused.contains("AI Operations"), "{refused}");
+    assert!(!refused.contains("resolve"), "{refused}");
     assert!(s.get("consumer", "next").unwrap().is_none());
     s.release_execution_after_attention(&owner("provider", 1), "consumer", "unknown", true)
         .unwrap();

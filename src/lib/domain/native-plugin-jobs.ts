@@ -18,9 +18,8 @@ const key = (v: unknown): v is string => typeof v === "string" && /^[a-f0-9]{48}
 const bytes = (v: unknown, limit: number): v is string => typeof v === "string" && v.length <= limit && new TextEncoder().encode(v).length <= limit && !v.includes("\0");
 const windowLabel = (v: unknown): v is string => typeof v === "string" && /^[!-~]{1,128}$/.test(v);
 export const nativeJobTerminal = (state: NativeJobState): boolean => ["completed", "error", "cancelled", "discarded"].includes(state);
-/** Presentation the host settled by explicit Stop or provider Discard. Its
- *  evidence stays in Unresolved AI operations; the job itself is dismissable
- *  and no longer active work. Mirrors the host's `parked` job rule. */
+/** Legacy parked presentation is inactive while native automatic settlement
+ *  advances its durable record. Mirrors the host's `parked` job rule. */
 export const nativeJobParked = (state: NativeJobState, phase?: string | null): boolean =>
   state === "needs_attention" && (phase === "stopped" || phase === "provider_result_discarded");
 /** Terminal or parked: no longer active, and dismissable. */
@@ -97,5 +96,5 @@ export function mergeNativeJobEvent(old: NativeJobView, event: NativeJobEvent): 
   return { jobs, tombstones, baseline, needsSnapshot };
 }
 export function jobStateLabel(state: NativeJobState): string {
-  return ({ accepting: "Preparing", running: "Generating", recovering: "Recovering original operation", needs_attention: "Needs attention — outcome or delivery requires recovery", completed: "Complete", error: "Failed", cancelled: "Cancelled", discarded: "Discarded" })[state];
+  return ({ accepting: "Preparing", running: "Generating", recovering: "Recovering original operation", needs_attention: "Recovering original operation", completed: "Complete", error: "Failed", cancelled: "Cancelled", discarded: "Discarded" })[state];
 }

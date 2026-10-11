@@ -49,7 +49,7 @@ export interface JobExtras {
 
 /** Running, or a failed job whose retry is starting: not dismissable, and
  *  it keeps Background Operations open. A stopped or discarded recovery is
- *  settled: its evidence stays in Unresolved AI operations. */
+ *  settled: its evidence stays in normal jobs history. */
 export function isJobActive(job: Job): boolean {
   return !nativeJobSettled({ state: job.status, phase: job.phase }) || job.retrying === true || !!job.controlPending;
 }

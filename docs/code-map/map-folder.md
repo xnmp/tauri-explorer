@@ -890,7 +890,7 @@ TraceExplorer's image UI, provider adapters and SQLite journal are maintained in
 ### Shared AI services implementation checkpoint
 
 - `src-tauri/src/ai/image_migration.rs` — native receipt-gated legacy image connection cutover, write fencing and rollback import epochs.
-- `src-tauri/src/installed_plugins/ai_operations.rs` — host-owned retained operation snapshots and explicit resume, discard and Stop controls.
+- `src-tauri/src/installed_plugins/ai_operations.rs` — automatic original-output recovery, idle settlement and compatible retained-operation controls.
 - `src-tauri/src/installed_plugins/diagnostics.rs` — bounded broker stderr storage and safe error classification.
 - `src-tauri/src/installed_plugins/job_bridge.rs` — qualified native job registration, receipt observation, controls and origin snapshots.
 - `src-tauri/src/installed_plugins/service_bridge.rs` — declared reverse-service routing, artifact callbacks and original-operation recovery.
@@ -910,21 +910,16 @@ TraceExplorer's image UI, provider adapters and SQLite journal are maintained in
 - `src-tauri/src/service_state/job_store.rs` — transactional job revisions, ownership, recovery, pruning and Stop presentation policy.
 - `src-tauri/src/service_state/mod.rs` — service ledger module boundary.
 - `src-tauri/src/service_state/model.rs` — native package generations, artifact descriptors, admissions and quotas.
-- `src-tauri/src/service_state/receipt.rs` — strict canonical provider receipt validation including bounded Codex diagnostics.
-- `src-tauri/src/service_state/receipts.rs` — durable monotonic receipt acceptance and immutable execution evidence.
+- `src-tauri/src/service_state/receipt.rs` — pure automatic settlement policy and strict canonical provider receipt validation including bounded Codex diagnostics.
+- `src-tauri/src/service_state/receipts.rs` — durable monotonic receipt acceptance, automatic dismissal transactions and immutable execution evidence.
 - `src-tauri/src/service_state/request.rs` — credential-free image request semantics and input/option validation.
 - `src-tauri/src/service_state/rules.rs` — pure service ownership, phase, identity and quota rules.
 - `src-tauri/src/service_state/store.rs` — SQLite service ownership transactions, retention and execution claims.
 - `src-tauri/src/service_state/tests.rs` — private native ledger, custody, restart, corruption and commit-failure fixtures.
-- `src/lib/api/ai-operations.ts` — native unresolved AI operation snapshot and action adapter.
-- `src/lib/api/mock-ai-presentation.ts` — mock command parity for native jobs and unresolved AI operations.
+- `src/lib/api/mock-ai-presentation.ts` — mock command parity for native jobs and automatic AI settlement.
 - `src/lib/api/native-plugin-jobs.ts` — native job snapshots, events and immutable-key controls.
-- `src/lib/components/AiOperationConfirmation.svelte` — operation-specific discard and Stop confirmation.
-- `src/lib/components/AiOperationsDialog.svelte` — retained execution and delivery recovery surface.
-- `src/lib/domain/ai-operations.ts` — pure unresolved operation presentation and action rules.
+- `src/lib/domain/ai-operations.ts` — native AI operation fixture metadata validation and action capabilities.
 - `src/lib/domain/native-plugin-jobs.ts` — strict native job validation and revision merge rules.
-- `src/lib/state/ai-operations.ts` — unresolved operation subscriptions, coalesced refresh and action state.
-- `src/lib/state/ai-operations.svelte.ts` — ref-counted live unresolved-AI-operation count for the progress panel indicator.
 - `src/lib/state/native-plugin-jobs.ts` — subscribe-before-snapshot job reconciliation and origin-scoped notifications.
 - `src/test-support/modal/DirtyCloseDialog.svelte` — browser fixture for dirty nested modal ownership.
 - `src/test-support/modal/PaneTestDialog.svelte` — contributed pane-dialog acceptance fixture with persistent draft, guarded close and local submit behavior.

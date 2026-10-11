@@ -503,6 +503,7 @@ backend for E2E/browser).
 - `plugins/registry.svelte.ts` — `pluginRegistry` owns activation, retry and shutdown completion; context retirement precedes reentrant hooks
 - `plugins/api.ts` — `Plugin`/`PluginContext` contract (storage, jobs, toast, settings, selection-aware inspector, and auto-disposed workspace file-change notifications)
 - `state/plugin-jobs.ts`, `api/plugin-jobs.ts` — window-owned accepted job/event reconciliation and typed IPC; plugin disable removes contributions while accepted work retains its owner. A registration's `retry` becomes the failed entry's Retry action.
+- `src-tauri/src/installed_plugins/ai_operations.rs` and `service_state/receipt.rs` — automatically recover original successful output or settle idle operations into ordinary job history; dispatch ownership fences prevent Unknown replay. `service_bridge_tests.rs` covers restart, worker ownership, retained/acquired outputs, permanent output loss and large backlogs.
 - `src-tauri/src/image_operation.rs` — immutable input snapshots and optional installed provenance around built-in image publication, independently of the Trace inspector contribution; failure/cancellation settlement retains durable attempt history.
 - `plugins/dialog-registry.svelte.ts`, `settings-registry.svelte.ts`, `fs-providers.ts` — extension points
 - built-ins: `plugins/ai-organize/`, `ai-rename/`, `nano-banana/`, `theme-from-image/`, `upscale/`, `demo/`

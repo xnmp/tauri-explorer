@@ -19,6 +19,53 @@ static WORKERS: [AtomicUsize; 3] = [
 // A death snapshot and creation of forwarding ownership must not cross.
 // This gate covers only native ledger admission/snapshot, never callbacks or IO.
 static ADMISSION: std::sync::Mutex<()> = std::sync::Mutex::new(());
+// Track a paid dispatch from before admission lookup through the final reply.
+// Automatic settlement commits its start fence under this same ownership gate.
+type DispatchKey = (String, String);
+static STARTS: std::sync::OnceLock<
+    std::sync::Mutex<std::collections::HashMap<DispatchKey, usize>>,
+> = std::sync::OnceLock::new();
+struct StartDispatch(DispatchKey);
+impl StartDispatch {
+    fn acquire(consumer: &str, operation: &str) -> Result<Self, AppError> {
+        let key = (consumer.to_owned(), operation.to_owned());
+        let mut starts = crate::native_deadline::lock(
+            STARTS.get_or_init(Default::default),
+            "AI dispatch ownership unavailable",
+        )?;
+        *starts.entry(key.clone()).or_default() += 1;
+        Ok(Self(key))
+    }
+}
+impl Drop for StartDispatch {
+    fn drop(&mut self) {
+        let mut starts = STARTS
+            .get()
+            .expect("initialized")
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        if let Some(count) = starts.get_mut(&self.0) {
+            *count -= 1;
+            if *count == 0 {
+                starts.remove(&self.0);
+            }
+        }
+    }
+}
+pub(super) fn settle_idle_dispatch(
+    store: &crate::service_state::Store,
+    consumer: &str,
+    operation: &str,
+) -> Result<Option<crate::service_state::job::JobRecord>, AppError> {
+    let starts = crate::native_deadline::lock(
+        STARTS.get_or_init(Default::default),
+        "AI dispatch ownership unavailable",
+    )?;
+    if starts.contains_key(&(consumer.to_owned(), operation.to_owned())) {
+        return Ok(None);
+    }
+    store.auto_settle_operation(consumer, operation, true)
+}
 struct IoLease(usize);
 static IO: [(std::sync::Mutex<usize>, std::sync::Condvar); 2] = [
     (std::sync::Mutex::new(0), std::sync::Condvar::new()),
@@ -466,6 +513,14 @@ pub(super) fn image_call(
     } else {
         None
     };
+    let _dispatch = if dispatch_method == "start" {
+        Some(StartDispatch::acquire(
+            &caller.package_id,
+            operation.as_deref().expect("start operation"),
+        )?)
+    } else {
+        None
+    };
     let mut admission = operation
         .as_ref()
         .map(|op| store.get(&caller.package_id, op))
@@ -482,6 +537,19 @@ pub(super) fn image_call(
             operation.as_deref().expect("owned operation"),
         )?
     {
+        if dispatch_method == "status" {
+            if let Some(receipt) = store.provider_receipt(
+                &caller.package_id,
+                operation.as_deref().expect("owned operation"),
+            )? {
+                if matches!(
+                    receipt["execution"]["state"].as_str(),
+                    Some("succeeded" | "failed" | "cancelled")
+                ) {
+                    return Ok(receipt);
+                }
+            }
+        }
         return Err(AppError::Service{code:"recovery_stopped".into(),message:"Automatic recovery was stopped for this original operation; its unknown execution evidence is retained".into()});
     }
     if dispatch_method == "start" {

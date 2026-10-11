@@ -137,6 +137,7 @@ fn bootstrap_services() -> Result<(), AppError> {
     service_host::initialize(&profile)?;
     lifecycle::recover(&root()?)?;
     service_bridge::recover_startup()?;
+    ai_operations::settle_stopped_backlog(service_host::store()?)?;
     job_bridge::initialize()?;
     backend::finish_initialize();
     Ok(())

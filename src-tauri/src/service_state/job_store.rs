@@ -309,14 +309,13 @@ fn indexes(conn: &Connection) -> Result<()> {
     Ok(())
 }
 impl Store {
-    /// A job parked by Stop settles to terminal `Discarded` once the user
-    /// dismisses its operation. It keeps the `stopped` phase so every
-    /// consumer-observation guard that skips stopped jobs still applies.
+    /// Settle presentation while keeping the stopped observation fence and original reason.
     pub(super) fn settle_dismissed_job_in(
         &self,
         conn: &Connection,
         consumer: &str,
         operation: &str,
+        reason: Option<&str>,
     ) -> Result<Option<JobRecord>> {
         let sequence = watermark(conn)?;
         let Some(raw) = conn
@@ -331,13 +330,32 @@ impl Store {
             return Ok(None);
         };
         let mut record = checked(raw, sequence)?;
-        if record.state.terminal() || record.phase.as_deref() != Some("stopped") {
+        if record.state.terminal() {
+            // Older terminal observations could omit the provider's safe
+            // failure reason. Fill it without changing the finished outcome.
+            if record.error.is_none() && reason.is_some() {
+                record.error = reason.map(str::to_owned);
+                record.updated_at_ms = clock()?;
+                record.revision = next_revision(conn)?;
+                valid(&record, false)?;
+                persist(conn, &record)?;
+                return Ok(Some(record));
+            }
             return Ok(None);
         }
+        let before = record.clone();
         record.state = JobState::Discarded;
-        record.error = Some("Dismissed by the user; the execution outcome remains unknown".into());
+        record.phase = Some("stopped".into());
+        if let Some(reason) = reason {
+            record.error = Some(reason.into());
+        } else if record.error.is_none() {
+            record.error = Some(
+                "The operation ended without a recoverable output; it will not be replayed".into(),
+            );
+        }
         record.output_path = None;
         record.updated_at_ms = clock()?;
+        stamp_settled(&before, &mut record);
         record.revision = next_revision(conn)?;
         valid(&record, false)?;
         persist(conn, &record)?;

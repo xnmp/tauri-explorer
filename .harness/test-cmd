@@ -1,1 +1,0 @@
-cd src-tauri && cargo test --test wry_build_script_rerun

@@ -582,7 +582,9 @@ Planned move journal authority: `src-tauri/src/files/recovery/move_model.rs` own
 
 ## Completed job cost and reveal
 
+- `src/lib/components/WindowDialogs.svelte` loads `ProgressDialog.svelte` through the shared lazy-dialog lifecycle when a file operation or image job is accepted, before the file-operation display delay. The component stays mounted after loading.
+
 - `src/lib/domain/job-presentation.ts` validates optional cost/reveal and formats decimal costs without floating point.
 - `src/lib/domain/job-reveal.ts` selects an existing folder/view pane, routes reveals through injected workspace effects, shares `workspace.selectFile` selection behavior, uses native path semantics, and aborts superseded requests. Matching errored panes must reload successfully before selection or view mounting.
-- `src/lib/state/job-reveal.ts` refreshes native `jobs.status` through the read-only `plugin_job_reveal` command (active backend only) before routing; `src/lib/state/file-view-panes.ts` exposes the mounted contribution's pane handle. `ProgressDialog.svelte` and `JobsPanel.svelte` show cost and Show image; `src/lib/state/plugin-jobs.ts` adds cost to completion notifications.
+- `src/lib/state/job-reveal.ts` lazily loads `src/lib/state/job-reveal-effects.ts`, preserving cancellation during module loading. The effects refresh native `jobs.status` through the read-only `plugin_job_reveal` command (active backend only) before routing; `src/lib/state/file-view-panes.ts` exposes the mounted contribution's pane handle. `ProgressDialog.svelte` and `JobsPanel.svelte` show cost and Show image; `src/lib/state/plugin-jobs.ts` adds cost to completion notifications.
 - Rust `service_state/job.rs`, `job_store.rs`, and `installed_plugins/job_bridge.rs` retain validated optional metadata with terminal cost immutability. `service_state/receipt.rs` validates receipt billing; per-broker initialization features in `installed_plugins/backend.rs` gate delivery through `service_bridge.rs` and completion receipt events.

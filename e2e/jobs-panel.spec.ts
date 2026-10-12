@@ -19,7 +19,7 @@
  * long enough (past the 1.5s dialog-delay gate) for the dialog to appear.
  */
 import { test, expect, type Page } from "./fixtures";
-import { waitForEntries, pressShortcut, MULTI_SELECT_MODIFIER } from "./helpers";
+import { activeExplorerPane, waitForEntries, pressShortcut, MULTI_SELECT_MODIFIER } from "./helpers";
 
 /** Select the three Documents files that don't exist in Pictures. */
 async function selectThreeDocs(page: Page) {
@@ -149,8 +149,9 @@ test("completed image jobs show cost in the notification and Jobs panel, and rev
   await expect(panel.locator('[data-job-id="99003"] .job-time')).toContainText("≈US$0.08");
   await panel.getByRole("button", { name: "Show image", exact: true }).click();
   await expect(panel).toBeHidden();
-  await expect(page.locator(".explorer-pane.active .entry-item.selected")).toHaveText(/screenshot.png/);
-  await expect(page.locator(".explorer-pane.active .entry-item.selected")).toBeInViewport();
+  const pane = await activeExplorerPane(page);
+  await expect(pane.locator(".entry-item.selected")).toHaveText(/screenshot.png/);
+  await expect(pane.locator(".entry-item.selected")).toBeInViewport();
 });
 
 test("large valid costs remain inside both job panels on a narrow viewport", async ({ page }) => {
@@ -169,7 +170,9 @@ test("large valid costs remain inside both job panels on a narrow viewport", asy
   await expect(panel.locator(".job-time")).toContainText(`US$1${"0".repeat(200)}.00`);
   expect(await panel.evaluate(el => el.scrollWidth <= el.clientWidth)).toBe(true);
   await panel.getByRole("button", { name: "Show image", exact: true }).click();
-  await expect(page.locator(".explorer-pane.active .entry-item.selected")).toHaveText(/screenshot.png/);
+  const pane = await activeExplorerPane(page);
+  await expect(pane.locator(".entry-item.selected")).toHaveText(/screenshot.png/);
+  await expect(pane.locator(".entry-item.selected")).toBeInViewport();
 });
 
 test("Show image recovers a folder listing hidden by a failed navigation", async ({ page }) => {
@@ -183,7 +186,7 @@ test("Show image recovers a folder listing hidden by a failed navigation", async
       reveal: { kind: "file", path: "/home/user/Pictures/screenshot.png" },
     });
   });
-  const pane = page.locator(".explorer-pane.active");
+  const pane = await activeExplorerPane(page);
   await expect(pane).toContainText("Path not found: /deleted");
   await page.getByRole("region", { name: "Background progress" }).getByRole("button", { name: "Show image", exact: true }).click();
   await expect(pane).not.toContainText("Path not found: /deleted");

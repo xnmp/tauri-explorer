@@ -99,7 +99,8 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 
 ## src/lib/state/ — Svelte 5 runes stores + pure pane logic. Business state lives here.
 
-- `src/lib/state/job-reveal.ts` — window-owned status refresh and workspace effects for Show image.
+- `src/lib/state/job-reveal.ts` — lazy Show image entry point; cancellation also invalidates pending imports.
+- `src/lib/state/job-reveal-effects.ts` — deferred window-owned status refresh and workspace effects for Show image.
 - `src/lib/state/file-view-panes.ts` — mounted plugin-view pane handles shared with host reveal routing.
 
 - `clipboard-image-progress.svelte.ts` — independent accepted image-paste lifetimes, retained until clipboard/write/listing settlement; shared by normal and explicit Paste Image.

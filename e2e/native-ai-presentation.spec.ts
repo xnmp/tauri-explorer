@@ -1,6 +1,6 @@
 /** Real presentation/controller with a private native transport. No provider calls. */
 import { test, expect } from "./fixtures";
-import { HOME_URL, waitForEntries } from "./helpers";
+import { activeExplorerPane, HOME_URL, waitForEntries } from "./helpers";
 
 test("retained native jobs recover without fabricated progress, wait for cancellation, and dismiss only presentation", async ({ page }) => {
   await page.setViewportSize({ width: 320, height: 800 });
@@ -140,9 +140,10 @@ for (const width of [320, 1024]) test(`completed native image cost and Show imag
   await expect(progress.locator('[data-job-id="99004"]')).toContainText("US$0.08");
   expect(await progress.evaluate(el => el.scrollWidth <= el.clientWidth)).toBe(true);
   await progress.getByRole("button", { name: "Show image", exact: true }).click();
-  await expect(page.locator(".explorer-pane.active .entry-item.selected")).toHaveText(/screenshot.png/);
-  await expect(page.locator(".explorer-pane.active .entry-item.selected")).toBeInViewport();
-  expect(await page.evaluate(async () => (await import("/src/lib/state/window-tabs.svelte.ts")).windowTabsManager.activeTabId)).toBe(await page.evaluate(() => (window as any).imageFolderTab));
+  await expect.poll(() => page.evaluate(async () => (await import("/src/lib/state/window-tabs.svelte.ts")).windowTabsManager.activeTabId)).toBe(await page.evaluate(() => (window as any).imageFolderTab));
+  const pane = await activeExplorerPane(page);
+  await expect(pane.locator(".entry-item.selected")).toHaveText(/screenshot.png/);
+  await expect(pane.locator(".entry-item.selected")).toBeInViewport();
 });
 
 test("Show image refreshes a native job whose unsaved view output has since been saved", async ({ page }) => {
@@ -159,6 +160,7 @@ test("Show image refreshes a native job whose unsaved view output has since been
   const progress = page.getByRole("region", { name: "Background progress" });
   await expect(progress).toContainText("≈<US$0.01");
   await progress.getByRole("button", { name: "Show image", exact: true }).click();
-  await expect(page.locator(".explorer-pane.active .entry-item.selected")).toHaveText(/screenshot.png/);
-  await expect(page.locator(".explorer-pane.active .entry-item.selected")).toBeInViewport();
+  const pane = await activeExplorerPane(page);
+  await expect(pane.locator(".entry-item.selected")).toHaveText(/screenshot.png/);
+  await expect(pane.locator(".entry-item.selected")).toBeInViewport();
 });

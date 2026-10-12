@@ -10,12 +10,12 @@ import { useExternalDrop } from "$lib/composables/use-external-drop.svelte";
 import { resolveDropTarget, resolveDropTargetFromElement, captureDropDestination, highlightTarget, highlightTargetAtPoint, clearHighlights, captureHighlightCleanup } from "$lib/composables/use-native-drop-target.svelte";
 import { dragState, type DragData } from "$lib/state/drag.svelte";
 import { handleFileDropMany } from "$lib/state/drop-operations";
-import { isCopyModifier as isCopyMod, isMac, isWindows } from "$lib/domain/platform";
+import { isCopyModifier as isCopyMod, usesHtml5Drag, isWindows } from "$lib/domain/platform";
 import { bookmarksStore } from "$lib/state/bookmarks.svelte";
 import { terminalPanelStore } from "$lib/state/terminal.svelte";
 import { pathComparison } from "$lib/domain/path";
 import { dispatchFileDrop, admitFileDrop } from "$lib/state/dispatch-file-drop";
-import { internalDragPaths, sameDropPathSet, domDropPaths, domOwnsFileDrop, isFileTransfer, nativeDragSession, resolveNativeDragPaths } from "$lib/domain/file-drop";
+import { internalDragPaths, sameDropPathSet, domDropPaths, domOwnsFileDrop, isFileTransfer, nativeDragSession, nativeDropUsesDomRules, resolveNativeDragPaths } from "$lib/domain/file-drop";
 import { toastStore } from "$lib/state/toast.svelte";
 import { dialogStore } from "$lib/state/dialogs.svelte";
 import { windowTabsManager } from "$lib/state/window-tabs.svelte";
@@ -40,13 +40,13 @@ export function useNativeDropHandler(deps: NativeDropDeps) {
     const session = nativeDragSession(rawPaths);
     // Recent never starts an OS file drag. GTK identifies its HTML5 gesture
     // with the URI session; retain the same clock/interval/completion fences.
-    if (!isMac && !isWindows && session) return dragState.survivingHtml5Source(observedAt, completedGestureSequence, observationClock, session);
+    if (usesHtml5Drag && session) return dragState.survivingHtml5Source(observedAt, completedGestureSequence, observationClock, session);
     if (source !== null) return source ?? dragState.latestSource();
     // Explicit source:null is external except for WebKitGTK's surviving HTML5
     // gesture. Never infer provenance from an asynchronous consumer's retained
     // source. Admission below still requires the entire native path multiset
     // or the exact session URI of a link-only source.
-    return !isMac && !isWindows ? dragState.survivingHtml5Source(observedAt, completedGestureSequence, observationClock) : null;
+    return usesHtml5Drag ? dragState.survivingHtml5Source(observedAt, completedGestureSequence, observationClock) : null;
   }
 
   function handleNativeEnter(rawPaths: string[], _position: { x: number; y: number }, source?: DragData | null, copyModifier?: boolean | null, observedAt?: number, completedGestureSequence?: number, observationClock?: string): void {
@@ -109,7 +109,9 @@ export function useNativeDropHandler(deps: NativeDropDeps) {
           && dialogStore.isPaneBlocked(windowTabsManager.activePaneId)) return;
       // Miller retains its former DOM target rules. Linux listings
       // keep the native move-only routing and cross-window refresh policy.
-      const domSource = isInternalDrag && dragData?.nativeCopyPolicy === "modifier";
+      // Copy intent is independent of transport. Only Linux HTML5 handoffs
+      // retain DOM destination rules; macOS/Windows pointer handoffs use native rules.
+      const domSource = isInternalDrag && nativeDropUsesDomRules(dragData, usesHtml5Drag);
       if (domSource && (!target || (target.type === "background" && target.domDisabled))) return;
       const isCopy = (copyModifier ?? copyModifierHeld) && (!isInternalDrag || dragData?.nativeCopyPolicy !== "move");
       // Recent is a shortcut source, not authority to mutate its folder or
@@ -184,7 +186,7 @@ export function useNativeDropHandler(deps: NativeDropDeps) {
         if (target?.type === "background") {
           const destDir = target.path || explorer.currentPath;
           const paths = internalDragPaths(dragData, isWindows);
-          const sameDirectoryCopy = target.miller && dragData.nativeCopyPolicy === "modifier" && copyModifierHeld;
+          const sameDirectoryCopy = target.miller && nativeDropUsesDomRules(dragData, usesHtml5Drag) && copyModifierHeld;
           if (!sameDirectoryCopy && paths?.every(p => pathsForPlatform.sameParent(p, destDir))) {
             clearHighlights();
             clearNativeHighlights = captureHighlightCleanup();

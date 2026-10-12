@@ -168,6 +168,8 @@ pub enum DragMode {
     Copy = 1, // NSDragOperationCopy
     Link = 2,  // NSDragOperationLink
     Move = 16, // NSDragOperationMove
+    /// Allow the destination to negotiate Move or Copy throughout the drag.
+    CopyMove = 17, // NSDragOperationCopy | NSDragOperationMove
 }
 
 #[cfg(target_os = "macos")]
@@ -177,6 +179,7 @@ impl From<DragMode> for objc2_app_kit::NSDragOperation {
             DragMode::Copy => objc2_app_kit::NSDragOperation::Copy,
             DragMode::Move => objc2_app_kit::NSDragOperation::Move,
             DragMode::Link => objc2_app_kit::NSDragOperation::Link,
+            DragMode::CopyMove => objc2_app_kit::NSDragOperation::Copy | objc2_app_kit::NSDragOperation::Move,
         }
     }
 }

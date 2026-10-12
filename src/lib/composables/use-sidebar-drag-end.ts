@@ -28,7 +28,19 @@ export function listenSidebarDragEnd(deps: {
       overQuickAccess = quickAccess.contains(document.elementFromPoint(event.clientX, event.clientY));
     }
     if (overQuickAccess && quickAccess?.isConnected && endedSource) {
+      // Route dragend-only completion through window capture too. It owns
+      // pending-start snapshots, destination leases and rejection redispatch.
       const target = resolveDropTargetFromElement(quickAccess);
+      const live = dragState.latestSource();
+      if (target?.type === "sidebar" && live?.sessionId === endedSource.sessionId && live?.transport === "native-pending") {
+        const dataTransfer = new DataTransfer();
+        dataTransfer.setData("application/x-explorer-kind", endedSource.kind);
+        dataTransfer.setData("application/x-explorer-session", endedSource.sessionId!);
+        dragState.bindDomSource(dataTransfer, endedSource);
+        quickAccess.dispatchEvent(new DragEvent("drop", { bubbles: true, cancelable: true, dataTransfer,
+          clientX: event.clientX, clientY: event.clientY, ctrlKey: event.ctrlKey, altKey: event.altKey,
+          shiftKey: event.shiftKey, metaKey: event.metaKey }));
+      }
       const receipt = admitFileDrop(target, endedSource, "dom");
       if (receipt) {
         try {

@@ -20,6 +20,8 @@ export function exposePluginSDK():void {
     // pane-scoped openDialog/presentation.openDialog and shared ui/modal behavior.
     // "fileDropTargets": workspace element registration, host hover feedback,
     // ordered paths from verified Explorer drags and Tauri-native OS drops.
+    // Only elements inside the calling plugin's mounted contributions/dialogs
+    // may register; host chrome and other plugins' DOM throw before registration.
     sdkVersion:1,apiVersion:3,capabilities:Object.freeze(["fileViews","previewInfo","previewTargets","blobWorkers","fileTiles","fileTile","tileSize","jobRetry","textGeneration","pluginServices","serviceArtifacts","settingsActions","modalNavigation","combinedSelection","paneDialogs","fileDropTargets"]),svelteVersion:SVELTE_ABI,
     modules:Object.freeze({"svelte":svelte,"svelte/internal/client":client,"ui/modal":{default:Modal},"ui/image-editor":{default:ImageEditor},
       // Built-in Tiles view tiles (FileTilesProps in api.ts); capability "fileTiles".

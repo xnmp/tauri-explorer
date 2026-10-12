@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { domDropPaths, domOwnsFileDrop, internalDragPaths, sameDropPathSet, validatedDropPaths, resolveNativeDragPaths } from "$lib/domain/file-drop";
+import { domDropPaths, domOwnsFileDrop, internalDragPaths, sameDropPathSet, validatedDropPaths, resolveNativeDragPaths, html5DragUriList, html5DragHtml, html5TransferMatchesGesture } from "$lib/domain/file-drop";
 
 const data = (path: string, paths?: unknown) => ({ path, name: "a.png", kind: "file", ...(paths === undefined ? {} : { paths }) });
 const transfer = (value: string, path = "/a.png") => ({ getData: (type: string) => type.endsWith("-paths") ? value : path });
@@ -89,4 +89,27 @@ it.each([
 ])("native observation %s belongs to HTML5 [%s, %s): %s", async (observed, start, end, expected) => {
   const { observedDuringGesture } = await import("$lib/domain/file-drop");
   expect(observedDuringGesture(observed, start, end)).toBe(expected);
+});
+
+
+it.each([
+  ["/tmp/a b#c?.png", "file:///tmp/a%20b%23c%3F.png"],
+  ["/tmp/back\\slash.png", "file:///tmp/back%5Cslash.png"],
+  ["C:\\images\\a b.png", "file:///C:/images/a%20b.png"],
+  ["\\\\server\\share\\a.png", "file://server/share/a.png"],
+])("exports a valid filesystem URI for %s without a session URL", (path, expected) => {
+  const value = html5DragUriList({ path, sessionId: "identity" });
+  expect(value).toBe(expected);
+  expect(new URL(value).protocol).toBe("file:");
+  expect(value).not.toContain("identity");
+});
+
+it("ordinary URI paths prove no identity; only the HTML token or Recent's URN does", () => {
+  const source = { path: "/tmp/a", sessionId: "session" };
+  const data = (html: string, uri = "file:///tmp/a") => ({ getData: (type: string) => type === "text/html" ? html : uri });
+  expect(html5TransferMatchesGesture(data(""), source)).toBe(false);
+  expect(html5TransferMatchesGesture(data(html5DragHtml(source), ""), source)).toBe(true);
+  expect(html5TransferMatchesGesture(data(html5DragHtml({ sessionId: "other" })), source)).toBe(false);
+  expect(html5TransferMatchesGesture(data("", "urn:tauri-explorer:drag:session"), { ...source, nativeCopyPolicy: "link" })).toBe(true);
+  expect(html5TransferMatchesGesture(data(""), { ...source, sessionId: undefined })).toBe(false);
 });

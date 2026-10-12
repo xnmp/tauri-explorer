@@ -165,7 +165,7 @@ fn recent_native_start_is_rejected_before_exporting_files_on_every_platform() {
         ..source()
     };
     assert!(native_drag_options(Some(&recent)).is_err());
-    for policy in [None, Some(CopyPolicy::Modifier), Some(CopyPolicy::Move)] {
+    for policy in [None, Some(CopyPolicy::Move)] {
         let ordinary = Source {
             native_copy_policy: policy,
             ..source()
@@ -178,6 +178,18 @@ fn recent_native_start_is_rejected_before_exporting_files_on_every_platform() {
     assert!(matches!(
         native_drag_options(None).unwrap().mode,
         drag::DragMode::Copy
+    ));
+}
+
+#[test]
+fn modifier_sources_offer_copy_and_move_until_the_destination_negotiates() {
+    let ordinary = Source {
+        native_copy_policy: Some(CopyPolicy::Modifier),
+        ..source()
+    };
+    assert!(matches!(
+        native_drag_options(Some(&ordinary)).unwrap().mode,
+        drag::DragMode::CopyMove
     ));
 }
 

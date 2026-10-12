@@ -10,7 +10,7 @@
 
 import { dragClock } from "./drag-clock";
 import { loadPersisted, savePersisted, removePersisted } from "./persisted";
-import { observedDuringGesture, internalDragPaths, sameDropPathSet, isFileTransfer, isExplorerFileTransfer, uriListMatchesGesture } from "$lib/domain/file-drop";
+import { observedDuringGesture, internalDragPaths, sameDropPathSet, isFileTransfer, isExplorerFileTransfer, html5TransferMatchesGesture } from "$lib/domain/file-drop";
 
 const STORAGE_KEY = "explorer-drag-data";
 const NATIVE_DECISION_KEY = "explorer-native-drag-decision";
@@ -259,10 +259,10 @@ export const dragState = {
 
   domSource(dataTransfer: DataTransfer): DragData | null {
     const captured = domSources.get(dataTransfer);
-    if (!isFileTransfer(dataTransfer) && dataTransfer.types?.includes("text/uri-list")) {
+    if (!isFileTransfer(dataTransfer) && (dataTransfer.types?.includes("text/uri-list") || dataTransfer.types?.includes("text/html"))) {
       const source = captured ?? this.latestSource();
       return source && (captured || this.hasLiveHtml5Gesture())
-        && uriListMatchesGesture(dataTransfer.getData("text/uri-list"), source) ? source : null;
+        && html5TransferMatchesGesture(dataTransfer, source) ? source : null;
     }
     if (captured) return captured;
     if (!isExplorerFileTransfer(dataTransfer)) return null;
@@ -397,7 +397,7 @@ export const dragState = {
   acceptsFileDrag(data: Pick<DataTransfer, "types"> | null | undefined): boolean {
     if (isFileTransfer(data)) return true;
     const types = [...(data?.types ?? [])];
-    return types.includes("text/uri-list") && types.every(type => type === "text/uri-list" || type === "text/html")
+    return types.length > 0 && types.every(type => type === "text/uri-list" || type === "text/html")
       && (this.hasLiveHtml5Gesture() || (!!data && domSources.has(data as DataTransfer)));
   },
 

@@ -153,3 +153,22 @@ it.each(["caller-close", "pane-close", "plugin-dispose", "editor-close"])("manag
     release(); plugin.dispose(); dialogRegistry.clear(); dialogStore.closeAll(); await windowTabsManager.dispose();
   }
 });
+
+
+it("disposing B closes its unmanaged pane opening of A's contribution and releases blocking", async () => {
+  windowTabsManager.init("/home/user", true);
+  const a = createPluginContext("contributor-a"), b = createPluginContext("opener-b");
+  try {
+    a.ctx.registerDialog({ id: "shared.dialog", component: (() => {}) as unknown as Component });
+    const pane = b.ctx.workspace.capturePane!()!;
+    b.ctx.openDialog("shared.dialog", {}, { scope: "pane", pane });
+    expect(dialogStore.isPaneBlocked(pane.paneId)).toBe(true);
+    b.dispose();
+    expect(dialogRegistry.isOpen("shared.dialog")).toBe(false);
+    expect(dialogStore.isPaneBlocked(pane.paneId)).toBe(false);
+    a.ctx.openDialog("shared.dialog", {}, { scope: "pane", pane });
+    expect(dialogRegistry.isOpen("shared.dialog")).toBe(true);
+  } finally {
+    a.dispose(); b.dispose(); dialogRegistry.clear(); dialogStore.closeAll(); await windowTabsManager.dispose();
+  }
+});

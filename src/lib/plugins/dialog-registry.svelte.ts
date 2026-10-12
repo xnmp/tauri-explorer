@@ -116,6 +116,13 @@ export function createDialogRegistry(dependencies: {
       catch (error) { close(id, "owner-disposed"); throw error; }
     },
     close,
+    closeOwner(owner: symbol): void {
+      // Snapshot the current instances. Reopening an id by another context
+      // never lends its lifetime to the original opener's disposer.
+      for (const dialog of [...openDialogs]) {
+        if (dialog.owner === owner) close(dialog.id, "owner-disposed");
+      }
+    },
     closeOwned(id: string, owner: symbol): void {
       if (openDialogs.some(dialog => dialog.id === id && dialog.owner === owner)) close(id);
     },

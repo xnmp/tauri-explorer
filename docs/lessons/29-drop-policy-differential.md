@@ -811,3 +811,117 @@ The full run first exposed an incomplete bookmark-test platform mock; declaring
 its existing Linux `isMac:false` contract corrected all six fixture failures.
 No commits were created. The only requested-check failure is the known missing
 `@vercel/blob` dependency.
+
+## Thirteenth-review native intent, export and plugin ownership
+
+Review 13 exposed five gaps in the transport/lifecycle table. Each now has a
+failing-first regression through production seams:
+
+- GTK snapshots read `DragContext.selected_action` (suggested action only when
+  no action has been selected), not Keymap's cached Ctrl state. AppKit uses its
+  drag's modifier-filtered source operation mask; OLE negotiates from the
+  callback's fresh key state and supported effects and returns that same effect.
+  Unsupported AppKit/OLE actions cannot publish a file completion. The pure
+  vendored `drag_drop_intent.rs` extractor is compiled and executed by
+  `tests/helpers/platform-drag-intent.ts`, then its results feed the production
+  receiver. Mid-drag Ctrl/Option changes initially failed four rows. Ordinary
+  native modifier sources now offer `DragMode::CopyMove`; the Rust source-options
+  regression failed first because the old source advertised Copy only. Actual
+  pointer-source IPC also lacked modifier policy (20 failing rows); pointer
+  sources now publish it. Linux HTML5 destination rules are classified separately
+  from copy intent, preserving macOS/Windows pointer destination/hover behavior.
+- Filesystem `text/uri-list` contains only valid file URIs. The random session
+  token is HTML text, without a URL/link or filesystem path. Recent still exports
+  only its session URN and cannot start a native file drag. The drag-out rows
+  cover listing/Miller files/folders and Recent, with unavailable/rejected native
+  startup. Old comment-prefixed source expectations failed first. Readable DOM
+  admission accepts the exact HTML token or Recent URN; ordinary file URIs cannot
+  adopt retained source state. The stripped runner projects the actual source
+  HTML rather than inventing target markup; empty readable URI plus retained
+  HTML is supported. Real headless WebKit drag tests confirm the HTML token
+  survives while custom MIME is stripped. This establishes in-page carrier
+  visibility, not physical OS application acceptance.
+- Sidebar dragend-only completion during pending native startup dispatches a
+  source-bound Drop through the existing window capture/rejection replay path.
+  Its full selection stays in the private source binding; no separate pending
+  queue or completion gate is introduced. The late-rejection regression failed
+  with no pin; listing/Miller rows now pin once after rejection and do nothing
+  after successful handoff. Existing destination leases and live modal checks
+  also apply to this fallback.
+- `pluginDomOwnership` defines ownership from host-issued component identities
+  and mounted roots. Every contributed dialog/view/inspector/Preview section/editor
+  tool is wrapped by `PluginContributionRoot`; the root is registered before
+  child components and their actions mount. The nearest root owns its subtree.
+  `registerFileDropTarget` throws before registering host chrome/body or another
+  plugin's Inputs, and live predicates recheck ownership. Both reviewer scenarios
+  failed first. The browser acceptance test attempts both invalid registrations
+  before verifying the original two-file delivery remains intact.
+- Plugin teardown closes all remaining dialogs owned by that opener's instance
+  symbol. Managed-session cleanup still runs first, preserving its existing result
+  semantics. A contributes/B opens unmanaged now closes on B disposal and releases
+  pane blocking without unregistering A's contribution; this test failed first.
+
+An independent reviewer falsified the first wrapper's lowercase component tag
+and child-before-root action ordering. Both were corrected and verified through
+real Chromium mounts, including nested A/B roots and unowned body checks. Further
+native review found unsupported-action and pointer-policy integration gaps; their
+regressions and guards are included above. No remaining transfer or duplicate
+completion defect was found in the final review.
+
+Relevant engine contracts:
+[WebKit URI/HTML sanitizer](https://github.com/WebKit/WebKit/blob/main/Source/WebCore/dom/DataTransfer.cpp#L289-L316),
+[GDK selected action](https://docs.gtk.org/gdk3/method.DragContext.get_selected_action.html),
+[OLE callback effect negotiation](https://learn.microsoft.com/en-us/windows/win32/api/oleidl/nf-oleidl-idroptarget-dragover).
+WebKit parses the entire URI-list value as a URL for native export, so an RFC-valid
+comment prefix is still inappropriate here. Multi-file OS export retains the
+engine's existing limitations; no physical Wayland/macOS acceptance run is claimed.
+
+Thirteenth-review verification (uncommitted):
+
+```text
+bunx vitest run tests/state tests/plugins tests/composables tests/domain tests/api --maxWorkers=2
+Test Files  364 passed (364)
+Tests       26204 passed | 25 skipped (26229)
+
+bun run check
+ERROR "website/api/report.js" 2:26 "Cannot find module '@vercel/blob' or its corresponding type declarations."
+COMPLETED 1876 FILES 1 ERRORS 0 WARNINGS 1 FILES_WITH_PROBLEMS
+
+bun run lint:arch
+arch-lint: clean
+
+bun run check:bundle
+Gzip size:   91,858 bytes (89.7 KiB)
+Startup JS:  62 chunks, 829,373 bytes raw / 277,375 bytes gzip
+PASS: main chunk and full startup graph are within their budgets.
+
+CARGO_TARGET_DIR=/var/tmp/te-wt2/target-pdlg cargo test --offline --manifest-path src-tauri/Cargo.toml native_file_drag
+test result: ok. 23 passed; 0 failed
+
+CARGO_TARGET_DIR=/var/tmp/te-wt2/target-pdlg cargo check --offline --manifest-path src-tauri/Cargo.toml -p wry
+Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.50s
+
+CARGO_TARGET_DIR=/var/tmp/te-wt2/target-pdlg cargo check --offline --manifest-path src-tauri/Cargo.toml -p wry -p drag --target x86_64-pc-windows-gnu
+Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.70s
+
+rustc --edition=2021 --test src-tauri/vendor/wry/src/drag_drop_intent.rs -o /tmp/pdlg-wry-intent-tests
+/tmp/pdlg-wry-intent-tests
+test result: ok. 1 passed; 0 failed
+
+Focused Chromium plugin/pane acceptance
+44 passed (52.5s)
+ALL_VIEW_MODES=1 plugin-file-drop.spec.ts
+8 passed (13.6s)
+WebKit file-drag-carrier.spec.ts
+2 passed (6.5s)
+
+python3 docs/code-map/validate.py --coverage
+coverage: 754/754 source files in map-folder.md
+```
+
+The whole standalone Wry unit harness was additionally attempted, but its own
+manifest requires uncached offline dev-dependency `glow 0.18.0`; testing Wry as
+a non-workspace dependency also disallows dev-dependencies. Its new extractor
+unit test therefore ran directly with `rustc`, and the same extractor is compiled
+by every differential run. Linux/macOS physical drag negotiations and external
+application export remain platform acceptance limits, not claimed successes.

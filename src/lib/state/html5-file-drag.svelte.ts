@@ -1,4 +1,4 @@
-import { html5DragUriList } from "$lib/domain/file-drop";
+import { html5DragUriList, html5DragHtml } from "$lib/domain/file-drop";
 import { dragState, type DragData } from "./drag.svelte";
 import { dragClock } from "./drag-clock";
 import { isTauri } from "$lib/api/common";
@@ -26,6 +26,7 @@ export function createHtml5FileDrag(onEnd: () => void = () => {}, copyPolicy: "m
       nativeCopyPolicy: copyPolicy, html5: true });
     source = dragState.current;
     event.dataTransfer.setData("text/uri-list", html5DragUriList(source!));
+    event.dataTransfer.setData("text/html", html5DragHtml(source!));
     dragState.bindDomSource(event.dataTransfer, source!);
     event.dataTransfer.setData("application/x-explorer-session", source!.sessionId!);
     event.dataTransfer.setData("application/x-explorer-sequence", String(source!.gestureSequence));

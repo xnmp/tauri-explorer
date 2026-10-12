@@ -26,8 +26,12 @@ needs an upstream replacement before the vendored crate can be removed.
 
 `drag_drop_snapshot` observes each platform callback before its ordinary Wry
 handler queues a Tauri event. It carries the top-level native window identity
-and callback-time copy modifier: COM `grfKeyState`/Ctrl on Windows, GDK Ctrl on
-Linux, and AppKit Option on macOS. The host captures source metadata and keeps
+and callback-time copy intent from the negotiated action: GDK selected action
+(with suggested action fallback before selection), AppKit's modifier-filtered
+`draggingSourceOperationMask`, and OLE's effect negotiated from the callback's
+`grfKeyState` and supported effects. All three use `drag_drop_intent.rs`, a pure
+extractor also compiled by the differential runner. Never query GTK's cached
+Keymap or AppKit's global NSEvent modifier cache during a drag grab. The host captures source metadata and keeps
 a per-window FIFO; later Tauri delivery must match the original event before
 the enriched payload is published. Missing/mismatched snapshots are discarded.
 Never replace this with a keyboard query during queued Tauri dispatch: Windows

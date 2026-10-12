@@ -296,6 +296,7 @@ fn start_drag_impl<W: HasWindowHandle, F: Fn(DragResult, CursorPosition) + Send 
                         DragMode::Copy => DROPEFFECT_COPY,
                         DragMode::Move => DROPEFFECT_MOVE,
                         DragMode::Link => DROPEFFECT_LINK,
+                        DragMode::CopyMove => DROPEFFECT_COPY | DROPEFFECT_MOVE,
                     };
 
                     let drop_result =

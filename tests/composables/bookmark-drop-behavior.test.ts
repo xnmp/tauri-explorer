@@ -32,7 +32,7 @@ vi.mock("$lib/state/drag.svelte", () => ({
 vi.mock("$lib/state/drop-operations", () => ({ handleFileDropMany: transfer }));
 vi.mock("$lib/state/bookmarks.svelte", () => ({ bookmarksStore: bookmarks }));
 vi.mock("$lib/state/terminal.svelte", () => ({ terminalPanelStore: { insertPaths: vi.fn() } }));
-vi.mock("$lib/domain/platform", () => ({ isCopyModifier: () => false, isWindows: false, isMac: false }));
+vi.mock("$lib/domain/platform", () => ({ isCopyModifier: () => false, isWindows: false, isMac: false, usesHtml5Drag: true }));
 vi.mock("$lib/domain/zoom", () => ({ getZoomFactor: () => 1 }));
 vi.mock("$lib/composables/use-external-drag.svelte", () => ({ startExternalDrag: vi.fn() }));
 

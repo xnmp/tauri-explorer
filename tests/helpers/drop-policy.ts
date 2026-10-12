@@ -267,3 +267,21 @@ export const dropDeferredUriCases = withDropVisibility(dropPlatforms.flatMap(pla
  * including WebKit's mixed Files + URI-list projection. */
 export const dropStaleFilesCases: DropCase[] = dropUriCases.filter(c => c.staleGesture)
   .flatMap(c => [false, true].map(filesUri => ({ ...c, source: "external-file" as const, filesUri })));
+
+
+/** Native intent comes from each callback, including changes during a grab. */
+export const dropModifierChangeCases = dropPlatforms.flatMap(platform => [false, true].map(copying => ({
+  platform, source: "miller-file" as const, target: "folder" as const, transport: "native-accepted" as const,
+  modifier: copying ? (platform === "mac" ? "option" as const : "ctrl" as const) : "none" as const,
+  copying,
+})));
+
+/** Linux's surviving HTML5 adapter is also the OS drag-out fallback. */
+export const outgoingFilesystemCases = (["listing-file", "listing-folder", "miller-file", "miller-folder", "recent"] as const)
+  .flatMap(source => (["dom-only", "native-rejected"] as const).map(transport => ({
+    platform: "linux" as const, source, transport, modifier: "none" as const, target: "folder" as const,
+  })));
+
+export const dropSidebarPendingCases = (["listing-folder", "miller-folder"] as const).flatMap(source =>
+  (["rejected", "accepted"] as const).map(reply => ({ platform: "linux" as const, source, reply,
+    target: "quick-access" as const, modifier: "none" as const, transport: "native-rejected" as const })));

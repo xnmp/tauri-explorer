@@ -38,6 +38,8 @@ import { extractError, type ApiResult } from "$lib/api/common";
 import { logFrontendError } from "$lib/api/crash";
 import { subscribeToLocalFileChanges } from "$lib/state/file-events";
 import { fileDropTargets } from "$lib/state/file-drop-targets.svelte";
+import PluginContributionRoot from "$lib/components/PluginContributionRoot.svelte";
+import { pluginDomOwnership } from "$lib/state/plugin-dom-ownership";
 import { modalOwnership } from "$lib/state/modal-ownership.svelte";
 
 dialogRegistry.connectPanes(() => windowTabsManager.paneDialogs);
@@ -248,7 +250,9 @@ export interface PluginWorkspace {
   /** Capability "fileDropTargets": deliver file paths dropped on `element`
    *  from explorer panes or other applications. The host shows the
    *  `drop-target` highlight. Returns an idempotent disposer; registrations
-   *  are also disposed with the plugin. */
+   *  are also disposed with the plugin. `element` must be inside this plugin's
+   *  mounted contribution or dialog content; host chrome and other plugins'
+   *  elements throw before registration. */
   registerFileDropTarget?(element: HTMLElement, handler: PluginFileDropHandler, options?: PluginFileDropTargetOptions): () => void;
 }
 
@@ -388,10 +392,16 @@ export function createPluginContext(
   const disposers = new Set<() => void>();
   let disposed = false;
   const dialogOwner = Symbol(pluginId);
+  const ownedComponent = (component: Component<any>): Component<any> => {
+    const contribution: Component<any> = (anchor, props) => PluginContributionRoot(anchor, { component, contribution, props });
+    pluginDomOwnership.contribute(contribution, dialogOwner);
+    return contribution;
+  };
   const managedDialogs=new Set<()=>void>();
   // Editor tools this plugin registered; only these may be opened directly.
   const editorTools=new Set<string>();
   disposers.add(()=>{for(const close of managedDialogs)close();managedDialogs.clear();});
+  disposers.add(() => dialogRegistry.closeOwner(dialogOwner));
   const track = (fn: () => void) => {
     let live = true;
     const dispose = () => {
@@ -503,24 +513,24 @@ export function createPluginContext(
       track(registerFsProvider(scheme, { list }, false));
     },
     registerDialog(descriptor: DialogDescriptor): void {
-      track(dialogRegistry.register(descriptor));
+      track(dialogRegistry.register({ ...descriptor, component: ownedComponent(descriptor.component) }));
     },
     registerImageEditorTool(tool: ImageEditorTool): void {
-      track(imageEditorRegistry.register(tool, order));
+      track(imageEditorRegistry.register({ ...tool, component: ownedComponent(tool.component) }, order));
       editorTools.add(tool.id);
     },
     registerInspector(descriptor: InspectorContribution): void {
-      track(inspectorRegistry.register(descriptor, order));
+      track(inspectorRegistry.register({ ...descriptor, component: ownedComponent(descriptor.component) }, order));
     },
     registerFileView(view: FileViewContribution): void {
       // `<pluginId>.<name>` with a dot-free name: plugin ids may contain dots,
       // so a prefix check alone would let "acme" claim "acme.trace"'s views.
       const name = view.id.startsWith(`${pluginId}.`) ? view.id.slice(pluginId.length + 1) : null;
       if (view.id !== pluginId && (!name || name.includes("."))) throw new Error(`File view ${view.id} must be named ${pluginId}.<name>`);
-      track(fileViewRegistry.register(pluginId, view, order));
+      track(fileViewRegistry.register(pluginId, { ...view, component: ownedComponent(view.component) }, order));
     },
     registerPreviewInfo(section: PreviewInfoContribution): void {
-      track(previewInfoRegistry.register(pluginId, section, order));
+      track(previewInfoRegistry.register(pluginId, { ...section, component: ownedComponent(section.component) }, order));
     },
     openDialog(id: string, props?: Record<string, unknown>, options?: PluginDialogOptions): void {
       try {
@@ -574,12 +584,16 @@ export function createPluginContext(
     workspace: {
       capturePane: (paneId) => disposed ? null : windowTabsManager.paneDialogs.capture(paneId),
       registerFileDropTarget(element, handler, options) {
+        if (disposed) throw new Error("Plugin caller was disposed");
+        if (!pluginDomOwnership.owns(element, dialogOwner)) {
+          throw new Error(`File drop target must be owned by ${pluginId}`);
+        }
         const unregister = fileDropTargets.register(element, async (paths, source) => {
           if (disposed) return;
           try { await handler(paths, source); }
           catch (error) { report(error, "file drop handler"); }
         }, { enabled: () => {
-          if (disposed) return false;
+          if (disposed || !pluginDomOwnership.owns(element, dialogOwner)) return false;
           try { return options?.enabled?.() ?? true; }
           catch (error) { report(error, "file drop target predicate"); return false; }
         } });

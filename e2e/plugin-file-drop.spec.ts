@@ -42,6 +42,19 @@ for (const mode of modes) {
     const destinationBefore = await destination.locator('.card[data-path]').evaluateAll(elements => elements.map(element => element.getAttribute("data-path")));
     await source.locator(`.entry-item[data-path=${JSON.stringify(selected[0])}]`).click();
     await source.locator(`.entry-item[data-path=${JSON.stringify(selected[1])}]`).click({ modifiers: ["Control"] });
+    const rejected = await target.evaluate(async element => {
+      // @ts-expect-error Vite serves test source modules.
+      const { createPluginContext } = await import("/src/lib/plugins/api.ts");
+      const intruder = createPluginContext("drop-intruder");
+      try {
+        return [element, document.body].map(node => {
+          try { intruder.ctx.workspace.registerFileDropTarget(node as HTMLElement, () => {}, { enabled: () => false }); return "accepted"; }
+          catch (error) { return String(error); }
+        });
+      } finally { intruder.dispose(); }
+    });
+    expect(rejected).toHaveLength(2);
+    expect(rejected.every(message => /owned by drop-intruder/.test(message))).toBe(true);
     await source.locator(`.entry-item[data-path=${JSON.stringify(selected[0])}]`).dragTo(target);
     const result = target.getByTestId("demo-file-drop-result");
     await expect(result).toHaveCount(1); await expect(result).toHaveAttribute("data-source", "pane");

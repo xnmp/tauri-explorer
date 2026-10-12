@@ -177,6 +177,7 @@ backend for E2E/browser).
 
 ## External drag/drop (OS ↔ app)
 
+- `src/lib/state/plugin-dom-ownership.ts`, `src/lib/components/PluginContributionRoot.svelte` — host-issued plugin DOM ownership, established before child actions mount; file-drop registration rejects host chrome and foreign contribution roots.
 - `src/lib/domain/file-drop.ts`, `src/lib/state/file-drop-targets.svelte.ts`, `src/lib/state/dispatch-file-drop.ts` — fileDropTargets capability: verified internal and native external paths, shared native/DOM/pointer completion admission, plugin-first terminal routing, registration disposal, and gesture-scoped feedback cleanup. `src/lib/plugins/demo/DemoFileDropTarget.svelte` provides contributed acceptance receipts.
 - `src/lib/state/html5-file-drag.svelte.ts` — common HTML5 source protocol used by file-list, Miller-column and Recent sources; Recent retains private Explorer link authority without filesystem URI export or outgoing native handoff.
 - Linux automatic Wry events after a rejected explicit start correlate only with the still-live HTML5 gesture and full path multiset. Backend observation times and bounded local/persisted intervals retain identity across IPC-delayed source-end. Expired/ambiguous observations cancel; explicit Rust identity wins. Consumer receipts prevent late duplicates, and ended/acknowledged gestures cannot lend identity to external files. Non-file and bookmark-only DOM payloads pass the file adapters unchanged; pending handoff decisions belong to the event's source session.

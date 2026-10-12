@@ -65,10 +65,12 @@ impl DragDropController {
     self.state.get()
   }
 
-  fn call(&self, webview: &WebView, event: DragDropEvent) -> bool {
-    let copying = gtk::gdk::Keymap::for_display(&webview.display()).is_some_and(|keymap| {
-      keymap.modifier_state() & gtk::gdk::ModifierType::CONTROL_MASK.bits() != 0
-    });
+  fn call(&self, webview: &WebView, context: &gtk::gdk::DragContext, event: DragDropEvent) -> bool {
+    let copying =
+      crate::drag_drop_intent::copy_modifier(crate::drag_drop_intent::PlatformDragIntent::Gtk {
+        selected_action: context.selected_action().bits(),
+        suggested_action: context.suggested_action().bits(),
+      });
     crate::drag_drop_snapshot::dispatch(window_id(webview), copying, event, &*self.handler)
   }
 }
@@ -85,13 +87,14 @@ pub(crate) fn connect_drag_event(webview: &WebView, handler: Box<dyn Fn(DragDrop
 
   {
     let controller = controller.clone();
-    webview.connect_drag_data_received(move |webview, _, _, _, data, info, _| {
+    webview.connect_drag_data_received(move |webview, ctx, _, _, data, info, _| {
       if info == 2 {
         let uris = data.uris();
         let paths = uris.iter().map(path_buf_from_uri).collect::<Vec<_>>();
         controller.enter();
         controller.call(
           webview,
+          ctx,
           DragDropEvent::Enter {
             paths: paths.clone(),
             position: controller.position.get(),
@@ -104,9 +107,9 @@ pub(crate) fn connect_drag_event(webview: &WebView, handler: Box<dyn Fn(DragDrop
 
   {
     let controller = controller.clone();
-    webview.connect_drag_motion(move |webview, _, x, y, _| {
+    webview.connect_drag_motion(move |webview, ctx, x, y, _| {
       if controller.state() == DragControllerState::Entered {
-        controller.call(webview, DragDropEvent::Over { position: (x, y) });
+        controller.call(webview, ctx, DragDropEvent::Over { position: (x, y) });
       } else {
         controller.store_position((x, y));
       }
@@ -123,6 +126,7 @@ pub(crate) fn connect_drag_event(webview: &WebView, handler: Box<dyn Fn(DragDrop
           controller.leave();
           return controller.call(
             webview,
+            ctx,
             DragDropEvent::Drop {
               paths,
               position: (x, y),

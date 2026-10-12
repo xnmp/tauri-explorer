@@ -19,6 +19,12 @@ export function isLinkOnlyFileTransfer(data: Pick<DataTransfer, "effectAllowed" 
     || data?.getData("application/x-explorer-effect") === "link";
 }
 
+/** Copy policy does not identify transport: only Linux HTML5 handoffs retain
+ * the source view's DOM destination rules after native startup. */
+export function nativeDropUsesDomRules(source: { nativeCopyPolicy?: string } | null, linux: boolean): boolean {
+  return linux && source?.nativeCopyPolicy === "modifier";
+}
+
 /** Native observations use process-scoped monotonic milliseconds before IPC delivery.
  * End is exclusive: a later external gesture must not borrow retired identity. */
 export function observedDuringGesture(observedAt: number, startedAt: number, endedAt?: number): boolean {
@@ -78,21 +84,29 @@ export function domOwnsFileDrop(nativeOwned: boolean): boolean {
   return !nativeOwned;
 }
 
-/** URI-list comments are ignored by filesystem consumers (RFC 2483). The
- * random gesture identity survives custom-MIME stripping without adding an
- * OS file. Recent exports only a private non-filesystem URI. */
+/** Filesystem export must remain a plain URI list: WebKit sanitizes it as a
+ * single URL before native export. Recent carries only a non-filesystem URN. */
 export function html5DragUriList(source: { sessionId?: string; path: string; paths?: string[]; nativeCopyPolicy?: string }): string {
   if (!source.sessionId) return "";
   if (source.nativeCopyPolicy === "link") return `urn:tauri-explorer:drag:${source.sessionId}`;
-  return [`# explorer-drag-session=${source.sessionId}`,
-    ...(source.paths ?? [source.path]).map(path => "file://" + encodeURI(path))].join("\r\n");
+  return (source.paths ?? [source.path]).map(path => {
+    const normalized = path.startsWith("/") ? path : path.replace(/\\/g, "/");
+    const prefix = normalized.startsWith("//") ? "file:" : normalized.startsWith("/") ? "file://" : "file:///";
+    return prefix + encodeURI(normalized).replace(/[?#]/g, encodeURIComponent);
+  }).join("\r\n");
 }
 
-export function uriListMatchesGesture(value: string, source: Parameters<typeof html5DragUriList>[0]): boolean {
-  const expected = html5DragUriList(source);
-  // Normalize line endings only; the complete ordered selection and session
-  // must match. Ordinary file URIs (even identical paths) prove no identity.
-  return !!expected && value.replace(/\r?\n/g, "\n") === expected.replace(/\r?\n/g, "\n");
+/** HTML text survives WebKit's stripped custom types without becoming a URL
+ * in the OS pasteboard. No filesystem path or link is embedded here. */
+export function html5DragHtml(source: { sessionId?: string }): string {
+  return source.sessionId ? `<span>urn:tauri-explorer:drag:${source.sessionId}</span>` : "";
+}
+
+export function html5TransferMatchesGesture(data: Pick<DataTransfer, "getData">, source: Parameters<typeof html5DragUriList>[0]): boolean {
+  // Only Recent's URI proves identity. Ordinary file URIs never do, even if
+  // the same paths are still retained after a missed dragend.
+  return !!source.sessionId && (data.getData("text/html").trim() === html5DragHtml(source)
+    || (source.nativeCopyPolicy === "link" && data.getData("text/uri-list") === html5DragUriList(source)));
 }
 
 /** GTK/Wry preserves Recent's sole URI as a native path string. A mixed or

@@ -2286,6 +2286,8 @@ impl WebView {
 
 /// LOCAL PATCH: preserve platform callback metadata before Tauri queues events.
 /// The observer does not replace the ordinary Wry drag/drop handler.
+pub mod drag_drop_intent;
+
 pub mod drag_drop_snapshot {
   use super::DragDropEvent;
   use std::sync::{Arc, Mutex};

@@ -83,6 +83,12 @@ export interface GitRef {
   target: string;
 }
 
+/** Exact branch identity; remote names must not collide with local shorthands. */
+export interface MergeBaseBranch {
+  name: string;
+  remote: boolean;
+}
+
 export interface GitRefs {
   local_branches: GitRef[];
   remote_branches: GitRef[];
@@ -109,6 +115,13 @@ export async function gitLog(
 /** Fetch all branches (local + remote), tags, and HEAD for a repo. */
 export async function gitRefs(repoPath: string): Promise<GitRefs> {
   return invoke<GitRefs>("git_refs", { repoPath });
+}
+
+export async function gitMergeBase(
+  repoPath: string, first: MergeBaseBranch, second: MergeBaseBranch,
+): Promise<string | null> {
+  const ref = (branch: MergeBaseBranch) => `refs/${branch.remote ? "remotes" : "heads"}/${branch.name}`;
+  return invoke<string | null>("git_merge_base", { repoPath, firstRef: ref(first), secondRef: ref(second) });
 }
 
 export interface CommitFile {

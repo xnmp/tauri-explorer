@@ -136,6 +136,7 @@
   let filePathReloadTimer: ReturnType<typeof setTimeout> | null = null;
 
   function onFilePathFilterInput(event: Event): void {
+    branchSession.cancelMergeBase();
     filePathFilter = (event.target as HTMLInputElement).value;
     closeDetails();
     closePrDetail();
@@ -164,6 +165,7 @@
   let localOnly = $state(loadPersisted<unknown>(LOCAL_ONLY_KEY, false) === true);
 
   function toggleLocalOnly(): void {
+    branchSession.cancelMergeBase();
     localOnly = !localOnly;
     savePersisted(LOCAL_ONLY_KEY, localOnly);
   }
@@ -177,6 +179,7 @@
   let hideRemoteOnly = $state(loadPersisted<unknown>(HIDE_REMOTE_ONLY_KEY, false) === true);
 
   function toggleHideRemoteOnly(): void {
+    branchSession.cancelMergeBase();
     hideRemoteOnly = !hideRemoteOnly;
     savePersisted(HIDE_REMOTE_ONLY_KEY, hideRemoteOnly);
     // The selected commit may not exist in the new subset (mirrors
@@ -238,13 +241,19 @@
   }
 
   function closeDetails(): void {
+    branchSession.cancelMergeBase();
+    resetDetails();
+  }
+
+  function resetDetails(): void {
     detailSession.close();
     // Keep the pane-owned in-flight commit guard across close/reopen.
     commitPanelStore.resetIfIdle();
     detailsHeight = 0;
   }
 
-  async function selectCommit(commit: CommitInfo): Promise<void> {
+  async function selectCommit(commit: CommitInfo, cancelJump = true): Promise<void> {
+    if (cancelJump) branchSession.cancelMergeBase();
     closePrDetail();
     const pending = detailSession.select(commit);
     if (!detailSession.selected) {
@@ -254,8 +263,15 @@
     await pending;
   }
 
-  const beginComparison = detailSession.beginComparison;
-  const exitComparison = detailSession.exitComparison;
+  function beginComparison(): void {
+    branchSession.cancelMergeBase();
+    detailSession.beginComparison();
+  }
+
+  function exitComparison(): Promise<void> {
+    branchSession.cancelMergeBase();
+    return detailSession.exitComparison();
+  }
 
   /** Expand/collapse one file's diff below its row. */
   async function toggleFileDiff(file: DetailFile): Promise<void> {
@@ -661,12 +677,16 @@
   // Every watcher, filter and action refresh enters the query owner's shared
   // reloader. Pagination extends the mounted history without replacing its
   // retained page-zero snapshot or adding a separate refresh policy.
-  const reload = querySession.reload;
+  function reload(): Promise<void> {
+    branchSession.cancelMergeBase();
+    return querySession.reload();
+  }
   const loadMore = querySession.loadMore;
 
   /** Apply a file-history request from the SCM panel. Keeping the filter
    *  component-local preserves #529's ephemeral graph-search behaviour. */
   function showFileHistory(filePath: string): void {
+    branchSession.cancelMergeBase();
     if (filePathReloadTimer !== null) {
       clearTimeout(filePathReloadTimer);
       filePathReloadTimer = null;
@@ -699,7 +719,9 @@
       void prSession.reloadBadges();
       return;
     }
-    untrack(() => void reload());
+    // User filter handlers retire navigation themselves. The fork-point
+    // action also changes this query, so its own reload must keep ownership.
+    untrack(() => void querySession.reload());
   });
 
   // Live refresh (#365, #432): watch the repo and reload when git state
@@ -719,6 +741,8 @@
     void subscribeGitChanges((change) => {
       if (!shouldReloadGraphForChange(change)) return;
       if (change.repoRoot && directoryKey(change.repoRoot) !== directoryKey(repo)) return;
+      // Retire the lookup at observation time, before the trailing reload.
+      branchSession.cancelMergeBase();
       if (refreshTimer !== null) clearTimeout(refreshTimer);
       refreshTimer = setTimeout(() => {
         refreshTimer = null;
@@ -789,6 +813,41 @@
 
   let branchPopoverOpen = $state(false);
   let branchQuery = $state("");
+  let firstMergeBranch = $state("");
+  let secondMergeBranch = $state("");
+  const branchRef = (branch: BranchListEntry) => `refs/${branch.remote ? "remotes" : "heads"}/${branch.name}`;
+
+  async function jumpToMergeBase(): Promise<void> {
+    const first = branchList.find((branch) => branchRef(branch) === firstMergeBranch);
+    const second = branchList.find((branch) => branchRef(branch) === secondMergeBranch);
+    if (!first || !second) return;
+    await branchSession.jumpToMergeBase(first, second, async (oid, isCurrent) => {
+      // Clear curation so an ancestor cannot be hidden. Walking all refs also
+      // avoids local/remote shorthand collisions in the branch-filter API.
+      if (filePathReloadTimer !== null) clearTimeout(filePathReloadTimer);
+      filePathReloadTimer = null;
+      resetDetails();
+      closePrDetail();
+      branchFilter = null;
+      filePathFilter = "";
+      localOnly = false;
+      hideRemoteOnly = false;
+      savePersisted(BRANCH_FILTER_KEY, branchFilter);
+      savePersisted(LOCAL_ONLY_KEY, false);
+      savePersisted(HIDE_REMOTE_ONLY_KEY, false);
+      await tick();
+      await querySession.reload();
+      if (!isCurrent()) return false;
+      const commit = await querySession.findCommit(oid, isCurrent);
+      if (!commit || !isCurrent()) return false;
+      await selectCommit(commit, false);
+      await tick();
+      if (selected?.oid !== oid) return false;
+      scrollRowIntoView(displayCommits.findIndex((row) => row.oid === oid));
+      return true;
+    });
+    if (branchSession.mergeBaseResult) branchPopoverOpen = false;
+  }
   const branchList = $derived(branchSession.branches);
   const branchAuthors = $derived(branchSession.authors);
 
@@ -807,6 +866,7 @@
 
   /** null = all branches; [] = none (#413). */
   function setBranchFilter(next: string[] | null): void {
+    branchSession.cancelMergeBase();
     branchFilter = next;
     savePersisted(BRANCH_FILTER_KEY, branchFilter);
     // The selected commit (or the PR dropdown's anchor row) may not exist in
@@ -943,6 +1003,7 @@
    *  it; opening it closes any open commit details (one expansion at a time). */
   function togglePrDetail(event: MouseEvent, commit: CommitInfo, pr: PrSnapshot): void {
     event.stopPropagation();
+    branchSession.cancelMergeBase();
     if (prDetail?.oid === commit.oid && prDetail.pr.number === pr.number) {
       closePrDetail();
       return;
@@ -1159,6 +1220,7 @@
     label: string,
     fn: () => Promise<void | GitUndoAction | null>,
   ): Promise<void> {
+    branchSession.cancelMergeBase();
     closeMenu();
     try {
       const undoAction = await fn();
@@ -1376,6 +1438,7 @@
 
   async function refreshWithFetch(): Promise<void> {
     if (fetching) return;
+    branchSession.cancelMergeBase();
     // Kill the post-F5 focus ring (#433): F5 is a keyboard event, so it
     // promotes whatever the pointer last left focused — the clicked commit row
     // or the active tab — to `:focus-visible`, painting the browser's default
@@ -1543,6 +1606,26 @@
           onclick={() => (branchPopoverOpen = false)}
         ></button>
         <div class="branch-popover" data-testid="branch-popover">
+          <div class="bf-heading">Fork point</div>
+          <div class="bf-fork-controls">
+            <select aria-label="First merge-base branch" bind:value={firstMergeBranch} onchange={() => branchSession.cancelMergeBase()}>
+              <option value="">First branch…</option>
+              {#each branchList as branch (branchRef(branch))}
+                <option value={branchRef(branch)}>{branch.name}{branch.remote ? " (remote)" : ""}</option>
+              {/each}
+            </select>
+            <select aria-label="Second merge-base branch" bind:value={secondMergeBranch} onchange={() => branchSession.cancelMergeBase()}>
+              <option value="">Second branch…</option>
+              {#each branchList as branch (branchRef(branch))}
+                <option value={branchRef(branch)}>{branch.name}{branch.remote ? " (remote)" : ""}</option>
+              {/each}
+            </select>
+            <button class="prompt-btn" disabled={!firstMergeBranch || !secondMergeBranch || firstMergeBranch === secondMergeBranch || branchSession.mergeBaseBusy} onclick={() => void jumpToMergeBase()}>
+              {branchSession.mergeBaseBusy ? "Finding merge-base…" : "Jump to merge-base"}
+            </button>
+            <span class="bf-fork-hint">Shows all branches and clears history filters.</span>
+            {#if branchSession.mergeBaseError}<span role="alert" class="bf-fork-error">{branchSession.mergeBaseError}</span>{/if}
+          </div>
           <div class="bf-heading">Commits</div>
           <input
             class="bf-path-search"
@@ -1655,7 +1738,11 @@
         data-testid="handle-graph"
       ></span>
       <span class="gh-message" title={filePathFilter.trim() || "Message"}>
-        {filePathFilter.trim() ? `Path: ${filePathFilter.trim()}` : "Message"}
+        {#if branchSession.mergeBaseResult}
+          Fork point: {branchSession.mergeBaseResult.first} / {branchSession.mergeBaseResult.second}
+        {:else}
+          {filePathFilter.trim() ? `Path: ${filePathFilter.trim()}` : "Message"}
+        {/if}
       </span>
       {#if shownColumns.author}
         <span id={`${resizeRegionId}-author`} class="gh-author" style:width="{authorCol.value}px">
@@ -3342,6 +3429,26 @@
     color: var(--text-primary);
     font-size: var(--font-size-body);
   }
+
+  .bf-fork-controls {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding: 6px;
+  }
+
+  .bf-fork-controls select {
+    width: 100%;
+    padding: 4px 8px;
+    border: 1px solid var(--divider);
+    border-radius: var(--radius-sm);
+    background: var(--background-card);
+    color: var(--text-primary);
+    font: inherit;
+  }
+
+  .bf-fork-hint { color: var(--text-secondary); font-size: var(--font-size-caption); }
+  .bf-fork-error { color: var(--text-primary); font-size: var(--font-size-caption); }
 
   /* Section headings inside the filter popover (#412). */
   .bf-heading {

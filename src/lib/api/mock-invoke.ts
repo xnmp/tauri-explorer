@@ -2352,6 +2352,30 @@ if (typeof window !== "undefined") {
     };
   },
 
+  git_merge_base: (args: Record<string, unknown>) => {
+    const resolve = (name: string) => Object.entries(MOCK_GRAPH_REFS).find(([, refs]) =>
+      refs.some((ref) => `refs/${ref.kind === "RemoteBranch" ? "remotes" : "heads"}/${ref.name}` === name),
+    )?.[0];
+    const first = resolve(args.firstRef as string);
+    const second = resolve(args.secondRef as string);
+    if (!first || !second) throw new Error("Branch not found");
+    const graph = mockCommitGraph();
+    const ancestors = (tip: string) => {
+      const seen = new Set<string>();
+      const pending = [tip];
+      while (pending.length) {
+        const oid = pending.pop()!;
+        if (seen.has(oid)) continue;
+        seen.add(oid);
+        pending.push(...(graph.find((commit) => commit.oid === oid)?.parents ?? []));
+      }
+      return seen;
+    };
+    const left = ancestors(first);
+    const right = ancestors(second);
+    return graph.find((commit) => left.has(commit.oid) && right.has(commit.oid))?.oid ?? null;
+  },
+
   git_refs: (args: Record<string, unknown>) => {
     const repoPath = (args.repoPath as string) ?? "";
     const loadIdx = loadRepoIndex(repoPath);

@@ -1,6 +1,8 @@
 import {
   gitBranchAuthors,
   gitRefs,
+  gitMergeBase,
+  type MergeBaseBranch,
   type BranchAuthor,
   type GitRefs,
 } from "$lib/api/git-log";
@@ -9,6 +11,7 @@ import type { BranchListEntry } from "$lib/domain/git-graph";
 export interface GitGraphBranchesDependencies {
   refs(repoPath: string): Promise<GitRefs>;
   branchAuthors(repoPath: string): Promise<BranchAuthor[]>;
+  mergeBase?: typeof gitMergeBase;
 }
 
 const message = (cause: unknown, fallback: string) =>
@@ -47,6 +50,46 @@ export function createGitGraphBranches(
   let authorsRequest = 0;
   let popoverRequest = 0;
   let disposed = false;
+  let mergeBaseRequest = 0;
+  let mergeBaseBusy = $state(false);
+  let mergeBaseError = $state<string | null>(null);
+  let mergeBaseResult = $state<{ first: string; second: string; oid: string } | null>(null);
+
+  function cancelMergeBase(): void {
+    mergeBaseRequest += 1;
+    mergeBaseBusy = false;
+    mergeBaseError = null;
+    mergeBaseResult = null;
+  }
+
+  async function jumpToMergeBase(
+    first: MergeBaseBranch, second: MergeBaseBranch,
+    reveal: (oid: string, isCurrent: () => boolean) => Promise<boolean>,
+  ): Promise<void> {
+    if (disposed || mergeBaseBusy || (first.name === second.name && first.remote === second.remote)) return;
+    const request = ++mergeBaseRequest;
+    const current = () => !disposed && request === mergeBaseRequest;
+    mergeBaseBusy = true;
+    mergeBaseError = null;
+    mergeBaseResult = null;
+    try {
+      const oid = await (dependencies.mergeBase ?? gitMergeBase)(repoPath, first, second);
+      if (!current()) return;
+      if (!oid) {
+        mergeBaseError = "These branches have no common ancestor";
+      } else {
+        const revealed = await reveal(oid, current);
+        if (current()) {
+          if (revealed) mergeBaseResult = { first: first.name, second: second.name, oid };
+          else mergeBaseError = "Could not reveal the merge-base; history changed or is incomplete. Try again.";
+        }
+      }
+    } catch (cause) {
+      if (current()) mergeBaseError = message(cause, "Could not find the merge-base");
+    } finally {
+      if (current()) mergeBaseBusy = false;
+    }
+  }
 
   function requestRefs(): Promise<RefsResult> {
     const request = ++refsRequest;
@@ -130,6 +173,11 @@ export function createGitGraphBranches(
   }
 
   return {
+    get mergeBaseBusy() { return mergeBaseBusy; },
+    get mergeBaseError() { return mergeBaseError; },
+    get mergeBaseResult() { return mergeBaseResult; },
+    jumpToMergeBase,
+    cancelMergeBase,
     get branches(): readonly Readonly<BranchListEntry>[] { return branches; },
     get authors(): ReadonlyMap<string, string> { return new Map(authors); },
     get hasKnownBranches(): boolean { return known; },
@@ -140,6 +188,7 @@ export function createGitGraphBranches(
     loadForPopover,
     invalidate,
     dispose(): void {
+      cancelMergeBase();
       disposed = true;
       refsRequest += 1;
       refsEpoch += 1;

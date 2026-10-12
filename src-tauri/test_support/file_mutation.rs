@@ -472,7 +472,7 @@ mod recovery_admission {
                 held.finish().unwrap();
                 let completed = entry_outcome(plan(), &runtime).await;
                 assert_eq!(completed.result.unwrap().path, native(&target));
-                assert!(completed.warning.is_none());
+                assert!(completed.warning.is_none(), "unexpected warning: {:?}", completed.warning);
                 if kind == "directory" {
                     assert!(target.is_dir());
                 } else {

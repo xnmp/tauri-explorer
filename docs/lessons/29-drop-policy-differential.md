@@ -599,3 +599,49 @@ The eleventh review found that folding case below the root on Windows suppressed
 real transfers between case-distinct directories (NTFS per-directory case
 sensitivity). Windows comparison keys now fold only the drive or UNC/WSL root;
 a case-only difference below it is passed to the backend, as on dev.
+
+## Regression: browser startup, rejected native start, and preview focus
+
+The four browser regressions after 89242c4a had two independent causes:
+
+- b50c4832 gated HTML5 payload creation on `dragClock.ready`, but
+  `useExternalDrop.setup` calibrated only when Tauri was already present.
+  The browser fixture started the app without Tauri, then injected its rejecting
+  native boundary. Readiness became false, so dragstart exported no MIME and
+  never reached `start_file_drag`. The folder, breadcrumb and tab destinations
+  consequently received no file transfer. Initialize the clock during browser
+  startup through the same mock-aware API used by the source. Keep the native
+  clock admission gate and the completion receipts.
+- 748e8ed5 narrowed active-pane input fallback to the document body. Clicking
+  the shared preview can focus its `.preview-content`, outside the explorer's
+  pane DOM. Escape therefore found no pane scope even though that preview
+  displays the active pane. Resolve preview input to the active pane while
+  keeping the tab strip, toolbar and sidebar as window-owned launchers.
+  Destination-scoped command admission and tab-strip Ctrl+T remain unchanged.
+
+The differential harness missed the drop regression twice: it mocked the
+clock as permanently ready, and every Linux `native-rejected` row produced
+automatic native Enter/Drop observations. A rejection does not guarantee those
+observations. In addition, its `dom-only` delivery rows disabled native start,
+so they could not represent rejected start followed exclusively by DOM delivery.
+
+`dropRejectedDomCases` now separates attempted transport from observed delivery:
+twelve rows cover listing/Miller file sources, folder/breadcrumb/tab destinations,
+and plain/Ctrl modifiers. Both runners consume those same independent oracle
+rows. The main runner suppresses native observations for DOM-only delivery.
+`tests/composables/drop-clock-fallback.test.ts` additionally uses the real clock,
+starts the listener in browser mode, injects the native boundary, starts the real
+source, waits for rejection, and delivers through capture admission and the
+component-used DOM destination seam. It checks transfer outcomes and attempts
+a duplicate after dragend, which must still produce only one completion.
+
+| Source (each) | DOM destination | Plain | Ctrl |
+| --- | --- | --- | --- |
+| Listing file / Miller file | Folder | Move | Copy |
+| Listing file / Miller file | Breadcrumb | Move | Move |
+| Listing file / Miller file | Tab | Move | Copy |
+
+The clock regression and preview Escape test fail with their respective
+production fixes reverted. Listener lifecycle fixtures wait for registration
+before dispatching events, so their assertions still exercise late cleanup and
+replacement registration after calibration.

@@ -23,6 +23,7 @@ const explorer = (c: DropCase) => c.source.startsWith("listing-") || c.source.st
 const folder = (c: DropCase) => c.source.endsWith("-folder");
 const nonfile = (c: DropCase) => c.source === "text" || c.source === "plugin-surface";
 export const nativeRoute = (c: DropCase) => !nonfile(c) && c.source !== "sidebar-bookmark"
+  && c.deliveryOrder !== "dom-only"
   && (c.transport === "native-accepted" || (c.source !== "external-file" && c.transport === "native-rejected" && c.platform === "linux"));
 const copy = (c: DropCase) => c.modifier === (c.platform === "mac" ? "option" : "ctrl");
 const pointer = (c: DropCase) => c.transport === "dom-only" && c.platform !== "linux" && explorer(c);
@@ -99,6 +100,14 @@ export const dropDeliveryCases: DropCase[] = dropPlatforms.flatMap(platform =>
       (deliveryOrder === "dom-only" ? ["dom-only"] as const : ["native-accepted", "native-rejected"] as const).map(transport => ({
         platform, source, target, deliveryOrder, transport, modifier: "none" as const,
       }))))));
+/** Rejection need not produce any automatic Wry observation. These rows use
+ * the HTML5 source and DOM destination, retaining the native-start attempt. */
+export const dropRejectedDomCases = (["listing-file", "miller-file"] as const).flatMap(source =>
+  (["folder", "breadcrumb", "tab"] as const).flatMap(target =>
+    (["none", "ctrl"] as const).map(modifier => ({
+      platform: "linux" as const, source, target, modifier,
+      transport: "native-rejected" as const, deliveryOrder: "dom-only" as const,
+    }))));
 export const dropModalCompletionCases: DropCase[] = dropDeliveryCases.filter(c => c.source.startsWith("listing-") || c.source.startsWith("miller-") || c.source === "recent" || c.source === "sidebar-bookmark" || c.source === "external-file")
   .flatMap(c => (["window", "destination-pane", "other-pane"] as const).map(completionModal => ({ ...c, completionModal })))
   .concat((["window", "destination-pane", "other-pane"] as const).map(completionModal => ({

@@ -84,6 +84,20 @@ describe("pane dialog keyboard routing", () => {
     f.press("t", { ctrlKey: true });
     expect(f.executeCommand).not.toHaveBeenCalled();
   });
+  it("Escape from the shared preview closes its active pane dialog after preview focus moved outside the overlay", () => {
+    const ownership = createModalOwnership(), a = scope();
+    const close = vi.fn();
+    ownership.registerSurface(close, undefined, undefined, { scope: a });
+    const f = fixture(false, [], ownership);
+    vi.stubGlobal("document", { body: new EventTarget() });
+    Object.assign(f.target, {
+      closest: (selector: string) => selector === ".preview-pane" ? f.target : null,
+    });
+    f.dialogs.requestCloseTop.mockImplementation((event, scope) => { ownership.requestTopClose(event, scope); });
+    f.press("Escape");
+    expect(close).toHaveBeenCalledOnce();
+    expect(f.dialogs.requestCloseTop).toHaveBeenCalledExactlyOnceWith(expect.any(Event), a);
+  });
   it("allows configured pane/tab navigation from inputs while retaining dialog control keys", () => {
     const ownership = createModalOwnership(), a = scope();
     ownership.register(() => {}, undefined, { scope: a });

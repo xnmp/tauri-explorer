@@ -27,7 +27,9 @@ describe("native drop listener lifecycle", () => {
     let finish!: (unlisten: () => void) => void;
     native.listen.mockImplementation((deliver: (event: any) => void) => { native.deliver = deliver; return new Promise(resolve => { finish = resolve; }); });
     const callbacks = { onDrop: vi.fn(), onLeave: vi.fn() }; const unlisten = vi.fn();
-    const service = useExternalDrop(callbacks); const pending = service.setup(); service.cleanup();
+    const service = useExternalDrop(callbacks); const pending = service.setup();
+    await vi.waitFor(() => expect(native.listen).toHaveBeenCalledOnce());
+    service.cleanup();
     native.deliver!(event("drop")); finish(unlisten); await pending;
     expect(unlisten).toHaveBeenCalledOnce(); expect(callbacks.onDrop).not.toHaveBeenCalled();
   });
@@ -36,7 +38,10 @@ describe("native drop listener lifecycle", () => {
     const deliveries: ((event: any) => void)[] = []; const finishes: ((unlisten: () => void) => void)[] = [];
     native.listen.mockImplementation((deliver: (event: any) => void) => { deliveries.push(deliver); return new Promise(resolve => { finishes.push(resolve); }); });
     const onDrop = vi.fn(); const service = useExternalDrop({ onDrop });
-    const old = service.setup(); const current = service.setup();
+    const old = service.setup();
+    await vi.waitFor(() => expect(native.listen).toHaveBeenCalledOnce());
+    const current = service.setup();
+    await vi.waitFor(() => expect(native.listen).toHaveBeenCalledTimes(2));
     const oldUnlisten = vi.fn(); const currentUnlisten = vi.fn();
     finishes[1](currentUnlisten); await current; finishes[0](oldUnlisten); await old;
     deliveries[0](event("drop")); deliveries[1](event("drop"));

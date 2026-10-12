@@ -33,9 +33,11 @@ function dom(data: Record<string, string>, extra: Record<string, unknown> = {}) 
   return { target: hit, clientX: 20, clientY: 30, preventDefault: vi.fn(), stopImmediatePropagation: vi.fn(), dataTransfer: { types: Object.keys(data), getData: (type: string) => data[type] ?? "", ...extra } };
 }
 function register(handler = vi.fn(), enabled?: () => boolean) { disposers.push(fileDropTargets.register(hit, handler, { enabled })); return handler; }
-function setup(active = true) {
+async function setup(active = true) {
+  native.deliver = null;
   const service = useNativeDropHandler({ getActiveExplorer: () => active ? ({ currentPath: "/destination" } as any) : undefined, refreshAllPanes: vi.fn() });
   service.setup(); disposers.push(service.cleanup);
+  await vi.waitFor(() => expect(native.deliver).not.toBeNull());
 }
 beforeEach(() => {
   dragState.clear(); transfer.mockClear(); listeners = {}; hit = dropElement();
@@ -53,14 +55,14 @@ describe("plugin native file drops", () => {
     const handler = register(vi.fn(async (batch: readonly string[]) => {
       await new Promise<void>(resolve => { finish = resolve; }); received.push([...batch]);
     }));
-    setup(); start(); const incoming = [...paths]; const pending = nativeDrop(incoming, { x: 40, y: 60 });
+    await setup(); start(); const incoming = [...paths]; const pending = nativeDrop(incoming, { x: 40, y: 60 });
     incoming.reverse(); incoming.push("/later.png");
     finish(); await pending;
     expect(received).toEqual([paths]); expect(handler).toHaveBeenCalledTimes(1); expect(transfer).not.toHaveBeenCalled();
   });
 
   it("delivers the complete live selection in Explorer order with no active explorer or transfer", async () => {
-    const handler = register(); setup(false); start();
+    const handler = register(); await setup(false); start();
     await nativeDrop([...paths].reverse(), { x: 300, y: 450 });
     expect(handler).toHaveBeenCalledExactlyOnceWith(paths, "pane");
     expect(transfer).not.toHaveBeenCalled(); expect(dragState.current).toBeNull();
@@ -68,7 +70,7 @@ describe("plugin native file drops", () => {
   });
 
   it.each([[paths[0]], [paths[0], "/unrelated.png"], [paths[0], paths[0]]].map(incoming => [incoming]))("does not substitute an incomplete or mismatched native set: %j", async incoming => {
-    const handler = register(); setup(); start();
+    const handler = register(); await setup(); start();
     const original = dragState.current;
     await nativeDrop(incoming, { x: 1, y: 2 });
     expect(handler).toHaveBeenCalledExactlyOnceWith(incoming, "external");
@@ -76,7 +78,7 @@ describe("plugin native file drops", () => {
   });
 
   it("retains verified source order when native source completion arrives before destination Drop", async () => {
-    const handler = register(); setup(); start(); const source = dragState.current;
+    const handler = register(); await setup(); start(); const source = dragState.current;
     nativeEvent("enter", paths, { x: 40, y: 60 });
     dragState.finish(source);
     await nativeDrop([...paths].reverse(), { x: 40, y: 60 });
@@ -84,7 +86,7 @@ describe("plugin native file drops", () => {
   });
 
   it("drops the receiver snapshot on Leave and new Enter", async () => {
-    const handler = register(); setup(); start();
+    const handler = register(); await setup(); start();
     nativeEvent("enter", paths, { x: 40, y: 60 }); dragState.clear(); nativeEvent("leave");
     nativeEvent("enter", paths, { x: 40, y: 60 });
     await nativeDrop(paths, { x: 40, y: 60 });
@@ -92,13 +94,13 @@ describe("plugin native file drops", () => {
   });
 
   it("revalidates the entire set at Drop after a verified Enter", async () => {
-    const handler = register(); setup(); start(); nativeEvent("enter", paths, { x: 40, y: 60 });
+    const handler = register(); await setup(); start(); nativeEvent("enter", paths, { x: 40, y: 60 });
     await nativeDrop([paths[0]], { x: 40, y: 60 });
     expect(handler).toHaveBeenCalledExactlyOnceWith([paths[0]], "external"); expect(transfer).not.toHaveBeenCalled();
   });
 
   it("delivers authoritative external paths without guessing from live state", async () => {
-    const handler = register(); setup();
+    const handler = register(); await setup();
     await nativeDrop(["file:///external/b.png\r\nfile:///external/a.png"], { x: 1, y: 2 });
     expect(handler).toHaveBeenCalledExactlyOnceWith(["/external/b.png", "/external/a.png"], "external");
     expect(transfer).not.toHaveBeenCalled();
@@ -108,13 +110,13 @@ describe("plugin native file drops", () => {
     const handler = register(vi.fn(), () => mode !== "disabled");
     if (mode === "modal") hit = dropElement("modal-overlay");
     if (mode === "inert") hit = dropElement("", { inert: "" }, hit);
-    setup(); start(); await nativeDrop(paths, { x: 1, y: 2 });
+    await setup(); start(); await nativeDrop(paths, { x: 1, y: 2 });
     expect(handler).not.toHaveBeenCalled(); expect(transfer).not.toHaveBeenCalled(); expect(dragState.current).toBeNull();
   });
 
   it("does not let a late native Leave clear a successor pointer highlight", async () => {
     let finish!: () => void; register(vi.fn(() => new Promise<void>(resolve => { finish = resolve; })));
-    setup(); start(); nativeEvent("enter", paths, { x: 40, y: 60 }); nativeEvent("over", [], { x: 40, y: 60 });
+    await setup(); start(); nativeEvent("enter", paths, { x: 40, y: 60 }); nativeEvent("over", [], { x: 40, y: 60 });
     const pending = nativeDrop(paths, { x: 40, y: 60 });
     hit = dropElement("entry-item directory", { "data-path": "/new-target" });
     dragState.start(entry("/new-drag.png")); highlightTargetAtPoint(20, 30);
@@ -125,7 +127,7 @@ describe("plugin native file drops", () => {
   it("claims before awaiting and preserves replacement drag state and feedback on completion", async () => {
     let finish!: () => void;
     const handler = register(vi.fn(() => new Promise<void>(resolve => { finish = resolve; })));
-    setup(); start(); highlightTargetAtPoint(20, 30);
+    await setup(); start(); highlightTargetAtPoint(20, 30);
     const pending = nativeDrop(paths, { x: 40, y: 60 });
     await nativeDrop(paths, { x: 40, y: 60 });
     expect(handler).toHaveBeenCalledTimes(1);
@@ -141,7 +143,7 @@ describe("plugin native file drops", () => {
 
 describe("plugin DOM file drops", () => {
   it("delivers verified internal MIME once, ordered by the live Explorer drag", async () => {
-    const handler = register(); setup(); start();
+    const handler = register(); await setup(); start();
     const event = dom({ "application/x-explorer-path": paths[1], "application/x-explorer-paths": JSON.stringify([...paths].reverse()) });
     await fire("drop", event);
     expect(event.stopImmediatePropagation).toHaveBeenCalled();
@@ -149,20 +151,20 @@ describe("plugin DOM file drops", () => {
   });
 
   it.each(['null', '[]', '["/source/z.png", 1]', '["/source/z.png", "relative.png"]', '["/source/z.png", "/forged.png"]'])("consumes malformed or unrelated MIME without fallback: %s", async payload => {
-    const handler = register(); setup(); start();
+    const handler = register(); await setup(); start();
     const event = dom({ "application/x-explorer-path": paths[1], "application/x-explorer-paths": payload });
     await fire("drop", event); expect(handler).not.toHaveBeenCalled(); expect(transfer).not.toHaveBeenCalled();
     expect(event.stopImmediatePropagation).toHaveBeenCalled();
   });
 
   it("rejects forged Explorer MIME without a live drag", async () => {
-    const handler = register(); setup();
+    const handler = register(); await setup();
     await fire("drop", dom({ "application/x-explorer-path": "/source/a.png" }));
     expect(handler).not.toHaveBeenCalled(); expect(transfer).not.toHaveBeenCalled();
   });
 
   it("ignores external DOM files, File.name, guessed File.path and URI text", async () => {
-    const handler = register(); setup(); start();
+    const handler = register(); await setup(); start();
     const original = dragState.current;
     await fire("drop", dom({ Files: "", "text/uri-list": "file:///external.png", "text/plain": "/external.png" }, { files: [{ name: "external.png", path: "/external.png" }] }));
     expect(handler).not.toHaveBeenCalled(); expect(transfer).not.toHaveBeenCalled();
@@ -170,7 +172,7 @@ describe("plugin DOM file drops", () => {
   });
 
   it("gives a successful native handoff sole authority over matching DOM MIME", async () => {
-    const handler = register(); setup(); start(); Object.assign(window, { __TAURI_INTERNALS__: {} });
+    const handler = register(); await setup(); start(); Object.assign(window, { __TAURI_INTERNALS__: {} });
     nativeEvent("enter", paths);
     const event = dom({ "application/x-explorer-paths": JSON.stringify(paths) });
     await fire("drop", event); expect(handler).not.toHaveBeenCalled(); expect(dragState.current).not.toBeNull();

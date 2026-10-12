@@ -13,7 +13,6 @@ import { getCurrentWebview } from "@tauri-apps/api/webview";
 import type { UnlistenFn } from "@tauri-apps/api/event";
 import type { NativeFileDragEvent } from "$lib/api/native-file-drag";
 import { dragClock } from "$lib/state/drag-clock";
-import { isTauri } from "$lib/api/common";
 import type { DragData } from "$lib/state/drag.svelte";
 
 export interface ExternalDropState {
@@ -48,7 +47,9 @@ export function useExternalDrop(callbacks: ExternalDropCallbacks) {
     unlisten?.();
     unlisten = null;
     try {
-      if (isTauri()) await dragClock.initialize();
+      // Browser startup uses the mock-aware clock too. Native capability can
+      // appear later; source admission must not depend on when it appeared.
+      await dragClock.initialize();
       if (owner !== generation) return;
       const webview = getCurrentWebview();
       const fn = await webview.listen<NativeFileDragEvent>("explorer-native-file-drag", (event) => {

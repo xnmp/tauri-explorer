@@ -3,7 +3,7 @@ vi.mock("$lib/state/drag-clock", async actual => ({ ...await actual<object>(), d
   initialize: async () => {}, ready: true,
   stamp: () => ({ clockId: `browser:${performance.timeOrigin}`, at: Math.floor(performance.timeOrigin + performance.now()), uncertainty: 0 }),
 } }));
-import { dropCases, dropSources, dropTargets, dropDeliveryOrders, dropDeliveryCases, dropModalCompletionCases, dropBoundaryCases, dropCrossWindowCases, dropPathCases, dropTemporalCases, outgoingRecentCases, dropPlatforms, branchDropPolicy, devDropPolicy, nativeRoute, intendedDifferences, type DropCase, type Outcome } from "../helpers/drop-policy";
+import { dropCases, dropSources, dropTargets, dropDeliveryOrders, dropDeliveryCases, dropRejectedDomCases, dropModalCompletionCases, dropBoundaryCases, dropCrossWindowCases, dropPathCases, dropTemporalCases, outgoingRecentCases, dropPlatforms, branchDropPolicy, devDropPolicy, nativeRoute, intendedDifferences, type DropCase, type Outcome } from "../helpers/drop-policy";
 import { dropElement } from "../helpers/drop-element";
 
 const io = vi.hoisted(() => ({ start: vi.fn(), listener: undefined as ((event: any) => void) | undefined,
@@ -235,7 +235,7 @@ describe.each(dropPlatforms)("differential drop outcomes: %s", platform => {
     peer.drag.dragState.finish(peer.drag.dragState.current, true);
     vi.restoreAllMocks();
   });
-  it.each([...dropCases, ...dropDeliveryCases, ...dropBoundaryCases, ...dropCrossWindowCases, ...dropPathCases].filter(c => c.platform === platform))("$source → $target / $modifier / $transport / $deliveryOrder / $lifetime / $window / $pathPair.id", async c => {
+  it.each([...dropCases, ...dropDeliveryCases, ...dropRejectedDomCases, ...dropBoundaryCases, ...dropCrossWindowCases, ...dropPathCases].filter(c => c.platform === platform))("$source → $target / $modifier / $transport / $deliveryOrder / $lifetime / $window / $pathPair.id", async c => {
     if (c.transport === "native-rejected") { io.start.mockRejectedValue("unavailable"); vi.spyOn(console, "warn").mockImplementation(() => {}); }
     const policy = branchDropPolicy(c);
     if (!policy.difference) expect(policy.outcome).toBe(devDropPolicy(c));

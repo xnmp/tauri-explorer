@@ -13,6 +13,20 @@ const record = (n = 1, revision = 1, state: NativeJobRecord["state"] = "running"
 function deferred<T>() { let resolve!: (v: T) => void; const promise = new Promise<T>((done) => { resolve=done; }); return { promise, resolve }; }
 afterEach(() => { jobsStore.applyNative([]); jobsStore.configureNativeControls(null); for (const j of [...jobsStore.jobs]) jobsStore.removeJob(j.id); });
 describe("native job revisions and ownership", () => {
+  it.each(["completed", "error"] as const)("accepts an authorized adoption followed by %s without reloading", (state) => {
+    const original = record(1, 1, "accepting");
+    const before = mergeNativeJobEvent(emptyNativeJobs(), { type: "updated", job: original });
+    const adopted = { ...record(1, 2, state), ownershipEpoch: 1, owner: { ...original.owner, digest: "b".repeat(64), incarnation: 4 } };
+    const after = mergeNativeJobEvent(before, { type: "updated", job: adopted });
+    expect(after.jobs.get(original.jobKey)).toEqual(adopted);
+    for (const stale of [
+      { ...original, revision: 3 },
+      { ...original, revision: 3, ownershipEpoch: 1 },
+      { ...adopted, revision: 3, ownershipEpoch: 0 },
+      { ...adopted, revision: 3, ownershipEpoch: -1 },
+    ]) expect(mergeNativeJobEvent(after, { type: "updated", job: stale })).toBe(after);
+  });
+
   it.each([
     ["discarded", "stopped"],
     ["error", "delivery_failed"],

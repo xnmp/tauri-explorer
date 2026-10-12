@@ -2,6 +2,7 @@
 export type NativeJobState = "accepting" | "running" | "recovering" | "needs_attention" | "completed" | "error" | "cancelled" | "discarded";
 export interface NativeJobRecord {
   jobKey: string; owner: { packageId: string; digest: string; incarnation: number }; operationId: string; jobId: number;
+  ownershipEpoch?: number;
   estimateKey?: string | null;
   kind: string; label: string; originWindow: string; revision: number; sourceRevision?: number;
   createdAtMs: number; updatedAtMs: number;
@@ -30,6 +31,7 @@ export function validNativeJob(value: unknown): value is NativeJobRecord {
   const r = value as NativeJobRecord;
   return key(r.jobKey) && !!r.owner && id(r.owner.packageId, 256) && /^[a-f0-9]{64}$/.test(r.owner.digest) && safe(r.owner.incarnation, true)
     && id(r.operationId) && id(r.kind) && safe(r.jobId, true) && safe(r.revision, true)
+    && (r.ownershipEpoch === undefined || safe(r.ownershipEpoch))
     && (r.sourceRevision === undefined || safe(r.sourceRevision)) && safe(r.createdAtMs) && safe(r.updatedAtMs)
     && (r.settledAtMs == null || safe(r.settledAtMs))
     && (r.estimateKey == null || typeof r.estimateKey === "string" && /^[!-~]{1,128}$/.test(r.estimateKey))
@@ -64,7 +66,9 @@ export function adoptNativeSnapshot(old: NativeJobView, snapshot: NativeJobSnaps
 }
 function sameIdentity(a: NativeJobRecord, b: NativeJobRecord): boolean {
   return a.jobKey === b.jobKey && a.jobId === b.jobId && a.kind === b.kind && a.operationId === b.operationId
-    && a.owner.packageId === b.owner.packageId && a.owner.digest === b.owner.digest && a.owner.incarnation === b.owner.incarnation
+    && a.owner.packageId === b.owner.packageId
+    && ((b.ownershipEpoch ?? 0) > (a.ownershipEpoch ?? 0)
+      || (b.ownershipEpoch ?? 0) === (a.ownershipEpoch ?? 0) && a.owner.digest === b.owner.digest && a.owner.incarnation === b.owner.incarnation)
     && (a.estimateKey == null || a.estimateKey === b.estimateKey)
     && a.originWindow === b.originWindow && a.createdAtMs === b.createdAtMs;
 }

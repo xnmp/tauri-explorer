@@ -666,6 +666,8 @@ impl Store {
                     .mode(0o600)
                     .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK | libc::O_NOCTTY);
             }
+            #[cfg(test)]
+            self.test_fs.before_mutation(&pending);
             let mut temp = options
                 .open(&pending)
                 .map_err(|_| reject("artifact temporary file unavailable"))?;
@@ -676,18 +678,42 @@ impl Store {
             {
                 return Err(reject("artifact temporary file must be regular"));
             }
+            self.checkpoint("seal-pending-created")?;
             temp.set_len(0)
-                .and_then(|_| temp.write_all(bytes))
-                .and_then(|_| temp.sync_all())
+                .map_err(|_| reject("artifact truncate failed"))?;
+            self.checkpoint("seal-pending-truncated")?;
+            #[cfg(test)]
+            {
+                temp.write_all(&bytes[..bytes.len() / 2])?;
+                self.checkpoint("seal-pending-partial")?;
+                temp.write_all(&bytes[bytes.len() / 2..])?;
+            }
+            #[cfg(not(test))]
+            temp.write_all(bytes)?;
+            self.checkpoint("seal-pending-full")?;
+            temp.sync_all()
                 .map_err(|_| reject("artifact write/sync failed"))?;
+            #[cfg(test)]
+            self.test_fs.file_synced(&pending);
+            self.checkpoint("seal-file-sync")?;
             // Hard-link publication refuses an existing destination and
             // consumes no second allocation of the sealed bytes.
+            #[cfg(test)]
+            self.test_fs.before_mutation(&target);
             fs::hard_link(&pending, &target)
                 .map_err(|_| reject("immutable artifact publication failed"))?;
+            #[cfg(test)]
+            self.test_fs.file_synced(&target);
+            self.checkpoint("seal-published")?;
         }
-        sync_directory(target.parent().unwrap())?;
-        match fs::remove_file(&pending) {
-            Ok(()) => sync_directory(target.parent().unwrap())?,
+        self.sync_artifact_directory(target.parent().unwrap())?;
+        self.checkpoint("seal-directory-sync")?;
+        match self.unlink_artifact_file(&pending) {
+            Ok(()) => {
+                self.checkpoint("seal-pending-unlinked")?;
+                self.sync_artifact_directory(target.parent().unwrap())?;
+                self.checkpoint("seal-cleanup-sync")?;
+            }
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
             Err(_) => return Err(reject("artifact temporary cleanup failed")),
         }
@@ -1044,6 +1070,7 @@ impl Store {
             if changed { tx.execute("UPDATE artifacts SET status='released' WHERE consumer=?1 AND operation=?2 AND kind='input'",params![caller.package_id,op]).map_err(sql)?; }
             Ok(changed)
         })?;
+        self.checkpoint("recapture-retired")?;
         drop(leases);
         if restarted {
             self.collect_released(&caller.package_id, op)?;
@@ -1080,12 +1107,19 @@ impl Store {
                 use std::os::unix::fs::OpenOptionsExt;
                 o.mode(0o600).custom_flags(libc::O_NOFOLLOW);
             }
+            #[cfg(test)]
+            self.test_fs.before_mutation(&path);
             let file = o
                 .open(&path)
                 .map_err(|_| reject("output stage creation failed"))?;
+            self.checkpoint("stage-created")?;
             file.sync_all()
                 .map_err(|_| reject("output stage sync failed"))?;
+            #[cfg(test)]
+            self.test_fs.file_synced(&path);
+            self.checkpoint("stage-file-sync")?;
             self.sync_artifact_directory(path.parent().unwrap())?;
+            self.checkpoint("stage-directory-sync")?;
         }
         self.transaction(|tx| {
             let current = Self::record(tx, consumer, op)?
@@ -1100,6 +1134,7 @@ impl Store {
             .map_err(sql)?;
             Ok(())
         })?;
+        self.checkpoint("stage-ledger")?;
         Ok(OutputStage {
             handle,
             path: path.to_string_lossy().into(),
@@ -1187,6 +1222,7 @@ impl Store {
                 .map_err(sql)?;
             Ok(())
         })?;
+        self.checkpoint("seal-ledger")?;
         self.finalize_stage(handle, &d)?;
         Ok(d)
     }
@@ -1201,7 +1237,9 @@ impl Store {
                 ))
             }
         }
+        self.checkpoint("seal-stage-unlinked")?;
         self.sync_artifact_directory(path.parent().unwrap())?;
+        self.checkpoint("seal-stage-sync")?;
         self.transaction(|tx| {
             tx.execute(
                 "UPDATE artifacts SET bytes=?2 WHERE handle=?1 AND status='sealed'",
@@ -1209,12 +1247,13 @@ impl Store {
             )
             .map_err(sql)?;
             Ok(())
-        })
+        })?;
+        self.checkpoint("seal-quota")
     }
     pub fn gc(&self) -> Result<()> {
         let conn = self.connect()?;
         let mut query = conn
-            .prepare("SELECT a.handle FROM artifacts a JOIN operations o ON o.consumer=a.consumer AND o.operation=a.operation WHERE a.status='released' OR o.phase='released' OR (a.kind='output' AND o.exec_released=1)")
+            .prepare("SELECT a.handle FROM artifacts a LEFT JOIN operations o ON o.consumer=a.consumer AND o.operation=a.operation WHERE a.status='released' OR o.phase='released' OR (a.kind='output' AND o.exec_released=1)")
             .map_err(sql)?;
         let handles = query
             .query_map([], |r| r.get::<_, String>(0))
@@ -1329,6 +1368,9 @@ impl Store {
             return Err(reject("consumer copy does not match the sealed output"));
         }
         sync_verified(&file, &physical).map_err(|_| reject("consumer evidence sync failed"))?;
+        #[cfg(test)]
+        self.test_fs.file_synced(&physical);
+        self.checkpoint("acquisition-file-sync")?;
         #[cfg(unix)]
         for (path, directory) in evidence_parents.into_iter().rev() {
             #[cfg(test)]
@@ -1343,7 +1385,8 @@ impl Store {
         }
         #[cfg(not(unix))]
         sync_directory(physical.parent().unwrap())?;
-        self.transaction(|tx| {
+        self.checkpoint("acquisition-directory-sync")?;
+        let receipt = self.transaction(|tx| {
             let current = Self::record(tx, &caller.package_id, op)?.ok_or_else(|| reject("admission missing"))?;
             if current.phase != AdmissionPhase::Terminal || current.output.as_ref() != Some(d) {
                 return Err(reject("handoff changed before evidence commit"));
@@ -1365,7 +1408,9 @@ impl Store {
             )
             .map_err(sql)?;
             Ok(TransferReceipt { transfer_receipt: receipt })
-        })
+        })?;
+        self.checkpoint("acquisition-ledger")?;
+        Ok(receipt)
     }
     pub(super) fn acquired_output_path(&self, a: &Admission) -> Result<String> {
         let conn = self.connect()?;
@@ -1413,7 +1458,7 @@ impl Store {
     }
     fn collect_artifact(&self, handle: &str) -> Result<()> {
         let collectable = |conn: &rusqlite::Connection| -> Result<bool> {
-            let row: Option<(String,String,bool,bool)> = conn.query_row("SELECT a.consumer,a.operation,(a.status='released' OR o.phase='released'),(a.kind='output' AND o.exec_released=1) FROM artifacts a JOIN operations o ON o.consumer=a.consumer AND o.operation=a.operation WHERE a.handle=?1", [handle], |r| Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?))).optional().map_err(sql)?;
+            let row: Option<(String,String,bool,bool)> = conn.query_row("SELECT a.consumer,a.operation,coalesce((a.status='released' OR o.phase='released'),0),coalesce((a.kind='output' AND o.exec_released=1),0) FROM artifacts a LEFT JOIN operations o ON o.consumer=a.consumer AND o.operation=a.operation WHERE a.handle=?1", [handle], |r| Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?))).optional().map_err(sql)?;
             match row {
                 Some((_, _, true, _)) => Ok(true),
                 Some((consumer, op, false, true)) => {

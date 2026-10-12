@@ -300,6 +300,7 @@ fn native_jobs_the_consumer_never_accepted_settle_and_free_their_package() {
             origin_window: "main.previous".into(),
             revision: 0,
             source_revision: 0,
+            ownership_epoch: 0,
             created_at_ms: old,
             updated_at_ms: old,
             settled_at_ms: None,

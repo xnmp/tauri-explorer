@@ -1299,6 +1299,7 @@ fn job(op: &str, n: u64) -> crate::service_state::job::JobRecord {
         origin_window: "main".into(),
         revision: 0,
         source_revision: 0,
+        ownership_epoch: 0,
         created_at_ms: 1_000 + n,
         updated_at_ms: 1_000 + n,
         settled_at_ms: None,

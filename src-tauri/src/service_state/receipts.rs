@@ -497,6 +497,9 @@ impl Store {
             let rows = query.query_map([], |r| Ok((r.get::<_,String>(0)?,r.get::<_,String>(1)?)))
                 .map_err(sql)?.collect::<std::result::Result<Vec<_>,_>>().map_err(sql)?;
             drop(query);
+            // Artifact rows retain their own package/preparation custody even
+            // when an interrupted recapture deleted its operation record.
+            tx.execute("UPDATE artifacts SET status='released' WHERE consumer=?1 AND NOT EXISTS(SELECT 1 FROM operations o WHERE o.consumer=artifacts.consumer AND o.operation=artifacts.operation)", [package]).map_err(sql)?;
             let mut jobs = Vec::new();
             let mut abandoned = Vec::new();
             let mut retained = std::collections::HashSet::new();
@@ -624,6 +627,7 @@ impl Store {
             // Capture custody before artifact validation or the receipt commit
             // can fail. The existing recovery loop retries this exact answer.
             self.remember_success(&admission, &status)?;
+            self.checkpoint("receipt-success-witness")?;
             evidence(self, tx, &admission, &status, true)?;
             tx.execute("INSERT INTO provider_receipts(consumer,operation,provider,revision,status,digest)VALUES(?1,?2,?3,?4,?5,?6)ON CONFLICT(consumer,operation)DO UPDATE SET revision=excluded.revision,status=excluded.status,digest=excluded.digest", params![consumer,op,encode(&admission.provider)?,revision as i64,raw,digest]).map_err(sql)?;
             if status["execution"]["state"] == "succeeded" && admission.phase != AdmissionPhase::Released {
@@ -650,6 +654,9 @@ impl Store {
             }
             Ok(status)
         });
+        if result.is_ok() {
+            self.checkpoint("receipt-ledger")?;
+        }
         if let Ok(status) = &result {
             let mut pending = self
                 .pending_success

@@ -127,6 +127,16 @@ pub(super) fn operation_rows(
     Ok(rows)
 }
 /// IO boundary for automatic disposition. No method can start generation.
+/// Idle answers belong to the responding incarnation, not merely its package.
+pub(super) fn verified_idle_generation(
+    observed: &PackageGeneration,
+    current: &PackageGeneration,
+    idle: bool,
+    live: bool,
+) -> bool {
+    observed == current && idle && live
+}
+
 pub(super) trait AutomaticPort {
     fn closing(&self) -> bool {
         false
@@ -530,11 +540,17 @@ impl AutomaticPort for LiveAutomatic {
             return apply(true);
         }
         if let Some(broker) = &provider {
+            let observed_owner = broker.generation();
             let idle = broker.control_call(
                 "control.operationIdle",
                 json!({"consumerPackage":a.consumer.package_id,"operationId":a.operation_id}),
             )?;
-            if idle["idle"] != true || !broker.owned_processes_idle() {
+            if !verified_idle_generation(
+                &observed_owner,
+                &broker.generation(),
+                idle["idle"] == true && broker.owned_processes_idle(),
+                broker.is_active(),
+            ) {
                 return apply(true);
             }
             // Status performs the provider's original local read/seal recovery
@@ -624,11 +640,17 @@ impl AutomaticPort for LiveAutomatic {
             return apply(true);
         }
         if let Some(broker) = &consumer {
+            let observed_owner = broker.generation();
             let status = broker.call("jobs.status", json!({"operationId":a.operation_id}))?;
-            if !status.is_null()
-                && (status["operationId"].as_str() != Some(&a.operation_id)
-                    || status["workerActive"] != false)
-            {
+            let idle = status.is_null()
+                || status["operationId"].as_str() == Some(&a.operation_id)
+                    && status["workerActive"] == false;
+            if !verified_idle_generation(
+                &observed_owner,
+                &broker.generation(),
+                idle,
+                broker.is_active(),
+            ) {
                 return apply(true);
             }
         }
@@ -706,6 +728,7 @@ impl RecoveryPort for LiveRecovery {
                 "services.image-generation.v1.status",
             )?
         };
+        let _output_recovery = store.output_recovery_guard(a)?;
         let receipt = broker.call("services.image-generation.v1.status", json!({"caller":{"packageId":a.consumer.package_id,"packageDigest":a.consumer.digest,"incarnation":a.consumer.incarnation},"request":{"operationId":a.operation_id}}))?;
         let authority = service_bridge::recovery_provider(
             store,

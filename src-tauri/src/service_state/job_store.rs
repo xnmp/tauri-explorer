@@ -49,7 +49,10 @@ fn text(value: &str, bytes: usize) -> bool {
 }
 fn valid(record: &JobRecord, registering: bool) -> Result<()> {
     generation(&record.owner)?;
-    if record.source_revision > SAFE {
+    if record.source_revision > SAFE
+        || record.ownership_epoch > SAFE
+        || registering && record.ownership_epoch != 0
+    {
         return Err(reject("invalid consumer job revision"));
     }
     if !key(&record.job_key)
@@ -199,6 +202,7 @@ fn stored(conn: &Connection, job_key: &str) -> Result<Option<JobRecord>> {
 fn immutable(a: &JobRecord, b: &JobRecord) -> bool {
     a.job_key == b.job_key
         && a.owner == b.owner
+        && a.ownership_epoch == b.ownership_epoch
         && a.operation_id == b.operation_id
         && a.job_id == b.job_id
         && a.kind == b.kind
@@ -350,6 +354,7 @@ impl Store {
                     origin_window: "host.delivery".into(),
                     revision: 0,
                     source_revision: 0,
+                    ownership_epoch: 0,
                     created_at_ms: timestamp,
                     updated_at_ms: timestamp,
                     settled_at_ms: None,
@@ -392,6 +397,11 @@ impl Store {
         };
         if job.owner != *owner {
             job.owner = owner.clone();
+            job.ownership_epoch = job
+                .ownership_epoch
+                .checked_add(1)
+                .filter(|n| *n <= SAFE)
+                .ok_or_else(|| reject("job ownership epoch exhausted"))?;
             job.revision = next_revision(conn)?;
             valid(&job, false)?;
             persist(conn, &job)?;
@@ -621,6 +631,39 @@ impl Store {
             Ok(())
         })
     }
+    /// A consumer fence and two unknown answers authorize unaccepted settlement.
+    /// Recheck admission and ownership atomically with presentation/input release.
+    pub fn settle_unaccepted_job(
+        &self,
+        observed: &JobRecord,
+        reason: &str,
+    ) -> Result<Option<JobRecord>> {
+        let settled = self.transaction(|tx| {
+            let Some(old) = stored(tx, &observed.job_key)? else { return Ok(None); };
+            if old.owner != observed.owner || old.ownership_epoch != observed.ownership_epoch
+                || old.revision != observed.revision || old.source_revision != 0 || old.run_id.is_some()
+                || !matches!(old.state, JobState::Accepting | JobState::Recovering | JobState::NeedsAttention)
+                || matches!(old.phase.as_deref(), Some("stopped" | "provider_result_discarded"))
+                || Self::record(tx, &old.owner.package_id, &old.operation_id)?.is_some() {
+                return Ok(None);
+            }
+            tx.execute("INSERT INTO operations(consumer,operation,owner,phase)VALUES(?1,?2,?3,'released')ON CONFLICT(consumer,operation)DO UPDATE SET phase='released' WHERE operations.admission IS NULL", params![old.owner.package_id, old.operation_id,encode(&old.owner)?]).map_err(sql)?;
+            tx.execute("UPDATE artifacts SET status='released' WHERE consumer=?1 AND operation=?2", params![old.owner.package_id, old.operation_id]).map_err(sql)?;
+            tx.execute("DELETE FROM preparation_replacements WHERE consumer=?1 AND operation=?2", params![old.owner.package_id, old.operation_id]).map_err(sql)?;
+            let mut next = JobRecord { state: JobState::Error, phase: Some("not_accepted".into()), error: Some(reason.into()), ..old.clone() };
+            next.revision = next_revision(tx)?;
+            next.updated_at_ms = clock()?;
+            stamp_settled(&old, &mut next);
+            valid(&next, false)?;
+            persist(tx, &next)?;
+            Ok(Some(next))
+        })?;
+        if let Some(job) = &settled {
+            self.collect_released(&job.owner.package_id, &job.operation_id)?;
+        }
+        Ok(settled)
+    }
+
     pub fn register_job(&self, mut record: JobRecord) -> Result<JobRecord> {
         valid(&record, true)?;
         serialized(&record)?;
@@ -894,6 +937,7 @@ mod tests {
             origin_window: "main".into(),
             revision: 0,
             source_revision: 0,
+            ownership_epoch: 0,
             created_at_ms: 1,
             updated_at_ms: 1,
             settled_at_ms: None,

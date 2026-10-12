@@ -134,6 +134,7 @@ fn seed(config: &Path, consumer: &PackageGeneration, provider: &PackageGeneratio
             origin_window: "main".into(),
             revision: 0,
             source_revision: 0,
+            ownership_epoch: 0,
             created_at_ms: timestamp,
             updated_at_ms: timestamp,
             settled_at_ms: None,

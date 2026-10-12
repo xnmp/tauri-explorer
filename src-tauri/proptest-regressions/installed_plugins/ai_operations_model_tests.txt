@@ -19,3 +19,5 @@ cc 1cd3c5b3242403b0ebc4c21c0b7ced2ff302cb14d0a0557c65a2fb9a5ff8db65 # shrinks to
 cc 1f8b53d0a4322b3715ab988f6885daf19076f4df538f6cc33b5f50abfbeddaf7 # shrinks to [SharedConsumerAdmit, SettlementCrash(2), Upgrade(false, false, false), SpoolReserve(2, false, false)]
 cc c7a72f9bb1722b993dd4f1d542a64bfa93a8c881778e49429d66b41cfc585669 # shrinks to [Upgrade(false, true, false), Register(0), Upgrade(false, true, false)]
 cc 273d74ee0461413b1394dee585468ab3986296b949ac00b4e791663b98493f27 # shrinks to [Upgrade(false, true, false), Register(0), Upgrade(false, true, false)]
+cc d6adf13f66bc32a79d62ef458dcbf0d30a55b41a3b300d97bbb00d36b97b8c85 # shrinks to [Admit(0, false), Sweep, Register(1), UnlinkFailure(true), Capture(1)]
+cc 056feb54b4d5bcab6fdad8a0e18706332609dc69a9017cb85deb2dd8455dc616 # shrinks to [DirectorySyncFailure(true), Admit(0, true), DirectorySyncFailure(false), SharedConsumerAdmit]

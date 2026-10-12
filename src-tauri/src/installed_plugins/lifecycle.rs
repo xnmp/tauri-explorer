@@ -119,9 +119,35 @@ fn snapshot_file(source: &Path, target: &Path) -> Result<Content, AppError> {
         use std::os::unix::fs::OpenOptionsExt;
         options.mode(0o600);
     }
-    copy_state(source, &mut options.open(target)?)
+    #[cfg(test)]
+    let oracle = test_fs_at(target);
+    #[cfg(test)]
+    if let Some(oracle) = &oracle {
+        oracle.before_mutation(target);
+    }
+    let content = copy_state(source, &mut options.open(target)?)?;
+    #[cfg(test)]
+    if let Some(oracle) = &oracle {
+        oracle.file_synced(target);
+    }
+    Ok(content)
+}
+#[cfg(test)]
+pub(super) fn test_fs_at(
+    path: &Path,
+) -> Option<std::sync::Arc<crate::service_state::test_fs::TestFs>> {
+    let root = path
+        .ancestors()
+        .find(|p| p.file_name().is_some_and(|n| n == "installed-plugins"))?;
+    let service = dunce::canonicalize(root.parent()?.join("service-state")).ok()?;
+    Some(crate::service_state::test_fs::for_root(&service))
 }
 fn sync_directory(path: &Path) -> Result<(), AppError> {
+    #[cfg(test)]
+    if let Some(oracle) = test_fs_at(path) {
+        oracle.sync_lifecycle(path)?;
+        return Ok(());
+    }
     crate::durable_dir::sync(path)?;
     Ok(())
 }
@@ -131,9 +157,20 @@ fn write_marker(snapshot: &Path, upgrade: &Upgrade) -> Result<(), AppError> {
         return Err(invalid("Plugin upgrade journal exceeds size limit"));
     }
     let mut stage = tempfile::NamedTempFile::new_in(snapshot)?;
+    #[cfg(test)]
+    let oracle = test_fs_at(snapshot);
+    #[cfg(test)]
+    if let Some(oracle) = &oracle {
+        oracle.created(stage.path());
+    }
     stage.write_all(&bytes)?;
     stage.flush()?;
     stage.as_file().sync_all()?;
+    #[cfg(test)]
+    if let Some(oracle) = &oracle {
+        oracle.file_synced(stage.path());
+        oracle.before_rename(stage.path(), &snapshot.join("upgrade.json"));
+    }
     stage
         .persist(snapshot.join("upgrade.json"))
         .map_err(|cause| AppError::from(cause.error))?;

@@ -147,7 +147,7 @@ fn model_regression_seal_retry_flushes_missing_stage_before_shrinking_quota() {
             "image/png"
         )
         .is_err());
-    assert!(s.test_fs.unflushed_bytes() > 0);
+    assert!(charged(&s) >= fs::metadata(&stage.path).map(|m| m.len()).unwrap_or(0));
     s.test_fs.faults(false, false);
     let d = s
         .seal(
@@ -246,21 +246,33 @@ fn model_regression_missing_success_releases_input_and_operation_capacity() {
 fn model_regression_gc_cannot_collect_an_active_original_recovery_writer() {
     let (root, s) = store();
     s.reserve(admission("original-writer", vec![])).unwrap();
-    s.forwarding(&owner("consumer", 1), "original-writer").unwrap();
+    s.forwarding(&owner("consumer", 1), "original-writer")
+        .unwrap();
     let mut r = provider_receipt("original-writer", 1, None);
     r["execution"] = serde_json::json!({"state":"unknown","error":{"code":"interrupted","message":"unconfirmed","correlationId":null}});
-    s.observe_receipt(&owner("provider", 1), "consumer", "original-writer", 1, r).unwrap();
-    s.auto_settle_operation("consumer", "original-writer", true).unwrap();
+    s.observe_receipt(&owner("provider", 1), "consumer", "original-writer", 1, r)
+        .unwrap();
+    s.auto_settle_operation("consumer", "original-writer", true)
+        .unwrap();
     let a = s.get("consumer", "original-writer").unwrap().unwrap();
     let _permit = s.output_recovery_guard(&a).unwrap();
-    let stage = s.stage(&owner("provider", 1), "consumer", "original-writer").unwrap();
+    let stage = s
+        .stage(&owner("provider", 1), "consumer", "original-writer")
+        .unwrap();
     fs::write(&stage.path, b"partial original").unwrap();
     // Another ledger handle must respect the writer admitted by this one.
     let other = Store::open(root.path().join("service"), Limits::default()).unwrap();
     other.gc().unwrap();
     assert_eq!(fs::read(&stage.path).unwrap(), b"partial original");
     png(Path::new(&stage.path));
-    s.seal(&owner("provider", 1), "consumer", "original-writer", &stage.handle, "image/png").expect("original writer lost its reserved publication");
+    s.seal(
+        &owner("provider", 1),
+        "consumer",
+        "original-writer",
+        &stage.handle,
+        "image/png",
+    )
+    .expect("original writer lost its reserved publication");
 }
 fn capture(s: &Store, root: &Path, op: &str) -> Vec<CapturedArtifact> {
     let path = root.join(format!("{op}.png"));
@@ -720,6 +732,7 @@ fn stop_recovery_commits_execution_release_and_presentation_policy_together() {
             origin_window: "main".into(),
             revision: 0,
             source_revision: 0,
+            ownership_epoch: 0,
             created_at_ms: 1,
             updated_at_ms: 1,
             settled_at_ms: None,
@@ -2506,4 +2519,41 @@ fn proven_success_can_begin_its_original_reserved_stage_after_remote_checkpoint(
     s.release(&owner("provider", 1), "consumer", op, "discarded", None)
         .unwrap();
     assert!(s.stage(&owner("provider", 1), "consumer", op).is_err());
+}
+
+#[test]
+fn tenth_orphaned_recapture_artifacts_are_collected_by_gc_and_removal() {
+    for removal in [false, true] {
+        let (root, s) = store();
+        let captured = capture(&s, root.path(), "recapture");
+        let path = s
+            .read(
+                &owner("consumer", 1),
+                "consumer",
+                "recapture",
+                &captured[0].artifact,
+            )
+            .unwrap()
+            .path;
+        // Recapture committed retirement, then crashed before replacement insertion.
+        let conn = s.connect().unwrap();
+        conn.execute(
+            "DELETE FROM operations WHERE consumer='consumer' AND operation='recapture'",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "UPDATE artifacts SET status=?1 WHERE consumer='consumer' AND operation='recapture'",
+            [if removal { "capturing" } else { "released" }],
+        )
+        .unwrap();
+        assert!(charged(&s) > 0);
+        if removal {
+            s.abandon_package_operations_deferred("consumer", |_| false)
+                .unwrap();
+        }
+        s.gc().unwrap();
+        assert!(!Path::new(&path).exists());
+        assert_eq!(charged(&s), 0);
+    }
 }

@@ -292,16 +292,29 @@ pub(super) fn write_index(root: &Path, index: &[Installed]) -> Result<(), AppErr
         return Err(invalid("Installed plugin index exceeds size limit"));
     }
     let mut stage = tempfile::NamedTempFile::new_in(root)?;
+    #[cfg(test)]
+    let oracle = super::lifecycle::test_fs_at(root);
+    #[cfg(test)]
+    if let Some(oracle) = &oracle {
+        oracle.created(stage.path());
+    }
     stage.write_all(&bytes)?;
     stage.flush()?;
     stage.as_file().sync_all()?;
+    #[cfg(test)]
+    if let Some(oracle) = &oracle {
+        oracle.file_synced(stage.path());
+        oracle.before_rename(stage.path(), &root.join("installed.json"));
+    }
     stage
         .persist(root.join("installed.json"))
         .map_err(|error| AppError::from(error.error))?;
-    #[cfg(unix)]
-    {
-        File::open(root)?.sync_all()?;
+    #[cfg(test)]
+    if let Some(oracle) = &oracle {
+        oracle.sync_lifecycle(root)?;
+        return Ok(());
     }
+    crate::durable_dir::sync(root)?;
     Ok(())
 }
 

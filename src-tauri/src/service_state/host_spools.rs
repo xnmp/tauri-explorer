@@ -53,6 +53,8 @@ struct Completion {
     stderr_length: u64,
     stdout_sha256: String,
     stderr_sha256: String,
+    #[serde(skip)]
+    stderr_incomplete: bool,
 }
 
 fn completion_for(status: i64, stdout: &[u8], stderr: &[u8]) -> Completion {
@@ -62,6 +64,7 @@ fn completion_for(status: i64, stdout: &[u8], stderr: &[u8]) -> Completion {
         stderr_length: stderr.len() as u64,
         stdout_sha256: hex::encode(Sha256::digest(stdout)),
         stderr_sha256: hex::encode(Sha256::digest(stderr)),
+        stderr_incomplete: false,
     }
 }
 
@@ -285,12 +288,53 @@ mod tests {
                 .unwrap(),
             "explicit removal lost the original-image notice evidence"
         );
+        let reply = store
+            .host_spool_result(&owner().package_id, "host:sibling")
+            .unwrap()
+            .expect("verified stdout must remain deliverable without diagnostics");
+        assert_eq!(
+            fs::read(reply["stdout"].as_str().unwrap()).unwrap(),
+            original
+        );
+        assert_eq!(fs::read(reply["stderr"].as_str().unwrap()).unwrap(), b"");
+        store.sweep_host_spools(|_| false).unwrap();
+        assert_eq!(charged(&store), original.len() as u64);
+        store
+            .release_host_spool(&owner().package_id, reply["handle"].as_str().unwrap())
+            .unwrap();
+        assert_eq!(charged(&store), 0);
+        assert!(!path.exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn damaged_diagnostics_keep_the_previous_charge_until_their_barrier_succeeds() {
+        use std::os::unix::fs::PermissionsExt;
+        let (_root, store) = store();
+        let (_, path, writer) = store
+            .reserve_pinned_host_spool(&owner(), "host:diagnostic-charge", 4096)
+            .unwrap();
+        store
+            .write_pinned_host_reply(&owner(), &writer, b"paid original", &vec![b'd'; 300], 0)
+            .unwrap();
+        drop(writer);
+        store.sweep_host_spools(|_| false).unwrap();
+        let stderr = path.join("stderr");
+        store.test_fs.before_mutation(&stderr);
+        fs::write(&stderr, vec![b'c'; 1000]).unwrap();
+        store.sweep_host_spools(|_| false).unwrap();
+        let previous = charged(&store);
+        store.test_fs.before_mutation(&stderr);
+        fs::write(&stderr, b"x").unwrap();
+        fs::set_permissions(&stderr, fs::Permissions::from_mode(0o400)).unwrap();
+        store.sweep_host_spools(|_| false).unwrap();
+        assert!(charged(&store) >= previous);
+        fs::set_permissions(&stderr, fs::Permissions::from_mode(0o600)).unwrap();
+        store.test_fs.power_loss();
         assert!(
-            !matches!(
-                store.host_spool_result(&owner().package_id, "host:sibling"),
-                Ok(Some(_))
-            ),
-            "an incomplete diagnostic stream was advertised as a full reply"
+            charged(&store)
+                >= fs::metadata(path.join("stdout")).unwrap().len()
+                    + fs::metadata(stderr).unwrap().len()
         );
     }
 
@@ -332,10 +376,11 @@ mod tests {
                     "valid {good_stream} was discarded because {bad_stream} did not validate"
                 );
                 assert!(
-                    !matches!(
-                        reopened.host_spool_result(&owner().package_id, "host:independent"),
-                        Ok(Some(_))
-                    ),
+                    (bad_stream == "stderr")
+                        == matches!(
+                            reopened.host_spool_result(&owner().package_id, "host:independent"),
+                            Ok(Some(_))
+                        ),
                     "damaged reply was advertised as complete"
                 );
                 assert!(charged(&reopened) >= expected.len() as u64);
@@ -420,6 +465,8 @@ mod tests {
             incarnation: 12,
             ..owner()
         };
+        let admission = store.get(consumer, operation).unwrap().unwrap();
+        let _repair = store.output_recovery_guard(&admission).unwrap();
         let (handle, path) = store
             .reserve_host_spool(&replacement, "host:unpaid-repair", 1024)
             .unwrap();
@@ -471,6 +518,11 @@ mod tests {
             incarnation: 12,
             ..owner()
         };
+        let candidates = store.package_operations(&owner().package_id).unwrap();
+        let _repairs: Vec<_> = candidates
+            .iter()
+            .map(|a| store.output_recovery_guard(a).unwrap())
+            .collect();
         let (b, b_path) = store
             .reserve_host_spool_with_custody(
                 &replacement,
@@ -527,6 +579,11 @@ mod tests {
             incarnation: 12,
             ..owner()
         };
+        let candidates = store.package_operations(&owner().package_id).unwrap();
+        let _repairs: Vec<_> = candidates
+            .iter()
+            .map(|a| store.output_recovery_guard(a).unwrap())
+            .collect();
         let (other, other_path) = store
             .reserve_host_spool(&replacement, "host:1", 1024)
             .unwrap();
@@ -672,6 +729,11 @@ mod tests {
             incarnation: owner().incarnation + 1,
             ..owner()
         };
+        let candidates = store.package_operations(&owner().package_id).unwrap();
+        let _repairs: Vec<_> = candidates
+            .iter()
+            .map(|a| store.output_recovery_guard(a).unwrap())
+            .collect();
         let (handle, path) = store
             .reserve_host_spool(&restarted, "host:reincarnated", 1024)
             .unwrap();
@@ -1263,8 +1325,12 @@ impl Store {
     }
     fn sync_complete_host_spool(&self, handle: &str) -> Result<()> {
         let directory = self.host_spool_path(handle)?;
-        for name in ["stdout", "stderr"] {
-            self.sync_host_spool_file(&directory.join(name))?;
+        let completion = self
+            .host_completion(handle)?
+            .ok_or_else(|| reject("host reply is incomplete"))?;
+        self.sync_host_spool_file(&directory.join("stdout"))?;
+        if !completion.stderr_incomplete {
+            self.sync_host_spool_file(&directory.join("stderr"))?;
         }
         // Repair old completed-pending rows as well as an interrupted manifest
         // publication. A status plus bounded durable bytes is still custody.
@@ -1427,12 +1493,26 @@ impl Store {
         }
         let admission = custody
             .map(|(consumer, operation)| {
-                let a = self.verify_provider(owner, consumer, operation)?;
+                let a = self
+                    .get(consumer, operation)?
+                    .ok_or_else(|| reject("host process admission disappeared"))?;
+                if a.provider.package_id != owner.package_id
+                    || a.provider != *owner && !self.original_writer_active(consumer, operation)?
+                {
+                    return Err(reject(
+                        "host process requires the original provider or an unpaid recovery permit",
+                    ));
+                }
                 if !matches!(
                     a.phase,
                     AdmissionPhase::Forwarding | AdmissionPhase::Accepted
                 ) || self.execution_released(consumer, operation)?
                 {
+                    if self.original_writer_active(consumer, operation)?
+                        && a.phase != AdmissionPhase::Released
+                    {
+                        return Ok(a);
+                    }
                     return Err(reject(
                         "host process requires an active forwarded admission",
                     ));
@@ -1452,7 +1532,10 @@ impl Store {
             let candidates = if let Some(a) = &admission {
                 let current = Self::record(tx,&a.consumer.package_id,&a.operation_id)?.ok_or_else(|| reject("host process admission disappeared"))?;
                 let released: bool = tx.query_row("SELECT exec_released FROM operations WHERE consumer=?1 AND operation=?2", params![a.consumer.package_id,a.operation_id], |r| r.get(0)).map_err(sql)?;
-                if current != *a || released { return Err(reject("host process admission changed before execution")); }
+                if current != *a || released && !self.original_writer_active(&a.consumer.package_id, &a.operation_id)? { return Err(reject("host process admission changed before execution")); }
+                if current.provider != *owner && !self.original_writer_active(&a.consumer.package_id, &a.operation_id)? {
+                    return Err(reject("host process requires the original execution generation or an unpaid recovery permit"));
+                }
                 vec![(a.consumer.package_id.clone(), a.operation_id.clone())]
             } else {
                 let mut q = tx.prepare("SELECT consumer,operation FROM operations WHERE json_extract(admission,'$.provider.packageId')=?1 AND phase!='released'").map_err(sql)?;
@@ -1460,6 +1543,17 @@ impl Store {
                 if candidates.len() > 1 { return Err(reject("host output custody is ambiguous; supply consumer and operation")); }
                 candidates
             };
+            for (consumer, operation) in &candidates {
+                let a = Self::record(tx, consumer, operation)?.ok_or_else(|| reject("host process admission disappeared"))?;
+                let released: bool = tx.query_row("SELECT exec_released FROM operations WHERE consumer=?1 AND operation=?2",params![consumer,operation],|r|r.get(0)).map_err(sql)?;
+                if Self::provider_receipt_at(tx,&a)?.is_some_and(|receipt| matches!(receipt["execution"]["state"].as_str(),Some("failed"|"cancelled"))) {
+                    return Err(reject("host process cannot restart a terminal provider execution"));
+                }
+
+                if (released || a.provider != *owner || !matches!(a.phase, AdmissionPhase::Forwarding | AdmissionPhase::Accepted)) && !self.original_writer_active(consumer, operation)? {
+                    return Err(reject("host process requires an active original execution or an unpaid recovery permit"));
+                }
+            }
             self.quota(tx,&owner.package_id,limit,false)?;
             tx.execute("INSERT INTO host_spools(handle,package,owner,request_id,limit_bytes,bytes,status,custody_recorded,consumer,operation) VALUES(?1,?2,?3,?4,?5,?5,'reserved',1,?6,?7)",params![handle,owner.package_id,encode(owner)?,request_id,limit as i64,custody.map(|c| c.0),custody.map(|c| c.1)]).map_err(sql)?;
             for (consumer, operation) in candidates {
@@ -1817,7 +1911,15 @@ impl Store {
         if observer_failed {
             return metadata;
         }
-        self.write_host_stream_observed(&path.join("stdout"), stdout, 7, &mut checkpoint)?;
+        self.write_host_stream_observed(&path.join("stdout"), stdout, 7, &mut |point| {
+            if point == 10 {
+                // Stdout is independently recoverable before diagnostic IO:
+                // flush its directory entry as well as its file contents.
+                self.sync_host_spool_directory(&path)?;
+                self.sync_host_spool_directory(path.parent().unwrap())?;
+            }
+            checkpoint(point)
+        })?;
         self.write_host_stream_observed(&path.join("stderr"), stderr, 11, &mut checkpoint)?;
         // Retry a refused witness barrier before the separate ledger attempt.
         // Its named evidence survives both metadata and transaction failures.
@@ -1908,19 +2010,18 @@ impl Store {
     }
 
     fn validate_host_completion(&self, path: &Path, raw: &[u8]) -> Result<Completion> {
-        let c: Completion =
+        let mut c: Completion =
             serde_json::from_slice(raw).map_err(|_| reject("invalid host output manifest"))?;
-        let mut complete = true;
-        for (name, length, sha) in [
-            ("stdout", c.stdout_length, &c.stdout_sha256),
-            ("stderr", c.stderr_length, &c.stderr_sha256),
-        ] {
-            // Each stream stands on its own witness. Only a recorded empty
-            // stream can be reconstructed; no missing nonempty bytes are guessed.
-            complete &= self.host_stream_matches(path, name, length, sha, true)?;
-        }
-        if !complete {
+        if !self.host_stream_matches(path, "stdout", c.stdout_length, &c.stdout_sha256, true)? {
             return Err(reject("host output no longer matches completion"));
+        }
+        let diagnostic_matches =
+            self.host_stream_matches(path, "stderr", c.stderr_length, &c.stderr_sha256, true);
+        if !matches!(diagnostic_matches, Ok(true)) {
+            if c.status != 0 || c.stdout_length == 0 {
+                return Err(reject("host output no longer matches completion"));
+            }
+            c.stderr_incomplete = true;
         }
         Ok(c)
     }
@@ -2193,9 +2294,78 @@ impl Store {
         // transaction, so visibility cannot stand in for durable custody.
         self.sync_complete_host_spool(&handle)?;
         let path = self.host_spool_path(&handle)?;
+        let stderr = if c.stderr_incomplete {
+            self.empty_host_diagnostics()?
+        } else {
+            path.join("stderr")
+        };
         Ok(Some(
-            json!({"handle":handle,"owner":decode::<PackageGeneration>(&owner)?,"status":c.status,"stdout":path.join("stdout"),"stderr":path.join("stderr")}),
+            json!({"handle":handle,"owner":decode::<PackageGeneration>(&owner)?,"status":c.status,"stdout":path.join("stdout"),"stderr":stderr}),
         ))
+    }
+
+    fn empty_host_diagnostics(&self) -> Result<PathBuf> {
+        let path = self.root.join("empty-diagnostics");
+        let mut options = fs::OpenOptions::new();
+        options.write(true).create_new(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(0o600);
+        }
+        match options.open(&path) {
+            Ok(_) => (),
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => (),
+            Err(e) => return Err(e.into()),
+        }
+        if !spool_bytes(&path, 0)?.is_empty() {
+            return Err(reject("invalid empty diagnostics"));
+        }
+        Ok(path)
+    }
+    fn completed_host_bytes(&self, handle: &str, completion: &Completion) -> Result<u64> {
+        let directory = self.host_spool_path(handle)?;
+        let diagnostic = directory.join("stderr");
+        // Delivery ignores broken diagnostics. Accounting may shrink only
+        // after their independent content/entry barriers succeed.
+        let previous: i64 = self
+            .connect()?
+            .query_row(
+                "SELECT bytes FROM host_spools WHERE handle=?1",
+                [handle],
+                |r| r.get(0),
+            )
+            .map_err(sql)?;
+        let previous = u64::try_from(previous).map_err(|_| reject("negative host spool charge"))?;
+        let stderr = match fs::symlink_metadata(&diagnostic) {
+            Ok(m) if m.is_file() => {
+                if self.sync_host_spool_file(&diagnostic).is_ok()
+                    && self.sync_host_spool_directory(&directory).is_ok()
+                {
+                    m.len()
+                } else {
+                    return Ok(previous.max(
+                        completion
+                            .stdout_length
+                            .saturating_add(m.len().max(completion.stderr_length)),
+                    ));
+                }
+            }
+            Err(e)
+                if e.kind() == std::io::ErrorKind::NotFound
+                    && self.sync_host_spool_directory(&directory).is_ok() =>
+            {
+                0
+            }
+            _ => {
+                return Ok(previous.max(
+                    completion
+                        .stdout_length
+                        .saturating_add(completion.stderr_length),
+                ))
+            }
+        };
+        Ok(completion.stdout_length.saturating_add(stderr))
     }
 
     pub fn release_host_spool(&self, package: &str, handle: &str) -> Result<()> {
@@ -2299,10 +2469,21 @@ impl Store {
             Ok(entries) => {
                 for entry in entries {
                     let entry = entry?;
-                    #[cfg(test)]
-                    let removed = self.test_fs.unlink(&entry.path());
-                    #[cfg(not(test))]
-                    let removed = fs::remove_file(entry.path());
+                    // Malformed diagnostics are still owned spool residue.
+                    // remove_dir_all does not follow a symlink entry; links use
+                    // unlink below. Never require diagnostics to be regular.
+                    let removed = if entry.file_type()?.is_dir() {
+                        fs::remove_dir_all(entry.path())
+                    } else {
+                        #[cfg(test)]
+                        {
+                            self.test_fs.unlink(&entry.path())
+                        }
+                        #[cfg(not(test))]
+                        {
+                            fs::remove_file(entry.path())
+                        }
+                    };
                     if removed.is_err() {
                         return Ok(());
                     }
@@ -2392,7 +2573,7 @@ impl Store {
                     if self.sync_complete_host_spool(&handle).is_err() {
                         continue;
                     }
-                    self.transaction(|tx|{tx.execute("UPDATE host_spools SET status='sealed',bytes=?2,process_status=?3 WHERE handle=?1 AND status!='released'",params![handle,(c.stdout_length+c.stderr_length) as i64,c.status]).map_err(sql)?;Ok(())})?;
+                    self.transaction(|tx|{tx.execute("UPDATE host_spools SET status='sealed',bytes=?2,process_status=?3 WHERE handle=?1 AND status!='released'",params![handle,self.completed_host_bytes(&handle, &c)? as i64,c.status]).map_err(sql)?;Ok(())})?;
                 }
                 Ok(None) if state == "reserved" => {
                     match self.has_verified_host_stream(&handle) {

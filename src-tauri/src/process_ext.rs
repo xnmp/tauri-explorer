@@ -167,15 +167,20 @@ fn run(
     #[cfg(windows)]
     if let Err(error) = owned_job.attach_and_resume(&mut child) {
         // The primary thread was created suspended and never resumed.
-        owned_job.terminate();
         let _ = child.kill();
+        owned_job.terminate();
         let _ = child.wait();
         return Err(NotStarted(error.into()));
     }
     let pid = child.id();
     let terminate = |child: &mut std::process::Child| {
         #[cfg(windows)]
-        owned_job.terminate();
+        {
+            // TerminateProcess uses nonzero code 1. Kill the launcher before
+            // the job-close fallback, whose exit code is unspecified.
+            let _ = child.kill();
+            owned_job.terminate();
+        }
         terminate_process_tree(child, pid);
     };
     let writer = match (bytes, child.stdin.take()) {
@@ -323,6 +328,19 @@ fn supervise(
         }
         if cancellation && !(completion == Completion::ChildExited && exited.is_some()) {
             terminate(child);
+            if completion == Completion::ChildExited {
+                let status = reap_after_cancellation(|| child.wait(), cancel_message)?;
+                readers.retire();
+                let (stdout, stderr) = readers.finish()?;
+                if overflow.load(Ordering::Relaxed) {
+                    return Err(AppError::Other("Child output exceeded its limit".into()));
+                }
+                return Ok(Output {
+                    status,
+                    stdout,
+                    stderr,
+                });
+            }
             let _ = child.wait();
             return Err(AppError::Other(cancel_message.into()));
         }
@@ -358,6 +376,19 @@ fn exited_without_reaping(child: &mut std::process::Child) -> std::io::Result<bo
     Ok(child.try_wait()?.is_some())
 }
 
+/// Reap after signalling; a stale running observation cannot erase natural success.
+pub(crate) fn reap_after_cancellation(
+    reap: impl FnOnce() -> std::io::Result<std::process::ExitStatus>,
+    cancel_message: &str,
+) -> Result<std::process::ExitStatus, AppError> {
+    let status = reap()?;
+    if status.success() {
+        Ok(status)
+    } else {
+        Err(AppError::Other(cancel_message.into()))
+    }
+}
+
 fn finish_workers<T, const N: usize>(workers: [std::thread::JoinHandle<T>; N]) {
     let deadline = Instant::now() + Duration::from_secs(1);
     while !workers.iter().all(|worker| worker.is_finished()) && Instant::now() < deadline {
@@ -390,6 +421,29 @@ fn terminate_process_tree(child: &mut std::process::Child, _pid: u32) {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn cancellation_reaps_success_after_a_stale_running_observation() {
+        #[cfg(unix)]
+        use std::os::unix::process::ExitStatusExt;
+        #[cfg(windows)]
+        use std::os::windows::process::ExitStatusExt;
+        let reaped = std::cell::Cell::new(false);
+        let status = super::reap_after_cancellation(
+            || {
+                reaped.set(true);
+                Ok(std::process::ExitStatus::from_raw(0))
+            },
+            "cancelled",
+        )
+        .expect("OS reported natural success after the stale observation");
+        assert!(reaped.get());
+        assert!(status.success());
+        assert!(super::reap_after_cancellation(
+            || Ok(std::process::ExitStatus::from_raw(1)),
+            "cancelled"
+        )
+        .is_err());
+    }
     use super::output_cancellable;
     #[cfg(unix)]
     use super::output_controlled;

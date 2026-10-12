@@ -819,6 +819,14 @@ pub(super) fn image_call(
     if !alive() {
         return Err(error("Service consumer disconnected before dispatch"));
     }
+    let _output_recovery = if dispatch_method == "status" {
+        admission
+            .as_ref()
+            .map(|a| store.output_recovery_guard(a))
+            .transpose()?
+    } else {
+        None
+    };
     let result = invoke(
         &format!(
             "services.{}.v{}.{}",

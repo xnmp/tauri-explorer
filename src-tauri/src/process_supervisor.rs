@@ -430,9 +430,15 @@ fn supervise(
         // The original, unreaped CLI may have completed before cancellation
         // retired its owner. Observe that exit after the predicate so its
         // authoritative status and bytes survive the owner's retirement.
-        if exited(owned.leaf.as_mut().expect("owned leaf"))? {
+        let observed_exit = exited(owned.leaf.as_mut().expect("owned leaf"))?;
+        if observed_exit || cancellation {
             owned.stop();
-            let status = owned.leaf.as_mut().expect("owned leaf").wait()?;
+            let leaf = owned.leaf.as_mut().expect("owned leaf");
+            let status = if cancellation && !observed_exit {
+                crate::process_ext::reap_after_cancellation(|| leaf.wait(), cancel_message)?
+            } else {
+                leaf.wait()?
+            };
             // Exit closes the leaf's write ends. Each sole reader drains its
             // queued bytes even if first scheduled after this decision. An
             // escaped pipe holder cannot extend that finite drain indefinitely.
@@ -457,10 +463,6 @@ fn supervise(
                 stdout,
                 stderr,
             });
-        }
-        if cancellation {
-            owned.stop();
-            return Err(AppError::Other(cancel_message.into()));
         }
         if exited(&mut owned.anchor)? {
             owned.stop();

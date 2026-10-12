@@ -76,6 +76,7 @@ pub(super) fn register(
             origin_window: origin_window.into(),
             revision: 0,
             source_revision: 0,
+            ownership_epoch: 0,
             created_at_ms: timestamp,
             updated_at_ms: timestamp,
             settled_at_ms: None,
@@ -397,6 +398,12 @@ pub(super) fn initialize() -> Result<(), AppError> {
         while !backend::is_closing() {
             if let Ok(snapshot)=service_host::store().and_then(|s|s.snapshot_jobs()) {
                 for record in snapshot.jobs {
+                    // Retention authorizes adoption, not execution. Keep
+                    // automatic discovery alive beyond the attention timeout.
+                    if unacknowledged(&record) && service_host::store().and_then(|s| admitted(s, &record)).is_ok_and(|a| !a) {
+                        schedule_reconcile(None, record);
+                        continue;
+                    }
                     if record.state == JobState::NeedsAttention && unacknowledged(&record) {
                         // Probe only a consumer that is already running, e.g.
                         // after it restarts; never respawn one for attention.
@@ -590,27 +597,20 @@ const DISPATCH_GRACE_MS: u64 = 30_000;
 const NOT_ACCEPTED: &str =
     "Image request was not accepted; nothing was started. Review its inputs and connection settings before retrying";
 fn settle(store: &Store, record: &JobRecord) -> Result<JobRecord, AppError> {
-    store.update_job(
-        &record.owner,
-        &record.job_key,
-        JobState::Error,
-        Some("not_accepted".into()),
-        None,
-        None,
-        Some(NOT_ACCEPTED.into()),
-    )
+    store
+        .settle_unaccepted_job(record, NOT_ACCEPTED)?
+        .ok_or_else(|| error("Unaccepted job authority changed before settlement"))
 }
 fn admitted(store: &Store, record: &JobRecord) -> Result<bool, AppError> {
     Ok(store
         .get(&record.owner.package_id, &record.operation_id)?
-        .is_some()
-        || store.preparation_retained(&record.owner.package_id, &record.operation_id)?)
+        .is_some())
 }
 /// Settles a job its consumer authoritatively does not know. The consumer
 /// first fences the original operation ID, so no late or repeated start can
 /// accept it, then must still report it unknown. A service admission means
 /// the provider may have work: such a job is never settled here.
-fn settle_unaccepted(
+pub(super) fn settle_unaccepted(
     store: &Store,
     record: &JobRecord,
     status: &Value,
@@ -618,7 +618,13 @@ fn settle_unaccepted(
 ) -> Result<Option<JobRecord>, AppError> {
     let eligible = |store: &Store| -> Result<Option<JobRecord>, AppError> {
         match store.job(&record.job_key)? {
-            Some(current) if unacknowledged(&current) && !admitted(store, &current)? => {
+            Some(current)
+                if current.owner == record.owner
+                    && current.ownership_epoch == record.ownership_epoch
+                    && current.revision == record.revision
+                    && unacknowledged(&current)
+                    && !admitted(store, &current)? =>
+            {
                 Ok(Some(current))
             }
             _ => Ok(None),
@@ -638,7 +644,13 @@ fn settle_unaccepted(
 /// A start refused before its request reached the backend is definite.
 fn settle_unsent(store: &Store, record: &JobRecord) -> Result<Option<JobRecord>, AppError> {
     match store.job(&record.job_key)? {
-        Some(current) if unacknowledged(&current) && !admitted(store, &current)? => {
+        Some(current)
+            if current.owner == record.owner
+                && current.ownership_epoch == record.ownership_epoch
+                && current.revision == record.revision
+                && unacknowledged(&current)
+                && !admitted(store, &current)? =>
+        {
             settle(store, &current).map(Some)
         }
         _ => Ok(None),
@@ -716,6 +728,7 @@ mod tests {
                 origin_window: "main.x".into(),
                 revision: 0,
                 source_revision: 0,
+                ownership_epoch: 0,
                 created_at_ms: created,
                 updated_at_ms: created,
                 settled_at_ms: None,
@@ -892,7 +905,93 @@ mod tests {
     }
 
     #[test]
-    fn a_compatible_retained_preparation_is_not_settled_from_missing_consumer_status() {
+    fn a_compatible_retained_preparation_converges_from_missing_consumer_status() {
+        for capture in 0..=2 {
+            let (dir, store, record) = fixture();
+            if capture != 0 {
+                let path = dir.path().join("input.png");
+                image::RgbaImage::from_pixel(2, 3, image::Rgba([12, 34, 56, 255]))
+                    .save(&path)
+                    .unwrap();
+                store
+                    .capture(
+                        &record.owner,
+                        &record.operation_id,
+                        vec![crate::service_state::model::CaptureInput {
+                            path: path.to_string_lossy().into(),
+                            expected_digest: None,
+                        }],
+                    )
+                    .unwrap();
+                if capture == 2 {
+                    let conn =
+                        rusqlite::Connection::open(dir.path().join("service-state/ledger.sqlite"))
+                            .unwrap();
+                    conn.execute("UPDATE operations SET captures=NULL", [])
+                        .unwrap();
+                    conn.execute("UPDATE artifacts SET status='capturing'", [])
+                        .unwrap();
+                }
+            }
+            store
+                .abandon_package_work_deferred(
+                    &record.owner.package_id,
+                    |_| false,
+                    |_, _| Some("d".repeat(64)),
+                )
+                .unwrap();
+            let replacement = PackageGeneration {
+                digest: "d".repeat(64),
+                incarnation: 8,
+                ..record.owner.clone()
+            };
+            store
+                .adopt_preparation(&replacement, &record.operation_id)
+                .unwrap();
+            let record = store.job(&record.job_key).unwrap().unwrap();
+            let mut calls = vec![];
+            let settled =
+                settle_unaccepted(&store, &record, &Value::Null, &mut unknown(&mut calls))
+                    .unwrap()
+                    .expect("retention must not leave an unaccepted job active forever");
+            assert_eq!(calls, ["jobs.cancelOperation", "jobs.status"]);
+            assert_eq!(settled.state, JobState::Error);
+            assert_eq!(settled.phase.as_deref(), Some("not_accepted"));
+            assert!(!store
+                .preparation_retained(&record.owner.package_id, &record.operation_id)
+                .unwrap());
+            let conn =
+                rusqlite::Connection::open(dir.path().join("service-state/ledger.sqlite")).unwrap();
+            assert_eq!(
+                conn.query_row("SELECT coalesce(sum(bytes),0) FROM artifacts", [], |r| r
+                    .get::<_, i64>(0))
+                    .unwrap(),
+                0
+            );
+            assert_eq!(
+                std::fs::read_dir(dir.path().join("service-state/bytes"))
+                    .unwrap()
+                    .count(),
+                0
+            );
+            let late = dir.path().join("late.png");
+            image::RgbaImage::from_pixel(2, 3, image::Rgba([12, 34, 56, 255]))
+                .save(&late)
+                .unwrap();
+            assert!(store
+                .capture(
+                    &record.owner,
+                    &record.operation_id,
+                    vec![crate::service_state::model::CaptureInput {
+                        path: late.to_string_lossy().into(),
+                        expected_digest: None
+                    }]
+                )
+                .is_err());
+        }
+    }
+    #[test]
+    fn old_owner_unknown_responses_cannot_settle_an_adopted_preparation() {
         let (_dir, store, record) = fixture();
         store
             .abandon_package_work_deferred(
@@ -901,19 +1000,50 @@ mod tests {
                 |_, _| Some("d".repeat(64)),
             )
             .unwrap();
-        let mut calls = vec![];
+        let replacement = PackageGeneration {
+            digest: "d".repeat(64),
+            incarnation: 8,
+            ..record.owner.clone()
+        };
         assert!(
-            settle_unaccepted(&store, &record, &Value::Null, &mut unknown(&mut calls))
-                .unwrap()
-                .is_none()
+            settle_unaccepted(&store, &record, &Value::Null, &mut |method| {
+                if method == "jobs.cancelOperation" {
+                    store.adopt_preparation(&replacement, &record.operation_id)?;
+                }
+                Ok(Value::Null)
+            })
+            .unwrap()
+            .is_none()
         );
-        assert!(
-            calls.is_empty(),
-            "unknown status cannot cancel retained preparation custody"
-        );
+        assert!(settle_unsent(&store, &record).unwrap().is_none());
+        let current = store.job(&record.job_key).unwrap().unwrap();
+        assert_eq!(current.owner, replacement);
+        assert_eq!(current.state, JobState::Accepting);
+    }
+
+    #[test]
+    fn unaccepted_settlement_rechecks_a_concurrent_acknowledgement() {
+        let (_dir, store, record) = fixture();
+        store
+            .observe_job(
+                &record.owner,
+                &record.job_key,
+                1,
+                JobState::Running,
+                Some("running".into()),
+                None,
+                None,
+                None,
+                None,
+            )
+            .unwrap();
+        assert!(store
+            .settle_unaccepted_job(&record, NOT_ACCEPTED)
+            .unwrap()
+            .is_none());
         assert_eq!(
             store.job(&record.job_key).unwrap().unwrap().state,
-            JobState::Accepting
+            JobState::Running
         );
     }
 }

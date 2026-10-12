@@ -40,6 +40,14 @@ pub(super) fn decode<T: DeserializeOwned>(value: &str) -> Result<T> {
     serde_json::from_str(value).map_err(|_| reject("durable record is malformed or unsupported"))
 }
 impl Store {
+    pub(super) fn checkpoint(&self, name: &'static str) -> Result<()> {
+        #[cfg(test)]
+        {
+            self.test_fs.checkpoint(name)?;
+        }
+        let _ = name;
+        Ok(())
+    }
     pub fn open(root: PathBuf, limits: Limits) -> Result<Self> {
         crate::native_deadline::check()?;
         if limits.disk_bytes == 0

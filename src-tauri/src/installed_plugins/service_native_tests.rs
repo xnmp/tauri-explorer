@@ -994,6 +994,7 @@ fn review_host_spool_upgrade(
             origin_window: "main.fixture".into(),
             revision: 0,
             source_revision: 0,
+            ownership_epoch: 0,
             created_at_ms: 1,
             updated_at_ms: 1,
             settled_at_ms: None,
@@ -1147,6 +1148,10 @@ fn review_host_spool_upgrade(
     if upgrade_provider {
         // SDK reverse request counters can reset in the replacement. Its
         // unrelated completed output must not replace original custody.
+        // This helper fabricates an already completed, unpaid cached reply;
+        // use the same host recovery authority as production status dispatch.
+        let original_admission = store.get(id, op).unwrap().unwrap();
+        let _repair = store.output_recovery_guard(&original_admission).unwrap();
         backend::fixture_completed_process_spool(PROVIDER, b"unrelated replacement output")
             .unwrap();
     }
@@ -1343,6 +1348,7 @@ fn review_consumer_upgrade(old_role: &str, incompatible_upgrade: bool) {
                 origin_window: "main.fixture".into(),
                 revision: 0,
                 source_revision: 0,
+                ownership_epoch: 0,
                 created_at_ms: 1,
                 updated_at_ms: 1,
                 settled_at_ms: None,

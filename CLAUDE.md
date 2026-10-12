@@ -149,6 +149,10 @@ Playwright `page.clock.install()` still advances with real time. Tests that
 assert exact elapsed or remaining labels must install a fixed time and pause
 after page readiness, then advance only with `runFor()`; otherwise flooring
 can turn an expected 20s remaining into 19s without any application defect.
+The graph-lineage unit file includes a wall-clock hover budget. Its ordered
+Vitest project must finish before ordinary parallel unit transforms, retaining
+the unchanged budget and worker overrides; scheduler contention is not graph
+execution time. Qualification tests verify actual worker admission ordering.
 Real-watcher timing tests must also wait for the backend watch and frontend
 listener to be ready, then acknowledge every filesystem write at the
 application-side watcher callback before attributing listing counts to it. A

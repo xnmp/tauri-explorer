@@ -37,3 +37,10 @@ so its exact remaining-time assertion failed. Integrating dev's #1092 fixed
 clock/pause correction preserves every estimate, overdue, cancellation and
 completion assertion. Reverting only that clock correction reproduced the
 same failure locally; application timing behavior requires no change.
+
+The operator's full unit run later exposed a graph-lineage timing test running
+alongside parallel module transforms. Isolating that unchanged suite in an
+ordered Vitest phase retains its 150 ms budget and all functional assertions.
+A real-runner qualification test checks file selection, worker limits and that
+ordinary unit modules are admitted only after graph work completes; the check
+fails with the old shared phase. Report attachment behavior is unaffected.

@@ -46,10 +46,21 @@ export default defineConfig({
       {
         extends: true,
         test: {
+          // This unchanged suite contains a wall-clock hover budget. Finish it
+          // before parallel transforms so scheduler contention is not charged
+          // to the graph classifier, while retaining its timing assertion.
+          name: "graph-lineage-timing",
+          include: ["tests/domain/git-graph-branch-line.test.ts"],
+          sequence: { groupOrder: 4 },
+        },
+      },
+      {
+        extends: true,
+        test: {
           name: "unit",
           include: ["tests/**/*.test.ts", "tests/**/*.bench.ts"],
-          exclude: ["tests/plugins/registry-churn.test.ts", "tests/native-suite-typecheck.test.ts", "tests/qualification/native-typecheck-cache.test.ts"],
-          sequence: { groupOrder: 4 },
+          exclude: ["tests/plugins/registry-churn.test.ts", "tests/native-suite-typecheck.test.ts", "tests/qualification/native-typecheck-cache.test.ts", "tests/domain/git-graph-branch-line.test.ts"],
+          sequence: { groupOrder: 5 },
         },
       },
     ],

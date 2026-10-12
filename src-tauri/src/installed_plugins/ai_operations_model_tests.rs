@@ -44,6 +44,7 @@ enum Command {
     Capture(u8),
     Dispatch(u8),
     CancelPreparation(u8),
+    ReleasePreparationCrash(u8, bool),
     CustodylessReserve(u8),
     CustodylessReply(u8, u8),
     CustodylessRelease(u8),
@@ -108,6 +109,8 @@ impl Command {
             Self::Capture(_) => "preparation-capture",
             Self::Dispatch(_) => "service-dispatch",
             Self::CancelPreparation(_) => "preparation-cancel",
+            Self::ReleasePreparationCrash(_, false) => "preparation-release-crash",
+            Self::ReleasePreparationCrash(_, true) => "preparation-release-power-loss",
             Self::CustodylessReserve(_) => "custodyless-reserve",
             Self::CustodylessReply(_, _) => "custodyless-reply-boundary",
             Self::CustodylessRelease(_) => "custodyless-release",
@@ -280,6 +283,7 @@ fn commands(max_steps: usize) -> impl Strategy<Value = Vec<Command>> {
             4 => slot.clone().prop_map(Command::Capture),
             4 => slot.clone().prop_map(Command::Dispatch),
             2 => slot.clone().prop_map(Command::CancelPreparation),
+            2 => (slot.clone(), any::<bool>()).prop_map(|(s,p)| Command::ReleasePreparationCrash(s,p)),
             3 => slot.clone().prop_map(Command::CustodylessReserve),
             3 => (slot.clone(), 1u8..=28).prop_map(|(s,p)| Command::CustodylessReply(s,p)),
             2 => slot.clone().prop_map(Command::CustodylessRelease),
@@ -562,6 +566,14 @@ struct Operation {
     delivery_effects: Cell<usize>,
 }
 impl Operation {
+    /// Eligibility for a new consumer-copy/acquisition transition. Keep the
+    /// provider's uncommitted local discard separate from its durable winner.
+    fn acquisition_ready(&self, a: &Admission) -> bool {
+        a.phase == AdmissionPhase::Terminal
+            && self.descriptor.is_some()
+            && a.output.as_ref() == self.descriptor.as_ref()
+            && (!self.discard_committed || self.acquisition_committed)
+    }
     /// Observe host commitment of an independently emitted provider discard.
     /// Every production reply path (status, replay, delayed publication) shares
     /// this oracle; host disposition alone never authorizes losing paid bytes.
@@ -1108,7 +1120,7 @@ impl Machine {
         )
         .unwrap();
         conn.query_row(
-            "SELECT EXISTS(SELECT 1 FROM operations WHERE consumer=?1 AND operation=?2 AND phase='released' AND admission IS NULL)",
+            "SELECT EXISTS(SELECT 1 FROM operations WHERE consumer=?1 AND operation=?2 AND phase='released' AND (admission IS NULL OR json_extract(admission,'$.disposition')='never_forwarded'))",
             rusqlite::params![op.consumer.package_id, op.id],
             |row| row.get::<_, bool>(0),
         ).unwrap()
@@ -1120,10 +1132,14 @@ impl Machine {
         };
         let mut ops = self.operations.borrow_mut();
         let op = &mut ops[index];
-        if op.removed || op.dispatched || !op.captured_inputs.is_empty() {
+        if op.removed
+            || op.dispatched
+            || !op.captured_inputs.is_empty()
+            || self.released_preparation(op)
+        {
             return Ok(());
         }
-        op.consumer = self.preparation_callback_owner(op)?;
+        let consumer = self.preparation_callback_owner(op)?;
         let path = self
             .fixture
             .profile
@@ -1131,7 +1147,7 @@ impl Machine {
             .join(format!("{}-input.png", op.id));
         fs::write(&path, &op.original).unwrap();
         match self.store().capture(
-            &op.consumer,
+            &consumer,
             &op.id,
             vec![CaptureInput {
                 path: path.to_string_lossy().into(),
@@ -1139,6 +1155,7 @@ impl Machine {
             }],
         ) {
             Ok(captures) => {
+                op.consumer = consumer;
                 op.captured_inputs = captures.into_iter().map(|c| c.artifact).collect();
                 self.applied += 1;
             }
@@ -1175,13 +1192,21 @@ impl Machine {
             service_id: "image-generation".into(),
             major: 1,
         };
-        if !self
-            .fixture
-            .installed(Role::Provider)
-            .is_some_and(|p| service_graph::provider_recovers(&p.manifest, &target))
-        {
+        let Some(installed_provider) = self.fixture.installed(Role::Provider) else {
+            return Ok(());
+        };
+        if !service_graph::provider_recovers(&installed_provider.manifest, &target) {
             return Ok(());
         }
+        // Match invoke_admitted: an existing operation keeps its original
+        // authority when a compatible replacement handles its status replay.
+        let provider = checked(service_bridge::recovery_provider(
+            self.store(),
+            &installed_provider.manifest,
+            &provider,
+            &consumer.package_id,
+            &op.id,
+        ))?;
         let mut request = Self::request(op);
         request["inputs"] = json!(op.captured_inputs);
         let target = ServiceTarget {
@@ -1190,11 +1215,7 @@ impl Machine {
             major: 1,
         };
         let starts_before = op.starts.get();
-        let stale_preparation = !op.captured_inputs.is_empty()
-            && op.consumer.package_id == consumer.package_id
-            && op.consumer.digest == consumer.digest
-            && op.consumer.incarnation != consumer.incarnation
-            && checked(self.store().get(&op.consumer.package_id, &op.id))?.is_none();
+        let stale_preparation = checked(self.stale_preparation(op, &consumer))?;
         let result = service_bridge::image_call(
             self.store(),
             &consumer,
@@ -1210,7 +1231,9 @@ impl Machine {
                 Ok(op.receipt(json!({"state":"none"})))
             },
         );
-        if result.is_ok() || op.starts.get() > starts_before {
+        // A Released intent can answer an idempotent start as cached status.
+        // Only the actual provider start invocation makes this dispatched.
+        if op.starts.get() > starts_before {
             op.dispatched = true;
             op.consumer = consumer;
             op.provider = provider;
@@ -1254,6 +1277,13 @@ impl Machine {
         if op.dispatched || op.removed {
             return Ok(());
         }
+        // A release already committed before a crash must be finished by the
+        // automatic sweep, not hidden by this fixture's terminal job write.
+        if checked(self.store().get(&op.consumer.package_id, &op.id))?
+            .is_some_and(|a| a.phase == AdmissionPhase::Released)
+        {
+            return Ok(());
+        }
         let caller = self.preparation_callback_owner(op)?;
         let _ = checked(self.store().release_unaccepted(&caller, &op.id))?;
         let job = checked(
@@ -1273,6 +1303,101 @@ impl Machine {
         op.removed = true;
         self.applied += 1;
         Ok(())
+    }
+    fn stale_preparation(
+        &self,
+        op: &Operation,
+        caller: &PackageGeneration,
+    ) -> Result<bool, AppError> {
+        Ok(!op.captured_inputs.is_empty()
+            && op.consumer.package_id == caller.package_id
+            && op.consumer.digest == caller.digest
+            && op.consumer.incarnation != caller.incarnation
+            && self.store().get(&op.consumer.package_id, &op.id)?.is_none())
+    }
+    fn reserve_preparation(&self, op: &Operation) -> Result<Admission, AppError> {
+        self.reserve_preparation_as(op, &op.consumer, &op.provider)
+    }
+    fn reserve_preparation_as(
+        &self,
+        op: &Operation,
+        consumer: &PackageGeneration,
+        provider: &PackageGeneration,
+    ) -> Result<Admission, AppError> {
+        let mut request = Self::request(op);
+        request["inputs"] = json!(op.captured_inputs);
+        // The durable boundary inside image_call("start"), before forwarding.
+        self.store().reserve_intent(
+            Admission {
+                consumer: consumer.clone(),
+                provider: provider.clone(),
+                target: ServiceTarget {
+                    package_id: provider.package_id.clone(),
+                    service_id: "image-generation".into(),
+                    major: 1,
+                },
+                operation_id: op.id.clone(),
+                fingerprint: "b".repeat(64),
+                phase: AdmissionPhase::Reserved,
+                inputs: op.captured_inputs.clone(),
+                output: None,
+                needs_attention: false,
+                disposition: None,
+                transfer_receipt: None,
+            },
+            &crate::service_state::request::semantic(&request)?,
+        )
+    }
+    fn release_preparation_crash(
+        &mut self,
+        slot: u8,
+        power_loss: bool,
+    ) -> Result<(), TestCaseError> {
+        let Some(index) = self.index(slot) else {
+            return Ok(());
+        };
+        {
+            let mut ops = self.operations.borrow_mut();
+            let op = &mut ops[index];
+            if op.dispatched || op.removed || self.released_preparation(op) {
+                return Ok(());
+            }
+            let consumer = self.preparation_callback_owner(op)?;
+            let Some(provider) = self.generation(Role::Provider) else {
+                return Ok(());
+            };
+            let stale_preparation = checked(self.stale_preparation(op, &consumer))?;
+            match self.reserve_preparation_as(op, &consumer, &provider) {
+                Ok(a) => {
+                    // Oracle ownership follows the durable reservation, never
+                    // a candidate callback that production may refuse.
+                    op.consumer = a.consumer;
+                    op.provider = a.provider;
+                }
+                Err(error)
+                    if expected_capacity(&error) || self.sync_failure || self.unlink_failure =>
+                {
+                    return Ok(())
+                }
+                Err(error)
+                    if stale_preparation
+                        && error
+                            .to_string()
+                            .contains("preparation owner expired; create a new operation ID") =>
+                {
+                    return Ok(())
+                }
+                Err(error) => {
+                    return Err(fail(format!(
+                        "unexpected interrupted reservation rejection: {error}"
+                    )))
+                }
+            }
+            // Commit release without the separate Cancelled presentation write.
+            checked(self.store().release_unaccepted(&op.consumer, &op.id))?;
+        }
+        self.applied += 1;
+        self.restart(power_loss)
     }
     fn stage(&mut self, slot: u8, complete: bool, synced: bool) -> Result<(), TestCaseError> {
         let Some(index) = self.index(slot) else {
@@ -1749,7 +1874,11 @@ impl Machine {
                 // a complete successful execution; crash settles as Unknown.
                 if !op.completion_identified && !op.sealed_original && !op.provider_rejected() {
                     op.valid_original = false;
-                    op.outcome = Outcome::Unknown;
+                    // Independent provider execution authority survives loss
+                    // of the host's unsealed capture; only delivery was lost.
+                    if op.outcome != Outcome::Succeeded {
+                        op.outcome = Outcome::Unknown;
+                    }
                 }
             }
         }
@@ -1779,7 +1908,7 @@ impl Machine {
                 && !self.original_conserved(op)
             {
                 op.valid_original = false;
-                if op.dispatched {
+                if op.dispatched && op.outcome != Outcome::Succeeded {
                     op.outcome = Outcome::Unknown;
                 }
             }
@@ -2339,8 +2468,11 @@ impl Machine {
                 }
             }
             1 => {
-                if admission.output.is_none() || self.operations.borrow()[index].transfer.is_some()
-                {
+                let ready = {
+                    let ops = self.operations.borrow();
+                    ops[index].acquisition_ready(&admission) && ops[index].transfer.is_none()
+                };
+                if !ready {
                     return Ok(());
                 }
                 let d = admission.output.as_ref().unwrap();
@@ -2493,7 +2625,7 @@ impl Machine {
         let Some(a) = checked(self.store().get(&op.consumer.package_id, &op.id))? else {
             return Ok(());
         };
-        if a.phase != AdmissionPhase::Terminal || a.output.as_ref() != Some(d) {
+        if !op.acquisition_ready(&a) {
             return Ok(());
         }
         let d = d.clone();
@@ -2677,6 +2809,22 @@ impl Machine {
             if kind == 1 && op.stage.is_none() || kind >= 2 && op.descriptor.is_none() {
                 return Ok(());
             }
+            if kind == 3 {
+                let a = checked(self.store().get(&op.consumer.package_id, &op.id))?.unwrap();
+                // Match ordinary acquisition eligibility before injecting a
+                // commit crash. A provider-local discard not yet committed
+                // still permits the acquisition race; committed discard does
+                // not, unless acquisition already won independently.
+                if !op.acquisition_ready(&a) {
+                    return Ok(());
+                }
+                if op.delivery_effects.get() == 0 {
+                    let d = op.descriptor.as_ref().unwrap().clone();
+                    // Copy preparation can fail before acquisition starts.
+                    // Do not leave its fault armed for unrelated work.
+                    checked(self.consumer_copy(op, &d))?;
+                }
+            }
             oracle.crash_at(name);
             let result: Result<(), AppError> = match kind {
                 0 => self
@@ -2710,23 +2858,18 @@ impl Machine {
                         )
                         .map(|_| ())
                 }
-                _ => {
-                    if op.delivery_effects.get() == 0 {
-                        let d = op.descriptor.as_ref().unwrap().clone();
-                        checked(self.consumer_copy(op, &d))?;
-                    }
-                    self.store()
-                        .acquired(
-                            &op.consumer,
-                            &op.id,
-                            op.descriptor.as_ref().unwrap(),
-                            op.copy.to_str().unwrap(),
-                        )
-                        .map(|r| {
-                            op.transfer = Some(r.transfer_receipt);
-                            op.acquisition_committed = true;
-                        })
-                }
+                _ => self
+                    .store()
+                    .acquired(
+                        &op.consumer,
+                        &op.id,
+                        op.descriptor.as_ref().unwrap(),
+                        op.copy.to_str().unwrap(),
+                    )
+                    .map(|r| {
+                        op.transfer = Some(r.transfer_receipt);
+                        op.acquisition_committed = true;
+                    }),
             };
             if oracle.checkpoint_hits(name) == before {
                 oracle.crash_at("__none__");
@@ -2857,7 +3000,8 @@ impl Machine {
             let visible = {
                 let ops = self.operations.borrow();
                 let op = &ops[index];
-                checked(self.store().get(&op.consumer.package_id, &op.id))?.is_some()
+                op.dispatched
+                    && checked(self.store().get(&op.consumer.package_id, &op.id))?.is_some()
             };
             if !visible {
                 return self.invariants();
@@ -2869,6 +3013,7 @@ impl Machine {
             Command::Capture(s) => self.capture(s)?,
             Command::Dispatch(s) => self.dispatch(s)?,
             Command::CancelPreparation(s) => self.cancel_preparation(s)?,
+            Command::ReleasePreparationCrash(s, p) => self.release_preparation_crash(s, p)?,
             Command::CustodylessReserve(s) => self.custodyless_reserve(s)?,
             Command::CustodylessReply(s, p) => self.custodyless_reply(s, p)?,
             Command::CustodylessRelease(s) => self.custodyless_release(s)?,
@@ -3495,6 +3640,17 @@ impl Machine {
                         .job_for_operation(&op.consumer.package_id, &op.id),
                 )?
                 .unwrap();
+                if admission.as_ref().is_some_and(|a| {
+                    a.phase == AdmissionPhase::Released
+                        && a.disposition.as_deref() == Some("never_forwarded")
+                }) {
+                    if job.state == JobState::NeedsAttention || job.output_path.is_some() {
+                        return Err(fail(
+                            "never-forwarded work requested attention or reported delivery",
+                        ));
+                    }
+                    continue;
+                }
                 if op.removed {
                     if !job.state.terminal() {
                         return Err(fail("removed preparation retained Accepting presentation"));
@@ -3804,7 +3960,9 @@ impl Machine {
                     .unwrap()
             {
                 op.valid_original = false;
-                op.outcome = Outcome::Unknown;
+                if op.outcome != Outcome::Succeeded {
+                    op.outcome = Outcome::Unknown;
+                }
             }
             op.provider_live = false;
             op.consumer_live = false;
@@ -3840,6 +3998,26 @@ impl Machine {
         self.custodyless_invariants(true)?;
         for op in self.operations.borrow().iter() {
             if !op.dispatched {
+                if self.released_preparation(op) {
+                    let job = checked(
+                        self.store()
+                            .job_for_operation(&op.consumer.package_id, &op.id),
+                    )?
+                    .unwrap();
+                    if !job.state.terminal() || checked(self.store().busy(&op.consumer.package_id))?
+                    {
+                        return Err(fail("released preparation never settled or remained busy"));
+                    }
+                    if checked(self.store().auto_settlement_operations())?
+                        .iter()
+                        .any(|(a, _, _)| {
+                            a.consumer.package_id == op.consumer.package_id
+                                && a.operation_id == op.id
+                        })
+                    {
+                        return Err(fail("released preparation remained an automatic candidate"));
+                    }
+                }
                 if op.removed {
                     self.assert_removed_clean(op)?;
                 }
@@ -4022,6 +4200,9 @@ impl FixtureRpc<'_> {
                 transfer_receipt: transfer.clone(),
             }
         } else {
+            if !op.acquisition_ready(&current) {
+                return Ok(());
+            }
             m.consumer_copy(op, d)?;
             m.store()
                 .acquired(&op.consumer, &op.id, d, op.copy.to_str().unwrap())?
@@ -4262,6 +4443,8 @@ const REQUIRED_TRANSITIONS: &[&str] = &[
     "preparation-capture",
     "service-dispatch",
     "preparation-cancel",
+    "preparation-release-crash",
+    "preparation-release-power-loss",
     "custodyless-reserve",
     "custodyless-reply-boundary",
     "custodyless-release",
@@ -4499,6 +4682,17 @@ fn coverage_campaign(totals: &mut BTreeMap<&'static str, u64>) -> Result<(), Tes
             ],
             totals,
         )?;
+        for power_loss in [false, true] {
+            collect_trace(
+                vec![
+                    Command::Register(1),
+                    Command::Capture(1),
+                    Command::ReleasePreparationCrash(1, power_loss),
+                    Command::Sweep,
+                ],
+                totals,
+            )?;
+        }
         collect_trace(
             vec![
                 Command::Register(1),
@@ -4949,6 +5143,7 @@ fn model_restart_refuses_expired_unadmitted_preparation_without_paid_work() {
     let captured = m.operations.borrow()[index].captured_inputs.clone();
     assert!(!captured.is_empty());
     m.apply(Command::Restart).unwrap();
+    m.apply(Command::ReleasePreparationCrash(1, false)).unwrap();
     m.apply(Command::Dispatch(1)).unwrap();
     assert!(!m.operations.borrow()[index].dispatched);
     assert_eq!(m.operations.borrow()[index].starts.get(), 0);
@@ -6928,6 +7123,353 @@ struct LegacyLedgerPort<'a> {
     machine: &'a Machine,
     recovery_calls: Cell<usize>,
 }
+
+#[test]
+fn model_discarded_acquisition_attempts_have_no_effect_or_leaked_fault() {
+    for power_loss in [false, true] {
+        for point in 0..3 {
+            let mut m = Machine::new();
+            for command in [
+                Command::Admit(1, false),
+                Command::Admit(0, false),
+                Command::ProviderComplete(1),
+                Command::DiscardCrash(1, 0, power_loss),
+                Command::Sweep,
+                Command::AggregateCrash(1, 3, point, power_loss),
+                Command::CopyBeforeProof(1),
+                Command::Probe(false),
+            ] {
+                m.apply(command).unwrap();
+            }
+            for action in 0..4 {
+                m.apply(Command::PausedMutation(1, 1, action)).unwrap();
+            }
+            // A forbidden transition must not leave its fault armed for a
+            // different operation's real, eligible production acquisition.
+            for command in [
+                Command::ProviderComplete(0),
+                Command::Acquire(0),
+                Command::Ack(0, false),
+            ] {
+                m.apply(command).unwrap();
+            }
+            m.quiesce().unwrap();
+            let ops = m.operations.borrow();
+            let discarded = &ops[m.index(1).unwrap()];
+            let a = m
+                .store()
+                .get(&discarded.consumer.package_id, &discarded.id)
+                .unwrap()
+                .unwrap();
+            assert_eq!(a.phase, AdmissionPhase::Released);
+            assert_eq!(a.disposition.as_deref(), Some("discarded"));
+            let job = m
+                .store()
+                .job_for_operation(&discarded.consumer.package_id, &discarded.id)
+                .unwrap()
+                .unwrap();
+            assert_eq!(job.state, JobState::Discarded);
+            assert!(job.output_path.is_none());
+            assert!(!discarded.copy.exists());
+            assert_eq!(discarded.delivery_effects.get(), 0);
+            assert_eq!(ops[m.index(0).unwrap()].delivery_effects.get(), 1);
+            assert!(!m.store().busy(&discarded.consumer.package_id).unwrap());
+            assert!(!m.store().busy(&discarded.provider.package_id).unwrap());
+            assert!(m.store().claims().unwrap().is_empty());
+            assert!(m.store().auto_settlement_operations().unwrap().is_empty());
+            assert_eq!(m.charges(), 0);
+            assert_eq!(m.disk_bytes(), 0);
+        }
+    }
+}
+
+#[test]
+fn model_released_preparation_replay_uses_compatible_provider_authority() {
+    for provider in [false, true] {
+        for power_loss in [false, true] {
+            let mut m = Machine::new();
+            for command in [
+                Command::Register(1),
+                Command::ReleasePreparationCrash(1, false),
+                Command::CompatibleUpgradeCrash(provider, 5, power_loss),
+                Command::Capture(1),
+                Command::Dispatch(1),
+            ] {
+                m.apply(command).unwrap();
+            }
+            m.quiesce().unwrap();
+            let ops = m.operations.borrow();
+            let op = &ops[m.index(1).unwrap()];
+            let a = m
+                .store()
+                .get(&op.consumer.package_id, &op.id)
+                .unwrap()
+                .unwrap();
+            assert_eq!(a.phase, AdmissionPhase::Released);
+            assert_eq!(a.disposition.as_deref(), Some("never_forwarded"));
+            let upgraded = m
+                .generation(if provider {
+                    Role::Provider
+                } else {
+                    Role::Consumer
+                })
+                .unwrap();
+            assert_ne!(
+                upgraded.digest,
+                if provider {
+                    a.provider.digest.clone()
+                } else {
+                    a.consumer.digest.clone()
+                },
+                "the tested package must actually have been replaced"
+            );
+            assert!(op.captured_inputs.is_empty());
+            assert!(!m
+                .fixture
+                .profile
+                .path()
+                .join(format!("{}-input.png", op.id))
+                .exists());
+            let job = m
+                .store()
+                .job_for_operation(&op.consumer.package_id, &op.id)
+                .unwrap()
+                .unwrap();
+            assert_eq!(job.state, JobState::Discarded);
+            assert!(!m.store().busy(&op.consumer.package_id).unwrap());
+            assert!(!m.store().busy(&op.provider.package_id).unwrap());
+            assert!(m.store().auto_settlement_operations().unwrap().is_empty());
+            assert!(m.store().claims().unwrap().is_empty());
+            assert_eq!(op.starts.get(), 0);
+            assert_eq!(m.charges(), 0);
+            assert_eq!(m.disk_bytes(), 0);
+        }
+    }
+}
+
+#[test]
+fn model_authoritative_success_survives_unsealed_stage_loss() {
+    let mut m = Machine::new();
+    for command in [
+        Command::SharedConsumerAdmit,
+        Command::Publish(2, 0, false),
+        Command::Stage(2, true, false),
+        Command::Gc,
+        Command::PowerLoss,
+    ] {
+        m.apply(command).unwrap();
+    }
+    let index = m.index(2).unwrap();
+    {
+        let ops = m.operations.borrow();
+        let op = &ops[index];
+        assert!(!op.valid_original, "volatile stage bytes must be lost");
+        assert_eq!(
+            op.outcome,
+            Outcome::Succeeded,
+            "durable provider execution must survive lost host bytes"
+        );
+    }
+    m.quiesce().unwrap();
+    let ops = m.operations.borrow();
+    let op = &ops[index];
+    let job = m
+        .store()
+        .job_for_operation(&op.consumer.package_id, &op.id)
+        .unwrap()
+        .unwrap();
+    assert_eq!(job.state, JobState::Error);
+    assert_eq!(job.phase.as_deref(), Some("delivery_failed"));
+    assert!(job.output_path.is_none());
+    let a = m
+        .store()
+        .get(&op.consumer.package_id, &op.id)
+        .unwrap()
+        .unwrap();
+    assert_eq!(a.phase, AdmissionPhase::Terminal);
+    assert_eq!(
+        a.disposition, None,
+        "missing success must not become an automatic discard"
+    );
+    let receipt = m
+        .store()
+        .provider_receipt(&op.consumer.package_id, &op.id)
+        .unwrap()
+        .unwrap();
+    assert_eq!(receipt["execution"]["state"], "succeeded");
+    assert_eq!(receipt["delivery"]["state"], "unavailable");
+    assert!(!m.store().busy(&op.consumer.package_id).unwrap());
+    assert!(!m.store().busy(&op.provider.package_id).unwrap());
+    assert!(m.store().claims().unwrap().is_empty());
+    assert_eq!(op.starts.get(), 1);
+    assert_eq!(op.recovery_native_starts.get(), 0);
+    assert_eq!(m.charges(), 0);
+    assert_eq!(m.disk_bytes(), 0);
+}
+
+#[test]
+fn model_interrupted_release_converges_through_quiescence() {
+    for power_loss in [false, true] {
+        let mut m = Machine::new();
+        m.apply(Command::Register(0)).unwrap();
+        m.apply(Command::Capture(0)).unwrap();
+        m.apply(Command::ReleasePreparationCrash(0, power_loss))
+            .unwrap();
+        // A successful status-only replay must not invent a paid dispatch.
+        m.apply(Command::Dispatch(0)).unwrap();
+        // A reservation tombstone does not give the synthetic provider an
+        // execution: these commands have unmet provider-visible preconditions.
+        m.apply(Command::Stage(0, true, true)).unwrap();
+        m.apply(Command::Publish(0, 0, false)).unwrap();
+        m.quiesce().unwrap();
+        let ops = m.operations.borrow();
+        let op = &ops[0];
+        let job = m
+            .store()
+            .job_for_operation(&op.consumer.package_id, &op.id)
+            .unwrap()
+            .unwrap();
+        assert_eq!(job.state, JobState::Discarded);
+        assert!(!m.store().busy(&op.consumer.package_id).unwrap());
+        assert!(m.store().auto_settlement_operations().unwrap().is_empty());
+        assert_eq!(op.starts.get(), 0);
+        assert!(m.store().claims().unwrap().is_empty());
+        assert_eq!(m.charges(), 0);
+        assert_eq!(m.disk_bytes(), 0);
+        for _ in 0..3 {
+            assert!(ai_operations::auto_reconcile_in(
+                m.store(),
+                &LegacyLedgerPort {
+                    machine: &m,
+                    recovery_calls: Cell::new(0)
+                }
+            )
+            .unwrap()
+            .is_empty());
+            assert_eq!(
+                m.store().job(&job.job_key).unwrap().unwrap().revision,
+                job.revision
+            );
+        }
+    }
+}
+
+#[test]
+fn model_never_forwarded_interrupted_release_settles_silently() {
+    for power_loss in [false, true] {
+        for startup_cleanup in [false, true] {
+            let mut m = Machine::new();
+            m.apply(Command::Register(0)).unwrap();
+            m.apply(Command::Capture(0)).unwrap();
+            if startup_cleanup {
+                {
+                    let ops = m.operations.borrow();
+                    m.reserve_preparation(&ops[0]).unwrap();
+                }
+                m.restart(power_loss).unwrap();
+                let ops = m.operations.borrow();
+                assert_eq!(m.store().release_preparations(&ops[0].consumer).unwrap(), 1);
+            } else {
+                m.apply(Command::ReleasePreparationCrash(0, power_loss))
+                    .unwrap();
+            }
+            let ops = m.operations.borrow();
+            let op = &ops[0];
+            let before = m
+                .store()
+                .job_for_operation(&op.consumer.package_id, &op.id)
+                .unwrap()
+                .unwrap();
+            assert_eq!(before.state, JobState::Accepting);
+            assert!(m.store().busy(&op.consumer.package_id).unwrap());
+            let port = LegacyLedgerPort {
+                machine: &m,
+                recovery_calls: Cell::new(0),
+            };
+            let settled = ai_operations::auto_reconcile_in(m.store(), &port).unwrap();
+            let job = m.store().job(&before.job_key).unwrap().unwrap();
+            assert!(
+                job.state.terminal(),
+                "released intent must finish its presentation: {job:?}"
+            );
+            assert_eq!(settled, vec![job.clone()]);
+            assert_eq!(job.state, JobState::Discarded);
+            assert!(job.output_path.is_none());
+            assert!(!m.store().busy(&op.consumer.package_id).unwrap());
+            assert!(!m.store().busy(&op.provider.package_id).unwrap());
+            assert_eq!(op.starts.get(), 0);
+            assert_eq!(port.recovery_calls.get(), 0);
+            m.assert_custody_clean(op, false).unwrap();
+            assert_eq!(m.charges(), 0);
+            assert_eq!(m.disk_bytes(), 0);
+            for _ in 0..3 {
+                assert!(ai_operations::auto_reconcile_in(m.store(), &port)
+                    .unwrap()
+                    .is_empty());
+                assert_eq!(
+                    m.store().job(&job.job_key).unwrap().unwrap().revision,
+                    job.revision
+                );
+                assert!(m.store().auto_settlement_operations().unwrap().is_empty());
+            }
+        }
+    }
+}
+
+#[test]
+fn model_release_during_idle_probe_finishes_presentation() {
+    struct ReleaseDuringProbe<'a>(&'a Store);
+    impl ai_operations::AutomaticPort for ReleaseDuringProbe<'_> {
+        fn active(
+            &self,
+            a: &Admission,
+            _: Option<&JobRecord>,
+            _: bool,
+            _: &str,
+        ) -> Result<bool, AppError> {
+            self.0.release_unaccepted(&a.consumer, &a.operation_id)?;
+            Ok(false)
+        }
+        fn recover(&self, _: &Admission, _: Option<&JobRecord>) -> Result<(), AppError> {
+            panic!("never-forwarded work must not recover provider execution")
+        }
+    }
+    let mut m = Machine::new();
+    m.apply(Command::Register(0)).unwrap();
+    m.apply(Command::Capture(0)).unwrap();
+    let ops = m.operations.borrow();
+    let op = &ops[0];
+    m.reserve_preparation(op).unwrap();
+    let port = ReleaseDuringProbe(m.store());
+    let settled = ai_operations::auto_reconcile_in(m.store(), &port).unwrap();
+    let job = m
+        .store()
+        .job_for_operation(&op.consumer.package_id, &op.id)
+        .unwrap()
+        .unwrap();
+    assert!(
+        job.state.terminal(),
+        "release during idle probe must finish: {job:?}"
+    );
+    assert_eq!(settled, vec![job.clone()]);
+    assert_eq!(job.state, JobState::Discarded);
+    assert!(job.output_path.is_none());
+    assert!(!m.store().busy(&op.consumer.package_id).unwrap());
+    assert!(!m.store().busy(&op.provider.package_id).unwrap());
+    assert_eq!(m.charges(), 0);
+    assert_eq!(m.disk_bytes(), 0);
+    assert!(m.store().claims().unwrap().is_empty());
+    for _ in 0..3 {
+        assert!(ai_operations::auto_reconcile_in(m.store(), &port)
+            .unwrap()
+            .is_empty());
+        assert_eq!(
+            m.store().job(&job.job_key).unwrap().unwrap().revision,
+            job.revision
+        );
+        assert!(m.store().auto_settlement_operations().unwrap().is_empty());
+    }
+}
 impl ai_operations::AutomaticPort for LegacyLedgerPort<'_> {
     fn active(
         &self,
@@ -6936,12 +7478,17 @@ impl ai_operations::AutomaticPort for LegacyLedgerPort<'_> {
         stopped: bool,
         execution: &str,
     ) -> Result<bool, AppError> {
-        if a.phase == AdmissionPhase::Released
-            || self.machine.operations.borrow().iter().any(|op| {
-                op.id == a.operation_id && (op.acquisition_committed || op.discard_committed)
-            })
+        if self
+            .machine
+            .operations
+            .borrow()
+            .iter()
+            .any(|op| op.id == a.operation_id && (op.acquisition_committed || op.discard_committed))
         {
             panic!("committed delivery repair must not depend on provider activity/status RPC")
+        } else if a.phase == AdmissionPhase::Released {
+            // Never-forwarded work has no provider execution to query.
+            Ok(false)
         } else {
             Transport {
                 machine: self.machine,
@@ -6967,10 +7514,9 @@ impl ai_operations::AutomaticPort for LegacyLedgerPort<'_> {
 #[test]
 fn model_legacy_terminal_and_released_ledger_shapes_converge() {
     use sha2::{Digest, Sha256};
-    // Admission rows are Terminal with no disposition, Released/discarded
-    // without transferReceipt, or Released/acquired with it. Other combinations
-    // violate origin/dev's persisted() contract and were never writable.
-    let admissions = ["terminal", "discarded", "acquired"];
+    // Every writable disposition from persisted(), including startup cleanup
+    // and interrupted cancellation of an intent that was never forwarded.
+    let admissions = ["terminal", "discarded", "acquired", "never_forwarded"];
     let receipts = [
         "discarded",
         "acquired",
@@ -7018,6 +7564,11 @@ fn model_legacy_terminal_and_released_ledger_shapes_converge() {
     for admission in admissions {
         for receipt in receipts {
             for proof in [true, false] {
+                // release_preparations/release_unaccepted write this from a
+                // Reserved admission before any receipt, output or acquisition.
+                if admission == "never_forwarded" && (proof || receipt != "absent") {
+                    continue;
+                }
                 // Acquired receipts and acquired releases require a committed
                 // matching evidence row in both historical implementations.
                 if !proof && (receipt == "acquired" || admission == "acquired") {
@@ -7030,8 +7581,16 @@ fn model_legacy_terminal_and_released_ledger_shapes_converge() {
                     cases += 1;
                     let case = format!("{admission}/{receipt}/proof={proof}/{state:?}/{phase:?}/error={has_error}/execution_released={execution_released}");
                     let mut m = Machine::new();
-                    m.apply(Command::Admit(0, true)).unwrap();
-                    m.apply(Command::ProviderComplete(0)).unwrap();
+                    if admission == "never_forwarded" {
+                        m.apply(Command::Register(0)).unwrap();
+                        m.apply(Command::Capture(0)).unwrap();
+                        let ops = m.operations.borrow();
+                        m.reserve_preparation(&ops[0]).unwrap();
+                        m.store().release_preparations(&ops[0].consumer).unwrap();
+                    } else {
+                        m.apply(Command::Admit(0, true)).unwrap();
+                        m.apply(Command::ProviderComplete(0)).unwrap();
+                    }
                     if proof {
                         m.apply(Command::Acquire(0)).unwrap();
                     }
@@ -7042,8 +7601,12 @@ fn model_legacy_terminal_and_released_ledger_shapes_converge() {
                         // completion before acquisition. Preserve that history
                         // and real consumer output if no delivery proof exists.
                         if state == JobState::Completed && !proof {
-                            let descriptor = op.descriptor.clone().unwrap();
-                            m.consumer_copy(op, &descriptor).unwrap();
+                            if admission == "never_forwarded" {
+                                fs::write(&op.copy, &op.original).unwrap();
+                            } else {
+                                let descriptor = op.descriptor.clone().unwrap();
+                                m.consumer_copy(op, &descriptor).unwrap();
+                            }
                         }
                         let mut a = m
                             .store()
@@ -7135,7 +7698,13 @@ fn model_legacy_terminal_and_released_ledger_shapes_converge() {
                         let acquired = proof || admission == "terminal" && receipt != "discarded";
                         if a.phase != AdmissionPhase::Released
                             || a.disposition.as_deref()
-                                != Some(if acquired { "acquired" } else { "discarded" })
+                                != Some(if acquired {
+                                    "acquired"
+                                } else if admission == "never_forwarded" {
+                                    "never_forwarded"
+                                } else {
+                                    "discarded"
+                                })
                             || !job.state.terminal()
                         {
                             return Err(format!("unsettled: admission={a:?}, job={job:?}"));
@@ -7148,6 +7717,14 @@ fn model_legacy_terminal_and_released_ledger_shapes_converge() {
                             return Err(format!("incorrect acquired presentation: {job:?}"));
                         }
                         if !acquired {
+                            if admission == "never_forwarded"
+                                && !state.terminal()
+                                && job.state != JobState::Discarded
+                            {
+                                return Err(format!(
+                                    "never-forwarded work was not settled silently: {job:?}"
+                                ));
+                            }
                             if state == JobState::Completed {
                                 if job.state != JobState::Completed
                                     || job.output_path.as_deref() != op.copy.to_str()
@@ -7192,6 +7769,8 @@ fn model_legacy_terminal_and_released_ledger_shapes_converge() {
                         if m.charges() != 0
                             || m.disk_bytes() != 0
                             || !m.store().claims().unwrap().is_empty()
+                            || m.store().busy(&op.consumer.package_id).unwrap()
+                            || m.store().busy(&op.provider.package_id).unwrap()
                         {
                             return Err("custody/charges/capacity held".into());
                         }

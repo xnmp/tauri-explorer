@@ -609,3 +609,345 @@ Logs for final continuation: `/tmp/hops15-final-targeted-{model,bridge}.log`,
 
 Accepted pre-seal completion contract and other documented platform/model limits
 remain unchanged. No commit, merge, issue close, deployment or user-desktop action.
+
+## Sixteenth review: released preparation presentation settlement
+
+Starting HEAD `55501430`, branch `feat/ai-ops-auto-settle`. Read review 15 in full
+from `/tmp/claude-1000/-home-chong-Repos-TraceExplorer/f4f074e8-00dc-47d2-b20d-ae1d367e1c92/scratchpad/revhops15.out`.
+No commit or merge.
+
+The P1 regression was reproduced before changing production: Accepting job →
+`reserve_intent` inside start → crash before `claim_forwarding` → startup
+`release_preparations` writes Released/never_forwarded. The shared terminal
+classifier correctly returns Pending without receipt/acquisition evidence.
+The unconditional Released return skipped idle settlement forever, retaining a
+nonterminal job and busy package. Interrupted cancellation between release and
+the separate Cancelled write had the same failure.
+
+Automatic reconciliation now returns immediately when terminal reconciliation
+actually updates presentation. Released/never_forwarded work instead finishes
+through `settle_idle_dispatch` under the existing action/IdleCallFence and
+dispatch-ownership fence. Store no-output checks still protect success. The
+Released shortcut requires terminal/absent presentation after that work; custody
+release alone cannot suppress settlement. Never-forwarded work becomes ordinary
+Discarded history without provider RPC, paid replay, attention prompt or frontend
+completion/error toast. Classifier-backed acquired/discarded repair still precedes
+provider status/activity and preserves worker accounting.
+
+Audited the early returns added by `55501430` across Rust/TypeScript. The second
+unconditional Released return after the idle probe had the same failure and was
+removed. `model_release_during_idle_probe_finishes_presentation` releases during
+the activity callback, then requires terminal presentation, busy cleared and
+quiescent repeated sweeps. The bridge's cached terminal-status return answers
+released status; it does not own settlement. Missing/unchanged receipt and
+already-Completed/absent-job repair returns do not independently suppress the
+outer sweep. No other concrete settlement-skipping return was found.
+
+Historical matrix coverage now enumerates every disposition writable by
+`persisted()`: acquired, discarded, never_forwarded, plus unreleased Terminal.
+Never-forwarded rows use the actual pre-forwarding no-receipt/no-output/no-proof
+shape written by preparation release, across all 24 historical job shapes and
+both execution-release flags. The 1,632 cases require correct terminal
+presentation, exact acquired output where applicable, zero custody/charges/claims,
+cleared consumer/provider busy state and repeated-sweep quiescence. Independent
+Completed reports remain preserved.
+
+The model adds independent `ReleasePreparationCrash` process/power-loss
+transitions to random exploration and the required directed deep campaign.
+They commit reserve/release without a synthetic terminal job write. Preparation
+cancellation no longer hides this gap during quiescence; Released/never_forwarded
+admissions must actually become terminal, clear busy and leave automatic
+candidates. The shared preparation-release predicate covers both admission-null
+tombstones and never-forwarded admissions. Preparation callback ownership is
+resolved through the existing production seam before reservation.
+
+Fail-first evidence:
+
+- `/tmp/hops16-red-interrupted-release.log`: stranded Accepting presentation.
+- `/tmp/hops16-red-idle-probe.log`: release inside idle probe leaves Accepting.
+- `/tmp/hops16-red-ledger.log`: 1,632 cases, 22 failures (20 nonterminal jobs and
+  two errorless terminal histories that never quiesce).
+
+Independent read-only adversarial review confirmed disposition routing,
+post-probe interleaving coverage, silent presentation and both fail-first logs.
+It found an initial model-oracle omission: the legacy preparation predicate
+only covered admission-null rows. That omission is fixed; model quiescence now
+checks never-forwarded admissions independently of the cancellation write.
+
+Final verification results and mutation-sensitivity evidence follow below.
+
+The generated quiescence regression was also run with the production fix
+temporarily reverted. It failed with `released preparation never settled or
+remained busy` (`/tmp/hops16-red-model-quiescence.log`). Production was restored
+byte-for-byte from `/tmp/hops16-ai_operations-fixed.rs` before final checks.
+
+The reviewer identified two related model preconditions exposed by the new
+crash transition. A successful idempotent start may return only status, so
+dispatch state now follows the actual provider `.start` invocation, not RPC
+success. Provider-visible synthetic events require an actual dispatched
+operation as well as an admission; a never-forwarded reservation tombstone is
+not evidence of provider execution. The directed quiescence trace now attempts
+status replay and synthetic Stage/Publish after interrupted release and requires
+zero paid starts plus final silent settlement. These are fixture/oracle changes;
+production paid-dispatch behavior is unchanged.
+
+Requested Cargo target: `/var/tmp/te-wt2/target-hops`. All Rust runs are sequential
+so rebuilding never replaces the executable during native subprocess probes.
+The full lib suite was run once, with `--test-threads=8`; it includes the final
+status-replay/provider-event oracle corrections. No production changes followed
+the passing targeted model result.
+
+```sh
+CARGO_TARGET_DIR=/var/tmp/te-wt2/target-hops cargo test --manifest-path src-tauri/Cargo.toml --lib model_tests -- --nocapture
+CARGO_TARGET_DIR=/var/tmp/te-wt2/target-hops cargo test --manifest-path src-tauri/Cargo.toml --lib service_bridge_tests -- --nocapture
+CARGO_TARGET_DIR=/var/tmp/te-wt2/target-hops cargo test --manifest-path src-tauri/Cargo.toml --lib -- --test-threads=8
+CARGO_TARGET_DIR=/var/tmp/te-wt2/target-hops cargo test --manifest-path src-tauri/Cargo.toml --lib ai_operations_reference_state_machine_deep -- --ignored --nocapture
+bunx vitest run tests/domain tests/state --maxWorkers=2
+bun run lint:arch
+```
+
+```text
+# Targeted model
+legacy ledger convergence: 1632 reachable cases, 0 failures
+test result: ok. 65 passed; 0 failed; 1 ignored; 0 measured; 2360 filtered out; finished in 129.20s
+# Targeted bridge
+test result: ok. 76 passed; 0 failed; 0 ignored; 0 measured; 2350 filtered out; finished in 28.89s
+# Full lib (one run)
+test result: FAILED. 2346 passed; 1 failed; 79 ignored; 0 measured; 0 filtered out; finished in 136.03s
+# Vitest domain/state, maxWorkers=2
+ Test Files  287 passed (287)
+      Tests  2923 passed (2923)
+   Duration  30.32s (tests 41%, import 31%, transform 16%, setup 7%, worker 4%)
+# bun run lint:arch
+arch-lint: clean
+```
+
+The only full-lib failure is the known
+`file_mutation::tests::recovery_admission::creation_is_lazy_and_competing_entry_plans_leave_names_and_bytes_unchanged`
+at `src-tauri/test_support/file_mutation.rs:475` (`completed.warning.is_none()`).
+No unrelated fix was made.
+
+Logs: `/tmp/hops16-targeted-model-final.log`, `/tmp/hops16-targeted-bridge.log`,
+`/tmp/hops16-lib.log`, `/tmp/hops16-deep.log`, `/tmp/hops16-vitest.log`,
+`/tmp/hops16-lint-arch.log`. The earlier focused model log is
+`/tmp/hops16-targeted-model.log` (64 passed before the additional quiescence test).
+Lesson: `docs/lessons/ai-ops-released-preparation-settlement.md`.
+
+The first deep run failed after 162.34s on a separate pre-existing fixture
+durability gap, minimized to
+`[SharedConsumerAdmit, Publish(2,0,false), Stage(2,true,false), Gc, PowerLoss]`.
+There is no Released/preparation-release transition in this trace. Independent
+source review confirmed that restart converted an authoritative provider
+Succeeded outcome to Unknown when volatile, unsealed host stage bytes vanished.
+Its subsequent status reply attempted the forbidden Succeeded→Unknown transition
+and production correctly rejected it before delivery-failure presentation.
+
+`model_authoritative_success_survives_unsealed_stage_loss` fails first with
+Unknown instead of Succeeded (`/tmp/hops16-red-authoritative-success.log`). The
+fixture now clears lost host-byte certainty while preserving independent
+Succeeded execution in both restart downgrade paths and the quiescence spool
+path. Synthetic ProviderComplete still requires sealed completion identity;
+explicit authoritative Publish remains modeled, and the accepted host atomic-
+seal contract is unchanged. No production receipt validation was weakened.
+
+The directed trace requires retained Succeeded/unavailable receipt and Terminal
+admission without automatic acquired/discarded disposition, terminal Error /
+delivery_failed history, zero paid replay and cleared busy/claims/charges.
+Production `recover_original_output` independently proves missing/corrupt bytes,
+sets the execution no-replay fence and bounds output capacity before presentation
+failure. Unpaid recovery eligibility remains; it must not be confused with
+nonterminal presentation or held capacity. Committed-seal/acquisition guarantees
+remain strict. New seed
+`890463e783af7ea5a463b2774d24d84015d15843e6ca4bfec63c889b6e4abe21` and all
+previous seeds are preserved. Initial deep log: `/tmp/hops16-deep.log`.
+
+The requested full-lib run preceded this fixture-only durability correction;
+it is not rerun. Final targeted model and deep reruns qualify the corrected
+oracle in `/tmp/hops16-targeted-model-current.log` and
+`/tmp/hops16-deep-final.log`. Production has not changed since its passing
+targeted/full-lib checks.
+
+After the execution-authority correction, model result:
+
+```text
+legacy ledger convergence: 1632 reachable cases, 0 failures
+test result: ok. 66 passed; 0 failed; 1 ignored; 0 measured; 2360 filtered out; finished in 94.15s
+```
+
+Fresh independent read-only review confirmed the three execution-authority
+guards, directed fail-first sensitivity and strict delivery/custody oracles;
+no remaining concrete defect was found. All changes remain uncommitted.
+
+The next deep attempt failed after 163.03s on
+`[Register(2), ReleasePreparationCrash(2,false), CompatibleUpgradeCrash(true,5,false), Dispatch(2)]`
+with provider ownership rejection. Independent review traced this to fixture
+dispatch bypassing production `invoke_admitted`'s `recovery_provider` resolution:
+the fixture passed the replacement digest directly to an admission pinned to
+the original provider. Production already resolves compatible replacement
+authority before `image_call`; this was not a production regression.
+
+The directed provider/consumer × process/power-loss replay regression reproduces
+the rejection before correction. Fixture dispatch must use the existing
+`recovery_provider` seam with the current manifest/generation, preserving pinned
+admission identity and incompatible replacement rejection. The outcomes require
+Released/never_forwarded, silent Discarded presentation, zero starts/custody/
+charges/claims/busy, and no automatic candidates. Seed
+`eaf2b5845fa23beae52e363a391d34036fca56deaeb785603f979ce3273d888a` is retained.
+Logs: `/tmp/hops16-deep-final.log`, `/tmp/hops16-red-provider-authority.log`.
+
+Fixture dispatch now uses that production authority seam. Fresh independent
+read-only review confirmed pinned identities, compatible replay and unchanged
+quiescence assertions, with no remaining concrete gap.
+
+Final targeted model result after both fixture corrections:
+
+```text
+legacy ledger convergence: 1632 reachable cases, 0 failures
+test result: ok. 67 passed; 0 failed; 1 ignored; 0 measured; 2360 filtered out; finished in 102.91s
+```
+
+Log: `/tmp/hops16-targeted-model-final2.log`. Final deep log:
+`/tmp/hops16-deep-final2.log`.
+
+The third deep attempt failed after 72.86s on
+`[SharedConsumerAdmit, ProviderComplete(2), DiscardCrash(2,0,false), Sweep, AggregateCrash(2,3,0,false)]`.
+Independent review confirmed another fixture transition-precondition gap: Sweep
+had committed the provider's locally durable discard and released custody, but
+the aggregate acquisition crash helper checked only descriptor presence. It
+armed a fault, then attempted consumer copy from a Released operation, whose
+production read correctly rejected it. The early copy-error return also bypassed
+unused-fault cleanup.
+
+`model_acquisition_crash_after_discard_has_no_effect_or_leaked_fault` fails first
+with that exact rejection (`/tmp/hops16-red-ineligible-acquisition.log`). The
+helper now checks Terminal admission, exact output identity and independent
+discard/acquisition precedence before arming acquisition crash injection. A
+provider-local discard that has not committed still participates in acquisition
+races. Consumer copy preparation runs before arming, so its error cannot leave
+an acquisition fault for unrelated work. Ordinary production rejection tests
+and committed-original delivery/custody invariants are unchanged.
+
+The directed regression covers all three acquisition barriers and process/power
+loss, verifies discarded output has no consumer copy/effect, then acquires a
+different operation through production to detect leaked fault injection. It
+requires terminal Discarded history, no busy/claims/charges and empty automatic
+candidates. Seed
+`bc87281a63870ae916b33d94e0713efef4a11fa865264c38fe8c76bed5959d16` and every
+previous seed are retained. Final rerun logs:
+`/tmp/hops16-targeted-model-final3.log`, `/tmp/hops16-deep-final3.log`.
+
+Fresh independent source review confirmed acquisition eligibility/fault lifetime
+and preservation of the uncommitted provider-discard acquisition race, with no
+remaining concrete gap. Final targeted model result:
+
+```text
+legacy ledger convergence: 1632 reachable cases, 0 failures
+test result: ok. 68 passed; 0 failed; 1 ignored; 0 measured; 2360 filtered out; finished in 101.20s
+```
+
+The fourth deep attempt failed after 93.87s on
+`[Register(2), Capture(2), Restart, ReleasePreparationCrash(2,false)]`.
+Independent review confirmed that an ordinary restart changes callback
+incarnation without granting adoption of an unadmitted captured preparation.
+Production correctly rejects reservation with `preparation owner expired`.
+The new fixture command both treated this established refusal as unexpected
+and updated its oracle owner before the reservation committed.
+
+The existing expired-preparation regression was expanded with this command and
+failed first (`/tmp/hops16-red-expired-preparation.log`). Dispatch and interrupted
+release now share the narrow stale captured/unadmitted predicate. The latter
+resolves candidate owners into locals, still attempts the production reservation
+so valid compatible grants can succeed, and updates oracle owners from the
+returned admission only after success. Only the exact expired-owner refusal for
+that stale preparation is accepted; its captures/owners remain intact and it
+performs no release/restart or paid work. Seed
+`c079a99503598fd8a2aaa811fcf7b481f07efb548570da666d91dd06162b580a` is preserved.
+Logs: `/tmp/hops16-deep-final3.log`, `/tmp/hops16-red-expired-preparation.log`;
+latest verification: `/tmp/hops16-targeted-model-final4.log`,
+`/tmp/hops16-deep-final4.log`. Production remains byte-for-byte unchanged.
+
+That targeted rerun passed 68 / 0 / 1 ignored (118.80s), but the fifth deep attempt
+failed after 103.19s on
+`[Admit(1,false), Admit(0,false), ProviderComplete(1), ProviderDiscard(1,false), Probe(false), PausedMutation(1,1,0)]`.
+This exposed the same acquisition-eligibility gap in the manually paused copy
+path: a descriptor remains forensic evidence after release and does not grant
+an output read. Independent review audited every model consumer-copy/read seam
+together rather than adding another isolated guard.
+
+`Operation::acquisition_ready` is now the shared pure eligibility rule for
+paused acquisition before its source read, aggregate acquisition before fault
+arming, copy-before-proof, and recovery resume's new-copy branch. It checks
+Terminal admission, exact descriptor and independent discard/acquisition
+precedence. Ordinary acquisition's explicit production rejection assertion for
+committed discard remains unchanged. Crucially, the paused path does not recheck
+inside the copy supplier after lifecycle mutation: its captured bytes and final
+`Store::acquired` refusal remain the actual race under test. Native writer and
+stale removed-read revocation probes are unaffected.
+
+The discard regression is expanded/renamed to
+`model_discarded_acquisition_attempts_have_no_effect_or_leaked_fault`. It now
+uses the primary consumer, tries crash injection, copy-before-proof and all four
+paused lifecycle actions after discard (with provider unavailable), then acquires
+another operation through production. It fails first at the paused read before
+the shared fix (`/tmp/hops16-red-ineligible-paused-acquisition.log`). Seed
+`bbdcef11553e340908b350370a0ea23375cea1929d5117fda29d665a46573be5` is retained.
+Latest verification logs: `/tmp/hops16-targeted-model-final5.log`,
+`/tmp/hops16-deep-final5.log`. Production still matches its original fixed
+snapshot byte-for-byte.
+
+The shared-eligibility target rerun passed 68 / 0 / 1 ignored (101.84s). The sixth
+deep attempt failed after 139.54s on
+`[Register(1), ReleasePreparationCrash(1,false), CompatibleUpgradeCrash(false,5,false), Capture(1)]`.
+Independent review confirmed a late capture on a closed preparation: resolving
+the callback through compatible recovery produced the pinned historical consumer,
+whose incarnation was correctly refused by production before any new capture.
+
+Capture now checks the existing released-preparation predicate before callback
+resolution/source creation and only updates oracle ownership after successful
+capture. The compatible replay regression was strengthened to use the affected
+primary consumer (the second consumer had been unaffected by the consumer-role
+upgrade), assert that the tested package really changed digest, and verify no
+new capture/source file after release. It fails first with the exact retired-
+incarnation error (`/tmp/hops16-red-released-capture.log`). Other preparation
+helpers were audited together: cancellation already skips Released admissions,
+unaccepted reconciliation treats Released as admitted, and recapture requires
+a Reserved, unadmitted retained preparation. No generic retired-error suppression
+was added. Seed
+`488285dde7b9bdc3e3ee276aed26e82073c9fde50336dbd770dc24fd024878da` is preserved.
+Latest verification logs: `/tmp/hops16-targeted-model-final6.log`,
+`/tmp/hops16-deep-final6.log`. Production is still unchanged.
+
+Final acceptance: the corrected deep run passes 1,024 random cases plus the
+directed campaign. All 135 required transition families have at least three
+actual hits, including preparation-release-crash=10,
+preparation-release-power-loss=16, ack-crash=3 and
+acquired-receipt-before-release=15. All saved seeds replay successfully.
+Fresh independent read-only review confirmed preparation/acquisition eligibility,
+transactional oracle ownership and the affected-package upgrade test; no remaining
+concrete defect was found. The deep run followed that review with no source edits.
+
+Final requested result lines:
+
+```text
+# Final targeted model (all 1632 historical cases converge)
+test result: ok. 68 passed; 0 failed; 1 ignored; 0 measured; 2360 filtered out; finished in 94.03s
+# Targeted bridge
+test result: ok. 76 passed; 0 failed; 0 ignored; 0 measured; 2350 filtered out; finished in 28.89s
+# Full lib, run once before subsequent fixture-only corrections
+test result: FAILED. 2346 passed; 1 failed; 79 ignored; 0 measured; 0 filtered out; finished in 136.03s
+# Final corrected deep model
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2428 filtered out; finished in 279.84s
+# Vitest domain/state, maxWorkers=2
+ Test Files  287 passed (287)
+      Tests  2923 passed (2923)
+# bun run lint:arch
+arch-lint: clean
+```
+
+The sole full-lib failure remains the known lazy-creation test identified above.
+Formatting and `git diff --check` are clean; final architecture log is
+`/tmp/hops16-lint-arch-final.log`. No production changes followed its passing
+targeted/full-lib results; final fixture corrections are qualified by the model
+suite and deep run. Accepted pre-seal completion and platform limits are unchanged.
+No commit, merge, issue close, deployment or user-desktop action. All work remains
+uncommitted on `feat/ai-ops-auto-settle`, HEAD `55501430`.

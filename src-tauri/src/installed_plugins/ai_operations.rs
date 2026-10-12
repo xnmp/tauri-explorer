@@ -219,14 +219,30 @@ fn auto_reconcile_candidates(
                     store.reconcile_terminal_job(&a.consumer.package_id, &a.operation_id)?
                 {
                     settled.push(completed);
-                }
-                if store
-                    .get(&a.consumer.package_id, &a.operation_id)?
-                    .is_some_and(|current| {
-                        current.phase == crate::service_state::model::AdmissionPhase::Released
-                    })
-                {
                     return Ok(());
+                }
+                if let Some(current) = store.get(&a.consumer.package_id, &a.operation_id)? {
+                    if current.phase == crate::service_state::model::AdmissionPhase::Released {
+                        // Release is custody bookkeeping, not presentation
+                        // settlement. Never-forwarded intents have no provider
+                        // execution to probe; finish through the idle/dispatch
+                        // fence and its no-output checks, without prompting.
+                        if current.disposition.as_deref() == Some("never_forwarded") {
+                            if let Some(job) = service_bridge::settle_idle_dispatch(
+                                store,
+                                &a.consumer.package_id,
+                                &a.operation_id,
+                            )? {
+                                settled.push(job);
+                            }
+                        }
+                        if store
+                            .job_for_operation(&a.consumer.package_id, &a.operation_id)?
+                            .is_none_or(|job| job.state.terminal())
+                        {
+                            return Ok(());
+                        }
+                    }
                 }
             }
             let mut recovery = None;
@@ -247,9 +263,6 @@ fn auto_reconcile_candidates(
                 let current = store
                     .get(&a.consumer.package_id, &a.operation_id)?
                     .ok_or_else(|| error("AI admission disappeared"))?;
-                if current.phase == crate::service_state::model::AdmissionPhase::Released {
-                    return Ok(());
-                }
                 let receipt = store.provider_receipt(&a.consumer.package_id, &a.operation_id)?;
                 if current.phase != crate::service_state::model::AdmissionPhase::Released
                     && receipt.as_ref().is_some_and(|r| {

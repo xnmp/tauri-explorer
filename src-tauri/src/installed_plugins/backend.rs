@@ -537,15 +537,16 @@ mod process_spool_tests {
 }
 
 /// Completed process output fixture; uses the broker's actual output custody.
-/// The lib harness cannot launch its own Unix supervisor executable.
-#[cfg(test)]
+/// The lib harness cannot launch its own Unix supervisor executable. Only the
+/// Linux native service tests use it.
+#[cfg(all(test, target_os = "linux"))]
 pub(super) fn fixture_completed_process_spool(
     package_id: &str,
     bytes: &[u8],
 ) -> Result<PathBuf, AppError> {
     fixture_completed_bound_process_spool(package_id, bytes, None)
 }
-#[cfg(test)]
+#[cfg(all(test, target_os = "linux"))]
 pub(super) fn fixture_completed_bound_process_spool(
     package_id: &str,
     bytes: &[u8],
@@ -553,7 +554,7 @@ pub(super) fn fixture_completed_bound_process_spool(
 ) -> Result<PathBuf, AppError> {
     fixture_process_spool(package_id, bytes, custody, false)
 }
-#[cfg(test)]
+#[cfg(all(test, target_os = "linux"))]
 pub(super) fn fixture_pending_process_spool(
     package_id: &str,
     bytes: &[u8],
@@ -561,7 +562,7 @@ pub(super) fn fixture_pending_process_spool(
 ) -> Result<PathBuf, AppError> {
     fixture_process_spool(package_id, bytes, custody, true)
 }
-#[cfg(test)]
+#[cfg(all(test, target_os = "linux"))]
 fn fixture_process_spool(
     package_id: &str,
     bytes: &[u8],

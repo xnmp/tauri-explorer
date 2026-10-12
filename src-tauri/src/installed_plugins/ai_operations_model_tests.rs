@@ -7679,6 +7679,10 @@ fn model_legacy_terminal_and_released_ledger_shapes_converge() {
                         recovery_calls: Cell::new(0),
                     };
                     let result = (|| -> Result<(), String> {
+                        // Other tests' lifecycle work is not simulated provider
+                        // latency. Own the shared action lane before the sweeps
+                        // start their bounded reconciliation clocks.
+                        let _action = ai_operations::action_guard().map_err(|e| e.to_string())?;
                         for _ in 0..3 {
                             ai_operations::auto_reconcile_in(m.store(), &port)
                                 .map_err(|e| e.to_string())?;

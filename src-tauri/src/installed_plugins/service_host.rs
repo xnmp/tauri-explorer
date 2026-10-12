@@ -37,8 +37,8 @@ pub(super) fn busy(message: &str) -> AppError {
         message: message.into(),
     }
 }
-/// Only the Linux startup queue branches on it outside tests.
-#[cfg(any(target_os = "linux", test))]
+/// Only the Linux startup queue branches on it.
+#[cfg(target_os = "linux")]
 pub(super) fn is_busy(error: &AppError) -> bool {
     matches!(error, AppError::Service { code, .. } if code == PACKAGE_BUSY)
 }

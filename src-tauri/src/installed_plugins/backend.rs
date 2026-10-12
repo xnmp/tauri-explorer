@@ -276,6 +276,7 @@ pub(super) struct Broker {
     control_token: String,
     diagnostics: Mutex<super::diagnostics::Diagnostics>,
     text_bridge: OnceLock<Arc<super::text_service::TextBridge>>,
+    features: OnceLock<HashSet<String>>,
     sequence: AtomicU64,
     pending: Mutex<HashMap<u64, Waiter>>,
     jobs: Mutex<HashMap<u64, Job>>,
@@ -1208,7 +1209,21 @@ impl Broker {
             self.package_id, self.incarnation
         )
     }
+    pub(super) fn supports(&self, feature: &str) -> bool {
+        self.features
+            .get()
+            .is_some_and(|features| features.contains(feature))
+    }
     pub(super) fn emit_service_update(&self, consumer: Value, status: Value) {
+        let supports = BROKERS
+            .get()
+            .and_then(|all| all.lock().ok())
+            .and_then(|all| {
+                all.get(consumer.as_str()?)
+                    .map(|broker| broker.supports("receiptBillingV1"))
+            })
+            .unwrap_or(false);
+        let status = crate::service_state::receipt::for_consumer(status, supports);
         let _ = self.app.emit(
             "image-generation:operation-changed",
             json!({"consumerPackageId":consumer,"status":status}),
@@ -1530,10 +1545,21 @@ impl Broker {
                         })
                         .and_then(|status| status["outputPath"].as_str());
                     let (event, payload) = match published {
-                        Some(path) => (
-                            format!("{}-complete", job.kind),
-                            json!({"jobId":id,"outputPath":path}),
-                        ),
+                        Some(path) => {
+                            let mut payload = json!({"jobId":id,"outputPath":path});
+                            if let Ok(status) = &status {
+                                if let Some(cost) = crate::service_state::job::cost(&status["cost"])
+                                {
+                                    payload["cost"] = json!(cost);
+                                }
+                                if let Some(reveal) =
+                                    crate::service_state::job::reveal(&status["reveal"])
+                                {
+                                    payload["reveal"] = json!(reveal);
+                                }
+                            }
+                            (format!("{}-complete", job.kind), payload)
+                        }
                         None => (
                             format!("{}-error", job.kind),
                             json!({"jobId":id,"error":status.as_ref().ok().and_then(|status|status["error"].as_str()).unwrap_or(&reason)}),
@@ -2671,6 +2697,7 @@ fn start_broker(
         control_token: hex::encode(token),
         diagnostics: Mutex::new(Default::default()),
         text_bridge: OnceLock::new(),
+        features: OnceLock::new(),
         sequence: AtomicU64::new(1),
         pending: Mutex::new(HashMap::new()),
         jobs: Mutex::new(HashMap::new()),
@@ -2796,12 +2823,22 @@ fn start_broker(
     };
     let initialized = broker.call(
         "initialize",
-        json!({"protocolVersion":1,"activeRunIds":if validation_only {vec![]} else {super::provenance::active_runs(id)},"processService":true,"processStdin":super::process_run::stdin_capability(),"processRecovery":{"version":1,"owner":broker.generation()},"textService":{"version":1},"serviceService":{"version":1},"artifactService":{"version":1},"credentialService":{"version":1},"jobService":{"version":1,"estimateKey":true},"hostControl":{"token":broker.control_token},"validationOnly":validation_only,"deferRecovery":deferred}),
+        json!({"protocolVersion":1,"activeRunIds":if validation_only {vec![]} else {super::provenance::active_runs(id)},"processService":true,"processStdin":super::process_run::stdin_capability(),"processRecovery":{"version":1,"owner":broker.generation()},"textService":{"version":1},"serviceService":{"version":1,"receiptBillingV1":true},"artifactService":{"version":1},"credentialService":{"version":1},"jobService":{"version":1,"estimateKey":true,"revealV1":true,"costV1":true},"hostControl":{"token":broker.control_token},"validationOnly":validation_only,"deferRecovery":deferred}),
     );
     // Legacy reconciliation serialization must not survive into failure cleanup.
     drop(ownership);
     match initialized {
-        Ok(result) if result["protocolVersion"] == 1 && result["ready"] == !deferred => {}
+        Ok(result) if result["protocolVersion"] == 1 && result["ready"] == !deferred => {
+            let features = result["features"]
+                .as_array()
+                .map(|a| {
+                    a.iter()
+                        .filter_map(|v| v.as_str().filter(|s| s.len() <= 64).map(str::to_owned))
+                        .collect()
+                })
+                .unwrap_or_default();
+            let _ = broker.features.set(features);
+        }
         Ok(_) => {
             broker.stop();
             return Err(error("Plugin backend protocol mismatch"));

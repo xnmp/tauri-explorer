@@ -84,6 +84,8 @@ pub(super) fn register(
             state: JobState::Accepting,
             phase: Some("preparing".into()),
             output_path: None,
+            cost: None,
+            reveal: None,
             run_id: None,
             error: None,
         };
@@ -118,7 +120,8 @@ pub(super) fn observe_in(
     let phase = status["recoveryState"].as_str().unwrap_or("recovering");
     let state = match status["status"].as_str() {
         Some("succeeded")
-            if status["outputPath"].as_str().is_some_and(|v| !v.is_empty())
+            if (status["outputPath"].as_str().is_some_and(|v| !v.is_empty())
+                || crate::service_state::job::reveal(&status["reveal"]).is_some())
                 && status["runId"].as_i64().is_some_and(|v| v > 0) =>
         {
             JobState::Completed
@@ -157,7 +160,7 @@ pub(super) fn observe_in(
     if current.run_id.is_some() && current.run_id != status["runId"].as_i64() {
         return Err(error("Consumer job receipt changed its original Trace run"));
     }
-    store.observe_job(
+    store.observe_job_with_presentation(
         &record.owner,
         &record.job_key,
         status["revision"]
@@ -177,6 +180,10 @@ pub(super) fn observe_in(
                     .ok_or_else(|| error("Invalid estimate key"))
             })
             .transpose()?,
+        Some((
+            crate::service_state::job::cost(&status["cost"]),
+            crate::service_state::job::reveal(&status["reveal"]),
+        )),
     )
 }
 static STATUS_WORKERS: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
@@ -700,6 +707,37 @@ pub(super) fn dismiss(key: &str) -> Result<Value, AppError> {
     Ok(Value::Null)
 }
 
+/// Reveal refresh is read-only and never starts a disabled/disconnected backend.
+pub(super) fn latest_reveal(
+    job_key: &str,
+) -> Result<Option<crate::service_state::job::JobReveal>, AppError> {
+    let Some(record) = service_host::store()?.job(job_key)? else {
+        return Ok(None);
+    };
+    let (broker, _lease) = {
+        let _gate = super::read_lifecycle()?;
+        let Some(broker) = backend::active_instance(&record.owner.package_id, &record.owner.digest)
+        else {
+            return Ok(None);
+        };
+        let lease = CallLease::acquire_method(&record.owner.package_id, "jobs.status")?;
+        (broker, lease)
+    };
+    let status = broker.call("jobs.status", json!({"operationId":record.operation_id}))?;
+    Ok(reveal_from_status(&record, &status))
+}
+fn reveal_from_status(
+    record: &JobRecord,
+    status: &Value,
+) -> Option<crate::service_state::job::JobReveal> {
+    if status["jobId"].as_u64() != Some(record.job_id)
+        || status["operationId"].as_str() != Some(&record.operation_id)
+    {
+        return None;
+    }
+    crate::service_state::job::reveal(&status["reveal"])
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -736,11 +774,32 @@ mod tests {
                 state: JobState::Accepting,
                 phase: Some("preparing".into()),
                 output_path: None,
+                cost: None,
+                reveal: None,
                 run_id: None,
                 error: None,
             })
             .unwrap();
         (dir, store, record)
+    }
+    #[test]
+    fn reveal_status_must_match_the_retained_job_and_be_valid() {
+        let (_root, _store, record) = fixture();
+        let mut status = json!({"jobId":record.job_id,"operationId":record.operation_id,"reveal":{"kind":"view","viewId":"trace.view","directory":"/images","targetId":"42"}});
+        assert!(reveal_from_status(&record, &status).is_some());
+        status["reveal"] = json!({"kind":"file","path":"/images/saved.png"});
+        assert_eq!(
+            serde_json::to_value(reveal_from_status(&record, &status)).unwrap(),
+            status["reveal"]
+        );
+        status["jobId"] = json!(1);
+        assert!(reveal_from_status(&record, &status).is_none());
+        status["jobId"] = json!(record.job_id);
+        status["operationId"] = json!("foreign-operation");
+        assert!(reveal_from_status(&record, &status).is_none());
+        status["operationId"] = json!(record.operation_id);
+        status["reveal"] = json!({"kind":"file","path":""});
+        assert!(reveal_from_status(&record, &status).is_none());
     }
     /// A consumer that does not know the operation: it records every call.
     fn unknown<'a>(calls: &'a mut Vec<String>) -> impl FnMut(&str) -> Result<Value, AppError> + 'a {

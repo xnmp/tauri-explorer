@@ -6,6 +6,7 @@ export async function snapshotPluginJobs(): Promise<NativeJobSnapshot> {
   if (!validNativeSnapshot(value)) throw new Error("Native job presentation is unavailable or malformed. Update the host or reload Background Operations.");
   return value;
 }
+export const latestPluginJobReveal = (jobKey: string) => invoke<unknown>("plugin_job_reveal", { jobKey });
 export const cancelPluginJob = (jobKey: string) => invoke<void>("plugin_job_cancel", { jobKey });
 export const dismissPluginJob = (jobKey: string) => invoke<void>("plugin_job_dismiss", { jobKey });
 export const resumePluginJob = (jobKey: string) => invoke<void>("plugin_job_resume", { jobKey });

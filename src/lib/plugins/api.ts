@@ -13,6 +13,7 @@
  * providers and event listeners.
  */
 
+import { selectWorkspaceFile } from "$lib/domain/job-reveal";
 import { imageEditorRegistry, type ImageEditorTool } from "./image-editor-registry.svelte";
 import type { Command } from "$lib/state/commands.svelte";
 import { registerCommandContribution } from "$lib/state/commands.svelte";
@@ -133,6 +134,22 @@ export interface PluginStorage {
   setChecked?(value: Record<string, unknown>): Promise<void>;
   subscribe?(listener: (value: Record<string,unknown>)=>void): ()=>void;
 }
+
+/** The money one AI operation cost. */
+export interface JobCost {
+  /** Non-negative decimal in major units, at most 6 fractional digits, e.g. "0.045". Never a float. */
+  amount: string;
+  /** ISO 4217 code; "USD" today. */
+  currency: string;
+  /** True when computed from reported usage × a dated published rate card; false when the provider reported the charge itself. */
+  estimated: boolean;
+  /** Bounded (≤ 64 chars) identifier of the origin, e.g. "bfl.credits" or "ratecard:openai-images:2026-10-11". */
+  source: string;
+}
+/** Where a finished job's output can be shown. */
+export type JobReveal =
+  | { kind: "file"; path: string }
+  | { kind: "view"; viewId: string; directory: string; targetId: string };
 
 /** Window-owned background jobs survive plugin activation changes. */
 export interface PluginJobs {
@@ -624,14 +641,15 @@ export function createPluginContext(
       selectFile: async (path) => {
         const explorer = windowTabsManager.getActiveExplorer();
         if (!explorer) return;
-        if (!sameDirectory(explorer.state.currentPath, parentDir(path))) await explorer.navigateTo(parentDir(path));
-        if (windowTabsManager.getActiveExplorer() !== explorer || !sameDirectory(explorer.state.currentPath, parentDir(path))) return;
-        if (explorer.revealEntry(path)) return;
-        // Newly published files can precede the filesystem watcher's listing refresh.
-        const lease = explorer.captureMutation();
-        await explorer.refresh({ silent: true });
-        if (windowTabsManager.getActiveExplorer() !== explorer || !lease.current() || !lease.selectionCurrent()) return;
-        if (!explorer.revealEntry(path)) toastStore.show("This recorded file is no longer present", "info");
+        const result = await selectWorkspaceFile(path, {
+          currentDirectory: () => explorer.currentPath,
+          current: () => windowTabsManager.getActiveExplorer() === explorer,
+          navigate: directory => explorer.navigateTo(directory, { autoEnterSingleSubdir: false }),
+          refresh: () => explorer.refresh({ silent: true }),
+          select: path => explorer.revealEntry(path),
+          capture: () => { const lease = explorer.captureMutation(); return () => lease.current() && lease.selectionCurrent(); },
+        });
+        if (result === "missing") toastStore.show("This recorded file is no longer present", "info");
       },
       // Refresh every explorer instance (across tabs), silently — a plugin's
       // background job may have written a file into any pane's directory.

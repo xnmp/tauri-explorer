@@ -2,6 +2,8 @@
   Jobs Panel - Background job status viewer (Ctrl+J)
 -->
 <script lang="ts">
+  import { formatJobCost } from "$lib/domain/job-presentation";
+  import { jobRevealController } from "$lib/state/job-reveal";
   import { isJobActive, jobsStore, type Job } from "$lib/state/jobs.svelte";
   import { retryJobAndRefocus } from "$lib/composables/use-job-retry";
   import { basename } from "$lib/domain/path";
@@ -81,6 +83,7 @@
         {:else}
           <div class="job-list">
             {#each jobsStore.jobs as job (job.jobKey ?? `${job.source}:${job.id}`)}
+              {@const cost = job.status === "completed" ? formatJobCost(job.cost) : ""}
               <div class="job-item" class:completed={job.status === "completed"} class:error={job.status === "error"} data-job-id={job.id} tabindex="-1">
                 <div class="job-status">
                   {#if job.status === "running"}
@@ -108,7 +111,8 @@
                     <div class="job-output">{basename(job.outputPath)}</div>
                   {/if}
                 </div>
-                <div class="job-time">{formatElapsed(job)}</div>
+                <div class="job-time">{formatElapsed(job)}{cost ? ` · ${cost}` : ""}</div>
+                {#if job.status === "completed" && job.reveal}<button class="clear-btn" onclick={() => { onClose(); void jobRevealController.show(job); }}>Show image</button>{/if}
                 {#if job.jobKey && ["accepting", "running", "recovering"].includes(job.status)}<button class="clear-btn" aria-label={`Cancel ${job.label}`} disabled={!!job.controlPending || job.cancelRequested} onclick={() => jobsStore.controlJob(job.id, "cancel")}>{job.cancelRequested ? "Cancel requested" : "Cancel"}</button>{/if}
                 {#if job.status === "error" && job.retry}
                   <button class="clear-btn retry-btn" aria-label={`Retry ${job.label}`} disabled={job.retrying || !!job.controlPending}
@@ -315,6 +319,8 @@
 
   .job-time {
     flex-shrink: 0;
+    max-width: 45%;
+    overflow-wrap: anywhere;
     font-size: 12px;
     color: var(--text-tertiary);
     font-variant-numeric: tabular-nums;

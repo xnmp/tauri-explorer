@@ -67,6 +67,8 @@ export interface FileViewContribution {
   props?: Record<string, unknown>;
   /** Whether the view applies to a folder. Reactive; defaults to true. */
   available?(directory: string): boolean;
+  /** Load, show and select/focus the target; reject if it no longer exists. */
+  reveal?(targetId: string, pane: FileViewPane, signal: AbortSignal): Promise<void>;
 }
 
 export interface RegisteredFileView extends FileViewContribution { readonly pluginId: string }

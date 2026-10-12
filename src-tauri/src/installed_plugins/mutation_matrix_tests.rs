@@ -975,6 +975,8 @@ impl Fixture {
                 state: JobState::Accepting,
                 phase: None,
                 output_path: None,
+                cost: None,
+                reveal: None,
                 run_id: None,
                 error: None,
             })
@@ -1413,6 +1415,8 @@ fn invariant_a_delayed_workers_cannot_create_custody_or_jobs_after_lifecycle_cha
             state: JobState::Accepting,
             phase: None,
             output_path: None,
+            cost: None,
+            reveal: None,
             run_id: None,
             error: None,
         };

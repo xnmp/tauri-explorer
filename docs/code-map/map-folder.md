@@ -99,6 +99,10 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 
 ## src/lib/state/ — Svelte 5 runes stores + pure pane logic. Business state lives here.
 
+- `src/lib/state/job-reveal.ts` — lazy Show image entry point; cancellation also invalidates pending imports.
+- `src/lib/state/job-reveal-effects.ts` — deferred window-owned status refresh and workspace effects for Show image.
+- `src/lib/state/file-view-panes.ts` — mounted plugin-view pane handles shared with host reveal routing.
+
 - `clipboard-image-progress.svelte.ts` — independent accepted image-paste lifetimes, retained until clipboard/write/listing settlement; shared by normal and explicit Paste Image.
 
 - `src/lib/state/file-recovery.svelte.ts` — page-created revision-ordered recovery state, explicit inspection/action capabilities and independently retired subscription lifetimes; no module-global active store.
@@ -347,6 +351,9 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 
 ## src/lib/domain/ — pure logic, no framework deps. Test + reuse here.
 
+- `src/lib/domain/job-presentation.ts` — validates optional job cost/reveal metadata and formats exact decimal money.
+- `src/lib/domain/job-reveal.ts` — pure pane choice, present-file selection, reveal routing and latest-click cancellation policy.
+
 - `src/lib/domain/image-job-progress.ts` — elapsed image-job timing and explicitly estimated progress; median of the latest 20 successful completions with ≥3 samples, keyed cohort → source → 120s, plus overdue estimate wording.
 - `src/lib/domain/file-drop.ts` — validated internal payloads, full path-set verification and explicit DOM/native transport authority.
 - `src/lib/domain/native-drop-paths.ts` — filesystem-only path admission for native drops; excludes blob URLs, relative paths and traversal before any transfer, bookmark or terminal action.
@@ -370,7 +377,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `file-types.ts` — extension→type/category detection + display; `isGitRepoFolder` (git-repo folder icon selection, #463).
 - `open-with.ts` — single-file selection eligibility and explicit Linux-only application-choice availability.
 - `relative-time.ts` — shared compact elapsed-time labels for file metadata, today's git commits, and PR comments.
-- `path.ts` — path normalization/join/parent/relative helpers.
+- `path.ts` — path normalization/join/parent/relative helpers, including native parent/equality helpers that retain POSIX backslashes.
 - `paste-source.ts` — pure file-list Paste source selection: the app's own Copy/Cut while the system clipboard mirrors it (or, for Copy only, when it cannot be read), otherwise an external file list (#865).
 - `platform.ts` — isMac/isWindows/isLinux detection.
 - `wsl.ts` — WSL path recognition.

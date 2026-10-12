@@ -1,9 +1,12 @@
 /** Native presentation receipts. Pure rules; host revisions order observations. */
+import type { JobCost, JobReveal } from "$lib/plugins/api";
 export type NativeJobState = "accepting" | "running" | "recovering" | "needs_attention" | "completed" | "error" | "cancelled" | "discarded";
 export interface NativeJobRecord {
   jobKey: string; owner: { packageId: string; digest: string; incarnation: number }; operationId: string; jobId: number;
   ownershipEpoch?: number;
   estimateKey?: string | null;
+  cost?: JobCost;
+  reveal?: JobReveal;
   kind: string; label: string; originWindow: string; revision: number; sourceRevision?: number;
   createdAtMs: number; updatedAtMs: number;
   /** When the host first settled the job; absent while active and on jobs settled before it was recorded. */

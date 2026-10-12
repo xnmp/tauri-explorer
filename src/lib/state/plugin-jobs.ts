@@ -9,11 +9,14 @@ import { isTauri } from "$lib/api/common";
 import { nativeJobTerminal, type NativeJobRecord } from "$lib/domain/native-plugin-jobs";
 import { installedPackages } from "$lib/plugins/installed";
 
+import type { JobCost, JobReveal } from "$lib/plugins/api";
+import { formatJobCost, jobCost, jobReveal } from "$lib/domain/job-presentation";
+
 const JOB_LABELS = { upscale: "Upscale", "nano-banana": "Nano Banana" } as const;
 export type PluginJobKind = string;
 
 type Outcome =
-  | { status: "completed"; outputPath: string; warning?: string }
+  | { status: "completed"; outputPath: string; warning?: string; cost?: JobCost; reveal?: JobReveal }
   | { status: "error"; error: string };
 
 interface JobRegistration {
@@ -33,7 +36,7 @@ type StartResult = { ok: true; data: number } | { ok: false; error: string };
 interface Dependencies {
   listen<T>(name: string, handler: (payload: T) => void): Promise<UnlistenFn>;
   add(registration: JobRegistration): void;
-  complete(id: number, outputPath: string): void;
+  complete(id: number, outputPath: string, presentation?: { cost?: JobCost; reveal?: JobReveal }): void;
   fail(id: number, error: string): void;
   success(message: string): void;
   error(message: string): void;
@@ -97,8 +100,9 @@ export function createPluginJobsController(deps: Dependencies) {
     settled.add(key);
     retainBounded(settled, 1024);
     if (outcome.status === "completed") {
-      deps.complete(id, outcome.outputPath);
-      deps.success(`${actionOf(registration)} complete: ${basename(outcome.outputPath)}${outcome.warning ? `. ${outcome.warning}` : ""}`);
+      if (outcome.cost || outcome.reveal) deps.complete(id, outcome.outputPath, { cost: outcome.cost, reveal: outcome.reveal });
+      else deps.complete(id, outcome.outputPath);
+      deps.success(`${actionOf(registration)} complete: ${basename(outcome.outputPath)}${outcome.cost ? ` · ${formatJobCost(outcome.cost)}` : ""}${outcome.warning ? `. ${outcome.warning}` : ""}`);
       void deps.refresh().catch((error) => console.error("[plugin-jobs] refresh failed:", error));
     } else {
       deps.fail(id, outcome.error);
@@ -112,7 +116,7 @@ export function createPluginJobsController(deps: Dependencies) {
     if(!/^[a-z0-9-]{1,99}$/.test(kind))return Promise.reject(new Error("Invalid plugin job kind"));
     const acquisition=(async()=>{
       const results=await Promise.allSettled([
-        deps.listen<{jobId:number;outputPath:string;warning?:string}>(`${kind}-complete`,(payload)=>current===session&&publish(kind,payload.jobId,{status:"completed",outputPath:payload.outputPath,warning:payload.warning})),
+        deps.listen<{jobId:number;outputPath:string;warning?:string;cost?:unknown;reveal?:unknown}>(`${kind}-complete`,(payload)=>current===session&&publish(kind,payload.jobId,{status:"completed",outputPath:payload.outputPath,warning:payload.warning,cost:jobCost(payload.cost),reveal:jobReveal(payload.reveal)})),
         deps.listen<{jobId:number;error:string}>(`${kind}-error`,(payload)=>current===session&&publish(kind,payload.jobId,{status:"error",error:payload.error})),
       ]);
       const acquired=results.flatMap((result)=>result.status==="fulfilled"?[result.value]:[]);
@@ -238,7 +242,7 @@ export function createPluginJobsController(deps: Dependencies) {
 export const windowJobSink: Omit<Dependencies, "listen"> = {
   add: ({ id, label, detail, kind, presentation, owner, retry }) => jobsStore.addJob(id, label, detail, kind, presentation, { owner, retry,
     nativeOwner: owner ? installedPackages().find((entry) => entry.manifest.contributions.includes(owner))?.manifest.id : undefined }),
-  complete: (id, outputPath) => jobsStore.completeJob(id, outputPath),
+  complete: (id, outputPath, presentation) => jobsStore.completeJob(id, outputPath, presentation),
   fail: (id, error) => jobsStore.failJob(id, error),
   success: (message) => toastStore.show(message, "success"),
   error: (message) => toastStore.error(message),
@@ -253,7 +257,7 @@ const nativeJobs = createNativePluginJobsController({
   apply: (records) => { jobsStore.applyNative(records); pluginJobsController.observeNative(records); },
   error: (message) => jobsStore.setMonitoringError(message),
   toast: (job) => {
-    if (job.state === "completed") { toastStore.show(`${job.label} complete`, "success"); void windowJobSink.refresh().catch(() => {}); }
+    if (job.state === "completed") { toastStore.show(`${job.label} complete${formatJobCost(job.cost) ? ` · ${formatJobCost(job.cost)}` : ""}`, "success"); void windowJobSink.refresh().catch(() => {}); }
     else if (job.state === "error") toastStore.error(`${job.label} failed: ${(job.error ?? "Generation failed").slice(0,100)}`);
   },
 });

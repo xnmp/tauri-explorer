@@ -740,6 +740,8 @@ fn stop_recovery_commits_execution_release_and_presentation_policy_together() {
             state: JobState::Accepting,
             phase: None,
             output_path: None,
+            cost: None,
+            reveal: None,
             run_id: None,
             error: None,
         })
@@ -1594,6 +1596,8 @@ fn compatible_preparation_retention_joins_package_digest_across_incarnations() {
                 state: JobState::Accepting,
                 phase: None,
                 output_path: None,
+                cost: None,
+                reveal: None,
                 run_id: None,
                 error: None,
             })
@@ -2623,5 +2627,58 @@ fn tenth_orphaned_recapture_artifacts_are_collected_by_gc_and_removal() {
         s.gc().unwrap();
         assert!(!Path::new(&path).exists());
         assert_eq!(charged(&s), 0);
+    }
+}
+
+#[test]
+fn receipt_billing_validates_bounds_and_projects_consumer_compatibility() {
+    let a = admission("billing", vec![]);
+    let mut receipt = provider_receipt("billing", 1, None);
+    let billing = serde_json::json!({"cost":{"amount":"0.045","currency":"USD","estimated":true,"source":"bfl.credits"},"evidence":{"schema":"bfl.v1","values":{"credits":1,"model":"image","charged":true,"unknown":null}}});
+    receipt["billing"] = billing.clone();
+    let validated = super::receipt::validate(&receipt, &a).unwrap();
+    assert_eq!(validated["billing"], billing);
+    assert_eq!(
+        super::receipt::for_consumer(validated.clone(), true),
+        validated
+    );
+    let legacy = super::receipt::for_consumer(validated.clone(), false);
+    assert!(legacy.get("billing").is_none());
+    assert_eq!(legacy["version"], 1);
+    assert!(validated.get("billing").is_some());
+    let mut invalids = vec![
+        serde_json::json!(null),
+        serde_json::json!({"cost":null}),
+        serde_json::json!({"evidence":null}),
+        serde_json::json!({"unknown":true}),
+    ];
+    for (field, value) in [
+        ("amount", serde_json::json!(0.1)),
+        ("amount", serde_json::json!("-0.1")),
+        ("amount", serde_json::json!("0.0000001")),
+        ("currency", serde_json::json!("usd")),
+        ("source", serde_json::json!("x".repeat(65))),
+    ] {
+        let mut invalid = billing.clone();
+        invalid["cost"][field] = value;
+        invalids.push(invalid);
+    }
+    for evidence in [
+        serde_json::json!({"schema":"x".repeat(65),"values":{}}),
+        serde_json::json!({"schema":"v1","values":{"nested":{}}}),
+        serde_json::json!({"schema":"v1","values":{"array":[]}}),
+        serde_json::json!({"schema":"v1","values":{"text":"x".repeat(129)}}),
+        serde_json::json!({"schema":"v1","values":{ "x".repeat(65): 1 }}),
+        serde_json::json!({"schema":"v1","values": (0..33).map(|n| (format!("k{n}"), serde_json::json!(n))).collect::<serde_json::Map<String,serde_json::Value>>()}),
+    ] {
+        invalids.push(serde_json::json!({"evidence":evidence}));
+    }
+    for billing in invalids {
+        receipt["billing"] = billing;
+        assert!(
+            super::receipt::validate(&receipt, &a).is_err(),
+            "{}",
+            receipt["billing"]
+        );
     }
 }

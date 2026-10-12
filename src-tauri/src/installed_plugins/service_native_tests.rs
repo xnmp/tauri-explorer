@@ -1002,6 +1002,8 @@ fn review_host_spool_upgrade(
             state: JobState::Accepting,
             phase: None,
             output_path: None,
+            cost: None,
+            reveal: None,
             run_id: None,
             error: None,
         })
@@ -1356,6 +1358,8 @@ fn review_consumer_upgrade(old_role: &str, incompatible_upgrade: bool) {
                 state: JobState::Accepting,
                 phase: None,
                 output_path: None,
+                cost: None,
+                reveal: None,
                 run_id: None,
                 error: None,
             })

@@ -7,7 +7,8 @@
   import { dialogRegistry } from "$lib/plugins/dialog-registry.svelte";
   import { conflictResolver } from "$lib/state/conflict-resolver.svelte";
   import { toastStore } from "$lib/state/toast.svelte";
-  import ProgressDialog from "./ProgressDialog.svelte";
+  import { operationsManager } from "$lib/state/operations.svelte";
+  import { jobsStore } from "$lib/state/jobs.svelte";
   import ToastOverlay from "./ToastOverlay.svelte";
   import { openWithStore } from "$lib/state/open-with.svelte";
 
@@ -20,6 +21,13 @@
   const notifyError = (message: string) => { toastStore.error(message); };
   const dialogCrash = (label: string, rollback?: () => void) =>
     createDialogCrashHandler(label, rollback, notifyError);
+
+  // Begin loading when work is accepted, before the file-operation display delay.
+  const ProgressDialog = useLazyDialog({
+    label: "Background progress",
+    isOpen: () => operationsManager.operations.length > 0 || jobsStore.jobs.some(job => job.presentation === "image"),
+    load: () => import("./ProgressDialog.svelte"),
+  }, notifyError);
 
   const PluginDialogMount = useLazyDialog({
     label: "Plugin dialog", isOpen: () => dialogRegistry.openDialogs.length > 0,
@@ -232,7 +240,11 @@
     />
   </svelte:boundary>
 {/if}
-<ProgressDialog />
+{#if ProgressDialog.component}
+  <svelte:boundary onerror={dialogCrash("Background progress")}>
+    <ProgressDialog.component />
+  </svelte:boundary>
+{/if}
 {#if ConflictDialog.component}
   <svelte:boundary onerror={dialogCrash("Conflict dialog", () => conflictResolver.resolve("cancel", true))}>
     <ConflictDialog.component />

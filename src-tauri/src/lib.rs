@@ -510,6 +510,7 @@ pub fn run_with_process_entry(launch_dir: Option<String>, t_process_entry: std::
             installed_plugins::set_plugin_package_enabled,
             installed_plugins::plugin_backend_invoke,
             installed_plugins::plugin_jobs_snapshot,
+            installed_plugins::plugin_job_reveal,
             installed_plugins::plugin_job_cancel,
             installed_plugins::plugin_job_resume,
             installed_plugins::plugin_job_dismiss,

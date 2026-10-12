@@ -1,4 +1,4 @@
-# ADR 0028: Report attachment admission and public hosting
+# ADR 0029: Report attachment admission and public hosting
 
 Status: Accepted
 

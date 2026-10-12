@@ -26,7 +26,7 @@ Deploy the website relay along with the app; an older image-only relay rejects
 videos, and the app retains attachments for retry/fallback until the window
 closes. Attachments remain memory-only; only report text survives app restart.
 
-[ADR 0028](../adr/0028-report-attachment-admission-and-hosting.md) governs the
+[ADR 0029](../adr/0029-report-attachment-admission-and-hosting.md) governs the
 copied-file and public-hosting boundaries, including signature-check limits,
 disclosure, submission uncertainty and best-effort cleanup.
 

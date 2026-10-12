@@ -1,5 +1,9 @@
 {
   "compilerOptions": {
+    // Keep repeated public typechecks within their existing deadline without
+    // skipping source/dependency validation. Compiler metadata is disposable.
+    "incremental": true,
+    "tsBuildInfoFile": "../node_modules/.cache/native-suite.tsbuildinfo",
     "target": "ES2022",
     "module": "ESNext",
     "moduleResolution": "bundler",

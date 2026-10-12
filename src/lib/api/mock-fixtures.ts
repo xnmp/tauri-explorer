@@ -176,6 +176,7 @@ export const mockFiles: Record<string, FileEntry[]> = {
     file("recording.mp4", "/home/user/Videos/recording.mp4", 52428800),
     file("tutorial.mkv", "/home/user/Videos/tutorial.mkv", 104857600),
     file("soundtrack.mp3", "/home/user/Videos/soundtrack.mp3", 8388608),
+    file("unreadable.avi", "/home/user/Videos/unreadable.avi", 1024),
   ],
   "/home/user/Documents/project": [
     dir("src", "/home/user/Documents/project/src"),

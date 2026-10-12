@@ -52,6 +52,7 @@ pub fn run_process_supervisor() -> Option<i32> {
     }
 }
 mod load_diagnostics;
+mod media_duration;
 mod nano_banana;
 mod palette;
 mod platform;
@@ -398,6 +399,7 @@ pub fn run_with_process_entry(launch_dir: Option<String>, t_process_entry: std::
             thumbnails::get_thumbnail_data,
             thumbnails::get_micro_thumbnail,
             thumbnails::get_video_thumbnail_data,
+            media_duration::get_media_durations,
             thumbnails::get_folder_preview,
             thumbnails::set_ffmpeg_path,
             thumbnails::clear_thumbnail_cache,
@@ -468,6 +470,8 @@ pub fn run_with_process_entry(launch_dir: Option<String>, t_process_entry: std::
             git_actions::git_branch_behind_upstream,
             git_log::git_branch_authors,
             github::git_open_prs,
+            github::git_pr_action,
+            github::git_pr_context,
             github::git_failed_ci_checks,
             github::git_failed_ci_check_log,
             git_actions::git_delete_branch,

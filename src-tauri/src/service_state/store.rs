@@ -868,10 +868,7 @@ impl Store {
             let delivery = Self::terminal_delivery_at(tx, &a)?;
             match (disposition, &delivery) {
                 ("acquired", super::receipts::TerminalDelivery::Acquired(id))
-                    if Some(id.as_str()) == receipt =>
-                {
-                    ()
-                }
+                    if Some(id.as_str()) == receipt => {}
                 ("acquired", _) => {
                     return Err(reject("acquisition receipt does not prove this output"))
                 }
@@ -1081,6 +1078,7 @@ impl Store {
                 }
             })
     }
+    #[cfg(test)]
     pub fn busy(&self, package: &str) -> Result<bool> {
         if self.snapshot_jobs()?.jobs.iter().any(|j| {
             j.owner.package_id == package
@@ -1194,6 +1192,7 @@ impl Store {
         }
         Ok(rows)
     }
+    #[cfg(test)]
     pub fn list_preparations(&self) -> Result<Vec<PackageGeneration>> {
         let mut owners = Vec::new();
         for (_, owner) in self.preparation_rows()? {

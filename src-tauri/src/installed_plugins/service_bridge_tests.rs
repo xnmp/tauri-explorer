@@ -2082,16 +2082,14 @@ fn review_failed_late_success_publication_remains_in_automatic_recovery() {
     assert_eq!(s.provider_receipt("consumer", op).unwrap(), Some(success));
     assert_eq!(s.get("consumer", op).unwrap().unwrap().output, Some(output));
     assert!(!s.execution_released("consumer", op).unwrap());
-    assert!(matches!(
-        call(&s, "start", request(op), |method, _| {
-            assert!(
-                method.ends_with(".status"),
-                "Unknown must never be replayed"
-            );
-            Ok(s.provider_receipt("consumer", op).unwrap().unwrap())
-        }),
-        Ok(_)
-    ));
+    assert!(call(&s, "start", request(op), |method, _| {
+        assert!(
+            method.ends_with(".status"),
+            "Unknown must never be replayed"
+        );
+        Ok(s.provider_receipt("consumer", op).unwrap().unwrap())
+    })
+    .is_ok());
 }
 
 #[test]

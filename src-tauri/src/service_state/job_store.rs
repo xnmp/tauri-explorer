@@ -439,6 +439,7 @@ impl Store {
     /// Acknowledgement is durable delivery proof. Complete from the acquired
     /// consumer copy and its already pinned run, without asking the provider
     /// for bytes it has legitimately collected or inventing a consumer run.
+    #[cfg(test)]
     pub fn complete_acquired_job(&self, consumer: &str, op: &str) -> Result<Option<JobRecord>> {
         self.transaction(|conn| {
             let Some(a) = Self::record(conn, consumer, op)? else {

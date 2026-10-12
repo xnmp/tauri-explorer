@@ -2280,6 +2280,7 @@ pub(super) struct DrainGuard {
     /// plugin ready, leaves it serving exactly as before the drain.
     quiesced: AtomicBool,
 }
+#[cfg(test)]
 pub(super) fn begin_drain(id: &str) -> Result<DrainGuard, AppError> {
     begin_drain_with(id, false)
 }

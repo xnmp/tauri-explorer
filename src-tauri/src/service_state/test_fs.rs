@@ -86,7 +86,7 @@ impl TestFs {
     pub fn created(&self, path: &Path) {
         let mut state = self.0.lock().unwrap();
         state.entries.entry(path.into()).or_insert(Entry::Missing);
-        state.contents.entry(path.into()).or_insert_with(Vec::new);
+        state.contents.entry(path.into()).or_default();
     }
     pub fn file_synced(&self, path: &Path) {
         self.0.lock().unwrap().contents.remove(path);
@@ -103,15 +103,6 @@ impl TestFs {
             };
             state.entries.entry(path.into()).or_insert(entry);
         }
-    }
-    pub fn unflushed_bytes(&self) -> u64 {
-        self.0
-            .lock()
-            .unwrap()
-            .removed
-            .values()
-            .map(|v| v.len() as u64)
-            .sum()
     }
     pub fn possible_file_identity(&self, path: &Path) -> String {
         crate::files::model_file_identity(path).unwrap_or_else(|_| {

@@ -81,6 +81,7 @@ impl Store {
                 && preparation_job_live(job)
         }))
     }
+    #[cfg(test)]
     pub fn preparation_retained(&self, consumer: &str, operation: &str) -> Result<bool> {
         if !identity(consumer) || !identity(operation) {
             return Err(reject("invalid preparation identity"));
@@ -488,6 +489,7 @@ impl Store {
             Ok(())
         })
     }
+    #[cfg(test)]
     pub fn prepare_consumer_removal(&self, package: &str) -> Result<()> {
         if !identity(package) {
             return Err(reject("invalid consumer package"));
@@ -531,9 +533,11 @@ impl Store {
     /// The common custody boundary for explicit removal and incompatible
     /// replacement. Enumerate the ledger, never claims(): settled and acquired
     /// admissions, preparations and presentation-only jobs are all included.
+    #[cfg(test)]
     pub fn abandon_package_outputs(&self, package: &str) -> Result<Vec<super::job::JobRecord>> {
         self.abandon_package_operations(package, |_| false)
     }
+    #[cfg(test)]
     pub fn abandon_package_operations(
         &self,
         package: &str,

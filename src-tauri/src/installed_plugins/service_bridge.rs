@@ -517,7 +517,7 @@ pub(super) fn begin_test_in(
         transfer_receipt: None,
     })?;
     let winner = if a.phase == AdmissionPhase::Reserved {
-        store.claim_forwarding(&caller, operation)?.1
+        store.claim_forwarding(caller, operation)?.1
     } else {
         false
     };

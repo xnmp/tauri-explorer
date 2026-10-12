@@ -315,14 +315,6 @@ fn writer(
             }
         })
 }
-fn reader(
-    pipe: impl pipe_capture::OutputPipe,
-    limit: usize,
-    overflow: Arc<AtomicBool>,
-    stop: Arc<AtomicBool>,
-) -> io::Result<JoinHandle<io::Result<Vec<u8>>>> {
-    pipe_capture::spawn(pipe, limit, overflow, stop)
-}
 /// SDK3 owned process path. Original args/env/cwd stay on the original
 /// Command. With `input`, stdin is a pipe that receives exactly those bytes and
 /// is then closed; without it, the caller's stdin configuration is used.
@@ -331,16 +323,6 @@ fn reader(
 /// Failures before the leaf is spawned (cancellation, supervision setup, a
 /// spawn error) are `NotStarted`: the program never executed. Every later
 /// failure is `Started`.
-pub(crate) fn run(
-    command: &mut Command,
-    cancelled: impl Fn() -> bool,
-    limits: (usize, usize),
-    cancel_message: &'static str,
-    input: Option<Vec<u8>>,
-) -> Result<Output, ProcessRunError> {
-    run_streaming(command, cancelled, limits, cancel_message, input, None)
-}
-
 pub(crate) fn run_streaming(
     command: &mut Command,
     cancelled: impl Fn() -> bool,
@@ -517,7 +499,7 @@ mod tests {
         let overflow = Arc::new(AtomicBool::new(false));
         // The reader was descheduled until after its owner's exit decision.
         let stop = Arc::new(AtomicBool::new(true));
-        let bytes = reader(output, png.len(), overflow.clone(), stop)
+        let bytes = pipe_capture::spawn_streaming(output, png.len(), overflow.clone(), stop, None)
             .unwrap()
             .join()
             .unwrap()

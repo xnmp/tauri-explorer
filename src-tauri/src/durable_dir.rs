@@ -100,9 +100,9 @@ pub(crate) fn sync_file(path: &Path) -> io::Result<()> {
     }
     #[cfg(test)]
     {
-        // Exercise Windows' writable-handle requirement on every test OS.
+        // Keep the probe non-mutating; sync_all enforces writable access on Windows.
         use std::io::Write;
-        (&handle).write(&[])?;
+        (&handle).write_all(&[])?;
         FILE_SYNCS.with(|paths| paths.borrow_mut().push(path.to_path_buf()));
     }
     handle.sync_all()
@@ -147,6 +147,7 @@ mod tests {
         let file = root.path().join("file");
         std::fs::write(&file, b"bytes").unwrap();
         super::sync_file(&file).unwrap();
+        assert_eq!(std::fs::read(&file).unwrap(), b"bytes");
         assert!(super::sync_file(root.path()).is_err());
         assert!(super::sync_file(&root.path().join("absent")).is_err());
     }

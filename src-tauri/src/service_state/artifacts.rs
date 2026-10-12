@@ -1479,9 +1479,9 @@ impl Store {
         // on failure the artifact row stays, so a later sweep retries it.
         let mut collected = true;
         for path in [
-            self.bytes_path(&handle)?,
-            self.pending_path(&handle)?,
-            self.stage_path(&handle)?,
+            self.bytes_path(handle)?,
+            self.pending_path(handle)?,
+            self.stage_path(handle)?,
         ] {
             let removed = self.unlink_artifact_file(&path);
             match removed {

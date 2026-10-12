@@ -1150,9 +1150,10 @@ fn upgrade_preserves_compatible_custody_and_authority_and_releases_incompatible_
                         }
                         .expect("every compatible phase retains recovery authority");
                         assert_eq!(authority, fx.generation(role));
-                        if before.output.is_some()
-                            && phase != Phase::Released
-                            && phase != Phase::Acquired
+                        if let Some(output) = before
+                            .output
+                            .as_ref()
+                            .filter(|_| phase != Phase::Released && phase != Phase::Acquired)
                         {
                             assert!(fx
                                 .store
@@ -1160,7 +1161,7 @@ fn upgrade_preserves_compatible_custody_and_authority_and_releases_incompatible_
                                     &fx.generation(Role::Consumer),
                                     fx.id(Role::Consumer),
                                     OP,
-                                    before.output.as_ref().unwrap()
+                                    output
                                 )
                                 .is_ok());
                         }

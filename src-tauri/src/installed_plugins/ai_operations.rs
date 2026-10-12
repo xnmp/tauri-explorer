@@ -516,10 +516,9 @@ impl AutomaticPort for LiveAutomatic {
                 || store.success_known(a)?
                 || retained_output
                 || storage_blocked)
+            && (!provider_compatible || backend::ensure(&a.provider.package_id).is_err())
         {
-            if !provider_compatible || backend::ensure(&a.provider.package_id).is_err() {
-                reconciliation_failed(a, ReconciliationPhase::Startup)?;
-            }
+            reconciliation_failed(a, ReconciliationPhase::Startup)?;
         }
         let _fence =
             backend::IdleCallFence::acquire(&[&a.consumer.package_id, &a.provider.package_id])?;

@@ -504,14 +504,6 @@ pub(super) fn publish(root: &Path, installed: Installed) -> Result<Installed, Ap
     Ok(installed)
 }
 
-pub(super) fn uninstall(root: &Path, id: &str) -> Result<(), AppError> {
-    let mut index = list(root)?;
-    index.retain(|entry| entry.manifest.id != id);
-    write_index(root, &index)
-    // Immutable payloads and user data remain for restart/rollback; future GC
-    // may retire versions only after their process and webview leases drain.
-}
-
 pub(super) fn frontend_asset(root: &Path, path: &str) -> Result<(Vec<u8>, &'static str), AppError> {
     let segments: Vec<_> = path.trim_start_matches('/').split('/').collect();
     if segments.len() < 3 {
@@ -606,7 +598,7 @@ pub(super) mod tests {
         path
     }
     #[test]
-    fn installing_serves_only_declared_frontend_assets_and_removal_preserves_payload() {
+    fn installing_serves_only_declared_frontend_assets() {
         let profile = tempfile::tempdir().unwrap();
         let root = profile.path().join("plugins");
         let input = archive(profile.path(), |_| {});
@@ -621,10 +613,6 @@ pub(super) mod tests {
         );
         assert!(frontend_asset(&root, &format!("{base}backend/worker")).is_err());
         assert!(frontend_asset(&root, &format!("{base}../installed.json")).is_err());
-        let payload = payload_path(&root, &installed);
-        uninstall(&root, &installed.manifest.id).unwrap();
-        assert!(list(&root).unwrap().is_empty());
-        assert!(payload.join("backend/worker").is_file());
     }
     #[test]
     fn incompatible_or_corrupted_archives_never_activate() {

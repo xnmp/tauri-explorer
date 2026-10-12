@@ -174,29 +174,32 @@ fn main() {
             || backend_dead()
     };
     let result = if args[0].starts_with("fallback-") {
-        process_ext::output_with_input(
+        process_ext::output_with_input_streaming(
             &mut command,
             cancellation,
             (65536, 65536),
             "fixture cancelled",
             input,
+            None,
         )
     } else {
-        process_supervisor::run(
+        process_supervisor::run_streaming(
             &mut command,
             cancellation,
             (65536, 65536),
             "fixture cancelled",
             input,
+            None,
         )
     };
     if args[0] == "reuse" {
         let first = result.unwrap();
-        let second = process_supervisor::run(
+        let second = process_supervisor::run_streaming(
             &mut command,
             || false,
             (65536, 65536),
             "fixture cancelled",
+            None,
             None,
         )
         .unwrap();

@@ -157,14 +157,6 @@ pub(super) fn admit<T>(
 
 /// Run an admitted request. `supervised` selects the SDK 3 Unix
 /// parent-death-safe process group; elsewhere the owned tree of `process_ext`.
-pub(super) fn execute(
-    request: ProcessRequest,
-    cancelled: impl Fn() -> bool,
-    supervised: bool,
-) -> Result<Output, ProcessRunError> {
-    execute_streaming(request, cancelled, supervised, None)
-}
-
 pub(super) fn execute_streaming(
     request: ProcessRequest,
     cancelled: impl Fn() -> bool,
@@ -237,7 +229,8 @@ mod tests {
     /// Runs the broker's own composition: validation, then execution.
     fn run(params: Value, cancelled: impl Fn() -> bool) -> Result<Output, String> {
         let request = parse(&params).map_err(code_of)?;
-        execute(request, cancelled, false).map_err(|failure| failure_code(&failure).to_owned())
+        execute_streaming(request, cancelled, false, None)
+            .map_err(|failure| failure_code(&failure).to_owned())
     }
     /// A deadlock must fail the test, not hang it.
     fn within<T: Send + 'static>(limit: Duration, work: impl FnOnce() -> T + Send + 'static) -> T {

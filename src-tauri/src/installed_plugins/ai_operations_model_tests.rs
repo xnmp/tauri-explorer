@@ -3768,17 +3768,17 @@ impl Machine {
             {
                 return Err(fail("automatic settlement released live worker execution"));
             }
-            if op.removed && op.acquisition_committed {
-                if a.disposition.as_deref() != Some("acquired")
+            if op.removed
+                && op.acquisition_committed
+                && (a.disposition.as_deref() != Some("acquired")
                     || self.notices.contains_key(&op.id)
                     || checked(
                         self.store()
                             .job_for_operation(&op.consumer.package_id, &op.id),
                     )?
-                    .is_none_or(|j| j.state != JobState::Completed)
-                {
-                    return Err(fail("removal misclassified durably acquired output"));
-                }
+                    .is_none_or(|j| j.state != JobState::Completed))
+            {
+                return Err(fail("removal misclassified durably acquired output"));
             }
             if op.removed
                 && (a.phase != AdmissionPhase::Released

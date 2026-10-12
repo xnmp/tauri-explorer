@@ -92,16 +92,6 @@ pub(crate) fn output_with_stdin(
 /// exactly those bytes and is then closed; without it, stdin is null. Failures
 /// are classified by whether the program could have executed. A completed
 /// child's original exit and output remain authoritative after cancellation.
-pub(crate) fn output_with_input(
-    command: &mut Command,
-    cancelled: impl Fn() -> bool,
-    limits: (usize, usize),
-    cancel_message: &'static str,
-    input: Option<Vec<u8>>,
-) -> Result<Output, ProcessRunError> {
-    output_with_input_streaming(command, cancelled, limits, cancel_message, input, None)
-}
-
 pub(crate) fn output_with_input_streaming(
     command: &mut Command,
     cancelled: impl Fn() -> bool,
@@ -226,10 +216,12 @@ fn run(
         &terminate,
         &launcher_exited,
         cancelled,
-        limits,
-        cancel_message,
-        completion,
-        stdout_sink,
+        SupervisionParams {
+            limits,
+            cancel_message,
+            completion,
+            stdout_sink,
+        },
     );
     if let Some(writer) = writer {
         // Termination closed every reader of stdin, so a blocked write fails
@@ -252,16 +244,26 @@ fn write_input(
         })
 }
 
+struct SupervisionParams {
+    limits: (usize, usize),
+    cancel_message: &'static str,
+    completion: Completion,
+    stdout_sink: Option<std::fs::File>,
+}
+
 fn supervise(
     child: &mut std::process::Child,
     terminate: &impl Fn(&mut std::process::Child),
     launcher_exited: &impl Fn(),
     cancelled: impl Fn() -> bool,
-    limits: (usize, usize),
-    cancel_message: &'static str,
-    completion: Completion,
-    stdout_sink: Option<std::fs::File>,
+    params: SupervisionParams,
 ) -> Result<Output, AppError> {
+    let SupervisionParams {
+        limits,
+        cancel_message,
+        completion,
+        stdout_sink,
+    } = params;
     let stdout = child
         .stdout
         .take()
@@ -580,11 +582,12 @@ mod tests {
         drop(writer);
         let overflow = Arc::new(AtomicBool::new(false));
         // A successful child has exited but its output reader has not run.
-        let bytes = super::pipe_capture::spawn(
+        let bytes = super::pipe_capture::spawn_streaming(
             output,
             png.len(),
             overflow,
             Arc::new(AtomicBool::new(true)),
+            None,
         )
         .unwrap()
         .join()
@@ -663,7 +666,7 @@ mod tests {
         ]);
         command.arg(&pid_file);
         let calls = std::cell::Cell::new(0);
-        let output = super::output_with_input(
+        let output = super::output_with_input_streaming(
             &mut command,
             || {
                 calls.set(calls.get() + 1);
@@ -708,6 +711,7 @@ mod tests {
             },
             (1024, 1024),
             "plugin retired",
+            None,
             None,
         )
         .expect("completed paid execution must retain its original output");

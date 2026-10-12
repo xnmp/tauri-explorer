@@ -104,15 +104,6 @@ impl<T: Read + AsRawHandle + Send + 'static> OutputPipe for T {
     }
 }
 
-pub(crate) fn spawn(
-    pipe: impl OutputPipe,
-    limit: usize,
-    overflow: Arc<AtomicBool>,
-    retire: Arc<AtomicBool>,
-) -> io::Result<JoinHandle<io::Result<Vec<u8>>>> {
-    spawn_streaming(pipe, limit, overflow, retire, None)
-}
-
 pub(crate) fn spawn_streaming(
     mut pipe: impl OutputPipe,
     limit: usize,

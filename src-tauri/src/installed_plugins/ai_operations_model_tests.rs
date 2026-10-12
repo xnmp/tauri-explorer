@@ -221,7 +221,7 @@ fn reply_boundary(point: u8) -> &'static str {
         "spool-stderr-partial",
         "spool-stderr-full",
         "spool-stderr-file-sync",
-        "spool-capture-durable",
+        "spool-seal-durable",
         "spool-intent-commit",
         "spool-pending-create",
         "spool-pending-partial",
@@ -520,6 +520,7 @@ struct Operation {
     valid_original: bool,
     durable_original: bool,
     completion_identified: bool,
+    sealed_original: bool,
     original: Vec<u8>,
     removed: bool,
     stage: Option<OutputStage>,
@@ -664,8 +665,9 @@ struct Machine {
     healthy: bool,
     unlink_failure: bool,
     sync_failure: bool,
+    deferred_consumer_attempts: Cell<usize>,
     incarnation: u64,
-    provider_incarnation: u64,
+    broker_incarnations: BTreeMap<String, u64>,
     dirty_writes: BTreeMap<PathBuf, Vec<u8>>,
     custodyless: Vec<CustodylessSpool>,
     raw_slots: [Option<usize>; SLOTS],
@@ -767,6 +769,14 @@ impl Machine {
             .register_consumer_root(&fixture.second_consumer.manifest.id, second_data)
             .unwrap();
         let oracle = store.test_fs.clone();
+        let broker_incarnations = [
+            fixture.id(Role::Consumer),
+            fixture.id(Role::Provider),
+            &fixture.second_consumer.manifest.id,
+        ]
+        .into_iter()
+        .map(|id| (id.to_owned(), 10))
+        .collect();
         Self {
             pending_idle: RefCell::new(BTreeMap::new()),
             idle_proofs: RefCell::new(BTreeMap::new()),
@@ -781,8 +791,9 @@ impl Machine {
             healthy: true,
             unlink_failure: false,
             sync_failure: false,
+            deferred_consumer_attempts: Cell::new(0),
             incarnation: 10,
-            provider_incarnation: 10,
+            broker_incarnations,
             dirty_writes: BTreeMap::new(),
             custodyless: vec![],
             raw_slots: [None; SLOTS],
@@ -799,19 +810,12 @@ impl Machine {
     }
     fn participant_generation(&self, index: usize, provider: bool) -> Option<PackageGeneration> {
         let ops = self.operations.borrow();
-        let op = &ops[index];
-        let owner = if provider { &op.provider } else { &op.consumer };
-        if owner.package_id == self.fixture.id(role(provider)) {
-            return self.generation(role(provider));
-        }
-        let installed = package::list(&self.fixture.root)
-            .ok()?
-            .into_iter()
-            .find(|p| p.enabled && p.manifest.id == owner.package_id)?;
-        Some(PackageGeneration {
-            digest: installed.digest,
-            ..owner.clone()
-        })
+        let owner = if provider {
+            &ops[index].provider
+        } else {
+            &ops[index].consumer
+        };
+        self.generation_for_package(&owner.package_id)
     }
     fn profile(&self) -> super::super::Profile<'_> {
         super::super::Profile {
@@ -820,18 +824,24 @@ impl Machine {
         }
     }
     fn generation(&self, role: Role) -> Option<PackageGeneration> {
-        self.fixture
-            .installed(role)
-            .filter(|p| p.enabled)
+        self.generation_for_package(self.fixture.id(role))
+    }
+    fn generation_for_package(&self, package: &str) -> Option<PackageGeneration> {
+        let incarnation = *self.broker_incarnations.get(package)?;
+        package::list(&self.fixture.root)
+            .ok()?
+            .into_iter()
+            .find(|p| p.manifest.id == package && p.enabled)
             .map(|p| PackageGeneration {
                 package_id: p.manifest.id,
                 digest: p.digest,
-                incarnation: if matches!(role, Role::Provider) {
-                    self.provider_incarnation
-                } else {
-                    self.incarnation
-                },
+                incarnation,
             })
+    }
+    fn replace_broker(&mut self, package: &str) {
+        self.incarnation += 1;
+        self.broker_incarnations
+            .insert(package.into(), self.incarnation);
     }
     fn publish(&self, index: usize, failure: bool) -> Result<(), AppError> {
         let ops = self.operations.borrow();
@@ -864,20 +874,12 @@ impl Machine {
         json!({"operationId":op.id,"connectionId":"model-profile","expectedConnectionRevision":"revision-1","model":null,"prompt":"model test","inputs":[],"options":{"size":"1024x1024","resolution":null,"aspectRatio":null,"quality":"low","background":"auto"},"preparationToken":"local-token","effectiveRecipeDigest":"b".repeat(64)})
     }
     fn register(&mut self, slot: u8) -> Result<(), TestCaseError> {
-        let consumer = if slot as usize == SLOTS - 1 {
-            package::list(&self.fixture.root)
-                .unwrap()
-                .into_iter()
-                .find(|p| p.manifest.id == self.fixture.second_consumer.manifest.id && p.enabled)
-                .map(|p| PackageGeneration {
-                    package_id: p.manifest.id,
-                    digest: p.digest,
-                    incarnation: self.incarnation + 1,
-                })
+        let package = if slot as usize == SLOTS - 1 {
+            &self.fixture.second_consumer.manifest.id
         } else {
-            self.generation(Role::Consumer)
+            self.fixture.id(Role::Consumer)
         };
-        let Some(mut consumer) = consumer else {
+        let Some(consumer) = self.generation_for_package(package) else {
             return Ok(());
         };
         if self.generation(Role::Provider).is_none() {
@@ -917,7 +919,6 @@ impl Machine {
         // Rejected preparation also tombstones its request identity. Each
         // generated admission attempt therefore gets a fresh ID.
         let id = format!("model-operation-{}-{index}", self.incarnation);
-        consumer.incarnation = self.incarnation;
         let provider = self.generation(Role::Provider).unwrap();
         let op = Operation {
             id: id.clone(),
@@ -939,6 +940,7 @@ impl Machine {
             valid_original: false,
             durable_original: false,
             completion_identified: false,
+            sealed_original: false,
             original: image_bytes(index as u8),
             removed: false,
             stage: None,
@@ -1015,12 +1017,9 @@ impl Machine {
             .into_iter()
             .find(|p| p.manifest.id == op.consumer.package_id && p.enabled)
             .ok_or_else(|| fail("consumer callback has no enabled package"))?;
-        let current = if op.consumer.package_id == self.fixture.id(Role::Consumer) {
-            self.generation(Role::Consumer)
-                .ok_or_else(|| fail("consumer callback has no current generation"))?
-        } else {
-            op.consumer.clone()
-        };
+        let current = self
+            .generation_for_package(&op.consumer.package_id)
+            .ok_or_else(|| fail("consumer callback has no current generation"))?;
         let job = checked(
             self.store()
                 .job_for_operation(&op.consumer.package_id, &op.id),
@@ -1132,6 +1131,11 @@ impl Machine {
             major: 1,
         };
         let starts_before = op.starts.get();
+        let stale_preparation = !op.captured_inputs.is_empty()
+            && op.consumer.package_id == consumer.package_id
+            && op.consumer.digest == consumer.digest
+            && op.consumer.incarnation != consumer.incarnation
+            && checked(self.store().get(&op.consumer.package_id, &op.id))?.is_none();
         let result = service_bridge::image_call(
             self.store(),
             &consumer,
@@ -1166,6 +1170,17 @@ impl Machine {
             {
                 // The attempt reached production and its durable preparation
                 // tombstone refused it before any provider invocation.
+            }
+            Err(error)
+                if stale_preparation
+                    && op.starts.get() == starts_before
+                    && error
+                        .to_string()
+                        .contains("preparation owner expired; create a new operation ID") =>
+            {
+                // A real restart changes the consumer incarnation. Without a
+                // replacement grant its old unadmitted capture cannot dispatch;
+                // retain it for automatic reconciliation/settlement, never pay.
             }
             Err(error) => return Err(fail(format!("unexpected admission rejection: {error}"))),
         }
@@ -1327,6 +1342,16 @@ impl Machine {
         self.applied += 1;
         Ok(())
     }
+    fn consumer_attempt(&self, result: Result<(), AppError>) -> Result<(), TestCaseError> {
+        match result {
+            Err(AppError::Io(_)) if self.sync_failure || self.unlink_failure => {
+                self.deferred_consumer_attempts
+                    .set(self.deferred_consumer_attempts.get() + 1);
+                Ok(())
+            }
+            result => checked(result),
+        }
+    }
     fn acquire(&self, slot: u8) -> Result<(), AppError> {
         let Some(index) = self.index(slot) else {
             return Ok(());
@@ -1462,10 +1487,7 @@ impl Machine {
                 spool.removed = true;
             }
         }
-        self.incarnation += 1;
-        if provider {
-            self.provider_incarnation = self.incarnation;
-        }
+        self.replace_broker(&id);
         self.applied += 1;
         Ok(())
     }
@@ -1480,7 +1502,7 @@ impl Machine {
             op.writer.take();
             if op.spool.is_some() {
                 op.spool_phase = 30;
-                if !op.completion_identified && !op.provider_rejected() {
+                if !op.completion_identified && !op.sealed_original && !op.provider_rejected() {
                     op.valid_original = false;
                     op.outcome = Outcome::Unknown;
                 }
@@ -1506,7 +1528,11 @@ impl Machine {
         }
         // Unsealed stage writes also have no durable completion identity.
         for op in self.operations.borrow_mut().iter_mut() {
-            if op.valid_original && !op.completion_identified && !self.original_conserved(op) {
+            if op.valid_original
+                && !op.completion_identified
+                && !op.sealed_original
+                && !self.original_conserved(op)
+            {
                 op.valid_original = false;
                 if op.dispatched {
                     op.outcome = Outcome::Unknown;
@@ -1525,7 +1551,9 @@ impl Machine {
         assert!(std::sync::Arc::ptr_eq(&oracle, &self.store().test_fs));
         checked(super::super::recover(&self.fixture.root))?;
         self.incarnation += 1;
-        self.provider_incarnation = self.incarnation;
+        for incarnation in self.broker_incarnations.values_mut() {
+            *incarnation = self.incarnation;
+        }
         Ok(())
     }
     fn spool_phase(&mut self, command: Command) -> Result<(), TestCaseError> {
@@ -1589,6 +1617,73 @@ impl Machine {
                         &control,
                         &std::sync::Arc::new(handle.clone()),
                     ))?;
+                    // Unbound CLI calls can be standalone after the selected
+                    // admission settles. Attribute only the custody actually
+                    // committed by Store, never the model's requested slot.
+                    let conn = rusqlite::Connection::open(
+                        self.fixture
+                            .profile
+                            .path()
+                            .join("service-state/ledger.sqlite"),
+                    )
+                    .unwrap();
+                    let linked: bool = conn.query_row(
+                        "SELECT EXISTS(SELECT 1 FROM host_spools WHERE handle=?1 AND consumer=?2 AND operation=?3) OR EXISTS(SELECT 1 FROM host_spool_admissions WHERE handle=?1 AND consumer=?2 AND operation=?3)",
+                        rusqlite::params![handle, op.consumer.package_id, op.id], |r| r.get(0),
+                    ).unwrap();
+                    if bound && !linked {
+                        return Err(fail(
+                            "explicit reservation lost requested operation custody",
+                        ));
+                    }
+                    if !linked && admission.phase != AdmissionPhase::Released {
+                        return Err(fail(
+                            "unbound reservation lost active selected operation custody",
+                        ));
+                    }
+                    let linked_elsewhere: bool = conn.query_row(
+                        "SELECT consumer IS NOT NULL OR EXISTS(SELECT 1 FROM host_spool_admissions WHERE handle=?1) FROM host_spools WHERE handle=?1",
+                        [&handle], |r| r.get(0),
+                    ).unwrap();
+                    if !linked && linked_elsewhere {
+                        // Capacity admission is not child invocation. This
+                        // fixture cannot execute a selected operation's recipe
+                        // against another operation's custody. Abort before
+                        // starting a writer/child; never call it custodyless.
+                        checked(
+                            self.store()
+                                .abandon_unsealed_host_spool(&owner.package_id, &handle),
+                        )?;
+                        self.applied += 1;
+                        return Ok(());
+                    }
+                    if !linked {
+                        // A truly independent CLI fixture has its own output,
+                        // not the selected operation's generation recipe.
+                        let original = image_bytes(200 + slot);
+                        let writer = checked(SpoolActor::new(
+                            self.fixture.profile.path().join("service-state"),
+                            self.limits,
+                            owner.clone(),
+                            handle.clone(),
+                            original.clone(),
+                            if nonzero { 17 } else { 0 },
+                        ))?;
+                        self.raw_slots[usize::from(slot)] = Some(self.custodyless.len());
+                        self.custodyless.push(CustodylessSpool {
+                            owner,
+                            handle,
+                            original: original.clone(),
+                            phase: 1,
+                            writer: Some(writer),
+                            removed: false,
+                            released: false,
+                            valid: false,
+                            durable: false,
+                        });
+                        self.applied += 1;
+                        return Ok(());
+                    }
                     op.spool_status = if nonzero { 17 } else { 0 };
                     op.writer = Some(checked(SpoolActor::new(
                         self.fixture.profile.path().join("service-state"),
@@ -1659,6 +1754,10 @@ impl Machine {
                     op.writer.take();
                 }
                 if expected == 10 && op.valid_original {
+                    // Independent contract event: successful seal publication,
+                    // before the derived database write. Never infer loss from
+                    // missing production metadata after this event.
+                    op.sealed_original = true;
                     op.durable_original = true;
                 }
                 self.applied += 1;
@@ -1767,6 +1866,7 @@ impl Machine {
                         .unwrap()
                         .host_spool_has_recorded_identity(&spool.handle),
                 )?;
+                spool.valid |= phase >= 10;
                 spool.durable |= phase >= 10;
                 if phase == 28 {
                     spool.writer.take();
@@ -2053,6 +2153,7 @@ impl Machine {
                 if completed {
                     let mut ops = self.operations.borrow_mut();
                     let op = &mut ops[index];
+                    op.sealed_original |= op.valid_original;
                     op.durable_original |= op.valid_original;
                     op.spool_phase = 18;
                 }
@@ -2084,6 +2185,9 @@ impl Machine {
                     .as_str()
                     .ok_or_else(|| AppError::Other("consumer intent lacks destination".into()))?,
             );
+            crate::durable_dir::sync_file(&journal)?;
+            self.oracle.file_synced(&journal);
+            self.oracle.sync(journal.parent().unwrap())?;
             // Intent pins the destination and sealed identity. The host still
             // validates and commits acquisition; existence is never a receipt.
             use sha2::{Digest, Sha256};
@@ -2091,6 +2195,9 @@ impl Machine {
                 bytes.len() as u64 == d.byte_length
                     && hex::encode(Sha256::digest(bytes)) == d.sha256
             }) {
+                crate::durable_dir::sync_file(&op.copy)?;
+                self.oracle.file_synced(&op.copy);
+                self.oracle.sync(op.copy.parent().unwrap())?;
                 return Ok(());
             }
         } else {
@@ -2133,7 +2240,7 @@ impl Machine {
             return Ok(());
         }
         let d = d.clone();
-        checked(self.consumer_copy(op, &d))?;
+        self.consumer_attempt(self.consumer_copy(op, &d))?;
         self.applied += 1;
         Ok(())
     }
@@ -2156,11 +2263,9 @@ impl Machine {
         else {
             return Ok(());
         };
-        let current = PackageGeneration {
-            package_id: owner.package_id.clone(),
-            digest: installed.digest,
-            incarnation: self.incarnation,
-        };
+        let current = self
+            .generation_for_package(&owner.package_id)
+            .ok_or_else(|| fail("consumer reconciliation has no current generation"))?;
         let observed = checked(self.store().job_for_operation(&owner.package_id, &id))?.unwrap();
         let record = checked(job_bridge::recovery_job(
             self.store(),
@@ -2699,14 +2804,14 @@ impl Machine {
                 }
             }
             Command::Acquire(s) => {
-                checked(self.acquire(s))?;
+                self.consumer_attempt(self.acquire(s))?;
             }
             Command::Ack(s, c) => {
-                checked(self.ack(s, c))?;
+                self.consumer_attempt(self.ack(s, c))?;
             }
             Command::ConsumerReceive(s, c) => {
-                checked(self.acquire(s))?;
-                checked(self.ack(s, c))?;
+                self.consumer_attempt(self.acquire(s))?;
+                self.consumer_attempt(self.ack(s, c))?;
             }
             Command::Replay(s) => {
                 if let Some(i) = self.index(s) {
@@ -2740,9 +2845,11 @@ impl Machine {
             }
             Command::Enable(p, true) => {
                 let id = self.fixture.id(role(p)).to_owned();
-                if self.fixture.installed(role(p)).is_some() {
+                if let Some(installed) = self.fixture.installed(role(p)) {
                     checked(super::super::set_enabled(&self.profile(), &id, true))?;
-                    self.incarnation += 1;
+                    if !installed.enabled {
+                        self.replace_broker(&id);
+                    }
                 }
             }
             Command::Sweep => {
@@ -3026,6 +3133,7 @@ impl Machine {
             .into_iter()
             .any(|p| fs::read(p).ok().as_ref() == Some(&op.original))
             || !op.completion_identified
+                && !op.sealed_original
                 && (self.oracle.contains_unflushed_data(&op.original)
                     || (op.writer.is_some()
                         && op.spool_phase >= 1
@@ -3196,7 +3304,7 @@ impl Machine {
                     reserved_output_bytes += objects.values().sum::<u64>();
                 }
             }
-            if op.completion_identified
+            if (op.completion_identified || op.sealed_original)
                 && op.valid_original
                 && !op.removed
                 && a.disposition.as_deref() == Some("discarded")
@@ -3226,7 +3334,7 @@ impl Machine {
             {
                 return Err(fail("removal retained active custody/job"));
             }
-            if op.completion_identified
+            if (op.completion_identified || op.sealed_original)
                 && op.valid_original
                 && !op.removed
                 && !self.original_conserved(op)
@@ -3376,6 +3484,9 @@ impl Machine {
                 if let Some(writer) = &op.writer {
                     for point in op.spool_phase..=17 {
                         checked(writer.phase(point))?;
+                        if point == 10 {
+                            op.sealed_original |= op.valid_original;
+                        }
                     }
                     op.spool_phase = 18;
                     op.durable_original |= op.valid_original;
@@ -3385,6 +3496,7 @@ impl Machine {
             if op.spool.is_some()
                 && !op.provider_rejected()
                 && !op.completion_identified
+                && !op.sealed_original
                 && !self
                     .store()
                     .host_spool_has_recorded_identity(op.spool.as_ref().unwrap())
@@ -3411,8 +3523,16 @@ impl Machine {
         }
         self.invariants()?;
         self.custodyless_invariants(true)?;
-        for slot in 0..SLOTS as u8 {
-            self.custodyless_release(slot)?;
+        for spool in &mut self.custodyless {
+            if !spool.removed && !spool.released {
+                checked(
+                    self.store
+                        .as_ref()
+                        .unwrap()
+                        .release_host_spool(&spool.owner.package_id, &spool.handle),
+                )?;
+                spool.released = true;
+            }
         }
         checked(self.store().gc())?;
         checked(self.store().sweep_host_spools(|_| false))?;
@@ -3438,7 +3558,7 @@ impl Machine {
                 self.assert_removed_clean(op)?;
                 continue;
             }
-            if op.completion_identified
+            if (op.completion_identified || op.sealed_original)
                 && op.valid_original
                 && (!op.acknowledged
                     || job.state != JobState::Completed
@@ -3887,7 +4007,7 @@ const REQUIRED_TRANSITIONS: &[&str] = &[
     "spool-stderr-full",
     "spool-stderr-file-sync",
     "spool-before-capture",
-    "spool-capture-durable",
+    "spool-seal-durable",
     "spool-parent-directory-sync",
     "spool-pending-commit",
     "spool-output-fsync",
@@ -4349,6 +4469,136 @@ fn ai_operations_reference_state_machine() {
     run(64, 40)
 }
 #[test]
+fn model_standalone_unbound_spool_does_not_revive_settled_execution() {
+    let mut m = Machine::new();
+    for command in [
+        Command::Admit(1, false),
+        Command::Publish(1, 2, false),
+        Command::Sweep,
+        Command::SpoolReserve(1, false, false),
+    ] {
+        m.apply(command).unwrap();
+    }
+    let ops = m.operations.borrow();
+    let op = &ops[0];
+    assert!(m
+        .store()
+        .execution_released(&op.consumer.package_id, &op.id)
+        .unwrap());
+    assert!(op.spool.is_none());
+    assert_eq!(op.native_paid_starts.get(), 0);
+    assert_eq!(m.custodyless.len(), 1);
+    assert!(m.custodyless[0].writer.is_some());
+    assert!(m.charges() > 0);
+    drop(ops);
+    m.quiesce().unwrap();
+    assert_eq!(m.charges(), 0);
+    assert_eq!(m.disk_bytes(), 0);
+}
+
+#[test]
+fn model_unbound_fixture_cannot_run_selected_recipe_against_other_custody() {
+    let mut m = Machine::new();
+    for command in [
+        Command::Admit(1, false),
+        Command::Publish(1, 2, false),
+        Command::Sweep,
+        Command::Admit(0, false),
+    ] {
+        m.apply(command).unwrap();
+    }
+    let charge = m.charges();
+    m.apply(Command::SpoolReserve(1, false, false)).unwrap();
+    assert!(
+        m.custodyless.is_empty(),
+        "other admission custody is never standalone"
+    );
+    for op in m.operations.borrow().iter() {
+        assert!(op.spool.is_none());
+        assert_eq!(
+            op.native_paid_starts.get(),
+            0,
+            "fixture must abort before child invocation"
+        );
+    }
+    assert_eq!(m.charges(), charge);
+    m.quiesce().unwrap();
+}
+
+#[test]
+fn model_restart_refuses_expired_unadmitted_preparation_without_paid_work() {
+    let mut m = Machine::new();
+    m.apply(Command::SharedConsumerAdmit).unwrap();
+    m.apply(Command::Admit(1, true)).unwrap();
+    let index = m.index(1).unwrap();
+    let captured = m.operations.borrow()[index].captured_inputs.clone();
+    assert!(!captured.is_empty());
+    m.apply(Command::Restart).unwrap();
+    m.apply(Command::Dispatch(1)).unwrap();
+    assert!(!m.operations.borrow()[index].dispatched);
+    assert_eq!(m.operations.borrow()[index].starts.get(), 0);
+    assert_eq!(m.operations.borrow()[index].captured_inputs, captured);
+    m.quiesce().unwrap();
+    assert_eq!(m.charges(), 0);
+    assert_eq!(m.disk_bytes(), 0);
+}
+
+#[test]
+fn model_noop_enable_preserves_captured_consumer_identity() {
+    let mut m = Machine::new();
+    m.apply(Command::Register(0)).unwrap();
+    m.apply(Command::Capture(0)).unwrap();
+    let consumer = m.generation(Role::Consumer).unwrap();
+    m.apply(Command::Enable(false, true)).unwrap();
+    assert_eq!(m.generation(Role::Consumer).unwrap(), consumer);
+    m.apply(Command::Dispatch(0)).unwrap();
+    assert_eq!(m.operations.borrow()[0].starts.get(), 1);
+    m.quiesce().unwrap();
+}
+
+#[test]
+fn model_provider_upgrade_preserves_capacity_blocked_consumer_preparation_identity() {
+    let mut m = Machine::new();
+    m.apply(Command::SharedConsumerAdmit).unwrap();
+    m.apply(Command::Admit(1, true)).unwrap();
+    let consumer = m.generation(Role::Consumer).unwrap();
+    let index = m.index(1).unwrap();
+    let captured = m.operations.borrow()[index].captured_inputs.clone();
+    assert!(!captured.is_empty());
+    assert!(!m.operations.borrow()[index].dispatched);
+    m.apply(Command::Upgrade(true, true, false)).unwrap();
+    assert_eq!(m.generation(Role::Consumer).unwrap(), consumer);
+    m.apply(Command::Admit(1, false)).unwrap();
+    assert_eq!(m.operations.borrow()[index].captured_inputs, captured);
+    assert_eq!(m.operations.borrow()[index].starts.get(), 0);
+    m.quiesce().unwrap();
+}
+
+#[test]
+fn model_transient_consumer_directory_sync_failure_eventually_delivers() {
+    let mut m = Machine::new();
+    for command in [
+        Command::SharedConsumerAdmit,
+        Command::ProviderComplete(0),
+        Command::DirectorySyncFailure(true),
+        Command::ConsumerReceive(0, false),
+        Command::Restart,
+        Command::DirectorySyncFailure(false),
+    ] {
+        m.apply(command).unwrap();
+    }
+    m.quiesce().unwrap();
+    assert!(
+        m.deferred_consumer_attempts.get() > 0,
+        "the injected error must actually defer delivery"
+    );
+    let ops = m.operations.borrow();
+    assert_eq!(fs::read(&ops[0].copy).unwrap(), ops[0].original);
+    assert_eq!(ops[0].delivery_effects.get(), 1);
+    assert!(ops[0].acknowledged);
+}
+
+#[test]
 fn model_unknown_valid_original_converges() {
     for synced in [false, true] {
         let mut m = Machine::new();
@@ -4772,9 +5022,9 @@ fn model_presealed_original_is_recovered_through_rpc() {
 }
 
 #[test]
-fn model_capture_crashes_settle_interrupted_until_identity_is_published() {
-    // 5: stdout file sync; 7: partial stderr; 10: both streams durable;
-    // 11: ledger identity published. Only the last boundary promises delivery.
+fn model_capture_crashes_preserve_sealed_original_before_database_commit() {
+    // 5: stdout file sync; 7: partial stderr; 10: sealed completion;
+    // 11: derived ledger identity. The seal already promises delivery.
     for last in [5, 7, 10, 11] {
         for power_loss in [false, true] {
             let mut m = Machine::new();
@@ -4783,7 +5033,7 @@ fn model_capture_crashes_settle_interrupted_until_identity_is_published() {
             for command in reply_commands(0).into_iter().take(last) {
                 m.apply(command).unwrap();
             }
-            assert_eq!(m.operations.borrow()[0].completion_identified, last == 11);
+            assert_eq!(m.operations.borrow()[0].sealed_original, last >= 10);
             m.apply(if power_loss {
                 Command::PowerLoss
             } else {
@@ -4793,7 +5043,7 @@ fn model_capture_crashes_settle_interrupted_until_identity_is_published() {
             m.quiesce().unwrap();
             let ops = m.operations.borrow();
             let op = &ops[0];
-            if last == 11 {
+            if last >= 10 {
                 assert_eq!(fs::read(&op.copy).unwrap(), op.original);
                 assert_eq!(op.delivery_effects.get(), 1);
             } else {
@@ -4813,6 +5063,20 @@ fn model_capture_crashes_settle_interrupted_until_identity_is_published() {
             assert_eq!(m.disk_bytes(), 0);
         }
     }
+}
+
+#[test]
+fn model_compatible_replacement_retains_recaptured_preparation_across_incarnations() {
+    let mut m = Machine::new();
+    for command in [
+        Command::Register(1),
+        Command::LifecycleCrash(true, 0),
+        Command::Admit(1, true),
+        Command::Upgrade(false, true, false),
+    ] {
+        m.apply(command).unwrap();
+    }
+    m.quiesce().unwrap();
 }
 
 #[test]

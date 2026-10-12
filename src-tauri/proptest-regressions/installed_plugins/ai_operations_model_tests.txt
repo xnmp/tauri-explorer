@@ -25,3 +25,7 @@ cc e3bc6657581861a1a0d15fa23e3f1aeb6163c8906696c31f4efc618214a2c81e # shrinks to
 cc 6cc5a48950aa5ec0e1764031cecc7345e3394a0bbf5563afe0fe12365f08cc23 # shrinks to [Register(0), CompatibleUpgradeCrash(false, 4, false), Capture(0)]
 cc d3267bda27d1034632dd45b176dae1565e21b0a497644f08093e0bb9b2ce7379 # shrinks to [DirectorySyncFailure(true), Admit(0, true), Upgrade(false, true, false)]
 cc 04cdad1bf1c334d1294e06263ff8b57efe3693d0646fb07ed673c2c065a9723d # shrinks to [Register(1), LifecycleCrash(true, 0), Admit(1, true), Upgrade(false, true, false)]
+cc be352b742e5523baf59c3b122879b57f5c6b1f90ae22cc095242c4b86966bded # shrinks to [SharedConsumerAdmit, ProviderComplete(0), DirectorySyncFailure(true), ConsumerReceive(0, false)]
+cc 1c305f7cbc547b877c5903c276318b6cfc3a4e0229640257e912983bcd1551b7 # shrinks to [Admit(1, false), Publish(1, 2, false), Sweep, SpoolReserve(1, false, false)]
+cc 7afb97594d91803c2f1036123a75387aff9c56ba88b74da10da89ccb80e88dc6 # shrinks to [SharedConsumerAdmit, Admit(1, true), Upgrade(true, true, false), Admit(1, false)]
+cc 5d75da62d7dbe104bf1c1d725938812c88f7b8ea6c4f2e50febb2b4a2fd9ce44 # shrinks to [SharedConsumerAdmit, Admit(1, true), Restart, Dispatch(1)]

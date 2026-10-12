@@ -1570,6 +1570,74 @@ fn startup_collects_crash_left_temporary_bytes_only_after_durable_release() {
     );
 }
 #[test]
+fn compatible_preparation_retention_joins_package_digest_across_incarnations() {
+    use super::job::{JobRecord, JobState};
+    for same_digest in [false, true] {
+        let (root, s) = store();
+        let op = "retained-preparation";
+        let job = s
+            .register_job(JobRecord {
+                job_key: "1".repeat(48),
+                owner: owner("consumer", 1),
+                operation_id: op.into(),
+                job_id: 1,
+                kind: "openai-image".into(),
+                label: "generated.png".into(),
+                origin_window: "main".into(),
+                revision: 0,
+                source_revision: 0,
+                ownership_epoch: 0,
+                created_at_ms: 1,
+                updated_at_ms: 1,
+                settled_at_ms: None,
+                estimate_key: None,
+                state: JobState::Accepting,
+                phase: None,
+                output_path: None,
+                run_id: None,
+                error: None,
+            })
+            .unwrap();
+        let mut captured_owner = owner("consumer", 2);
+        if !same_digest {
+            captured_owner.digest = "b".repeat(64);
+        }
+        let source = root.path().join("source.png");
+        png(&source);
+        let captured = s
+            .capture(
+                &captured_owner,
+                op,
+                vec![CaptureInput {
+                    path: source.to_string_lossy().into(),
+                    expected_digest: None,
+                }],
+            )
+            .unwrap();
+        let path = s
+            .read(&captured_owner, "consumer", op, &captured[0].artifact)
+            .unwrap()
+            .path;
+        let original = fs::read(&path).unwrap();
+        s.abandon_package_work_deferred("consumer", |_| false, |_, _| Some("c".repeat(64)))
+            .unwrap();
+        s.gc().unwrap();
+        if same_digest {
+            assert_eq!(fs::read(&path).unwrap(), original);
+            assert_eq!(
+                s.job(&job.job_key).unwrap().unwrap().state,
+                JobState::Accepting
+            );
+        } else {
+            assert!(
+                !Path::new(&path).exists(),
+                "mismatched digest retained input custody"
+            );
+        }
+    }
+}
+
+#[test]
 fn dead_owner_completed_capture_without_admission_releases_busy_and_bytes() {
     let (root, s) = store();
     let captured = capture(&s, root.path(), "unreserved");

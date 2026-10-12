@@ -408,7 +408,9 @@ impl Drop for ProcessSpool {
             .take();
         if !self.retain.load(Ordering::Acquire) {
             if let Some((store, owner)) = &self.durable {
-                if let Err(cause) = store.release_host_spool(&owner.package_id, &self.handle) {
+                if let Err(cause) =
+                    store.abandon_unsealed_host_spool(&owner.package_id, &self.handle)
+                {
                     log::warn!("Plugin output cleanup deferred: {cause}")
                 }
             }
@@ -419,6 +421,75 @@ impl Drop for ProcessSpool {
 #[cfg(test)]
 mod process_spool_tests {
     use super::*;
+
+    #[cfg(unix)]
+    #[test]
+    fn native_exit_zero_with_excess_stderr_seals_and_recovers_original() {
+        use crate::service_state::{
+            model::{Limits, PackageGeneration},
+            Store,
+        };
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("service-state");
+        let store = Box::leak(Box::new(
+            Store::open(path.clone(), Limits::default()).unwrap(),
+        ));
+        let owner = PackageGeneration {
+            package_id: "fixture.diagnostic-spool".into(),
+            digest: "a".repeat(64),
+            incarnation: 1,
+        };
+        let original = include_bytes!("../../../e2e-tauri/fixtures/image-crop/quadrants.png");
+        let source = root.path().join("original.png");
+        fs::write(&source, original).unwrap();
+        let (handle, directory, writer) = store
+            .reserve_pinned_host_spool(&owner, "host:stderr-overflow", 10240)
+            .unwrap();
+        let spool = ProcessSpool {
+            handle,
+            path: directory,
+            durable: Some((store, owner.clone())),
+            writer: Mutex::new(Some(writer)),
+            retain: AtomicBool::new(false),
+            _temporary: None,
+        };
+        let mut command = std::process::Command::new("sh");
+        command.args(["-c", "cat \"$1\"; printf diagnostic-prefix >&2; head -c 200000 /dev/zero >&2; printf diagnostic-suffix >&2", "fixture"]);
+        command.arg(source);
+        let output = crate::process_ext::output_with_input_streaming(
+            &mut command,
+            || false,
+            (8192, 128),
+            "cancelled",
+            None,
+            Some(spool.stdout_sink().unwrap()),
+        )
+        .unwrap();
+        assert!(output.status.success());
+        assert_eq!(output.stdout, original);
+        assert_eq!(output.stderr.len(), 128);
+        assert!(output.stderr.starts_with(b"diagnostic-prefix"));
+        assert!(output.stderr.ends_with(b"diagnostic-suffix"));
+        assert!(String::from_utf8_lossy(&output.stderr).contains("[stderr truncated]"));
+        spool.complete(&output.stdout, &output.stderr, 0).unwrap();
+        // Destructor must trust the seal even without its in-memory retain bit.
+        spool.retain.store(false, Ordering::Release);
+        drop(spool);
+        let reopened = Store::open(path, Limits::default()).unwrap();
+        reopened.sweep_host_spools(|_| false).unwrap();
+        let reply = reopened
+            .host_spool_result(&owner.package_id, "host:stderr-overflow")
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            fs::read(reply["stdout"].as_str().unwrap()).unwrap(),
+            original
+        );
+        assert_eq!(reply["status"], 0);
+        reopened
+            .release_host_spool(&owner.package_id, reply["handle"].as_str().unwrap())
+            .unwrap();
+    }
 
     #[test]
     fn paid_stdout_survives_failed_pending_marker_commit_and_retirement() {

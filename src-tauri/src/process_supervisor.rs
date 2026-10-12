@@ -442,7 +442,11 @@ fn supervise(
         stop.clone(),
         stdout_sink,
     )?);
-    readers.stderr = Some(reader(stderr, limits.1, overflow.clone(), stop.clone())?);
+    readers.stderr = Some(pipe_capture::spawn_diagnostics(
+        stderr,
+        limits.1,
+        stop.clone(),
+    )?);
     if let Some((pipe, input)) = stdin {
         readers.stdin = Some(writer(pipe, input, stop)?);
     }

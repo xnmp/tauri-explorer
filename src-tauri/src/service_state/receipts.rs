@@ -510,7 +510,7 @@ impl Store {
                 if !affected { continue; }
                 let preparation_digest = if admission.is_none() {
                     Self::preparation_owner(tx, &consumer, &op)?
-                        .and_then(|owner| original_jobs.iter().find(|job| job.owner == owner && job.operation_id == op)
+                        .and_then(|owner| original_jobs.iter().find(|job| same_owner(&job.owner, &owner) && job.operation_id == op)
                             .filter(|job| preparation_job_live(job))
                             .and_then(|job| retain_preparation(&owner, job)))
                 } else { None };

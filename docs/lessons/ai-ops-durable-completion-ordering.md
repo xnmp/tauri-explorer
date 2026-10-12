@@ -1,21 +1,34 @@
-# AI completion identity follows durable bytes
+# AI success commits through the sealed completion sidecar
 
-A paid process reply captured in RAM is not a recoverable completion. A host
-restart can destroy it. The ordering invariant is stronger and implementable:
-no status/hash/length or successful recovery witness is persisted before its
-named bytes and directory entries are synced. All capture paths use
-`Store::durable_host_completion`, including reply writes, completed-pending
-fallback and direct spool sealing. Conflicting repeated replies are rejected
-before changing previously identified bytes.
+A separate completion-identity transaction after fsyncing capture creates a
+loss window: a crash leaves durable original bytes but no recoverable identity,
+so reserved-spool cleanup deletes successful output. A transaction before
+capture durability creates the opposite invalid-identity window.
 
-The shared pipe reader tees bounded stdout into a spool file as it arrives.
-The existing bounded Output API remains; completion avoids truncating an exact
-streamed file and supplies the final durability barrier. Streaming reduces the
-RAM-only window but does not promise that unfsynced chunks survive power loss.
+The shared `Store::durable_host_completion` now fsyncs both streams and their
+directory entries, writes status/hash/length into a temporary sidecar, fsyncs
+that sidecar, then atomically renames it to `completed.json` and syncs the
+directory. This sealed-sidecar publication is the completion commit point.
+SQLite completion/status rows and older pending markers are derived metadata;
+recovery rebuilds the database identity from the seal. Destructor abandonment
+and the sweeper preserve sealed capture until delivery acknowledgement or
+explicit settlement. A pre-seal crash still settles as Unknown without replay.
 
-The conservation oracle records actual published identities and keeps that
-obligation after cleanup/restart. RAM or simulated resurrectable data cannot
-satisfy it. Before any identity exists, a capture crash recovers as Unknown and
-settles silently without paid replay, delivery, input custody or spool charges.
-The pre-persistence test retains paid invocation truth and asserts interruption;
-post-identity crash tests still require exact image delivery.
+The shared pipe reader tees bounded stdout into the temporary spool. Stdout
+overflow fails execution; stderr uses an independent bounded prefix/suffix
+buffer and an explicit truncation marker, so diagnostics cannot turn an exit-zero
+original into an error. Streaming does not guarantee unfsynced chunks survive
+power loss.
+
+The model records the successful seal independently of production metadata,
+keeps that conservation obligation through restart, and requires exact delivery
+at quiescence. Actual first-seal write/sync/rename boundaries are also exercised
+with Store filesystem faults. Directory-sync errors on consumer delivery defer
+acquisition; retry resyncs the journal and copy before acknowledgement and must
+converge after faults clear. Preserve saved shrinking seeds.
+
+Compatible replacement must join preparation custody and its live presentation
+by package and digest, using `same_owner`, rather than requiring the same process
+incarnation: recovery can recapture input under a newer incarnation while the
+Accepting job still names the prior one. A different digest cannot retain that
+input custody through this join.

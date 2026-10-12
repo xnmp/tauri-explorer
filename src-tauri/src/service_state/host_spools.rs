@@ -143,6 +143,134 @@ mod tests {
     }
 
     #[test]
+    fn first_seal_crash_boundaries_preserve_committed_output() {
+        let points = [
+            "host-seal-temp-create",
+            "host-seal-temp-partial",
+            "host-seal-temp-full",
+            "host-seal-temp-sync",
+            "host-seal-rename",
+            "host-seal-target-sync",
+            "host-seal-directory-sync",
+        ];
+        for (index, point) in points.into_iter().enumerate() {
+            for power_loss in [false, true] {
+                let (root, store) = store();
+                let (handle, directory, writer) = store
+                    .reserve_pinned_host_spool(&owner(), "host:first-seal", 1024)
+                    .unwrap();
+                let original = b"sole paid original";
+                store.test_fs.crash_at(point);
+                let error = store
+                    .write_pinned_host_reply(&owner(), &writer, original, b"diagnostics", 0)
+                    .unwrap_err();
+                assert!(error.to_string().contains("injected aggregate crash"));
+                drop(writer);
+                if power_loss {
+                    store.test_fs.power_loss();
+                }
+                drop(store);
+                let reopened =
+                    Store::open(root.path().join("service-state"), Limits::default()).unwrap();
+                reopened.sweep_host_spools(|_| false).unwrap();
+                let committed = index == 6 || index >= 4 && !power_loss;
+                let reply = reopened
+                    .host_spool_result(&owner().package_id, "host:first-seal")
+                    .unwrap();
+                if committed {
+                    let reply = reply.expect("published seal lost original");
+                    assert_eq!(
+                        fs::read(reply["stdout"].as_str().unwrap()).unwrap(),
+                        original
+                    );
+                    reopened
+                        .abandon_unsealed_host_spool(&owner().package_id, &handle)
+                        .unwrap();
+                    assert_eq!(fs::read(directory.join("stdout")).unwrap(), original);
+                    reopened
+                        .release_host_spool(&owner().package_id, &handle)
+                        .unwrap();
+                } else {
+                    assert!(reply.is_none());
+                }
+                assert!(!directory.exists());
+                assert_eq!(charged(&reopened), 0);
+            }
+        }
+    }
+
+    #[test]
+    fn sealed_original_recovers_identity_after_crash_before_database_commit() {
+        let (root, store) = store();
+        let (handle, directory, writer) = store
+            .reserve_pinned_host_spool(&owner(), "host:seal-before-db", 1024)
+            .unwrap();
+        let original = b"sole paid original";
+        assert!(store
+            .write_pinned_host_reply_observed(
+                &owner(),
+                &writer,
+                original,
+                b"diagnostics",
+                0,
+                |point| {
+                    if point == 10 {
+                        Err(reject("crash after seal before database commit"))
+                    } else {
+                        Ok(())
+                    }
+                }
+            )
+            .is_err());
+        let indexed: Option<String> = store
+            .connect()
+            .unwrap()
+            .query_row(
+                "SELECT completion FROM host_spools WHERE handle=?1",
+                [&handle],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert!(indexed.is_none());
+        assert!(directory.join("completed.json").exists());
+        drop(writer);
+        store.test_fs.power_loss();
+        drop(store);
+        let reopened = Store::open(root.path().join("service-state"), Limits::default()).unwrap();
+        reopened.sweep_host_spools(|_| false).unwrap();
+        let indexed: Option<String> = reopened
+            .connect()
+            .unwrap()
+            .query_row(
+                "SELECT completion FROM host_spools WHERE handle=?1",
+                [&handle],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert!(
+            indexed.is_some(),
+            "recovery must rebuild the derived database identity"
+        );
+        let reply = reopened
+            .host_spool_result(&owner().package_id, "host:seal-before-db")
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            fs::read(reply["stdout"].as_str().unwrap()).unwrap(),
+            original
+        );
+        reopened
+            .abandon_unsealed_host_spool(&owner().package_id, &handle)
+            .unwrap();
+        assert_eq!(fs::read(directory.join("stdout")).unwrap(), original);
+        reopened
+            .release_host_spool(&owner().package_id, &handle)
+            .unwrap();
+        assert!(!directory.exists());
+        assert_eq!(charged(&reopened), 0);
+    }
+
+    #[test]
     fn conflicting_repeat_cannot_overwrite_identified_original() {
         let (_root, store) = store();
         let (_, path, writer) = store
@@ -1441,21 +1569,50 @@ impl Store {
         self.sync_host_spool_directory(directory.parent().unwrap())
     }
 
-    /// Every capture path obtains completion identity through this barrier.
-    /// Recovery may trust the returned identity even if publication interrupts.
+    /// The atomic sealed-sidecar rename is the sole completion commit point.
+    /// The temporary spool's bytes and header are fsynced before publication;
+    /// SQLite completion metadata is only a recoverable index of this seal.
+    /// Both native capture and ProcessSpool completion enter through this seam.
     fn durable_host_completion(&self, directory: &Path, status: i64) -> Result<Completion> {
         let stdout = spool_bytes(&directory.join("stdout"), MAX_SPOOL)?;
         let stderr = spool_bytes(&directory.join("stderr"), MAX_SPOOL)?;
-        for name in ["stdout", "stderr"] {
-            self.sync_host_spool_file(&directory.join(name))?;
-        }
-        self.sync_host_spool_directory(directory)?;
-        self.sync_host_spool_directory(directory.parent().unwrap())?;
         let completion = completion_for(status, &stdout, &stderr);
         self.ensure_host_completion_identity(
             directory.file_name().unwrap().to_str().unwrap(),
             &completion,
         )?;
+        for name in ["stdout", "stderr"] {
+            self.sync_host_spool_file(&directory.join(name))?;
+        }
+        // Durable stream names must precede the seal's rename. Recovery can
+        // never find a committed seal whose referenced streams were not synced.
+        self.sync_host_spool_directory(directory)?;
+        self.sync_host_spool_directory(directory.parent().unwrap())?;
+        if !directory.join("completed.json").try_exists()? {
+            self.write_host_completion_observed(
+                directory,
+                "completed.json",
+                &completion,
+                &mut |point| {
+                    #[cfg(test)]
+                    self.test_fs.checkpoint(
+                        [
+                            "host-seal-temp-create",
+                            "host-seal-temp-partial",
+                            "host-seal-temp-full",
+                            "host-seal-temp-sync",
+                            "host-seal-rename",
+                            "host-seal-target-sync",
+                            "host-seal-directory-sync",
+                        ][usize::from(point - 1)],
+                    )?;
+                    #[cfg(not(test))]
+                    let _ = point;
+                    Ok(())
+                },
+            )?;
+        }
+        self.sync_host_spool_directory(directory)?;
         Ok(completion)
     }
 
@@ -1978,9 +2135,9 @@ impl Store {
         })
     }
 
-    /// Persist the original reply and its independently durable completion
-    /// identity before committing completed-pending. The pending metadata is
-    /// also usable when that commit fails or completed.json is never published.
+    /// Seal the original before publishing any derived database/pending
+    /// metadata. A crash before the database commit recovers from the seal;
+    /// legacy pending markers remain readable for existing reservations.
     pub fn write_pinned_host_reply(
         &self,
         owner: &PackageGeneration,
@@ -2025,8 +2182,7 @@ impl Store {
             &writer.handle,
             &completion_for(status, stdout, stderr),
         )?;
-        // Capture may still be interrupted here. No recovery identity exists
-        // until both byte streams and their directory entries are durable.
+        // Until the sealed-sidecar rename, this is only a temporary capture.
         checkpoint(1)?;
         self.write_host_stream_observed(&path.join("stdout"), stdout, 2, &mut checkpoint)?;
         self.write_host_stream_observed(&path.join("stderr"), stderr, 6, &mut checkpoint)?;
@@ -2052,8 +2208,8 @@ impl Store {
         }
         self.sync_host_spool_directory(path.parent().unwrap())?;
         checkpoint(17)?;
-        // The ledger or independent file witness can preserve completion when
-        // the other publication fails, but neither precedes durable capture.
+        // The sealed sidecar already owns completion. These metadata writes
+        // can fail without releasing the original.
         if let Err(cause) = metadata {
             if !self.retain_pinned_host_execution(owner, writer, status)? {
                 return Err(reject("host output reservation was cancelled"));
@@ -2494,6 +2650,32 @@ impl Store {
         Ok(completion.stdout_length.saturating_add(stderr))
     }
 
+    /// Destructor cleanup can abandon temporary capture, never a seal.
+    /// Explicit delivery acknowledgement/settlement uses release_host_spool.
+    pub(crate) fn abandon_unsealed_host_spool(&self, package: &str, handle: &str) -> Result<()> {
+        let lease = self.lease(handle)?;
+        if self
+            .host_spool_path(handle)?
+            .join("completed.json")
+            .try_exists()?
+            || !self.recorded_host_completions(handle)?.is_empty()
+        {
+            return Ok(());
+        }
+        // Release intent is published under the same writer exclusion used by
+        // capture. Drop the lease only before the collector reacquires it.
+        self.transaction(|tx| {
+            tx.execute(
+                "UPDATE host_spools SET status='released' WHERE handle=?1 AND package=?2",
+                params![handle, package],
+            )
+            .map_err(sql)?;
+            Ok(())
+        })?;
+        drop(lease);
+        self.collect_host_spool(handle)
+    }
+
     pub fn release_host_spool(&self, package: &str, handle: &str) -> Result<()> {
         if !identity(package) {
             return Err(reject("invalid host output owner"));
@@ -2699,9 +2881,19 @@ impl Store {
                     if self.sync_complete_host_spool(&handle).is_err() {
                         continue;
                     }
-                    self.transaction(|tx|{tx.execute("UPDATE host_spools SET status='sealed',bytes=?2,process_status=?3 WHERE handle=?1 AND status!='released'",params![handle,self.completed_host_bytes(&handle, &c)? as i64,c.status]).map_err(sql)?;Ok(())})?;
+                    self.transaction(|tx|{tx.execute("UPDATE host_spools SET status='sealed',bytes=?2,process_status=?3,completion=?4 WHERE handle=?1 AND status!='released'",params![handle,self.completed_host_bytes(&handle, &c)? as i64,c.status,encode(&c)?]).map_err(sql)?;Ok(())})?;
                 }
                 Ok(None) if state == "reserved" => {
+                    // Even an unreadable or damaged seal is retained until an
+                    // explicit settlement; absence of valid evidence is not
+                    // permission to delete a published original.
+                    if self
+                        .host_spool_path(&handle)?
+                        .join("completed.json")
+                        .try_exists()?
+                    {
+                        continue;
+                    }
                     match self.has_verified_host_stream(&handle) {
                         Ok(false) => (),
                         Ok(true) | Err(_) => continue,

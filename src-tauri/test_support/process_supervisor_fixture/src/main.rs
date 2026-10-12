@@ -207,6 +207,17 @@ fn main() {
         return;
     }
     match result {
+        Ok(output) if args[0].ends_with("stderr-success") => {
+            assert!(output.status.success());
+            assert_eq!(output.stdout, ORIGINAL_PNG);
+            assert_eq!(output.stderr.len(), 65536);
+            assert!(output.stderr.starts_with(b"diagnostic-prefix"));
+            assert!(output.stderr.ends_with(b"diagnostic-suffix"));
+            assert!(String::from_utf8_lossy(&output.stderr).contains("[stderr truncated]"));
+            println!(
+                "exit-zero-stderr-overflow: original preserved; bounded prefix/suffix diagnostics"
+            );
+        }
         Ok(output) if args[0].ends_with("detached-output-exit") => {
             println!("status={}", output.status.code().unwrap_or(-1));
             println!("original-png-match={}", output.stdout == ORIGINAL_PNG);
@@ -250,6 +261,13 @@ fn digest(bytes: &[u8]) -> String {
     format!("{}:{hash:016x}", bytes.len())
 }
 fn leaf(args: &[String]) {
+    if args[0].ends_with("stderr-success") {
+        std::io::stdout().write_all(ORIGINAL_PNG).unwrap();
+        std::io::stderr().write_all(b"diagnostic-prefix").unwrap();
+        std::io::stderr().write_all(&vec![b'x'; 200_000]).unwrap();
+        std::io::stderr().write_all(b"diagnostic-suffix").unwrap();
+        return;
+    }
     match args[0].as_str() {
         "detached-output-exit"
         | "fallback-detached-output-exit"

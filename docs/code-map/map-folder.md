@@ -859,7 +859,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `src-tauri/src/installed_plugins/lifecycle.rs` — declared state snapshots, preflight/commit/rollback journal and interrupted upgrade recovery.
 - `src-tauri/src/installed_plugins/provenance.rs` — optional recording facade and host-retained publisher leases for core edits/rename.
 - `src-tauri/src/file_picker.rs` — owned native open/save picker requests; replies are scoped to their creating window.
-- `src-tauri/src/process_ext/pipe_capture.rs` — shared Unix/Windows bounded pipe capture with optional stdout streaming; process-exit retirement drains queued bytes without a scheduling deadline.
+- `src-tauri/src/process_ext/pipe_capture.rs` — shared Unix/Windows bounded stdout pipe capture with optional streaming and independently truncated prefix/suffix diagnostics; process-exit retirement drains queued bytes without a scheduling deadline.
 - `src-tauri/src/process_ext/windows_job.rs` — attach suspended launchers to kill-on-close JobObjects before descendants can start.
 - `src/lib/plugins/installed.ts` — load/remove installed contributions and synchronize package changes between windows.
 - `src/lib/plugins/runtime-sdk.ts`, `src/lib/plugins/svelte-runtime.d.ts` — frozen SDK and exact shared Svelte compiler/runtime bindings; host modules `ui/modal`, `ui/image-editor`, `ui/file-tiles` (capability `fileTiles`), `ui/file-tile` (capability `fileTile`, including `tileGridMetrics`); capability `tileSize` (`FileViewPane.tileSize`, file-tiles `size`); capability `jobRetry` (`PluginJobs.accept` registration `retry`).
@@ -906,7 +906,7 @@ TraceExplorer's image UI, provider adapters and SQLite journal are maintained in
 - `src-tauri/src/process_supervisor.rs` — Unix parent-death process group anchor and bounded owned CLI output.
 - `src-tauri/src/recovery_actor.rs` — fixed-worker generation recovery ownership, queue limits and original deadlines.
 - `src-tauri/src/service_state/artifacts.rs` — captured inputs, reserved output stages, sealing, acquisition proof and retained artifact custody.
-- `src-tauri/src/service_state/host_spools.rs` — shared bytes-before-identity completion barrier, immutable recorded stdout/stderr custody and empty-stream repair, generation-scoped recovery, persistence checkpoints, writer pins and quota-visible collection.
+- `src-tauri/src/service_state/host_spools.rs` — shared atomic sealed-sidecar completion commit and derived identity recovery, immutable recorded stdout/stderr custody and empty-stream repair, generation-scoped recovery, persistence checkpoints, writer pins and quota-visible collection.
 - `src-tauri/src/service_state/intents.rs` — immutable semantic admission identities and replay-conflict validation.
 - `src-tauri/src/service_state/job.rs` — durable host job presentation and snapshot wire records.
 - `src-tauri/src/service_state/job_store.rs` — transactional job revisions, acquired-output completion, participant-removal terminalization, quota-full delivery presentation, recovery and pruning.

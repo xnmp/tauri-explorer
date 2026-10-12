@@ -2,6 +2,7 @@
 //! rather than closing capture after a scheduling deadline. A detached writer
 //! can keep a pipe open, but cannot make that finite drain wait for future data.
 use std::{
+    collections::VecDeque,
     io::{self, Read, Write},
     sync::{
         atomic::{AtomicBool, Ordering},
@@ -122,7 +123,65 @@ pub(crate) fn spawn_streaming(
     pipe.configure()?;
     std::thread::Builder::new()
         .name("owned-process-output".into())
-        .spawn(move || read(&mut pipe, limit, &overflow, &retire, &mut sink))
+        .spawn(move || read(&mut pipe, limit, Some(&overflow), &retire, &mut sink))
+}
+
+/// Diagnostics are bounded independently of stdout and never cancel a child.
+pub(crate) fn spawn_diagnostics(
+    mut pipe: impl OutputPipe,
+    limit: usize,
+    retire: Arc<AtomicBool>,
+) -> io::Result<JoinHandle<io::Result<Vec<u8>>>> {
+    pipe.configure()?;
+    std::thread::Builder::new()
+        .name("owned-process-diagnostics".into())
+        .spawn(move || read(&mut pipe, limit, None, &retire, &mut None))
+}
+
+const TRUNCATED: &[u8] = b"\n[stderr truncated]\n";
+
+struct Diagnostics {
+    prefix: Vec<u8>,
+    suffix: VecDeque<u8>,
+    limit: usize,
+    truncated: bool,
+}
+impl Diagnostics {
+    fn new(limit: usize) -> Self {
+        Self {
+            prefix: Vec::new(),
+            suffix: VecDeque::new(),
+            limit,
+            truncated: false,
+        }
+    }
+    fn push(&mut self, bytes: &[u8]) {
+        let remaining = self.limit.saturating_sub(self.prefix.len());
+        self.truncated |= bytes.len() > remaining;
+        self.prefix
+            .extend_from_slice(&bytes[..bytes.len().min(remaining)]);
+        let suffix_limit = self.limit.saturating_sub(TRUNCATED.len()) / 2;
+        if suffix_limit == 0 {
+            return;
+        }
+        for &byte in bytes {
+            if self.suffix.len() == suffix_limit {
+                self.suffix.pop_front();
+            }
+            self.suffix.push_back(byte);
+        }
+    }
+    fn finish(mut self) -> Vec<u8> {
+        if !self.truncated {
+            return self.prefix;
+        }
+        let marker = &TRUNCATED[..TRUNCATED.len().min(self.limit)];
+        self.prefix
+            .truncate(self.limit - marker.len() - self.suffix.len());
+        self.prefix.extend_from_slice(marker);
+        self.prefix.extend(self.suffix);
+        self.prefix
+    }
 }
 
 /// Output workers are always joined. Retirement makes every read finite even
@@ -150,11 +209,11 @@ impl Readers {
         readers.stdout = Some(spawn_streaming(
             stdout,
             limits.0,
-            overflow.clone(),
+            overflow,
             retire.clone(),
             stdout_sink,
         )?);
-        readers.stderr = Some(spawn(stderr, limits.1, overflow, retire)?);
+        readers.stderr = Some(spawn_diagnostics(stderr, limits.1, retire)?);
         Ok(readers)
     }
 
@@ -197,11 +256,12 @@ fn join(reader: JoinHandle<io::Result<Vec<u8>>>) -> io::Result<Vec<u8>> {
 fn read(
     pipe: &mut impl OutputPipe,
     limit: usize,
-    overflow: &AtomicBool,
+    overflow: Option<&AtomicBool>,
     retire: &AtomicBool,
     sink: &mut Option<std::fs::File>,
 ) -> io::Result<Vec<u8>> {
     let mut bytes = Vec::new();
+    let mut diagnostics = overflow.is_none().then(|| Diagnostics::new(limit));
     let mut buffer = [0u8; 8192];
     let mut queued = None;
     loop {
@@ -209,23 +269,27 @@ fn read(
             queued = Some(pipe.available()?);
         }
         let count = match queued {
-            Some(0) => return Ok(bytes),
+            Some(0) => return Ok(diagnostics.map_or(bytes, Diagnostics::finish)),
             Some(count) => count.min(buffer.len()),
             None => buffer.len(),
         };
         match pipe.read_ready(&mut buffer[..count]) {
-            Ok(0) => return Ok(bytes),
+            Ok(0) => return Ok(diagnostics.map_or(bytes, Diagnostics::finish)),
             Ok(count) => {
-                let remaining = limit.saturating_sub(bytes.len());
-                let captured = &buffer[..count.min(remaining)];
-                if let Some(sink) = sink {
-                    // File writes shrink the RAM-only window. Completion's
-                    // shared Store barrier supplies the final durability.
-                    sink.write_all(captured)?;
-                }
-                bytes.extend_from_slice(captured);
-                if count > remaining {
-                    overflow.store(true, Ordering::Release);
+                if let Some(diagnostics) = &mut diagnostics {
+                    diagnostics.push(&buffer[..count]);
+                } else {
+                    let remaining = limit.saturating_sub(bytes.len());
+                    let captured = &buffer[..count.min(remaining)];
+                    if let Some(sink) = sink {
+                        // File writes shrink the RAM-only window. Completion's
+                        // shared Store barrier supplies the final durability.
+                        sink.write_all(captured)?;
+                    }
+                    bytes.extend_from_slice(captured);
+                    if count > remaining {
+                        overflow.unwrap().store(true, Ordering::Release);
+                    }
                 }
                 if let Some(remaining) = queued.as_mut() {
                     *remaining -= count;
@@ -235,12 +299,44 @@ fn read(
             // No queued data remains. An escaped helper may retain the write
             // end; its future bytes do not belong to the completed leaf.
             Err(error) if error.kind() == io::ErrorKind::WouldBlock && queued.is_some() => {
-                return Ok(bytes)
+                return Ok(diagnostics.map_or(bytes, Diagnostics::finish))
             }
             Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
                 std::thread::sleep(Duration::from_millis(5));
             }
             Err(error) => return Err(error),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn diagnostics_preserve_prefix_suffix_and_bound_even_for_tiny_limits() {
+        for limit in [0, 1, TRUNCATED.len(), 64, 1024] {
+            let input = (0..4096).map(|n| (n % 251) as u8).collect::<Vec<_>>();
+            let mut capture = Diagnostics::new(limit);
+            for chunk in input.chunks(7) {
+                capture.push(chunk);
+            }
+            let output = capture.finish();
+            assert_eq!(output.len(), limit);
+            if limit > TRUNCATED.len() {
+                let suffix = (limit - TRUNCATED.len()) / 2;
+                let prefix = limit - TRUNCATED.len() - suffix;
+                assert_eq!(&output[..prefix], &input[..prefix]);
+                assert_eq!(&output[prefix..prefix + TRUNCATED.len()], TRUNCATED);
+                assert_eq!(&output[limit - suffix..], &input[input.len() - suffix..]);
+            }
+        }
+    }
+    #[test]
+    fn diagnostics_within_limit_are_unchanged() {
+        for input in [b"".as_slice(), b"exact diagnostics".as_slice()] {
+            let mut capture = Diagnostics::new(input.len());
+            capture.push(input);
+            assert_eq!(capture.finish(), input);
         }
     }
 }

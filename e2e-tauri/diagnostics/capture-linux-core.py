@@ -38,10 +38,12 @@ def capture(directory, task, pid, epoch, stream, limit=1024 * 1024 * 1024):
     # Hard-link publication is exclusive too: never overwrite an earlier core.
     os.link(pending, target)
     metadata = target.with_name(target.name + ".capture.json")
-    metadata.write_text(json.dumps({
-        "task": task, "pid": pid, "epoch": epoch, "bytes": size, "truncated": truncated,
-    }) + "\n")
-    metadata.chmod(0o644)
+    metadata_descriptor = os.open(metadata, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o644)
+    os.fchmod(metadata_descriptor, 0o644)
+    with os.fdopen(metadata_descriptor, "w") as output:
+        output.write(json.dumps({
+            "task": task, "pid": pid, "epoch": epoch, "bytes": size, "truncated": truncated,
+        }) + "\n")
     # The pending marker owns BOTH the core and metadata publication.
     pending.unlink()
 

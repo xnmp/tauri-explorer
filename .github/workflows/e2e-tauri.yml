@@ -280,7 +280,9 @@ jobs:
         shell: bash
         run: |
           mkdir -p e2e-tauri/logs
-          mkdir -p /tmp/issue-1102-cores
+          # Root's kernel helper writes here; job processes must not be able to
+          # plant files or replace this directory through the sticky /tmp root.
+          sudo install -d -m 755 /tmp/issue-1102-cores
           # A direct path resolves inside the crashing process's mount namespace,
           # which WebKit's sandbox may make read-only. A kernel pipe runs on the host.
           sudo install -m 755 e2e-tauri/diagnostics/capture-linux-core.py /tmp/issue-1102-core.py

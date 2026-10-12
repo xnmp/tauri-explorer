@@ -23,12 +23,23 @@ async function handoffCaptures(source: string, destination: string, timeoutMs: n
     for (const file of fs.readdirSync(source, { withFileTypes: true })) {
       if (!file.isFile() || !/^core-[\w.-]+-\d+-\d+(?:\.pending|\.capture\.json)?$/.test(file.name)) continue;
       if (copied.has(file.name)) continue;
-      if (file.name.endsWith(".capture.json") && fs.existsSync(path.join(source, file.name.replace(/\.capture\.json$/, ".pending")))) continue;
+      const coreName = file.name.replace(/\.(?:capture\.json|pending)$/, "");
+      // A raw hard link alone is not a completed capture. The marker owns
+      // metadata (including truncation) too; retain only its pending alias.
+      if (!file.name.endsWith(".pending") && fs.existsSync(path.join(source, `${coreName}.pending`))) continue;
       try {
         fs.copyFileSync(path.join(source, file.name), path.join(destination, file.name));
         copied.add(file.name);
       }
       catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
+    }
+  }
+  for (const name of copied) {
+    if (!name.endsWith(".pending")) continue;
+    const coreName = name.slice(0, -".pending".length);
+    if (!fs.existsSync(path.join(source, name))
+      && copied.has(coreName) && copied.has(`${coreName}.capture.json`)) {
+      fs.unlinkSync(path.join(destination, name));
     }
   }
 }

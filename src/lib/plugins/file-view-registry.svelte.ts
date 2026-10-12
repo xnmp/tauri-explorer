@@ -41,8 +41,10 @@ export interface FileViewPane {
   readonly tileSize?: PaneTileSize;
   /** Select one entry with the normal modifier semantics (Ctrl toggles, Shift extends). */
   select(entry: FileEntry, modifiers?: { ctrlKey?: boolean; shiftKey?: boolean }): void;
-  /** Replace the selection; `focus` becomes the cursor/primary entry. */
-  setSelection(paths: readonly string[], focus?: string | null): void;
+  /** Replace listed selection; `focus` becomes the cursor and range anchor.
+   * Capability "selectionAnchor": `keepAnchor` replaces only the selected set,
+   * preserving the cursor and range anchor even when unselected; ignores `focus`. */
+  setSelection(paths: readonly string[], focus?: string | null, options?: { keepAnchor?: boolean }): void;
   clearSelection(): void;
   /** Activate an entry like a double-click: enter a folder or open a file. */
   open(entry: FileEntry): Promise<void>;

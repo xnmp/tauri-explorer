@@ -86,6 +86,23 @@ export function selectByIndices(
   return new Set(pathsToSelect);
 }
 
+/** Replace listed paths. Marquee updates preserve the range anchor and cursor,
+ * even when the cursor is no longer selected; focus is ignored in that mode. */
+export function selectPaths(
+  entries: readonly FileEntry[],
+  paths: readonly string[],
+  anchorPath: string | null,
+  cursorPath: string | null,
+  focus: string | null = null,
+  options: { keepAnchor?: boolean } = {},
+): { selectedPaths: Set<string>; anchorPath: string | null; cursorPath: string | null } {
+  const listed = new Set(entries.map((entry) => entry.path));
+  const selectedPaths = new Set(paths.filter((path) => listed.has(path)));
+  if (options.keepAnchor) return { selectedPaths, anchorPath, cursorPath };
+  const primary = focus !== null && selectedPaths.has(focus) ? focus : [...selectedPaths].at(-1) ?? null;
+  return { selectedPaths, anchorPath: primary, cursorPath: primary ?? cursorPath };
+}
+
 /**
  * Get selected entries from displayEntries.
  */

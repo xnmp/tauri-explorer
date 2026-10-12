@@ -569,15 +569,12 @@ function createExplorerState(seed?: ExplorerSeed) {
     setSelection(nextSet);
   }
 
-  /** Replace the selection with listed paths; `focus` becomes the primary
-   *  entry (cursor and range anchor). Unknown paths are ignored. */
-  function selectPaths(paths: readonly string[], focus: string | null = null) {
-    const listed = new Set(coreState.entries.map((entry) => entry.path));
-    const next = [...new Set(paths)].filter((path) => listed.has(path));
-    const primary = focus !== null && next.includes(focus) ? focus : next.at(-1) ?? null;
-    setSelection(next);
-    coreState.selectionAnchorPath = primary;
-    if (primary) coreState.cursorPath = primary;
+  /** Replace listed paths, optionally retaining the marquee's anchor/cursor semantics. */
+  function selectPaths(paths: readonly string[], focus: string | null = null, options: { keepAnchor?: boolean } = {}) {
+    const result = selection.selectPaths(coreState.entries, paths, coreState.selectionAnchorPath, coreState.cursorPath, focus, options);
+    setSelection(result.selectedPaths);
+    coreState.selectionAnchorPath = result.anchorPath;
+    coreState.cursorPath = result.cursorPath;
   }
 
   function selectAll() {

@@ -8,6 +8,8 @@ export interface LinuxCoreRecord {
 
 export interface LinuxCoreCollectorOptions {
   directory: string;
+  captureDirectory?: string;
+  captureTimeoutMs?: number;
   executables: Readonly<Record<string, string>>;
   debug: (executable: string, core: string) => Promise<string>;
 }

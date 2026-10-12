@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { collectLinuxCoreEvidence } from "../../e2e-tauri/diagnostics/linux-core-evidence";
@@ -17,6 +17,55 @@ afterEach(() => {
 });
 
 describe("native core evidence", () => {
+  async function activeCapture(directory: string) {
+    const script = fileURLToPath(new URL("../../e2e-tauri/diagnostics/capture-linux-core.py", import.meta.url));
+    const child = spawn("python3", [script, directory, "WebKitWebProces", "1234", "1"], { stdio: ["pipe", "ignore", "pipe"] });
+    const exited = new Promise<void>((resolve, reject) => {
+      child.once("error", reject);
+      child.once("exit", code => code === 0 ? resolve() : reject(new Error(`capture exited ${code}`)));
+    });
+    child.stdin.write("first bytes");
+    const deadline = Date.now() + 2_000;
+    while (!fs.existsSync(path.join(directory, "core-WebKitWebProces-1234-1.pending"))) {
+      if (Date.now() > deadline) { child.kill(); throw new Error("sink never acquired pending capture"); }
+      await new Promise(resolve => setTimeout(resolve, 5));
+    }
+    return { child, exited };
+  }
+
+  it("the artifact handoff waits for a real active kernel writer and retains its finalized bytes/metadata", async () => {
+    const source = fixture(), directory = fixture();
+    const { child, exited } = await activeCapture(source);
+    try {
+      const collecting = collectLinuxCoreEvidence({ directory, captureDirectory: source, captureTimeoutMs: 2_000,
+        executables: { WebKitWebProces: "/usr/lib/WebKitWebProcess" }, debug: async () => "actual stack" });
+      child.stdin.end(" and final bytes");
+      const records = await collecting;
+      await exited;
+      expect(records).toHaveLength(1);
+      expect(records[0].error).toBeNull();
+      expect(fs.readFileSync(path.join(directory, records[0].core), "utf8")).toBe("first bytes and final bytes");
+      expect(JSON.parse(fs.readFileSync(path.join(directory, `${records[0].core}.capture.json`), "utf8")).truncated).toBe(false);
+      expect(fs.readFileSync(path.join(directory, records[0].transcript!), "utf8")).toBe("actual stack");
+    } finally { child.stdin.end(); await exited; }
+  });
+
+  it("a capture handoff deadline retains and indexes partial evidence as a failure", async () => {
+    const source = fixture(), directory = fixture();
+    const { child, exited } = await activeCapture(source);
+    try {
+      const debug = vi.fn();
+      const records = await collectLinuxCoreEvidence({ directory, captureDirectory: source, captureTimeoutMs: 10,
+        executables: { WebKitWebProces: "/usr/lib/WebKitWebProcess" }, debug });
+      expect(records).toHaveLength(1);
+      expect(records[0].core).toBe("core-WebKitWebProces-1234-1.pending");
+      expect(records[0].error).toContain("did not complete");
+      expect(debug).not.toHaveBeenCalled();
+      expect(fs.existsSync(path.join(directory, records[0].core))).toBe(true);
+      expect(JSON.parse(fs.readFileSync(path.join(directory, "core-index.json"), "utf8"))).toEqual(records);
+    } finally { child.stdin.end(); await exited; }
+  });
+
   it("retains the debugger's actual stack transcript for the matching native executable", async () => {
     const directory = fixture();
     const name = "core-WebKitWebProces-1234-1791777389";

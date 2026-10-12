@@ -280,11 +280,50 @@ jobs:
         shell: bash
         run: |
           mkdir -p e2e-tauri/logs
+          mkdir -p /tmp/issue-1102-cores
           # A direct path resolves inside the crashing process's mount namespace,
           # which WebKit's sandbox may make read-only. A kernel pipe runs on the host.
           sudo install -m 755 e2e-tauri/diagnostics/capture-linux-core.py /tmp/issue-1102-core.py
           sudo sysctl -w 'kernel.core_pattern=|/usr/bin/python3 /tmp/issue-1102-core.py /tmp/issue-1102-cores %e %P %t'
+          # Wait for pipe helpers before retiring crashing processes. The
+          # collector also owns a bounded wait/partial-file path independently.
+          sudo sysctl -w kernel.core_pipe_limit=16
           dpkg-query -W libwebkit2gtk-4.1-0 libjavascriptcoregtk-4.1-0 > e2e-tauri/logs/core-versions.txt
+
+      - name: Verify Linux crash sink outside a read-only mount namespace
+        if: runner.os == 'Linux'
+        timeout-minutes: 2
+        shell: bash
+        run: |
+          cc -g -O0 -x c -o /tmp/issue-1102-core-probe - <<'C'
+          #include <signal.h>
+          #include <sys/prctl.h>
+          int main(void) {
+            if (prctl(PR_SET_NAME, "tauri-core-test", 0, 0, 0)) return 2;
+            raise(SIGSEGV);
+            return 3;
+          }
+          C
+          # Only this child's mount namespace becomes read-only. The kernel
+          # sink must still publish through the host namespace, as with WebKit.
+          set +e
+          sudo unshare --mount --propagation private bash -ec '
+            mount --bind /tmp/issue-1102-cores /tmp/issue-1102-cores
+            mount -o remount,bind,ro /tmp/issue-1102-cores
+            exec /tmp/issue-1102-core-probe'
+          probe_status=$?
+          set -e
+          test "$probe_status" -eq 139
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          cores = list(Path('/tmp/issue-1102-cores').glob('core-tauri-core-test-*-*.capture.json'))
+          assert len(cores) == 1, f'Native kernel pipe preflight did not publish one core: {cores}'
+          metadata = json.loads(cores[0].read_text())
+          assert metadata['bytes'] > 4 and not metadata['truncated'], metadata
+          raw = Path(str(cores[0]).removesuffix('.capture.json'))
+          assert raw.open('rb').read(4) == b'\x7fELF', 'Kernel did not publish an ELF core'
+          PY
 
       - name: Run smoke suite (Linux, isolated display and window manager)
         if: runner.os == 'Linux'
@@ -304,11 +343,10 @@ jobs:
         run: |
           webkit_process="$(dpkg -L libwebkit2gtk-4.1-0 | awk '/\/WebKitWebProcess$/ { print; exit }')"
           test -n "$webkit_process"
-          if [ -d /tmp/issue-1102-cores ]; then
-            cp /tmp/issue-1102-cores/core-* e2e-tauri/logs/
-          fi
           bun e2e-tauri/diagnostics/linux-core-evidence.ts e2e-tauri/logs \
-            "WebKitWebProces=$webkit_process" "tauri-explorer=$PWD/src-tauri/target/debug/tauri-explorer"
+            --capture-directory=/tmp/issue-1102-cores \
+            "WebKitWebProces=$webkit_process" "tauri-explorer=$PWD/src-tauri/target/debug/tauri-explorer" \
+            tauri-core-test=/tmp/issue-1102-core-probe
 
       # The runner's EDGEWEBDRIVER matches the Edge *browser*, but tauri apps
       # run on the WebView2 *runtime*, whose version can differ — msedgedriver

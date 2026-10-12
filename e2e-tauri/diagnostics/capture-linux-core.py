@@ -11,7 +11,7 @@ import sys
 
 
 def capture(directory, task, pid, epoch, stream, limit=1024 * 1024 * 1024):
-    if task not in ("WebKitWebProces", "tauri-explorer"):
+    if task not in ("WebKitWebProces", "tauri-explorer", "tauri-core-test"):
         return
     if not re.fullmatch(r"[0-9]+", pid) or not re.fullmatch(r"[0-9]+", epoch):
         raise ValueError("Invalid kernel crash identity")
@@ -21,6 +21,7 @@ def capture(directory, task, pid, epoch, stream, limit=1024 * 1024 * 1024):
     # Refuse existing paths, including symlinks; publish only after stdin ends.
     pending = target.with_name(target.name + ".pending")
     descriptor = os.open(pending, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o644)
+    os.fchmod(descriptor, 0o644)
     size = 0
     truncated = False
     with os.fdopen(descriptor, "wb") as output:
@@ -36,10 +37,13 @@ def capture(directory, task, pid, epoch, stream, limit=1024 * 1024 * 1024):
                 break
     # Hard-link publication is exclusive too: never overwrite an earlier core.
     os.link(pending, target)
-    pending.unlink()
-    target.with_name(target.name + ".capture.json").write_text(json.dumps({
+    metadata = target.with_name(target.name + ".capture.json")
+    metadata.write_text(json.dumps({
         "task": task, "pid": pid, "epoch": epoch, "bytes": size, "truncated": truncated,
     }) + "\n")
+    metadata.chmod(0o644)
+    # The pending marker owns BOTH the core and metadata publication.
+    pending.unlink()
 
 
 if __name__ == "__main__":

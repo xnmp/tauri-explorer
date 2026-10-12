@@ -52,3 +52,13 @@ export async function compareCropPixels(original: string, saved: string, padded:
         cornerAlpha: actual[3], centerAlpha: actual[(Math.floor(canvas.height / 2) * canvas.width + Math.floor(canvas.width / 2)) * 4 + 3] });
     } catch (error) { done({ error: String(error) }); }
   }
+
+export async function observeCropPreview(expected: number[], done: (ready: boolean) => void) {
+        const image = document.querySelector<HTMLImageElement>(".preview-image");
+        if (!image?.complete || !image.naturalWidth) { done(false); return; }
+        // SVG naturalWidth is CSS-layout-dependent in WebKit. Inspect the
+        // actual displayed URL through an unstyled image instead.
+        const intrinsic = new Image(); intrinsic.src = image.src;
+        try { await intrinsic.decode(); done(intrinsic.naturalWidth === expected[0] && intrinsic.naturalHeight === expected[1]); }
+        catch { done(false); }
+      }

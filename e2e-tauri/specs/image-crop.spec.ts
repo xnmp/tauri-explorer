@@ -5,7 +5,7 @@ import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { domText, entryPathSelector, navigateTo } from "./helpers";
 import { createNativeFixtureDirectory } from "../native-qualification";
-import { compareCropPixels } from "../crop-pixel-oracle";
+import { compareCropPixels, observeCropPreview } from "../crop-pixel-oracle";
 import { formatSize } from "../../src/lib/domain/file";
 
 const fixtures = fileURLToPath(new URL("../fixtures/image-crop/", import.meta.url));
@@ -136,15 +136,7 @@ nativeDescribe("native image cropping", () => {
         if (["png", "webp", "bmp", "avif"].includes(extension)) expect(observed.centerAlpha).toBe(0);
       }
       const row = $(entryPathSelector(target)); await row.waitForDisplayed(); await row.click();
-      await browser.waitUntil(async () => browser.executeAsync(async (expected: number[], done: (ready: boolean) => void) => {
-        const image = document.querySelector<HTMLImageElement>(".preview-image");
-        if (!image?.complete || !image.naturalWidth) { done(false); return; }
-        // SVG naturalWidth is CSS-layout-dependent in WebKit. Inspect the
-        // actual displayed URL through an unstyled image instead.
-        const intrinsic = new Image(); intrinsic.src = image.src;
-        try { await intrinsic.decode(); done(intrinsic.naturalWidth === expected[0] && intrinsic.naturalHeight === expected[1]); }
-        catch { done(false); }
-      }, extension === "icns" ? [256, 256] : [448, 336]), { timeoutMsg: "native output dimensions did not reach the preview" });
+      await browser.waitUntil(async () => browser.executeAsync(observeCropPreview, extension === "icns" ? [256, 256] : [448, 336]), { timeoutMsg: "native output dimensions did not reach the preview" });
       await screenshot(`${extension}-saved-copy`);
     });
   }

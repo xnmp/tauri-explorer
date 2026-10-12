@@ -15,7 +15,53 @@ import {
   directoryKey,
   nativeDirectoryKey,
   splitFlattenedUriList,
+  pathComparison,
 } from "../../src/lib/domain/path";
+
+describe.each([false, true])("platform path comparisons (Windows=%s)", windows => {
+  const paths = pathComparison(windows);
+  it("compares directory separators, equality and containment consistently", () => {
+    const source = windows ? "C:\\tmp\\a\\b" : "/tmp/a\\b";
+    const destination = windows ? "c:/tmp/a/b/" : "/tmp/a/b/";
+    expect(paths.same(source, destination)).toBe(windows);
+    expect(paths.contains(destination + "child", source)).toBe(windows);
+    expect(paths.sameParent(source + "/item", source + "/")).toBe(true);
+    expect(paths.contains(source + "extra", source)).toBe(false);
+  });
+  it("never treats a case-only difference below the root as the same directory", () => {
+    // Windows directories can be case-sensitive (NTFS per-directory case sensitivity), so
+    // only the backend may decide that Case and case alias; admission must not suppress it.
+    const root = windows ? "C:/" : "/";
+    expect(paths.same(root + "Case", root + "case/")).toBe(false);
+    expect(paths.contains(root + "case/item", root + "Case")).toBe(false);
+    expect(paths.sameParent(root + "work/Case/a.txt", root + "work/case")).toBe(false);
+    if (windows) expect(paths.same("c:/Case", "C:/Case")).toBe(true);
+    expect(paths.same(root + "Case/./", root + "Case")).toBe(true);
+    expect(paths.contains(root + "Case", root)).toBe(true);
+    expect(paths.parent(root)).toBe(paths.key(root));
+  });
+  it("declines ambiguous paths instead of inventing an absolute identity", () => {
+    const root = windows ? "C:/" : "/";
+    for (const input of ["", "relative", "C:relative", root + "a/../b", root + "bad\0name"]) {
+      expect(paths.key(input)).toBeNull();
+      expect(paths.same(input, input)).toBe(false);
+      expect(paths.contains(input, root)).toBe(false);
+      expect(paths.sameParent(input, root)).toBe(false);
+    }
+  });
+});
+
+it("Windows UNC comparisons preserve share roots and the WSL Linux suffix", () => {
+  const paths = pathComparison(true);
+  expect(paths.parent("\\\\HOST\\Share\\item")).toBe("//host/share");
+  expect(paths.parent("//host/share/")).toBe("//host/share");
+  expect(paths.contains("//host/other/item", "//host/share")).toBe(false);
+  expect(paths.same("\\\\HOST\\Share\\Dir", "//host/share/Dir/")).toBe(true);
+  expect(paths.same("\\\\HOST\\Share\\Dir", "//host/share/dir/")).toBe(false);
+  expect(paths.same("\\\\WSL.localhost\\Ubuntu\\Case", "//wsl.localhost/Ubuntu/case")).toBe(false);
+  expect(paths.same("\\\\?\\C:\\Users\\Owner", "c:/Users/Owner")).toBe(true);
+  expect(paths.same("\\\\?\\UNC\\HOST\\Share\\Dir", "//host/share/Dir")).toBe(true);
+});
 
 describe("nativeDirectoryKey", () => {
   it("keeps distinct POSIX native names separate while ignoring trailing separators", () => {

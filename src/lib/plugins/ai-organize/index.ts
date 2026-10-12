@@ -173,6 +173,7 @@ export const aiOrganizePlugin: Plugin = {
 
     // 4. Command-palette entry.
     ctx.registerCommand({
+      scope: "pane",
       id: "plugin.ai-organize.suggest",
       label: "AI: Suggest Destination…",
       category: "file",

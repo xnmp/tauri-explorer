@@ -1085,6 +1085,11 @@ function mockDirectoryListing(raw: string): CompactDirectoryListing {
 
 const mockTextConnections = createMockTextConnections();
 const mockCommands: Record<string, CommandHandler> = {
+  // A browser has no native window to start an OS drag. Match a failed
+  // native start (Result<(), String>): reject without a completion callback
+  // so the source retains DOM-drop authority. Never fake a successful lease.
+  native_file_drag_clock: () => ({ id: `browser:${performance.timeOrigin}`, now: performance.timeOrigin + performance.now() }),
+  start_file_drag: () => { throw "Native file dragging is unavailable in the browser"; },
   plugin_jobs_snapshot: () => mockAiPresentation().snapshot(),
   plugin_job_cancel: (args) => mockAiPresentation().cancel(String(args.jobKey)),
   plugin_job_dismiss: (args) => mockAiPresentation().dismiss(String(args.jobKey)),

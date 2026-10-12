@@ -7,7 +7,6 @@
   import { dialogRegistry } from "$lib/plugins/dialog-registry.svelte";
   import { conflictResolver } from "$lib/state/conflict-resolver.svelte";
   import { toastStore } from "$lib/state/toast.svelte";
-  import ShortcutCheatsheet from "./ShortcutCheatsheet.svelte";
   import ProgressDialog from "./ProgressDialog.svelte";
   import ToastOverlay from "./ToastOverlay.svelte";
   import { openWithStore } from "$lib/state/open-with.svelte";
@@ -21,6 +20,18 @@
   const notifyError = (message: string) => { toastStore.error(message); };
   const dialogCrash = (label: string, rollback?: () => void) =>
     createDialogCrashHandler(label, rollback, notifyError);
+
+  const PluginDialogMount = useLazyDialog({
+    label: "Plugin dialog", isOpen: () => dialogRegistry.openDialogs.length > 0,
+    load: () => import("./PluginDialogMount.svelte"),
+    onFailure: () => { for (const dialog of dialogRegistry.openDialogs) dialogRegistry.closeInstance(dialog.id, dialog.instanceId); },
+  }, notifyError);
+
+  const ShortcutCheatsheet = useLazyDialog({
+    label: "Keyboard Shortcut Reference", isOpen: () => !pickerInfo && dialogStore.isShortcutsOpen,
+    load: () => import("./ShortcutCheatsheet.svelte"),
+    onFailure: () => dialogStore.closeShortcuts(),
+  }, notifyError);
 
   // Each dialog tracks its own demand. Constructors stay mounted after loading
   // to retain local state and close transitions; imports stay out of startup.
@@ -117,7 +128,11 @@
     </svelte:boundary>
   {/if}
 {:else}
-<ShortcutCheatsheet open={dialogStore.isShortcutsOpen} onClose={() => dialogStore.closeShortcuts()} />
+{#if ShortcutCheatsheet.component}
+  <svelte:boundary onerror={dialogCrash("Keyboard Shortcut Reference", () => dialogStore.closeShortcuts())}>
+    <ShortcutCheatsheet.component open={dialogStore.isShortcutsOpen} onClose={() => dialogStore.closeShortcuts()} />
+  </svelte:boundary>
+{/if}
 {#if ImageCropEditor.component && dialogStore.imageEditorTarget}
   {@const target = dialogStore.imageEditorTarget}
   {#key target}
@@ -199,12 +214,16 @@
     />
   </svelte:boundary>
 {/if}
+{#if PluginDialogMount.component}
 {#each dialogRegistry.openDialogs as d (d.instanceId)}
   {@const DialogComponent = d.component}
   <svelte:boundary onerror={dialogCrash(d.id, () => dialogRegistry.closeInstance(d.id,d.instanceId))}>
-    <DialogComponent {...d.props} open={true} onClose={() => dialogRegistry.closeInstance(d.id,d.instanceId)} />
+    <PluginDialogMount.component dialog={d}>
+      <DialogComponent {...d.props} open={true} onClose={() => dialogRegistry.closeInstance(d.id,d.instanceId)} />
+    </PluginDialogMount.component>
   </svelte:boundary>
 {/each}
+{/if}
 {#if JobsPanel.component}
   <svelte:boundary onerror={dialogCrash("Jobs Panel", () => dialogStore.closeJobsPanel())}>
     <JobsPanel.component

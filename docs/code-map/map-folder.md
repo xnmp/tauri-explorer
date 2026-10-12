@@ -24,11 +24,13 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 
 - `src/lib/components/FileRecoveryDialog.svelte`, `src/lib/components/FileRecoveryNotice.svelte` — page-owned recovery inspection/choices, stable async-action focus and persistent attention notice; deferred mounting uses WindowDialogs and the status-bar snippet or standalone attention row.
 
-- `WindowDialogs.svelte` — typed lazy dialog host, crash boundaries, plugin dialogs and window-level feedback, including portal mode.
+- `WindowDialogs.svelte` — typed lazy dialog host, crash boundaries, demand-loaded plugin mounting/shortcut help and window-level feedback, including portal mode.
+- `src/lib/components/PluginDialogMount.svelte` — retained contributed dialog host; private presentation context and pane-slot DOM portal with hidden/inert parking.
 - `OpenWithDialog.svelte` — accessible installed-application choice with captured filename, loading/empty/error feedback and unchanged-default messaging.
 
 - `FileList.svelte` — dispatches to Details/List/Tiles by view mode; hosts marquee, drop, empty-state. Central view entry.
 - `PluginInspector.svelte` — selection-aware right-side host for plugin inspector contributions; hidden when none apply.
+- `src/lib/components/PluginContributionRoot.svelte` — establishes host-issued DOM ownership before mounting a contributed component; transparent wrapper for dialogs, file views, inspectors, Preview sections and editor tools.
 - `PluginFileView.svelte` — hosts a plugin file view (SDK 2) in place of a pane's listing, with a pane-scoped handle; error boundary offers retry or return to files, and Preview targets it owned are cleared on unmount.
 - `PluginPreviewTarget.svelte` — Preview of a plugin target (a non-file subject): image, details and explicit actions only, no file actions, opening, sibling stepping or dragging. Its chrome is placed in a vertical dock by `PreviewPane.svelte`'s grid rules. Its image fullscreens like a file image through the pane's controller: a 1024px thumbnail in the pane, the full-resolution image (loaded like a file image) once fullscreen (#1033).
 - `PreviewImageSurface.svelte` — the Preview pane's image surface (container, image, zoom indicator, fullscreen styles) shared by file images and plugin targets; event handling comes from `use-preview-fullscreen` (#1033).
@@ -41,7 +43,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `src/lib/components/EntrySymlinkBadge.svelte` — shared file symlink indicator for EntryCell and FileTile, hidden during rename.
 - `FileTiles.svelte` — the SDK module `ui/file-tiles`: non-virtualized Tiles-view tiles for plugin sections, callbacks for select/open/menu, own-width columns, roving focus; size from the `size` prop, else the enclosing plugin view's context, else the global setting.
 - `VirtualList.svelte` — variable-height windowed scroller with persistent extent canvas; publishes scroll/layout settlement for marquee hit testing and cursor reveal. Perf-critical.
-- `MillerColumns.svelte` — column/Miller-columns browsing mode.
+- `MillerColumns.svelte` — column/Miller-columns browsing mode; owner identity and pane-content modality follow both inline and hoisted rendering.
 - `FileItem.svelte` — single entry row/tile (icon, name, badges, selection state).
 - `EntryCell.svelte` — shared List/Tiles gridcell with roving focus, selection semantics and drag-drop interactions.
 - `EntryName.svelte` — shared inline rename input/display across all views.
@@ -135,7 +137,10 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `repo-root-cache.svelte.ts` — bounded reactive repository discovery with positive/negative TTL, shared probes and invalidation-safe publication.
 - `owned-registry.ts` — framework-free contribution registration identity; old disposers cannot remove replacements even when values are reused.
 - `ordered-registry.ts` — owned contributions sorted by plugin list position, then registration; shared by context-menu items and plugin settings sections.
-- `modal-ownership.svelte.ts` — shared input ownership for mounted and contributed modals; closing releases only the corresponding registration.
+- `modal-ownership.svelte.ts` — shared input ownership for mounted and contributed modals; live surface admission precedes DOM suspension; closing releases only the corresponding registration.
+- `src/lib/state/modal-focus.ts` — pane dialog focus restoration tracks actual focus ownership across DOM detachment and releases listeners on cleanup; shared modal focus eligibility.
+- `src/lib/state/pane-dialogs.svelte.ts` — host-private pane capture handles, transient scope retirement, identity-bound overlay slots, retained portal mounts and shared inert registration for pane-owned content.
+- `src/lib/state/dialog-presentation-context.ts` — private scope/visibility/focus context inherited by the shared SDK Modal.
 - `run-after-close.ts` — runs a command chosen from a modal launcher (the command palette) only after the launcher has released the top modal surface, so the dialog it opens is not closed as the caller.
 - `open-with.svelte.ts` — captured application-choice sessions, late-result rejection and single launch lifecycle.
 
@@ -182,10 +187,16 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `src/lib/state/session-operations.ts` — the one presentation shared by both ordered sessions: operation panel, conflict prompts, incremental entries, refresh broadcast and completion reporting.
 - `src/lib/state/move-operations.ts` — the move session over it: deduplicated sources, vacated source directories refreshed, no renderer-owned inverse; also the plugin `PluginWorkspace.moveFile` path (#881).
 - `paste-operations.ts` — clipboard-mode dispatch to the copy or move session and cut-clipboard release.
+- `src/lib/state/html5-file-drag.svelte.ts` — listing/Miller filesystem source MIME and native handoff; Recent private link MIME without OS filesystem export; source lifetime protocol.
+- `src/lib/state/sidebar-navigation.ts` — sidebar mouse/keyboard navigation through the active pane's modal ownership gate.
+- `src/lib/state/plugin-dom-ownership.ts` — host-issued component/root identities and nearest-root plugin ownership, shared by mounted contributions and file-drop API admission.
+- `src/lib/state/file-drop-targets.svelte.ts` — plugin element registrations, terminal disabled/modal resolution and idempotent teardown.
+- `src/lib/state/dispatch-file-drop.ts` — shared native/DOM/pointer completion admission, immutable plugin delivery and gesture-scoped async cleanup.
 - `drop-operations.ts` — drop source-path extraction and dispatch to the copy or move session.
 - `conflict-resolver.svelte.ts` — paste conflict resolution state (overwrite/skip/cancel).
 - `clipboard.svelte.ts` — cross-pane/window revisioned file clipboard state and Cut ownership reconciliation.
-- `drag.svelte.ts` — shared in-app drag state (DragData; dataTransfer is unreliable in Tauri).
+- `src/lib/state/drag-clock.ts` — native process clock calibration with renderer performance.now, IPC uncertainty bounds and runtime identity.
+- `drag.svelte.ts` — shared drag state, cross-window gesture sequence, HTML5 observation history, bounded shared completion receipts and native provenance expiry (dataTransfer is unreliable in Tauri).
 - `undo.svelte.ts` — revisioned native-history projection; queued writes retain their receipts so Undo targets the entry captured at intent.
 - `undo-helpers.ts` — pure completion labels for renderer and native-only history actions.
 - `tests/state/undo-helpers.test.ts` — completion labels for native replacement history and recursive batch presentation; executable renderer input remains the separate UndoAction contract.
@@ -195,7 +206,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `context-menu.svelte.ts` — context menu open state + position.
 - `context-menu-items.svelte.ts` — registry for plugin-provided context-menu items.
 - `command-definitions.ts` — command palette command definitions (assembles command modules).
-- `commands.svelte.ts` — command registry + palette store.
+- `commands.svelte.ts` — command registry + palette store; required destination scope and optional affected-pane resolver govern execution and keyboard admission.
 - `commands/shared.ts` — shared helpers for command modules.
 - `commands/file-commands.ts` — file ops commands (new/rename/delete/copy...).
 - `commands/navigation-commands.ts` — navigation commands (back/fwd/up/goto).
@@ -251,6 +262,8 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `tab-transfer.ts` (above).
 
 ## src/lib/api/ — invoke() bridge to Rust. Thin IPC wrappers; grep here for Tauri command names.
+
+- `src/lib/api/native-file-drag.ts` — host native drag start channel and enriched receiver event contract.
 
 - `pdf-preview.ts` — bounded native PDF bytes, lazy PDF.js worker/readiness, cancellable page rendering and validated native annotation-link dispatch (#728–#730).
 
@@ -311,7 +324,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `use-column-resize.svelte.ts` — One keyed resize owner with session-local Details widths, visibility projection and ordered retirement.
 - `use-progressive-render.svelte.ts` — chunked render to avoid freeze on huge dirs.
 - `use-drop-target.svelte.ts` — directory-entry drop-target behavior.
-- `use-native-drop-target.svelte.ts` — position-based drop target detection.
+- `use-native-drop-target.svelte.ts` — position-based drop target detection, shared pane/window owner resolution and live modality admission for deferred destinations.
 - `use-native-drop-handler.ts` — handle native (external) OS file drops.
 - `src/lib/composables/observe-active-directory.svelte.ts` — lifecycle-owned plugin observation of the active workspace directory without polling or cloning its listing.
 - `use-external-drop.svelte.ts` — external file drops into the app.
@@ -319,6 +332,9 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `use-pointer-drag.svelte.ts` — pointer-event drag for macOS (in-app DnD). [modified on branch]
 - `use-pointer-intent.svelte.ts` — pointer-vs-keyboard intent for pickers.
 - `use-sidebar-drag.svelte.ts` — lightweight sidebar-item pointer drag (macOS).
+- `src/lib/composables/use-sidebar-drag-end.ts` — source-bound document dragend capture, bookmark fallback and gesture retirement.
+- `src/lib/composables/use-sidebar-file-drop.ts` — MIME-scoped Quick Access pinning and bookmark reorder, independent of retained file consumers.
+- `src/lib/composables/use-dom-directory-drop.ts` — shared importable folder/breadcrumb/tab/listing/Miller DOM transfer destinations and copy policies.
 - `use-content-search.svelte.ts` — content-search stream lifecycle for the dialog.
 - `use-file-watchers.ts` — subscribe file-change/event listeners.
 - `use-window-lifecycle.ts` — window lifecycle (focus/close/resize) handlers.
@@ -332,6 +348,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 ## src/lib/domain/ — pure logic, no framework deps. Test + reuse here.
 
 - `src/lib/domain/image-job-progress.ts` — elapsed image-job timing and explicitly estimated progress; median of the latest 20 successful completions with ≥3 samples, keyed cohort → source → 120s, plus overdue estimate wording.
+- `src/lib/domain/file-drop.ts` — validated internal payloads, full path-set verification and explicit DOM/native transport authority.
 - `src/lib/domain/native-drop-paths.ts` — filesystem-only path admission for native drops; excludes blob URLs, relative paths and traversal before any transfer, bookmark or terminal action.
 - `src/lib/domain/file-view-id.ts` — bounded, plugin-scoped file view id format, validated wherever ids are persisted with pane layouts.
 
@@ -435,7 +452,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 
 - `api.ts` — plugin API surface exposed to plugins; the context reports a command or menu action failure under the plugin's name and logs it (#782).
 - `registry.svelte.ts` — built-in plugin lifecycle; published activation/shutdown drains, terminal admission and context-first reentrant teardown. Startup activations run together so one hung plugin blocks no other; contributions are placed by list position, not completion order (#782).
-- `dialog-registry.svelte.ts` — registry for plugin modal dialogs.
+- `dialog-registry.svelte.ts` — registry for plugin modal dialogs; PluginContext wiring injects the window-owned pane host.
 - `settings-registry.svelte.ts` — registry for plugin settings sections.
 - `inspector-registry.svelte.ts` — ordered, owner-disposed registry for selection-aware inspector contributions.
 - `file-view-registry.svelte.ts` — SDK 2 file view contributions (ordered, owner-disposed) and the pane handle type a view receives.
@@ -443,7 +460,8 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `src/lib/plugins/image-editor-registry.svelte.ts` — ordered, owner-disposed image editing tool contributions with immutable captured source revisions and opaque service ports.
 - `src/lib/domain/plugin-image-editor.ts` — rules for `ctx.presentation.openImageEditor`: a plugin opens the editor directly only in a tool it registered, for one absolute file path.
 - `fs-providers.ts` — virtual-filesystem provider registry + dispatch.
-- `demo/index.ts` — demo plugin exercising every contribution seam.
+- `demo/index.ts` — demo plugin exercising every contribution seam; view components load only on activation.
+- `src/lib/plugins/demo/DemoFileDropTarget.svelte` — contributed drop acceptance surface with enabled gating and visible ordered path/source receipts.
 - `demo/DemoFileView.svelte` + `demo/DemoPreviewInfo.svelte` — demo file view and Preview-info section exercising the SDK 2 seams.
 - `ai-organize/index.ts` + `AiOrganizeDialog.svelte` — AI organize plugin (#158).
 - `ai-rename/index.ts` + `AiRenameDialog.svelte` — AI rename plugin (#145).
@@ -881,6 +899,8 @@ TraceExplorer's image UI, provider adapters and SQLite journal are maintained in
 - `src-tauri/src/installed_plugins/service_graph_tests.rs` — service graph version, identity, optional dependency and cycle contracts.
 - `src-tauri/src/installed_plugins/service_host.rs` — host lifetime service store and package mutation claim checks.
 - `src-tauri/src/native_deadline.rs` — scoped monotonic native lock, queue and RPC budgets.
+- `src-tauri/src/native_file_drag.rs` — async OS drag start (rejects shortcut sources before export), synchronous platform-completion retirement, sequence-bearing provenance and per-window receiver snapshots emitted before frontend channel reordering.
+- `src-tauri/test_support/native_file_drag.rs` — native session ordering, completion-backlog interleavings, gesture-sequence admission, complete-set verification, successor retirement and later external same-path contracts.
 - `src-tauri/src/durable_dir.rs` — per-platform directory-entry durability barrier (Unix fsync, Windows writable directory-handle flush).
 - `src-tauri/src/process_supervisor.rs` — Unix parent-death process group anchor and bounded owned CLI output.
 - `src-tauri/src/recovery_actor.rs` — fixed-worker generation recovery ownership, queue limits and original deadlines.
@@ -907,6 +927,7 @@ TraceExplorer's image UI, provider adapters and SQLite journal are maintained in
 - `src/lib/state/ai-operations.svelte.ts` — ref-counted live unresolved-AI-operation count for the progress panel indicator.
 - `src/lib/state/native-plugin-jobs.ts` — subscribe-before-snapshot job reconciliation and origin-scoped notifications.
 - `src/test-support/modal/DirtyCloseDialog.svelte` — browser fixture for dirty nested modal ownership.
+- `src/test-support/modal/PaneTestDialog.svelte` — contributed pane-dialog acceptance fixture with persistent draft, guarded close and local submit behavior.
 
 - `src-tauri/src/installed_plugins/backend_native_tests.rs` — isolated actual Wry/production-broker fixture for held private validation, reverse quarantine, independent controls, rollback, retirement and publisher-aware shutdown.
 - `src-tauri/src/installed_plugins/backend_native_recovery_tests.rs` — actual Wry fixture seeding startup claims: readiness held until recovery, shutdown waits for in-flight recovery IO, no paid start.
@@ -915,3 +936,7 @@ TraceExplorer's image UI, provider adapters and SQLite journal are maintained in
 - `src-tauri/src/installed_plugins/service_native_tests.rs` — actual Wry fixture: per-consumer status timeouts, transport-loss recovery, reverse RPC correlation and routing without Trace.
 - `src-tauri/src/installed_plugins/service_native_kill_tests.rs` — actual Wry fixture: consumer SIGKILLed while the provider runs; both cancel/success gate orders settle once, without failure, replayed start or a retained artifact lease.
 - `src-tauri/src/installed_plugins/startup_native_tests.rs` — actual Wry fixtures: unreadable AI storage keeps legacy backends and retries; startup recovery errors degrade instead of failing setup; a process without the profile never recovers live claims.
+
+- `src/lib/domain/pane-dialog-keys.ts` — editable pane-dialog command input policy from registry declarations, independent of destination modality.
+
+- `src/lib/domain/command-admission.ts` — shared pane/window destination admission, consumed by registry execution and keyboard routing.

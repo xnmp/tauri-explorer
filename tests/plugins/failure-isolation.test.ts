@@ -49,7 +49,7 @@ function healthyPlugin(id: string) {
     name: `Healthy ${id}`,
     description: "test plugin",
     activate: (ctx: PluginContext) => {
-      ctx.registerCommand({ id: `plugin.${id}.cmd`, label: id, category: "general", handler: () => { runs.push(id); } });
+      ctx.registerCommand({ scope: "pane", id: `plugin.${id}.cmd`, label: id, category: "general", handler: () => { runs.push(id); } });
     },
   };
   return { plugin, runs };
@@ -84,7 +84,7 @@ describe("plugin failure isolation", () => {
       description: "throws on its first activation",
       activate: (ctx) => {
         attempts += 1;
-        ctx.registerCommand({ id: "plugin.brittle.cmd", label: "Brittle", category: "general", handler: () => {} });
+        ctx.registerCommand({ scope: "pane", id: "plugin.brittle.cmd", label: "Brittle", category: "general", handler: () => {} });
         if (attempts === 1) throw new Error("activation failed");
       },
     };
@@ -136,7 +136,7 @@ describe("plugin failure isolation", () => {
       name: "Quota Plugin",
       description: "its service rejects every request",
       activate: (ctx) => {
-        ctx.registerCommand({
+        ctx.registerCommand({ scope: "pane",
           id: "plugin.quota.cmd",
           label: "Quota",
           category: "general",

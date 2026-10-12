@@ -7,6 +7,10 @@
   import { windowTabsManager } from "$lib/state/window-tabs.svelte";
   import { homeDirectory } from "$lib/state/home.svelte";
   import { bookmarksStore } from "$lib/state/bookmarks.svelte";
+  import { createHtml5FileDrag } from "$lib/state/html5-file-drag.svelte";
+  import { navigateFromSidebar } from "$lib/state/sidebar-navigation";
+  import { dropOnQuickAccess, dropBookmarkReorder } from "$lib/composables/use-sidebar-file-drop";
+  import { listenSidebarDragEnd } from "$lib/composables/use-sidebar-drag-end";
   import { dragState } from "$lib/state/drag.svelte";
   import { mountDrive } from "$lib/api/drives";
   import { createDriveOpener } from "$lib/state/drive-opening";
@@ -23,13 +27,13 @@
   import { openRecycleBinWithFeedback } from "$lib/state/recycle-bin";
   import { toastStore } from "$lib/state/toast.svelte";
   import { getBookmarkDropHint, getEffectiveDragKind } from "$lib/domain/bookmark-drop-feedback";
+  import { isExplorerFileTransfer } from "$lib/domain/file-drop";
 
+  const recentDrag = createHtml5FileDrag(() => {}, "link");
   const sidebarDrag = usesPointerDrag ? useSidebarDrag() : null;
 
   // Window-global surface: navigates whichever pane is active.
-  const navigateTo = (path: string) => {
-    windowTabsManager.getActiveExplorer()?.navigateTo(path);
-  };
+  const navigateTo = navigateFromSidebar;
 
   const openDrive = createDriveOpener({
     mount: mountDrive, navigate: navigateTo, error: toastStore.error,
@@ -65,7 +69,11 @@
       quickAccessEl.addEventListener("drop", onQuickAccessDrop);
     }
     document.addEventListener("dragstart", onDragStartPoll);
-    document.addEventListener("dragend", onDragEnd, { capture: true });
+    const stopDragEnd = listenSidebarDragEnd({
+      quickAccess: () => quickAccessEl,
+      isDragOver: () => isDragOver,
+      reset: () => { isDragOver = false; isBookmarkDropTarget = false; stopDragPoll(); },
+    });
     document.addEventListener("explorer-bookmark-drop-target", onBookmarkDropTargetChange);
 
     return () => {
@@ -76,7 +84,7 @@
         quickAccessEl.removeEventListener("drop", onQuickAccessDrop);
       }
       document.removeEventListener("dragstart", onDragStartPoll);
-      document.removeEventListener("dragend", onDragEnd, { capture: true });
+      stopDragEnd();
       document.removeEventListener("explorer-bookmark-drop-target", onBookmarkDropTargetChange);
       stopDragPoll();
       drivesStore.stopPolling();
@@ -126,14 +134,8 @@
     lastDragY = 0;
   }
 
-  // Accept the drop if either our in-memory drag state is set OR the
-  // DataTransfer carries our app's drag MIME. The MIME check is the fallback
-  // for cases where the drag source can't initiate the native OS shell drag
-  // (e.g. UNC paths skip tauri-plugin-drag); without it the browser's
-  // HTML5-only DnD ends up with dropEffect "none" and shows the cancel cursor.
   function isExplorerDrag(event: DragEvent): boolean {
-    if (dragState.current) return true;
-    return event.dataTransfer?.types.includes("application/x-explorer-kind") ?? false;
+    return isExplorerFileTransfer(event.dataTransfer) || dragState.acceptsFileDrag(event.dataTransfer);
   }
 
   function onQuickAccessDragEnter(event: DragEvent) {
@@ -161,36 +163,9 @@
   }
 
   function onQuickAccessDrop(event: DragEvent) {
-    event.preventDefault();
-    event.stopPropagation();
-    if (dragState.current) {
-      const { kind, path, name } = dragState.current;
-      if (kind === "directory" && path) {
-        bookmarksStore.addBookmark(path, name);
-      }
-    }
+    if (!dropOnQuickAccess(event)) return;
     isDragOver = false;
     isBookmarkDropTarget = false;
-    dragState.clear();
-    stopDragPoll();
-  }
-
-  function onDragEnd(event: DragEvent) {
-    let overQuickAccess = isDragOver;
-    if (!overQuickAccess && quickAccessEl && event.clientX > 0 && event.clientY > 0) {
-      const el = document.elementFromPoint(event.clientX, event.clientY);
-      overQuickAccess = quickAccessEl.contains(el);
-    }
-
-    if (overQuickAccess && dragState.current) {
-      const { kind, path, name } = dragState.current;
-      if (kind === "directory" && path) {
-        bookmarksStore.addBookmark(path, name);
-      }
-    }
-    isDragOver = false;
-    isBookmarkDropTarget = false;
-    dragState.clear();
     stopDragPoll();
   }
 
@@ -344,11 +319,7 @@
   }
 
   function handleBookmarkDrop(event: DragEvent, toIndex: number) {
-    if (draggedBookmarkIndex === null) return;
-    event.preventDefault();
-    if (draggedBookmarkIndex !== toIndex) {
-      bookmarksStore.reorderBookmarks(draggedBookmarkIndex, toIndex);
-    }
+    if (!dropBookmarkReorder(event, draggedBookmarkIndex, toIndex)) return;
     draggedBookmarkIndex = null;
     dropTargetIndex = null;
   }
@@ -618,8 +589,8 @@
               role="button"
               tabindex="0"
               draggable={usesHtml5Drag}
-              ondragstart={usesHtml5Drag ? (e) => { dragState.start({ kind: "directory", path: loc.path, name: loc.name }); if (e.dataTransfer) { e.dataTransfer.effectAllowed = "link"; e.dataTransfer.setData("application/x-explorer-kind", "directory"); } } : undefined}
-              ondragend={usesHtml5Drag ? () => dragState.clear() : undefined}
+              ondragstart={usesHtml5Drag ? (e) => recentDrag.start(e, { kind: "directory", path: loc.path, name: loc.name }) : undefined}
+              ondragend={usesHtml5Drag ? recentDrag.end : undefined}
               onmousedown={usesPointerDrag ? (e) => sidebarDrag!.handlePointerDown(e, loc.path, loc.name) : undefined}
             >
               <svg width="16" height="16" viewBox="0 0 16 16" fill="none" class="nav-icon" data-drag-icon>

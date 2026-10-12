@@ -30,7 +30,7 @@ function makeSlowPlugin(id: string) {
     enabledByDefault: false,
     activate: async (ctx: PluginContext) => {
       calls.push("activate:start");
-      ctx.registerCommand({ id: `plugin.${id}.cmd`, label: id, category: "general", handler: () => {} });
+      ctx.registerCommand({ scope: "pane", id: `plugin.${id}.cmd`, label: id, category: "general", handler: () => {} });
       await gate;
       calls.push("activate:end");
     },
@@ -101,7 +101,7 @@ describe("plugin registry activation race", () => {
       description: "failure",
       enabledByDefault: false,
       activate(ctx) {
-        ctx.registerCommand({
+        ctx.registerCommand({ scope: "pane",
           id: "plugin.failure.cmd",
           label: "failure",
           category: "general",
@@ -200,7 +200,7 @@ describe("plugin registry activation race", () => {
       description: "test",
       enabledByDefault: false,
       activate(ctx) {
-        ctx.registerCommand({
+        ctx.registerCommand({ scope: "pane",
           id: "plugin.dispose-reentrant.cmd",
           label: "reentrant",
           category: "general",
@@ -225,7 +225,7 @@ describe("plugin registry activation race", () => {
     let registry!: ReturnType<typeof createPluginRegistry>;
     let reenable: Promise<void> | undefined;
     const activate = vi.fn((ctx: PluginContext) => {
-      ctx.registerCommand({
+      ctx.registerCommand({ scope: "pane",
         id: "plugin.reenable-reentrant.cmd",
         label: "reentrant",
         category: "general",
@@ -270,7 +270,7 @@ describe("plugin registry activation race", () => {
       enabledByDefault: false,
       activate(ctx) {
         attempts++;
-        ctx.registerCommand({
+        ctx.registerCommand({ scope: "pane",
           id: "plugin.failure-retry.cmd",
           label: "retry",
           category: "general",
@@ -312,7 +312,7 @@ describe("plugin registry activation race", () => {
       description: "test",
       enabledByDefault: false,
       async activate(ctx) {
-        ctx.registerCommand({
+        ctx.registerCommand({ scope: "pane",
           id: "plugin.activation-dispose-reentrant.cmd",
           label: "dispose",
           category: "general",

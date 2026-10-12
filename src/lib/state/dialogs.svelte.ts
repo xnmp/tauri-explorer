@@ -8,7 +8,7 @@
  * previous window.dispatchEvent custom event pattern.
  */
 
-import { modalOwnership } from "./modal-ownership.svelte";
+import { modalOwnership, type ModalScope } from "./modal-ownership.svelte";
 import { openWithStore } from "./open-with.svelte";
 import type { FileEntry } from "$lib/domain/file";
 
@@ -241,6 +241,17 @@ function createDialogStore() {
     get hasModalOpen(): boolean {
       return anyModalOpen();
     },
+    /** Pane input includes window modals, but never another pane's bucket. */
+    isPaneBlocked(paneId: string): boolean {
+      return anyModalOpen() || modalOwnership.hasPaneOpen(paneId);
+    },
+    inputScope(event: Event, activePaneId: string): ModalScope | undefined {
+      return anyModalOpen() ? null : modalOwnership.inputScope(event, activePaneId);
+    },
+    isInputBlocked(event: Event, activePaneId: string): boolean {
+      return this.inputScope(event, activePaneId) !== undefined;
+    },
+    subscribeOwnership: modalOwnership.subscribe,
 
     // Overlay dialog actions
     openQuickOpen(): void {
@@ -367,8 +378,8 @@ function createDialogStore() {
 
     closeFileRecovery(): void { fileRecoveryOpen = false; },
 
-    requestCloseTop(event?: KeyboardEvent): void {
-      if (!modalOwnership.requestTopClose(event)) closeUnmountedDialogs();
+    requestCloseTop(event?: KeyboardEvent, scope: ModalScope = null): void {
+      if (!modalOwnership.requestTopClose(event, scope) && !scope) closeUnmountedDialogs();
     },
 
     closeAll(): void {

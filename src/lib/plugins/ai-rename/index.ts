@@ -192,6 +192,7 @@ export const aiRenamePlugin: Plugin = {
 
     // 4. Command-palette entry.
     ctx.registerCommand({
+      scope: "pane",
       id: "plugin.ai-rename.suggest",
       label: "AI: Suggest Rename…",
       category: "plugins",

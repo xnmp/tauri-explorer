@@ -14,8 +14,6 @@
 
 import type { Plugin } from "../api";
 import type { DirectoryListing, FileEntry } from "$lib/domain/file";
-import DemoFileView from "./DemoFileView.svelte";
-import DemoPreviewInfo from "./DemoPreviewInfo.svelte";
 
 export const DEMO_FILE_VIEW = "demo.cards";
 
@@ -48,8 +46,12 @@ export const demoPlugin: Plugin = {
   description: "Reference plugin exercising commands, context menu, settings, and a demo:// virtual folder.",
   enabledByDefault: false,
 
-  activate(ctx) {
+  async activate(ctx) {
+    const [{ default: DemoFileView }, { default: DemoPreviewInfo }] = await Promise.all([
+      import("./DemoFileView.svelte"), import("./DemoPreviewInfo.svelte"),
+    ]);
     ctx.registerCommand({
+      scope: "pane",
       id: "plugin.demo.hello",
       label: "Demo: Hello",
       category: "plugins",
@@ -57,6 +59,7 @@ export const demoPlugin: Plugin = {
     });
 
     ctx.registerCommand({
+      scope: "pane",
       id: "plugin.demo.open",
       label: "Demo: Open Virtual Folder",
       category: "plugins",
@@ -93,7 +96,7 @@ export const demoPlugin: Plugin = {
       id: DEMO_FILE_VIEW,
       title: "Demo Cards",
       component: DemoFileView,
-      props: { onGreet: () => ctx.toast.show("Greetings from the virtual card", "success") },
+      props: { registerFileDropTarget: ctx.workspace.registerFileDropTarget, onGreet: () => ctx.toast.show("Greetings from the virtual card", "success") },
     });
 
     ctx.registerPreviewInfo?.({
@@ -103,6 +106,7 @@ export const demoPlugin: Plugin = {
     });
 
     ctx.registerCommand({
+      scope: "pane",
       id: "plugin.demo.toggle-cards",
       label: "Demo: Toggle Cards View",
       category: "plugins",

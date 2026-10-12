@@ -106,7 +106,7 @@ backend for E2E/browser).
 - `components/NavigationHistoryMenu.svelte` — back/fwd history dropdown
 - `domain/autocomplete.ts` — `parsePathInput`, `filterDirectorySuggestions`
 - `domain/breadcrumb-truncation.ts` — collapse long crumb chains
-- `domain/path.ts` — path parsing/join/parent (`parentDir`), WSL/UNC handling
+- `domain/path.ts` — path parsing/join/parent (`parentDir`), WSL/UNC handling; pure `pathComparison(windows)` gives drop equality/parent/containment explicit platform semantics and rejects unresolved parent/drive-relative identities.
 - `state/navigation.ts` — history stack, navigate/back/forward
 - FLOW: navigate mutates explorer.currentPath + history; breadcrumbs derived from currentPath; autocomplete lists dirs via `listDirectory`.
 
@@ -164,8 +164,11 @@ backend for E2E/browser).
 
 - `composables/use-pointer-drag.svelte.ts` — pointer-based drag, `createDragGhost`, multi-select ghost
 - `composables/use-pointer-intent.svelte.ts` — distinguish click vs drag start
-- `state/drag.svelte.ts` — `dragState` shared store (localStorage cross-window fallback)
+- `src/lib/state/drag-clock.ts`, `src-tauri/src/native_file_drag.rs` — process-scoped Instant clock sampled once per renderer against performance.now; bounded IPC uncertainty and clock identity fence history/floors across restarts and post-adjustment new windows.
+- `state/drag.svelte.ts` — `dragState` shared store, monotonic cross-window gesture sequence, observation-correlated HTML5 history (including session-specific GTK Recent lookup), bounded shared completion receipts published at admission, and native provenance expiry.
 - `composables/use-drop-target.svelte.ts` — dropzone highlight + accept logic
+- `src/lib/composables/use-dom-directory-drop.ts`, `src/lib/composables/use-sidebar-file-drop.ts` — component-used DOM destination seams exercised by the independent Cartesian drop policy in `tests/helpers/drop-policy.ts` and `tests/composables/drop-policy-differential.test.ts`.
+- `src/lib/state/sidebar-navigation.ts` — shared active-pane modality gate for sidebar click/Enter/Space navigation, including mounted drives and Recent folders.
 - `state/drop-operations.ts` — `handleFileDrop`/`handleFileDropMany`, source-path extraction
 - `src-tauri/test_support/case_only_rename.rs` — real-volume rename/move/session case-variant and identity contracts; reports the volume semantics exercised by each runner.
 - `composables/use-sidebar-drag.svelte.ts` — drag onto sidebar bookmarks
@@ -173,6 +176,15 @@ backend for E2E/browser).
 - FLOW: pointer-drag sets `dragState` → drop-target computes destination → ordered copy/move session; plugin moves use the same ordered move session (#881). Branch: `fix/multi-file-drag-ghost-opacity`.
 
 ## External drag/drop (OS ↔ app)
+
+- `src/lib/state/plugin-dom-ownership.ts`, `src/lib/components/PluginContributionRoot.svelte` — host-issued plugin DOM ownership, established before child actions mount; file-drop registration rejects host chrome and foreign contribution roots.
+- `src/lib/domain/file-drop.ts`, `src/lib/state/file-drop-targets.svelte.ts`, `src/lib/state/dispatch-file-drop.ts` — fileDropTargets capability: verified internal and native external paths, shared native/DOM/pointer completion admission, plugin-first terminal routing, registration disposal, and gesture-scoped feedback cleanup. `src/lib/plugins/demo/DemoFileDropTarget.svelte` provides contributed acceptance receipts.
+- `src/lib/state/html5-file-drag.svelte.ts` — common HTML5 source protocol used by file-list, Miller-column and Recent sources; filesystem export retains effectAllowed=all and DOM receivers retain their move/copy effects. Recent retains private Explorer link authority without filesystem URI export or outgoing native handoff.
+- Linux automatic Wry events after a rejected explicit start correlate only with the still-live HTML5 gesture and full path multiset. Backend observation times and bounded local/persisted intervals retain identity across IPC-delayed source-end. Expired/ambiguous observations cancel; explicit Rust identity wins. Consumer receipts prevent late duplicates, and ended/acknowledged gestures cannot lend identity to external files. Non-file and bookmark-only DOM payloads pass the file adapters unchanged; pending handoff decisions belong to the event's source session.
+- `src/lib/composables/use-sidebar-drag-end.ts` — document capture tracks the source gesture, so early/old dragend cannot erase a native or successor source.
+- `src/lib/api/native-file-drag.ts`, `src-tauri/src/native_file_drag.rs`, `src-tauri/test_support/native_file_drag.rs` — native main-thread source lease and per-receiver snapshots carrying frontend gesture and native-completion sequences. Platform completion synchronously retires active identity before queuing notification; rejected starts leave HTML5 recovery eligible. Vendored Wry captures copy intent/source identity at platform callbacks before Tauri queues events; callback-time Ctrl/Option state remains independent of OS actions. Native acknowledgement and GTK DOM fallback retain the 4fb58708 behavior; GTK cached modifiers may miss Ctrl first pressed after Wayland handoff. Receiver FIFO admission checks original event identity; verified Windows link transports retain original source paths. Vendored drag prepares Windows transport paths once and starts them without resolving links again. GTK completes at dnd-finished after selection transfer.
+- Native snapshot callbacks register numeric receiver IDs against stable labels before delivery; Destroyed clears receiver state by that mapping without a native getter. GTK deferred Leave retains weak original view/window identity and checks it before observer/handler dispatch, preventing address reuse from poisoning a replacement receiver.
+- Native ownership follows successful handoff; rejected starts retain DOM authority. Pending DOM drops capture destination ancestry/path, owning pane (including a tab's active pane), explorer/navigation lease and registration identity before awaiting that decision; stale or newly covered destinations are discarded with a notice. Every surface resolves pane/window ownership through `resolveDropOwner`; modal targets require live `modalOwnership.ownsInput` admission before reactive DOM suspension. Implicit native destinations obey pane modality even when inert hit testing exposes a workspace wrapper. Miller retains its DOM target/modifier policies; native handoffs retain modifier-derived move/copy intent independently of Copy-only OS source actions. Recent never starts an OS file drag: frontend and Rust admission reject shortcut handoff because GTK3 Wayland maps Link to Copy. Pointer owns macOS/Windows same-window drags.
 
 - `composables/use-external-drag.svelte.ts` — start OS drag-out of files
 - `composables/use-external-drop.svelte.ts`, `use-native-drop-target.svelte.ts`, `use-native-drop-handler.ts` — accept OS file drops
@@ -380,7 +392,7 @@ backend for E2E/browser).
 ## Command palette
 
 - `components/CommandPalette.svelte` — searchable command list
-- `state/commands.svelte.ts` — registry (`registerCommand`, `executeCommand`, frecency)
+- `src/lib/domain/command-admission.ts`, `state/commands.svelte.ts` — shared destination admission and registry (`registerCommand`, `executeCommand`, frecency); each command declares pane/window destination scope, and multi-pane operations resolve their actual affected panes. Registry execution and keyboard admission (including fallback surface keys) consume those declarations regardless of focus or launcher.
 - `state/command-definitions.ts` — command type/category defs
 - `state/commands/` — `file-commands.ts`, `view-commands.ts`, `navigation-commands.ts`, `pane-commands.ts`, `general-commands.ts`, `system-actions.ts`, `shared.ts`
 - `state/frecency.svelte.ts` — recency+frequency ranking
@@ -444,10 +456,14 @@ backend for E2E/browser).
 
 ## Toasts & dialogs
 
+- `src/lib/state/pane-dialogs.svelte.ts`, `state/modal-ownership.svelte.ts`, `src/lib/state/dialog-presentation-context.ts`, `src/lib/components/PluginDialogMount.svelte`, `src/lib/domain/pane-dialog-keys.ts` — SDK `paneDialogs` capability: window-local lifetime-bound captures, independent pane reservations/surfaces, private Modal context, retained DOM portals and command-declared keyboard navigation exceptions. `ExplorerPane.svelte` hosts the overlay slot beside inert content; tab parking keeps the contributed component mounted with `open=true`.
+- FLOW: `plugins/api.ts` injects the window-owned pane host; plugin `workspace.capturePane` → `dialog-registry.svelte.ts` validates host identity/reserves scope → `WindowDialogs.svelte` retains the keyed component → mount wrapper portals to ExplorerPane. `window-tabs.svelte.ts` pane/session retirement synchronously disposes dialogs and captures; physical slot registration survives failed native close while old handles remain invalid. `src/test-support/modal/PaneTestDialog.svelte` exercises the contract through a real plugin context in `e2e/pane-dialogs.spec.ts`.
+- `src/lib/state/modal-focus.ts` — tracks the latest DOM focus owner so pane dialog removal can restore the active owner after detachment without reclaiming focus moved to another surface. Modal registrations remain authoritative outside rune state: Svelte cleanup reads historical rune values, so reactive-array read/modify/write can resurrect a released reservation or discard a newly mounted window dialog.
+
 - `components/ToastOverlay.svelte`, `state/toast.svelte.ts` — `toastStore` transient notices
 - `state/dialogs.svelte.ts` — `dialogStore` generic dialog orchestration
 - `src/test-support/lazy-dialog-lifetime.svelte.ts` — browser-only effect-lifetime fixture imported by E2E; absent from the production import graph.
-- `components/WindowDialogs.svelte`, `composables/use-lazy-dialog.svelte.ts`, `state/lazy-dialog.svelte.ts` — typed lazy constructors with independent demand, one pending import per host/dialog, retained success and teardown-safe publication. The host includes plugin dialogs and portal feedback.
+- `components/WindowDialogs.svelte`, `composables/use-lazy-dialog.svelte.ts`, `state/lazy-dialog.svelte.ts` — typed lazy constructors with independent demand, one pending import per host/dialog, retained success and teardown-safe publication. Plugin mounting and shortcut help load on demand; `ProgressDialog.svelte` likewise loads unresolved AI operations only when opened. Modal UI stays outside the startup graph.
 - `domain/lazy-dialog.ts` — shared failure containment and mount-crash recovery; the host wraps each dialog in `<svelte:boundary>`. Active failures roll back modal ownership and notify; cancelled requests and destroyed hosts cannot publish stale feedback.
 - `domain/theme-list.ts` — `dedupeThemesById`, last occurrence wins; applied in `theme.svelte.ts` `discoverThemes()` so a user theme reusing a built-in id overrides it instead of crashing ThemePicker's keyed each (#585)
 - `components/Modal.svelte`, `components/modal.css` — modal shell; static blurred backdrop and shared clip/margin entrances avoid WebKitGTK opening flashes, including legacy plugin dialog cards (#1080).

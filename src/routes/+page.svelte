@@ -258,8 +258,8 @@
       <Sidebar />
     {/if}
     {#if millerAsLeftIsland && leftExplorer}
-      <div class="miller-island">
-        <MillerColumns explorer={leftExplorer} />
+      <div class="miller-island" data-pane-id={windowTabsManager.activePaneId}>
+        <MillerColumns explorer={leftExplorer} paneId={windowTabsManager.activePaneId} />
       </div>
     {/if}
     {#snippet paneAndPreview()}

@@ -2,7 +2,7 @@
  * Command registry behavior (#280): registration/override/unregister, the
  * `when()` gate, and executeCommand's success/failure contract.
  */
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import {
   registerCommand,
   unregisterCommand,
@@ -12,8 +12,14 @@ import {
   type Command,
 } from "$lib/state/commands.svelte";
 
+import { modalOwnership } from "$lib/state/modal-ownership.svelte";
+import { windowTabsManager } from "$lib/state/window-tabs.svelte";
+import { runAfterClose } from "$lib/state/run-after-close";
+
+afterEach(() => vi.restoreAllMocks());
+
 function cmd(id: string, overrides: Partial<Command> = {}): Command {
-  return { id, label: id, category: "general", handler: vi.fn(), ...overrides };
+  return { id, scope: "window", label: id, category: "general", handler: vi.fn(), ...overrides };
 }
 
 const TEST_IDS = ["t.a", "t.b", "t.gated", "t.hidden", "t.throws"];
@@ -74,4 +80,20 @@ describe("command registry (#280)", () => {
 
     await expect(executeCommand("t.throws")).resolves.toBe(false);
   });
+});
+
+
+it("palette dispatch cannot mutate a covered pane after its own window modal closes", async () => {
+  vi.spyOn(windowTabsManager, "activePaneId", "get").mockReturnValue("a");
+  const handler = vi.fn();
+  registerCommand(cmd("t.a", { scope: "pane", handler }));
+  const releasePane = modalOwnership.register(() => {}, undefined, { scope: { paneId: "a", token: Symbol() } });
+  const releasePalette = modalOwnership.register(() => {});
+  try {
+    await runAfterClose(releasePalette, () => executeCommand("t.a"), async () => {});
+    expect(handler).not.toHaveBeenCalled();
+    releasePane();
+    await expect(executeCommand("t.a")).resolves.toBe(true);
+    expect(handler).toHaveBeenCalledOnce();
+  } finally { releasePalette(); releasePane(); }
 });

@@ -52,6 +52,18 @@ describe("resolveDropTarget", () => {
     clearHighlights();
   });
 
+  it.each(["[inert]", "[hidden]", ".pane-dialog-container"])("blocks transfers and hover feedback beneath %s", blockedAncestor => {
+    const folder = makeElement("entry-item directory", { "data-path": "/covered" });
+    const closest = folder.closest.bind(folder);
+    folder.closest = ((selector: string) => selector.split(",").map(part => part.trim()).includes(blockedAncestor)
+      ? folder : closest(selector)) as typeof folder.closest;
+    stubElementFromPoint(folder);
+    expect(resolveDropTarget({ x: 10, y: 20 })).toEqual({ type: "blocked" });
+    expect(resolveDropTargetAtPoint(10, 20)).toEqual({ type: "blocked" });
+    highlightTarget({ x: 10, y: 20 });
+    expect(folder.classList.contains("drop-target")).toBe(false);
+  });
+
   it("returns folder target when over a directory entry", () => {
     const el = makeElement("entry-item directory", { "data-path": "/home/user/Documents" });
     stubElementFromPoint(el);

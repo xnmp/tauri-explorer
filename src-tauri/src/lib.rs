@@ -36,6 +36,7 @@ mod image_crop;
 mod image_operation;
 mod installed_plugins;
 mod native_deadline;
+mod native_file_drag;
 #[cfg(unix)]
 mod process_supervisor;
 mod recovery_actor;
@@ -253,6 +254,7 @@ pub fn run_with_process_entry(launch_dir: Option<String>, t_process_entry: std::
     builder
         .manage(LaunchCwd(launch_cwd_for_state))
         .manage(window_launch::Requests::default())
+        .manage(native_file_drag::Sessions::default())
         .manage(system::StartupClock {
             started: t_start,
             epoch_ms: t_start_epoch_ms,
@@ -283,6 +285,7 @@ pub fn run_with_process_entry(launch_dir: Option<String>, t_process_entry: std::
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_drag::init())
         .on_window_event(|window, event| {
+            native_file_drag::on_window_event(window, event);
             if matches!(event, tauri::WindowEvent::Focused(true)) {
                 installed_plugins::notify_pending_errors(window);
             }
@@ -308,6 +311,8 @@ pub fn run_with_process_entry(launch_dir: Option<String>, t_process_entry: std::
             ai::ai_connection_cancel_test,
             // Launch info
             get_launch_cwd,
+            native_file_drag::start_file_drag,
+            native_file_drag::native_file_drag_clock,
             get_log_dir,
             system::get_app_info,
             user_report::submit_user_report,
@@ -526,6 +531,7 @@ pub fn run_with_process_entry(launch_dir: Option<String>, t_process_entry: std::
             terminal::terminal_status,
         ])
         .setup(move |app| {
+            native_file_drag::install_snapshots(app.handle().clone());
             let t_setup = std::time::Instant::now();
             // First in setup: portal mode returns early below, and a renderer
             // crash after window creation is exactly when this line matters.

@@ -4,12 +4,12 @@
   Issue: tauri-u00y, tauri-nxfi
 -->
 <script lang="ts">
+  import { dropIntoDirectory, dragOverDirectory } from "$lib/composables/use-dom-directory-drop";
   import { windowTabsManager } from "$lib/state/window-tabs.svelte";
   import { onMount, tick } from "svelte";
   import type { ExplorerInstance } from "$lib/state/explorer.svelte";
   import { settingsStore } from "$lib/state/settings.svelte";
   import { homeDirectory } from "$lib/state/home.svelte";
-  import { getDropSourcePaths, handleFileDropMany } from "$lib/state/drop-operations";
   import { truncateBreadcrumbs } from "$lib/domain/breadcrumb-truncation";
   import { isWslDistroRoot, isWslHome } from "$lib/domain/wsl";
   import { directoryKey, isDriveRoot } from "$lib/domain/path";
@@ -270,9 +270,7 @@
   let dropTargetCrumb = $state<string | null>(null);
 
   function handleCrumbDragOver(event: DragEvent, path: string): void {
-    if (!event.dataTransfer?.types.includes("application/x-explorer-path")) return;
-    event.preventDefault();
-    event.dataTransfer.dropEffect = "move";
+    if (!dragOverDirectory(event, "move")) return;
     dropTargetCrumb = path;
   }
 
@@ -281,16 +279,10 @@
   }
 
   async function handleCrumbDrop(event: DragEvent, targetPath: string): Promise<void> {
-    event.preventDefault();
     dropTargetCrumb = null;
     if (!event.dataTransfer) return;
 
-    const sourcePaths = getDropSourcePaths(event.dataTransfer).filter(
-      (sourcePath) => sourcePath !== targetPath && !targetPath.startsWith(sourcePath + "/"),
-    );
-    await handleFileDropMany(sourcePaths, targetPath, false, {
-      onRefresh: () => windowTabsManager.refreshAllPanes(),
-    });
+    await dropIntoDirectory(event, targetPath, "breadcrumb", { onRefresh: () => windowTabsManager.refreshAllPanes() });
   }
 
 </script>

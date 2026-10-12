@@ -10,7 +10,7 @@
 
 import { dragClock } from "./drag-clock";
 import { loadPersisted, savePersisted, removePersisted } from "./persisted";
-import { observedDuringGesture, internalDragPaths, sameDropPathSet } from "$lib/domain/file-drop";
+import { observedDuringGesture, internalDragPaths, sameDropPathSet, isFileTransfer } from "$lib/domain/file-drop";
 
 const STORAGE_KEY = "explorer-drag-data";
 const NATIVE_DECISION_KEY = "explorer-native-drag-decision";
@@ -370,6 +370,24 @@ export const dragState = {
   /** Read drag data from localStorage (cross-window fallback) */
   readCrossWindow(): DragData | null {
     return loadPersisted<DragData | null>(STORAGE_KEY, null);
+  },
+
+  /** True while this app's own HTML5 drag is in flight (dragend retires it). */
+  hasLiveHtml5Gesture(): boolean {
+    const data = this.latestSource();
+    return !!data?.html5 && data.html5ClockId === dragClock.stamp().clockId;
+  },
+
+  /** DOM admission for dragenter/dragover/drop. WebKit hides the custom
+   * Explorer MIME types from the DataTransfer a target sees; only the
+   * text/uri-list (+ derived text/html) projection of our own payload remains.
+   * That exact shape, during our own live gesture, is admitted; Files, plain
+   * text or anything else is not. */
+  acceptsFileDrag(data: Pick<DataTransfer, "types"> | null | undefined): boolean {
+    if (isFileTransfer(data)) return true;
+    const types = [...(data?.types ?? [])];
+    return types.includes("text/uri-list") && types.every(type => type === "text/uri-list" || type === "text/html")
+      && this.hasLiveHtml5Gesture();
   },
 
   /** Retained local state owns its pending consumers, not the next gesture. */

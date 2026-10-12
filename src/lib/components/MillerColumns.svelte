@@ -8,6 +8,7 @@
   (0=off; per-pane since #229, defaulting from settings).
 -->
 <script lang="ts">
+  import { dragState } from "$lib/state/drag.svelte";
   import { useInlinePanelWidth } from "$lib/composables/use-inline-panel-width.svelte";
   import type { ReserveInlineWidth } from "$lib/state/pane-viewport.svelte";
   import PanelResizeHandle from "./PanelResizeHandle.svelte";
@@ -20,7 +21,6 @@
   import FileIcon from "./FileIcon.svelte";
   import EntryName from "./EntryName.svelte";
   import { createHtml5FileDrag } from "$lib/state/html5-file-drag.svelte";
-  import { isFileTransfer } from "$lib/domain/file-drop";
   import { dropIntoDirectory } from "$lib/composables/use-dom-directory-drop";
   import { windowTabsManager } from "$lib/state/window-tabs.svelte";
   import { useDropTarget } from "$lib/composables/use-drop-target.svelte";
@@ -271,7 +271,7 @@
   let bgDropCopy = $state(false);
 
   function handleBgDragOver(event: DragEvent, columnPath: string): void {
-    if (!isFileTransfer(event.dataTransfer)) return;
+    if (!dragState.acceptsFileDrag(event.dataTransfer)) return;
     event.preventDefault();
     const copying = isCopyModifier(event);
     if (event.dataTransfer) event.dataTransfer.dropEffect = copying ? "copy" : "move";

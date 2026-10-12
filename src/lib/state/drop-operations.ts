@@ -39,7 +39,9 @@ export function getDropSourcePaths(dataTransfer: DataTransfer): string[] {
   }
   // Only an Explorer MIME marker permits the cross-window fallback. External
   // DOM files have no authoritative paths, even during an unrelated drag.
-  if (!dataTransfer.getData("application/x-explorer-kind")) return [];
+  // WebKit strips the Explorer MIME types; acceptsFileDrag admits only the
+  // uri-list-only projection of our own live gesture.
+  if (!dataTransfer.getData("application/x-explorer-kind") && !dragState.acceptsFileDrag(dataTransfer)) return [];
   return internalDragPaths(dragState.domSource(dataTransfer), isWindows) ?? [];
 }
 

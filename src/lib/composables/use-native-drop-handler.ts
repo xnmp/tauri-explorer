@@ -15,7 +15,7 @@ import { bookmarksStore } from "$lib/state/bookmarks.svelte";
 import { terminalPanelStore } from "$lib/state/terminal.svelte";
 import { pathComparison } from "$lib/domain/path";
 import { dispatchFileDrop, admitFileDrop } from "$lib/state/dispatch-file-drop";
-import { internalDragPaths, sameDropPathSet, domDropPaths, domOwnsFileDrop, isFileTransfer, isExplorerFileTransfer } from "$lib/domain/file-drop";
+import { internalDragPaths, sameDropPathSet, domDropPaths, domOwnsFileDrop, isFileTransfer } from "$lib/domain/file-drop";
 import { nativeDropPaths } from "$lib/domain/native-drop-paths";
 import { toastStore } from "$lib/state/toast.svelte";
 import { dialogStore } from "$lib/state/dialogs.svelte";
@@ -197,7 +197,7 @@ export function useNativeDropHandler(deps: NativeDropDeps) {
   function trackDragModifiers(event: DragEvent): void { copyModifierHeld = isCopyMod(event); }
 
   function handleDomDragOver(event: DragEvent): void {
-    if (!isFileTransfer(event.dataTransfer)) return;
+    if (!dragState.acceptsFileDrag(event.dataTransfer)) return;
     trackDragModifiers(event);
     event.preventDefault();
     const target = resolveDropTargetFromElement(event.target as Element | null);
@@ -208,8 +208,8 @@ export function useNativeDropHandler(deps: NativeDropDeps) {
   }
 
   function handleDomDrop(event: DragEvent): void {
-    if (!isFileTransfer(event.dataTransfer)) return;
-    const bound = event.dataTransfer && isExplorerFileTransfer(event.dataTransfer) ? dragState.domSource(event.dataTransfer) : null;
+    if (!dragState.acceptsFileDrag(event.dataTransfer)) return;
+    const bound = event.dataTransfer && dragState.acceptsFileDrag(event.dataTransfer) ? dragState.domSource(event.dataTransfer) : null;
     if (dragState.expiredDomSource(bound, event.dataTransfer)) {
       event.preventDefault(); event.stopImmediatePropagation(); return;
     }
@@ -268,7 +268,10 @@ export function useNativeDropHandler(deps: NativeDropDeps) {
     const data = deferredDomSources.has(event) || source?.sessionId === live?.sessionId ? source : null;
     const livePaths = internalDragPaths(data, isWindows);
     const payload = event.dataTransfer ? domDropPaths(event.dataTransfer, isWindows) : null;
-    const paths = livePaths && payload && sameDropPathSet(payload, livePaths, isWindows) ? livePaths : [];
+    // WebKit strips the Explorer MIME payload; admission then rests on the
+    // in-flight gesture (acceptsFileDrag) and its live source is the evidence.
+    const payloadStripped = !!event.dataTransfer && !isFileTransfer(event.dataTransfer);
+    const paths = livePaths && (payloadStripped || (payload && sameDropPathSet(payload, livePaths, isWindows))) ? livePaths : [];
     void dispatchFileDrop(target, paths, "pane", paths.length ? data : null);
   }
 

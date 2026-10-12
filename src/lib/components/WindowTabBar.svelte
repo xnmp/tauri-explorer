@@ -9,11 +9,11 @@
 -->
 <script lang="ts">
   import { tick, onDestroy } from "svelte";
+  import { dragState } from "$lib/state/drag.svelte";
   import { slide } from "svelte/transition";
   import { MediaQuery } from "svelte/reactivity";
   import { windowTabsManager, type TabTransfer } from "$lib/state/window-tabs.svelte";
   import { dropIntoDirectory } from "$lib/composables/use-dom-directory-drop";
-  import { isFileTransfer } from "$lib/domain/file-drop";
   import { settingsStore } from "$lib/state/settings.svelte";
   import {
     tabDragState,
@@ -396,7 +396,7 @@
 
   // ── File drops ONTO a tab (move the dragged files into that tab's directory) ──
   function isFileDrag(dataTransfer: DataTransfer | null): boolean {
-    return isFileTransfer(dataTransfer);
+    return dragState.acceptsFileDrag(dataTransfer);
   }
 
   function handleTabDragOver(event: DragEvent, tabId: string): void {

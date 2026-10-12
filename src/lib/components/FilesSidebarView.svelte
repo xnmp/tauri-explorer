@@ -135,7 +135,7 @@
   }
 
   function isExplorerDrag(event: DragEvent): boolean {
-    return isExplorerFileTransfer(event.dataTransfer);
+    return isExplorerFileTransfer(event.dataTransfer) || dragState.acceptsFileDrag(event.dataTransfer);
   }
 
   function onQuickAccessDragEnter(event: DragEvent) {

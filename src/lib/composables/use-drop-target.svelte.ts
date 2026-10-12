@@ -7,7 +7,7 @@
 import type { FileEntry } from "$lib/domain/file";
 import { isCopyModifier } from "$lib/domain/platform";
 import { dropIntoDirectory } from "./use-dom-directory-drop";
-import { isFileTransfer } from "$lib/domain/file-drop";
+import { dragState } from "$lib/state/drag.svelte";
 
 interface DropTargetDeps {
   /** Called after a successful drop to refresh the UI */
@@ -20,7 +20,7 @@ export function useDropTarget(deps: DropTargetDeps) {
 
   function handleDragOver(event: DragEvent, entry: FileEntry): void {
     if (entry.kind !== "directory") return;
-    if (!isFileTransfer(event.dataTransfer)) return;
+    if (!dragState.acceptsFileDrag(event.dataTransfer)) return;
     event.preventDefault();
     const copying = isCopyModifier(event);
     if (event.dataTransfer) event.dataTransfer.dropEffect = copying ? "copy" : "move";
@@ -52,7 +52,7 @@ export function useDropTarget(deps: DropTargetDeps) {
   }
 
   async function handleDrop(event: DragEvent, entry: FileEntry): Promise<void> {
-    if (!isFileTransfer(event.dataTransfer)) return;
+    if (!dragState.acceptsFileDrag(event.dataTransfer)) return;
     event.preventDefault();
     // Item-level drops are fully handled here — never let them bubble to
     // background drop handlers (FileList content, Miller column background),

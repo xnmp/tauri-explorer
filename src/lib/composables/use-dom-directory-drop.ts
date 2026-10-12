@@ -3,7 +3,7 @@ import { admitFileDrop } from "$lib/state/dispatch-file-drop";
 import { dragState } from "$lib/state/drag.svelte";
 import { isCopyModifier, isWindows } from "$lib/domain/platform";
 import { pathComparison } from "$lib/domain/path";
-import { isFileTransfer, isLinkOnlyFileTransfer } from "$lib/domain/file-drop";
+import { isLinkOnlyFileTransfer } from "$lib/domain/file-drop";
 import { resolveDropTargetFromElement } from "./use-native-drop-target.svelte";
 
 export type DirectoryDropKind = "folder" | "breadcrumb" | "tab" | "listing-background" | "miller-background";
@@ -11,7 +11,7 @@ const pathsForPlatform = pathComparison(isWindows);
 
 /** Importable DOM destination seam; components retain only hover/render state. */
 export async function dropIntoDirectory(event: DragEvent, path: string, kind: DirectoryDropKind, options: DropOptions): Promise<void> {
-  if (!isFileTransfer(event.dataTransfer) || !event.dataTransfer) return;
+  if (!dragState.acceptsFileDrag(event.dataTransfer) || !event.dataTransfer) return;
   const source = dragState.domSource(event.dataTransfer);
   const receipt = admitFileDrop(resolveDropTargetFromElement(event.target as Element | null), source, "dom");
   if (!receipt) return;

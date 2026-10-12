@@ -80,7 +80,7 @@ describe("handleFileDropMany", () => {
 
 
 describe("DOM drop path admission", () => {
-  const transfer = (payload: Record<string, string>) => ({ getData: (type: string) => payload[type] ?? "" }) as DataTransfer;
+  const transfer = (payload: Record<string, string>) => ({ types: Object.keys(payload), getData: (type: string) => payload[type] ?? "" }) as unknown as DataTransfer;
 
   it("preserves batch order while retaining the primary-path helper contract", () => {
     const payload = transfer({ "application/x-explorer-path": "/b.png", "application/x-explorer-paths": '["/a.png","/b.png"]' });

@@ -14,7 +14,6 @@
   import { openFile, openImageWithSiblings } from "$lib/api/open";
   import { resolveActivation } from "$lib/api/activate";
   import { dragState } from "$lib/state/drag.svelte";
-  import { isFileTransfer } from "$lib/domain/file-drop";
   import { useMarqueeSelection } from "$lib/composables/use-marquee-selection.svelte";
   import { useTypeAhead } from "$lib/composables/use-type-ahead.svelte";
   import { isImageFile } from "$lib/domain/file-types";
@@ -352,7 +351,7 @@
   function handleListDragOver(event: DragEvent): void {
     if (pluginView) return;
     const crossWindow = dragState.readCrossWindow();
-    if (!isFileTransfer(event.dataTransfer)) return;
+    if (!dragState.acceptsFileDrag(event.dataTransfer)) return;
 
     const target = event.target as HTMLElement;
     if (target.closest(".entry-item")) return;

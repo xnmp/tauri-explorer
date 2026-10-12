@@ -315,3 +315,297 @@ HEAD remains `4bd263b5`; no commit, merge, issue close or user-desktop action.
 All eight changed files, including the new saved regression seed, remain
 uncommitted in this working tree. The accepted pre-seal completion contract and
 other documented model/platform limits in the thirteenth review remain unchanged.
+
+
+## Fifteenth review: proof-backed legacy repair and provider acknowledgement model
+
+Starting HEAD `9c5a7daa`, branch `feat/ai-ops-auto-settle`. Review 14 was read
+in full from
+`/tmp/claude-1000/-home-chong-Repos-TraceExplorer/f4f074e8-00dc-47d2-b20d-ae1d367e1c92/scratchpad/revhops14.out`.
+No commit or merge. Both findings are addressed.
+
+Completion takes the verified receipt returned by the shared terminal classifier,
+not the receipt field in a potentially discarded admission. One IMMEDIATE
+transaction repairs Terminal/Released admission phase and disposition, transfer
+receipt, attention flag, existing successful provider receipt delivery/hash,
+artifact/spool release intent, obsolete settlement/preparation markers and
+non-Completed presentation. Existing Completed history remains unchanged. Historical provider execution/diagnostics/identity/
+revision remain intact; absent receipts are not invented, and earlier running/
+unknown receipts retain their earlier execution history. Completion uses the
+historically verified consumer path even if the consumer later edits/deletes it.
+Physical collection remains separate and keeps charges until unlink barriers
+succeed. Committed discard terminalizes stranded presentation without asserting
+that a possibly live native worker has ended. Error histories lacking a message
+receive the validated provider failure reason or a safe no-replay fallback;
+verified acquisition corrects that otherwise stranded errorless history too. Consumer completion events retain
+the independent handoff-release ordering gate.
+
+Automatic reconciliation classifies and repairs committed local terminal delivery
+under the host action/IdleCallFence before any provider activity/status RPC. This
+prevents an unavailable provider or exhausted RPC deadline from blocking local
+repair. Pending Terminal operations still use original unpaid production
+recovery. Candidate selection includes recoverable terminal jobs behind stale
+discarded tombstones and already Completed rows with inconsistent delivery
+bookkeeping, then removes repaired work from the automatic backlog.
+
+Table-driven production regression:
+`model_legacy_terminal_and_released_ledger_shapes_converge`.
+
+| Axis | Enumerated values / contract |
+| --- | --- |
+| Admission | Terminal (no disposition/transfer); Released/discarded (no transfer); Released/acquired (matching transfer) |
+| Provider receipt | Succeeded/discarded, succeeded/acquired, absent, succeeded/available, succeeded/unavailable, earlier running/none, earlier unknown/none |
+| Acquisition evidence | Present or absent; acquired receipts/releases without matching evidence were never writable by either historical contract and are excluded |
+| Job | Every JobState with null phase; Accepting/accepting, Running/running, Recovering/recovering, NeedsAttention/stopped or provider_result_discarded, Discarded/stopped or discarded, Error/stopped or delivery_failed or storage_full, Error/failed with/without error, Cancelled/consumer_removed or cancelled, Completed/complete; null-phase Error with/without error |
+| Execution-release flag | Both 0 and 1, including legacy idle flags behind acquired/discarded tombstones |
+| Completed history | Includes schema-permitted independent completion without acquisition evidence, with a real consumer copy. Preserve successful history; discard must not attach a no-output error. Shipped Trace consumers normally completed only after acquisition, but origin/dev host APIs allowed independent reports. |
+
+Final continuation expands the table to 1,584 historical combinations checking terminal/correct presentation,
+exact acquired bytes and path, canonical receipt/tombstone where applicable,
+zero charged custody/disk bytes/operation claims, and repeated sweeps with no
+new job revisions, recovery calls or automatic candidates. The port panics if
+committed delivery consults provider activity; Released recovery cannot answer
+status. Pending original delivery alone uses healthy fixture RPC.
+
+`model_legacy_acquired_completion_repair_is_atomic_and_rejects_invalid_proof`
+uses a SQLite trigger to abort the presentation write after earlier bookkeeping
+writes. Admission/provider receipt/job/artifact inventory remain unchanged.
+Mismatched evidence descriptors also reject with unchanged bookkeeping; restored
+proof completes idempotently with the pinned run and original receipt revision.
+
+The model now separates `provider_acknowledged` from `host_released`. Receipt
+commit alone sets the former; restart preserves that provider receipt, and sweep
+observes actual host release from the production ledger. The directed regression
+`model_acquired_receipt_restart_sweep_releases_through_reconciliation` checks
+`Admit → ProviderComplete → Acquire → AcquiredReceipt → Restart → Sweep`: before
+sweep the provider receipt is acquired, the admission is Terminal and capacity is
+held; automatic production reconciliation then releases custody and completes
+history without synthetic Ack or lifecycle removal. The same trace participates
+in the directed deep campaign.
+
+Fail-first logs:
+
+- `/tmp/hops-fifteenth-red-ledger.log`: original 192-case table failed 126 cases
+  before production repair, including Released/discarded evidence-backed jobs.
+- `/tmp/hops-fifteenth-red-model.log`: requested no-removal acquired-receipt trace
+  failed with `valid original never delivered` before separating model state.
+
+Intermediate focused checks caught the unsafe execution-release flag mutation
+while a raw native writer remained active. The existing provider-rejection
+regression remains unchanged and checks that correction. The standalone orphan
+spool regression now asserts Released admission, terminal job and no operation
+claims rather than the previous idle-settlement implementation's exact flag;
+its no-paid-start, live independent writer, retained charge and final collection
+assertions remain. The initial atomic test expected private trigger error text;
+ledger errors are sanitized, so it now checks failure plus full rollback.
+Logs: `/tmp/hops-fifteenth-model-targeted.log`,
+`/tmp/hops-fifteenth-model-targeted-final.log`.
+
+Independent adversarial review checked production transactions, evidence/receipt
+integrity, historical coverage, provider-unavailable convergence, model state
+separation and worker accounting. It identified the provider-RPC-before-repair
+gap; that path now repairs before RPC. The final focused result is 68 passed / 0 failed / 1 ignored (29.57s), with
+384 ledger combinations and zero failures. No remaining concrete blocker was
+found in the final independent read-only review.
+
+The first deep run exposed another fixture gap and minimized to
+`[SharedConsumerAdmit, ProviderComplete(0), DiscardCrash(0,0,false)]`: a durable
+provider-local discard survives a precommit host rollback, then its status retry
+commits through production reconciliation. The fixture had not advanced its host
+discard oracle on that retry and incorrectly reported automatic discard. A
+separate read-only debugger independently confirmed the gap. The observer now
+records explicit provider intent plus a matching durable discarded receipt/revision
+before propagating reconciliation errors, never admission disposition or API
+success alone. The minimized directed regression checks pre-sweep uncommitted
+and post-sweep committed discard, followed by zero custody/charges/claims. Seed
+`36efde3704e39caadf820032c1d222755c1d13ee0b8f5dafcf03cce9a72b2c28` is retained
+alongside every previous seed. Log: `/tmp/hops-fifteenth-model-deep-precommit-red.log`
+(169.91s).
+
+The expanded errorless-history cases also failed first: the 384-case table had
+33 failures, all Error/failed/null combinations, before safe terminal failure
+reason/acquired correction. The same run reproduces the minimized discard trace.
+Log: `/tmp/hops-fifteenth-red-errorless-and-precommit.log`. The second deep run found a separate collision-transition precondition gap:
+`[Admit(1,false), Publish(1,2,true), Spool(1), Seal(0), DelayedReceipt(0,false),
+Seal(0), Upgrade(true,true,false), Probe(true), ReplacementCollision(1)]`.
+Instrumentation proved the affected operation was Failed, with a raw captured
+reply but no valid paid output; the admission was Released/discarded and its
+provider receipt failed/none. A replacement collision cannot demand preservation
+of a legitimately rejected raw reply. The fixture now refuses this transition
+for failed/cancelled or Released operations; production lookup is unchanged.
+A directed failed/cancelled regression drives production GC, checks no rejected
+operation custody before/after the collision attempt, and converges to zero
+claims/charges. Existing successful bound/unbound collision coverage still
+requires delivery of the exact original bytes. Independent debugging/review
+confirmed this distinction. Seed
+`ecb832fe048f8d0bcbb91ed7f6177e626aef8bb194bfc84750313ed929204d1b` is preserved.
+Logs: `/tmp/hops-fifteenth-model-deep-collision-red.log` (171.16s),
+`/tmp/hops-fifteenth-red-collision.log`; final focused log:
+`/tmp/hops-fifteenth-model-targeted-final8.log`. The third deep run reached the same provider-discard oracle gap through
+`Replay` rather than status:
+`[Admit(0,false), PausedProviderMutation(1,0,0), ProviderComplete(0),
+DiscardCrash(0,0,false), Replay(0)]`. The fix is centralized in
+`Operation::observe_discard_commitment`: independent provider intent, no known
+acquisition winner and full equality of the authenticated durable receipt with
+the fixture's emitted discarded receipt. The common invariant boundary covers
+every command/RPC publication path; status also observes immediately before
+same-call consumer handoff or propagating a reply/release error. No host admission
+disposition alone can authorize discard. The directed replay test checks
+pre-replay false and post-replay true, then custody/charge/claim quiescence.
+Independent debugging/review confirmed the root correction. Seed
+`5932e4a2faa2ba31e54b63dcce37750c5de23fb7f0234488fec6bb0282a10335` is retained.
+Log: `/tmp/hops-fifteenth-model-deep-replay-red.log` (195.91s).
+
+A passing deep run then reached all 133 required transition families at >=3
+hits (acquired-receipt-before-release=15, ack-crash=3): 1,024 random cases plus
+the directed campaign, 268.57s. The first full lib run found the known lazy-
+creation failure plus two existing contracts: 2338 passed / 3 failed / 79 ignored
+(71.20s). Log: `/tmp/hops-fifteenth-lib-old-status-contract.log`.
+
+The evidence-only recovery regression expected restoration of disposed host
+bytes through provider recovery after acquisition already committed. It now
+registers a parked presentation and verifies required local completion, exact
+consumer bytes despite host-file deletion, canonical release/receipt, zero
+operation claims, no provider activity/recovery, cached status, empty repeated
+sweep and later acquired acknowledgement with unchanged Completed history.
+The existing domain reconstruction coverage remains unchanged.
+
+The second failure exposed a real retained-status regression: Released custody
+was authoritative while the native worker accounting flag deliberately remained
+unchanged. `image_call` now treats Released admissions as cache/replay authority
+in addition to that execution flag, after the existing identity checks, matching
+`recovery_retained_status`. Retained terminal status no longer calls the provider;
+starts remain fenced without claiming a live worker ended. All 43 focused
+automatic regressions pass (21.11s); log: `/tmp/hops-fifteenth-automatic-final.log`.
+Independent final source/test review confirmed the guard and strengthened
+outcome regression, with no remaining concrete blocker. The final deep and both
+full lib reruns below follow this last production correction.
+
+The deep rerun after the Released-status correction uncovered a pre-existing
+fixture success-boundary gap:
+`[SharedConsumerAdmit, Admit(0,false), DirectorySyncFailure(true),
+Stage(2,false,false), ProviderComplete(2), PowerLoss]`. `ProviderComplete` had
+published success from volatile complete bytes despite failed sealing and no
+descriptor/completion identity. Power loss then changed the fixture to Unknown;
+production correctly rejected the impossible Succeeded→Unknown observation.
+Synthetic ProviderComplete now requires a sealed descriptor, committed seal or
+recorded completion identity. Explicit authoritative Publish(Succeeded) remains
+unchanged. The directed regression asserts no pre-seal success receipt and final
+quiescence; independent debugging/review confirmed the accepted boundary. Seed
+`5719da24968c35b081dc1e4c9ac9f8aa31f58d279f6b276a8748dd355249f0d7` is retained.
+Log: `/tmp/hops-fifteenth-model-deep-unsealed-red.log` (233.19s). Final focused
+model suite: 68 passed / 0 failed / 1 ignored (29.57s), all 384 ledger cases
+converge. Production has not changed since the Released-status correction.
+
+A further deep run found paused acquisition bypassing the consumer's durable
+intent: `[Admit(0,false), ProviderComplete(0), CopyBeforeProof(0),
+PausedMutation(0,1,0)]`. The normal copy had already committed its journal and
+destination, but the manually paused fixture branch unconditionally rewrote it
+and counted a second delivery. `consumer_copy_from` now shares descriptor/path
+validation, existing-copy verification/sync and first-write accounting between
+ordinary recovery and the paused acquisition branch. Its lazy source supplier
+uses normal Store read for recovery and pre-mutation captured bytes for the
+paused path. The latter still calls acquisition after the lifecycle mutation,
+preserving the production removal/upgrade fence. No effect-counter suppression
+is used. The directed regression checks one effect before/after the pause and
+final quiescence; independent debugging/review confirmed the shared-intent fix.
+Seed `597c4ffdde2610b9a8be986280c75cc2d8cdd837a443e7959d3cbe7f1209d9b8` is retained.
+Log: `/tmp/hops-fifteenth-model-deep-paused-copy-red.log` (247.87s). Final focused
+suite: 68 passed / 0 failed / 1 ignored (29.57s), with 384/0 ledger cases.
+
+Continuation reviewed the entire uncommitted diff and the prior transcript tail.
+A fresh initial targeted/full run confirmed the existing fixes: 62 model tests,
+75 bridge tests; full lib 2342 passed / 1 known lazy-creation failure / 79 ignored
+(64.18s). The prior log's two bridge failures did not reproduce.
+
+Independent review falsified full historical job-shape coverage: verified
+acquisition could remain Error/failed with a message, Cancelled/cancelled or
+Discarded/discarded, including null phases; candidate selection could hide these
+behind an already acquired tombstone. The expanded regression failed first:
+1536 cases / 312 failures (`/tmp/hops15-cont-expanded-red.log`). Including
+schema-permitted independent Completed reports produced 1584 cases / 316 failures
+(`/tmp/hops15-cont-expanded-completed-red.log`), with four erroneous no-output
+messages attached to completed consumer history. Completion now repairs every
+non-Completed job from verified acquisition, evidence-backed terminal failures
+remain automatic candidates regardless of phase/error, and discard preserves
+existing Completed history. Ordinary consumer-observation terminal protections
+remain unchanged; the presentation conventions document states the independent
+proof-backed exception.
+
+`released_acquired_replay_validates_request_with_legacy_execution_flag` also
+failed first with recovery_stopped (`/tmp/hops15-cont-replay-red.log`). Released
+start requests now validate their pinned semantic identity and downgrade to
+cached status for either legacy execution flag, while non-Released stopped work
+still refuses start. The test checks changed-prompt rejection before dispatch,
+exact retained status, and unchanged consumer output.
+
+Final cross-layer adversarial review found that the live frontend still rejected
+newer host Completed events after ordinary Error/Cancelled/Discarded history.
+The ledger repaired but the UI could retain its old terminal state until a
+snapshot reload. The domain event merge now accepts trusted newer host
+completion with an output path regardless of prior non-Completed phase, while
+preserving identity, revision, malformed-event, dismissal and Completed-state
+protection. Expanded domain/state regressions failed first: 11 failed / 21 passed
+(`/tmp/hops15-cont-frontend-red.log`); focused verification passed 32/32
+(`/tmp/hops15-final-targeted-frontend.log`). The live controller assertions check
+Complete plus exact output path, cleared error, one initial snapshot, no reload
+and no duplicate toast. Final independent source review confirmed all five
+claims (atomic repair, quiescence, validated replay, live UI correction and
+acknowledgement/release separation), with no remaining concrete blocker.
+
+Final requested verification results follow below.
+
+Requested Cargo target: `/var/tmp/te-wt2/target-hops`. Deep and full runs are
+sequential, with full lib using `--test-threads=8`, so native subprocess probes
+never race executable replacement.
+
+```sh
+CARGO_TARGET_DIR=/var/tmp/te-wt2/target-hops cargo test --manifest-path src-tauri/Cargo.toml --lib model_tests -- --nocapture
+CARGO_TARGET_DIR=/var/tmp/te-wt2/target-hops cargo test --manifest-path src-tauri/Cargo.toml --lib service_bridge_tests -- --nocapture
+bunx vitest run tests/state/native-plugin-jobs.test.ts --maxWorkers=2
+# Final broad verification order:
+CARGO_TARGET_DIR=/var/tmp/te-wt2/target-hops cargo test --manifest-path src-tauri/Cargo.toml --lib -- --test-threads=8
+CARGO_TARGET_DIR=/var/tmp/te-wt2/target-hops cargo test --manifest-path src-tauri/Cargo.toml --lib ai_operations_reference_state_machine_deep -- --ignored --nocapture
+CARGO_TARGET_DIR=/var/tmp/te-wt2/target-hops cargo test --manifest-path src-tauri/Cargo.toml --lib -- --test-threads=8
+bunx vitest run tests/domain tests/state --maxWorkers=2
+bun run lint:arch
+```
+
+Final code verification, in the requested order after focused regression checks:
+
+```text
+# Targeted model (all 1584 ledger shapes converge; rollback, invalid proof and restart/sweep trace pass)
+test result: ok. 62 passed; 0 failed; 1 ignored; 0 measured; 2360 filtered out; finished in 88.25s
+# Targeted bridge (including both legacy execution flags and pinned-request rejection)
+test result: ok. 76 passed; 0 failed; 0 ignored; 0 measured; 2347 filtered out; finished in 26.57s
+# Targeted live frontend
+ Test Files  1 passed (1)
+      Tests  32 passed (32)
+# Full lib 1
+test result: FAILED. 2343 passed; 1 failed; 79 ignored; 0 measured; 0 filtered out; finished in 127.50s
+# Deep model
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2422 filtered out; finished in 341.42s
+# Full lib 2
+test result: FAILED. 2343 passed; 1 failed; 79 ignored; 0 measured; 0 filtered out; finished in 144.73s
+# Vitest domain/state, maxWorkers=2
+ Test Files  287 passed (287)
+      Tests  2923 passed (2923)
+   Duration  24.34s (tests 45%, import 30%, transform 14%, setup 7%, worker 4%)
+# bun run lint:arch
+arch-lint: clean
+```
+
+Both full lib failures are exactly
+`file_mutation::tests::recovery_admission::creation_is_lazy_and_competing_entry_plans_leave_names_and_bytes_unchanged`
+at `src-tauri/test_support/file_mutation.rs:475` (`completed.warning.is_none()`).
+No other full-suite failures. The deep run covers all 133 required transition
+families with at least three hits each; acquired-receipt-before-release has 15
+hits. No production changes followed these passing targeted/deep results.
+`git diff --check` is clean. All work remains uncommitted.
+
+Logs for final continuation: `/tmp/hops15-final-targeted-{model,bridge}.log`,
+`/tmp/hops15-final-model-deep.log`, `/tmp/hops15-final-lib-{1,2}.log`,
+`/tmp/hops15-final-lint-arch.log`, `/tmp/hops15-final-vitest.log`.
+
+Accepted pre-seal completion contract and other documented platform/model limits
+remain unchanged. No commit, merge, issue close, deployment or user-desktop action.

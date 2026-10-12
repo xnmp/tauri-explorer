@@ -31,12 +31,22 @@ describe("native job revisions and ownership", () => {
     ["discarded", "stopped"],
     ["error", "delivery_failed"],
     ["error", "storage_full"],
-  ] as const)("accepts acknowledged completion without an observed run from %s/%s", (state, phase) => {
+    ["error", "failed"],
+    ["error", null],
+    ["cancelled", "cancelled"],
+    ["cancelled", null],
+    ["discarded", "discarded"],
+    ["discarded", "provider_result_discarded"],
+    ["discarded", null],
+  ] as const)("accepts proof-backed host completion without an observed run from %s/%s", (state, phase) => {
     const settled = { ...record(1, 2, state), phase, runId: null, settledAtMs: 2 };
     const before = mergeNativeJobEvent(emptyNativeJobs(), { type: "updated", job: settled });
     const completed = { ...record(1, 3, "completed"), phase: "complete", runId: null, settledAtMs: 2 };
     expect(mergeNativeJobEvent(before, { type: "updated", job: completed }).jobs.get(settled.jobKey)).toEqual(completed);
     for (const invalid of [
+      { ...completed, revision: settled.revision },
+      { ...completed, revision: settled.revision - 1 },
+      { ...completed, operationId: "other-operation" },
       { ...completed, outputPath: undefined },
       { ...completed, runId: 0 },
       { ...completed, runId: Number.MAX_SAFE_INTEGER + 1 },
@@ -59,7 +69,7 @@ describe("native job revisions and ownership", () => {
       expect(mergeNativeJobEvent(retained, { type: "updated", job: { ...completed, state: "discarded" } })).toBe(retained);
     }
     const explicit = mergeNativeJobEvent(emptyNativeJobs(), { type: "updated", job: { ...stopped, phase: "provider_result_discarded" } });
-    expect(mergeNativeJobEvent(explicit, { type: "updated", job: completed })).toBe(explicit);
+    expect(mergeNativeJobEvent(explicit, { type: "updated", job: completed }).jobs.get(stopped.jobKey)).toEqual(completed);
   });
   it("adopts a prepared estimate key once and rejects a changed cohort", () => {
     let state = mergeNativeJobEvent(emptyNativeJobs(), {type:"updated",job:record()});
@@ -90,14 +100,16 @@ describe("native job revisions and ownership", () => {
   });
 });
 describe("owned native subscription",()=>{
-  it("shows a late acknowledged output in live history silently, without reload", async () => {
+  it.each(["discarded", "error", "cancelled"] as const)("shows repaired %s history as Complete silently, without reload", async (state) => {
     let receive!: (value: unknown) => void;
-    const stopped = { ...record(1, 2, "discarded"), phase: "stopped", runId: null, settledAtMs: 2 };
+    const stopped = { ...record(1, 2, state), phase: state === "error" ? "failed" : null, error: state === "error" ? "Historical delivery failure" : null, runId: null, settledAtMs: 2 };
     const toast = vi.fn();
-    const controller = createNativePluginJobsController({ watch: async fn => { receive = fn; return () => {}; }, snapshot: async () => ({ originWindow: "main", watermark: 2, jobs: [stopped] }), apply: records => jobsStore.applyNative(records), toast, error: () => {} });
+    const snapshot = vi.fn(async () => ({ originWindow: "main", watermark: 2, jobs: [stopped] }));
+    const controller = createNativePluginJobsController({ watch: async fn => { receive = fn; return () => {}; }, snapshot, apply: records => jobsStore.applyNative(records), toast, error: () => {} });
     await controller.init();
     receive({ type: "updated", job: { ...record(1, 3, "completed"), phase: "complete", runId: null, settledAtMs: 2 } });
-    expect(jobsStore.jobs[0]).toMatchObject({ status: "completed", outputPath: "/generated/image.png" });
+    expect(jobsStore.jobs[0]).toMatchObject({ status: "completed", outputPath: "/generated/image.png", error: undefined });
+    expect(snapshot).toHaveBeenCalledTimes(1);
     expect(toast).not.toHaveBeenCalled();
     receive({ type: "updated", job: record(1, 4) });
     expect(jobsStore.jobs[0].status).toBe("completed");

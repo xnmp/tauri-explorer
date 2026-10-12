@@ -3334,16 +3334,28 @@ fn automatic_settlement_fills_missing_terminal_error_reason_without_changing_out
 }
 
 #[test]
-fn automatic_review_consumer_evidence_recovers_interrupted_acknowledgement() {
-    use crate::service_state::job::JobRecord;
+fn automatic_review_consumer_evidence_releases_interrupted_acknowledgement_locally() {
+    use crate::service_state::job::{JobRecord, JobState};
     let (root, s) = fixture();
     let op = "review-consumer-evidence";
+    let registered = s.register_job(job(op, 74)).unwrap();
     let d = ready(&s, op);
+    s.update_job(
+        &registered.owner,
+        &registered.job_key,
+        JobState::NeedsAttention,
+        Some("stopped".into()),
+        None,
+        None,
+        Some("Lost acknowledgement".into()),
+    )
+    .unwrap();
     let data = root.path().join("consumer-data");
     fs::create_dir(&data).unwrap();
     s.register_consumer_root("consumer", data.clone()).unwrap();
     let copy = data.join("original.png");
     let original = s.read(&consumer(), "consumer", op, &d).unwrap().path;
+    let original_bytes = fs::read(&original).unwrap();
     fs::copy(&original, &copy).unwrap();
     let transfer = s
         .acquired(&consumer(), op, &d, copy.to_str().unwrap())
@@ -3357,8 +3369,8 @@ fn automatic_review_consumer_evidence_recovers_interrupted_acknowledgement() {
     );
     unavailable["revision"] = json!(3);
     reconcile_at(&s, &provider(), &a, &unavailable).unwrap();
-    struct Original<'a>(&'a Store, std::cell::Cell<bool>);
-    impl super::ai_operations::AutomaticPort for Original<'_> {
+    struct NoProvider;
+    impl super::ai_operations::AutomaticPort for NoProvider {
         fn active(
             &self,
             _: &Admission,
@@ -3366,27 +3378,41 @@ fn automatic_review_consumer_evidence_recovers_interrupted_acknowledgement() {
             _: bool,
             _: &str,
         ) -> Result<bool, AppError> {
-            Ok(false)
+            panic!("verified acquisition must complete without provider status");
         }
-        fn recover(&self, a: &Admission, _: Option<&JobRecord>) -> Result<(), AppError> {
-            self.0.read(
-                &consumer(),
-                "consumer",
-                &a.operation_id,
-                a.output.as_ref().unwrap(),
-            )?;
-            self.1.set(true);
-            Ok(())
+        fn recover(&self, _: &Admission, _: Option<&JobRecord>) -> Result<(), AppError> {
+            panic!("verified acquisition must complete without provider recovery");
         }
     }
-    let port = Original(&s, std::cell::Cell::new(false));
-    super::ai_operations::auto_reconcile_in(&s, &port).unwrap();
-    assert!(
-        port.1.get(),
-        "validated consumer evidence must recover the original output"
+    let completed = super::ai_operations::auto_reconcile_in(&s, &NoProvider).unwrap();
+    assert_eq!(completed.len(), 1);
+    assert_eq!(completed[0].state, JobState::Completed);
+    assert_eq!(completed[0].output_path.as_deref(), copy.to_str());
+    assert_eq!(completed[0].run_id, registered.run_id);
+    assert!(completed[0].error.is_none());
+    let released = s.get("consumer", op).unwrap().unwrap();
+    assert_eq!(released.phase, AdmissionPhase::Released);
+    assert_eq!(released.disposition.as_deref(), Some("acquired"));
+    assert_eq!(
+        released.transfer_receipt.as_deref(),
+        Some(transfer.transfer_receipt.as_str())
     );
     assert!(!s.execution_released("consumer", op).unwrap());
-    assert_eq!(fs::read(&original).unwrap(), fs::read(&copy).unwrap());
+    assert!(s.claims().unwrap().is_empty());
+    assert_eq!(fs::read(&copy).unwrap(), original_bytes);
+    let retained = s.provider_receipt("consumer", op).unwrap().unwrap();
+    assert_eq!(retained["delivery"]["state"], "acquired");
+    assert_eq!(retained["revision"], json!(3));
+    assert_eq!(
+        call(&s, "status", json!({"operationId":op}), |_, _| panic!(
+            "released status must use retained receipt"
+        ))
+        .unwrap(),
+        retained
+    );
+    assert!(super::ai_operations::auto_reconcile_in(&s, &NoProvider)
+        .unwrap()
+        .is_empty());
     let mut acquired = status(
         op,
         "succeeded",
@@ -3402,7 +3428,8 @@ fn automatic_review_consumer_evidence_recovers_interrupted_acknowledgement() {
             .as_deref(),
         Some("acquired")
     );
-    assert!(copy.is_file());
+    assert_eq!(fs::read(&copy).unwrap(), original_bytes);
+    assert_eq!(s.job(&registered.job_key).unwrap().unwrap(), completed[0]);
 }
 
 // Native admission is process-wide; each lifecycle fixture needs private
@@ -4092,5 +4119,69 @@ fn invariant_b_acquired_output_completes_all_nonterminal_jobs_with_or_without_a_
             assert_eq!(completed.run_id, run);
             assert_eq!(completed.output_path.as_deref(), copy.to_str());
         }
+    }
+}
+
+#[test]
+fn released_acquired_replay_validates_request_with_legacy_execution_flag() {
+    let (root, store) = fixture();
+    let op = "legacy-acquired-replay";
+    let output = ready(&store, op);
+    let data = root.path().join("consumer-data");
+    fs::create_dir(&data).unwrap();
+    store
+        .register_consumer_root("consumer", data.clone())
+        .unwrap();
+    let copy = data.join("result.png");
+    fs::copy(
+        store
+            .read(&consumer(), "consumer", op, &output)
+            .unwrap()
+            .path,
+        &copy,
+    )
+    .unwrap();
+    let proof = store
+        .acquired(&consumer(), op, &output, copy.to_str().unwrap())
+        .unwrap();
+    let receipt = status(
+        op,
+        "succeeded",
+        json!({"state":"acquired","transferReceipt":proof.transfer_receipt}),
+    );
+    let admission = store.get("consumer", op).unwrap().unwrap();
+    reconcile_at(&store, &provider(), &admission, &receipt).unwrap();
+    let conn = rusqlite::Connection::open(root.path().join("service/ledger.sqlite")).unwrap();
+    for flag in [false, true] {
+        conn.execute(
+            "UPDATE operations SET exec_released=?1 WHERE consumer='consumer' AND operation=?2",
+            rusqlite::params![flag, op],
+        )
+        .unwrap();
+        assert_eq!(
+            call(&store, "status", json!({"operationId":op}), |_, _| panic!(
+                "released status reached provider"
+            ))
+            .unwrap(),
+            receipt
+        );
+        assert_eq!(
+            call(&store, "start", request(op), |_, _| panic!(
+                "released replay reached provider"
+            ))
+            .unwrap(),
+            receipt
+        );
+        let mut changed = request(op);
+        changed["prompt"] = json!("different paid request");
+        assert!(call(&store, "start", changed, |_, _| panic!(
+            "conflicting replay reached provider"
+        ))
+        .is_err());
+        assert_eq!(
+            store.provider_receipt("consumer", op).unwrap().unwrap(),
+            receipt
+        );
+        assert!(copy.is_file());
     }
 }

@@ -207,10 +207,27 @@ fn auto_reconcile_candidates(
                 .and_then(|r| r["execution"]["state"].as_str())
                 .unwrap_or("unconfirmed");
             let job = store.job_for_operation(&a.consumer.package_id, &a.operation_id)?;
-            if a.phase == crate::service_state::model::AdmissionPhase::Released
-                && job.as_ref().is_some_and(|j| j.state == JobState::Completed)
             {
-                return Ok(());
+                // Committed delivery is local authority to retire custody. Do
+                // not let an unavailable provider or an expired RPC deadline
+                // prevent proof-backed bookkeeping repair.
+                let _fence = backend::IdleCallFence::acquire(&[
+                    &a.consumer.package_id,
+                    &a.provider.package_id,
+                ])?;
+                if let Some(completed) =
+                    store.reconcile_terminal_job(&a.consumer.package_id, &a.operation_id)?
+                {
+                    settled.push(completed);
+                }
+                if store
+                    .get(&a.consumer.package_id, &a.operation_id)?
+                    .is_some_and(|current| {
+                        current.phase == crate::service_state::model::AdmissionPhase::Released
+                    })
+                {
+                    return Ok(());
+                }
             }
             let mut recovery = None;
             port.with_activity(store, &a, job.as_ref(), stopped, execution, &mut |active| {
@@ -220,7 +237,7 @@ fn auto_reconcile_candidates(
                     return Ok(());
                 }
                 if let Some(completed) =
-                    store.complete_acquired_job(&a.consumer.package_id, &a.operation_id)?
+                    store.reconcile_terminal_job(&a.consumer.package_id, &a.operation_id)?
                 {
                     settled.push(completed);
                     return Ok(());
@@ -230,6 +247,9 @@ fn auto_reconcile_candidates(
                 let current = store
                     .get(&a.consumer.package_id, &a.operation_id)?
                     .ok_or_else(|| error("AI admission disappeared"))?;
+                if current.phase == crate::service_state::model::AdmissionPhase::Released {
+                    return Ok(());
+                }
                 let receipt = store.provider_receipt(&a.consumer.package_id, &a.operation_id)?;
                 if current.phase != crate::service_state::model::AdmissionPhase::Released
                     && receipt.as_ref().is_some_and(|r| {

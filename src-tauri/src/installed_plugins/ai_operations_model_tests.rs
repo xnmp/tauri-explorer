@@ -548,7 +548,8 @@ struct Operation {
     writer: Option<SpoolActor>,
     transfer: Option<String>,
     copy: PathBuf,
-    acknowledged: bool,
+    host_released: bool,
+    provider_acknowledged: bool,
     acquisition_committed: bool,
     discard_committed: bool,
     provider_discarded: bool,
@@ -561,6 +562,27 @@ struct Operation {
     delivery_effects: Cell<usize>,
 }
 impl Operation {
+    /// Observe host commitment of an independently emitted provider discard.
+    /// Every production reply path (status, replay, delayed publication) shares
+    /// this oracle; host disposition alone never authorizes losing paid bytes.
+    fn observe_discard_commitment(&mut self, store: &Store) -> Result<(), AppError> {
+        if self.discard_committed || !self.provider_discarded || self.acquisition_committed {
+            return Ok(());
+        }
+        let expected = self.last_receipt.borrow().clone();
+        if let Some(expected) =
+            expected.filter(|receipt| receipt["delivery"]["state"] == "discarded")
+        {
+            if store
+                .provider_receipt(&self.consumer.package_id, &self.id)?
+                .as_ref()
+                == Some(&expected)
+            {
+                self.discard_committed = true;
+            }
+        }
+        Ok(())
+    }
     fn provider_rejected(&self) -> bool {
         matches!(self.outcome, Outcome::Failed | Outcome::Cancelled)
     }
@@ -595,7 +617,7 @@ impl Operation {
         if self.provider_discarded {
             return json!({"state":"discarded"});
         }
-        if self.acknowledged {
+        if self.provider_acknowledged || self.host_released {
             return json!({"state":"acquired","transferReceipt":self.transfer});
         }
         self.descriptor.as_ref().map_or_else(
@@ -886,6 +908,21 @@ impl Machine {
         for job in ai_operations::auto_reconcile_in(self.store(), &Transport { machine: self })? {
             backend::emit_job_event(json!({"type":"updated","job":job}));
         }
+        for op in self
+            .operations
+            .borrow_mut()
+            .iter_mut()
+            .filter(|op| !op.removed)
+        {
+            if let Some(a) = self.store().get(&op.consumer.package_id, &op.id)? {
+                if a.phase == AdmissionPhase::Released
+                    && a.disposition.as_deref() == Some("acquired")
+                {
+                    op.host_released = true;
+                    op.transfer = a.transfer_receipt;
+                }
+            }
+        }
         Ok(())
     }
     fn request(op: &Operation) -> Value {
@@ -923,7 +960,7 @@ impl Machine {
             let op = &ops[index];
             if !op.removed
                 && (!op.dispatched
-                    || !op.acknowledged
+                    || !op.host_released
                         && !self
                             .store()
                             .execution_released(&op.consumer.package_id, &op.id)
@@ -983,7 +1020,8 @@ impl Machine {
                     "consumer-data"
                 })
                 .join(format!("{id}.png")),
-            acknowledged: false,
+            host_released: false,
+            provider_acknowledged: false,
             acquisition_committed: false,
             discard_committed: false,
             provider_discarded: false,
@@ -1243,7 +1281,7 @@ impl Machine {
         let mut ops = self.operations.borrow_mut();
         let op = &mut ops[index];
         if op.removed
-            || op.acknowledged
+            || op.host_released
             || !complete && op.valid_original
             || op.descriptor.is_some()
             || matches!(op.outcome, Outcome::Failed | Outcome::Cancelled)
@@ -1293,7 +1331,7 @@ impl Machine {
         };
         let mut ops = self.operations.borrow_mut();
         let op = &mut ops[index];
-        if op.removed || op.acknowledged {
+        if op.removed || op.host_released {
             return;
         }
         let Some(stage) = &op.stage else { return };
@@ -1323,7 +1361,7 @@ impl Machine {
         let op = &mut ops[index];
         if op.removed
             || op.valid_original
-            || op.acknowledged
+            || op.host_released
             || matches!(op.outcome, Outcome::Failed | Outcome::Cancelled)
         {
             return Ok(());
@@ -1379,7 +1417,7 @@ impl Machine {
         };
         let mut ops = self.operations.borrow_mut();
         let op = &mut ops[index];
-        if op.removed || op.acknowledged || op.transfer.is_some() {
+        if op.removed || op.host_released || op.transfer.is_some() {
             return Ok(());
         }
         let Some(d) = &op.descriptor else {
@@ -1416,7 +1454,7 @@ impl Machine {
         };
         let mut ops = self.operations.borrow_mut();
         let op = &mut ops[index];
-        if op.removed || op.acknowledged || op.transfer.is_none() {
+        if op.removed || op.host_released || op.transfer.is_none() {
             return Ok(());
         }
         let status = op.receipt(if op.provider_discarded {
@@ -1431,7 +1469,7 @@ impl Machine {
             status["revision"].as_u64().unwrap(),
             status,
         )?;
-        op.acknowledged = true;
+        op.provider_acknowledged = !op.provider_discarded;
         op.consumer_live = false;
         Ok(())
     }
@@ -1588,7 +1626,7 @@ impl Machine {
         };
         let mut ops = self.operations.borrow_mut();
         let op = &mut ops[index];
-        if op.removed || op.acknowledged {
+        if op.removed || op.host_released {
             return Ok(());
         }
         let Some(transfer) = op.transfer.as_deref() else {
@@ -1601,7 +1639,7 @@ impl Machine {
             "acquired",
             Some(transfer),
         )?;
-        op.acknowledged = true;
+        op.host_released = true;
         op.consumer_live = false;
         op.valid_original = true;
         op.durable_original = true;
@@ -1701,7 +1739,7 @@ impl Machine {
         for op in self.operations.borrow_mut().iter_mut() {
             op.provider_live = false;
             op.consumer_live = false;
-            if !op.acknowledged {
+            if !op.host_released && !op.provider_acknowledged {
                 op.transfer = None;
             }
             op.writer.take();
@@ -1780,7 +1818,7 @@ impl Machine {
         };
         let mut ops = self.operations.borrow_mut();
         let op = &mut ops[index];
-        if op.removed || op.acknowledged {
+        if op.removed || op.host_released {
             return Ok(());
         }
         if let Command::SpoolReserve(_, bound, nonzero) = command {
@@ -2161,7 +2199,8 @@ impl Machine {
             let ops = self.operations.borrow();
             let op = &ops[index];
             if op.removed
-                || op.acknowledged
+                || op.host_released
+                || op.provider_rejected()
                 || op.spool_phase != 29
                 || !op.extra_spools.is_empty()
                 || op.spool_owner.as_ref().unwrap().digest == owner.digest
@@ -2180,6 +2219,9 @@ impl Machine {
         // SDK reverse counters reset in a new broker. Its unrelated raw
         // reply can share a request ID with the original paid process.
         let admitted = checked(self.store().get(&consumer, &operation))?.unwrap();
+        if admitted.phase == AdmissionPhase::Released {
+            return Ok(());
+        }
         let _repair = checked(
             self.store
                 .as_ref()
@@ -2240,7 +2282,7 @@ impl Machine {
             return Ok(());
         };
         if self.operations.borrow()[index].removed
-            || self.operations.borrow()[index].acknowledged
+            || self.operations.borrow()[index].host_released
             || self.operations.borrow()[index].consumer.package_id
                 != self.fixture.id(Role::Consumer)
         {
@@ -2306,19 +2348,12 @@ impl Machine {
                 let source_bytes = fs::read(&source.path).map_err(|e| fail(e.to_string()))?;
                 self.mutation(mutation)?;
                 let (copy, removed) = {
-                    let ops = self.operations.borrow();
+                    let mut ops = self.operations.borrow_mut();
+                    self.consumer_attempt(
+                        self.consumer_copy_from(&mut ops[index], d, || Ok(source_bytes)),
+                    )?;
                     (ops[index].copy.clone(), ops[index].removed)
                 };
-                fs::write(&copy, &source_bytes).map_err(|e| fail(e.to_string()))?;
-                {
-                    let ops = self.operations.borrow();
-                    ops[index]
-                        .consumer_runs
-                        .set(ops[index].consumer_runs.get() + 1);
-                    ops[index]
-                        .delivery_effects
-                        .set(ops[index].delivery_effects.get() + 1);
-                }
                 let acquired =
                     held.acquired(&admission.consumer, &operation, d, copy.to_str().unwrap());
                 if removed && acquired.is_ok() {
@@ -2374,6 +2409,21 @@ impl Machine {
         Ok(())
     }
     fn consumer_copy(&self, op: &mut Operation, d: &ArtifactDescriptor) -> Result<(), AppError> {
+        let consumer = op.consumer.clone();
+        let operation = op.id.clone();
+        self.consumer_copy_from(op, d, || {
+            let source = self
+                .store()
+                .read(&consumer, &consumer.package_id, &operation, d)?;
+            Ok(fs::read(source.path)?)
+        })
+    }
+    fn consumer_copy_from(
+        &self,
+        op: &mut Operation,
+        d: &ArtifactDescriptor,
+        source: impl FnOnce() -> Result<Vec<u8>, AppError>,
+    ) -> Result<(), AppError> {
         let journal = op
             .copy
             .parent()
@@ -2417,12 +2467,10 @@ impl Machine {
             self.oracle.file_synced(&journal);
             self.oracle.sync(journal.parent().unwrap())?;
         }
-        let source = self
-            .store()
-            .read(&op.consumer, &op.consumer.package_id, &op.id, d)?;
+        let bytes = source()?;
         op.consumer_runs.set(op.consumer_runs.get() + 1);
         self.oracle.before_mutation(&op.copy);
-        fs::copy(source.path, &op.copy)?;
+        fs::write(&op.copy, bytes)?;
         op.delivery_effects.set(op.delivery_effects.get() + 1);
         crate::durable_dir::sync_file(&op.copy)?;
         self.oracle.file_synced(&op.copy);
@@ -2435,7 +2483,7 @@ impl Machine {
         };
         let mut ops = self.operations.borrow_mut();
         let op = &mut ops[index];
-        if op.removed || op.acknowledged || op.transfer.is_some() || op.delivery_effects.get() != 0
+        if op.removed || op.host_released || op.transfer.is_some() || op.delivery_effects.get() != 0
         {
             return Ok(());
         }
@@ -2623,7 +2671,7 @@ impl Machine {
         {
             let mut ops = self.operations.borrow_mut();
             let op = &mut ops[index];
-            if op.removed || !op.dispatched || op.acknowledged {
+            if op.removed || !op.dispatched || op.host_released {
                 return Ok(());
             }
             if kind == 1 && op.stage.is_none() || kind >= 2 && op.descriptor.is_none() {
@@ -2722,7 +2770,7 @@ impl Machine {
             ops.iter().map(|o| o.consumer_runs.get() as u64).sum(),
             ops.iter().map(|o| o.resume_calls.get() as u64).sum(),
             ops.iter().filter(|o| o.transfer.is_some()).count() as u64,
-            ops.iter().filter(|o| o.acknowledged).count() as u64,
+            ops.iter().filter(|o| o.host_released).count() as u64,
             ops.iter()
                 .filter(|o| o.provider_live || o.consumer_live)
                 .count() as u64,
@@ -2839,8 +2887,11 @@ impl Machine {
                         let mut ops = self.operations.borrow_mut();
                         let op = &mut ops[index];
                         if !op.removed
-                            && !op.acknowledged
+                            && !op.host_released
                             && op.valid_original
+                            && (op.descriptor.is_some()
+                                || op.sealed_original
+                                || op.completion_identified)
                             && !matches!(op.outcome, Outcome::Failed | Outcome::Cancelled)
                         {
                             op.outcome = Outcome::Succeeded;
@@ -2866,7 +2917,7 @@ impl Machine {
                             _ => Outcome::Cancelled,
                         };
                         if op.removed
-                            || op.acknowledged
+                            || op.host_released
                             || op.outcome == Outcome::Succeeded && next != Outcome::Succeeded
                             || op.outcome == Outcome::Unknown
                                 && !matches!(next, Outcome::Unknown | Outcome::Succeeded)
@@ -3380,6 +3431,7 @@ impl Machine {
             return Ok(());
         }
         for op in self.operations.borrow_mut().iter_mut() {
+            checked(op.observe_discard_commitment(self.store()))?;
             op.completion_identified |= op.descriptor.is_some()
                 || op.spool.as_ref().is_some_and(|handle| {
                     self.store()
@@ -3393,13 +3445,13 @@ impl Machine {
                     return Err(fail("job revision regressed"));
                 }
                 if old.state == JobState::Completed && job.state != JobState::Completed {
-                    return Err(fail("acknowledged completion regressed"));
+                    return Err(fail("released completion regressed"));
                 }
             }
             if job.state == JobState::Completed {
                 let ops = self.operations.borrow();
                 let op = ops.iter().find(|o| o.id == job.operation_id).unwrap();
-                if !(op.acknowledged || op.acquisition_committed)
+                if !(op.host_released || op.acquisition_committed)
                     || fs::read(job.output_path.as_ref().unwrap()).ok().as_ref()
                         != Some(&op.original)
                 {
@@ -3424,9 +3476,9 @@ impl Machine {
                     op.delivery_effects.get()
                 )));
             }
-            if op.acknowledged && op.delivery_effects.get() != 1 {
+            if op.host_released && op.delivery_effects.get() != 1 {
                 return Err(fail(format!(
-                    "acknowledged without exactly one delivery effect: {}",
+                    "released without exactly one delivery effect: {}",
                     op.id
                 )));
             }
@@ -3548,7 +3600,7 @@ impl Machine {
                 return Err(fail(format!("success discarded: {}", op.id)));
             }
             if !op.removed
-                && !op.acknowledged
+                && !op.host_released
                 && !op.paid_success
                 && (op.provider_live
                     || op.consumer_live
@@ -3590,8 +3642,8 @@ impl Machine {
             {
                 return Err(fail(format!("original bytes disappeared: {}", op.id)));
             }
-            if op.acknowledged && fs::read(&op.copy).ok().as_ref() != Some(&op.original) {
-                return Err(fail("acknowledged original lost"));
+            if op.host_released && fs::read(&op.copy).ok().as_ref() != Some(&op.original) {
+                return Err(fail("released original lost"));
             }
         }
         self.custodyless_invariants(false)?;
@@ -3818,7 +3870,7 @@ impl Machine {
             }
             if (op.completion_identified || op.sealed_original)
                 && op.valid_original
-                && (!op.acknowledged
+                && (!op.host_released
                     || job.state != JobState::Completed
                     || fs::read(&op.copy).ok().as_ref() != Some(&op.original))
             {
@@ -3878,7 +3930,7 @@ impl FixtureRpc<'_> {
         }
         let mut ops = m.operations.borrow_mut();
         let op = ops.iter_mut().find(|o| o.id == a.operation_id).unwrap();
-        if op.removed || op.acknowledged {
+        if op.removed || op.host_released {
             return Ok(());
         }
         // This is the fake provider's status RPC: it finds existing paid bytes
@@ -3926,19 +3978,19 @@ impl FixtureRpc<'_> {
             op.outcome = Outcome::Succeeded;
         }
         let current = m.store().get(&op.consumer.package_id, &op.id)?.unwrap();
-        service_bridge::reconcile_at(
-            m.store(),
-            &op.provider,
-            &current,
-            &op.receipt(op.delivery()),
-        )?;
+        let status = op.receipt(op.delivery());
+        let result = service_bridge::reconcile_at(m.store(), &op.provider, &current, &status);
+        // A provider-local discard can survive a precommit host crash. Its
+        // later status reply may commit even if release/reply then fails. The
+        // oracle records that authenticated receipt, never host disposition.
+        op.observe_discard_commitment(m.store())?;
+        result?;
         let released = m.store().get(&op.consumer.package_id, &op.id)?.unwrap();
-        if op.provider_discarded
-            && op.acquisition_committed
+        if released.phase == AdmissionPhase::Released
             && released.disposition.as_deref() == Some("acquired")
         {
             op.transfer = released.transfer_receipt;
-            op.acknowledged = true;
+            op.host_released = true;
         }
         Ok(())
     }
@@ -3956,7 +4008,7 @@ impl FixtureRpc<'_> {
         let mut ops = m.operations.borrow_mut();
         let op = &mut ops[index];
         op.resume_calls.set(op.resume_calls.get() + 1);
-        if op.removed || op.acknowledged || op.discard_committed {
+        if op.removed || op.host_released || op.discard_committed {
             return Ok(());
         }
         let current = m.store().get(&op.consumer.package_id, &op.id)?.unwrap();
@@ -3983,7 +4035,7 @@ impl FixtureRpc<'_> {
             "acquired",
             Some(&proof.transfer_receipt),
         )?;
-        op.acknowledged = true;
+        op.host_released = true;
         op.valid_original = true;
         op.durable_original = true;
         m.store()
@@ -4171,7 +4223,7 @@ impl ai_operations::AutomaticPort for Transport<'_> {
         let ops = self.machine.operations.borrow();
         let op = ops.iter().find(|o| o.id == a.operation_id).unwrap();
         Ok(!op.removed
-            && !op.acknowledged
+            && !op.host_released
             && (op.provider_live || op.consumer_live || op.writer.is_some()))
     }
     fn recover(&self, a: &Admission, job: Option<&JobRecord>) -> Result<(), AppError> {
@@ -4638,6 +4690,16 @@ fn coverage_campaign(totals: &mut BTreeMap<&'static str, u64>) -> Result<(), Tes
             vec![Command::RecoveryWriterGc(0), Command::CrashMidWrite(0)],
             totals,
         )?;
+        collect_trace(
+            vec![
+                Command::ProviderComplete(0),
+                Command::Acquire(0),
+                Command::AcquiredReceipt(0),
+                Command::Restart,
+                Command::Sweep,
+            ],
+            totals,
+        )?;
         for removal in [
             Command::Enable(false, false),
             Command::Uninstall(false),
@@ -4822,10 +4884,22 @@ fn model_standalone_unbound_spool_does_not_revive_settled_execution() {
     }
     let ops = m.operations.borrow();
     let op = &ops[0];
+    assert_eq!(
+        m.store()
+            .get(&op.consumer.package_id, &op.id)
+            .unwrap()
+            .unwrap()
+            .phase,
+        AdmissionPhase::Released
+    );
     assert!(m
         .store()
-        .execution_released(&op.consumer.package_id, &op.id)
-        .unwrap());
+        .job_for_operation(&op.consumer.package_id, &op.id)
+        .unwrap()
+        .unwrap()
+        .state
+        .terminal());
+    assert!(m.store().claims().unwrap().is_empty());
     assert!(op.spool.is_none());
     assert_eq!(op.native_paid_starts.get(), 0);
     assert_eq!(m.custodyless.len(), 1);
@@ -4940,7 +5014,7 @@ fn model_transient_consumer_directory_sync_failure_eventually_delivers() {
     let ops = m.operations.borrow();
     assert_eq!(fs::read(&ops[0].copy).unwrap(), ops[0].original);
     assert_eq!(ops[0].delivery_effects.get(), 1);
-    assert!(ops[0].acknowledged);
+    assert!(ops[0].host_released);
 }
 
 #[test]
@@ -5579,7 +5653,7 @@ fn model_acquired_proof_resumes_acknowledgement_without_a_second_consumer_run() 
     m.quiesce().unwrap();
     assert_eq!(m.operations.borrow()[0].delivery_effects.get(), 1);
     assert_eq!(m.operations.borrow()[0].consumer_runs.get(), 1);
-    assert!(m.operations.borrow()[0].acknowledged);
+    assert!(m.operations.borrow()[0].host_released);
 }
 
 #[test]
@@ -6190,7 +6264,7 @@ fn model_acquisition_evidence_alone_makes_removal_delivered() {
     ] {
         m.apply(command).unwrap();
     }
-    assert!(!m.operations.borrow()[0].acknowledged);
+    assert!(!m.operations.borrow()[0].host_released);
     m.quiesce().unwrap();
     assert_eq!(m.charges(), 0);
 }
@@ -6516,4 +6590,635 @@ fn model_recapture_crash_after_other_preparation_adopts_replacement_generation()
     assert_eq!(m.charges(), 0);
     assert_eq!(m.disk_bytes(), 0);
     assert!(m.store().claims().unwrap().is_empty());
+}
+
+#[test]
+fn model_acquired_receipt_restart_sweep_releases_through_reconciliation() {
+    let mut m = Machine::new();
+    for command in [
+        Command::Admit(0, false),
+        Command::ProviderComplete(0),
+        Command::Acquire(0),
+        Command::AcquiredReceipt(0),
+        Command::Restart,
+    ] {
+        m.apply(command).unwrap();
+    }
+    {
+        let ops = m.operations.borrow();
+        let op = &ops[0];
+        let a = m
+            .store()
+            .get(&op.consumer.package_id, &op.id)
+            .unwrap()
+            .unwrap();
+        assert_eq!(a.phase, AdmissionPhase::Terminal);
+        assert!(op.provider_acknowledged);
+        assert!(!op.host_released);
+        assert_eq!(
+            m.store()
+                .provider_receipt(&op.consumer.package_id, &op.id)
+                .unwrap()
+                .unwrap()["delivery"]["state"],
+            "acquired"
+        );
+        assert!(!m.store().claims().unwrap().is_empty());
+    }
+    m.apply(Command::Sweep).unwrap();
+    m.quiesce().unwrap();
+    let ops = m.operations.borrow();
+    let op = &ops[0];
+    assert_eq!(
+        m.store()
+            .get(&op.consumer.package_id, &op.id)
+            .unwrap()
+            .unwrap()
+            .disposition
+            .as_deref(),
+        Some("acquired")
+    );
+    assert_eq!(
+        m.store()
+            .job_for_operation(&op.consumer.package_id, &op.id)
+            .unwrap()
+            .unwrap()
+            .state,
+        JobState::Completed
+    );
+    m.assert_custody_clean(op, false).unwrap();
+    assert_eq!(m.charges(), 0);
+    assert!(m.store().claims().unwrap().is_empty());
+}
+
+#[test]
+fn model_legacy_discard_reply_retries_after_host_precommit_crash() {
+    let mut m = Machine::new();
+    for command in [
+        Command::SharedConsumerAdmit,
+        Command::ProviderComplete(0),
+        Command::DiscardCrash(0, 0, false),
+    ] {
+        m.apply(command).unwrap();
+    }
+    assert!(m.operations.borrow()[0].provider_discarded);
+    assert!(!m.operations.borrow()[0].discard_committed);
+    m.apply(Command::Sweep).unwrap();
+    assert!(m.operations.borrow()[0].discard_committed);
+    m.quiesce().unwrap();
+    assert_eq!(m.charges(), 0);
+    assert_eq!(m.disk_bytes(), 0);
+    assert!(m.store().claims().unwrap().is_empty());
+}
+
+#[test]
+fn model_replacement_collision_does_not_require_rejected_raw_reply() {
+    for outcome in [2, 3] {
+        let mut m = Machine::new();
+        m.admit(0, false).unwrap();
+        for command in [
+            Command::Admit(1, false),
+            Command::Publish(1, outcome, true),
+            Command::Spool(1),
+            Command::Seal(0),
+            Command::DelayedReceipt(0, false),
+            Command::Seal(0),
+            Command::Upgrade(true, true, false),
+            Command::Probe(true),
+        ] {
+            m.apply(command).unwrap();
+        }
+        m.apply(Command::Gc).unwrap();
+        {
+            let ops = m.operations.borrow();
+            let op = &ops[m.index(1).unwrap()];
+            assert!(op.captured_process_reply);
+            assert!(!op.paid_success);
+            assert!(!op.valid_original);
+            let a = m
+                .store()
+                .get(&op.consumer.package_id, &op.id)
+                .unwrap()
+                .unwrap();
+            assert_eq!(a.phase, AdmissionPhase::Released);
+            assert_eq!(a.disposition.as_deref(), Some("discarded"));
+            m.assert_custody_clean(op, false).unwrap();
+        }
+        m.apply(Command::ReplacementCollision(1)).unwrap();
+        {
+            let ops = m.operations.borrow();
+            m.assert_custody_clean(&ops[m.index(1).unwrap()], false)
+                .unwrap();
+        }
+        m.quiesce().unwrap();
+        assert_eq!(m.charges(), 0);
+        assert_eq!(m.disk_bytes(), 0);
+        assert!(m.store().claims().unwrap().is_empty());
+    }
+}
+
+#[test]
+fn model_discard_reply_replay_after_host_precommit_crash_records_commitment() {
+    let mut m = Machine::new();
+    m.admit(0, false).unwrap();
+    for command in [
+        Command::Admit(0, false),
+        Command::PausedProviderMutation(1, 0, 0),
+        Command::ProviderComplete(0),
+        Command::DiscardCrash(0, 0, false),
+    ] {
+        m.apply(command).unwrap();
+    }
+    let index = m.index(0).unwrap();
+    assert!(m.operations.borrow()[index].provider_discarded);
+    assert!(!m.operations.borrow()[index].discard_committed);
+    m.apply(Command::Replay(0)).unwrap();
+    assert!(m.operations.borrow()[index].discard_committed);
+    m.quiesce().unwrap();
+    assert_eq!(m.charges(), 0);
+    assert_eq!(m.disk_bytes(), 0);
+    assert!(m.store().claims().unwrap().is_empty());
+}
+
+#[test]
+fn model_provider_completion_cannot_publish_success_before_seal_identity() {
+    let mut m = Machine::new();
+    m.admit(0, false).unwrap();
+    for command in [
+        Command::SharedConsumerAdmit,
+        Command::Admit(0, false),
+        Command::DirectorySyncFailure(true),
+        Command::Stage(2, false, false),
+        Command::ProviderComplete(2),
+    ] {
+        m.apply(command).unwrap();
+    }
+    let index = m.index(2).unwrap();
+    {
+        let ops = m.operations.borrow();
+        let op = &ops[index];
+        assert!(op.descriptor.is_none());
+        assert!(!op.completion_identified && !op.sealed_original);
+        assert_ne!(
+            m.store()
+                .provider_receipt(&op.consumer.package_id, &op.id)
+                .unwrap()
+                .unwrap()["execution"]["state"],
+            "succeeded"
+        );
+    }
+    m.apply(Command::PowerLoss).unwrap();
+    m.quiesce().unwrap();
+    assert_eq!(m.charges(), 0);
+    assert_eq!(m.disk_bytes(), 0);
+    assert!(m.store().claims().unwrap().is_empty());
+}
+
+#[test]
+fn model_paused_acquisition_reuses_durable_consumer_intent() {
+    let mut m = Machine::new();
+    m.admit(0, false).unwrap();
+    for command in [
+        Command::Admit(0, false),
+        Command::ProviderComplete(0),
+        Command::CopyBeforeProof(0),
+    ] {
+        m.apply(command).unwrap();
+    }
+    assert_eq!(m.operations.borrow()[0].delivery_effects.get(), 1);
+    m.apply(Command::PausedMutation(0, 1, 0)).unwrap();
+    assert_eq!(m.operations.borrow()[0].delivery_effects.get(), 1);
+    m.quiesce().unwrap();
+    assert_eq!(m.charges(), 0);
+    assert_eq!(m.disk_bytes(), 0);
+    assert!(m.store().claims().unwrap().is_empty());
+}
+
+#[test]
+fn model_legacy_acquired_completion_repair_is_atomic_and_rejects_invalid_proof() {
+    use sha2::{Digest, Sha256};
+    let mut m = Machine::new();
+    for command in [
+        Command::Admit(0, true),
+        Command::ProviderComplete(0),
+        Command::Acquire(0),
+    ] {
+        m.apply(command).unwrap();
+    }
+    let ops = m.operations.borrow();
+    let op = &ops[0];
+    let conn =
+        rusqlite::Connection::open(m.fixture.profile.path().join("service-state/ledger.sqlite"))
+            .unwrap();
+    let mut a = m
+        .store()
+        .get(&op.consumer.package_id, &op.id)
+        .unwrap()
+        .unwrap();
+    a.phase = AdmissionPhase::Released;
+    a.disposition = Some("discarded".into());
+    let status = op.receipt(json!({"state":"discarded"}));
+    let raw = serde_json::to_string(&crate::service_state::receipt::validate(&status, &a).unwrap())
+        .unwrap();
+    conn.execute(
+        "UPDATE operations SET phase='released',admission=?3 WHERE consumer=?1 AND operation=?2",
+        rusqlite::params![
+            op.consumer.package_id,
+            op.id,
+            serde_json::to_string(&a).unwrap()
+        ],
+    )
+    .unwrap();
+    conn.execute("UPDATE provider_receipts SET status=?3,revision=?4,digest=?5 WHERE consumer=?1 AND operation=?2", rusqlite::params![op.consumer.package_id,op.id,raw,status["revision"].as_u64().unwrap() as i64,hex::encode(Sha256::digest(raw.as_bytes()))]).unwrap();
+    let before = m
+        .store()
+        .job_for_operation(&op.consumer.package_id, &op.id)
+        .unwrap()
+        .unwrap();
+    let inventory = || {
+        conn.query_row("SELECT group_concat(handle || ':' || status || ':' || bytes, ',') FROM artifacts WHERE consumer=?1 AND operation=?2", rusqlite::params![op.consumer.package_id,op.id], |r| r.get::<_,String>(0)).unwrap()
+    };
+    let charged = inventory();
+    let unchanged = || {
+        assert_eq!(
+            m.store()
+                .get(&op.consumer.package_id, &op.id)
+                .unwrap()
+                .unwrap(),
+            a
+        );
+        assert_eq!(
+            m.store()
+                .provider_receipt(&op.consumer.package_id, &op.id)
+                .unwrap()
+                .unwrap(),
+            serde_json::from_str::<Value>(&raw).unwrap()
+        );
+        assert_eq!(m.store().job(&before.job_key).unwrap().unwrap(), before);
+        assert_eq!(inventory(), charged);
+    };
+    conn.execute_batch("CREATE TRIGGER fail_completion BEFORE UPDATE ON presentation_jobs BEGIN SELECT RAISE(ABORT,'injected presentation commit failure'); END;").unwrap();
+    assert!(m
+        .store()
+        .complete_acquired_job(&op.consumer.package_id, &op.id)
+        .is_err());
+    unchanged();
+    conn.execute_batch("DROP TRIGGER fail_completion").unwrap();
+    let descriptor = op.descriptor.as_ref().unwrap();
+    let mut corrupt = descriptor.clone();
+    corrupt.sha256 = "0".repeat(64);
+    conn.execute(
+        "UPDATE evidence SET descriptor=?3 WHERE consumer=?1 AND operation=?2",
+        rusqlite::params![
+            op.consumer.package_id,
+            op.id,
+            serde_json::to_string(&corrupt).unwrap()
+        ],
+    )
+    .unwrap();
+    assert!(m
+        .store()
+        .complete_acquired_job(&op.consumer.package_id, &op.id)
+        .is_err());
+    unchanged();
+    conn.execute(
+        "UPDATE evidence SET descriptor=?3 WHERE consumer=?1 AND operation=?2",
+        rusqlite::params![
+            op.consumer.package_id,
+            op.id,
+            serde_json::to_string(descriptor).unwrap()
+        ],
+    )
+    .unwrap();
+    let done = m
+        .store()
+        .complete_acquired_job(&op.consumer.package_id, &op.id)
+        .unwrap()
+        .unwrap();
+    assert_eq!(done.state, JobState::Completed);
+    assert_eq!(done.output_path.as_deref(), op.copy.to_str());
+    assert_eq!(done.run_id, before.run_id);
+    assert_eq!(
+        m.store()
+            .get(&op.consumer.package_id, &op.id)
+            .unwrap()
+            .unwrap()
+            .transfer_receipt,
+        op.transfer
+    );
+    assert_eq!(
+        m.store()
+            .provider_receipt(&op.consumer.package_id, &op.id)
+            .unwrap()
+            .unwrap()["revision"],
+        status["revision"]
+    );
+    assert!(m
+        .store()
+        .complete_acquired_job(&op.consumer.package_id, &op.id)
+        .unwrap()
+        .is_none());
+    m.store().gc().unwrap();
+    m.assert_custody_clean(op, false).unwrap();
+    assert_eq!(m.charges(), 0);
+}
+
+// Committed delivery must repair without provider RPC. Pending Terminal
+// ledgers still exercise production receipt reconciliation and original resume.
+struct LegacyLedgerPort<'a> {
+    machine: &'a Machine,
+    recovery_calls: Cell<usize>,
+}
+impl ai_operations::AutomaticPort for LegacyLedgerPort<'_> {
+    fn active(
+        &self,
+        a: &Admission,
+        job: Option<&JobRecord>,
+        stopped: bool,
+        execution: &str,
+    ) -> Result<bool, AppError> {
+        if a.phase == AdmissionPhase::Released
+            || self.machine.operations.borrow().iter().any(|op| {
+                op.id == a.operation_id && (op.acquisition_committed || op.discard_committed)
+            })
+        {
+            panic!("committed delivery repair must not depend on provider activity/status RPC")
+        } else {
+            Transport {
+                machine: self.machine,
+            }
+            .active(a, job, stopped, execution)
+        }
+    }
+    fn recover(&self, a: &Admission, job: Option<&JobRecord>) -> Result<(), AppError> {
+        self.recovery_calls.set(self.recovery_calls.get() + 1);
+        if a.phase == AdmissionPhase::Released {
+            Err(AppError::Other(
+                "Legacy provider cannot answer status".into(),
+            ))
+        } else {
+            Transport {
+                machine: self.machine,
+            }
+            .recover(a, job)
+        }
+    }
+}
+
+#[test]
+fn model_legacy_terminal_and_released_ledger_shapes_converge() {
+    use sha2::{Digest, Sha256};
+    // Admission rows are Terminal with no disposition, Released/discarded
+    // without transferReceipt, or Released/acquired with it. Other combinations
+    // violate origin/dev's persisted() contract and were never writable.
+    let admissions = ["terminal", "discarded", "acquired"];
+    let receipts = [
+        "discarded",
+        "acquired",
+        "absent",
+        "available",
+        "unavailable",
+        "running",
+        "unknown",
+    ];
+    // Presentation writes in origin/dev bounded phase/error text but did not
+    // couple terminal state to delivery proof. Include null phases and both
+    // error-bearing/errorless failure history, not only host stop phases.
+    let jobs = [
+        (JobState::NeedsAttention, Some("stopped"), false),
+        (JobState::Accepting, Some("accepting"), false),
+        (JobState::Running, Some("running"), false),
+        (JobState::Recovering, Some("recovering"), false),
+        (
+            JobState::NeedsAttention,
+            Some("provider_result_discarded"),
+            false,
+        ),
+        (JobState::Discarded, Some("stopped"), false),
+        (JobState::Error, Some("stopped"), true),
+        (JobState::Error, Some("delivery_failed"), true),
+        (JobState::Error, Some("storage_full"), true),
+        (JobState::Error, Some("failed"), false),
+        (JobState::Error, Some("failed"), true),
+        (JobState::Cancelled, Some("consumer_removed"), false),
+        (JobState::Cancelled, Some("cancelled"), false),
+        (JobState::Discarded, Some("discarded"), false),
+        (JobState::Completed, Some("complete"), false),
+        (JobState::Accepting, None, false),
+        (JobState::Running, None, false),
+        (JobState::Recovering, None, false),
+        (JobState::NeedsAttention, None, false),
+        (JobState::Error, None, false),
+        (JobState::Error, None, true),
+        (JobState::Cancelled, None, false),
+        (JobState::Discarded, None, false),
+        (JobState::Completed, None, false),
+    ];
+    let mut failures = Vec::new();
+    let mut cases = 0;
+    for admission in admissions {
+        for receipt in receipts {
+            for proof in [true, false] {
+                // Acquired receipts and acquired releases require a committed
+                // matching evidence row in both historical implementations.
+                if !proof && (receipt == "acquired" || admission == "acquired") {
+                    continue;
+                }
+                for ((state, phase, has_error), execution_released) in jobs
+                    .into_iter()
+                    .flat_map(|job| [false, true].map(|flag| (job, flag)))
+                {
+                    cases += 1;
+                    let case = format!("{admission}/{receipt}/proof={proof}/{state:?}/{phase:?}/error={has_error}/execution_released={execution_released}");
+                    let mut m = Machine::new();
+                    m.apply(Command::Admit(0, true)).unwrap();
+                    m.apply(Command::ProviderComplete(0)).unwrap();
+                    if proof {
+                        m.apply(Command::Acquire(0)).unwrap();
+                    }
+                    {
+                        let mut ops = m.operations.borrow_mut();
+                        let op = &mut ops[0];
+                        // Host job APIs also allowed independently reported
+                        // completion before acquisition. Preserve that history
+                        // and real consumer output if no delivery proof exists.
+                        if state == JobState::Completed && !proof {
+                            let descriptor = op.descriptor.clone().unwrap();
+                            m.consumer_copy(op, &descriptor).unwrap();
+                        }
+                        let mut a = m
+                            .store()
+                            .get(&op.consumer.package_id, &op.id)
+                            .unwrap()
+                            .unwrap();
+                        if admission != "terminal" {
+                            a.phase = AdmissionPhase::Released;
+                            a.disposition = Some(admission.into());
+                            a.transfer_receipt =
+                                (admission == "acquired").then(|| op.transfer.clone().unwrap());
+                        }
+                        let conn = rusqlite::Connection::open(
+                            m.fixture.profile.path().join("service-state/ledger.sqlite"),
+                        )
+                        .unwrap();
+                        conn.execute("UPDATE operations SET phase=?3,admission=?4,exec_released=?5 WHERE consumer=?1 AND operation=?2", rusqlite::params![op.consumer.package_id, op.id, if admission == "terminal" { "terminal" } else { "released" }, serde_json::to_string(&a).unwrap(), execution_released]).unwrap();
+                        let delivery = match receipt {
+                            "discarded" => json!({"state":"discarded"}),
+                            "acquired" => json!({"state":"acquired","transferReceipt":op.transfer}),
+                            "unavailable" => json!({"state":"unavailable","reason":"missing"}),
+                            "running" | "unknown" => json!({"state":"none"}),
+                            _ => json!({"state":"available","output":op.descriptor}),
+                        };
+                        let outcome = op.outcome;
+                        op.outcome = match receipt {
+                            "running" => Outcome::Running,
+                            "unknown" => Outcome::Unknown,
+                            _ => outcome,
+                        };
+                        let status = op.receipt(delivery);
+                        op.outcome = outcome;
+                        if receipt == "absent" {
+                            conn.execute(
+                                "DELETE FROM provider_receipts WHERE consumer=?1 AND operation=?2",
+                                rusqlite::params![op.consumer.package_id, op.id],
+                            )
+                            .unwrap();
+                        } else {
+                            let status =
+                                crate::service_state::receipt::validate(&status, &a).unwrap();
+                            let raw = serde_json::to_string(&status).unwrap();
+                            conn.execute("UPDATE provider_receipts SET status=?3,revision=?4,digest=?5 WHERE consumer=?1 AND operation=?2", rusqlite::params![op.consumer.package_id, op.id, raw, status["revision"].as_u64().unwrap() as i64, hex::encode(Sha256::digest(raw.as_bytes()))]).unwrap();
+                        }
+                        op.provider_discarded = receipt == "discarded";
+                        op.provider_acknowledged = receipt == "acquired";
+                        op.discard_committed =
+                            !proof && (receipt == "discarded" || admission == "discarded");
+                        let mut job = m
+                            .store()
+                            .job_for_operation(&op.consumer.package_id, &op.id)
+                            .unwrap()
+                            .unwrap();
+                        job.state = state;
+                        job.phase = phase.map(str::to_owned);
+                        job.error = has_error.then(|| "Historical delivery error".into());
+                        job.output_path = (state == JobState::Completed)
+                            .then(|| op.copy.to_string_lossy().into_owned());
+                        job.settled_at_ms = (state.terminal() || state == JobState::NeedsAttention)
+                            .then_some(job.updated_at_ms);
+                        conn.execute(
+                            "UPDATE presentation_jobs SET record=?2 WHERE key=?1",
+                            rusqlite::params![job.job_key, serde_json::to_string(&job).unwrap()],
+                        )
+                        .unwrap();
+                    }
+                    m.restart(false).unwrap();
+                    let port = LegacyLedgerPort {
+                        machine: &m,
+                        recovery_calls: Cell::new(0),
+                    };
+                    let result = (|| -> Result<(), String> {
+                        for _ in 0..3 {
+                            ai_operations::auto_reconcile_in(m.store(), &port)
+                                .map_err(|e| e.to_string())?;
+                        }
+                        let ops = m.operations.borrow();
+                        let op = &ops[0];
+                        let a = m
+                            .store()
+                            .get(&op.consumer.package_id, &op.id)
+                            .unwrap()
+                            .unwrap();
+                        let job = m
+                            .store()
+                            .job_for_operation(&op.consumer.package_id, &op.id)
+                            .unwrap()
+                            .unwrap();
+                        let acquired = proof || admission == "terminal" && receipt != "discarded";
+                        if a.phase != AdmissionPhase::Released
+                            || a.disposition.as_deref()
+                                != Some(if acquired { "acquired" } else { "discarded" })
+                            || !job.state.terminal()
+                        {
+                            return Err(format!("unsettled: admission={a:?}, job={job:?}"));
+                        }
+                        if acquired
+                            && (job.state != JobState::Completed
+                                || job.output_path.as_deref() != op.copy.to_str()
+                                || fs::read(&op.copy).ok().as_ref() != Some(&op.original))
+                        {
+                            return Err(format!("incorrect acquired presentation: {job:?}"));
+                        }
+                        if !acquired {
+                            if state == JobState::Completed {
+                                if job.state != JobState::Completed
+                                    || job.output_path.as_deref() != op.copy.to_str()
+                                    || job.error.is_some()
+                                    || fs::read(&op.copy).ok().as_ref() != Some(&op.original)
+                                {
+                                    return Err(format!("reported completion regressed: {job:?}"));
+                                }
+                            } else if job.state == JobState::Completed || job.output_path.is_some()
+                            {
+                                return Err(format!("discard shown as delivered: {job:?}"));
+                            }
+                        }
+                        let historical_execution = proof
+                            && matches!(receipt, "running" | "unknown")
+                            || admission != "terminal" && matches!(receipt, "running" | "unknown");
+                        if historical_execution
+                            && m.store()
+                                .provider_receipt(&op.consumer.package_id, &op.id)
+                                .unwrap()
+                                .unwrap()["execution"]["state"]
+                                != receipt
+                        {
+                            return Err("historical execution metadata was changed".into());
+                        }
+                        if acquired
+                            && receipt != "absent"
+                            && !historical_execution
+                            && m.store()
+                                .provider_receipt(&op.consumer.package_id, &op.id)
+                                .unwrap()
+                                .unwrap()["delivery"]["state"]
+                                != "acquired"
+                        {
+                            return Err("provider receipt was not repaired".into());
+                        }
+                        if acquired && a.transfer_receipt.is_none() {
+                            return Err("acquired tombstone lacks verified receipt".into());
+                        }
+                        m.assert_custody_clean(op, false)
+                            .map_err(|e| e.to_string())?;
+                        if m.charges() != 0
+                            || m.disk_bytes() != 0
+                            || !m.store().claims().unwrap().is_empty()
+                        {
+                            return Err("custody/charges/capacity held".into());
+                        }
+                        let calls = port.recovery_calls.get();
+                        let revision = job.revision;
+                        for _ in 0..3 {
+                            ai_operations::auto_reconcile_in(m.store(), &port)
+                                .map_err(|e| e.to_string())?;
+                        }
+                        if calls != port.recovery_calls.get()
+                            || m.store().job(&job.job_key).unwrap().unwrap().revision != revision
+                            || !m.store().auto_settlement_operations().unwrap().is_empty()
+                        {
+                            return Err("settled ledger retries forever".into());
+                        }
+                        Ok(())
+                    })();
+                    if let Err(error) = result {
+                        failures.push(format!("{case}: {error}"));
+                    }
+                }
+            }
+        }
+    }
+    eprintln!(
+        "legacy ledger convergence: {cases} reachable cases, {} failures",
+        failures.len()
+    );
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
 }

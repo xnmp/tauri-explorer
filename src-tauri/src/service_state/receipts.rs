@@ -316,6 +316,35 @@ impl Store {
                 .provider_receipt(&a.consumer.package_id, &a.operation_id)?
                 .is_some_and(|r| r["execution"]["state"] == "succeeded"))
     }
+    /// Derived delivery bookkeeping may predate acquisition/discard precedence.
+    /// Repair only delivery from the classifier's verified evidence, preserving
+    /// the authenticated provider identity, execution, diagnostics and revision.
+    pub(super) fn repair_acquired_receipt_in(
+        conn: &Connection,
+        a: &Admission,
+        receipt: &str,
+    ) -> Result<()> {
+        let Some(mut old) = observed(conn, a)? else {
+            return Ok(());
+        };
+        // Acquisition may outlive a missing final success observation. Do not
+        // invent success metadata when repairing earlier execution history.
+        if old.status["execution"]["state"] != "succeeded" {
+            return Ok(());
+        }
+        let delivery = serde_json::json!({"state":"acquired","transferReceipt":receipt});
+        if old.status["delivery"] == delivery {
+            return Ok(());
+        }
+        old.status["delivery"] = delivery;
+        let (_, raw, digest) = receipt_json(&old.status, a, old.revision)?;
+        conn.execute(
+            "UPDATE provider_receipts SET status=?3,digest=?4 WHERE consumer=?1 AND operation=?2",
+            params![a.consumer.package_id, a.operation_id, raw, digest],
+        )
+        .map_err(sql)?;
+        Ok(())
+    }
     pub fn retain_success(
         &self,
         provider: &PackageGeneration,

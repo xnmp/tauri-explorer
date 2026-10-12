@@ -84,12 +84,11 @@ export function mergeNativeJobEvent(old: NativeJobView, event: NativeJobEvent): 
     jobs.delete(jobKey); tombstones.set(jobKey, revision);
   } else {
     const previous = jobs.get(jobKey);
-    // The native ledger may correct a host-settled Unknown after its original
-    // output is acknowledged. The consumer may have crashed before publishing
-    // its run ID, so a completed host receipt needs only its acquired path.
-    // Keep every other terminal outcome immutable.
-    const recoveredSettlement = (previous?.state === "discarded" && previous.phase === "stopped"
-      || previous?.state === "error" && (previous.phase === "delivery_failed" || previous.phase === "storage_full"))
+    // The host ledger verifies acquisition before repairing older presentation,
+    // regardless of its terminal phase. Its trusted completion event may lack
+    // a run ID when the consumer crashed before publishing one. Identity and
+    // revision guards still apply; Completed never regresses to another state.
+    const recoveredSettlement = previous?.state !== "completed"
       && event.job.state === "completed" && !!event.job.outputPath;
     const consumerRemoval = previous?.state !== "completed" && event.job.state === "error"
       && event.job.phase === "consumer_removed" && !!event.job.error;

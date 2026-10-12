@@ -30,3 +30,8 @@ cc 1c305f7cbc547b877c5903c276318b6cfc3a4e0229640257e912983bcd1551b7 # shrinks to
 cc 7afb97594d91803c2f1036123a75387aff9c56ba88b74da10da89ccb80e88dc6 # shrinks to [SharedConsumerAdmit, Admit(1, true), Upgrade(true, true, false), Admit(1, false)]
 cc 5d75da62d7dbe104bf1c1d725938812c88f7b8ea6c4f2e50febb2b4a2fd9ce44 # shrinks to [SharedConsumerAdmit, Admit(1, true), Restart, Dispatch(1)]
 cc 624b5ae4de4f985e1a0bb2b54b0d2f24e97ba485978acf5efd60ba7325924600 # shrinks to [SharedConsumerAdmit, Admit(1, true), CompatibleUpgradeCrash(false, 5, false), Admit(0, false), RecaptureCrash(1)]
+cc 36efde3704e39caadf820032c1d222755c1d13ee0b8f5dafcf03cce9a72b2c28 # shrinks to [SharedConsumerAdmit, ProviderComplete(0), DiscardCrash(0, 0, false)]
+cc ecb832fe048f8d0bcbb91ed7f6177e626aef8bb194bfc84750313ed929204d1b # shrinks to [Admit(1, false), Publish(1, 2, true), Spool(1), Seal(0), DelayedReceipt(0, false), Seal(0), Upgrade(true, true, false), Probe(true), ReplacementCollision(1)]
+cc 5932e4a2faa2ba31e54b63dcce37750c5de23fb7f0234488fec6bb0282a10335 # shrinks to [Admit(0, false), PausedProviderMutation(1, 0, 0), ProviderComplete(0), DiscardCrash(0, 0, false), Replay(0)]
+cc 5719da24968c35b081dc1e4c9ac9f8aa31f58d279f6b276a8748dd355249f0d7 # shrinks to [SharedConsumerAdmit, Admit(0, false), DirectorySyncFailure(true), Stage(2, false, false), ProviderComplete(2), PowerLoss]
+cc 597c4ffdde2610b9a8be986280c75cc2d8cdd837a443e7959d3cbe7f1209d9b8 # shrinks to [Admit(0, false), ProviderComplete(0), CopyBeforeProof(0), PausedMutation(0, 1, 0)]

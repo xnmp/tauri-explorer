@@ -1421,14 +1421,9 @@ impl Store {
         &self,
         conn: &rusqlite::Connection,
         a: &Admission,
+        receipt: &str,
     ) -> Result<String> {
-        Self::verify_acquisition_at(
-            conn,
-            a,
-            a.transfer_receipt
-                .as_deref()
-                .ok_or_else(|| reject("missing acquisition receipt"))?,
-        )?;
+        Self::verify_acquisition_at(conn, a, receipt)?;
         let (path, root): (String,String) = conn.query_row("SELECT e.path,r.path FROM evidence e JOIN roots r ON r.package=e.consumer WHERE e.consumer=?1 AND e.operation=?2", params![a.consumer.package_id,a.operation_id],|r|Ok((r.get(0)?,r.get(1)?))).map_err(sql)?;
         let path = PathBuf::from(path);
         // This is historical presentation, not a fresh file capability. The

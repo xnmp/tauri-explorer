@@ -966,7 +966,36 @@ impl Store {
     }
     pub fn auto_settlement_operations(&self) -> Result<Vec<(Admission, u64, bool)>> {
         let conn = self.connect()?;
-        let mut query=conn.prepare("SELECT consumer,operation,created_at_ms,exec_released FROM operations WHERE admission IS NOT NULL AND (phase!='released' OR EXISTS(SELECT 1 FROM presentation_jobs j WHERE j.owner=operations.consumer AND j.operation=operations.operation AND (json_extract(j.record,'$.state') IN ('accepting','running','recovering','needs_attention') OR (json_extract(j.record,'$.state')='error' AND json_extract(j.record,'$.error') IS NULL) OR (json_extract(j.record,'$.state') IN ('discarded','error') AND json_extract(j.record,'$.phase') IN ('stopped','delivery_failed','storage_full') AND json_extract(operations.admission,'$.disposition')='acquired')))) ORDER BY created_at_ms ASC").map_err(sql)?;
+        // A stale release disposition must not hide verified delivery, even
+        // when its presentation is already terminal. Once repaired, these rows
+        // leave the sweep rather than retrying an unavailable provider forever.
+        let mut query = conn.prepare(
+            "SELECT consumer,operation,created_at_ms,exec_released FROM operations
+             WHERE admission IS NOT NULL AND (
+               phase!='released'
+               OR EXISTS(
+                 SELECT 1 FROM presentation_jobs j
+                 WHERE j.owner=operations.consumer AND j.operation=operations.operation AND (
+                   json_extract(j.record,'$.state') IN ('accepting','running','recovering','needs_attention')
+                   OR (json_extract(j.record,'$.error') IS NULL AND json_extract(j.record,'$.state')='error')
+                   OR (json_extract(j.record,'$.state') IN ('discarded','error','cancelled')
+                     AND EXISTS(SELECT 1 FROM evidence e WHERE e.consumer=operations.consumer AND e.operation=operations.operation))
+                 )
+               )
+               OR EXISTS(
+                 SELECT 1 FROM evidence e
+                 WHERE e.consumer=operations.consumer AND e.operation=operations.operation AND (
+                   json_extract(admission,'$.disposition') IS NOT 'acquired'
+                   OR json_extract(admission,'$.transferReceipt') IS NOT e.receipt
+                   OR json_extract(admission,'$.needsAttention')=1
+                   OR EXISTS(SELECT 1 FROM provider_receipts p
+                     WHERE p.consumer=operations.consumer AND p.operation=operations.operation
+                       AND json_extract(p.status,'$.execution.state')='succeeded'
+                       AND json_extract(p.status,'$.delivery.state')!='acquired')
+                 )
+               )
+             ) ORDER BY created_at_ms ASC",
+        ).map_err(sql)?;
         let rows = query
             .query_map([], |r| {
                 Ok((

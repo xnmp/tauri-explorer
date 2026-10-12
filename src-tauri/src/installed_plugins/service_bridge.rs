@@ -736,7 +736,9 @@ pub(super) fn image_call(
         store.verify_provider(provider, &caller.package_id, &a.operation_id)?;
     }
     if matches!(dispatch_method.as_str(), "start" | "status")
-        && admission.is_some()
+        && admission
+            .as_ref()
+            .is_some_and(|a| a.phase != AdmissionPhase::Released)
         && store.execution_released(
             &caller.package_id,
             operation.as_deref().expect("owned operation"),
@@ -780,10 +782,10 @@ pub(super) fn image_call(
             },
             &semantic,
         )?;
-        let (claimed, winner) = if a.phase == AdmissionPhase::Reserved {
-            store.claim_forwarding(caller, op)?
-        } else {
+        let (claimed, winner) = if a.phase == AdmissionPhase::Released {
             (a, false)
+        } else {
+            store.claim_forwarding(caller, op)?
         };
         if winner {
             body["inputs"] = encoded(&claimed.inputs)?;
@@ -792,6 +794,24 @@ pub(super) fn image_call(
         if !winner {
             dispatch_method = "status".into();
             body = json!({"operationId":op});
+        }
+    }
+    if dispatch_method == "status" {
+        if let Some(a) = admission
+            .as_ref()
+            .filter(|a| a.phase == AdmissionPhase::Released)
+        {
+            // An idempotent start has already validated its pinned request and
+            // become status above. Released custody can answer locally without
+            // asserting that a still-live native worker has ended.
+            if let Some(receipt) = store.provider_receipt(&caller.package_id, &a.operation_id)? {
+                if matches!(
+                    receipt["execution"]["state"].as_str(),
+                    Some("succeeded" | "failed" | "cancelled")
+                ) {
+                    return Ok(receipt);
+                }
+            }
         }
     }
     if dispatch_method == "acknowledge" {

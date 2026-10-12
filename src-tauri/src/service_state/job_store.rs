@@ -14,6 +14,8 @@ const SAFE: u64 = 9_007_199_254_740_991;
 const MAX_RECORD: usize = 16 * 1024;
 const MAX_ACTIVE: usize = 128;
 const MAX_TERMINAL: usize = 256;
+const NO_RECOVERABLE_OUTPUT: &str =
+    "The operation ended without a recoverable output; it will not be replayed";
 const ROWS: &str = "SELECT CASE WHEN length(CAST(key AS BLOB))<=48 THEN key ELSE NULL END,CASE WHEN length(CAST(owner AS BLOB))<=256 THEN owner ELSE NULL END,CASE WHEN length(CAST(operation AS BLOB))<=128 THEN operation ELSE NULL END,job_id,revision,CASE WHEN length(CAST(record AS BLOB))<=16384 THEN record ELSE NULL END FROM presentation_jobs";
 
 /// Presentation the host already settled by explicit user action: a stopped
@@ -445,33 +447,107 @@ impl Store {
             self.complete_acquired_job_in(conn, &a)
         })
     }
+    /// Finish committed terminal delivery even when its original provider is
+    /// no longer available. Custody and presentation share the repair transaction;
+    /// physical collection retains its durable charge until unlink is synced.
+    pub fn reconcile_terminal_job(&self, consumer: &str, op: &str) -> Result<Option<JobRecord>> {
+        self.transaction(|conn| {
+            let Some(a) = Self::record(conn, consumer, op)? else {
+                return Ok(None);
+            };
+            if !matches!(
+                a.phase,
+                super::model::AdmissionPhase::Terminal | super::model::AdmissionPhase::Released
+            ) {
+                return Ok(None);
+            }
+            match Self::terminal_delivery_at(conn, &a)? {
+                super::receipts::TerminalDelivery::Acquired(_) => {
+                    self.complete_acquired_job_in(conn, &a)
+                }
+                super::receipts::TerminalDelivery::Discarded => {
+                    let mut released = a.clone();
+                    released.phase = super::model::AdmissionPhase::Released;
+                    released.disposition = Some("discarded".into());
+                    released.transfer_receipt = None;
+                    released.needs_attention = false;
+                    Self::persist(conn, &released)?;
+                    Self::release_job_custody_in(conn, &released)?;
+                    let reason = Self::provider_receipt_at(conn, &released)?.and_then(|receipt| {
+                        receipt["execution"]["error"]["message"]
+                            .as_str()
+                            .map(str::to_owned)
+                    });
+                    self.settle_dismissed_job_in(
+                        conn,
+                        consumer,
+                        op,
+                        Some(reason.as_deref().unwrap_or(NO_RECOVERABLE_OUTPUT)),
+                    )
+                }
+                super::receipts::TerminalDelivery::Pending => Ok(None),
+            }
+        })
+    }
+    fn release_job_custody_in(conn: &Connection, a: &super::model::Admission) -> Result<()> {
+        conn.execute(
+            "UPDATE artifacts SET status='released' WHERE consumer=?1 AND operation=?2",
+            params![a.consumer.package_id, a.operation_id],
+        )
+        .map_err(sql)?;
+        Self::release_operation_spools_in(conn, &a.consumer.package_id, &a.operation_id, true)?;
+        conn.execute(
+            "DELETE FROM dismissed_operations WHERE consumer=?1 AND operation=?2",
+            params![a.consumer.package_id, a.operation_id],
+        )
+        .map_err(sql)?;
+        conn.execute(
+            "DELETE FROM preparation_replacements WHERE consumer=?1 AND operation=?2",
+            params![a.consumer.package_id, a.operation_id],
+        )
+        .map_err(sql)?;
+        Ok(())
+    }
     pub(super) fn complete_acquired_job_in(
         &self,
         conn: &Connection,
         a: &super::model::Admission,
     ) -> Result<Option<JobRecord>> {
-        if a.phase != super::model::AdmissionPhase::Released
-            || !matches!(
-                Self::terminal_delivery_at(conn, a)?,
-                super::receipts::TerminalDelivery::Acquired(_)
-            )
-        {
+        if !matches!(
+            a.phase,
+            super::model::AdmissionPhase::Terminal | super::model::AdmissionPhase::Released
+        ) {
             return Ok(None);
         }
+        let super::receipts::TerminalDelivery::Acquired(receipt) =
+            Self::terminal_delivery_at(conn, a)?
+        else {
+            return Ok(None);
+        };
+        let path = self.acquired_output_path_at(conn, a, &receipt)?;
+        let mut repaired = a.clone();
+        repaired.phase = super::model::AdmissionPhase::Released;
+        repaired.disposition = Some("acquired".into());
+        repaired.transfer_receipt = Some(receipt.clone());
+        repaired.needs_attention = false;
+        Self::persist(conn, &repaired)?;
+        Self::repair_acquired_receipt_in(conn, &repaired, &receipt)?;
+        Self::release_job_custody_in(conn, &repaired)?;
+        conn.execute(
+            "UPDATE operations SET exec_released=0 WHERE consumer=?1 AND operation=?2",
+            params![a.consumer.package_id, a.operation_id],
+        )
+        .map_err(sql)?;
         let Some(mut current) = all(conn)?.into_iter().find(|j| {
             j.owner.package_id == a.consumer.package_id && j.operation_id == a.operation_id
         }) else {
             return Ok(None);
         };
-        let recoverable = !current.state.terminal()
-            || matches!(
-                current.phase.as_deref(),
-                Some("stopped" | "delivery_failed" | "storage_full" | "consumer_removed")
-            );
-        if !recoverable {
+        // Acquisition proves delivered success independently of older consumer
+        // presentation phases, including cancellation and delivery failures.
+        if current.state == JobState::Completed {
             return Ok(None);
         }
-        let path = self.acquired_output_path_at(conn, a)?;
         let old = current.clone();
         current.state = JobState::Completed;
         current.phase = Some("complete".into());
@@ -570,7 +646,7 @@ impl Store {
         if record.state.terminal() {
             // Older terminal observations could omit the provider's safe
             // failure reason. Fill it without changing the finished outcome.
-            if record.error.is_none() && reason.is_some() {
+            if record.state != JobState::Completed && record.error.is_none() && reason.is_some() {
                 record.error = reason.map(str::to_owned);
                 record.updated_at_ms = clock()?;
                 record.revision = next_revision(conn)?;
@@ -586,9 +662,7 @@ impl Store {
         if let Some(reason) = reason {
             record.error = Some(reason.into());
         } else if record.error.is_none() {
-            record.error = Some(
-                "The operation ended without a recoverable output; it will not be replayed".into(),
-            );
+            record.error = Some(NO_RECOVERABLE_OUTPUT.into());
         }
         record.output_path = None;
         record.updated_at_ms = clock()?;

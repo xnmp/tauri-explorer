@@ -14,8 +14,6 @@
 
 import type { Plugin } from "../api";
 import type { DirectoryListing, FileEntry } from "$lib/domain/file";
-import DemoFileView from "./DemoFileView.svelte";
-import DemoPreviewInfo from "./DemoPreviewInfo.svelte";
 
 export const DEMO_FILE_VIEW = "demo.cards";
 
@@ -48,7 +46,10 @@ export const demoPlugin: Plugin = {
   description: "Reference plugin exercising commands, context menu, settings, and a demo:// virtual folder.",
   enabledByDefault: false,
 
-  activate(ctx) {
+  async activate(ctx) {
+    const [{ default: DemoFileView }, { default: DemoPreviewInfo }] = await Promise.all([
+      import("./DemoFileView.svelte"), import("./DemoPreviewInfo.svelte"),
+    ]);
     ctx.registerCommand({
       scope: "pane",
       id: "plugin.demo.hello",

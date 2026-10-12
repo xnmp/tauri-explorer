@@ -16,10 +16,17 @@
   import { unresolvedIndicator } from "$lib/domain/ai-operations";
   import { unresolvedAiCount } from "$lib/state/ai-operations.svelte";
   import { onMount } from "svelte";
-  import AiOperationsDialog from "./AiOperationsDialog.svelte";
+  import { useLazyDialog } from "$lib/composables/use-lazy-dialog.svelte";
+  import { createDialogCrashHandler } from "$lib/domain/lazy-dialog";
+  import { toastStore } from "$lib/state/toast.svelte";
 
   let now = $state(Date.now());
   let unresolvedOpen = $state(false);
+  const AiOperationsDialog = useLazyDialog({
+    label: "AI operations", isOpen: () => unresolvedOpen,
+    load: () => import("./AiOperationsDialog.svelte"),
+    onFailure: () => { unresolvedOpen = false; },
+  }, message => toastStore.error(message));
 
   const operations = $derived(operationsManager.showProgressDialog ? operationsManager.operations : []);
   const imageJobs = $derived(jobsStore.jobs.filter((job) => job.presentation === "image"));
@@ -280,7 +287,11 @@
     </div>
   </div>
 {/if}
-{#if unresolvedOpen}<AiOperationsDialog onClose={() => { unresolvedOpen = false; }} />{/if}
+{#if unresolvedOpen && AiOperationsDialog.component}
+  <svelte:boundary onerror={createDialogCrashHandler("AI operations", () => { unresolvedOpen = false; }, message => toastStore.error(message))}>
+    <AiOperationsDialog.component onClose={() => { unresolvedOpen = false; }} />
+  </svelte:boundary>
+{/if}
 
 <style>
   .job-prompt { font-size: 12px; color: var(--text-secondary); margin: 0 0 6px; overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 2; line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }

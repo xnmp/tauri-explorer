@@ -24,7 +24,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 
 - `src/lib/components/FileRecoveryDialog.svelte`, `src/lib/components/FileRecoveryNotice.svelte` — page-owned recovery inspection/choices, stable async-action focus and persistent attention notice; deferred mounting uses WindowDialogs and the status-bar snippet or standalone attention row.
 
-- `WindowDialogs.svelte` — typed lazy dialog host, crash boundaries, plugin dialogs and window-level feedback, including portal mode.
+- `WindowDialogs.svelte` — typed lazy dialog host, crash boundaries, demand-loaded plugin mounting/shortcut help and window-level feedback, including portal mode.
 - `src/lib/components/PluginDialogMount.svelte` — retained contributed dialog host; private presentation context and pane-slot DOM portal with hidden/inert parking.
 - `OpenWithDialog.svelte` — accessible installed-application choice with captured filename, loading/empty/error feedback and unchanged-default messaging.
 
@@ -450,7 +450,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 
 - `api.ts` — plugin API surface exposed to plugins; the context reports a command or menu action failure under the plugin's name and logs it (#782).
 - `registry.svelte.ts` — built-in plugin lifecycle; published activation/shutdown drains, terminal admission and context-first reentrant teardown. Startup activations run together so one hung plugin blocks no other; contributions are placed by list position, not completion order (#782).
-- `dialog-registry.svelte.ts` — registry for plugin modal dialogs.
+- `dialog-registry.svelte.ts` — registry for plugin modal dialogs; PluginContext wiring injects the window-owned pane host.
 - `settings-registry.svelte.ts` — registry for plugin settings sections.
 - `inspector-registry.svelte.ts` — ordered, owner-disposed registry for selection-aware inspector contributions.
 - `file-view-registry.svelte.ts` — SDK 2 file view contributions (ordered, owner-disposed) and the pane handle type a view receives.
@@ -458,7 +458,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `src/lib/plugins/image-editor-registry.svelte.ts` — ordered, owner-disposed image editing tool contributions with immutable captured source revisions and opaque service ports.
 - `src/lib/domain/plugin-image-editor.ts` — rules for `ctx.presentation.openImageEditor`: a plugin opens the editor directly only in a tool it registered, for one absolute file path.
 - `fs-providers.ts` — virtual-filesystem provider registry + dispatch.
-- `demo/index.ts` — demo plugin exercising every contribution seam.
+- `demo/index.ts` — demo plugin exercising every contribution seam; view components load only on activation.
 - `src/lib/plugins/demo/DemoFileDropTarget.svelte` — contributed drop acceptance surface with enabled gating and visible ordered path/source receipts.
 - `demo/DemoFileView.svelte` + `demo/DemoPreviewInfo.svelte` — demo file view and Preview-info section exercising the SDK 2 seams.
 - `ai-organize/index.ts` + `AiOrganizeDialog.svelte` — AI organize plugin (#158).

@@ -220,9 +220,12 @@ describe("native drag gesture completion", () => {
     expect(dragState.current).toBe(replacement); expect(dragState.readCrossWindow()?.path).toBe("/b.png");
   });
 
-  it("returns the captured source to DOM authority on native start failure", async () => {
+  it.each([
+    new Error("native start failed"),
+    { kind: "other", message: "native start failed" },
+  ])("returns the captured source to DOM authority on native start failure: %j", async failure => {
     vi.spyOn(console, "warn").mockImplementation(() => {});
-    startDragMock.mockRejectedValueOnce(new Error("native start failed"));
+    startDragMock.mockRejectedValueOnce(failure);
     dragState.start({ path: "/a.png", name: "a.png", kind: "file" });
     const original = dragState.current;
     await startExternalDrag(["/a.png"]);

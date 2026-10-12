@@ -1,7 +1,6 @@
 /** Contributed dialogs retain one component instance per id/window. Pane scope
  * shares the same reservation, guarded surface and managed-session lifecycle. */
 import { modalOwnership, type ModalCaller, type ModalScope } from "$lib/state/modal-ownership.svelte";
-import { windowTabsManager } from "$lib/state/window-tabs.svelte";
 import type { PaneDialogHost } from "$lib/state/pane-dialogs.svelte";
 import { createOwnedRegistry } from "$lib/state/owned-registry";
 import type { PluginDialogOptions } from "./api";
@@ -26,9 +25,15 @@ export interface DialogResult { reason: "closed" | "caller-closed" | "owner-disp
 
 export function createDialogRegistry(dependencies: {
   ownership: typeof modalOwnership;
-  panes: PaneDialogHost;
-} = { ownership: modalOwnership, panes: windowTabsManager.paneDialogs }) {
-  const { ownership, panes } = dependencies;
+  panes?: PaneDialogHost;
+} = { ownership: modalOwnership }) {
+  const { ownership } = dependencies;
+  let readPanes = () => dependencies.panes;
+  const requirePanes = () => {
+    const panes = readPanes();
+    if (!panes) throw new Error("Pane dialog host is unavailable");
+    return panes;
+  };
   const registered = createOwnedRegistry<DialogDescriptor>();
   // Raw state preserves host-private lifetime identity (no deep proxies).
   let openDialogs = $state.raw<readonly OpenDialog[]>([]);
@@ -47,25 +52,25 @@ export function createDialogRegistry(dependencies: {
     sessions.delete(id); session?.detachCaller(); session?.resolve({ reason });
   }
   function scopeFor(options?: PluginDialogOptions): ModalScope {
-    return options?.scope === "pane" ? panes.resolve(options.pane) : null;
+    return options?.scope === "pane" ? requirePanes().resolve(options.pane) : null;
   }
   function forward(dialog: OpenDialog): void {
-    if (dialog.scope) panes.activate(dialog.scope);
+    if (dialog.scope) requirePanes().activate(dialog.scope);
     ownership.bringForward(dialog.presentation);
   }
   function add(descriptor: DialogDescriptor, props: Record<string, unknown>, scope: ModalScope, owner?: symbol): void {
     // Activation can fail during native window closing. No reservation may
     // survive a rejected opening, even before a component has been recorded.
-    if (scope) panes.activate(scope);
+    if (scope) requirePanes().activate(scope);
     const dialog: OpenDialog = {
       id: descriptor.id, instanceId: ++sequence, component: descriptor.component,
       props: { ...props, ...descriptor.props }, scope, presentation: Symbol(descriptor.id), owner,
     };
     releaseModal.set(dialog.id, ownership.register(() => close(dialog.id), undefined, {
-      scope, presentation: dialog.presentation, available: () => !scope || panes.isVisible(scope),
+      scope, presentation: dialog.presentation, available: () => !scope || requirePanes().isVisible(scope),
     }));
     if (scope) {
-      retirePane.set(dialog.id, panes.onRetired(scope, () => close(dialog.id, "owner-disposed")));
+      retirePane.set(dialog.id, requirePanes().onRetired(scope, () => close(dialog.id, "owner-disposed")));
     }
     openDialogs = [...openDialogs, dialog];
   }
@@ -87,6 +92,8 @@ export function createDialogRegistry(dependencies: {
   }
 
   return {
+    /** The PluginContext composition root supplies the window-owned host. */
+    connectPanes(resolve: () => PaneDialogHost): void { readPanes = resolve; },
     get openDialogs() { return openDialogs; },
     register(desc: DialogDescriptor): () => void {
       const dispose = registered.register(desc.id, { ...desc, props: { ...desc.props } });
@@ -120,10 +127,10 @@ export function createDialogRegistry(dependencies: {
       // Capture before any destination activation/focus. A supplied handle
       // carries the original surface across the caller's asynchronous work.
       const callerPane = options?.caller ?? (options?.scope === "pane" ? options.pane : null);
-      const capturedCaller = callerPane ? panes.callerFor(callerPane) : null;
-      const activePane = callerPane ? null : panes.capture();
+      const capturedCaller = callerPane ? requirePanes().callerFor(callerPane) : null;
+      const activePane = callerPane ? null : readPanes()?.capture();
       const caller = callerPane ? capturedCaller
-        : ownership.captureCaller(activePane ? panes.resolve(activePane) : null);
+        : ownership.captureCaller(activePane ? requirePanes().resolve(activePane) : null);
       const descriptor = registered.get(id);
       if (!descriptor) throw new Error("Configuration dialog is unavailable; enable its plugin contribution");
       const existing = openDialogs.find(dialog => dialog.id === id);

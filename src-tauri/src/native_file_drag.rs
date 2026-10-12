@@ -1,5 +1,6 @@
 //! Native source identity is captured before frontend IPC channels can reorder.
 
+use crate::error::AppError;
 use base64::Engine;
 use serde::{Deserialize, Serialize};
 use std::{
@@ -43,11 +44,11 @@ pub struct ClockSample {
 #[tauri::command]
 pub async fn native_file_drag_clock(
     sessions: tauri::State<'_, Sessions>,
-) -> Result<ClockSample, String> {
+) -> Result<ClockSample, AppError> {
     let registry = sessions
         .registry
         .lock()
-        .map_err(|_| "Native drag clock unavailable".to_owned())?;
+        .map_err(|_| AppError::Other("Native drag clock unavailable".into()))?;
     Ok(registry.clock_sample())
 }
 
@@ -584,7 +585,7 @@ pub async fn start_file_drag(
     image: String,
     source: Option<Source>,
     on_event: Channel<Completion>,
-) -> Result<(), String> {
+) -> Result<(), AppError> {
     if item.is_empty() || item.iter().any(|path| !path.is_absolute()) {
         return Err("Drag paths must be absolute and nonempty".into());
     }
@@ -595,12 +596,13 @@ pub async fn start_file_drag(
         return Err("Drag source does not match the native files".into());
     }
     let options = native_drag_options(source.as_ref())?;
-    let item = drag::prepare_file_paths(item).map_err(|error| error.to_string())?;
+    let item =
+        drag::prepare_file_paths(item).map_err(|error| AppError::Other(error.to_string()))?;
     let image = if let Some(data) = image.strip_prefix("data:image/png;base64,") {
         drag::Image::Raw(
             base64::engine::general_purpose::STANDARD
                 .decode(data)
-                .map_err(|error| error.to_string())?,
+                .map_err(|error| AppError::Other(error.to_string()))?,
         )
     } else {
         drag::Image::File(PathBuf::from(image))
@@ -687,8 +689,11 @@ pub async fn start_file_drag(
         }
         let _ = send.send(result);
     })
-    .map_err(|error| error.to_string())?;
-    receive.await.map_err(|error| error.to_string())?
+    .map_err(|error| AppError::Other(error.to_string()))?;
+    receive
+        .await
+        .map_err(|error| AppError::Other(error.to_string()))?
+        .map_err(AppError::from)
 }
 
 #[cfg(test)]

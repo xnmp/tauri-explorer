@@ -40,6 +40,8 @@ import { subscribeToLocalFileChanges } from "$lib/state/file-events";
 import { fileDropTargets } from "$lib/state/file-drop-targets.svelte";
 import { modalOwnership } from "$lib/state/modal-ownership.svelte";
 
+dialogRegistry.connectPanes(() => windowTabsManager.paneDialogs);
+
 export type { PaneTileSize, TileSizePreset, TileGridMetrics } from "$lib/domain/tile-layout";
 import type { TileSizePreset, TileGridMetrics } from "$lib/domain/tile-layout";
 import type { Component } from "svelte";

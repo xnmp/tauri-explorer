@@ -122,7 +122,7 @@ describe("external drag-out", () => {
     const dt = makeDataTransfer();
     interactions.handleDragStart({ dataTransfer: dt } as DragEvent, entry, true);
 
-    expect(dt.getData("text/uri-list")).toBe("file:///h/my%20file.txt");
+    expect(dt.getData("text/uri-list").split("\r\n").filter(line => !line.startsWith("#"))).toEqual(["file:///h/my%20file.txt"]);
   });
 
   it("preserves HTML5 DataTransfer for in-app drops", () => {

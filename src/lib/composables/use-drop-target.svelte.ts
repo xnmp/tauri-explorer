@@ -52,7 +52,7 @@ export function useDropTarget(deps: DropTargetDeps) {
   }
 
   async function handleDrop(event: DragEvent, entry: FileEntry): Promise<void> {
-    if (!dragState.acceptsFileDrag(event.dataTransfer)) return;
+    if (!dragState.acceptsFileDrop(event.dataTransfer)) return;
     event.preventDefault();
     // Item-level drops are fully handled here — never let them bubble to
     // background drop handlers (FileList content, Miller column background),

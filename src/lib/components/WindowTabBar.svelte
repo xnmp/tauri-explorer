@@ -414,7 +414,7 @@
   }
 
   async function handleTabDrop(event: DragEvent, tabId: string): Promise<void> {
-    if (!isFileDrag(event.dataTransfer)) return;
+    if (!dragState.acceptsFileDrop(event.dataTransfer)) return;
     event.preventDefault();
     fileDropTargetTabId = null;
     const targetPath = windowTabsManager.getTabPath(tabId);

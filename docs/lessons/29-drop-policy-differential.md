@@ -2,7 +2,7 @@
 
 Baseline: `origin/dev` at `773eb55a`. The executable oracle is
 `tests/helpers/drop-policy.ts`; it imports no production routing. The production
-runner is `tests/composables/drop-policy-differential.test.ts`. The complete
+runner is `tests/composables/drop-policy-differential.test.ts`. The historical full-visibility
 reviewable expansion is [29-drop-policy-matrix.tsv](29-drop-policy-matrix.tsv):
 3,159 source × target × modifier × transport × platform rows, 1,365 explicit
 cross-window rows, twelve expired-identity rows (six per window scope), and 66
@@ -19,7 +19,7 @@ live-modality/completion rows in `dropModalCompletionCases`; these extend the
 static TSV and run the real sidebar capture listener.
 
 Sources: listing file, listing folder, Miller file, Miller folder, Recent
-shortcut, sidebar bookmark reorder, external OS file, plain text,
+shortcut, sidebar bookmark reorder, external OS file, external URI-only drag, plain text,
 plugin-specific DOM surface.
 Targets: folder entry, breadcrumb, tab, bookmark, Quick Access, sidebar reorder
 row, registered plugin target, dialog textarea, covered pane, listing background,
@@ -314,7 +314,8 @@ coverage: 747/747 source files in map-folder.md
    dialog targets before the new window dialog mounts.
 3. Dev's Recent HTML5 row exported only `application/x-explorer-kind`, with
    `effectAllowed = "link"`; its sidebar pointer source had no native handoff.
-   Recent now exports no `text/uri-list` or other standard filesystem payload
+   Recent initially exported no `text/uri-list` or other standard filesystem payload
+   (the visibility review below adds a private non-filesystem URI)
    and never starts an outgoing native file drag. Private Explorer MIME/state
    retain pinning and registered-plugin delivery. Frontend and Rust start
    boundaries reject link-only sources, with Rust admission before native path
@@ -645,3 +646,107 @@ The clock regression and preview Escape test fail with their respective
 production fixes reverted. Listener lifecycle fixtures wait for registration
 before dispatching events, so their assertions still exercise late cleanup and
 replacement registration after calibration.
+
+
+## WebKit target visibility and stale HTML5 authority
+
+`DataTransfer` at a target is a separate dimension from the source platform or
+native transport. `dropVisibilityCases` expands every core, delivery-order,
+rejected-start/DOM-only, expiry, receiver-window and path row under `full` and
+`stripped`. Full preserves Chromium/WebView2 custom MIME; stripped projects only
+`text/uri-list`, optionally with engine-derived `text/html`, after the actual
+production dragstart. The runner uses a new target DataTransfer, so its source
+binding cannot accidentally mask the projection. Pointer/native-only rows also
+run twice; they keep their transport outcomes. Unrelated bookmark reorder,
+text and plugin gestures retain their own DOM protocol.
+
+`dropUriHtmlCases` explicitly covers both projections for rejected-start
+folder/breadcrumb/tab drops and link-only Recent bookmark/plugin/breadcrumb
+drops. The NavigationBar hover gate now calls the importable
+`dragOverDirectory` seam using `acceptsFileDrag`; it previously required
+`application/x-explorer-path`, so stripped visibility broke its own hover
+admission even when the window capture handler cancelled dragover. Quick Access
+completion also still required custom MIME and now uses the shared source-path
+admission.
+
+Recent sets custom path/name/kind/session/sequence/effect MIME and `effectAllowed`
+to Link. It previously emitted no URI-list at all: stripping therefore left an
+empty target payload, which HEAD's fallback could not accept. It now exports
+only `urn:tauri-explorer:drag:<random-session>` as the standard URI carrier.
+This contains no filesystem path; native drag start, directory mutation and
+terminal insertion remain forbidden by its link policy.
+
+HEAD's URI-shape plus live-state fallback had a reachable stale-source hole:
+if dragend was missed, an external URI-only drag could adopt `latestSource()`
+indefinitely, including across windows sharing the process clock. Matching a
+file path or adding an age timeout cannot establish gesture identity. File
+sources now carry a random session comment plus the ordered file URI list;
+Recent carries its private session URI. `domSource` validates the complete
+readable URI payload before returning a stripped source. Ordinary external URI
+lists, even ones naming the exact same file, cannot borrow source authority.
+The comment syntax follows [RFC 2483](https://www.rfc-editor.org/rfc/rfc2483.html).
+
+`dropUriCases` asserts rejection across every target/platform with URI-list alone
+and URI-list plus HTML: no source, missed local dragend, missed peer dragend,
+retired source, mismatched clock, and mismatched session. Hover remains tentative:
+its protected data store cannot expose a nonce, so lingering live state can still
+cancel dragover. Readable Drop is the operation boundary and rejects the
+unproven payload before capture dispatch. `acceptsFileDrop` applies that stronger
+readable-data gate before folder/tab/Miller/Quick Access handlers cancel browser
+default or propagation; hover continues to use `acceptsFileDrag`. This is gesture correlation, not a
+security boundary against deliberate replay of an exact session-bearing payload.
+
+`dropDeferredUriCases` covers a readable drop captured during pending native
+start, then dragend, then native rejection. Its verified DataTransfer binding
+permits replay after retirement without reopening arbitrary URI-list fallback.
+Both window capture and destination routing must preserve that binding.
+
+`dropStaleFilesCases` additionally covers unbound Files and Files plus URI-list
+against retained sources. `domSource` now rejects those before reading retained
+paths, closing the broader Files fallback hole exposed by the same review.
+
+The static TSV above predates target visibility, external URI and deferred URI
+rows; it is not regenerated or claimed to cover these dimensions. Their complete
+executable expansion is in the independent oracle and production runner.
+
+Failing-first evidence: expanded rows failed on HEAD for Recent, breadcrumb
+hover, Quick Access completion and stale URI source adoption. With all HEAD
+production changes temporarily reverted, the listing-file folder/plugin/terminal
+stripped probe failed 79 rows (201 passed); production files were restored
+byte-for-byte. The deferred replay regression failed before its bound-transfer
+admission fix and now passes all 12 platform/target/visibility rows.
+
+An independent isolated headless WebKit probe observed the old single file URI
+as URI-list/HTML types with an empty readable URI, while the session-comment
+payload retained readable data and custom MIME. Recent's private URN also
+survived. This establishes same-window browser behavior, not native cross-window
+or OS drag-out acceptance. [WebKit's URI sanitizer](https://github.com/WebKit/WebKit/blob/main/Source/WebCore/dom/DataTransfer.cpp) can omit the platform URL for
+comment-prefixed lists; explicit native drag-out still receives unchanged file
+paths, but rejected-native HTML5 OS export needs platform acceptance. If a
+platform removes the session carrier, stripped DOM drops fail closed rather
+than adopting lingering source paths.
+
+
+Verification after restoration:
+
+```text
+bunx vitest run tests/state tests/plugins tests/composables tests/domain tests/api --maxWorkers=2
+Test Files  364 passed (364)
+Tests  26150 passed (26150)
+
+bun run check
+ERROR "website/api/report.js" 2:26 "Cannot find module '@vercel/blob' or its corresponding type declarations."
+COMPLETED 1873 FILES 1 ERRORS 0 WARNINGS 1 FILES_WITH_PROBLEMS
+
+bun run lint:arch
+arch-lint: clean
+
+bun run check:bundle
+Gzip size:   91,615 bytes (89.5 KiB)
+Startup JS:  62 chunks, 826,886 bytes raw / 276,609 bytes gzip
+PASS: main chunk and full startup graph are within their budgets.
+```
+
+The final target-object refinement clones full visibility as well as stripped
+visibility; its standalone differential run passed all 22,507 tests. The only
+requested-check failure is the known missing `@vercel/blob` dependency.

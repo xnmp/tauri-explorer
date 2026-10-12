@@ -24,7 +24,7 @@ describe("shared HTML5 filesystem source protocol", () => {
     const source = createHtml5FileDrag(() => {}, "link");
     source.start({ dataTransfer: payload } as DragEvent, { path: "/work/project", name: "project", kind: "directory" });
     expect(payload.effectAllowed).toBe("link");
-    expect(payload.getData("text/uri-list")).toBe("");
+    expect(payload.getData("text/uri-list")).toMatch(/^urn:tauri-explorer:drag:/);
     expect(payload.getData("text/plain")).toBe("");
     expect(native).not.toHaveBeenCalled();
     source.end();
@@ -33,7 +33,7 @@ describe("shared HTML5 filesystem source protocol", () => {
     vi.stubGlobal("window", {}); const payload = transfer(); const onEnd = vi.fn(); const source = createHtml5FileDrag(onEnd);
     source.start({ dataTransfer: payload } as DragEvent, data);
     expect(payload.getData("application/x-explorer-paths")).toBe(JSON.stringify(data.paths));
-    expect(payload.getData("text/uri-list")).toBe("file:///z.png\r\nfile:///a.png");
+    expect(payload.getData("text/uri-list")).toBe(`# explorer-drag-session=${dragState.current?.sessionId}\r\nfile:///z.png\r\nfile:///a.png`);
     expect(dragState.current?.paths).toEqual(data.paths); expect(native).not.toHaveBeenCalled();
     source.end(); expect(dragState.current).toBeNull(); expect(onEnd).toHaveBeenCalledOnce();
   });
@@ -57,7 +57,7 @@ describe("shared HTML5 filesystem source protocol", () => {
     const source = createHtml5FileDrag(); source.start({ dataTransfer: payload } as DragEvent, { path: "/my folder", name: "my folder", kind: "directory" });
     expect(payload.getData("application/x-explorer-path")).toBe("/my folder");
     expect(payload.getData("application/x-explorer-kind")).toBe("directory");
-    expect(payload.getData("text/uri-list")).toBe("file:///my%20folder");
+    expect(payload.getData("text/uri-list")).toBe(`# explorer-drag-session=${dragState.current?.sessionId}\r\nfile:///my%20folder`);
     expect(native.mock.calls[0][0].item).toEqual(["/my folder"]);
   });
 

@@ -3,7 +3,7 @@ vi.mock("$lib/state/drag-clock", async actual => ({ ...await actual<object>(), d
   initialize: async () => {}, ready: true,
   stamp: () => ({ clockId: `browser:${performance.timeOrigin}`, at: Math.floor(performance.timeOrigin + performance.now()), uncertainty: 0 }),
 } }));
-import { dropCases, dropSources, dropTargets, dropDeliveryOrders, dropDeliveryCases, dropRejectedDomCases, dropModalCompletionCases, dropBoundaryCases, dropCrossWindowCases, dropPathCases, dropTemporalCases, outgoingRecentCases, dropPlatforms, branchDropPolicy, devDropPolicy, nativeRoute, intendedDifferences, type DropCase, type Outcome } from "../helpers/drop-policy";
+import { dropStaleFilesCases, dropDeferredUriCases, dropVisibilityCases, dropUriCases, dropUriHtmlCases, dropVisibilities, dropCases, dropSources, dropTargets, dropDeliveryOrders, dropDeliveryCases, dropRejectedDomCases, dropModalCompletionCases, dropBoundaryCases, dropCrossWindowCases, dropPathCases, dropTemporalCases, outgoingRecentCases, dropPlatforms, branchDropPolicy, devDropPolicy, nativeRoute, intendedDifferences, type DropCase, type Outcome } from "../helpers/drop-policy";
 import { dropElement } from "../helpers/drop-element";
 
 const io = vi.hoisted(() => ({ start: vi.fn(), listener: undefined as ((event: any) => void) | undefined,
@@ -128,6 +128,29 @@ async function run(c: DropCase): Promise<Outcome[]> {
   } else if (c.source === "sidebar-bookmark") dt = transfer({ "application/x-bookmark-index": "0" });
   else if (c.source === "external-file") dt = transfer({ Files: "" });
   else dt = transfer({ "text/plain": "description", ...(c.source === "plugin-surface" ? { "application/x-plugin-item": "item" } : {}) });
+  // Targets see a distinct protected data store, never the dragstart object.
+  if (fileSource) {
+    const visibleTypes = c.visibility === "stripped"
+      ? ["text/uri-list", ...(c.uriHtml ? ["text/html"] : [])].filter(type => type === "text/html" || dt.types.includes(type))
+      : [...dt.types];
+    const projected = transfer(Object.fromEntries(visibleTypes.map(type =>
+      [type, type === "text/html" ? "<a>item</a>" : dt.getData(type)])));
+    projected.effectAllowed = dt.effectAllowed;
+    dt = projected;
+  }
+  if (c.source === "external-uri" || (c.source === "external-file" && c.staleGesture)) {
+    if (c.staleGesture) {
+      const state = c.staleGesture === "cross-window" ? peer.drag.dragState : modules.drag.dragState;
+      state.start({ path: sourcePath, name: "item", kind: "file", html5: true,
+        nativeCopyPolicy: "modifier" });
+      if (c.staleGesture === "retired") state.endHtml5(state.current);
+      if (c.staleGesture === "wrong-clock") vi.stubGlobal("performance", { timeOrigin: matrixClock + 1, now: () => 0 });
+    }
+    // Even a matching filesystem URI is not proof of this app's gesture.
+    const uri = (c.staleGesture === "mismatched-session" ? "# explorer-drag-session=unrelated\r\n" : "") + "file://" + encodeURI(sourcePath);
+    dt = transfer(c.source === "external-file" ? { Files: "", ...(c.filesUri ? { "text/uri-list": uri, ...(c.uriHtml ? { "text/html": "<a>external file</a>" } : {}) } : {}) }
+      : { "text/uri-list": uri, ...(c.uriHtml ? { "text/html": "<a>external</a>" } : {}) });
+  }
   let delayedObservation: number | undefined;
   if (c.lifetime === "expired") {
     delayedObservation = observationTime + 1.25;
@@ -145,6 +168,12 @@ async function run(c: DropCase): Promise<Outcome[]> {
     if (nativeRoute(c)) { native("enter", source, c, capturedAt); native("drop", source, c, capturedAt); await flush(); }
   };
   const over = event("dragover", dt, c); win.dispatchEvent(over);
+  if (c.target === "breadcrumb") {
+    // The component-used hover gate is exercised even if capture admits it.
+    const crumbOver = event("dragover", dt, c);
+    modules.directory.dragOverDirectory(crumbOver, "move");
+    if (fileSource && c.transport === "native-rejected" && c.deliveryOrder === "dom-only") expect(crumbOver.defaultPrevented).toBe(true);
+  }
   sidebarOver = !!hit.closest(".quick-access");
   openCompletionModal(c);
   const end = () => {
@@ -165,6 +194,11 @@ async function run(c: DropCase): Promise<Outcome[]> {
       else await domDestination(drop, c);
     }
     await flush();
+    if (c.source === "external-uri") {
+      expect(drop.defaultPrevented).toBe(false);
+      expect(drop.stopped).toBe(false);
+      if (!c.staleGesture || c.staleGesture === "retired" || c.staleGesture === "wrong-clock") expect(over.defaultPrevented).toBe(false);
+    }
   };
   if (c.completionPath === "sidebar-dragend") end();
   else if (c.deliveryOrder === "native-late-after-dragend") { await deliverDom(); end(); await deliverNative(); }
@@ -235,7 +269,7 @@ describe.each(dropPlatforms)("differential drop outcomes: %s", platform => {
     peer.drag.dragState.finish(peer.drag.dragState.current, true);
     vi.restoreAllMocks();
   });
-  it.each([...dropCases, ...dropDeliveryCases, ...dropRejectedDomCases, ...dropBoundaryCases, ...dropCrossWindowCases, ...dropPathCases].filter(c => c.platform === platform))("$source → $target / $modifier / $transport / $deliveryOrder / $lifetime / $window / $pathPair.id", async c => {
+  it.each([...dropVisibilityCases, ...dropUriCases, ...dropUriHtmlCases, ...dropStaleFilesCases].filter(c => c.platform === platform))("$source → $target / $modifier / $transport / $deliveryOrder / $lifetime / $window / $pathPair.id / $visibility / html:$uriHtml / stale:$staleGesture / Files+URI:$filesUri", async c => {
     if (c.transport === "native-rejected") { io.start.mockRejectedValue("unavailable"); vi.spyOn(console, "warn").mockImplementation(() => {}); }
     const policy = branchDropPolicy(c);
     if (!policy.difference) expect(policy.outcome).toBe(devDropPolicy(c));
@@ -246,6 +280,31 @@ describe.each(dropPlatforms)("differential drop outcomes: %s", platform => {
       expect(record.paths).toEqual([sourcePath]);
       if (record.target) expect(record.target).toBe(destPath);
     }
+  });
+  it.each(dropDeferredUriCases.filter(c => c.platform === platform))("deferred URI drop after dragend / $target / $visibility", async c => {
+    delete (win as any).__TAURI_INTERNALS__;
+    hit = target(c);
+    if (c.target === "plugin") cleanup.push(modules.targets.fileDropTargets.register(hit, (paths: readonly string[]) => {
+      io.outcomes.push("plugin:pane"); io.records.push({ paths: [...paths] });
+    }));
+    const source = modules.html.createHtml5FileDrag();
+    const startData = transfer();
+    source.start(event("dragstart", startData, c), { path: sourcePath, name: "item", kind: "file" });
+    sourceEnd = source.end;
+    const lease = modules.drag.dragState.beginNative(modules.drag.dragState.current);
+    const dt = c.visibility === "stripped" ? transfer({ "text/uri-list": startData.getData("text/uri-list") }) : startData;
+    hit.dispatchEvent = e => {
+      Object.defineProperty(e, "target", { value: hit });
+      return win.dispatchEvent(e);
+    };
+    win.addEventListener("drop", e => { void domDestination(e as DragEvent, c); });
+    win.dispatchEvent(event("drop", dt, c));
+    source.end(); sourceEnd = undefined;
+    observationTime += 2;
+    lease.failed();
+    await vi.waitFor(() => expect(io.outcomes.length).toBe(1));
+    expect(io.outcomes).toEqual([branchDropPolicy(c).outcome]);
+    expect(io.records[0].paths).toEqual([sourcePath]);
   });
   it.each(["html5", "pointer"] as const)("%s completion receipt survives async delivery, finish, and a receiver-window change", async transport => {
     modules.drag.dragState.start({ path: sourcePath, name: "item", kind: "file", html5: transport === "html5" });
@@ -373,7 +432,7 @@ describe.each(dropPlatforms)("differential drop outcomes: %s", platform => {
     if (adapter === "html5") {
       const source = modules.html.createHtml5FileDrag(() => {}, "link");
       source.start(event("dragstart", dt, c), { path: sourcePath, name: "item", kind: "directory" }); sourceEnd = source.end;
-      expect(dt.getData("text/uri-list")).toBe("");
+      expect(dt.getData("text/uri-list")).toMatch(/^urn:tauri-explorer:drag:/);
       expect(dt.getData("text/plain")).toBe("");
     } else if (adapter === "pointer") {
       hit = dropElement();
@@ -392,13 +451,21 @@ describe.each(dropPlatforms)("differential drop outcomes: %s", platform => {
 });
 
 it("every declared difference has exercised rows, and the Cartesian matrix is complete", () => {
-  expect(dropCases).toHaveLength(3159);
-  expect(dropDeliveryCases).toHaveLength(2457);
+  expect(dropCases).toHaveLength(3510);
+  expect(dropVisibilityCases).toHaveLength(2 * (dropCases.length + dropDeliveryCases.length + dropRejectedDomCases.length
+    + dropBoundaryCases.length + dropCrossWindowCases.length + dropPathCases.length));
+  for (const c of dropCases) {
+    const rows = dropVisibilityCases.filter(row => row.platform === c.platform && row.source === c.source
+      && row.target === c.target && row.modifier === c.modifier && row.transport === c.transport
+      && !row.deliveryOrder && !row.lifetime && !row.window && !row.pathPair);
+    expect(rows.map(row => row.visibility)).toEqual([...dropVisibilities]);
+  }
+  expect(dropDeliveryCases).toHaveLength(2730);
   for (const platform of dropPlatforms) for (const target of dropTargets) for (const deliveryOrder of dropDeliveryOrders) {
     const rows = dropDeliveryCases.filter(c => c.platform === platform && c.target === target && c.deliveryOrder === deliveryOrder);
     expect(new Set(rows.map(c => c.source))).toEqual(new Set(dropSources));
     expect(rows).toHaveLength(dropSources.length * (deliveryOrder === "dom-only" ? 1 : 2));
   }
-  for (const difference of intendedDifferences) expect([...dropCases, ...dropDeliveryCases, ...dropBoundaryCases, ...dropCrossWindowCases, ...dropPathCases].some(c => branchDropPolicy(c).difference === difference.id)).toBe(true);
+  for (const difference of intendedDifferences) expect(dropVisibilityCases.some(c => branchDropPolicy(c).difference === difference.id)).toBe(true);
   expect(dropCrossWindowCases.length).toBeGreaterThan(0); expect(dropPathCases).toHaveLength(66);
 });

@@ -208,8 +208,8 @@ export function useNativeDropHandler(deps: NativeDropDeps) {
   }
 
   function handleDomDrop(event: DragEvent): void {
-    if (!dragState.acceptsFileDrag(event.dataTransfer)) return;
-    const bound = event.dataTransfer && dragState.acceptsFileDrag(event.dataTransfer) ? dragState.domSource(event.dataTransfer) : null;
+    if (!dragState.acceptsFileDrop(event.dataTransfer)) return;
+    const bound = event.dataTransfer ? dragState.domSource(event.dataTransfer) : null;
     if (dragState.expiredDomSource(bound, event.dataTransfer)) {
       event.preventDefault(); event.stopImmediatePropagation(); return;
     }
@@ -269,7 +269,7 @@ export function useNativeDropHandler(deps: NativeDropDeps) {
     const livePaths = internalDragPaths(data, isWindows);
     const payload = event.dataTransfer ? domDropPaths(event.dataTransfer, isWindows) : null;
     // WebKit strips the Explorer MIME payload; admission then rests on the
-    // in-flight gesture (acceptsFileDrag) and its live source is the evidence.
+    // URI session checked by domSource, including captured deferred sources.
     const payloadStripped = !!event.dataTransfer && !isFileTransfer(event.dataTransfer);
     const paths = livePaths && (payloadStripped || (payload && sameDropPathSet(payload, livePaths, isWindows))) ? livePaths : [];
     void dispatchFileDrop(target, paths, "pane", paths.length ? data : null);

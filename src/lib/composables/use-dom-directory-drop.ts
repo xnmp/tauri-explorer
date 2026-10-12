@@ -9,9 +9,17 @@ import { resolveDropTargetFromElement } from "./use-native-drop-target.svelte";
 export type DirectoryDropKind = "folder" | "breadcrumb" | "tab" | "listing-background" | "miller-background";
 const pathsForPlatform = pathComparison(isWindows);
 
+/** Component-used breadcrumb hover seam. */
+export function dragOverDirectory(event: DragEvent, effect: DataTransfer["dropEffect"]): boolean {
+  if (!event.dataTransfer || !dragState.acceptsFileDrag(event.dataTransfer)) return false;
+  event.preventDefault();
+  event.dataTransfer.dropEffect = effect;
+  return true;
+}
+
 /** Importable DOM destination seam; components retain only hover/render state. */
 export async function dropIntoDirectory(event: DragEvent, path: string, kind: DirectoryDropKind, options: DropOptions): Promise<void> {
-  if (!dragState.acceptsFileDrag(event.dataTransfer) || !event.dataTransfer) return;
+  if (!dragState.acceptsFileDrop(event.dataTransfer) || !event.dataTransfer) return;
   const source = dragState.domSource(event.dataTransfer);
   const receipt = admitFileDrop(resolveDropTargetFromElement(event.target as Element | null), source, "dom");
   if (!receipt) return;

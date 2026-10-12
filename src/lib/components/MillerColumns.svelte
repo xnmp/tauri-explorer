@@ -287,6 +287,7 @@
   }
 
   async function handleBgDrop(event: DragEvent, columnPath: string): Promise<void> {
+    if (!dragState.acceptsFileDrop(event.dataTransfer)) return;
     event.preventDefault();
     bgDropColumn = null;
     bgDropCopy = false;

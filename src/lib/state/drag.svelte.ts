@@ -10,7 +10,7 @@
 
 import { dragClock } from "./drag-clock";
 import { loadPersisted, savePersisted, removePersisted } from "./persisted";
-import { observedDuringGesture, internalDragPaths, sameDropPathSet, isFileTransfer } from "$lib/domain/file-drop";
+import { observedDuringGesture, internalDragPaths, sameDropPathSet, isFileTransfer, isExplorerFileTransfer, uriListMatchesGesture } from "$lib/domain/file-drop";
 
 const STORAGE_KEY = "explorer-drag-data";
 const NATIVE_DECISION_KEY = "explorer-native-drag-decision";
@@ -257,7 +257,13 @@ export const dragState = {
 
   domSource(dataTransfer: DataTransfer): DragData | null {
     const captured = domSources.get(dataTransfer);
+    if (!isFileTransfer(dataTransfer) && dataTransfer.types?.includes("text/uri-list")) {
+      const source = captured ?? this.latestSource();
+      return source && (captured || this.hasLiveHtml5Gesture())
+        && uriListMatchesGesture(dataTransfer.getData("text/uri-list"), source) ? source : null;
+    }
     if (captured) return captured;
+    if (!isExplorerFileTransfer(dataTransfer)) return null;
     const id = dataTransfer.getData("application/x-explorer-session");
     const live = this.latestSource();
     return !id || live?.sessionId === id ? live
@@ -375,19 +381,28 @@ export const dragState = {
   /** True while this app's own HTML5 drag is in flight (dragend retires it). */
   hasLiveHtml5Gesture(): boolean {
     const data = this.latestSource();
-    return !!data?.html5 && data.html5ClockId === dragClock.stamp().clockId;
+    return !!data?.html5 && data.html5ClockId === dragClock.stamp().clockId
+      && !readHtml5Gestures().some(item => item.data.sessionId === data.sessionId && item.endedAt !== undefined);
   },
 
   /** DOM admission for dragenter/dragover/drop. WebKit hides the custom
    * Explorer MIME types from the DataTransfer a target sees; only the
    * text/uri-list (+ derived text/html) projection of our own payload remains.
    * That exact shape, during our own live gesture, is admitted; Files, plain
-   * text or anything else is not. */
+   * text or anything else is not. Hover is tentative; domSource must verify
+   * the readable session carrier at Drop. A bound transfer also admits an
+   * already-verified pending-start replay after the source's dragend. */
   acceptsFileDrag(data: Pick<DataTransfer, "types"> | null | undefined): boolean {
     if (isFileTransfer(data)) return true;
     const types = [...(data?.types ?? [])];
     return types.includes("text/uri-list") && types.every(type => type === "text/uri-list" || type === "text/html")
-      && this.hasLiveHtml5Gesture();
+      && (this.hasLiveHtml5Gesture() || (!!data && domSources.has(data as DataTransfer)));
+  },
+
+  /** Drop can read data: URI-only admission additionally requires proof of
+   * its source session, before any target consumes browser default/propagation. */
+  acceptsFileDrop(data: DataTransfer | null | undefined): boolean {
+    return !!data && this.acceptsFileDrag(data) && (isFileTransfer(data) || !!this.domSource(data));
   },
 
   /** Retained local state owns its pending consumers, not the next gesture. */

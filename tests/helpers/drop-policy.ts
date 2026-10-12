@@ -2,13 +2,18 @@
  * Do not import production routing: this table is the differential contract.
  * Rows are ordered; dimensions never silently omit unsupported transports.
  */
-export const dropSources = ["listing-file", "listing-folder", "miller-file", "miller-folder", "recent", "sidebar-bookmark", "external-file", "text", "plugin-surface"] as const;
+export const dropSources = ["listing-file", "listing-folder", "miller-file", "miller-folder", "recent", "sidebar-bookmark", "external-file", "external-uri", "text", "plugin-surface"] as const;
 export const dropTargets = ["folder", "breadcrumb", "tab", "bookmark", "quick-access", "sidebar-reorder", "plugin", "textarea", "covered-pane", "listing-background", "miller-background", "plugin-view", "terminal"] as const;
 export const dropModifiers = ["none", "ctrl", "option"] as const;
 export const dropTransports = ["native-accepted", "native-rejected", "dom-only"] as const;
 export const dropDeliveryOrders = ["native-first", "dom-first", "native-late-after-dragend", "dom-only"] as const;
 export const dropPlatforms = ["linux", "mac", "windows"] as const;
+export const dropVisibilities = ["full", "stripped"] as const;
 export type DropCase = {
+  visibility?: typeof dropVisibilities[number];
+  uriHtml?: boolean;
+  filesUri?: boolean;
+  staleGesture?: "local" | "cross-window" | "retired" | "wrong-clock" | "mismatched-session";
   source: typeof dropSources[number]; target: typeof dropTargets[number];
   modifier: typeof dropModifiers[number]; transport: typeof dropTransports[number]; platform: typeof dropPlatforms[number];
   deliveryOrder?: typeof dropDeliveryOrders[number];
@@ -22,7 +27,7 @@ export type Outcome = "move" | "copy" | "pin" | "reorder" | "plugin:pane" | "plu
 const explorer = (c: DropCase) => c.source.startsWith("listing-") || c.source.startsWith("miller-");
 const folder = (c: DropCase) => c.source.endsWith("-folder");
 const nonfile = (c: DropCase) => c.source === "text" || c.source === "plugin-surface";
-export const nativeRoute = (c: DropCase) => !nonfile(c) && c.source !== "sidebar-bookmark"
+export const nativeRoute = (c: DropCase) => !nonfile(c) && c.source !== "external-uri" && c.source !== "sidebar-bookmark"
   && c.deliveryOrder !== "dom-only"
   && (c.transport === "native-accepted" || (c.source !== "external-file" && c.transport === "native-rejected" && c.platform === "linux"));
 const copy = (c: DropCase) => c.modifier === (c.platform === "mac" ? "option" : "ctrl");
@@ -49,12 +54,19 @@ export const devPolicyRows: readonly { id: string; when(c: DropCase): boolean; o
 ];
 export function devDropPolicy(c: DropCase): Outcome {
   if (c.pathPair) return c.pathPair.dev;
+  if (c.source === "external-uri") return "ignored";
+  if (c.visibility === "stripped" && !nativeRoute(c) && !pointer(c)
+    && (explorer(c) || c.source === "recent")) return "ignored";
   return devPolicyRows.find(row => row.when(c))!.outcome(c);
 }
 
 /** Every deliberate difference is named and justified, never inferred from
  * production output. All other combinations must equal the dev policy. */
 export const intendedDifferences = [
+  { id: "webkit-dom-visibility", reason: "Internal HTML5 routing survives WebKit hiding custom MIME types; URI-only external gestures never acquire Explorer authority.",
+    when: (c: DropCase) => c.visibility === "stripped" && (explorer(c) || c.source === "recent") && !nativeRoute(c) && !pointer(c)
+      && branchDropPolicy({ ...c, visibility: "full" }).outcome !== "ignored",
+    outcome: (c: DropCase): Outcome => branchDropPolicy({ ...c, visibility: "full" }).outcome },
   { id: "platform-path-semantics", reason: "Use literal POSIX names and Windows separator/case semantics; reject ambiguous parent/drive-relative paths before transfer.",
     when: (c: DropCase) => !!c.pathPair?.reason, outcome: (c: DropCase): Outcome => c.pathPair!.branch },
   { id: "dom-first-pin-only-noop", reason: "A DOM-first file drop on the pin-only Quick Access ancestor completes as a no-op; its receipt consumes late automatic native delivery too.",
@@ -87,6 +99,7 @@ export const intendedDifferences = [
       : c.platform === "linux" && c.source.startsWith("miller-") && ["breadcrumb", "listing-background"].includes(c.target) ? "move" : copy(c) ? "copy" : "move" },
 ] as const;
 export function branchDropPolicy(c: DropCase): { outcome: Outcome; difference: string | null } {
+  if (c.source === "external-uri") return { outcome: "ignored", difference: null };
   if (c.pathPair) return { outcome: c.pathPair.branch, difference: c.pathPair.reason ? "platform-path-semantics" : null };
   const difference = intendedDifferences.find(row => row.when(c));
   return { outcome: difference ? difference.outcome(c) : devDropPolicy(c), difference: difference?.id ?? null };
@@ -222,3 +235,33 @@ export const dropPathCases: DropCase[] = pathRows.flatMap(row => row.platforms.f
 export const dropClockCases = (["backward", "forward"] as const).flatMap(direction =>
   ([0, 9] as const).flatMap(priorGestures =>
     [false, true].map(restart => ({ direction, priorGestures, restart }))));
+
+/** Visibility is orthogonal to transport/platform; both engines can run on Linux.
+ * Bookmark reorder/text/plugin gestures keep their own unrelated DOM protocol. */
+export const withDropVisibility = (cases: readonly DropCase[]): DropCase[] => cases.flatMap(c =>
+  dropVisibilities.map(visibility => ({ ...c, visibility })));
+export const dropVisibilityCases = withDropVisibility([
+  ...dropCases, ...dropDeliveryCases, ...dropRejectedDomCases, ...dropBoundaryCases, ...dropCrossWindowCases, ...dropPathCases,
+]);
+export const dropUriCases: DropCase[] = dropPlatforms.flatMap(platform =>
+  (["local", "cross-window", "retired", "wrong-clock", "mismatched-session", undefined] as const).flatMap(staleGesture =>
+    [false, true].flatMap(uriHtml => dropTargets.map(target => ({
+      platform, source: "external-uri" as const, target, modifier: "none" as const,
+      transport: "dom-only" as const, visibility: "stripped" as const, staleGesture, uriHtml,
+    })))));
+export const dropUriHtmlCases = withDropVisibility([...dropRejectedDomCases, ...(
+  ["bookmark", "quick-access", "plugin", "breadcrumb"].map(target => ({
+    platform: "linux" as const, source: "recent" as const, target: target as DropCase["target"],
+    modifier: "none" as const, transport: "dom-only" as const, deliveryOrder: "dom-only" as const,
+  })))]).map(c => ({ ...c, uriHtml: true }));
+
+/** Readable Drop precedes dragend; rejected native start replays its captured
+ * source after dragend. Provenance must survive without admitting a new drag. */
+export const dropDeferredUriCases = withDropVisibility(dropPlatforms.flatMap(platform =>
+  (["folder", "plugin"] as const).map(target => ({ platform, source: "miller-file" as const, target,
+    modifier: "none" as const, transport: "native-rejected" as const, deliveryOrder: "dom-only" as const }))));
+
+/** Native Files never authorizes fallback to an unrelated retained selection,
+ * including WebKit's mixed Files + URI-list projection. */
+export const dropStaleFilesCases: DropCase[] = dropUriCases.filter(c => c.staleGesture)
+  .flatMap(c => [false, true].map(filesUri => ({ ...c, source: "external-file" as const, filesUri })));

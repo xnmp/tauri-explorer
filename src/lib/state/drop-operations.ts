@@ -37,10 +37,9 @@ export function getDropSourcePaths(dataTransfer: DataTransfer): string[] {
   if (dataTransfer.getData("application/x-explorer-paths") || dataTransfer.getData("application/x-explorer-path")) {
     return domDropPaths(dataTransfer, isWindows) ?? [];
   }
-  // Only an Explorer MIME marker permits the cross-window fallback. External
-  // DOM files have no authoritative paths, even during an unrelated drag.
-  // WebKit strips the Explorer MIME types; acceptsFileDrag admits only the
-  // uri-list-only projection of our own live gesture.
+  // Hover admission alone proves no paths. domSource requires an Explorer
+  // marker or an exact session-bearing URI payload; unbound native Files
+  // cannot borrow a retained selection even while an internal drag is live.
   if (!dataTransfer.getData("application/x-explorer-kind") && !dragState.acceptsFileDrag(dataTransfer)) return [];
   return internalDragPaths(dragState.domSource(dataTransfer), isWindows) ?? [];
 }

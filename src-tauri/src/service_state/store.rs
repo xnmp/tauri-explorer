@@ -858,29 +858,44 @@ impl Store {
         receipt: Option<&str>,
     ) -> Result<Admission> {
         let a = self.transaction(|tx| {
-            let mut a = Self::record(tx, consumer, op)?.ok_or_else(|| reject("operation is not admitted"))?;
-            if !same_owner(&a.provider, provider) || !matches!(disposition, "acquired" | "discarded") {
+            let mut a = Self::record(tx, consumer, op)?
+                .ok_or_else(|| reject("operation is not admitted"))?;
+            if !same_owner(&a.provider, provider)
+                || !matches!(disposition, "acquired" | "discarded")
+            {
                 return Err(reject("invalid handoff authority or disposition"));
             }
+            let delivery = Self::terminal_delivery_at(tx, &a)?;
+            match (disposition, &delivery) {
+                ("acquired", super::receipts::TerminalDelivery::Acquired(id))
+                    if Some(id.as_str()) == receipt =>
+                {
+                    ()
+                }
+                ("acquired", _) => {
+                    return Err(reject("acquisition receipt does not prove this output"))
+                }
+                ("discarded", super::receipts::TerminalDelivery::Acquired(_)) => {
+                    return Err(reject("acquired output cannot be discarded"))
+                }
+                _ if receipt.is_some() => {
+                    return Err(reject("discard cannot use an acquisition receipt"))
+                }
+                _ => (),
+            }
             if a.phase == AdmissionPhase::Released {
-                if a.disposition.as_deref() != Some(disposition) || a.transfer_receipt.as_deref() != receipt {
+                if a.disposition.as_deref() == Some(disposition)
+                    && a.transfer_receipt.as_deref() == receipt
+                {
+                    return Ok(a);
+                }
+                // Repair a legacy discarded tombstone only with committed
+                // acquisition proof. Every other tombstone remains immutable.
+                if !matches!(delivery, super::receipts::TerminalDelivery::Acquired(_)) {
                     return Err(reject("handoff disposition conflicts with its tombstone"));
                 }
-                return Ok(a);
-            }
-            if a.phase != AdmissionPhase::Terminal {
+            } else if a.phase != AdmissionPhase::Terminal {
                 return Err(reject("only terminal handoffs may be released"));
-            }
-            if disposition == "acquired" {
-                let raw: Option<(String, String)> = tx
-                    .query_row("SELECT receipt,descriptor FROM evidence WHERE consumer=?1 AND operation=?2", params![consumer, op], |r| Ok((r.get(0)?, r.get(1)?)))
-                    .optional()
-                    .map_err(sql)?;
-                if raw.is_none_or(|(id, d)| Some(id.as_str()) != receipt || decode::<ArtifactDescriptor>(&d).ok() != a.output) {
-                    return Err(reject("acquisition receipt does not prove this output"));
-                }
-            } else if receipt.is_some() {
-                return Err(reject("discard cannot use an acquisition receipt"));
             }
             a.phase = AdmissionPhase::Released;
             a.disposition = Some(disposition.into());

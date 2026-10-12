@@ -32,3 +32,18 @@ by package and digest, using `same_owner`, rather than requiring the same proces
 incarnation: recovery can recapture input under a newer incarnation while the
 Accepting job still names the prior one. A different digest cannot retain that
 input custody through this join.
+
+## Acquired receipt and admission release are separate commits
+
+Removal can run after durable acquisition and the provider acquired receipt,
+but before admission release. A missing acquired disposition does not mean
+undelivered output. Use `Store::terminal_delivery_at` for terminal classification;
+verified acquisition evidence wins over release bookkeeping. Persist the acquired
+tombstone and complete existing presentation in the removal transaction, without
+loss notices. Consumer edits/deletion after acquisition do not undo historical
+delivery. The model must schedule acquired receipt -> crash -> removal before
+release, and track durable acquisition independently of acknowledgement.
+
+Broker identity assertions must read production `Broker::generation()` through
+the active registry. Fixture identity maps cannot detect a lifecycle regression;
+prove sensitivity by mutating production retirement/replacement and reverting it.

@@ -1325,15 +1325,14 @@ impl Store {
         evidence: &str,
     ) -> Result<TransferReceipt> {
         let a = self.verify_consumer(caller, op)?;
-        if a.phase == AdmissionPhase::Released
-            && a.disposition.as_deref() == Some("acquired")
-            && a.output.as_ref() == Some(d)
-        {
-            return Ok(TransferReceipt {
-                transfer_receipt: a
-                    .transfer_receipt
-                    .ok_or_else(|| reject("acquisition tombstone lacks receipt"))?,
-            });
+        if a.phase == AdmissionPhase::Released && a.output.as_ref() == Some(d) {
+            if let super::receipts::TerminalDelivery::Acquired(receipt) =
+                Self::terminal_delivery_at(&self.connect()?, &a)?
+            {
+                return Ok(TransferReceipt {
+                    transfer_receipt: receipt,
+                });
+            }
         }
         if a.phase != AdmissionPhase::Terminal || a.output.as_ref() != Some(d) {
             return Err(reject("acquisition requires the exact terminal output"));
@@ -1412,10 +1411,13 @@ impl Store {
         self.checkpoint("acquisition-ledger")?;
         Ok(receipt)
     }
-    pub(super) fn acquired_output_path(&self, a: &Admission) -> Result<String> {
-        let conn = self.connect()?;
+    pub(super) fn acquired_output_path_at(
+        &self,
+        conn: &rusqlite::Connection,
+        a: &Admission,
+    ) -> Result<String> {
         Self::verify_acquisition_at(
-            &conn,
+            conn,
             a,
             a.transfer_receipt
                 .as_deref()
@@ -1423,21 +1425,13 @@ impl Store {
         )?;
         let (path, root): (String,String) = conn.query_row("SELECT e.path,r.path FROM evidence e JOIN roots r ON r.package=e.consumer WHERE e.consumer=?1 AND e.operation=?2", params![a.consumer.package_id,a.operation_id],|r|Ok((r.get(0)?,r.get(1)?))).map_err(sql)?;
         let path = PathBuf::from(path);
-        no_links(&path)?;
-        let physical =
-            dunce::canonicalize(&path).map_err(|_| reject("consumer evidence unavailable"))?;
-        if !physical.starts_with(root) || physical.starts_with(&self.root) {
+        // This is historical presentation, not a fresh file capability. The
+        // acquisition commit already verified and fsynced these exact bytes.
+        // Later consumer deletion/editing cannot undo delivery or veto removal.
+        if !path.is_absolute() || !path.starts_with(root) || path.starts_with(&self.root) {
             return Err(reject("consumer evidence escaped its storage root"));
         }
-        let d = a
-            .output
-            .as_ref()
-            .ok_or_else(|| reject("missing acquired output"))?;
-        let bytes = bounded(&mut open_regular(&physical)?, d.byte_length)?;
-        if bytes.len() as u64 != d.byte_length || hex::encode(Sha256::digest(&bytes)) != d.sha256 {
-            return Err(reject("consumer copy does not match the sealed output"));
-        }
-        Ok(physical.to_string_lossy().into())
+        Ok(path.to_string_lossy().into())
     }
     pub(super) fn collect_released(&self, consumer: &str, op: &str) -> Result<()> {
         let conn = self.connect()?;

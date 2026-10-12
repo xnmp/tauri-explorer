@@ -143,7 +143,7 @@ mod tests {
     }
 
     #[test]
-    fn first_seal_crash_boundaries_preserve_committed_output() {
+    fn first_atomic_seal_rename_commits_success_pre_rename_crash_releases_unknown() {
         let points = [
             "host-seal-temp-create",
             "host-seal-temp-partial",
@@ -173,6 +173,10 @@ mod tests {
                 let reopened =
                     Store::open(root.path().join("service-state"), Limits::default()).unwrap();
                 reopened.sweep_host_spools(|_| false).unwrap();
+                // Atomic rename commits success. Before it, even fsynced
+                // complete stdout cannot distinguish success from a partial
+                // capture because the exit status survives only in host RAM.
+                // Directory sync additionally protects rename against power loss.
                 let committed = index == 6 || index >= 4 && !power_loss;
                 let reply = reopened
                     .host_spool_result(&owner().package_id, "host:first-seal")

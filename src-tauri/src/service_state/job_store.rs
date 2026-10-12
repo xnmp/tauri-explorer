@@ -438,45 +438,51 @@ impl Store {
     /// consumer copy and its already pinned run, without asking the provider
     /// for bytes it has legitimately collected or inventing a consumer run.
     pub fn complete_acquired_job(&self, consumer: &str, op: &str) -> Result<Option<JobRecord>> {
-        let Some(a) = self.get(consumer, op)? else {
-            return Ok(None);
-        };
+        self.transaction(|conn| {
+            let Some(a) = Self::record(conn, consumer, op)? else {
+                return Ok(None);
+            };
+            self.complete_acquired_job_in(conn, &a)
+        })
+    }
+    pub(super) fn complete_acquired_job_in(
+        &self,
+        conn: &Connection,
+        a: &super::model::Admission,
+    ) -> Result<Option<JobRecord>> {
         if a.phase != super::model::AdmissionPhase::Released
-            || a.disposition.as_deref() != Some("acquired")
+            || !matches!(
+                Self::terminal_delivery_at(conn, a)?,
+                super::receipts::TerminalDelivery::Acquired(_)
+            )
         {
             return Ok(None);
         }
-        let Some(job) = self.job_for_operation(consumer, op)? else {
+        let Some(mut current) = all(conn)?.into_iter().find(|j| {
+            j.owner.package_id == a.consumer.package_id && j.operation_id == a.operation_id
+        }) else {
             return Ok(None);
         };
-        let recoverable = !job.state.terminal()
+        let recoverable = !current.state.terminal()
             || matches!(
-                job.phase.as_deref(),
-                Some("stopped" | "delivery_failed" | "storage_full")
+                current.phase.as_deref(),
+                Some("stopped" | "delivery_failed" | "storage_full" | "consumer_removed")
             );
         if !recoverable {
             return Ok(None);
         }
-        let path = self.acquired_output_path(&a)?;
-        self.transaction(|conn| {
-            let Some(mut current) = stored(conn, &job.job_key)? else {
-                return Ok(None);
-            };
-            if current != job || Self::record(conn, consumer, op)?.as_ref() != Some(&a) {
-                return Ok(None);
-            }
-            let old = current.clone();
-            current.state = JobState::Completed;
-            current.phase = Some("complete".into());
-            current.output_path = Some(path);
-            current.error = None;
-            current.updated_at_ms = clock()?;
-            current.revision = next_revision(conn)?;
-            stamp_settled(&old, &mut current);
-            valid(&current, false)?;
-            persist(conn, &current)?;
-            Ok(Some(current))
-        })
+        let path = self.acquired_output_path_at(conn, a)?;
+        let old = current.clone();
+        current.state = JobState::Completed;
+        current.phase = Some("complete".into());
+        current.output_path = Some(path);
+        current.error = None;
+        current.updated_at_ms = clock()?;
+        current.revision = next_revision(conn)?;
+        stamp_settled(&old, &mut current);
+        valid(&current, false)?;
+        persist(conn, &current)?;
+        Ok(Some(current))
     }
     /// Presentation failure releases no execution or output custody. The
     /// caller holds the worker-idle fence; recheck success/unavailable in the
@@ -492,6 +498,12 @@ impl Store {
             let Some(a) = Self::record(conn, &old.owner.package_id, &old.operation_id)? else {
                 return Ok(None);
             };
+            if matches!(
+                Self::terminal_delivery_at(conn, &a)?,
+                super::receipts::TerminalDelivery::Acquired(_)
+            ) {
+                return Ok(None);
+            }
             let receipt = Self::provider_receipt_at(conn, &a)?;
             if !receipt.is_some_and(|r| {
                 r["execution"]["state"] == "succeeded" && r["delivery"]["state"] == "unavailable"
@@ -795,6 +807,21 @@ impl Store {
             // delayed success has no output. Correct only that presentation,
             // after the original handoff is durably acknowledged and a newer
             // consumer receipt reports its completed output and Trace run.
+            // Durable delivery and completion-event ordering are separate.
+            // Removal commits the acquired release and presentation together;
+            // ordinary consumer events still wait for handoff release before
+            // replacing a previously settled host presentation.
+            let (acquired, handoff_released) =
+                match Self::record(conn, &old.owner.package_id, &old.operation_id)? {
+                    Some(a) => (
+                        matches!(
+                            Self::terminal_delivery_at(conn, &a)?,
+                            super::receipts::TerminalDelivery::Acquired(_)
+                        ),
+                        a.phase == super::model::AdmissionPhase::Released,
+                    ),
+                    None => (false, false),
+                };
             let recovered_settlement =
                 (matches!(old.state, JobState::Discarded | JobState::NeedsAttention)
                     && old.phase.as_deref() == Some("stopped")
@@ -807,14 +834,8 @@ impl Store {
                     && state == JobState::Completed
                     && output_path.as_ref().is_some_and(|p| !p.is_empty())
                     && run_id.is_some_and(|id| id > 0)
-                    && Self::record(conn, &old.owner.package_id, &old.operation_id)?.is_some_and(
-                        |a| {
-                            a.phase == super::model::AdmissionPhase::Released
-                                && a.disposition.as_deref() == Some("acquired")
-                                && a.output.is_some()
-                                && a.transfer_receipt.is_some()
-                        },
-                    );
+                    && acquired
+                    && handoff_released;
             if source_revision.is_some()
                 && (old.phase.as_deref() == Some("stopped")
                     || old.phase.as_deref() == Some("provider_result_discarded")

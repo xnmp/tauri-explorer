@@ -69,6 +69,7 @@ enum Command {
     QueueIdleProof(u8, bool),
     DeliverIdleProof(u8, bool),
     Ack(u8, bool),
+    AcquiredReceipt(u8),
     ConsumerReceive(u8, bool),
     Replay(u8),
     Upgrade(bool, bool, bool),
@@ -149,6 +150,7 @@ impl Command {
             Self::CompatibleUpgradeCrash(_, _, true) => "compatible-upgrade-power-loss",
             Self::PausedProviderMutation(_, 0, _) => "provider-recovery-response-paused-lifecycle",
             Self::PausedProviderMutation(..) => "provider-native-writer-paused-lifecycle",
+            Self::AcquiredReceipt(_) => "acquired-receipt-before-release",
             Self::Ack(_, true) => "ack-crash",
             Self::Ack(_, false) => "ack-complete",
             Self::ConsumerReceive(_, true) => "consumer-receive-crash",
@@ -288,6 +290,7 @@ fn commands(max_steps: usize) -> impl Strategy<Value = Vec<Command>> {
             3 => (slot.clone(), any::<bool>(), any::<bool>()).prop_map(|(s,p,a)| Command::WorkerActive(s,p,a)),
             3 => slot.clone().prop_map(Command::Acquire),
             3 => (slot.clone(), any::<bool>()).prop_map(|(s,c)| Command::Ack(s,c)),
+            2 => slot.clone().prop_map(Command::AcquiredReceipt),
             3 => (slot.clone(), any::<bool>()).prop_map(|(s,c)| Command::ConsumerReceive(s,c)),
             2 => slot.clone().prop_map(Command::Replay),
             4 => (any::<bool>(),any::<bool>(),any::<bool>()).prop_map(|(r,c,q)| Command::Upgrade(r,c,q)),
@@ -537,6 +540,7 @@ struct Operation {
     transfer: Option<String>,
     copy: PathBuf,
     acknowledged: bool,
+    acquisition_committed: bool,
     provider_live: bool,
     consumer_live: bool,
     revision: Cell<u64>,
@@ -966,6 +970,7 @@ impl Machine {
                 })
                 .join(format!("{id}.png")),
             acknowledged: false,
+            acquisition_committed: false,
             provider_live: false,
             consumer_live: false,
             revision: Cell::new(0),
@@ -1375,6 +1380,30 @@ impl Machine {
                 .acquired(&op.consumer, &op.id, &d, op.copy.to_str().unwrap())?
                 .transfer_receipt,
         );
+        op.acquisition_committed = true;
+        Ok(())
+    }
+    // The provider receipt commits before admission release in production.
+    // Keep that crash boundary independently schedulable with lifecycle actions.
+    fn acquired_receipt(&self, slot: u8) -> Result<(), AppError> {
+        let Some(index) = self.index(slot) else {
+            return Ok(());
+        };
+        let mut ops = self.operations.borrow_mut();
+        let op = &mut ops[index];
+        if op.removed || op.acknowledged || op.transfer.is_none() {
+            return Ok(());
+        }
+        let status = op.receipt(json!({"state":"acquired","transferReceipt":op.transfer}));
+        self.store().observe_receipt(
+            &op.provider,
+            &op.consumer.package_id,
+            &op.id,
+            status["revision"].as_u64().unwrap(),
+            status,
+        )?;
+        op.acknowledged = true;
+        op.consumer_live = false;
         Ok(())
     }
     fn ack(&self, slot: u8, crash: bool) -> Result<(), AppError> {
@@ -1502,6 +1531,8 @@ impl Machine {
             op.writer.take();
             if op.spool.is_some() {
                 op.spool_phase = 30;
+                // Before atomic seal rename, even durable stdout cannot prove
+                // a complete successful execution; crash settles as Unknown.
                 if !op.completion_identified && !op.sealed_original && !op.provider_rejected() {
                     op.valid_original = false;
                     op.outcome = Outcome::Unknown;
@@ -2118,7 +2149,9 @@ impl Machine {
                     return Err(fail("paused acquisition revived removed custody"));
                 }
                 if let Ok(proof) = acquired {
-                    self.operations.borrow_mut()[index].transfer = Some(proof.transfer_receipt);
+                    let mut ops = self.operations.borrow_mut();
+                    ops[index].transfer = Some(proof.transfer_receipt);
+                    ops[index].acquisition_committed = true;
                 }
             }
             _ => {
@@ -2451,6 +2484,7 @@ impl Machine {
                         )
                         .map(|r| {
                             op.transfer = Some(r.transfer_receipt);
+                            op.acquisition_committed = true;
                         })
                 }
             };
@@ -2805,6 +2839,9 @@ impl Machine {
             }
             Command::Acquire(s) => {
                 self.consumer_attempt(self.acquire(s))?;
+            }
+            Command::AcquiredReceipt(s) => {
+                self.consumer_attempt(self.acquired_receipt(s))?;
             }
             Command::Ack(s, c) => {
                 self.consumer_attempt(self.ack(s, c))?;
@@ -3164,7 +3201,7 @@ impl Machine {
             if job.state == JobState::Completed {
                 let ops = self.operations.borrow();
                 let op = ops.iter().find(|o| o.id == job.operation_id).unwrap();
-                if !op.acknowledged
+                if !(op.acknowledged || op.acquisition_committed)
                     || fs::read(job.output_path.as_ref().unwrap()).ok().as_ref()
                         != Some(&op.original)
                 {
@@ -3323,6 +3360,18 @@ impl Machine {
                 )?
             {
                 return Err(fail("automatic settlement released live worker execution"));
+            }
+            if op.removed && op.acquisition_committed {
+                if a.disposition.as_deref() != Some("acquired")
+                    || self.notices.contains_key(&op.id)
+                    || checked(
+                        self.store()
+                            .job_for_operation(&op.consumer.package_id, &op.id),
+                    )?
+                    .is_none_or(|j| j.state != JobState::Completed)
+                {
+                    return Err(fail("removal misclassified durably acquired output"));
+                }
             }
             if op.removed
                 && (a.phase != AdmissionPhase::Released
@@ -3708,6 +3757,7 @@ impl FixtureRpc<'_> {
                 .acquired(&op.consumer, &op.id, d, op.copy.to_str().unwrap())?
         };
         op.transfer = Some(proof.transfer_receipt.clone());
+        op.acquisition_committed = true;
         m.store().release(
             &op.provider,
             &op.consumer.package_id,
@@ -3969,6 +4019,7 @@ const REQUIRED_TRANSITIONS: &[&str] = &[
     "worker-idle",
     "acquire",
     "ack-crash",
+    "acquired-receipt-before-release",
     "ack-complete",
     "consumer-receive-crash",
     "consumer-receive-complete",
@@ -4364,6 +4415,23 @@ fn coverage_campaign(totals: &mut BTreeMap<&'static str, u64>) -> Result<(), Tes
             vec![Command::RecoveryWriterGc(0), Command::CrashMidWrite(0)],
             totals,
         )?;
+        for removal in [
+            Command::Enable(false, false),
+            Command::Uninstall(false),
+            Command::Enable(true, false),
+            Command::Uninstall(true),
+        ] {
+            collect_trace(
+                vec![
+                    Command::ProviderComplete(0),
+                    Command::Acquire(0),
+                    Command::AcquiredReceipt(0),
+                    Command::Restart,
+                    removal,
+                ],
+                totals,
+            )?;
+        }
         for ack in [
             Command::Ack(0, true),
             Command::Ack(0, false),
@@ -4545,12 +4613,14 @@ fn model_restart_refuses_expired_unadmitted_preparation_without_paid_work() {
 
 #[test]
 fn model_noop_enable_preserves_captured_consumer_identity() {
+    #[cfg(target_os = "linux")]
+    if verify_production_broker_identity(false) {
+        return;
+    }
     let mut m = Machine::new();
     m.apply(Command::Register(0)).unwrap();
     m.apply(Command::Capture(0)).unwrap();
-    let consumer = m.generation(Role::Consumer).unwrap();
     m.apply(Command::Enable(false, true)).unwrap();
-    assert_eq!(m.generation(Role::Consumer).unwrap(), consumer);
     m.apply(Command::Dispatch(0)).unwrap();
     assert_eq!(m.operations.borrow()[0].starts.get(), 1);
     m.quiesce().unwrap();
@@ -4558,16 +4628,18 @@ fn model_noop_enable_preserves_captured_consumer_identity() {
 
 #[test]
 fn model_provider_upgrade_preserves_capacity_blocked_consumer_preparation_identity() {
+    #[cfg(target_os = "linux")]
+    if verify_production_broker_identity(true) {
+        return;
+    }
     let mut m = Machine::new();
     m.apply(Command::SharedConsumerAdmit).unwrap();
     m.apply(Command::Admit(1, true)).unwrap();
-    let consumer = m.generation(Role::Consumer).unwrap();
     let index = m.index(1).unwrap();
     let captured = m.operations.borrow()[index].captured_inputs.clone();
     assert!(!captured.is_empty());
     assert!(!m.operations.borrow()[index].dispatched);
     m.apply(Command::Upgrade(true, true, false)).unwrap();
-    assert_eq!(m.generation(Role::Consumer).unwrap(), consumer);
     m.apply(Command::Admit(1, false)).unwrap();
     assert_eq!(m.operations.borrow()[index].captured_inputs, captured);
     assert_eq!(m.operations.borrow()[index].starts.get(), 0);
@@ -5022,9 +5094,10 @@ fn model_presealed_original_is_recovered_through_rpc() {
 }
 
 #[test]
-fn model_capture_crashes_preserve_sealed_original_before_database_commit() {
+fn model_atomic_seal_commits_success_before_database_pre_seal_crash_is_unknown() {
     // 5: stdout file sync; 7: partial stderr; 10: sealed completion;
-    // 11: derived ledger identity. The seal already promises delivery.
+    // 11: derived ledger identity. Atomic seal rename commits success;
+    // pre-seal crashes settle silently as Unknown with all charges released.
     for last in [5, 7, 10, 11] {
         for power_loss in [false, true] {
             let mut m = Machine::new();
@@ -5323,7 +5396,7 @@ fn model_consumer_copy_before_proof_survives_restart_without_another_delivery() 
 }
 
 #[test]
-fn model_pre_persistence_success_is_not_erased_by_restart() {
+fn model_crash_before_atomic_seal_rename_settles_silently_as_unknown() {
     for crash in [Command::Restart, Command::SpoolCrash(0, 2)] {
         let mut m = Machine::new();
         m.admit(0, false).unwrap();
@@ -5332,8 +5405,9 @@ fn model_pre_persistence_success_is_not_erased_by_restart() {
         assert!(m.operations.borrow()[0].paid_success);
         assert!(!m.operations.borrow()[0].completion_identified);
         m.apply(crash).unwrap();
-        // Invocation truth survives, but RAM-only success is not a recoverable
-        // completion. Silent interruption must release all custody and charges.
+        // Atomic seal rename is the success commit point. Before it, durable
+        // stdout cannot prove completeness: the exit status is only in RAM.
+        // Crash therefore settles silently as Unknown and releases charges.
         assert!(m.operations.borrow()[0].paid_success);
         assert!(!m.operations.borrow()[0].valid_original);
         assert_eq!(m.operations.borrow()[0].outcome, Outcome::Unknown);
@@ -5458,4 +5532,242 @@ fn model_shared_consumer_coverage_counts_new_admission_only() {
     }
     assert_eq!(m.coverage["shared-provider-consumers"], 1);
     m.quiesce().unwrap();
+}
+
+#[test]
+fn model_acquired_receipt_crash_then_removal_before_admission_release_is_delivered() {
+    for removal in [
+        Command::Enable(false, false),
+        Command::Uninstall(false),
+        Command::Enable(true, false),
+        Command::Uninstall(true),
+    ] {
+        let mut m = Machine::new();
+        for command in [
+            Command::Admit(0, false),
+            Command::ProviderComplete(0),
+            Command::Acquire(0),
+            Command::AcquiredReceipt(0),
+            Command::Restart,
+        ] {
+            m.apply(command).unwrap();
+        }
+        let (consumer, id, provider) = {
+            let ops = m.operations.borrow();
+            (
+                ops[0].consumer.package_id.clone(),
+                ops[0].id.clone(),
+                ops[0].provider.clone(),
+            )
+        };
+        let before = m.store().get(&consumer, &id).unwrap().unwrap();
+        assert_eq!(before.phase, AdmissionPhase::Terminal);
+        assert_eq!(before.disposition, None);
+        let receipt = m.store().provider_receipt(&consumer, &id).unwrap().unwrap();
+        assert_eq!(receipt["delivery"]["state"], "acquired");
+        m.apply(removal).unwrap();
+        let after = m.store().get(&consumer, &id).unwrap().unwrap();
+        assert_eq!(after.disposition.as_deref(), Some("acquired"));
+        assert_eq!(m.notices.get(&id).copied().unwrap_or(0), 0);
+        let job = m
+            .store()
+            .job_for_operation(&consumer, &id)
+            .unwrap()
+            .unwrap();
+        assert_eq!(job.state, JobState::Completed);
+        assert_eq!(
+            fs::read(job.output_path.unwrap()).unwrap(),
+            m.operations.borrow()[0].original
+        );
+        service_bridge::reconcile_at(m.store(), &provider, &after, &receipt).unwrap();
+        m.quiesce().unwrap();
+        assert_eq!(m.charges(), 0);
+    }
+}
+
+/// Run the identity contract against the production registry, allocation and
+/// retirement path, in an isolated native subprocess. Model-owned generations
+/// remain transport fixtures and must never be evidence of broker identity.
+#[cfg(target_os = "linux")]
+fn verify_production_broker_identity(upgrade_provider: bool) -> bool {
+    use std::process::Command as ProcessCommand;
+    if std::env::var_os("TE_MODEL_BROKER_IDENTITY").is_none() {
+        let profile = tempfile::Builder::new()
+            .prefix("te-lifecycle-native.")
+            .tempdir_in("/tmp")
+            .unwrap();
+        for directory in ["config", "data", "cache", "runtime"] {
+            fs::create_dir(profile.path().join(directory)).unwrap();
+        }
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(
+            profile.path().join("runtime"),
+            fs::Permissions::from_mode(0o700),
+        )
+        .unwrap();
+        let test = if upgrade_provider {
+            "model_provider_upgrade_preserves_capacity_blocked_consumer_preparation_identity"
+        } else {
+            "model_noop_enable_preserves_captured_consumer_identity"
+        };
+        let result = ProcessCommand::new("xvfb-run")
+            .args(["-a", "-s", "-screen 0 1024x768x24", "dbus-run-session", "--", "sh", "-c",
+                r#"openbox >/dev/null 2>&1 & wm=$!; trap 'kill $wm 2>/dev/null || true' EXIT; timeout 45s "$@""#, "fixture"])
+            .arg(std::env::current_exe().unwrap()).args([test, "--nocapture", "--test-threads=1"])
+            .env("TE_MODEL_BROKER_IDENTITY", "1").env("TE_LIFECYCLE_NATIVE_FIXTURE", "1")
+            .env("GDK_BACKEND", "x11")
+            .env("XDG_CURRENT_DESKTOP", "Openbox")
+            .env("XDG_SESSION_TYPE", "x11")
+            .env("XDG_SESSION_DESKTOP", "openbox")
+            .env("NO_AT_BRIDGE", "1")
+            .env_remove("HYPRLAND_INSTANCE_SIGNATURE")
+            .env_remove("SWAYSOCK")
+            .env_remove("I3SOCK")
+            .env_remove("SESSION_MANAGER")
+            .env_remove("WAYLAND_DISPLAY")
+            .env_remove("DBUS_SESSION_BUS_ADDRESS")
+            .env("XDG_CONFIG_HOME", profile.path().join("config"))
+            .env("XDG_DATA_HOME", profile.path().join("data"))
+            .env("XDG_CACHE_HOME", profile.path().join("cache"))
+            .env("XDG_RUNTIME_DIR", profile.path().join("runtime"))
+            .output().unwrap();
+        assert!(
+            result.status.success(),
+            "production broker identity probe failed:\n{}\n{}",
+            String::from_utf8_lossy(&result.stdout),
+            String::from_utf8_lossy(&result.stderr)
+        );
+        return false;
+    }
+    let app = super::super::mutation_native_tests::native_app();
+    // Only initialize the broker: background AI/startup reconciliation is not
+    // part of this lifecycle identity contract and would compete with the probe.
+    backend::initialize(app.handle().clone());
+    let root = crate::installed_plugins::root().unwrap();
+    fs::create_dir_all(&root).unwrap();
+    super::super::super::service_host::initialize(root.parent().unwrap()).unwrap();
+    backend::finish_initialize();
+    let consumer = super::super::mutation_native_tests::scripted(
+        &root,
+        "fixture.identity.consumer",
+        3,
+        "quiesce",
+    );
+    let provider = super::super::mutation_native_tests::scripted(
+        &root,
+        "fixture.identity.provider",
+        3,
+        "quiesce",
+    );
+    package::write_index(&root, &[consumer.clone(), provider.clone()]).unwrap();
+    let owner = backend::ensure(&consumer.manifest.id).unwrap();
+    let before = owner.generation();
+    let pid = owner.call("ping", json!({})).unwrap()["pid"]
+        .as_i64()
+        .unwrap();
+    // Check the actual worker, not just the runner's environment.
+    let worker_environment = fs::read(format!("/proc/{pid}/environ")).unwrap();
+    let display = format!("DISPLAY={}", std::env::var("DISPLAY").unwrap());
+    assert!(worker_environment
+        .split(|b| *b == 0)
+        .any(|e| e == display.as_bytes()));
+    assert!(worker_environment
+        .split(|b| *b == 0)
+        .any(|e| e == b"GDK_BACKEND=x11"));
+    assert!(!worker_environment
+        .split(|b| *b == 0)
+        .any(|e| e.starts_with(b"WAYLAND_DISPLAY=")));
+    let store = super::super::super::service_host::store().unwrap();
+    let profile = super::super::Profile { root: &root, store };
+    if upgrade_provider {
+        let old_provider = backend::ensure(&provider.manifest.id).unwrap().generation();
+        let archives = root.parent().unwrap().join("archives");
+        fs::create_dir_all(&archives).unwrap();
+        let archive = package::tests::archive_named(&archives, "provider-next.teplugin", |m| {
+            m.id = provider.manifest.id.clone();
+            m.version = "2.0.0".into();
+            m.sdk_version = 3;
+            m.contributions = vec![provider.manifest.id.replace('.', "-")];
+        });
+        super::super::upgrade(&profile, &archive, &|_, _, _| Ok(())).unwrap();
+        assert!(
+            backend::active_instance(&provider.manifest.id, &old_provider.digest).is_none(),
+            "probe must really retire the affected provider"
+        );
+    } else {
+        super::super::set_enabled(&profile, &consumer.manifest.id, true).unwrap();
+    }
+    let after = backend::current_instance(&consumer.manifest.id)
+        .expect("lifecycle retired the unaffected consumer broker")
+        .generation();
+    assert_eq!(
+        after, before,
+        "production replaced the unaffected broker incarnation"
+    );
+    for name in ["DBUS_SESSION_BUS_ADDRESS", "XDG_CONFIG_HOME"] {
+        let expected = format!("{name}={}", std::env::var(name).unwrap());
+        assert!(worker_environment
+            .split(|b| *b == 0)
+            .any(|e| e == expected.as_bytes()));
+    }
+    assert!(super::super::mutation_native_tests::running(pid));
+    backend::shutdown();
+    drop(app);
+    true
+}
+
+#[test]
+fn model_acquisition_evidence_alone_makes_removal_delivered() {
+    let mut m = Machine::new();
+    for command in [
+        Command::Admit(0, false),
+        Command::ProviderComplete(0),
+        Command::Acquire(0),
+        Command::Restart,
+        Command::Enable(false, false),
+    ] {
+        m.apply(command).unwrap();
+    }
+    assert!(!m.operations.borrow()[0].acknowledged);
+    m.quiesce().unwrap();
+    assert_eq!(m.charges(), 0);
+}
+
+#[test]
+fn model_removal_preserves_committed_delivery_when_consumer_later_deletes_copy() {
+    let mut m = Machine::new();
+    for command in [
+        Command::Admit(0, false),
+        Command::ProviderComplete(0),
+        Command::Acquire(0),
+        Command::AcquiredReceipt(0),
+        Command::Restart,
+    ] {
+        m.apply(command).unwrap();
+    }
+    let ops = m.operations.borrow();
+    let op = &ops[0];
+    fs::remove_file(&op.copy).unwrap();
+    // Consumer edits after acquisition are outside the delivery conservation
+    // oracle. Drive production removal directly: historical delivery must not
+    // be regraded from the consumer's current filesystem contents.
+    let (result, events) = backend::capture_job_events(|| {
+        super::super::set_enabled(&m.profile(), &op.consumer.package_id, false)
+    });
+    result.unwrap();
+    assert!(!events.iter().any(|e| e["job"]["state"] == "error"));
+    let a = m
+        .store()
+        .get(&op.consumer.package_id, &op.id)
+        .unwrap()
+        .unwrap();
+    assert_eq!(a.disposition.as_deref(), Some("acquired"));
+    let job = m
+        .store()
+        .job_for_operation(&op.consumer.package_id, &op.id)
+        .unwrap()
+        .unwrap();
+    assert_eq!(job.state, JobState::Completed);
+    assert_eq!(job.output_path.as_deref(), op.copy.to_str());
+    assert_eq!(m.charges(), 0);
 }

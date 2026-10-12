@@ -13,6 +13,15 @@ use std::{
     path::{Path, PathBuf},
     sync::{Arc, LazyLock, Mutex, Weak},
 };
+/// Terminal delivery is derived from committed acquisition proof, never from
+/// the separately persisted admission release. Evidence wins over a stale
+/// disposition, including the receipt-commit -> crash -> removal gap.
+#[derive(Debug, PartialEq, Eq)]
+pub(super) enum TerminalDelivery {
+    Acquired(String),
+    Discarded,
+    Pending,
+}
 type SuccessReceipts = HashMap<(String, String), Value>;
 pub(super) type PendingSuccess = Arc<Mutex<SuccessReceipts>>;
 /// Session witnesses are shared by handles of the same ledger (lifecycle
@@ -267,6 +276,33 @@ impl Store {
             .cloned()
             .collect())
     }
+    pub(super) fn terminal_delivery_at(
+        conn: &Connection,
+        a: &Admission,
+    ) -> Result<TerminalDelivery> {
+        let evidence: Option<String> = conn
+            .query_row(
+                "SELECT receipt FROM evidence WHERE consumer=?1 AND operation=?2",
+                params![a.consumer.package_id, a.operation_id],
+                |r| r.get(0),
+            )
+            .optional()
+            .map_err(sql)?;
+        let acquired = Self::provider_receipt_at(conn, a)?
+            .filter(|r| {
+                r["execution"]["state"] == "succeeded" && r["delivery"]["state"] == "acquired"
+            })
+            .and_then(|r| r["delivery"]["transferReceipt"].as_str().map(str::to_owned));
+        if let Some(receipt) = acquired.or(evidence) {
+            Self::verify_acquisition_at(conn, a, &receipt)?;
+            return Ok(TerminalDelivery::Acquired(receipt));
+        }
+        Ok(if a.disposition.as_deref() == Some("discarded") {
+            TerminalDelivery::Discarded
+        } else {
+            TerminalDelivery::Pending
+        })
+    }
     pub fn success_known(&self, a: &Admission) -> Result<bool> {
         Ok(a.output.is_some()
             || self.pending_success(a)?.is_some()
@@ -285,7 +321,7 @@ impl Store {
             return Err(reject("provider receipt owner does not match"));
         }
         if a.phase == AdmissionPhase::Released
-            && a.disposition.as_deref() == Some("discarded")
+            && Self::terminal_delivery_at(&self.connect()?, a)? == TerminalDelivery::Discarded
             && matches!(
                 status["delivery"]["state"].as_str(),
                 Some("available" | "unavailable")
@@ -537,20 +573,29 @@ impl Store {
                         })
                         || tx.query_row("SELECT EXISTS(SELECT 1 FROM artifacts WHERE consumer=?1 AND operation=?2 AND kind='output' AND status='sealed')", params![consumer,op], |r| r.get::<_,bool>(0)).map_err(sql)?
                         || Self::provider_receipt_at(tx, &a)?.is_some_and(|r| r["execution"]["state"] == "succeeded");
-                    let undelivered = success && a.disposition.as_deref() != Some("acquired")
-                        && a.disposition.as_deref() != Some("discarded");
-                    if a.phase != AdmissionPhase::Released {
+                    let delivery = Self::terminal_delivery_at(tx, &a)?;
+                    let undelivered = success && delivery == TerminalDelivery::Pending;
+                    if a.phase != AdmissionPhase::Released || matches!(delivery, TerminalDelivery::Acquired(_)) {
                         if let Some(receipt) = Self::provider_receipt_at(tx, &a)? {
                             if receipt["delivery"]["state"] == "available" {
                                 a.output = Some(serde_json::from_value(receipt["delivery"]["output"].clone()).map_err(|_|reject("invalid output descriptor"))?);
                             }
                         }
                         a.phase = AdmissionPhase::Released;
-                        a.disposition = Some("discarded".into());
-                        a.transfer_receipt = None;
+                        match delivery {
+                            TerminalDelivery::Acquired(receipt) => {
+                                a.disposition = Some("acquired".into());
+                                a.transfer_receipt = Some(receipt);
+                            }
+                            _ => {
+                                a.disposition = Some("discarded".into());
+                                a.transfer_receipt = None;
+                            }
+                        }
                         a.needs_attention = false;
                         Self::persist(tx, &a)?;
                     }
+                    if let Some(job) = self.complete_acquired_job_in(tx, &a)? { jobs.push(job); }
                     if undelivered {
                         if let Some(job) = self.report_undelivered_in(tx, &a, package)? { jobs.push(job); }
                     }
@@ -623,6 +668,10 @@ impl Store {
                     return Ok(old.status);
                 }
                 super::receipt::validate_transition(&old.status, &status)?;
+            }
+            if status["delivery"]["state"] == "discarded"
+                && matches!(Self::terminal_delivery_at(tx, &admission)?, TerminalDelivery::Acquired(_)) {
+                return Err(reject("acquired output cannot be discarded"));
             }
             // Capture custody before artifact validation or the receipt commit
             // can fail. The existing recovery loop retries this exact answer.
@@ -740,7 +789,7 @@ impl Store {
             let status = receipt.as_ref().map(|r| &r.status);
             let execution = status.and_then(|r| r["execution"]["state"].as_str()).unwrap_or("unconfirmed");
             let delivery = status.and_then(|r| r["delivery"]["state"].as_str()).unwrap_or("none");
-            if self.pending_success(&a)?.is_some() || self.retained_output_at(tx, consumer, op)? || super::receipt::auto_settlement(a.phase, execution, delivery, !no_live_worker) != super::receipt::AutoSettlement::Settle || a.output.is_some() && !(a.phase == AdmissionPhase::Released && a.disposition.as_deref() == Some("discarded")) {
+            if self.pending_success(&a)?.is_some() || self.retained_output_at(tx, consumer, op)? || super::receipt::auto_settlement(a.phase, execution, delivery, !no_live_worker) != super::receipt::AutoSettlement::Settle || a.output.is_some() && !(a.phase == AdmissionPhase::Released && Self::terminal_delivery_at(tx, &a)? == TerminalDelivery::Discarded) {
                 return Err(reject("automatic settlement requires idle workers and no recoverable output"));
             }
             tx.execute("UPDATE operations SET exec_released=1 WHERE consumer=?1 AND operation=?2", params![consumer, op]).map_err(sql)?;

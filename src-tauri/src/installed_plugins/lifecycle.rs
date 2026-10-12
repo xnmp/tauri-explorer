@@ -1,7 +1,7 @@
 //! Recoverable package upgrade: quiesce publishers, snapshot declared state, then activate.
-//! Every package mutation (upgrade, removal, enablement) consults durable AI
-//! claims in either role before it fences, quiesces or rewrites the index.
-use super::{backend, package, service_graph, service_host};
+//! Explicit lifecycle intent is independent of AI phase: retire publishers,
+//! then preserve compatible custody or finish removal from a durable journal.
+use super::{backend, package, service_graph};
 use crate::{error::AppError, service_state::Store};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -13,6 +13,29 @@ use std::{
 const MAX_STATE: u64 = 512 * 1024 * 1024;
 // Two bounded installed indexes plus snapshot metadata and future-safe slack.
 const MAX_JOURNAL: u64 = 4 * 1024 * 1024;
+#[cfg(test)]
+thread_local! {
+    static CRASH_BOUNDARY: std::cell::Cell<Option<&'static str>> = const { std::cell::Cell::new(None) };
+}
+#[cfg(test)]
+pub(super) fn crash_at_boundary(name: &'static str) {
+    CRASH_BOUNDARY.with(|boundary| boundary.set(Some(name)));
+}
+fn checkpoint(name: &str) -> Result<(), AppError> {
+    #[cfg(test)]
+    if CRASH_BOUNDARY.with(|boundary| {
+        if boundary.get() == Some(name) {
+            boundary.set(None);
+            true
+        } else {
+            false
+        }
+    }) {
+        return Err(invalid("injected lifecycle crash"));
+    }
+    let _ = name;
+    Ok(())
+}
 #[derive(Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 enum Phase {
@@ -96,17 +119,36 @@ fn snapshot_file(source: &Path, target: &Path) -> Result<Content, AppError> {
         use std::os::unix::fs::OpenOptionsExt;
         options.mode(0o600);
     }
-    copy_state(source, &mut options.open(target)?)
+    #[cfg(test)]
+    let oracle = test_fs_at(target);
+    #[cfg(test)]
+    if let Some(oracle) = &oracle {
+        oracle.before_mutation(target);
+    }
+    let content = copy_state(source, &mut options.open(target)?)?;
+    #[cfg(test)]
+    if let Some(oracle) = &oracle {
+        oracle.file_synced(target);
+    }
+    Ok(content)
+}
+#[cfg(test)]
+pub(super) fn test_fs_at(
+    path: &Path,
+) -> Option<std::sync::Arc<crate::service_state::test_fs::TestFs>> {
+    let root = path
+        .ancestors()
+        .find(|p| p.file_name().is_some_and(|n| n == "installed-plugins"))?;
+    let service = dunce::canonicalize(root.parent()?.join("service-state")).ok()?;
+    Some(crate::service_state::test_fs::for_root(&service))
 }
 fn sync_directory(path: &Path) -> Result<(), AppError> {
-    #[cfg(unix)]
-    {
-        fs::File::open(path)?.sync_all()?;
+    #[cfg(test)]
+    if let Some(oracle) = test_fs_at(path) {
+        oracle.sync_lifecycle(path)?;
+        return Ok(());
     }
-    #[cfg(not(unix))]
-    {
-        let _ = path;
-    }
+    crate::durable_dir::sync(path)?;
     Ok(())
 }
 fn write_marker(snapshot: &Path, upgrade: &Upgrade) -> Result<(), AppError> {
@@ -115,9 +157,20 @@ fn write_marker(snapshot: &Path, upgrade: &Upgrade) -> Result<(), AppError> {
         return Err(invalid("Plugin upgrade journal exceeds size limit"));
     }
     let mut stage = tempfile::NamedTempFile::new_in(snapshot)?;
+    #[cfg(test)]
+    let oracle = test_fs_at(snapshot);
+    #[cfg(test)]
+    if let Some(oracle) = &oracle {
+        oracle.created(stage.path());
+    }
     stage.write_all(&bytes)?;
     stage.flush()?;
     stage.as_file().sync_all()?;
+    #[cfg(test)]
+    if let Some(oracle) = &oracle {
+        oracle.file_synced(stage.path());
+        oracle.before_rename(stage.path(), &snapshot.join("upgrade.json"));
+    }
     stage
         .persist(snapshot.join("upgrade.json"))
         .map_err(|cause| AppError::from(cause.error))?;
@@ -152,12 +205,21 @@ fn validate(upgrade: &Upgrade) -> Result<(), AppError> {
         {
             return Err(invalid("Plugin upgrade journal changes unrelated packages"));
         }
+        let candidate = index
+            .iter()
+            .find(|p| p.manifest.id == upgrade.package_id)
+            .ok_or_else(|| invalid("Plugin replacement journal is missing its package"))?;
+        let disabled = service_graph::replacement_dependents(&upgrade.previous, candidate);
         for entry in before {
             let other = after
                 .iter()
                 .find(|other| other.manifest.id == entry.manifest.id)
                 .ok_or_else(|| invalid("Plugin upgrade journal changes unrelated packages"))?;
-            if serde_json::to_value(entry).map_err(|cause| invalid(cause.to_string()))?
+            let mut expected = entry.clone();
+            if disabled.contains(&entry.manifest.id) {
+                expected.enabled = false;
+            }
+            if serde_json::to_value(&expected).map_err(|cause| invalid(cause.to_string()))?
                 != serde_json::to_value(other).map_err(|cause| invalid(cause.to_string()))?
             {
                 return Err(invalid("Plugin upgrade journal changes unrelated packages"));
@@ -246,6 +308,7 @@ fn restore(root: &Path, snapshot: &Path, upgrade: &mut Upgrade) -> Result<(), Ap
     Ok(())
 }
 pub(super) fn recover(root: &Path) -> Result<(), AppError> {
+    recover_consumer_removals(root)?;
     let snapshot = root.join("upgrade-pending");
     if !snapshot.exists() {
         return Ok(());
@@ -273,6 +336,34 @@ pub(super) fn recover(root: &Path) -> Result<(), AppError> {
                 write_marker(&snapshot, &upgrade)?;
             }
         }
+        if matches!(upgrade.phase, Phase::Committed | Phase::Published) {
+            if let Some(candidate) = upgrade
+                .committed_index
+                .as_ref()
+                .and_then(|index| index.iter().find(|p| p.manifest.id == upgrade.package_id))
+            {
+                let store = Store::open(
+                    root.parent()
+                        .ok_or_else(|| invalid("Plugin profile is unavailable"))?
+                        .join("service-state"),
+                    crate::service_state::model::Limits::default(),
+                )?;
+                reconcile_replacement(
+                    &store,
+                    candidate,
+                    upgrade
+                        .previous
+                        .iter()
+                        .find(|p| p.manifest.id == upgrade.package_id)
+                        .map(|p| &p.manifest),
+                )?;
+                for id in service_graph::replacement_dependents(&upgrade.previous, candidate) {
+                    super::service_bridge::signal_removal_cancellations(&store, &id, |_| false)?;
+                    report_consumer_removal(&store, &id)?;
+                    backend::release_recovered_fence(&id)?;
+                }
+            }
+        }
         cleanup(&snapshot);
         backend::release_recovered_fence(&upgrade.package_id)?;
         Ok(())
@@ -289,16 +380,16 @@ pub(super) struct Profile<'a> {
 /// Validation-only startup of a candidate. Production uses the real broker.
 pub(super) type Preflight<'a> =
     &'a dyn Fn(&package::Installed, PathBuf, &backend::DrainGuard) -> Result<(), AppError>;
-/// Close admission for a package that has no durable claim or live native work.
+/// The single lifecycle admission boundary: AI claims, jobs and calls never
+/// veto a user's exit or repair. Fence new calls, then retire existing work.
 pub(super) fn drain_idle(store: &Store, id: &str) -> Result<backend::DrainGuard, AppError> {
     let _guard = super::write_lifecycle()?;
-    service_host::mutation_allowed_in(store, id)?;
-    if backend::busy(id) {
-        return Err(service_host::busy(
-            "Finish active plugin operations before changing this package",
-        ));
+    let drain = backend::begin_change(id)?;
+    if let Err(cause) = store.retire_package_generations(id, drain.generation().as_ref()) {
+        drain.retain_for_recovery();
+        return Err(cause);
     }
-    backend::begin_drain(id)
+    Ok(drain)
 }
 /// Install or upgrade from an archive. The caller activates after return,
 /// once the mutation and lifecycle gates are released.
@@ -307,87 +398,205 @@ pub(super) fn upgrade(
     archive: &Path,
     preflight: Preflight,
 ) -> Result<package::Installed, AppError> {
+    let _action = super::ai_operations::action_guard()?;
     let _mutation = super::mutation_lock()?;
     recover(profile.root)?;
     let candidate = package::prepare(profile.root, archive)?;
     let drain = drain_idle(profile.store, &candidate.manifest.id)?;
-    drain.quiesce()?;
+    // A broken or working AI participant cannot veto repair. A graceful
+    // checkpoint is preferred; native retirement cancels remaining work.
+    let _ = drain.quiesce();
+    backend::retire(&candidate.manifest.id);
     // The package fence, not a global lock, owns snapshot/preflight/rollback.
     // Reader threads may need lifecycle admission while retirement joins them.
     install_with(profile.root, candidate, &drain, preflight)
 }
 pub(super) fn uninstall(profile: &Profile, id: &str) -> Result<(), AppError> {
+    let _action = super::ai_operations::action_guard()?;
     let _mutation = super::mutation_lock()?;
     recover(profile.root)?;
-    let drain = drain_idle(profile.store, id)?;
-    drain.quiesce()?;
-    let mut remaining = package::list(profile.root)?;
-    remaining.retain(|entry| entry.manifest.id != id);
-    service_graph::validate_enabled(&remaining)?;
-    backend::retire(id);
-    let _lifecycle = super::LIFECYCLE
-        .write()
-        .map_err(|_| invalid("Plugin lifecycle lock is unavailable"))?;
-    package::uninstall(profile.root, id)
+    remove_or_disable(profile, id, true)
 }
-pub(super) fn set_enabled(profile: &Profile, id: &str, enabled: bool) -> Result<(), AppError> {
-    let _mutation = super::mutation_lock()?;
-    recover(profile.root)?;
-    {
-        let _guard = super::read_lifecycle()?;
-        let entries = package::list(profile.root)?;
-        let current = entries
-            .iter()
-            .find(|entry| entry.manifest.id == id)
-            .ok_or_else(|| invalid("Plugin package is not installed"))?;
-        if current.enabled == enabled {
-            return Ok(());
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct Removal {
+    entries: Vec<package::Installed>,
+    packages: Vec<String>,
+}
+fn write_removal(root: &Path, removal: &Removal) -> Result<(), AppError> {
+    package::validate_index(&removal.entries)?;
+    service_graph::validate_enabled(&removal.entries)?;
+    let bytes = serde_json::to_vec(removal).map_err(|e| invalid(e.to_string()))?;
+    if bytes.len() as u64 > MAX_JOURNAL {
+        return Err(invalid("Plugin removal journal exceeds size limit"));
+    }
+    let mut stage = tempfile::NamedTempFile::new_in(root)?;
+    stage.write_all(&bytes)?;
+    crate::durable_dir::sync_file(stage.path())?;
+    stage
+        .persist(root.join("removal-pending.json"))
+        .map_err(|e| AppError::from(e.error))?;
+    crate::durable_dir::sync(root)?;
+    Ok(())
+}
+fn finish_removal(root: &Path, store: &Store, removal: &Removal) -> Result<(), AppError> {
+    package::validate_index(&removal.entries)?;
+    service_graph::validate_enabled(&removal.entries)?;
+    let mut drains = Vec::new();
+    let result: Result<(), AppError> = (|| {
+        // Repeat native retirement during both restart and same-session replay;
+        // a failed earlier sweep may have left an admitted/live publisher.
+        for id in &removal.packages {
+            drains.push(drain_idle(store, id)?);
+        }
+        for id in &removal.packages {
+            super::service_bridge::signal_removal_cancellations(store, id, |_| false)?;
+        }
+        for id in &removal.packages {
+            backend::retire(id);
+        }
+        let _lifecycle = super::write_lifecycle()?;
+        package::write_index(root, &removal.entries)?;
+        checkpoint("removal-index")?;
+        for id in &removal.packages {
+            report_consumer_removal(store, id)?;
+        }
+        fs::remove_file(root.join("removal-pending.json"))?;
+        crate::durable_dir::sync(root)?;
+        Ok(())
+    })();
+    if result.is_err() {
+        for drain in &drains {
+            drain.retain_for_recovery();
         }
     }
-    let drain = if enabled {
-        None
-    } else {
-        Some(drain_idle(profile.store, id)?)
-    };
-    if let Some(drain) = &drain {
-        drain.quiesce()?;
-        // A safe disable stops routing before the index changes.
-        backend::retire(id);
+    result
+}
+/// Journal the complete user decision before cancellation, index publication
+/// or custody release. Restart always finishes it, even before index commit.
+fn remove_or_disable(profile: &Profile, id: &str, uninstall: bool) -> Result<(), AppError> {
+    let mut entries = package::list(profile.root)?;
+    let ids = service_graph::removal_packages(&entries, id);
+    for entry in &mut entries {
+        if ids.contains(&entry.manifest.id) {
+            entry.enabled = false;
+        }
     }
-    let _guard = super::LIFECYCLE
-        .write()
-        .map_err(|_| invalid("Plugin lifecycle lock is unavailable"))?;
+    if uninstall {
+        entries.retain(|entry| entry.manifest.id != id);
+    }
+    let removal = Removal {
+        entries,
+        packages: ids,
+    };
+    write_removal(profile.root, &removal)?;
+    checkpoint("removal-intent")?;
+    finish_removal(profile.root, profile.store, &removal)
+}
+fn reconcile_replacement(
+    store: &Store,
+    candidate: &package::Installed,
+    previous: Option<&package::Manifest>,
+) -> Result<(), AppError> {
+    let compatible = previous.is_some_and(|old| {
+        service_graph::replacement_preserves_contracts(old, &candidate.manifest)
+    });
+    super::service_bridge::signal_removal_cancellations(store, &candidate.manifest.id, |a| {
+        super::ai_operations::replacement_recovers(&candidate.manifest, a)
+    })?;
+    super::ai_operations::reset_replacement_reconciliation(store, &candidate.manifest.id)?;
+    for job in store.abandon_package_work_deferred(
+        &candidate.manifest.id,
+        |a| super::ai_operations::replacement_recovers(&candidate.manifest, a),
+        |owner, _| {
+            (compatible && owner.package_id == candidate.manifest.id)
+                .then(|| candidate.digest.clone())
+        },
+    )? {
+        backend::release_job(&job.owner, job.job_id);
+        backend::emit_job_event(serde_json::json!({"type":"updated","job":job}));
+    }
+    checkpoint("replacement-abandoned")?;
+    store.gc()?;
+    store.sweep_host_spools(|_| true)?;
+    if !compatible {
+        // A package may have successful custody-less replies without a single
+        // admission. Incompatible replacement always collects that custody;
+        // only independently compatible admitted originals are exempt.
+        store.release_unretained_package_spools(&candidate.manifest.id)?;
+    }
+    Ok(())
+}
+fn report_consumer_removal(store: &Store, id: &str) -> Result<(), AppError> {
+    for job in store.abandon_package_operations_deferred(id, |_| false)? {
+        backend::release_job(&job.owner, job.job_id);
+        backend::emit_job_event(serde_json::json!({"type":"updated","job":job}));
+    }
+    checkpoint("removal-abandoned")?;
+    store.gc()?;
+    store.sweep_host_spools(|_| true)?;
+    store.release_package_spools(id)?;
+    checkpoint("removal-cleanup")?;
+    store.finish_consumer_removal(id)?;
+    Ok(())
+}
+fn recover_consumer_removals(root: &Path) -> Result<(), AppError> {
+    let ledger = root
+        .parent()
+        .ok_or_else(|| invalid("Plugin profile is unavailable"))?
+        .join("service-state");
+    if !ledger.exists() {
+        return Ok(());
+    }
+    let store = Store::open(ledger, crate::service_state::model::Limits::default())?;
+    let journal = root.join("removal-pending.json");
+    if journal.exists() {
+        let removal: Removal = serde_json::from_reader(open_regular(&journal, MAX_JOURNAL)?)
+            .map_err(|e| invalid(e.to_string()))?;
+        finish_removal(root, &store, &removal)?;
+        for id in &removal.packages {
+            backend::release_recovered_fence(id)?;
+        }
+    }
+    let entries = package::list(root)?;
+    for id in store.pending_consumer_removals()? {
+        if entries.iter().any(|p| p.manifest.id == id && p.enabled) {
+            // Crash before the package-index commit: there was no removal.
+            store.finish_consumer_removal(&id)?;
+        } else {
+            report_consumer_removal(&store, &id)?;
+        }
+    }
+    Ok(())
+}
+pub(super) fn set_enabled(profile: &Profile, id: &str, enabled: bool) -> Result<(), AppError> {
+    let _action = super::ai_operations::action_guard()?;
+    let _mutation = super::mutation_lock()?;
+    recover(profile.root)?;
+    let _guard = super::read_lifecycle()?;
     let mut entries = package::list(profile.root)?;
     let current = entries
         .iter()
-        .find(|entry| entry.manifest.id == id)
+        .find(|p| p.manifest.id == id)
         .ok_or_else(|| invalid("Plugin package is not installed"))?;
-    if current.enabled == enabled {
+    if enabled && current.enabled {
         return Ok(());
     }
     if !enabled {
-        service_host::mutation_allowed_in(profile.store, id)?;
-        if backend::busy(id) {
-            return Err(service_host::busy(
-                "Finish active plugin operations before changing this package",
-            ));
-        }
-    } else if profile.store.claims()?.iter().any(|a| {
-        (a.consumer.package_id == id && a.consumer.digest != current.digest)
-            || (a.provider.package_id == id && a.provider.digest != current.digest)
-    }) {
-        return Err(invalid(
-            "Enable the pinned package version to recover its AI operations",
-        ));
+        drop(_guard);
+        return remove_or_disable(profile, id, false);
     }
-    let entry = entries
+    drop(_guard);
+    let _guard = super::write_lifecycle()?;
+    entries
         .iter_mut()
-        .find(|entry| entry.manifest.id == id)
-        .ok_or_else(|| invalid("Plugin package is not installed"))?;
-    entry.enabled = enabled;
+        .find(|p| p.manifest.id == id)
+        .unwrap()
+        .enabled = true;
     service_graph::validate_enabled(&entries)?;
     package::write_index(profile.root, &entries)
 }
+
 /// The broker-preflight entry used by the native candidate fixture.
 #[cfg(all(test, target_os = "linux"))]
 pub(super) fn install(
@@ -404,18 +613,28 @@ fn install_with(
     preflight: Preflight,
 ) -> Result<package::Installed, AppError> {
     recover(root)?;
-    service_host::candidate_state_allowed_at(
+    let store = Store::open(
         root.parent()
-            .ok_or_else(|| invalid("Plugin profile root is unavailable"))?,
-        &next,
+            .ok_or_else(|| invalid("Plugin profile is unavailable"))?
+            .join("service-state"),
+        crate::service_state::model::Limits::default(),
     )?;
-    if backend::busy(&next.manifest.id) {
-        return Err(service_host::busy(
-            "Finish active plugin operations before upgrading",
-        ));
-    }
     let previous = package::list(root)?;
-    let (proposed, installed) = package::planned_index(&previous, next.clone())?;
+    let disabled = service_graph::replacement_dependents(&previous, &next);
+    let mut compatible_index = previous.clone();
+    for p in &mut compatible_index {
+        if disabled.contains(&p.manifest.id) {
+            p.enabled = false;
+        }
+    }
+    let (proposed, installed) = package::planned_index(&compatible_index, next.clone())?;
+    let dependent_drains = disabled
+        .iter()
+        .map(|id| drain_idle(&store, id))
+        .collect::<Result<Vec<_>, _>>()?;
+    for id in &disabled {
+        backend::retire(id);
+    }
     backend::retire(&next.manifest.id);
     let snapshot = root.join("upgrade-pending");
     fs::create_dir(&snapshot)?;
@@ -447,7 +666,7 @@ fn install_with(
         committed_index: None,
         files: vec![],
     };
-    let result = (|| {
+    let result: Result<package::Installed, AppError> = (|| {
         let data = data_root(root, &next.manifest.id)?;
         for name in names {
             let source = data.join(&name);
@@ -460,6 +679,7 @@ fn install_with(
         }
         write_marker(&snapshot, &upgrade)?;
         sync_directory(root)?;
+        checkpoint("upgrade-prepared")?;
         let validation = snapshot.join("validation");
         fs::create_dir(&validation)?;
         #[cfg(unix)]
@@ -493,6 +713,7 @@ fn install_with(
         upgrade.phase = Phase::Committed;
         upgrade.committed_index = Some(proposed.clone());
         write_marker(&snapshot, &upgrade)?;
+        checkpoint("upgrade-committed")?;
         {
             let _gate = super::LIFECYCLE
                 .write()
@@ -501,6 +722,20 @@ fn install_with(
         }
         upgrade.phase = Phase::Published;
         write_marker(&snapshot, &upgrade)?;
+        checkpoint("upgrade-published")?;
+        reconcile_replacement(
+            &store,
+            &installed,
+            upgrade
+                .previous
+                .iter()
+                .find(|p| p.manifest.id == upgrade.package_id)
+                .map(|p| &p.manifest),
+        )?;
+        for id in &disabled {
+            super::service_bridge::signal_removal_cancellations(&store, id, |_| false)?;
+            report_consumer_removal(&store, id)?;
+        }
         // External journal reconciliation may collect publication proof. It is
         // safe only after the durable commit forbids database rollback.
         // The caller activates after releasing the lifecycle/startup gates.
@@ -512,10 +747,21 @@ fn install_with(
             Ok(installed)
         }
         Err(cause) => {
+            #[cfg(test)]
+            if cause.to_string().contains("injected lifecycle crash") {
+                fence.retain_for_recovery();
+                for drain in &dependent_drains {
+                    drain.retain_for_recovery();
+                }
+                return Err(cause);
+            }
             if matches!(upgrade.phase, Phase::Committed | Phase::Published) {
                 // The marker replacement/flush may have succeeded. Retain its
                 // decision and close admission until forward recovery settles.
                 fence.retain_for_recovery();
+                for drain in &dependent_drains {
+                    drain.retain_for_recovery();
+                }
                 return Err(invalid(format!("Plugin commit requires recovery: {cause}")));
             }
             backend::retire(&next.manifest.id);

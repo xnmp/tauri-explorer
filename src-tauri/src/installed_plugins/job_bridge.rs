@@ -35,6 +35,7 @@ fn opaque(bytes: usize) -> Result<String, AppError> {
 }
 static BOOT: OnceLock<String> = OnceLock::new();
 static RECONCILER: Mutex<Option<std::thread::JoinHandle<()>>> = Mutex::new(None);
+static AUTO_RECONCILER: Mutex<Option<std::thread::JoinHandle<()>>> = Mutex::new(None);
 pub(super) fn origin(label: &str) -> Result<String, AppError> {
     if label.len() > 64
         || !label
@@ -75,6 +76,7 @@ pub(super) fn register(
             origin_window: origin_window.into(),
             revision: 0,
             source_revision: 0,
+            ownership_epoch: 0,
             created_at_ms: timestamp,
             updated_at_ms: timestamp,
             settled_at_ms: None,
@@ -101,6 +103,13 @@ fn emit(record: &JobRecord) {
     backend::emit_job_event(json!({"type":"updated","job":record}));
 }
 fn observe(record: &JobRecord, status: &Value) -> Result<JobRecord, AppError> {
+    observe_in(service_host::store()?, record, status)
+}
+pub(super) fn observe_in(
+    store: &Store,
+    record: &JobRecord,
+    status: &Value,
+) -> Result<JobRecord, AppError> {
     if status["jobId"].as_u64() != Some(record.job_id)
         || status["operationId"].as_str() != Some(&record.operation_id)
     {
@@ -114,7 +123,7 @@ fn observe(record: &JobRecord, status: &Value) -> Result<JobRecord, AppError> {
         {
             JobState::Completed
         }
-        Some("failed") if status["providerExecution"]["state"] == "failed" => JobState::Error,
+        Some("failed") => JobState::Error,
         Some("cancelled") => JobState::Cancelled,
         Some("discarded") => JobState::Discarded,
         Some("running") if phase != "needs_attention" => JobState::Running,
@@ -122,16 +131,24 @@ fn observe(record: &JobRecord, status: &Value) -> Result<JobRecord, AppError> {
         _ if phase == "needs_attention" => JobState::NeedsAttention,
         _ => JobState::Recovering,
     };
+    let phase = if state == JobState::Error && status["providerExecution"]["state"] == "succeeded" {
+        "delivery_failed"
+    } else {
+        phase
+    };
     let output = if state == JobState::Completed {
         status["outputPath"].as_str().map(str::to_owned)
     } else {
         None
     };
-    let message = status["error"].as_str().map(str::to_owned);
-    let current = service_host::store()?
+    let message = status["error"]
+        .as_str()
+        .or_else(|| status["providerExecution"]["error"]["message"].as_str())
+        .map(str::to_owned);
+    let current = store
         .job(&record.job_key)?
         .ok_or_else(|| error("Background job is not retained"))?;
-    if current.phase.as_deref() == Some("stopped")
+    if current.phase.as_deref() == Some("stopped") && state != JobState::Completed
         || current.phase.as_deref() == Some("provider_result_discarded")
             && state != JobState::Discarded
     {
@@ -140,7 +157,7 @@ fn observe(record: &JobRecord, status: &Value) -> Result<JobRecord, AppError> {
     if current.run_id.is_some() && current.run_id != status["runId"].as_i64() {
         return Err(error("Consumer job receipt changed its original Trace run"));
     }
-    service_host::store()?.observe_job(
+    store.observe_job(
         &record.owner,
         &record.job_key,
         status["revision"]
@@ -177,6 +194,30 @@ impl Drop for StatusWorker {
 pub(super) fn schedule_status(broker: Arc<Broker>, record: JobRecord) {
     schedule_reconcile(Some(broker), record);
 }
+/// Lifecycle may adopt a preparation while this callback holds an older job
+/// snapshot. Validate against the same durable row returned by adoption,
+/// before invoking a consumer control or applying its receipt.
+pub(super) fn recovery_job(
+    store: &Store,
+    manifest: &super::package::Manifest,
+    current: &PackageGeneration,
+    record: &JobRecord,
+) -> Result<JobRecord, AppError> {
+    let caller =
+        super::service_bridge::recovery_caller(store, manifest, current, &record.operation_id)?;
+    let recovered = store
+        .job(&record.job_key)?
+        .ok_or_else(|| error("Background operation is no longer retained"))?;
+    if caller.package_id != recovered.owner.package_id
+        || caller.digest != recovered.owner.digest
+        || recovered.operation_id != record.operation_id
+        || recovered.job_id != record.job_id
+    {
+        return Err(error("Consumer package changed"));
+    }
+    Ok(recovered)
+}
+
 fn schedule_reconcile(broker: Option<Arc<Broker>>, record: JobRecord) {
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
     let workers = STATUS_WORKERS.get_or_init(Default::default);
@@ -203,12 +244,12 @@ fn schedule_reconcile(broker: Option<Arc<Broker>>, record: JobRecord) {
                     }
                     CallLease::acquire_method(&record.owner.package_id, "jobs.status")?
                 };
-                let current = broker.generation();
-                if current.package_id != record.owner.package_id
-                    || current.digest != record.owner.digest
-                {
-                    return Err(error("Consumer package changed"));
-                }
+                let record = recovery_job(
+                    service_host::store()?,
+                    broker.manifest(),
+                    &broker.generation(),
+                    &record,
+                )?;
                 let status =
                     broker.call("jobs.status", json!({"operationId":record.operation_id}))?;
                 if status.is_null() {
@@ -246,12 +287,31 @@ fn schedule_reconcile(broker: Option<Arc<Broker>>, record: JobRecord) {
     }
 }
 pub(super) fn event(broker: Arc<Broker>, name: &str, payload: &Value) -> Result<(), AppError> {
+    let store = service_host::store()?;
+    let owner = match payload["operationId"].as_str() {
+        Some(operation) => super::service_bridge::recovery_caller(
+            store,
+            broker.manifest(),
+            &broker.generation(),
+            operation,
+        )?,
+        None => broker.generation(),
+    };
+    event_in(store, &owner, name, payload, |record| {
+        schedule_status(broker.clone(), record)
+    })
+}
+pub(super) fn event_in(
+    store: &Store,
+    owner: &PackageGeneration,
+    name: &str,
+    payload: &Value,
+    mut probe: impl FnMut(JobRecord),
+) -> Result<(), AppError> {
     let Some(operation) = payload["operationId"].as_str() else {
         return Ok(());
     };
-    let owner = broker.generation();
-    let Some(record) = service_host::store()?.job_for_operation(&owner.package_id, operation)?
-    else {
+    let Some(record) = store.job_for_operation(&owner.package_id, operation)? else {
         return Ok(());
     };
     if owner.digest != record.owner.digest
@@ -266,17 +326,17 @@ pub(super) fn event(broker: Arc<Broker>, name: &str, payload: &Value) -> Result<
     {
         return Err(error("Plugin event does not match its durable native job"));
     }
-    if record.phase.as_deref() == Some("stopped") {
+    if record.phase.as_deref() == Some("stopped") && !name.ends_with("-complete") {
         return Ok(());
     }
     if name.ends_with("-progress") {
         if record.state.terminal() {
             return Ok(());
         }
-        let updated = observe(&record, payload)?;
+        let updated = observe_in(store, &record, payload)?;
         emit(&updated);
     } else {
-        schedule_status(broker, record);
+        probe(record);
     }
     Ok(())
 }
@@ -311,17 +371,39 @@ pub(super) fn initialize() -> Result<(), AppError> {
         emit(&record)
     }
     // Snapshot/status reconciliation is unpaid and owns at most eight workers.
-    // Attention records remain retained until an explicit recovery action.
+    // Inactive shared operations recover or settle without user intervention.
     let mut reconciler = RECONCILER
         .lock()
         .map_err(|_| error("Background operation worker ownership is unavailable"))?;
     if reconciler.is_some() {
         return Ok(());
     }
+    let mut automatic = AUTO_RECONCILER
+        .lock()
+        .map_err(|_| error("Automatic AI worker ownership is unavailable"))?;
+    if automatic.is_none() {
+        *automatic = Some(
+            std::thread::Builder::new()
+                .name("native-ai-settlement".into())
+                .spawn(|| {
+                    while !backend::is_closing() {
+                        super::ai_operations::auto_reconcile();
+                        std::thread::sleep(std::time::Duration::from_secs(2));
+                    }
+                })
+                .map_err(|_| error("Automatic AI worker could not start"))?,
+        );
+    }
     let worker = std::thread::Builder::new().name("native-job-reconciler".into()).spawn(|| {
         while !backend::is_closing() {
             if let Ok(snapshot)=service_host::store().and_then(|s|s.snapshot_jobs()) {
                 for record in snapshot.jobs {
+                    // Retention authorizes adoption, not execution. Keep
+                    // automatic discovery alive beyond the attention timeout.
+                    if unacknowledged(&record) && service_host::store().and_then(|s| admitted(s, &record)).is_ok_and(|a| !a) {
+                        schedule_reconcile(None, record);
+                        continue;
+                    }
                     if record.state == JobState::NeedsAttention && unacknowledged(&record) {
                         // Probe only a consumer that is already running, e.g.
                         // after it restarts; never respawn one for attention.
@@ -334,7 +416,7 @@ pub(super) fn initialize() -> Result<(), AppError> {
                         continue;
                     }
                     if now().saturating_sub(record.created_at_ms)>600_000 {
-                        if let Ok(updated)=service_host::store().and_then(|s|s.update_job(&record.owner,&record.job_key,JobState::NeedsAttention,Some("needs_attention".into()),None,record.run_id,Some("Recovery requires attention; the original operation has not been replayed".into()))) {emit(&updated);}
+                        if let Ok(updated)=service_host::store().and_then(|s|s.update_job(&record.owner,&record.job_key,JobState::NeedsAttention,Some("needs_attention".into()),None,record.run_id,Some("Recovery ended without a confirmed result; the original operation has not been replayed".into()))) {emit(&updated);}
                         continue;
                     }
                     schedule_reconcile(None,record);
@@ -347,6 +429,13 @@ pub(super) fn initialize() -> Result<(), AppError> {
     Ok(())
 }
 pub(super) fn shutdown() {
+    let automatic = AUTO_RECONCILER
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .take();
+    if let Some(worker) = automatic {
+        let _ = worker.join();
+    }
     let worker = {
         RECONCILER
             .lock()
@@ -377,11 +466,12 @@ pub(super) fn cancel(key: &str) -> Result<Value, AppError> {
         ));
     }
     let broker = backend::ensure(&record.owner.package_id)?;
-    if broker.generation().digest != record.owner.digest {
-        return Err(error(
-            "Enable the original consumer package before cancelling this operation",
-        ));
-    }
+    let record = recovery_job(
+        service_host::store()?,
+        broker.manifest(),
+        &broker.generation(),
+        &record,
+    )?;
     let _lease = {
         let _gate = super::read_lifecycle()?;
         if !broker.is_active() {
@@ -404,15 +494,22 @@ pub(super) fn resume(key: &str) -> Result<Value, AppError> {
     if record.state.terminal() {
         return Ok(json!(record));
     }
-    if record.phase.as_deref() == Some("stopped") {
+    if record.phase.as_deref() == Some("stopped")
+        && !service_host::store()?
+            .get(&record.owner.package_id, &record.operation_id)?
+            .map(|a| service_host::store()?.success_known(&a))
+            .transpose()?
+            .unwrap_or(false)
+    {
         return Err(error("Automatic recovery was explicitly stopped; its unknown execution evidence remains retained"));
     }
     let broker = backend::ensure(&record.owner.package_id)?;
-    if broker.generation().digest != record.owner.digest {
-        return Err(error(
-            "Enable the original consumer package before recovering this operation",
-        ));
-    }
+    let record = recovery_job(
+        service_host::store()?,
+        broker.manifest(),
+        &broker.generation(),
+        &record,
+    )?;
     let _lease = {
         let _gate = super::read_lifecycle()?;
         if !broker.is_active() {
@@ -420,22 +517,64 @@ pub(super) fn resume(key: &str) -> Result<Value, AppError> {
         }
         CallLease::acquire_method(&record.owner.package_id, "jobs.resumeOperation")?
     };
-    broker.call(
-        "jobs.resumeOperation",
-        json!({"operationId":record.operation_id}),
-    )?;
-    let updated = service_host::store()?.update_job(
-        &record.owner,
-        &record.job_key,
-        JobState::Recovering,
-        Some("recovering".into()),
-        None,
-        record.run_id,
-        None,
-    )?;
-    emit(&updated);
+    let updated = resume_in(service_host::store()?, &record, || {
+        broker
+            .call(
+                "jobs.resumeOperation",
+                json!({"operationId":record.operation_id}),
+            )
+            .map(|_| ())
+    })?;
     schedule_status(broker, updated.clone());
     Ok(json!(updated))
+}
+
+/// Resume the original consumer protocol, retaining the durable stop guard
+/// and presentation update in the host path used by both RPC transports.
+pub(super) fn resume_in(
+    store: &Store,
+    record: &JobRecord,
+    invoke: impl FnOnce() -> Result<(), AppError>,
+) -> Result<JobRecord, AppError> {
+    let current = store
+        .job(&record.job_key)?
+        .ok_or_else(|| error("Background operation is no longer retained"))?;
+    if current.state.terminal() {
+        return Ok(current);
+    }
+    if current.phase.as_deref() == Some("stopped")
+        && !store
+            .get(&current.owner.package_id, &current.operation_id)?
+            .map(|a| store.success_known(&a))
+            .transpose()?
+            .unwrap_or(false)
+    {
+        return Err(error("Automatic recovery was explicitly stopped; its unknown execution evidence remains retained"));
+    }
+    invoke()?;
+    // A synchronous consumer can acknowledge during the RPC. Re-read its
+    // durable result before updating presentation, rather than regressing it.
+    let current = store
+        .job(&record.job_key)?
+        .ok_or_else(|| error("Background operation is no longer retained"))?;
+    if current.state.terminal() {
+        return Ok(current);
+    }
+    let updated = if current.phase.as_deref() == Some("stopped") {
+        current
+    } else {
+        store.update_job(
+            &current.owner,
+            &current.job_key,
+            JobState::Recovering,
+            Some("recovering".into()),
+            None,
+            current.run_id,
+            None,
+        )?
+    };
+    emit(&updated);
+    Ok(updated)
 }
 
 /// The consumer never acknowledged this operation: no receipt revision was
@@ -458,15 +597,9 @@ const DISPATCH_GRACE_MS: u64 = 30_000;
 const NOT_ACCEPTED: &str =
     "Image request was not accepted; nothing was started. Review its inputs and connection settings before retrying";
 fn settle(store: &Store, record: &JobRecord) -> Result<JobRecord, AppError> {
-    store.update_job(
-        &record.owner,
-        &record.job_key,
-        JobState::Error,
-        Some("not_accepted".into()),
-        None,
-        None,
-        Some(NOT_ACCEPTED.into()),
-    )
+    store
+        .settle_unaccepted_job(record, NOT_ACCEPTED)?
+        .ok_or_else(|| error("Unaccepted job authority changed before settlement"))
 }
 fn admitted(store: &Store, record: &JobRecord) -> Result<bool, AppError> {
     Ok(store
@@ -477,7 +610,7 @@ fn admitted(store: &Store, record: &JobRecord) -> Result<bool, AppError> {
 /// first fences the original operation ID, so no late or repeated start can
 /// accept it, then must still report it unknown. A service admission means
 /// the provider may have work: such a job is never settled here.
-fn settle_unaccepted(
+pub(super) fn settle_unaccepted(
     store: &Store,
     record: &JobRecord,
     status: &Value,
@@ -485,7 +618,13 @@ fn settle_unaccepted(
 ) -> Result<Option<JobRecord>, AppError> {
     let eligible = |store: &Store| -> Result<Option<JobRecord>, AppError> {
         match store.job(&record.job_key)? {
-            Some(current) if unacknowledged(&current) && !admitted(store, &current)? => {
+            Some(current)
+                if current.owner == record.owner
+                    && current.ownership_epoch == record.ownership_epoch
+                    && current.revision == record.revision
+                    && unacknowledged(&current)
+                    && !admitted(store, &current)? =>
+            {
                 Ok(Some(current))
             }
             _ => Ok(None),
@@ -505,7 +644,13 @@ fn settle_unaccepted(
 /// A start refused before its request reached the backend is definite.
 fn settle_unsent(store: &Store, record: &JobRecord) -> Result<Option<JobRecord>, AppError> {
     match store.job(&record.job_key)? {
-        Some(current) if unacknowledged(&current) && !admitted(store, &current)? => {
+        Some(current)
+            if current.owner == record.owner
+                && current.ownership_epoch == record.ownership_epoch
+                && current.revision == record.revision
+                && unacknowledged(&current)
+                && !admitted(store, &current)? =>
+        {
             settle(store, &current).map(Some)
         }
         _ => Ok(None),
@@ -583,6 +728,7 @@ mod tests {
                 origin_window: "main.x".into(),
                 revision: 0,
                 source_revision: 0,
+                ownership_epoch: 0,
                 created_at_ms: created,
                 updated_at_ms: created,
                 settled_at_ms: None,
@@ -756,5 +902,148 @@ mod tests {
         assert!(!store.busy("xnmp.trace-explorer").unwrap());
         // Settling again is a no-op, never a second terminal transition.
         assert!(settle_unsent(&store, &record).unwrap().is_none());
+    }
+
+    #[test]
+    fn a_compatible_retained_preparation_converges_from_missing_consumer_status() {
+        for capture in 0..=2 {
+            let (dir, store, record) = fixture();
+            if capture != 0 {
+                let path = dir.path().join("input.png");
+                image::RgbaImage::from_pixel(2, 3, image::Rgba([12, 34, 56, 255]))
+                    .save(&path)
+                    .unwrap();
+                store
+                    .capture(
+                        &record.owner,
+                        &record.operation_id,
+                        vec![crate::service_state::model::CaptureInput {
+                            path: path.to_string_lossy().into(),
+                            expected_digest: None,
+                        }],
+                    )
+                    .unwrap();
+                if capture == 2 {
+                    let conn =
+                        rusqlite::Connection::open(dir.path().join("service-state/ledger.sqlite"))
+                            .unwrap();
+                    conn.execute("UPDATE operations SET captures=NULL", [])
+                        .unwrap();
+                    conn.execute("UPDATE artifacts SET status='capturing'", [])
+                        .unwrap();
+                }
+            }
+            store
+                .abandon_package_work_deferred(
+                    &record.owner.package_id,
+                    |_| false,
+                    |_, _| Some("d".repeat(64)),
+                )
+                .unwrap();
+            let replacement = PackageGeneration {
+                digest: "d".repeat(64),
+                incarnation: 8,
+                ..record.owner.clone()
+            };
+            store
+                .adopt_preparation(&replacement, &record.operation_id)
+                .unwrap();
+            let record = store.job(&record.job_key).unwrap().unwrap();
+            let mut calls = vec![];
+            let settled =
+                settle_unaccepted(&store, &record, &Value::Null, &mut unknown(&mut calls))
+                    .unwrap()
+                    .expect("retention must not leave an unaccepted job active forever");
+            assert_eq!(calls, ["jobs.cancelOperation", "jobs.status"]);
+            assert_eq!(settled.state, JobState::Error);
+            assert_eq!(settled.phase.as_deref(), Some("not_accepted"));
+            assert!(!store
+                .preparation_retained(&record.owner.package_id, &record.operation_id)
+                .unwrap());
+            let conn =
+                rusqlite::Connection::open(dir.path().join("service-state/ledger.sqlite")).unwrap();
+            assert_eq!(
+                conn.query_row("SELECT coalesce(sum(bytes),0) FROM artifacts", [], |r| r
+                    .get::<_, i64>(0))
+                    .unwrap(),
+                0
+            );
+            assert_eq!(
+                std::fs::read_dir(dir.path().join("service-state/bytes"))
+                    .unwrap()
+                    .count(),
+                0
+            );
+            let late = dir.path().join("late.png");
+            image::RgbaImage::from_pixel(2, 3, image::Rgba([12, 34, 56, 255]))
+                .save(&late)
+                .unwrap();
+            assert!(store
+                .capture(
+                    &record.owner,
+                    &record.operation_id,
+                    vec![crate::service_state::model::CaptureInput {
+                        path: late.to_string_lossy().into(),
+                        expected_digest: None
+                    }]
+                )
+                .is_err());
+        }
+    }
+    #[test]
+    fn old_owner_unknown_responses_cannot_settle_an_adopted_preparation() {
+        let (_dir, store, record) = fixture();
+        store
+            .abandon_package_work_deferred(
+                &record.owner.package_id,
+                |_| false,
+                |_, _| Some("d".repeat(64)),
+            )
+            .unwrap();
+        let replacement = PackageGeneration {
+            digest: "d".repeat(64),
+            incarnation: 8,
+            ..record.owner.clone()
+        };
+        assert!(
+            settle_unaccepted(&store, &record, &Value::Null, &mut |method| {
+                if method == "jobs.cancelOperation" {
+                    store.adopt_preparation(&replacement, &record.operation_id)?;
+                }
+                Ok(Value::Null)
+            })
+            .unwrap()
+            .is_none()
+        );
+        assert!(settle_unsent(&store, &record).unwrap().is_none());
+        let current = store.job(&record.job_key).unwrap().unwrap();
+        assert_eq!(current.owner, replacement);
+        assert_eq!(current.state, JobState::Accepting);
+    }
+
+    #[test]
+    fn unaccepted_settlement_rechecks_a_concurrent_acknowledgement() {
+        let (_dir, store, record) = fixture();
+        store
+            .observe_job(
+                &record.owner,
+                &record.job_key,
+                1,
+                JobState::Running,
+                Some("running".into()),
+                None,
+                None,
+                None,
+                None,
+            )
+            .unwrap();
+        assert!(store
+            .settle_unaccepted_job(&record, NOT_ACCEPTED)
+            .unwrap()
+            .is_none());
+        assert_eq!(
+            store.job(&record.job_key).unwrap().unwrap().state,
+            JobState::Running
+        );
     }
 }

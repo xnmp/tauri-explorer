@@ -55,9 +55,13 @@ pub(crate) fn sync(directory: &Path) -> io::Result<()> {
 /// Flushes an existing regular file by path. Windows only flushes through a
 /// writable handle, so a read-only handle used to verify bytes cannot also
 /// serve as the durability barrier there.
-#[cfg(any(not(unix), test))]
 pub(crate) fn sync_file(path: &Path) -> io::Result<()> {
+    #[cfg(test)]
+    if FAIL_FILE_SYNC.with(|fail| fail.replace(false)) {
+        return Err(io::Error::other("injected file sync failure"));
+    }
     let mut options = std::fs::OpenOptions::new();
+    options.read(true).write(true);
     #[cfg(not(windows))]
     {
         if std::fs::symlink_metadata(path)?.file_type().is_symlink() {
@@ -66,14 +70,16 @@ pub(crate) fn sync_file(path: &Path) -> io::Result<()> {
                 "durable file must not be a link",
             ));
         }
-        options.read(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK | libc::O_NOCTTY);
+        }
     }
     #[cfg(windows)]
     {
         use std::os::windows::fs::OpenOptionsExt;
         options
-            .read(true)
-            .write(true)
             .share_mode(0x1 | 0x2 | 0x4)
             .custom_flags(0x0020_0000);
     }
@@ -92,7 +98,28 @@ pub(crate) fn sync_file(path: &Path) -> io::Result<()> {
             "durable file must be a regular file",
         ));
     }
+    #[cfg(test)]
+    {
+        // Keep the probe non-mutating; sync_all enforces writable access on Windows.
+        use std::io::Write;
+        (&handle).write_all(&[])?;
+        FILE_SYNCS.with(|paths| paths.borrow_mut().push(path.to_path_buf()));
+    }
     handle.sync_all()
+}
+
+#[cfg(test)]
+thread_local! {
+    static FILE_SYNCS: std::cell::RefCell<Vec<std::path::PathBuf>> = const { std::cell::RefCell::new(Vec::new()) };
+    static FAIL_FILE_SYNC: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+#[cfg(test)]
+pub(crate) fn fail_next_file_sync() {
+    FAIL_FILE_SYNC.with(|fail| fail.set(true));
+}
+#[cfg(test)]
+pub(crate) fn take_file_syncs() -> Vec<std::path::PathBuf> {
+    FILE_SYNCS.with(|paths| std::mem::take(&mut *paths.borrow_mut()))
 }
 
 #[cfg(test)]
@@ -120,6 +147,7 @@ mod tests {
         let file = root.path().join("file");
         std::fs::write(&file, b"bytes").unwrap();
         super::sync_file(&file).unwrap();
+        assert_eq!(std::fs::read(&file).unwrap(), b"bytes");
         assert!(super::sync_file(root.path()).is_err());
         assert!(super::sync_file(&root.path().join("absent")).is_err());
     }

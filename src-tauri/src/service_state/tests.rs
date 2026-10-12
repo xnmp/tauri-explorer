@@ -35,6 +35,245 @@ fn png(path: &Path) {
     let image = image::RgbaImage::from_pixel(2, 3, image::Rgba([12, 34, 56, 255]));
     image.save(path).unwrap();
 }
+fn charged(s: &Store) -> u64 {
+    s.connect()
+        .unwrap()
+        .query_row("SELECT coalesce(sum(bytes),0) FROM artifacts", [], |r| {
+            r.get::<_, i64>(0)
+        })
+        .unwrap() as u64
+}
+#[test]
+fn review_partial_stage_unknown_settles_and_releases_capacity() {
+    let (_root, s) = store();
+    let captured = capture(&s, _root.path(), "partial");
+    s.reserve(admission(
+        "partial",
+        captured.into_iter().map(|x| x.artifact).collect(),
+    ))
+    .unwrap();
+    s.forwarding(&owner("consumer", 1), "partial").unwrap();
+    let stage = s
+        .stage(&owner("provider", 1), "consumer", "partial")
+        .unwrap();
+    fs::write(&stage.path, b"\x89PNG\r\n\x1a\npartial").unwrap();
+    let mut r = provider_receipt("partial", 1, None);
+    r["execution"] = serde_json::json!({"state":"unknown","error":{"code":"interrupted","message":"crashed","correlationId":null}});
+    s.observe_receipt(&owner("provider", 1), "consumer", "partial", 1, r)
+        .unwrap();
+    s.auto_settle_operation("consumer", "partial", true)
+        .unwrap();
+    s.gc().unwrap();
+    assert!(s.claims().unwrap().is_empty());
+    assert_eq!(charged(&s), 0);
+    assert!(!Path::new(&stage.path).exists());
+    assert!(s
+        .claim_forwarding(&owner("consumer", 1), "partial")
+        .is_err());
+}
+#[test]
+fn review_missing_succeeded_output_retires_unused_capacity_without_restart() {
+    let (_root, s) = store();
+    s.reserve(admission("missing-success", vec![])).unwrap();
+    s.forwarding(&owner("consumer", 1), "missing-success")
+        .unwrap();
+    let mut r = provider_receipt(
+        "missing-success",
+        1,
+        Some(ArtifactDescriptor {
+            handle: "a".repeat(48),
+            sha256: "a".repeat(64),
+            byte_length: 1,
+            media_type: "image/png".into(),
+        }),
+    );
+    r["delivery"] = serde_json::json!({"state":"unavailable","reason":"storage_unavailable"});
+    s.observe_receipt(&owner("provider", 1), "consumer", "missing-success", 1, r)
+        .unwrap();
+    for _ in 0..3 {
+        assert!(s
+            .recover_original_output(&owner("provider", 1), "consumer", "missing-success")
+            .unwrap()
+            .is_none());
+        s.gc().unwrap();
+        assert_eq!(charged(&s), 0);
+    }
+    assert!(s
+        .provider_receipt("consumer", "missing-success")
+        .unwrap()
+        .is_some_and(|r| r["execution"]["state"] == "succeeded"));
+}
+#[test]
+fn review_gc_notfound_retry_flushes_unlink_before_deleting_accounting() {
+    let (_root, s) = store();
+    let d = output(&s, "unlink-sync");
+    let bytes = s.root.join("bytes").join(format!("{}.bin", d.handle));
+    s.test_fs.faults(false, true);
+    s.release(
+        &owner("provider", 1),
+        "consumer",
+        "unlink-sync",
+        "discarded",
+        None,
+    )
+    .unwrap();
+    // First unlink succeeds without a durable directory-entry removal. Retry
+    // encounters NotFound, but must still establish the missing barrier.
+    s.test_fs.faults(false, false);
+    s.gc().unwrap();
+    s.test_fs.power_loss();
+    assert!(
+        !bytes.exists(),
+        "unaccounted artifact returned after power loss"
+    );
+    assert_eq!(charged(&s), 0);
+}
+#[test]
+fn model_regression_seal_retry_flushes_missing_stage_before_shrinking_quota() {
+    let (_root, s) = store();
+    s.reserve(admission("seal-sync", vec![])).unwrap();
+    s.forwarding(&owner("consumer", 1), "seal-sync").unwrap();
+    let stage = s
+        .stage(&owner("provider", 1), "consumer", "seal-sync")
+        .unwrap();
+    png(Path::new(&stage.path));
+    s.test_fs.faults(false, true);
+    assert!(s
+        .seal(
+            &owner("provider", 1),
+            "consumer",
+            "seal-sync",
+            &stage.handle,
+            "image/png"
+        )
+        .is_err());
+    assert!(charged(&s) >= fs::metadata(&stage.path).map(|m| m.len()).unwrap_or(0));
+    s.test_fs.faults(false, false);
+    let d = s
+        .seal(
+            &owner("provider", 1),
+            "consumer",
+            "seal-sync",
+            &stage.handle,
+            "image/png",
+        )
+        .unwrap();
+    s.test_fs.power_loss();
+    assert!(
+        !Path::new(&stage.path).exists(),
+        "duplicate stage returned after quota retirement"
+    );
+    assert_eq!(charged(&s), d.byte_length);
+}
+#[test]
+fn model_regression_missing_sealed_unpublished_bytes_do_not_pin_unknown() {
+    let (_root, s) = store();
+    s.reserve(admission("lost-unpublished", vec![])).unwrap();
+    s.forwarding(&owner("consumer", 1), "lost-unpublished")
+        .unwrap();
+    let stage = s
+        .stage(&owner("provider", 1), "consumer", "lost-unpublished")
+        .unwrap();
+    png(Path::new(&stage.path));
+    let d = s
+        .seal(
+            &owner("provider", 1),
+            "consumer",
+            "lost-unpublished",
+            &stage.handle,
+            "image/png",
+        )
+        .unwrap();
+    let path = s.root.join("bytes").join(format!("{}.bin", d.handle));
+    fs::remove_file(path).unwrap();
+    crate::durable_dir::sync(&s.root.join("bytes")).unwrap();
+    let mut r = provider_receipt("lost-unpublished", 1, None);
+    r["execution"] = serde_json::json!({"state":"unknown","error":{"code":"interrupted","message":"unconfirmed","correlationId":null}});
+    s.observe_receipt(&owner("provider", 1), "consumer", "lost-unpublished", 1, r)
+        .unwrap();
+    s.auto_settle_operation("consumer", "lost-unpublished", true)
+        .unwrap();
+    assert!(s.claims().unwrap().is_empty());
+    assert_eq!(charged(&s), 0);
+}
+#[test]
+fn model_regression_missing_success_releases_input_and_operation_capacity() {
+    let (root, s) = store();
+    let captures = capture(&s, root.path(), "lost-paid");
+    s.reserve(admission(
+        "lost-paid",
+        captures.into_iter().map(|x| x.artifact).collect(),
+    ))
+    .unwrap();
+    s.forwarding(&owner("consumer", 1), "lost-paid").unwrap();
+    let mut r = provider_receipt(
+        "lost-paid",
+        1,
+        Some(ArtifactDescriptor {
+            handle: "a".repeat(48),
+            sha256: "a".repeat(64),
+            byte_length: 1,
+            media_type: "image/png".into(),
+        }),
+    );
+    r["delivery"] = serde_json::json!({"state":"unavailable","reason":"storage_unavailable"});
+    s.observe_receipt(&owner("provider", 1), "consumer", "lost-paid", 1, r)
+        .unwrap();
+    assert!(s
+        .recover_original_output(&owner("provider", 1), "consumer", "lost-paid")
+        .unwrap()
+        .is_none());
+    assert_eq!(charged(&s), 0);
+    assert!(s.claims().unwrap().is_empty());
+    drop(s);
+    let s = Store::open(
+        root.path().join("service"),
+        Limits {
+            operations: 1,
+            per_consumer: 1,
+            ..Limits::default()
+        },
+    )
+    .unwrap();
+    s.reserve(admission("next-paid", vec![]))
+        .expect("inactive delivery failure cannot occupy an operation slot");
+    assert!(s
+        .provider_receipt("consumer", "lost-paid")
+        .unwrap()
+        .is_some_and(|r| r["execution"]["state"] == "succeeded"));
+}
+#[test]
+fn model_regression_gc_cannot_collect_an_active_original_recovery_writer() {
+    let (root, s) = store();
+    s.reserve(admission("original-writer", vec![])).unwrap();
+    s.forwarding(&owner("consumer", 1), "original-writer")
+        .unwrap();
+    let mut r = provider_receipt("original-writer", 1, None);
+    r["execution"] = serde_json::json!({"state":"unknown","error":{"code":"interrupted","message":"unconfirmed","correlationId":null}});
+    s.observe_receipt(&owner("provider", 1), "consumer", "original-writer", 1, r)
+        .unwrap();
+    s.auto_settle_operation("consumer", "original-writer", true)
+        .unwrap();
+    let a = s.get("consumer", "original-writer").unwrap().unwrap();
+    let _permit = s.output_recovery_guard(&a).unwrap();
+    let stage = s
+        .stage(&owner("provider", 1), "consumer", "original-writer")
+        .unwrap();
+    fs::write(&stage.path, b"partial original").unwrap();
+    // Another ledger handle must respect the writer admitted by this one.
+    let other = Store::open(root.path().join("service"), Limits::default()).unwrap();
+    other.gc().unwrap();
+    assert_eq!(fs::read(&stage.path).unwrap(), b"partial original");
+    png(Path::new(&stage.path));
+    s.seal(
+        &owner("provider", 1),
+        "consumer",
+        "original-writer",
+        &stage.handle,
+        "image/png",
+    )
+    .expect("original writer lost its reserved publication");
+}
 fn capture(s: &Store, root: &Path, op: &str) -> Vec<CapturedArtifact> {
     let path = root.join(format!("{op}.png"));
     png(&path);
@@ -72,6 +311,118 @@ fn output(s: &Store, op: &str) -> ArtifactDescriptor {
     )
     .unwrap();
     d
+}
+#[test]
+fn review_removal_fences_seal_paused_before_capacity_reservation() {
+    use std::sync::{Arc, Barrier};
+    let (_root, s) = store();
+    let s = Arc::new(s);
+    s.reserve(admission("late-seal", vec![])).unwrap();
+    s.forwarding(&owner("consumer", 1), "late-seal").unwrap();
+    let stage = s
+        .stage(&owner("provider", 1), "consumer", "late-seal")
+        .unwrap();
+    png(Path::new(&stage.path));
+    let entered = Arc::new(Barrier::new(2));
+    let resume = Arc::new(Barrier::new(2));
+    *s.pause_output_reservation.lock().unwrap() = Some((entered.clone(), resume.clone()));
+    let worker = {
+        let s = s.clone();
+        let handle = stage.handle.clone();
+        std::thread::spawn(move || {
+            s.seal(
+                &owner("provider", 1),
+                "consumer",
+                "late-seal",
+                &handle,
+                "image/png",
+            )
+        })
+    };
+    entered.wait();
+    s.abandon_package_outputs("consumer").unwrap();
+    resume.wait();
+    let rejected = worker.join().unwrap().unwrap_err().to_string();
+    assert!(
+        rejected.contains("output capacity requires an undisposed admitted artifact"),
+        "reservation must reject removal before byte publication: {rejected}"
+    );
+    assert!(
+        !Path::new(&stage.path).exists(),
+        "lease drop must collect retired stage"
+    );
+    assert!(
+        !s.root
+            .join("bytes")
+            .join(format!("{}.bin", stage.handle))
+            .exists(),
+        "removed work must not publish bytes"
+    );
+    assert_eq!(
+        s.connect()
+            .unwrap()
+            .query_row("SELECT coalesce(sum(bytes),0) FROM artifacts", [], |r| r
+                .get::<_, i64>(0))
+            .unwrap(),
+        0
+    );
+}
+
+#[test]
+fn review_removal_keeps_held_bytes_charged_until_lease_drop() {
+    let (root, _) = store();
+    let s = Store::open(
+        root.path().join("limited"),
+        Limits {
+            disk_bytes: 100 * 1024 * 1024,
+            ..Limits::default()
+        },
+    )
+    .unwrap();
+    let d = output(&s, "held-output");
+    let path = s.root.join("bytes").join(format!("{}.bin", d.handle));
+    let lease = s.hold_artifact_io(&d.handle).unwrap();
+    s.abandon_package_outputs("consumer").unwrap();
+    assert!(path.exists());
+    assert!(
+        matches!(s.reserve(admission("next", vec![])), Err(crate::error::AppError::Service { code, .. }) if code == "storage_full"),
+        "bytes still on disk consume quota"
+    );
+    drop(lease);
+    assert!(
+        !path.exists(),
+        "lease drop retries collection without a restart"
+    );
+    s.reserve(admission("next", vec![]))
+        .expect("deleted bytes release quota");
+}
+
+#[test]
+fn review_unremovable_output_keeps_quota_and_next_sweep_retries() {
+    let (root, _) = store();
+    let s = Store::open(
+        root.path().join("limited"),
+        Limits {
+            disk_bytes: 100 * 1024 * 1024,
+            ..Limits::default()
+        },
+    )
+    .unwrap();
+    let d = output(&s, "unremovable");
+    let path = s.root.join("bytes").join(format!("{}.bin", d.handle));
+    // A portable deletion failure, including when tests run as root.
+    fs::remove_file(&path).unwrap();
+    fs::create_dir(&path).unwrap();
+    fs::write(path.join("held"), b"image").unwrap();
+    s.abandon_package_outputs("consumer").unwrap();
+    assert!(
+        matches!(s.reserve(admission("next", vec![])), Err(crate::error::AppError::Service { code, .. }) if code == "storage_full")
+    );
+    fs::remove_dir_all(&path).unwrap();
+    fs::write(&path, b"image").unwrap();
+    s.gc().unwrap();
+    assert!(!path.exists());
+    s.reserve(admission("next", vec![])).unwrap();
 }
 #[test]
 fn durable_admission_idempotency_and_forwarding_never_reverts() {
@@ -355,7 +706,7 @@ fn unknown_outcomes_hold_operation_capacity_until_recovery_is_stopped() {
         .unwrap_err()
         .to_string();
     assert!(refused.contains("operation capacity reached"), "{refused}");
-    assert!(refused.contains("AI Operations"), "{refused}");
+    assert!(!refused.contains("resolve"), "{refused}");
     assert!(s.get("consumer", "next").unwrap().is_none());
     s.release_execution_after_attention(&owner("provider", 1), "consumer", "unknown", true)
         .unwrap();
@@ -381,6 +732,7 @@ fn stop_recovery_commits_execution_release_and_presentation_policy_together() {
             origin_window: "main".into(),
             revision: 0,
             source_revision: 0,
+            ownership_epoch: 0,
             created_at_ms: 1,
             updated_at_ms: 1,
             settled_at_ms: None,
@@ -1218,6 +1570,74 @@ fn startup_collects_crash_left_temporary_bytes_only_after_durable_release() {
     );
 }
 #[test]
+fn compatible_preparation_retention_joins_package_digest_across_incarnations() {
+    use super::job::{JobRecord, JobState};
+    for same_digest in [false, true] {
+        let (root, s) = store();
+        let op = "retained-preparation";
+        let job = s
+            .register_job(JobRecord {
+                job_key: "1".repeat(48),
+                owner: owner("consumer", 1),
+                operation_id: op.into(),
+                job_id: 1,
+                kind: "openai-image".into(),
+                label: "generated.png".into(),
+                origin_window: "main".into(),
+                revision: 0,
+                source_revision: 0,
+                ownership_epoch: 0,
+                created_at_ms: 1,
+                updated_at_ms: 1,
+                settled_at_ms: None,
+                estimate_key: None,
+                state: JobState::Accepting,
+                phase: None,
+                output_path: None,
+                run_id: None,
+                error: None,
+            })
+            .unwrap();
+        let mut captured_owner = owner("consumer", 2);
+        if !same_digest {
+            captured_owner.digest = "b".repeat(64);
+        }
+        let source = root.path().join("source.png");
+        png(&source);
+        let captured = s
+            .capture(
+                &captured_owner,
+                op,
+                vec![CaptureInput {
+                    path: source.to_string_lossy().into(),
+                    expected_digest: None,
+                }],
+            )
+            .unwrap();
+        let path = s
+            .read(&captured_owner, "consumer", op, &captured[0].artifact)
+            .unwrap()
+            .path;
+        let original = fs::read(&path).unwrap();
+        s.abandon_package_work_deferred("consumer", |_| false, |_, _| Some("c".repeat(64)))
+            .unwrap();
+        s.gc().unwrap();
+        if same_digest {
+            assert_eq!(fs::read(&path).unwrap(), original);
+            assert_eq!(
+                s.job(&job.job_key).unwrap().unwrap().state,
+                JobState::Accepting
+            );
+        } else {
+            assert!(
+                !Path::new(&path).exists(),
+                "mismatched digest retained input custody"
+            );
+        }
+    }
+}
+
+#[test]
 fn dead_owner_completed_capture_without_admission_releases_busy_and_bytes() {
     let (root, s) = store();
     let captured = capture(&s, root.path(), "unreserved");
@@ -1407,10 +1827,11 @@ fn durable_observation_retries_interrupted_phase_transition_without_regressing()
             false
         )
         .is_err());
-    assert_eq!(
-        s.get("consumer", "observed").unwrap().unwrap().phase,
-        AdmissionPhase::Accepted
-    );
+    // Success and its custody projection now commit together. A failed
+    // follow-up terminal call cannot hide the already deliverable output.
+    assert!(s
+        .read(&owner("consumer", 2), "consumer", "observed", &d)
+        .is_ok());
     drop(s);
     let s = Store::open(root.path().join("service"), Limits::default()).unwrap();
     assert_eq!(
@@ -2166,4 +2587,41 @@ fn proven_success_can_begin_its_original_reserved_stage_after_remote_checkpoint(
     s.release(&owner("provider", 1), "consumer", op, "discarded", None)
         .unwrap();
     assert!(s.stage(&owner("provider", 1), "consumer", op).is_err());
+}
+
+#[test]
+fn tenth_orphaned_recapture_artifacts_are_collected_by_gc_and_removal() {
+    for removal in [false, true] {
+        let (root, s) = store();
+        let captured = capture(&s, root.path(), "recapture");
+        let path = s
+            .read(
+                &owner("consumer", 1),
+                "consumer",
+                "recapture",
+                &captured[0].artifact,
+            )
+            .unwrap()
+            .path;
+        // Recapture committed retirement, then crashed before replacement insertion.
+        let conn = s.connect().unwrap();
+        conn.execute(
+            "DELETE FROM operations WHERE consumer='consumer' AND operation='recapture'",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "UPDATE artifacts SET status=?1 WHERE consumer='consumer' AND operation='recapture'",
+            [if removal { "capturing" } else { "released" }],
+        )
+        .unwrap();
+        assert!(charged(&s) > 0);
+        if removal {
+            s.abandon_package_operations_deferred("consumer", |_| false)
+                .unwrap();
+        }
+        s.gc().unwrap();
+        assert!(!Path::new(&path).exists());
+        assert_eq!(charged(&s), 0);
+    }
 }

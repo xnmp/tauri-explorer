@@ -1,8 +1,34 @@
 //! Pure structural validation before a provider receipt can change ownership.
-use super::model::{Admission, ArtifactDescriptor};
+use super::model::{Admission, AdmissionPhase, ArtifactDescriptor};
 use crate::error::AppError;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+/// Host policy never starts a request. Recovery only drives an existing result.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum AutoSettlement {
+    Recover,
+    Settle,
+    Leave,
+}
+pub(crate) fn auto_settlement(
+    _state: AdmissionPhase,
+    execution: &str,
+    _delivery: &str,
+    active: bool,
+) -> AutoSettlement {
+    if active {
+        return AutoSettlement::Leave;
+    }
+    // A successful execution is never automatically discarded, even when
+    // delivery is missing, corrupt, or already explicitly disposed. Only the
+    // original handoff/recovery may advance it; later passes silently retry.
+    if execution == "succeeded" {
+        AutoSettlement::Recover
+    } else {
+        AutoSettlement::Settle
+    }
+}
+
 /// A user may dismiss an operation only when nothing remains to recover:
 /// recovery was explicitly stopped, the provider's outcome is unknown and it
 /// holds no retained output. A succeeded execution keeps its bytes until
@@ -346,13 +372,20 @@ pub(crate) fn validate(value: &Value, admission: &Admission) -> Result<Value, Ap
 }
 pub(crate) fn validate_transition(previous: &Value, next: &Value) -> Result<(), AppError> {
     let reject = || AppError::Other("Image receipt conflicts with its durable outcome".into());
+    // Unknown fences replay; it does not disprove a delayed original result.
+    // Only authoritative success can refine it, never a new execution start.
+    let late_success =
+        previous["execution"]["state"] == "unknown" && next["execution"]["state"] == "succeeded";
     if let Some(d) = previous.get("diagnostics") {
         let n = &next["diagnostics"];
         if d["kind"] != n["kind"]
             || d["threadId"] != n["threadId"]
-            || (d["explanation"].is_object() && d["explanation"] != n["explanation"])
+            || (!late_success
+                && d["explanation"].is_object()
+                && d["explanation"] != n["explanation"])
             || (previous["execution"]["state"] != "running"
                 && previous["execution"]["state"] != "accepted"
+                && !late_success
                 && d != n)
         {
             return Err(reject());
@@ -363,7 +396,8 @@ pub(crate) fn validate_transition(previous: &Value, next: &Value) -> Result<(), 
     if matches!(
         before,
         Some("succeeded" | "failed" | "cancelled" | "unknown")
-    ) && previous["execution"] != next["execution"]
+    ) && !late_success
+        && previous["execution"] != next["execution"]
     {
         return Err(reject());
     }
@@ -478,6 +512,63 @@ mod adapter_tests {
             long.as_str(),
         ] {
             assert!(!adapter(bad), "{bad}");
+        }
+    }
+}
+
+#[cfg(test)]
+mod auto_settlement_tests {
+    use super::*;
+    #[test]
+    fn every_state_execution_delivery_and_activity_combination() {
+        for phase in [
+            AdmissionPhase::Reserved,
+            AdmissionPhase::Forwarding,
+            AdmissionPhase::Accepted,
+            AdmissionPhase::Terminal,
+            AdmissionPhase::Released,
+        ] {
+            for execution in [
+                "accepted",
+                "running",
+                "succeeded",
+                "failed",
+                "cancelled",
+                "unknown",
+                "unconfirmed",
+                "",
+                "malformed",
+            ] {
+                for delivery in [
+                    "none",
+                    "available",
+                    "unavailable",
+                    "acquired",
+                    "discarded",
+                    "",
+                    "malformed",
+                    "unrecoverable",
+                ] {
+                    assert_eq!(
+                        auto_settlement(phase, execution, delivery, true),
+                        AutoSettlement::Leave
+                    );
+                    let decision = auto_settlement(phase, execution, delivery, false);
+                    if execution == "unknown" {
+                        assert_ne!(
+                            decision,
+                            AutoSettlement::Recover,
+                            "Unknown must never be replayed"
+                        );
+                    }
+                    if execution == "succeeded" {
+                        assert_eq!(decision, AutoSettlement::Recover,
+                            "successful output must be retained for every delivery state: {phase:?}/{delivery}");
+                    } else {
+                        assert_eq!(decision, AutoSettlement::Settle);
+                    }
+                }
+            }
         }
     }
 }

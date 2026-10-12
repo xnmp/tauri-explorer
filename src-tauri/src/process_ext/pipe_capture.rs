@@ -1,0 +1,333 @@
+//! One reader owns each pipe. Retirement drains a snapshot of its queued bytes,
+//! rather than closing capture after a scheduling deadline. A detached writer
+//! can keep a pipe open, but cannot make that finite drain wait for future data.
+use std::{
+    collections::VecDeque,
+    io::{self, Read, Write},
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    },
+    thread::JoinHandle,
+    time::Duration,
+};
+
+#[cfg(unix)]
+use std::os::fd::AsRawFd;
+#[cfg(windows)]
+use std::os::windows::io::AsRawHandle;
+
+pub(crate) trait OutputPipe: Read + Send + 'static {
+    fn configure(&self) -> io::Result<()>;
+    /// Returns queued bytes, or zero for an empty/closed pipe. The pipe's only
+    /// reader consumes no more than this snapshot once retirement is observed.
+    fn available(&self) -> io::Result<usize>;
+    fn read_ready(&mut self, buffer: &mut [u8]) -> io::Result<usize>;
+}
+
+#[cfg(unix)]
+impl<T: Read + AsRawFd + Send + 'static> OutputPipe for T {
+    fn configure(&self) -> io::Result<()> {
+        let fd = self.as_raw_fd();
+        let flags = unsafe { libc::fcntl(fd, libc::F_GETFL) };
+        if flags < 0 || unsafe { libc::fcntl(fd, libc::F_SETFL, flags | libc::O_NONBLOCK) } < 0 {
+            Err(io::Error::last_os_error())
+        } else {
+            Ok(())
+        }
+    }
+
+    fn available(&self) -> io::Result<usize> {
+        let mut bytes: libc::c_int = 0;
+        if unsafe { libc::ioctl(self.as_raw_fd(), libc::FIONREAD, &mut bytes) } < 0 {
+            Err(io::Error::last_os_error())
+        } else {
+            Ok(bytes.max(0) as usize)
+        }
+    }
+
+    fn read_ready(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
+        self.read(buffer)
+    }
+}
+
+#[cfg(windows)]
+fn peek(pipe: &impl AsRawHandle) -> io::Result<Option<usize>> {
+    use windows_sys::Win32::{
+        Foundation::{ERROR_BROKEN_PIPE, ERROR_PIPE_NOT_CONNECTED},
+        System::Pipes::PeekNamedPipe,
+    };
+    let mut bytes = 0;
+    // Anonymous child pipes support PeekNamedPipe. Their sole reader then
+    // reads at most the returned amount, so synchronous ReadFile cannot wait
+    // for another writer. Broken pipes are EOF, including empty stderr.
+    if unsafe {
+        PeekNamedPipe(
+            pipe.as_raw_handle(),
+            std::ptr::null_mut(),
+            0,
+            std::ptr::null_mut(),
+            &mut bytes,
+            std::ptr::null_mut(),
+        )
+    } != 0
+    {
+        Ok(Some(bytes as usize))
+    } else {
+        let error = io::Error::last_os_error();
+        match error.raw_os_error().map(|code| code as u32) {
+            Some(ERROR_BROKEN_PIPE | ERROR_PIPE_NOT_CONNECTED) => Ok(None),
+            _ => Err(error),
+        }
+    }
+}
+
+#[cfg(windows)]
+impl<T: Read + AsRawHandle + Send + 'static> OutputPipe for T {
+    fn configure(&self) -> io::Result<()> {
+        Ok(())
+    }
+
+    fn available(&self) -> io::Result<usize> {
+        Ok(peek(self)?.unwrap_or(0))
+    }
+
+    fn read_ready(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
+        match peek(self)? {
+            None => Ok(0),
+            Some(0) => Err(io::ErrorKind::WouldBlock.into()),
+            Some(bytes) => {
+                let count = bytes.min(buffer.len());
+                self.read(&mut buffer[..count])
+            }
+        }
+    }
+}
+
+pub(crate) fn spawn_streaming(
+    mut pipe: impl OutputPipe,
+    limit: usize,
+    overflow: Arc<AtomicBool>,
+    retire: Arc<AtomicBool>,
+    mut sink: Option<std::fs::File>,
+) -> io::Result<JoinHandle<io::Result<Vec<u8>>>> {
+    pipe.configure()?;
+    std::thread::Builder::new()
+        .name("owned-process-output".into())
+        .spawn(move || read(&mut pipe, limit, Some(&overflow), &retire, &mut sink))
+}
+
+/// Diagnostics are bounded independently of stdout and never cancel a child.
+pub(crate) fn spawn_diagnostics(
+    mut pipe: impl OutputPipe,
+    limit: usize,
+    retire: Arc<AtomicBool>,
+) -> io::Result<JoinHandle<io::Result<Vec<u8>>>> {
+    pipe.configure()?;
+    std::thread::Builder::new()
+        .name("owned-process-diagnostics".into())
+        .spawn(move || read(&mut pipe, limit, None, &retire, &mut None))
+}
+
+const TRUNCATED: &[u8] = b"\n[stderr truncated]\n";
+
+struct Diagnostics {
+    prefix: Vec<u8>,
+    suffix: VecDeque<u8>,
+    limit: usize,
+    truncated: bool,
+}
+impl Diagnostics {
+    fn new(limit: usize) -> Self {
+        Self {
+            prefix: Vec::new(),
+            suffix: VecDeque::new(),
+            limit,
+            truncated: false,
+        }
+    }
+    fn push(&mut self, bytes: &[u8]) {
+        let remaining = self.limit.saturating_sub(self.prefix.len());
+        self.truncated |= bytes.len() > remaining;
+        self.prefix
+            .extend_from_slice(&bytes[..bytes.len().min(remaining)]);
+        let suffix_limit = self.limit.saturating_sub(TRUNCATED.len()) / 2;
+        if suffix_limit == 0 {
+            return;
+        }
+        for &byte in bytes {
+            if self.suffix.len() == suffix_limit {
+                self.suffix.pop_front();
+            }
+            self.suffix.push_back(byte);
+        }
+    }
+    fn finish(mut self) -> Vec<u8> {
+        if !self.truncated {
+            return self.prefix;
+        }
+        let marker = &TRUNCATED[..TRUNCATED.len().min(self.limit)];
+        self.prefix
+            .truncate(self.limit - marker.len() - self.suffix.len());
+        self.prefix.extend_from_slice(marker);
+        self.prefix.extend(self.suffix);
+        self.prefix
+    }
+}
+
+/// Output workers are always joined. Retirement makes every read finite even
+/// when a descendant escaped the process group and retained a pipe handle.
+pub(crate) struct Readers {
+    retire: Arc<AtomicBool>,
+    stdout: Option<JoinHandle<io::Result<Vec<u8>>>>,
+    stderr: Option<JoinHandle<io::Result<Vec<u8>>>>,
+}
+
+impl Readers {
+    pub(crate) fn new_streaming(
+        stdout: impl OutputPipe,
+        stderr: impl OutputPipe,
+        limits: (usize, usize),
+        overflow: Arc<AtomicBool>,
+        stdout_sink: Option<std::fs::File>,
+    ) -> io::Result<Self> {
+        let retire = Arc::new(AtomicBool::new(false));
+        let mut readers = Self {
+            retire: retire.clone(),
+            stdout: None,
+            stderr: None,
+        };
+        readers.stdout = Some(spawn_streaming(
+            stdout,
+            limits.0,
+            overflow,
+            retire.clone(),
+            stdout_sink,
+        )?);
+        readers.stderr = Some(spawn_diagnostics(stderr, limits.1, retire)?);
+        Ok(readers)
+    }
+
+    pub(crate) fn retire(&self) {
+        self.retire.store(true, Ordering::Release);
+    }
+
+    pub(crate) fn is_finished(&self) -> bool {
+        [&self.stdout, &self.stderr]
+            .iter()
+            .all(|reader| reader.as_ref().is_none_or(JoinHandle::is_finished))
+    }
+
+    pub(crate) fn finish(&mut self) -> io::Result<(Vec<u8>, Vec<u8>)> {
+        self.retire();
+        // Join both before propagating an error, so no worker outlives cleanup.
+        let stdout = join(self.stdout.take().expect("stdout reader"));
+        let stderr = join(self.stderr.take().expect("stderr reader"));
+        Ok((stdout?, stderr?))
+    }
+}
+
+impl Drop for Readers {
+    fn drop(&mut self) {
+        self.retire();
+        for reader in [&mut self.stdout, &mut self.stderr] {
+            if let Some(reader) = reader.take() {
+                let _ = reader.join();
+            }
+        }
+    }
+}
+
+fn join(reader: JoinHandle<io::Result<Vec<u8>>>) -> io::Result<Vec<u8>> {
+    reader
+        .join()
+        .map_err(|_| io::Error::other("child output reader panicked"))?
+}
+
+fn read(
+    pipe: &mut impl OutputPipe,
+    limit: usize,
+    overflow: Option<&AtomicBool>,
+    retire: &AtomicBool,
+    sink: &mut Option<std::fs::File>,
+) -> io::Result<Vec<u8>> {
+    let mut bytes = Vec::new();
+    let mut diagnostics = overflow.is_none().then(|| Diagnostics::new(limit));
+    let mut buffer = [0u8; 8192];
+    let mut queued = None;
+    loop {
+        if queued.is_none() && retire.load(Ordering::Acquire) {
+            queued = Some(pipe.available()?);
+        }
+        let count = match queued {
+            Some(0) => return Ok(diagnostics.map_or(bytes, Diagnostics::finish)),
+            Some(count) => count.min(buffer.len()),
+            None => buffer.len(),
+        };
+        match pipe.read_ready(&mut buffer[..count]) {
+            Ok(0) => return Ok(diagnostics.map_or(bytes, Diagnostics::finish)),
+            Ok(count) => {
+                if let Some(diagnostics) = &mut diagnostics {
+                    diagnostics.push(&buffer[..count]);
+                } else {
+                    let remaining = limit.saturating_sub(bytes.len());
+                    let captured = &buffer[..count.min(remaining)];
+                    if let Some(sink) = sink {
+                        // File writes shrink the RAM-only window. Completion's
+                        // shared Store barrier supplies the final durability.
+                        sink.write_all(captured)?;
+                    }
+                    bytes.extend_from_slice(captured);
+                    if count > remaining {
+                        overflow.unwrap().store(true, Ordering::Release);
+                    }
+                }
+                if let Some(remaining) = queued.as_mut() {
+                    *remaining -= count;
+                }
+            }
+            Err(error) if error.kind() == io::ErrorKind::Interrupted => {}
+            // No queued data remains. An escaped helper may retain the write
+            // end; its future bytes do not belong to the completed leaf.
+            Err(error) if error.kind() == io::ErrorKind::WouldBlock && queued.is_some() => {
+                return Ok(diagnostics.map_or(bytes, Diagnostics::finish))
+            }
+            Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
+                std::thread::sleep(Duration::from_millis(5));
+            }
+            Err(error) => return Err(error),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn diagnostics_preserve_prefix_suffix_and_bound_even_for_tiny_limits() {
+        for limit in [0, 1, TRUNCATED.len(), 64, 1024] {
+            let input = (0..4096).map(|n| (n % 251) as u8).collect::<Vec<_>>();
+            let mut capture = Diagnostics::new(limit);
+            for chunk in input.chunks(7) {
+                capture.push(chunk);
+            }
+            let output = capture.finish();
+            assert_eq!(output.len(), limit);
+            if limit > TRUNCATED.len() {
+                let suffix = (limit - TRUNCATED.len()) / 2;
+                let prefix = limit - TRUNCATED.len() - suffix;
+                assert_eq!(&output[..prefix], &input[..prefix]);
+                assert_eq!(&output[prefix..prefix + TRUNCATED.len()], TRUNCATED);
+                assert_eq!(&output[limit - suffix..], &input[input.len() - suffix..]);
+            }
+        }
+    }
+    #[test]
+    fn diagnostics_within_limit_are_unchanged() {
+        for input in [b"".as_slice(), b"exact diagnostics".as_slice()] {
+            let mut capture = Diagnostics::new(input.len());
+            capture.push(input);
+            assert_eq!(capture.finish(), input);
+        }
+    }
+}

@@ -62,6 +62,7 @@ fn accepting_job(store: &Store) -> JobRecord {
             origin_window: "main.first".into(),
             revision: 0,
             source_revision: 0,
+            ownership_epoch: 0,
             created_at_ms: now,
             updated_at_ms: now,
             settled_at_ms: None,

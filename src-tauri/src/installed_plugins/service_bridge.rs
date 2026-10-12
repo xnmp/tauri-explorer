@@ -19,6 +19,86 @@ static WORKERS: [AtomicUsize; 3] = [
 // A death snapshot and creation of forwarding ownership must not cross.
 // This gate covers only native ledger admission/snapshot, never callbacks or IO.
 static ADMISSION: std::sync::Mutex<()> = std::sync::Mutex::new(());
+// Track a paid dispatch from before admission lookup through the final reply.
+// Automatic settlement commits its start fence under this same ownership gate.
+type DispatchKey = (String, String);
+static STARTS: std::sync::OnceLock<
+    std::sync::Mutex<std::collections::HashMap<DispatchKey, usize>>,
+> = std::sync::OnceLock::new();
+struct StartDispatch(DispatchKey);
+impl StartDispatch {
+    fn acquire(consumer: &str, operation: &str) -> Result<Self, AppError> {
+        let key = (consumer.to_owned(), operation.to_owned());
+        let mut starts = crate::native_deadline::lock(
+            STARTS.get_or_init(Default::default),
+            "AI dispatch ownership unavailable",
+        )?;
+        *starts.entry(key.clone()).or_default() += 1;
+        Ok(Self(key))
+    }
+}
+impl Drop for StartDispatch {
+    fn drop(&mut self) {
+        let mut starts = STARTS
+            .get()
+            .expect("initialized")
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        if let Some(count) = starts.get_mut(&self.0) {
+            *count -= 1;
+            if *count == 0 {
+                starts.remove(&self.0);
+            }
+        }
+    }
+}
+// A lost settings.test reply does not end registration. Retain dispatch
+// ownership until an explicit provider update acknowledges registration or
+// the owning incarnation is proven dead; status alone cannot close this gap.
+static TEST_STARTS: std::sync::OnceLock<
+    std::sync::Mutex<std::collections::HashMap<DispatchKey, (PackageGeneration, StartDispatch)>>,
+> = std::sync::OnceLock::new();
+pub(super) fn test_registered(provider: &PackageGeneration, operation: &str) {
+    let mut pending = TEST_STARTS
+        .get_or_init(Default::default)
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    let key = (provider.package_id.clone(), operation.to_owned());
+    if pending
+        .get(&key)
+        .is_some_and(|(owner, _)| owner == provider)
+    {
+        pending.remove(&key);
+    }
+}
+fn test_owner_dead(provider: &PackageGeneration) {
+    TEST_STARTS
+        .get_or_init(Default::default)
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .retain(|_, (owner, _)| owner != provider);
+}
+pub(super) fn dispatch_active(consumer: &str, operation: &str) -> Result<bool, AppError> {
+    Ok(crate::native_deadline::lock(
+        STARTS.get_or_init(Default::default),
+        "AI dispatch ownership unavailable",
+    )?
+    .contains_key(&(consumer.to_owned(), operation.to_owned())))
+}
+pub(super) fn settle_idle_dispatch(
+    store: &crate::service_state::Store,
+    consumer: &str,
+    operation: &str,
+) -> Result<Option<crate::service_state::job::JobRecord>, AppError> {
+    let starts = crate::native_deadline::lock(
+        STARTS.get_or_init(Default::default),
+        "AI dispatch ownership unavailable",
+    )?;
+    if starts.contains_key(&(consumer.to_owned(), operation.to_owned())) {
+        return Ok(None);
+    }
+    store.auto_settle_operation(consumer, operation, true)
+}
 struct IoLease(usize);
 static IO: [(std::sync::Mutex<usize>, std::sync::Condvar); 2] = [
     (std::sync::Mutex::new(0), std::sync::Condvar::new()),
@@ -152,7 +232,23 @@ fn handle_inner(broker: Arc<Broker>, frame: Value, reply: bool) -> Result<(), Ap
                         }
                         backend::CallLease::acquire_direction(&broker.manifest().id, lane)?
                     };
+                    let operation = params["operationId"].as_str().map(str::to_owned);
+                    let consumer = params["consumerPackageId"]
+                        .as_str()
+                        .unwrap_or(&broker.manifest().id)
+                        .to_owned();
                     let result = dispatch(&broker, &method, params);
+                    if matches!(&result,Err(AppError::Service { code,.. }) if code=="storage_full")
+                    {
+                        if let Some(operation) = operation {
+                            if let Ok(Some(job)) = service_host::store()
+                                .and_then(|s| s.job_for_operation(&consumer, &operation))
+                            {
+                                backend::release_job(&job.owner, job.job_id);
+                                backend::emit_job_event(json!({"type":"updated","job":job}));
+                            }
+                        }
+                    }
                     drop(lease);
                     result
                 })();
@@ -219,8 +315,46 @@ fn dispatch(broker: &Arc<Broker>, method: &str, params: Value) -> Result<Value, 
     if !broker.can_recover() {
         return Err(error("Service owner disconnected before native IO"));
     }
-    let caller = broker.generation();
     let store = service_host::store()?;
+    let caller = if matches!(
+        method,
+        "host.artifacts.read" | "host.artifacts.acquired" | "host.artifacts.capture"
+    ) && params["consumerPackageId"]
+        .as_str()
+        .is_none_or(|id| id == broker.manifest().id)
+    {
+        recovery_caller(
+            store,
+            broker.manifest(),
+            &broker.generation(),
+            text(&params, "operationId")?,
+        )?
+    } else if matches!(
+        method,
+        "host.artifacts.stage"
+            | "host.artifacts.seal"
+            | "host.artifacts.read"
+            | "host.services.provider.update"
+            | "host.services.test.update"
+    ) {
+        let consumer = params["consumerPackageId"]
+            .as_str()
+            .unwrap_or(&broker.manifest().id);
+        let operation = if method == "host.services.provider.update" {
+            text(&params["status"], "operationId")?
+        } else {
+            text(&params, "operationId")?
+        };
+        recovery_provider(
+            store,
+            broker.manifest(),
+            &broker.generation(),
+            consumer,
+            operation,
+        )?
+    } else {
+        broker.generation()
+    };
     match method {
         "host.services.describe" => {
             let target: ServiceTarget = decode(params)?;
@@ -260,13 +394,12 @@ fn dispatch(broker: &Arc<Broker>, method: &str, params: Value) -> Result<Value, 
             let operation = text(&params["status"], "operationId")?;
             let admission = store.verify_provider(&caller, consumer, operation)?;
             let status = reconcile_receipt(store, &caller, &admission, &params["status"])?;
+            if consumer == caller.package_id {
+                test_registered(&caller, operation);
+            }
             Ok(json!({"updated":true,"consumerPackageId":consumer,"status":status}))
         }
         "host.services.test.begin" => {
-            let _admission = ADMISSION.lock().unwrap_or_else(|cause| cause.into_inner());
-            if !broker.can_recover() {
-                return Err(error("Connection test owner disconnected before admission"));
-            }
             test_provider(broker)?;
             let operation = text(&params, "operationId")?;
             let fingerprint = text(&params, "effectiveRecipeDigest")?;
@@ -274,41 +407,16 @@ fn dispatch(broker: &Arc<Broker>, method: &str, params: Value) -> Result<Value, 
             if !inputs.is_empty() {
                 return Err(error("Connection tests cannot capture input files"));
             }
-            let target = ServiceTarget {
-                package_id: caller.package_id.clone(),
-                service_id: "image-generation".into(),
-                major: 1,
-            };
-            let a = store.reserve(Admission {
-                consumer: caller.clone(),
-                provider: caller.clone(),
-                target,
-                operation_id: operation.into(),
-                fingerprint: fingerprint.into(),
-                phase: AdmissionPhase::Reserved,
-                inputs,
-                output: None,
-                needs_attention: false,
-                disposition: None,
-                transfer_receipt: None,
-            })?;
-            let winner = if a.phase == AdmissionPhase::Reserved {
-                store.claim_forwarding(&caller, operation)?.1
-            } else {
-                false
-            };
-            if !winner {
-                return Err(AppError::MutationUncertain("Connection test forwarding was already recorded; inspect the original operation before testing again".into()));
-            }
-            Ok(
-                json!({"accepted":true,"caller":{"packageId":caller.package_id,"packageDigest":caller.digest,"incarnation":caller.incarnation}}),
-            )
+            begin_test_in(store, &caller, operation, fingerprint, || {
+                broker.can_recover()
+            })
         }
         "host.services.test.update" => {
             test_provider(broker)?;
             let operation = text(&params, "operationId")?;
             let a = store.verify_provider(&caller, &caller.package_id, operation)?;
             reconcile(&caller, &a, &params["status"])?;
+            test_registered(&caller, operation);
             Ok(json!({"updated":true}))
         }
         "host.artifacts.capture" => {
@@ -321,7 +429,9 @@ fn dispatch(broker: &Arc<Broker>, method: &str, params: Value) -> Result<Value, 
             let request: Capture = decode(params)?;
             let inputs = store.capture(&caller, &request.operation_id, request.inputs)?;
             if !broker.can_recover() {
-                let _ = store.release_preparations(&caller);
+                // The death actor owns implicit cleanup. A lifecycle change
+                // may still be deciding compatible retention, so this callback
+                // must not discard its completed capture ahead of that choice.
                 return Err(error("Capture owner disconnected"));
             }
             Ok(json!({"inputs":inputs}))
@@ -373,6 +483,59 @@ fn dispatch(broker: &Arc<Broker>, method: &str, params: Value) -> Result<Value, 
         _ => Err(error("Unsupported plugin service request")),
     }
 }
+/// Durable connection-test admission, shared with the native registration fixture.
+pub(super) fn begin_test_in(
+    store: &crate::service_state::Store,
+    caller: &PackageGeneration,
+    operation: &str,
+    fingerprint: &str,
+    alive: impl Fn() -> bool,
+) -> Result<Value, AppError> {
+    let _admission =
+        crate::native_deadline::lock(&ADMISSION, "Connection test admission is unavailable")?;
+    if !alive() {
+        return Err(error("Connection test owner disconnected before admission"));
+    }
+    let dispatch = StartDispatch::acquire(&caller.package_id, operation)?;
+    let inputs = Vec::new();
+    let target = ServiceTarget {
+        package_id: caller.package_id.clone(),
+        service_id: "image-generation".into(),
+        major: 1,
+    };
+    let a = store.reserve(Admission {
+        consumer: caller.clone(),
+        provider: caller.clone(),
+        target,
+        operation_id: operation.into(),
+        fingerprint: fingerprint.into(),
+        phase: AdmissionPhase::Reserved,
+        inputs,
+        output: None,
+        needs_attention: false,
+        disposition: None,
+        transfer_receipt: None,
+    })?;
+    let winner = if a.phase == AdmissionPhase::Reserved {
+        store.claim_forwarding(caller, operation)?.1
+    } else {
+        false
+    };
+    if !winner {
+        return Err(AppError::MutationUncertain("Connection test forwarding was already recorded; inspect the original operation before testing again".into()));
+    }
+    TEST_STARTS
+        .get_or_init(Default::default)
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .insert(
+            (caller.package_id.clone(), operation.to_owned()),
+            (caller.clone(), dispatch),
+        );
+    Ok(
+        json!({"accepted":true,"caller":{"packageId":caller.package_id,"packageDigest":caller.digest,"incarnation":caller.incarnation}}),
+    )
+}
 fn test_provider(broker: &Broker) -> Result<(), AppError> {
     if broker.manifest().id != "xnmp.image-generation"
         || !broker
@@ -395,7 +558,7 @@ fn invoke(consumer: &Arc<Broker>, request: Invocation) -> Result<Value, AppError
     {
         return Err(error("Unsupported service ownership protocol"));
     }
-    let (provider, _lease) = {
+    let (provider, lease) = {
         let _gate = super::read_lifecycle()?;
         let entries = package::list(&super::root()?)?;
         let (provider, _) = service_graph::route(
@@ -414,7 +577,20 @@ fn invoke(consumer: &Arc<Broker>, request: Invocation) -> Result<Value, AppError
             )?,
         )
     };
+    invoke_admitted(consumer, request, &provider, &lease)
+}
+/// Continue the routed invocation after the lifecycle read gate is released.
+/// The original lease must survive startup; an optional consumer can remain
+/// live when the provider is disabled and enabled again.
+fn invoke_admitted(
+    consumer: &Arc<Broker>,
+    request: Invocation,
+    provider: &package::Installed,
+    lease: &backend::CallLease,
+) -> Result<Value, AppError> {
+    lease.require_current(&provider.manifest.id)?;
     let backend = backend::ensure(&provider.manifest.id)?;
+    lease.require_current(&provider.manifest.id)?;
     if backend.generation().digest != provider.digest {
         return Err(error("Provider generation changed"));
     }
@@ -422,8 +598,30 @@ fn invoke(consumer: &Arc<Broker>, request: Invocation) -> Result<Value, AppError
         return Err(error("Unsupported service ownership protocol"));
     }
     let store = service_host::store()?;
-    let caller = consumer.generation();
-    let provider = backend.generation();
+    let caller = if matches!(
+        request.method.as_str(),
+        "start" | "status" | "cancel" | "acknowledge"
+    ) {
+        recovery_caller(
+            store,
+            consumer.manifest(),
+            &consumer.generation(),
+            text(&request.params, "operationId")?,
+        )?
+    } else {
+        consumer.generation()
+    };
+    let provider = if let Some(operation) = request.params["operationId"].as_str() {
+        recovery_provider(
+            store,
+            backend.manifest(),
+            &backend.generation(),
+            &caller.package_id,
+            operation,
+        )?
+    } else {
+        backend.generation()
+    };
     let target = ServiceTarget {
         package_id: request.package_id,
         service_id: request.service_id,
@@ -436,9 +634,63 @@ fn invoke(consumer: &Arc<Broker>, request: Invocation) -> Result<Value, AppError
         &target,
         &request.method,
         request.params,
-        || consumer.can_recover() && backend.can_recover(),
-        |method, params| backend.call(method, params),
+        || {
+            lease.require_current(&backend.manifest().id).is_ok()
+                && consumer.can_recover()
+                && backend.can_recover()
+        },
+        |method, params| {
+            lease.require_current(&backend.manifest().id)?;
+            backend.call(method, params)
+        },
     )
+}
+/// A compatible upgrade can deliver the original result using its original
+/// provider identity. This grants local recovery only, never a new execution.
+pub(super) fn recovery_caller(
+    store: &crate::service_state::Store,
+    manifest: &package::Manifest,
+    current: &PackageGeneration,
+    operation: &str,
+) -> Result<PackageGeneration, AppError> {
+    let Some(a) = store.get(&current.package_id, operation)? else {
+        store.adopt_preparation(current, operation)?;
+        return Ok(current.clone());
+    };
+    if a.consumer.digest == current.digest {
+        return Ok(current.clone());
+    }
+    if !super::ai_operations::replacement_recovers(manifest, &a) {
+        return Err(error(
+            "Consumer package does not advertise the original recovery contract",
+        ));
+    }
+    Ok(a.consumer)
+}
+/// Preserve the original authority while a compatible replacement runs only
+/// local result recovery. No admission identity or paid request is rewritten.
+pub(super) fn recovery_provider(
+    store: &crate::service_state::Store,
+    manifest: &package::Manifest,
+    current: &PackageGeneration,
+    consumer: &str,
+    operation: &str,
+) -> Result<PackageGeneration, AppError> {
+    let Some(a) = store.get(consumer, operation)? else {
+        return Ok(current.clone());
+    };
+    if a.provider.package_id != current.package_id {
+        return Err(error("Provider package does not own this operation"));
+    }
+    if a.provider.digest == current.digest {
+        return Ok(current.clone());
+    }
+    if !super::ai_operations::replacement_recovers(manifest, &a) {
+        return Err(error(
+            "Provider package does not advertise the original recovery contract",
+        ));
+    }
+    Ok(a.provider)
 }
 /// Durable business boundary shared by the real broker and native protocol
 /// fixtures. Transport and lifecycle admission remain outside this function.
@@ -466,6 +718,14 @@ pub(super) fn image_call(
     } else {
         None
     };
+    let _dispatch = if dispatch_method == "start" {
+        Some(StartDispatch::acquire(
+            &caller.package_id,
+            operation.as_deref().expect("start operation"),
+        )?)
+    } else {
+        None
+    };
     let mut admission = operation
         .as_ref()
         .map(|op| store.get(&caller.package_id, op))
@@ -476,12 +736,27 @@ pub(super) fn image_call(
         store.verify_provider(provider, &caller.package_id, &a.operation_id)?;
     }
     if matches!(dispatch_method.as_str(), "start" | "status")
-        && admission.is_some()
+        && admission
+            .as_ref()
+            .is_some_and(|a| a.phase != AdmissionPhase::Released)
         && store.execution_released(
             &caller.package_id,
             operation.as_deref().expect("owned operation"),
         )?
     {
+        if dispatch_method == "status" {
+            if let Some(receipt) = store.provider_receipt(
+                &caller.package_id,
+                operation.as_deref().expect("owned operation"),
+            )? {
+                if matches!(
+                    receipt["execution"]["state"].as_str(),
+                    Some("succeeded" | "failed" | "cancelled")
+                ) {
+                    return Ok(receipt);
+                }
+            }
+        }
         return Err(AppError::Service{code:"recovery_stopped".into(),message:"Automatic recovery was stopped for this original operation; its unknown execution evidence is retained".into()});
     }
     if dispatch_method == "start" {
@@ -507,10 +782,10 @@ pub(super) fn image_call(
             },
             &semantic,
         )?;
-        let (claimed, winner) = if a.phase == AdmissionPhase::Reserved {
-            store.claim_forwarding(caller, op)?
-        } else {
+        let (claimed, winner) = if a.phase == AdmissionPhase::Released {
             (a, false)
+        } else {
+            store.claim_forwarding(caller, op)?
         };
         if winner {
             body["inputs"] = encoded(&claimed.inputs)?;
@@ -519,6 +794,24 @@ pub(super) fn image_call(
         if !winner {
             dispatch_method = "status".into();
             body = json!({"operationId":op});
+        }
+    }
+    if dispatch_method == "status" {
+        if let Some(a) = admission
+            .as_ref()
+            .filter(|a| a.phase == AdmissionPhase::Released)
+        {
+            // An idempotent start has already validated its pinned request and
+            // become status above. Released custody can answer locally without
+            // asserting that a still-live native worker has ended.
+            if let Some(receipt) = store.provider_receipt(&caller.package_id, &a.operation_id)? {
+                if matches!(
+                    receipt["execution"]["state"].as_str(),
+                    Some("succeeded" | "failed" | "cancelled")
+                ) {
+                    return Ok(receipt);
+                }
+            }
         }
     }
     if dispatch_method == "acknowledge" {
@@ -546,6 +839,14 @@ pub(super) fn image_call(
     if !alive() {
         return Err(error("Service consumer disconnected before dispatch"));
     }
+    let _output_recovery = if dispatch_method == "status" {
+        admission
+            .as_ref()
+            .map(|a| store.output_recovery_guard(a))
+            .transpose()?
+    } else {
+        None
+    };
     let result = invoke(
         &format!(
             "services.{}.v{}.{}",
@@ -580,6 +881,9 @@ fn reconcile_receipt(
     status: &Value,
 ) -> Result<Value, AppError> {
     let validated = crate::service_state::receipt::validate(status, admission)?;
+    // BEGIN IMMEDIATE itself may time out before observe_receipt can run.
+    // Preserve an authenticated success before crossing that write boundary.
+    store.retain_success(provider, admission, &validated)?;
     let latest = store.observe_receipt(
         provider,
         &admission.consumer.package_id,
@@ -694,10 +998,13 @@ pub(super) fn on_dead(generation: PackageGeneration) {
     // A dead broker without durable work cannot consume recovery capacity.
     // Admission/death share this lock, so a paid forwarding winner is visible.
     let retained = crate::native_deadline::scoped(deadline, || -> Result<bool, AppError> {
-        let store = service_host::store()?;
         let _admission =
             crate::native_deadline::lock(&ADMISSION, "Recovery admission lock is unavailable")?;
-        Ok(store.list_preparations()?.contains(&generation)
+        // A begin that passed liveness may still be publishing its forwarding
+        // ownership. Wait for that publication before retiring this incarnation.
+        test_owner_dead(&generation);
+        let store = service_host::store()?;
+        Ok(store.list_releasable_preparations()?.contains(&generation)
             || store
                 .claims()?
                 .iter()
@@ -764,6 +1071,11 @@ pub(super) trait RecoveryPort {
     /// Best-effort early cancellation to an already-live provider instance.
     /// Queue acceptance is not execution confirmation.
     fn signal_cancel(&self, admission: &Admission);
+    /// Removal retains a durable retry when the bounded control queue is full.
+    fn try_signal_cancel(&self, admission: &Admission) -> bool {
+        self.signal_cancel(admission);
+        true
+    }
     /// One authoritative control call to the admission's pinned provider
     /// package. `settle` runs while the provider call ownership is retained.
     fn control(
@@ -788,14 +1100,23 @@ impl RecoveryPort for LiveRecovery {
         backend::is_closing()
     }
     fn signal_cancel(&self, admission: &Admission) {
-        if let Some(provider) =
-            backend::active_instance(&admission.provider.package_id, &admission.provider.digest)
+        let _ = self.try_signal_cancel(admission);
+    }
+    fn try_signal_cancel(&self, admission: &Admission) -> bool {
+        let Some(provider) = backend::current_instance(&admission.provider.package_id) else {
+            return true;
+        };
+        if provider.generation().digest != admission.provider.digest
+            && !super::ai_operations::replacement_recovers(provider.manifest(), admission)
         {
-            let _ = provider.notify_request(
+            return true;
+        }
+        provider
+            .notify_request(
                 &control_method(admission, "cancel"),
                 control_params(admission),
-            );
-        }
+            )
+            .is_ok()
     }
     fn control(
         &self,
@@ -803,26 +1124,75 @@ impl RecoveryPort for LiveRecovery {
         method: &str,
         settle: &mut dyn FnMut(&PackageGeneration, &Value) -> Result<(), AppError>,
     ) -> Result<Value, AppError> {
-        let _lease = {
+        let lease = {
             let _gate = super::read_lifecycle()?;
             let entries = package::list(&super::root()?)?;
             if !entries.iter().any(|entry| {
                 entry.enabled
                     && entry.manifest.id == admission.provider.package_id
-                    && entry.digest == admission.provider.digest
+                    && (entry.digest == admission.provider.digest
+                        || super::ai_operations::replacement_recovers(&entry.manifest, admission))
             }) {
                 return Err(error("Recovery provider is unavailable"));
             }
             backend::CallLease::acquire_lane(&admission.provider.package_id, true)?
         };
+        lease.require_current(&admission.provider.package_id)?;
         let provider = backend::ensure(&admission.provider.package_id)?;
+        lease.require_current(&admission.provider.package_id)?;
+        let _output_recovery = service_host::store()?.output_recovery_guard(admission)?;
+        lease.require_current(&admission.provider.package_id)?;
         let response = provider.call(
             &control_method(admission, method),
             control_params(admission),
         )?;
-        settle(&provider.generation(), &response)?;
+        let authority = recovery_provider(
+            service_host::store()?,
+            provider.manifest(),
+            &provider.generation(),
+            &admission.consumer.package_id,
+            &admission.operation_id,
+        )?;
+        settle(&authority, &response)?;
         Ok(response)
     }
+}
+pub(super) fn signal_removal_cancellations(
+    store: &crate::service_state::Store,
+    package: &str,
+    retain: impl Fn(&Admission) -> bool,
+) -> Result<(), AppError> {
+    signal_removal_cancellations_in(store, package, retain, &LiveRecovery)
+}
+pub(super) fn signal_removal_cancellations_in(
+    store: &crate::service_state::Store,
+    package: &str,
+    retain: impl Fn(&Admission) -> bool,
+    port: &impl RecoveryPort,
+) -> Result<(), AppError> {
+    let cancelled: Vec<_> = store
+        .package_operations(package)?
+        .into_iter()
+        .filter(|a| !retain(a))
+        .collect();
+    store.queue_removal_cancellations(&cancelled)?;
+    retry_removal_cancellations_in(store, port)
+}
+pub(super) fn retry_removal_cancellations(
+    store: &crate::service_state::Store,
+) -> Result<(), AppError> {
+    retry_removal_cancellations_in(store, &LiveRecovery)
+}
+pub(super) fn retry_removal_cancellations_in(
+    store: &crate::service_state::Store,
+    port: &impl RecoveryPort,
+) -> Result<(), AppError> {
+    for a in store.pending_removal_cancellations()? {
+        if port.try_signal_cancel(&a) {
+            store.finish_removal_cancellation(&a)?;
+        }
+    }
+    Ok(())
 }
 /// Recovery policy for one dead generation's durable claims. A dead consumer's
 /// live provider work is cancelled and reconciled; a dead provider's work is
@@ -841,8 +1211,12 @@ pub(super) fn recover_owned(
     if mode == Mode::Expired {
         return Ok(());
     }
-    let _ = store.release_preparations(generation);
     let claims = {
+        // Retirement may enqueue this actor before upgrade preflight commits
+        // its compatibility decision. Serialize local custody changes with
+        // that decision, without keeping the action lane across provider IO.
+        let _action = super::ai_operations::action_guard()?;
+        let _ = store.release_preparations(generation);
         let _admission =
             crate::native_deadline::lock(&ADMISSION, "Recovery admission lock is unavailable")?;
         store.claims()?
@@ -942,9 +1316,12 @@ pub(super) fn recover_owned(
     }
     while !port.closing()
         && Instant::now() < aggregate_deadline
-        && store.list_preparations()?.contains(generation)
+        && store.list_releasable_preparations()?.contains(generation)
     {
-        let _ = store.release_preparations(generation);
+        {
+            let _action = super::ai_operations::action_guard()?;
+            let _ = store.release_preparations(generation);
+        }
         std::thread::sleep(Duration::from_millis(50));
     }
     Ok(())
@@ -978,7 +1355,7 @@ pub(super) fn recover_startup() -> Result<(), AppError> {
 pub(super) fn startup_owners(
     store: &crate::service_state::Store,
 ) -> Result<Vec<PackageGeneration>, AppError> {
-    let mut owners = store.list_preparations()?;
+    let mut owners = store.list_releasable_preparations()?;
     owners.extend(
         store
             .claims()?

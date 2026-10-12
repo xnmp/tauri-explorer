@@ -27,6 +27,9 @@ impl JobState {
 pub(crate) struct JobRecord {
     pub job_key: String,
     pub owner: PackageGeneration,
+    /// Host-authorized preparation ownership transfers; never consumer-authored.
+    #[serde(default)]
+    pub ownership_epoch: u64,
     pub operation_id: String,
     pub job_id: u64,
     pub kind: String,

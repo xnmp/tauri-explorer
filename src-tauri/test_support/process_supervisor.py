@@ -68,7 +68,7 @@ def run(mode):
         process = subprocess.Popen([str(EXE), mode, str(path)], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         pids = []
         try:
-            if mode not in ['success', 'nonzero', 'large-success', 'missing', 'reuse', 'stdin-digest', 'stdin-unread-exit']:
+            if mode not in ['success', 'nonzero', 'large-success', 'missing', 'reuse', 'stdin-digest', 'stdin-unread-exit', 'cancel-after-success', 'cancel-after-nonzero']:
                 pids = report(path)
             if mode == 'backend-death':
                 # Kill the owning backend while its CLI tree is still running.
@@ -78,10 +78,25 @@ def run(mode):
                     time.sleep(.01)
                 os.kill(int(backend.read_text()), signal.SIGKILL)
             output, errors = process.communicate(timeout=5)
+            if mode.endswith('detached-output-exit'):
+                # Escaped pipe holder belongs exclusively to this fixture.
+                # Reap it in this runner's private subreaper after observing
+                # the host outcome, never by changing global host policy.
+                for pid in set(pids[1:]):
+                    if not stopped(pid):
+                        os.kill(pid, signal.SIGKILL)
             wait_stopped(pids)
             assert not errors, errors
             if mode == 'reuse':
                 assert process.returncode == 0 and output == b'reused-command-success\n'
+            elif mode.startswith('cancel-after-'):
+                status = 0 if mode == 'cancel-after-success' else 23
+                expected = f'status={status}\nstdout=completed-paid-output\nstderr=completed-stderr\n'.encode()
+                assert process.returncode == 0 and output == expected, (process.returncode, output)
+            elif mode.endswith('detached-output-exit'):
+                expected = (b'status=0\noriginal-png-match=false\npartial-capture-match=true\nstderr=completed-stderr\n'
+                            if 'partial-' in mode else b'status=0\noriginal-png-match=true\nstderr=completed-stderr\n')
+                assert process.returncode == 0 and output == expected, (process.returncode, output)
             elif mode == 'success':
                 assert process.returncode == 0
                 assert output == b'status=0\nstdout=exact-success:in-memory-only\n\nstderr=exact-stderr\n\n'
@@ -121,6 +136,12 @@ def run(mode):
 for mode in ['success', 'reuse', 'nonzero', 'large-success', 'early-exit', 'cancel', 'backend-death', 'overflow', 'stderr-overflow', 'missing',
              'stdin-digest', 'stdin-unread-exit', 'stdin-unread-cancel', 'stdin-unread-overflow']:
     run(mode)
+if sys.platform.startswith('linux'):
+    for mode in ['cancel-after-success', 'cancel-after-nonzero', 'detached-output-exit', 'fallback-detached-output-exit',
+                 'stderr-held-detached-output-exit', 'fallback-stderr-held-detached-output-exit',
+                 'stdout-held-detached-output-exit', 'fallback-stdout-held-detached-output-exit',
+                 'partial-detached-output-exit', 'fallback-partial-detached-output-exit']:
+        run(mode)
 
 with tempfile.TemporaryDirectory(prefix='te-supervisor-parent-death-') as root:
     path = Path(root) / 'pids'
@@ -171,4 +192,4 @@ for fd_kind in ['missing', 'regular', 'socket-invalid-handshake']:
         output, errors = helper.communicate(timeout=3)
         assert helper.returncode == 64 and output == errors == b'', (fd_kind, helper.returncode, output, errors)
     print('PASS private-mode-refuses-' + fd_kind, flush=True)
-print('19 process-supervisor outcome fixtures passed', flush=True)
+print(f'{29 if sys.platform.startswith("linux") else 19} process-supervisor outcome fixtures passed', flush=True)

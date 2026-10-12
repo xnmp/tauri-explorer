@@ -3,6 +3,7 @@
 //! output spools, shell wrapping, or supervisor-owned output reader is involved.
 #![cfg(unix)]
 use crate::error::{AppError, ProcessRunError};
+use crate::process_ext::pipe_capture;
 use std::{
     io::{self, Read, Write},
     os::{
@@ -15,7 +16,7 @@ use std::{
         Arc,
     },
     thread::JoinHandle,
-    time::{Duration, Instant},
+    time::Duration,
 };
 const MARKER: &str = "--te-owned-process-supervisor-v1";
 const HELLO: &[u8; 8] = b"TEPS1\0\0\0";
@@ -314,48 +315,6 @@ fn writer(
             }
         })
 }
-fn reader(
-    mut pipe: impl Read + Send + 'static,
-    limit: usize,
-    overflow: Arc<AtomicBool>,
-    stop: Arc<AtomicBool>,
-) -> io::Result<JoinHandle<io::Result<Vec<u8>>>> {
-    std::thread::Builder::new()
-        .name("owned-process-output".into())
-        .spawn(move || {
-            let mut bytes = Vec::new();
-            let mut buffer = [0u8; 8192];
-            loop {
-                if stop.load(Ordering::Acquire) {
-                    return Err(io::Error::new(
-                        io::ErrorKind::TimedOut,
-                        "Owned output drain stopped",
-                    ));
-                }
-                match pipe.read(&mut buffer) {
-                    Ok(0) => return Ok(bytes),
-                    Ok(count) => {
-                        let available = limit.saturating_sub(bytes.len());
-                        bytes.extend_from_slice(&buffer[..count.min(available)]);
-                        if count > available {
-                            overflow.store(true, Ordering::Release);
-                        }
-                    }
-                    Err(e) if e.kind() == io::ErrorKind::Interrupted => {}
-                    Err(e) if e.kind() == io::ErrorKind::WouldBlock => {
-                        if stop.load(Ordering::Acquire) {
-                            return Err(io::Error::new(
-                                io::ErrorKind::TimedOut,
-                                "Owned output pipes did not close",
-                            ));
-                        }
-                        std::thread::sleep(Duration::from_millis(5));
-                    }
-                    Err(e) => return Err(e),
-                }
-            }
-        })
-}
 /// SDK3 owned process path. Original args/env/cwd stay on the original
 /// Command. With `input`, stdin is a pipe that receives exactly those bytes and
 /// is then closed; without it, the caller's stdin configuration is used.
@@ -364,12 +323,13 @@ fn reader(
 /// Failures before the leaf is spawned (cancellation, supervision setup, a
 /// spawn error) are `NotStarted`: the program never executed. Every later
 /// failure is `Started`.
-pub(crate) fn run(
+pub(crate) fn run_streaming(
     command: &mut Command,
     cancelled: impl Fn() -> bool,
     limits: (usize, usize),
     cancel_message: &'static str,
     input: Option<Vec<u8>>,
+    stdout_sink: Option<std::fs::File>,
 ) -> Result<Output, ProcessRunError> {
     if limits.0 > MAX_OUTPUT || limits.1 > MAX_OUTPUT {
         return Err(ProcessRunError::NotStarted(AppError::Other(
@@ -413,8 +373,15 @@ pub(crate) fn run(
             .spawn()
             .map_err(|cause| ProcessRunError::NotStarted(cause.into()))?,
     );
-    supervise(&mut owned, cancelled, limits, cancel_message, input)
-        .map_err(ProcessRunError::Started)
+    supervise(
+        &mut owned,
+        cancelled,
+        limits,
+        cancel_message,
+        input,
+        stdout_sink,
+    )
+    .map_err(ProcessRunError::Started)
 }
 fn supervise(
     owned: &mut Owned,
@@ -422,6 +389,7 @@ fn supervise(
     limits: (usize, usize),
     cancel_message: &'static str,
     input: Option<Vec<u8>>,
+    stdout_sink: Option<std::fs::File>,
 ) -> Result<Output, AppError> {
     let leaf = owned.leaf.as_mut().expect("owned leaf");
     let stdout = leaf
@@ -441,8 +409,6 @@ fn supervise(
         )),
         None => None,
     };
-    nonblocking(stdout.as_raw_fd())?;
-    nonblocking(stderr.as_raw_fd())?;
     let overflow = Arc::new(AtomicBool::new(false));
     let stop = Arc::new(AtomicBool::new(false));
     let mut readers = Readers {
@@ -451,44 +417,43 @@ fn supervise(
         stderr: None,
         stdin: None,
     };
-    readers.stdout = Some(reader(stdout, limits.0, overflow.clone(), stop.clone())?);
-    readers.stderr = Some(reader(stderr, limits.1, overflow.clone(), stop.clone())?);
+    readers.stdout = Some(pipe_capture::spawn_streaming(
+        stdout,
+        limits.0,
+        overflow.clone(),
+        stop.clone(),
+        stdout_sink,
+    )?);
+    readers.stderr = Some(pipe_capture::spawn_diagnostics(
+        stderr,
+        limits.1,
+        stop.clone(),
+    )?);
     if let Some((pipe, input)) = stdin {
         readers.stdin = Some(writer(pipe, input, stop)?);
     }
     loop {
-        if cancelled() || overflow.load(Ordering::Acquire) {
+        let cancellation = cancelled();
+        if overflow.load(Ordering::Acquire) {
             owned.stop();
-            return Err(AppError::Other(
-                if overflow.load(Ordering::Acquire) {
-                    "Child output exceeded its limit"
-                } else {
-                    cancel_message
-                }
-                .into(),
-            ));
+            return Err(AppError::Other("Child output exceeded its limit".into()));
         }
-        if exited(&mut owned.anchor)? {
+        // The original, unreaped CLI may have completed before cancellation
+        // retired its owner. Observe that exit after the predicate so its
+        // authoritative status and bytes survive the owner's retirement.
+        let observed_exit = exited(owned.leaf.as_mut().expect("owned leaf"))?;
+        if observed_exit || cancellation {
             owned.stop();
-            return Err(AppError::Other(
-                "Owned process supervision was interrupted".into(),
-            ));
-        }
-        if exited(owned.leaf.as_mut().expect("owned leaf"))? {
-            owned.stop();
-            let status = owned.leaf.as_mut().expect("owned leaf").wait()?;
-            // Kill inherited pipe holders immediately after leaf exit, then drain
-            // original pipes to EOF. No reader thread is detached on any path.
-            let deadline = Instant::now() + Duration::from_secs(1);
-            while !(readers.stdout.as_ref().unwrap().is_finished()
-                && readers.stderr.as_ref().unwrap().is_finished())
-            {
-                if Instant::now() >= deadline {
-                    readers.stop.store(true, Ordering::Release);
-                    break;
-                }
-                std::thread::sleep(Duration::from_millis(5));
-            }
+            let leaf = owned.leaf.as_mut().expect("owned leaf");
+            let status = if cancellation && !observed_exit {
+                crate::process_ext::reap_after_cancellation(|| leaf.wait(), cancel_message)?
+            } else {
+                leaf.wait()?
+            };
+            // Exit closes the leaf's write ends. Each sole reader drains its
+            // queued bytes even if first scheduled after this decision. An
+            // escaped pipe holder cannot extend that finite drain indefinitely.
+            readers.stop.store(true, Ordering::Release);
             let stdout = readers
                 .stdout
                 .take()
@@ -510,6 +475,36 @@ fn supervise(
                 stderr,
             });
         }
+        if exited(&mut owned.anchor)? {
+            owned.stop();
+            return Err(AppError::Other(
+                "Owned process supervision was interrupted".into(),
+            ));
+        }
         std::thread::sleep(Duration::from_millis(5));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn stopped_reader_drains_a_completed_png_already_queued_in_its_pipe() {
+        let png = include_bytes!("../../static/favicon.png");
+        let (output, mut writer) = UnixStream::pair().unwrap();
+        writer.write_all(png).unwrap();
+        drop(writer);
+        nonblocking(output.as_raw_fd()).unwrap();
+        let overflow = Arc::new(AtomicBool::new(false));
+        // The reader was descheduled until after its owner's exit decision.
+        let stop = Arc::new(AtomicBool::new(true));
+        let bytes = pipe_capture::spawn_streaming(output, png.len(), overflow.clone(), stop, None)
+            .unwrap()
+            .join()
+            .unwrap()
+            .unwrap();
+        assert_eq!(bytes, png);
+        assert!(!overflow.load(Ordering::Acquire));
     }
 }

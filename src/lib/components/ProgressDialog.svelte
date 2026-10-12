@@ -13,20 +13,8 @@
   import { formatSize } from "$lib/domain/file";
   import { imageJobProgress, imageJobEstimateLabel, formatJobDuration, isTimingSettled } from "$lib/domain/image-job-progress";
   import { jobStateLabel, nativeJobTerminal } from "$lib/domain/native-plugin-jobs";
-  import { unresolvedIndicator } from "$lib/domain/ai-operations";
-  import { unresolvedAiCount } from "$lib/state/ai-operations.svelte";
-  import { onMount } from "svelte";
-  import { useLazyDialog } from "$lib/composables/use-lazy-dialog.svelte";
-  import { createDialogCrashHandler } from "$lib/domain/lazy-dialog";
-  import { toastStore } from "$lib/state/toast.svelte";
 
   let now = $state(Date.now());
-  let unresolvedOpen = $state(false);
-  const AiOperationsDialog = useLazyDialog({
-    label: "AI operations", isOpen: () => unresolvedOpen,
-    load: () => import("./AiOperationsDialog.svelte"),
-    onFailure: () => { unresolvedOpen = false; },
-  }, message => toastStore.error(message));
 
   const operations = $derived(operationsManager.showProgressDialog ? operationsManager.operations : []);
   const imageJobs = $derived(jobsStore.jobs.filter((job) => job.presentation === "image"));
@@ -34,9 +22,6 @@
   // A retry in progress keeps its failed entry, and the panel, open.
   const hasActive = $derived(operationsManager.hasActiveOperations || imageJobs.some(isJobActive));
   let region: HTMLElement | undefined = $state();
-  const unresolved = $derived(unresolvedIndicator(unresolvedAiCount.count));
-
-  onMount(() => unresolvedAiCount.subscribe());
 
   // A settled job's duration is frozen: only unsettled jobs need a tick.
   const ticking = $derived(imageJobs.some((job) => !isTimingSettled(job)));
@@ -96,9 +81,6 @@
       <div class="dialog-header">
         <h3 class="dialog-title">{imageJobs.length ? operations.length ? "Background Operations" : "Image generation" : "File Operations"}</h3>
         <div class="header-actions">
-          {#if unresolved}
-            <button class="header-btn unresolved" aria-label={unresolved.label} onclick={() => { unresolvedOpen = true; }}>{unresolved.text}</button>
-          {/if}
           {#if operationsManager.hasActiveOperations}
             <button
               class="header-btn cancel-all"
@@ -260,11 +242,6 @@
             </div>
             {#if job.jobKey && ["accepting", "running", "recovering"].includes(job.status)}
               <button class="action-btn" aria-label={`Cancel ${job.label}`} disabled={!!job.controlPending || job.cancelRequested} onclick={() => jobsStore.controlJob(job.id, "cancel")}>×</button>
-            {:else if job.status === "needs_attention"}
-              <div class="operation-actions">
-                <button class="header-btn" onclick={() => { unresolvedOpen = true; }}>Inspect</button>
-                {#if !isJobActive(job)}<button class="action-btn" aria-label={`Dismiss ${job.label}`} disabled={!!job.controlPending} onclick={() => jobsStore.dismissJob(job.id)}>×</button>{/if}
-              </div>
             {:else if nativeJobTerminal(job.status)}
               <div class="operation-actions">
                 {#if job.status === "error" && job.retry}
@@ -286,11 +263,6 @@
       </div>
     </div>
   </div>
-{/if}
-{#if unresolvedOpen && AiOperationsDialog.component}
-  <svelte:boundary onerror={createDialogCrashHandler("AI operations", () => { unresolvedOpen = false; }, message => toastStore.error(message))}>
-    <AiOperationsDialog.component onClose={() => { unresolvedOpen = false; }} />
-  </svelte:boundary>
 {/if}
 
 <style>
@@ -366,10 +338,6 @@
   .header-btn:hover {
     background: var(--subtle-fill-secondary);
     color: var(--text-primary);
-  }
-
-  .header-btn.unresolved {
-    color: var(--system-caution-text, var(--system-caution));
   }
 
   .header-btn.cancel-all {

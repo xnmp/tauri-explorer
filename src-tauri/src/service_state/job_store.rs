@@ -14,6 +14,8 @@ const SAFE: u64 = 9_007_199_254_740_991;
 const MAX_RECORD: usize = 16 * 1024;
 const MAX_ACTIVE: usize = 128;
 const MAX_TERMINAL: usize = 256;
+const NO_RECOVERABLE_OUTPUT: &str =
+    "The operation ended without a recoverable output; it will not be replayed";
 const ROWS: &str = "SELECT CASE WHEN length(CAST(key AS BLOB))<=48 THEN key ELSE NULL END,CASE WHEN length(CAST(owner AS BLOB))<=256 THEN owner ELSE NULL END,CASE WHEN length(CAST(operation AS BLOB))<=128 THEN operation ELSE NULL END,job_id,revision,CASE WHEN length(CAST(record AS BLOB))<=16384 THEN record ELSE NULL END FROM presentation_jobs";
 
 /// Presentation the host already settled by explicit user action: a stopped
@@ -49,7 +51,10 @@ fn text(value: &str, bytes: usize) -> bool {
 }
 fn valid(record: &JobRecord, registering: bool) -> Result<()> {
     generation(&record.owner)?;
-    if record.source_revision > SAFE {
+    if record.source_revision > SAFE
+        || record.ownership_epoch > SAFE
+        || registering && record.ownership_epoch != 0
+    {
         return Err(reject("invalid consumer job revision"));
     }
     if !key(&record.job_key)
@@ -199,6 +204,7 @@ fn stored(conn: &Connection, job_key: &str) -> Result<Option<JobRecord>> {
 fn immutable(a: &JobRecord, b: &JobRecord) -> bool {
     a.job_key == b.job_key
         && a.owner == b.owner
+        && a.ownership_epoch == b.ownership_epoch
         && a.operation_id == b.operation_id
         && a.job_id == b.job_id
         && a.kind == b.kind
@@ -256,9 +262,6 @@ fn prune(conn: &Connection) -> Result<()> {
         .map_err(sql)?
         .map(|r| checked(r.map_err(sql)?, sequence))
         .collect::<Result<Vec<_>>>()?;
-    if records.len() > MAX_ACTIVE + MAX_TERMINAL {
-        return Err(reject("durable jobs exceed retained capacity"));
-    }
     let settled: Vec<_> = records.iter().filter(|r| retained(r)).collect();
     for record in settled
         .iter()
@@ -269,6 +272,9 @@ fn prune(conn: &Connection) -> Result<()> {
             [&record.job_key],
         )
         .map_err(sql)?;
+    }
+    if records.len() - settled.len().saturating_sub(MAX_TERMINAL) > MAX_ACTIVE + MAX_TERMINAL {
+        return Err(reject("durable jobs exceed retained capacity"));
     }
     Ok(())
 }
@@ -309,14 +315,321 @@ fn indexes(conn: &Connection) -> Result<()> {
     Ok(())
 }
 impl Store {
-    /// A job parked by Stop settles to terminal `Discarded` once the user
-    /// dismisses its operation. It keeps the `stopped` phase so every
-    /// consumer-observation guard that skips stopped jobs still applies.
+    /// Explicit package removal is a delivery outcome, including for clients
+    /// that did not register presentation. Commit its report with disposition.
+    pub(super) fn report_undelivered_in(
+        &self,
+        conn: &Connection,
+        a: &super::model::Admission,
+        plugin: &str,
+    ) -> Result<Option<JobRecord>> {
+        let old = conn
+            .query_row(
+                &format!("{ROWS} WHERE owner=?1 AND operation=?2"),
+                params![a.consumer.package_id, a.operation_id],
+                row,
+            )
+            .optional()
+            .map_err(sql)?
+            .map(|raw| checked(raw, watermark(conn)?))
+            .transpose()?;
+        if old.as_ref().is_some_and(|j| {
+            j.state == JobState::Completed || j.phase.as_deref() == Some("consumer_removed")
+        }) {
+            return Ok(None);
+        }
+        let timestamp = clock()?;
+        let mut record = match old {
+            Some(record) => record,
+            None => {
+                let mut bytes = [0u8; 32];
+                getrandom::fill(&mut bytes)
+                    .map_err(|_| reject("could not allocate delivery report"))?;
+                JobRecord {
+                    job_key: hex::encode(&bytes[..24]),
+                    job_id: (u64::from_le_bytes(bytes[24..].try_into().unwrap()) & ((1 << 51) - 1))
+                        | (1 << 51),
+                    owner: a.consumer.clone(),
+                    operation_id: a.operation_id.clone(),
+                    kind: "openai-image".into(),
+                    label: "AI image".into(),
+                    origin_window: "host.delivery".into(),
+                    revision: 0,
+                    source_revision: 0,
+                    ownership_epoch: 0,
+                    created_at_ms: timestamp,
+                    updated_at_ms: timestamp,
+                    settled_at_ms: None,
+                    estimate_key: None,
+                    state: JobState::Accepting,
+                    phase: None,
+                    output_path: None,
+                    run_id: None,
+                    error: None,
+                }
+            }
+        };
+        record.state = JobState::Error;
+        record.phase = Some("consumer_removed".into());
+        record.error = Some(format!("An image from {plugin} could not be delivered"));
+        record.output_path = None;
+        record.run_id = None;
+        record.updated_at_ms = timestamp;
+        record.settled_at_ms = Some(timestamp);
+        record.revision = next_revision(conn)?;
+        valid(&record, false)?;
+        conn.execute("INSERT INTO presentation_jobs(key,owner,operation,job_id,revision,record)VALUES(?1,?2,?3,?4,?5,?6)ON CONFLICT(key)DO UPDATE SET revision=excluded.revision,record=excluded.record", params![record.job_key,record.owner.package_id,record.operation_id,record.job_id as i64,record.revision as i64,serialized(&record)?]).map_err(sql)?;
+        prune(conn)?;
+        Ok(Some(record))
+    }
+    pub(super) fn jobs_in(&self, conn: &Connection) -> Result<Vec<JobRecord>> {
+        all(conn)
+    }
+    pub(super) fn adopt_preparation_job_in(
+        &self,
+        conn: &Connection,
+        owner: &PackageGeneration,
+        operation: &str,
+    ) -> Result<()> {
+        let Some(mut job) = all(conn)?
+            .into_iter()
+            .find(|job| job.owner.package_id == owner.package_id && job.operation_id == operation)
+        else {
+            return Err(reject("retained preparation job disappeared"));
+        };
+        if job.owner != *owner {
+            job.owner = owner.clone();
+            job.ownership_epoch = job
+                .ownership_epoch
+                .checked_add(1)
+                .filter(|n| *n <= SAFE)
+                .ok_or_else(|| reject("job ownership epoch exhausted"))?;
+            job.revision = next_revision(conn)?;
+            valid(&job, false)?;
+            persist(conn, &job)?;
+        }
+        Ok(())
+    }
+    pub(super) fn cancel_removed_job_in(
+        &self,
+        conn: &Connection,
+        consumer: &str,
+        op: &str,
+    ) -> Result<Option<JobRecord>> {
+        let Some(mut job) = all(conn)?
+            .into_iter()
+            .find(|j| j.owner.package_id == consumer && j.operation_id == op)
+        else {
+            return Ok(None);
+        };
+        if job.state.terminal() {
+            return Ok(None);
+        }
+        let old = job.clone();
+        job.state = JobState::Cancelled;
+        job.phase = Some("consumer_removed".into());
+        job.output_path = None;
+        job.updated_at_ms = clock()?;
+        job.revision = next_revision(conn)?;
+        stamp_settled(&old, &mut job);
+        valid(&job, false)?;
+        persist(conn, &job)?;
+        Ok(Some(job))
+    }
+    /// Acknowledgement is durable delivery proof. Complete from the acquired
+    /// consumer copy and its already pinned run, without asking the provider
+    /// for bytes it has legitimately collected or inventing a consumer run.
+    #[cfg(test)]
+    pub fn complete_acquired_job(&self, consumer: &str, op: &str) -> Result<Option<JobRecord>> {
+        self.transaction(|conn| {
+            let Some(a) = Self::record(conn, consumer, op)? else {
+                return Ok(None);
+            };
+            self.complete_acquired_job_in(conn, &a)
+        })
+    }
+    /// Finish committed terminal delivery even when its original provider is
+    /// no longer available. Custody and presentation share the repair transaction;
+    /// physical collection retains its durable charge until unlink is synced.
+    pub fn reconcile_terminal_job(&self, consumer: &str, op: &str) -> Result<Option<JobRecord>> {
+        self.transaction(|conn| {
+            let Some(a) = Self::record(conn, consumer, op)? else {
+                return Ok(None);
+            };
+            if !matches!(
+                a.phase,
+                super::model::AdmissionPhase::Terminal | super::model::AdmissionPhase::Released
+            ) {
+                return Ok(None);
+            }
+            match Self::terminal_delivery_at(conn, &a)? {
+                super::receipts::TerminalDelivery::Acquired(_) => {
+                    self.complete_acquired_job_in(conn, &a)
+                }
+                super::receipts::TerminalDelivery::Discarded => {
+                    let mut released = a.clone();
+                    released.phase = super::model::AdmissionPhase::Released;
+                    released.disposition = Some("discarded".into());
+                    released.transfer_receipt = None;
+                    released.needs_attention = false;
+                    Self::persist(conn, &released)?;
+                    Self::release_job_custody_in(conn, &released)?;
+                    let reason = Self::provider_receipt_at(conn, &released)?.and_then(|receipt| {
+                        receipt["execution"]["error"]["message"]
+                            .as_str()
+                            .map(str::to_owned)
+                    });
+                    self.settle_dismissed_job_in(
+                        conn,
+                        consumer,
+                        op,
+                        Some(reason.as_deref().unwrap_or(NO_RECOVERABLE_OUTPUT)),
+                    )
+                }
+                super::receipts::TerminalDelivery::Pending => Ok(None),
+            }
+        })
+    }
+    fn release_job_custody_in(conn: &Connection, a: &super::model::Admission) -> Result<()> {
+        conn.execute(
+            "UPDATE artifacts SET status='released' WHERE consumer=?1 AND operation=?2",
+            params![a.consumer.package_id, a.operation_id],
+        )
+        .map_err(sql)?;
+        Self::release_operation_spools_in(conn, &a.consumer.package_id, &a.operation_id, true)?;
+        conn.execute(
+            "DELETE FROM dismissed_operations WHERE consumer=?1 AND operation=?2",
+            params![a.consumer.package_id, a.operation_id],
+        )
+        .map_err(sql)?;
+        conn.execute(
+            "DELETE FROM preparation_replacements WHERE consumer=?1 AND operation=?2",
+            params![a.consumer.package_id, a.operation_id],
+        )
+        .map_err(sql)?;
+        Ok(())
+    }
+    pub(super) fn complete_acquired_job_in(
+        &self,
+        conn: &Connection,
+        a: &super::model::Admission,
+    ) -> Result<Option<JobRecord>> {
+        if !matches!(
+            a.phase,
+            super::model::AdmissionPhase::Terminal | super::model::AdmissionPhase::Released
+        ) {
+            return Ok(None);
+        }
+        let super::receipts::TerminalDelivery::Acquired(receipt) =
+            Self::terminal_delivery_at(conn, a)?
+        else {
+            return Ok(None);
+        };
+        let path = self.acquired_output_path_at(conn, a, &receipt)?;
+        let mut repaired = a.clone();
+        repaired.phase = super::model::AdmissionPhase::Released;
+        repaired.disposition = Some("acquired".into());
+        repaired.transfer_receipt = Some(receipt.clone());
+        repaired.needs_attention = false;
+        Self::persist(conn, &repaired)?;
+        Self::repair_acquired_receipt_in(conn, &repaired, &receipt)?;
+        Self::release_job_custody_in(conn, &repaired)?;
+        conn.execute(
+            "UPDATE operations SET exec_released=0 WHERE consumer=?1 AND operation=?2",
+            params![a.consumer.package_id, a.operation_id],
+        )
+        .map_err(sql)?;
+        let Some(mut current) = all(conn)?.into_iter().find(|j| {
+            j.owner.package_id == a.consumer.package_id && j.operation_id == a.operation_id
+        }) else {
+            return Ok(None);
+        };
+        // Acquisition proves delivered success independently of older consumer
+        // presentation phases, including cancellation and delivery failures.
+        if current.state == JobState::Completed {
+            return Ok(None);
+        }
+        let old = current.clone();
+        current.state = JobState::Completed;
+        current.phase = Some("complete".into());
+        current.output_path = Some(path);
+        current.error = None;
+        current.updated_at_ms = clock()?;
+        current.revision = next_revision(conn)?;
+        stamp_settled(&old, &mut current);
+        valid(&current, false)?;
+        persist(conn, &current)?;
+        Ok(Some(current))
+    }
+    /// Presentation failure releases no execution or output custody. The
+    /// caller holds the worker-idle fence; recheck success/unavailable in the
+    /// same transaction so a newer handoff cannot be graded as delivery loss.
+    pub fn fail_output_delivery(&self, job: &JobRecord) -> Result<Option<JobRecord>> {
+        self.transaction(|conn| {
+            let Some(old) = stored(conn, &job.job_key)? else {
+                return Ok(None);
+            };
+            if old.state.terminal() && old.phase.as_deref() != Some("storage_full") {
+                return Ok(None);
+            }
+            let Some(a) = Self::record(conn, &old.owner.package_id, &old.operation_id)? else {
+                return Ok(None);
+            };
+            if matches!(
+                Self::terminal_delivery_at(conn, &a)?,
+                super::receipts::TerminalDelivery::Acquired(_)
+            ) {
+                return Ok(None);
+            }
+            let receipt = Self::provider_receipt_at(conn, &a)?;
+            if !receipt.is_some_and(|r| {
+                r["execution"]["state"] == "succeeded" && r["delivery"]["state"] == "unavailable"
+            }) {
+                return Ok(None);
+            }
+            let mut next = JobRecord {
+                state: JobState::Error,
+                phase: Some("delivery_failed".into()),
+                output_path: None,
+                error: Some(
+                    "Original output could not be delivered; recovery will retry automatically"
+                        .into(),
+                ),
+                revision: next_revision(conn)?,
+                updated_at_ms: clock()?,
+                ..old.clone()
+            };
+            stamp_settled(&old, &mut next);
+            valid(&next, false)?;
+            persist(conn, &next)?;
+            prune(conn)?;
+            Ok(Some(next))
+        })
+    }
+    pub fn mark_storage_full(&self, job: &JobRecord) -> Result<Option<JobRecord>> {
+        self.transaction(|conn| {
+            let Some(old)=stored(conn,&job.job_key)? else { return Ok(None); };
+            if old.state == JobState::Completed || old.phase.as_deref()==Some("storage_full") { return Ok(None); }
+            let mut next=JobRecord {
+                state:JobState::Error,
+                phase:Some("storage_full".into()),
+                error:Some("AI image storage is full; recovery will retry automatically when capacity is available".into()),
+                revision:next_revision(conn)?, updated_at_ms:clock()?, ..old.clone()
+            };
+            stamp_settled(&old,&mut next);
+            valid(&next,false)?;
+            persist(conn,&next)?;
+            prune(conn)?;
+            Ok(Some(next))
+        })
+    }
+    /// Settle presentation while keeping the stopped observation fence and original reason.
     pub(super) fn settle_dismissed_job_in(
         &self,
         conn: &Connection,
         consumer: &str,
         operation: &str,
+        reason: Option<&str>,
     ) -> Result<Option<JobRecord>> {
         let sequence = watermark(conn)?;
         let Some(raw) = conn
@@ -331,13 +644,30 @@ impl Store {
             return Ok(None);
         };
         let mut record = checked(raw, sequence)?;
-        if record.state.terminal() || record.phase.as_deref() != Some("stopped") {
+        if record.state.terminal() {
+            // Older terminal observations could omit the provider's safe
+            // failure reason. Fill it without changing the finished outcome.
+            if record.state != JobState::Completed && record.error.is_none() && reason.is_some() {
+                record.error = reason.map(str::to_owned);
+                record.updated_at_ms = clock()?;
+                record.revision = next_revision(conn)?;
+                valid(&record, false)?;
+                persist(conn, &record)?;
+                return Ok(Some(record));
+            }
             return Ok(None);
         }
+        let before = record.clone();
         record.state = JobState::Discarded;
-        record.error = Some("Dismissed by the user; the execution outcome remains unknown".into());
+        record.phase = Some("stopped".into());
+        if let Some(reason) = reason {
+            record.error = Some(reason.into());
+        } else if record.error.is_none() {
+            record.error = Some(NO_RECOVERABLE_OUTPUT.into());
+        }
         record.output_path = None;
         record.updated_at_ms = clock()?;
+        stamp_settled(&before, &mut record);
         record.revision = next_revision(conn)?;
         valid(&record, false)?;
         persist(conn, &record)?;
@@ -388,6 +718,39 @@ impl Store {
             Ok(())
         })
     }
+    /// A consumer fence and two unknown answers authorize unaccepted settlement.
+    /// Recheck admission and ownership atomically with presentation/input release.
+    pub fn settle_unaccepted_job(
+        &self,
+        observed: &JobRecord,
+        reason: &str,
+    ) -> Result<Option<JobRecord>> {
+        let settled = self.transaction(|tx| {
+            let Some(old) = stored(tx, &observed.job_key)? else { return Ok(None); };
+            if old.owner != observed.owner || old.ownership_epoch != observed.ownership_epoch
+                || old.revision != observed.revision || old.source_revision != 0 || old.run_id.is_some()
+                || !matches!(old.state, JobState::Accepting | JobState::Recovering | JobState::NeedsAttention)
+                || matches!(old.phase.as_deref(), Some("stopped" | "provider_result_discarded"))
+                || Self::record(tx, &old.owner.package_id, &old.operation_id)?.is_some() {
+                return Ok(None);
+            }
+            tx.execute("INSERT INTO operations(consumer,operation,owner,phase)VALUES(?1,?2,?3,'released')ON CONFLICT(consumer,operation)DO UPDATE SET phase='released' WHERE operations.admission IS NULL", params![old.owner.package_id, old.operation_id,encode(&old.owner)?]).map_err(sql)?;
+            tx.execute("UPDATE artifacts SET status='released' WHERE consumer=?1 AND operation=?2", params![old.owner.package_id, old.operation_id]).map_err(sql)?;
+            tx.execute("DELETE FROM preparation_replacements WHERE consumer=?1 AND operation=?2", params![old.owner.package_id, old.operation_id]).map_err(sql)?;
+            let mut next = JobRecord { state: JobState::Error, phase: Some("not_accepted".into()), error: Some(reason.into()), ..old.clone() };
+            next.revision = next_revision(tx)?;
+            next.updated_at_ms = clock()?;
+            stamp_settled(&old, &mut next);
+            valid(&next, false)?;
+            persist(tx, &next)?;
+            Ok(Some(next))
+        })?;
+        if let Some(job) = &settled {
+            self.collect_released(&job.owner.package_id, &job.operation_id)?;
+        }
+        Ok(settled)
+    }
+
     pub fn register_job(&self, mut record: JobRecord) -> Result<JobRecord> {
         valid(&record, true)?;
         serialized(&record)?;
@@ -397,6 +760,7 @@ impl Store {
                 if !immutable(old, &record) { return Err(reject("job identity already belongs to another registration")); }
                 return Ok(old.clone());
             }
+            Self::generation_admitted(conn,&record.owner)?;
             if jobs.iter().filter(|r| !retained(r)).count() >= MAX_ACTIVE { return Err(reject("resolve active jobs before starting more")); }
             // Parked rows may have filled retained capacity; keep room for one more.
             prune(conn)?;
@@ -514,10 +878,44 @@ impl Store {
             if source_revision.is_some_and(|revision| revision <= old.source_revision) {
                 return Ok(old);
             }
+            // A host-settled Unknown is a no-replay fence, not proof that a
+            // delayed success has no output. Correct only that presentation,
+            // after the original handoff is durably acknowledged and a newer
+            // consumer receipt reports its completed output and Trace run.
+            // Durable delivery and completion-event ordering are separate.
+            // Removal commits the acquired release and presentation together;
+            // ordinary consumer events still wait for handoff release before
+            // replacing a previously settled host presentation.
+            let (acquired, handoff_released) =
+                match Self::record(conn, &old.owner.package_id, &old.operation_id)? {
+                    Some(a) => (
+                        matches!(
+                            Self::terminal_delivery_at(conn, &a)?,
+                            super::receipts::TerminalDelivery::Acquired(_)
+                        ),
+                        a.phase == super::model::AdmissionPhase::Released,
+                    ),
+                    None => (false, false),
+                };
+            let recovered_settlement =
+                (matches!(old.state, JobState::Discarded | JobState::NeedsAttention)
+                    && old.phase.as_deref() == Some("stopped")
+                    || old.state == JobState::Error
+                        && matches!(
+                            old.phase.as_deref(),
+                            Some("delivery_failed" | "storage_full")
+                        ))
+                    && source_revision.is_some()
+                    && state == JobState::Completed
+                    && output_path.as_ref().is_some_and(|p| !p.is_empty())
+                    && run_id.is_some_and(|id| id > 0)
+                    && acquired
+                    && handoff_released;
             if source_revision.is_some()
                 && (old.phase.as_deref() == Some("stopped")
                     || old.phase.as_deref() == Some("provider_result_discarded")
                         && state != JobState::Discarded)
+                && !recovered_settlement
             {
                 return Ok(old);
             }
@@ -555,7 +953,7 @@ impl Store {
             {
                 return Ok(old);
             }
-            if old.state.terminal() {
+            if old.state.terminal() && !recovered_settlement {
                 return Err(reject("a terminal job outcome is immutable"));
             }
             // Parked rows do not count toward active capacity, so they may
@@ -566,7 +964,9 @@ impl Store {
                     "a stopped or discarded job cannot become active again",
                 ));
             }
-            transition(old.state, state)?;
+            if !recovered_settlement {
+                transition(old.state, state)?;
+            }
             next.revision = next_revision(conn)?;
             next.updated_at_ms = clock()?;
             stamp_settled(&old, &mut next);
@@ -633,6 +1033,7 @@ mod tests {
             origin_window: "main".into(),
             revision: 0,
             source_revision: 0,
+            ownership_epoch: 0,
             created_at_ms: 1,
             updated_at_ms: 1,
             settled_at_ms: None,

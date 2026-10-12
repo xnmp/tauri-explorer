@@ -860,6 +860,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `src-tauri/src/installed_plugins/lifecycle.rs` — declared state snapshots, preflight/commit/rollback journal and interrupted upgrade recovery.
 - `src-tauri/src/installed_plugins/provenance.rs` — optional recording facade and host-retained publisher leases for core edits/rename.
 - `src-tauri/src/file_picker.rs` — owned native open/save picker requests; replies are scoped to their creating window.
+- `src-tauri/src/process_ext/pipe_capture.rs` — shared Unix/Windows bounded stdout pipe capture with optional streaming and independently truncated prefix/suffix diagnostics; process-exit retirement drains queued bytes without a scheduling deadline.
 - `src-tauri/src/process_ext/windows_job.rs` — attach suspended launchers to kill-on-close JobObjects before descendants can start.
 - `src/lib/plugins/installed.ts` — load/remove installed contributions and synchronize package changes between windows.
 - `src/lib/plugins/runtime-sdk.ts`, `src/lib/plugins/svelte-runtime.d.ts` — frozen SDK and exact shared Svelte compiler/runtime bindings; host modules `ui/modal`, `ui/image-editor`, `ui/file-tiles` (capability `fileTiles`), `ui/file-tile` (capability `fileTile`, including `tileGridMetrics`); capability `tileSize` (`FileViewPane.tileSize`, file-tiles `size`); capability `jobRetry` (`PluginJobs.accept` registration `retry`).
@@ -891,14 +892,14 @@ TraceExplorer's image UI, provider adapters and SQLite journal are maintained in
 ### Shared AI services implementation checkpoint
 
 - `src-tauri/src/ai/image_migration.rs` — native receipt-gated legacy image connection cutover, write fencing and rollback import epochs.
-- `src-tauri/src/installed_plugins/ai_operations.rs` — host-owned retained operation snapshots and explicit resume, discard and Stop controls.
+- `src-tauri/src/installed_plugins/ai_operations.rs` — automatic original-output recovery, idle settlement and compatible retained-operation controls.
 - `src-tauri/src/installed_plugins/diagnostics.rs` — bounded broker stderr storage and safe error classification.
-- `src-tauri/src/installed_plugins/job_bridge.rs` — qualified native job registration, receipt observation, controls and origin snapshots.
+- `src-tauri/src/installed_plugins/job_bridge.rs` — qualified native job registration, receipt observation, replacement-authority adoption, controls and origin snapshots.
 - `src-tauri/src/installed_plugins/service_bridge.rs` — declared reverse-service routing, artifact callbacks and original-operation recovery.
 - `src-tauri/src/installed_plugins/service_bridge_tests.rs` — private ledger and fake-transport fixtures for the real image service business boundary.
-- `src-tauri/src/installed_plugins/service_graph.rs` — pure declared service dependency and enablement validation.
+- `src-tauri/src/installed_plugins/service_graph.rs` — pure declared service dependency, enablement and pre-admission replacement compatibility validation.
 - `src-tauri/src/installed_plugins/service_graph_tests.rs` — service graph version, identity, optional dependency and cycle contracts.
-- `src-tauri/src/installed_plugins/service_host.rs` — host lifetime service store and package mutation claim checks.
+- `src-tauri/src/installed_plugins/service_host.rs` — host lifetime service store and legacy recovery compatibility.
 - `src-tauri/src/native_deadline.rs` — scoped monotonic native lock, queue and RPC budgets.
 - `src-tauri/src/native_file_drag.rs` — async OS drag start (rejects shortcut sources before export), synchronous platform-completion retirement, sequence-bearing provenance and per-window receiver snapshots emitted before frontend channel reordering.
 - `src-tauri/test_support/native_file_drag.rs` — native session ordering, completion-backlog interleavings, gesture-sequence admission, complete-set verification, successor retirement and later external same-path contracts.
@@ -906,34 +907,32 @@ TraceExplorer's image UI, provider adapters and SQLite journal are maintained in
 - `src-tauri/src/process_supervisor.rs` — Unix parent-death process group anchor and bounded owned CLI output.
 - `src-tauri/src/recovery_actor.rs` — fixed-worker generation recovery ownership, queue limits and original deadlines.
 - `src-tauri/src/service_state/artifacts.rs` — captured inputs, reserved output stages, sealing, acquisition proof and retained artifact custody.
+- `src-tauri/src/service_state/host_spools.rs` — shared atomic sealed-sidecar completion commit and derived identity recovery, immutable recorded stdout/stderr custody and empty-stream repair, generation-scoped recovery, persistence checkpoints, writer pins and quota-visible collection.
 - `src-tauri/src/service_state/intents.rs` — immutable semantic admission identities and replay-conflict validation.
 - `src-tauri/src/service_state/job.rs` — durable host job presentation and snapshot wire records.
-- `src-tauri/src/service_state/job_store.rs` — transactional job revisions, ownership, recovery, pruning and Stop presentation policy.
+- `src-tauri/src/service_state/job_store.rs` — transactional job revisions, acquired-output completion, participant-removal terminalization, quota-full delivery presentation, recovery and pruning.
 - `src-tauri/src/service_state/mod.rs` — service ledger module boundary.
 - `src-tauri/src/service_state/model.rs` — native package generations, artifact descriptors, admissions and quotas.
-- `src-tauri/src/service_state/receipt.rs` — strict canonical provider receipt validation including bounded Codex diagnostics.
-- `src-tauri/src/service_state/receipts.rs` — durable monotonic receipt acceptance and immutable execution evidence.
+- `src-tauri/src/service_state/receipt.rs` — pure automatic settlement policy and strict canonical provider receipt validation including bounded Codex diagnostics.
+- `src-tauri/src/service_state/receipts.rs` — durable monotonic receipt acceptance, shared session success witnesses, compatible preparation adoption grants, explicit participant removal, automatic dismissal and immutable execution evidence.
 - `src-tauri/src/service_state/request.rs` — credential-free image request semantics and input/option validation.
 - `src-tauri/src/service_state/rules.rs` — pure service ownership, phase, identity and quota rules.
-- `src-tauri/src/service_state/store.rs` — SQLite service ownership transactions, retention and execution claims.
+- `src-tauri/src/service_state/store.rs` — SQLite service ownership transactions, all-phase participant inventory, durable generation retirement, retention and execution claims.
 - `src-tauri/src/service_state/tests.rs` — private native ledger, custody, restart, corruption and commit-failure fixtures.
-- `src/lib/api/ai-operations.ts` — native unresolved AI operation snapshot and action adapter.
-- `src/lib/api/mock-ai-presentation.ts` — mock command parity for native jobs and unresolved AI operations.
+- `src-tauri/src/service_state/test_fs.rs` — per-ledger filesystem fault and power-loss oracle for creation, partial writes, rename, and unlink; tracks entry and content durability separately.
+- `src/lib/api/mock-ai-presentation.ts` — mock command parity for native jobs and automatic AI settlement.
 - `src/lib/api/native-plugin-jobs.ts` — native job snapshots, events and immutable-key controls.
-- `src/lib/components/AiOperationConfirmation.svelte` — operation-specific discard and Stop confirmation.
-- `src/lib/components/AiOperationsDialog.svelte` — retained execution and delivery recovery surface.
-- `src/lib/domain/ai-operations.ts` — pure unresolved operation presentation and action rules.
+- `src/lib/domain/ai-operations.ts` — native AI operation fixture metadata validation and action capabilities.
 - `src/lib/domain/native-plugin-jobs.ts` — strict native job validation and revision merge rules.
-- `src/lib/state/ai-operations.ts` — unresolved operation subscriptions, coalesced refresh and action state.
-- `src/lib/state/ai-operations.svelte.ts` — ref-counted live unresolved-AI-operation count for the progress panel indicator.
 - `src/lib/state/native-plugin-jobs.ts` — subscribe-before-snapshot job reconciliation and origin-scoped notifications.
 - `src/test-support/modal/DirtyCloseDialog.svelte` — browser fixture for dirty nested modal ownership.
 - `src/test-support/modal/PaneTestDialog.svelte` — contributed pane-dialog acceptance fixture with persistent draft, guarded close and local submit behavior.
 
 - `src-tauri/src/installed_plugins/backend_native_tests.rs` — isolated actual Wry/production-broker fixture for held private validation, reverse quarantine, independent controls, rollback, retirement and publisher-aware shutdown.
 - `src-tauri/src/installed_plugins/backend_native_recovery_tests.rs` — actual Wry fixture seeding startup claims: readiness held until recovery, shutdown waits for in-flight recovery IO, no paid start.
-- `src-tauri/src/installed_plugins/mutation_matrix_tests.rs` — role × action × phase package mutation matrix and cold start with queued upgrades behind durable claims.
-- `src-tauri/src/installed_plugins/mutation_native_tests.rs` — actual Wry fixture: disable retires the backend only after claims drain.
+- `src-tauri/src/installed_plugins/mutation_matrix_tests.rs` — provider/consumer × lifecycle action × every phase/job state invariants, crash recovery, late workers and incompatible required dependencies.
+- `src-tauri/src/installed_plugins/ai_operations_model_tests.rs` — shrinking Proptest reference machine over real pre-admission, admission, artifact, job, recovery and lifecycle transitions; phased persistence, admission-free spools and independent work/delivery/byte/quota oracles.
+- `src-tauri/src/installed_plugins/mutation_native_tests.rs` — actual Wry fixture: explicit removal cancels active work and releases custody without an AI veto.
 - `src-tauri/src/installed_plugins/service_native_tests.rs` — actual Wry fixture: per-consumer status timeouts, transport-loss recovery, reverse RPC correlation and routing without Trace.
 - `src-tauri/src/installed_plugins/service_native_kill_tests.rs` — actual Wry fixture: consumer SIGKILLed while the provider runs; both cancel/success gate orders settle once, without failure, replayed start or a retained artifact lease.
 - `src-tauri/src/installed_plugins/startup_native_tests.rs` — actual Wry fixtures: unreadable AI storage keeps legacy backends and retries; startup recovery errors degrade instead of failing setup; a process without the profile never recovers live claims.

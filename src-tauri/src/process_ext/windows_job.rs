@@ -80,7 +80,16 @@ impl Job {
     pub(super) fn terminate(&self) {
         let handle = self.0.replace(std::ptr::null_mut());
         if !handle.is_null() {
+            // Explicit nonzero termination status distinguishes our kill
+            // from a launcher that naturally exited zero before cancellation.
+            // KILL_ON_JOB_CLOSE remains the fallback if termination fails.
             unsafe {
+                if TerminateJobObject(handle, 1) == 0 {
+                    log::warn!(
+                        "Owned process job termination failed: {}",
+                        io::Error::last_os_error()
+                    );
+                }
                 CloseHandle(handle);
             }
         }

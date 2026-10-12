@@ -3873,6 +3873,11 @@ fn invariant_a_and_b_released_acquired_running_job_is_repairable_and_completes()
         "view",
         "large-presentation",
     ] {
+        // The oversized record needs a ~2 KB output path, beyond macOS PATH_MAX
+        // and Windows MAX_PATH; the trimming logic it covers is platform-neutral.
+        if mode == "large-presentation" && !cfg!(target_os = "linux") {
+            continue;
+        }
         let cost =
             json!({"amount":"0.075","currency":"USD","estimated":false,"source":"bfl.credits"});
         let view =

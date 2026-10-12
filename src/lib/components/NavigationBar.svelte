@@ -26,10 +26,15 @@
 
   let { explorer, paneId }: Props = $props();
 
-  const backShortcut = $derived(getCommandShortcut("navigation.goBack"));
-  const forwardShortcut = $derived(getCommandShortcut("navigation.goForward"));
-  const backTitle = $derived(`Back${backShortcut ? ` (${backShortcut})` : ""} — right-click for history`);
-  const forwardTitle = $derived(`Forward${forwardShortcut ? ` (${forwardShortcut})` : ""} — right-click for history`);
+  const navigationTitles = $derived.by(() => {
+    const backShortcut = getCommandShortcut("navigation.goBack");
+    const forwardShortcut = getCommandShortcut("navigation.goForward");
+
+    return {
+      back: `Back${backShortcut ? ` (${backShortcut})` : ""} — right-click for history`,
+      forward: `Forward${forwardShortcut ? ` (${forwardShortcut})` : ""} — right-click for history`,
+    };
+  });
 
   // Home directory detection for breadcrumb collapsing. Read from the shared
   // app-wide cache so a freshly mounted bar (new tab / tab switch) collapses
@@ -302,7 +307,7 @@
       <button
         class="nav-btn"
         class:disabled={!explorer.canGoBack}
-        title={backTitle}
+        title={navigationTitles.back}
         aria-disabled={!explorer.canGoBack}
         onclick={() => explorer.goBack()}
         oncontextmenu={openHistoryMenu}
@@ -318,7 +323,7 @@
       <button
         class="nav-btn"
         class:disabled={!explorer.canGoForward}
-        title={forwardTitle}
+        title={navigationTitles.forward}
         aria-disabled={!explorer.canGoForward}
         onclick={() => explorer.goForward()}
         oncontextmenu={openHistoryMenu}

@@ -8,3 +8,7 @@ same effective keybinding state used by window command dispatch.
 For navigation controls, verify the rendered `title` attribute and then press
 the advertised custom binding against visible folder history. This catches both
 a stale label and any divergence between the label and command handling.
+
+Compute the back and forward labels in one derived snapshot. Every split pane
+mounts its own navigation bar, so chained per-label derivations multiply
+reactive owners during pane creation without providing independent invalidation.

@@ -21,3 +21,7 @@ cc c7a72f9bb1722b993dd4f1d542a64bfa93a8c881778e49429d66b41cfc585669 # shrinks to
 cc 273d74ee0461413b1394dee585468ab3986296b949ac00b4e791663b98493f27 # shrinks to [Upgrade(false, true, false), Register(0), Upgrade(false, true, false)]
 cc d6adf13f66bc32a79d62ef458dcbf0d30a55b41a3b300d97bbb00d36b97b8c85 # shrinks to [Admit(0, false), Sweep, Register(1), UnlinkFailure(true), Capture(1)]
 cc 056feb54b4d5bcab6fdad8a0e18706332609dc69a9017cb85deb2dd8455dc616 # shrinks to [DirectorySyncFailure(true), Admit(0, true), DirectorySyncFailure(false), SharedConsumerAdmit]
+cc e3bc6657581861a1a0d15fa23e3f1aeb6163c8906696c31f4efc618214a2c81e # shrinks to [DirectorySyncFailure(true), Admit(2, true), CompatibleUpgradeCrash(false, 4, true), Capture(2)]
+cc 6cc5a48950aa5ec0e1764031cecc7345e3394a0bbf5563afe0fe12365f08cc23 # shrinks to [Register(0), CompatibleUpgradeCrash(false, 4, false), Capture(0)]
+cc d3267bda27d1034632dd45b176dae1565e21b0a497644f08093e0bb9b2ce7379 # shrinks to [DirectorySyncFailure(true), Admit(0, true), Upgrade(false, true, false)]
+cc 04cdad1bf1c334d1294e06263ff8b57efe3693d0646fb07ed673c2c065a9723d # shrinks to [Register(1), LifecycleCrash(true, 0), Admit(1, true), Upgrade(false, true, false)]

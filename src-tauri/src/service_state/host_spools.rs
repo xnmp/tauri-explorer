@@ -92,6 +92,72 @@ mod tests {
             })
             .unwrap() as u64
     }
+    #[test]
+    fn every_reply_identity_names_power_loss_durable_bytes() {
+        for stop in 1..=17 {
+            let (root, store) = store();
+            let (handle, path, writer) = store
+                .reserve_pinned_host_spool(&owner(), "host:ordering", 1024)
+                .unwrap();
+            let stdout = b"sole paid original";
+            let stderr = b"diagnostic";
+            assert!(store
+                .write_pinned_host_reply_observed(&owner(), &writer, stdout, stderr, 0, |point| {
+                    if point == stop {
+                        Err(reject("crash"))
+                    } else {
+                        Ok(())
+                    }
+                },)
+                .is_err());
+            let identified = !store.recorded_host_completions(&handle).unwrap().is_empty();
+            drop(writer);
+            store.test_fs.power_loss();
+            if identified {
+                assert_eq!(
+                    fs::read(path.join("stdout")).unwrap_or_default(),
+                    stdout,
+                    "identity preceded durable stdout at checkpoint {stop}"
+                );
+                assert_eq!(
+                    fs::read(path.join("stderr")).unwrap_or_default(),
+                    stderr,
+                    "identity preceded durable stderr at checkpoint {stop}"
+                );
+            }
+            drop(store);
+            let reopened =
+                Store::open(root.path().join("service-state"), Limits::default()).unwrap();
+            let reply = reopened
+                .host_spool_result(&owner().package_id, "host:ordering")
+                .unwrap();
+            if identified {
+                let reply = reply.expect("published original must recover");
+                assert_eq!(fs::read(reply["stdout"].as_str().unwrap()).unwrap(), stdout);
+            } else {
+                assert!(reply.is_none(), "unidentified reply advertised success");
+                reopened.sweep_host_spools(|_| false).unwrap();
+                assert_eq!(charged(&reopened), 0);
+            }
+        }
+    }
+
+    #[test]
+    fn conflicting_repeat_cannot_overwrite_identified_original() {
+        let (_root, store) = store();
+        let (_, path, writer) = store
+            .reserve_pinned_host_spool(&owner(), "host:immutable", 1024)
+            .unwrap();
+        store
+            .write_pinned_host_reply(&owner(), &writer, b"first original", b"", 0)
+            .unwrap();
+        assert!(store
+            .write_pinned_host_reply(&owner(), &writer, b"different original", b"", 0)
+            .is_err());
+        assert_eq!(fs::read(path.join("stdout")).unwrap(), b"first original");
+        store.test_fs.power_loss();
+        assert_eq!(fs::read(path.join("stdout")).unwrap(), b"first original");
+    }
     fn complete(store: &Store, request: &str) -> (String, PathBuf) {
         let (handle, path) = store.reserve_host_spool(&owner(), request, 1024).unwrap();
         fs::write(path.join("stdout"), b"original paid CLI output").unwrap();
@@ -611,9 +677,20 @@ mod tests {
         let (handle, path, writer) = store
             .reserve_pinned_host_spool(&owner(), "host:metadata-failure", 1024)
             .unwrap();
-        crate::durable_dir::fail_next_file_sync();
         assert!(store
-            .write_pinned_host_reply(&owner(), &writer, b"sole paid original", b"", 0)
+            .write_pinned_host_reply_observed(
+                &owner(),
+                &writer,
+                b"sole paid original",
+                b"",
+                0,
+                |point| {
+                    if point == 10 {
+                        crate::durable_dir::fail_next_file_sync();
+                    }
+                    Ok(())
+                }
+            )
             .is_err());
         assert!(path.join("pending.json").exists());
         drop(writer);
@@ -640,10 +717,21 @@ mod tests {
         let (_handle, _path, writer) = store
             .reserve_pinned_host_spool(&owner(), "host:combined-failure", 1024)
             .unwrap();
-        crate::durable_dir::fail_next_file_sync();
         store.fail_next_write();
         assert!(store
-            .write_pinned_host_reply(&owner(), &writer, b"sole paid original", b"", 0)
+            .write_pinned_host_reply_observed(
+                &owner(),
+                &writer,
+                b"sole paid original",
+                b"",
+                0,
+                |point| {
+                    if point == 10 {
+                        crate::durable_dir::fail_next_file_sync();
+                    }
+                    Ok(())
+                }
+            )
             .is_err());
         drop(writer);
         drop(store);
@@ -1174,7 +1262,7 @@ mod tests {
     }
 
     #[test]
-    fn visible_completion_cannot_publish_recovery_or_lower_quota_before_directory_retry() {
+    fn failed_capture_directory_barrier_cannot_publish_success() {
         let (_root, store) = store();
         let (handle, directory) = store
             .reserve_host_spool(&owner(), "host:unsynced-completion", 1024)
@@ -1183,26 +1271,25 @@ mod tests {
         fs::write(directory.join("stderr"), []).unwrap();
         store.test_fs.faults(false, true);
         assert!(store.seal_host_spool(&owner(), &handle, 0).is_err());
+        assert!(!store.host_spool_has_recorded_identity(&handle).unwrap());
         store.sweep_host_spools(|_| false).unwrap();
         assert_eq!(
             charged(&store),
             1024,
-            "visible manifest bypassed failed directory durability"
+            "failed directory barrier released charge early"
         );
         assert!(store
             .host_spool_result(&owner().package_id, "host:unsynced-completion")
-            .is_err());
+            .unwrap()
+            .is_none());
         store.test_fs.faults(false, false);
         store.sweep_host_spools(|_| false).unwrap();
-        assert_eq!(charged(&store), 10);
-        let recovered = store
+        assert_eq!(charged(&store), 0);
+        assert!(!directory.exists());
+        assert!(store
             .host_spool_result(&owner().package_id, "host:unsynced-completion")
             .unwrap()
-            .unwrap();
-        assert_eq!(
-            fs::read(recovered["stdout"].as_str().unwrap()).unwrap(),
-            b"paid bytes"
-        );
+            .is_none());
     }
 
     #[cfg(unix)]
@@ -1296,6 +1383,15 @@ impl Store {
         first: u8,
         checkpoint: &mut impl FnMut(u8) -> Result<()>,
     ) -> Result<()> {
+        // A streaming reader may already have written exactly this stream.
+        // Do not truncate it and reopen a RAM-only capture window at completion.
+        if spool_bytes(path, MAX_SPOOL).ok().as_deref() == Some(bytes) {
+            checkpoint(first)?;
+            checkpoint(first + 1)?;
+            checkpoint(first + 2)?;
+            self.sync_host_spool_file(path)?;
+            return checkpoint(first + 3);
+        }
         self.observe_host_spool_mutation(path);
         let mut options = fs::OpenOptions::new();
         options.write(true).create(true).truncate(true);
@@ -1345,6 +1441,38 @@ impl Store {
         self.sync_host_spool_directory(directory.parent().unwrap())
     }
 
+    /// Every capture path obtains completion identity through this barrier.
+    /// Recovery may trust the returned identity even if publication interrupts.
+    fn durable_host_completion(&self, directory: &Path, status: i64) -> Result<Completion> {
+        let stdout = spool_bytes(&directory.join("stdout"), MAX_SPOOL)?;
+        let stderr = spool_bytes(&directory.join("stderr"), MAX_SPOOL)?;
+        for name in ["stdout", "stderr"] {
+            self.sync_host_spool_file(&directory.join(name))?;
+        }
+        self.sync_host_spool_directory(directory)?;
+        self.sync_host_spool_directory(directory.parent().unwrap())?;
+        let completion = completion_for(status, &stdout, &stderr);
+        self.ensure_host_completion_identity(
+            directory.file_name().unwrap().to_str().unwrap(),
+            &completion,
+        )?;
+        Ok(completion)
+    }
+
+    fn ensure_host_completion_identity(&self, handle: &str, completion: &Completion) -> Result<()> {
+        for recorded in self.recorded_host_completions(handle)? {
+            if recorded.status != completion.status
+                || recorded.stdout_length != completion.stdout_length
+                || recorded.stderr_length != completion.stderr_length
+                || recorded.stdout_sha256 != completion.stdout_sha256
+                || recorded.stderr_sha256 != completion.stderr_sha256
+            {
+                return Err(reject("host reply completion is immutable"));
+            }
+        }
+        Ok(())
+    }
+
     fn write_host_completion(
         &self,
         directory: &Path,
@@ -1362,9 +1490,8 @@ impl Store {
         checkpoint: &mut impl FnMut(u8) -> Result<()>,
     ) -> Result<()> {
         if name == "pending.json" {
-            // First-publication evidence is immutable and keeps its name even
-            // when flushing fails. A temporary-file Drop would delete the sole
-            // status/hash witness while the reply bytes are being persisted.
+            // Evidence is immutable and follows durable capture. Retain its
+            // name when flushing fails so another publication can recover it.
             let raw = serde_json::to_vec(completion)
                 .map_err(|_| reject("host output manifest serialization failed"))?;
             let target = directory.join(name);
@@ -1817,6 +1944,23 @@ impl Store {
         self.commit_host_spool_seal(owner, &writer.handle)
     }
 
+    /// Open the sole process reader's stdout destination under its writer pin.
+    pub(crate) fn open_pinned_host_stdout(&self, writer: &HostSpoolWriter<'_>) -> Result<fs::File> {
+        if !std::ptr::eq(self, writer.store) {
+            return Err(reject("host output writer belongs to another store"));
+        }
+        let path = self.host_spool_path(&writer.handle)?.join("stdout");
+        self.observe_host_spool_mutation(&path);
+        let mut options = fs::OpenOptions::new();
+        options.write(true).create_new(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(0o600);
+        }
+        Ok(options.open(path)?)
+    }
+
     pub fn retain_pinned_host_execution(
         &self,
         owner: &PackageGeneration,
@@ -1826,17 +1970,8 @@ impl Store {
         if !std::ptr::eq(self, writer.store) {
             return Err(reject("host output writer belongs to another store"));
         }
-        // A pending commit never advertises a reply held only in memory.
         let path = self.host_spool_path(&writer.handle)?;
-        for name in ["stdout", "stderr"] {
-            self.sync_host_spool_file(&path.join(name))?;
-        }
-        self.sync_host_spool_directory(&path)?;
-        let completion = completion_for(
-            status,
-            &spool_bytes(&path.join("stdout"), MAX_SPOOL)?,
-            &spool_bytes(&path.join("stderr"), MAX_SPOOL)?,
-        );
+        let completion = self.durable_host_completion(&path, status)?;
         self.transaction(|tx| {
             let changed=tx.execute("UPDATE host_spools SET status='completed-pending',process_status=?3,completion=?4 WHERE handle=?1 AND owner=?2 AND status!='released'",params![writer.handle,encode(owner)?,status,encode(&completion)?]).map_err(sql)?;
             Ok(changed==1)
@@ -1886,53 +2021,40 @@ impl Store {
         if limit < 0 || stdout.len().saturating_add(stderr.len()) as u64 > limit as u64 {
             return Err(reject("host output exceeds reservation"));
         }
-        let completion = completion_for(status, stdout, stderr);
-        // Keep a second durable identity before touching either output name.
-        // This is an intent, not completed-pending: recovery must still validate
-        // the exact full bytes and retry their barriers. A failed intent commit
-        // can instead be covered by the independent named witness below.
+        self.ensure_host_completion_identity(
+            &writer.handle,
+            &completion_for(status, stdout, stderr),
+        )?;
+        // Capture may still be interrupted here. No recovery identity exists
+        // until both byte streams and their directory entries are durable.
+        checkpoint(1)?;
+        self.write_host_stream_observed(&path.join("stdout"), stdout, 2, &mut checkpoint)?;
+        self.write_host_stream_observed(&path.join("stderr"), stderr, 6, &mut checkpoint)?;
+        let completion = self.durable_host_completion(&path, status)?;
+        checkpoint(10)?;
         match self.transaction(|tx| {
             tx.execute("UPDATE host_spools SET process_status=?3,completion=?4 WHERE handle=?1 AND owner=?2 AND status!='released'", params![writer.handle,encode(owner)?,status,encode(&completion)?]).map(|changed| changed == 1).map_err(sql)
         }) {
             Ok(false) => return Err(reject("host output reservation was cancelled")),
             Ok(true) => (),
-            Err(cause) => log::warn!("Host reply intent deferred to its file witness: {cause}"),
+            Err(cause) => log::warn!("Host reply identity deferred to its file witness: {cause}"),
         }
-        checkpoint(1)?;
+        checkpoint(11)?;
         let mut observer_failed = false;
         let metadata =
             self.write_host_completion_observed(&path, "pending.json", &completion, &mut |point| {
-                let result = checkpoint(point);
+                let result = checkpoint(point + 10);
                 observer_failed |= result.is_err();
                 result
             });
-        // Metadata IO can fall back to the ledger, but a stopped execution
-        // must not perform another mutation beyond its observed crash point.
         if observer_failed {
             return metadata;
         }
-        self.write_host_stream_observed(&path.join("stdout"), stdout, 7, &mut |point| {
-            if point == 10 {
-                // Stdout is independently recoverable before diagnostic IO:
-                // flush its directory entry as well as its file contents.
-                self.sync_host_spool_directory(&path)?;
-                self.sync_host_spool_directory(path.parent().unwrap())?;
-            }
-            checkpoint(point)
-        })?;
-        self.write_host_stream_observed(&path.join("stderr"), stderr, 11, &mut checkpoint)?;
-        // Retry a refused witness barrier before the separate ledger attempt.
-        // Its named evidence survives both metadata and transaction failures.
-        let witness_barrier = self.sync_host_spool_file(&path.join("pending.json"));
-        checkpoint(15)?;
-        self.sync_host_spool_directory(&path)?;
-        checkpoint(16)?;
         self.sync_host_spool_directory(path.parent().unwrap())?;
         checkpoint(17)?;
-        // A metadata publication failure cannot erase already durable bytes.
-        // Persist the legacy-compatible completion witness before returning
-        // that error, so a healthy sweep cannot misclassify this as abandoned.
-        if let Err(cause) = metadata.and(witness_barrier) {
+        // The ledger or independent file witness can preserve completion when
+        // the other publication fails, but neither precedes durable capture.
+        if let Err(cause) = metadata {
             if !self.retain_pinned_host_execution(owner, writer, status)? {
                 return Err(reject("host output reservation was cancelled"));
             }
@@ -1985,10 +2107,7 @@ impl Store {
         if limit < 0 || bytes > limit as u64 {
             return Err(reject("host output exceeds reservation"));
         }
-        for name in ["stdout", "stderr"] {
-            self.sync_host_spool_file(&path.join(name))?;
-        }
-        let completion = completion_for(status, &stdout, &stderr);
+        let completion = self.durable_host_completion(&path, status)?;
         self.write_host_completion_observed(&path, "completed.json", &completion, checkpoint)?;
         self.sync_host_spool_directory(&path)?;
         self.sync_host_spool_directory(path.parent().unwrap())?;
@@ -2065,6 +2184,7 @@ impl Store {
     }
 
     fn recorded_host_completions(&self, handle: &str) -> Result<Vec<Completion>> {
+        use rusqlite::OptionalExtension;
         let path = self.host_spool_path(handle)?;
         let mut records = Vec::new();
         for name in ["completed.json", "pending.json"] {
@@ -2074,21 +2194,27 @@ impl Store {
                 Err(cause) => return Err(cause),
             }
         }
-        let raw: Option<String> = self
+        let raw: Option<Option<String>> = self
             .connect()?
             .query_row(
                 "SELECT completion FROM host_spools WHERE handle=?1",
                 [handle],
                 |r| r.get(0),
             )
+            .optional()
             .map_err(sql)?;
-        if let Some(raw) = raw {
+        if let Some(Some(raw)) = raw {
             records.push(raw.into_bytes());
         }
         Ok(records
             .into_iter()
             .filter_map(|raw| serde_json::from_slice(&raw).ok())
             .collect())
+    }
+
+    #[cfg(test)]
+    pub(crate) fn host_spool_has_recorded_identity(&self, handle: &str) -> Result<bool> {
+        Ok(!self.recorded_host_completions(handle)?.is_empty())
     }
 
     /// Incomplete replies may still own a verified original stream. The

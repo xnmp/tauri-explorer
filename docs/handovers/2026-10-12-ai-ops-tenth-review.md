@@ -2,7 +2,7 @@
 
 Repository `/var/tmp/te-wt2/hops`, branch `feat/ai-ops-auto-settle`.
 Review base HEAD `ae8430247d1bbc9af5bb8d17a551fccf3cdd2e35`.
-User prohibits commits; all review changes remain uncommitted.
+Round-10 fixes are committed (7f54a10a).
 Contract: `docs/lessons/ai-ops-auto-settle-review.md`.
 
 ## Numbered findings

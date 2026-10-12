@@ -338,6 +338,17 @@ pub(crate) fn run(
     cancel_message: &'static str,
     input: Option<Vec<u8>>,
 ) -> Result<Output, ProcessRunError> {
+    run_streaming(command, cancelled, limits, cancel_message, input, None)
+}
+
+pub(crate) fn run_streaming(
+    command: &mut Command,
+    cancelled: impl Fn() -> bool,
+    limits: (usize, usize),
+    cancel_message: &'static str,
+    input: Option<Vec<u8>>,
+    stdout_sink: Option<std::fs::File>,
+) -> Result<Output, ProcessRunError> {
     if limits.0 > MAX_OUTPUT || limits.1 > MAX_OUTPUT {
         return Err(ProcessRunError::NotStarted(AppError::Other(
             "Owned process output limit is invalid".into(),
@@ -380,8 +391,15 @@ pub(crate) fn run(
             .spawn()
             .map_err(|cause| ProcessRunError::NotStarted(cause.into()))?,
     );
-    supervise(&mut owned, cancelled, limits, cancel_message, input)
-        .map_err(ProcessRunError::Started)
+    supervise(
+        &mut owned,
+        cancelled,
+        limits,
+        cancel_message,
+        input,
+        stdout_sink,
+    )
+    .map_err(ProcessRunError::Started)
 }
 fn supervise(
     owned: &mut Owned,
@@ -389,6 +407,7 @@ fn supervise(
     limits: (usize, usize),
     cancel_message: &'static str,
     input: Option<Vec<u8>>,
+    stdout_sink: Option<std::fs::File>,
 ) -> Result<Output, AppError> {
     let leaf = owned.leaf.as_mut().expect("owned leaf");
     let stdout = leaf
@@ -416,7 +435,13 @@ fn supervise(
         stderr: None,
         stdin: None,
     };
-    readers.stdout = Some(reader(stdout, limits.0, overflow.clone(), stop.clone())?);
+    readers.stdout = Some(pipe_capture::spawn_streaming(
+        stdout,
+        limits.0,
+        overflow.clone(),
+        stop.clone(),
+        stdout_sink,
+    )?);
     readers.stderr = Some(reader(stderr, limits.1, overflow.clone(), stop.clone())?);
     if let Some((pipe, input)) = stdin {
         readers.stdin = Some(writer(pipe, input, stop)?);

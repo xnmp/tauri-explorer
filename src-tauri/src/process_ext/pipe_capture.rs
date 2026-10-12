@@ -2,7 +2,7 @@
 //! rather than closing capture after a scheduling deadline. A detached writer
 //! can keep a pipe open, but cannot make that finite drain wait for future data.
 use std::{
-    io::{self, Read},
+    io::{self, Read, Write},
     sync::{
         atomic::{AtomicBool, Ordering},
         Arc,
@@ -104,15 +104,25 @@ impl<T: Read + AsRawHandle + Send + 'static> OutputPipe for T {
 }
 
 pub(crate) fn spawn(
-    mut pipe: impl OutputPipe,
+    pipe: impl OutputPipe,
     limit: usize,
     overflow: Arc<AtomicBool>,
     retire: Arc<AtomicBool>,
 ) -> io::Result<JoinHandle<io::Result<Vec<u8>>>> {
+    spawn_streaming(pipe, limit, overflow, retire, None)
+}
+
+pub(crate) fn spawn_streaming(
+    mut pipe: impl OutputPipe,
+    limit: usize,
+    overflow: Arc<AtomicBool>,
+    retire: Arc<AtomicBool>,
+    mut sink: Option<std::fs::File>,
+) -> io::Result<JoinHandle<io::Result<Vec<u8>>>> {
     pipe.configure()?;
     std::thread::Builder::new()
         .name("owned-process-output".into())
-        .spawn(move || read(&mut pipe, limit, &overflow, &retire))
+        .spawn(move || read(&mut pipe, limit, &overflow, &retire, &mut sink))
 }
 
 /// Output workers are always joined. Retirement makes every read finite even
@@ -124,11 +134,12 @@ pub(crate) struct Readers {
 }
 
 impl Readers {
-    pub(crate) fn new(
+    pub(crate) fn new_streaming(
         stdout: impl OutputPipe,
         stderr: impl OutputPipe,
         limits: (usize, usize),
         overflow: Arc<AtomicBool>,
+        stdout_sink: Option<std::fs::File>,
     ) -> io::Result<Self> {
         let retire = Arc::new(AtomicBool::new(false));
         let mut readers = Self {
@@ -136,7 +147,13 @@ impl Readers {
             stdout: None,
             stderr: None,
         };
-        readers.stdout = Some(spawn(stdout, limits.0, overflow.clone(), retire.clone())?);
+        readers.stdout = Some(spawn_streaming(
+            stdout,
+            limits.0,
+            overflow.clone(),
+            retire.clone(),
+            stdout_sink,
+        )?);
         readers.stderr = Some(spawn(stderr, limits.1, overflow, retire)?);
         Ok(readers)
     }
@@ -182,6 +199,7 @@ fn read(
     limit: usize,
     overflow: &AtomicBool,
     retire: &AtomicBool,
+    sink: &mut Option<std::fs::File>,
 ) -> io::Result<Vec<u8>> {
     let mut bytes = Vec::new();
     let mut buffer = [0u8; 8192];
@@ -199,7 +217,13 @@ fn read(
             Ok(0) => return Ok(bytes),
             Ok(count) => {
                 let remaining = limit.saturating_sub(bytes.len());
-                bytes.extend_from_slice(&buffer[..count.min(remaining)]);
+                let captured = &buffer[..count.min(remaining)];
+                if let Some(sink) = sink {
+                    // File writes shrink the RAM-only window. Completion's
+                    // shared Store barrier supplies the final durability.
+                    sink.write_all(captured)?;
+                }
+                bytes.extend_from_slice(captured);
                 if count > remaining {
                     overflow.store(true, Ordering::Release);
                 }

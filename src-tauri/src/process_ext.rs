@@ -83,6 +83,7 @@ pub(crate) fn output_with_stdin(
         cancel_message,
         Input::Stdio(stdin),
         Completion::OutputClosed,
+        None,
     )
     .map_err(ProcessRunError::into_error)
 }
@@ -98,6 +99,17 @@ pub(crate) fn output_with_input(
     cancel_message: &'static str,
     input: Option<Vec<u8>>,
 ) -> Result<Output, ProcessRunError> {
+    output_with_input_streaming(command, cancelled, limits, cancel_message, input, None)
+}
+
+pub(crate) fn output_with_input_streaming(
+    command: &mut Command,
+    cancelled: impl Fn() -> bool,
+    limits: (usize, usize),
+    cancel_message: &'static str,
+    input: Option<Vec<u8>>,
+    stdout_sink: Option<std::fs::File>,
+) -> Result<Output, ProcessRunError> {
     let input = match input {
         Some(bytes) => Input::Bytes(bytes),
         None => Input::Stdio(Stdio::null()),
@@ -109,6 +121,7 @@ pub(crate) fn output_with_input(
         cancel_message,
         input,
         Completion::ChildExited,
+        stdout_sink,
     )
 }
 
@@ -133,6 +146,7 @@ fn run(
     cancel_message: &'static str,
     input: Input,
     completion: Completion,
+    stdout_sink: Option<std::fs::File>,
 ) -> Result<Output, ProcessRunError> {
     use ProcessRunError::{NotStarted, Started};
     if cancelled() {
@@ -215,6 +229,7 @@ fn run(
         limits,
         cancel_message,
         completion,
+        stdout_sink,
     );
     if let Some(writer) = writer {
         // Termination closed every reader of stdin, so a blocked write fails
@@ -245,6 +260,7 @@ fn supervise(
     limits: (usize, usize),
     cancel_message: &'static str,
     completion: Completion,
+    stdout_sink: Option<std::fs::File>,
 ) -> Result<Output, AppError> {
     let stdout = child
         .stdout
@@ -255,7 +271,13 @@ fn supervise(
         .take()
         .ok_or_else(|| AppError::Other("child stderr pipe unavailable".into()))?;
     let overflow = std::sync::Arc::new(AtomicBool::new(false));
-    let mut readers = match pipe_capture::Readers::new(stdout, stderr, limits, overflow.clone()) {
+    let mut readers = match pipe_capture::Readers::new_streaming(
+        stdout,
+        stderr,
+        limits,
+        overflow.clone(),
+        stdout_sink,
+    ) {
         Ok(readers) => readers,
         Err(error) => {
             terminate(child);

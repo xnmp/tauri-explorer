@@ -7,7 +7,7 @@ job with nonzero code 1 before closing the job handle. A previously observed
 natural nonzero exit remains a process result rather than being relabeled Cancelled.
 
 A successful nonempty image stdout validates independently of diagnostics.
-Persist its file and directory barriers before stderr writes. Missing, corrupt,
+Recovery can use its already-published identity even when diagnostics are later lost. Missing, corrupt,
 unreadable or nonregular stderr must not block stdout recovery or delivery.
 Quota may shrink only after independent file/entry barriers; when they fail,
 retain at least the prior charge, which can exceed the original manifest length.
@@ -38,8 +38,11 @@ Count actual transitions, including shared-consumer admissions, rather than
 synthetic applied increments. Count physical objects by native file identity so
 hard links share a charge while separate equal-byte files do not.
 
-The stricter oracle exposes a remaining contract failure: a paid successful
-reply exists only in RAM, durable intent records its identity, and a restart
-before stdout persistence loses every original byte. Keep paid-success and
-valid-original truth through restart. This failure requires durable source/output
-custody across the native capture boundary; weakening the oracle is not a fix.
+The eleventh review clarifies the capture contract: RAM-only bytes cannot survive
+a crashed process. Persist no completion identity until the named streams and
+entries are durable; every native and ProcessSpool completion uses one shared
+Store barrier. Stream stdout while reading, and never truncate that exact stream
+again at completion. Before identity publication, interruption settles silently
+and releases charges. Once identity exists, conservation and delivery remain
+mandatory. Paid invocation truth remains independent of recoverable success.
+See `ai-ops-durable-completion-ordering.md` for the regression boundaries.

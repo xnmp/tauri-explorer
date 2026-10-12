@@ -334,6 +334,27 @@ impl ProcessSpool {
     fn path(&self) -> &std::path::Path {
         &self.path
     }
+    fn stdout_sink(&self) -> Result<fs::File, AppError> {
+        if let Some((store, _)) = &self.durable {
+            let writer = self
+                .writer
+                .lock()
+                .map_err(|_| error("Plugin spool writer is unavailable"))?;
+            return store.open_pinned_host_stdout(
+                writer
+                    .as_ref()
+                    .ok_or_else(|| error("Plugin spool writer was released"))?,
+            );
+        }
+        let mut options = fs::OpenOptions::new();
+        options.write(true).create_new(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(0o600);
+        }
+        Ok(options.open(self.path().join("stdout"))?)
+    }
     fn complete(&self, stdout: &[u8], stderr: &[u8], status: i64) -> Result<Value, AppError> {
         let writer = self
             .writer
@@ -1833,10 +1854,12 @@ impl Broker {
             let spool=&admission.spool;
             let modern = owner.installed.manifest.sdk_version >= 3;
             let result = (|| {
-                let output = super::process_run::execute(
+                let stdout_sink = spool.stdout_sink().map_err(ProcessRunError::NotStarted)?;
+                let output = super::process_run::execute_streaming(
                     request,
                     || !owner.alive.load(Ordering::Acquire) || control.check().is_err(),
                     cfg!(unix) && modern,
+                    Some(stdout_sink),
                 )?;
                 let started = ProcessRunError::Started;
                 #[cfg(unix)]

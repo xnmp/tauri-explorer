@@ -162,6 +162,15 @@ pub(super) fn execute(
     cancelled: impl Fn() -> bool,
     supervised: bool,
 ) -> Result<Output, ProcessRunError> {
+    execute_streaming(request, cancelled, supervised, None)
+}
+
+pub(super) fn execute_streaming(
+    request: ProcessRequest,
+    cancelled: impl Fn() -> bool,
+    supervised: bool,
+    stdout_sink: Option<std::fs::File>,
+) -> Result<Output, ProcessRunError> {
     let mut command = Command::new(&request.program);
     command.no_console().args(&request.args);
     if let Some(cwd) = &request.cwd {
@@ -179,10 +188,24 @@ pub(super) fn execute(
     let input = request.stdin.map(String::into_bytes);
     #[cfg(unix)]
     if supervised {
-        return crate::process_supervisor::run(&mut command, cancelled, limits, CANCELLED, input);
+        return crate::process_supervisor::run_streaming(
+            &mut command,
+            cancelled,
+            limits,
+            CANCELLED,
+            input,
+            stdout_sink,
+        );
     }
     let _ = supervised;
-    crate::process_ext::output_with_input(&mut command, cancelled, limits, CANCELLED, input)
+    crate::process_ext::output_with_input_streaming(
+        &mut command,
+        cancelled,
+        limits,
+        CANCELLED,
+        input,
+        stdout_sink,
+    )
 }
 
 /// The wire code for a failed run: typed when nothing ran, else interrupted.
@@ -233,6 +256,47 @@ mod tests {
     #[cfg(unix)]
     fn quoted(path: &Path) -> String {
         format!("'{}'", path.display().to_string().replace('\'', "'\\''"))
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn stdout_is_streamed_before_process_exit_and_bounded_on_overflow() {
+        within(Duration::from_secs(20), || {
+            let directory = tempfile::tempdir().unwrap();
+            let path = directory.path().join("stdout");
+            let sink = std::fs::File::create(&path).unwrap();
+            let request = parse(&shell("printf 'captured while running'; exec sleep 30")).unwrap();
+            let observed = path.clone();
+            let began = Instant::now();
+            let failure = execute_streaming(
+                request,
+                || {
+                    std::fs::read(&observed).unwrap_or_default() == b"captured while running"
+                        || began.elapsed() > Duration::from_secs(5)
+                },
+                false,
+                Some(sink),
+            )
+            .unwrap_err();
+            assert_eq!(
+                std::fs::read(&path).unwrap(),
+                b"captured while running",
+                "capture stayed in RAM until exit"
+            );
+            assert_eq!(failure_code(&failure), code::INTERRUPTED);
+
+            let mut request = shell("while :; do printf xxxxxxxxxxxxxxxx; done");
+            request["stdoutLimit"] = json!(64);
+            let failure = execute_streaming(
+                parse(&request).unwrap(),
+                || false,
+                false,
+                Some(std::fs::File::create(&path).unwrap()),
+            )
+            .unwrap_err();
+            assert_eq!(failure_code(&failure), code::INTERRUPTED);
+            assert_eq!(std::fs::metadata(&path).unwrap().len(), 64);
+        });
     }
 
     #[test]

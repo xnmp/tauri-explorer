@@ -173,7 +173,7 @@ impl Command {
             Self::SpoolReserve(_, true, false) => "bound-spool-reserve",
             Self::SpoolReserve(_, false, false) => "unbound-spool-reserve",
             Self::SpoolReserve(_, _, true) => "nonzero-spool-reserve",
-            Self::SpoolReply(_) => "spool-intent-commit",
+            Self::SpoolReply(_) => "spool-before-capture",
             Self::SpoolReplyStep(_, point) => reply_boundary(*point),
             Self::SpoolPending(_) => "spool-pending-commit",
             Self::SpoolFsync(_) => "spool-output-fsync",
@@ -212,12 +212,7 @@ impl Command {
 }
 fn reply_boundary(point: u8) -> &'static str {
     [
-        "spool-intent-commit",
-        "spool-pending-create",
-        "spool-pending-partial",
-        "spool-pending-full",
-        "spool-pending-file-sync",
-        "spool-pending-directory-sync",
+        "spool-before-capture",
         "spool-stdout-create",
         "spool-stdout-partial",
         "spool-stdout-full",
@@ -226,11 +221,17 @@ fn reply_boundary(point: u8) -> &'static str {
         "spool-stderr-partial",
         "spool-stderr-full",
         "spool-stderr-file-sync",
-        "spool-witness-file-sync",
-        "spool-directory-sync",
+        "spool-capture-durable",
+        "spool-intent-commit",
+        "spool-pending-create",
+        "spool-pending-partial",
+        "spool-pending-full",
+        "spool-pending-file-sync",
+        "spool-pending-directory-sync",
         "spool-parent-directory-sync",
     ][usize::from(point - 1)]
 }
+
 fn manifest_boundary(point: u8) -> &'static str {
     [
         "spool-manifest-temp-create",
@@ -518,6 +519,7 @@ struct Operation {
     paid_success: bool,
     valid_original: bool,
     durable_original: bool,
+    completion_identified: bool,
     original: Vec<u8>,
     removed: bool,
     stage: Option<OutputStage>,
@@ -936,6 +938,7 @@ impl Machine {
             paid_success: false,
             valid_original: false,
             durable_original: false,
+            completion_identified: false,
             original: image_bytes(index as u8),
             removed: false,
             stage: None,
@@ -1023,14 +1026,36 @@ impl Machine {
                 .job_for_operation(&op.consumer.package_id, &op.id),
         )?
         .ok_or_else(|| fail("consumer callback lost its presentation"))?;
-        Ok(checked(job_bridge::recovery_job(
+        checked(job_bridge::recovery_job(
             self.store(),
             &installed.manifest,
             &current,
             &job,
-        ))?
-        .owner)
+        ))?;
+        // Match the broker callback caller, not the job's presentation owner:
+        // a prepared-upgrade rollback can retain an older presentation epoch.
+        checked(service_bridge::recovery_caller(
+            self.store(),
+            &installed.manifest,
+            &current,
+            &op.id,
+        ))
     }
+    fn released_preparation(&self, op: &Operation) -> bool {
+        let conn = rusqlite::Connection::open(
+            self.fixture
+                .profile
+                .path()
+                .join("service-state/ledger.sqlite"),
+        )
+        .unwrap();
+        conn.query_row(
+            "SELECT EXISTS(SELECT 1 FROM operations WHERE consumer=?1 AND operation=?2 AND phase='released' AND admission IS NULL)",
+            rusqlite::params![op.consumer.package_id, op.id],
+            |row| row.get::<_, bool>(0),
+        ).unwrap()
+    }
+
     fn capture(&mut self, slot: u8) -> Result<(), TestCaseError> {
         let Some(index) = self.index(slot) else {
             return Ok(());
@@ -1060,6 +1085,15 @@ impl Machine {
                 self.applied += 1;
             }
             Err(error) if expected_capacity(&error) || self.sync_failure || self.unlink_failure => {
+            }
+            Err(error)
+                if error
+                    .to_string()
+                    .contains("capture operation conflicts with its original snapshot")
+                    && self.released_preparation(op) =>
+            {
+                // The real capture call refused a settled preparation. As with
+                // dispatch, a tombstone refusal cannot authorize paid work.
             }
             Err(error) => return Err(fail(format!("unexpected input capture rejection: {error}"))),
         }
@@ -1358,6 +1392,16 @@ impl Machine {
             return Ok(());
         }
         let id = self.fixture.id(role).to_owned();
+        // A failed capture may already have released its preparation before
+        // this lifecycle action. Its later automatic cancellation is expected;
+        // active preparations still have the full compatible-retention oracle.
+        let released_before: Vec<String> = self
+            .operations
+            .borrow()
+            .iter()
+            .filter(|op| !op.dispatched && self.released_preparation(op))
+            .map(|op| op.id.clone())
+            .collect();
         let leases = if live {
             vec![backend::CallLease::acquire(&id).unwrap()]
         } else {
@@ -1391,6 +1435,15 @@ impl Machine {
         }
         drop(leases);
         for op in self.operations.borrow_mut().iter_mut() {
+            if released_before.contains(&op.id)
+                && checked(
+                    self.store()
+                        .job_for_operation(&op.consumer.package_id, &op.id),
+                )?
+                .is_some_and(|job| job.state.terminal())
+            {
+                op.removed = true;
+            }
             if (remove || !compatible)
                 && !op.removed
                 && (op.consumer.package_id == id || op.dispatched && op.provider.package_id == id)
@@ -1427,12 +1480,17 @@ impl Machine {
             op.writer.take();
             if op.spool.is_some() {
                 op.spool_phase = 30;
+                if !op.completion_identified && !op.provider_rejected() {
+                    op.valid_original = false;
+                    op.outcome = Outcome::Unknown;
+                }
             }
         }
         for spool in &mut self.custodyless {
             spool.writer.take();
-            if power_loss && !spool.durable {
-                spool.valid = false;
+            // Without a published identity, process success cannot be recovered.
+            if !spool.valid {
+                spool.durable = false;
             }
             spool.phase = 30;
         }
@@ -1443,6 +1501,15 @@ impl Machine {
             for (path, bytes) in std::mem::take(&mut self.dirty_writes) {
                 if path.exists() {
                     fs::write(path, bytes).unwrap();
+                }
+            }
+        }
+        // Unsealed stage writes also have no durable completion identity.
+        for op in self.operations.borrow_mut().iter_mut() {
+            if op.valid_original && !op.completion_identified && !self.original_conserved(op) {
+                op.valid_original = false;
+                if op.dispatched {
+                    op.outcome = Outcome::Unknown;
                 }
             }
         }
@@ -1694,8 +1761,13 @@ impl Machine {
         match writer.phase(phase) {
             Ok(()) => {
                 spool.phase += 1;
-                spool.valid |= phase >= 9;
-                spool.durable |= phase >= 16;
+                spool.valid |= checked(
+                    self.store
+                        .as_ref()
+                        .unwrap()
+                        .host_spool_has_recorded_identity(&spool.handle),
+                )?;
+                spool.durable |= phase >= 10;
                 if phase == 28 {
                     spool.writer.take();
                 }
@@ -1704,14 +1776,12 @@ impl Machine {
             Err(_) if self.sync_failure || self.unlink_failure => {
                 spool.writer.take();
                 spool.phase = 30;
-                let path = self
-                    .fixture
-                    .profile
-                    .path()
-                    .join("service-state/host-spools")
-                    .join(&spool.handle)
-                    .join("stdout");
-                spool.valid = fs::read(path).ok().as_ref() == Some(&spool.original);
+                spool.valid |= checked(
+                    self.store
+                        .as_ref()
+                        .unwrap()
+                        .host_spool_has_recorded_identity(&spool.handle),
+                )?;
             }
             Err(error) => return Err(fail(format!("custodyless completion failed: {error}"))),
         }
@@ -2955,12 +3025,24 @@ impl Machine {
         paths
             .into_iter()
             .any(|p| fs::read(p).ok().as_ref() == Some(&op.original))
-            || self.oracle.contains_unflushed_data(&op.original)
-            || (op.writer.is_some() && op.spool_phase >= 1 && op.paid_success && op.valid_original)
+            || !op.completion_identified
+                && (self.oracle.contains_unflushed_data(&op.original)
+                    || (op.writer.is_some()
+                        && op.spool_phase >= 1
+                        && op.paid_success
+                        && op.valid_original))
     }
     fn invariants(&mut self) -> Result<(), TestCaseError> {
         if self.store.is_none() {
             return Ok(());
+        }
+        for op in self.operations.borrow_mut().iter_mut() {
+            op.completion_identified |= op.descriptor.is_some()
+                || op.spool.as_ref().is_some_and(|handle| {
+                    self.store()
+                        .host_spool_has_recorded_identity(handle)
+                        .unwrap()
+                });
         }
         for job in checked(self.store().snapshot_jobs())?.jobs {
             if let Some(old) = self.jobs.get(&job.job_key) {
@@ -3114,7 +3196,11 @@ impl Machine {
                     reserved_output_bytes += objects.values().sum::<u64>();
                 }
             }
-            if op.paid_success && !op.removed && a.disposition.as_deref() == Some("discarded") {
+            if op.completion_identified
+                && op.valid_original
+                && !op.removed
+                && a.disposition.as_deref() == Some("discarded")
+            {
                 return Err(fail(format!("success discarded: {}", op.id)));
             }
             if !op.removed
@@ -3140,7 +3226,11 @@ impl Machine {
             {
                 return Err(fail("removal retained active custody/job"));
             }
-            if op.valid_original && !op.removed && !self.original_conserved(op) {
+            if op.completion_identified
+                && op.valid_original
+                && !op.removed
+                && !self.original_conserved(op)
+            {
                 return Err(fail(format!("original bytes disappeared: {}", op.id)));
             }
             if op.acknowledged && fs::read(&op.copy).ok().as_ref() != Some(&op.original) {
@@ -3292,6 +3382,17 @@ impl Machine {
                 }
             }
             op.writer.take();
+            if op.spool.is_some()
+                && !op.provider_rejected()
+                && !op.completion_identified
+                && !self
+                    .store()
+                    .host_spool_has_recorded_identity(op.spool.as_ref().unwrap())
+                    .unwrap()
+            {
+                op.valid_original = false;
+                op.outcome = Outcome::Unknown;
+            }
             op.provider_live = false;
             op.consumer_live = false;
             if op.outcome == Outcome::Running {
@@ -3337,7 +3438,7 @@ impl Machine {
                 self.assert_removed_clean(op)?;
                 continue;
             }
-            if op.paid_success
+            if op.completion_identified
                 && op.valid_original
                 && (!op.acknowledged
                     || job.state != JobState::Completed
@@ -3785,8 +3886,8 @@ const REQUIRED_TRANSITIONS: &[&str] = &[
     "spool-stderr-partial",
     "spool-stderr-full",
     "spool-stderr-file-sync",
-    "spool-witness-file-sync",
-    "spool-directory-sync",
+    "spool-before-capture",
+    "spool-capture-durable",
     "spool-parent-directory-sync",
     "spool-pending-commit",
     "spool-output-fsync",
@@ -4671,27 +4772,46 @@ fn model_presealed_original_is_recovered_through_rpc() {
 }
 
 #[test]
-fn model_complete_stdout_survives_crash_during_nonempty_stderr() {
-    for power_loss in [false, true] {
-        let mut m = Machine::new();
-        m.admit(0, false).unwrap();
-        m.apply(Command::SpoolReserve(0, true, false)).unwrap();
-        let last = 10;
-        for command in reply_commands(0).into_iter().take(last) {
-            m.apply(command).unwrap();
+fn model_capture_crashes_settle_interrupted_until_identity_is_published() {
+    // 5: stdout file sync; 7: partial stderr; 10: both streams durable;
+    // 11: ledger identity published. Only the last boundary promises delivery.
+    for last in [5, 7, 10, 11] {
+        for power_loss in [false, true] {
+            let mut m = Machine::new();
+            m.admit(0, false).unwrap();
+            m.apply(Command::SpoolReserve(0, true, false)).unwrap();
+            for command in reply_commands(0).into_iter().take(last) {
+                m.apply(command).unwrap();
+            }
+            assert_eq!(m.operations.borrow()[0].completion_identified, last == 11);
+            m.apply(if power_loss {
+                Command::PowerLoss
+            } else {
+                Command::Restart
+            })
+            .unwrap();
+            m.quiesce().unwrap();
+            let ops = m.operations.borrow();
+            let op = &ops[0];
+            if last == 11 {
+                assert_eq!(fs::read(&op.copy).unwrap(), op.original);
+                assert_eq!(op.delivery_effects.get(), 1);
+            } else {
+                let job = m
+                    .store()
+                    .job_for_operation(&op.consumer.package_id, &op.id)
+                    .unwrap()
+                    .unwrap();
+                assert!(job.state.terminal());
+                assert_ne!(job.state, JobState::Completed);
+                assert_eq!(op.outcome, Outcome::Unknown);
+                assert_eq!(op.delivery_effects.get(), 0);
+                assert!(!op.copy.exists());
+            }
+            assert_eq!(op.starts.get(), 1);
+            assert_eq!(m.charges(), 0);
+            assert_eq!(m.disk_bytes(), 0);
         }
-        m.apply(if power_loss {
-            Command::PowerLoss
-        } else {
-            Command::Restart
-        })
-        .unwrap();
-        m.quiesce().unwrap();
-        let ops = m.operations.borrow();
-        assert_eq!(fs::read(&ops[0].copy).unwrap(), ops[0].original);
-        assert_eq!(ops[0].delivery_effects.get(), 1);
-        assert_eq!(m.charges(), 0);
-        assert_eq!(m.disk_bytes(), 0);
     }
 }
 
@@ -4821,7 +4941,7 @@ fn model_recovery_paid_native_work_is_counted_separately_from_service_start() {
 }
 
 #[test]
-fn model_pending_create_crash_stops_before_stdout_is_created() {
+fn model_stdout_partial_crash_has_no_completion_identity() {
     let mut m = Machine::new();
     m.admit(0, false).unwrap();
     m.apply(Command::SpoolReserve(0, true, false)).unwrap();
@@ -4834,9 +4954,10 @@ fn model_pending_create_crash_stops_before_stdout_is_created() {
         .join("service-state/host-spools")
         .join(m.operations.borrow()[0].spool.as_ref().unwrap());
     m.operations.borrow_mut()[0].writer.take();
-    assert!(path.join("pending.json").exists());
-    assert!(!path.join("stdout").exists());
+    assert!(!path.join("pending.json").exists());
+    assert!(path.join("stdout").exists());
     assert!(!path.join("stderr").exists());
+    assert!(!m.operations.borrow()[0].completion_identified);
 }
 
 #[test]
@@ -4939,16 +5060,74 @@ fn model_consumer_copy_before_proof_survives_restart_without_another_delivery() 
 
 #[test]
 fn model_pre_persistence_success_is_not_erased_by_restart() {
-    let mut m = Machine::new();
-    m.admit(0, false).unwrap();
-    m.apply(Command::SpoolReserve(0, true, false)).unwrap();
-    m.apply(Command::SpoolReply(0)).unwrap();
-    assert!(m.operations.borrow()[0].valid_original);
-    // Keep the independent paid-success oracle. This counterexample is a
-    // contract failure, not authority to downgrade success to Unknown.
-    let error = m.apply(Command::Restart).unwrap_err();
-    assert!(m.operations.borrow()[0].valid_original);
-    assert!(error.to_string().contains("original bytes disappeared"));
+    for crash in [Command::Restart, Command::SpoolCrash(0, 2)] {
+        let mut m = Machine::new();
+        m.admit(0, false).unwrap();
+        m.apply(Command::SpoolReserve(0, true, false)).unwrap();
+        m.apply(Command::SpoolReply(0)).unwrap();
+        assert!(m.operations.borrow()[0].paid_success);
+        assert!(!m.operations.borrow()[0].completion_identified);
+        m.apply(crash).unwrap();
+        // Invocation truth survives, but RAM-only success is not a recoverable
+        // completion. Silent interruption must release all custody and charges.
+        assert!(m.operations.borrow()[0].paid_success);
+        assert!(!m.operations.borrow()[0].valid_original);
+        assert_eq!(m.operations.borrow()[0].outcome, Outcome::Unknown);
+        m.quiesce().unwrap();
+        let ops = m.operations.borrow();
+        let op = &ops[0];
+        let job = m
+            .store()
+            .job_for_operation(&op.consumer.package_id, &op.id)
+            .unwrap()
+            .unwrap();
+        assert!(job.state.terminal());
+        assert_ne!(job.state, JobState::Completed);
+        assert_eq!(op.starts.get(), 1);
+        assert_eq!(op.delivery_effects.get(), 0);
+        assert_eq!(m.charges(), 0);
+    }
+}
+
+#[test]
+fn model_preparation_capture_retries_use_broker_authority_and_released_tombstones() {
+    for trace in [
+        vec![
+            Command::Register(0),
+            Command::CompatibleUpgradeCrash(false, 4, false),
+            Command::Capture(0),
+        ],
+        vec![
+            Command::DirectorySyncFailure(true),
+            Command::Admit(0, true),
+            Command::Upgrade(false, true, false),
+        ],
+        vec![
+            Command::Register(1),
+            Command::UnlinkFailure(true),
+            Command::Capture(1),
+            Command::PowerLoss,
+            Command::Capture(1),
+        ],
+        vec![
+            Command::DirectorySyncFailure(true),
+            Command::Admit(2, true),
+            Command::CompatibleUpgradeCrash(false, 4, true),
+            Command::Capture(2),
+        ],
+    ] {
+        let mut m = Machine::new();
+        for command in trace {
+            m.apply(command).unwrap();
+        }
+        assert!(m
+            .operations
+            .borrow()
+            .iter()
+            .all(|op| !op.dispatched && op.starts.get() == 0));
+        m.quiesce().unwrap();
+        assert_eq!(m.charges(), 0);
+    }
 }
 
 #[test]

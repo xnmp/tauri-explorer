@@ -44,3 +44,14 @@ ordered Vitest phase retains its 150 ms budget and all functional assertions.
 A real-runner qualification test checks file selection, worker limits and that
 ordinary unit modules are admitted only after graph work completes; the check
 fails with the old shared phase. Report attachment behavior is unaffected.
+
+Later Linux native smoke logs stopped inside the crop pixel oracle and also
+reported a fake CLI that never started. Both affected suites passed locally
+on a private WebKit display, so no crop-output defect was established. The
+oracle now observes bounded load/error events for drawable first-frame pixels
+and intrinsic preview dimensions, and reports an explicit error if no event
+arrives. It retains every pixel, geometry and file-preservation assertion.
+The test-only CLI timeout allows cold interpreter startup while still expiring
+well before the fixture's late write; production timeout behavior is unchanged.
+New renderer callback and real subprocess tests reproduce the old harness
+failures, independently of application behavior.

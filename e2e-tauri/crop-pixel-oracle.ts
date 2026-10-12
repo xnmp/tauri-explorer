@@ -1,7 +1,19 @@
 /** Serializable renderer oracle used by the real native crop suite. */
 export async function compareCropPixels(original: string, saved: string, padded: boolean, measureEdges: boolean, rectangle: number[], done: (result: unknown) => void) {
+    const cleanups: Array<() => void> = [];
     try {
-      const load = async (url: string) => { const image = new Image(); image.src = url; await image.decode(); return image; };
+      // Crop verification uses the loaded first frame, including animated GIFs.
+      // A decode promise can remain pending in WebKit's injected world. A load
+      // event provides drawable pixels; bound missing events and fail explicitly.
+      const load = (url: string) => new Promise<HTMLImageElement>((resolve, reject) => {
+        const image = new Image();
+        const cleanup = () => { clearTimeout(timer); image.onload = null; image.onerror = null; };
+        cleanups.push(cleanup);
+        const timer = setTimeout(() => { cleanup(); reject(new Error("Timed out loading crop comparison image")); }, 5_000);
+        image.onload = () => { cleanup(); resolve(image); };
+        image.onerror = () => { cleanup(); reject(new Error("Failed to load crop comparison image")); };
+        image.src = url;
+      });
       const [source, result] = await Promise.all([load(original), load(saved)]);
       const canvas = document.createElement("canvas");
       canvas.width = result.naturalWidth; canvas.height = result.naturalHeight;
@@ -51,6 +63,7 @@ export async function compareCropPixels(original: string, saved: string, padded:
         edgeDisplacement,
         cornerAlpha: actual[3], centerAlpha: actual[(Math.floor(canvas.height / 2) * canvas.width + Math.floor(canvas.width / 2)) * 4 + 3] });
     } catch (error) { done({ error: String(error) }); }
+    finally { cleanups.forEach(cleanup => cleanup()); }
   }
 
 export async function observeCropPreview(expected: number[], done: (ready: boolean) => void) {
@@ -58,7 +71,15 @@ export async function observeCropPreview(expected: number[], done: (ready: boole
         if (!image?.complete || !image.naturalWidth) { done(false); return; }
         // SVG naturalWidth is CSS-layout-dependent in WebKit. Inspect the
         // actual displayed URL through an unstyled image instead.
-        const intrinsic = new Image(); intrinsic.src = image.src;
-        try { await intrinsic.decode(); done(intrinsic.naturalWidth === expected[0] && intrinsic.naturalHeight === expected[1]); }
-        catch { done(false); }
+        const intrinsic = new Image();
+        let settled = false;
+        const finish = (ready: boolean) => {
+          if (settled) return;
+          settled = true;
+          clearTimeout(timer); intrinsic.onload = null; intrinsic.onerror = null; done(ready);
+        };
+        const timer = setTimeout(() => finish(false), 5_000);
+        intrinsic.onload = () => finish(intrinsic.naturalWidth === expected[0] && intrinsic.naturalHeight === expected[1]);
+        intrinsic.onerror = () => finish(false);
+        intrinsic.src = image.src;
       }

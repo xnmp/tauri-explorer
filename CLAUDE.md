@@ -158,6 +158,11 @@ The graph-lineage unit file includes a wall-clock hover budget. Its ordered
 Vitest project must finish before ordinary parallel unit transforms, retaining
 the unchanged budget and worker overrides; scheduler contention is not graph
 execution time. Qualification tests verify actual worker admission ordering.
+Native crop oracles measure loaded first-frame pixels and intrinsic preview
+dimensions. Use bounded load/error callbacks rather than an unbounded injected
+`Image.decode()` promise, retaining exact pixel assertions. The fake external
+CLI's test-only timeout must include cold interpreter startup before reaping;
+a deadline that kills it before its PID is written cannot prove child cleanup.
 Real-watcher timing tests must also wait for the backend watch and frontend
 listener to be ready, then acknowledge every filesystem write at the
 application-side watcher callback before attributing listing counts to it. A

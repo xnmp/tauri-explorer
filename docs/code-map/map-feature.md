@@ -127,6 +127,7 @@ backend for E2E/browser).
 - `src/test-support/e2e-hooks.ts` (+ `window-operations.ts`, `dom-rpc.ts`) — opt-in page-owned native E2E dispatch and readiness with teardown-safe lazy imports/publication; per-op target, picker, unready and in-flight close fixtures cover rejected handoffs and duplicate-label creation ownership. Loaded only via `api/e2e-hooks.ts` `loadE2EHooks()`.
 - `e2e-tauri/owned-windows.ts` — every native handle scan; parked warm pages are found by URL and a `warm-ready` operation, never scripted (#931).
 - `e2e-tauri/window-transfer-waits.ts`, `e2e-tauri/specs/window-transfer-lifetime.spec.ts` — renderer-side correlated observation for native window-operation results and listing entries. `e2e-tauri/diagnostics/window-transfer.ts` retains window/runtime evidence for transfer and clipboard failures (#710).
+- `e2e-tauri/crop-pixel-oracle.ts` supplies bounded loaded-frame pixel and intrinsic-preview observations to `e2e-tauri/specs/image-crop.spec.ts`, without weakening codec or geometry assertions.
 - `e2e-tauri/specs/helpers.ts`, `e2e-tauri/diagnostics/fresh-window.ts`, `e2e-tauri/diagnostics/process-timeline.ts` — bounded process timelines around fresh-window launch, selection and first lookup; retain the requested label even when selection fails before page readiness (#781). Every `e2e-tauri/diagnostics/` module persists through `e2e-tauri/diagnostics/artifact.ts` and carries a `Retire-when: #NNN closed` tag.
 - `state/window-startup.ts` — owns settings → theme/readiness → plugins initialization; teardown revokes late startup.
 

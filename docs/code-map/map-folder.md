@@ -761,6 +761,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `e2e-tauri/gated-suites.ts` — run/skip/fail decision for native suites that need an opt-in build or fixture directory; `TAURI_E2E_REQUIRE_GATED=1` turns a missing prerequisite into a named failure (#774). Contracts in `tests/qualification/gated-suites.test.ts`.
 - `e2e-tauri/specs/gated-describe.ts` — `gatedDescribe`, the Mocha adapter over that decision; separate from `specs/helpers.ts` because qualification tests import the helpers without Mocha types.
 - `e2e-tauri/external-job-fixture.ts` — Linux native-test `PATH` fixture for a deterministic long-running fake Gemini CLI.
+- `e2e-tauri/crop-pixel-oracle.ts` — serializable, bounded first-frame pixel and intrinsic-preview observers for native crop verification; preserves exact comparisons when decoder promises stall.
 - `e2e-tauri/specs/external-job-timeout.spec.ts` — real CLI timeout/reap, withheld output and Jobs-panel error outcome.
 - `e2e-tauri/diagnostics/artifact.ts` — shared best-effort diagnostic artifact writer: per-investigation log directory, ADR 0021 hashed file names, never masks the documented failure. Contract in `tests/qualification/diagnostic-artifact.test.ts`.
 - `e2e-tauri/diagnostics/process-timeline.ts` — process-only `/proc` session-loss sampler: renderer/driver classification, bounded rolling samples, PID+start-time renderer lifetimes (`Retire-when: #781 closed`).

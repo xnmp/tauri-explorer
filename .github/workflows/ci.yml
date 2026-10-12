@@ -208,7 +208,9 @@ jobs:
   rust:
     needs: changes
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    # Build, the lib suite (~6 min on CI) and the opt-in recovery tests
+    # together exceed 30 minutes on a cold cache.
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v7
         if: ${{ needs.changes.outputs.code == 'true' }}

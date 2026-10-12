@@ -17,6 +17,9 @@
 <script lang="ts">
   import "./modal.css";
   import { modalOwnership } from "$lib/state/modal-ownership.svelte";
+  import { dialogStore } from "$lib/state/dialogs.svelte";
+  import { getDialogPresentation } from "$lib/state/dialog-presentation-context";
+  import { canRestoreModalFocus as canRestoreFocus, createPaneDialogFocusRestore } from "$lib/state/modal-focus";
   import { untrack, type Snippet } from "svelte";
 
   interface Props {
@@ -61,6 +64,8 @@
   }: Props = $props();
 
   let overlayRef = $state<HTMLElement | null>(null);
+  const presentation = getDialogPresentation();
+  const scope = presentation?.scope ?? null;
   let ownership = $state.raw<ReturnType<typeof modalOwnership.registerSurface> | null>(null);
   const top = $derived(ownership?.isTop() ?? false);
   let lastFocused: HTMLElement | null = null;
@@ -71,7 +76,11 @@
       if (event) handleKeydown(event);
       else if (canClose()) onClose();
       focusOwnedSurface();
-    }, () => canClose(), focusOwnedSurface));
+    }, () => canClose(), focusOwnedSurface, {
+      scope, presentation: presentation?.presentation,
+      available: () => presentation?.visible ?? true,
+      element: () => overlayRef, focus: focusOwnedSurface,
+    }));
     ownership = owner;
     return () => { owner.release(); ownership=null; };
   });
@@ -90,12 +99,6 @@
       // offsetParent is null for display:none subtrees (e.g. inactive tabs)
       (el) => el.offsetParent !== null
     );
-  }
-
-  function canRestoreFocus(element: HTMLElement): boolean {
-    if (!element.isConnected || element.closest("[inert], [aria-hidden='true']")) return false;
-    if (element.matches(":disabled")) return false;
-    return element === document.body || element.offsetParent !== null;
   }
 
   /** Keep Tab inside the dialog: cycle through focusable elements. */
@@ -123,7 +126,7 @@
       if (canClose()) onClose();
       return;
     }
-    if (event.key === "Tab") {
+    if (event.key === "Tab" && !scope) {
       trapTab(event);
       return;
     }
@@ -143,6 +146,11 @@
     if (!open || !overlayRef) return;
     const ref = overlayRef;
     const previous = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    if (scope && presentation) return createPaneDialogFocusRestore(ref, previous, scope.paneId, {
+      isActive: () => presentation.isActive(),
+      isUncovered: () => !dialogStore.isPaneBlocked(scope.paneId),
+      focusUncovered: () => presentation.focusUncovered(),
+    });
     return () => {
       if (previous && canRestoreFocus(previous)) {
         previous.focus();
@@ -159,7 +167,7 @@
     const ref = overlayRef;
     if (!ref) return;
     queueMicrotask(() => {
-      if (!ownership?.isTop() || !ref.isConnected || ref.contains(document.activeElement)) return;
+      if (!ownership?.isTop() || (scope && !presentation?.isActive()) || !ref.isConnected || ref.contains(document.activeElement)) return;
       const remembered = lastFocused;
       const preferred = ref.querySelector<HTMLElement>("[autofocus], [data-autofocus]");
       const target = remembered && ref.contains(remembered) && canRestoreFocus(remembered)
@@ -170,7 +178,7 @@
   }
 
   $effect(() => {
-    if (open && overlayRef && top) focusOwnedSurface();
+    if (open && overlayRef && top && (!scope || presentation?.isActive())) focusOwnedSurface();
   });
 </script>
 
@@ -181,9 +189,10 @@
     class="modal-overlay {overlayClass}"
     class:top-aligned={align === "top"}
     class:suspended={!top}
+    class:pane-scoped={!!scope}
     style:--modal-top-offset={topOffset}
-    {role}
-    aria-modal={top ? "true" : undefined}
+    role={scope ? "dialog" : role}
+    aria-modal={top && !scope ? "true" : undefined}
     aria-hidden={!top ? "true" : undefined}
     inert={!top}
     aria-label={label}
@@ -200,6 +209,7 @@
 
 <style>
   .modal-overlay.suspended { visibility:hidden; pointer-events:none; }
+  .modal-overlay.pane-scoped { position: absolute; }
   .modal-overlay {
     position: fixed;
     inset: 0;

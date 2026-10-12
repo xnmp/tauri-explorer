@@ -37,6 +37,69 @@ import { observeActiveDirectory } from "$lib/composables/observe-active-director
 import { extractError, type ApiResult } from "$lib/api/common";
 import { logFrontendError } from "$lib/api/crash";
 import { subscribeToLocalFileChanges } from "$lib/state/file-events";
+import { fileDropTargets } from "$lib/state/file-drop-targets.svelte";
+import PluginContributionRoot from "$lib/components/PluginContributionRoot.svelte";
+import { pluginDomOwnership } from "$lib/state/plugin-dom-ownership";
+import { modalOwnership } from "$lib/state/modal-ownership.svelte";
+
+dialogRegistry.connectPanes(() => windowTabsManager.paneDialogs);
+
+export type { PaneTileSize, TileSizePreset, TileGridMetrics } from "$lib/domain/tile-layout";
+import type { TileSizePreset, TileGridMetrics } from "$lib/domain/tile-layout";
+import type { Component } from "svelte";
+
+/** `ui/file-tile` (capability "fileTile"). Renders one `role="gridcell"`;
+ * the plugin supplies grid/row roles and owns keyboard navigation/selection.
+ * Host clipboard, hidden/empty-folder styling and pane-owned inline rename
+ * are reactive. No host drag/drop wiring: `ui/file-tiles` exposes none either.
+ */
+export interface FileTileProps {
+  entry: FileEntry;
+  selected: boolean;
+  /** Roving tab stop (0 when true, otherwise -1); does not move DOM focus. */
+  focused?: boolean;
+  /** Optional one-based column index, supplied by the plugin's layout. */
+  column?: number;
+  /** DOM focus notification; plugins may update their roving tab stop. */
+  onfocus?: (event: FocusEvent) => void;
+  /** Keyboard events are forwarded unchanged; the plugin owns navigation. */
+  onkeydown?: (event: KeyboardEvent) => void;
+  /** Optional remembered video-thumbnail failure; keeps the plain file icon. */
+  videoUnavailable?: boolean;
+  /** Allows a virtualized plugin grid to retain failed-video fallback by path. */
+  onvideounavailable?: (entry: FileEntry) => void;
+  /** Explicit preset, else enclosing pane's folder size, else global setting.
+   * Unknown values fall through like an omitted preset. */
+  size?: TileSizePreset;
+  /** Receives the original mouse event, including selection modifiers. */
+  onselect: (entry: FileEntry, event: MouseEvent) => void;
+  /** Double-click. Keyboard activation belongs to the plugin's grid. */
+  onopen: (entry: FileEntry) => void;
+  /** Receives the original event after preventDefault(). */
+  onmenu: (entry: FileEntry, event: MouseEvent) => void;
+}
+
+/** `ui/file-tiles` (capability "fileTiles"). Owns a non-virtualized grid,
+ * roving focus, arrows/Home/End and Enter activation. */
+export interface FileTilesProps {
+  entries: readonly FileEntry[];
+  /** Replace a plain Set to update selection, or use a reactive Set. */
+  selected: ReadonlySet<string>;
+  onselect: FileTileProps["onselect"];
+  onopen: FileTileProps["onopen"];
+  onmenu: FileTileProps["onmenu"];
+  /** Accessible grid name; defaults to "Files". */
+  label?: string;
+  /** Same explicit/pane/global resolution as `FileTileProps.size`. */
+  size?: TileSizePreset;
+}
+
+/** Shape of `sdk.modules["ui/file-tile"]`; detect `"fileTile"` capability. */
+export interface FileTileModule {
+  readonly default: Component<FileTileProps>;
+  /** Omitted/unknown preset: medium. CSS px, before host zoom. */
+  readonly tileGridMetrics: (size?: TileSizePreset) => TileGridMetrics;
+}
 
 // ----- Settings descriptors -----
 
@@ -110,6 +173,34 @@ export interface PluginMoveResult {
   error?: string;
 }
 
+/** Host-issued, window-local pane handle (capability "paneDialogs"). Plugins
+ *  obtain it from `workspace.capturePane`; they never construct or serialize it. */
+export interface PluginDialogPane {
+  readonly paneId: string;
+}
+
+/** Where a plugin dialog is shown. Omitted means a window modal. A "pane"
+ *  dialog covers only the captured pane; other panes stay usable. */
+export type PluginDialogOptions = (
+  | { readonly scope: "window" }
+  | { readonly scope: "pane"; readonly pane: PluginDialogPane }
+) & {
+  /** Capture before awaiting work to retain the requesting modal's lifetime,
+   *  independently of the destination. Pane handles also retain their caller. */
+  readonly caller?: PluginDialogPane;
+};
+
+/** "pane": a verified drag from an explorer pane. "external": paths Tauri
+ *  delivered from another application. */
+export type PluginFileDropSource = "pane" | "external";
+
+export type PluginFileDropHandler = (paths: readonly string[], source: PluginFileDropSource) => void | Promise<void>;
+
+export interface PluginFileDropTargetOptions {
+  /** When it returns false, drops on the target are consumed without delivery. */
+  readonly enabled?: () => boolean;
+}
+
 /**
  * Read/act on the active file-explorer pane. This is the seam plugins use to
  * reach the workspace — they never import the window/tab or explorer stores
@@ -150,6 +241,19 @@ export interface PluginWorkspace {
   /** SDK 2: show one of this plugin's file views in the active pane, or
    *  return it to its built-in view mode when the view is already chosen. */
   toggleFileView?(viewId: string): void;
+  /** Capability "paneDialogs": capture a pane of this window's active explorer
+   *  tab (the active pane when paneId is omitted) for a pane-scoped dialog.
+   *  The handle stays valid for the pane's lifetime, across selection and
+   *  focus changes; null when there is no such pane. It also captures the
+   *  calling modal for managed children opened after asynchronous work. */
+  capturePane?(paneId?: string): PluginDialogPane | null;
+  /** Capability "fileDropTargets": deliver file paths dropped on `element`
+   *  from explorer panes or other applications. The host shows the
+   *  `drop-target` highlight. Returns an idempotent disposer; registrations
+   *  are also disposed with the plugin. `element` must be inside this plugin's
+   *  mounted contribution or dialog content; host chrome and other plugins'
+   *  elements throw before registration. */
+  registerFileDropTarget?(element: HTMLElement, handler: PluginFileDropHandler, options?: PluginFileDropTargetOptions): () => void;
 }
 
 /**
@@ -168,7 +272,7 @@ export interface PluginWorkspace {
 export interface PluginContext {
   /** Managed navigation retains a caller's mounted modal and draft. */
   presentation?: {
-    openDialog(id:string,props?:Record<string,unknown>):Promise<import("./dialog-registry.svelte").DialogResult>;
+    openDialog(id:string,props?:Record<string,unknown>,options?:PluginDialogOptions):Promise<import("./dialog-registry.svelte").DialogResult>;
     /** Opens the host image editor directly in one of this plugin's editor tools; settles when it closes. */
     openImageEditor?(request:{path:string;tool:string}):Promise<void>;
   };
@@ -199,8 +303,9 @@ export interface PluginContext {
   /** SDK 2: contribute a Preview-info section for files or this plugin's targets. */
   registerPreviewInfo?(section: PreviewInfoContribution): void;
   /** Open a registered dialog, passing props to its component. `open` and an
-   *  `onClose` (which closes the dialog) are injected by the renderer. */
-  openDialog(id: string, props?: Record<string, unknown>): void;
+   *  `onClose` (which closes the dialog) are injected by the renderer.
+   *  `options` (capability "paneDialogs") scopes it to a captured pane. */
+  openDialog(id: string, props?: Record<string, unknown>, options?: PluginDialogOptions): void;
   /** Close an open dialog by id. */
   closeDialog(id: string): void;
   jobs: PluginJobs;
@@ -284,22 +389,37 @@ export function createPluginContext(
   dispose: () => void;
   reportFailure: (error: unknown, contribution: string) => void;
 } {
-  const disposers: (() => void)[] = [];
+  const disposers = new Set<() => void>();
   let disposed = false;
+  const dialogOwner = Symbol(pluginId);
+  const ownedComponent = (component: Component<any>): Component<any> => {
+    const contribution: Component<any> = (anchor, props) => PluginContributionRoot(anchor, { component, contribution, props });
+    pluginDomOwnership.contribute(contribution, dialogOwner);
+    return contribution;
+  };
   const managedDialogs=new Set<()=>void>();
   // Editor tools this plugin registered; only these may be opened directly.
   const editorTools=new Set<string>();
-  disposers.push(()=>{for(const close of managedDialogs)close();managedDialogs.clear();});
+  disposers.add(()=>{for(const close of managedDialogs)close();managedDialogs.clear();});
+  disposers.add(() => dialogRegistry.closeOwner(dialogOwner));
   const track = (fn: () => void) => {
-    if (disposed) fn();
-    else disposers.push(fn);
+    let live = true;
+    const dispose = () => {
+      if (!live) return;
+      live = false;
+      disposers.delete(dispose);
+      fn();
+    };
+    if (disposed) dispose();
+    else disposers.add(dispose);
+    return dispose;
   };
   const storage = createPluginStorage(pluginId);
   // Accepted jobs outlive the plugin, but their Retry runs its code: drop it.
   const pluginJobs = scopePluginJobs(pluginId);
-  disposers.push(() => pluginJobs.retire());
+  disposers.add(() => pluginJobs.retire());
   // Preview targets are pane state owned by this plugin; drop them with it.
-  disposers.push(() => {
+  disposers.add(() => {
     for (const explorer of windowTabsManager.getAllExplorers()) explorer.clearPreviewTargetsOwnedBy(pluginId);
   });
   // Tauri rejects with a serialized AppError ({ kind, message }), not an Error.
@@ -317,15 +437,27 @@ export function createPluginContext(
 
   const ctx: PluginContext = {
     presentation:{
-      async openDialog(id,props) {if(disposed)throw new Error("Plugin caller was disposed");const session=dialogRegistry.openManaged(id,props);managedDialogs.add(session.close);try{return await session.result;}finally{managedDialogs.delete(session.close);}},
+      async openDialog(id,props,options) {
+        try {
+          if(disposed)throw new Error("Plugin caller was disposed");
+          const session=dialogRegistry.openManaged(id,props,options,dialogOwner);
+          if(session.ownsDialog)managedDialogs.add(session.close);
+          try{return await session.result;}finally{managedDialogs.delete(session.close);}
+        } catch (error) { report(error, `presentation ${id}`); throw error; }
+      },
       async openImageEditor(request) {
         if(disposed)throw new Error("Plugin caller was disposed");
         const refused=imageEditorRequestError(request,editorTools);
         if(refused)throw new Error(refused);
         const {path,tool}=request;
+        // Capture before the window editor takes ownership/focus. Pane callers
+        // retain their lifetime while suspended by this managed child.
+        const pane=windowTabsManager.paneDialogs.capture();
+        const caller=modalOwnership.captureCaller(pane ? windowTabsManager.paneDialogs.resolve(pane) : null);
         const session=dialogStore.openImageEditorTool(path,basename(path),tool);
         managedDialogs.add(session.close);
-        try{await session.closed;}finally{managedDialogs.delete(session.close);}
+        const detachCaller=caller?.onClosed(session.close) ?? (()=>{});
+        try{await session.closed;}finally{detachCaller();managedDialogs.delete(session.close);}
       },
     },
     text: {
@@ -381,30 +513,33 @@ export function createPluginContext(
       track(registerFsProvider(scheme, { list }, false));
     },
     registerDialog(descriptor: DialogDescriptor): void {
-      track(dialogRegistry.register(descriptor));
+      track(dialogRegistry.register({ ...descriptor, component: ownedComponent(descriptor.component) }));
     },
     registerImageEditorTool(tool: ImageEditorTool): void {
-      track(imageEditorRegistry.register(tool, order));
+      track(imageEditorRegistry.register({ ...tool, component: ownedComponent(tool.component) }, order));
       editorTools.add(tool.id);
     },
     registerInspector(descriptor: InspectorContribution): void {
-      track(inspectorRegistry.register(descriptor, order));
+      track(inspectorRegistry.register({ ...descriptor, component: ownedComponent(descriptor.component) }, order));
     },
     registerFileView(view: FileViewContribution): void {
       // `<pluginId>.<name>` with a dot-free name: plugin ids may contain dots,
       // so a prefix check alone would let "acme" claim "acme.trace"'s views.
       const name = view.id.startsWith(`${pluginId}.`) ? view.id.slice(pluginId.length + 1) : null;
       if (view.id !== pluginId && (!name || name.includes("."))) throw new Error(`File view ${view.id} must be named ${pluginId}.<name>`);
-      track(fileViewRegistry.register(pluginId, view, order));
+      track(fileViewRegistry.register(pluginId, { ...view, component: ownedComponent(view.component) }, order));
     },
     registerPreviewInfo(section: PreviewInfoContribution): void {
-      track(previewInfoRegistry.register(pluginId, section, order));
+      track(previewInfoRegistry.register(pluginId, { ...section, component: ownedComponent(section.component) }, order));
     },
-    openDialog(id: string, props?: Record<string, unknown>): void {
-      dialogRegistry.open(id, props ?? {});
+    openDialog(id: string, props?: Record<string, unknown>, options?: PluginDialogOptions): void {
+      try {
+        if (disposed) throw new Error("Plugin caller was disposed");
+        dialogRegistry.open(id, props ?? {}, options, dialogOwner);
+      } catch (error) { report(error, `dialog ${id}`); throw error; }
     },
     closeDialog(id: string): void {
-      dialogRegistry.close(id);
+      dialogRegistry.closeOwned(id, dialogOwner);
     },
     jobs: pluginJobs.jobs,
     toast: {
@@ -447,6 +582,23 @@ export function createPluginContext(
       await Promise.all(sections.slice(1).map((section)=>section.applySaved(patch)));
     },
     workspace: {
+      capturePane: (paneId) => disposed ? null : windowTabsManager.paneDialogs.capture(paneId),
+      registerFileDropTarget(element, handler, options) {
+        if (disposed) throw new Error("Plugin caller was disposed");
+        if (!pluginDomOwnership.owns(element, dialogOwner)) {
+          throw new Error(`File drop target must be owned by ${pluginId}`);
+        }
+        const unregister = fileDropTargets.register(element, async (paths, source) => {
+          if (disposed) return;
+          try { await handler(paths, source); }
+          catch (error) { report(error, "file drop handler"); }
+        }, { enabled: () => {
+          if (disposed || !pluginDomOwnership.owns(element, dialogOwner)) return false;
+          try { return options?.enabled?.() ?? true; }
+          catch (error) { report(error, "file drop target predicate"); return false; }
+        } });
+        return track(unregister);
+      },
       getCurrentDirectory:()=>windowTabsManager.getActiveExplorer()?.currentPath ?? null,
       onDirectoryChanged:handler=>track(observeActiveDirectory(handler)),
       captureSelection:()=>{
@@ -529,8 +681,8 @@ export function createPluginContext(
     reportFailure: report,
     dispose: () => {
       disposed = true;
-      while (disposers.length) {
-        const fn = disposers.pop();
+      for (const fn of [...disposers].reverse()) {
+        disposers.delete(fn);
         try {
           fn?.();
         } catch (err) {

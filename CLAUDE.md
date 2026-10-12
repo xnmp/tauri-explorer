@@ -43,6 +43,7 @@ Rules that bite:
   keep it distinct from `--icon-folder` (the Hacker theme deliberately uses its
   darker terminal green) and cover every file-list view mode when changing it.
 - Three view modes (Details/List/Tiles) dispatched by `FileList.svelte` — display features must land in all three.
+- Details-only columns (e.g. Length, #995) are the exception: their values are lazy per-row metadata requested by rendered `FileItem` rows through a cached resolver, never fields on directory listings.
 - Keep high-frequency hover feedback on file entries, sidebar navigation, and tabs immediate. Preserve motion for one-shot structural events (such as tab enter/close), but do not add CSS transition settling to pointer highlights; it reads as input latency even when the main thread is idle (#503).
 - Refresh policy is split deliberately: WHEN=`refresh-manager`, WHETHER=`pane-watch`, HOW=`pane-refresh`. Don't add a fourth gate, and don't build private refresh stacks inside components — the git graph did, and it produced #431/#432.
 - Watcher callbacks are delayed work: capture the explorer path when queuing a refresh and drop the callback if that explorer navigates before it runs. Preserve the backend observation time too: notify delivery can lag behind a trailing listing, and treating an already-covered change as new work creates a third refresh. Otherwise an event attributed to the old directory refreshes the new one and corrupts both directories' cadence.
@@ -64,12 +65,14 @@ Rules that bite:
 - Do not use generic `gio open trash:///` or `xdg-open` on `Trash/files` as proof of a graphical Trash view: the former can dispatch to a handler that rejects the URI asynchronously, while the latter can open a terminal as the directory MIME default. Treat uncertain FileManager1 responses as errors rather than launching a second manager (#660, #672, #757).
 - Keep state machines and caches out of component-local scope (`<script module>` in a `.svelte` file is not a state layer). If it can't be unit-tested through an import, it will eventually be wrong unobserved (#444).
 - Rust test modules included with `#[path]` from production modules belong in `src-tauri/test_support/`, not Cargo's auto-discovered `src-tauri/tests/`. Keeping source-included modules under `tests/` makes `cargo clippy --all-targets` compile them again as standalone integration crates, where their `super`/`crate` imports are invalid.
+- The native crate is a desktop application library with no Rust doctest examples; keep `[lib] doctest = false` so shared qualification target caches cannot feed a zero-test rustdoc harness mixed-feature Tauri artifacts. Unit and integration tests remain under ordinary `cargo test` targets.
 - Progress toasts must bypass the generic opacity entrance animation so accepted long-running work is visible immediately. Under load, WebKit can strand an entrance animation on its zero-opacity first frame; keep motion on the progress spinner instead.
 - Plugin context-menu actions that invoke an AI service carry `group: "ai"`; `ContextMenu.svelte` renders those applicable actions in its shared AI submenu while leaving non-AI plugin actions top-level.
 - The Theme from Image context-menu action also belongs in that shared AI submenu, even though palette extraction runs locally; keep its single, real-image selection predicate intact.
 - Miller columns cache ancestor listings independently of the active pane. Publish the affected parent directory after local mutations so their visible source column refreshes immediately (#598).
 - Quick Open keeps local active-pane/recent/frecency matches immediate and caps the merged rendered list at 20 rows; rendering thousands of active-directory matches blocks the input even when matching itself is cheap. Its recursive backend walk goes through `domain/quick-open-search.ts`; retain its trailing debounce and invalidate an active stream on new input so large deferred trees do not compete with typing. Completed walks are cached briefly in `search_cache.rs` only while the root has an active filesystem watcher and a separate recursive cache-invalidation watch was established successfully; pane/thumbnail refresh watches stay non-recursive to avoid overlapping subtree fan-out. Because recursive cache roots can overlap, removing one registration must rebuild all surviving registrations and advance their cache epochs; notify's Linux backend can otherwise silently remove descendant OS watches. Coverage transitions advance only the exact root's epoch before advertising cache coverage—filesystem-change invalidation remains ancestor/descendant-aware—so an in-flight walk from an uncovered gap cannot publish after coverage returns without evicting unchanged overlapping listings. All epoch allocation goes through the same bounded revision tracker, including first-time coverage transitions. Ending the final pane watch must remove the recursive coverage and advance that root's cache epoch because files can change before it is watched again. Unwatched or recursively-uncovered roots always walk fresh, cancelled walks are never published, and publication must retain the pre-walk per-root invalidation revision so a watcher event racing a cold walk cannot resurrect stale entries or an unrelated root's event discard valid work. Detach the captured stream listener before awaiting cancellation IPC, or a late cancellation can remove its replacement (#600, #651).
 - Terminal focus gives terminal-hosted applications ownership of every key except the small, availability-aware core-navigation allowlist in `domain/terminal-keys.ts` (Quick Open, Command Palette, previous/next tab, and the configured terminal-toggle chord). Keep the ownership decision shared by `+page.svelte` and `TerminalPanel.svelte`; chord prefixes and suffixes must be checked against the eligible command ID so other chords sharing a prefix stay terminal-owned, and a terminal-owned mismatching suffix must cancel the pending Explorer chord before another key can complete it.
+- Shortcut hints in command-owned UI must come from `getCommandShortcut(commandId)`, not hardcoded defaults, so persisted overrides and unbound commands remain consistent with window command dispatch.
 - Fixed overlays under root CSS zoom are engine-specific: `fixedFromClient` and `fixedFromRect` divide once only on Chromium; WKWebView uses two divisions, while WebKitGTK's CSS-space rect offsets its second scale. Keep the live Chromium check wired through the context-menu conversion (#493).
 - Zoomed image previews update their `transform` for every pointer move. Keep the compositor hint scoped to `.preview-image.zoomed`, so active panning stays smooth without retaining layers for every ordinary image preview (#635).
 - Vertical preview docks retain the persisted preferred height, but their rendered wrapper caps it to the center stack's available height minus a usable file region. Keep that allocation in the shared page layout rather than component-local resize state so zoom and window resizing cannot feed back into saved settings (#699).
@@ -96,6 +99,9 @@ Rules that bite:
   the GitHub issue. Production therefore needs `BLOB_READ_WRITE_TOKEN` as well
   as `GITHUB_ISSUE_TOKEN`. Keep the raw attachment total at or below 3 MiB so
   its base64 JSON request stays below Vercel's 4.5 MB function-body limit.
+- The root Vitest suite imports the report relay from `website/`; keep its
+  `@vercel/blob` runtime and compatible Undici major in the root test-harness
+  dev dependencies as well as the independently deployed website package.
 
 ## Documentation
 
@@ -246,3 +252,45 @@ Native graph fixtures must wait for the reset view's `.file-list` before their
 repository is deleted, because reset navigation completes asynchronously.
 
 - Files grid width updates must render within ResizeObserver delivery (`flushSync`); deferred row chunking can expose tracks from the fullscreen preview width on exit (#1061). See `docs/lessons/1061-tile-layout-delivery.md`.
+
+Git Graph PR mutations use `git_pr_action` through `gh` with an explicit selected
+GitHub repository and user confirmation. Creation requires an already-pushed
+branch and revalidates the displayed HEAD branch before spawning the CLI.
+Every confirmation carries its displayed repository identity, which the backend
+rechecks against the selected remote. A successful merge command means “merge
+requested”: GitHub may enqueue it, so only refreshed badges reflect closure. PR
+mutations do not delete or update local branches and have no local undo receipt.
+Badge-cache revisions reject pre-mutation cache fills, including uncertain CLI
+failures; the mounted PR session refreshes badges and keeps duplicate submissions
+blocked through that refresh. Browser screenshots simulate GitHub, while isolated
+Rust subprocess fixtures cover the production argv/cwd and CLI error boundary.
+See ADR 0005 and ADR 0006.
+
+GitHub PR mutations (#1082): keep `--repo github.com/owner/name` explicit. Pending work belongs to `git-pr-mutations.svelte.ts`, not a mounted graph session; Rust admission spans windows/worktrees of the same target. After gh starts, a failure may follow remote acceptance: invalidate badges, retain the uncertain warning, and require an explicit GitHub check before retrying (ADR 0006).
+
+The unchanged 5,001-activation registry churn file runs in the first Vitest
+project group, followed by the unchanged native-suite compiler check, then
+parallel unit files. Keep the projects exhaustive and
+non-overlapping; inherited include arrays concatenate, so define each project's
+include explicitly instead of inheriting the unit glob. Keep existing test
+assertions, deadlines and CLI worker overrides intact. Use positive group orders:
+Vitest puts isolated order-zero projects last with `maxWorkers=1`. Verify actual
+worker admission as well as resolved config (#1082).
+
+Graph reference disclosures capture the scroller's actual position when opened.
+A native scroll notification can arrive after the click for positioning that
+already happened. Compare positions rather than dismissing on every delivery;
+inherit the snapshot into scoped actions and focus with preventScroll. Subsequent
+vertical or horizontal movement still dismisses the anchored menu (#1082).
+
+The native suite's public TypeScript command uses incremental compiler metadata
+under node_modules/.cache. Repeated typechecks must still validate changed imported
+contracts and recover after errors; do not alter the existing five-second test
+deadline to compensate for host load. Metadata is disposable, not acceptance proof.
+
+The new native cache contract probe also runs before parallel unit transforms, in its own ordered project after the unchanged public compiler check. Preserve exhaustive selection and worker overrides.
+
+Compiler regression probes resolve TypeScript's CLI through Node package
+resolution from the test module. Review checkouts may inherit dependencies from
+an ancestor; a checkout-relative node_modules/typescript path is not portable.
+Keep the real compiler and every cold/warm/error/recovery assertion intact.

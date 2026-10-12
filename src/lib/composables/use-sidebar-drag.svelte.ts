@@ -1,6 +1,6 @@
 /**
  * Lightweight pointer-drag for sidebar items (Recent, etc.) on macOS.
- * Only supports dragging to the Bookmarks section (sidebar drop target).
+ * Supports Bookmarks and registered plugin file drop targets.
  */
 
 import { onDestroy } from "svelte";
@@ -9,6 +9,9 @@ import { bookmarksStore } from "$lib/state/bookmarks.svelte";
 import { resolveDropTargetAtPoint, highlightTargetAtPoint, clearHighlights } from "./use-native-drop-target.svelte";
 import { createDragGhost } from "./use-pointer-drag.svelte";
 import { settingsStore } from "$lib/state/settings.svelte";
+import { dispatchFileDrop, admitFileDrop } from "$lib/state/dispatch-file-drop";
+import { internalDragPaths } from "$lib/domain/file-drop";
+import { isWindows } from "$lib/domain/platform";
 
 const THRESHOLD_PX = 5;
 
@@ -56,7 +59,7 @@ export function useSidebarDrag() {
     if (!dragActive) {
       if (Math.sqrt(dx * dx + dy * dy) < THRESHOLD_PX) return;
       dragActive = true;
-      dragState.start({ path: dragPath, name: dragName, kind: "directory" });
+      dragState.start({ path: dragPath, name: dragName, kind: "directory", nativeCopyPolicy: "link" });
       ghostEl = createDragGhost(sourceEl, dragName);
     }
 
@@ -67,24 +70,32 @@ export function useSidebarDrag() {
 
     highlightTargetAtPoint(event.clientX, event.clientY);
     const target = resolveDropTargetAtPoint(event.clientX, event.clientY);
-    document.body.style.cursor = target?.type === "sidebar" ? "copy" : "not-allowed";
+    document.body.style.cursor = target?.type === "sidebar" || target?.type === "bookmark" || target?.type === "plugin" ? "copy" : "not-allowed";
   }
 
-  function onMouseUp(event: MouseEvent): void {
+  async function onMouseUp(event: MouseEvent): Promise<void> {
     if (!dragActive) {
       cleanup(false);
       return;
     }
 
-    clearHighlights();
     if (ghostEl) ghostEl.style.display = "none";
     const target = resolveDropTargetAtPoint(event.clientX, event.clientY);
+    const data = dragState.current;
+    const path = dragPath;
+    const name = dragName;
+    cleanup(false);
+    const delivery = dispatchFileDrop(target, internalDragPaths(data, isWindows) ?? [], "pane", data);
+    if (delivery) { await delivery; return; }
+    clearHighlights();
+    const receipt = admitFileDrop(target, data);
+    if (!receipt) return;
+    try {
+      if (target?.type === "sidebar" || target?.type === "bookmark") {
+        bookmarksStore.addBookmark(path, name);
+      }
 
-    if (target?.type === "sidebar") {
-      bookmarksStore.addBookmark(dragPath, dragName);
-    }
-
-    cleanup(true);
+    } finally { receipt.finish(); }
   }
 
   function onKeyDown(event: KeyboardEvent): void {

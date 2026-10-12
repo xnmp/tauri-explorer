@@ -90,7 +90,7 @@ describe("plugin registry churn", () => {
       id: "churn-alpha", name: "alpha", description: "test", enabledByDefault: false,
       activate(ctx) {
         calls.alpha++;
-        ctx.registerCommand({
+        ctx.registerCommand({ scope: "pane",
           id: "plugin.churn-alpha.cmd", label: "alpha", category: "plugins", handler: () => {},
         });
         ctx.registerContextMenuItem({

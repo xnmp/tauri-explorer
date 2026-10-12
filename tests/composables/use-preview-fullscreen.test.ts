@@ -119,10 +119,29 @@ describe("createPreviewFullscreen", () => {
   });
 
   it("blocked keys (a modal is open) are left alone, Esc included", () => {
-    const fs = createPreviewFullscreen({ keysBlocked: () => true });
+    let blocked = false;
+    const fs = createPreviewFullscreen({ keysBlocked: () => blocked });
     fs.toggle();
+    blocked = true;
     fs.handleKey(key("Escape"));
     expect(fs.active).toBe(true);
+  });
+
+  it.each(["toggle", "click"] as const)("cannot enter fullscreen via %s while the pane is covered", input => {
+    let blocked = true;
+    const onToggle = vi.fn();
+    const fs = createPreviewFullscreen({ keysBlocked: () => blocked, onToggle });
+    if (input === "toggle") fs.toggle(); else fs.click(click());
+    expect(fs.active).toBe(false);
+    expect(onToggle).not.toHaveBeenCalled();
+    const escape = key("Escape");
+    fs.handleKey(escape);
+    expect(escape.preventDefault).not.toHaveBeenCalled();
+    blocked = false;
+    fs.toggle();
+    expect(fs.active).toBe(true);
+    fs.handleKey(key("Escape"));
+    expect(fs.active).toBe(false);
   });
 
   it("wheel zooms only in fullscreen, at the cursor", () => {

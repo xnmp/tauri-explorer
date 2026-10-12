@@ -7,9 +7,11 @@
 -->
 <script lang="ts">
   import type { FileViewPane } from "$lib/plugins/file-view-registry.svelte";
+  import type { PluginWorkspace } from "../api";
+  import DemoFileDropTarget from "./DemoFileDropTarget.svelte";
   import FileTiles from "$lib/components/FileTiles.svelte";
 
-  let { pane, onGreet }: { pane: FileViewPane; onGreet: () => void } = $props();
+  let { pane, onGreet, registerFileDropTarget }: { pane: FileViewPane; onGreet: () => void; registerFileDropTarget?: PluginWorkspace["registerFileDropTarget"] } = $props();
   const selected = $derived(new Set(pane.selection.map((entry) => entry.path)));
   const target = $derived(pane.previewTarget);
 
@@ -45,6 +47,7 @@
       onselect={(entry) => pane.select(entry)} onopen={(entry) => void pane.open(entry)}
       onmenu={(entry, event) => pane.contextMenu(event, entry)} />
   </section>
+  {#if registerFileDropTarget}<DemoFileDropTarget register={registerFileDropTarget} />{/if}
 </div>
 
 <style>

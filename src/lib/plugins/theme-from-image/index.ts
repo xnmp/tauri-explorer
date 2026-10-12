@@ -58,6 +58,7 @@ export const themeFromImagePlugin: Plugin = {
     });
 
     ctx.registerCommand({
+      scope: "pane",
       id: "theme-from-image.fromWallpaper",
       label: "Create Theme from Wallpaper",
       category: "plugins",

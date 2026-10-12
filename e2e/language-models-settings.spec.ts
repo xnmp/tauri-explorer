@@ -66,11 +66,13 @@ test("AI search synonyms find the manager and disabling allows removing the fina
 test("language settings remain keyboard operable and fit a narrow viewport", async ({ page }) => {
   await page.setViewportSize({ width: 320, height: 768 });
   await openSettings(page);
+  // The heading renders while settings load; Tab only reaches the control once it exists.
+  const enabled = page.getByLabel("Enable language models", { exact: true });
+  await expect(enabled).toBeVisible();
   await page.locator(".settings-search").fill("LLM");
   await page.locator(".settings-search").press("Tab");
   await expect(page.getByRole("button", { name: "Close settings" })).toBeFocused();
   await page.keyboard.press("Tab");
-  const enabled = page.getByLabel("Enable language models", { exact: true });
   await expect(enabled).toBeFocused(); await page.keyboard.press("Space");
   await expect(enabled).not.toBeChecked();
   const bounds = await page.locator(".language-models").evaluate(element => ({ left: element.getBoundingClientRect().left, right: element.getBoundingClientRect().right, width: element.scrollWidth, clientWidth: element.clientWidth }));

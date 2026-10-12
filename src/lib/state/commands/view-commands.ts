@@ -30,24 +30,28 @@ function setBuiltInView(mode: ViewMode): void {
 export const viewCommands: Command[] = [
   {
     id: "view.details",
+    scope: "pane",
     label: "Details View",
     category: "view",
     handler: () => setBuiltInView("details"),
   },
   {
     id: "view.list",
+    scope: "pane",
     label: "List View",
     category: "view",
     handler: () => setBuiltInView("list"),
   },
   {
     id: "view.tiles",
+    scope: "pane",
     label: "Tiles View",
     category: "view",
     handler: () => setBuiltInView("tiles"),
   },
   {
     id: "view.setDefaultViewMode",
+    scope: "pane",
     label: "Set Current View Mode as Default",
     category: "view",
     handler: () => {
@@ -62,6 +66,7 @@ export const viewCommands: Command[] = [
   // (Settings dialog) remains the default for panes without a choice.
   {
     id: "view.toggleMillerColumns",
+    scope: "pane",
     label: "Toggle Miller Columns",
     category: "view",
     shortcut: "Alt+M E",
@@ -69,24 +74,28 @@ export const viewCommands: Command[] = [
   },
   {
     id: "view.millerLayers0",
+    scope: "pane",
     label: "Miller Columns: Off",
     category: "view",
     handler: () => getActiveExplorer()?.setMillerLayers(0),
   },
   {
     id: "view.millerLayers1",
+    scope: "pane",
     label: "Miller Columns: 1 Layer",
     category: "view",
     handler: () => getActiveExplorer()?.setMillerLayers(1),
   },
   {
     id: "view.millerLayers2",
+    scope: "pane",
     label: "Miller Columns: 2 Layers",
     category: "view",
     handler: () => getActiveExplorer()?.setMillerLayers(2),
   },
   {
     id: "view.millerLayers3",
+    scope: "pane",
     label: "Miller Columns: 3 Layers",
     category: "view",
     handler: () => getActiveExplorer()?.setMillerLayers(3),
@@ -97,6 +106,7 @@ export const viewCommands: Command[] = [
   // indicators the panel depends on.
   {
     id: "view.toggleScmPanel",
+    scope: "pane",
     label: "Toggle Source Control Panel",
     category: "view",
     shortcut: "Alt+M G",
@@ -111,30 +121,35 @@ export const viewCommands: Command[] = [
   },
   {
     id: "view.sortByName",
+    scope: "pane",
     label: "Sort by Name",
     category: "view",
     handler: () => getActiveExplorer()?.setSorting("name"),
   },
   {
     id: "view.sortByDateModified",
+    scope: "pane",
     label: "Sort by Date Modified",
     category: "view",
     handler: () => getActiveExplorer()?.setSorting("modified"),
   },
   {
     id: "view.sortBySize",
+    scope: "pane",
     label: "Sort by Size",
     category: "view",
     handler: () => getActiveExplorer()?.setSorting("size"),
   },
   {
     id: "view.sortByType",
+    scope: "pane",
     label: "Sort by Type",
     category: "view",
     handler: () => getActiveExplorer()?.setSorting("type"),
   },
   {
     id: "view.focusFilesSidebar",
+    scope: "window",
     label: "Toggle Files Sidebar (Bookmarks & Recent)",
     category: "view",
     shortcut: "Alt+M B",
@@ -149,6 +164,7 @@ export const viewCommands: Command[] = [
   },
   {
     id: "view.toggleTheme",
+    scope: "window",
     label: "Toggle Dark/Light Theme",
     category: "view",
     handler: () => {
@@ -158,6 +174,7 @@ export const viewCommands: Command[] = [
   },
   {
     id: "view.toggleTerminal",
+    scope: "pane",
     label: "Toggle Terminal",
     category: "view",
     // Display only: Ctrl+` is hardcoded in +page.svelte's keydown handler so
@@ -168,6 +185,7 @@ export const viewCommands: Command[] = [
   },
   {
     id: "view.zoomIn",
+    scope: "window",
     label: "Zoom In",
     category: "view",
     shortcut: "Ctrl+=",
@@ -175,6 +193,7 @@ export const viewCommands: Command[] = [
   },
   {
     id: "view.zoomOut",
+    scope: "window",
     label: "Zoom Out",
     category: "view",
     shortcut: "Ctrl+-",
@@ -182,6 +201,7 @@ export const viewCommands: Command[] = [
   },
   {
     id: "view.zoomReset",
+    scope: "window",
     label: "Reset Zoom",
     category: "view",
     shortcut: "Ctrl+0",
@@ -189,6 +209,7 @@ export const viewCommands: Command[] = [
   },
   {
     id: "view.setListColumns",
+    scope: "pane",
     label: "Set List View Column Count",
     category: "view",
     handler: () => {
@@ -208,6 +229,7 @@ export const viewCommands: Command[] = [
   },
   {
     id: "view.setTileSize",
+    scope: "pane",
     label: "Tile View: Set Size",
     category: "view",
     handler: () => {
@@ -235,6 +257,7 @@ export const viewCommands: Command[] = [
   },
   {
     id: "view.switchTheme",
+    scope: "window",
     label: "Switch Theme...",
     category: "view",
     handler: () => dialogStore.openThemePicker(),
@@ -243,6 +266,7 @@ export const viewCommands: Command[] = [
   // reveals the pane when hidden, so the command has a visible effect.
   {
     id: "view.cyclePreviewPanePosition",
+    scope: "pane",
     label: "Cycle Preview Pane Position",
     category: "view",
     shortcut: "Alt+Shift+P",
@@ -253,6 +277,7 @@ export const viewCommands: Command[] = [
   },
   {
     id: "view.previewPanePositionRight",
+    scope: "pane",
     label: "Dock Preview Pane Right",
     category: "view",
     handler: () => {
@@ -262,6 +287,7 @@ export const viewCommands: Command[] = [
   },
   {
     id: "view.previewPanePositionBottom",
+    scope: "pane",
     label: "Dock Preview Pane Bottom",
     category: "view",
     handler: () => {
@@ -271,6 +297,7 @@ export const viewCommands: Command[] = [
   },
   {
     id: "view.previewPanePositionTop",
+    scope: "pane",
     label: "Dock Preview Pane Top",
     category: "view",
     handler: () => {
@@ -280,6 +307,7 @@ export const viewCommands: Command[] = [
   },
   {
     id: "view.previewPanePositionAuto",
+    scope: "pane",
     // Getter, not a plain string: re-evaluated on every palette render/filter
     // so the currently-resolved side stays live as the window is resized,
     // without needing a dynamic-label field on Command (#467).

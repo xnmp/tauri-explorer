@@ -12,6 +12,32 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # Docs-only PRs skip the heavy suites. Required status contexts must still
+  # report, and a skipped matrix job never expands its contexts, so required
+  # jobs keep running and gate their steps on this output instead. Anything not
+  # matching the docs patterns, and every non-PR event, counts as code.
+  changes:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      code: ${{ github.event_name != 'pull_request' && 'true' || steps.filter.outputs.code }}
+    steps:
+      - id: filter
+        if: github.event_name == 'pull_request'
+        uses: dorny/paths-filter@v3
+        with:
+          # A file is code unless it matches a docs exclusion.
+          predicate-quantifier: every
+          filters: |
+            code:
+              - '**'
+              - '!docs/**'
+              - '!**/*.md'
+              - '!output/**'
+
   # Code maps are only useful while they are accurate: an agent that trusts a map
   # naming a moved file searches worse than one with no map at all. Two guards —
   # references (every file a map names exists) and coverage (every source file is
@@ -26,6 +52,8 @@ jobs:
         run: python3 docs/code-map/validate.py --coverage
 
   frontend-checks:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -59,6 +87,8 @@ jobs:
   # so contention-sensitive tests retain their existing execution conditions.
   # Two shards of 561 tests ran 19-20m and began hitting the timeout.
   chromium:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     strategy:
@@ -92,19 +122,31 @@ jobs:
   # Preserve the protected-branch check name and require every Chromium shard.
   frontend:
     if: always()
-    needs: [frontend-checks, chromium]
+    needs: [changes, frontend-checks, chromium]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
+      # Upstream jobs are skipped only on a docs-only PR; on code every one must
+      # succeed, so a failed, cancelled or skipped shard still fails this check.
       - name: Require frontend validation and browser outcomes
         env:
+          CHANGES_RESULT: ${{ needs.changes.result }}
+          CODE: ${{ needs.changes.outputs.code }}
           CHECKS_RESULT: ${{ needs.frontend-checks.result }}
           CHROMIUM_RESULT: ${{ needs.chromium.result }}
-        run: test "$CHECKS_RESULT" = success && test "$CHROMIUM_RESULT" = success
+        run: |
+          test "$CHANGES_RESULT" = success
+          if [ "$CODE" = true ]; then
+            test "$CHECKS_RESULT" = success && test "$CHROMIUM_RESULT" = success
+          else
+            test "$CHECKS_RESULT" = skipped && test "$CHROMIUM_RESULT" = skipped
+          fi
 
   # WebKit ≈ WKWebView — the closest automated proxy for the macOS webview
   # (no WKWebView WebDriver exists). Catches Safari-family CSS/JS breakage.
   webkit-tests:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
     # The full 777-test suite exceeded 40m, and two shards still ran 24-38m,
     # so runner contention pushed them past the bound (#932). Keep one worker
@@ -146,24 +188,35 @@ jobs:
   # WebKit is also a protected context: every shard must complete successfully.
   webkit:
     if: always()
-    needs: [webkit-tests]
+    needs: [changes, webkit-tests]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
       - name: Require all WebKit browser outcomes
         env:
+          CHANGES_RESULT: ${{ needs.changes.result }}
+          CODE: ${{ needs.changes.outputs.code }}
           WEBKIT_RESULT: ${{ needs.webkit-tests.result }}
-        run: test "$WEBKIT_RESULT" = success
+        run: |
+          test "$CHANGES_RESULT" = success
+          if [ "$CODE" = true ]; then
+            test "$WEBKIT_RESULT" = success
+          else
+            test "$WEBKIT_RESULT" = skipped
+          fi
 
   rust:
+    needs: changes
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
+        if: ${{ needs.changes.outputs.code == 'true' }}
 
       # nasm: required by turbojpeg-sys (x86 SIMD assembler).
       # libdav1d-dev: AVIF decode (image avif-native, Linux-only feature).
       - name: Install Tauri Linux system dependencies
+        if: ${{ needs.changes.outputs.code == 'true' }}
         run: |
           sudo apt-get update
           sudo apt-get install -y \
@@ -171,26 +224,32 @@ jobs:
             libjavascriptcoregtk-4.1-dev nasm libdav1d-dev
 
       - uses: dtolnay/rust-toolchain@stable
+        if: ${{ needs.changes.outputs.code == 'true' }}
         with:
           components: rustfmt, clippy
 
       - uses: Swatinem/rust-cache@v2
+        if: ${{ needs.changes.outputs.code == 'true' }}
         with:
           workspaces: src-tauri
 
       # tauri::generate_context! requires the frontendDist dir to exist.
       - name: Create empty frontend dist
+        if: ${{ needs.changes.outputs.code == 'true' }}
         run: mkdir -p build
 
       - name: Format check
+        if: ${{ needs.changes.outputs.code == 'true' }}
         run: cargo fmt --manifest-path src-tauri/Cargo.toml --all -- --check
 
       # --features avif keeps the (default-off) AVIF code linted and tested;
       # this runner has a current dav1d. The release build ships without it.
       - name: Clippy
+        if: ${{ needs.changes.outputs.code == 'true' }}
         run: cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets --features avif -- -D warnings
 
       - name: Rust tests
+        if: ${{ needs.changes.outputs.code == 'true' }}
         run: cargo test --manifest-path src-tauri/Cargo.toml --features avif
 
       # Keep the deferred recovery policy verified without enabling it in
@@ -199,7 +258,9 @@ jobs:
       # e2e-hooks (#884) rides along so the hook-build branches are linted
       # and unit-tested on Linux too; it is absent from release artifacts.
       - name: Opt-in recovery Clippy
+        if: ${{ needs.changes.outputs.code == 'true' }}
         run: cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets --features avif,durable-recovery,e2e-renderer-recovery,e2e-hooks -- -D warnings
 
       - name: Opt-in recovery tests
+        if: ${{ needs.changes.outputs.code == 'true' }}
         run: cargo test --manifest-path src-tauri/Cargo.toml --features avif,durable-recovery,e2e-hooks

@@ -2798,6 +2798,12 @@ if (typeof window !== "undefined") {
   clipboard_has_image: () =>
     localStorage.getItem(MOCK_LOCAL_KEYS.reportClipboardImage) === "1",
 
+  clipboard_has_report_attachment: () => localStorage.getItem(MOCK_LOCAL_KEYS.reportClipboardVideo) === "1" || localStorage.getItem(MOCK_LOCAL_KEYS.reportClipboardImage) === "1",
+
+  clipboard_read_report_attachment: () => localStorage.getItem(MOCK_LOCAL_KEYS.reportClipboardVideo) === "1"
+    ? { name: "Copied video.mp4", mediaType: "video/mp4", data: "AAAAGGZ0eXBpc29tAAAAAGlzb21tcDQy" }
+    : { name: "Clipboard screenshot.png", mediaType: "image/png", data: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=" },
+
   clipboard_read_report_image: () => ({
     name: "Clipboard screenshot.png",
     mediaType: "image/png",

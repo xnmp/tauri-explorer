@@ -396,6 +396,8 @@ pub fn run_with_process_entry(launch_dir: Option<String>, t_process_entry: std::
             clipboard::clipboard_release_cut,
             clipboard::clipboard_has_image,
             clipboard::clipboard_read_report_image,
+            clipboard::clipboard_has_report_attachment,
+            clipboard::clipboard_read_report_attachment,
             clipboard::clipboard_paste_image,
             // Thumbnails
             thumbnails::get_thumbnail,

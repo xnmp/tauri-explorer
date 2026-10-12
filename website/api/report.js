@@ -65,11 +65,13 @@ function attachmentStore() {
     /** @param {{name: string, mediaType: string, bytes: Uint8Array}} attachment */
     async upload(attachment) {
       if (!token) {
-        throw new ReportError("server_rejected", "Image hosting is not configured", 503);
+        throw new ReportError("server_rejected", "Attachment hosting is not configured", 503);
       }
       const safeName = attachment.name.replace(/[^A-Za-z0-9._-]+/gu, "-").slice(-80)
         || "screenshot";
-      const blob = await put(`user-reports/${safeName}`, Buffer.from(attachment.bytes), {
+      const extension = { "image/png": "png", "image/jpeg": "jpg", "image/gif": "gif", "video/mp4": "mp4", "video/webm": "webm", "video/quicktime": "mov" }[attachment.mediaType];
+      const blobName = `${safeName.replace(/\.[^.]*$/u, "")}.${extension}`;
+      const blob = await put(`user-reports/${blobName}`, Buffer.from(attachment.bytes), {
         access: "public",
         addRandomSuffix: true,
         contentType: attachment.mediaType,

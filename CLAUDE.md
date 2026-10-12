@@ -94,10 +94,19 @@ Rules that bite:
 - Git-graph undo snapshots come from the Rust mutation command, stay session/repository-scoped in `state/git-graph-undo.ts`, and are re-verified by `git_undo` before the inverse. Merge/pull undo requires unchanged HEAD + a clean tree; tag deletion records the raw tag-object OID so annotated tags restore exactly (#513).
 - Git-graph tabs remount on activation; their snapshot cache must retain the supported 12-tab load fan-out so switching back can paint cached history instead of starting a new git-log request. External watcher changes evict the snapshot; valid cached remounts skip the redundant graph reload (#505).
 - Git-graph fetch, pull, and remote-branch push share one client-ID network-operation lifecycle in `git-graph-refresh.ts`. Per ADR 0006, fetch enumerates `fetch --all`-eligible remotes (respecting `skipFetchAll`/`skipDefaultUpdate`) and updates each one atomically; ordinary remote errors are aggregated after later remotes run, while cancellation stops immediately between remotes. Only the unbounded network phase is killable: pull receives a per-invocation IPC phase channel before starting, then must deliver the transition from atomic fetch to local fast-forward (or fail closed before moving HEAD) so the banner switches to “Finishing Git pull…” and removes the now-ineffective Cancel control while preserving completed-pull undo; remote-delete cancellation reports that the remote may already have applied it (#528).
-- User-report images are hosted as public Vercel Blobs before the relay creates
+- User-report images and videos are hosted as public Vercel Blobs before the relay creates
   the GitHub issue. Production therefore needs `BLOB_READ_WRITE_TOKEN` as well
   as `GITHUB_ISSUE_TOKEN`. Keep the raw attachment total at or below 3 MiB so
   its base64 JSON request stays below Vercel's 4.5 MB function-body limit.
+  Video reports support MP4/WebM/MOV within the existing 2 MiB/file cap. Clipboard
+  attachments use the ordered file snapshot and require one copied video file;
+  retain image-data fallback for non-video paths and failed file-list discovery,
+  preserving image validation/read errors. Clipboard routing and availability
+  share `clipboard/content.rs`; test mixed image/file clipboard owners. Check container
+  signatures in frontend draft admission, native submission and the relay, and
+  deploy the relay alongside the app. ADR 0029 governs copied-file authority,
+  bounded reads, signature limits, public disclosure and upload cleanup/uncertainty.
+  See `docs/lessons/1059-report-video-attachments.md`.
 - The root Vitest suite imports the report relay from `website/`; keep its
   `@vercel/blob` runtime and compatible Undici major in the root test-harness
   dev dependencies as well as the independently deployed website package.
@@ -141,6 +150,19 @@ clock-exact debounce coverage in fake-timer domain tests: an E2E runner may stal
 between synthetic keystrokes for longer than the debounce and legitimately
 start an intermediate query, so contract-level final-query tests should update
 the input atomically.
+Playwright `page.clock.install()` still advances with real time. Tests that
+assert exact elapsed or remaining labels must install a fixed time and pause
+after page readiness, then advance only with `runFor()`; otherwise flooring
+can turn an expected 20s remaining into 19s without any application defect.
+The graph-lineage unit file includes a wall-clock hover budget. Its ordered
+Vitest project must finish before ordinary parallel unit transforms, retaining
+the unchanged budget and worker overrides; scheduler contention is not graph
+execution time. Qualification tests verify actual worker admission ordering.
+Native crop oracles measure loaded first-frame pixels and intrinsic preview
+dimensions. Use bounded load/error callbacks rather than an unbounded injected
+`Image.decode()` promise, retaining exact pixel assertions. The fake external
+CLI's test-only timeout must include cold interpreter startup before reaping;
+a deadline that kills it before its PID is written cannot prove child cleanup.
 Real-watcher timing tests must also wait for the backend watch and frontend
 listener to be ready, then acknowledge every filesystem write at the
 application-side watcher callback before attributing listing counts to it. A
@@ -179,6 +201,20 @@ SCM archive actions preserve each repo-relative path under `.archive/` and add
 - Squash-merge conflicts in `map-feature.md` are usually both-append — resolve as a union, checking for line-level supersedes. (`lessons_learnt.md` is frozen; lessons are per-issue files now, which cannot conflict.)
 
 ## Debugging
+
+PTY output and exit notifications come from independent threads. Native tests
+that inspect the complete transcript must wait for the output channel to close
+as well as for the child exit; an exit notification does not mean the last
+output callback has run. Keep those waits bounded and retain terminal cleanup
+on assertion failures.
+When forcing output delivery to follow exit, gate a test-side forwarding
+consumer, never the production PTY reader: read backpressure can prevent the
+shell from exiting. Include output larger than the PTY buffer to catch this.
+For cwd/lifecycle tests, observe initial shell output before writing input;
+startup typeahead has separate regression coverage.
+Use private XDG config/data/cache directories for the native library suite:
+rename completion consults installed provenance plugins, so an inherited host
+profile can change its warning result.
 
 When a bug resists quick diagnosis: search `docs/lessons/` + the frozen `lessons_learnt.md` archive and commit history first, then add targeted logging/instrumentation before another fix attempt. Suite-wide test timeouts (~5 s) under parallel/CPU load are a known flake mode — rerun the failing files in isolation before treating them as regressions.
 

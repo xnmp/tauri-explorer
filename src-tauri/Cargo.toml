@@ -10,6 +10,10 @@ edition = "2021"
 [lib]
 name = "tauri_explorer_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
+# The desktop library has no Rust doctest examples. A zero-test rustdoc harness
+# only recompiles the full Tauri app and can select stale mixed-feature externs
+# when qualification worktrees share Cargo's target cache.
+doctest = false
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }

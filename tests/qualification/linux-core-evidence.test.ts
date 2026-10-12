@@ -66,6 +66,48 @@ describe("native core evidence", () => {
     } finally { child.stdin.end(); await exited; }
   });
 
+  it("a writer paused after raw publication cannot publish a successful artifact before metadata completes", async () => {
+    const source = fixture(), directory = fixture();
+    const script = fileURLToPath(new URL("../../e2e-tauri/diagnostics/capture-linux-core.py", import.meta.url));
+    const child = spawn("python3", ["-c", `import io,os,runpy,sys
+capture = runpy.run_path(sys.argv[1])['capture']
+original_link = os.link
+def held_link(*args, **kwargs):
+    original_link(*args, **kwargs)
+    print('linked', flush=True)
+    sys.stdin.buffer.read(1)
+os.link = held_link
+capture(sys.argv[2], 'WebKitWebProces', '1234', '1', io.BytesIO(b'123456'), limit=4)
+`, script, source], { stdio: ["pipe", "pipe", "pipe"] });
+    const exited = new Promise<void>((resolve, reject) => {
+      child.once("error", reject);
+      child.once("exit", code => code === 0 ? resolve() : reject(new Error(`capture exited ${code}`)));
+    });
+    try {
+      await new Promise<void>(resolve => child.stdout.once("data", () => resolve()));
+      const debug = vi.fn().mockResolvedValue("misleading stack from truncated core");
+      const records = await collectLinuxCoreEvidence({ directory, captureDirectory: source, captureTimeoutMs: 0,
+        executables: { WebKitWebProces: "/usr/lib/WebKitWebProcess" }, debug });
+      expect(records).toHaveLength(1);
+      expect(records.every(record => record.error !== null)).toBe(true);
+      expect(records[0].core).toBe("core-WebKitWebProces-1234-1.pending");
+      expect(fs.readFileSync(path.join(directory, records[0].core), "utf8")).toBe("1234");
+      expect(debug).not.toHaveBeenCalled();
+    } finally { child.stdin.end("release"); await exited; }
+    expect(JSON.parse(fs.readFileSync(path.join(source, "core-WebKitWebProces-1234-1.capture.json"), "utf8")).truncated).toBe(true);
+  });
+
+  it("kernel metadata publication refuses a pre-existing symlink without modifying its target", () => {
+    const source = fixture(), protectedDirectory = fixture();
+    const protectedFile = path.join(protectedDirectory, "unrelated-file");
+    fs.writeFileSync(protectedFile, "unchanged", { mode: 0o600 });
+    fs.symlinkSync(protectedFile, path.join(source, "core-WebKitWebProces-1234-1.capture.json"));
+    const script = fileURLToPath(new URL("../../e2e-tauri/diagnostics/capture-linux-core.py", import.meta.url));
+    expect(() => execFileSync("python3", [script, source, "WebKitWebProces", "1234", "1"], { input: "core", stdio: "pipe" })).toThrow();
+    expect(fs.readFileSync(protectedFile, "utf8")).toBe("unchanged");
+    expect(fs.statSync(protectedFile).mode & 0o777).toBe(0o600);
+  });
+
   it("retains the debugger's actual stack transcript for the matching native executable", async () => {
     const directory = fixture();
     const name = "core-WebKitWebProces-1234-1791777389";

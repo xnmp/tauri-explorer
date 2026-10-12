@@ -180,6 +180,15 @@ SCM archive actions preserve each repo-relative path under `.archive/` and add
 
 ## Debugging
 
+Linux native session-loss diagnostics (#1102): `navigateTo` can report a null
+status path after WebDriver has lost the main renderer, even when navigation
+already completed. Read the uncut command transcript and application termination
+clock before treating it as a child-window readiness race. Hosted core capture
+uses a kernel pipe because a direct core path resolves inside WebKit's sandbox
+mount namespace. Keep this kernel-wide configuration on disposable CI runners;
+never apply it to the local desktop. Local isolated XDG data/trash must share the
+fixtures' filesystem, and the address-selection spec also requires `xdotool`.
+
 When a bug resists quick diagnosis: search `docs/lessons/` + the frozen `lessons_learnt.md` archive and commit history first, then add targeted logging/instrumentation before another fix attempt. Suite-wide test timeouts (~5 s) under parallel/CPU load are a known flake mode — rerun the failing files in isolation before treating them as regressions.
 
 For Windows native transfer waits, use one renderer-side observer through

@@ -1063,6 +1063,8 @@ impl Machine {
             state: JobState::Accepting,
             phase: Some("accepting".into()),
             output_path: None,
+            cost: None,
+            reveal: None,
             run_id: None,
             error: None,
         };
@@ -6292,7 +6294,7 @@ for line in sys.stdin:
     fs::write(&input, &original).unwrap();
     let preparations: Vec<_> = ["identity-captured", "identity-blocked"].into_iter().enumerate().map(|(i, operation)| {
         store.register_job(JobRecord {
-            job_key: format!("{:048x}", i + 1), owner: before.clone(), operation_id: operation.into(), job_id: i as u64 + 1, kind: "identity-image".into(), label: "identity.png".into(), origin_window: "main".into(), revision: 0, source_revision: 0, ownership_epoch: 0, created_at_ms: 1, updated_at_ms: 1, settled_at_ms: None, estimate_key: None, state: JobState::Accepting, phase: Some("accepting".into()), output_path: None, error: None, run_id: None,
+            job_key: format!("{:048x}", i + 1), owner: before.clone(), operation_id: operation.into(), job_id: i as u64 + 1, kind: "identity-image".into(), label: "identity.png".into(), origin_window: "main".into(), revision: 0, source_revision: 0, ownership_epoch: 0, created_at_ms: 1, updated_at_ms: 1, settled_at_ms: None, estimate_key: None, state: JobState::Accepting, phase: Some("accepting".into()), output_path: None, cost: None, reveal: None, error: None, run_id: None,
         }).unwrap();
         let captures = store.capture(&before, operation, vec![CaptureInput { path: input.to_string_lossy().into(), expected_digest: None }]).unwrap();
         let mut request = json!({"operationId":operation,"connectionId":"identity-profile","expectedConnectionRevision":"identity-revision","model":null,"prompt":"identity probe","inputs":[],"options":{"size":"1024x1024","resolution":null,"aspectRatio":null,"quality":"low","background":"auto"},"preparationToken":"identity-token","effectiveRecipeDigest":"b".repeat(64)});

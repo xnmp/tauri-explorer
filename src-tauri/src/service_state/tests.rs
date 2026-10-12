@@ -1596,6 +1596,8 @@ fn compatible_preparation_retention_joins_package_digest_across_incarnations() {
                 state: JobState::Accepting,
                 phase: None,
                 output_path: None,
+                cost: None,
+                reveal: None,
                 run_id: None,
                 error: None,
             })

@@ -707,6 +707,37 @@ pub(super) fn dismiss(key: &str) -> Result<Value, AppError> {
     Ok(Value::Null)
 }
 
+/// Reveal refresh is read-only and never starts a disabled/disconnected backend.
+pub(super) fn latest_reveal(
+    job_key: &str,
+) -> Result<Option<crate::service_state::job::JobReveal>, AppError> {
+    let Some(record) = service_host::store()?.job(job_key)? else {
+        return Ok(None);
+    };
+    let (broker, _lease) = {
+        let _gate = super::read_lifecycle()?;
+        let Some(broker) = backend::active_instance(&record.owner.package_id, &record.owner.digest)
+        else {
+            return Ok(None);
+        };
+        let lease = CallLease::acquire_method(&record.owner.package_id, "jobs.status")?;
+        (broker, lease)
+    };
+    let status = broker.call("jobs.status", json!({"operationId":record.operation_id}))?;
+    Ok(reveal_from_status(&record, &status))
+}
+fn reveal_from_status(
+    record: &JobRecord,
+    status: &Value,
+) -> Option<crate::service_state::job::JobReveal> {
+    if status["jobId"].as_u64() != Some(record.job_id)
+        || status["operationId"].as_str() != Some(&record.operation_id)
+    {
+        return None;
+    }
+    crate::service_state::job::reveal(&status["reveal"])
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1074,35 +1105,4 @@ mod tests {
             JobState::Running
         );
     }
-}
-
-/// Reveal refresh is read-only and never starts a disabled/disconnected backend.
-pub(super) fn latest_reveal(
-    job_key: &str,
-) -> Result<Option<crate::service_state::job::JobReveal>, AppError> {
-    let Some(record) = service_host::store()?.job(job_key)? else {
-        return Ok(None);
-    };
-    let (broker, _lease) = {
-        let _gate = super::read_lifecycle()?;
-        let Some(broker) = backend::active_instance(&record.owner.package_id, &record.owner.digest)
-        else {
-            return Ok(None);
-        };
-        let lease = CallLease::acquire_method(&record.owner.package_id, "jobs.status")?;
-        (broker, lease)
-    };
-    let status = broker.call("jobs.status", json!({"operationId":record.operation_id}))?;
-    Ok(reveal_from_status(&record, &status))
-}
-fn reveal_from_status(
-    record: &JobRecord,
-    status: &Value,
-) -> Option<crate::service_state::job::JobReveal> {
-    if status["jobId"].as_u64() != Some(record.job_id)
-        || status["operationId"].as_str() != Some(&record.operation_id)
-    {
-        return None;
-    }
-    crate::service_state::job::reveal(&status["reveal"])
 }

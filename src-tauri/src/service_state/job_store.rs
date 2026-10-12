@@ -364,6 +364,8 @@ impl Store {
                     state: JobState::Accepting,
                     phase: None,
                     output_path: None,
+                    cost: None,
+                    reveal: None,
                     run_id: None,
                     error: None,
                 }
@@ -552,11 +554,26 @@ impl Store {
         let old = current.clone();
         current.state = JobState::Completed;
         current.phase = Some("complete".into());
+        current.reveal = current.reveal.or_else(|| {
+            let reveal = JobReveal::File { path: path.clone() };
+            reveal.valid().then_some(reveal)
+        });
+        if current.cost.is_none() {
+            current.cost = Self::provider_receipt_at(conn, &repaired)?
+                .and_then(|receipt| super::job::cost(&receipt["billing"]["cost"]));
+        }
         current.output_path = Some(path);
         current.error = None;
         current.updated_at_ms = clock()?;
         current.revision = next_revision(conn)?;
         stamp_settled(&old, &mut current);
+        // Optional presentation must not block the verified handoff completing.
+        if serialized(&current).is_err() {
+            current.cost = None;
+        }
+        if serialized(&current).is_err() {
+            current.reveal = None;
+        }
         valid(&current, false)?;
         persist(conn, &current)?;
         Ok(Some(current))
@@ -826,6 +843,7 @@ impl Store {
             None,
         )
     }
+    #[cfg(test)]
     #[allow(clippy::too_many_arguments)]
     pub fn observe_job(
         &self,
@@ -964,7 +982,7 @@ impl Store {
                 .clone()
                 .unwrap_or((old.cost.clone(), old.reveal.clone()));
             let mut next = JobRecord {
-                cost: if old.state.terminal() {
+                cost: if old.state.terminal() && old.cost.is_some() {
                     old.cost.clone()
                 } else {
                     cost.filter(JobCost::valid).or(old.cost.clone())
@@ -991,15 +1009,17 @@ impl Store {
                     return Err(reject("a terminal job outcome is immutable"));
                 }
                 next = JobRecord {
+                    cost: next.cost,
                     reveal: next.reveal,
                     source_revision: next.source_revision,
                     ..old.clone()
                 };
             }
             // Optional presentation must never prevent an active job settling.
-            // A terminal cost is pinned; an oversized new reveal keeps its predecessor.
+            // An existing terminal cost is pinned; a first cost may arrive after host completion.
+            // An oversized new reveal keeps its predecessor.
             if serialized(&next).is_err() {
-                next.cost = if old.state.terminal() {
+                next.cost = if old.state.terminal() && !recovered_settlement {
                     old.cost.clone()
                 } else {
                     None
@@ -1008,11 +1028,16 @@ impl Store {
             if serialized(&next).is_err() {
                 next.reveal = old.reveal.clone();
             }
-            if serialized(&next).is_err() && !old.state.terminal() {
+            if serialized(&next).is_err() && (!old.state.terminal() || recovered_settlement) {
                 next.reveal = None;
             }
             valid(&next, false)?;
-            if next == old || old.state.terminal() && !recovered_settlement && next.reveal == old.reveal {
+            if next == old
+                || old.state.terminal()
+                    && !recovered_settlement
+                    && next.reveal == old.reveal
+                    && next.cost == old.cost
+            {
                 return Ok(old);
             }
             // Parked rows do not count toward active capacity, so they may

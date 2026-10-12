@@ -3560,8 +3560,9 @@ fn automatic_review_late_success_corrects_settled_unknown_job_with_output() {
         1,
         "acknowledgement before a completion event must remain discoverable"
     );
+    let cost = json!({"amount":"0.075","currency":"USD","estimated":false,"source":"bfl.credits"});
     let completed = super::job_bridge::observe_in(&s, &registered, &json!({
-        "jobId":registered.job_id, "operationId":op, "revision":5,
+        "jobId":registered.job_id, "operationId":op, "revision":5, "cost":cost, "reveal":{"kind":"file","path":copy.to_str().unwrap()},
         "status":"succeeded", "recoveryState":"complete", "outputPath":copy.to_str().unwrap(), "runId":17
     })).unwrap();
     assert_eq!(
@@ -3570,6 +3571,11 @@ fn automatic_review_late_success_corrects_settled_unknown_job_with_output() {
         "late acknowledged success must replace the host's earlier no-output settlement"
     );
     assert_eq!(completed.output_path.as_deref(), copy.to_str());
+    assert_eq!(serde_json::to_value(&completed.cost).unwrap(), cost);
+    assert_eq!(
+        serde_json::to_value(&completed.reveal).unwrap(),
+        json!({"kind":"file","path":copy.to_str().unwrap()})
+    );
     drop(s);
     let reopened = Store::open(root.path().join("service"), Limits::default()).unwrap();
     assert_eq!(reopened.job(&registered.job_key).unwrap(), Some(completed));
@@ -3861,62 +3867,142 @@ fn invariant_b_replacement_recovers_settled_accepted_and_running_after_restart()
 #[test]
 fn invariant_a_and_b_released_acquired_running_job_is_repairable_and_completes() {
     use crate::service_state::job::{JobRecord, JobState};
-    let (root, s) = fixture();
-    let op = "acknowledged-unpublished";
-    let registered = s.register_job(job(op, 97)).unwrap();
-    s.update_job(
-        &consumer(),
-        &registered.job_key,
-        JobState::Running,
-        Some("running".into()),
-        None,
-        Some(17),
-        None,
-    )
-    .unwrap();
-    let d = ready(&s, op);
-    let data = root.path().join("consumer-data");
-    fs::create_dir(&data).unwrap();
-    s.register_consumer_root("consumer", data.clone()).unwrap();
-    let copy = data.join("acquired.png");
-    fs::copy(s.read(&consumer(), "consumer", op, &d).unwrap().path, &copy).unwrap();
-    let proof = s
-        .acquired(&consumer(), op, &d, copy.to_str().unwrap())
+    for mode in [
+        "consumer-cost",
+        "provider-cost",
+        "view",
+        "large-presentation",
+    ] {
+        let cost =
+            json!({"amount":"0.075","currency":"USD","estimated":false,"source":"bfl.credits"});
+        let view =
+            json!({"kind":"view","viewId":"trace.view","directory":"/images","targetId":"17"});
+        let (root, s) = fixture();
+        let op = "acknowledged-unpublished";
+        let registered = s.register_job(job(op, 97)).unwrap();
+        s.update_job(
+            &consumer(),
+            &registered.job_key,
+            JobState::Running,
+            Some("running".into()),
+            None,
+            Some(17),
+            None,
+        )
         .unwrap();
-    call(&s, "acknowledge", json!({"operationId":op,"outputSha256":d.sha256,"disposition":"acquired","transferReceipt":proof.transfer_receipt}), |_, _| Ok(status(op, "succeeded", json!({"state":"acquired","transferReceipt":proof.transfer_receipt})))).unwrap();
-    // Crash before a consumer completion receipt. Only host acquisition and the
-    // previously pinned consumer run survive; no provider bytes remain.
-    drop(s);
-    let s = Store::open(root.path().join("service"), Limits::default()).unwrap();
-    for id in ["consumer", "provider"] {
-        drop(
-            super::lifecycle::drain_idle(&s, id)
-                .expect("acknowledged output must never block repair or removal"),
+        if matches!(mode, "view" | "large-presentation") {
+            let mut prior_cost = cost.clone();
+            prior_cost["amount"] = json!("9".repeat(15000));
+            s.observe_job_with_presentation(
+                &registered.owner,
+                &registered.job_key,
+                1,
+                JobState::Running,
+                Some("running".into()),
+                None,
+                Some(17),
+                None,
+                None,
+                Some((
+                    (mode == "large-presentation")
+                        .then(|| crate::service_state::job::cost(&prior_cost).unwrap()),
+                    (mode == "view").then(|| crate::service_state::job::reveal(&view).unwrap()),
+                )),
+            )
+            .unwrap();
+        }
+        let d = ready(&s, op);
+        let data = root.path().join("consumer-data");
+        fs::create_dir(&data).unwrap();
+        s.register_consumer_root("consumer", data.clone()).unwrap();
+        let mut output_directory = data.clone();
+        if mode == "large-presentation" {
+            for _ in 0..10 {
+                output_directory = output_directory.join("x".repeat(200));
+            }
+            fs::create_dir_all(&output_directory).unwrap();
+        }
+        let copy = output_directory.join("acquired.png");
+        fs::copy(s.read(&consumer(), "consumer", op, &d).unwrap().path, &copy).unwrap();
+        let proof = s
+            .acquired(&consumer(), op, &d, copy.to_str().unwrap())
+            .unwrap();
+        let mut acknowledged = status(
+            op,
+            "succeeded",
+            json!({"state":"acquired","transferReceipt":proof.transfer_receipt}),
         );
-    }
-    struct AcquiredOnly;
-    impl super::ai_operations::AutomaticPort for AcquiredOnly {
-        fn active(
-            &self,
-            _: &Admission,
-            _: Option<&JobRecord>,
-            _: bool,
-            _: &str,
-        ) -> Result<bool, AppError> {
-            Ok(false)
+        if mode == "provider-cost" {
+            acknowledged["billing"] = json!({"cost":cost});
         }
-        fn recover(&self, _: &Admission, _: Option<&JobRecord>) -> Result<(), AppError> {
-            Err(AppError::Other(
-                "provider has already released its output".into(),
-            ))
+        call(&s, "acknowledge", json!({"operationId":op,"outputSha256":d.sha256,"disposition":"acquired","transferReceipt":proof.transfer_receipt}), |_, _| Ok(acknowledged.clone())).unwrap();
+        // Crash before a consumer completion receipt. Only host acquisition and the
+        // previously pinned consumer run survive; no provider bytes remain.
+        drop(s);
+        let s = Store::open(root.path().join("service"), Limits::default()).unwrap();
+        for id in ["consumer", "provider"] {
+            drop(
+                super::lifecycle::drain_idle(&s, id)
+                    .expect("acknowledged output must never block repair or removal"),
+            );
         }
+        struct AcquiredOnly;
+        impl super::ai_operations::AutomaticPort for AcquiredOnly {
+            fn active(
+                &self,
+                _: &Admission,
+                _: Option<&JobRecord>,
+                _: bool,
+                _: &str,
+            ) -> Result<bool, AppError> {
+                Ok(false)
+            }
+            fn recover(&self, _: &Admission, _: Option<&JobRecord>) -> Result<(), AppError> {
+                Err(AppError::Other(
+                    "provider has already released its output".into(),
+                ))
+            }
+        }
+        super::ai_operations::auto_reconcile_in(&s, &AcquiredOnly).unwrap();
+        let completed = s.job(&registered.job_key).unwrap().unwrap();
+        assert_eq!(completed.state, JobState::Completed);
+        assert_eq!(completed.output_path.as_deref(), copy.to_str());
+        assert_eq!(completed.run_id, Some(17));
+        assert!(copy.is_file());
+        let expected_reveal = if mode == "view" {
+            view
+        } else {
+            json!({"kind":"file","path":copy.to_str().unwrap()})
+        };
+        assert_eq!(
+            serde_json::to_value(&completed.reveal).unwrap(),
+            expected_reveal
+        );
+        if mode == "provider-cost" {
+            assert_eq!(serde_json::to_value(&completed.cost).unwrap(), cost);
+        } else {
+            assert!(completed.cost.is_none());
+        }
+        let observed = super::job_bridge::observe_in(&s, &completed, &json!({
+        "jobId":completed.job_id, "operationId":op, "revision":completed.source_revision + 1,
+        "status":"succeeded", "recoveryState":"complete", "outputPath":copy.to_str().unwrap(), "runId":17, "cost":cost
+    })).unwrap();
+        assert_eq!(serde_json::to_value(&observed.cost).unwrap(), cost);
+        assert_eq!(observed.reveal, completed.reveal);
+        assert_eq!(observed.settled_at_ms, completed.settled_at_ms);
+        assert_eq!(observed.output_path, completed.output_path);
+        assert_eq!(
+            observed.revision > completed.revision,
+            mode != "provider-cost"
+        );
+        let mut changed_cost = cost.clone();
+        changed_cost["amount"] = json!("99");
+        let changed = super::job_bridge::observe_in(&s, &observed, &json!({
+        "jobId":observed.job_id, "operationId":op, "revision":observed.source_revision + 1,
+        "status":"succeeded", "recoveryState":"complete", "outputPath":copy.to_str().unwrap(), "runId":17, "cost":changed_cost
+    })).unwrap();
+        assert_eq!(changed, observed, "the first terminal cost stays pinned");
     }
-    super::ai_operations::auto_reconcile_in(&s, &AcquiredOnly).unwrap();
-    let completed = s.job(&registered.job_key).unwrap().unwrap();
-    assert_eq!(completed.state, JobState::Completed);
-    assert_eq!(completed.output_path.as_deref(), copy.to_str());
-    assert_eq!(completed.run_id, Some(17));
-    assert!(copy.is_file());
 }
 
 #[test]

@@ -474,9 +474,8 @@ mod recovery_admission {
                 assert_eq!(completed.result.unwrap().path, native(&target));
                 if kind == "rename" {
                     assert!(completed.warning.as_deref().is_none_or(|warning| {
-                        warning.starts_with(
-                            "Rename completed, but Trace could not update its locator:",
-                        )
+                        warning
+                            == "Rename completed, but Trace could not update its locator: Plugin AI services are unavailable in this process; this plugin waits for their recovery"
                     }));
                 } else {
                     assert!(completed.warning.is_none());

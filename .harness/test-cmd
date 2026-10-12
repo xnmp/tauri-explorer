@@ -1,0 +1,1 @@
+bunx vitest run tests/qualification/linux-core-evidence.test.ts

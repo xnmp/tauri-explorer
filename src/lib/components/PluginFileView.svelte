@@ -48,9 +48,9 @@
       if (effect.focusPane) windowTabsManager.setActivePane(paneId);
       explorer.selectEntry(entry, effect.selectionModifiers);
     },
-    setSelection(paths, focus = null) {
+    setSelection(paths, focus = null, options) {
       windowTabsManager.setActivePane(paneId);
-      explorer.selectPaths(paths, focus);
+      explorer.selectPaths(paths, focus, options);
     },
     clearSelection() { explorer.clearSelection(); },
     open(entry) { return onopen(entry); },

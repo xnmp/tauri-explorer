@@ -23,6 +23,9 @@ import { pluginSettingsSections } from "./settings-registry.svelte";
 import { dialogRegistry, type DialogDescriptor } from "./dialog-registry.svelte";
 import { inspectorRegistry, type InspectorContribution } from "./inspector-registry.svelte";
 import { fileViewRegistry, type FileViewContribution } from "./file-view-registry.svelte";
+/** Capability "selectionAnchor": FileViewPane.setSelection accepts
+ * `{ keepAnchor: true }` to replace selection without moving the range anchor or cursor. */
+export type { FileViewPane } from "./file-view-registry.svelte";
 import { previewInfoRegistry, type PreviewInfoContribution } from "./preview-registry.svelte";
 import { toastStore, type ToastType } from "$lib/state/toast.svelte";
 import { readConfigFile } from "$lib/api/config";

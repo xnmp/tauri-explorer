@@ -22,7 +22,8 @@ export function exposePluginSDK():void {
     // ordered paths from verified Explorer drags and Tauri-native OS drops.
     // Only elements inside the calling plugin's mounted contributions/dialogs
     // may register; host chrome and other plugins' DOM throw before registration.
-    sdkVersion:1,apiVersion:3,capabilities:Object.freeze(["fileViews","previewInfo","previewTargets","blobWorkers","fileTiles","fileTile","tileSize","jobRetry","jobReveal","jobCost","fileViewReveal","textGeneration","pluginServices","serviceArtifacts","settingsActions","modalNavigation","combinedSelection","paneDialogs","fileDropTargets"]),svelteVersion:SVELTE_ABI,
+    // "selectionAnchor": FileViewPane.setSelection(paths, focus, { keepAnchor: true }).
+    sdkVersion:1,apiVersion:3,capabilities:Object.freeze(["fileViews","previewInfo","previewTargets","blobWorkers","fileTiles","fileTile","tileSize","jobRetry","jobReveal","jobCost","fileViewReveal","textGeneration","pluginServices","serviceArtifacts","settingsActions","modalNavigation","combinedSelection","paneDialogs","fileDropTargets","selectionAnchor"]),svelteVersion:SVELTE_ABI,
     modules:Object.freeze({"svelte":svelte,"svelte/internal/client":client,"ui/modal":{default:Modal},"ui/image-editor":{default:ImageEditor},
       // Built-in Tiles view tiles (FileTilesProps in api.ts); capability "fileTiles".
       // Capability "tileSize": FileViewPane.tileSize and file-tiles' `size` prop.

@@ -29,12 +29,14 @@ let matrixClock = 20_000_000_000_000;
 let sourceNode: HTMLElement;
 let sidebarOver = false;
 let sourceEnd: (() => void) | undefined;
+let recentSourceTransfer: DataTransfer | undefined;
 const flush = async () => { for (let i = 0; i < 15; i++) await Promise.resolve(); };
 function transfer(values: Record<string, string> = {}): DataTransfer {
   const data = new Map(Object.entries(values));
   return { getData: (type: string) => data.get(type) ?? "", setData: (type: string, value: string) => { data.set(type, value); }, get types() { return [...data.keys()]; }, effectAllowed: "all", dropEffect: "none" } as unknown as DataTransfer;
 }
 function event(type: string, dt: DataTransfer, c: DropCase, target = hit): DragEvent & { stopped: boolean } {
+  if (type === "dragstart" && c.source === "recent") recentSourceTransfer = dt;
   const e = Object.assign(new Event(type, { cancelable: true }), { dataTransfer: dt, clientX: 30, clientY: 40,
     ctrlKey: c.modifier === "ctrl", altKey: c.modifier === "option", stopped: false });
   Object.defineProperty(e, "target", { value: target });
@@ -44,7 +46,12 @@ function event(type: string, dt: DataTransfer, c: DropCase, target = hit): DragE
 }
 function native(type: string, source: any, c: DropCase, observedAt?: number, completedGestureSequence?: number) {
   observationTime += 2;
-  io.listener!({ payload: { type, paths: [sourcePath], source, position: { x: 60, y: 80 }, copyModifier: c.modifier === (c.platform === "mac" ? "option" : "ctrl"), observedAt: observedAt ?? observationTime + 0.25, completedGestureSequence } });
+  // GTK exports Recent's actual URI-list; Wry preserves the non-file URN.
+  // No explicit native start ran, so Rust supplies no source provenance.
+  const recentGtk = c.platform === "linux" && c.source === "recent";
+  const paths = recentGtk ? [recentSourceTransfer!.getData("text/uri-list")] : [sourcePath];
+  if (recentGtk) expect(paths[0]).toMatch(/^urn:tauri-explorer:drag:/);
+  io.listener!({ payload: { type, paths, source: recentGtk ? null : source, position: { x: 60, y: 80 }, copyModifier: c.modifier === (c.platform === "mac" ? "option" : "ctrl"), observedAt: observedAt ?? observationTime + 0.25, completedGestureSequence } });
 }
 function target(c: DropCase) {
   const pane = dropElement("explorer-pane", { "data-pane-id": "owner" });
@@ -165,7 +172,16 @@ async function run(c: DropCase): Promise<Outcome[]> {
   const source = c.source === "external-file" || c.transport === "native-rejected" ? null : { ...sourceModules.drag.dragState.current };
   const capturedAt = delayedObservation ?? observationTime + 0.25;
   const deliverNative = async () => {
-    if (nativeRoute(c)) { native("enter", source, c, capturedAt); native("drop", source, c, capturedAt); await flush(); }
+    if (nativeRoute(c)) {
+      native("enter", source, c, capturedAt); native("drop", source, c, capturedAt); await flush();
+      // Wry may intercept GTK delivery entirely. A later DOM callback must
+      // not mask a lost native Recent completion on its receiving surfaces.
+      if (c.platform === "linux" && c.source === "recent" && !c.completionModal
+          && !["dom-first", "native-late-after-dragend"].includes(c.deliveryOrder ?? "")) {
+        const expected = branchDropPolicy(c).outcome;
+        if (expected === "pin" || expected === "plugin:pane") expect(io.outcomes).toEqual([expected]);
+      }
+    }
   };
   const over = event("dragover", dt, c); win.dispatchEvent(over);
   if (c.target === "breadcrumb") {
@@ -230,7 +246,7 @@ describe.each(dropPlatforms)("differential drop outcomes: %s", platform => {
     observationTime = matrixClock += 100;
     vi.spyOn(Date, "now").mockImplementation(() => observationTime);
     vi.stubGlobal("performance", { timeOrigin: matrixClock, now: () => observationTime - matrixClock });
-    cleanup = []; sourceEnd = undefined; sourceNode = dropElement(); sidebarOver = false; io.outcomes = []; io.records = []; io.callbacks.clear(); io.start.mockReset().mockResolvedValue(undefined);
+    cleanup = []; sourceEnd = undefined; recentSourceTransfer = undefined; sourceNode = dropElement(); sidebarOver = false; io.outcomes = []; io.records = []; io.callbacks.clear(); io.start.mockReset().mockResolvedValue(undefined);
     // Retain the shared gesture history between live peer modules. Clearing
     // storage alone would fabricate a quota-loss boundary while leaving one
     // peer's local ordinals ahead of the other, rather than a fresh window.
@@ -305,6 +321,30 @@ describe.each(dropPlatforms)("differential drop outcomes: %s", platform => {
     await vi.waitFor(() => expect(io.outcomes.length).toBe(1));
     expect(io.outcomes).toEqual([branchDropPolicy(c).outcome]);
     expect(io.records[0].paths).toEqual([sourcePath]);
+  });
+  it.runIf(platform === "linux").each(dropVisibilities.flatMap(visibility =>
+    (["empty", "unrelated", "mixed"] as const).flatMap(payload =>
+      (["enter-only", "enter-and-drop"] as const).map(delivery => ({ visibility, payload, delivery }))))
+  )("unresolved GTK $payload / $delivery preserves Recent DOM delivery / $visibility", async ({ visibility, payload, delivery }) => {
+    const c: DropCase = { platform, source: "recent", target: "plugin", modifier: "none", transport: "dom-only", visibility };
+    hit = target(c);
+    const handler = vi.fn();
+    cleanup.push(modules.targets.fileDropTargets.register(hit, handler));
+    const source = modules.html.createHtml5FileDrag(() => {}, "link");
+    const startData = transfer();
+    source.start(event("dragstart", startData, c), { path: sourcePath, name: "item", kind: "directory" });
+    sourceEnd = source.end;
+    const dt = visibility === "stripped" ? transfer({ "text/uri-list": startData.getData("text/uri-list") }) : startData;
+    const rawPaths = payload === "empty" ? [] : payload === "unrelated" ? ["urn:tauri-explorer:drag:unrelated"]
+      : [startData.getData("text/uri-list"), "invalid"];
+    for (const type of delivery === "enter-only" ? ["enter"] : ["enter", "drop"]) {
+      io.listener!({ payload: { type, paths: rawPaths, source: null, observedAt: observationTime + 0.25, position: { x: 60, y: 80 } } });
+      await flush();
+    }
+    expect(handler).not.toHaveBeenCalled();
+    win.dispatchEvent(event("drop", dt, c));
+    await flush();
+    expect(handler).toHaveBeenCalledExactlyOnceWith([sourcePath], "pane");
   });
   it.each(["html5", "pointer"] as const)("%s completion receipt survives async delivery, finish, and a receiver-window change", async transport => {
     modules.drag.dragState.start({ path: sourcePath, name: "item", kind: "file", html5: transport === "html5" });
@@ -432,7 +472,7 @@ describe.each(dropPlatforms)("differential drop outcomes: %s", platform => {
     if (adapter === "html5") {
       const source = modules.html.createHtml5FileDrag(() => {}, "link");
       source.start(event("dragstart", dt, c), { path: sourcePath, name: "item", kind: "directory" }); sourceEnd = source.end;
-      expect(dt.getData("text/uri-list")).toMatch(/^urn:tauri-explorer:drag:/);
+      expect(dt.getData("text/uri-list")).toBe(`urn:tauri-explorer:drag:${modules.drag.dragState.current.sessionId}`);
       expect(dt.getData("text/plain")).toBe("");
     } else if (adapter === "pointer") {
       hit = dropElement();

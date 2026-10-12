@@ -27,6 +27,8 @@ export type Outcome = "move" | "copy" | "pin" | "reorder" | "plugin:pane" | "plu
 const explorer = (c: DropCase) => c.source.startsWith("listing-") || c.source.startsWith("miller-");
 const folder = (c: DropCase) => c.source.endsWith("-folder");
 const nonfile = (c: DropCase) => c.source === "text" || c.source === "plugin-surface";
+// Native receiver delivery is separate from explicit native start: Linux
+// Recent reaches Wry through GTK with its session URN and source:null.
 export const nativeRoute = (c: DropCase) => !nonfile(c) && c.source !== "external-uri" && c.source !== "sidebar-bookmark"
   && c.deliveryOrder !== "dom-only"
   && (c.transport === "native-accepted" || (c.source !== "external-file" && c.transport === "native-rejected" && c.platform === "linux"));

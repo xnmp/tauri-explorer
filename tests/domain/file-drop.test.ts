@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { domDropPaths, domOwnsFileDrop, internalDragPaths, sameDropPathSet, validatedDropPaths } from "$lib/domain/file-drop";
+import { domDropPaths, domOwnsFileDrop, internalDragPaths, sameDropPathSet, validatedDropPaths, resolveNativeDragPaths } from "$lib/domain/file-drop";
 
 const data = (path: string, paths?: unknown) => ({ path, name: "a.png", kind: "file", ...(paths === undefined ? {} : { paths }) });
 const transfer = (value: string, path = "/a.png") => ({ getData: (type: string) => type.endsWith("-paths") ? value : path });
@@ -60,6 +60,24 @@ describe("verified file drop paths", () => {
   it("chooses one transport: DOM until native handoff succeeds", () => {
     expect(domOwnsFileDrop(false)).toBe(true);
     expect(domOwnsFileDrop(true)).toBe(false);
+  });
+});
+
+describe("native session URI paths", () => {
+  const source = { path: "/recent/a", name: "a", kind: "directory", paths: ["/recent/b", "/recent/a"], sessionId: "session", nativeCopyPolicy: "link" };
+  const urn = "urn:tauri-explorer:drag:session";
+  it("resolves the matching shortcut session to its complete ordered selection", () => {
+    expect(resolveNativeDragPaths([urn], source, false)).toEqual(source.paths);
+  });
+  it.each([[], ["urn:tauri-explorer:drag:other"], [urn, urn], [urn, "invalid"], [urn + "\n"], [urn + "\0"], ["urn:tauri-explorer:drag:"]].map(paths => [paths]))("rejects incomplete or mismatched identity: %j", paths => {
+    expect(resolveNativeDragPaths(paths, source, false)).toEqual([]);
+  });
+  it.each([null, { ...source, nativeCopyPolicy: "move" }, { ...source, paths: ["relative"] }])("cannot substitute invalid or non-shortcut sources: %j", data => {
+    expect(resolveNativeDragPaths([urn], data, false)).toEqual([]);
+  });
+  it("preserves ordinary filesystem transport and rejects URNs on Windows", () => {
+    expect(resolveNativeDragPaths(["/external/a"], source, false)).toEqual(["/external/a"]);
+    expect(resolveNativeDragPaths([urn], source, true)).toEqual([]);
   });
 });
 

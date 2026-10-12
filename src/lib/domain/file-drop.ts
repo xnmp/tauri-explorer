@@ -1,4 +1,4 @@
-import { isNativeDropPath } from "./native-drop-paths";
+import { isNativeDropPath, nativeDropPaths } from "./native-drop-paths";
 
 /** Admission uses the current gesture's types, never unrelated retained state.
  * Bookmark reorder and plugin-specific/text payloads belong to their DOM owners. */
@@ -93,4 +93,19 @@ export function uriListMatchesGesture(value: string, source: Parameters<typeof h
   // Normalize line endings only; the complete ordered selection and session
   // must match. Ordinary file URIs (even identical paths) prove no identity.
   return !!expected && value.replace(/\r?\n/g, "\n") === expected.replace(/\r?\n/g, "\n");
+}
+
+/** GTK/Wry preserves Recent's sole URI as a native path string. A mixed or
+ * malformed payload cannot substitute the session's filesystem selection. */
+export function nativeDragSession(rawPaths: readonly string[]): string | null {
+  return rawPaths.length === 1 ? /^urn:tauri-explorer:drag:([^\s\0]+)$/.exec(rawPaths[0])?.[1] ?? null : null;
+}
+
+export function resolveNativeDragPaths(rawPaths: readonly string[], source: unknown, windows: boolean): string[] {
+  const session = nativeDragSession(rawPaths);
+  if (!windows && session && source && typeof source === "object") {
+    const data = source as Record<string, unknown>;
+    if (data.sessionId === session && data.nativeCopyPolicy === "link") return internalDragPaths(source, windows) ?? [];
+  }
+  return nativeDropPaths(rawPaths, windows);
 }

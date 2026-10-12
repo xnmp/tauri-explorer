@@ -200,17 +200,19 @@ export const dragState = {
     }
   },
 
-  survivingHtml5Source(observedAt?: number, completedGestureSequence = 0, observationClock?: string): DragData | null {
+  survivingHtml5Source(observedAt?: number, completedGestureSequence = 0, observationClock?: string, sessionId?: string): DragData | null {
     if (observationClock !== undefined && observationClock !== dragClock.stamp().clockId) return null;
     const data = this.latestSource();
     // Native completion may precede both start acknowledgement and dragend in
     // this renderer. The platform snapshot, not either IPC reply, fences reuse.
     const eligible = (sequence?: number) => !completedGestureSequence || (sequence !== undefined && sequence > completedGestureSequence);
+    const matchesSession = (source: DragData) => sessionId === undefined || source.sessionId === sessionId;
     if (observedAt !== undefined) return [...readHtml5Gestures()].reverse().find(item => !item.nativeAccepted
+      && matchesSession(item.data)
       && eligible(item.ordinal)
       && observedDuringGesture(observedAt, item.startedAt + item.uncertainty, item.endedAt))?.data
-      ?? (data?.html5 && data.html5ClockId === dragClock.stamp().clockId && eligible(data.gestureSequence) && data.transport !== "native" && observedDuringGesture(observedAt, (data.html5StartedAt ?? NaN) + (data.html5Uncertainty ?? 0)) ? data : null);
-    return data?.html5 && data.html5ClockId === dragClock.stamp().clockId && eligible(data.gestureSequence) && data.transport !== "native" ? data : null;
+      ?? (data?.html5 && matchesSession(data) && data.html5ClockId === dragClock.stamp().clockId && eligible(data.gestureSequence) && data.transport !== "native" && observedDuringGesture(observedAt, (data.html5StartedAt ?? NaN) + (data.html5Uncertainty ?? 0)) ? data : null);
+    return data?.html5 && matchesSession(data) && data.html5ClockId === dragClock.stamp().clockId && eligible(data.gestureSequence) && data.transport !== "native" ? data : null;
   },
 
   expiredNativeObservation(observedAt?: number, source?: DragData | null, inferred = false, observationClock?: string): boolean {

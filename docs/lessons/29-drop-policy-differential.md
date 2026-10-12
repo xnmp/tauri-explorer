@@ -85,8 +85,9 @@ Cross-window rows instantiate independent source and receiver module graphs;
 only native source metadata or shared storage can carry identity/policy across
 them. The runner retains shared gesture history while those windows are alive
 and drains source completion between rows. Clearing only storage would invent a
-quota-loss boundary while leaving local gesture ordinals intact. Recent's native
-cells are synthetic receiver-provenance contracts, not outgoing OS gestures.
+quota-loss boundary while leaving local gesture ordinals intact. Linux Recent
+native cells feed the actual GTK URI-list carrier (the session URN) with
+`source:null`; macOS/Windows cells remain synthetic receiver-provenance contracts.
 Recent's actual sources never start an outgoing native file drag or export
 filesystem URIs. `outgoingRecentCases` checks the HTML5 source, native-request
 guard and actual macOS/Windows sidebar pointer source separately. No synthetic
@@ -750,3 +751,63 @@ PASS: main chunk and full startup graph are within their budgets.
 The final target-object refinement clones full visibility as well as stripped
 visibility; its standalone differential run passed all 22,507 tests. The only
 requested-check failure is the known missing `@vercel/blob` dependency.
+
+## Twelfth-review Linux Recent native session resolution
+
+Recent exports only `urn:tauri-explorer:drag:<session>` in `text/uri-list`.
+WebKitGTK exports that carrier through GTK; vendored Wry strips `file://` only,
+so the native receiver gets the URN unchanged with `source:null`. The runner
+previously substituted the source's filesystem path, hiding a lost native
+completion. Filesystem validation discarded the real URN, and an empty native
+Enter could still suppress the matching DOM delivery.
+
+Native resolution now identifies the singleton URN's exact HTML5 session before
+validating paths. The existing observation interval, process clock, completion
+sequence and bounded history remain authoritative; a delayed observation can
+resolve the original source without adopting a replacement gesture. Only a
+matching link-only session can substitute its complete ordered source paths.
+An unresolved native event cannot take DOM ownership, and an empty native Drop
+returns before completion admission or plugin dispatch.
+
+Every Linux Recent native row now reads the actual production dragstart
+URI-list and supplies `source:null`, across all target types, delivery orders
+and both full/stripped target visibilities. Native-first pin/plugin rows assert
+completion before any DOM fallback, because Wry may intercept delivery entirely.
+Twelve additional rows cover empty, unrelated and mixed native payloads,
+Enter-only versus Enter-and-Drop, and both target visibilities. Domain tests
+cover malformed carriers, session/policy mismatch and complete ordered paths.
+Outgoing Recent tests require exactly the session URN and no native start;
+filesystem URI export remains forbidden.
+
+Failing-first: the corrected Recent runner reproduced 120 failures. Reverting
+all three production fixes after adding the empty-payload regressions reproduced
+126 failures (2,515 passed, 19,902 skipped); the production files were restored
+byte-for-byte. Independent adversarial verification passed 10 probes covering
+empty/malformed events, Drop without Enter, original/replacement sessions,
+retired observations and clock mismatch. Physical GTK delivery was inspected
+through the vendored Wry code, not exercised on a native GUI in this review.
+
+Final twelfth-review verification:
+
+```text
+bunx vitest run tests/state tests/plugins tests/composables tests/domain tests/api --maxWorkers=2
+Test Files  364 passed (364)
+Tests  26174 passed | 24 skipped (26198)
+
+bun run check
+ERROR "website/api/report.js" 2:26 "Cannot find module '@vercel/blob' or its corresponding type declarations."
+COMPLETED 1873 FILES 1 ERRORS 0 WARNINGS 1 FILES_WITH_PROBLEMS
+
+bun run lint:arch
+arch-lint: clean
+
+bun run check:bundle
+Gzip size:   91,674 bytes (89.5 KiB)
+Startup JS:  62 chunks, 827,403 bytes raw / 276,771 bytes gzip
+PASS: main chunk and full startup graph are within their budgets.
+```
+
+The full run first exposed an incomplete bookmark-test platform mock; declaring
+its existing Linux `isMac:false` contract corrected all six fixture failures.
+No commits were created. The only requested-check failure is the known missing
+`@vercel/blob` dependency.

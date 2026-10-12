@@ -15,8 +15,7 @@ import { bookmarksStore } from "$lib/state/bookmarks.svelte";
 import { terminalPanelStore } from "$lib/state/terminal.svelte";
 import { pathComparison } from "$lib/domain/path";
 import { dispatchFileDrop, admitFileDrop } from "$lib/state/dispatch-file-drop";
-import { internalDragPaths, sameDropPathSet, domDropPaths, domOwnsFileDrop, isFileTransfer } from "$lib/domain/file-drop";
-import { nativeDropPaths } from "$lib/domain/native-drop-paths";
+import { internalDragPaths, sameDropPathSet, domDropPaths, domOwnsFileDrop, isFileTransfer, nativeDragSession, resolveNativeDragPaths } from "$lib/domain/file-drop";
 import { toastStore } from "$lib/state/toast.svelte";
 import { dialogStore } from "$lib/state/dialogs.svelte";
 import { windowTabsManager } from "$lib/state/window-tabs.svelte";
@@ -31,42 +30,55 @@ export function useNativeDropHandler(deps: NativeDropDeps) {
   let copyModifierHeld = false;
   // Receiver-owned snapshot of the live source at native Enter. Source result
   // and destination Drop use different IPC channels and can arrive reordered.
-  let nativeGesture: { data: DragData | null; expired?: boolean } | null = null;
+  let nativeGesture: { data: DragData | null; hasPaths: boolean; expired?: boolean } | null = null;
   let nativeDomSession: string | undefined;
   const deferredDomSources = new WeakMap<DragEvent, DragData>();
   const pendingDomDrops = new Set<() => void>();
   let clearNativeHighlights: (() => void) | null = null;
 
-  function nativeSource(source: DragData | null | undefined, observedAt?: number, completedGestureSequence?: number, observationClock?: string): DragData | null {
+  function nativeSource(rawPaths: readonly string[], source: DragData | null | undefined, observedAt?: number, completedGestureSequence?: number, observationClock?: string): DragData | null {
+    const session = nativeDragSession(rawPaths);
+    // Recent never starts an OS file drag. GTK identifies its HTML5 gesture
+    // with the URI session; retain the same clock/interval/completion fences.
+    if (!isMac && !isWindows && session) return dragState.survivingHtml5Source(observedAt, completedGestureSequence, observationClock, session);
     if (source !== null) return source ?? dragState.latestSource();
     // Explicit source:null is external except for WebKitGTK's surviving HTML5
     // gesture. Never infer provenance from an asynchronous consumer's retained
-    // source. Admission below still requires the entire native path multiset.
+    // source. Admission below still requires the entire native path multiset
+    // or the exact session URI of a link-only source.
     return !isMac && !isWindows ? dragState.survivingHtml5Source(observedAt, completedGestureSequence, observationClock) : null;
   }
 
   function handleNativeEnter(rawPaths: string[], _position: { x: number; y: number }, source?: DragData | null, copyModifier?: boolean | null, observedAt?: number, completedGestureSequence?: number, observationClock?: string): void {
     if (copyModifier != null) copyModifierHeld = copyModifier;
-    const paths = nativeDropPaths(rawPaths, isWindows);
-    const data = nativeSource(source, observedAt, completedGestureSequence, observationClock);
+    const data = nativeSource(rawPaths, source, observedAt, completedGestureSequence, observationClock);
+    const paths = resolveNativeDragPaths(rawPaths, data, isWindows);
     const livePaths = internalDragPaths(data, isWindows);
     const verifiedSource = livePaths && sameDropPathSet(paths, livePaths, isWindows);
     // Explicit Rust provenance is already correlated at the platform callback.
     // Inferred HTML5 identity also needs timestamp admission: an end/start in
     // the same JS millisecond cannot identify which gesture made this event.
     if (dragState.expiredNativeObservation(observedAt, verifiedSource ? data : null, source == null, observationClock)) {
-      nativeGesture = { data: null, expired: true };
-      nativeDomSession = dragState.cancelledNativeSession(observedAt, paths, isWindows, observationClock);
+      nativeGesture = { data: null, hasPaths: paths.length > 0, expired: true };
+      nativeDomSession = paths.length ? dragState.cancelledNativeSession(observedAt, paths, isWindows, observationClock) : undefined;
       return;
     }
-    nativeGesture = { data: livePaths && sameDropPathSet(paths, livePaths, isWindows) && data
+    nativeGesture = { hasPaths: paths.length > 0, data: livePaths && sameDropPathSet(paths, livePaths, isWindows) && data
       ? { ...data, paths: [...livePaths] } : null };
     nativeDomSession = nativeGesture.data?.sessionId;
   }
 
   async function handleNativeDrop(rawPaths: string[], position: { x: number; y: number }, source?: DragData | null, copyModifier?: boolean | null, observedAt?: number, completedGestureSequence?: number, observationClock?: string): Promise<void> {
-    const paths = nativeDropPaths(rawPaths, isWindows);
-    const dragData = source ?? (nativeGesture ? nativeGesture.data : nativeSource(source, observedAt, completedGestureSequence, observationClock));
+    const dragData = nativeDragSession(rawPaths)
+      ? nativeSource(rawPaths, source, observedAt, completedGestureSequence, observationClock)
+      : source ?? (nativeGesture ? nativeGesture.data : nativeSource(rawPaths, source, observedAt, completedGestureSequence, observationClock));
+    const paths = resolveNativeDragPaths(rawPaths, dragData, isWindows);
+    if (!paths.length) {
+      nativeGesture = null;
+      nativeDomSession = undefined;
+      clearNativeHighlights?.(); clearNativeHighlights = null;
+      return;
+    }
     const internalPaths = internalDragPaths(dragData, isWindows);
     const isInternalDrag = internalPaths !== null && sameDropPathSet(paths, internalPaths, isWindows);
     if (nativeGesture?.expired || dragState.expiredNativeObservation(observedAt, isInternalDrag ? dragData : null,
@@ -258,7 +270,7 @@ export function useNativeDropHandler(deps: NativeDropDeps) {
     // Acknowledged native handoff owns this gesture. Rejected native starts
     // retain HTML5 authority, including built-in folder/breadcrumb/tab drops.
     const session = event.dataTransfer?.getData("application/x-explorer-session") || undefined;
-    if (!domOwnsFileDrop(nativeGesture !== null || dragState.nativeOwns(session)
+    if (!domOwnsFileDrop(!!nativeGesture?.hasPaths || dragState.nativeOwns(session)
         || (!!session && session === nativeDomSession))) {
       event.stopImmediatePropagation();
       return;

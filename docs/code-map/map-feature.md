@@ -165,7 +165,7 @@ backend for E2E/browser).
 - `composables/use-pointer-drag.svelte.ts` — pointer-based drag, `createDragGhost`, multi-select ghost
 - `composables/use-pointer-intent.svelte.ts` — distinguish click vs drag start
 - `src/lib/state/drag-clock.ts`, `src-tauri/src/native_file_drag.rs` — process-scoped Instant clock sampled once per renderer against performance.now; bounded IPC uncertainty and clock identity fence history/floors across restarts and post-adjustment new windows.
-- `state/drag.svelte.ts` — `dragState` shared store, monotonic cross-window gesture sequence, observation-correlated HTML5 history, bounded shared completion receipts published at admission, and native provenance expiry.
+- `state/drag.svelte.ts` — `dragState` shared store, monotonic cross-window gesture sequence, observation-correlated HTML5 history (including session-specific GTK Recent lookup), bounded shared completion receipts published at admission, and native provenance expiry.
 - `composables/use-drop-target.svelte.ts` — dropzone highlight + accept logic
 - `src/lib/composables/use-dom-directory-drop.ts`, `src/lib/composables/use-sidebar-file-drop.ts` — component-used DOM destination seams exercised by the independent Cartesian drop policy in `tests/helpers/drop-policy.ts` and `tests/composables/drop-policy-differential.test.ts`.
 - `src/lib/state/sidebar-navigation.ts` — shared active-pane modality gate for sidebar click/Enter/Space navigation, including mounted drives and Recent folders.

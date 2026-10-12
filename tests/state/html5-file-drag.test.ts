@@ -24,7 +24,7 @@ describe("shared HTML5 filesystem source protocol", () => {
     const source = createHtml5FileDrag(() => {}, "link");
     source.start({ dataTransfer: payload } as DragEvent, { path: "/work/project", name: "project", kind: "directory" });
     expect(payload.effectAllowed).toBe("link");
-    expect(payload.getData("text/uri-list")).toMatch(/^urn:tauri-explorer:drag:/);
+    expect(payload.getData("text/uri-list")).toBe(`urn:tauri-explorer:drag:${dragState.current?.sessionId}`);
     expect(payload.getData("text/plain")).toBe("");
     expect(native).not.toHaveBeenCalled();
     source.end();

@@ -13,7 +13,9 @@ const pathsForPlatform = pathComparison(isWindows);
 export function dragOverDirectory(event: DragEvent, effect: DataTransfer["dropEffect"]): boolean {
   if (!event.dataTransfer || !dragState.acceptsFileDrag(event.dataTransfer)) return false;
   event.preventDefault();
-  event.dataTransfer.dropEffect = effect;
+  // OS/browser acknowledgement cannot authorize source deletion. The Drop
+  // handler decides the app's transfer intent separately from this cursor.
+  event.dataTransfer.dropEffect = effect === "move" ? "copy" : effect;
   return true;
 }
 

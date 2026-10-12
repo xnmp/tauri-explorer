@@ -32,6 +32,7 @@ describe("shared HTML5 filesystem source protocol", () => {
   it("publishes ordered MIME, absolute URI paths and a live gesture for browser drops", () => {
     vi.stubGlobal("window", {}); const payload = transfer(); const onEnd = vi.fn(); const source = createHtml5FileDrag(onEnd);
     source.start({ dataTransfer: payload } as DragEvent, data);
+    expect(payload.effectAllowed).toBe("copy");
     expect(payload.getData("application/x-explorer-paths")).toBe(JSON.stringify(data.paths));
     expect(payload.getData("text/uri-list")).toBe("file:///z.png\r\nfile:///a.png");
     expect(dragState.current?.paths).toEqual(data.paths); expect(native).not.toHaveBeenCalled();

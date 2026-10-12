@@ -285,3 +285,14 @@ export const outgoingFilesystemCases = (["listing-file", "listing-folder", "mill
 export const dropSidebarPendingCases = (["listing-folder", "miller-folder"] as const).flatMap(source =>
   (["rejected", "accepted"] as const).map(reply => ({ platform: "linux" as const, source, reply,
     target: "quick-access" as const, modifier: "none" as const, transport: "native-rejected" as const })));
+
+// Native acknowledgement is delivery admission, before frontend destination routing.
+// Frontend-only blocking cannot synchronously reject Tauri's queued callback.
+export const dropOsEffectCases = dropPlatforms.flatMap(platform => [
+  { destination: "accepted folder", target: "folder", accepted: true, expected: "move", effect: "copy" },
+  { destination: "native rejected", target: "folder", accepted: false, expected: null, effect: "none" },
+  { destination: "native blocked", target: "covered-pane", accepted: false, expected: null, effect: "none" },
+  { destination: "frontend blocked after queueing", target: "covered-pane", accepted: true, expected: "blocked", effect: "copy" },
+  { destination: "terminal", target: "terminal", accepted: true, expected: "terminal-insertion", effect: "copy" },
+  { destination: "plugin", target: "plugin", accepted: true, expected: "plugin:external", effect: "copy" },
+].map(row => ({ ...row, platform, target: row.target as DropCase["target"] })));

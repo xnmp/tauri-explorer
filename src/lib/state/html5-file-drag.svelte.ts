@@ -20,7 +20,9 @@ export function createHtml5FileDrag(onEnd: () => void = () => {}, copyPolicy: "m
     event.dataTransfer.setData("application/x-explorer-name", data.name);
     event.dataTransfer.setData("application/x-explorer-kind", data.kind);
     if (paths.length > 1) event.dataTransfer.setData("application/x-explorer-paths", JSON.stringify(paths));
-    event.dataTransfer.effectAllowed = copyPolicy === "link" ? "link" : "all";
+    // This public transport can outlive failed native startup. Source-side
+    // deletion is unsupported; internal move intent stays in source provenance.
+    event.dataTransfer.effectAllowed = copyPolicy === "link" ? "link" : "copy";
     event.dataTransfer.setData("application/x-explorer-effect", copyPolicy === "link" ? "link" : "all");
     dragState.start({ ...data, paths: paths.length > 1 ? paths : undefined,
       nativeCopyPolicy: copyPolicy, html5: true });

@@ -402,7 +402,7 @@
   function handleTabDragOver(event: DragEvent, tabId: string): void {
     if (isFileDrag(event.dataTransfer)) {
       event.preventDefault();
-      if (event.dataTransfer) event.dataTransfer.dropEffect = "move";
+      if (event.dataTransfer) event.dataTransfer.dropEffect = "copy";
       fileDropTargetTabId = tabId;
     }
   }

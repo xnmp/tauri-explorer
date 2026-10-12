@@ -1,10 +1,10 @@
-import { platformCopyModifier } from "../helpers/platform-drag-intent";
+import { platformCopyModifier, platformDropEffect, waylandDropEffect } from "../helpers/platform-drag-intent";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 vi.mock("$lib/state/drag-clock", async actual => ({ ...await actual<object>(), dragClock: {
   initialize: async () => {}, ready: true,
   stamp: () => ({ clockId: `browser:${performance.timeOrigin}`, at: Math.floor(performance.timeOrigin + performance.now()), uncertainty: 0 }),
 } }));
-import { dropModifierChangeCases, outgoingFilesystemCases, dropSidebarPendingCases, dropStaleFilesCases, dropDeferredUriCases, dropVisibilityCases, dropUriCases, dropUriHtmlCases, dropVisibilities, dropCases, dropSources, dropTargets, dropDeliveryOrders, dropDeliveryCases, dropRejectedDomCases, dropModalCompletionCases, dropBoundaryCases, dropCrossWindowCases, dropPathCases, dropTemporalCases, outgoingRecentCases, dropPlatforms, branchDropPolicy, devDropPolicy, nativeRoute, intendedDifferences, type DropCase, type Outcome } from "../helpers/drop-policy";
+import { dropOsEffectCases, dropModifierChangeCases, outgoingFilesystemCases, dropSidebarPendingCases, dropStaleFilesCases, dropDeferredUriCases, dropVisibilityCases, dropUriCases, dropUriHtmlCases, dropVisibilities, dropCases, dropSources, dropTargets, dropDeliveryOrders, dropDeliveryCases, dropRejectedDomCases, dropModalCompletionCases, dropBoundaryCases, dropCrossWindowCases, dropPathCases, dropTemporalCases, outgoingRecentCases, dropPlatforms, branchDropPolicy, devDropPolicy, nativeRoute, intendedDifferences, type DropCase, type Outcome } from "../helpers/drop-policy";
 import { dropElement } from "../helpers/drop-element";
 
 const io = vi.hoisted(() => ({ start: vi.fn(), listener: undefined as ((event: any) => void) | undefined,
@@ -317,6 +317,56 @@ describe.each(dropPlatforms)("differential drop outcomes: %s", platform => {
     native("drop", source, c); await flush();
     expect(io.outcomes).toEqual([]);
   });
+  it.runIf(platform === "linux").each([
+    { selected: 2, expected: 2 }, { selected: 4, expected: 0 },
+    { selected: 0, expected: 0 }, { selected: 32, expected: 0 },
+  ])("Wayland selected $selected acknowledges $expected", ({ selected, expected }) => {
+    expect(waylandDropEffect(selected, true)).toBe(expected);
+    expect(waylandDropEffect(selected, false)).toBe(0);
+  });
+  it.each([
+    { destination: "folder", expected: "move", effect: "copy" },
+    { destination: "plugin", expected: "plugin:pane", effect: "copy" },
+    { destination: "covered-pane", expected: "blocked", effect: "none" },
+  ] as const)("copy-only DOM transport → $destination: $expected / OS $effect", async row => {
+    const c: DropCase = { platform, source: "miller-file", target: row.destination, modifier: "none", transport: "dom-only" };
+    hit = target(c);
+    vi.spyOn(modules.dialogs.dialogStore, "isPaneBlocked").mockReturnValue(c.target === "covered-pane");
+    if (c.target === "plugin") cleanup.push(modules.targets.fileDropTargets.register(hit, (_paths: readonly string[], kind: string) => {
+      io.outcomes.push(`plugin:${kind}`);
+    }));
+    const dt = transfer();
+    if (platform === "linux") {
+      io.start.mockRejectedValue("unavailable");
+      vi.spyOn(console, "warn").mockImplementation(() => {});
+    }
+    const drag = modules.html.createHtml5FileDrag();
+    drag.start(event("dragstart", dt, c), { path: sourcePath, name: "item", kind: "file" });
+    expect(dt.effectAllowed).toBe("copy");
+    await flush();
+    const over = event("dragover", dt, c);
+    win.dispatchEvent(over);
+    if (c.target === "folder") expect(modules.directory.dragOverDirectory(over, "move")).toBe(true);
+    expect(dt.dropEffect).toBe(row.effect);
+    const drop = event("drop", dt, c);
+    win.dispatchEvent(drop);
+    if (c.target === "folder") await modules.directory.dropIntoDirectory(drop, destPath, "folder", { onRefresh() {} });
+    await flush();
+    expect(dt.dropEffect).toBe(row.effect);
+    expect(io.outcomes.length ? io.outcomes : drop.stopped ? ["blocked"] : []).toEqual([row.expected]);
+    drag.end();
+  });
+  it.each(dropOsEffectCases.filter(c => c.platform === platform))("OS effect: $destination → $effect", async row => {
+    // Actual Rust mapping, with explicit native admission. Destination outcomes
+    // run through production frontend routing only after delivery is admitted.
+    const allowed = platform === "linux" ? 6 : platform === "mac" ? 17 : 3;
+    const copy = platform === "linux" ? 2 : 1;
+    expect(platformDropEffect(platform, allowed, row.accepted)).toBe(row.effect === "copy" ? copy : 0);
+    if (row.accepted) {
+      const c: DropCase = { platform, source: "external-file", target: row.target, modifier: "none", transport: "native-accepted" };
+      expect(await run(c)).toEqual([row.expected]);
+    }
+  });
   it.each(dropModifierChangeCases.filter(c => c.platform === platform))("native action follows a mid-drag modifier change / $modifier", async c => {
     const { copying } = c;
     hit = target(c);
@@ -329,6 +379,9 @@ describe.each(dropPlatforms)("differential drop outcomes: %s", platform => {
       : { platform, keyState: copying ? 8 : 0, allowedEffects: 3 });
     io.listener!({ payload: { type: "drop", paths: [sourcePath], source, copyModifier, observedAt: observationTime + 0.25, position: { x: 60, y: 80 } } });
     await flush();
+    const allowed = platform === "linux" ? 6 : platform === "mac" ? 17 : 3;
+    expect(platformDropEffect(platform, allowed, true)).toBe(platform === "linux" ? 2 : 1);
+    if (platform === "linux") expect(waylandDropEffect(copying ? 2 : 4, true)).toBe(copying ? 2 : 0);
     expect(io.outcomes).toEqual([copying ? "copy" : "move"]);
   });
   it.each(dropSidebarPendingCases.filter(c => c.platform === platform))("dragend-only sidebar after late native $reply / $source", async c => {

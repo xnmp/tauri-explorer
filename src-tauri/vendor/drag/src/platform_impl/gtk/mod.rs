@@ -32,7 +32,6 @@ pub fn start_drag<F: Fn(DragResult, CursorPosition) + Send + 'static>(
         DragMode::Copy => gdk::DragAction::COPY,
         DragMode::Move => gdk::DragAction::MOVE,
         DragMode::Link => gdk::DragAction::LINK,
-        DragMode::CopyMove => gdk::DragAction::COPY | gdk::DragAction::MOVE,
     };
 
     log::debug!("Setting drag source with action: {:?}", drag_action);

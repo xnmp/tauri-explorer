@@ -15,7 +15,7 @@ import { bookmarksStore } from "$lib/state/bookmarks.svelte";
 import { terminalPanelStore } from "$lib/state/terminal.svelte";
 import { pathComparison } from "$lib/domain/path";
 import { dispatchFileDrop, admitFileDrop } from "$lib/state/dispatch-file-drop";
-import { internalDragPaths, sameDropPathSet, domDropPaths, domOwnsFileDrop, isFileTransfer, nativeDragSession, nativeDropUsesDomRules, resolveNativeDragPaths } from "$lib/domain/file-drop";
+import { internalDragPaths, sameDropPathSet, domDropPaths, domOwnsFileDrop, isFileTransfer, isLinkOnlyFileTransfer, nativeDragSession, nativeDropUsesDomRules, resolveNativeDragPaths } from "$lib/domain/file-drop";
 import { toastStore } from "$lib/state/toast.svelte";
 import { dialogStore } from "$lib/state/dialogs.svelte";
 import { windowTabsManager } from "$lib/state/window-tabs.svelte";
@@ -210,11 +210,17 @@ export function useNativeDropHandler(deps: NativeDropDeps) {
   function trackModifierUp(e: KeyboardEvent) { copyModifierHeld = isCopyMod(e); }
   function trackDragModifiers(event: DragEvent): void { copyModifierHeld = isCopyMod(event); }
 
+  function acknowledgeDomDrop(event: DragEvent, blocked: boolean): void {
+    if (!event.dataTransfer) return;
+    event.dataTransfer.dropEffect = blocked ? "none" : isLinkOnlyFileTransfer(event.dataTransfer) ? "link" : "copy";
+  }
+
   function handleDomDragOver(event: DragEvent): void {
     if (!dragState.acceptsFileDrag(event.dataTransfer)) return;
     trackDragModifiers(event);
     event.preventDefault();
     const target = resolveDropTargetFromElement(event.target as Element | null);
+    acknowledgeDomDrop(event, target?.type === "blocked");
     if (target?.type === "plugin" || target?.type === "blocked") {
       event.stopImmediatePropagation();
       highlightTargetAtPoint(event.clientX, event.clientY);
@@ -225,11 +231,13 @@ export function useNativeDropHandler(deps: NativeDropDeps) {
     if (!dragState.acceptsFileDrop(event.dataTransfer)) return;
     const bound = event.dataTransfer ? dragState.domSource(event.dataTransfer) : null;
     if (dragState.expiredDomSource(bound, event.dataTransfer)) {
+      acknowledgeDomDrop(event, true);
       event.preventDefault(); event.stopImmediatePropagation(); return;
     }
     if (!deferredDomSources.has(event)) trackDragModifiers(event);
     event.preventDefault();
     const target = resolveDropTargetFromElement(event.target as Element | null);
+    acknowledgeDomDrop(event, target?.type === "blocked");
     const terminal = target?.type === "plugin" || target?.type === "blocked";
     const source = deferredDomSources.get(event) ?? bound;
     const live = dragState.latestSource();
@@ -274,6 +282,7 @@ export function useNativeDropHandler(deps: NativeDropDeps) {
     const session = event.dataTransfer?.getData("application/x-explorer-session") || undefined;
     if (!domOwnsFileDrop(!!nativeGesture?.hasPaths || dragState.nativeOwns(session)
         || (!!session && session === nativeDomSession))) {
+      acknowledgeDomDrop(event, true);
       event.stopImmediatePropagation();
       return;
     }

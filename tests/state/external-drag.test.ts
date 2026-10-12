@@ -136,7 +136,7 @@ describe("external drag-out", () => {
     interactions.handleDragStart({ dataTransfer: dt } as DragEvent, entry, true);
 
     expect(dt.getData("application/x-explorer-path")).toBe("/h/x.txt");
-    expect(dt.effectAllowed).toBe("all");
+    expect(dt.effectAllowed).toBe("copy");
   });
 
   it("uses pure HTML5 DnD on Windows: no native OLE drag, no dragstart preventDefault", () => {

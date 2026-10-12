@@ -30,7 +30,7 @@ and callback-time copy intent from the negotiated action: GDK selected action
 (with suggested action fallback before selection), AppKit's modifier-filtered
 `draggingSourceOperationMask`, and OLE's effect negotiated from the callback's
 `grfKeyState` and supported effects. All three use `drag_drop_intent.rs`, a pure
-extractor also compiled by the differential runner. Never query GTK's cached
+intent/effect mapping also compiled by the differential runner. Never query GTK's cached
 Keymap or AppKit's global NSEvent modifier cache during a drag grab. The host captures source metadata and keeps
 a per-window FIFO; later Tauri delivery must match the original event before
 the enriched payload is published. Missing/mismatched snapshots are discarded.
@@ -41,6 +41,45 @@ The bridge lives in `src/lib.rs` and each platform's `drag_drop.rs`. The host
 depends directly on the same patched Wry version; keep `Cargo.toml`'s direct
 dependency aligned when upgrading. Targeted host regressions are in
 `src-tauri/test_support/native_file_drag.rs`.
+
+## Drag intent and source-safe acknowledgement (#29, review 14)
+
+The snapshot's `copy_modifier` is internal transfer intent. It never authorizes
+OS source deletion. The OS-facing functions in `drag_drop_intent.rs` return
+Copy/None only; rejected callbacks are consumed rather than delegated to a
+native default that might report Move. Copy-only sources necessarily negotiate
+Copy; preserving modifier-driven moves across native window handoffs would
+require a separate private intent channel. Same-window pointer/DOM moves remain
+app-owned, independent of the public Copy acknowledgement.
+
+| Platform | Negotiation / intent | Final OS report |
+| --- | --- | --- |
+| GTK X11 | Existing WebKit/GDK negotiation can select Copy or Move. Snapshot selected action, falling back to suggested action before selection. | Require offered Copy; after delivery, `drag_status(COPY)` sets the XdndFinished action. `drag_finish(accepted, false)` never requests DELETE. Rejection reports None. |
+| GTK Wayland | GTK3 offers Copy/Move/Ask even when `drag_status` prefers Copy. Snapshot actual selected action (suggested fallback before selection), without cached Keymap modifiers. | Only a selected Copy can be accepted for delivery. GTK3 Wayland destination contexts may report protocol None, so only verified Xdnd is exempt from this gate; unknown/local protocols also require selected Copy. Move/Ask/None are rejected before Drop dispatch and finished unsuccessfully. Non-Ask action cannot safely change after Drop; never convert Move to Copy then finish successfully. |
+| AppKit | Source's current modifier-filtered Copy/Move mask determines internal intent. Destination offers Copy/None only. | Copy for admitted delivery when source supports Copy; otherwise None/NO. No default-handler fallback can return Move. |
+| OLE | Fresh callback key state and source's allowed effects determine internal Copy/Move intent. Destination offers Copy/None only on Enter/Over. | Drop returns Copy only after a valid nonempty payload and successful handler delivery; otherwise None. Move-only sources are rejected. |
+
+Tauri's Wry handler always accepts **queued delivery**. Pane/modal rejection,
+terminal insertion and plugin dispatch happen asynchronously afterward, so those
+already-queued drops receive Copy, including a later frontend block. They cannot
+synchronously produce None without a new native admission bridge. The table tests
+distinguish native rejection/blocking (None) from frontend blocking after queueing
+(Copy). They assert the actual pure Rust mapping alongside frontend outcomes;
+they do not claim a physical native/compositor acceptance run.
+
+Every explicit host file source uses `DragMode::Copy`; the unsupported CopyMove
+addition is removed. HTML5 filesystem fallback also uses `effectAllowed=copy`,
+including failed native startup. Its directory receivers report public Copy while
+keeping internal move/modifier policy. Recent retains its existing link-only
+session carrier and still cannot start a native filesystem drag.
+
+Platform contracts:
+[OLE completion](https://learn.microsoft.com/en-us/windows/win32/api/oleidl/nf-oleidl-idroptarget-drop),
+[AppKit source deletion](https://developer.apple.com/library/archive/documentation/Cocoa/Conceptual/DragandDrop/Concepts/dragsource.html),
+[GTK finish/delete flag](https://docs.gtk.org/gtk3/func.drag_finish.html),
+[GTK X11 action completion](https://raw.githubusercontent.com/GNOME/gtk/gtk-3-24/gdk/x11/gdkdnd-x11.c),
+[GTK Wayland action advertisement](https://raw.githubusercontent.com/GNOME/gtk/gtk-3-24/gdk/wayland/gdkselection-wayland.c),
+[Wayland selected-action and completion rules](https://wayland.freedesktop.org/docs/html/apa.html#protocol-spec-wl_data_offer).
 
 GTK's deferred Leave uses weak references to the original WebView and top-level
 window. Both must remain alive and attached before `dispatch_deferred` admits

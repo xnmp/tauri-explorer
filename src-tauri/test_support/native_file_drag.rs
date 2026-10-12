@@ -182,14 +182,14 @@ fn recent_native_start_is_rejected_before_exporting_files_on_every_platform() {
 }
 
 #[test]
-fn modifier_sources_offer_copy_and_move_until_the_destination_negotiates() {
+fn modifier_sources_advertise_copy_without_source_deletion() {
     let ordinary = Source {
         native_copy_policy: Some(CopyPolicy::Modifier),
         ..source()
     };
     assert!(matches!(
         native_drag_options(Some(&ordinary)).unwrap().mode,
-        drag::DragMode::CopyMove
+        drag::DragMode::Copy
     ));
 }
 

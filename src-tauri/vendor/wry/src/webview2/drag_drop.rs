@@ -178,7 +178,7 @@ impl IDropTarget_Impl for DragDropTarget_Impl {
     let mut paths = Vec::new();
     let hdrop = unsafe { DragDropTarget::iterate_filenames(pDataObj, |path| paths.push(path)) };
 
-    let enter_is_valid = hdrop.is_some();
+    let enter_is_valid = hdrop.is_some() && !paths.is_empty();
 
     if !enter_is_valid {
       unsafe {
@@ -192,11 +192,12 @@ impl IDropTarget_Impl for DragDropTarget_Impl {
       *self.enter_is_valid.get() = enter_is_valid;
     }
 
+    let allowed = unsafe { (*pdwEffect).0 };
     let cursor_effect = DROPEFFECT(crate::drag_drop_intent::ole_operation(
       grfKeyState.0,
-      unsafe { (*pdwEffect).0 },
+      allowed,
     ));
-    self.call(
+    let accepted = self.call(
       DragDropEvent::Enter {
         paths,
         position: (pt.x as _, pt.y as _),
@@ -205,7 +206,7 @@ impl IDropTarget_Impl for DragDropTarget_Impl {
     );
 
     unsafe {
-      *pdwEffect = cursor_effect;
+      *pdwEffect = DROPEFFECT(crate::drag_drop_intent::ole_drop_effect(allowed, accepted));
     }
 
     Ok(())
@@ -217,28 +218,26 @@ impl IDropTarget_Impl for DragDropTarget_Impl {
     pt: &POINTL,
     pdwEffect: *mut DROPEFFECT,
   ) -> windows::core::Result<()> {
-    let effect = DROPEFFECT(crate::drag_drop_intent::ole_operation(
+    let allowed = unsafe { (*pdwEffect).0 };
+    let intent = DROPEFFECT(crate::drag_drop_intent::ole_operation(
       grfKeyState.0,
-      unsafe { (*pdwEffect).0 },
+      allowed,
     ));
-    if unsafe { *self.enter_is_valid.get() } {
+    let accepted = if unsafe { *self.enter_is_valid.get() } {
       let mut pt = POINT { x: pt.x, y: pt.y };
       let _ = unsafe { ScreenToClient(self.hwnd, &mut pt) };
       self.call(
         DragDropEvent::Over {
           position: (pt.x as _, pt.y as _),
         },
-        effect,
-      );
-    }
-
-    unsafe {
-      *pdwEffect = if *self.enter_is_valid.get() {
-        effect
-      } else {
-        DROPEFFECT_NONE
-      }
+        intent,
+      )
+    } else {
+      false
     };
+    unsafe {
+      *pdwEffect = DROPEFFECT(crate::drag_drop_intent::ole_drop_effect(allowed, accepted));
+    }
     Ok(())
   }
 
@@ -256,36 +255,40 @@ impl IDropTarget_Impl for DragDropTarget_Impl {
     pt: &POINTL,
     pdwEffect: *mut DROPEFFECT,
   ) -> windows::core::Result<()> {
-    let effect = DROPEFFECT(crate::drag_drop_intent::ole_operation(
+    let allowed = unsafe { (*pdwEffect).0 };
+    let intent = DROPEFFECT(crate::drag_drop_intent::ole_operation(
       grfKeyState.0,
-      unsafe { (*pdwEffect).0 },
+      allowed,
     ));
-    if effect == DROPEFFECT_NONE {
-      unsafe {
-        *pdwEffect = DROPEFFECT_NONE;
-        *self.enter_is_valid.get() = false;
-      }
+    // Clear the output on every failure path, including a Drop without Enter.
+    unsafe { *pdwEffect = DROPEFFECT_NONE };
+    let valid = unsafe { *self.enter_is_valid.get() };
+    unsafe { *self.enter_is_valid.get() = false };
+    if !valid || crate::drag_drop_intent::ole_drop_effect(allowed, true) == 0 {
       self.call(DragDropEvent::Leave, DROPEFFECT_NONE);
       return Ok(());
     }
-    if unsafe { *self.enter_is_valid.get() } {
-      let mut pt = POINT { x: pt.x, y: pt.y };
-      let _ = unsafe { ScreenToClient(self.hwnd, &mut pt) };
-
-      let mut paths = Vec::new();
-      let hdrop = unsafe { DragDropTarget::iterate_filenames(pDataObj, |path| paths.push(path)) };
+    let mut pt = POINT { x: pt.x, y: pt.y };
+    let _ = unsafe { ScreenToClient(self.hwnd, &mut pt) };
+    let mut paths = Vec::new();
+    let hdrop = unsafe { DragDropTarget::iterate_filenames(pDataObj, |path| paths.push(path)) };
+    let accepted = if hdrop.is_some() && !paths.is_empty() {
       self.call(
         DragDropEvent::Drop {
           paths,
           position: (pt.x as _, pt.y as _),
         },
-        effect,
-      );
-
-      unsafe { *pdwEffect = effect };
-      if let Some(hdrop) = hdrop {
-        unsafe { DragFinish(hdrop) };
-      }
+        intent,
+      )
+    } else {
+      self.call(DragDropEvent::Leave, DROPEFFECT_NONE);
+      false
+    };
+    unsafe {
+      *pdwEffect = DROPEFFECT(crate::drag_drop_intent::ole_drop_effect(allowed, accepted));
+    }
+    if let Some(hdrop) = hdrop {
+      unsafe { DragFinish(hdrop) };
     }
 
     Ok(())

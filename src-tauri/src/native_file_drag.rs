@@ -67,15 +67,9 @@ fn native_drag_options(source: Option<&Source>) -> Result<drag::Options, String>
         return Err("Shortcut sources cannot start native file drags".into());
     }
     Ok(drag::Options {
-        // Copy-only advertisement cannot express a mid-drag modifier change.
-        // The destination negotiates the same action we snapshot in Wry.
-        mode: if source
-            .is_some_and(|source| source.native_copy_policy == Some(CopyPolicy::Modifier))
-        {
-            drag::DragMode::CopyMove
-        } else {
-            drag::DragMode::Copy
-        },
+        // No platform implements source-side deletion. Internal intent does
+        // not authorize an external destination to request that deletion.
+        mode: drag::DragMode::Copy,
         ..drag::Options::default()
     })
 }

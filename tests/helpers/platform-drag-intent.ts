@@ -8,12 +8,20 @@ import { join, resolve } from "node:path";
 
 const execute = promisify(execFile);
 const folder = mkdtempSync(join(tmpdir(), "pdlg-intent-"));
-let results: Map<string, boolean>;
+let results: Map<string, string>;
 try {
   const source = join(folder, "main.rs"), binary = join(folder, "intent");
   writeFileSync(source, `#[path = ${JSON.stringify(resolve("src-tauri/vendor/wry/src/drag_drop_intent.rs"))}] mod intent;
-use intent::{copy_modifier, ole_operation, PlatformDragIntent};
+use intent::{copy_modifier, ole_operation, gtk_drop_effect, appkit_drop_effect, ole_drop_effect, PlatformDragIntent};
 fn main() {
+  for allowed in 0..64 { for accepted in [false, true] {
+    println!("effect:linux:{allowed}:{accepted} {}", gtk_drop_effect(allowed, 4, 2, accepted));
+    println!("effect:mac:{allowed}:{accepted} {}", appkit_drop_effect(allowed as usize, accepted));
+    println!("effect:windows:{allowed}:{accepted} {}", ole_drop_effect(allowed, accepted));
+  } }
+  for selected in [0, 2, 4, 32] { for accepted in [false, true] {
+    println!("effect:wayland:{selected}:{accepted} {}", gtk_drop_effect(6, selected, 0, accepted));
+  } }
   for selected in [0, 2, 4] { for suggested in [2, 4] { for cached in [0, 4] {
     println!("linux:{selected}:{suggested}:{cached} {}", copy_modifier(PlatformDragIntent::Gtk { selected_action: selected, suggested_action: suggested }));
   } } }
@@ -26,7 +34,7 @@ fn main() {
 }`);
   await execute("rustc", ["--edition=2021", "-Awarnings", source, "-o", binary]);
   results = new Map((await execute(binary, { encoding: "utf8" })).stdout.trim().split("\n").map(line => {
-    const [key, value] = line.split(" "); return [key, value === "true"];
+    const [key, value] = line.split(" "); return [key, value];
   }));
 } finally { rmSync(folder, { recursive: true, force: true }); }
 
@@ -40,5 +48,19 @@ export function platformCopyModifier(event: PlatformDragEvent): boolean {
     : `windows:${event.keyState}:${event.allowedEffects}`;
   const value = results.get(key);
   if (value === undefined) throw new Error(`Unsupported platform fixture: ${key}`);
-  return value;
+  return value === "true";
+}
+
+/** Execute the OS-facing mapping, independently of frontend transfer intent. */
+export function platformDropEffect(platform: PlatformDragEvent["platform"], allowed: number, accepted: boolean): number {
+  const key = `effect:${platform}:${allowed}:${accepted}`;
+  const value = results.get(key);
+  if (value === undefined) throw new Error(`Unsupported effect fixture: ${key}`);
+  return Number(value);
+}
+
+export function waylandDropEffect(selected: number, accepted: boolean): number {
+  const value = results.get(`effect:wayland:${selected}:${accepted}`);
+  if (value === undefined) throw new Error(`Unsupported Wayland fixture: ${selected}`);
+  return Number(value);
 }

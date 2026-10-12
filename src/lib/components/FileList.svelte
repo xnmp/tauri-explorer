@@ -364,7 +364,7 @@
     }
 
     event.preventDefault();
-    if (event.dataTransfer) event.dataTransfer.dropEffect = "move";
+    if (event.dataTransfer) event.dataTransfer.dropEffect = "copy";
     isDropTarget = true;
   }
 

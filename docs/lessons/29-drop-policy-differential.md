@@ -925,3 +925,69 @@ a non-workspace dependency also disallows dev-dependencies. Its new extractor
 unit test therefore ran directly with `rustc`, and the same extractor is compiled
 by every differential run. Linux/macOS physical drag negotiations and external
 application export remain platform acceptance limits, not claimed successes.
+
+
+## Fourteenth-review source-safe OS effects
+
+Native intent and acknowledgement must be different values. Reporting Move after
+queueing delivery allowed an external source to delete data before any transfer,
+including terminal/plugin/blocked destinations. Explicit outgoing CopyMove also
+promised source deletion that no platform implements. All explicit native and
+HTML5 filesystem sources now advertise Copy. In-app DOM/pointer moves remain
+private operations; Copy-only native handoffs necessarily negotiate Copy.
+
+Incoming OLE/AppKit return Copy/None from dedicated mappings while snapshotting
+callback-time intent separately. X11 snapshots intent before changing its final
+XdndFinished action to Copy and never requests GTK DELETE. Wayland needs a
+selected-Copy gate for all non-Xdnd protocols (GTK3 Wayland destinations report protocol None): GTK3 advertises Copy/Move/Ask even with a Copy preference, and
+non-Ask selected action cannot be changed after Drop. Reject Move/Ask/None before
+delivery; finishing a selected Move with `del=false` alone is unsafe. Platform
+contracts and negotiation/final-report table live in
+`src-tauri/vendor/wry/TAURI_EXPLORER_PATCH.md`.
+
+Native rejection/blocking is None. Tauri always admits queued delivery, so later
+frontend blocking, terminal insertion and plugin delivery acknowledge Copy. The
+frontend cannot retrospectively change that result. Differential rows explicitly
+distinguish these layers and run the actual Rust effect mappings. Per-platform
+unit tests cover Copy/None outputs, unsupported masks, Wayland selected-action
+rejection and mid-drag action/modifier changes. A DOM row verifies public Copy
+with an actual in-app Move outcome; outgoing source regressions failed first.
+
+
+Fourteenth-review verification (uncommitted):
+
+```text
+CARGO_TARGET_DIR=/var/tmp/te-wt2/target-pdlg cargo test --offline --manifest-path src-tauri/Cargo.toml native_file_drag
+test result: ok. 23 passed; 0 failed
+
+rustc --edition=2021 --test src-tauri/vendor/wry/src/drag_drop_intent.rs -o /tmp/pdlg-wry-intent-tests
+/tmp/pdlg-wry-intent-tests
+test result: ok. 4 passed; 0 failed
+
+CARGO_TARGET_DIR=/var/tmp/te-wt2/target-pdlg cargo check --offline --manifest-path src-tauri/Cargo.toml -p wry -p drag --target x86_64-pc-windows-gnu
+Finished `dev` profile [unoptimized + debuginfo] target(s) in 23.99s
+
+CC_aarch64_apple_darwin=clang CARGO_TARGET_DIR=/var/tmp/te-wt2/target-pdlg cargo check --offline --manifest-path src-tauri/Cargo.toml -p wry -p drag --target aarch64-apple-darwin
+Finished `dev` profile [unoptimized + debuginfo] target(s) in 23.50s
+
+bunx vitest run tests/state tests/composables --maxWorkers=2
+Test Files  207 passed (207)
+Tests       24441 passed | 33 skipped (24474)
+
+CARGO_TARGET_DIR=/var/tmp/te-wt2/target-pdlg bun run lint:arch
+arch-lint: clean
+
+python3 docs/code-map/validate.py --coverage
+coverage: 756/756 source files in map-folder.md
+
+bun run check
+ERROR "website/api/report.js" 2:26 "Cannot find module '@vercel/blob' or its corresponding type declarations."
+COMPLETED 1876 FILES 1 ERRORS 0 WARNINGS 1 FILES_WITH_PROBLEMS
+```
+
+The default macOS cross C compiler rejected Apple's flags; Clang passed the
+installed aarch64-apple-darwin target check. Independent review falsified both
+late Wayland action conversion and protocol==Wayland detection (GTK3 contexts
+report None); the final non-Xdnd gate addresses both. Rejection explicitly emits
+Leave before suppressing GTK's deferred callback. Final independent review found
+no remaining blocker. Physical native/compositor interoperability was not run.

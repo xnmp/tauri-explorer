@@ -838,16 +838,12 @@ failing-first regression through production seams:
   admission accepts the exact HTML token or Recent URN; ordinary file URIs cannot
   adopt retained source state. The stripped runner projects the actual source
   HTML rather than inventing target markup; empty readable URI plus retained
-  HTML is supported. Real headless WebKit drag tests confirm the HTML token
-  survives while custom MIME is stripped. This establishes in-page carrier
-  visibility, not physical OS application acceptance.
-- Sidebar dragend-only completion during pending native startup dispatches a
-  source-bound Drop through the existing window capture/rejection replay path.
-  Its full selection stays in the private source binding; no separate pending
-  queue or completion gate is introduced. The late-rejection regression failed
-  with no pin; listing/Miller rows now pin once after rejection and do nothing
-  after successful handoff. Existing destination leases and live modal checks
-  also apply to this fallback.
+  HTML is supported. The original headless WebKit probe confirmed only token
+  visibility; it bypassed production publishing and admission. Review 16
+  replaces it with actual file-list publishing and visible plugin delivery,
+  including an HTML-only projection with all alternate formats removed.
+- Sidebar dragend-only pending-start replay was added here, then removed in
+  review 16 because it could override cancellation. See the known limit below.
 - `pluginDomOwnership` defines ownership from host-issued component identities
   and mounted roots. Every contributed dialog/view/inspector/Preview section/editor
   tool is wrapped by `PluginContributionRoot`; the root is registered before
@@ -1047,3 +1043,50 @@ restoration deliberately does not fix it. Cached-modifier fixtures verify the
 current contract and do not claim that mid-drag Wayland key changes are fresh.
 Physical Linux/macOS/Windows compositor and external-application drag acceptance
 remain unverified in this change.
+
+## Sixteenth-review cancellation and production carrier acceptance
+
+Restored `use-sidebar-drag-end.ts` exactly to its `4fb58708` behavior. A pending
+native start no longer creates an independent synthetic root-sidebar Drop.
+That replay could pin after Escape, or after a real bookmark-child Drop had
+been cancelled because its destination was removed. Consumer receipts could
+suppress duplicates of a successful drop but could not authorize a cancelled
+one. Removed the `dropSidebarPendingCases` oracle rows accepting this replay.
+
+Cancellation regressions use the production listing and Miller source adapters,
+document capture dragend, and native-rejection routing. Escape rows cover a
+rejection before Escape (with browser dragleave/zero-coordinate dragend),
+between document dragend and source cleanup, and after source cleanup. Pending
+rows keep stale sidebar hover deliberately. Destination-change rows remove the
+bookmark child before or after document dragend and reject before or after
+source cleanup. They require the cancellation notice and assert that neither
+the child nor its Quick Access ancestor pins anything. Fourteen cancellation
+rows now pass; before restoring the hook, eight of the initial ten rows failed
+with an unwanted pin.
+
+Independent review also forced bookmark removal and a fully settled rejection
+between Drop and document dragend. That synthetic interleaving still pins through
+the restored baseline fallback. It is not covered by the late-rejection safety
+claim: the HTML drag processing model fires Drop and dragend sequentially in one
+completion task, and no real-browser IPC interleaving was established here.
+Exact restoration therefore does not prove cancellation safety under arbitrary
+synthetic scheduling. Browser/native reentry remains unverified.
+
+Known limit: if the browser delivers only dragend over Quick Access (no readable
+Drop) while native startup is pending, and native startup rejects after dragend,
+nothing is pinned. There is no trustworthy successful-drop signal in that
+sequence. Keep the gesture cancelled rather than reconstructing a root-sidebar
+Drop that can override Escape or destination-change cancellation. This edge
+case is deferred for a separate issue.
+
+`e2e/file-drag-carrier.spec.ts` now drags two selected real file-list entries to
+the Demo plugin's registered target. The application's `createHtml5FileDrag`
+publishes the payload; production admission and dispatch deliver the selection.
+The assertions require a visible `pane` result with both paths in selection
+order, preserved source entries, and no transfer toast. One row uses the
+browser's ordinary projection; the other removes every format except the exact
+production `text/html` after source publishing. That row tests stripped-type
+admission on Chromium and WebKit and fails if production HTML publishing or
+admission is removed. The former standalone HTML echo probe provided neither
+of those guarantees; its historical two-pass result above is not production
+acceptance evidence. Playwright is deferred to the user for this revision.

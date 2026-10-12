@@ -274,7 +274,3 @@ export const outgoingFilesystemCases = (["listing-file", "listing-folder", "mill
   .flatMap(source => (["dom-only", "native-rejected"] as const).map(transport => ({
     platform: "linux" as const, source, transport, modifier: "none" as const, target: "folder" as const,
   })));
-
-export const dropSidebarPendingCases = (["listing-folder", "miller-folder"] as const).flatMap(source =>
-  (["rejected", "accepted"] as const).map(reply => ({ platform: "linux" as const, source, reply,
-    target: "quick-access" as const, modifier: "none" as const, transport: "native-rejected" as const })));

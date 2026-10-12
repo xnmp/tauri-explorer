@@ -4,7 +4,7 @@ vi.mock("$lib/state/drag-clock", async actual => ({ ...await actual<object>(), d
   initialize: async () => {}, ready: true,
   stamp: () => ({ clockId: `browser:${performance.timeOrigin}`, at: Math.floor(performance.timeOrigin + performance.now()), uncertainty: 0 }),
 } }));
-import { outgoingFilesystemCases, dropSidebarPendingCases, dropStaleFilesCases, dropDeferredUriCases, dropVisibilityCases, dropUriCases, dropUriHtmlCases, dropVisibilities, dropCases, dropSources, dropTargets, dropDeliveryOrders, dropDeliveryCases, dropRejectedDomCases, dropModalCompletionCases, dropBoundaryCases, dropCrossWindowCases, dropPathCases, dropTemporalCases, outgoingRecentCases, dropPlatforms, branchDropPolicy, devDropPolicy, nativeRoute, intendedDifferences, type DropCase, type Outcome } from "../helpers/drop-policy";
+import { outgoingFilesystemCases, dropStaleFilesCases, dropDeferredUriCases, dropVisibilityCases, dropUriCases, dropUriHtmlCases, dropVisibilities, dropCases, dropSources, dropTargets, dropDeliveryOrders, dropDeliveryCases, dropRejectedDomCases, dropModalCompletionCases, dropBoundaryCases, dropCrossWindowCases, dropPathCases, dropTemporalCases, outgoingRecentCases, dropPlatforms, branchDropPolicy, devDropPolicy, nativeRoute, intendedDifferences, type DropCase, type Outcome } from "../helpers/drop-policy";
 import { dropElement } from "../helpers/drop-element";
 
 const io = vi.hoisted(() => ({ start: vi.fn(), listener: undefined as ((event: any) => void) | undefined,
@@ -60,10 +60,6 @@ function native(type: string, source: any, c: DropCase, observedAt?: number, com
 function target(c: DropCase) {
   const pane = dropElement("explorer-pane", { "data-pane-id": "owner" });
   const access = dropElement("quick-access");
-  access.dispatchEvent = replay => {
-    Object.defineProperty(replay, "target", { value: access });
-    return win.dispatchEvent(replay);
-  };
   const targets = {
     folder: dropElement("entry-item directory", { "data-path": destPath }, pane),
     breadcrumb: dropElement("crumb", { "data-path": destPath }, pane),
@@ -348,23 +344,75 @@ describe.each(dropPlatforms)("differential drop outcomes: %s", platform => {
     await flush();
     await vi.waitFor(() => expect(io.outcomes).toEqual([copying ? "copy" : "move"]));
   });
-  it.each(dropSidebarPendingCases.filter(c => c.platform === platform))("dragend-only sidebar after late native $reply / $source", async c => {
+  it.runIf(platform === "linux").each(
+    (["listing-folder", "miller-folder"] as const).flatMap(source =>
+      (["before-escape", "before-source-end", "after-source-end"] as const).map(rejection => ({ source, rejection }))),
+  )("Escape-cancelled sidebar gesture never pins / $source / $rejection", async ({ source: sourceKind, rejection }) => {
+    const c: DropCase = { platform, source: sourceKind, target: "quick-access", modifier: "none", transport: "native-rejected" };
     hit = target(c); sidebarOver = true;
-    let rejectStart!: (reason: string) => void, acceptStart!: () => void;
-    io.start.mockImplementationOnce(() => new Promise<void>((resolve, reject) => { rejectStart = reject; acceptStart = resolve; }));
+    let rejectStart!: (reason: string) => void;
+    io.start.mockImplementationOnce(() => new Promise<void>((_, reject) => { rejectStart = reject; }));
     vi.spyOn(console, "warn").mockImplementation(() => {});
     hit.dispatchEvent = replay => { Object.defineProperty(replay, "target", { value: hit }); return win.dispatchEvent(replay); };
     win.addEventListener("drop", e => { void domDestination(e as DragEvent, c); });
-    const source = modules.html.createHtml5FileDrag();
+    const entry = { path: sourcePath, name: "item", kind: "directory" };
+    const source = sourceKind === "listing-folder"
+      ? modules.items.useItemInteractions({ getExplorer: () => ({ getSelectedEntries: () => [entry], refresh() {} }) })
+      : modules.html.createHtml5FileDrag();
     const start = event("dragstart", transfer(), c, sourceNode);
-    source.start(start, { path: sourcePath, name: "item", kind: "directory" }); sourceEnd = source.end;
+    if (sourceKind === "listing-folder") source.handleDragStart(start, entry, true); else source.start(start, entry);
+    sourceEnd = sourceKind === "listing-folder" ? source.handleDragEnd : source.end;
     doc.dispatchEvent(start);
-    doc.dispatchEvent(event("dragend", transfer(), c, sourceNode)); source.end(); sourceEnd = undefined;
-    expect(io.outcomes).toEqual([]);
-    if (c.reply === "rejected") rejectStart("unavailable"); else acceptStart();
+    if (rejection === "before-escape") { rejectStart("unavailable"); await flush(); }
+    win.dispatchEvent(Object.assign(new Event("keydown"), { key: "Escape" }));
+    // Escape ends the browser gesture without a Drop. With an already settled
+    // start, model its dragleave clearing hover and dragend's zero coordinates.
+    // Pending rows deliberately retain stale hover to attack synthetic replay.
+    if (rejection === "before-escape") sidebarOver = false;
+    const end = event("dragend", transfer(), c, sourceNode);
+    Object.assign(end, { clientX: 0, clientY: 0 });
+    doc.dispatchEvent(end);
+    if (rejection === "before-source-end") { rejectStart("unavailable"); await flush(); }
+    sourceEnd!(); sourceEnd = undefined;
+    if (rejection === "after-source-end") rejectStart("unavailable");
     await flush();
-    expect(io.outcomes).toEqual(c.reply === "rejected" ? ["pin"] : []);
-    expect(io.records).toEqual(c.reply === "rejected" ? [{ paths: [sourcePath] }] : []);
+    expect(io.outcomes).toEqual([]);
+    expect(io.records).toEqual([]);
+  });
+  it.runIf(platform === "linux").each(
+    (["listing-folder", "miller-folder"] as const).flatMap(source =>
+      (["before-dragend", "after-dragend"] as const).flatMap(removal =>
+        (["before-source-end", "after-source-end"] as const).map(rejection => ({ source, removal, rejection })))),
+  )("destination-change cancelled sidebar drop never pins / $source / $removal / $rejection", async ({ source: sourceKind, removal, rejection }) => {
+    const c: DropCase = { platform, source: sourceKind, target: "bookmark", modifier: "none", transport: "native-rejected" };
+    hit = target(c); sidebarOver = true;
+    const bookmark = hit;
+    const access = bookmark.closest(".quick-access")!;
+    access.dispatchEvent = replay => { Object.defineProperty(replay, "target", { value: access }); return win.dispatchEvent(replay); };
+    let rejectStart!: (reason: string) => void;
+    io.start.mockImplementationOnce(() => new Promise<void>((_, reject) => { rejectStart = reject; }));
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    win.addEventListener("drop", e => { void domDestination(e as DragEvent, c); });
+    const entry = { path: sourcePath, name: "item", kind: "directory" };
+    const source = sourceKind === "listing-folder"
+      ? modules.items.useItemInteractions({ getExplorer: () => ({ getSelectedEntries: () => [entry], refresh() {} }) })
+      : modules.html.createHtml5FileDrag();
+    const start = event("dragstart", transfer(), c, sourceNode);
+    if (sourceKind === "listing-folder") source.handleDragStart(start, entry, true); else source.start(start, entry);
+    sourceEnd = sourceKind === "listing-folder" ? source.handleDragEnd : source.end;
+    doc.dispatchEvent(start);
+    win.dispatchEvent(event("drop", start.dataTransfer!, c));
+    const removeBookmark = () => { Object.defineProperty(bookmark, "isConnected", { value: false }); };
+    if (removal === "before-dragend") removeBookmark();
+    doc.dispatchEvent(event("dragend", transfer(), c, sourceNode));
+    if (removal === "after-dragend") removeBookmark();
+    if (rejection === "before-source-end") { rejectStart("unavailable"); await flush(); }
+    sourceEnd!(); sourceEnd = undefined;
+    if (rejection === "after-source-end") rejectStart("unavailable");
+    await flush();
+    expect(modules.toast.toastStore.toasts.some((toast: { message: string }) => /destination changed/.test(toast.message))).toBe(true);
+    expect(io.outcomes).toEqual([]);
+    expect(io.records).toEqual([]);
   });
   it.each(dropDeferredUriCases.filter(c => c.platform === platform))("deferred URI drop after dragend / $target / $visibility", async c => {
     delete (win as any).__TAURI_INTERNALS__;

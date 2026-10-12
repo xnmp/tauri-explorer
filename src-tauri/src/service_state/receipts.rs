@@ -288,7 +288,9 @@ impl Store {
             )
             .optional()
             .map_err(sql)?;
-        let acquired = Self::provider_receipt_at(conn, a)?
+        let provider_receipt = Self::provider_receipt_at(conn, a)?;
+        let acquired = provider_receipt
+            .as_ref()
             .filter(|r| {
                 r["execution"]["state"] == "succeeded" && r["delivery"]["state"] == "acquired"
             })
@@ -297,11 +299,15 @@ impl Store {
             Self::verify_acquisition_at(conn, a, &receipt)?;
             return Ok(TerminalDelivery::Acquired(receipt));
         }
-        Ok(if a.disposition.as_deref() == Some("discarded") {
-            TerminalDelivery::Discarded
-        } else {
-            TerminalDelivery::Pending
-        })
+        Ok(
+            if a.disposition.as_deref() == Some("discarded")
+                || provider_receipt.is_some_and(|r| r["delivery"]["state"] == "discarded")
+            {
+                TerminalDelivery::Discarded
+            } else {
+                TerminalDelivery::Pending
+            },
+        )
     }
     pub fn success_known(&self, a: &Admission) -> Result<bool> {
         Ok(a.output.is_some()
@@ -660,18 +666,36 @@ impl Store {
         let result = self.transaction(|tx| {
             let admission = Self::record(tx,consumer,op)?.ok_or_else(||reject("provider receipt has no admitted operation"))?;
             if !same_owner(&admission.provider,provider) {return Err(reject("provider receipt owner does not match"));}
-            let (status, raw, digest) = receipt_json(&status,&admission,revision)?;
-            if let Some(old) = observed(tx,&admission)? {
+            let (status, _, _) = receipt_json(&status,&admission,revision)?;
+            let delivery = Self::terminal_delivery_at(tx, &admission)?;
+            let project_delivery = |mut status: Value| {
+                if status["delivery"]["state"] == "discarded" {
+                    if let TerminalDelivery::Acquired(receipt) = &delivery {
+                        // A provider's own discard cannot undo verified host
+                        // acquisition. Project only delivery; execution,
+                        // diagnostics, identity and revision remain immutable.
+                        status["delivery"] = serde_json::json!({"state":"acquired","transferReceipt":receipt});
+                    }
+                }
+                status
+            };
+            let (status, raw, digest) = receipt_json(&project_delivery(status),&admission,revision)?;
+            if let Some(mut old) = observed(tx,&admission)? {
+                // observed() first validates stored bytes and their integrity
+                // hash. Project a pre-fix contradictory discard for comparison
+                // and stale replies without weakening any metadata guard.
+                let projected = project_delivery(old.status.clone());
+                if projected != old.status {
+                    let (status, _, digest) = receipt_json(&projected,&admission,old.revision)?;
+                    old.status = status;
+                    old.digest = digest;
+                }
                 if revision < old.revision {return Ok(old.status);}
                 if revision == old.revision {
                     if digest != old.digest {return Err(reject("provider receipt conflicts at the same revision"));}
                     return Ok(old.status);
                 }
                 super::receipt::validate_transition(&old.status, &status)?;
-            }
-            if status["delivery"]["state"] == "discarded"
-                && matches!(Self::terminal_delivery_at(tx, &admission)?, TerminalDelivery::Acquired(_)) {
-                return Err(reject("acquired output cannot be discarded"));
             }
             // Capture custody before artifact validation or the receipt commit
             // can fail. The existing recovery loop retries this exact answer.

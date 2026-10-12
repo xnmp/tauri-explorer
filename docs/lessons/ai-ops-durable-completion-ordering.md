@@ -47,3 +47,33 @@ release, and track durable acquisition independently of acknowledgement.
 Broker identity assertions must read production `Broker::generation()` through
 the active registry. Fixture identity maps cannot detect a lifecycle regression;
 prove sensitivity by mutating production retirement/replacement and reverting it.
+
+## Acquisition and provider discard compete before admission release
+
+A provider discard receipt commits before reconciliation releases custody.
+If consumer acquisition inserts evidence in that gap, immutable receipt history
+cannot refine discard to acquired, while acquired evidence prohibits discarded
+release. That inconsistent pair strands bytes, disk charges and an operation slot.
+The shared terminal classifier must include committed discard receipts, and
+acquisition must consult it inside the same IMMEDIATE transaction that inserts
+evidence. The first terminal decision to commit wins. Discard-first rejects
+acquisition. Acquisition-first must project a losing provider discard to the
+verified acquired receipt and let normal reconciliation release it: rejection
+alone can loop forever when the provider's own discard is already durable.
+Keep the provider-local outcome independently in the model, without rolling it
+back on host rejection. Integrity-check stored pre-fix contradictory receipts
+before projecting their delivery for comparisons; preserve metadata/revision
+validation and historical acquired evidence precedence.
+
+Model crashes after a ledger commit can lose the API reply. Record commitment
+from the reached durability barrier, not successful return. Exercise initiating
+discard at both receipt witness (rollback) and receipt ledger (commit), acquisition
+at file/directory sync and evidence commit, and custody release before collection.
+Assert retained charged bytes before the collection-fault restart, then zero
+custody, disk charges and operation claims at quiescence.
+
+Native lifecycle identity probes must establish captured preparations and live
+Accepting jobs under the real broker generation, reach admission capacity refusal,
+and declare the consumer's service dependency. Then dispatch those original inputs
+through the actual native provider after lifecycle changes. Mutating retirement
+only for preparation-owning consumers must fail both identity probes.

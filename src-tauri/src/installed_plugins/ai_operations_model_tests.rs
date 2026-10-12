@@ -70,6 +70,8 @@ enum Command {
     DeliverIdleProof(u8, bool),
     Ack(u8, bool),
     AcquiredReceipt(u8),
+    ProviderDiscard(u8, bool),
+    DiscardCrash(u8, u8, bool),
     ConsumerReceive(u8, bool),
     Replay(u8),
     Upgrade(bool, bool, bool),
@@ -151,6 +153,11 @@ impl Command {
             Self::PausedProviderMutation(_, 0, _) => "provider-recovery-response-paused-lifecycle",
             Self::PausedProviderMutation(..) => "provider-native-writer-paused-lifecycle",
             Self::AcquiredReceipt(_) => "acquired-receipt-before-release",
+            Self::ProviderDiscard(_, false) => "provider-discard-commit",
+            Self::ProviderDiscard(_, true) => "provider-discard-release",
+            Self::DiscardCrash(_, 0, _) => "discard-crash-before-commit",
+            Self::DiscardCrash(_, 1, _) => "discard-crash-after-commit",
+            Self::DiscardCrash(..) => "discard-crash-before-collection",
             Self::Ack(_, true) => "ack-crash",
             Self::Ack(_, false) => "ack-complete",
             Self::ConsumerReceive(_, true) => "consumer-receive-crash",
@@ -291,6 +298,8 @@ fn commands(max_steps: usize) -> impl Strategy<Value = Vec<Command>> {
             3 => slot.clone().prop_map(Command::Acquire),
             3 => (slot.clone(), any::<bool>()).prop_map(|(s,c)| Command::Ack(s,c)),
             2 => slot.clone().prop_map(Command::AcquiredReceipt),
+            2 => (slot.clone(), any::<bool>()).prop_map(|(s,r)| Command::ProviderDiscard(s,r)),
+            2 => (slot.clone(), 0u8..3, any::<bool>()).prop_map(|(s,p,l)| Command::DiscardCrash(s,p,l)),
             3 => (slot.clone(), any::<bool>()).prop_map(|(s,c)| Command::ConsumerReceive(s,c)),
             2 => slot.clone().prop_map(Command::Replay),
             4 => (any::<bool>(),any::<bool>(),any::<bool>()).prop_map(|(r,c,q)| Command::Upgrade(r,c,q)),
@@ -541,6 +550,8 @@ struct Operation {
     copy: PathBuf,
     acknowledged: bool,
     acquisition_committed: bool,
+    discard_committed: bool,
+    provider_discarded: bool,
     provider_live: bool,
     consumer_live: bool,
     revision: Cell<u64>,
@@ -580,6 +591,9 @@ impl Operation {
     fn delivery(&self) -> Value {
         if self.outcome != Outcome::Succeeded {
             return json!({"state":"none"});
+        }
+        if self.provider_discarded {
+            return json!({"state":"discarded"});
         }
         if self.acknowledged {
             return json!({"state":"acquired","transferReceipt":self.transfer});
@@ -971,6 +985,8 @@ impl Machine {
                 .join(format!("{id}.png")),
             acknowledged: false,
             acquisition_committed: false,
+            discard_committed: false,
+            provider_discarded: false,
             provider_live: false,
             consumer_live: false,
             revision: Cell::new(0),
@@ -1375,6 +1391,15 @@ impl Machine {
         }
         let d = d.clone();
         self.consumer_copy(op, &d)?;
+        if op.discard_committed {
+            assert!(
+                self.store()
+                    .acquired(&op.consumer, &op.id, &d, op.copy.to_str().unwrap())
+                    .is_err(),
+                "committed provider discard must fence acquisition"
+            );
+            return Ok(());
+        }
         op.transfer = Some(
             self.store()
                 .acquired(&op.consumer, &op.id, &d, op.copy.to_str().unwrap())?
@@ -1394,7 +1419,11 @@ impl Machine {
         if op.removed || op.acknowledged || op.transfer.is_none() {
             return Ok(());
         }
-        let status = op.receipt(json!({"state":"acquired","transferReceipt":op.transfer}));
+        let status = op.receipt(if op.provider_discarded {
+            op.delivery()
+        } else {
+            json!({"state":"acquired","transferReceipt":op.transfer})
+        });
         self.store().observe_receipt(
             &op.provider,
             &op.consumer.package_id,
@@ -1404,6 +1433,153 @@ impl Machine {
         )?;
         op.acknowledged = true;
         op.consumer_live = false;
+        Ok(())
+    }
+    fn provider_discard(&mut self, slot: u8, release: bool) -> Result<(), TestCaseError> {
+        let Some(index) = self.index(slot) else {
+            return Ok(());
+        };
+        let mut ops = self.operations.borrow_mut();
+        let op = &mut ops[index];
+        if op.removed || op.descriptor.is_none() {
+            return Ok(());
+        }
+        let a = checked(self.store().get(&op.consumer.package_id, &op.id))?.unwrap();
+        if release {
+            if !op.provider_discarded || a.phase == AdmissionPhase::Released {
+                return Ok(());
+            }
+            checked(service_bridge::reconcile_at(
+                self.store(),
+                &op.provider,
+                &a,
+                &op.receipt(op.delivery()),
+            ))?;
+        } else {
+            op.provider_discarded = true;
+            let status = op.receipt(op.delivery());
+            let result = self.store().observe_receipt(
+                &op.provider,
+                &op.consumer.package_id,
+                &op.id,
+                status["revision"].as_u64().unwrap(),
+                status,
+            );
+            if op.acquisition_committed {
+                if let Ok(status) = result {
+                    if status["delivery"]["state"] != "acquired" {
+                        return Err(fail("provider discard overwrote committed acquisition"));
+                    }
+                }
+                // Provider-local discard is durable even when the host refuses
+                // it. Future status/ack replies keep returning this receipt.
+                self.applied += 1;
+                return Ok(());
+            } else {
+                checked(result)?;
+                op.discard_committed = true;
+            }
+        }
+        self.applied += 1;
+        Ok(())
+    }
+    fn discard_crash(&mut self, slot: u8, point: u8, loss: bool) -> Result<(), TestCaseError> {
+        let Some(index) = self.index(slot) else {
+            return Ok(());
+        };
+        {
+            let mut ops = self.operations.borrow_mut();
+            let op = &mut ops[index];
+            if op.removed || op.descriptor.is_none() {
+                return Ok(());
+            }
+            if point < 2 {
+                if op.discard_committed {
+                    return Ok(());
+                }
+                let name = if point == 0 {
+                    "receipt-success-witness"
+                } else {
+                    "receipt-ledger"
+                };
+                let before = self.oracle.checkpoint_hits(name);
+                op.provider_discarded = true;
+                let status = op.receipt(op.delivery());
+                self.oracle.crash_at(name);
+                let result = self.store().observe_receipt(
+                    &op.provider,
+                    &op.consumer.package_id,
+                    &op.id,
+                    status["revision"].as_u64().unwrap(),
+                    status,
+                );
+                if self.oracle.checkpoint_hits(name) == before {
+                    self.oracle.crash_at("__none__");
+                    return Ok(());
+                }
+                if !result.is_err_and(|e| e.to_string().contains("injected aggregate crash")) {
+                    return Err(fail(
+                        "discard checkpoint did not interrupt production observation",
+                    ));
+                }
+                // The receipt-ledger barrier follows COMMIT; the witness
+                // barrier is still inside the transaction and rolls back.
+                op.discard_committed = point == 1 && !op.acquisition_committed;
+            } else {
+                if !op.provider_discarded {
+                    return Ok(());
+                }
+                let a = checked(self.store().get(&op.consumer.package_id, &op.id))?.unwrap();
+                if a.phase != AdmissionPhase::Terminal {
+                    return Ok(());
+                }
+                // Collection failure leaves physical custody after the durable
+                // release. Restart must collect it and return its disk charge.
+                let receipt = checked(
+                    self.store()
+                        .provider_receipt(&op.consumer.package_id, &op.id),
+                )?;
+                let transfer = receipt
+                    .as_ref()
+                    .and_then(|r| r["delivery"]["transferReceipt"].as_str());
+                self.oracle.faults(true, self.sync_failure);
+                let _ = self.store().release(
+                    &op.provider,
+                    &op.consumer.package_id,
+                    &op.id,
+                    if op.acquisition_committed {
+                        "acquired"
+                    } else {
+                        "discarded"
+                    },
+                    if op.acquisition_committed {
+                        transfer
+                    } else {
+                        None
+                    },
+                );
+                let bytes = self
+                    .fixture
+                    .profile
+                    .path()
+                    .join("service-state/bytes")
+                    .join(format!("{}.bin", op.descriptor.as_ref().unwrap().handle));
+                if !bytes.exists() || self.charges() <= 0 {
+                    return Err(fail(
+                        "collection fault did not retain charged original custody before restart",
+                    ));
+                }
+                let released = checked(self.store().get(&op.consumer.package_id, &op.id))?.unwrap();
+                if released.phase != AdmissionPhase::Released {
+                    return Err(fail(
+                        "discard release did not commit before collection fault",
+                    ));
+                }
+                self.oracle.faults(self.unlink_failure, self.sync_failure);
+            }
+        }
+        self.restart(loss)?;
+        self.applied += 1;
         Ok(())
     }
     fn ack(&self, slot: u8, crash: bool) -> Result<(), AppError> {
@@ -2330,17 +2506,28 @@ impl Machine {
         let Some(index) = self.index(slot) else {
             return Ok(());
         };
-        let (owner, id) = {
+        let id = {
             let ops = self.operations.borrow();
             let op = &ops[index];
             if op.removed || op.dispatched || op.captured_inputs.is_empty() {
                 return Ok(());
             }
-            (op.consumer.clone(), op.id.clone())
+            if !checked(
+                self.store()
+                    .preparation_retained(&op.consumer.package_id, &op.id),
+            )? {
+                return Ok(());
+            }
+            op.id.clone()
         };
-        if !checked(self.store().preparation_retained(&owner.package_id, &id))? {
-            return Ok(());
-        }
+        let owner = {
+            let mut ops = self.operations.borrow_mut();
+            let op = &mut ops[index];
+            // Resolve the real callback owner before arming a filesystem
+            // crash; compatible replacement can retire the captured owner.
+            op.consumer = self.preparation_callback_owner(op)?;
+            op.consumer.clone()
+        };
         let conn = rusqlite::Connection::open(
             self.fixture
                 .profile
@@ -2366,7 +2553,12 @@ impl Machine {
         let result = self
             .store()
             .capture(&owner, &id, serde_json::from_str(&spec).unwrap());
-        assert!(result.is_err_and(|e| e.to_string().contains("injected aggregate crash")));
+        assert!(
+            result
+                .as_ref()
+                .is_err_and(|e| e.to_string().contains("injected aggregate crash")),
+            "recapture result={result:?}, callback owner={owner:?}"
+        );
         self.operations.borrow_mut()[index].captured_inputs.clear();
         oracle.faults(false, false);
         self.restart(false)?;
@@ -2491,6 +2683,10 @@ impl Machine {
             if oracle.checkpoint_hits(name) == before {
                 oracle.crash_at("__none__");
                 return Ok(());
+            }
+            if kind == 3 && point == 2 {
+                // Evidence committed, even though the crash lost its reply.
+                op.acquisition_committed = true;
             }
             if !result.is_err_and(|e| e.to_string().contains("injected aggregate crash")) {
                 return Err(fail(
@@ -2840,6 +3036,8 @@ impl Machine {
             Command::Acquire(s) => {
                 self.consumer_attempt(self.acquire(s))?;
             }
+            Command::ProviderDiscard(s, release) => self.provider_discard(s, release)?,
+            Command::DiscardCrash(s, point, loss) => self.discard_crash(s, point, loss)?,
             Command::AcquiredReceipt(s) => {
                 self.consumer_attempt(self.acquired_receipt(s))?;
             }
@@ -3344,6 +3542,7 @@ impl Machine {
             if (op.completion_identified || op.sealed_original)
                 && op.valid_original
                 && !op.removed
+                && !op.discard_committed
                 && a.disposition.as_deref() == Some("discarded")
             {
                 return Err(fail(format!("success discarded: {}", op.id)));
@@ -3386,6 +3585,7 @@ impl Machine {
             if (op.completion_identified || op.sealed_original)
                 && op.valid_original
                 && !op.removed
+                && !op.discard_committed
                 && !self.original_conserved(op)
             {
                 return Err(fail(format!("original bytes disappeared: {}", op.id)));
@@ -3607,6 +3807,15 @@ impl Machine {
                 self.assert_removed_clean(op)?;
                 continue;
             }
+            if op.discard_committed {
+                if a.phase != AdmissionPhase::Released
+                    || a.disposition.as_deref() != Some("discarded")
+                {
+                    return Err(fail("committed discard never released custody"));
+                }
+                self.assert_custody_clean(op, false)?;
+                continue;
+            }
             if (op.completion_identified || op.sealed_original)
                 && op.valid_original
                 && (!op.acknowledged
@@ -3722,7 +3931,16 @@ impl FixtureRpc<'_> {
             &op.provider,
             &current,
             &op.receipt(op.delivery()),
-        )
+        )?;
+        let released = m.store().get(&op.consumer.package_id, &op.id)?.unwrap();
+        if op.provider_discarded
+            && op.acquisition_committed
+            && released.disposition.as_deref() == Some("acquired")
+        {
+            op.transfer = released.transfer_receipt;
+            op.acknowledged = true;
+        }
+        Ok(())
     }
     fn consumer_resume(&self, a: &Admission) -> Result<(), AppError> {
         self.status(a)?;
@@ -3738,7 +3956,7 @@ impl FixtureRpc<'_> {
         let mut ops = m.operations.borrow_mut();
         let op = &mut ops[index];
         op.resume_calls.set(op.resume_calls.get() + 1);
-        if op.removed || op.acknowledged {
+        if op.removed || op.acknowledged || op.discard_committed {
             return Ok(());
         }
         let current = m.store().get(&op.consumer.package_id, &op.id)?.unwrap();
@@ -4020,6 +4238,11 @@ const REQUIRED_TRANSITIONS: &[&str] = &[
     "acquire",
     "ack-crash",
     "acquired-receipt-before-release",
+    "provider-discard-commit",
+    "provider-discard-release",
+    "discard-crash-before-commit",
+    "discard-crash-after-commit",
+    "discard-crash-before-collection",
     "ack-complete",
     "consumer-receive-crash",
     "consumer-receive-complete",
@@ -4431,6 +4654,56 @@ fn coverage_campaign(totals: &mut BTreeMap<&'static str, u64>) -> Result<(), Tes
                 ],
                 totals,
             )?;
+        }
+        for loss in [false, true] {
+            for point in 0..3 {
+                let mut trace = vec![Command::ProviderComplete(0), Command::Acquire(0)];
+                if point == 2 {
+                    trace.push(Command::ProviderDiscard(0, false));
+                }
+                trace.push(Command::DiscardCrash(0, point, loss));
+                collect_trace(trace, totals)?;
+            }
+        }
+        for loss in [false, true] {
+            for point in 0..3 {
+                collect_trace(
+                    vec![
+                        Command::ProviderComplete(0),
+                        Command::AggregateCrash(0, 3, point, loss),
+                        Command::ProviderDiscard(0, false),
+                        Command::Acquire(0),
+                        Command::ProviderDiscard(0, true),
+                    ],
+                    totals,
+                )?;
+                let mut trace = vec![Command::ProviderComplete(0)];
+                if point == 2 {
+                    trace.push(Command::ProviderDiscard(0, false));
+                }
+                trace.extend([
+                    Command::DiscardCrash(0, point, loss),
+                    Command::Acquire(0),
+                    Command::ProviderDiscard(0, false),
+                    Command::ProviderDiscard(0, true),
+                ]);
+                collect_trace(trace, totals)?;
+            }
+        }
+        for acquire_first in [false, true] {
+            let mut trace = vec![Command::ProviderComplete(0)];
+            if acquire_first {
+                trace.extend([Command::Acquire(0), Command::Restart]);
+            }
+            trace.extend([
+                Command::ProviderDiscard(0, false),
+                Command::Restart,
+                Command::Acquire(0),
+                Command::Restart,
+                Command::ProviderDiscard(0, true),
+                Command::Restart,
+            ]);
+            collect_trace(trace, totals)?;
         }
         for ack in [
             Command::Ack(0, true),
@@ -5647,18 +5920,39 @@ fn verify_production_broker_identity(upgrade_provider: bool) -> bool {
     fs::create_dir_all(&root).unwrap();
     super::super::super::service_host::initialize(root.parent().unwrap()).unwrap();
     backend::finish_initialize();
-    let consumer = super::super::mutation_native_tests::scripted(
+    let mut consumer = super::super::mutation_native_tests::scripted(
         &root,
         "fixture.identity.consumer",
         3,
         "quiesce",
     );
-    let provider = super::super::mutation_native_tests::scripted(
-        &root,
-        "fixture.identity.provider",
-        3,
-        "quiesce",
-    );
+    let services = json!([{"id":"image-generation","major":1,"methods":["describe","prepare","start","status","cancel","acknowledge"]}]);
+    consumer.manifest.service_dependencies = serde_json::from_value(json!([{
+        "packageId":"fixture.identity.provider","serviceId":"image-generation","major":1
+    }]))
+    .unwrap();
+    // A real native service endpoint: dispatch returns an admitted running
+    // receipt and logs the original input descriptors for outcome assertions.
+    let source = r#"#!/usr/bin/env python3
+import json,os,sys
+for line in sys.stdin:
+ f=json.loads(line); m=f.get('method'); p=f.get('params',{})
+ if m is None or 'id' not in f: continue
+ if m=='initialize': r={'protocolVersion':1,'ready':False}
+ elif m=='ping': r={'pid':os.getpid()}
+ elif m=='lifecycle.quiesce': r={'ready':False,'idle':True,'checkpoint':True}
+ elif m=='services.image-generation.v1.start':
+  p=p['request']
+  r={'version':1,'operationId':p['operationId'],'requestFingerprint':p['effectiveRecipeDigest'],'provider':{'packageId':'fixture.identity.provider','serviceId':'image-generation','major':1},'revision':1,'execution':{'state':'running'},'delivery':{'state':'none'}}
+  with open(os.environ['XDG_CONFIG_HOME']+'/identity-dispatch.jsonl','a') as log: log.write(json.dumps(p)+'\n')
+ else: r={'ready':True}
+ print(json.dumps({'jsonrpc':'2.0','id':f['id'],'result':r}),flush=True)
+"#;
+    let mut provider = backend::native_tests::payload(&root, source);
+    provider.manifest.id = "fixture.identity.provider".into();
+    provider.manifest.contributions = vec!["fixture-identity-provider".into()];
+    provider.manifest.sdk_version = 3;
+    provider.manifest.services = serde_json::from_value(services).unwrap();
     package::write_index(&root, &[consumer.clone(), provider.clone()]).unwrap();
     let owner = backend::ensure(&consumer.manifest.id).unwrap();
     let before = owner.generation();
@@ -5677,18 +5971,121 @@ fn verify_production_broker_identity(upgrade_provider: bool) -> bool {
     assert!(!worker_environment
         .split(|b| *b == 0)
         .any(|e| e.starts_with(b"WAYLAND_DISPLAY=")));
-    let store = super::super::super::service_host::store().unwrap();
-    let profile = super::super::Profile { root: &root, store };
+    let store = Store::open(
+        root.parent().unwrap().join("service-state"),
+        Limits {
+            disk_bytes: 200 * 1024 * 1024 + 16 * 1024,
+            operations: 4,
+            per_consumer: 3,
+        },
+    )
+    .unwrap();
+    let profile = super::super::Profile {
+        root: &root,
+        store: &store,
+    };
+    let provider_owner = backend::ensure(&provider.manifest.id).unwrap().generation();
+    let target = ServiceTarget {
+        package_id: provider.manifest.id.clone(),
+        service_id: "image-generation".into(),
+        major: 1,
+    };
+    // Occupy output capacity independently of the consumer. Captures fit,
+    // but no 100 MiB execution reservation fits until a blocker is released.
+    let blockers: Vec<_> = (0..2)
+        .map(|i| {
+            let caller = PackageGeneration {
+                package_id: format!("fixture.identity.blocker{i}"),
+                digest: "a".repeat(64),
+                incarnation: 1,
+            };
+            store
+                .reserve(Admission {
+                    consumer: caller.clone(),
+                    provider: provider_owner.clone(),
+                    target: target.clone(),
+                    operation_id: "blocker".into(),
+                    fingerprint: "b".repeat(64),
+                    phase: AdmissionPhase::Reserved,
+                    inputs: vec![],
+                    output: None,
+                    needs_attention: false,
+                    disposition: None,
+                    transfer_receipt: None,
+                })
+                .unwrap();
+            store.claim_forwarding(&caller, "blocker").unwrap();
+            caller
+        })
+        .collect();
+    let input = root.parent().unwrap().join("identity-input.png");
+    let original = image_bytes(97);
+    fs::write(&input, &original).unwrap();
+    let preparations: Vec<_> = ["identity-captured", "identity-blocked"].into_iter().enumerate().map(|(i, operation)| {
+        store.register_job(JobRecord {
+            job_key: format!("{:048x}", i + 1), owner: before.clone(), operation_id: operation.into(), job_id: i as u64 + 1, kind: "identity-image".into(), label: "identity.png".into(), origin_window: "main".into(), revision: 0, source_revision: 0, ownership_epoch: 0, created_at_ms: 1, updated_at_ms: 1, settled_at_ms: None, estimate_key: None, state: JobState::Accepting, phase: Some("accepting".into()), output_path: None, error: None, run_id: None,
+        }).unwrap();
+        let captures = store.capture(&before, operation, vec![CaptureInput { path: input.to_string_lossy().into(), expected_digest: None }]).unwrap();
+        let mut request = json!({"operationId":operation,"connectionId":"identity-profile","expectedConnectionRevision":"identity-revision","model":null,"prompt":"identity probe","inputs":[],"options":{"size":"1024x1024","resolution":null,"aspectRatio":null,"quality":"low","background":"auto"},"preparationToken":"identity-token","effectiveRecipeDigest":"b".repeat(64)});
+        request["inputs"] = json!(captures.iter().map(|c| c.artifact.clone()).collect::<Vec<_>>());
+        (operation, captures, request)
+    }).collect();
+    assert_eq!(store.list_preparations().unwrap(), vec![before.clone()]);
+    let dispatch = |request: Value| {
+        let entries = package::list(&root).unwrap();
+        let current_consumer =
+            backend::current_instance(&consumer.manifest.id).expect("consumer must stay active");
+        let (routed, _) = service_graph::route(
+            &entries,
+            current_consumer.manifest(),
+            &target.package_id,
+            &target.service_id,
+            target.major,
+            "start",
+        )
+        .unwrap();
+        let broker = backend::ensure(&routed.manifest.id).unwrap();
+        service_bridge::image_call(
+            &store,
+            &current_consumer.generation(),
+            &broker.generation(),
+            &target,
+            "start",
+            request,
+            || current_consumer.is_active(),
+            |method, params| broker.call(method, params),
+        )
+    };
+    let blocked = dispatch(preparations[1].2.clone()).unwrap_err();
+    assert!(
+        expected_capacity(&blocked),
+        "probe must reach capacity refusal: {blocked}"
+    );
+    assert!(store
+        .get(&before.package_id, preparations[1].0)
+        .unwrap()
+        .is_none());
+    assert!(!PathBuf::from(std::env::var("XDG_CONFIG_HOME").unwrap())
+        .join("identity-dispatch.jsonl")
+        .exists());
     if upgrade_provider {
         let old_provider = backend::ensure(&provider.manifest.id).unwrap().generation();
         let archives = root.parent().unwrap().join("archives");
         fs::create_dir_all(&archives).unwrap();
-        let archive = package::tests::archive_named(&archives, "provider-next.teplugin", |m| {
-            m.id = provider.manifest.id.clone();
-            m.version = "2.0.0".into();
-            m.sdk_version = 3;
-            m.contributions = vec![provider.manifest.id.replace('.', "-")];
-        });
+        let archive = archives.join("provider-next.teplugin");
+        let mut manifest = provider.manifest.clone();
+        manifest.version = "2.0.0".into();
+        let mut zip = zip::ZipWriter::new(fs::File::create(&archive).unwrap());
+        let options = zip::write::SimpleFileOptions::default();
+        zip.start_file("manifest.json", options).unwrap();
+        serde_json::to_writer(&mut zip, &manifest).unwrap();
+        use std::io::Write;
+        for name in manifest.files.keys() {
+            zip.start_file(name, options).unwrap();
+            zip.write_all(&fs::read(package::payload_path(&root, &provider).join(name)).unwrap())
+                .unwrap();
+        }
+        zip.finish().unwrap();
         super::super::upgrade(&profile, &archive, &|_, _, _| Ok(())).unwrap();
         assert!(
             backend::active_instance(&provider.manifest.id, &old_provider.digest).is_none(),
@@ -5711,6 +6108,71 @@ fn verify_production_broker_identity(upgrade_provider: bool) -> bool {
             .any(|e| e == expected.as_bytes()));
     }
     assert!(super::super::mutation_native_tests::running(pid));
+    for blocker in &blockers {
+        store
+            .terminal(&provider_owner, &blocker.package_id, "blocker", None, false)
+            .unwrap();
+        store
+            .release(
+                &provider_owner,
+                &blocker.package_id,
+                "blocker",
+                "discarded",
+                None,
+            )
+            .unwrap();
+    }
+    for (operation, captures, request) in &preparations {
+        assert_eq!(
+            store
+                .job_for_operation(&before.package_id, operation)
+                .unwrap()
+                .unwrap()
+                .owner,
+            before
+        );
+        let recaptured = store
+            .capture(
+                &after,
+                operation,
+                vec![CaptureInput {
+                    path: input.to_string_lossy().into(),
+                    expected_digest: None,
+                }],
+            )
+            .unwrap();
+        assert_eq!(recaptured[0].artifact, captures[0].artifact);
+        assert_eq!(
+            dispatch(request.clone()).unwrap()["execution"]["state"],
+            "running"
+        );
+        let admitted = store.get(&after.package_id, operation).unwrap().unwrap();
+        assert_eq!(admitted.consumer, before);
+        assert_eq!(admitted.inputs, vec![captures[0].artifact.clone()]);
+        let path = store
+            .read(
+                &admitted.provider,
+                &after.package_id,
+                operation,
+                &captures[0].artifact,
+            )
+            .unwrap();
+        assert_eq!(fs::read(path.path).unwrap(), original);
+    }
+    let dispatched: Vec<Value> = fs::read_to_string(
+        PathBuf::from(std::env::var("XDG_CONFIG_HOME").unwrap()).join("identity-dispatch.jsonl"),
+    )
+    .unwrap()
+    .lines()
+    .map(|line| serde_json::from_str(line).unwrap())
+    .collect();
+    assert_eq!(
+        dispatched,
+        preparations
+            .iter()
+            .map(|(_, _, request)| request.clone())
+            .collect::<Vec<_>>()
+    );
     backend::shutdown();
     drop(app);
     true
@@ -5770,4 +6232,288 @@ fn model_removal_preserves_committed_delivery_when_consumer_later_deletes_copy()
     assert_eq!(job.state, JobState::Completed);
     assert_eq!(job.output_path.as_deref(), op.copy.to_str());
     assert_eq!(m.charges(), 0);
+}
+
+#[test]
+fn model_provider_discard_and_acquisition_first_commit_wins_across_crashes() {
+    for acquire_first in [false, true] {
+        for power_loss in [false, true] {
+            let crash = if power_loss {
+                Command::PowerLoss
+            } else {
+                Command::Restart
+            };
+            let mut m = Machine::new();
+            for command in [
+                Command::Admit(0, true),
+                Command::ProviderComplete(0),
+                Command::CopyBeforeProof(0),
+                crash,
+            ] {
+                m.apply(command).unwrap();
+            }
+            if acquire_first {
+                m.apply(Command::Acquire(0)).unwrap();
+                m.apply(crash).unwrap();
+            }
+            m.apply(Command::ProviderDiscard(0, false)).unwrap();
+            m.apply(crash).unwrap();
+            m.apply(Command::Acquire(0)).unwrap();
+            m.apply(crash).unwrap();
+            if acquire_first {
+                m.apply(Command::AcquiredReceipt(0)).unwrap();
+                m.apply(crash).unwrap();
+            }
+            m.apply(Command::ProviderDiscard(0, true)).unwrap();
+            m.apply(crash).unwrap();
+            m.quiesce().unwrap();
+            let ops = m.operations.borrow();
+            let op = &ops[0];
+            let a = m
+                .store()
+                .get(&op.consumer.package_id, &op.id)
+                .unwrap()
+                .unwrap();
+            assert_eq!(a.phase, AdmissionPhase::Released);
+            assert_eq!(
+                a.disposition.as_deref(),
+                Some(if acquire_first {
+                    "acquired"
+                } else {
+                    "discarded"
+                })
+            );
+            assert_eq!(op.acquisition_committed, acquire_first);
+            m.assert_custody_clean(op, false).unwrap();
+            assert!(m.store().claims().unwrap().is_empty());
+            assert_eq!(m.charges(), 0);
+            assert_eq!(m.disk_bytes(), 0);
+        }
+    }
+}
+
+#[test]
+fn model_discard_acquisition_races_at_internal_durable_barriers_converge() {
+    for loss in [false, true] {
+        for point in 0..3 {
+            for discard_crash in [false, true] {
+                let mut m = Machine::new();
+                m.apply(Command::Admit(0, true)).unwrap();
+                m.apply(Command::ProviderComplete(0)).unwrap();
+                if discard_crash {
+                    if point == 2 {
+                        m.apply(Command::ProviderDiscard(0, false)).unwrap();
+                    }
+                    m.apply(Command::DiscardCrash(0, point, loss)).unwrap();
+                } else {
+                    m.apply(Command::AggregateCrash(0, 3, point, loss)).unwrap();
+                }
+                m.apply(Command::ProviderDiscard(0, false)).unwrap();
+                m.apply(Command::Acquire(0)).unwrap();
+                m.apply(Command::ProviderDiscard(0, true)).unwrap();
+                m.quiesce().unwrap();
+                let ops = m.operations.borrow();
+                let op = &ops[0];
+                assert_eq!(op.acquisition_committed, !discard_crash && point == 2);
+                let a = m
+                    .store()
+                    .get(&op.consumer.package_id, &op.id)
+                    .unwrap()
+                    .unwrap();
+                assert_eq!(a.phase, AdmissionPhase::Released);
+                assert_eq!(
+                    a.disposition.as_deref(),
+                    Some(if op.acquisition_committed {
+                        "acquired"
+                    } else {
+                        "discarded"
+                    })
+                );
+                m.assert_custody_clean(op, false).unwrap();
+                assert_eq!(m.charges(), 0);
+                assert_eq!(m.disk_bytes(), 0);
+                assert!(m.store().claims().unwrap().is_empty());
+            }
+        }
+    }
+}
+
+#[test]
+fn model_persistent_provider_discard_after_acquisition_converges_without_provider_rollback() {
+    for loss in [false, true] {
+        let mut m = Machine::new();
+        for command in [
+            Command::Admit(0, true),
+            Command::ProviderComplete(0),
+            Command::Acquire(0),
+            Command::ProviderDiscard(0, false),
+        ] {
+            m.apply(command).unwrap();
+        }
+        m.apply(if loss {
+            Command::PowerLoss
+        } else {
+            Command::Restart
+        })
+        .unwrap();
+        // No provider acquired receipt, synthetic Ack or explicit release.
+        // Automatic status must handle the provider's immutable discard reply.
+        m.quiesce().unwrap();
+        let ops = m.operations.borrow();
+        let op = &ops[0];
+        assert_eq!(op.delivery()["state"], "discarded");
+        assert!(op.acquisition_committed);
+        let a = m
+            .store()
+            .get(&op.consumer.package_id, &op.id)
+            .unwrap()
+            .unwrap();
+        assert_eq!(a.disposition.as_deref(), Some("acquired"));
+        assert_eq!(
+            m.store()
+                .job_for_operation(&op.consumer.package_id, &op.id)
+                .unwrap()
+                .unwrap()
+                .state,
+            JobState::Completed
+        );
+        m.assert_custody_clean(op, false).unwrap();
+        assert_eq!(m.charges(), 0);
+        assert_eq!(m.disk_bytes(), 0);
+        assert!(m.store().claims().unwrap().is_empty());
+    }
+}
+
+#[test]
+fn model_acquisition_winner_survives_losing_discard_observation_and_collection_crashes() {
+    for loss in [false, true] {
+        for point in 0..3 {
+            let mut m = Machine::new();
+            for command in [
+                Command::Admit(0, true),
+                Command::ProviderComplete(0),
+                Command::Acquire(0),
+            ] {
+                m.apply(command).unwrap();
+            }
+            if point == 2 {
+                m.apply(Command::ProviderDiscard(0, false)).unwrap();
+            }
+            m.apply(Command::DiscardCrash(0, point, loss)).unwrap();
+            m.quiesce().unwrap();
+            let ops = m.operations.borrow();
+            let op = &ops[0];
+            assert!(op.provider_discarded);
+            assert_eq!(op.delivery()["state"], "discarded");
+            assert_eq!(
+                m.store()
+                    .get(&op.consumer.package_id, &op.id)
+                    .unwrap()
+                    .unwrap()
+                    .disposition
+                    .as_deref(),
+                Some("acquired")
+            );
+            m.assert_custody_clean(op, false).unwrap();
+            assert_eq!(m.charges(), 0);
+            assert_eq!(m.disk_bytes(), 0);
+            assert!(m.store().claims().unwrap().is_empty());
+        }
+    }
+}
+
+#[test]
+fn model_legacy_conflicting_discard_receipt_and_acquisition_evidence_converge() {
+    use sha2::{Digest, Sha256};
+    for revision in [0, 1, 2] {
+        let mut m = Machine::new();
+        for command in [
+            Command::Admit(0, true),
+            Command::ProviderComplete(0),
+            Command::Acquire(0),
+        ] {
+            m.apply(command).unwrap();
+        }
+        {
+            let mut ops = m.operations.borrow_mut();
+            let op = &mut ops[0];
+            op.provider_discarded = true;
+            let status = op.receipt(op.delivery());
+            let a = m
+                .store()
+                .get(&op.consumer.package_id, &op.id)
+                .unwrap()
+                .unwrap();
+            let validated = crate::service_state::receipt::validate(&status, &a).unwrap();
+            let raw = serde_json::to_string(&validated).unwrap();
+            // Seed exactly the pre-fix contradictory durable state; current
+            // transactions can no longer create it. Integrity remains valid.
+            let conn = rusqlite::Connection::open(
+                m.fixture.profile.path().join("service-state/ledger.sqlite"),
+            )
+            .unwrap();
+            conn.execute("UPDATE provider_receipts SET status=?3,revision=?4,digest=?5 WHERE consumer=?1 AND operation=?2", rusqlite::params![op.consumer.package_id, op.id, raw, status["revision"].as_u64().unwrap() as i64, hex::encode(Sha256::digest(raw.as_bytes()))]).unwrap();
+            let mut incoming = status.clone();
+            incoming["revision"] = json!(status["revision"].as_u64().unwrap() - 1 + revision);
+            service_bridge::reconcile_at(m.store(), &op.provider, &a, &incoming).unwrap();
+            let current = m
+                .store()
+                .provider_receipt(&op.consumer.package_id, &op.id)
+                .unwrap()
+                .unwrap();
+            let mut conflict = status;
+            conflict["revision"] = current["revision"].clone();
+            conflict["execution"]["metadata"]["adapter"] = json!("different-provider-metadata");
+            assert!(m
+                .store()
+                .observe_receipt(
+                    &op.provider,
+                    &op.consumer.package_id,
+                    &op.id,
+                    conflict["revision"].as_u64().unwrap(),
+                    conflict.clone()
+                )
+                .is_err());
+            conflict["revision"] = json!(conflict["revision"].as_u64().unwrap() + 1);
+            assert!(m
+                .store()
+                .observe_receipt(
+                    &op.provider,
+                    &op.consumer.package_id,
+                    &op.id,
+                    conflict["revision"].as_u64().unwrap(),
+                    conflict
+                )
+                .is_err());
+            assert_eq!(
+                m.store()
+                    .provider_receipt(&op.consumer.package_id, &op.id)
+                    .unwrap()
+                    .unwrap(),
+                current
+            );
+        }
+        m.quiesce().unwrap();
+        assert_eq!(m.charges(), 0);
+        assert_eq!(m.disk_bytes(), 0);
+        assert!(m.store().claims().unwrap().is_empty());
+    }
+}
+
+#[test]
+fn model_recapture_crash_after_other_preparation_adopts_replacement_generation() {
+    let mut m = Machine::new();
+    for command in [
+        Command::SharedConsumerAdmit,
+        Command::Admit(1, true),
+        Command::CompatibleUpgradeCrash(false, 5, false),
+        Command::Admit(0, false),
+        Command::RecaptureCrash(1),
+    ] {
+        m.apply(command).unwrap();
+    }
+    m.quiesce().unwrap();
+    assert_eq!(m.charges(), 0);
+    assert_eq!(m.disk_bytes(), 0);
+    assert!(m.store().claims().unwrap().is_empty());
 }

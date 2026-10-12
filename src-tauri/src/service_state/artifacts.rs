@@ -1390,6 +1390,12 @@ impl Store {
             if current.phase != AdmissionPhase::Terminal || current.output.as_ref() != Some(d) {
                 return Err(reject("handoff changed before evidence commit"));
             }
+            // Provider discard and consumer acquisition share this IMMEDIATE
+            // transaction boundary. The first durable terminal decision wins;
+            // release/collection can follow independently after a crash.
+            if Self::terminal_delivery_at(tx, &current)? == super::receipts::TerminalDelivery::Discarded {
+                return Err(reject("discarded output cannot be acquired"));
+            }
             let old: Option<(String, String)> = tx
                 .query_row("SELECT receipt,descriptor FROM evidence WHERE consumer=?1 AND operation=?2", params![caller.package_id, op], |r| Ok((r.get(0)?, r.get(1)?)))
                 .optional()

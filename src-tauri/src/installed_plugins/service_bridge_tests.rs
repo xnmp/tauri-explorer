@@ -1656,15 +1656,40 @@ fn orphan_import_acknowledge_and_discard_release_only_after_durable_evidence() {
         assert!(!retained("import", &d));
     }
     assert!(copy.is_file());
-    // The tombstone refuses a conflicting discard and turns replay into status.
+    // A late immutable provider discard converges to the verified acquired
+    // winner. Repeated replies preserve its receipt, bytes and released custody.
     let a = s.get("consumer", "import").unwrap().unwrap();
-    assert!(reconcile_at(
-        &s,
-        &provider(),
-        &a,
-        &status("import", "succeeded", json!({"state":"discarded"}))
-    )
-    .is_err());
+    let imported_bytes = fs::read(&copy).unwrap();
+    for _ in 0..2 {
+        reconcile_at(
+            &s,
+            &provider(),
+            &a,
+            &status("import", "succeeded", json!({"state":"discarded"})),
+        )
+        .unwrap();
+        let current = s.get("consumer", "import").unwrap().unwrap();
+        assert_eq!(current.phase, AdmissionPhase::Released);
+        assert_eq!(current.disposition.as_deref(), Some("acquired"));
+        assert_eq!(
+            current.transfer_receipt.as_deref(),
+            Some(receipt.transfer_receipt.as_str())
+        );
+        let observed = s.provider_receipt("consumer", "import").unwrap().unwrap();
+        assert_eq!(observed["delivery"]["state"], "acquired");
+        assert_eq!(
+            observed["delivery"]["transferReceipt"],
+            receipt.transfer_receipt
+        );
+        assert_eq!(fs::read(&copy).unwrap(), imported_bytes);
+        assert!(s
+            .claims()
+            .unwrap()
+            .iter()
+            .all(|claim| claim.operation_id != "import"));
+        assert!(s.read(&adopter, "consumer", "import", &d).is_err());
+        assert!(!retained("import", &d));
+    }
     call_as(
         &s,
         &adopter,

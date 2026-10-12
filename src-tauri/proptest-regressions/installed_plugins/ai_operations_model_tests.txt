@@ -29,3 +29,4 @@ cc be352b742e5523baf59c3b122879b57f5c6b1f90ae22cc095242c4b86966bded # shrinks to
 cc 1c305f7cbc547b877c5903c276318b6cfc3a4e0229640257e912983bcd1551b7 # shrinks to [Admit(1, false), Publish(1, 2, false), Sweep, SpoolReserve(1, false, false)]
 cc 7afb97594d91803c2f1036123a75387aff9c56ba88b74da10da89ccb80e88dc6 # shrinks to [SharedConsumerAdmit, Admit(1, true), Upgrade(true, true, false), Admit(1, false)]
 cc 5d75da62d7dbe104bf1c1d725938812c88f7b8ea6c4f2e50febb2b4a2fd9ce44 # shrinks to [SharedConsumerAdmit, Admit(1, true), Restart, Dispatch(1)]
+cc 624b5ae4de4f985e1a0bb2b54b0d2f24e97ba485978acf5efd60ba7325924600 # shrinks to [SharedConsumerAdmit, Admit(1, true), CompatibleUpgradeCrash(false, 5, false), Admit(0, false), RecaptureCrash(1)]

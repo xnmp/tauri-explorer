@@ -65,3 +65,4 @@ Your invitation states the platform configuration qualified for your cohort.
 Linux desktop environments and display scales outside that configuration,
 Windows window transfer, and macOS shell integration require separate
 qualification before invitations cover them.
+

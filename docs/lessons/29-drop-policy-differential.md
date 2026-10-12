@@ -812,7 +812,7 @@ its existing Linux `isMac:false` contract corrected all six fixture failures.
 No commits were created. The only requested-check failure is the known missing
 `@vercel/blob` dependency.
 
-## Thirteenth-review native intent, export and plugin ownership
+## Thirteenth-review native intent, export and plugin ownership (native intent superseded below)
 
 Review 13 exposed five gaps in the transport/lifecycle table. Each now has a
 failing-first regression through production seams:
@@ -927,7 +927,7 @@ by every differential run. Linux/macOS physical drag negotiations and external
 application export remain platform acceptance limits, not claimed successes.
 
 
-## Fourteenth-review source-safe OS effects
+## Fourteenth-review source-safe OS effects (historical; reverted below)
 
 Native intent and acknowledgement must be different values. Reporting Move after
 queueing delivery allowed an external source to delete data before any transfer,
@@ -991,3 +991,59 @@ late Wayland action conversion and protocol==Wayland detection (GTK3 contexts
 report None); the final non-Xdnd gate addresses both. Rejection explicitly emits
 Leave before suppressing GTK's deferred callback. Final independent review found
 no remaining blocker. Physical native/compositor interoperability was not run.
+
+
+## Fifteenth-review restoration
+
+Native effect, acknowledgement, advertised actions, copy/move intent and the
+GTK drop gate/fallback are restored to `4fb58708`. The negotiated-action intent
+extractor and selected-Copy gate from `b4bbba22` / `aca9841a` are removed. Those
+changes made unmodified in-app native handoffs copy, rejected Recent plugin
+drops on X11 when Copy was absent, and swallowed GTK bookmark/text DOM drops.
+The thirteenth/fourteenth-review native-intent/effect descriptions and result
+lines above record superseded work, not the current implementation.
+
+GTK reads its cached Ctrl modifiers; AppKit reads Option; OLE reads callback
+`grfKeyState`. Intent never comes from the source's Copy-only action offer.
+Explicit native sources retain default `DragMode::Copy`. HTML5 filesystem
+sources retain `effectAllowed=all`, and their DOM receivers retain the original
+copy/move effects. Accepted AppKit/OLE native delivery retains Copy acknowledgement.
+GTK retains `drop_finish(true)` for URI-list delivery, with no selected-action,
+protocol or Copy-support gate, and returns false for a drop without URI-list so
+WebKit's DOM handler can run. This restores the baseline GTK completion contract;
+it does not assert a physically measured compositor effect.
+
+The kept fixes are plain filesystem URI-list with session identity in HTML,
+sidebar deferred-drop replay, plugin-owned target validation, and unmanaged
+pane-dialog teardown with the opener. Their existing regression coverage stays.
+
+`tests/helpers/platform-drag-intent.ts` compiles the actual restored modifier
+expressions, GTK Drop callback body, OLE Enter/Over/Drop flow and accepted AppKit
+Enter/Updated/Perform responses against inert platform adapters. Differential regressions assert native
+handoff Move without a modifier, Recent plugin delivery through GTK without an
+action-set gate, DOM bookmark reorder after GTK's no-URI fallback, external
+Copy acknowledgement, and outgoing HTML5 actions. Rust source-option tests pin
+outgoing Copy for every internal policy. These are callback/routing contracts,
+not physical OS drag acceptance. The fixture also runs four Rust callback
+regressions via `rustc --test`; its result can be printed with:
+
+```sh
+bun -e 'import { nativeCallbackTestResult } from "./tests/helpers/platform-drag-intent.ts"; console.log(nativeCallbackTestResult)'
+```
+
+The handoff regressions failed on all three platforms before restoration.
+A separate compile of the actual pre-restoration GTK Drop body reproduced both
+Recent-without-Copy rejection and consumed bookmark reorder; those same callback
+contracts pass against the restored body. Independent review also falsified an
+initial AppKit Updated coverage gap; the runner now checks every negotiation
+phase and rejects an Updated-to-Move mutation.
+
+## Known limits
+
+On GNOME Wayland, Ctrl first pressed only after the native drag handoff may be
+missed because GTK's cached modifier state can be stale during the native grab.
+This is unverified on a physical desktop and is deferred to a follow-up; this
+restoration deliberately does not fix it. Cached-modifier fixtures verify the
+current contract and do not claim that mid-drag Wayland key changes are fresh.
+Physical Linux/macOS/Windows compositor and external-application drag acceptance
+remain unverified in this change.

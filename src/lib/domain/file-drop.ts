@@ -19,12 +19,6 @@ export function isLinkOnlyFileTransfer(data: Pick<DataTransfer, "effectAllowed" 
     || data?.getData("application/x-explorer-effect") === "link";
 }
 
-/** Copy policy does not identify transport: only Linux HTML5 handoffs retain
- * the source view's DOM destination rules after native startup. */
-export function nativeDropUsesDomRules(source: { nativeCopyPolicy?: string } | null, linux: boolean): boolean {
-  return linux && source?.nativeCopyPolicy === "modifier";
-}
-
 /** Native observations use process-scoped monotonic milliseconds before IPC delivery.
  * End is exclusive: a later external gesture must not borrow retired identity. */
 export function observedDuringGesture(observedAt: number, startedAt: number, endedAt?: number): boolean {

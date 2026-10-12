@@ -10,12 +10,12 @@ import { useExternalDrop } from "$lib/composables/use-external-drop.svelte";
 import { resolveDropTarget, resolveDropTargetFromElement, captureDropDestination, highlightTarget, highlightTargetAtPoint, clearHighlights, captureHighlightCleanup } from "$lib/composables/use-native-drop-target.svelte";
 import { dragState, type DragData } from "$lib/state/drag.svelte";
 import { handleFileDropMany } from "$lib/state/drop-operations";
-import { isCopyModifier as isCopyMod, usesHtml5Drag, isWindows } from "$lib/domain/platform";
+import { isCopyModifier as isCopyMod, isMac, isWindows } from "$lib/domain/platform";
 import { bookmarksStore } from "$lib/state/bookmarks.svelte";
 import { terminalPanelStore } from "$lib/state/terminal.svelte";
 import { pathComparison } from "$lib/domain/path";
 import { dispatchFileDrop, admitFileDrop } from "$lib/state/dispatch-file-drop";
-import { internalDragPaths, sameDropPathSet, domDropPaths, domOwnsFileDrop, isFileTransfer, isLinkOnlyFileTransfer, nativeDragSession, nativeDropUsesDomRules, resolveNativeDragPaths } from "$lib/domain/file-drop";
+import { internalDragPaths, sameDropPathSet, domDropPaths, domOwnsFileDrop, isFileTransfer, nativeDragSession, resolveNativeDragPaths } from "$lib/domain/file-drop";
 import { toastStore } from "$lib/state/toast.svelte";
 import { dialogStore } from "$lib/state/dialogs.svelte";
 import { windowTabsManager } from "$lib/state/window-tabs.svelte";
@@ -40,13 +40,13 @@ export function useNativeDropHandler(deps: NativeDropDeps) {
     const session = nativeDragSession(rawPaths);
     // Recent never starts an OS file drag. GTK identifies its HTML5 gesture
     // with the URI session; retain the same clock/interval/completion fences.
-    if (usesHtml5Drag && session) return dragState.survivingHtml5Source(observedAt, completedGestureSequence, observationClock, session);
+    if (!isMac && !isWindows && session) return dragState.survivingHtml5Source(observedAt, completedGestureSequence, observationClock, session);
     if (source !== null) return source ?? dragState.latestSource();
     // Explicit source:null is external except for WebKitGTK's surviving HTML5
     // gesture. Never infer provenance from an asynchronous consumer's retained
     // source. Admission below still requires the entire native path multiset
     // or the exact session URI of a link-only source.
-    return usesHtml5Drag ? dragState.survivingHtml5Source(observedAt, completedGestureSequence, observationClock) : null;
+    return !isMac && !isWindows ? dragState.survivingHtml5Source(observedAt, completedGestureSequence, observationClock) : null;
   }
 
   function handleNativeEnter(rawPaths: string[], _position: { x: number; y: number }, source?: DragData | null, copyModifier?: boolean | null, observedAt?: number, completedGestureSequence?: number, observationClock?: string): void {
@@ -109,9 +109,7 @@ export function useNativeDropHandler(deps: NativeDropDeps) {
           && dialogStore.isPaneBlocked(windowTabsManager.activePaneId)) return;
       // Miller retains its former DOM target rules. Linux listings
       // keep the native move-only routing and cross-window refresh policy.
-      // Copy intent is independent of transport. Only Linux HTML5 handoffs
-      // retain DOM destination rules; macOS/Windows pointer handoffs use native rules.
-      const domSource = isInternalDrag && nativeDropUsesDomRules(dragData, usesHtml5Drag);
+      const domSource = isInternalDrag && dragData?.nativeCopyPolicy === "modifier";
       if (domSource && (!target || (target.type === "background" && target.domDisabled))) return;
       const isCopy = (copyModifier ?? copyModifierHeld) && (!isInternalDrag || dragData?.nativeCopyPolicy !== "move");
       // Recent is a shortcut source, not authority to mutate its folder or
@@ -186,7 +184,7 @@ export function useNativeDropHandler(deps: NativeDropDeps) {
         if (target?.type === "background") {
           const destDir = target.path || explorer.currentPath;
           const paths = internalDragPaths(dragData, isWindows);
-          const sameDirectoryCopy = target.miller && nativeDropUsesDomRules(dragData, usesHtml5Drag) && copyModifierHeld;
+          const sameDirectoryCopy = target.miller && dragData.nativeCopyPolicy === "modifier" && copyModifierHeld;
           if (!sameDirectoryCopy && paths?.every(p => pathsForPlatform.sameParent(p, destDir))) {
             clearHighlights();
             clearNativeHighlights = captureHighlightCleanup();
@@ -210,17 +208,11 @@ export function useNativeDropHandler(deps: NativeDropDeps) {
   function trackModifierUp(e: KeyboardEvent) { copyModifierHeld = isCopyMod(e); }
   function trackDragModifiers(event: DragEvent): void { copyModifierHeld = isCopyMod(event); }
 
-  function acknowledgeDomDrop(event: DragEvent, blocked: boolean): void {
-    if (!event.dataTransfer) return;
-    event.dataTransfer.dropEffect = blocked ? "none" : isLinkOnlyFileTransfer(event.dataTransfer) ? "link" : "copy";
-  }
-
   function handleDomDragOver(event: DragEvent): void {
     if (!dragState.acceptsFileDrag(event.dataTransfer)) return;
     trackDragModifiers(event);
     event.preventDefault();
     const target = resolveDropTargetFromElement(event.target as Element | null);
-    acknowledgeDomDrop(event, target?.type === "blocked");
     if (target?.type === "plugin" || target?.type === "blocked") {
       event.stopImmediatePropagation();
       highlightTargetAtPoint(event.clientX, event.clientY);
@@ -231,13 +223,11 @@ export function useNativeDropHandler(deps: NativeDropDeps) {
     if (!dragState.acceptsFileDrop(event.dataTransfer)) return;
     const bound = event.dataTransfer ? dragState.domSource(event.dataTransfer) : null;
     if (dragState.expiredDomSource(bound, event.dataTransfer)) {
-      acknowledgeDomDrop(event, true);
       event.preventDefault(); event.stopImmediatePropagation(); return;
     }
     if (!deferredDomSources.has(event)) trackDragModifiers(event);
     event.preventDefault();
     const target = resolveDropTargetFromElement(event.target as Element | null);
-    acknowledgeDomDrop(event, target?.type === "blocked");
     const terminal = target?.type === "plugin" || target?.type === "blocked";
     const source = deferredDomSources.get(event) ?? bound;
     const live = dragState.latestSource();
@@ -282,7 +272,6 @@ export function useNativeDropHandler(deps: NativeDropDeps) {
     const session = event.dataTransfer?.getData("application/x-explorer-session") || undefined;
     if (!domOwnsFileDrop(!!nativeGesture?.hasPaths || dragState.nativeOwns(session)
         || (!!session && session === nativeDomSession))) {
-      acknowledgeDomDrop(event, true);
       event.stopImmediatePropagation();
       return;
     }

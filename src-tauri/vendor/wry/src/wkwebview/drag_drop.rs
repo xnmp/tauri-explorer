@@ -8,36 +8,21 @@ use objc2::{
   runtime::{Bool, ProtocolObject},
   DeclaredClass,
 };
-use objc2_app_kit::{NSDragOperation, NSDraggingInfo, NSFilenamesPboardType};
+use objc2_app_kit::{
+  NSDragOperation, NSDraggingInfo, NSEvent, NSEventModifierFlags, NSFilenamesPboardType,
+};
 use objc2_foundation::{NSArray, NSPoint, NSRect, NSString};
 
 use crate::DragDropEvent;
 
 use super::WryWebView;
 
-fn reported_operation(
-  drag_info: &ProtocolObject<dyn NSDraggingInfo>,
-  accepted: bool,
-) -> NSDragOperation {
-  NSDragOperation::from_bits_truncate(crate::drag_drop_intent::appkit_drop_effect(
-    unsafe { drag_info.draggingSourceOperationMask() }.bits(),
-    accepted,
-  ))
-}
-
-fn call(
-  this: &WryWebView,
-  drag_info: &ProtocolObject<dyn NSDraggingInfo>,
-  event: DragDropEvent,
-) -> bool {
+fn call(this: &WryWebView, event: DragDropEvent) -> bool {
   let window = this
     .window()
     .map(|window| (&*window as *const _) as usize)
     .unwrap_or(0);
-  let copying =
-    crate::drag_drop_intent::copy_modifier(crate::drag_drop_intent::PlatformDragIntent::AppKit {
-      source_operation_mask: unsafe { drag_info.draggingSourceOperationMask() }.bits(),
-    });
+  let copying = NSEvent::modifierFlags_class().contains(NSEventModifierFlags::Option);
   crate::drag_drop_snapshot::dispatch(window, copying, event, &*this.ivars().drag_drop_handler)
 }
 
@@ -67,9 +52,12 @@ pub(crate) fn dragging_entered(
   let frame: NSRect = this.frame();
   let position = (dl.x as i32, (frame.size.height - dl.y) as i32);
 
-  let accepted =
-    !paths.is_empty() && call(this, drag_info, DragDropEvent::Enter { paths, position });
-  reported_operation(drag_info, accepted)
+  if !call(this, DragDropEvent::Enter { paths, position }) {
+    // Reject the Wry file drop (invoke the OS default behaviour)
+    unsafe { objc2::msg_send![super(this), draggingEntered: drag_info] }
+  } else {
+    NSDragOperation::Copy
+  }
 }
 
 pub(crate) fn dragging_updated(
@@ -80,25 +68,44 @@ pub(crate) fn dragging_updated(
   let frame: NSRect = this.frame();
   let position = (dl.x as i32, (frame.size.height - dl.y) as i32);
 
-  let accepted = call(this, drag_info, DragDropEvent::Over { position });
-  reported_operation(drag_info, accepted)
+  if !call(this, DragDropEvent::Over { position }) {
+    unsafe {
+      let os_operation = objc2::msg_send![super(this), draggingUpdated: drag_info];
+      if os_operation == NSDragOperation::None {
+        // 0 will be returned for a drop on any arbitrary location on the webview.
+        // We'll override that with NSDragOperationCopy.
+        NSDragOperation::Copy
+      } else {
+        // A different NSDragOperation is returned when a file is hovered over something like
+        // a <input type="file">, so we'll make sure to preserve that behaviour.
+        os_operation
+      }
+    }
+  } else {
+    NSDragOperation::Copy
+  }
 }
 
 pub(crate) fn perform_drag_operation(
   this: &WryWebView,
   drag_info: &ProtocolObject<dyn NSDraggingInfo>,
 ) -> Bool {
-  if reported_operation(drag_info, true) == NSDragOperation::None {
-    return Bool::NO;
-  }
   let paths = unsafe { collect_paths(drag_info) };
   let dl: NSPoint = unsafe { drag_info.draggingLocation() };
   let frame: NSRect = this.frame();
   let position = (dl.x as i32, (frame.size.height - dl.y) as i32);
 
-  Bool::new(!paths.is_empty() && call(this, drag_info, DragDropEvent::Drop { paths, position }))
+  if !call(this, DragDropEvent::Drop { paths, position }) {
+    // Reject the Wry drop (invoke the OS default behaviour)
+    unsafe { objc2::msg_send![super(this), performDragOperation: drag_info] }
+  } else {
+    Bool::YES
+  }
 }
 
 pub(crate) fn dragging_exited(this: &WryWebView, drag_info: &ProtocolObject<dyn NSDraggingInfo>) {
-  call(this, drag_info, DragDropEvent::Leave);
+  if !call(this, DragDropEvent::Leave) {
+    // Reject the Wry drop (invoke the OS default behaviour)
+    unsafe { objc2::msg_send![super(this), draggingExited: drag_info] }
+  }
 }

@@ -24,9 +24,9 @@ use windows::{
       Com::{IDataObject, DVASPECT_CONTENT, FORMATETC, TYMED_HGLOBAL},
       Ole::{
         IDropTarget, IDropTarget_Impl, RegisterDragDrop, RevokeDragDrop, CF_HDROP, DROPEFFECT,
-        DROPEFFECT_NONE,
+        DROPEFFECT_COPY, DROPEFFECT_NONE,
       },
-      SystemServices::MODIFIERKEYS_FLAGS,
+      SystemServices::{MK_CONTROL, MODIFIERKEYS_FLAGS},
     },
     UI::{
       Shell::{DragFinish, DragQueryFileW, HDROP},
@@ -80,17 +80,16 @@ impl DragDropController {
 pub struct DragDropTarget {
   hwnd: HWND,
   listener: Rc<dyn Fn(DragDropEvent) -> bool>,
+  cursor_effect: UnsafeCell<DROPEFFECT>,
   enter_is_valid: UnsafeCell<bool>, /* If the currently hovered item is not valid there must not be any `HoveredFileCancelled` emitted */
 }
 
 impl DragDropTarget {
-  fn call(&self, event: DragDropEvent, effect: DROPEFFECT) -> bool {
+  fn call(&self, event: DragDropEvent, keys: MODIFIERKEYS_FLAGS) -> bool {
     let window = unsafe { GetAncestor(self.hwnd, GA_ROOT) };
     crate::drag_drop_snapshot::dispatch(
       window.0 as usize,
-      crate::drag_drop_intent::copy_modifier(crate::drag_drop_intent::PlatformDragIntent::Ole {
-        effect: effect.0,
-      }),
+      keys.0 & MK_CONTROL.0 != 0,
       event,
       &*self.listener,
     )
@@ -99,6 +98,7 @@ impl DragDropTarget {
     Self {
       hwnd,
       listener,
+      cursor_effect: DROPEFFECT_NONE.into(),
       enter_is_valid: false.into(),
     }
   }
@@ -178,13 +178,9 @@ impl IDropTarget_Impl for DragDropTarget_Impl {
     let mut paths = Vec::new();
     let hdrop = unsafe { DragDropTarget::iterate_filenames(pDataObj, |path| paths.push(path)) };
 
-    let enter_is_valid = hdrop.is_some() && !paths.is_empty();
+    let enter_is_valid = hdrop.is_some();
 
     if !enter_is_valid {
-      unsafe {
-        *self.enter_is_valid.get() = false;
-        *pdwEffect = DROPEFFECT_NONE;
-      }
       return Ok(());
     };
 
@@ -192,21 +188,23 @@ impl IDropTarget_Impl for DragDropTarget_Impl {
       *self.enter_is_valid.get() = enter_is_valid;
     }
 
-    let allowed = unsafe { (*pdwEffect).0 };
-    let cursor_effect = DROPEFFECT(crate::drag_drop_intent::ole_operation(
-      grfKeyState.0,
-      allowed,
-    ));
-    let accepted = self.call(
+    self.call(
       DragDropEvent::Enter {
         paths,
         position: (pt.x as _, pt.y as _),
       },
-      cursor_effect,
+      grfKeyState,
     );
 
+    let cursor_effect = if enter_is_valid {
+      DROPEFFECT_COPY
+    } else {
+      DROPEFFECT_NONE
+    };
+
     unsafe {
-      *pdwEffect = DROPEFFECT(crate::drag_drop_intent::ole_drop_effect(allowed, accepted));
+      *pdwEffect = cursor_effect;
+      *self.cursor_effect.get() = cursor_effect;
     }
 
     Ok(())
@@ -218,32 +216,24 @@ impl IDropTarget_Impl for DragDropTarget_Impl {
     pt: &POINTL,
     pdwEffect: *mut DROPEFFECT,
   ) -> windows::core::Result<()> {
-    let allowed = unsafe { (*pdwEffect).0 };
-    let intent = DROPEFFECT(crate::drag_drop_intent::ole_operation(
-      grfKeyState.0,
-      allowed,
-    ));
-    let accepted = if unsafe { *self.enter_is_valid.get() } {
+    if unsafe { *self.enter_is_valid.get() } {
       let mut pt = POINT { x: pt.x, y: pt.y };
       let _ = unsafe { ScreenToClient(self.hwnd, &mut pt) };
       self.call(
         DragDropEvent::Over {
           position: (pt.x as _, pt.y as _),
         },
-        intent,
-      )
-    } else {
-      false
-    };
-    unsafe {
-      *pdwEffect = DROPEFFECT(crate::drag_drop_intent::ole_drop_effect(allowed, accepted));
+        grfKeyState,
+      );
     }
+
+    unsafe { *pdwEffect = *self.cursor_effect.get() };
     Ok(())
   }
 
   fn DragLeave(&self) -> windows::core::Result<()> {
     if unsafe { *self.enter_is_valid.get() } {
-      self.call(DragDropEvent::Leave, DROPEFFECT_NONE);
+      self.call(DragDropEvent::Leave, MODIFIERKEYS_FLAGS(0));
     }
     Ok(())
   }
@@ -253,42 +243,25 @@ impl IDropTarget_Impl for DragDropTarget_Impl {
     pDataObj: windows_core::Ref<'_, IDataObject>,
     grfKeyState: MODIFIERKEYS_FLAGS,
     pt: &POINTL,
-    pdwEffect: *mut DROPEFFECT,
+    _pdwEffect: *mut DROPEFFECT,
   ) -> windows::core::Result<()> {
-    let allowed = unsafe { (*pdwEffect).0 };
-    let intent = DROPEFFECT(crate::drag_drop_intent::ole_operation(
-      grfKeyState.0,
-      allowed,
-    ));
-    // Clear the output on every failure path, including a Drop without Enter.
-    unsafe { *pdwEffect = DROPEFFECT_NONE };
-    let valid = unsafe { *self.enter_is_valid.get() };
-    unsafe { *self.enter_is_valid.get() = false };
-    if !valid || crate::drag_drop_intent::ole_drop_effect(allowed, true) == 0 {
-      self.call(DragDropEvent::Leave, DROPEFFECT_NONE);
-      return Ok(());
-    }
-    let mut pt = POINT { x: pt.x, y: pt.y };
-    let _ = unsafe { ScreenToClient(self.hwnd, &mut pt) };
-    let mut paths = Vec::new();
-    let hdrop = unsafe { DragDropTarget::iterate_filenames(pDataObj, |path| paths.push(path)) };
-    let accepted = if hdrop.is_some() && !paths.is_empty() {
+    if unsafe { *self.enter_is_valid.get() } {
+      let mut pt = POINT { x: pt.x, y: pt.y };
+      let _ = unsafe { ScreenToClient(self.hwnd, &mut pt) };
+
+      let mut paths = Vec::new();
+      let hdrop = unsafe { DragDropTarget::iterate_filenames(pDataObj, |path| paths.push(path)) };
       self.call(
         DragDropEvent::Drop {
           paths,
           position: (pt.x as _, pt.y as _),
         },
-        intent,
-      )
-    } else {
-      self.call(DragDropEvent::Leave, DROPEFFECT_NONE);
-      false
-    };
-    unsafe {
-      *pdwEffect = DROPEFFECT(crate::drag_drop_intent::ole_drop_effect(allowed, accepted));
-    }
-    if let Some(hdrop) = hdrop {
-      unsafe { DragFinish(hdrop) };
+        grfKeyState,
+      );
+
+      if let Some(hdrop) = hdrop {
+        unsafe { DragFinish(hdrop) };
+      }
     }
 
     Ok(())

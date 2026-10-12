@@ -66,12 +66,7 @@ fn native_drag_options(source: Option<&Source>) -> Result<drag::Options, String>
     if source.is_some_and(|source| source.native_copy_policy == Some(CopyPolicy::Link)) {
         return Err("Shortcut sources cannot start native file drags".into());
     }
-    Ok(drag::Options {
-        // No platform implements source-side deletion. Internal intent does
-        // not authorize an external destination to request that deletion.
-        mode: drag::DragMode::Copy,
-        ..drag::Options::default()
-    })
+    Ok(drag::Options::default())
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]

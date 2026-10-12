@@ -23,7 +23,7 @@ export function useDropTarget(deps: DropTargetDeps) {
     if (!dragState.acceptsFileDrag(event.dataTransfer)) return;
     event.preventDefault();
     const copying = isCopyModifier(event);
-    if (event.dataTransfer) event.dataTransfer.dropEffect = "copy";
+    if (event.dataTransfer) event.dataTransfer.dropEffect = copying ? "copy" : "move";
     dropTargets[entry.path] = true;
     copyDropTargets[entry.path] = copying;
   }

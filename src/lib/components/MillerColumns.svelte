@@ -274,7 +274,7 @@
     if (!dragState.acceptsFileDrag(event.dataTransfer)) return;
     event.preventDefault();
     const copying = isCopyModifier(event);
-    if (event.dataTransfer) event.dataTransfer.dropEffect = "copy";
+    if (event.dataTransfer) event.dataTransfer.dropEffect = copying ? "copy" : "move";
     bgDropColumn = columnPath;
     bgDropCopy = copying;
   }

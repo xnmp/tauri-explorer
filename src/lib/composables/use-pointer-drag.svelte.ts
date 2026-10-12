@@ -104,7 +104,7 @@ export function usePointerDrag(deps: PointerDragDeps) {
       const dist = Math.sqrt(dx * dx + dy * dy);
       if (dist < THRESHOLD_PX) return;
       dragActive = true;
-      dragState.start({ ...entryData!, nativeCopyPolicy: "modifier" });
+      dragState.start(entryData!);
       const fallback = dragPaths.length > 1 ? `${dragPaths.length} items` : basename(dragPaths[0]);
       ghostEl = createDragGhost(sourceEl, fallback, dragPaths.length);
     }

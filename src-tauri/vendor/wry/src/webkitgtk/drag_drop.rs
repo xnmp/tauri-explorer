@@ -8,10 +8,7 @@ use std::{
   rc::Rc,
 };
 
-use gtk::{
-  glib::{translate::IntoGlib, GString},
-  prelude::*,
-};
+use gtk::{glib::GString, prelude::*};
 use webkit2gtk::WebView;
 
 use crate::DragDropEvent;
@@ -68,12 +65,10 @@ impl DragDropController {
     self.state.get()
   }
 
-  fn call(&self, webview: &WebView, context: &gtk::gdk::DragContext, event: DragDropEvent) -> bool {
-    let copying =
-      crate::drag_drop_intent::copy_modifier(crate::drag_drop_intent::PlatformDragIntent::Gtk {
-        selected_action: context.selected_action().bits(),
-        suggested_action: context.suggested_action().bits(),
-      });
+  fn call(&self, webview: &WebView, event: DragDropEvent) -> bool {
+    let copying = gtk::gdk::Keymap::for_display(&webview.display()).is_some_and(|keymap| {
+      keymap.modifier_state() & gtk::gdk::ModifierType::CONTROL_MASK.bits() != 0
+    });
     crate::drag_drop_snapshot::dispatch(window_id(webview), copying, event, &*self.handler)
   }
 }
@@ -90,14 +85,13 @@ pub(crate) fn connect_drag_event(webview: &WebView, handler: Box<dyn Fn(DragDrop
 
   {
     let controller = controller.clone();
-    webview.connect_drag_data_received(move |webview, ctx, _, _, data, info, _| {
+    webview.connect_drag_data_received(move |webview, _, _, _, data, info, _| {
       if info == 2 {
         let uris = data.uris();
         let paths = uris.iter().map(path_buf_from_uri).collect::<Vec<_>>();
         controller.enter();
         controller.call(
           webview,
-          ctx,
           DragDropEvent::Enter {
             paths: paths.clone(),
             position: controller.position.get(),
@@ -110,9 +104,9 @@ pub(crate) fn connect_drag_event(webview: &WebView, handler: Box<dyn Fn(DragDrop
 
   {
     let controller = controller.clone();
-    webview.connect_drag_motion(move |webview, ctx, x, y, _| {
+    webview.connect_drag_motion(move |webview, _, x, y, _| {
       if controller.state() == DragControllerState::Entered {
-        controller.call(webview, ctx, DragDropEvent::Over { position: (x, y) });
+        controller.call(webview, DragDropEvent::Over { position: (x, y) });
       } else {
         controller.store_position((x, y));
       }
@@ -125,47 +119,19 @@ pub(crate) fn connect_drag_event(webview: &WebView, handler: Box<dyn Fn(DragDrop
     webview.connect_drag_drop(move |webview, ctx, x, y, time| {
       if controller.state() == DragControllerState::Leaving {
         if let Some(paths) = controller.take_paths() {
-          // Snapshot the negotiated/suggested intent BEFORE changing the
-          // final protocol action. Never ask GTK to delete source data.
-          let allowed = ctx.actions().bits();
-          let selected = ctx.selected_action().bits();
-          // GTK3 Wayland destination contexts can report protocol None.
-          // Only verified Xdnd permits final-action rewriting.
-          let protocol = ctx.protocol().into_glib();
-          let supported =
-            crate::drag_drop_intent::gtk_drop_effect(allowed, selected, protocol, true) != 0;
-          let accepted = supported
-            && !paths.is_empty()
-            && controller.call(
-              webview,
-              ctx,
-              DragDropEvent::Drop {
-                paths,
-                position: (x, y),
-              },
-            );
-          if !accepted {
-            // Drop suppresses the deferred Leave queued by GTK. Rejection must
-            // still retire the receiver and frontend hover/source identity.
-            controller.call(webview, ctx, DragDropEvent::Leave);
-          }
-          let effect =
-            crate::drag_drop_intent::gtk_drop_effect(allowed, selected, protocol, accepted);
-          ctx.drag_status(gtk::gdk::DragAction::from_bits_truncate(effect), time);
-          ctx.drag_finish(effect != 0, false, time);
+          ctx.drop_finish(true, time);
           controller.leave();
-          // Consume rejection too: WebKit's default must not acknowledge Move.
-          return true;
+          return controller.call(
+            webview,
+            DragDropEvent::Drop {
+              paths,
+              position: (x, y),
+            },
+          );
         }
       }
 
-      if controller.state() != DragControllerState::Left {
-        controller.call(webview, ctx, DragDropEvent::Leave);
-        controller.leave();
-      }
-      ctx.drag_status(gtk::gdk::DragAction::empty(), time);
-      ctx.drag_finish(false, false, time);
-      true
+      false
     });
   }
 

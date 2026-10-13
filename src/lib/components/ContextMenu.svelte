@@ -780,6 +780,24 @@
           {/if}
         </button>
       {/each}
+      <button
+        class="menu-item"
+        class:selected={settingsStore.showHidden}
+        onclick={() => { settingsStore.toggleHidden(); contextMenuStore.close(); }}
+        role="menuitemcheckbox"
+        aria-checked={settingsStore.showHidden}
+      >
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+          <path d="M1.5 8C2.8 5.4 5.2 3.5 8 3.5C10.8 3.5 13.2 5.4 14.5 8C13.2 10.6 10.8 12.5 8 12.5C5.2 12.5 2.8 10.6 1.5 8Z" stroke="currentColor" stroke-width="1.25" stroke-linejoin="round"/>
+          <circle cx="8" cy="8" r="2" stroke="currentColor" stroke-width="1.25"/>
+        </svg>
+        <span>Show hidden files</span>
+        {#if settingsStore.showHidden}
+          <svg class="check-icon" width="12" height="12" viewBox="0 0 12 12" fill="none">
+            <path d="M2.5 6L5 8.5L9.5 3.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+        {/if}
+      </button>
     {/if}
 
     {#if pluginMenuItems.length > 0}

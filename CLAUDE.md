@@ -330,6 +330,7 @@ Compiler regression probes resolve TypeScript's CLI through Node package
 resolution from the test module. Review checkouts may inherit dependencies from
 an ancestor; a checkout-relative node_modules/typescript path is not portable.
 Keep the real compiler and every cold/warm/error/recovery assertion intact.
+
 ### About command (#755)
 
 The About surface uses the existing `AppInfo` contract and `getAppInfo()` bridge
@@ -337,6 +338,9 @@ The About surface uses the existing `AppInfo` contract and `getAppInfo()` bridge
 lazy-loaded through `WindowDialogs.svelte`, with modal ownership provided by
 `Modal.svelte`; do not read package.json for the running application version.
 The store must include About in `hasModalOpen` and `closeAll`, including while
-its lazy import is pending. Browser evidence for this surface must finish CSS
+its lazy import is pending. Add the flag to `anyModalOpen` and
+`closeUnmountedDialogs` so pane input blocking and mounted close guards share
+the same lifecycle. The command declares window scope for destination admission.
+Browser evidence for this surface must finish CSS
 animations (`page.screenshot({ animations: "disabled", ... })`): a visible DOM
 assertion can succeed on the first transparent frame of the shared modal fade.

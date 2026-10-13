@@ -1,9 +1,16 @@
 /** Native presentation receipts. Pure rules; host revisions order observations. */
+import type { JobCost, JobReveal } from "$lib/plugins/api";
 export type NativeJobState = "accepting" | "running" | "recovering" | "needs_attention" | "completed" | "error" | "cancelled" | "discarded";
 export interface NativeJobRecord {
   jobKey: string; owner: { packageId: string; digest: string; incarnation: number }; operationId: string; jobId: number;
+  ownershipEpoch?: number;
+  estimateKey?: string | null;
+  cost?: JobCost;
+  reveal?: JobReveal;
   kind: string; label: string; originWindow: string; revision: number; sourceRevision?: number;
-  createdAtMs: number; updatedAtMs: number; state: NativeJobState; phase?: string | null; outputPath?: string | null; runId?: number | null; error?: string | null;
+  createdAtMs: number; updatedAtMs: number;
+  /** When the host first settled the job; absent while active and on jobs settled before it was recorded. */
+  settledAtMs?: number | null; state: NativeJobState; phase?: string | null; outputPath?: string | null; runId?: number | null; error?: string | null;
 }
 export interface NativeJobSnapshot { originWindow: string; watermark: number; jobs: NativeJobRecord[] }
 export type NativeJobEvent = { type: "updated"; job: NativeJobRecord } | { type: "dismissed"; jobKey: string; revision: number };
@@ -15,9 +22,8 @@ const key = (v: unknown): v is string => typeof v === "string" && /^[a-f0-9]{48}
 const bytes = (v: unknown, limit: number): v is string => typeof v === "string" && v.length <= limit && new TextEncoder().encode(v).length <= limit && !v.includes("\0");
 const windowLabel = (v: unknown): v is string => typeof v === "string" && /^[!-~]{1,128}$/.test(v);
 export const nativeJobTerminal = (state: NativeJobState): boolean => ["completed", "error", "cancelled", "discarded"].includes(state);
-/** Presentation the host settled by explicit Stop or provider Discard. Its
- *  evidence stays in Unresolved AI operations; the job itself is dismissable
- *  and no longer active work. Mirrors the host's `parked` job rule. */
+/** Legacy parked presentation is inactive while native automatic settlement
+ *  advances its durable record. Mirrors the host's `parked` job rule. */
 export const nativeJobParked = (state: NativeJobState, phase?: string | null): boolean =>
   state === "needs_attention" && (phase === "stopped" || phase === "provider_result_discarded");
 /** Terminal or parked: no longer active, and dismissable. */
@@ -28,7 +34,10 @@ export function validNativeJob(value: unknown): value is NativeJobRecord {
   const r = value as NativeJobRecord;
   return key(r.jobKey) && !!r.owner && id(r.owner.packageId, 256) && /^[a-f0-9]{64}$/.test(r.owner.digest) && safe(r.owner.incarnation, true)
     && id(r.operationId) && id(r.kind) && safe(r.jobId, true) && safe(r.revision, true)
+    && (r.ownershipEpoch === undefined || safe(r.ownershipEpoch))
     && (r.sourceRevision === undefined || safe(r.sourceRevision)) && safe(r.createdAtMs) && safe(r.updatedAtMs)
+    && (r.settledAtMs == null || safe(r.settledAtMs))
+    && (r.estimateKey == null || typeof r.estimateKey === "string" && /^[!-~]{1,128}$/.test(r.estimateKey))
     && typeof r.label === "string" && !!r.label && Array.from(r.label).length <= 256 && !/\p{Cc}/u.test(r.label)
     && windowLabel(r.originWindow) && states.has(r.state)
     && (r.phase == null || bytes(r.phase, 128)) && (r.error == null || bytes(r.error, 2048))
@@ -60,10 +69,14 @@ export function adoptNativeSnapshot(old: NativeJobView, snapshot: NativeJobSnaps
 }
 function sameIdentity(a: NativeJobRecord, b: NativeJobRecord): boolean {
   return a.jobKey === b.jobKey && a.jobId === b.jobId && a.kind === b.kind && a.operationId === b.operationId
-    && a.owner.packageId === b.owner.packageId && a.owner.digest === b.owner.digest && a.owner.incarnation === b.owner.incarnation
+    && a.owner.packageId === b.owner.packageId
+    && ((b.ownershipEpoch ?? 0) > (a.ownershipEpoch ?? 0)
+      || (b.ownershipEpoch ?? 0) === (a.ownershipEpoch ?? 0) && a.owner.digest === b.owner.digest && a.owner.incarnation === b.owner.incarnation)
+    && (a.estimateKey == null || a.estimateKey === b.estimateKey)
     && a.originWindow === b.originWindow && a.createdAtMs === b.createdAtMs;
 }
 export function mergeNativeJobEvent(old: NativeJobView, event: NativeJobEvent): NativeJobView {
+  if (!validNativeEvent(event)) return old;
   const jobKey = event.type === "updated" ? event.job.jobKey : event.jobKey;
   const revision = event.type === "updated" ? event.job.revision : event.revision;
   if (revision <= old.baseline || revision <= (old.tombstones.get(jobKey) ?? 0) || revision <= (old.jobs.get(jobKey)?.revision ?? 0)) return old;
@@ -74,7 +87,15 @@ export function mergeNativeJobEvent(old: NativeJobView, event: NativeJobEvent): 
     jobs.delete(jobKey); tombstones.set(jobKey, revision);
   } else {
     const previous = jobs.get(jobKey);
-    if (previous && (!sameIdentity(previous, event.job) || nativeJobTerminal(previous.state) && previous.state !== event.job.state)) return old;
+    // The host ledger verifies acquisition before repairing older presentation,
+    // regardless of its terminal phase. Its trusted completion event may lack
+    // a run ID when the consumer crashed before publishing one. Identity and
+    // revision guards still apply; Completed never regresses to another state.
+    const recoveredSettlement = previous?.state !== "completed"
+      && event.job.state === "completed" && !!event.job.outputPath;
+    const consumerRemoval = previous?.state !== "completed" && event.job.state === "error"
+      && event.job.phase === "consumer_removed" && !!event.job.error;
+    if (previous && (!sameIdentity(previous, event.job) || nativeJobTerminal(previous.state) && previous.state !== event.job.state && !recoveredSettlement && !consumerRemoval)) return old;
     if ([...jobs.values()].some((r) => r.jobKey !== jobKey && (r.jobId === event.job.jobId || r.owner.packageId === event.job.owner.packageId && r.operationId === event.job.operationId))) return old;
     if (!previous && !nativeJobSettled(event.job) && [...jobs.values()].filter((r) => !nativeJobSettled(r)).length >= 128) return old;
     jobs.set(jobKey, event.job);
@@ -91,5 +112,5 @@ export function mergeNativeJobEvent(old: NativeJobView, event: NativeJobEvent): 
   return { jobs, tombstones, baseline, needsSnapshot };
 }
 export function jobStateLabel(state: NativeJobState): string {
-  return ({ accepting: "Preparing", running: "Generating", recovering: "Recovering original operation", needs_attention: "Needs attention — outcome or delivery requires recovery", completed: "Complete", error: "Failed", cancelled: "Cancelled", discarded: "Discarded" })[state];
+  return ({ accepting: "Preparing", running: "Generating", recovering: "Recovering original operation", needs_attention: "Recovering original operation", completed: "Complete", error: "Failed", cancelled: "Cancelled", discarded: "Discarded" })[state];
 }

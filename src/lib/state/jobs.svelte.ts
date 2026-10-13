@@ -6,6 +6,8 @@
  */
 
 import { nativeJobSettled, nativeJobTerminal, type NativeJobRecord, type NativeJobState } from "$lib/domain/native-plugin-jobs";
+import type { JobCost, JobReveal } from "$lib/plugins/api";
+import { jobCost, jobReveal } from "$lib/domain/job-presentation";
 export type JobStatus = NativeJobState;
 
 /** Starts a replacement for a failed job (a plugin's `accept` result). */
@@ -19,11 +21,14 @@ export interface Job {
   /** Origin of the job: "app" for built-in flows, or a plugin id. */
   source: string;
   presentation?: "image";
+  estimateKey?: string;
   status: JobStatus;
   error?: string;
   startTime: number;
   endTime?: number;
   outputPath?: string;
+  cost?: JobCost;
+  reveal?: JobReveal;
   /** The plugin that started the job; its retirement drops `retry`. */
   owner?: string;
   /** Stable native package authority, separate from the contribution owning Retry. */
@@ -48,7 +53,7 @@ export interface JobExtras {
 
 /** Running, or a failed job whose retry is starting: not dismissable, and
  *  it keeps Background Operations open. A stopped or discarded recovery is
- *  settled: its evidence stays in Unresolved AI operations. */
+ *  settled: its evidence stays in normal jobs history. */
 export function isJobActive(job: Job): boolean {
   return !nativeJobSettled({ state: job.status, phase: job.phase }) || job.retrying === true || !!job.controlPending;
 }
@@ -78,9 +83,9 @@ function createJobsStore() {
     jobs = [...jobs, job];
   }
 
-  function completeJob(id: number, outputPath: string): void {
+  function completeJob(id: number, outputPath: string, presentation: { cost?: JobCost; reveal?: JobReveal } = {}): void {
     jobs = jobs.map((j) =>
-      j.id === id && !j.jobKey ? { ...j, status: "completed" as const, endTime: Date.now(), outputPath } : j
+      j.id === id && !j.jobKey ? { ...j, status: "completed" as const, endTime: Date.now(), outputPath, cost: jobCost(presentation.cost), reveal: jobReveal(presentation.reveal) } : j
     );
   }
 
@@ -120,8 +125,9 @@ function createJobsStore() {
       const previous = jobs.find((job) => job.jobKey === r.jobKey || !job.jobKey && job.id === r.jobId && job.source === r.kind && job.nativePackageOwner === r.owner.packageId);
       const terminal = nativeJobSettled(r);
       return { id: r.jobId, jobKey: r.jobKey, revision: r.revision, owner: previous?.owner ?? r.owner.packageId, nativePackageOwner: r.owner.packageId, source: r.kind, label: r.label,
-        detail: previous?.detail ?? "", presentation: "image", status: r.state, startTime: r.createdAtMs,
-        ...(terminal ? { endTime: r.updatedAtMs } : {}), outputPath: r.outputPath ?? undefined, error: r.error ?? undefined, phase: r.phase ?? undefined,
+        cost: jobCost(r.cost), reveal: jobReveal(r.reveal),
+        detail: previous?.detail ?? "", presentation: "image", estimateKey: r.estimateKey ?? undefined, status: r.state, startTime: r.createdAtMs,
+        ...(terminal && r.settledAtMs != null ? { endTime: r.settledAtMs } : {}), outputPath: r.outputPath ?? undefined, error: r.error ?? undefined, phase: r.phase ?? undefined,
         retry: previous?.retry, retrying: previous?.retrying,
         controlPending: terminal ? undefined : previous?.controlPending, controlError: previous?.controlError,
         cancelRequested: terminal ? false : previous?.cancelRequested };

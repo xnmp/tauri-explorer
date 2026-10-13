@@ -9,13 +9,12 @@
 -->
 <script lang="ts">
   import { tick, onDestroy } from "svelte";
+  import { dragState } from "$lib/state/drag.svelte";
   import { slide } from "svelte/transition";
   import { MediaQuery } from "svelte/reactivity";
   import { windowTabsManager, type TabTransfer } from "$lib/state/window-tabs.svelte";
+  import { dropIntoDirectory } from "$lib/composables/use-dom-directory-drop";
   import { settingsStore } from "$lib/state/settings.svelte";
-  import { getDropSourcePaths } from "$lib/state/drop-operations";
-  import { handleFileDropMany } from "$lib/state/drop-operations";
-  import { dragState } from "$lib/state/drag.svelte";
   import {
     tabDragState,
     windowAtScreenPos,
@@ -23,8 +22,6 @@
   } from "$lib/state/tab-transfer";
   import { getZoomFactor } from "$lib/domain/zoom";
   import { openNewWindow } from "$lib/state/commands/shared";
-  import { parentDir } from "$lib/domain/path";
-  import { isCopyModifier } from "$lib/domain/platform";
   import { showTabStrip } from "$lib/domain/titlebar";
   import type { WebviewWindow } from "@tauri-apps/api/webviewWindow";
 
@@ -399,17 +396,11 @@
 
   // ── File drops ONTO a tab (move the dragged files into that tab's directory) ──
   function isFileDrag(dataTransfer: DataTransfer | null): boolean {
-    if (!dataTransfer) return false;
-    const types = dataTransfer.types;
-    return (
-      types.includes("application/x-explorer-path") ||
-      types.includes("application/x-explorer-paths") ||
-      types.includes("Files")
-    );
+    return dragState.acceptsFileDrag(dataTransfer);
   }
 
   function handleTabDragOver(event: DragEvent, tabId: string): void {
-    if (isFileDrag(event.dataTransfer) || dragState.readCrossWindow()) {
+    if (isFileDrag(event.dataTransfer)) {
       event.preventDefault();
       if (event.dataTransfer) event.dataTransfer.dropEffect = "move";
       fileDropTargetTabId = tabId;
@@ -423,31 +414,16 @@
   }
 
   async function handleTabDrop(event: DragEvent, tabId: string): Promise<void> {
-    if (!(isFileDrag(event.dataTransfer) || dragState.readCrossWindow())) return;
+    if (!dragState.acceptsFileDrop(event.dataTransfer)) return;
     event.preventDefault();
     fileDropTargetTabId = null;
     const targetPath = windowTabsManager.getTabPath(tabId);
     if (!targetPath || !event.dataTransfer) return;
 
-    const sourcePaths = getDropSourcePaths(event.dataTransfer);
-    if (sourcePaths.length === 0) return;
-
-    const isCopy = isCopyModifier(event);
-    dragState.clear();
     const onRefresh = () => {
-      for (const explorer of windowTabsManager.getAllExplorers()) {
-        explorer.refresh({ silent: true });
-      }
+      for (const explorer of windowTabsManager.getAllExplorers()) explorer.refresh({ silent: true });
     };
-    const valid = sourcePaths.filter(
-      (sourcePath) =>
-        parentDir(sourcePath) !== targetPath &&
-        sourcePath !== targetPath &&
-        !targetPath.startsWith(sourcePath + "/"),
-    );
-    // The helper transfers sequentially (no stacked conflict dialogs) and
-    // records one undoable batch (#163).
-    await handleFileDropMany(valid, targetPath, isCopy, { onRefresh });
+    await dropIntoDirectory(event, targetPath, "tab", { onRefresh: onRefresh });
   }
 </script>
 

@@ -79,6 +79,8 @@ export function registerGitPaletteTargets(
   ): void => {
     commands.push({
       id: `git.palette.${paneId}.${suffix}`,
+      scope: "pane",
+      paneIds: () => [paneId],
       label,
       category: "general",
       when,

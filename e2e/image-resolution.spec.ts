@@ -10,6 +10,8 @@ test("Details shows source resolution, unavailable cells and a persistent column
   await expect(page.locator(".column-header.resolution-column")).toBeVisible();
   const photo = page.locator('.file-item[data-path="/home/user/Pictures/photo1.jpg"]');
   await expect(photo.locator(".resolution-cell")).toHaveText("1920 × 1080 px");
+  await expect(page.locator(".column-header.length-column")).toBeVisible();
+  await expect(photo.locator(".length-cell")).toHaveText("");
   await page.screenshot({ path: "evidence/ac-1-source-resolution.png" });
   await expect(page.locator('.file-item[data-path="/home/user/Pictures/vacation"] .resolution-cell')).toHaveText("—");
   await page.goto("/?path=/home/user/Pictures/vacation&viewMode=details");
@@ -22,6 +24,7 @@ test("Details shows source resolution, unavailable cells and a persistent column
   await expect(page.locator(".file-item").first()).toBeVisible();
   await expect(page.locator(".resolution-cell")).toHaveCount(0);
   await expect(page.locator(".column-header.resolution-column")).toHaveCount(0);
+  await expect(page.locator(".column-header.length-column")).toBeVisible();
   await page.locator(".column-headers").click({ button: "right" });
   await expect(page.locator(".column-menu-item").filter({ hasText: "Resolution" }).locator(".column-menu-check")).toHaveText("");
   await page.screenshot({ path: "evidence/ac-3-persisted-visibility.png" });
@@ -45,9 +48,17 @@ test("visible metadata refreshes on replacement events without changing file-lis
   expect(await photo.locator(".date-cell, .size-cell").allTextContents()).toEqual(details);
   await page.screenshot({ path: "evidence/ac-4-refreshed-source-resolution.png" });
   const handle = page.getByRole("separator", { name: "Resize Resolution column" });
+  const lengthHandle = page.getByRole("separator", { name: "Resize Length column" });
+  const lengthWidth = await lengthHandle.getAttribute("aria-valuenow");
+  const header = page.locator(".column-header-wrapper").filter({ has: page.locator(".resolution-column") });
+  const headerWidth = (await header.boundingBox())!.width;
+  const cellWidth = (await photo.locator(".resolution-cell").boundingBox())!.width;
   const initial = Number(await handle.getAttribute("aria-valuenow"));
   await handle.focus(); await page.keyboard.press("ArrowRight");
   await expect(handle).toHaveAttribute("aria-valuenow", String(initial + 10));
+  await expect(lengthHandle).toHaveAttribute("aria-valuenow", lengthWidth!);
+  await expect.poll(async () => (await header.boundingBox())!.width - headerWidth).toBeCloseTo(10, 0);
+  await expect.poll(async () => (await photo.locator(".resolution-cell").boundingBox())!.width - cellWidth).toBeCloseTo(10, 0);
 });
 
 test("large image folders request metadata only for mounted rows and admit rows after scrolling", async ({ page }) => {

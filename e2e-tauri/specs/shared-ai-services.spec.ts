@@ -118,6 +118,15 @@ async function screenshot(name: string): Promise<void> {
   fs.mkdirSync(evidence, { recursive: true });
   await browser.saveScreenshot(path.join(evidence, `${present ? "present" : "absent"}-${name}.png`));
 }
+/** Chooses an option in a native <select> or a WAI-ARIA select-only combobox, detected by feature. */
+async function chooseOption(trigger: ChainablePromiseElement, value: string): Promise<void> {
+  if ((await trigger.getTagName()) === "select") {
+    await trigger.selectByAttribute("value", value);
+    return;
+  }
+  await trigger.click();
+  await $(`[role="listbox"] [role="option"][data-value="${value}"]`).click();
+}
 async function field(label: string, value: string): Promise<void> {
   await $(".connections").$(`label*=${label}`).$("input").setValue(value);
 }
@@ -126,12 +135,19 @@ async function addConnection(name: string): Promise<string> {
   await field("Name", name);
   await field("Images resource URL", endpoint);
   await field("Image model ID", "fixture/native-image-v1");
-  await $(".connections").$("label*=Credential source").$("select").selectByAttribute("value", "none");
-  const id = await $(".connections").$("label*=Edit connection").$("select").getValue();
-  await $(".connections").$("label*=Default image connection").$("select").selectByAttribute("value", id);
+  await chooseOption($(".connections").$("label*=Credential source").$("select, [role=\"combobox\"]"), "none");
+  await makeSelectedDefault();
   await $("button=Save connections").click();
   await browser.waitUntil(async () => !(await $("button=Save connections").isEnabled()), { timeoutMsg: "native connection save never committed" });
+  const saved = await backend("xnmp.image-generation", "settings.read");
+  const id = saved.profiles.find((profile: { name: string }) => profile.name === name)?.id;
+  expect(saved.defaultConnectionId).toBe(id);
   return id;
+}
+/** The selected connection becomes the default; the first connection already is one. */
+async function makeSelectedDefault(): Promise<void> {
+  const button = $(".connections").$("button=Set as default");
+  if (await button.isExisting()) await button.click();
 }
 function privateProcesses(): unknown[] {
   const profile = process.env.XDG_CONFIG_HOME!;
@@ -437,7 +453,7 @@ gatedDescribe("shared AI native working snapshot", [[process.platform === "linux
     connectionA = await addConnection("Native connection A");
     await $(".connections").$("button=Close").click();
     await $(".connections").waitForDisplayed({ reverse: true });
-    await $('[aria-label="Image connection"]').selectByAttribute("value", connectionA);
+    await chooseOption($('[aria-label="Image connection"]'), connectionA);
     await $("button=Configure connections").click();
     await $(".connections").waitForDisplayed();
     await addConnection("Native connection B");
@@ -792,7 +808,9 @@ gatedDescribe("shared AI native working snapshot", [[process.platform === "linux
     await command("Image Generation: Configure connections");
     await $(".connections").waitForDisplayed({ timeoutMsg: "the palette's command opened no image connections dialog" });
     const otherDefault = imageSettings.profiles.map((profile: { id: string }) => profile.id).find((id: string) => id !== imageSettings.defaultConnectionId);
-    await choose($(".connections").$("label*=Default image connection").$("select"), otherDefault);
+    const otherName = imageSettings.profiles.find((profile: { id: string }) => profile.id === otherDefault).name;
+    await $(".connections nav").$(`button*=${otherName}`).click();
+    await makeSelectedDefault();
     await $("button=Save connections").click();
     await browser.waitUntil(async () => !(await $("button=Save connections").isEnabled()), { timeoutMsg: "image connection save never committed" });
     expect((await backend("xnmp.image-generation", "settings.read")).defaultConnectionId).toBe(otherDefault);

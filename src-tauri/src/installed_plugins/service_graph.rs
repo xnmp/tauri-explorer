@@ -76,6 +76,141 @@ pub(super) fn select<'a>(
     Ok((provider, export))
 }
 
+/// Negotiate recovery using the same declared service identity/major as normal
+/// routing. Package release versions and digests do not define the contract.
+pub(super) fn consumer_recovers(
+    manifest: &Manifest,
+    target: &crate::service_state::model::ServiceTarget,
+) -> bool {
+    manifest.sdk_version >= 3
+        && manifest.service_dependencies.iter().any(|dep| {
+            dep.package_id == target.package_id
+                && dep.service_id == target.service_id
+                && dep.major == target.major
+        })
+}
+
+pub(super) fn provider_recovers(
+    manifest: &Manifest,
+    target: &crate::service_state::model::ServiceTarget,
+) -> bool {
+    manifest.sdk_version >= 3
+        && manifest.id == target.package_id
+        && manifest.services.iter().any(|export| {
+            export.id == target.service_id
+                && export.major == target.major
+                && ["status", "cancel", "acknowledge"]
+                    .iter()
+                    .all(|method| export.methods.iter().any(|exported| exported == method))
+        })
+}
+
+/// Before service admission the consumer has not selected a durable target.
+/// Preserve its preparation only when every original declared contract still
+/// exists; lifecycle supplies the original manifest rather than guessing from
+/// a presentation kind or the current phase.
+pub(super) fn replacement_preserves_contracts(previous: &Manifest, next: &Manifest) -> bool {
+    previous.id == next.id
+        && previous.sdk_version >= 3
+        && next.sdk_version >= 3
+        && previous.service_dependencies.iter().all(|old| {
+            next.service_dependencies.iter().any(|new| {
+                old.package_id == new.package_id
+                    && old.service_id == new.service_id
+                    && old.major == new.major
+            })
+        })
+        && previous.services.iter().all(|old| {
+            next.services.iter().any(|new| {
+                old.id == new.id
+                    && old.major == new.major
+                    && old
+                        .methods
+                        .iter()
+                        .all(|method| new.methods.contains(method))
+            })
+        })
+}
+
+/// Required consumers of removed service contracts follow uninstall semantics
+/// during replacement; compatible consumers remain enabled.
+pub(super) fn replacement_dependents(entries: &[Installed], next: &Installed) -> Vec<String> {
+    let affected = removal_packages(entries, &next.manifest.id);
+    let mut projected = entries.to_vec();
+    if let Some(old) = projected
+        .iter_mut()
+        .find(|p| p.manifest.id == next.manifest.id)
+    {
+        let enabled = old.enabled;
+        *old = next.clone();
+        old.enabled = enabled;
+    } else {
+        projected.push(next.clone());
+    }
+    let mut disabled = Vec::new();
+    loop {
+        let missing: Vec<_> = projected
+            .iter()
+            .filter(|p| {
+                p.enabled && p.manifest.id != next.manifest.id && affected.contains(&p.manifest.id)
+            })
+            .filter(|p| {
+                p.manifest
+                    .service_dependencies
+                    .iter()
+                    .filter(|d| !d.optional)
+                    .any(|d| {
+                        select(
+                            &projected,
+                            &p.manifest,
+                            &d.package_id,
+                            &d.service_id,
+                            d.major,
+                        )
+                        .is_err()
+                    })
+            })
+            .map(|p| p.manifest.id.clone())
+            .collect();
+        if missing.is_empty() {
+            break;
+        }
+        for p in &mut projected {
+            if missing.contains(&p.manifest.id) {
+                p.enabled = false;
+            }
+        }
+        disabled.extend(missing);
+    }
+    disabled
+}
+/// Required dependents cannot stay enabled after explicit provider removal.
+/// Optional dependencies retain their usual unavailable-service behavior.
+pub(super) fn removal_packages(entries: &[Installed], package: &str) -> Vec<String> {
+    let mut removed = HashSet::from([package.to_owned()]);
+    loop {
+        let dependents: Vec<_> = entries
+            .iter()
+            .filter(|p| {
+                p.enabled
+                    && !removed.contains(&p.manifest.id)
+                    && p.manifest
+                        .service_dependencies
+                        .iter()
+                        .any(|dep| !dep.optional && removed.contains(&dep.package_id))
+            })
+            .map(|p| p.manifest.id.clone())
+            .collect();
+        if dependents.is_empty() {
+            break;
+        }
+        removed.extend(dependents);
+    }
+    let mut removed: Vec<_> = removed.into_iter().collect();
+    removed.sort();
+    removed
+}
+
 /// Call-time routing: the caller must declare the exact dependency and the
 /// selected provider generation must export the requested method.
 pub(super) fn route<'a>(

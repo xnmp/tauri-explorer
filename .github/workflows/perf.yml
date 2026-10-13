@@ -22,6 +22,7 @@ jobs:
   perf-check:
     name: Performance Regression Check
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
 
@@ -46,6 +47,7 @@ jobs:
   tiles-scroll-perf:
     name: Tiles Scroll Perf (#593 regression guard)
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
 

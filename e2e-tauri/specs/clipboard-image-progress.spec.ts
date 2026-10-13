@@ -129,10 +129,15 @@ async function mode(name: string) {
       await $(entryPathSelector(imagePath)).click();
       if (!await $(".preview-pane").isDisplayed()) await browser.keys(" ");
       await $(".preview-image").waitForDisplayed();
+      // The pane may show the original or a display-sized rendition (#1054),
+      // depending on its size and DPR; either way it must decode at the
+      // source's aspect ratio and never above the source size.
       await browser.waitUntil(() => browser.execute(() => {
         const image = document.querySelector<HTMLImageElement>(".preview-image");
-        return image?.complete && image.naturalWidth === 2048 && image.naturalHeight === 1536;
-      }), { timeoutMsg: "saved image did not decode at its source dimensions in the actual preview" });
+        if (!image?.complete || image.naturalWidth === 0) return false;
+        const { naturalWidth: width, naturalHeight: height } = image;
+        return width <= 2048 && height <= 1536 && width >= 512 && Math.abs(width / height - 2048 / 1536) < 0.01;
+      }), { timeoutMsg: "saved image did not decode at the source's aspect ratio in the actual preview" });
       await browser.saveScreenshot(`${proof}/${name}-completed-${process.platform}.png`);
     });
   }

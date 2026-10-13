@@ -1,13 +1,18 @@
 /**
+
  * External drag-out: handleDragStart must initiate a native drag session and
  * populate HTML5 DataTransfer so both in-app drop targets and external apps work.
  * Issue: feat/drag-out-to-external-apps
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+vi.mock("$lib/state/drag-clock", async actual => ({ ...await actual<object>(), dragClock: {
+  initialize: async () => {}, ready: true,
+  stamp: () => ({ clockId: `browser:${performance.timeOrigin}`, at: Math.floor(performance.timeOrigin + performance.now()), uncertainty: 0 }),
+} }));
 
 const startDragMock = vi.fn();
-vi.mock("@crabnebula/tauri-plugin-drag", () => ({
-  startDrag: (...args: unknown[]) => startDragMock(...args),
+vi.mock("$lib/api/native-file-drag", () => ({
+  startFileDrag: (...args: unknown[]) => startDragMock(...args),
 }));
 
 // `isMac` is a module-level constant in domain/platform.ts, evaluated once at
@@ -21,6 +26,8 @@ vi.mock("$lib/domain/platform", () => ({
   isCopyModifier: (e: { altKey: boolean; ctrlKey: boolean }) => platformState.isMac ? e.altKey : e.ctrlKey,
 }));
 
+import { startExternalDrag } from "$lib/composables/use-external-drag.svelte";
+import { dragState } from "$lib/state/drag.svelte";
 import { useItemInteractions } from "$lib/composables/use-item-interactions.svelte";
 import type { FileEntry } from "$lib/domain/file";
 import type { ExplorerInstance } from "$lib/state/explorer.svelte";
@@ -56,7 +63,7 @@ function makeExplorer(selected: FileEntry[]): ExplorerInstance {
 
 describe("external drag-out", () => {
   beforeEach(() => {
-    startDragMock.mockReset();
+    startDragMock.mockReset().mockResolvedValue(undefined);
     platformState.isMac = false;
     platformState.isWindows = false;
     (globalThis as { window?: unknown }).window = { __TAURI_INTERNALS__: {} };
@@ -115,7 +122,7 @@ describe("external drag-out", () => {
     const dt = makeDataTransfer();
     interactions.handleDragStart({ dataTransfer: dt } as DragEvent, entry, true);
 
-    expect(dt.getData("text/uri-list")).toBe("file:///h/my%20file.txt");
+    expect(dt.getData("text/uri-list").split("\r\n").filter(line => !line.startsWith("#"))).toEqual(["file:///h/my%20file.txt"]);
   });
 
   it("preserves HTML5 DataTransfer for in-app drops", () => {
@@ -180,5 +187,51 @@ describe("external drag-out", () => {
     interactions.handleDragStart({ dataTransfer: makeDataTransfer() } as DragEvent, entry, true);
 
     expect(startDragMock).not.toHaveBeenCalled();
+  });
+});
+
+
+describe("native drag gesture completion", () => {
+  beforeEach(() => {
+    startDragMock.mockReset().mockResolvedValue(undefined);
+    vi.stubGlobal("window", { __TAURI_INTERNALS__: {} });
+    dragState.clear();
+  });
+  afterEach(() => { dragState.clear(); vi.unstubAllGlobals(); });
+
+  it("keeps the source live after initiation and retires it only on the native result callback", async () => {
+    dragState.start({ path: "/a.png", name: "a.png", kind: "file" });
+    const original = dragState.current;
+    const pending = startExternalDrag(["/a.png"]);
+    await Promise.resolve();
+    expect(dragState.current?.sessionId).toBe(original?.sessionId);
+    startDragMock.mock.calls[0][1]({ result: "Cancelled", cursorPos: { x: 1, y: 2 } });
+    await pending;
+    expect(dragState.current).toBeNull(); expect(dragState.readCrossWindow()).toBeNull();
+  });
+
+  it("does not retire a newer source on late native completion", async () => {
+    dragState.start({ path: "/a.png", name: "a.png", kind: "file" });
+    const pending = startExternalDrag(["/a.png"]);
+    dragState.start({ path: "/b.png", name: "b.png", kind: "file" });
+    const replacement = dragState.current;
+    startDragMock.mock.calls[0][1]({ result: "Dropped", cursorPos: { x: 1, y: 2 } });
+    await pending;
+    expect(dragState.current).toBe(replacement); expect(dragState.readCrossWindow()?.path).toBe("/b.png");
+  });
+
+  it.each([
+    new Error("native start failed"),
+    { kind: "other", message: "native start failed" },
+  ])("returns the captured source to DOM authority on native start failure: %j", async failure => {
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    startDragMock.mockRejectedValueOnce(failure);
+    dragState.start({ path: "/a.png", name: "a.png", kind: "file" });
+    const original = dragState.current;
+    await startExternalDrag(["/a.png"]);
+    expect(dragState.current?.sessionId).toBe(original?.sessionId);
+    expect(dragState.nativeOwns()).toBe(false);
+    dragState.clear(); expect(dragState.readCrossWindow()).toBeNull();
+    vi.restoreAllMocks();
   });
 });

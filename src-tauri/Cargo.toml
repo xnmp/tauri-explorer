@@ -10,12 +10,17 @@ edition = "2021"
 [lib]
 name = "tauri_explorer_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
+# The desktop library has no Rust doctest examples. A zero-test rustdoc harness
+# only recompiles the full Tauri app and can select stale mixed-feature externs
+# when qualification worktrees share Cargo's target cache.
+doctest = false
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 
 [dev-dependencies]
 criterion = "0.8"
+proptest = "1.11"
 tauri = { version = "2", features = ["test"] }
 
 [[bench]]
@@ -35,9 +40,12 @@ url = "2"
 reqwest = { version = "0.13.2", default-features = false, features = ["rustls", "json", "stream"] }
 keyring = { version = "3", features = ["apple-native", "windows-native", "sync-secret-service", "crypto-rust"] }
 tauri = { version = "2", features = ["protocol-asset", "macos-private-api"] }
+# Local callback-time drag metadata observer in the existing vendored Wry.
+wry = { version = "0.57", default-features = false }
 tauri-plugin-opener = "2"
 tauri-plugin-shell = "2"
 tauri-plugin-drag = "2"
+drag = "2.1.1"
 clipboard-rs = "0.3.5"
 serde = { version = "1", features = ["derive", "rc"] }
 serde_json = "1"
@@ -131,12 +139,12 @@ gdkx11-sys = "0.18"
 tauri-plugin-single-instance = "2.5.2"
 
 [target.'cfg(target_os = "windows")'.dependencies]
-windows-sys = {version="0.61",features= ["Win32_Foundation", "Win32_Security", "Win32_System_JobObjects", "Win32_System_Threading", "Win32_System_Diagnostics_ToolHelp", "Win32_System_Registry"] }
+windows-sys = {version="0.61",features= ["Win32_Foundation", "Win32_Security", "Win32_System_JobObjects", "Win32_System_Threading", "Win32_System_Diagnostics_ToolHelp", "Win32_System_Registry", "Win32_System_Pipes"] }
 webview2-com = "0.39"
 windows-core = "0.62.2"
 # Win32_System_DataExchange/Memory: the clipboard sequence number and the
 # Cut token read-back (clipboard/windows.rs, #877).
-windows = { version = "0.62.2", features = ["Wdk_Foundation", "Wdk_Storage_FileSystem", "Win32_Security_Authorization", "Win32_Foundation", "Win32_Globalization", "Win32_Security", "Win32_Storage_FileSystem", "Win32_System_Com", "Win32_System_DataExchange", "Win32_System_IO", "Win32_System_Memory", "Win32_System_Threading", "Win32_UI_Shell", "Win32_UI_Shell_PropertiesSystem"] }
+windows = { version = "0.62.2", features = ["Wdk_Foundation", "Wdk_Storage_FileSystem", "Win32_Security_Authorization", "Win32_Foundation", "Win32_Globalization", "Win32_Security", "Win32_Storage_FileSystem", "Win32_System_Com", "Win32_System_DataExchange", "Win32_System_IO", "Win32_System_Memory", "Win32_System_Threading", "Win32_UI_Input_KeyboardAndMouse", "Win32_UI_Shell", "Win32_UI_Shell_PropertiesSystem"] }
 
 # NSPasteboard change count and a private token type prove Cut ownership
 # (clipboard/macos.rs, #877). clipboard-rs already builds these versions.
@@ -144,7 +152,7 @@ windows = { version = "0.62.2", features = ["Wdk_Foundation", "Wdk_Storage_FileS
 security-framework = "2.11"
 objc2 = "0.6"
 objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSArray", "NSData", "NSString", "NSURL"] }
-objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "NSPasteboard", "NSPasteboardItem"] }
+objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "NSEvent", "NSPasteboard", "NSPasteboardItem"] }
 
 # Thin LTO + single codegen unit: measurable wins for the CPU-bound stacks
 # (image decode, ripgrep, fuzzy matching, zip) at an acceptable release build
@@ -169,6 +177,6 @@ opt-level = 3
 # Tracks crabnebula-dev/drag-rs#72.
 [patch.crates-io]
 drag = { path = "vendor/drag" }
-# Keep the WebKit IPC signal callback from retaining its owning WebView after
-# native close. Remove this patch when the fix ships in upstream Wry.
+# Keep the WebKit IPC signal callback weak and capture drag metadata before
+# Tauri queues it. See vendor/wry/TAURI_EXPLORER_PATCH.md for upgrade gates.
 wry = { path = "vendor/wry" }

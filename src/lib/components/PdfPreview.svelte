@@ -5,6 +5,7 @@
   import { createPdfPreview, createPdfRenderLifetime } from "$lib/state/pdf-preview.svelte";
   import { PDF_FIT, fitPdfScale, panPdf, pdfPointerPoint, resizePdfView, zoomPdf, type PdfView, type Size } from "$lib/domain/pdf-preview";
   import { dialogStore } from "$lib/state/dialogs.svelte";
+  import { windowTabsManager } from "$lib/state/window-tabs.svelte";
 
   const { path, name, fullscreen, ontogglefullscreen, onnavigate }: {
     path: string; name: string; fullscreen: boolean; ontogglefullscreen(): void; onnavigate(delta: number): void;
@@ -162,7 +163,7 @@
   $effect(() => {
     if (!fullscreen) return;
     const listener = (event: KeyboardEvent) => {
-      if (dialogStore.hasModalOpen || event.target instanceof Element && event.target.closest("button, a, input, textarea, select, [contenteditable]")) return;
+      if (dialogStore.isInputBlocked(event, windowTabsManager.activePaneId) || event.target instanceof Element && event.target.closest("button, a, input, textarea, select, [contenteditable]")) return;
       keydown(event);
       if (event.defaultPrevented) event.stopImmediatePropagation();
     };

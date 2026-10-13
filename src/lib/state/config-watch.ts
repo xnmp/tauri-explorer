@@ -86,8 +86,15 @@ export function startConfigWatch(): () => void {
   let unlisten: UnlistenFn | null = null;
   let stopped = false;
 
-  void listen<{ filename: string }>(CONFIG_CHANGED_EVENT, (event) => {
-    void handleConfigFileChanged(event.payload.filename);
+  void listen<unknown>(CONFIG_CHANGED_EVENT, (event) => {
+    // The payload crosses IPC unchecked. A bare-string payload once threw here
+    // on every launch (#1056); ignore anything without a string filename.
+    const filename = (event.payload as { filename?: unknown } | null)?.filename;
+    if (typeof filename !== "string") {
+      console.warn(`Ignoring ${CONFIG_CHANGED_EVENT} with malformed payload`, event.payload);
+      return;
+    }
+    void handleConfigFileChanged(filename);
   })
     .then((fn) => {
       // The caller may have torn down before listen() resolved.

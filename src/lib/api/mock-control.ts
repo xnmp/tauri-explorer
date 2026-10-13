@@ -44,6 +44,7 @@ import type { Drive } from "./drives";
 import type { GitFileEntry, GitOpState } from "./git";
 import type { ImageCropCapture, ImageCropSave } from "./image-crop";
 import type { FileMutationReceipt } from "$lib/domain/file";
+import type { PreviewImageSource } from "$lib/domain/preview-rendition";
 import type { MockAiPresentation } from "./mock-ai-presentation";
 
 export interface MockGitState {
@@ -72,6 +73,8 @@ export interface MockControl {
   imageResolution?: (path: string) => { width: number; height: number } | null | Promise<{ width: number; height: number } | null>;
   /** Overrides `read_image_data_url` for the path under test. */
   previewReadImage?: (path: string) => string | Promise<string>;
+  /** Overrides `get_preview_image` (default: every image is its own original). */
+  previewImageSource?: (path: string, maxEdge: number) => PreviewImageSource | Promise<PreviewImageSource>;
   imageCropCapture?: (path: string) => ImageCropCapture | Promise<ImageCropCapture>;
   imageCropSave?: (request: ImageCropSave) => FileMutationReceipt | Promise<FileMutationReceipt>;
   /** Overrides filename collision checks for slow storage responses. */
@@ -179,6 +182,7 @@ export const MOCK_LOCAL_KEYS = {
   cutOwnershipUnavailable: "mock-cut-ownership-unavailable",
   /** "1" when set: `clipboard_has_image` reports true. */
   reportClipboardImage: "mock-report-clipboard-image",
+  reportClipboardVideo: "mock-report-clipboard-video",
   /** Error message: `open_recycle_bin` throws it. */
   openRecycleBinError: "mock-open-recycle-bin-error",
   /** JSON of the last `picker_respond` payload. */

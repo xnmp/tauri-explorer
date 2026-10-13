@@ -17,6 +17,7 @@
  */
 
 import { isFileViewId } from "$lib/domain/file-view-id";
+import { createFileViewPresentation } from "./file-view-presentation.svelte";
 import { fileViewRegistry } from "$lib/plugins/file-view-registry.svelte";
 import { resolveFileCursor } from "$lib/domain/file-list-navigation";
 import { clampNumericSetting } from "$lib/domain/settings-numbers";
@@ -98,6 +99,11 @@ function createExplorerState(seed?: ExplorerSeed) {
   let fileViewChoice = $state<string | null | undefined>(undefined);
   const fileView = $derived(fileViewChoice !== undefined ? fileViewChoice
     : isFileViewId(settingsStore.defaultFileView) ? settingsStore.defaultFileView : null);
+
+  // Presentation follows navigation intent before IO publishes currentPath.
+  // Its independent lifetime survives tab remounts and ends on Explorer destroy.
+  let presentationDirectory = $state(seed?.currentPath ?? "");
+  const fileViewPresentation = createFileViewPresentation(() => presentationDirectory, () => fileView);
 
   // A plugin's non-file Preview subject. It belongs to the folder it was set
   // in and yields to any later file selection.
@@ -237,6 +243,7 @@ function createExplorerState(seed?: ExplorerSeed) {
       trace?.finish("destroyed");
       return "stale";
     }
+    presentationDirectory = path;
     creationSession = null;
     const gen = ++navGeneration;
     // A caller's trace is used only while it is still the pane's newest;
@@ -266,6 +273,7 @@ function createExplorerState(seed?: ExplorerSeed) {
       if (result.ok) {
         load.phase("publish");
         load.entries(result.entries.length);
+        presentationDirectory = result.path;
         coreState.currentPath = result.path;
         coreState.entries = result.entries;
         observation.commit();
@@ -293,6 +301,7 @@ function createExplorerState(seed?: ExplorerSeed) {
         load.finish("ok");
         return "ok";
       } else {
+        presentationDirectory = coreState.currentPath;
         coreState.error = result.error;
         coreState.loading = false;
         load.finish("error");
@@ -569,15 +578,12 @@ function createExplorerState(seed?: ExplorerSeed) {
     setSelection(nextSet);
   }
 
-  /** Replace the selection with listed paths; `focus` becomes the primary
-   *  entry (cursor and range anchor). Unknown paths are ignored. */
-  function selectPaths(paths: readonly string[], focus: string | null = null) {
-    const listed = new Set(coreState.entries.map((entry) => entry.path));
-    const next = [...new Set(paths)].filter((path) => listed.has(path));
-    const primary = focus !== null && next.includes(focus) ? focus : next.at(-1) ?? null;
-    setSelection(next);
-    coreState.selectionAnchorPath = primary;
-    if (primary) coreState.cursorPath = primary;
+  /** Replace listed paths, optionally retaining the marquee's anchor/cursor semantics. */
+  function selectPaths(paths: readonly string[], focus: string | null = null, options: { keepAnchor?: boolean } = {}) {
+    const result = selection.selectPaths(coreState.entries, paths, coreState.selectionAnchorPath, coreState.cursorPath, focus, options);
+    setSelection(result.selectedPaths);
+    coreState.selectionAnchorPath = result.anchorPath;
+    coreState.cursorPath = result.cursorPath;
   }
 
   function selectAll() {
@@ -828,6 +834,7 @@ function createExplorerState(seed?: ExplorerSeed) {
     },
 
     // Top-level state getters (preferred over state.*)
+    fileViewPresentation,
     get currentPath() {
       return coreState.currentPath;
     },
@@ -1020,6 +1027,7 @@ function createExplorerState(seed?: ExplorerSeed) {
       // Seal pending listings and release late observation leases,
       // so a closed tab cannot retain a late native observation lease.
       destroyed = true;
+      fileViewPresentation.dispose();
       creationSession = null;
       navGeneration += 1;
       activeLoad?.finish("destroyed");

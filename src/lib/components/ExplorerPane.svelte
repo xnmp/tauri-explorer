@@ -4,6 +4,8 @@
   Issue: tauri-explorer-auj, tauri-explorer-ldfx (window-level tabs)
 -->
 <script lang="ts">
+  import { clickSelectionEffect } from "$lib/domain/workspace-selection";
+  import { createPanePointerFocus, focusFirstAccepting } from "$lib/state/pane-pointer-focus";
   import { resolveFileListMove } from "$lib/domain/file-list-navigation";
   import { tick, untrack } from "svelte";
   import { setPaneIdContext } from "$lib/state/pane-context";
@@ -26,7 +28,6 @@ import ScmPanel from "./ScmPanel.svelte";
   import { gitRepoRoot } from "$lib/api/git";
 import { nextRemovableRoot } from "$lib/domain/drives";
   import { isVirtualPath } from "$lib/domain/virtual-path";
-  import { fileViewRegistry } from "$lib/plugins/file-view-registry.svelte";
 
   interface Props {
     paneId: PaneId;
@@ -44,6 +45,17 @@ import { nextRemovableRoot } from "$lib/domain/drives";
   // directory its entry is rendered in.
   setPaneIdContext(untrack(() => paneId));
   const mountedPaneId = untrack(() => paneId);
+  function paneContent(element: HTMLElement) {
+    return { destroy: windowTabsManager.paneDialogs.registerContent(mountedPaneId, element) };
+  }
+  function dialogSlot(slot: HTMLElement) {
+    return { destroy: windowTabsManager.paneDialogs.registerSlot(mountedPaneId, slot, () => {
+      focusFirstAccepting([
+        paneRef?.querySelector<HTMLElement>('.entry-item[tabindex="0"], [role="gridcell"][tabindex="0"]'),
+        paneRef,
+      ], () => document.activeElement);
+    }) };
+  }
   const reserveInlineWidth = () => windowTabsManager.paneViewport.reserveInlineWidth(mountedPaneId);
 
   // Repo whose commit graph this pane shows instead of the file listing
@@ -62,7 +74,8 @@ import { nextRemovableRoot } from "$lib/domain/drives";
   // global `showScmPanel` default.
   const paneScmVisible = $derived(windowTabsManager.getPaneScmVisible(paneId));
 
-  const pluginViewActive = $derived(!!fileViewRegistry.resolve(paneExplorer.fileView, paneExplorer.currentPath));
+  const fileViewPresentation = paneExplorer.fileViewPresentation;
+  const pluginViewActive = $derived(fileViewPresentation.resolution.kind !== "builtin");
 
   let paneRef = $state<HTMLElement | null>(null);
   let fileListScrollToEntry = $state<((entry: import("$lib/domain/file").FileEntry) => void) | undefined>();
@@ -74,7 +87,7 @@ import { nextRemovableRoot } from "$lib/domain/drives";
     function onWindowKeydown(e: KeyboardEvent) {
       const tag = (e.target as HTMLElement)?.tagName;
       if (tag === "INPUT" || tag === "TEXTAREA" || (e.target as HTMLElement)?.closest?.('[role="separator"]')) return;
-      if (dialogStore.hasModalOpen) return;
+      if (dialogStore.isPaneBlocked(paneId) || dialogStore.isInputBlocked(e, paneId)) return;
       handleKeydown(e);
     }
     window.addEventListener("keydown", onWindowKeydown);
@@ -206,6 +219,53 @@ import { nextRemovableRoot } from "$lib/domain/drives";
     windowTabsManager.setActivePane(paneId);
   }
 
+  const pointerFocus = createPanePointerFocus();
+  /** Rows and SDK file tiles: the surfaces whose selection is click-owned. */
+  const ENTRY_SURFACE = '.entry-item, .file-tiles-grid [role="gridcell"]';
+
+  function handleFocusIn(): void {
+    // Focus the pointer moved here during an additive gesture is returned on release.
+    if (!pointerFocus.active) handleFocus();
+  }
+
+  function keepsPaneFocus(event: MouseEvent): boolean {
+    const target = event.target;
+    // Editors and other pane chrome keep their normal focus behavior.
+    return target instanceof Element && !!target.closest(ENTRY_SURFACE)
+      && !target.closest("input, textarea, button, a, [contenteditable]")
+      && !clickSelectionEffect(event, paneId, windowTabsManager.activePaneId).focusPane;
+  }
+
+  function handleMouseDown(event: MouseEvent): void {
+    const previousFocus = document.activeElement;
+    const focusedPane = windowTabsManager.activePaneId;
+    pointerFocus.begin(keepsPaneFocus(event) ? () => {
+      if (windowTabsManager.activePaneId !== focusedPane) return;
+      const owner = document.querySelector<HTMLElement>(`[data-pane-id="${CSS.escape(focusedPane)}"]`);
+      // The previous focus owner only counts when it lies inside the pane that
+      // was active: stale focus left in another pane (e.g. after a keyboard pane
+      // switch) must never be restored, or that pane would become active. It may
+      // also be document.body or unfocusable, so fall back to the pane's own
+      // row/tile, then the pane element, which keeps keyboard input with it.
+      focusFirstAccepting([
+        previousFocus instanceof HTMLElement && previousFocus.isConnected && owner?.contains(previousFocus)
+          ? previousFocus : null,
+        owner?.querySelector<HTMLElement>('.entry-item[tabindex="0"], [role="gridcell"][tabindex="0"]'),
+        owner,
+      ], () => document.activeElement);
+    } : null);
+  }
+
+  function handlePaneClick(event: MouseEvent): void {
+    pointerFocus.end();
+    if (keepsPaneFocus(event)) return;
+    handleFocus();
+    // A view that owns selection (SDK tiles) may have activated this pane
+    // itself; DOM focus must follow the active pane, as FileList does for rows.
+    const cell = event.target instanceof Element ? event.target.closest<HTMLElement>(ENTRY_SURFACE) : null;
+    if (cell && !paneRef?.contains(document.activeElement)) cell.focus({ preventScroll: true });
+  }
+
   /** Select an entry and ask FileList's active virtualized view to reveal it. */
   function selectAndReveal(
     entry: import("$lib/domain/file").FileEntry,
@@ -223,7 +283,7 @@ import { nextRemovableRoot } from "$lib/domain/drives";
 
   function handleKeydown(event: KeyboardEvent): void {
     // A plugin file view owns keyboard navigation within its own content.
-    if (event.defaultPrevented || dialogStore.hasModalOpen || paneGitGraph || pluginViewActive) return;
+    if (event.defaultPrevented || dialogStore.isPaneBlocked(paneId) || dialogStore.isInputBlocked(event, paneId) || paneGitGraph || pluginViewActive) return;
     const target = event.target as HTMLElement | null;
     if (!target || target.isContentEditable || target.closest('input, textarea, select, [contenteditable="true"]')) return;
     // File navigation belongs to the collection. Ordinary controls, Miller
@@ -253,6 +313,14 @@ import { nextRemovableRoot } from "$lib/domain/drives";
   // Note: Tab initialization is handled at page level by windowTabsManager
 </script>
 
+<svelte:window
+  onpointerdowncapture={() => pointerFocus.end()}
+  onpointercancel={() => pointerFocus.end()}
+  onmouseup={() => pointerFocus.release()}
+  onkeydowncapture={() => pointerFocus.end()}
+  onblur={() => pointerFocus.end()}
+/>
+
 <!-- svelte-ignore a11y_no_noninteractive_element_interactions -- pane-level click-to-focus delegation; keyboard users get the same activation via Tab + onfocus below -->
 <!-- svelte-ignore a11y_click_events_have_key_events -- onclick mirrors onfocus, so Tab already provides the keyboard equivalent -->
 <!-- svelte-ignore a11y_no_noninteractive_tabindex -- tabindex=0 is required so keyboard users can Tab into the pane, mirroring the click handler -->
@@ -263,9 +331,13 @@ import { nextRemovableRoot } from "$lib/domain/drives";
   class:inactive={isInactive}
   aria-label="file browser pane"
   tabindex="0"
-  onfocusin={handleFocus}
-  onclick={handleFocus}
+  data-pane-id={paneId}
+  onfocusincapture={handleFocusIn}
+  onmousedowncapture={handleMouseDown}
+  ondragstartcapture={() => { pointerFocus.end(); handleFocus(); }}
+  onclick={handlePaneClick}
 >
+  <div class="pane-base-content" use:paneContent>
   {#if paneGitGraph}
     <div class="pane-content">
       <!-- Same gating as the explorer branch below: the SCM panel stays
@@ -303,7 +375,7 @@ import { nextRemovableRoot } from "$lib/domain/drives";
            keyed off the single `islandMode` derived — not one platform's flag —
            or the columns double-mount inline AND as the island (#434). -->
       {#if paneExplorer.millerLayers > 0 && !millerHoistedToIsland}
-        <MillerColumns explorer={paneExplorer} {reserveInlineWidth} />
+        <MillerColumns explorer={paneExplorer} {paneId} {reserveInlineWidth} />
       {/if}
       <!-- SCM panel sits between the Miller columns and the file list (#227);
            per pane (#334, #434) — each pane's panel follows its own explorer
@@ -312,9 +384,13 @@ import { nextRemovableRoot } from "$lib/domain/drives";
       {#if settingsStore.showGitStatus && paneScmVisible}
         <ScmPanel {reserveInlineWidth} />
       {/if}
-      <FileList explorer={paneExplorer} bind:scrollToEntry={fileListScrollToEntry} />
+      <FileList explorer={paneExplorer} presentation={fileViewPresentation} bind:scrollToEntry={fileListScrollToEntry} />
     </div>
     <ContextMenu explorer={paneExplorer} />
+  {/if}
+  </div>
+  <div class="pane-dialog-slot" use:dialogSlot></div>
+  {#if paneExplorer}
     <DeleteDialog explorer={paneExplorer} />
   {/if}
 </section>
@@ -349,6 +425,7 @@ import { nextRemovableRoot } from "$lib/domain/drives";
   }
 
   .explorer-pane {
+    position: relative;
     display: flex;
     flex-direction: column;
     flex: 1;
@@ -385,6 +462,29 @@ import { nextRemovableRoot } from "$lib/domain/drives";
     flex: 1;
     min-height: 0;
     overflow: hidden;
+  }
+
+  .pane-base-content {
+    display: flex;
+    flex-direction: column;
+    flex: 1;
+    min-height: 0;
+    min-width: 0;
+    overflow: hidden;
+  }
+
+  .pane-dialog-slot {
+    /* Retain the portal/focus registration without covering listing cells
+       when no dialog is mounted. DOM portals update :empty synchronously. */
+    display: contents;
+  }
+
+  .pane-dialog-slot:not(:empty) {
+    display: block;
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    z-index: var(--z-modal, 1000);
   }
 
   /* Vibrancy: flatten inside the island */

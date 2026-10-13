@@ -1,8 +1,55 @@
 //! Pure structural validation before a provider receipt can change ownership.
-use super::model::{Admission, ArtifactDescriptor};
+use super::model::{Admission, AdmissionPhase, ArtifactDescriptor};
 use crate::error::AppError;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+/// Host policy never starts a request. Recovery only drives an existing result.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum AutoSettlement {
+    Recover,
+    Settle,
+    Leave,
+}
+pub(crate) fn auto_settlement(
+    _state: AdmissionPhase,
+    execution: &str,
+    _delivery: &str,
+    active: bool,
+) -> AutoSettlement {
+    if active {
+        return AutoSettlement::Leave;
+    }
+    // A successful execution is never automatically discarded, even when
+    // delivery is missing, corrupt, or already explicitly disposed. Only the
+    // original handoff/recovery may advance it; later passes silently retry.
+    if execution == "succeeded" {
+        AutoSettlement::Recover
+    } else {
+        AutoSettlement::Settle
+    }
+}
+
+/// A user may dismiss an operation only when nothing remains to recover:
+/// recovery was explicitly stopped, the provider's outcome is unknown and it
+/// holds no retained output. A succeeded execution keeps its bytes until
+/// discarded; an unstopped one is still recoverable.
+pub(crate) fn dismissable(stopped: bool, execution: &str, delivery: &str) -> bool {
+    stopped && execution == "unknown" && delivery == "none"
+}
+/// Whether a dismissal marker still hides an operation. The marker pins the
+/// provider receipt revision the user accepted; any newer provider evidence
+/// (for example a later success with retained bytes) or any change that makes
+/// the operation no longer dismissable brings it back.
+pub(crate) fn dismissal_holds(
+    marked_revision: Option<u64>,
+    receipt_revision: Option<u64>,
+    stopped: bool,
+    execution: &str,
+    delivery: &str,
+) -> bool {
+    matches!((marked_revision, receipt_revision), (Some(m), Some(r)) if m == r)
+        && dismissable(stopped, execution, delivery)
+}
 #[derive(Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct Receipt {
@@ -15,6 +62,48 @@ struct Receipt {
     delivery: Delivery,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     diagnostics: Option<OperationDiagnostics>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    billing: Option<Billing>,
+}
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct Billing {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    cost: Option<super::job::JobCost>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    evidence: Option<BillingEvidence>,
+}
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct BillingEvidence {
+    schema: String,
+    values: std::collections::BTreeMap<String, Value>,
+}
+impl Billing {
+    fn valid(&self) -> bool {
+        self.cost.as_ref().is_none_or(super::job::JobCost::valid)
+            && self.evidence.as_ref().is_none_or(|e| {
+                e.schema.chars().count() <= 64
+                    && e.values.len() <= 32
+                    && e.values.iter().all(|(k, v)| {
+                        k.chars().count() <= 64
+                            && match v {
+                                Value::String(s) => s.chars().count() <= 128,
+                                Value::Number(_) | Value::Bool(_) | Value::Null => true,
+                                _ => false,
+                            }
+                    })
+            })
+    }
+}
+/// Consumer compatibility is projected at delivery, never in durable evidence.
+pub(crate) fn for_consumer(mut receipt: Value, receipt_billing: bool) -> Value {
+    if !receipt_billing {
+        if let Some(object) = receipt.as_object_mut() {
+            object.remove("billing");
+        }
+    }
+    receipt
 }
 #[derive(Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -128,6 +217,16 @@ pub(crate) fn identity(value: &str) -> bool {
             .bytes()
             .all(|b| b.is_ascii_alphanumeric() || b"._-".contains(&b))
 }
+/// An image adapter identifier such as `openai-images`, `codex-cli` or
+/// `gemini`: providers add adapters without a host change, so the host checks
+/// the identifier's shape rather than a fixed list.
+pub(crate) fn adapter(value: &str) -> bool {
+    (1..=64).contains(&value.len())
+        && value.as_bytes()[0].is_ascii_lowercase()
+        && value
+            .bytes()
+            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
+}
 fn bounded(value: &str, max: usize) -> bool {
     value.len() <= max && !value.chars().any(char::is_control)
 }
@@ -221,18 +320,32 @@ impl OperationDiagnostics {
     }
 }
 
-pub(crate) fn validate(value: &Value, admission: &Admission) -> Result<Value, AppError> {
+pub(crate) fn validate_structure(value: &Value) -> Result<Value, AppError> {
     let invalid = || AppError::Other("Invalid image service receipt".into());
     if serde_json::to_vec(value).map_err(|_| invalid())?.len() > 16 * 1024 {
         return Err(invalid());
     }
+    if let Some(billing) = value.get("billing") {
+        if !billing.is_object()
+            || billing
+                .get("cost")
+                .is_some_and(|v| super::job::cost(v).is_none())
+            || billing.get("evidence").is_some_and(|v| !v.is_object())
+        {
+            return Err(invalid());
+        }
+    }
     let receipt: Receipt = serde_json::from_value(value.clone()).map_err(|_| invalid())?;
     if receipt.version != 1
-        || receipt.operation_id != admission.operation_id
-        || receipt.request_fingerprint != admission.fingerprint
-        || receipt.provider.package_id != admission.provider.package_id
-        || receipt.provider.service_id != admission.target.service_id
-        || receipt.provider.major != admission.target.major
+        || !identity(&receipt.operation_id)
+        || receipt.request_fingerprint.len() != 64
+        || !receipt
+            .request_fingerprint
+            .bytes()
+            .all(|b| b.is_ascii_hexdigit())
+        || !identity(&receipt.provider.package_id)
+        || !identity(&receipt.provider.service_id)
+        || receipt.provider.major == 0
         || receipt.revision == 0
         || receipt.revision > 9_007_199_254_740_991
     {
@@ -245,9 +358,12 @@ pub(crate) fn validate(value: &Value, admission: &Admission) -> Result<Value, Ap
     {
         return Err(invalid());
     }
+    if receipt.billing.as_ref().is_some_and(|b| !b.valid()) {
+        return Err(invalid());
+    }
     match &receipt.execution {
         Execution::Succeeded { metadata } => {
-            if !matches!(metadata.adapter.as_str(), "openai-images" | "codex-cli")
+            if !adapter(&metadata.adapter)
                 || !bounded(&metadata.endpoint_identity, 8192)
                 || metadata.requested_model.as_ref().is_some_and(|v| !model(v))
                 || metadata.actual_model.as_ref().is_some_and(|v| !model(v))
@@ -313,15 +429,36 @@ pub(crate) fn validate(value: &Value, admission: &Admission) -> Result<Value, Ap
     }
     serde_json::to_value(receipt).map_err(|_| invalid())
 }
+/// Ledger identity is an additional check, independent of receipt shape/bounds.
+pub(crate) fn validate(value: &Value, admission: &Admission) -> Result<Value, AppError> {
+    let receipt = validate_structure(value)?;
+    if receipt["operationId"] != admission.operation_id
+        || receipt["requestFingerprint"] != admission.fingerprint
+        || receipt["provider"]["packageId"] != admission.provider.package_id
+        || receipt["provider"]["serviceId"] != admission.target.service_id
+        || receipt["provider"]["major"] != admission.target.major
+    {
+        return Err(AppError::Other("Invalid image service receipt".into()));
+    }
+    Ok(receipt)
+}
+
 pub(crate) fn validate_transition(previous: &Value, next: &Value) -> Result<(), AppError> {
     let reject = || AppError::Other("Image receipt conflicts with its durable outcome".into());
+    // Unknown fences replay; it does not disprove a delayed original result.
+    // Only authoritative success can refine it, never a new execution start.
+    let late_success =
+        previous["execution"]["state"] == "unknown" && next["execution"]["state"] == "succeeded";
     if let Some(d) = previous.get("diagnostics") {
         let n = &next["diagnostics"];
         if d["kind"] != n["kind"]
             || d["threadId"] != n["threadId"]
-            || (d["explanation"].is_object() && d["explanation"] != n["explanation"])
+            || (!late_success
+                && d["explanation"].is_object()
+                && d["explanation"] != n["explanation"])
             || (previous["execution"]["state"] != "running"
                 && previous["execution"]["state"] != "accepted"
+                && !late_success
                 && d != n)
         {
             return Err(reject());
@@ -332,7 +469,8 @@ pub(crate) fn validate_transition(previous: &Value, next: &Value) -> Result<(), 
     if matches!(
         before,
         Some("succeeded" | "failed" | "cancelled" | "unknown")
-    ) && previous["execution"] != next["execution"]
+    ) && !late_success
+        && previous["execution"] != next["execution"]
     {
         return Err(reject());
     }
@@ -353,4 +491,157 @@ pub(crate) fn validate_transition(previous: &Value, next: &Value) -> Result<(), 
         return Err(reject());
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod dismissal_tests {
+    use super::{dismissable, dismissal_holds};
+    #[test]
+    fn only_stopped_unknown_with_no_delivery_is_dismissable() {
+        assert!(dismissable(true, "unknown", "none"));
+    }
+    #[test]
+    fn an_operation_that_is_not_stopped_is_not_dismissable() {
+        assert!(!dismissable(false, "unknown", "none"));
+    }
+    #[test]
+    fn a_succeeded_execution_is_discarded_not_dismissed() {
+        for delivery in ["available", "unavailable", "none"] {
+            assert!(!dismissable(true, "succeeded", delivery), "{delivery}");
+        }
+    }
+    #[test]
+    fn retained_delivery_is_never_dismissable() {
+        for delivery in ["available", "unavailable", "acquired", "discarded"] {
+            assert!(!dismissable(true, "unknown", delivery), "{delivery}");
+        }
+    }
+    #[test]
+    fn other_execution_states_are_not_dismissable() {
+        for execution in [
+            "accepted",
+            "running",
+            "failed",
+            "cancelled",
+            "unconfirmed",
+            "",
+        ] {
+            assert!(!dismissable(true, execution, "none"), "{execution}");
+        }
+    }
+    #[test]
+    fn a_marker_at_the_current_revision_hides_a_dismissable_operation() {
+        assert!(dismissal_holds(Some(2), Some(2), true, "unknown", "none"));
+    }
+    #[test]
+    fn no_marker_or_no_receipt_hides_nothing() {
+        assert!(!dismissal_holds(None, Some(2), true, "unknown", "none"));
+        assert!(!dismissal_holds(Some(2), None, true, "unknown", "none"));
+    }
+    #[test]
+    fn newer_provider_evidence_resurfaces_the_operation() {
+        assert!(!dismissal_holds(Some(2), Some(3), true, "unknown", "none"));
+    }
+    #[test]
+    fn output_arriving_later_resurfaces_the_operation_even_at_the_same_revision() {
+        assert!(!dismissal_holds(
+            Some(2),
+            Some(2),
+            true,
+            "succeeded",
+            "available"
+        ));
+        assert!(!dismissal_holds(
+            Some(2),
+            Some(2),
+            true,
+            "unknown",
+            "available"
+        ));
+    }
+    #[test]
+    fn a_marker_never_hides_an_operation_that_is_no_longer_stopped() {
+        assert!(!dismissal_holds(Some(2), Some(2), false, "unknown", "none"));
+    }
+}
+
+#[cfg(test)]
+mod adapter_tests {
+    use super::adapter;
+    #[test]
+    fn adapter_identifiers_are_checked_by_shape() {
+        for ok in ["openai-images", "codex-cli", "gemini", "bfl", "a", "x2"] {
+            assert!(adapter(ok), "{ok}");
+        }
+        let long = "a".repeat(65);
+        for bad in [
+            "",
+            "Gemini",
+            "2fast",
+            "-x",
+            "open_ai",
+            "a b",
+            "é",
+            long.as_str(),
+        ] {
+            assert!(!adapter(bad), "{bad}");
+        }
+    }
+}
+
+#[cfg(test)]
+mod auto_settlement_tests {
+    use super::*;
+    #[test]
+    fn every_state_execution_delivery_and_activity_combination() {
+        for phase in [
+            AdmissionPhase::Reserved,
+            AdmissionPhase::Forwarding,
+            AdmissionPhase::Accepted,
+            AdmissionPhase::Terminal,
+            AdmissionPhase::Released,
+        ] {
+            for execution in [
+                "accepted",
+                "running",
+                "succeeded",
+                "failed",
+                "cancelled",
+                "unknown",
+                "unconfirmed",
+                "",
+                "malformed",
+            ] {
+                for delivery in [
+                    "none",
+                    "available",
+                    "unavailable",
+                    "acquired",
+                    "discarded",
+                    "",
+                    "malformed",
+                    "unrecoverable",
+                ] {
+                    assert_eq!(
+                        auto_settlement(phase, execution, delivery, true),
+                        AutoSettlement::Leave
+                    );
+                    let decision = auto_settlement(phase, execution, delivery, false);
+                    if execution == "unknown" {
+                        assert_ne!(
+                            decision,
+                            AutoSettlement::Recover,
+                            "Unknown must never be replayed"
+                        );
+                    }
+                    if execution == "succeeded" {
+                        assert_eq!(decision, AutoSettlement::Recover,
+                            "successful output must be retained for every delivery state: {phase:?}/{delivery}");
+                    } else {
+                        assert_eq!(decision, AutoSettlement::Settle);
+                    }
+                }
+            }
+        }
+    }
 }

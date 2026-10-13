@@ -1,7 +1,23 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { mockInvoke } from "../../src/lib/api/mock-invoke";
 import { decodeDirectoryListing, type CompactDirectoryListing } from "$lib/api/directory-wire";
 import { MOCK_LOCAL_KEYS } from "../../src/lib/api/mock-control";
+
+describe("mockInvoke — native file drag", () => {
+  it("rejects an unavailable native start without reporting completion or transferring files", async () => {
+    const directory = "/home/user/Documents";
+    const paths = async () => decodeDirectoryListing(await mockInvoke<CompactDirectoryListing>(
+      "list_directory", { path: directory },
+    )).entries.map(entry => entry.path);
+    const before = await paths();
+    const onmessage = vi.fn();
+    await expect(mockInvoke("start_file_drag", {
+      item: [`${directory}/notes.md`], image: "/drag.png", source: null, onEvent: { onmessage },
+    })).rejects.toBe("Native file dragging is unavailable in the browser");
+    expect(onmessage).not.toHaveBeenCalled();
+    expect(await paths()).toEqual(before);
+  });
+});
 
 describe("mockInvoke — clipboard file round-trip", () => {
   type Snapshot = { revision: number; paths: string[]; operation: string | null };

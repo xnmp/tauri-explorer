@@ -44,6 +44,7 @@ export function createGitGraphQuerySession(options: {
   let disposed = false;
   let appendOwner: object | null = null;
   let activeWriter: ReturnType<typeof beginSnapshotWrite> | undefined;
+  let pendingPage: Promise<void> | null = null;
 
   const reloader = createReloader(async ({ isCurrent }) => {
     const query = captureQuery();
@@ -85,7 +86,7 @@ export function createGitGraphQuerySession(options: {
     }
   });
 
-  async function loadMore(): Promise<void> {
+  async function appendPage(): Promise<void> {
     if (disposed || initialLoading || loadingMore || !snapshot.hasMore) return;
     const query = captureQuery();
     const key = keyOf(query);
@@ -125,6 +126,14 @@ export function createGitGraphQuerySession(options: {
     }
   }
 
+  async function loadMore(): Promise<void> {
+    if (pendingPage) return;
+    const pending = appendPage();
+    pendingPage = pending;
+    try { await pending; }
+    finally { if (pendingPage === pending) pendingPage = null; }
+  }
+
   function reload(): Promise<void> {
     if (disposed) return Promise.resolve();
     activeWriter?.dispose();
@@ -133,9 +142,33 @@ export function createGitGraphQuerySession(options: {
     // read still has a queued reload to drain. Old finally blocks cannot
     // clear a replacement's busy state.
     appendOwner = null;
+    pendingPage = null;
     loadingMore = false;
     initialLoading = true;
     return reloader.reload();
+  }
+
+  /** Extend the actual displayed walk until a navigation target is available.
+   * A refresh, filter change or disposal retires this lookup. */
+  async function findCommit(oid: string, ownsRequest = () => true) {
+    const generation = reloader.generation;
+    const key = displayedKey;
+    const current = () => !disposed && ownsRequest() && generation === reloader.generation
+      && key === keyOf(options.readQuery());
+    while (current()) {
+      if (error) throw new Error(error);
+      const found = snapshot.commits.find((commit) => commit.oid === oid);
+      if (found) return found;
+      if (!snapshot.hasMore) return null;
+      const before = snapshot.commits.length;
+      if (pendingPage) await pendingPage;
+      else await loadMore();
+      if (!current()) return null;
+      if (error) throw new Error(error);
+      // Another paging owner or a non-advancing backend must not spin forever.
+      if (snapshot.commits.length === before) return null;
+    }
+    return null;
   }
 
   return {
@@ -152,6 +185,7 @@ export function createGitGraphQuerySession(options: {
     get error() { return error; },
     reload,
     loadMore,
+    findCommit,
     dispose(): void {
       disposed = true;
       appendOwner = null;

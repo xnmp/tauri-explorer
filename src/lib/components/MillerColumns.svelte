@@ -8,6 +8,7 @@
   (0=off; per-pane since #229, defaulting from settings).
 -->
 <script lang="ts">
+  import { dragState } from "$lib/state/drag.svelte";
   import { useInlinePanelWidth } from "$lib/composables/use-inline-panel-width.svelte";
   import type { ReserveInlineWidth } from "$lib/state/pane-viewport.svelte";
   import PanelResizeHandle from "./PanelResizeHandle.svelte";
@@ -19,11 +20,11 @@
   import { createDirectoryWatch } from "$lib/state/directory-watch";
   import FileIcon from "./FileIcon.svelte";
   import EntryName from "./EntryName.svelte";
-  import { dragState } from "$lib/state/drag.svelte";
+  import { createHtml5FileDrag } from "$lib/state/html5-file-drag.svelte";
+  import { dropIntoDirectory } from "$lib/composables/use-dom-directory-drop";
   import { windowTabsManager } from "$lib/state/window-tabs.svelte";
   import { useDropTarget } from "$lib/composables/use-drop-target.svelte";
   import { usePointerDrag } from "$lib/composables/use-pointer-drag.svelte";
-  import { getDropSourcePaths, handleFileDropMany } from "$lib/state/drop-operations";
   import { isCopyModifier, usesPointerDrag, usesHtml5Drag } from "$lib/domain/platform";
   import { manualHiddenStore } from "$lib/state/manual-hidden.svelte";
   import { parentDir } from "$lib/domain/path";
@@ -36,11 +37,20 @@
   const panelId = $props.id();
 
   interface Props {
+    paneId?: string;
     reserveInlineWidth?: ReserveInlineWidth;
     explorer: ExplorerInstance;
   }
 
-  let { explorer, reserveInlineWidth }: Props = $props();
+  let { explorer, paneId, reserveInlineWidth }: Props = $props();
+  function paneContent(element: HTMLElement) {
+    const destroy = $effect.root(() => {
+      $effect(() => {
+        if (paneId) return windowTabsManager.paneDialogs.registerContent(paneId, element);
+      });
+    });
+    return { destroy };
+  }
 
   interface MillerColumn {
     path: string;
@@ -247,19 +257,9 @@
     explorer.openContextMenu(event.clientX, event.clientY, entry);
   }
 
-  function handleDragStart(event: DragEvent, entry: FileEntry): void {
-    if (!event.dataTransfer) return;
-    event.dataTransfer.setData("application/x-explorer-path", entry.path);
-    event.dataTransfer.setData("application/x-explorer-name", entry.name);
-    event.dataTransfer.setData("application/x-explorer-kind", entry.kind);
-    event.dataTransfer.effectAllowed = "all";
-    dragState.start({ path: entry.path, name: entry.name, kind: entry.kind });
-  }
-
-  function handleDragEnd(): void {
-    dragState.clear();
-    windowTabsManager.refreshAllPanes();
-  }
+  const fileDrag = createHtml5FileDrag(() => windowTabsManager.refreshAllPanes());
+  const handleDragStart = (event: DragEvent, entry: FileEntry) => fileDrag.start(event, entry);
+  const handleDragEnd = fileDrag.end;
 
   // Shared drop-target behavior
   const dropTarget = useDropTarget({ onRefresh: () => windowTabsManager.refreshAllPanes() });
@@ -271,8 +271,7 @@
   let bgDropCopy = $state(false);
 
   function handleBgDragOver(event: DragEvent, columnPath: string): void {
-    const types = event.dataTransfer?.types;
-    if (!types?.includes("application/x-explorer-path") && !types?.includes("Files") && !dragState.readCrossWindow()) return;
+    if (!dragState.acceptsFileDrag(event.dataTransfer)) return;
     event.preventDefault();
     const copying = isCopyModifier(event);
     if (event.dataTransfer) event.dataTransfer.dropEffect = copying ? "copy" : "move";
@@ -288,23 +287,13 @@
   }
 
   async function handleBgDrop(event: DragEvent, columnPath: string): Promise<void> {
+    if (!dragState.acceptsFileDrop(event.dataTransfer)) return;
     event.preventDefault();
     bgDropColumn = null;
     bgDropCopy = false;
     if (!event.dataTransfer) return;
 
-    const sourcePaths = getDropSourcePaths(event.dataTransfer);
-    if (sourcePaths.length === 0) return;
-
-    const isCopy = isCopyModifier(event);
-
-    dragState.clear();
-    const valid = sourcePaths.filter(
-      (sourcePath) => sourcePath !== columnPath && !columnPath.startsWith(sourcePath + "/"),
-    );
-    await handleFileDropMany(valid, columnPath, isCopy, {
-      onRefresh: () => windowTabsManager.refreshAllPanes(),
-    });
+    await dropIntoDirectory(event, columnPath, "miller-background", { onRefresh: () => windowTabsManager.refreshAllPanes() });
   }
 
   // Resizable width
@@ -317,7 +306,7 @@
 </script>
 
 {#if columns.length > 0}
-  <div id={panelId} class="miller-columns" class:resizing={resize.isResizing} style="width: {resize.value}px">
+  <div id={panelId} class="miller-columns" data-pane-id={paneId} use:paneContent class:resizing={resize.isResizing} style="width: {resize.value}px">
     {#each columns as column (column.path)}
       <!-- svelte-ignore a11y_no_static_element_interactions -->
       <div

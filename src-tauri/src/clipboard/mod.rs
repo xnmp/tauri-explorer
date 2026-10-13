@@ -70,31 +70,50 @@ pub async fn clipboard_has_image() -> Result<bool, AppError> {
 #[tauri::command]
 pub async fn clipboard_read_report_image(
 ) -> Result<crate::user_report::ReportAttachment, crate::user_report::SubmitReportError> {
-    let (bytes, media_type) =
-        tokio::task::spawn_blocking(|| content::read_report_image(platform::reader().as_ref()))
-            .await
-            .map_err(|error| {
-                crate::user_report::SubmitReportError::new(
-                    "clipboard_unavailable",
-                    format!("Clipboard task failed: {error}"),
-                )
-            })?
-            .ok_or_else(|| {
-                crate::user_report::SubmitReportError::new(
-                    "clipboard_unavailable",
-                    "No image data in clipboard",
-                )
-            })?;
-    let extension = if media_type == "image/jpeg" {
-        "jpg"
-    } else {
-        "png"
-    };
-    crate::user_report::attachment_from_image_bytes(
-        format!("Clipboard screenshot.{extension}"),
-        media_type,
-        bytes,
-    )
+    tokio::task::spawn_blocking(|| {
+        content::read_report_image_attachment(platform::reader().as_ref())
+    })
+    .await
+    .map_err(|error| {
+        crate::user_report::SubmitReportError::new(
+            "clipboard_unavailable",
+            format!("Clipboard task failed: {error}"),
+        )
+    })?
+}
+
+/// Report attachments include clipboard screenshots and copied video files.
+#[tauri::command]
+pub async fn clipboard_has_report_attachment() -> Result<bool, AppError> {
+    let paths = clipboard_snapshot()
+        .await
+        .map(|snapshot| snapshot.paths)
+        .unwrap_or_default();
+    tokio::task::spawn_blocking(move || {
+        content::has_report_attachment(&paths, platform::reader().as_ref())
+    })
+    .await
+    .map_err(|error| AppError::Other(format!("Clipboard task failed: {error}")))?
+}
+
+#[tauri::command]
+pub async fn clipboard_read_report_attachment(
+) -> Result<crate::user_report::ReportAttachment, crate::user_report::SubmitReportError> {
+    // A failed file-list probe must not hide either the image or its error.
+    let paths = clipboard_snapshot()
+        .await
+        .map(|snapshot| snapshot.paths)
+        .unwrap_or_default();
+    tokio::task::spawn_blocking(move || {
+        content::read_report_attachment(&paths, platform::reader().as_ref())
+    })
+    .await
+    .map_err(|error| {
+        crate::user_report::SubmitReportError::new(
+            "clipboard_unavailable",
+            format!("Clipboard task failed: {error}"),
+        )
+    })?
 }
 
 /// Paste clipboard image data to a file in the given directory.

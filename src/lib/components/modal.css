@@ -22,13 +22,18 @@
 
 @keyframes modal-card-in {
   from {
-    opacity: 0;
-    transform: scale(0.95) translateY(8px);
+    clip-path: inset(0 0 100% 0 round var(--radius-lg));
+    margin-top: -6px;
   }
   to {
-    opacity: 1;
-    transform: scale(1) translateY(0);
+    /* Keep the dialog shadow visible as the reveal completes. */
+    clip-path: inset(-80px round var(--radius-lg));
+    margin-top: 0;
   }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .modal-card { animation: none; }
 }
 
 .modal-card .dialog-header {

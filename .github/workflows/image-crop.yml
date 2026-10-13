@@ -4,10 +4,18 @@ on:
   pull_request:
     branches: [dev]
     paths:
-      - "src-tauri/**"
+      - "src-tauri/src/image_crop.rs"
+      - "src-tauri/src/image_crop/**"
+      - "src-tauri/src/image_operation.rs"
+      - "src-tauri/src/files/image_crop.rs"
+      - "src-tauri/test_support/image_crop*.rs"
+      - "src-tauri/test_support/fixtures/*image-crop*"
+      - "src-tauri/Cargo.toml"
+      - "src-tauri/Cargo.lock"
       - ".github/workflows/image-crop.yml"
-  push:
-    branches: [feat/ability-to-crop-image-from-preview-pane]
+  # macOS is nightly/manual only: PRs run Linux and Windows.
+  schedule:
+    - cron: "43 5 * * *"
   workflow_dispatch:
 
 concurrency:
@@ -19,11 +27,13 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
+        os: ${{ fromJSON(github.event_name == 'pull_request' && '["ubuntu-latest","windows-latest"]' || '["ubuntu-latest","windows-latest","macos-latest"]') }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event_name == 'schedule' && 'dev' || '' }}
       - uses: dtolnay/rust-toolchain@stable
       - name: Install Linux native dependencies
         if: runner.os == 'Linux'

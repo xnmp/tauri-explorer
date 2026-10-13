@@ -151,13 +151,13 @@ test("selected image reads keep Submit disabled across closing and reopening", a
     buffer: Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+a9S8AAAAASUVORK5CYII=", "base64"),
   });
   await expect.poll(() => page.evaluate(() => localStorage.getItem("pending-report-image-read"))).toBe("1");
-  await expect(dialog.getByRole("button", { name: "Reading images…", exact: true })).toBeDisabled();
+  await expect(dialog.getByRole("button", { name: "Reading attachments…", exact: true })).toBeDisabled();
   await page.keyboard.press("Control+Enter");
   expect(await page.evaluate((key) => localStorage.getItem(key), MOCK_LOCAL_KEYS.submittedReport)).toBeNull();
   await dialog.getByRole("button", { name: "Cancel", exact: true }).click();
   await expect(dialog).toBeHidden();
   dialog = await openReportDialog(page);
-  await expect(dialog.getByRole("button", { name: "Reading images…", exact: true })).toBeDisabled();
+  await expect(dialog.getByRole("button", { name: "Reading attachments…", exact: true })).toBeDisabled();
   await page.evaluate(() => (window as Window & { releaseReportImageRead?: () => void }).releaseReportImageRead!());
   await expect(dialog.getByText("delayed-proof.png")).toBeVisible();
   await dialog.getByRole("button", { name: "Submit", exact: true }).click();
@@ -231,11 +231,29 @@ test("a failed report keeps its in-session attachment retry draft", async ({ pag
   await expect(dialog.getByText("Clipboard screenshot.png")).toBeVisible();
   await dialog.getByRole("button", { name: "Submit" }).click();
   await expect(page.locator(".toast.error")).toContainText(
-    "Your text is saved; images remain available until this window closes",
+    "Your text is saved; images and videos remain available until this window closes",
   );
 
   dialog = await openReportDialog(page);
   await expect(dialog.getByLabel("Title")).toHaveValue("Retry with image");
   await expect(dialog.getByText("Clipboard screenshot.png")).toBeVisible();
   await dialog.screenshot({ path: evidencePath("ac-4-failed-report-retry.png") });
+});
+
+test("ordinary text drag inserts into the report description", async ({ page }) => {
+  await page.goto("/"); await waitForEntries(page);
+  const dialog = await openReportDialog(page);
+  const description = dialog.getByLabel("Description");
+  await description.fill("Existing report details. ");
+  await description.evaluate(textarea => {
+    const source = document.createElement("div");
+    source.draggable = true;
+    source.dataset.testid = "report-text-drag";
+    source.textContent = "Additional dropped details";
+    source.addEventListener("dragstart", event => event.dataTransfer!.setData("text/plain", source.textContent!));
+    textarea.parentElement!.prepend(source);
+  });
+  await page.getByTestId("report-text-drag").dragTo(description);
+  await expect(description).toHaveValue(/Additional dropped details/);
+  await expect(description).toHaveValue(/Existing report details/);
 });

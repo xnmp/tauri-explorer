@@ -1,6 +1,12 @@
 /**
- * Full-resolution image loading for the Preview pane: file images and plugin
- * Preview targets (#1033) load the same way.
+ * Image loading for the Preview pane: file images and plugin Preview targets
+ * (#1033) load the same way.
+ *
+ * With `rendition`, the backend is first asked for a display-sized rendition
+ * of a large raster image (#1054); a small, animated or unsupported image is
+ * its own original. Any rendition failure falls through to the original, so
+ * the worst case is the full-resolution load the pane always used to do.
+ * Plugin targets and fullscreen request the original directly.
  *
  * In Tauri the image streams through the `asset:` protocol and is decoded
  * off-screen. When that fails — cloud-mounted placeholders (Google Drive,
@@ -15,6 +21,9 @@
 import { isTauri } from "$lib/api/common";
 import { readImageAsBlobUrl } from "$lib/api/files";
 import { logFrontendDiagnostic } from "$lib/api/frontend-log";
+import { getPreviewImage } from "$lib/api/thumbnails";
+import { SKIPPED, type LatestOnlyRunner } from "$lib/domain/latest-only";
+import { mayHaveRendition, type PreviewImageResolution } from "$lib/domain/preview-rendition";
 
 export interface PreviewImageOwner {
   /** Whether this load is still the one the caller wants. */
@@ -25,12 +34,35 @@ export interface PreviewImageOwner {
   releaseBlob(url: string): void;
 }
 
+export interface PreviewImageReady {
+  readonly status: "ready";
+  readonly url: string;
+  /** The bytes came through the backend read rather than the asset protocol. */
+  readonly viaBackend: boolean;
+  /** A display-sized rendition, or the file itself. */
+  readonly resolution: PreviewImageResolution;
+}
+
 export type PreviewImageLoad =
-  /** Decoded and ready to show; `viaBackend` when the bytes came through the backend read. */
-  | { readonly status: "ready"; readonly url: string; readonly viaBackend: boolean }
+  | PreviewImageReady
   | { readonly status: "failed" }
   /** Superseded: the caller shows nothing from this load. */
   | { readonly status: "stale" };
+
+export interface PreviewRenditionOptions {
+  /** Longest rendition edge in device pixels (see `domain/preview-rendition`). */
+  readonly maxEdge: number;
+  /**
+   * Serialises the backend requests of one surface so selections skipped
+   * while a decode runs never queue decode work of their own.
+   */
+  readonly runner?: LatestOnlyRunner;
+}
+
+export interface PreviewImageOptions {
+  /** Prefer a display-sized rendition; omitted, the original is loaded. */
+  readonly rendition?: PreviewRenditionOptions;
+}
 
 const STALE: PreviewImageLoad = { status: "stale" };
 const FAILED: PreviewImageLoad = { status: "failed" };
@@ -47,7 +79,16 @@ function errorText(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-async function loadViaBackend(path: string, owner: PreviewImageOwner): Promise<PreviewImageLoad> {
+async function assetUrl(path: string, cacheBust: string): Promise<string> {
+  const { convertFileSrc } = await import("@tauri-apps/api/core");
+  return `${convertFileSrc(path)}?v=${encodeURIComponent(cacheBust)}`;
+}
+
+async function loadViaBackend(
+  path: string,
+  owner: PreviewImageOwner,
+  resolution: PreviewImageResolution,
+): Promise<PreviewImageLoad> {
   const fallback = await readImageAsBlobUrl(path);
   if (!owner.isCurrent()) {
     owner.adoptBlob(fallback.ok ? fallback.data : "");
@@ -62,7 +103,7 @@ async function loadViaBackend(path: string, owner: PreviewImageOwner): Promise<P
   try {
     await decodeImage(fallback.data);
     if (!owner.isCurrent()) return STALE;
-    return { status: "ready", url: fallback.data, viaBackend: true };
+    return { status: "ready", url: fallback.data, viaBackend: true, resolution };
   } catch (error) {
     if (!owner.isCurrent()) return STALE;
     owner.releaseBlob(fallback.data);
@@ -72,24 +113,84 @@ async function loadViaBackend(path: string, owner: PreviewImageOwner): Promise<P
   }
 }
 
-/**
- * Loads `path` at full resolution. `cacheBust` versions the asset URL so the
- * webview re-fetches when the file changes (callers pass an mtime/size key).
- */
-export async function loadPreviewImage(path: string, cacheBust: string, owner: PreviewImageOwner): Promise<PreviewImageLoad> {
-  if (!isTauri()) return loadViaBackend(path, owner);
+/** The file itself: asset protocol, then the backend read. */
+async function loadOriginal(path: string, cacheBust: string, owner: PreviewImageOwner): Promise<PreviewImageLoad> {
+  if (!isTauri()) return loadViaBackend(path, owner, "original");
   try {
-    const { convertFileSrc } = await import("@tauri-apps/api/core");
+    const url = await assetUrl(path, cacheBust);
     if (!owner.isCurrent()) return STALE;
-    const url = `${convertFileSrc(path)}?v=${encodeURIComponent(cacheBust)}`;
     // Decode off-screen — the caller's spinner stays visible until ready.
     await decodeImage(url);
     if (!owner.isCurrent()) return STALE;
-    return { status: "ready", url, viaBackend: false };
+    return { status: "ready", url, viaBackend: false, resolution: "original" };
   } catch (assetErr) {
     if (!owner.isCurrent()) return STALE;
     console.warn("[preview] asset image decode failed; using backend fallback", { path, error: assetErr });
     logFrontendDiagnostic("preview asset image decode failed", { path, error: errorText(assetErr) });
-    return loadViaBackend(path, owner);
+    return loadViaBackend(path, owner, "original");
   }
+}
+
+/** A cached rendition file; null when it cannot be shown (load the original). */
+async function loadRenditionFile(
+  renditionPath: string,
+  cacheBust: string,
+  owner: PreviewImageOwner,
+): Promise<PreviewImageLoad | null> {
+  if (!isTauri()) {
+    const image = await loadViaBackend(renditionPath, owner, "rendition");
+    return image.status === "failed" ? null : image;
+  }
+  try {
+    const url = await assetUrl(renditionPath, cacheBust);
+    if (!owner.isCurrent()) return STALE;
+    await decodeImage(url);
+    if (!owner.isCurrent()) return STALE;
+    return { status: "ready", url, viaBackend: false, resolution: "rendition" };
+  } catch (error) {
+    if (!owner.isCurrent()) return STALE;
+    // Pruned from the cache, or outside the asset scope (XDG_CACHE_HOME
+    // outside $HOME): the original still works.
+    console.warn("[preview] rendition decode failed; loading the original", { renditionPath, error });
+    logFrontendDiagnostic("preview rendition decode failed", { path: renditionPath, error: errorText(error) });
+    return null;
+  }
+}
+
+/** The rendition when the backend has one; null to load the original instead. */
+async function loadRendition(
+  path: string,
+  cacheBust: string,
+  owner: PreviewImageOwner,
+  options: PreviewRenditionOptions,
+): Promise<PreviewImageLoad | null> {
+  const request = () => getPreviewImage(path, options.maxEdge);
+  const answer = options.runner
+    ? await options.runner.run(request, () => owner.isCurrent())
+    : await request();
+  if (answer === SKIPPED || !owner.isCurrent()) return STALE;
+  if (!answer.ok) {
+    console.warn("[preview] rendition request failed; loading the original", { path, error: answer.error });
+    logFrontendDiagnostic("preview rendition request failed", { path, error: answer.error });
+    return null;
+  }
+  if (answer.data.kind === "original") return null;
+  return loadRenditionFile(answer.data.path, cacheBust, owner);
+}
+
+/**
+ * Loads `path` for the Preview pane. `cacheBust` versions the asset URL so the
+ * webview re-fetches when the file changes (callers pass an mtime/size key).
+ */
+export async function loadPreviewImage(
+  path: string,
+  cacheBust: string,
+  owner: PreviewImageOwner,
+  options: PreviewImageOptions = {},
+): Promise<PreviewImageLoad> {
+  if (options.rendition && mayHaveRendition(path)) {
+    const rendition = await loadRendition(path, cacheBust, owner, options.rendition);
+    if (rendition) return rendition;
+  }
+  return loadOriginal(path, cacheBust, owner);
 }

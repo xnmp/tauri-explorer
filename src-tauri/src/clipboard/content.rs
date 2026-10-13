@@ -17,6 +17,68 @@ pub(super) fn read_report_image(reader: &dyn ClipboardReader) -> Option<(Vec<u8>
     })
 }
 
+/// Build the screenshot attachment without touching the filesystem.
+pub(super) fn read_report_image_attachment(
+    reader: &dyn ClipboardReader,
+) -> Result<crate::user_report::ReportAttachment, crate::user_report::SubmitReportError> {
+    report_image_attachment(read_report_image(reader))
+}
+
+fn report_image_attachment(
+    image: Option<(Vec<u8>, &'static str)>,
+) -> Result<crate::user_report::ReportAttachment, crate::user_report::SubmitReportError> {
+    let (bytes, media_type) = image.ok_or_else(|| {
+        crate::user_report::SubmitReportError::new(
+            "clipboard_unavailable",
+            "No image data in clipboard",
+        )
+    })?;
+    let extension = if media_type == "image/jpeg" {
+        "jpg"
+    } else {
+        "png"
+    };
+    crate::user_report::attachment_from_image_bytes(
+        format!("Clipboard screenshot.{extension}"),
+        media_type,
+        bytes,
+    )
+}
+
+/// Shared admission seam for the report command and native regression tests.
+pub(super) fn read_report_attachment(
+    paths: &[String],
+    reader: &dyn ClipboardReader,
+) -> Result<crate::user_report::ReportAttachment, crate::user_report::SubmitReportError> {
+    // A copied recording wins over any thumbnail offered by its clipboard
+    // owner. Multiple files retain the explicit copy-one-file contract.
+    if paths.len() > 1
+        || paths
+            .first()
+            .is_some_and(|path| crate::user_report::clipboard_video_media_type(path).is_some())
+    {
+        return crate::user_report::attachment_from_clipboard_files(paths);
+    }
+    match read_report_image(reader) {
+        None if !paths.is_empty() => crate::user_report::attachment_from_clipboard_files(paths),
+        image => report_image_attachment(image),
+    }
+}
+
+pub(super) fn has_report_attachment(
+    paths: &[String],
+    reader: &dyn ClipboardReader,
+) -> Result<bool, AppError> {
+    if paths
+        .iter()
+        .any(|path| crate::user_report::clipboard_video_media_type(path).is_some())
+    {
+        Ok(true)
+    } else {
+        reader.has_image_result()
+    }
+}
+
 /// Save the clipboard's PNG image into `directory` under a timestamped name
 /// that never overwrites an existing file. Returns the created path.
 pub(super) fn paste_image(
@@ -289,3 +351,7 @@ mod tests {
         assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 0);
     }
 }
+
+#[cfg(test)]
+#[path = "../../test_support/report_clipboard_routing.rs"]
+mod report_routing;

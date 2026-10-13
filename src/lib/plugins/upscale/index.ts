@@ -104,6 +104,7 @@ export const upscalePlugin: Plugin = {
 
     // 4. Command-palette entry.
     ctx.registerCommand({
+      scope: "pane",
       id: "plugin.upscale.run",
       label: "Upscale: Upscale Image…",
       category: "plugins",

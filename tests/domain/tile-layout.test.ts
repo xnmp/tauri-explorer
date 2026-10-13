@@ -2,7 +2,32 @@
  * Tile geometry shared by the Tiles view and the plugin SDK's file tiles.
  */
 import { describe, expect, it } from "vitest";
-import { gridFocusStep, isThumbnailSize, paneTileSize, THUMBNAIL_SIZE_CONFIG, tileLayout, type ThumbnailSize } from "$lib/domain/tile-layout";
+import { gridFocusStep, isThumbnailSize, paneTileSize, tileGridMetrics, THUMBNAIL_SIZE_CONFIG, tileLayout, type ThumbnailSize } from "$lib/domain/tile-layout";
+
+describe("tileGridMetrics (ui/file-tile)", () => {
+  it("exposes every preset's minimum width, allocated height, gap and grid padding", () => {
+    expect((["small", "medium", "large", "xlarge"] as const).map(tileGridMetrics)).toEqual([
+      { cellWidth: 84, cellHeight: 103, gap: 2, gridPadding: 8 },
+      { cellWidth: 108, cellHeight: 129, gap: 6, gridPadding: 8 },
+      { cellWidth: 140, cellHeight: 161, gap: 6, gridPadding: 8 },
+      { cellWidth: 172, cellHeight: 193, gap: 6, gridPadding: 8 },
+    ]);
+  });
+
+  it("matches the host's virtual row stride and returns immutable geometry", () => {
+    for (const preset of ["small", "medium", "large", "xlarge"] as const) {
+      const metrics = tileGridMetrics(preset);
+      expect(metrics.cellHeight + metrics.gap).toBe(tileLayout(preset).rowHeight);
+      expect(Object.isFrozen(metrics)).toBe(true);
+    }
+  });
+
+  it("uses medium for absent, unknown and malformed presets", () => {
+    for (const preset of [undefined, null, "", "huge", "constructor", "__proto__", 1e9, {}]) {
+      expect(tileGridMetrics(preset as ThumbnailSize)).toEqual(tileGridMetrics("medium"));
+    }
+  });
+});
 
 describe("tileLayout", () => {
   it("sizes rows to padding, icon, name, selection border and gap", () => {

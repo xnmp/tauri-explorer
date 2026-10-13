@@ -36,11 +36,12 @@
     gitCheckoutTracking,
     gitSyncLocalBranches,
     type ResetMode,
+    type PrAction,
   } from "$lib/api/git-log";
   import {
     releaseGitSummaryConsumer,
   } from "$lib/state/git-summary-cache";
-  import { assignLayout, baseUpdateMergeOids, branchPath, detachedHeadIndicator, groupRefChips, prBadgePresentation, ciStatusLabel, reviewDecisionLabel, prDescription, prDetailComments, shouldMuteBaseUpdateMerge, sliceBranchLine, stepOnBranchLine, scrollTopToReveal, traceGraphLineage, remoteOnlyBranchNames, GRAPH_PALETTE, type GraphLayout, type BranchLine, type BranchLineDirection, type RefChips, type RemoteRefChip, type BranchListEntry } from "$lib/domain/git-graph";
+  import { assignLayout, graphViewportMoved, type GraphViewportPosition, prRepositorySlug, baseUpdateMergeOids, branchPath, detachedHeadIndicator, groupRefChips, prBadgePresentation, ciStatusLabel, reviewDecisionLabel, prDescription, prDetailComments, shouldMuteBaseUpdateMerge, sliceBranchLine, stepOnBranchLine, scrollTopToReveal, traceGraphLineage, remoteOnlyBranchNames, GRAPH_PALETTE, type GraphLayout, type BranchLine, type BranchLineDirection, type RefChips, type RemoteRefChip, type BranchListEntry } from "$lib/domain/git-graph";
   import { openExternalUrl } from "$lib/api/crash";
   import {
     cancelActiveGitNetworkOperation,
@@ -135,6 +136,7 @@
   let filePathReloadTimer: ReturnType<typeof setTimeout> | null = null;
 
   function onFilePathFilterInput(event: Event): void {
+    branchSession.cancelMergeBase();
     filePathFilter = (event.target as HTMLInputElement).value;
     closeDetails();
     closePrDetail();
@@ -163,6 +165,7 @@
   let localOnly = $state(loadPersisted<unknown>(LOCAL_ONLY_KEY, false) === true);
 
   function toggleLocalOnly(): void {
+    branchSession.cancelMergeBase();
     localOnly = !localOnly;
     savePersisted(LOCAL_ONLY_KEY, localOnly);
   }
@@ -176,6 +179,7 @@
   let hideRemoteOnly = $state(loadPersisted<unknown>(HIDE_REMOTE_ONLY_KEY, false) === true);
 
   function toggleHideRemoteOnly(): void {
+    branchSession.cancelMergeBase();
     hideRemoteOnly = !hideRemoteOnly;
     savePersisted(HIDE_REMOTE_ONLY_KEY, hideRemoteOnly);
     // The selected commit may not exist in the new subset (mirrors
@@ -237,13 +241,19 @@
   }
 
   function closeDetails(): void {
+    branchSession.cancelMergeBase();
+    resetDetails();
+  }
+
+  function resetDetails(): void {
     detailSession.close();
     // Keep the pane-owned in-flight commit guard across close/reopen.
     commitPanelStore.resetIfIdle();
     detailsHeight = 0;
   }
 
-  async function selectCommit(commit: CommitInfo): Promise<void> {
+  async function selectCommit(commit: CommitInfo, cancelJump = true): Promise<void> {
+    if (cancelJump) branchSession.cancelMergeBase();
     closePrDetail();
     const pending = detailSession.select(commit);
     if (!detailSession.selected) {
@@ -253,8 +263,15 @@
     await pending;
   }
 
-  const beginComparison = detailSession.beginComparison;
-  const exitComparison = detailSession.exitComparison;
+  function beginComparison(): void {
+    branchSession.cancelMergeBase();
+    detailSession.beginComparison();
+  }
+
+  function exitComparison(): Promise<void> {
+    branchSession.cancelMergeBase();
+    return detailSession.exitComparison();
+  }
 
   /** Expand/collapse one file's diff below its row. */
   async function toggleFileDiff(file: DetailFile): Promise<void> {
@@ -660,12 +677,16 @@
   // Every watcher, filter and action refresh enters the query owner's shared
   // reloader. Pagination extends the mounted history without replacing its
   // retained page-zero snapshot or adding a separate refresh policy.
-  const reload = querySession.reload;
+  function reload(): Promise<void> {
+    branchSession.cancelMergeBase();
+    return querySession.reload();
+  }
   const loadMore = querySession.loadMore;
 
   /** Apply a file-history request from the SCM panel. Keeping the filter
    *  component-local preserves #529's ephemeral graph-search behaviour. */
   function showFileHistory(filePath: string): void {
+    branchSession.cancelMergeBase();
     if (filePathReloadTimer !== null) {
       clearTimeout(filePathReloadTimer);
       filePathReloadTimer = null;
@@ -698,7 +719,9 @@
       void prSession.reloadBadges();
       return;
     }
-    untrack(() => void reload());
+    // User filter handlers retire navigation themselves. The fork-point
+    // action also changes this query, so its own reload must keep ownership.
+    untrack(() => void querySession.reload());
   });
 
   // Live refresh (#365, #432): watch the repo and reload when git state
@@ -718,6 +741,8 @@
     void subscribeGitChanges((change) => {
       if (!shouldReloadGraphForChange(change)) return;
       if (change.repoRoot && directoryKey(change.repoRoot) !== directoryKey(repo)) return;
+      // Retire the lookup at observation time, before the trailing reload.
+      branchSession.cancelMergeBase();
       if (refreshTimer !== null) clearTimeout(refreshTimer);
       refreshTimer = setTimeout(() => {
         refreshTimer = null;
@@ -788,6 +813,41 @@
 
   let branchPopoverOpen = $state(false);
   let branchQuery = $state("");
+  let firstMergeBranch = $state("");
+  let secondMergeBranch = $state("");
+  const branchRef = (branch: BranchListEntry) => `refs/${branch.remote ? "remotes" : "heads"}/${branch.name}`;
+
+  async function jumpToMergeBase(): Promise<void> {
+    const first = branchList.find((branch) => branchRef(branch) === firstMergeBranch);
+    const second = branchList.find((branch) => branchRef(branch) === secondMergeBranch);
+    if (!first || !second) return;
+    await branchSession.jumpToMergeBase(first, second, async (oid, isCurrent) => {
+      // Clear curation so an ancestor cannot be hidden. Walking all refs also
+      // avoids local/remote shorthand collisions in the branch-filter API.
+      if (filePathReloadTimer !== null) clearTimeout(filePathReloadTimer);
+      filePathReloadTimer = null;
+      resetDetails();
+      closePrDetail();
+      branchFilter = null;
+      filePathFilter = "";
+      localOnly = false;
+      hideRemoteOnly = false;
+      savePersisted(BRANCH_FILTER_KEY, branchFilter);
+      savePersisted(LOCAL_ONLY_KEY, false);
+      savePersisted(HIDE_REMOTE_ONLY_KEY, false);
+      await tick();
+      await querySession.reload();
+      if (!isCurrent()) return false;
+      const commit = await querySession.findCommit(oid, isCurrent);
+      if (!commit || !isCurrent()) return false;
+      await selectCommit(commit, false);
+      await tick();
+      if (selected?.oid !== oid) return false;
+      scrollRowIntoView(displayCommits.findIndex((row) => row.oid === oid));
+      return true;
+    });
+    if (branchSession.mergeBaseResult) branchPopoverOpen = false;
+  }
   const branchList = $derived(branchSession.branches);
   const branchAuthors = $derived(branchSession.authors);
 
@@ -806,6 +866,7 @@
 
   /** null = all branches; [] = none (#413). */
   function setBranchFilter(next: string[] | null): void {
+    branchSession.cancelMergeBase();
     branchFilter = next;
     savePersisted(BRANCH_FILTER_KEY, branchFilter);
     // The selected commit (or the PR dropdown's anchor row) may not exist in
@@ -909,7 +970,9 @@
     const el = event.target as HTMLElement;
     scrollTop = el.scrollTop;
     scrollLeft = el.scrollLeft;
-    if (menu?.trigger) closeMenu();
+    // Scroll positioning is synchronous, but its notification can follow the
+    // disclosure click. Dismiss only movement since the menu acquired its anchor.
+    if (menu?.trigger && menu.viewport && graphViewportMoved(menu.viewport, { top: el.scrollTop, left: el.scrollLeft })) closeMenu();
     if (el.scrollTop + el.clientHeight >= el.scrollHeight - ROW_HEIGHT * 20) {
       // loadMore() resumes from the cursor (unfiltered) or the real-commit
       // count (filtered); both are immune to the woven-stash off-by-N (#432).
@@ -940,6 +1003,7 @@
    *  it; opening it closes any open commit details (one expansion at a time). */
   function togglePrDetail(event: MouseEvent, commit: CommitInfo, pr: PrSnapshot): void {
     event.stopPropagation();
+    branchSession.cancelMergeBase();
     if (prDetail?.oid === commit.oid && prDetail.pr.number === pr.number) {
       closePrDetail();
       return;
@@ -962,6 +1026,34 @@
     void openExternalUrl(pr.htmlUrl);
   }
 
+  let prDialog = $state<PrAction | null>(null);
+  const prActionBusy = $derived(prSession.actionBusy);
+  const prActionResult = $derived(prSession.actionResult);
+  const prActionError = $derived(prSession.actionError);
+  const prActionUncertain = $derived(prSession.actionUncertain);
+  let uncertainRetryAcknowledged = $state(false);
+  async function createPrDialog(): Promise<void> {
+    if (!headBranch || prActionBusy) return;
+    uncertainRetryAcknowledged = false;
+    prDialog = await prSession.prepareCreate(headBranch);
+  }
+  function openPrAction(action: "merge" | "approve", pr: PrSnapshot): void {
+    if (prActionBusy) return;
+    const repoSlug = prRepositorySlug(pr);
+    if (!repoSlug) { toastStore.error("Cannot determine this PR's GitHub repository"); return; }
+    uncertainRetryAcknowledged = false;
+    prSession.clearActionStatus();
+    prDialog = action === "merge"
+      ? { action, repoSlug, prNumber: pr.number, method: "squash" }
+      : { action, repoSlug, prNumber: pr.number };
+  }
+  async function submitPrAction(): Promise<void> {
+    if (!prDialog || prActionBusy || (prActionUncertain && !uncertainRetryAcknowledged)) return;
+    await prSession.performAction({ ...prDialog }, uncertainRetryAcknowledged);
+    uncertainRetryAcknowledged = false;
+    if (!prSession.actionError) prDialog = null;
+  }
+
   // ----- Commit context menu (VSCode "Git Graph"-parity actions) -----
 
   interface MenuAnchor {
@@ -969,6 +1061,7 @@
     y: number;
     commit: CommitInfo;
     trigger?: HTMLElement;
+    viewport?: GraphViewportPosition;
   }
   interface ActionMenu extends MenuAnchor {
     kind: "actions";
@@ -1037,6 +1130,7 @@
     menu = {
       kind: "actions",
       trigger,
+      viewport: trigger ? menu?.viewport : undefined,
       x: clientToFixed(event.clientX),
       y: clientToFixed(event.clientY),
       commit,
@@ -1054,6 +1148,7 @@
     event.preventDefault();
     prompt = null;
     menu = { kind: "references", commit, trigger,
+      viewport: { top: scrollerEl?.scrollTop ?? 0, left: scrollerEl?.scrollLeft ?? 0 },
       x: clientToFixed(rect.left), y: clientToFixed(rect.bottom) };
   }
 
@@ -1063,7 +1158,7 @@
       closeMenu();
       return;
     }
-    menuEl?.querySelector<HTMLButtonElement>("button")?.focus();
+    menuEl?.querySelector<HTMLButtonElement>("button")?.focus({ preventScroll: true });
   });
 
   /** Tracking checkout of a remote-only branch (#432): create/switch to a
@@ -1125,6 +1220,7 @@
     label: string,
     fn: () => Promise<void | GitUndoAction | null>,
   ): Promise<void> {
+    branchSession.cancelMergeBase();
     closeMenu();
     try {
       const undoAction = await fn();
@@ -1342,6 +1438,7 @@
 
   async function refreshWithFetch(): Promise<void> {
     if (fetching) return;
+    branchSession.cancelMergeBase();
     // Kill the post-F5 focus ring (#433): F5 is a keyboard event, so it
     // promotes whatever the pointer last left focused — the clicked commit row
     // or the active tab — to `:focus-visible`, painting the browser's default
@@ -1432,6 +1529,18 @@
   {#if error}
     <div class="graph-status error">{error}</div>
   {:else}
+    <div class="pr-actions-toolbar">
+      <button type="button" class="prompt-btn" disabled={!headBranch || prActionBusy || prsByBranch.has(headBranch)} onclick={createPrDialog} title={headBranch ? `Create a PR for ${headBranch}` : "Check out a branch to create a PR"}>Create PR</button>
+      {#if prActionBusy}<span role="status">GitHub PR action in progress…</span>{/if}
+      {#if prActionResult && !prActionBusy}
+        <span role="status" class="pr-actions-status">
+          {#if prActionResult.action === "create"}PR created: {prActionResult.output}
+          {:else if prActionResult.action === "merge"}Merge requested for PR #{prActionResult.prNumber}; GitHub may queue it.
+          {:else}PR #{prActionResult.prNumber} approved{/if}
+        </span>
+      {/if}
+      {#if prActionError && !prDialog}<span role="alert" class="pr-detail-error">{prActionError}</span>{/if}
+    </div>
     {#if detachedIndicator}
       <!-- Standing detached-HEAD banner (#524): outside the header row so it
            never disturbs column layout, and outside every menu so it lasts as
@@ -1497,6 +1606,26 @@
           onclick={() => (branchPopoverOpen = false)}
         ></button>
         <div class="branch-popover" data-testid="branch-popover">
+          <div class="bf-heading">Fork point</div>
+          <div class="bf-fork-controls">
+            <select aria-label="First merge-base branch" bind:value={firstMergeBranch} onchange={() => branchSession.cancelMergeBase()}>
+              <option value="">First branch…</option>
+              {#each branchList as branch (branchRef(branch))}
+                <option value={branchRef(branch)}>{branch.name}{branch.remote ? " (remote)" : ""}</option>
+              {/each}
+            </select>
+            <select aria-label="Second merge-base branch" bind:value={secondMergeBranch} onchange={() => branchSession.cancelMergeBase()}>
+              <option value="">Second branch…</option>
+              {#each branchList as branch (branchRef(branch))}
+                <option value={branchRef(branch)}>{branch.name}{branch.remote ? " (remote)" : ""}</option>
+              {/each}
+            </select>
+            <button class="prompt-btn" disabled={!firstMergeBranch || !secondMergeBranch || firstMergeBranch === secondMergeBranch || branchSession.mergeBaseBusy} onclick={() => void jumpToMergeBase()}>
+              {branchSession.mergeBaseBusy ? "Finding merge-base…" : "Jump to merge-base"}
+            </button>
+            <span class="bf-fork-hint">Shows all branches and clears history filters.</span>
+            {#if branchSession.mergeBaseError}<span role="alert" class="bf-fork-error">{branchSession.mergeBaseError}</span>{/if}
+          </div>
           <div class="bf-heading">Commits</div>
           <input
             class="bf-path-search"
@@ -1609,7 +1738,11 @@
         data-testid="handle-graph"
       ></span>
       <span class="gh-message" title={filePathFilter.trim() || "Message"}>
-        {filePathFilter.trim() ? `Path: ${filePathFilter.trim()}` : "Message"}
+        {#if branchSession.mergeBaseResult}
+          Fork point: {branchSession.mergeBaseResult.first} / {branchSession.mergeBaseResult.second}
+        {:else}
+          {filePathFilter.trim() ? `Path: ${filePathFilter.trim()}` : "Message"}
+        {/if}
       </span>
       {#if shownColumns.author}
         <span id={`${resizeRegionId}-author`} class="gh-author" style:width="{authorCol.value}px">
@@ -2177,6 +2310,8 @@
                   <button type="button" class="pr-detail-open" onclick={() => openPrExternal(pr)}>
                     Open on GitHub ↗
                   </button>
+                  <button type="button" class="prompt-btn" disabled={prActionBusy || pr.draft} onclick={() => openPrAction("merge", pr)}>Merge PR</button>
+                  <button type="button" class="prompt-btn" disabled={prActionBusy || pr.draft} onclick={() => openPrAction("approve", pr)}>Approve PR</button>
                 </div>
                 {#if description}
                   <p class="pr-detail-description" data-testid="git-graph-pr-detail-body">{description}</p>
@@ -2560,6 +2695,35 @@
     {/if}
   {/if}
 
+  <Modal open={prDialog !== null} label={prDialog?.action === "create" ? "Create pull request" : prDialog?.action === "merge" ? "Merge pull request" : "Approve pull request"} onClose={() => { if (!prActionBusy) prDialog = null; }} canClose={() => !prActionBusy}>
+    {#if prDialog}
+      <form class="modal-card pr-action-card" onsubmit={(event) => { event.preventDefault(); void submitPrAction(); }}>
+        <div class="dialog-header">
+          <h2>{prDialog.action === "create" ? "Create pull request" : prDialog.action === "merge" ? "Merge pull request" : "Approve pull request"}</h2>
+          <p class="dialog-subtitle">Repository: {prDialog.repoSlug}</p>
+          <p class="dialog-subtitle">{prDialog.action === "create" ? `Current branch: ${prDialog.headBranch}` : `PR #${prDialog.prNumber} · ${repoPath}`}</p>
+        </div>
+        {#if prDialog.action === "create"}
+          <div class="form-field"><label for="pr-title">Title</label><input id="pr-title" data-autofocus required bind:value={prDialog.title} disabled={prActionBusy} /></div>
+          <div class="form-field"><label for="pr-base">Base branch</label><input id="pr-base" required placeholder="e.g. main" bind:value={prDialog.base} disabled={prActionBusy} /></div>
+          <div class="form-field"><label for="pr-body">Description</label><textarea id="pr-body" rows="4" bind:value={prDialog.body} disabled={prActionBusy}></textarea></div>
+          <p class="dialog-subtitle">Push the branch before creating a PR. This creates it on the repository's selected GitHub remote.</p>
+        {:else if prDialog.action === "merge"}
+          <div class="form-field"><label for="pr-method">Merge method</label><select id="pr-method" bind:value={prDialog.method} disabled={prActionBusy}><option value="squash">Squash</option><option value="merge">Merge commit</option><option value="rebase">Rebase</option></select></div>
+          <p class="dialog-subtitle">This merges the PR on GitHub. Local branches are kept. GitHub permissions and branch protection still apply.</p>
+        {:else}
+          <p>Submit an approving review for this PR on GitHub?</p>
+        {/if}
+        {#if prActionError}<p class="error-message" role="alert">{prActionError}</p>{/if}
+        {#if prActionUncertain}<label><input type="checkbox" bind:checked={uncertainRetryAcknowledged} disabled={prActionBusy} /> I checked GitHub and want to retry this action</label>{/if}
+        <div class="dialog-actions">
+          <button type="button" class="btn secondary" disabled={prActionBusy} onclick={() => (prDialog = null)}>Cancel</button>
+          <button type="submit" class="btn primary" disabled={prActionBusy || (prActionUncertain && !uncertainRetryAcknowledged) || (prDialog.action === "create" && (!prDialog.title.trim() || !prDialog.base.trim()))}>{prActionBusy ? "Working…" : prDialog.action === "create" ? "Create PR" : prDialog.action === "merge" ? "Merge PR" : "Approve PR"}</button>
+        </div>
+      </form>
+    {/if}
+  </Modal>
+
   <Modal
     open={undoConfirmation !== null}
     onClose={() => (undoConfirmation = null)}
@@ -2584,6 +2748,13 @@
 </div>
 
 <style>
+  .pr-actions-toolbar { display: flex; align-items: center; gap: var(--spacing-md); padding: var(--spacing-sm) var(--spacing-md); border-bottom: 1px solid var(--surface-stroke); font-size: var(--font-size-caption); }
+  .pr-actions-status { overflow-wrap: anywhere; }
+  .pr-action-card .form-field { margin-top: var(--spacing-md); }
+  .pr-action-card textarea, .pr-action-card select { width: 100%; box-sizing: border-box; padding: var(--spacing-sm); border: 1px solid var(--control-stroke); border-radius: var(--radius-sm); background: var(--control-fill); color: var(--text-primary); font: inherit; }
+  .pr-action-card textarea:focus, .pr-action-card select:focus { outline: 2px solid var(--focus-stroke-outer); outline-offset: 1px; }
+  .pr-action-card textarea { resize: vertical; }
+
   .git-graph-view {
     flex: 1;
     display: flex;
@@ -3258,6 +3429,26 @@
     color: var(--text-primary);
     font-size: var(--font-size-body);
   }
+
+  .bf-fork-controls {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding: 6px;
+  }
+
+  .bf-fork-controls select {
+    width: 100%;
+    padding: 4px 8px;
+    border: 1px solid var(--divider);
+    border-radius: var(--radius-sm);
+    background: var(--background-card);
+    color: var(--text-primary);
+    font: inherit;
+  }
+
+  .bf-fork-hint { color: var(--text-secondary); font-size: var(--font-size-caption); }
+  .bf-fork-error { color: var(--text-primary); font-size: var(--font-size-caption); }
 
   /* Section headings inside the filter popover (#412). */
   .bf-heading {

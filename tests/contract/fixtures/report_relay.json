@@ -24,5 +24,115 @@
     "kind",
     "website",
     "attachments"
+  ],
+  "mediaCases": [
+    {
+      "name": "png",
+      "mediaType": "image/png",
+      "data": "iVBORw0KGgo=",
+      "valid": true
+    },
+    {
+      "name": "jpeg",
+      "mediaType": "image/jpeg",
+      "data": "/9j/",
+      "valid": true
+    },
+    {
+      "name": "gif87",
+      "mediaType": "image/gif",
+      "data": "R0lGODdh",
+      "valid": true
+    },
+    {
+      "name": "gif89",
+      "mediaType": "image/gif",
+      "data": "R0lGODlh",
+      "valid": true
+    },
+    {
+      "name": "mp4",
+      "mediaType": "video/mp4",
+      "data": "AAAAGGZ0eXBpc29tAAAAAGlzb21tcDQy",
+      "valid": true
+    },
+    {
+      "name": "mov",
+      "mediaType": "video/quicktime",
+      "data": "AAAAFGZ0eXBxdCAgAAAAAHF0ICA=",
+      "valid": true
+    },
+    {
+      "name": "webm",
+      "mediaType": "video/webm",
+      "data": "GkXfow==",
+      "valid": true
+    },
+    {
+      "name": "mov-as-mp4",
+      "mediaType": "video/mp4",
+      "data": "AAAAFGZ0eXBxdCAgAAAAAHF0ICA=",
+      "valid": false
+    },
+    {
+      "name": "mp4-as-mov",
+      "mediaType": "video/quicktime",
+      "data": "AAAAGGZ0eXBpc29tAAAAAGlzb21tcDQy",
+      "valid": false
+    },
+    {
+      "name": "video-as-image",
+      "mediaType": "image/png",
+      "data": "AAAAGGZ0eXBpc29tAAAAAGlzb21tcDQy",
+      "valid": false
+    },
+    {
+      "name": "image-as-video",
+      "mediaType": "video/webm",
+      "data": "R0lGODlh",
+      "valid": false
+    },
+    {
+      "name": "unsupported",
+      "mediaType": "video/avi",
+      "data": "AAAAGGZ0eXBpc29tAAAAAGlzb21tcDQy",
+      "valid": false
+    },
+    {
+      "name": "short-ftyp",
+      "mediaType": "video/mp4",
+      "data": "AAAAGGZ0eXBpc29t",
+      "valid": false
+    },
+    {
+      "name": "ftyp-past-data",
+      "mediaType": "video/mp4",
+      "data": "AAABAGZ0eXBpc29tAAAAAGlzb21tcDQy",
+      "valid": false
+    },
+    {
+      "name": "ftyp-too-small",
+      "mediaType": "video/mp4",
+      "data": "AAAACGZ0eXBpc29tAAAAAGlzb21tcDQy",
+      "valid": false
+    },
+    {
+      "name": "image-brand",
+      "mediaType": "video/mp4",
+      "data": "AAAAEGZ0eXBtaWYxAAAAAA==",
+      "valid": false
+    },
+    {
+      "name": "high-bit-ftyp",
+      "mediaType": "video/mp4",
+      "data": "AAAAGOZ0eXBpc29tAAAAAGlzb21tcDQy",
+      "valid": false
+    },
+    {
+      "name": "empty",
+      "mediaType": "image/png",
+      "data": "",
+      "valid": false
+    }
   ]
 }

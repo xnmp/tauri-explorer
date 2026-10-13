@@ -133,10 +133,17 @@ fn bootstrap_services() -> Result<(), AppError> {
     // Reconstruct native metadata under this bootstrap gate so newly scheduled
     // reconciliation cannot race readiness. Service participants cannot have
     // started yet; no provider RPC or candidate handshake occurs under it.
-    let _bootstrap = write_lifecycle()?;
-    service_host::initialize(&profile)?;
+    {
+        let _bootstrap = write_lifecycle()?;
+        service_host::initialize(&profile)?;
+    }
+    // Journal recovery owns short lifecycle fences and may retire/join a
+    // surviving degraded broker. Never keep the global gate across that IO.
     lifecycle::recover(&root()?)?;
+    let _bootstrap = write_lifecycle()?;
+    service_host::store()?.revisit_uncertain_settlements()?;
     service_bridge::recover_startup()?;
+    ai_operations::settle_stopped_backlog(service_host::store()?)?;
     job_bridge::initialize()?;
     backend::finish_initialize();
     Ok(())
@@ -314,7 +321,14 @@ pub async fn plugin_backend_invoke(
         }
         let _lease = backend::CallLease::acquire_method(&package_id, &method)?;
         drop(_guard);
-        backend::call_with_origin(&package_id, &method, params, &origin_label, entered)
+        backend::call_admitted(
+            &package_id,
+            &method,
+            params,
+            &origin_label,
+            entered,
+            &_lease,
+        )
     })
     .await
     .map_err(|error| AppError::WorkerFailed(error.to_string()))?
@@ -326,6 +340,15 @@ pub async fn plugin_jobs_snapshot(window: tauri::WebviewWindow) -> Result<Value,
     tauri::async_runtime::spawn_blocking(move || {
         retry_services();
         job_bridge::snapshot(&label)
+    })
+    .await
+    .map_err(|e| AppError::WorkerFailed(e.to_string()))?
+}
+#[tauri::command]
+pub async fn plugin_job_reveal(job_key: String) -> Result<Value, AppError> {
+    tauri::async_runtime::spawn_blocking(move || {
+        serde_json::to_value(job_bridge::latest_reveal(&job_key)?)
+            .map_err(|e| AppError::Other(e.to_string()))
     })
     .await
     .map_err(|e| AppError::WorkerFailed(e.to_string()))?

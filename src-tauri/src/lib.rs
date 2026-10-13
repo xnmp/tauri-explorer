@@ -36,6 +36,7 @@ mod image_crop;
 mod image_operation;
 mod installed_plugins;
 mod native_deadline;
+mod native_file_drag;
 #[cfg(unix)]
 mod process_supervisor;
 mod recovery_actor;
@@ -52,6 +53,7 @@ pub fn run_process_supervisor() -> Option<i32> {
     }
 }
 mod load_diagnostics;
+mod media_duration;
 mod nano_banana;
 mod palette;
 mod platform;
@@ -68,6 +70,8 @@ mod service_state;
 mod update_check;
 mod upscale;
 mod user_report;
+#[cfg(target_os = "linux")]
+mod webkit_renderer;
 mod window_launch;
 /// Non-Linux stub so the command registry stays platform-independent.
 #[cfg(not(target_os = "linux"))]
@@ -165,12 +169,10 @@ pub fn run_with_process_entry(launch_dir: Option<String>, t_process_entry: std::
         .map(|duration| duration.as_secs_f64() * 1000.0)
         .unwrap_or(f64::NAN);
 
-    // Fix webkit2gtk Wayland protocol errors on Linux compositors (Hyprland, Sway, etc.)
+    // Avoid WebKitGTK's DMABuf Wayland protocol errors without giving up
+    // composited painting (#1057); see webkit_renderer.
     #[cfg(target_os = "linux")]
-    {
-        std::env::set_var("WEBKIT_DISABLE_COMPOSITING_MODE", "1");
-        std::env::set_var("WEBKIT_DISABLE_DMABUF_RENDERER", "1");
-    }
+    let renderer_plan = webkit_renderer::apply();
 
     let home_dir = dirs::home_dir()
         .unwrap_or_else(|| std::path::PathBuf::from("/"))
@@ -252,6 +254,7 @@ pub fn run_with_process_entry(launch_dir: Option<String>, t_process_entry: std::
     builder
         .manage(LaunchCwd(launch_cwd_for_state))
         .manage(window_launch::Requests::default())
+        .manage(native_file_drag::Sessions::default())
         .manage(system::StartupClock {
             started: t_start,
             epoch_ms: t_start_epoch_ms,
@@ -282,6 +285,7 @@ pub fn run_with_process_entry(launch_dir: Option<String>, t_process_entry: std::
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_drag::init())
         .on_window_event(|window, event| {
+            native_file_drag::on_window_event(window, event);
             if matches!(event, tauri::WindowEvent::Focused(true)) {
                 installed_plugins::notify_pending_errors(window);
             }
@@ -307,6 +311,8 @@ pub fn run_with_process_entry(launch_dir: Option<String>, t_process_entry: std::
             ai::ai_connection_cancel_test,
             // Launch info
             get_launch_cwd,
+            native_file_drag::start_file_drag,
+            native_file_drag::native_file_drag_clock,
             get_log_dir,
             system::get_app_info,
             user_report::submit_user_report,
@@ -391,16 +397,20 @@ pub fn run_with_process_entry(launch_dir: Option<String>, t_process_entry: std::
             clipboard::clipboard_release_cut,
             clipboard::clipboard_has_image,
             clipboard::clipboard_read_report_image,
+            clipboard::clipboard_has_report_attachment,
+            clipboard::clipboard_read_report_attachment,
             clipboard::clipboard_paste_image,
             // Thumbnails
             thumbnails::get_thumbnail,
             thumbnails::get_thumbnail_data,
             thumbnails::get_micro_thumbnail,
             thumbnails::get_video_thumbnail_data,
+            media_duration::get_media_durations,
             thumbnails::get_folder_preview,
             thumbnails::set_ffmpeg_path,
             thumbnails::clear_thumbnail_cache,
             thumbnails::get_thumbnail_cache_stats,
+            thumbnails::preview_rendition::get_preview_image,
             // Archive operations
             archive::compress_to_zip,
             archive::cancel_compress,
@@ -441,6 +451,7 @@ pub fn run_with_process_entry(launch_dir: Option<String>, t_process_entry: std::
             git_avatar::git_author_avatar,
             git_log::git_log,
             git_log::git_refs,
+            git_log::git_merge_base,
             git_log::git_commit_files,
             git_log::git_commit_file_diff,
             git_log::git_compare_commit_files,
@@ -466,6 +477,8 @@ pub fn run_with_process_entry(launch_dir: Option<String>, t_process_entry: std::
             git_actions::git_branch_behind_upstream,
             git_log::git_branch_authors,
             github::git_open_prs,
+            github::git_pr_action,
+            github::git_pr_context,
             github::git_failed_ci_checks,
             github::git_failed_ci_check_log,
             git_actions::git_delete_branch,
@@ -498,6 +511,7 @@ pub fn run_with_process_entry(launch_dir: Option<String>, t_process_entry: std::
             installed_plugins::set_plugin_package_enabled,
             installed_plugins::plugin_backend_invoke,
             installed_plugins::plugin_jobs_snapshot,
+            installed_plugins::plugin_job_reveal,
             installed_plugins::plugin_job_cancel,
             installed_plugins::plugin_job_resume,
             installed_plugins::plugin_job_dismiss,
@@ -522,7 +536,21 @@ pub fn run_with_process_entry(launch_dir: Option<String>, t_process_entry: std::
             terminal::terminal_status,
         ])
         .setup(move |app| {
+            native_file_drag::install_snapshots(app.handle().clone());
             let t_setup = std::time::Instant::now();
+            // First in setup: portal mode returns early below, and a renderer
+            // crash after window creation is exactly when this line matters.
+            #[cfg(target_os = "linux")]
+            log::info!(
+                "Renderer(webkit): mode={:?} set={:?} unset={:?} reason={}",
+                renderer_plan.mode,
+                renderer_plan.set,
+                renderer_plan.unset,
+                renderer_plan.reason,
+            );
+            // Before any window: the asset scope must serve Preview renditions
+            // from the cache (its `$HOME/**/*` glob skips dot-dirs, #1054).
+            thumbnails::preview_rendition::allow_rendition_assets(app);
             installed_plugins::initialize(app.handle().clone())?;
 
             // Before any window exists, so every mutation command can admit.

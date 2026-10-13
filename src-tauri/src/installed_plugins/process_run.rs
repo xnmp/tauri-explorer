@@ -70,6 +70,20 @@ pub(super) struct ProcessRequest {
     /// means stdin is null.
     #[serde(default)]
     stdin: Option<String>,
+    #[serde(default)]
+    consumer_package_id: Option<String>,
+    #[serde(default)]
+    operation_id: Option<String>,
+}
+impl ProcessRequest {
+    pub(super) fn output_reservation(&self) -> u64 {
+        self.stdout_limit as u64 + self.stderr_limit as u64
+    }
+    pub(super) fn output_custody(&self) -> Option<(&str, &str)> {
+        self.consumer_package_id
+            .as_deref()
+            .zip(self.operation_id.as_deref())
+    }
 }
 
 /// Validate a request before any admission or process work.
@@ -86,6 +100,16 @@ pub(super) fn parse(params: &Value) -> Result<ProcessRequest, AppError> {
             .stdin
             .as_ref()
             .is_some_and(|stdin| stdin.len() > STDIN_MAX_BYTES)
+        || request.consumer_package_id.is_some() != request.operation_id.is_some()
+        || request.output_custody().is_some_and(|(consumer, op)| {
+            [consumer, op].iter().any(|value| {
+                value.is_empty()
+                    || value.len() > 256
+                    || !value
+                        .bytes()
+                        .all(|b| b.is_ascii_alphanumeric() || b"._-:".contains(&b))
+            })
+        })
     {
         return Err(refusal(
             code::INVALID_REQUEST,
@@ -97,13 +121,13 @@ pub(super) fn parse(params: &Value) -> Result<ProcessRequest, AppError> {
 
 /// Register a process under the broker's maps; the caller holds both locks.
 /// A refusal leaves both maps unchanged.
-pub(super) fn admit(
+pub(super) fn admit<T>(
     controls: &mut HashMap<String, JobControl>,
-    spools: &mut HashMap<String, Arc<tempfile::TempDir>>,
+    spools: &mut HashMap<String, Arc<T>>,
     alive: bool,
     id: &str,
     control: &JobControl,
-    spool: &Arc<tempfile::TempDir>,
+    spool: &Arc<T>,
 ) -> Result<(), AppError> {
     if controls.contains_key(id) {
         return Err(refusal(
@@ -133,10 +157,11 @@ pub(super) fn admit(
 
 /// Run an admitted request. `supervised` selects the SDK 3 Unix
 /// parent-death-safe process group; elsewhere the owned tree of `process_ext`.
-pub(super) fn execute(
+pub(super) fn execute_streaming(
     request: ProcessRequest,
     cancelled: impl Fn() -> bool,
     supervised: bool,
+    stdout_sink: Option<std::fs::File>,
 ) -> Result<Output, ProcessRunError> {
     let mut command = Command::new(&request.program);
     command.no_console().args(&request.args);
@@ -155,10 +180,24 @@ pub(super) fn execute(
     let input = request.stdin.map(String::into_bytes);
     #[cfg(unix)]
     if supervised {
-        return crate::process_supervisor::run(&mut command, cancelled, limits, CANCELLED, input);
+        return crate::process_supervisor::run_streaming(
+            &mut command,
+            cancelled,
+            limits,
+            CANCELLED,
+            input,
+            stdout_sink,
+        );
     }
     let _ = supervised;
-    crate::process_ext::output_with_input(&mut command, cancelled, limits, CANCELLED, input)
+    crate::process_ext::output_with_input_streaming(
+        &mut command,
+        cancelled,
+        limits,
+        CANCELLED,
+        input,
+        stdout_sink,
+    )
 }
 
 /// The wire code for a failed run: typed when nothing ran, else interrupted.
@@ -190,7 +229,8 @@ mod tests {
     /// Runs the broker's own composition: validation, then execution.
     fn run(params: Value, cancelled: impl Fn() -> bool) -> Result<Output, String> {
         let request = parse(&params).map_err(code_of)?;
-        execute(request, cancelled, false).map_err(|failure| failure_code(&failure).to_owned())
+        execute_streaming(request, cancelled, false, None)
+            .map_err(|failure| failure_code(&failure).to_owned())
     }
     /// A deadlock must fail the test, not hang it.
     fn within<T: Send + 'static>(limit: Duration, work: impl FnOnce() -> T + Send + 'static) -> T {
@@ -209,6 +249,47 @@ mod tests {
     #[cfg(unix)]
     fn quoted(path: &Path) -> String {
         format!("'{}'", path.display().to_string().replace('\'', "'\\''"))
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn stdout_is_streamed_before_process_exit_and_bounded_on_overflow() {
+        within(Duration::from_secs(20), || {
+            let directory = tempfile::tempdir().unwrap();
+            let path = directory.path().join("stdout");
+            let sink = std::fs::File::create(&path).unwrap();
+            let request = parse(&shell("printf 'captured while running'; exec sleep 30")).unwrap();
+            let observed = path.clone();
+            let began = Instant::now();
+            let failure = execute_streaming(
+                request,
+                || {
+                    std::fs::read(&observed).unwrap_or_default() == b"captured while running"
+                        || began.elapsed() > Duration::from_secs(5)
+                },
+                false,
+                Some(sink),
+            )
+            .unwrap_err();
+            assert_eq!(
+                std::fs::read(&path).unwrap(),
+                b"captured while running",
+                "capture stayed in RAM until exit"
+            );
+            assert_eq!(failure_code(&failure), code::INTERRUPTED);
+
+            let mut request = shell("while :; do printf xxxxxxxxxxxxxxxx; done");
+            request["stdoutLimit"] = json!(64);
+            let failure = execute_streaming(
+                parse(&request).unwrap(),
+                || false,
+                false,
+                Some(std::fs::File::create(&path).unwrap()),
+            )
+            .unwrap_err();
+            assert_eq!(failure_code(&failure), code::INTERRUPTED);
+            assert_eq!(std::fs::metadata(&path).unwrap().len(), 64);
+        });
     }
 
     #[test]

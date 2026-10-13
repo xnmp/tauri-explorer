@@ -33,6 +33,7 @@ import { createFileRecoverySession } from "./file-recovery-session.svelte";
 import { markStartup } from "./startup-timing";
 import { startNativeLaunchReceiver } from "./native-launch";
 import { createDeferredFocusRequest } from "./deferred-focus";
+import { fileViewRegistry } from "$lib/plugins/file-view-registry.svelte";
 
 export interface WindowSessionOptions {
   picker: boolean;
@@ -62,6 +63,11 @@ export function startWindowSession(options: WindowSessionOptions) {
   try {
     markStartup("mount");
     void themeStore.initTheme().catch(reportError);
+    // Own discovery before settings IO and tab initialization. A restored
+    // plugin choice may reach first paint before initPlugins even starts.
+    const finishPluginDiscovery = !options.picker && isTauri()
+      ? fileViewRegistry.beginLoading() : () => {};
+    stops.push(finishPluginDiscovery);
     const startup = startWindowStartup({
       loadSettings: () => settingsStore.init(),
       synchronizeTheme: () => themeStore.syncFromSettings(),
@@ -69,11 +75,11 @@ export function startWindowSession(options: WindowSessionOptions) {
         markStartup("settings-ready");
         options.settingsReady();
       },
-      initializePlugins: () => options.picker ? Promise.resolve() : pluginRegistry.initPlugins(),
+      initializePlugins: () => options.picker ? Promise.resolve() : pluginRegistry.initPlugins(finishPluginDiscovery),
       disposePlugins: () => options.picker ? Promise.resolve() : pluginRegistry.dispose(),
     });
     stops.push(() => { void startup.dispose().catch(reportError); });
-    void startup.ready.catch(reportError);
+    void startup.ready.finally(finishPluginDiscovery).catch(reportError);
     if (options.picker) return { dispose, recovery, markCoreReady() {}, markBackgroundReady() {} };
     stops.push(() => { void recovery?.dispose().catch(reportError); });
 
@@ -97,7 +103,7 @@ export function startWindowSession(options: WindowSessionOptions) {
     const tab = windowTabsManager.init(plan.initialPath, plan.skipRestore, plan.overridePath);
     const initialExplorer = windowTabsManager.getActiveExplorer();
     const launchFocus = launchRequest(window.location.search, "focusAddressBar") === "1"
-      ? createDeferredFocusRequest(window, () => !dialogStore.hasModalOpen
+      ? createDeferredFocusRequest(window, () => !dialogStore.isPaneBlocked(windowTabsManager.activePaneId)
         && windowTabsManager.getActiveExplorer() === initialExplorer)
       : null;
     if (launchFocus) stops.push(launchFocus.cancel);
@@ -167,6 +173,7 @@ export function startWindowSession(options: WindowSessionOptions) {
       bindings: keybindingsStore, getCommand, executeCommand, dialogs: dialogStore,
       terminal: { get enabled() { return settingsStore.enableTerminal; }, toggle: () => terminalPanelStore.toggle() },
       toggleDualPane: () => windowTabsManager.toggleDualPane(), getActiveExplorer,
+      getActivePaneId: () => windowTabsManager.activePaneId,
     }));
     windowSizeStore.sync();
     window.addEventListener("resize", windowSizeStore.sync, { signal: lifetime.signal });

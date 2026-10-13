@@ -46,6 +46,15 @@ export async function waitForEntries(page: Page) {
   await page.locator(".entry-item").first().waitFor({ timeout: 5000 });
 }
 
+/** Pane activation is manager state; `.active` only paints the split-pane border. */
+export async function activeExplorerPane(page: Page) {
+  const paneId = await page.evaluate(async () => {
+    const { windowTabsManager } = await import("/src/lib/state/window-tabs.svelte.ts");
+    return windowTabsManager.activePaneId;
+  });
+  return page.locator(`.explorer-pane[data-pane-id="${paneId}"]`);
+}
+
 /** Execute a selection-aware action through the real command palette. */
 export async function runPaletteCommand(page: Page, label: string) {
   await page.keyboard.press("ControlOrMeta+Shift+P");

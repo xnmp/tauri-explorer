@@ -2,13 +2,73 @@
  * Path normalization helpers.
  * Pure functions — no framework or filesystem deps.
  *
- * Separator policy: these helpers accept either `/` or `\` on input (Windows
+ * Legacy separator policy: most helpers accept either `/` or `\` on input (Windows
  * backends emit backslash-separated paths) and emit `/`-separated results.
  * Forward slashes round-trip correctly through the Windows APIs the backend
- * uses, so callers can stay separator-agnostic.
+ * uses, so callers can stay separator-agnostic. Admission comparisons use the
+ * explicit platform semantics in `pathComparison` instead.
  */
 
 import { isVirtualPath } from "./virtual-path";
+
+/** Filesystem comparisons for drop admission. Platform is explicit so POSIX
+ * backslashes never become separators. This is lexical identity, not realpath:
+ * unresolved `..` and drive-relative paths have no safe comparison key.
+ * Case stays literal below the root on every platform; on Windows only the drive
+ * or UNC/WSL root folds case. Case-insensitive aliases and other filesystem-specific
+ * aliases remain the backend's responsibility. */
+export function pathComparison(windows: boolean) {
+  const key = (path: string): string | null => {
+    if (!path || path.includes("\0")) return null;
+    const normalized = windows ? toForwardSlashes(path) : path;
+    if (normalized.split("/").includes("..")) return null;
+    let root: string;
+    let tail: string;
+    if (windows) {
+      const drive = normalized.match(/^([A-Za-z]:)\/(.*)$/);
+      const unc = normalized.match(/^(\/\/[^/?\.][^/]*\/[^/]+)(?:\/(.*))?$/);
+      const extended = normalized.match(/^\/\/\?\/(?:([A-Za-z]:)\/(.*)|UNC\/([^/]+\/[^/]+)(?:\/(.*))?)$/i);
+      if (drive) { root = drive[1] + "/"; tail = drive[2]; }
+      else if (unc) { root = unc[1]; tail = unc[2] ?? ""; }
+      else if (extended) { root = extended[1] ? extended[1] + "/" : "//" + extended[3]; tail = (extended[1] ? extended[2] : extended[4]) ?? ""; }
+      else return null;
+    } else {
+      if (!normalized.startsWith("/")) return null;
+      // Exactly two leading slashes can have implementation-defined meaning.
+      root = normalized.startsWith("//") && !normalized.startsWith("///") ? "//" : "/";
+      tail = normalized.slice(root.length);
+    }
+    const parts = tail.split("/").filter(part => part !== "" && part !== ".");
+    const result = root + (root.endsWith("/") || !parts.length ? "" : "/") + parts.join("/");
+    if (!windows) return result;
+    // Only the root folds case: drive letters and UNC/WSL hosts and shares are always case-insensitive,
+    // but a directory below can be case-sensitive (NTFS per-directory case sensitivity), so the tail
+    // stays literal and a case-only difference is left to the backend rather than suppressed here.
+    const folded = root.toLowerCase();
+    return folded + result.slice(root.length);
+  };
+  const same = (a: string, b: string): boolean => {
+    const left = key(a);
+    return left !== null && left === key(b);
+  };
+  const contains = (child: string, parent: string): boolean => {
+    const c = key(child), p = key(parent);
+    return c !== null && p !== null && (c === p || c.startsWith(p.endsWith("/") ? p : p + "/"));
+  };
+  const parent = (path: string): string | null => {
+    const p = key(path);
+    if (p === null) return null;
+    const root = windows ? p.match(/^(?:[a-z]:\/|\/\/[^/]+\/[^/]+)/)?.[0] : p.startsWith("//") ? "//" : "/";
+    if (!root || p === root) return p;
+    const index = p.lastIndexOf("/");
+    return index < root.length ? root : p.slice(0, index);
+  };
+  const sameParent = (source: string, directory: string): boolean => {
+    const p = parent(source);
+    return p !== null && same(p, directory);
+  };
+  return { key, same, contains, parent, sameParent };
+}
 
 const BARE_DRIVE_LETTER = /^([A-Za-z]):$/;
 /** A Windows drive prefix capturing the letter and the remainder, e.g. `C:/Users`. */
@@ -40,16 +100,16 @@ export function toBackslashes(path: string): string {
 
 /**
  * Coerce every separator in `path` to a single style. The caller supplies the
- * target separator (typically the platform's native one) so this stays pure and
- * platform-agnostic — a backslash is a legal character in a Unix filename, so
- * the conversion must be opt-in via `sep`, never inferred.
+ * target separator (typically the platform's native one) so this stays pure.
+ * POSIX absolute paths retain literal backslashes when `sep` is `/`, using
+ * the same native separator policy as `nativeDirectoryKey`.
  */
 export function toNativeSeparators(path: string, sep: "/" | "\\"): string {
   // Virtual (`scheme://…`) paths are plugin addresses, not OS paths — leave
   // their separators untouched so `demo://a/b` never becomes `demo:\a\b` on
   // Windows (which would break provider dispatch and breadcrumb parsing).
   if (isVirtualPath(path)) return path;
-  return sep === "\\" ? toBackslashes(toForwardSlashes(path)) : toForwardSlashes(path);
+  return sep === "\\" ? toBackslashes(toForwardSlashes(path)) : nativeForwardSlashes(path);
 }
 
 /** Strip a single trailing separator, but never reduce a bare root (`/`) to empty. */
@@ -101,8 +161,15 @@ export function isDriveRoot(path: string): boolean {
  * `"\\\\server\\share"`       → `"//server/share"` (a share root is its own parent)
  */
 export function parentDir(path: string): string {
-  const p = toForwardSlashes(path);
+  return parentOfNormalizedPath(toForwardSlashes(path));
+}
 
+/** Parent of a native path, retaining legal POSIX backslashes. */
+export function nativeParentDir(path: string): string {
+  return parentOfNormalizedPath(nativeForwardSlashes(path));
+}
+
+function parentOfNormalizedPath(p: string): string {
   // Windows drive paths (`C:` / `C:/` / `C:/Users/...`).
   const drive = p.match(DRIVE_PREFIX);
   if (drive) {
@@ -146,10 +213,20 @@ export function directoryKey(path: string): string {
 
 /** Native POSIX names may contain literal backslashes; comparison must retain
  * them while Windows paths still use the shared separator/case rules. */
+function nativeForwardSlashes(path: string): string {
+  return path.startsWith("/") && !path.startsWith("//") ? path : toForwardSlashes(path);
+}
+
 export function nativeDirectoryKey(path: string): string {
+  const native = nativeForwardSlashes(path);
   return path.startsWith("/") && !path.startsWith("//")
-    ? stripTrailingSlash(path)
-    : directoryKey(path);
+    ? stripTrailingSlash(native)
+    : directoryKey(native);
+}
+
+/** Native directory equality, including Windows separator and case rules. */
+export function sameNativeDirectory(a: string, b: string): boolean {
+  return nativeDirectoryKey(a) === nativeDirectoryKey(b);
 }
 
 /**

@@ -303,3 +303,10 @@ pub struct SizeEstimate {
     #[serde(rename = "totalBytes")]
     pub total_bytes: u64,
 }
+
+/// Test accounting uses the native object identity so hard links count once.
+#[cfg(test)]
+pub(crate) fn model_file_identity(path: &std::path::Path) -> std::io::Result<String> {
+    let file = std::fs::File::open(path)?;
+    serde_json::to_string(&file_identity::of_file(&file)?).map_err(std::io::Error::other)
+}

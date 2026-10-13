@@ -37,3 +37,8 @@ A virtual cursor jump can unmount the old focused row before FileList focuses
 its replacement. A null relatedTarget is not proof of external keyboard entry;
 keep its preventScroll behavior and require a known external focus origin for
 the native Tab reveal. Cover scrolled Ctrl+End/Home as well as mounted arrows.
+
+When integrating the Length column, retain both complete settings defaults and
+independent resize/visibility assertions. Persistence browser tests must not use
+`seedSettings` across reload: its init script reapplies the seed every load and
+can overwrite the saved preference. Use a fresh context or a one-time seed.

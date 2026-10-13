@@ -21,5 +21,8 @@ pathlib.Path("nanobanana-output/late.png").write_text("late")
   fs.chmodSync(executable, 0o755);
   environment.PATH = `${directory}${path.delimiter}${environment.PATH ?? ""}`;
   environment.TAURI_E2E_EXTERNAL_JOB_PID = pidFile;
-  environment.TAURI_EXPLORER_E2E_PLUGIN_JOB_TIMEOUT_MS = "100";
+  // Include cold interpreter/process startup in this test-only deadline. The
+  // 30-second CLI still cannot finish before timeout, while its PID becomes
+  // observable on loaded runners so the test can verify real child reaping.
+  environment.TAURI_EXPLORER_E2E_PLUGIN_JOB_TIMEOUT_MS = "2000";
 }

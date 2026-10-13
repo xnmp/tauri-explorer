@@ -780,6 +780,22 @@ pub async fn git_failed_ci_check_log(
     .map_err(|e| AppError::Other(format!("Task join error: {e}")))?
 }
 
+/// The github.com issues page for the repo's selected remote (origin first),
+/// or `None` when it has no remote or the remote is not on github.com.
+fn git_issues_url_for_root(repo_root: &str) -> Result<Option<String>, AppError> {
+    let repo = open_repo(Path::new(repo_root))?;
+    Ok(remote_url(&repo)
+        .and_then(|url| parse_github_remote(&url))
+        .map(|(owner, name)| format!("https://github.com/{owner}/{name}/issues")))
+}
+
+#[tauri::command]
+pub async fn git_issues_url(repo_root: String) -> Result<Option<String>, AppError> {
+    tokio::task::spawn_blocking(move || git_issues_url_for_root(&repo_root))
+        .await
+        .map_err(|e| AppError::Other(format!("Task join error: {e}")))?
+}
+
 /// Open PRs for the repo at `repo_root`, decorated for the git graph's ref
 /// chips. Degrades to `Ok(vec![])` — never `Err` — for every condition that
 /// isn't a caller bug: no GitHub remote, offline, rate-limited, or a
@@ -1226,6 +1242,64 @@ mod tests {
         }))
         .unwrap();
         assert_eq!(PrInfo::from(pull).body, None);
+    }
+
+    fn repo_with_remotes(remotes: &[(&str, &str)]) -> (tempfile::TempDir, String) {
+        let dir = tempfile::tempdir().unwrap();
+        let repo = git2::Repository::init(dir.path()).unwrap();
+        for (name, url) in remotes {
+            repo.remote(name, url).unwrap();
+        }
+        let root = dir.path().to_string_lossy().to_string();
+        (dir, root)
+    }
+
+    #[test]
+    fn issues_url_covers_https_and_ssh_remotes() {
+        for url in [
+            "https://github.com/octo/widgets.git",
+            "https://github.com/octo/widgets",
+            "git@github.com:octo/widgets.git",
+            "ssh://git@github.com/octo/widgets.git",
+        ] {
+            let (_dir, root) = repo_with_remotes(&[("origin", url)]);
+            assert_eq!(
+                git_issues_url_for_root(&root).unwrap().as_deref(),
+                Some("https://github.com/octo/widgets/issues"),
+                "remote: {url}"
+            );
+        }
+    }
+
+    #[test]
+    fn issues_url_prefers_origin_then_first_remote() {
+        let (_dir, root) = repo_with_remotes(&[
+            ("fork", "https://github.com/me/widgets.git"),
+            ("origin", "https://github.com/octo/widgets.git"),
+        ]);
+        assert_eq!(
+            git_issues_url_for_root(&root).unwrap().as_deref(),
+            Some("https://github.com/octo/widgets/issues")
+        );
+        let (_dir, root) = repo_with_remotes(&[("upstream", "git@github.com:octo/other.git")]);
+        assert_eq!(
+            git_issues_url_for_root(&root).unwrap().as_deref(),
+            Some("https://github.com/octo/other/issues")
+        );
+    }
+
+    #[test]
+    fn issues_url_is_none_without_a_github_remote() {
+        let (_dir, root) = repo_with_remotes(&[]);
+        assert_eq!(git_issues_url_for_root(&root).unwrap(), None);
+        let (_dir, root) = repo_with_remotes(&[("origin", "https://gitlab.com/octo/widgets.git")]);
+        assert_eq!(git_issues_url_for_root(&root).unwrap(), None);
+    }
+
+    #[test]
+    fn issues_url_errors_outside_a_repository() {
+        let dir = tempfile::tempdir().unwrap();
+        assert!(git_issues_url_for_root(&dir.path().to_string_lossy()).is_err());
     }
 }
 

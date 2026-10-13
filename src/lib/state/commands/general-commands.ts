@@ -163,13 +163,9 @@ export const gitGraphCommands: Command[] = [
     handler: async () => {
       const path = getActiveExplorer()?.state.currentPath;
       if (!path) return;
-      const root = await gitRepoRoot(path);
-      if (!root.ok || !root.data) {
-        toastStore.show("No GitHub remote found for this folder", "info");
-        return;
-      }
       try {
-        const url = await gitIssuesUrl(root.data);
+        const root = await gitRepoRoot(path);
+        const url = root.ok && root.data ? await gitIssuesUrl(root.data) : null;
         if (!url) {
           toastStore.show("No GitHub remote found for this folder", "info");
           return;

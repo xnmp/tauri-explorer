@@ -1,5 +1,5 @@
 import { test, expect } from "./fixtures";
-import { seedSettings } from "./helpers";
+import { seedSettings, waitForStableWidth } from "./helpers";
 
 test("virtualized Details keyboard jumps preserve the horizontal column position", async ({ page }) => {
   await seedSettings(page, { showPreviewPane: true });
@@ -10,6 +10,7 @@ test("virtualized Details keyboard jumps preserve the horizontal column position
   const firstPath = await rows.first().getAttribute("data-path");
   const first = page.locator(`.file-item[data-path="${firstPath}"]`);
   const scroller = page.locator(".file-list .content");
+  await waitForStableWidth(scroller);
   const scrollLeft = await scroller.evaluate((element) => {
     element.scrollLeft = element.scrollWidth - element.clientWidth;
     return element.scrollLeft;

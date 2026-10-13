@@ -1,5 +1,5 @@
 import { test, expect } from "./fixtures";
-import { seedSettings } from "./helpers";
+import { seedSettings, waitForStableWidth } from "./helpers";
 
 test("selecting and moving through Details keeps the scrolled Resolution column visible", async ({ page }) => {
   await seedSettings(page, { showPreviewPane: true });
@@ -9,6 +9,7 @@ test("selecting and moving through Details keeps the scrolled Resolution column 
   const next = page.locator('.file-item[data-path="/home/user/Pictures/photo2.jpg"]');
   await expect(first.locator(".resolution-cell")).toHaveText("1920 × 1080 px");
   const scroller = page.locator(".file-list .content");
+  await waitForStableWidth(scroller);
   const scrollLeft = await scroller.evaluate((element) => {
     element.scrollLeft = element.scrollWidth - element.clientWidth;
     return element.scrollLeft;

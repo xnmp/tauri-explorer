@@ -32,7 +32,10 @@ test("explains and opens nothing outside a git repository", async ({ page }) => 
   await waitForEntries(page);
   await runOpenIssues(page);
 
-  await expect(page.locator(".toast")).toContainText("Not inside a git repository");
+  const toast = page.locator(".toast");
+  await expect(toast).toContainText("No GitHub remote found for this folder");
+  await expect.poll(() => toast.evaluate((el) => getComputedStyle(el).opacity)).toBe("1");
+  await page.waitForTimeout(500); // let the toast entrance settle before capture
   await page.screenshot({ path: "evidence/ac-2-not-a-repo-toast.png" });
   expect(await openedUrl(page)).toBeNull();
 });

@@ -165,7 +165,7 @@ export const gitGraphCommands: Command[] = [
       if (!path) return;
       const root = await gitRepoRoot(path);
       if (!root.ok || !root.data) {
-        toastStore.show("Not inside a git repository", "info");
+        toastStore.show("No GitHub remote found for this folder", "info");
         return;
       }
       try {

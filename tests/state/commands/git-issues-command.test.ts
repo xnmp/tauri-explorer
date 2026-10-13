@@ -64,7 +64,8 @@ describe("git.openIssues (#1055)", () => {
     h.gitRepoRoot.mockResolvedValue({ ok: true, data: null });
     await command.handler();
 
-    expect(h.show).toHaveBeenCalledWith("Not inside a git repository", "info");
+    expect(h.show).toHaveBeenCalledWith("No GitHub remote found for this folder", "info");
+    expect(h.gitIssuesUrl).not.toHaveBeenCalled();
     expect(h.openExternalUrl).not.toHaveBeenCalled();
   });
 

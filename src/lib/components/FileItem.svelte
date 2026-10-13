@@ -110,8 +110,10 @@
     // identity. Pointer selection and cursor moves within the grid must retain
     // the user's horizontal position and FileList's preventScroll choice.
     const grid = event.currentTarget.closest('[role="grid"]');
-    const fromGrid = event.relatedTarget instanceof Node && grid?.contains(event.relatedTarget);
-    if (event.currentTarget.matches(":focus-visible") && !fromGrid) {
+    // A virtual jump can remove the old row before focus, leaving a null
+    // relatedTarget. That is still FileList-owned focus, not native Tab entry.
+    const fromOutsideGrid = event.relatedTarget instanceof Node && !grid?.contains(event.relatedTarget);
+    if (event.currentTarget.matches(":focus-visible") && fromOutsideGrid) {
       event.currentTarget.scrollIntoView({ block: "nearest", inline: "start" });
     }
   }}

@@ -163,6 +163,12 @@ inotify event-loop barrier before probing the canonical nested settings target.
 Keep source-included Rust test filenames ending in `_test.rs` so the publication
 gate recognizes them, and retain the public integration test when testing with
 the entire implementation file reverted.
+Run `bun run test:config-watch` from the repository root to execute both the
+watcher ownership contracts and public nested-root/symlink integration tests.
+The local harness command file is ignored and may disappear between checkouts;
+keep the reproducible test entry point in `package.json`, and configure the local
+harness to run it alongside `bun run test`. Frontend Vitest alone does not
+exercise the Rust watcher acceptance criteria.
 Pending config-watch removals are cleanup obligations, not confirmed coverage.
 On a return retarget, complete uncertain cleanup before registering the root
 again; otherwise an unregister error after native removal can leave that root

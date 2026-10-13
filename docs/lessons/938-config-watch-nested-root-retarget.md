@@ -38,3 +38,10 @@ When returning-ancestor cleanup invalidates the previous plan's descendants,
 restore their native coverage if registration fails and the plan rolls back.
 `src-tauri/test_support/config_watch_cleanup_return_test.rs` checks one callback
 after returning under both failure models, cleanup retry, and rollback coverage.
+
+The operator report contained only truncated Vitest startup warnings, with no
+failed assertion. The complete frontend unit and performance suites passed on
+reproduction. The previously documented ignored harness command was absent in
+the repair checkout. `bun run test:config-watch` now provides a tracked entry
+point for both the Rust ownership contracts and public integration tests;
+configure the local harness to run it in addition to the frontend suite.

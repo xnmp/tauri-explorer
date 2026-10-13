@@ -14,12 +14,16 @@ async function dragBetween(page: Page, source: Locator, target: Locator, keys: r
   const from = await source.boundingBox();
   const to = await target.boundingBox();
   if (!from || !to) throw new Error("Drag source or target is not visible");
+  // Details rows can be wider than their pane (horizontal scroll), so the row's
+  // geometric centre may be clipped; grab the leading, always-visible edge.
+  const grab = (box: { x: number; width: number }) => box.x + Math.min(box.width / 2, 60);
+  const fromX = grab(from), fromY = from.y + from.height / 2;
   for (const key of keys) await page.keyboard.down(key);
   try {
-    await page.mouse.move(from.x + from.width / 2, from.y + from.height / 2);
+    await page.mouse.move(fromX, fromY);
     await page.mouse.down();
-    await page.mouse.move(from.x + from.width / 2 + 15, from.y + from.height / 2, { steps: 5 });
-    await page.mouse.move(to.x + to.width / 2, to.y + to.height / 2, { steps: 15 });
+    await page.mouse.move(fromX + 15, fromY, { steps: 5 });
+    await page.mouse.move(grab(to), to.y + to.height / 2, { steps: 15 });
     await page.mouse.up();
   } finally { for (const key of [...keys].reverse()) await page.keyboard.up(key); }
 }

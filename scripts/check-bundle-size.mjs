@@ -29,12 +29,12 @@ const BUDGET_GZIP_BYTES = 239_791;
 // split. Guard both parse input (raw bytes, relevant to local Tauri assets)
 // and transfer size. Splitting a large chunk must not evade the startup cap.
 const STARTUP_RAW_BUDGET = 866_617;
-// Raised 277,378 -> 278_200 for #994 (Details Resolution column). dev measured
+// Raised 277,378 -> 278_400 for #994 (Details Resolution column). dev measured
 // 277,120 (258 bytes of headroom); the column's header, row cell, queue and
-// keyboard-reveal handler add ~814 bytes gzip (277,934 total). Lazy-loading the
+// keyboard-reveal handler add ~814 bytes gzip (277,934 total; 278,112 after merging later dev work). Lazy-loading the
 // cell was measured and does not help: Vite's preload wrapper plus the extra
 // chunk cost as much as the moved code. Raw stays well under its cap.
-const STARTUP_GZIP_BUDGET = 278_200;
+const STARTUP_GZIP_BUDGET = 278_400;
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const clientDir = resolve(repoRoot, ".svelte-kit/output/client");

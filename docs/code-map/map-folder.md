@@ -808,6 +808,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `scripts/grant-macos-accessibility.sh` — CI-only, SIP-guarded Xcode Helper Accessibility grant for the Appium Mac2 pilot.
 - `.github/workflows/macos-native-ui.yml` — hosted macOS production bundle build, Appium Mac2 run and outcome artifact upload.
 - `scripts/run-native-soak.ts` — native soak configuration, run ownership and report finalization.
+- `scripts/e2e-shards.mjs` + `scripts/e2e-shard-timings.json` — CI browser shards as whole spec files balanced by recorded per-file CI durations (`plan` → `--test-list`; `record` refreshes timings from `gh run view --log`); contracts in `tests/e2e-shards.test.ts` (#1123).
 - `tests/qualification/native-soak.test.ts` — native qualification inputs, binary provenance, report and startup-marker contracts.
 - `tests/qualification/native-runner-edge-cases.test.ts` — process exit, cleanup and artifact containment edge cases.
 - `tests/qualification/macos-startup-phase-attribution.test.ts` — correlated macOS startup phase decomposition, retained unattributed residual (bound scaled with launch length) and half-bounce verdicts.

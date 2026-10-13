@@ -86,6 +86,9 @@ jobs:
   # Keep one browser worker per runner; split the growing suite across runners
   # so contention-sensitive tests retain their existing execution conditions.
   # Two shards of 561 tests ran 19-20m and began hitting the timeout.
+  # Shards are whole spec files balanced by recorded CI duration
+  # (scripts/e2e-shards.mjs, #1123): Playwright's count-based --shard left one
+  # shard ~1.8x longer than another, and the slowest shard sets wall time.
   chromium:
     needs: changes
     if: needs.changes.outputs.code == 'true'
@@ -108,8 +111,11 @@ jobs:
       - name: Install Playwright browser
         run: npx playwright install --with-deps chromium
 
+      - name: Plan duration-balanced shard
+        run: node scripts/e2e-shards.mjs plan --engine chromium --shard ${{ matrix.shard }}/${{ strategy.job-total }} --out "$RUNNER_TEMP/e2e-shard.txt"
+
       - name: E2E tests
-        run: npx playwright test --shard=${{ matrix.shard }}/3 --reporter=line,html
+        run: npx playwright test --project=chromium --test-list "$RUNNER_TEMP/e2e-shard.txt" --reporter=line,html
 
       - name: Upload Playwright report on failure
         if: failure()
@@ -150,12 +156,14 @@ jobs:
     runs-on: ubuntu-latest
     # The full 777-test suite exceeded 40m, and two shards still ran 24-38m,
     # so runner contention pushed them past the bound (#932). Keep one worker
-    # on each runner and the per-runner bound; partition four ways for headroom.
+    # on each runner and the per-runner bound. Five duration-balanced shards
+    # (~20m each from recorded CI timings, #1123) replace four count-based
+    # ones whose slowest ran 30m.
     timeout-minutes: 40
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3, 4]
+        shard: [1, 2, 3, 4, 5]
     steps:
       - uses: actions/checkout@v7
 
@@ -169,13 +177,16 @@ jobs:
       - name: Install Playwright WebKit
         run: npx playwright install --with-deps webkit
 
+      - name: Plan duration-balanced shard
+        run: node scripts/e2e-shards.mjs plan --engine webkit --shard ${{ matrix.shard }}/${{ strategy.job-total }} --out "$RUNNER_TEMP/e2e-shard.txt"
+
       - name: E2E tests (WebKit)
         env:
           WEBKIT: "1"
           PW_VIDEO_HEADED: "1"
         # Only video decoder specs opt into GTK; other specs retain headless WPE.
         # The display belongs to this hosted runner and is destroyed after testing.
-        run: xvfb-run -a --server-args="-screen 0 1920x1080x24 -nolisten tcp" npx playwright test --project=webkit --shard=${{ matrix.shard }}/4 --reporter=line,html
+        run: xvfb-run -a --server-args="-screen 0 1920x1080x24 -nolisten tcp" npx playwright test --project=webkit --test-list "$RUNNER_TEMP/e2e-shard.txt" --reporter=line,html
 
       - name: Upload Playwright report on failure
         if: failure()
@@ -205,20 +216,41 @@ jobs:
             test "$WEBKIT_RESULT" = skipped
           fi
 
-  rust:
+  # The default-feature and opt-in feature suites each compile a different lib
+  # test binary and run the full ~6 min lib suite, so run them on parallel
+  # runners rather than back to back (#1123). Both stay full passes:
+  # `not(feature = "durable-recovery")` tests exist only in the default suite.
+  rust-suite:
     needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
-    # Build, the lib suite (~6 min on CI) and the opt-in recovery tests
-    # together exceed 30 minutes on a cold cache.
+    # A cold cache build plus the lib suite has exceeded 30 minutes.
     timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # --features avif keeps the (default-off) AVIF code linted and
+          # tested; this runner has a current dav1d. The release build ships
+          # without it.
+          - suite: default
+            clippy-features: avif
+            test-features: avif
+          # Keep the deferred recovery policy verified without enabling it in
+          # release artifacts. Default-policy capacity coverage runs in the
+          # default suite. durable-recovery is read only on Linux, like this
+          # runner (ADR 0020). e2e-hooks (#884) rides along so the hook-build
+          # branches are linted and unit-tested on Linux too; it is absent
+          # from release artifacts.
+          - suite: opt-in
+            clippy-features: avif,durable-recovery,e2e-renderer-recovery,e2e-hooks
+            test-features: avif,durable-recovery,e2e-hooks
     steps:
       - uses: actions/checkout@v7
-        if: ${{ needs.changes.outputs.code == 'true' }}
 
       # nasm: required by turbojpeg-sys (x86 SIMD assembler).
       # libdav1d-dev: AVIF decode (image avif-native, Linux-only feature).
       - name: Install Tauri Linux system dependencies
-        if: ${{ needs.changes.outputs.code == 'true' }}
         run: |
           sudo apt-get update
           sudo apt-get install -y \
@@ -226,43 +258,48 @@ jobs:
             libjavascriptcoregtk-4.1-dev nasm libdav1d-dev
 
       - uses: dtolnay/rust-toolchain@stable
-        if: ${{ needs.changes.outputs.code == 'true' }}
         with:
           components: rustfmt, clippy
 
+      # Each suite builds different feature artifacts; separate cache keys
+      # keep the two matrix jobs from overwriting each other's target dir.
       - uses: Swatinem/rust-cache@v2
-        if: ${{ needs.changes.outputs.code == 'true' }}
         with:
           workspaces: src-tauri
+          key: ${{ matrix.suite }}
 
       # tauri::generate_context! requires the frontendDist dir to exist.
       - name: Create empty frontend dist
-        if: ${{ needs.changes.outputs.code == 'true' }}
         run: mkdir -p build
 
       - name: Format check
-        if: ${{ needs.changes.outputs.code == 'true' }}
+        if: ${{ matrix.suite == 'default' }}
         run: cargo fmt --manifest-path src-tauri/Cargo.toml --all -- --check
 
-      # --features avif keeps the (default-off) AVIF code linted and tested;
-      # this runner has a current dav1d. The release build ships without it.
       - name: Clippy
-        if: ${{ needs.changes.outputs.code == 'true' }}
-        run: cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets --features avif -- -D warnings
+        run: cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets --features ${{ matrix.clippy-features }} -- -D warnings
 
       - name: Rust tests
-        if: ${{ needs.changes.outputs.code == 'true' }}
-        run: cargo test --manifest-path src-tauri/Cargo.toml --features avif
+        run: cargo test --manifest-path src-tauri/Cargo.toml --features ${{ matrix.test-features }}
 
-      # Keep the deferred recovery policy verified without enabling it in
-      # release artifacts. Default-policy capacity coverage runs above.
-      # durable-recovery is read only on Linux, like this runner (ADR 0020).
-      # e2e-hooks (#884) rides along so the hook-build branches are linted
-      # and unit-tested on Linux too; it is absent from release artifacts.
-      - name: Opt-in recovery Clippy
-        if: ${{ needs.changes.outputs.code == 'true' }}
-        run: cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets --features avif,durable-recovery,e2e-renderer-recovery,e2e-hooks -- -D warnings
-
-      - name: Opt-in recovery tests
-        if: ${{ needs.changes.outputs.code == 'true' }}
-        run: cargo test --manifest-path src-tauri/Cargo.toml --features avif,durable-recovery,e2e-hooks
+  # Preserve the protected-branch check name and require every Rust suite.
+  rust:
+    if: always()
+    needs: [changes, rust-suite]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      # Skipped only on a docs-only PR; on code every suite must succeed, so a
+      # failed, cancelled or skipped suite still fails this check.
+      - name: Require all Rust suite outcomes
+        env:
+          CHANGES_RESULT: ${{ needs.changes.result }}
+          CODE: ${{ needs.changes.outputs.code }}
+          RUST_RESULT: ${{ needs.rust-suite.result }}
+        run: |
+          test "$CHANGES_RESULT" = success
+          if [ "$CODE" = true ]; then
+            test "$RUST_RESULT" = success
+          else
+            test "$RUST_RESULT" = skipped
+          fi

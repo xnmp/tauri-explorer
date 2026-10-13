@@ -54,7 +54,7 @@ it("opening a dialog over the preview's pane exits fullscreen before painting an
     client.flush(() => f.ownership.register(() => {}, () => true, { scope: { paneId: "a", token: Symbol() } }));
     expect(f.fullscreen.active).toBe(false);
     expect(f.attrs.has("data-preview-fullscreen")).toBe(false);
-    client.flush(() => f.fullscreen.click({ stopPropagation() {} }));
+    client.flush(() => f.fullscreen.click({ stopPropagation() {} }, true));
     expect(f.fullscreen.active).toBe(false);
     expect(f.press("Escape").defaultPrevented).toBe(false);
   } finally { f.dispose(); }

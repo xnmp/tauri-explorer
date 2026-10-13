@@ -27,12 +27,25 @@ function containerAtOrigin(): HTMLElement {
 describe("createPreviewFullscreen", () => {
   it("a clean click at fit zoom enters and leaves fullscreen", () => {
     const fs = createPreviewFullscreen();
-    fs.click(click());
+    fs.click(click(), true);
     expect(fs.active).toBe(true);
     expect(fs.transform).toBe("scale(1)");
-    fs.click(click());
+    fs.click(click(), true);
     expect(fs.active).toBe(false);
     expect(fs.transform).toBe("");
+  });
+
+  it("a click on the background around the picture does not enter fullscreen", () => {
+    const fs = createPreviewFullscreen();
+    fs.click(click(), false);
+    expect(fs.active).toBe(false);
+  });
+
+  it("a click on the background still leaves fullscreen at fit zoom", () => {
+    const fs = createPreviewFullscreen();
+    fs.click(click(), true);
+    fs.click(click(), false);
+    expect(fs.active).toBe(false);
   });
 
   it("toggle runs onToggle; Esc and exit do not, and both reset the zoom", () => {
@@ -131,7 +144,7 @@ describe("createPreviewFullscreen", () => {
     let blocked = true;
     const onToggle = vi.fn();
     const fs = createPreviewFullscreen({ keysBlocked: () => blocked, onToggle });
-    if (input === "toggle") fs.toggle(); else fs.click(click());
+    if (input === "toggle") fs.toggle(); else fs.click(click(), true);
     expect(fs.active).toBe(false);
     expect(onToggle).not.toHaveBeenCalled();
     const escape = key("Escape");
@@ -172,7 +185,7 @@ describe("createPreviewFullscreen", () => {
     fs.pointerUp();
     expect(fs.panning).toBe(false);
     expect([fs.panX, fs.panY]).toEqual([30, -10]);
-    fs.click(click());
+    fs.click(click(), true);
     expect(fs.active).toBe(true);
   });
 
@@ -184,9 +197,9 @@ describe("createPreviewFullscreen", () => {
     fs.pointerMove({ clientX: 40, clientY: 0 });
     fs.pointerUp();
     fs.handleKey(key("0"));
-    fs.click(click()); // the drag's own click
+    fs.click(click(), true); // the drag's own click
     expect(fs.active).toBe(true);
-    fs.click(click());
+    fs.click(click(), true);
     expect(fs.active).toBe(false);
   });
 
@@ -194,7 +207,7 @@ describe("createPreviewFullscreen", () => {
     const fs = createPreviewFullscreen();
     fs.toggle();
     fs.handleKey(key("+"));
-    fs.click(click());
+    fs.click(click(), true);
     expect(fs.active).toBe(true);
   });
 

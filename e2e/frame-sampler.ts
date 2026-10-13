@@ -2,9 +2,13 @@
  * Per-frame layout sampling for "no stale frame" tests (#1061).
  *
  * The sampler records `snapshot()` during each frame's ResizeObserver delivery,
- * through an observer created after the app's own observers, so it runs after
- * their first-pass callbacks and just before the browser paints. Its probe
- * element changes size every animation frame, so it reports every frame.
+ * through an observer created after the app's observers that exist when it
+ * starts, so it runs after their first-pass callbacks and before the browser
+ * paints. Its probe element changes size every animation frame, so it reports
+ * every frame. Observers created later (a component mounted after sampling
+ * starts) and deeper delivery passes run after it: a correction they paint in
+ * the same frame can still be sampled as wrong. That errs towards a false
+ * failure, never a missed stale frame.
  *
  * `snapshot` is serialized into the page: it must be self-contained.
  */

@@ -426,6 +426,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `detail-columns.ts` — Details column defaults, finite bounds, malformed-width normalization and visible grid projection.
 - `media-duration.ts` — Length-cell formatting (m:ss / h:mm:ss via `mediaTime`, empty when unknown) and the size+mtime cache revision (#995).
 - `resize-size.ts` — bounded scalar normalization, visual/model delta conversion and axis-aware keyboard sizing.
+- `scroll-moves-handle.ts` — which scrolls end a panel drag: the document's, an ancestor's or a synced scroller's, never an unrelated list's.
 - `pane-viewport.ts` — pure descendant minima (`paneMinima` sizes the rendered canvas and split children without measurement), canvas placement, active-pane reveal and keyboard divider policy.
 - `pane-layout.ts` — pane split-tree pure logic (#228).
 - `tab-title.ts` — VS Code-style tab title disambiguation.

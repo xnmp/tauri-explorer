@@ -1,11 +1,15 @@
 import { onDestroy, tick } from "svelte";
 import { resizeActivity } from "$lib/state/resize-activity.svelte";
 import type { ResizeEffects, ScalarResize } from "$lib/state/scalar-resize";
+import { scrollMovesHandle } from "$lib/domain/scroll-moves-handle";
 
 export interface ResizePresentation {
   element?(handle: HTMLElement): HTMLElement | null;
   /** Visual pixels per model unit; supply for counter-zoomed geometry. */
   scale?(element: HTMLElement): number;
+  /** Scrollers outside the handle's ancestors whose scrolling still moves it,
+   * such as a body whose scrollLeft a header follows. */
+  scrollers?(handle: HTMLElement): readonly (Element | null | undefined)[];
 }
 
 /** DOM lifetime shared by width/height preference adapters. Global cancellation
@@ -54,7 +58,10 @@ export function useResizeOwner(create: (effects: ResizeEffects) => ScalarResize,
     zoom.observe(document.documentElement, { attributes: true, attributeFilter: ["style"] });
     window.addEventListener("blur", owner.cancel, { signal: controller.signal });
     window.addEventListener("resize", owner.cancel, { signal: controller.signal });
-    window.addEventListener("scroll", owner.cancel, { signal: controller.signal, capture: true });
+    // Only a scroll that moves the handle invalidates the gesture's coordinates.
+    window.addEventListener("scroll", (scrolled) => {
+      if (scrollMovesHandle(scrolled.target, handle, document, presentation.scrollers?.(handle))) owner.cancel();
+    }, { signal: controller.signal, capture: true });
     release = () => {
       controller.abort(); zoom.disconnect();
       if (handle.hasPointerCapture(event.pointerId)) handle.releasePointerCapture(event.pointerId);

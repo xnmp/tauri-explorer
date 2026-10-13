@@ -22,7 +22,8 @@
   // resolution then applies geometry's clamp in the same layout pass as a
   // viewport change. `split` is a frame late and only serves input/ARIA (#1061).
   // A child's minimum along the split axis; CSS applies it as min-width (row)
-  // or min-height (column).
+  // or min-height (column). Always a value: custom properties inherit, so an
+  // unset one would give a nested child its ancestor's minimum.
   const minimumExtent = (child: PaneNode) => {
     const size = minima?.get(child.id);
     return `${(node.type === "split" && node.direction === "column" ? size?.height : size?.width) ?? 0}px`;

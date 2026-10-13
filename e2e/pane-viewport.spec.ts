@@ -298,7 +298,11 @@ for (const zoomLevel of [100, 130]) {
   }
 }
 
-/** The worst overflow of any split's children and dividers past the split itself. */
+/** For the 16-pane layout: the worst overflow of any split's children and
+ * dividers past the split, and how far the canvas minimum is from four 240 × 200
+ * panes plus three of the dividers CSS is painting, along each axis. A stale
+ * divider in the minima shows as overflow when it is too narrow and as a
+ * mismatched canvas minimum either way. */
 function splitOverflow() {
   let overflow = 0;
   for (const split of document.querySelectorAll<HTMLElement>(".pane-split")) {
@@ -307,7 +311,11 @@ function splitOverflow() {
     const children = [...split.children].reduce((sum, child) => sum + extent(child), 0);
     overflow = Math.max(overflow, children - extent(split));
   }
-  return { island: document.documentElement.hasAttribute("data-vibrancy"), overflow };
+  const tree = document.querySelector<HTMLElement>(".pane-tree")!;
+  const divider = parseFloat(getComputedStyle(tree).getPropertyValue("--pane-divider-size"));
+  const minimum = Math.max(Math.abs(parseFloat(tree.style.minWidth) - (4 * 240 + 3 * divider)),
+    Math.abs(parseFloat(tree.style.minHeight) - (4 * 200 + 3 * divider)));
+  return { island: document.documentElement.hasAttribute("data-vibrancy"), overflow, minimum };
 }
 type OverflowSample = ReturnType<typeof splitOverflow>;
 
@@ -330,7 +338,10 @@ for (const zoomLevel of [100, 130]) {
     await expect(page.locator("html")).toHaveAttribute("data-vibrancy", "");
     const samples = await stopFrameSampler<OverflowSample>(page);
     expect(samples.length).toBeGreaterThan(5);
-    samples.forEach((sample, frame) => expect(sample.overflow, `startup frame ${frame}`).toBeLessThanOrEqual(0.1));
+    samples.forEach((sample, frame) => {
+      expect(sample.overflow, `startup frame ${frame}`).toBeLessThanOrEqual(0.1);
+      expect(sample.minimum, `startup frame ${frame} canvas minimum`).toBe(0);
+    });
   });
 
   test(`island mode toggles never overflow a constrained split at ${zoomLevel}%`, async ({ page }) => {
@@ -349,7 +360,10 @@ for (const zoomLevel of [100, 130]) {
       const samples = await stopFrameSampler<OverflowSample>(page);
       const first = samples.findIndex(sample => sample.island === island);
       expect(first, "sampled frames before the toggle").toBeGreaterThan(0);
-      samples.forEach((sample, frame) => expect(sample.overflow, `frame ${frame} (island ${island})`).toBeLessThanOrEqual(0.1));
+      samples.forEach((sample, frame) => {
+        expect(sample.overflow, `frame ${frame} (island ${island})`).toBeLessThanOrEqual(0.1);
+        expect(sample.minimum, `frame ${frame} (island ${island}) canvas minimum`).toBe(0);
+      });
     }
   });
 }

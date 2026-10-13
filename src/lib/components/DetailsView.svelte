@@ -11,6 +11,7 @@
   import { settingsStore } from "$lib/state/settings.svelte";
   import { useColumnResize } from "$lib/composables/use-column-resize.svelte";
   import { DETAIL_COLUMNS, type ColumnKey } from "$lib/domain/detail-columns";
+  import { fixedMenuPosition, getZoomFactor } from "$lib/domain/zoom";
   import FileItem from "./FileItem.svelte";
   import VirtualList from "./VirtualList.svelte";
   import InlineNewFolder, { NEW_FOLDER_SENTINEL, isNewFolderSentinel } from "./InlineNewFolder.svelte";
@@ -59,6 +60,29 @@
 
   function closeColumnMenu() {
     columnMenuPos = null;
+  }
+
+  function positionColumnMenu(node: HTMLDivElement) {
+    if (!columnMenuPos) return;
+    // The pointer, viewport and measured menu must share fixed-CSS space.
+    // offset sizes avoid the engine-specific rect coordinate differences.
+    // New WebKit versions scale fixed offsets once, while native versions
+    // covered by fixedFromClient scale them twice. Measure offset scaling relative
+    // to size scaling so both viewport-space and older CSS-space rects work.
+    // These synchronous probes finish before the mounted menu is painted.
+    node.style.left = "0px";
+    const origin = node.getBoundingClientRect();
+    node.style.left = "100px";
+    const probe = node.getBoundingClientRect();
+    const zoom = getZoomFactor();
+    const scale = zoom * (probe.left - origin.left) / 100
+      / (probe.width / node.offsetWidth);
+    const singleScale = Math.abs(scale - zoom) <= Math.abs(scale - zoom ** 2);
+    const position = fixedMenuPosition(columnMenuPos,
+      { width: window.innerWidth, height: window.innerHeight },
+      { width: node.offsetWidth, height: node.offsetHeight }, zoom, singleScale);
+    node.style.left = `${position.x}px`;
+    node.style.top = `${position.y}px`;
   }
 </script>
 
@@ -162,7 +186,7 @@
     <!-- svelte-ignore a11y_no_static_element_interactions -->
     <!-- svelte-ignore a11y_click_events_have_key_events -- click-outside backdrop pattern (matches CaretPicker/NavigationHistoryMenu); Escape/Tab away is not the primary dismiss path but the menu items themselves remain keyboard-focusable -->
     <div class="column-menu-backdrop" onclick={closeColumnMenu} oncontextmenu={(e) => { e.preventDefault(); e.stopPropagation(); closeColumnMenu(); }}></div>
-    <div class="column-menu" style="left: {columnMenuPos.x}px; top: {columnMenuPos.y}px;">
+    <div class="column-menu" use:positionColumnMenu>
       <button class="column-menu-item" onclick={() => { settingsStore.toggleColumn("date"); closeColumnMenu(); }}>
         <span class="column-menu-check">{settingsStore.columnVisibility.date ? "✓" : ""}</span>
         Date modified

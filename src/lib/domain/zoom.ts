@@ -132,6 +132,26 @@ export function fixedFromClient(
   return chromium ? clientCoord / zoom : clientCoord / zoom ** 2;
 }
 
+/** Place a pointer menu in fixed CSS coordinates using its layout dimensions. */
+export function fixedMenuPosition(
+  pointer: { x: number; y: number },
+  viewport: { width: number; height: number },
+  menu: { width: number; height: number },
+  zoom: number,
+  singleScale: boolean,
+): { x: number; y: number } {
+  const fixed = (value: number) => fixedFromClient(value, zoom, singleScale);
+  const pad = fixed(8);
+  // Menu sizes render with one zoom factor even on legacy WebKit, where
+  // fixed offsets scale twice. Convert the rendered extents into offset space.
+  const width = fixed(menu.width * zoom);
+  const height = fixed(menu.height * zoom);
+  return {
+    x: Math.max(pad, Math.min(fixed(pointer.x), fixed(viewport.width) - width - pad)),
+    y: Math.max(pad, Math.min(fixed(pointer.y), fixed(viewport.height) - height - pad)),
+  };
+}
+
 export function fixedFromRect(
   rectCoord: number,
   zoom: number,

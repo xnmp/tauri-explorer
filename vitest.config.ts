@@ -11,7 +11,11 @@ export default defineConfig({
     // sequentially via vitest.perf.config.ts — see package.json.
     exclude: ["tests/perf/**", "**/node_modules/**"],
     environment: "node",
-    setupFiles: ["./tests/setup.ts"],
+    setupFiles: ["./tests/setup.ts", "./tests/runner-setup.ts"],
+    // Hundreds of cold Svelte transforms otherwise contend across every core,
+    // exhausting behavior-test timers. Keep the default bounded like browser
+    // tests; explicit Vitest --maxWorkers overrides still take precedence.
+    maxWorkers: 4,
     // The 5,001-activation lifecycle regression has no timing assertion, but
     // competing transforms can exhaust its unchanged five-second deadline.
     // Ordered projects keep it and the unchanged subprocess compiler gate in

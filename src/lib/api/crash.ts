@@ -3,8 +3,9 @@
  * Local capture only: panics land in files via the Rust panic hook; uncaught
  * webview errors are both mirrored into the rotating backend logs AND recorded
  * as crash files so the next-launch notice can offer them exactly like a Rust
- * crash. Nothing leaves the machine unless the user opens the pre-filled
- * GitHub issue themselves.
+ * crash. Unhandled promise rejections are only logged: the app keeps running,
+ * so the "crashed last time" notice would be false (#1056). Nothing leaves the
+ * machine unless the user opens the pre-filled GitHub issue themselves.
  */
 
 import { invoke } from "./common";
@@ -97,8 +98,9 @@ function capture(message: string, stack?: string): void {
 }
 
 /**
- * Install window-level error handlers that mirror uncaught frontend errors
- * into the backend log files. Idempotent per window.
+ * Install window-level handlers that mirror uncaught frontend errors and
+ * unhandled rejections into the backend log files, and record only uncaught
+ * errors as crash files. Idempotent per window.
  */
 let installed = false;
 export function installGlobalErrorHandlers(): void {
@@ -118,6 +120,5 @@ export function installGlobalErrorHandlers(): void {
     forward(
       isError ? `${message}\n${(event.reason as Error).stack ?? ""}` : message,
     );
-    capture(message, isError ? (event.reason as Error).stack : undefined);
   });
 }

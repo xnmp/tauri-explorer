@@ -35,3 +35,4 @@ decision during review.
 | [0027](0027-git-avatar-cache-lifecycle.md) | Git avatar lookup and cache lifecycle | Accepted |
 | [0028](0028-media-duration-probe-boundary.md) | Media duration probe boundary | Accepted |
 | [0029](0029-report-attachment-admission-and-hosting.md) | Report attachment admission and public hosting | Accepted |
+| [0030](0030-frontend-crash-recording-and-config-change-events.md) | Frontend crash recording and the config-change event contract | Accepted |

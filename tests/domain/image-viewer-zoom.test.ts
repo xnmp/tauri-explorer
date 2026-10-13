@@ -162,3 +162,22 @@ describe("fullscreenKeyAction", () => {
     expect(fullscreenKeyAction("Enter", 1)).toBeNull();
   });
 });
+
+describe("fullscreenKeyAction for a text subject", () => {
+  it("steps with Left/Right at any zoom instead of panning", () => {
+    expect(fullscreenKeyAction("ArrowLeft", 3, "text")).toEqual({ kind: "step", delta: -1 });
+    expect(fullscreenKeyAction("ArrowRight", 3, "text")).toEqual({ kind: "step", delta: 1 });
+  });
+
+  it("scrolls with Up/Down at any zoom, in the direction of the key", () => {
+    expect(fullscreenKeyAction("ArrowUp", 1, "text")).toEqual({ kind: "scroll", dy: -KEY_PAN_STEP });
+    expect(fullscreenKeyAction("ArrowDown", 3, "text")).toEqual({ kind: "scroll", dy: KEY_PAN_STEP });
+  });
+
+  it("keeps the exit and zoom keys", () => {
+    expect(fullscreenKeyAction("Escape", 2, "text")).toEqual({ kind: "exit" });
+    expect(fullscreenKeyAction("+", 1, "text")).toEqual({ kind: "zoom", factor: KEY_ZOOM_STEP });
+    expect(fullscreenKeyAction("0", 2, "text")).toEqual({ kind: "reset" });
+    expect(fullscreenKeyAction("a", 2, "text")).toBeNull();
+  });
+});

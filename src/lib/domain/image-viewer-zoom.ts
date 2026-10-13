@@ -94,15 +94,24 @@ export type FullscreenKeyAction =
   | { readonly kind: "zoom"; readonly factor: number }
   | { readonly kind: "reset" }
   | { readonly kind: "pan"; readonly dx: number; readonly dy: number }
+  | { readonly kind: "scroll"; readonly dy: number }
   | { readonly kind: "step"; readonly delta: -1 | 1 };
+
+/** What the fullscreen viewer shows: an image (zoom + pan) or reflowing text (zoom + scroll). */
+export type FullscreenSubjectKind = "image" | "text";
 
 /**
  * What a key does in fullscreen: Esc exits, +/- zoom, 0 resets, arrows pan
  * while zoomed; at the base zoom Left/Right step between siblings and
- * Up/Down do nothing. `null` means the key is not the viewer's.
+ * Up/Down do nothing. A text subject never pans: Left/Right always step and
+ * Up/Down scroll the text. `null` means the key is not the viewer's.
  */
-export function fullscreenKeyAction(key: string, zoom: number): FullscreenKeyAction | null {
-  const zoomed = zoom > MIN_ZOOM;
+export function fullscreenKeyAction(
+  key: string,
+  zoom: number,
+  subject: FullscreenSubjectKind = "image",
+): FullscreenKeyAction | null {
+  const zoomed = zoom > MIN_ZOOM && subject === "image";
   switch (key) {
     case "Escape":
       return { kind: "exit" };
@@ -119,8 +128,10 @@ export function fullscreenKeyAction(key: string, zoom: number): FullscreenKeyAct
     case "ArrowRight":
       return zoomed ? { kind: "pan", dx: -KEY_PAN_STEP, dy: 0 } : { kind: "step", delta: 1 };
     case "ArrowUp":
+      if (subject === "text") return { kind: "scroll", dy: -KEY_PAN_STEP };
       return zoomed ? { kind: "pan", dx: 0, dy: KEY_PAN_STEP } : null;
     case "ArrowDown":
+      if (subject === "text") return { kind: "scroll", dy: KEY_PAN_STEP };
       return zoomed ? { kind: "pan", dx: 0, dy: -KEY_PAN_STEP } : null;
     default:
       return null;

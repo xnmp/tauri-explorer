@@ -94,7 +94,12 @@ import { openFile } from "$lib/api/open";
     navigate: (delta) => navigateSibling(delta),
     // PDF and video previews own their keys in fullscreen; only Esc stays ours.
     subjectOwnsKeys: () => !!selectedFile && (isPdfFile(selectedFile) || isVideoMediaFile(selectedFile)),
+    // Text, markdown and code zoom with the wheel and scroll with Up/Down (#1039).
+    subjectZoomsText: () => textZoomable,
+    scrollSubject: (dy) => previewContentEl?.scrollBy({ top: dy }),
   });
+
+  let previewContentEl = $state<HTMLElement | null>(null);
 
   function handlePaneDoubleClick(event: MouseEvent): void {
     const target = event.target;
@@ -221,6 +226,14 @@ import { openFile } from "$lib/api/open";
   // Commit file diff routed from the git graph (#366); wins over the
   // working-tree diff when both are somehow set (openers clear the other).
   const commitDiff = $derived(scmStore.commitDiff);
+
+  /** The branch of the template that shows reflowing text: the only subject whose fullscreen zoom is a font zoom. */
+  const textZoomable = $derived(
+    !!selectedFile && !activeDiff && !commitDiff && !previewLoading &&
+    !previewPdf && !previewVideo && !previewImageUrl && previewFolderChildren.length === 0 &&
+    previewCsv === null &&
+    (previewMarkdownHtml !== null || previewHighlightedHtml !== null || previewText !== null),
+  );
   const diffPath = $derived(commitDiff?.path ?? activeDiff?.path ?? "");
   let diffParsed = $state<ParsedDiff | null>(null);
   let diffLoading = $state(false);
@@ -743,6 +756,9 @@ import { openFile } from "$lib/api/open";
         <path d="M3 3L13 13M13 3L3 13" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
       </svg>
     </button>
+    {#if textZoomable}
+      <div class="fs-text-zoom-indicator">{Math.round(fullscreen.zoom * 100)}%</div>
+    {/if}
   {/if}
   {#if activeDiff || commitDiff}
     <div class="preview-header">
@@ -850,8 +866,11 @@ import { openFile } from "$lib/api/open";
     {/if}
 
     <!-- svelte-ignore a11y_no_noninteractive_tabindex -- a scrollable region must be keyboard-focusable (WCAG 2.1.1, #797). -->
-    <div class="preview-content" role="region" aria-label="Preview of {selectedFile.name}{isVideoMediaFile(selectedFile) ? ' (video)' : ''}" aria-busy={previewLoading} tabindex="0"
-      bind:clientWidth={previewContentWidth} bind:clientHeight={previewContentHeight}>
+    <div class="preview-content" class:fs-text={fullscreen.active && textZoomable}
+      style:--fs-text-zoom={fullscreen.zoom}
+      onwheel={textZoomable ? fullscreen.wheel : undefined}
+      role="region" aria-label="Preview of {selectedFile.name}{isVideoMediaFile(selectedFile) ? ' (video)' : ''}" aria-busy={previewLoading} tabindex="0"
+      bind:this={previewContentEl} bind:clientWidth={previewContentWidth} bind:clientHeight={previewContentHeight}>
       {#if isVideoMediaFile(selectedFile)}
         <span class="video-preview-marker"><VideoIndicator /></span>
       {/if}
@@ -1266,6 +1285,34 @@ import { openFile } from "$lib/api/open";
   }
   .preview-pane.fullscreen .preview-content {
     overflow: hidden;
+  }
+  /* Fullscreen text (#1039). The pane cancels the root UI zoom so images fit
+     the screen, which would also shrink the text below its docked size; zoom
+     the text back by the app zoom, times the wheel zoom. The wheel zoom is
+     the only scroll gesture, so the content scrolls by key or scrollbar. */
+  .preview-pane.fullscreen .preview-content.fs-text {
+    overflow-x: hidden;
+    overflow-y: auto;
+  }
+  .preview-pane.fullscreen .preview-content.fs-text > :is(.preview-text, .preview-markdown) {
+    zoom: calc(var(--app-zoom, 1) * var(--fs-text-zoom, 1));
+  }
+  .preview-pane.fullscreen .preview-content.fs-text > .preview-truncated {
+    zoom: var(--app-zoom, 1);
+  }
+  .fs-text-zoom-indicator {
+    position: absolute;
+    bottom: 16px;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 1;
+    padding: 4px 12px;
+    border-radius: var(--radius-pill, 999px);
+    background: rgba(0, 0, 0, 0.55);
+    color: #fff;
+    font-size: 12px;
+    font-variant-numeric: tabular-nums;
+    pointer-events: none;
   }
   /* PluginPreviewTarget renders its chrome as direct children of this pane
      (see the dock layout above); fullscreen hides it like the file chrome. */

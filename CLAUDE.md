@@ -260,3 +260,8 @@ identity at high zoom; aligning the outer edge also preserves its leading ring.
 Pointer selection and cursor moves within the grid must retain the user's
 horizontal column position and FileList's preventScroll ownership (ADR 0015).
 Do not relax the icon viewport, focus-ring or horizontal-scroll assertions.
+
+A virtual cursor jump can unmount the old focused row before FileList focuses
+its replacement. A null relatedTarget is not proof of external keyboard entry;
+keep its preventScroll behavior and require a known external focus origin for
+the native Tab reveal. Cover scrolled Ctrl+End/Home as well as mounted arrows.

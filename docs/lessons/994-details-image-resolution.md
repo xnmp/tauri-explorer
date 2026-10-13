@@ -32,3 +32,8 @@ benchmark. Its child now has a 30-second process timeout and the enclosing test
 has a 35-second deadline; the zero-exit assertion is unchanged. This avoids the
 framework's five-second default rejecting a healthy compile on a slower host,
 while retaining a finite bound for hung processes.
+
+A virtual cursor jump can unmount the old focused row before FileList focuses
+its replacement. A null relatedTarget is not proof of external keyboard entry;
+keep its preventScroll behavior and require a known external focus origin for
+the native Tab reveal. Cover scrolled Ctrl+End/Home as well as mounted arrows.

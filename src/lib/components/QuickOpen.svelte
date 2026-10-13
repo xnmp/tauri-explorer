@@ -14,6 +14,7 @@ import { openFile } from "$lib/api/open";
   import { settingsStore } from "$lib/state/settings.svelte";
   import { parentDir, basename, directoryKey, toForwardSlashes, expandTilde as expandTildePath } from "$lib/domain/path";
   import { windowTabsManager } from "$lib/state/window-tabs.svelte";
+  import { navigateFromQuickOpen } from "$lib/state/quick-open-navigation";
   import { usePointerIntent } from "$lib/composables/use-pointer-intent.svelte";
   import FileIcon from "./FileIcon.svelte";
   import Modal from "./Modal.svelte";
@@ -411,9 +412,7 @@ import { openFile } from "$lib/api/open";
         event.preventDefault();
         // If query looks like a path (starts with / or ~), navigate directly
         if (query.startsWith("/") || query.startsWith("~")) {
-          const explorer = windowTabsManager.getActiveExplorer();
-          explorer?.navigateTo(expandTilde(query.trim()));
-          onClose();
+          void navigateFromQuickOpen(onClose, expandTilde(query.trim()));
         } else if (displayResults[selectedIndex]) {
           selectResult(displayResults[selectedIndex]);
         }
@@ -438,12 +437,11 @@ import { openFile } from "$lib/api/open";
   }
 
   async function selectResult(result: SearchResult): Promise<void> {
-    const explorer = windowTabsManager.getActiveExplorer();
-
     if (result.kind === "directory") {
       // Jumping to a folder is navigation, not a file action — it no longer
       // feeds frecency (the Recent list ranks folders by file activity).
-      explorer?.navigateTo(result.path);
+      await navigateFromQuickOpen(onClose, result.path);
+      return;
     } else {
       const openResult = await openFile(result.path);
       if (openResult.ok) {
@@ -451,8 +449,8 @@ import { openFile } from "$lib/api/open";
         // Opening a file marks its folder as actively worked-in for Recent ranking.
         frecencyStore.recordFileAction(result.path);
       } else {
-        const resultDir = parentDir(result.path);
-        explorer?.navigateTo(resultDir);
+        await navigateFromQuickOpen(onClose, parentDir(result.path));
+        return;
       }
     }
 

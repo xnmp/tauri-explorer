@@ -41,6 +41,8 @@ export interface PreviewImageReady {
   readonly viaBackend: boolean;
   /** A display-sized rendition, or the file itself. */
   readonly resolution: PreviewImageResolution;
+  /** The off-screen element that decoded it; a cache keeps it referenced (#1014). */
+  readonly decoded: HTMLImageElement;
 }
 
 export type PreviewImageLoad =
@@ -69,10 +71,15 @@ const FAILED: PreviewImageLoad = { status: "failed" };
 
 /** Decode an image off the main thread so selection/animation aren't blocked. */
 export async function decodeImage(url: string): Promise<string> {
+  await decodeImageElement(url);
+  return url;
+}
+
+async function decodeImageElement(url: string): Promise<HTMLImageElement> {
   const img = new Image();
   img.src = url;
   await img.decode();
-  return url;
+  return img;
 }
 
 function errorText(error: unknown): string {
@@ -101,9 +108,9 @@ async function loadViaBackend(
   }
   if (!owner.adoptBlob(fallback.data)) return STALE;
   try {
-    await decodeImage(fallback.data);
+    const decoded = await decodeImageElement(fallback.data);
     if (!owner.isCurrent()) return STALE;
-    return { status: "ready", url: fallback.data, viaBackend: true, resolution };
+    return { status: "ready", url: fallback.data, viaBackend: true, resolution, decoded };
   } catch (error) {
     if (!owner.isCurrent()) return STALE;
     owner.releaseBlob(fallback.data);
@@ -120,9 +127,9 @@ async function loadOriginal(path: string, cacheBust: string, owner: PreviewImage
     const url = await assetUrl(path, cacheBust);
     if (!owner.isCurrent()) return STALE;
     // Decode off-screen — the caller's spinner stays visible until ready.
-    await decodeImage(url);
+    const decoded = await decodeImageElement(url);
     if (!owner.isCurrent()) return STALE;
-    return { status: "ready", url, viaBackend: false, resolution: "original" };
+    return { status: "ready", url, viaBackend: false, resolution: "original", decoded };
   } catch (assetErr) {
     if (!owner.isCurrent()) return STALE;
     console.warn("[preview] asset image decode failed; using backend fallback", { path, error: assetErr });
@@ -144,9 +151,9 @@ async function loadRenditionFile(
   try {
     const url = await assetUrl(renditionPath, cacheBust);
     if (!owner.isCurrent()) return STALE;
-    await decodeImage(url);
+    const decoded = await decodeImageElement(url);
     if (!owner.isCurrent()) return STALE;
-    return { status: "ready", url, viaBackend: false, resolution: "rendition" };
+    return { status: "ready", url, viaBackend: false, resolution: "rendition", decoded };
   } catch (error) {
     if (!owner.isCurrent()) return STALE;
     // Pruned from the cache, or outside the asset scope (XDG_CACHE_HOME

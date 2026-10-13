@@ -8,8 +8,9 @@
   import { previewResizeSpec } from "$lib/domain/preview-size";
   import { windowTabsManager } from "$lib/state/window-tabs.svelte";
   import { readTextFile, fetchDirectory } from "$lib/api/files";
-  import { decodeImage, loadPreviewImage, type PreviewImageOptions } from "$lib/state/preview-image";
-  import { createFullResolutionUpgrade } from "$lib/state/preview-resolution";
+  import { decodeImage, loadPreviewImage, type PreviewImageOptions, type PreviewImageReady } from "$lib/state/preview-image";
+  import { createFullResolutionUpgrade, type ShownRendition } from "$lib/state/preview-resolution";
+  import { createPreviewImageCache } from "$lib/state/preview-image-cache";
   import { needsFullResolution, renditionMaxEdge } from "$lib/domain/preview-rendition";
   import { createLatestOnlyRunner } from "$lib/domain/latest-only";
   import { usePreviewFullscreen } from "$lib/composables/use-preview-fullscreen.svelte";
@@ -163,7 +164,12 @@ import { openFile } from "$lib/api/open";
   let previewContentWidth = $state(0);
   let previewContentHeight = $state(0);
   const renditionRunner = createLatestOnlyRunner();
-  const fullResolution = createFullResolutionUpgrade();
+  // Images this pane already showed, per file version: a revisit shows one
+  // synchronously instead of loading it again (#1014). Released on unmount.
+  const imageCache = createPreviewImageCache((url) => URL.revokeObjectURL(url));
+  const fullResolution = createFullResolutionUpgrade(async (path, cacheBust, owner) =>
+    imageCache.lookup(path, cacheBust, {}) ?? loadPreviewImage(path, cacheBust, owner),
+  );
   let previewText = $state<string | null>(null);
   let previewHighlightedHtml = $state<string | null>(null);
   let previewMarkdownHtml = $state<string | null>(null);
@@ -440,7 +446,48 @@ import { openFile } from "$lib/api/open";
     previewImageHeld = false;
   }
 
-  function showingRendition(rendition: Parameters<typeof fullResolution.showing>[0]): void {
+  /** Remembers a loaded file image (the cache takes its blob) and shows it. */
+  function showLoadedImage(request: PreviewRequest, path: string, cacheBust: string, options: PreviewImageOptions, image: PreviewImageReady): void {
+    previewLifetime.disownBlob(request, image.url);
+    imageCache.store(path, cacheBust, options, image);
+    showCachedImage(image);
+  }
+
+  /** Shows a remembered image for `file` (rendition state included); false on a miss. */
+  function showRememberedImage(request: PreviewRequest, file: FileEntry, cacheBust: string, options: PreviewImageOptions): boolean {
+    const image = imageCache.lookup(file.path, cacheBust, options);
+    if (!image) return false;
+    showCachedImage(image);
+    if (image.resolution === "rendition") showingRendition({ path: file.path, cacheBust, owner: imageOwner(request), request });
+    previewImageNote = imageNote(file, image);
+    return true;
+  }
+
+  function imageOwner(request: PreviewRequest) {
+    return {
+      isCurrent: () => previewLifetime.isCurrent(request),
+      adoptBlob: (url: string) => previewLifetime.adoptBlob(request, url),
+      releaseBlob: (url: string) => previewLifetime.releaseBlob(request, url),
+    };
+  }
+
+  function imageNote(file: FileEntry, image: PreviewImageReady): string | null {
+    return image.viaBackend && /\.avif$/i.test(file.name) ? "AVIF fallback preview shows the first frame." : null;
+  }
+
+  /** Shows an image the cache owns; any blob the lifetime still holds is released. */
+  function showCachedImage(image: PreviewImageReady): void {
+    previewLifetime.clearBlob();
+    previewImageUrl = image.url;
+    previewImageHeld = false;
+  }
+
+  // The rendition on screen and the request that showed it, so its upgrade
+  // can be remembered under that file version.
+  let shownRendition: (ShownRendition & { readonly request: PreviewRequest }) | null = null;
+
+  function showingRendition(rendition: typeof shownRendition): void {
+    shownRendition = rendition;
     fullResolution.showing(rendition);
     previewShowsRendition = rendition !== null;
   }
@@ -453,8 +500,9 @@ import { openFile } from "$lib/api/open";
     void fullResolution.upgrade(wantsFullResolution).then((image) => {
       // Re-checked at the swap: leaving fullscreen or moving to another file
       // while the original decoded must keep what is on screen.
-      if (!image || !previewShowsRendition || !wantsFullResolution()) return;
-      showImage(image.url);
+      const source = shownRendition;
+      if (!image || !source || !previewShowsRendition || !wantsFullResolution()) return;
+      showLoadedImage(source.request, source.path, source.cacheBust, {}, image);
       previewShowsRendition = false;
     });
   });
@@ -604,17 +652,20 @@ import { openFile } from "$lib/api/open";
       // A display-sized rendition for large images, else the original: asset
       // protocol first, then the backend read (cloud placeholders, and the
       // only path in browser/E2E mode); see state/preview-image.
-      const owner = {
-        isCurrent: () => previewLifetime.isCurrent(request),
-        adoptBlob: (url: string) => previewLifetime.adoptBlob(request, url),
-        releaseBlob: (url: string) => previewLifetime.releaseBlob(request, url),
-      };
-      const image = await loadPreviewImage(file.path, bust, owner, imageLoadOptions());
+      // An image this pane already showed for this file version is shown at
+      // once, with no request (#1014).
+      const options = imageLoadOptions();
+      if (showRememberedImage(request, file, bust, options)) {
+        previewLoading = false;
+        return;
+      }
+      const owner = imageOwner(request);
+      const image = await loadPreviewImage(file.path, bust, owner, options);
       if (image.status === "stale") return;
       if (image.status === "ready") {
-        showImage(image.url);
-        if (image.resolution === "rendition") showingRendition({ path: file.path, cacheBust: bust, owner });
-        previewImageNote = image.viaBackend && /\.avif$/i.test(file.name) ? "AVIF fallback preview shows the first frame." : null;
+        showLoadedImage(request, file.path, bust, options, image);
+        if (image.resolution === "rendition") showingRendition({ path: file.path, cacheBust: bust, owner, request });
+        previewImageNote = imageNote(file, image);
       } else {
         previewError = "Cannot preview image";
       }
@@ -710,6 +761,7 @@ import { openFile } from "$lib/api/open";
 
   onDestroy(() => {
     previewLifetime.dispose();
+    imageCache.clear();
   });
 </script>
 

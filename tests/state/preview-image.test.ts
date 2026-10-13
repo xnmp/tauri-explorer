@@ -35,6 +35,9 @@ class FakeImage {
   }
 }
 
+/** The ready image keeps the element that decoded its URL (#1014). */
+const decodedFrom = (url: string) => expect.objectContaining({ src: url });
+
 const RENDITION = "/cache/thumbnails/abc.preview.jpg";
 const withRendition = { rendition: { maxEdge: 2048 } };
 
@@ -65,7 +68,7 @@ describe("loadPreviewImage", () => {
   it("in Tauri, streams through the asset protocol with a cache-busting version", async () => {
     isTauri.mockReturnValue(true);
     const result = await loadPreviewImage("/home/u/a b.png", "12-34", owner().value);
-    expect(result).toEqual({ status: "ready", url: "asset://localhost/home/u/a b.png?v=12-34", viaBackend: false, resolution: "original" });
+    expect(result).toEqual({ status: "ready", url: "asset://localhost/home/u/a b.png?v=12-34", viaBackend: false, resolution: "original", decoded: decodedFrom("asset://localhost/home/u/a b.png?v=12-34") });
     expect(readImageAsBlobUrl).not.toHaveBeenCalled();
   });
 
@@ -82,7 +85,7 @@ describe("loadPreviewImage", () => {
     const o = owner();
     const result = await loadPreviewImage("/var/folders/T/plugin/out.png", "v", o.value);
     expect(readImageAsBlobUrl).toHaveBeenCalledWith("/var/folders/T/plugin/out.png");
-    expect(result).toEqual({ status: "ready", url: "blob:full", viaBackend: true, resolution: "original" });
+    expect(result).toEqual({ status: "ready", url: "blob:full", viaBackend: true, resolution: "original", decoded: decodedFrom("blob:full") });
     expect(o.adopted).toEqual(["blob:full"]);
   });
 
@@ -91,7 +94,7 @@ describe("loadPreviewImage", () => {
     readImageAsBlobUrl.mockResolvedValue({ ok: true, data: "blob:mock" });
     const result = await loadPreviewImage("/tmp/x.png", "v", owner().value);
     expect(convertFileSrc).not.toHaveBeenCalled();
-    expect(result).toEqual({ status: "ready", url: "blob:mock", viaBackend: true, resolution: "original" });
+    expect(result).toEqual({ status: "ready", url: "blob:mock", viaBackend: true, resolution: "original", decoded: decodedFrom("blob:mock") });
   });
 
   it("fails when the backend read fails", async () => {
@@ -142,7 +145,7 @@ describe("loadPreviewImage with a rendition", () => {
     const result = await loadPreviewImage("/w/huge.png", "1-2", owner().value, withRendition);
 
     expect(getPreviewImage).toHaveBeenCalledWith("/w/huge.png", 2048);
-    expect(result).toEqual({ status: "ready", url: `asset://localhost${RENDITION}?v=1-2`, viaBackend: false, resolution: "rendition" });
+    expect(result).toEqual({ status: "ready", url: `asset://localhost${RENDITION}?v=1-2`, viaBackend: false, resolution: "rendition", decoded: decodedFrom(`asset://localhost${RENDITION}?v=1-2`) });
     // The rendition itself is shown: neither the original nor the backend
     // read is touched (a blocked rendition must not pass as success).
     expect(decoded).toEqual([`asset://localhost${RENDITION}?v=1-2`]);
@@ -154,7 +157,7 @@ describe("loadPreviewImage with a rendition", () => {
     isTauri.mockReturnValue(true);
     getPreviewImage.mockResolvedValue({ ok: true, data: { kind: "original" } });
     const result = await loadPreviewImage("/w/small.png", "v", owner().value, withRendition);
-    expect(result).toEqual({ status: "ready", url: "asset://localhost/w/small.png?v=v", viaBackend: false, resolution: "original" });
+    expect(result).toEqual({ status: "ready", url: "asset://localhost/w/small.png?v=v", viaBackend: false, resolution: "original", decoded: decodedFrom("asset://localhost/w/small.png?v=v") });
   });
 
   it("falls back to the original when the rendition request fails", async () => {
@@ -180,7 +183,7 @@ describe("loadPreviewImage with a rendition", () => {
     readImageAsBlobUrl.mockResolvedValue({ ok: true, data: "blob:full" });
     const result = await loadPreviewImage("/cloud/huge.png", "v", owner().value, withRendition);
     expect(readImageAsBlobUrl).toHaveBeenCalledWith("/cloud/huge.png");
-    expect(result).toEqual({ status: "ready", url: "blob:full", viaBackend: true, resolution: "original" });
+    expect(result).toEqual({ status: "ready", url: "blob:full", viaBackend: true, resolution: "original", decoded: decodedFrom("blob:full") });
   });
 
   it("a load superseded during the rendition request shows nothing and loads nothing else", async () => {
@@ -227,7 +230,7 @@ describe("loadPreviewImage with a rendition", () => {
     readImageAsBlobUrl.mockResolvedValue({ ok: true, data: "blob:rendition" });
     const result = await loadPreviewImage("/w/huge.png", "v", owner().value, withRendition);
     expect(readImageAsBlobUrl).toHaveBeenCalledWith(RENDITION);
-    expect(result).toEqual({ status: "ready", url: "blob:rendition", viaBackend: true, resolution: "rendition" });
+    expect(result).toEqual({ status: "ready", url: "blob:rendition", viaBackend: true, resolution: "rendition", decoded: decodedFrom("blob:rendition") });
   });
 
   it("never asks for a rendition of a format that cannot have one, or of a virtual path", async () => {

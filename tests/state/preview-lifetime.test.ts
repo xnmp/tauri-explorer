@@ -61,4 +61,23 @@ describe("preview request lifetime", () => {
     expect(revoke).toHaveBeenCalledOnce();
     expect(revoke).toHaveBeenCalledWith("blob:shared");
   });
+
+  it("hands the current blob to another owner without revoking it later", () => {
+    const revoke = vi.fn();
+    const lifetime = createPreviewLifetime(revoke);
+    const stale = lifetime.begin("/a.png|1|1");
+    const current = lifetime.begin("/b.png|1|1");
+    expect(lifetime.adoptBlob(current, "blob:cached")).toBe(true);
+
+    lifetime.disownBlob(stale, "blob:cached");
+    lifetime.clearBlob();
+    expect(revoke.mock.calls).toEqual([["blob:cached"]]);
+
+    const next = lifetime.begin("/c.png|1|1");
+    expect(lifetime.adoptBlob(next, "blob:kept")).toBe(true);
+    lifetime.disownBlob(next, "blob:kept");
+    lifetime.clearBlob();
+    lifetime.dispose();
+    expect(revoke.mock.calls).toEqual([["blob:cached"]]);
+  });
 });

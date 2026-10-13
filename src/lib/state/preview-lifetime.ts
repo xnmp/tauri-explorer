@@ -40,6 +40,10 @@ export function createPreviewLifetime(revokeObjectUrl: (url: string) => void) {
       if (request.revision === revision && ownedBlobUrl === url) ownedBlobUrl = null;
       revoke(url);
     },
+    /** Hand the current request's blob to another owner (the image cache); it is no longer revoked here. */
+    disownBlob(request: PreviewRequest, url: string): void {
+      if (!disposed && request.revision === revision && ownedBlobUrl === url) ownedBlobUrl = null;
+    },
     clearBlob(): void {
       revoke(ownedBlobUrl);
       ownedBlobUrl = null;

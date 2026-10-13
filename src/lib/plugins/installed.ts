@@ -1,6 +1,7 @@
 import type {Plugin,PluginContext} from "./api";
 import {invoke,extractError,isTauri} from "$lib/api/common";
 import {convertFileSrc} from "@tauri-apps/api/core";
+import {fileViewRegistry} from "./file-view-registry.svelte";
 const SVELTE_ABI="5.56.3";
 /** SDK versions this host runs; must match SDK_VERSIONS in installed_plugins/package.rs. */
 export const SUPPORTED_SDK_VERSIONS:readonly number[]=[1,2,3];
@@ -18,35 +19,50 @@ const styles=new Map<string,HTMLLinkElement>();
 let transition=Promise.resolve();
 
 function serial(work:()=>Promise<void>):Promise<void>{const next=transition.catch(()=>{}).then(work);transition=next;return next;}
-async function load(entry:InstalledPackage,registry:PackageRegistry):Promise<void> {
-  const {manifest}=entry;
-  if(!SUPPORTED_SDK_VERSIONS.includes(manifest.sdkVersion)||manifest.svelteVersion!==SVELTE_ABI)throw new Error(`${manifest.name} requires a different plugin host`);
-  (await import("./runtime-sdk")).exposePluginSDK();
-  const base=`/${manifest.id}/${entry.digest}/`;
-  const url=convertFileSrc(base+manifest.frontend,"plugin");
-  const module=await import(/* @vite-ignore */ url) as {plugins?:Plugin[]};
-  if(!Array.isArray(module.plugins)||new Set(module.plugins.map((plugin)=>plugin.id)).size!==module.plugins.length||module.plugins.length!==manifest.contributions.length||module.plugins.some((plugin)=>!manifest.contributions.includes(plugin.id)||typeof plugin.activate!=="function"))throw new Error("Plugin contributions differ from the installed manifest");
-  const link=document.createElement("link");link.rel="stylesheet";link.href=convertFileSrc(base+manifest.styles,"plugin");
-  await new Promise<void>((resolve,reject)=>{link.onload=()=>resolve();link.onerror=()=>reject(new Error(`Could not load ${manifest.name} styles`));document.head.append(link);});
-  styles.set(manifest.id,link);
-  const backend={invoke:<T>(method:string,params?:Record<string,unknown>)=>invoke<T>("plugin_backend_invoke",{packageId:manifest.id,method,params:params??{}})};
+async function load(entry:InstalledPackage,registry:PackageRegistry,finishLoading:()=>void):Promise<void> {
   try {
-    await registry.registerInstalled(module.plugins.map((plugin)=>({...plugin,activate:(ctx:PluginContext)=>plugin.activate({...ctx,backend})})));
-    loaded.set(manifest.id,entry);failures.delete(manifest.id);
-  } catch(error) { link.remove();styles.delete(manifest.id);throw error; }
+    const {manifest}=entry;
+    if(!SUPPORTED_SDK_VERSIONS.includes(manifest.sdkVersion)||manifest.svelteVersion!==SVELTE_ABI)throw new Error(`${manifest.name} requires a different plugin host`);
+    (await import("./runtime-sdk")).exposePluginSDK();
+    const base=`/${manifest.id}/${entry.digest}/`;
+    const url=convertFileSrc(base+manifest.frontend,"plugin");
+    const module=await import(/* @vite-ignore */ url) as {plugins?:Plugin[]};
+    if(!Array.isArray(module.plugins)||new Set(module.plugins.map((plugin)=>plugin.id)).size!==module.plugins.length||module.plugins.length!==manifest.contributions.length||module.plugins.some((plugin)=>!manifest.contributions.includes(plugin.id)||typeof plugin.activate!=="function"))throw new Error("Plugin contributions differ from the installed manifest");
+    const link=document.createElement("link");link.rel="stylesheet";link.href=convertFileSrc(base+manifest.styles,"plugin");
+    await new Promise<void>((resolve,reject)=>{link.onload=()=>resolve();link.onerror=()=>reject(new Error(`Could not load ${manifest.name} styles`));document.head.append(link);});
+    styles.set(manifest.id,link);
+    const backend={invoke:<T>(method:string,params?:Record<string,unknown>)=>invoke<T>("plugin_backend_invoke",{packageId:manifest.id,method,params:params??{}})};
+    try {
+      // Activation acquires individual owner leases synchronously. Retire the
+      // package lease now so a failed/disabled owner cannot be masked by siblings.
+      finishLoading();
+      await registry.registerInstalled(module.plugins.map((plugin)=>({...plugin,activate:(ctx:PluginContext)=>plugin.activate({...ctx,backend})})));
+      loaded.set(manifest.id,entry);failures.delete(manifest.id);
+    } catch(error) { link.remove();styles.delete(manifest.id);throw error; }
+  } finally { finishLoading(); }
 }
 
 export function installedPackages():readonly InstalledPackage[]{return current;}
-export async function refreshInstalledPackages(registry:PackageRegistry):Promise<void>{
+export async function refreshInstalledPackages(registry:PackageRegistry,discoveryComplete:()=>void=()=>{}):Promise<void>{
   return serial(async()=>{
-    const next=await invoke<InstalledPackage[]>("list_installed_plugins");
-    for(const old of loaded.values())if(!next.some((entry)=>entry.manifest.id===old.manifest.id&&entry.enabled&&entry.digest===old.digest)){
-      await registry.removeInstalled(old.manifest.contributions);styles.get(old.manifest.id)?.remove();styles.delete(old.manifest.id);loaded.delete(old.manifest.id);
+    const pending=new Map<InstalledPackage,()=>void>();
+    try {
+      const next=await invoke<InstalledPackage[]>("list_installed_plugins");
+      fileViewRegistry.discoverOwners(next.flatMap(entry=>entry.manifest.contributions));
+      for(const entry of next)if(entry.enabled&&loaded.get(entry.manifest.id)?.digest!==entry.digest)
+        pending.set(entry,fileViewRegistry.beginLoading(entry.manifest.contributions));
+      discoveryComplete();
+      for(const old of loaded.values())if(!next.some((entry)=>entry.manifest.id===old.manifest.id&&entry.enabled&&entry.digest===old.digest)){
+        await registry.removeInstalled(old.manifest.contributions);styles.get(old.manifest.id)?.remove();styles.delete(old.manifest.id);loaded.delete(old.manifest.id);
+      }
+      for(const entry of next)if(entry.enabled&&!loaded.has(entry.manifest.id)){
+        try { await load(entry,registry,pending.get(entry)!); } catch(error) { failures.set(entry.manifest.id,extractError(error)); }
+      }
+      current=next;
+    } finally {
+      discoveryComplete();
+      for(const finish of pending.values())finish();
     }
-    for(const entry of next)if(entry.enabled&&!loaded.has(entry.manifest.id)){
-      try { await load(entry,registry); } catch(error) { failures.set(entry.manifest.id,extractError(error)); }
-    }
-    current=next;
   });
 }
 

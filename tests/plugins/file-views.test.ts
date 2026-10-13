@@ -30,6 +30,40 @@ describe("file view registry", () => {
   it("treats a throwing availability check as unavailable", () => {
     fileViewRegistry.register("trace", { id: "trace.view", title: "Trace", component: Component, available: () => { throw new Error("boom"); } });
     expect(fileViewRegistry.resolve("trace.view", "/pictures")).toBeNull();
+    expect(fileViewRegistry.presentation("trace.view", "/pictures", 0)).toEqual({ kind: "builtin" });
+  });
+
+  it("does not mount a view whose eligibility is pending", () => {
+    fileViewRegistry.register("trace", { id: "trace.view", title: "Trace", component: Component, available: () => "pending" });
+    expect(fileViewRegistry.resolve("trace.view", "/pictures")).toBeNull();
+    expect(fileViewRegistry.presentation("trace.view", "/pictures", 0)).toEqual({ kind: "hold" });
+    expect(fileViewRegistry.presentation("trace.view", "/pictures", 400)).toEqual({ kind: "builtin" });
+  });
+
+  it("holds missing views only during discovery or their owner's loading", () => {
+    const finishDiscovery = fileViewRegistry.beginLoading();
+    expect(fileViewRegistry.presentation("trace.view", "/pictures", 0)).toEqual({ kind: "hold" });
+    expect(fileViewRegistry.presentation(null, "/pictures", 0)).toEqual({ kind: "builtin" });
+    expect(fileViewRegistry.presentation("trace.view", "demo://", 0)).toEqual({ kind: "builtin" });
+    finishDiscovery();
+    expect(fileViewRegistry.presentation("trace.view", "/pictures", 0)).toEqual({ kind: "builtin" });
+    const finishTrace = fileViewRegistry.beginLoading(["trace"]);
+    const finishOther = fileViewRegistry.beginLoading(["other"]);
+    expect(fileViewRegistry.presentation("trace.view", "/pictures", 0)).toEqual({ kind: "hold" });
+    expect(fileViewRegistry.presentation("absent.view", "/pictures", 0)).toEqual({ kind: "builtin" });
+    expect(fileViewRegistry.presentation("trace.nested.view", "/pictures", 0)).toEqual({ kind: "builtin" });
+    expect(fileViewRegistry.presentation("trace.view", "/pictures", 400)).toEqual({ kind: "builtin" });
+    finishTrace(); finishTrace();
+    expect(fileViewRegistry.presentation("trace.view", "/pictures", 0)).toEqual({ kind: "builtin" });
+    expect(fileViewRegistry.presentation("other.view", "/pictures", 0)).toEqual({ kind: "hold" });
+    finishOther();
+  });
+
+  it("a registered boolean answer wins over its owner's unfinished activation", () => {
+    const finish = fileViewRegistry.beginLoading(["trace"]);
+    fileViewRegistry.register("trace", { id: "trace.view", title: "Trace", component: Component, available: () => false });
+    expect(fileViewRegistry.presentation("trace.view", "/pictures", 0)).toEqual({ kind: "builtin" });
+    finish();
   });
 
   it("rejects malformed and duplicate view ids", () => {

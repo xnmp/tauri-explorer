@@ -25,6 +25,7 @@
   import InlineNewFolder from "./InlineNewFolder.svelte";
   import PluginFileView from "./PluginFileView.svelte";
   import { fileViewRegistry } from "$lib/plugins/file-view-registry.svelte";
+  import type { FileViewPresentation } from "$lib/state/file-view-presentation.svelte";
   import { getPaneIdContext } from "$lib/state/pane-context";
   import { clickSelectionEffect } from "$lib/domain/workspace-selection";
 
@@ -32,16 +33,19 @@
 
   interface Props {
     explorer: ExplorerInstance;
+    presentation: FileViewPresentation;
     /** Scroll a selected entry into view; bound by ExplorerPane's keyboard navigation. */
     scrollToEntry?: (entry: FileEntry) => void;
   }
 
-  let { explorer, scrollToEntry = $bindable() }: Props = $props();
+  let { explorer, presentation, scrollToEntry = $bindable() }: Props = $props();
 
   const paneId = getPaneIdContext();
   // A plugin view replaces the listing only where it applies; elsewhere the
   // pane shows its built-in view while retaining the preference.
-  const pluginView = $derived(paneId ? fileViewRegistry.resolve(explorer.fileView, explorer.currentPath) : null);
+  const resolution = $derived(presentation.resolution);
+  const holdingView = $derived(resolution.kind === "hold");
+  const pluginView = $derived(paneId && resolution.kind === "plugin" ? fileViewRegistry.get(resolution.id) : null);
 
 
   // Drop target state for dropping files into current directory
@@ -256,7 +260,7 @@
   // ===================
 
   function handleBackgroundClick(event: MouseEvent): void {
-    if (pluginView) return;
+    if (pluginView || holdingView) return;
     if (
       marquee.isBackgroundClick(event.target as HTMLElement) &&
       !marquee.isDragging &&
@@ -279,7 +283,7 @@
   }
 
   function handleKeydown(event: KeyboardEvent): void {
-    if (pluginView || windowTabsManager.getActiveExplorer() !== explorer) return;
+    if (pluginView || holdingView || windowTabsManager.getActiveExplorer() !== explorer) return;
     typeAhead.handleKeydown(event);
   }
 
@@ -296,7 +300,7 @@
   }
 
   function handleMarqueeStart(event: MouseEvent): void {
-    if (pluginView) return;
+    if (pluginView || holdingView) return;
     const rect = contentRef?.getBoundingClientRect();
     if (!rect) return;
     cachedDragRect = rect;
@@ -349,7 +353,7 @@
   // ===================
 
   function handleListDragOver(event: DragEvent): void {
-    if (pluginView) return;
+    if (pluginView || holdingView) return;
     const crossWindow = dragState.readCrossWindow();
     if (!dragState.acceptsFileDrag(event.dataTransfer)) return;
 
@@ -377,7 +381,7 @@
   async function handleListDrop(event: DragEvent): Promise<void> {
     isDropTarget = false;
     // A plugin view owns its surface; the host never turns a drop on it into a move.
-    if (pluginView) return;
+    if (pluginView || holdingView) return;
 
     const target = event.target as HTMLElement;
     if (target.closest(".entry-item")) return;
@@ -429,6 +433,8 @@
           Go back
         </button>
       </div>
+    {:else if holdingView && !explorer.error}
+      <!-- Neutral background only while eligibility is unresolved. -->
     {:else if pluginView && paneId && !explorer.error}
       {#key pluginView.id}
         <PluginFileView {explorer} {paneId} view={pluginView} onopen={handleDoubleClick} />

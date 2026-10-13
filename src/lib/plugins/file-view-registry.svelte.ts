@@ -15,6 +15,8 @@ import type { PaneTileSize } from "$lib/domain/tile-layout";
 export type { PaneTileSize, TileSizePreset } from "$lib/domain/tile-layout";
 
 import { isFileViewId } from "$lib/domain/file-view-id";
+import { resolveFileView, type FileViewEligibility, type FileViewResolution } from "$lib/domain/file-view-resolution";
+export type { FileViewEligibility } from "$lib/domain/file-view-resolution";
 
 /**
  * The pane a file view renders in. Every getter is reactive. Actions apply to
@@ -67,8 +69,10 @@ export interface FileViewContribution {
   title: string;
   component: Component<any>;
   props?: Record<string, unknown>;
-  /** Whether the view applies to a folder. Reactive; defaults to true. */
-  available?(directory: string): boolean;
+  /** Reactive; defaults to true. Capability "fileViewEligibilityPending":
+   * return "pending" for an unknown folder, then publish a reactive boolean.
+   * The host holds neutral first paint for at most 400ms; no Promise is accepted. */
+  available?(directory: string): FileViewEligibility;
   /** Load, show and select/focus the target; reject if it no longer exists. */
   reveal?(targetId: string, pane: FileViewPane, signal: AbortSignal): Promise<void>;
 }
@@ -78,8 +82,39 @@ export interface RegisteredFileView extends FileViewContribution { readonly plug
 function createFileViewRegistry() {
   const registrations = createOrderedRegistry<RegisteredFileView>();
   let items = $state.raw<readonly RegisteredFileView[]>([]);
+  // null means package discovery has not supplied owner IDs yet. Tokens keep
+  // overlapping load/activation lifetimes independent, including retirement.
+  // Discovery is uncertainty only for owners not supplied by a manifest or
+  // the built-in catalog. A settled known owner cannot become unknown again.
+  let knownOwners = $state.raw<readonly string[]>([]);
+  const owns = (owner: string, preference: string) => preference === owner
+    || (preference.startsWith(`${owner}.`) && !preference.slice(owner.length + 1).includes("."));
+  function discoverOwners(pluginIds: readonly string[]): void {
+    knownOwners = [...new Set([...knownOwners, ...pluginIds])];
+  }
+  let loading = $state.raw<ReadonlyMap<symbol, readonly string[] | null>>(new Map());
+  function eligibility(view: RegisteredFileView, directory: string): FileViewEligibility {
+    try { return view.available?.(directory) ?? true; }
+    catch (error) {
+      console.error(`[plugins] "${view.pluginId}" file view ${view.id} available() failed:`, error);
+      return false;
+    }
+  }
   return {
     get items(): readonly RegisteredFileView[] { return items; },
+    discoverOwners,
+    /** Host lifecycle only: declare unregistered views pending until settled. */
+    beginLoading(pluginIds: readonly string[] | null = null): () => void {
+      if (pluginIds !== null) discoverOwners(pluginIds);
+      const token = Symbol();
+      loading = new Map(loading).set(token, pluginIds === null ? null : [...pluginIds]);
+      return () => {
+        if (!loading.has(token)) return;
+        const next = new Map(loading);
+        next.delete(token);
+        loading = next;
+      };
+    },
     register(pluginId: string, item: FileViewContribution, order = Number.MAX_SAFE_INTEGER): () => void {
       if (!isFileViewId(item.id)) throw new Error(`Invalid file view id: ${String(item.id)}`);
       if (items.some((existing) => existing.id === item.id)) throw new Error(`File view ${item.id} is already registered`);
@@ -94,15 +129,19 @@ function createFileViewRegistry() {
     resolve(preference: string | null | undefined, directory: string): RegisteredFileView | null {
       const view = this.get(preference);
       if (!view || !directory || isVirtualPath(directory)) return null;
-      try { return view.available?.(directory) ?? true ? view : null; }
-      catch (error) {
-        // Runs inside a derived: a throwing (or state-mutating) check falls back
-        // to the built-in view, but must not fail silently.
-        console.error(`[plugins] "${view.pluginId}" file view ${view.id} available() failed:`, error);
-        return null;
-      }
+      return eligibility(view, directory) === true ? view : null;
     },
-    clear(): void { registrations.clear(); items = []; },
+    presentation(preference: string | null | undefined, directory: string, elapsedMs: number): FileViewResolution {
+      if (!preference || !directory || isVirtualPath(directory)) return { kind: "builtin" };
+      const view = this.get(preference);
+      const known = knownOwners.some((owner) => owns(owner, preference));
+      const pendingOwner = [...loading.values()].some((ids) => ids === null
+        ? !known : ids.some((owner) => owns(owner, preference)));
+      const providers = view ? [{ id: view.id, eligibility: eligibility(view, directory) }]
+        : pendingOwner ? [{ id: preference, eligibility: "pending" as const }] : [];
+      return resolveFileView(providers, preference, elapsedMs);
+    },
+    clear(): void { registrations.clear(); items = []; loading = new Map(); knownOwners = []; },
   };
 }
 

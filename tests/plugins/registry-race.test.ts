@@ -17,6 +17,7 @@ import type { Plugin, PluginContext } from "$lib/plugins/api";
 import { settingsStore } from "$lib/state/settings.svelte";
 import { getCommand } from "$lib/state/commands.svelte";
 import { providerFor } from "$lib/plugins/fs-providers";
+import { fileViewRegistry } from "$lib/plugins/file-view-registry.svelte";
 
 /** A plugin whose activate() blocks until the test releases it. */
 function makeSlowPlugin(id: string) {
@@ -46,6 +47,31 @@ beforeEach(() => {
 
 afterEach(()=>vi.unstubAllGlobals());
 describe("plugin registry activation race", () => {
+  it("holds an unregistered preferred view during activation and releases it immediately on disable", async () => {
+    const { plugin, release } = makeSlowPlugin("view-loading");
+    const registry = createPluginRegistry([plugin]);
+    const activation = registry.setEnabled(plugin.id, true);
+    try {
+      expect(fileViewRegistry.presentation("view-loading.view", "/pictures", 0)).toEqual({ kind: "hold" });
+      expect(fileViewRegistry.presentation("view-loading.view", "/pictures", 400)).toEqual({ kind: "builtin" });
+      await registry.setEnabled(plugin.id, false);
+      expect(fileViewRegistry.presentation("view-loading.view", "/pictures", 0)).toEqual({ kind: "builtin" });
+    } finally { release(); await activation; await registry.dispose(); }
+  });
+
+  it("failed activation settles an unregistered preferred view as unavailable", async () => {
+    let reject!: (error: Error) => void;
+    const plugin: Plugin = { id: "failed-view", name: "Failed", description: "fixture",
+      activate: () => new Promise<void>((_, fail) => { reject = fail; }) };
+    const registry = createPluginRegistry([plugin]);
+    const activation = registry.initPlugins();
+    expect(fileViewRegistry.presentation("failed-view.view", "/pictures", 0)).toEqual({ kind: "hold" });
+    reject(new Error("activation failed"));
+    await activation;
+    expect(fileViewRegistry.presentation("failed-view.view", "/pictures", 0)).toEqual({ kind: "builtin" });
+    await registry.dispose();
+  });
+
   it("hydrates native window jobs without waiting for monitoring before activation",async()=>{
     vi.stubGlobal("isTauri",true);
     const activate=vi.fn();const jobs={init:vi.fn(()=>new Promise<void>(()=>{})),dispose:vi.fn(async()=>{})};

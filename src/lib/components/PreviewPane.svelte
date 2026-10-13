@@ -1592,9 +1592,14 @@ import { openFile } from "$lib/api/open";
     font-size: var(--font-size-caption);
   }
 
+  /* Stacked (side dock) layout: the sections region has a size derived from
+     the pane alone, never from what the sections contain, so the content
+     above it (the image) keeps the same box while the selection steps through
+     files whose Preview info differs in height. Longer info scrolls in here.
+     Vertical docks place it on a grid track instead (see above). */
   .preview-sections {
-    flex: 0 1 auto;
-    max-height: 55%;
+    flex: 0 1 min(40%, 24rem);
+    min-height: 0;
     overflow: auto;
     border-top: 1px solid var(--divider);
   }

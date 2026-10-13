@@ -132,16 +132,51 @@ export function fixedFromClient(
   return chromium ? clientCoord / zoom : clientCoord / zoom ** 2;
 }
 
-/** Place a pointer menu in fixed CSS coordinates using its layout dimensions. */
+/**
+ * Does this engine scale `position: fixed` offsets once (Chromium, current
+ * WebKitGTK/Safari) rather than twice (macOS WKWebView, older WebKitGTK)?
+ * Inputs are the rect left of a fixed overlay at `left: 0` and `left: 100px`,
+ * its rect width and its layout `offsetWidth`. Comparing the offset response to
+ * the size response also covers older CSS-space rects (unscaled widths).
+ */
+export function isSingleScaleFixedOffset(
+  zoom: number,
+  originLeft: number,
+  probeLeft: number,
+  probeWidth: number,
+  offsetWidth: number,
+): boolean {
+  const scale = zoom * (probeLeft - originLeft) / 100 / (probeWidth / offsetWidth);
+  return Math.abs(scale - zoom) <= Math.abs(scale - zoom ** 2);
+}
+
+/** Measure {@link isSingleScaleFixedOffset} on a mounted fixed overlay.
+ *  Synchronous, so it completes before the overlay is painted; it restores the
+ *  overlay's inline `left`. */
+export function probeSingleScaleFixedOffset(node: HTMLElement): boolean {
+  const previousLeft = node.style.left;
+  node.style.left = "0px";
+  const origin = node.getBoundingClientRect();
+  node.style.left = "100px";
+  const probe = node.getBoundingClientRect();
+  node.style.left = previousLeft;
+  return isSingleScaleFixedOffset(
+    getZoomFactor(), origin.left, probe.left, probe.width, node.offsetWidth,
+  );
+}
+
+/** Place a pointer menu in fixed CSS coordinates using its layout dimensions.
+ *  `padding` is the on-screen margin kept from the viewport edges. */
 export function fixedMenuPosition(
   pointer: { x: number; y: number },
   viewport: { width: number; height: number },
   menu: { width: number; height: number },
   zoom: number,
   singleScale: boolean,
+  padding = 8,
 ): { x: number; y: number } {
   const fixed = (value: number) => fixedFromClient(value, zoom, singleScale);
-  const pad = fixed(8);
+  const pad = fixed(padding);
   // Menu sizes render with one zoom factor even on legacy WebKit, where
   // fixed offsets scale twice. Convert the rendered extents into offset space.
   const width = fixed(menu.width * zoom);

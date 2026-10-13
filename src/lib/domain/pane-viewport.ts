@@ -10,6 +10,13 @@ export interface PaneGeometry extends PaneSize {
   divider: number;
 }
 
+/** The gap between split children, in CSS pixels: wider in island mode, where
+ * panes float apart. PaneContainer sets `--pane-divider-size` from this and
+ * the minima use it in the same render, so the two never disagree (#1061). */
+export function paneDividerSize(islandMode: boolean): number {
+  return islandMode ? 8 : 6;
+}
+
 const nonnegative = (value: number) => Number.isFinite(value) ? Math.max(0, value) : 0;
 const clamp = (value: number, min: number, max: number) => Math.max(min, Math.min(max, value));
 

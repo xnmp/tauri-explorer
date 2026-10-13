@@ -29,7 +29,9 @@ directional focus and dwindle placement consume the same leaf rectangles, includ
 divider offsets. Before the first usable measurement, focus/dwindle retain their
 existing normalized/window-aspect fallback. A viewport resize updates presentation,
 not the captured workspace or saved ratios. The frontend measures native CSS client
-sizes, and island mode supplies its shared 8-pixel gap instead of the usual 6.
+sizes. The divider is not measured: `paneDividerSize` gives island mode's shared
+8-pixel gap instead of the usual 6, and both the CSS divider and the minima read
+it in the same render, so they never disagree for a frame (#1061).
 
 `PaneContainer` owns the scrollable workspace. Active-pane changes and completed
 geometry updates reveal that pane through local scroll coordinates; they do not

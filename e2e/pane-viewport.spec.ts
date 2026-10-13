@@ -1,5 +1,6 @@
 import { expect, test, type Page } from "./fixtures";
 import { installLayoutInspector } from "./layout-inspector";
+import { sampleFramesFromStartup, startFrameSampler, stopFrameSampler } from "./frame-sampler";
 
 let pageErrors: string[] = [];
 test.beforeEach(({ page }) => { pageErrors = []; page.on("pageerror", error => pageErrors.push(error.message)); });
@@ -253,5 +254,102 @@ for (const viewMode of ["details", "list", "tiles"] as const) {
     // jump back to the retained selection at the top of the collection.
     await expect.poll(() => viewport.evaluate(element => element.scrollTop)).toBeGreaterThanOrEqual(before.top);
     await expect(page.locator(".entry-item.selected")).toHaveCount(0);
+  });
+}
+
+// Reveal, directional focus and divider input all read the measured geometry,
+// while CSS paints the panes (#1061). Once settled, the two must agree.
+for (const zoomLevel of [100, 130]) {
+  for (const island of [false, true]) {
+    test(`painted dense panes match the measured geometry at ${zoomLevel}%${island ? " in island mode" : ""}`, async ({ page }) => {
+      await page.setViewportSize({ width: 640, height: 480 });
+      await page.addInitScript(settings => localStorage.setItem("explorer-settings", JSON.stringify(settings)),
+        { zoomLevel, floatingIslands: island });
+      await restore(page);
+      if (island) await expect(page.locator("html")).toHaveAttribute("data-vibrancy", "");
+      const mismatch = () => page.evaluate(async () => {
+        const load = new Function("return import('/src/lib/state/window-tabs.svelte.ts')");
+        const geometry = (await load()).windowTabsManager.paneViewport.geometry;
+        if (!geometry) return { panes: 0, worst: Infinity };
+        // Client rects are in zoomed pixels; geometry is in the tree's CSS pixels.
+        const probe = document.createElement("div");
+        probe.style.cssText = "position:fixed;left:-2000px;top:0;width:1000px;height:1px";
+        document.body.append(probe);
+        const scale = probe.getBoundingClientRect().width / 1000;
+        probe.remove();
+        const tree = document.querySelector(".pane-tree")!.getBoundingClientRect();
+        let worst = Math.abs(tree.width / scale - geometry.width);
+        worst = Math.max(worst, Math.abs(tree.height / scale - geometry.height));
+        const elements = [...document.querySelectorAll<HTMLElement>(".explorer-pane")];
+        for (const element of elements) {
+          const want = geometry.panes.get(element.dataset.paneId!);
+          if (!want) return { panes: elements.length, worst: Infinity };
+          const rect = element.getBoundingClientRect();
+          const got = [(rect.x - tree.x) / scale, (rect.y - tree.y) / scale, rect.width / scale, rect.height / scale];
+          [want.x, want.y, want.w, want.h].forEach((value, i) => { worst = Math.max(worst, Math.abs(got[i] - value)); });
+        }
+        return { panes: elements.length, worst };
+      });
+      await expect.poll(async () => (await mismatch()).worst).toBeLessThanOrEqual(0.5);
+      // The dense layout overflows this window: geometry is the clamped canvas.
+      expect((await mismatch()).panes).toBe(16);
+      expect(await page.locator(".pane-tree").evaluate(tree => tree.offsetWidth > tree.parentElement!.clientWidth)).toBe(true);
+    });
+  }
+}
+
+/** The worst overflow of any split's children and dividers past the split itself. */
+function splitOverflow() {
+  let overflow = 0;
+  for (const split of document.querySelectorAll<HTMLElement>(".pane-split")) {
+    const row = split.classList.contains("row");
+    const extent = (element: Element) => { const rect = element.getBoundingClientRect(); return row ? rect.width : rect.height; };
+    const children = [...split.children].reduce((sum, child) => sum + extent(child), 0);
+    overflow = Math.max(overflow, children - extent(split));
+  }
+  return { island: document.documentElement.hasAttribute("data-vibrancy"), overflow };
+}
+type OverflowSample = ReturnType<typeof splitOverflow>;
+
+// Island mode widens the CSS dividers in the same render that applies it. The
+// split minima must use that width in the same render too, not wait for the
+// viewport measurement, or a constrained split overflows by the extra divider
+// width for a frame: on startup, where no measurement exists yet, and on toggle.
+for (const zoomLevel of [100, 130]) {
+  test(`a dense island workspace never overflows its splits from the first frame at ${zoomLevel}%`, async ({ page }) => {
+    await page.setViewportSize({ width: 640, height: 480 });
+    await page.addInitScript(({ settings, tabs }) => {
+      localStorage.setItem("explorer-settings", JSON.stringify(settings));
+      localStorage.setItem("explorer-tabs", JSON.stringify(tabs));
+    }, { settings: { zoomLevel, floatingIslands: true }, tabs: { version: 3, activeTabId: "viewport-tab",
+      tabs: [{ id: "viewport-tab", kind: "explorer", activePaneId: "viewport-15", layout: layout(Array.from({ length: 16 }, (_, i) => i)) }] } });
+    await sampleFramesFromStartup(page, ".pane-split", splitOverflow);
+    // A path parameter would replace the saved tabs.
+    await page.goto("/");
+    await expect(page.locator(".explorer-pane")).toHaveCount(16);
+    await expect(page.locator("html")).toHaveAttribute("data-vibrancy", "");
+    const samples = await stopFrameSampler<OverflowSample>(page);
+    expect(samples.length).toBeGreaterThan(5);
+    samples.forEach((sample, frame) => expect(sample.overflow, `startup frame ${frame}`).toBeLessThanOrEqual(0.1));
+  });
+
+  test(`island mode toggles never overflow a constrained split at ${zoomLevel}%`, async ({ page }) => {
+    await page.setViewportSize({ width: 640, height: 480 });
+    await page.addInitScript(settings => localStorage.setItem("explorer-settings", JSON.stringify(settings)), { zoomLevel });
+    await restore(page);
+    const setIsland = (on: boolean) => page.evaluate(async value => {
+      const load = new Function("return import('/src/lib/state/settings.svelte.ts')");
+      (await load()).settingsStore.update({ floatingIslands: value });
+    }, on);
+    for (const island of [true, false]) {
+      await startFrameSampler(page, splitOverflow);
+      await setIsland(island);
+      if (island) await expect(page.locator("html")).toHaveAttribute("data-vibrancy", "");
+      else await expect(page.locator("html")).not.toHaveAttribute("data-vibrancy");
+      const samples = await stopFrameSampler<OverflowSample>(page);
+      const first = samples.findIndex(sample => sample.island === island);
+      expect(first, "sampled frames before the toggle").toBeGreaterThan(0);
+      samples.forEach((sample, frame) => expect(sample.overflow, `frame ${frame} (island ${island})`).toBeLessThanOrEqual(0.1));
+    }
   });
 }

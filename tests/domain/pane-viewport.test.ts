@@ -77,24 +77,27 @@ describe("pane workspace geometry", () => {
 });
 
 // The canvas is sized in CSS as "fill the viewport, at least this minimum", so
-// it follows the viewport in the same layout pass (#1061). That is only correct
-// if the minimum reproduces the measured canvas for every viewport size.
+// it follows the viewport in the same layout pass (#1061). The measured canvas
+// must agree: the minimum below a small viewport, the viewport above it.
 describe("pane workspace minimum", () => {
-  const layouts: Record<string, PaneNode> = {
-    "lone pane": leaf("only"),
-    "nested row and column splits": split(leaf("a"), split(leaf("b"), leaf("c"), 0.3, "column"), 0.9),
-    "column of rows": split(split(leaf("a"), leaf("b")), split(leaf("c"), leaf("d")), 0.5, "column"),
-  };
-  const viewports = [0, 1, 239, 240, 500, 736, 1158, 4000];
-  for (const [name, root] of Object.entries(layouts)) {
-    it(`is the measured canvas for small viewports and fills larger ones: ${name}`, () => {
-      const inline = new Map([["a", 120], ["only", 200]]);
-      const minimum = paneMinimum(root, 8, inline);
-      for (const width of viewports) for (const height of viewports) {
-        const geometry = paneGeometry(root, { width, height }, 8, inline);
-        expect(geometry.width).toBe(Math.max(width, minimum.width));
-        expect(geometry.height).toBe(Math.max(height, minimum.height));
-      }
+  // Divider 8; inline panels widen "a" by 120 and "only" by 200.
+  const inline = new Map([["a", 120], ["only", 200]]);
+  const cases: { name: string; root: PaneNode; minimum: PaneSize }[] = [
+    { name: "lone pane", root: leaf("only"), minimum: { width: 440, height: 0 } },
+    // a (360) | 8 | b over c (240 wide, 200 + 8 + 200 tall)
+    { name: "nested row and column splits", root: split(leaf("a"), split(leaf("b"), leaf("c"), 0.3, "column"), 0.9),
+      minimum: { width: 608, height: 408 } },
+    // a (360) | 8 | b (240) above c | 8 | d; the wider row sets the width
+    { name: "column of rows", root: split(split(leaf("a"), leaf("b")), split(leaf("c"), leaf("d")), 0.5, "column"),
+      minimum: { width: 608, height: 408 } },
+  ];
+  for (const { name, root, minimum } of cases) {
+    it(`is the measured canvas below it and the viewport above it: ${name}`, () => {
+      expect(paneMinimum(root, 8, inline)).toEqual(minimum);
+      const small = paneGeometry(root, { width: 300, height: 100 }, 8, inline);
+      expect({ width: small.width, height: small.height }).toEqual({ width: minimum.width, height: Math.max(100, minimum.height) });
+      const large = paneGeometry(root, { width: 4000, height: 3000 }, 8, inline);
+      expect({ width: large.width, height: large.height }).toEqual({ width: 4000, height: 3000 });
     });
   }
 

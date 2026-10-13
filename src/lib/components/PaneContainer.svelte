@@ -9,7 +9,7 @@
   import { windowTabsManager } from "$lib/state/window-tabs.svelte";
   import { settingsStore } from "$lib/state/settings.svelte";
   import { resizeActivity } from "$lib/state/resize-activity.svelte";
-  import { revealPane } from "$lib/domain/pane-viewport";
+  import { paneDividerSize, revealPane } from "$lib/domain/pane-viewport";
   import { usePaneDividers } from "$lib/composables/use-pane-dividers.svelte";
   import PaneLayoutView from "./PaneLayoutView.svelte";
 
@@ -26,17 +26,16 @@
   const instance = $derived(windowTabsManager.activeTabInstance);
   const geometry = $derived(windowTabsManager.paneViewport.geometry);
   const minima = $derived(windowTabsManager.paneViewport.minima);
-  const gap = $derived(settingsStore.islandMode ? 8 : 6);
+  const gap = $derived(paneDividerSize(settingsStore.islandMode));
   const dividers = usePaneDividers({ geometry: () => geometry, begin: windowTabsManager.beginSplitResize });
   $effect(() => {
-    const divider = gap;
     const measuredWidth = width, measuredHeight = height;
     untrack(dividers.cancel);
     // Geometry feeds reveal, directional focus and divider input; the canvas
     // itself is sized by CSS, so this deferral never shows a stale frame (#1061).
     // Commit outside ResizeObserver delivery so WebKit can finish the current layout.
     const frame = requestAnimationFrame(() => {
-      windowTabsManager.paneViewport.measure(measuredWidth, measuredHeight, divider);
+      windowTabsManager.paneViewport.measure(measuredWidth, measuredHeight);
     });
     return () => cancelAnimationFrame(frame);
   });

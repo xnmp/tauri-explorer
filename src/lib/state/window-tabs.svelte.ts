@@ -35,6 +35,7 @@ import {
 } from "$lib/domain/pane-layout";
 import { createExplorerState, type ExplorerInstance } from "./explorer.svelte";
 import { createPaneViewport } from "./pane-viewport.svelte";
+import { paneDividerSize } from "$lib/domain/pane-viewport";
 import { createPaneSessions } from "./pane-sessions";
 import { createPaneDialogHost } from "./pane-dialogs.svelte";
 import { modalOwnership } from "./modal-ownership.svelte";
@@ -237,7 +238,10 @@ function createWindowTabsManager(options: {
 
   const activeTab = $derived(tabs.find((t) => t.id === activeTabId) ?? null);
 
-  const paneViewport = createPaneViewport(() => activeTab?.kind === "explorer" ? activeTab.layout : undefined);
+  const paneViewport = createPaneViewport(
+    () => activeTab?.kind === "explorer" ? activeTab.layout : undefined,
+    () => paneDividerSize(settingsStore.islandMode),
+  );
 
   /** The active tab's focused pane id ("" for non-explorer tabs). */
   const activePaneId = $derived(

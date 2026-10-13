@@ -1,13 +1,16 @@
 import type { PaneNode } from "$lib/domain/pane-layout";
-import { paneGeometry, paneMinima, type PaneSize } from "$lib/domain/pane-viewport";
+import { paneDividerSize, paneGeometry, paneMinima, type PaneSize } from "$lib/domain/pane-viewport";
 
 export interface InlineWidthLease { update(width: number): void; dispose(): void }
 export type ReserveInlineWidth = () => InlineWidthLease;
 
-/** Viewport measurements are window presentation state, never saved ratios. */
-export function createPaneViewport(getLayout: () => PaneNode | undefined) {
+/** Viewport measurements are window presentation state, never saved ratios.
+ * `getDivider` is read live, not measured: the CSS divider width changes in the
+ * same render, and minima that waited for a measurement would let panes
+ * overflow the split for a frame (#1061). */
+export function createPaneViewport(getLayout: () => PaneNode | undefined, getDivider: () => number = () => paneDividerSize(false)) {
   let size = $state<PaneSize | undefined>();
-  let divider = $state(6);
+  const divider = $derived(getDivider());
   let contributions = $state<ReadonlyMap<symbol, { paneId: string; width: number }>>(new Map());
   const widths = $derived.by(() => {
     const result = new Map<string, number>();
@@ -48,10 +51,9 @@ export function createPaneViewport(getLayout: () => PaneNode | undefined) {
         dispose() { disposed = true; remove(); },
       };
     },
-    measure(width: number, height: number, gap: number) {
+    measure(width: number, height: number) {
       if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) return;
       if (size?.width !== width || size?.height !== height) size = { width, height };
-      if (Number.isFinite(gap) && gap >= 0) divider = gap;
     },
   };
 }

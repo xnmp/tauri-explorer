@@ -21,9 +21,11 @@
   // Paint from the saved preference and measurement-free minima: CSS flex
   // resolution then applies geometry's clamp in the same layout pass as a
   // viewport change. `split` is a frame late and only serves input/ARIA (#1061).
+  // A child's minimum along the split axis; CSS applies it as min-width (row)
+  // or min-height (column).
   const minimumExtent = (child: PaneNode) => {
     const size = minima?.get(child.id);
-    return size ? `${node.type === "split" && node.direction === "column" ? size.height : size.width}px` : undefined;
+    return `${(node.type === "split" && node.direction === "column" ? size?.height : size?.width) ?? 0}px`;
   };
 </script>
 
@@ -39,13 +41,12 @@
     <div role="alert">Unable to load this pane.</div>
   {/if}
 {:else}
-  {@const minimumProperty = node.direction === "row" ? "min-width" : "min-height"}
   <div
     class="pane-split {node.direction}"
     class:resizing={dividers.activeId === node.id}
     style="--split-ratio: {preferredSplitRatio(node.ratio)}"
   >
-    <div class="split-child first" id={`pane-region-${node.id}`} style="{minimumProperty}: {minimumExtent(node.first) ?? 0}">
+    <div class="split-child first" id={`pane-region-${node.id}`} style:--split-min={minimumExtent(node.first)}>
       <PaneLayoutView node={node.first} {geometry} {minima} {dividers} />
     </div>
 
@@ -70,7 +71,7 @@
       <div class="divider-handle"></div>
     </div>
 
-    <div class="split-child second" style="{minimumProperty}: {minimumExtent(node.second) ?? 0}">
+    <div class="split-child second" style:--split-min={minimumExtent(node.second)}>
       <PaneLayoutView node={node.second} {geometry} {minima} {dividers} />
     </div>
   </div>
@@ -116,6 +117,14 @@
     min-width: 0;
     min-height: 0;
     overflow: hidden;
+  }
+
+  .pane-split.row > .split-child {
+    min-width: var(--split-min, 0);
+  }
+
+  .pane-split.column > .split-child {
+    min-height: var(--split-min, 0);
   }
 
   .split-child.first {

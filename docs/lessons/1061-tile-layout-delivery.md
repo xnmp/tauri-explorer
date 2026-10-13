@@ -29,8 +29,15 @@ own ResizeObserver delivery settles the tile rows before paint. Measured
 geometry still drives reveal, directional focus, divider input and ARIA
 values, none of which is painted size.
 
+The divider width followed the same trap one level down: the CSS divider used
+the island setting directly, but the minima used a divider recorded by the
+deferred `measure()`. On startup in island mode, the first frame painted 8 px
+dividers against 6 px minima, so a constrained split overflowed by 2 px per
+divider. Both now read `paneDividerSize(settingsStore.islandMode)`.
+
 Rule: never size painted layout from a ResizeObserver value committed in a
-later frame. Express it in CSS from inputs that are known before layout.
+later frame. Express it in CSS from inputs that are known before layout. Any
+input to those inputs, like the divider width, must be known before layout too.
 
 Testing: `e2e/tiles-fullscreen-exit-frames.spec.ts` samples the tile grid and
 pane widths in a ResizeObserver created after the app's observers, whose probe
@@ -38,6 +45,12 @@ changes size every animation frame, so it reports each frame after the app's
 first-pass observer callbacks. It requires every frame after the change to
 equal the settled grid, for fullscreen exits by Escape, double-click and image
 click, docked Preview toggles, window resizes and a resize that makes a split
-pane's minimum bind, in Chromium and WebKit. A sampler that only checks
+pane's minimum bind, in Chromium and WebKit, for the right, bottom and top
+docks, island mode and fractional zoom. `e2e/pane-viewport.spec.ts` uses the
+same sampler (`e2e/frame-sampler.ts`, which can also start at page load) to
+require that no split ever overflows on island startup or toggle, and checks
+that painted pane rectangles match the measured geometry. A runtime toggle
+never showed the divider lag, because the deferred `measure()` frame callback
+runs before that frame paints; only startup, which has no measurement yet, did. A sampler that only checks
 consistency within one frame (tracks against a probe of the same width) cannot
 see a stale frame.

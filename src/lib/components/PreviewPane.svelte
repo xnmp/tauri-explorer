@@ -497,11 +497,13 @@ import { openFile } from "$lib/api/open";
   const wantsFullResolution = () => needsFullResolution({ fullscreen: fullscreen.active, zoom: fullscreen.zoom });
   $effect(() => {
     if (!previewShowsRendition || !wantsFullResolution()) return;
+    // Captured with the upgrade's target: the original is remembered under
+    // the version of the rendition it replaces.
+    const source = shownRendition;
     void fullResolution.upgrade(wantsFullResolution).then((image) => {
       // Re-checked at the swap: leaving fullscreen or moving to another file
       // while the original decoded must keep what is on screen.
-      const source = shownRendition;
-      if (!image || !source || !previewShowsRendition || !wantsFullResolution()) return;
+      if (!image || !source || shownRendition !== source || !previewShowsRendition || !wantsFullResolution()) return;
       showLoadedImage(source.request, source.path, source.cacheBust, {}, image);
       previewShowsRendition = false;
     });

@@ -52,7 +52,7 @@ jobs:
       - id: e2e
         if: github.event_name == 'pull_request'
         run: |
-          if ! raw=$(node scripts/e2e-affected.mjs HEAD^1 HEAD); then raw=ALL; fi
+          if ! raw=$(node scripts/e2e-affected.mjs --strict HEAD^1 HEAD); then raw=ALL; fi
           selection=$(tr '\n' ' ' <<< "$raw")
           selection="${selection% }"
           echo "selection=${selection:-NONE}" >> "$GITHUB_OUTPUT"

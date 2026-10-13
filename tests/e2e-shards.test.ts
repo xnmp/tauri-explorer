@@ -4,7 +4,9 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   combineRuns,
+  compareSelection,
   discoverSpecs,
+  listedSpecFiles,
   parseCiLog,
   parseShardArg,
   planShards,
@@ -123,6 +125,17 @@ describe("parseCiLog", () => {
     });
   });
 
+  it("charges a retried test's attempts to its own file", () => {
+    const log = [
+      start("chromium (2)", "10:00:00.0000000", 1, "chromium", "flaky.spec.ts"),
+      start("chromium (2)", "10:00:30.0000000", 2, "chromium", "other.spec.ts"),
+      line("chromium (2)", "10:00:35.0000000", "[3/3] (retries) [chromium] › e2e/flaky.spec.ts:12:3 › suite › title (retry #1)"),
+      line("chromium (2)", "10:00:45.0000000", "  2 passed (45.0s)"),
+    ].join("\n");
+
+    expect(parseCiLog(log)).toEqual({ chromium: { "flaky.spec.ts": 40, "other.spec.ts": 5 } });
+  });
+
   it("drops a final test that never finished in a cancelled job", () => {
     const log = [
       start("webkit-tests (2)", "10:00:00.0000000", 1, "webkit", "a.spec.ts"),
@@ -187,10 +200,43 @@ describe("discoverSpecs", () => {
     expect(discoverSpecs(dir)).toEqual(["a.test.mjs", "b.spec.ts", "nested/deeper/c.spec.tsx"]);
   });
 
-  it("matches the repository's e2e directory", () => {
+  it("returns paths relative to the repository's e2e directory", () => {
     const specs = discoverSpecs();
 
     expect(specs.length).toBeGreaterThan(0);
-    expect(specs.every((spec) => !spec.startsWith("e2e/") && /\.spec\.ts$/.test(spec))).toBe(true);
+    expect(specs.every((spec) => !spec.startsWith("e2e/") && /\.(spec|test)\.(c|m)?[jt]sx?$/.test(spec))).toBe(true);
+  });
+});
+
+describe("listedSpecFiles", () => {
+  it("collects files with at least one test from nested suites of a JSON report", () => {
+    const report = {
+      suites: [
+        { title: "a.spec.ts", file: "a.spec.ts", specs: [], suites: [{ title: "group", file: "a.spec.ts", specs: [{ title: "t" }] }] },
+        { title: "empty.spec.ts", file: "empty.spec.ts", specs: [], suites: [] },
+        { title: "nested/b.spec.ts", file: "nested/b.spec.ts", specs: [{ title: "t" }, { title: "u" }] },
+      ],
+    };
+
+    expect(listedSpecFiles(report)).toEqual(["a.spec.ts", "nested/b.spec.ts"]);
+  });
+
+  it("returns nothing for a report without suites or with malformed entries", () => {
+    expect(listedSpecFiles({})).toEqual([]);
+    expect(listedSpecFiles({ suites: [null, 3, { file: 7, specs: [{}] }, { suites: "x" }] })).toEqual([]);
+  });
+});
+
+describe("compareSelection", () => {
+  it("accepts a selection that matches the plan exactly", () => {
+    expect(compareSelection(["b.spec.ts", "a.spec.ts"], ["a.spec.ts", "b.spec.ts"])).toEqual({ missing: [], unexpected: [] });
+  });
+
+  it("reports planned files Playwright did not select, including an empty selection", () => {
+    expect(compareSelection(["a.spec.ts", "b.spec.ts"], [])).toEqual({ missing: ["a.spec.ts", "b.spec.ts"], unexpected: [] });
+  });
+
+  it("reports selected files outside the plan", () => {
+    expect(compareSelection(["a.spec.ts"], ["a.spec.ts", "z.spec.ts"])).toEqual({ missing: [], unexpected: ["z.spec.ts"] });
   });
 });

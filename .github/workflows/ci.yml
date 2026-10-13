@@ -111,8 +111,10 @@ jobs:
       - name: Install Playwright browser
         run: npx playwright install --with-deps chromium
 
+      # --verify fails the job unless Playwright selects exactly the planned
+      # files; --test-list silently runs nothing for an unresolvable entry.
       - name: Plan duration-balanced shard
-        run: node scripts/e2e-shards.mjs plan --engine chromium --shard ${{ matrix.shard }}/${{ strategy.job-total }} --out "$RUNNER_TEMP/e2e-shard.txt"
+        run: node scripts/e2e-shards.mjs plan --engine chromium --shard ${{ matrix.shard }}/${{ strategy.job-total }} --out "$RUNNER_TEMP/e2e-shard.txt" --verify
 
       - name: E2E tests
         run: npx playwright test --project=chromium --test-list "$RUNNER_TEMP/e2e-shard.txt" --reporter=line,html
@@ -178,7 +180,9 @@ jobs:
         run: npx playwright install --with-deps webkit
 
       - name: Plan duration-balanced shard
-        run: node scripts/e2e-shards.mjs plan --engine webkit --shard ${{ matrix.shard }}/${{ strategy.job-total }} --out "$RUNNER_TEMP/e2e-shard.txt"
+        env:
+          WEBKIT: "1"
+        run: node scripts/e2e-shards.mjs plan --engine webkit --shard ${{ matrix.shard }}/${{ strategy.job-total }} --out "$RUNNER_TEMP/e2e-shard.txt" --verify
 
       - name: E2E tests (WebKit)
         env:
@@ -221,6 +225,7 @@ jobs:
   # runners rather than back to back (#1123). Both stay full passes:
   # `not(feature = "durable-recovery")` tests exist only in the default suite.
   rust-suite:
+    name: rust-suite (${{ matrix.suite }})
     needs: changes
     if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
@@ -263,10 +268,13 @@ jobs:
 
       # Each suite builds different feature artifacts; separate cache keys
       # keep the two matrix jobs from overwriting each other's target dir.
+      # Save only from dev so PR branches restore dev's caches instead of
+      # adding ~1.5 GB entries each and evicting other workflows' caches.
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: src-tauri
           key: ${{ matrix.suite }}
+          save-if: ${{ github.ref == 'refs/heads/dev' }}
 
       # tauri::generate_context! requires the frontendDist dir to exist.
       - name: Create empty frontend dist

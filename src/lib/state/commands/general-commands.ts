@@ -351,6 +351,13 @@ export const generalDialogCommands: Command[] = [
     },
   },
   {
+    id: "help.about",
+    scope: "window",
+    label: "About",
+    category: "general",
+    handler: () => dialogStore.openAbout(),
+  },
+  {
     id: "general.openSettings",
     scope: "window",
     label: "Settings",

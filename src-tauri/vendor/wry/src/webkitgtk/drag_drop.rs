@@ -65,9 +65,19 @@ impl DragDropController {
     self.state.get()
   }
 
-  fn call(&self, event: DragDropEvent) -> bool {
-    (self.handler)(event)
+  fn call(&self, webview: &WebView, event: DragDropEvent) -> bool {
+    let copying = gtk::gdk::Keymap::for_display(&webview.display()).is_some_and(|keymap| {
+      keymap.modifier_state() & gtk::gdk::ModifierType::CONTROL_MASK.bits() != 0
+    });
+    crate::drag_drop_snapshot::dispatch(window_id(webview), copying, event, &*self.handler)
   }
+}
+
+fn window_id(webview: &WebView) -> usize {
+  webview
+    .toplevel()
+    .map(|window| window.as_ptr() as usize)
+    .unwrap_or(0)
 }
 
 pub(crate) fn connect_drag_event(webview: &WebView, handler: Box<dyn Fn(DragDropEvent) -> bool>) {
@@ -75,15 +85,18 @@ pub(crate) fn connect_drag_event(webview: &WebView, handler: Box<dyn Fn(DragDrop
 
   {
     let controller = controller.clone();
-    webview.connect_drag_data_received(move |_, _, _, _, data, info, _| {
+    webview.connect_drag_data_received(move |webview, _, _, _, data, info, _| {
       if info == 2 {
         let uris = data.uris();
         let paths = uris.iter().map(path_buf_from_uri).collect::<Vec<_>>();
         controller.enter();
-        controller.call(DragDropEvent::Enter {
-          paths: paths.clone(),
-          position: controller.position.get(),
-        });
+        controller.call(
+          webview,
+          DragDropEvent::Enter {
+            paths: paths.clone(),
+            position: controller.position.get(),
+          },
+        );
         controller.store_paths(paths);
       }
     });
@@ -91,9 +104,9 @@ pub(crate) fn connect_drag_event(webview: &WebView, handler: Box<dyn Fn(DragDrop
 
   {
     let controller = controller.clone();
-    webview.connect_drag_motion(move |_, _, x, y, _| {
+    webview.connect_drag_motion(move |webview, _, x, y, _| {
       if controller.state() == DragControllerState::Entered {
-        controller.call(DragDropEvent::Over { position: (x, y) });
+        controller.call(webview, DragDropEvent::Over { position: (x, y) });
       } else {
         controller.store_position((x, y));
       }
@@ -103,15 +116,18 @@ pub(crate) fn connect_drag_event(webview: &WebView, handler: Box<dyn Fn(DragDrop
 
   {
     let controller = controller.clone();
-    webview.connect_drag_drop(move |_, ctx, x, y, time| {
+    webview.connect_drag_drop(move |webview, ctx, x, y, time| {
       if controller.state() == DragControllerState::Leaving {
         if let Some(paths) = controller.take_paths() {
           ctx.drop_finish(true, time);
           controller.leave();
-          return controller.call(DragDropEvent::Drop {
-            paths,
-            position: (x, y),
-          });
+          return controller.call(
+            webview,
+            DragDropEvent::Drop {
+              paths,
+              position: (x, y),
+            },
+          );
         }
       }
 
@@ -119,14 +135,30 @@ pub(crate) fn connect_drag_event(webview: &WebView, handler: Box<dyn Fn(DragDrop
     });
   }
 
-  webview.connect_drag_leave(move |_w, _, _| {
+  webview.connect_drag_leave(move |webview, _, _| {
     if controller.state() != DragControllerState::Left {
       controller.leaving();
       let controller = controller.clone();
+      let window = window_id(webview);
+      let original_view = webview.downgrade();
+      let original_window = webview.toplevel().map(|window| window.downgrade());
       gtk::glib::idle_add_local_once(move || {
         if controller.state() == DragControllerState::Leaving {
           controller.leave();
-          controller.call(DragDropEvent::Leave);
+          crate::drag_drop_snapshot::dispatch_deferred(
+            window,
+            false,
+            DragDropEvent::Leave,
+            || {
+              let view = original_view.upgrade()?;
+              let original_window = original_window.as_ref()?.upgrade()?;
+              // A destroyed/reparented view cannot attribute a delayed Leave
+              // to a new top-level window reusing the old GTK address.
+              (view.toplevel().as_ref() == Some(&original_window))
+                .then_some(original_window.as_ptr() as usize)
+            },
+            &*controller.handler,
+          );
         }
       });
     }

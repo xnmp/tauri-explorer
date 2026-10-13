@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { startWindowSession } from "$lib/state/window-session";
 import { createForegroundGate, type ForegroundGate } from "$lib/state/page-foreground";
+import { fileViewRegistry } from "$lib/plugins/file-view-registry.svelte";
 
 const f = vi.hoisted(() => ({
   settings: vi.fn<() => Promise<void>>(), initTabs: vi.fn(() => ({})), view: vi.fn(),
@@ -13,7 +14,7 @@ const f = vi.hoisted(() => ({
   recoveryStart: vi.fn(async () => {}), recoveryDispose: vi.fn(async () => {}),
   gate: null as unknown as ForegroundGate,
   activeExplorer: null as unknown as { currentPath: string; setViewMode: (mode: string) => void },
-  mode: "off", warmEnabled: true,
+  mode: "off", warmEnabled: true, paneBlocked: false,
 }));
 vi.mock("$lib/state/file-recovery-session.svelte", () => ({ createFileRecoverySession: () => ({ start: f.recoveryStart, dispose: f.recoveryDispose }) }));
 vi.mock("$lib/api/common", () => ({ isTauri: () => true }));
@@ -25,7 +26,7 @@ vi.mock("$lib/state/theme.svelte", () => ({ themeStore: { initTheme: async () =>
 vi.mock("$lib/state/settings.svelte", () => ({ settingsStore: { init: f.settings, get warmWindow() { return f.warmEnabled; } } }));
 vi.mock("$lib/plugins/registry.svelte", () => ({ pluginRegistry: { initPlugins: f.plugins, dispose: f.disposePlugins } }));
 vi.mock("$lib/state/window-tabs.svelte", () => ({ windowTabsManager: { init: f.initTabs, observeNativeClose: f.nativeClose,
-  getActiveExplorer: () => f.activeExplorer } }));
+  activePaneId: "launch-pane", getActiveExplorer: () => f.activeExplorer } }));
 vi.mock("$lib/state/window-title.svelte", () => ({ startWindowTitleSync: f.title }));
 vi.mock("$lib/state/warm-window", () => ({ warmMode: () => f.mode, spawnWarmWindow: f.spawn,
   runWarmWindow: () => ({ ready: Promise.resolve(true), dispose() {} }) }));
@@ -43,7 +44,7 @@ vi.mock("$lib/state/command-definitions", () => ({ registerAllCommands: f.comman
 vi.mock("$lib/state/window-keyboard", () => ({ startWindowKeyboard: () => f.stopKeyboard }));
 vi.mock("$lib/state/keybindings.svelte", () => ({ keybindingsStore: {} }));
 vi.mock("$lib/state/commands.svelte", () => ({ getCommand() {}, executeCommand() {} }));
-vi.mock("$lib/state/dialogs.svelte", () => ({ dialogStore: {} }));
+vi.mock("$lib/state/dialogs.svelte", () => ({ dialogStore: { isPaneBlocked: () => f.paneBlocked } }));
 vi.mock("$lib/state/terminal.svelte", () => ({ terminalPanelStore: {} }));
 vi.mock("$lib/state/window-size.svelte", () => ({ windowSizeStore: { sync: f.syncSize } }));
 vi.mock("$lib/state/startup-timing", () => ({ markStartup() {} }));
@@ -56,19 +57,59 @@ let host: EventTarget;
 const options = () => ({ picker: false, homePath: "/home/me", settingsReady: vi.fn(), commandsReady: vi.fn() });
 beforeEach(() => {
   vi.useFakeTimers(); vi.clearAllMocks();
-  f.mode = "off"; f.warmEnabled = true; f.gate = createForegroundGate(true);
+  f.mode = "off"; f.warmEnabled = true; f.paneBlocked = false; f.gate = createForegroundGate(true);
   f.activeExplorer = { currentPath: "/work", setViewMode: f.view };
   f.settings.mockImplementation(() => new Promise(resolve => { resolveSettings = resolve; }));
   f.title.mockReturnValue(f.stopTitle); f.nativeClose.mockReturnValue(f.stopNativeClose);
   f.config.mockReturnValue(f.stopConfig); f.transfer.mockReturnValue(f.stopTransfer);
   f.setupWatch.mockReset(); f.cleanupDrop.mockReset();
   f.nativeSession.mockResolvedValue("session");
+  fileViewRegistry.clear();
   host = Object.assign(new EventTarget(), { location: { search: "?path=%2Fchild&viewMode=tiles" } });
   vi.stubGlobal("window", host);
 });
 afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); });
 
 describe("page session ownership", () => {
+  it("declares plugin discovery before initial tabs while settings are unresolved, and retires it immediately", () => {
+    const answers: unknown[] = [];
+    f.initTabs.mockImplementationOnce(() => {
+      answers.push(fileViewRegistry.presentation("trace.view", "/child", 0));
+      return {};
+    });
+    const session = startWindowSession(options());
+    expect(answers).toEqual([{ kind: "hold" }]);
+    expect(f.plugins).not.toHaveBeenCalled();
+    session.dispose();
+    expect(fileViewRegistry.presentation("trace.view", "/child", 0)).toEqual({ kind: "builtin" });
+  });
+
+  it("retires discovery even if plugin activation never settles", async () => {
+    f.plugins.mockImplementationOnce(() => new Promise(() => {}));
+    const session = startWindowSession(options());
+    resolveSettings(); await Promise.resolve();
+    expect(f.plugins).toHaveBeenCalledOnce();
+    expect(f.plugins.mock.calls[0]).toEqual([expect.any(Function)]);
+    expect(fileViewRegistry.presentation("trace.view", "/child", 0)).toEqual({ kind: "hold" });
+    session.dispose();
+    expect(fileViewRegistry.presentation("trace.view", "/child", 0)).toEqual({ kind: "builtin" });
+  });
+
+  it("releases discovery after successful startup without retiring the session", async () => {
+    const session = startWindowSession(options());
+    resolveSettings(); await vi.advanceTimersByTimeAsync(0);
+    expect(fileViewRegistry.presentation("trace.view", "/child", 0)).toEqual({ kind: "builtin" });
+    session.dispose();
+  });
+
+  it("does not steal launch focus from a pane dialog that opened before readiness", async () => {
+    Object.assign(host, { location: { search: "?path=/child&focusAddressBar=1" } });
+    const focus = vi.fn(); host.addEventListener("explorer:focus-address-bar", focus);
+    const session = startWindowSession(options());
+    f.paneBlocked = true; session.markCoreReady();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(focus).not.toHaveBeenCalled(); session.dispose();
+  });
   it("retains the new-window address request until readiness, then delivers it once", async () => {
     Object.assign(host, { location: { search: "?path=/child&focusAddressBar=1" } });
     const focus = vi.fn();

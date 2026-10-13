@@ -18,8 +18,10 @@ it("announces the file-tiles module and pane tile sizes alongside the existing S
   const sdk = (globalThis as { __TAURI_EXPLORER_PLUGIN_SDK__?: Sdk }).__TAURI_EXPLORER_PLUGIN_SDK__!;
   expect(sdk.sdkVersion).toBe(1);
   expect(sdk.apiVersion).toBe(3);
-  expect(sdk.capabilities).toEqual(expect.arrayContaining(["fileViews", "previewInfo", "previewTargets", "blobWorkers", "fileTiles", "tileSize", "jobRetry", "textGeneration", "pluginServices", "serviceArtifacts", "settingsActions", "modalNavigation", "combinedSelection"]));
+  expect(sdk.capabilities).toEqual(expect.arrayContaining(["fileViews", "previewInfo", "previewTargets", "blobWorkers", "fileTiles", "tileSize", "jobRetry","jobReveal","jobCost","fileViewReveal", "textGeneration", "pluginServices", "serviceArtifacts", "settingsActions", "modalNavigation", "combinedSelection", "paneDialogs", "fileDropTargets"]));
   expect(sdk.capabilities).toContain("fileTile");
+  expect(sdk.capabilities).toContain("selectionAnchor");
+  expect(sdk.capabilities).toContain("fileViewEligibilityPending");
   for (const name of ["ui/modal", "ui/image-editor", "ui/file-tiles", "ui/file-tile"]) {
     expect(typeof sdk.modules[name]?.default, name).toBe("function");
   }

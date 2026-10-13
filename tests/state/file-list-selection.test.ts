@@ -32,7 +32,7 @@ vi.mock("$lib/api/files", async (importOriginal) => ({
 }));
 
 import { createExplorerState, type ExplorerInstance } from "$lib/state/explorer.svelte";
-import { calculateSelection } from "$lib/state/selection";
+import { calculateSelection, selectPaths } from "$lib/state/selection";
 
 function entry(
   name: string,
@@ -289,4 +289,62 @@ describe("explorer selection and focus cursor", () => {
     expect(selectedNames(explorer)).toEqual(["next-a"]);
     expect(explorer.focusedEntry?.path).toBe(next[0].path);
   });
+});
+
+
+describe("plugin path selection", () => {
+  it.each([undefined, false])("keeps legacy focus semantics with keepAnchor=%s", (keepAnchor) => {
+    const entries = [entry("a"), entry("b"), entry("c")];
+    const explorer = explorerWith(entries);
+    explorer.selectEntry(entries[2]);
+    explorer.selectPaths([entries[0].path, entries[1].path, "/unlisted", entries[0].path], entries[0].path, keepAnchor === undefined ? undefined : { keepAnchor });
+    expect(selectedNames(explorer)).toEqual(["a", "b"]);
+    expect(explorer.focusedEntry?.path).toBe(entries[0].path);
+    explorer.selectEntry(entries[2], { shiftKey: true });
+    expect(selectedNames(explorer)).toEqual(["a", "b", "c"]);
+    explorer.selectPaths([entries[0].path, entries[1].path], "/unlisted");
+    expect(explorer.focusedEntry?.path).toBe(entries[1].path);
+    explorer.selectEntry(entries[2], { shiftKey: true });
+    expect(selectedNames(explorer)).toEqual(["b", "c"]);
+    explorer.selectPaths([]);
+    expect(selectedNames(explorer)).toEqual([]);
+    expect(explorer.focusedEntry?.path).toBe(entries[2].path);
+    explorer.selectEntry(entries[0], { shiftKey: true });
+    expect(selectedNames(explorer)).toEqual(["a"]);
+  });
+
+  it.each([{ names: ["b"] }, { names: [] }])("preserves an unselected cursor and range anchor when replacing with $names", ({ names }) => {
+    const entries = [entry("a"), entry("b"), entry("c")];
+    const explorer = explorerWith(entries);
+    explorer.selectEntry(entries[0]);
+    // A distinct cursor proves both values survive, even outside the new selection.
+    explorer.focusEntry(entries[2]);
+    explorer.selectPaths([...names.map((name) => `/root/${name}`), "/unlisted"], entries[1].path, { keepAnchor: true });
+    expect(selectedNames(explorer)).toEqual(names);
+    expect(explorer.focusedEntry?.path).toBe(entries[2].path);
+    explorer.selectEntry(entries[2], { shiftKey: true });
+    expect(selectedNames(explorer)).toEqual(["a", "b", "c"]);
+  });
+
+  it("matches the built-in marquee when adding paths, then Shift-clicking", () => {
+    const entries = [entry("notes.txt"), entry("plain.png"), entry("refs")];
+    const plugin = explorerWith(entries), builtIn = explorerWith(entries);
+    for (const explorer of [plugin, builtIn]) explorer.selectEntry(entries[0]);
+    plugin.selectPaths([entries[0].path, entries[1].path], null, { keepAnchor: true });
+    builtIn.selectByIndices([1], true);
+    for (const explorer of [plugin, builtIn]) {
+      expect(explorer.focusedEntry?.path).toBe(entries[0].path);
+      explorer.selectEntry(entries[2], { shiftKey: true });
+      expect(selectedNames(explorer)).toEqual(["notes.txt", "plain.png", "refs"]);
+    }
+  });
+});
+
+
+it("pure path replacement keeps null navigation state and ignores focus, duplicates, and unknown paths", () => {
+  const entries = [entry("a"), entry("b")];
+  const result = selectPaths(entries, ["/missing", entries[1].path, entries[1].path], null, null, entries[1].path, { keepAnchor: true });
+  expect([...result.selectedPaths]).toEqual([entries[1].path]);
+  expect(result.anchorPath).toBeNull();
+  expect(result.cursorPath).toBeNull();
 });

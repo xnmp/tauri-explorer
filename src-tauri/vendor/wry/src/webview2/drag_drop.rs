@@ -26,11 +26,11 @@ use windows::{
         IDropTarget, IDropTarget_Impl, RegisterDragDrop, RevokeDragDrop, CF_HDROP, DROPEFFECT,
         DROPEFFECT_COPY, DROPEFFECT_NONE,
       },
-      SystemServices::MODIFIERKEYS_FLAGS,
+      SystemServices::{MK_CONTROL, MODIFIERKEYS_FLAGS},
     },
     UI::{
       Shell::{DragFinish, DragQueryFileW, HDROP},
-      WindowsAndMessaging::EnumChildWindows,
+      WindowsAndMessaging::{EnumChildWindows, GetAncestor, GA_ROOT},
     },
   },
 };
@@ -85,6 +85,15 @@ pub struct DragDropTarget {
 }
 
 impl DragDropTarget {
+  fn call(&self, event: DragDropEvent, keys: MODIFIERKEYS_FLAGS) -> bool {
+    let window = unsafe { GetAncestor(self.hwnd, GA_ROOT) };
+    crate::drag_drop_snapshot::dispatch(
+      window.0 as usize,
+      keys.0 & MK_CONTROL.0 != 0,
+      event,
+      &*self.listener,
+    )
+  }
   pub fn new(hwnd: HWND, listener: Rc<dyn Fn(DragDropEvent) -> bool>) -> DragDropTarget {
     Self {
       hwnd,
@@ -159,7 +168,7 @@ impl IDropTarget_Impl for DragDropTarget_Impl {
   fn DragEnter(
     &self,
     pDataObj: windows_core::Ref<'_, IDataObject>,
-    _grfKeyState: MODIFIERKEYS_FLAGS,
+    grfKeyState: MODIFIERKEYS_FLAGS,
     pt: &POINTL,
     pdwEffect: *mut DROPEFFECT,
   ) -> windows::core::Result<()> {
@@ -179,10 +188,13 @@ impl IDropTarget_Impl for DragDropTarget_Impl {
       *self.enter_is_valid.get() = enter_is_valid;
     }
 
-    (self.listener)(DragDropEvent::Enter {
-      paths,
-      position: (pt.x as _, pt.y as _),
-    });
+    self.call(
+      DragDropEvent::Enter {
+        paths,
+        position: (pt.x as _, pt.y as _),
+      },
+      grfKeyState,
+    );
 
     let cursor_effect = if enter_is_valid {
       DROPEFFECT_COPY
@@ -200,16 +212,19 @@ impl IDropTarget_Impl for DragDropTarget_Impl {
 
   fn DragOver(
     &self,
-    _grfKeyState: MODIFIERKEYS_FLAGS,
+    grfKeyState: MODIFIERKEYS_FLAGS,
     pt: &POINTL,
     pdwEffect: *mut DROPEFFECT,
   ) -> windows::core::Result<()> {
     if unsafe { *self.enter_is_valid.get() } {
       let mut pt = POINT { x: pt.x, y: pt.y };
       let _ = unsafe { ScreenToClient(self.hwnd, &mut pt) };
-      (self.listener)(DragDropEvent::Over {
-        position: (pt.x as _, pt.y as _),
-      });
+      self.call(
+        DragDropEvent::Over {
+          position: (pt.x as _, pt.y as _),
+        },
+        grfKeyState,
+      );
     }
 
     unsafe { *pdwEffect = *self.cursor_effect.get() };
@@ -218,7 +233,7 @@ impl IDropTarget_Impl for DragDropTarget_Impl {
 
   fn DragLeave(&self) -> windows::core::Result<()> {
     if unsafe { *self.enter_is_valid.get() } {
-      (self.listener)(DragDropEvent::Leave);
+      self.call(DragDropEvent::Leave, MODIFIERKEYS_FLAGS(0));
     }
     Ok(())
   }
@@ -226,7 +241,7 @@ impl IDropTarget_Impl for DragDropTarget_Impl {
   fn Drop(
     &self,
     pDataObj: windows_core::Ref<'_, IDataObject>,
-    _grfKeyState: MODIFIERKEYS_FLAGS,
+    grfKeyState: MODIFIERKEYS_FLAGS,
     pt: &POINTL,
     _pdwEffect: *mut DROPEFFECT,
   ) -> windows::core::Result<()> {
@@ -236,10 +251,13 @@ impl IDropTarget_Impl for DragDropTarget_Impl {
 
       let mut paths = Vec::new();
       let hdrop = unsafe { DragDropTarget::iterate_filenames(pDataObj, |path| paths.push(path)) };
-      (self.listener)(DragDropEvent::Drop {
-        paths,
-        position: (pt.x as _, pt.y as _),
-      });
+      self.call(
+        DragDropEvent::Drop {
+          paths,
+          position: (pt.x as _, pt.y as _),
+        },
+        grfKeyState,
+      );
 
       if let Some(hdrop) = hdrop {
         unsafe { DragFinish(hdrop) };

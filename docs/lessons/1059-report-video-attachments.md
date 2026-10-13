@@ -1,0 +1,57 @@
+Report Issue supports PNG/JPEG/GIF images and MP4/WebM/MOV videos. The raw
+attachment caps remain 3 files, 2 MiB per file, and 3 MiB total; base64 JSON
+must still fit Vercel's 4.5 MB request ceiling. This deliberately supports
+short clips rather than a new recording upload service.
+
+Clipboard video reads use the existing ordered file-clipboard snapshot, then
+read one regular file with a bounded `take(MAX_ATTACHMENT_BYTES + 1)`. Copying
+multiple files produces an explicit copy-one-file message. A copied video file
+takes precedence over a thumbnail image offered by the same clipboard owner.
+Non-video paths fall back to offered image data, so a PNG URI does not hide a
+screenshot. Unsupported paths without image data do not enable attachment.
+File-list discovery failures also fall back to images and preserve the image
+read error. Keep routing and availability in the shared `clipboard/content.rs`
+seam; test both rather than only testing the copied-file reader.
+
+Frontend draft admission, Rust submission and the relay all check signatures:
+PNG/JPEG/GIF prefixes, the WebM EBML prefix, and a bounded leading `ftyp` box
+with MP4 or QuickTime brands. These are container signature checks, not a full
+media decode. The `mediaCases` in `tests/contract/fixtures/report_relay.json`
+are asserted by frontend, native and relay tests to keep all three in sync. Video previews deliberately use a
+placeholder so they do not decode untrusted attachments in the dialog.
+
+The relay retains image embeds and renders videos as Markdown links. Blob
+uploads use the declared validated content type and an extension matching it.
+Deploy the website relay along with the app; an older image-only relay rejects
+videos, and the app retains attachments for retry/fallback until the window
+closes. Attachments remain memory-only; only report text survives app restart.
+
+[ADR 0029](../adr/0029-report-attachment-admission-and-hosting.md) governs the
+copied-file and public-hosting boundaries, including signature-check limits,
+disclosure, submission uncertainty and best-effort cleanup.
+
+The later Chromium/WebKit aggregate CI failures came from the native image
+estimate test introduced on the integration base, not report attachment code.
+The plain Playwright clock kept advancing in real time alongside `runFor()`,
+so its exact remaining-time assertion failed. Integrating dev's #1092 fixed
+clock/pause correction preserves every estimate, overdue, cancellation and
+completion assertion. Reverting only that clock correction reproduced the
+same failure locally; application timing behavior requires no change.
+
+The operator's full unit run later exposed a graph-lineage timing test running
+alongside parallel module transforms. Isolating that unchanged suite in an
+ordered Vitest phase retains its 150 ms budget and all functional assertions.
+A real-runner qualification test checks file selection, worker limits and that
+ordinary unit modules are admitted only after graph work completes; the check
+fails with the old shared phase. Report attachment behavior is unaffected.
+
+Later Linux native smoke logs stopped inside the crop pixel oracle and also
+reported a fake CLI that never started. Both affected suites passed locally
+on a private WebKit display, so no crop-output defect was established. The
+oracle now observes bounded load/error events for drawable first-frame pixels
+and intrinsic preview dimensions, and reports an explicit error if no event
+arrives. It retains every pixel, geometry and file-preservation assertion.
+The test-only CLI timeout allows cold interpreter startup while still expiring
+well before the fixture's late write; production timeout behavior is unchanged.
+New renderer callback and real subprocess tests reproduce the old harness
+failures, independently of application behavior.

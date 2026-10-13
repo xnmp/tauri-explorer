@@ -472,7 +472,14 @@ mod recovery_admission {
                 held.finish().unwrap();
                 let completed = entry_outcome(plan(), &runtime).await;
                 assert_eq!(completed.result.unwrap().path, native(&target));
-                assert!(completed.warning.is_none());
+                if kind == "rename" {
+                    assert!(completed.warning.as_deref().is_none_or(|warning| {
+                        warning
+                            == "Rename completed, but Trace could not update its locator: Plugin AI services are unavailable in this process; this plugin waits for their recovery"
+                    }));
+                } else {
+                    assert!(completed.warning.is_none());
+                }
                 if kind == "directory" {
                     assert!(target.is_dir());
                 } else {

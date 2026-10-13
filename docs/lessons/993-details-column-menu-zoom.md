@@ -43,3 +43,12 @@ Keep these images mapped to the same acceptance criterion as edge containment.
 Headers and row cells render independently. Assert a nonempty set of mounted
 rows and each column's cell count before hiding, while hidden, and after
 restoring, before capturing its state.
+
+## Integration with the Length column
+
+Keep the Length column and its backdrop right-click propagation guard when
+merging the zoom-positioned popup. The popup's measured dimensions include all
+currently available controls, so the extra Length control needs no hardcoded
+menu height. Preserve the unit runner's ordered projects alongside its worker
+limit; the ordering tests verify complete, nonduplicated test discovery and
+phase admission with both one and multiple workers.

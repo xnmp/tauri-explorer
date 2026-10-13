@@ -1,6 +1,6 @@
 /** Real presentation/controller with a private native transport. No provider calls. */
 import { test, expect } from "./fixtures";
-import { HOME_URL, waitForEntries } from "./helpers";
+import { activeExplorerPane, HOME_URL, waitForEntries } from "./helpers";
 
 test("retained native jobs recover without fabricated progress, wait for cancellation, and dismiss only presentation", async ({ page }) => {
   await page.setViewportSize({ width: 320, height: 800 });
@@ -52,161 +52,115 @@ test("retained native jobs recover without fabricated progress, wait for cancell
   expect(await page.evaluate(() => (window as any).nativePresentation.calls)).toEqual([`cancel:${"a".repeat(48)}`, `dismiss:${"a".repeat(48)}`, `dismiss:${"a".repeat(48)}`]);
 });
 
-for (const width of [320, 1024]) test(`operation-specific discard preserves another receipt and dirty parent at ${width}px`, async ({ page }) => {
+for (const width of [320, 1024]) test(`automatically settled jobs show their reason once without resolution controls at ${width}px`, async ({ page }) => {
   await page.setViewportSize({ width, height: 800 });
+  await page.goto(HOME_URL); await waitForEntries(page);
+  const reason = "Provider connection closed before its outcome was known";
+  await page.evaluate(async (reason) => {
+    const { getMockControl } = await import("/src/lib/api/mock-control.ts");
+    const { jobsStore } = await import("/src/lib/state/jobs.svelte.ts");
+    // The fixture runs the host's inactive-operation policy, then publishes its
+    // authoritative native presentation. It never calls an AI provider.
+    const { createMockAiPresentation } = await import("/src/lib/api/mock-ai-presentation.ts");
+    const mock = getMockControl().nativeAiPresentation ??= createMockAiPresentation((name, value) => window.dispatchEvent(new CustomEvent(name, { detail: value })));
+    const stopped = { operationId: "op-stopped", consumerPackage: "xnmp.trace-explorer", providerPackage: "xnmp.image-generation", createdAtMs: Date.now(), execution: "unknown", delivery: "none", reason, canResume: false, canDiscard: false, canStop: false, canDismiss: true, active: false };
+    const job = { jobKey: "c".repeat(48), owner: { packageId: "xnmp.trace-explorer", digest: "b".repeat(64), incarnation: 1 }, operationId: stopped.operationId, jobId: 99002, kind: "openai-image", label: "stopped.png", originWindow: "mock-window", revision: 1, createdAtMs: Date.now() - 3000, updatedAtMs: Date.now(), state: "needs_attention", phase: "stopped" };
+    mock.seed({ originWindow: "mock-window", watermark: 1, jobs: [job] }, { version: 1, operations: [stopped] });
+    jobsStore.applyNative(mock.snapshot().jobs);
+    jobsStore.configureNativeControls({ cancel: async key => mock.cancel(key), resume: async key => mock.resume(key), dismiss: async key => { mock.dismiss(key); jobsStore.applyNative(mock.snapshot().jobs); }, refresh: async () => { jobsStore.applyNative(mock.snapshot().jobs); } });
+  }, reason);
+  const progress = page.getByRole("region", { name: "Background progress" });
+  await expect(progress.getByText("Discarded", { exact: true })).toBeVisible();
+  await expect(progress.getByText(reason, { exact: true })).toHaveCount(1);
+  await expect(progress.getByText(/unresolved|Inspect/i)).toHaveCount(0);
+  expect(await progress.evaluate(el => el.scrollWidth <= el.clientWidth)).toBe(true);
+
+  await page.keyboard.press("Control+j");
+  const jobs = page.getByRole("dialog", { name: "Background Jobs", exact: true });
+  await expect(jobs.getByText(reason, { exact: true })).toHaveCount(1);
+  await expect(jobs.getByText(/unresolved|Inspect/i)).toHaveCount(0);
+  await jobs.getByRole("button", { name: "Close", exact: true }).click();
+  await expect(jobs).toBeHidden();
+  await progress.getByRole("button", { name: "Dismiss stopped.png" }).click();
+  await expect(progress).toBeHidden();
+  await page.keyboard.press("Control+j");
+  await expect(jobs.getByText("No background jobs", { exact: true })).toBeVisible();
+  expect(await page.evaluate(async () => {
+    const { getMockControl } = await import("/src/lib/api/mock-control.ts");
+    return getMockControl().nativeAiPresentation!.calls.filter(call => call.command === "resume");
+  })).toEqual([]);
+});
+
+test("Plugins has no unresolved operations entry", async ({ page }) => {
   await page.goto(HOME_URL); await waitForEntries(page);
   await page.keyboard.press("Control+,");
   await page.getByRole("button", { name: "Open Plugins", exact: true }).click();
-  const parent = page.getByRole("dialog", { name: "Plugins", exact: true });
-  await parent.locator(".plugins-search").fill("dirty parent filter");
-  await page.evaluate(async () => {
-    const { dialogRegistry } = await import("/src/lib/plugins/dialog-registry.svelte.ts");
-    const { default: component } = await import("/src/lib/components/AiOperationsDialog.svelte");
-    let snapshot = { version: 1, operations: ["alpha", "beta"].map(operationId => ({ operationId, consumerPackage: "xnmp.trace-explorer", providerPackage: "xnmp.image-generation", createdAtMs: Date.now(), execution: "succeeded", delivery: "sealed", reason: "Original output retained", canResume: true, canDiscard: true, canStop: false })) };
-    let fail = true, notify = () => {}; const calls: unknown[] = [];
-    dialogRegistry.register({ id: "fixture.operations", component, props: { dependencies: {
-      read: async () => structuredClone(snapshot), watch: async receive => { notify = receive; return () => {}; },
-      resolve: async (operation: any, action: string) => { calls.push([operation.consumerPackage, operation.operationId, action]); if (fail) { notify(); throw new Error("Receipt commit unavailable"); } snapshot = { ...snapshot, operations: snapshot.operations.filter(item => item.operationId !== operation.operationId) }; return structuredClone(snapshot); },
-    } } });
-    dialogRegistry.openManaged("fixture.operations");
-    (window as any).operationPresentation = { calls, allow: () => { fail = false; } };
-  });
-  const dialog = page.getByRole("dialog", { name: "Unresolved AI operations", exact: true });
-  const alpha = dialog.locator('[data-operation-id="alpha"]');
-  await expect(alpha.getByText("Original output retained")).toBeVisible();
-  const card = dialog.locator(".operations");
-  expect(await card.evaluate(el => el.scrollWidth <= el.clientWidth)).toBe(true);
-  await alpha.getByRole("button", { name: "Discard retained result…" }).click();
-  const confirm = page.getByRole("alertdialog");
-  await expect(confirm).toContainText("alpha"); await expect(confirm).toContainText("xnmp.trace-explorer");
-  await expect(confirm.getByRole("button", { name: "Keep operation" })).toBeFocused();
-  await confirm.getByRole("button", { name: "Keep operation" }).click();
-  expect(await page.evaluate(() => (window as any).operationPresentation.calls)).toEqual([]);
-  await alpha.getByRole("button", { name: "Discard retained result…" }).click();
-  await confirm.getByRole("button", { name: "Discard retained result", exact: true }).click();
-  await expect(confirm.getByRole("alert")).toHaveText("Receipt commit unavailable");
-  await page.evaluate(() => (window as any).operationPresentation.allow());
-  await confirm.getByRole("button", { name: "Discard retained result", exact: true }).click();
-  await expect(confirm).toBeHidden(); await expect(alpha).toHaveCount(0);
-  await expect(dialog.locator('[data-operation-id="beta"]')).toBeVisible();
-  expect(await page.evaluate(() => (window as any).operationPresentation.calls)).toEqual([["xnmp.trace-explorer", "alpha", "discard"], ["xnmp.trace-explorer", "alpha", "discard"]]);
-  await dialog.getByRole("button", { name: "Close unresolved operations" }).click();
-  await expect(parent).toBeVisible(); await expect(parent.locator(".plugins-search")).toHaveValue("dirty parent filter");
-  await page.keyboard.press("Tab"); expect(await parent.evaluate(el => el.contains(document.activeElement))).toBe(true);
+  const plugins = page.getByRole("dialog", { name: "Plugins", exact: true });
+  await expect(plugins.getByRole("textbox", { name: "Filter plugins" })).toBeVisible();
+  await expect(plugins.getByRole("button", { name: /Unresolved AI/i })).toHaveCount(0);
 });
 
-test("Plugins opens the real unresolved command surface and distinguishes missing provider configuration", async ({ page }) => {
-  await page.goto(HOME_URL); await waitForEntries(page);
-  await page.keyboard.press("Control+,"); await page.getByRole("button", { name: "Open Plugins", exact: true }).click();
-  const parent = page.getByRole("dialog", { name: "Plugins", exact: true });
-  await parent.getByRole("button", { name: "Unresolved AI operations", exact: true }).click();
-  const dialog = page.getByRole("dialog", { name: "Unresolved AI operations", exact: true });
-  await expect(dialog.getByText("No unresolved AI operations.", { exact: true })).toBeVisible();
-  await dialog.getByRole("button", { name: "Configure image connections" }).click();
-  await expect(dialog.getByRole("alert")).toHaveText("Install the Image Generation package in Plugins to configure connections.");
-  await dialog.getByRole("button", { name: "Close unresolved operations" }).click(); await expect(parent).toBeVisible();
-});
-
-test("progress panel shows the unresolved indicator only when AI operations are unresolved", async ({ page }) => {
+test("late acknowledged success replaces settled history with its output without reload", async ({ page }) => {
   await page.goto(HOME_URL); await waitForEntries(page);
   await page.evaluate(async () => {
+    const { createNativePluginJobsController } = await import("/src/lib/state/native-plugin-jobs.ts");
     const { jobsStore } = await import("/src/lib/state/jobs.svelte.ts");
-    jobsStore.addJob(4321, "plain.png", "Normal job", "openai-image", "image");
+    const stopped = { jobKey: "d".repeat(48), owner: { packageId: "consumer", digest: "b".repeat(64), incarnation: 1 }, operationId: "late-original", jobId: 99003, kind: "openai-image", label: "original.png", originWindow: "fixture-window", revision: 1, createdAtMs: Date.now() - 3000, updatedAtMs: Date.now(), state: "discarded" as const, phase: "stopped", settledAtMs: Date.now() };
+    let receive: (event: unknown) => void = () => {};
+    const observer = createNativePluginJobsController({ watch: async callback => { receive = callback; return () => {}; }, snapshot: async () => ({ originWindow: "fixture-window", watermark: 1, jobs: [stopped] }), apply: records => jobsStore.applyNative(records), toast: () => { throw Error("Late recovery must be silent"); }, error: () => {} });
+    await observer.init();
+    (window as any).deliverLateOriginal = () => receive({ type: "updated", job: { ...stopped, revision: 2, state: "completed", phase: "complete", outputPath: "/recovered/late-delivered.png", runId: 17, error: null } });
   });
   const progress = page.getByRole("region", { name: "Background progress" });
-  await expect(progress.getByText("Normal job", { exact: true })).toBeVisible();
-  await expect(progress.getByRole("button", { name: /Unresolved AI/ })).toHaveCount(0);
-  await expect(progress.getByText(/unresolved/)).toHaveCount(0);
-
-  await page.evaluate(async () => {
-    const { getMockControl } = await import("/src/lib/api/mock-control.ts");
-    const control = getMockControl();
-    const op = { operationId: "op-1", consumerPackage: "xnmp.trace-explorer", providerPackage: "xnmp.image-generation", createdAtMs: Date.now(), execution: "succeeded", delivery: "sealed", reason: "Original output retained", canResume: true, canDiscard: true, canStop: false };
-    control.nativeAiPresentation!.seed({ originWindow: "mock-window", watermark: 0, jobs: [] }, { version: 1, operations: [op] });
-  });
-  const button = progress.getByRole("button", { name: "Unresolved AI operations: 1" });
-  await expect(button).toHaveText("1 unresolved");
-  await button.click();
-  const dialog = page.getByRole("dialog", { name: "Unresolved AI operations", exact: true });
-  await expect(dialog.getByText("Original output retained")).toBeVisible();
+  await expect(progress.getByText("Discarded", { exact: true })).toBeVisible();
+  await page.evaluate(() => (window as any).deliverLateOriginal());
+  await expect(progress.getByText("Complete", { exact: true })).toBeVisible();
+  await expect(progress.getByText("Discarded", { exact: true })).toHaveCount(0);
+  await page.keyboard.press("Control+j");
+  const jobs = page.getByRole("dialog", { name: "Background Jobs", exact: true });
+  await expect(jobs.getByText("late-delivered.png", { exact: true })).toBeVisible();
+  await expect(jobs.getByText("Discarded", { exact: true })).toHaveCount(0);
 });
 
-test("an actively running AI operation is not counted as unresolved", async ({ page }) => {
-  await page.goto(HOME_URL); await waitForEntries(page);
+for (const width of [320, 1024]) test(`completed native image cost and Show image activate the existing folder tab at ${width}px`, async ({ page }) => {
+  await page.setViewportSize({ width, height: 800 });
+  await page.goto("/?path=/home/user/Documents"); await waitForEntries(page);
   await page.evaluate(async () => {
+    const { windowTabsManager } = await import("/src/lib/state/window-tabs.svelte.ts");
     const { jobsStore } = await import("/src/lib/state/jobs.svelte.ts");
-    jobsStore.addJob(4322, "plain.png", "Running job", "openai-image", "image");
+    const original = windowTabsManager.activeTabId!;
+    const images = windowTabsManager.createTab("/home/user/Pictures");
+    await windowTabsManager.getActiveExplorer()!.navigateTo("/home/user/Pictures");
+    windowTabsManager.setPaneGitGraph(windowTabsManager.activePaneId, "/home/user/Pictures");
+    windowTabsManager.setActiveTab(original);
+    (window as any).imageFolderTab = images.id;
+    jobsStore.applyNative([{ jobKey: "e".repeat(48), owner: { packageId: "xnmp.trace-explorer", digest: "b".repeat(64), incarnation: 1 }, operationId: "completed-image", jobId: 99004, kind: "openai-image", label: "Completed image", originWindow: "mock-window", revision: 1, createdAtMs: Date.now() - 3000, updatedAtMs: Date.now(), settledAtMs: Date.now(), state: "completed", runId: 42, cost: { amount: "0.075", currency: "USD", estimated: false, source: "bfl.credits" }, reveal: { kind: "file", path: "/home/user/Pictures/screenshot.png" } }]);
   });
   const progress = page.getByRole("region", { name: "Background progress" });
-  await expect(progress.getByText("Running job", { exact: true })).toBeVisible();
-  const seed = (rows: { id: string; active: boolean }[]) => page.evaluate(async (rows) => {
-    const { getMockControl } = await import("/src/lib/api/mock-control.ts");
-    const operations = rows.map(({ id, active }) => ({ operationId: id, consumerPackage: "xnmp.trace-explorer", providerPackage: "xnmp.image-generation", createdAtMs: Date.now(), execution: "running", delivery: "none", reason: `Reason ${id}`, canResume: true, canDiscard: false, canStop: false, active }));
-    getMockControl().nativeAiPresentation!.seed({ originWindow: "mock-window", watermark: 0, jobs: [] }, { version: 1, operations });
-  }, rows);
-
-  await seed([{ id: "op-active", active: true }]);
-  await expect(progress.getByText(/unresolved/)).toHaveCount(0);
-  await expect(progress.getByRole("button", { name: /Unresolved AI/ })).toHaveCount(0);
-
-  await seed([{ id: "op-active", active: true }, { id: "op-stuck", active: false }]);
-  const button = progress.getByRole("button", { name: "Unresolved AI operations: 1" });
-  await expect(button).toHaveText("1 unresolved");
-  await button.click();
-  const dialog = page.getByRole("dialog", { name: "Unresolved AI operations", exact: true });
-  await expect(dialog.locator('[data-operation-id="op-active"]').getByText("In progress")).toBeVisible();
-  await expect(dialog.locator('[data-operation-id="op-stuck"]').getByText("In progress")).toHaveCount(0);
+  await expect(progress.locator('[data-job-id="99004"]')).toContainText("US$0.08");
+  expect(await progress.evaluate(el => el.scrollWidth <= el.clientWidth)).toBe(true);
+  await progress.getByRole("button", { name: "Show image", exact: true }).click();
+  await expect.poll(() => page.evaluate(async () => (await import("/src/lib/state/window-tabs.svelte.ts")).windowTabsManager.activeTabId)).toBe(await page.evaluate(() => (window as any).imageFolderTab));
+  const pane = await activeExplorerPane(page);
+  await expect(pane.locator(".entry-item.selected")).toHaveText(/screenshot.png/);
+  await expect(pane.locator(".entry-item.selected")).toBeInViewport();
 });
 
-test("a stopped unknown operation can be dismissed: the row, its count and its job leave the unresolved surfaces", async ({ page }) => {
-  await page.goto(HOME_URL); await waitForEntries(page);
+test("Show image refreshes a native job whose unsaved view output has since been saved", async ({ page }) => {
+  await page.goto("/?path=/home/user/Documents"); await waitForEntries(page);
   await page.evaluate(async () => {
     const { getMockControl } = await import("/src/lib/api/mock-control.ts");
+    const { createMockAiPresentation } = await import("/src/lib/api/mock-ai-presentation.ts");
     const { jobsStore } = await import("/src/lib/state/jobs.svelte.ts");
-    jobsStore.addJob(4324, "plain.png", "Anchor job", "openai-image", "image");
-    const stopped = { operationId: "op-stopped", consumerPackage: "xnmp.trace-explorer", providerPackage: "xnmp.image-generation", createdAtMs: Date.now(), execution: "unknown", delivery: "none", reason: "Automatic recovery stopped; unknown execution evidence is retained", canResume: false, canDiscard: false, canStop: false, canDismiss: true };
-    const kept = { ...stopped, operationId: "op-kept", execution: "succeeded", delivery: "available", reason: "Original output retained", canDiscard: true, canDismiss: false };
-    const job = { jobKey: "c".repeat(48), owner: { packageId: "xnmp.trace-explorer", digest: "b".repeat(64), incarnation: 1 }, operationId: "op-stopped", jobId: 99002, kind: "openai-image", label: "stopped.png", originWindow: "mock-window", revision: 1, createdAtMs: Date.now() - 3000, updatedAtMs: Date.now(), state: "needs_attention", phase: "stopped" };
-    getMockControl().nativeAiPresentation!.seed({ originWindow: "mock-window", watermark: 1, jobs: [job] }, { version: 1, operations: [stopped, kept] });
+    const mock = getMockControl().nativeAiPresentation ??= createMockAiPresentation((name, value) => window.dispatchEvent(new CustomEvent(name, { detail: value })));
+    const job = { jobKey: "f".repeat(48), owner: { packageId: "xnmp.trace-explorer", digest: "b".repeat(64), incarnation: 1 }, operationId: "saved-image", jobId: 99005, kind: "openai-image", label: "Saved image", originWindow: "mock-window", revision: 1, createdAtMs: Date.now() - 3000, updatedAtMs: Date.now(), settledAtMs: Date.now(), state: "completed" as const, runId: 42, cost: { amount: "0.005", currency: "USD", estimated: true, source: "bfl.credits" }, reveal: { kind: "view" as const, viewId: "trace.view", directory: "/home/user/Pictures", targetId: "42" } };
+    jobsStore.applyNative([job]);
+    mock.seed({ originWindow: "mock-window", watermark: 2, jobs: [{ ...job, revision: 2, reveal: { kind: "file", path: "/home/user/Pictures/screenshot.png" } }] });
   });
   const progress = page.getByRole("region", { name: "Background progress" });
-  const indicator = progress.getByRole("button", { name: /Unresolved AI operations/ });
-  await expect(indicator).toHaveText("2 unresolved");
-  await indicator.click();
-  const dialog = page.getByRole("dialog", { name: "Unresolved AI operations", exact: true });
-  const row = dialog.locator('[data-operation-id="op-stopped"]');
-  await expect(row.getByRole("button", { name: "Dismiss…" })).toBeVisible();
-  await expect(dialog.locator('[data-operation-id="op-kept"]').getByRole("button", { name: "Dismiss…" })).toHaveCount(0);
-  await row.getByRole("button", { name: "Dismiss…" }).click();
-  const confirm = page.getByRole("alertdialog");
-  await expect(confirm).toContainText("Its outcome stays unknown and its evidence is kept. It will not be retried.");
-  await confirm.getByRole("button", { name: "Dismiss operation", exact: true }).click();
-  await expect(confirm).toBeHidden();
-  await expect(row).toHaveCount(0);
-  await expect(dialog.locator('[data-operation-id="op-kept"]')).toBeVisible();
-  await dialog.getByRole("button", { name: "Close unresolved operations" }).click();
-  await expect(indicator).toHaveText("1 unresolved");
-  await expect(progress.getByRole("button", { name: "Inspect operation" })).toHaveCount(0);
-  expect(await page.evaluate(async () => { const { getMockControl } = await import("/src/lib/api/mock-control.ts"); return getMockControl().nativeAiPresentation!.calls.filter(c => c.command === "resolve").map(c => c.action); })).toEqual(["dismiss"]);
-});
-
-test("dismissing the only unresolved operation removes the unresolved indicator", async ({ page }) => {
-  await page.goto(HOME_URL); await waitForEntries(page);
-  await page.evaluate(async () => {
-    const { jobsStore } = await import("/src/lib/state/jobs.svelte.ts");
-    const { getMockControl } = await import("/src/lib/api/mock-control.ts");
-    jobsStore.addJob(4323, "plain.png", "Anchor job", "openai-image", "image");
-    const stopped = { operationId: "op-only", consumerPackage: "xnmp.trace-explorer", providerPackage: "xnmp.image-generation", createdAtMs: Date.now(), execution: "unknown", delivery: "none", reason: "Automatic recovery stopped; unknown execution evidence is retained", canResume: false, canDiscard: false, canStop: false, canDismiss: true };
-    getMockControl().nativeAiPresentation!.seed({ originWindow: "mock-window", watermark: 0, jobs: [] }, { version: 1, operations: [stopped] });
-  });
-  const progress = page.getByRole("region", { name: "Background progress" });
-  const indicator = progress.getByRole("button", { name: "Unresolved AI operations: 1" });
-  await expect(indicator).toHaveText("1 unresolved");
-  await indicator.click();
-  const dialog = page.getByRole("dialog", { name: "Unresolved AI operations", exact: true });
-  await dialog.getByRole("button", { name: "Dismiss…" }).click();
-  await page.getByRole("alertdialog").getByRole("button", { name: "Dismiss operation", exact: true }).click();
-  await expect(dialog.getByText("No unresolved AI operations.", { exact: true })).toBeVisible();
-  await dialog.getByRole("button", { name: "Close unresolved operations" }).click();
-  await expect(progress.getByText(/unresolved/)).toHaveCount(0);
+  await expect(progress).toContainText("≈<US$0.01");
+  await progress.getByRole("button", { name: "Show image", exact: true }).click();
+  const pane = await activeExplorerPane(page);
+  await expect(pane.locator(".entry-item.selected")).toHaveText(/screenshot.png/);
+  await expect(pane.locator(".entry-item.selected")).toBeInViewport();
 });

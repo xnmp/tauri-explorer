@@ -76,7 +76,7 @@ pub(in crate::installed_plugins) fn running(pid: i64) -> bool {
 
 #[test]
 #[ignore = "requires a private native display/profile; execute via dedicated subprocess"]
-fn native_disable_retires_the_backend_only_after_claims_drain() {
+fn native_disable_retires_the_backend_and_releases_accepted_claims() {
     assert_eq!(
         std::env::var("TE_LIFECYCLE_NATIVE_FIXTURE").as_deref(),
         Ok("1")
@@ -138,40 +138,18 @@ fn native_disable_retires_the_backend_only_after_claims_drain() {
     store.claim_forwarding(&consumer, "retirement").unwrap();
     store.accepted(&provider, id, "retirement").unwrap();
     let profile = Profile { root: &root, store };
-    assert!(service_host::is_busy(
-        &set_enabled(&profile, id, false).unwrap_err()
-    ));
-    assert!(package::list(&root).unwrap()[0].enabled);
-    assert!(running(pid), "a refused disable retired the backend");
-    assert_eq!(
-        backend::ensure(id)
-            .unwrap()
-            .call("ping", json!({}))
-            .unwrap()["pid"],
-        pid
-    );
-    // The provider settles with an unknown outcome and no live worker.
-    store
-        .terminal(&provider, id, "retirement", None, true)
-        .unwrap();
-    store
-        .stop_recovery(&provider, id, "retirement", true)
-        .unwrap();
     set_enabled(&profile, id, false).unwrap();
+    assert!(store.claims().unwrap().is_empty());
+    assert_eq!(
+        store.get(id, "retirement").unwrap().unwrap().phase,
+        AdmissionPhase::Released
+    );
     assert!(!package::list(&root).unwrap()[0].enabled);
     let deadline = Instant::now() + Duration::from_secs(3);
     while running(pid) && Instant::now() < deadline {
         std::thread::sleep(Duration::from_millis(10));
     }
     assert!(!running(pid), "disable left the backend running");
-    assert_eq!(
-        methods(&root, id)
-            .iter()
-            .filter(|m| *m == "lifecycle.quiesce")
-            .count(),
-        1,
-        "only the admitted disable quiesces the plugin"
-    );
     assert!(backend::active_instance(id, &current.digest).is_none());
     assert!(backend::ensure(id).is_err());
     super::super::shutdown();
@@ -196,7 +174,7 @@ pub(in crate::installed_plugins) fn native_app() -> tauri::App {
 
 #[test]
 #[ignore = "requires a private native display/profile; execute via dedicated subprocess"]
-fn native_refused_drains_keep_the_sdk3_backend_serving() {
+fn native_disable_and_uninstall_ignore_quiesce_refusal_and_disable_dependents() {
     let app = native_app();
     super::super::initialize(app.handle().clone()).unwrap();
     let root = root().unwrap();
@@ -225,61 +203,33 @@ fn native_refused_drains_keep_the_sdk3_backend_serving() {
         root: &root,
         store: service_host::store().unwrap(),
     };
-    // Trace refuses quiesce on a busy checkpoint and keeps itself ready.
-    assert!(set_enabled(&profile, id, false).is_err());
-    assert!(package::list(&root).unwrap()[0].enabled);
-    assert!(methods(&root, id).iter().any(|m| m == "lifecycle.quiesce"));
-    // The event arrives with no intervening admission or re-activation. The
-    // reader handles frames in order, so the next reply proves it survived.
-    broker.call("poke", json!({})).unwrap();
-    assert_eq!(
-        broker.call("ping", json!({})).unwrap()["pid"],
-        pid,
-        "an ordinary event after a refused drain killed the backend"
-    );
-    assert!(running(pid));
-    assert!(backend::active_instance(id, &current.digest).is_some());
-    // Still the same serving process, without a second activation.
-    assert_eq!(
-        backend::ensure(id)
+    set_enabled(&profile, id, false).unwrap();
+    assert!(
+        !package::list(&root)
             .unwrap()
-            .call("ping", json!({}))
-            .unwrap()["pid"],
-        pid
-    );
-    assert_eq!(
-        methods(&root, id)
             .iter()
-            .filter(|m| *m == "lifecycle.activate")
-            .count(),
-        1
+            .find(|p| p.manifest.id == id)
+            .unwrap()
+            .enabled
     );
-    // Quiesced, then refused: the plugin is not ready until re-activated. An
-    // event in that window is dropped, never treated as transport failure.
+    assert!(!running(pid));
+    assert!(backend::active_instance(id, &current.digest).is_none());
     let quiescing = backend::ensure(&provider.manifest.id).unwrap();
-    let pid = quiescing.call("ping", json!({})).unwrap()["pid"]
+    let provider_pid = quiescing.call("ping", json!({})).unwrap()["pid"]
         .as_i64()
         .unwrap();
-    assert!(uninstall(&profile, &provider.manifest.id).is_err());
-    assert!(methods(&root, &provider.manifest.id)
+    uninstall(&profile, &provider.manifest.id).unwrap();
+    assert!(!running(provider_pid));
+    let installed = package::list(&root).unwrap();
+    assert!(!installed
         .iter()
-        .any(|m| m == "lifecycle.quiesce"));
-    quiescing.call("poke", json!({})).unwrap();
-    assert_eq!(quiescing.call("ping", json!({})).unwrap()["pid"], pid);
-    assert_eq!(
-        backend::ensure(&provider.manifest.id)
-            .unwrap()
-            .call("ping", json!({}))
-            .unwrap()["pid"],
-        pid
-    );
-    assert_eq!(
-        methods(&root, &provider.manifest.id)
+        .any(|p| p.manifest.id == provider.manifest.id));
+    assert!(
+        !installed
             .iter()
-            .filter(|m| *m == "lifecycle.activate")
-            .count(),
-        2,
-        "the next admission re-activates the quiesced plugin"
+            .find(|p| p.manifest.id == "fixture.dependent")
+            .unwrap()
+            .enabled
     );
     super::super::shutdown();
     drop(app);
@@ -350,6 +300,7 @@ fn native_jobs_the_consumer_never_accepted_settle_and_free_their_package() {
             origin_window: "main.previous".into(),
             revision: 0,
             source_revision: 0,
+            ownership_epoch: 0,
             created_at_ms: old,
             updated_at_ms: old,
             settled_at_ms: None,
@@ -357,6 +308,8 @@ fn native_jobs_the_consumer_never_accepted_settle_and_free_their_package() {
             state: JobState::Accepting,
             phase: Some("preparing".into()),
             output_path: None,
+            cost: None,
+            reveal: None,
             run_id: None,
             error: None,
         })

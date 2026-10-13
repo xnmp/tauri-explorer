@@ -1,6 +1,7 @@
 <script lang="ts">
   import {
-    readClipboardReportImage,
+    readClipboardReportAttachment,
+    clipboardHasReportAttachment,
     submitUserReport,
   } from "$lib/api/user-report";
   import { openExternalUrl } from "$lib/api/crash";
@@ -11,7 +12,6 @@
     slowLoadReportBudget,
     type SlowLoadRecord,
   } from "$lib/domain/load-diagnostics";
-  import { clipboardHasImage } from "$lib/api/clipboard-image";
   import {
     MAX_USER_REPORT_CONTACT_UNITS,
     MAX_USER_REPORT_DESCRIPTION_UNITS,
@@ -35,7 +35,7 @@
 
   let { open, onClose }: Props = $props();
   let attachmentError = $state("");
-  let clipboardImageAvailable = $state(false);
+  let clipboardAttachmentAvailable = $state(false);
   const textDraft = $derived(userReportDraftStore.value);
   const attachments = $derived(userReportDraftStore.attachments);
   const readingClipboard = $derived(userReportDraftStore.readingClipboard);
@@ -44,7 +44,7 @@
   const canSubmit = $derived(
     textDraft.title.trim().length > 0 && !submitting && !readingAttachments,
   );
-  const clipboardImageAttached = $derived(
+  const clipboardAttachmentAttached = $derived(
     userReportDraftStore.clipboardAttachmentData !== null
       && attachments.some((attachment) => attachment.data === userReportDraftStore.clipboardAttachmentData),
   );
@@ -66,8 +66,8 @@
   $effect(() => {
     if (!open) return;
     attachmentError = "";
-    clipboardImageAvailable = false;
-    void probeClipboardImage();
+    clipboardAttachmentAvailable = false;
+    void probeClipboardAttachment();
     void loadSlowLoads();
   });
 
@@ -75,8 +75,8 @@
     slowLoads = await recentSlowLoads();
   }
 
-  async function probeClipboardImage(): Promise<void> {
-    clipboardImageAvailable = await clipboardHasImage();
+  async function probeClipboardAttachment(): Promise<void> {
+    clipboardAttachmentAvailable = await clipboardHasReportAttachment();
   }
 
   function bytesToBase64(bytes: Uint8Array): string {
@@ -100,9 +100,9 @@
     attachmentError = error ?? "";
   }
 
-  async function attachClipboardImage(): Promise<void> {
+  async function attachClipboardAttachment(): Promise<void> {
     if (readingClipboard) return;
-    const error = await userReportDraftStore.attachClipboard(readClipboardReportImage);
+    const error = await userReportDraftStore.attachClipboard(readClipboardReportAttachment);
     attachmentError = error ?? "";
   }
 
@@ -148,7 +148,7 @@
       const error = unknownError as Partial<UserReportError>;
       if (error.kind === "submission_uncertain") {
         toastStore.show(
-          "The report may have been submitted. Check recent issues before retrying. Text is saved; images remain until this window closes.",
+          "The report may have been submitted. Check recent issues before retrying. Text is saved; images and videos remain until this window closes.",
           "error",
           { duration: 10000 },
         );
@@ -157,7 +157,7 @@
       if ((draft.attachments?.length ?? 0) > 0) {
         const fallbackUrl = userReportFallbackUrl(draft);
         toastStore.show(
-          `${userReportAttachmentFailureMessage(error.kind)}${fallbackUrl ? " Opening GitHub; add the images there manually." : ""}`,
+          `${userReportAttachmentFailureMessage(error.kind)}${fallbackUrl ? " Opening GitHub; add the attachments there manually." : ""}`,
           "error",
           { duration: 8000 },
         );
@@ -265,27 +265,27 @@
       />
     </label>
 
-    <section class="attachments" aria-label="Image attachments">
+    <section class="attachments" aria-label="Images and videos">
       <div class="attachment-heading">
-        <span>Images (optional)</span>
+        <span>Images and videos (optional)</span>
         <div class="attachment-actions">
-          {#if !clipboardImageAttached}
+          {#if !clipboardAttachmentAttached}
             <button
               type="button"
               class="btn secondary compact"
-              disabled={submitting || readingClipboard || !clipboardImageAvailable}
-              title={clipboardImageAvailable ? undefined : "No image in clipboard"}
-              onclick={() => void attachClipboardImage()}
+              disabled={submitting || readingClipboard || !clipboardAttachmentAvailable}
+              title={clipboardAttachmentAvailable ? undefined : "No image or copied file in clipboard"}
+              onclick={() => void attachClipboardAttachment()}
             >
               {readingClipboard ? "Reading clipboard…" : "Attach from clipboard"}
             </button>
           {/if}
           <label class="btn secondary compact file-picker">
-            Add images
+            Add images and videos
             <input
-              aria-label="Add images"
+              aria-label="Add images and videos"
               type="file"
-              accept="image/png,image/jpeg,image/gif"
+              accept="image/png,image/jpeg,image/gif,video/mp4,video/webm,video/quicktime,.mp4,.webm,.mov"
               multiple
               disabled={submitting}
               onchange={(event) => {
@@ -297,7 +297,7 @@
           </label>
         </div>
       </div>
-      <p class="attachment-hint">PNG, JPEG, or GIF. Up to 3 images, 2 MiB each and 3 MiB total. Failed images can be retried until this window closes.</p>
+      <p class="attachment-hint">PNG, JPEG, GIF, MP4, WebM, or MOV. Up to 3 attachments, 2 MiB each and 3 MiB total. Use short clips or lower-quality recordings. Failed attachments can be retried until this window closes.</p>
       {#if attachmentError}
         <p class="attachment-error" role="alert">{attachmentError}</p>
       {/if}
@@ -305,10 +305,14 @@
         <ul class="attachment-list">
           {#each attachments as attachment, index}
             <li>
+              {#if attachment.mediaType.startsWith("video/")}
+                <div class="video-placeholder" role="img" aria-label="Video attachment">▶ Video</div>
+              {:else}
               <img
                 src={`data:${attachment.mediaType};base64,${attachment.data}`}
                 alt={attachment.name}
               />
+              {/if}
               <span title={attachment.name}>{attachment.name}</span>
               <button
                 type="button"
@@ -346,7 +350,7 @@
 
     <p class="report-disclosure">
       Submitting creates a public GitHub issue. Your description, optional contact details,
-      app and OS version, and any images will be public. Images are uploaded to public hosting.
+      app and OS version, and any images and videos will be public. Attachments are uploaded to public hosting.
       Local logs are not attached automatically{offerSlowLoads && includeSlowLoads ? "; the slow folder-load diagnostics above are" : ""}.
     </p>
 
@@ -354,7 +358,7 @@
       <span class="hint">Ctrl+Enter to submit</span>
       <button type="button" class="btn secondary" onclick={onClose}>{submitting ? "Close" : "Cancel"}</button>
       <button type="submit" class="btn primary" disabled={!canSubmit}>
-        {submitting ? "Submitting…" : readingAttachments ? "Reading images…" : "Submit"}
+        {submitting ? "Submitting…" : readingAttachments ? "Reading attachments…" : "Submit"}
       </button>
     </footer>
   </form>
@@ -454,6 +458,14 @@
     border: 1px solid var(--surface-stroke);
     border-radius: var(--radius-sm);
     background: var(--surface-secondary);
+  }
+  .video-placeholder {
+    height: 72px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--text-secondary);
+    font-size: 13px;
   }
   .attachment-list img {
     display: block;

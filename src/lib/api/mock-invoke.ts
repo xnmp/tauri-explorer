@@ -1,3 +1,7 @@
+import type { OpenPr, PrAction } from "./git-log";
+let mockCreatedPr: OpenPr | null = null;
+const mockMergedPrs = new Set<number>();
+const mockApprovedPrs = new Set<number>();
 import { createMockTextConnections } from "./mock-text-connections";
 import { createMockAiPresentation } from "./mock-ai-presentation";
 import type { AiResolution } from "$lib/domain/ai-operations";
@@ -124,6 +128,11 @@ function mockBatch(paths: string[], operation: (path: string) => void): FileBatc
   return result;
 }
 
+
+const MOCK_MEDIA_DURATIONS: Record<string, number> = {
+  "/home/user/Videos/recording.mp4": 754.4,
+  "/home/user/Videos/tutorial.mkv": 3725.2,
+};
 
 if (typeof window !== "undefined") {
   const control = getMockControl();
@@ -1076,7 +1085,13 @@ function mockDirectoryListing(raw: string): CompactDirectoryListing {
 
 const mockTextConnections = createMockTextConnections();
 const mockCommands: Record<string, CommandHandler> = {
+  // A browser has no native window to start an OS drag. Match a failed
+  // native start (Result<(), String>): reject without a completion callback
+  // so the source retains DOM-drop authority. Never fake a successful lease.
+  native_file_drag_clock: () => ({ id: `browser:${performance.timeOrigin}`, now: performance.timeOrigin + performance.now() }),
+  start_file_drag: () => { throw "Native file dragging is unavailable in the browser"; },
   plugin_jobs_snapshot: () => mockAiPresentation().snapshot(),
+  plugin_job_reveal: (args) => mockAiPresentation().snapshot().jobs.find(job => job.jobKey === args.jobKey)?.reveal ?? null,
   plugin_job_cancel: (args) => mockAiPresentation().cancel(String(args.jobKey)),
   plugin_job_dismiss: (args) => mockAiPresentation().dismiss(String(args.jobKey)),
   plugin_job_resume: (args) => mockAiPresentation().resume(String(args.jobKey)),
@@ -1224,6 +1239,11 @@ const mockCommands: Record<string, CommandHandler> = {
   warm_pool_shutdown: () => undefined,
 
   list_directory: (args) => mockDirectoryListing(args.path as string),
+
+  // Details Length column (#995): fixed durations so views render stable text;
+  // `unreadable.avi` models a video whose container metadata cannot be read.
+  get_media_durations: (args) =>
+    (args.paths as string[]).map((path) => MOCK_MEDIA_DURATIONS[path] ?? null),
 
   is_directory_empty: (args) => {
     const path = args.path as string;
@@ -2333,6 +2353,30 @@ if (typeof window !== "undefined") {
     };
   },
 
+  git_merge_base: (args: Record<string, unknown>) => {
+    const resolve = (name: string) => Object.entries(MOCK_GRAPH_REFS).find(([, refs]) =>
+      refs.some((ref) => `refs/${ref.kind === "RemoteBranch" ? "remotes" : "heads"}/${ref.name}` === name),
+    )?.[0];
+    const first = resolve(args.firstRef as string);
+    const second = resolve(args.secondRef as string);
+    if (!first || !second) throw new Error("Branch not found");
+    const graph = mockCommitGraph();
+    const ancestors = (tip: string) => {
+      const seen = new Set<string>();
+      const pending = [tip];
+      while (pending.length) {
+        const oid = pending.pop()!;
+        if (seen.has(oid)) continue;
+        seen.add(oid);
+        pending.push(...(graph.find((commit) => commit.oid === oid)?.parents ?? []));
+      }
+      return seen;
+    };
+    const left = ancestors(first);
+    const right = ancestors(second);
+    return graph.find((commit) => left.has(commit.oid) && right.has(commit.oid))?.oid ?? null;
+  },
+
   git_refs: (args: Record<string, unknown>) => {
     const repoPath = (args.repoPath as string) ?? "";
     const loadIdx = loadRepoIndex(repoPath);
@@ -2381,6 +2425,19 @@ if (typeof window !== "undefined") {
   // in e2e. #7 exercises a passing/approved/commented PR, #12 a failing draft
   // (draft styling wins over CI color), #15 the tokenless case (all status
   // fields null → plain purple badge, pending kept for label coverage).
+  git_pr_context: () => ({ repoSlug: "mock/project", headBranch: mockDetached ? null : (MOCK_GRAPH_REFS[mockHeadOid()] ?? []).find(ref => ref.kind === "LocalBranch")?.name ?? null }),
+
+  git_pr_action: (args: Record<string, unknown>) => {
+    const request = args.request as PrAction;
+    if (request.action === "create") {
+      mockCreatedPr = { number: 99, title: request.title, headRef: request.headBranch, baseRef: request.base, htmlUrl: "https://github.com/mock/project/pull/99", draft: false, ciStatus: null, reviewDecision: null, commentCount: 0, body: request.body };
+      return mockCreatedPr.htmlUrl;
+    }
+    if (request.action === "merge" && !new URLSearchParams(window.location.search).has("gitPrMergeQueued")) mockMergedPrs.add(request.prNumber);
+    else if (request.action === "approve") mockApprovedPrs.add(request.prNumber);
+    return "";
+  },
+
   git_open_prs: (args: Record<string, unknown>) => {
     const repoRoot = (args.repoRoot as string) ?? "";
     if (!repoRoot.startsWith("/home/user/Documents/project")) return [];
@@ -2491,7 +2548,8 @@ if (typeof window !== "undefined") {
         comments: [],
         reviewThreads: null,
       },
-    ];
+      ...(mockCreatedPr ? [mockCreatedPr] : []),
+    ].filter(pr => !mockMergedPrs.has(pr.number)).map(pr => mockApprovedPrs.has(pr.number) ? { ...pr, reviewDecision: "approved" } : pr);
   },
 
   git_failed_ci_checks: (args: Record<string, unknown>) => {
@@ -2764,6 +2822,12 @@ if (typeof window !== "undefined") {
 
   clipboard_has_image: () =>
     localStorage.getItem(MOCK_LOCAL_KEYS.reportClipboardImage) === "1",
+
+  clipboard_has_report_attachment: () => localStorage.getItem(MOCK_LOCAL_KEYS.reportClipboardVideo) === "1" || localStorage.getItem(MOCK_LOCAL_KEYS.reportClipboardImage) === "1",
+
+  clipboard_read_report_attachment: () => localStorage.getItem(MOCK_LOCAL_KEYS.reportClipboardVideo) === "1"
+    ? { name: "Copied video.mp4", mediaType: "video/mp4", data: "AAAAGGZ0eXBpc29tAAAAAGlzb21tcDQy" }
+    : { name: "Clipboard screenshot.png", mediaType: "image/png", data: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=" },
 
   clipboard_read_report_image: () => ({
     name: "Clipboard screenshot.png",

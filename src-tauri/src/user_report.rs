@@ -60,11 +60,32 @@ impl SubmitReportError {
     }
 }
 
-fn valid_image_magic(media_type: &str, bytes: &[u8]) -> bool {
+fn valid_media_magic(media_type: &str, bytes: &[u8]) -> bool {
     match media_type {
         "image/png" => bytes.starts_with(b"\x89PNG\r\n\x1a\n"),
         "image/jpeg" => bytes.starts_with(b"\xff\xd8\xff"),
         "image/gif" => bytes.starts_with(b"GIF87a") || bytes.starts_with(b"GIF89a"),
+        "video/webm" => bytes.starts_with(b"\x1a\x45\xdf\xa3"),
+        "video/mp4" | "video/quicktime" => {
+            if bytes.len() < 16 || &bytes[4..8] != b"ftyp" {
+                return false;
+            }
+            let size = u32::from_be_bytes(bytes[..4].try_into().unwrap()) as usize;
+            if size < 16 || size > bytes.len() {
+                return false;
+            }
+            let brand = &bytes[8..12];
+            if media_type == "video/quicktime" {
+                brand == b"qt  "
+            } else {
+                [
+                    b"isom", b"iso2", b"iso3", b"iso4", b"iso5", b"iso6", b"iso8", b"iso9",
+                    b"avc1", b"mp41", b"mp42", b"M4V ", b"MSNV", b"dash",
+                ]
+                .iter()
+                .any(|candidate| brand == *candidate)
+            }
+        }
         _ => false,
     }
 }
@@ -73,7 +94,7 @@ fn valid_image_magic(media_type: &str, bytes: &[u8]) -> bool {
 pub(crate) fn report_image_media_type(bytes: &[u8]) -> Option<&'static str> {
     ["image/png", "image/jpeg", "image/gif"]
         .into_iter()
-        .find(|media_type| valid_image_magic(media_type, bytes))
+        .find(|media_type| valid_media_magic(media_type, bytes))
 }
 
 pub(crate) fn validate_attachments(
@@ -82,7 +103,7 @@ pub(crate) fn validate_attachments(
     if attachments.len() > MAX_ATTACHMENTS {
         return Err(SubmitReportError::new(
             "malformed_input",
-            "Attach up to 3 images",
+            "Attach up to 3 images and videos",
         ));
     }
     let mut total = 0;
@@ -93,7 +114,12 @@ pub(crate) fn validate_attachments(
             || name.chars().any(char::is_control)
             || !matches!(
                 attachment.media_type.as_str(),
-                "image/png" | "image/jpeg" | "image/gif"
+                "image/png"
+                    | "image/jpeg"
+                    | "image/gif"
+                    | "video/mp4"
+                    | "video/webm"
+                    | "video/quicktime"
             )
         {
             return Err(SubmitReportError::new(
@@ -104,9 +130,12 @@ pub(crate) fn validate_attachments(
         let bytes = base64::engine::general_purpose::STANDARD
             .decode(&attachment.data)
             .map_err(|_| SubmitReportError::new("malformed_input", "Attachment data is invalid"))?;
+        if bytes.len() > MAX_ATTACHMENT_BYTES && attachment.media_type.starts_with("video/") {
+            return Err(SubmitReportError::new("malformed_input", "Video is too large (2 MiB maximum). Try a shorter clip or a recording at lower quality."));
+        }
         if bytes.is_empty()
             || bytes.len() > MAX_ATTACHMENT_BYTES
-            || !valid_image_magic(&attachment.media_type, &bytes)
+            || !valid_media_magic(&attachment.media_type, &bytes)
         {
             return Err(SubmitReportError::new(
                 "malformed_input",
@@ -1224,3 +1253,70 @@ mod tests {
         assert!(body.contains("abc"));
     }
 }
+
+#[cfg(test)]
+#[path = "../test_support/user_report_video.rs"]
+mod video_tests;
+
+/// File extensions eligible for the copied-video route. Signature validation
+/// remains mandatory when reading the file; discovery does not read its bytes.
+pub(crate) fn clipboard_video_media_type(path: &str) -> Option<&'static str> {
+    match std::path::Path::new(path)
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .map(str::to_ascii_lowercase)
+        .as_deref()
+    {
+        Some("mp4") => Some("video/mp4"),
+        Some("webm") => Some("video/webm"),
+        Some("mov") => Some("video/quicktime"),
+        _ => None,
+    }
+}
+
+/// Read only one explicitly copied regular video file; never allocate more
+/// than the relay's per-file cap, even if the file grows during the read.
+pub(crate) fn attachment_from_clipboard_files(
+    paths: &[String],
+) -> Result<ReportAttachment, SubmitReportError> {
+    use std::io::Read;
+    let fail = |message: &str| SubmitReportError::new("clipboard_unavailable", message);
+    if paths.len() != 1 {
+        return Err(fail("Copy one video file to attach from clipboard"));
+    }
+    let path = std::path::Path::new(&paths[0]);
+    let media_type = clipboard_video_media_type(&paths[0])
+        .ok_or_else(|| fail("Unsupported clipboard file. Copy an MP4, WebM, or MOV video."))?;
+    if !path.is_file() {
+        return Err(fail(
+            "Unsupported clipboard file: select a regular video file",
+        ));
+    }
+    let file = std::fs::File::open(path).map_err(|_| fail("Could not read clipboard video"))?;
+    let size = file
+        .metadata()
+        .map_err(|_| fail("Could not read clipboard video"))?
+        .len();
+    let too_large = || {
+        fail("Clipboard video is too large (2 MiB maximum). Try a shorter clip or a recording at lower quality.")
+    };
+    if size > MAX_ATTACHMENT_BYTES as u64 {
+        return Err(too_large());
+    }
+    let mut bytes = Vec::new();
+    file.take(MAX_ATTACHMENT_BYTES as u64 + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|_| fail("Could not read clipboard video"))?;
+    if bytes.len() > MAX_ATTACHMENT_BYTES {
+        return Err(too_large());
+    }
+    let name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or_else(|| fail("Clipboard video has an invalid filename"))?;
+    attachment_from_image_bytes(name.into(), media_type, bytes)
+}
+
+#[cfg(test)]
+#[path = "../test_support/user_report_media_contract.rs"]
+mod media_contract_tests;

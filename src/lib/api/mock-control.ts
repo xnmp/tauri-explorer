@@ -181,6 +181,7 @@ export const MOCK_LOCAL_KEYS = {
   cutOwnershipUnavailable: "mock-cut-ownership-unavailable",
   /** "1" when set: `clipboard_has_image` reports true. */
   reportClipboardImage: "mock-report-clipboard-image",
+  reportClipboardVideo: "mock-report-clipboard-video",
   /** Error message: `open_recycle_bin` throws it. */
   openRecycleBinError: "mock-open-recycle-bin-error",
   /** JSON of the last `picker_respond` payload. */

@@ -13,6 +13,7 @@ import { settingsStore } from "../settings.svelte";
 export const navigationCommands: Command[] = [
   {
     id: "navigation.focusAddressBar",
+    scope: "pane",
     label: "Focus Address Bar",
     category: "navigation",
     shortcut: "Ctrl+L",
@@ -23,6 +24,7 @@ export const navigationCommands: Command[] = [
   },
   {
     id: "navigation.goBack",
+    scope: "pane",
     label: "Go Back",
     category: "navigation",
     shortcut: "Ctrl+Alt+Left",
@@ -31,6 +33,7 @@ export const navigationCommands: Command[] = [
   },
   {
     id: "navigation.goForward",
+    scope: "pane",
     label: "Go Forward",
     category: "navigation",
     shortcut: "Ctrl+Alt+Right",
@@ -39,6 +42,7 @@ export const navigationCommands: Command[] = [
   },
   {
     id: "navigation.goUp",
+    scope: "pane",
     label: "Go Up",
     category: "navigation",
     shortcut: "Ctrl+Alt+Up",
@@ -47,6 +51,7 @@ export const navigationCommands: Command[] = [
   },
   {
     id: "navigation.goHome",
+    scope: "pane",
     label: "Go to Home",
     category: "navigation",
     handler: async () => {
@@ -59,6 +64,7 @@ export const navigationCommands: Command[] = [
   },
   {
     id: "navigation.refresh",
+    scope: "pane",
     label: "Refresh",
     category: "navigation",
     shortcut: "F5",
@@ -70,6 +76,7 @@ export const navigationCommands: Command[] = [
   },
   {
     id: "gitGraph.refresh",
+    scope: "pane",
     label: "Git Graph: Refresh (fetch from remotes)",
     category: "navigation",
     shortcut: "F5",
@@ -89,6 +96,7 @@ export const navigationCommands: Command[] = [
   // the active graph pane, and visible to the terminal key-ownership gate.
   {
     id: "gitGraph.selectOlderOnLine",
+    scope: "pane",
     label: "Git Graph: Select Older Commit on Branch Line",
     category: "navigation",
     shortcut: "Ctrl+Down",
@@ -99,6 +107,7 @@ export const navigationCommands: Command[] = [
   },
   {
     id: "gitGraph.selectNewerOnLine",
+    scope: "pane",
     label: "Git Graph: Select Newer Commit on Branch Line",
     category: "navigation",
     shortcut: "Ctrl+Up",

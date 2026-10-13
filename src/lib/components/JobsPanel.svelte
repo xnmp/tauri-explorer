@@ -2,11 +2,12 @@
   Jobs Panel - Background job status viewer (Ctrl+J)
 -->
 <script lang="ts">
+  import { formatJobCost } from "$lib/domain/job-presentation";
+  import { jobRevealController } from "$lib/state/job-reveal";
   import { isJobActive, jobsStore, type Job } from "$lib/state/jobs.svelte";
   import { retryJobAndRefocus } from "$lib/composables/use-job-retry";
   import { basename } from "$lib/domain/path";
   import Modal from "./Modal.svelte";
-  import AiOperationsDialog from "./AiOperationsDialog.svelte";
   import { formatJobDuration, isTimingSettled, jobDuration } from "$lib/domain/image-job-progress";
   import { jobStateLabel } from "$lib/domain/native-plugin-jobs";
 
@@ -18,7 +19,6 @@
   let { open, onClose }: Props = $props();
 
   let panel: HTMLElement | undefined = $state();
-  let unresolvedOpen = $state(false);
 
   // Live elapsed time counter. Only unsettled jobs have a moving duration;
   // a settled job's is frozen, so it never needs a tick.
@@ -53,7 +53,6 @@
       <header class="panel-header">
         <h2 id="jobs-panel-title">Background Jobs</h2>
         <div class="header-actions">
-          <button class="clear-btn" onclick={() => { unresolvedOpen = true; }}>Unresolved AI operations</button>
           <button class="clear-btn" onclick={() => jobsStore.refreshNative()}>Reload job status</button>
           {#if jobsStore.jobs.some((j) => !isJobActive(j))}
             <button class="clear-btn" onclick={() => jobsStore.clearCompleted()}>
@@ -84,6 +83,7 @@
         {:else}
           <div class="job-list">
             {#each jobsStore.jobs as job (job.jobKey ?? `${job.source}:${job.id}`)}
+              {@const cost = job.status === "completed" ? formatJobCost(job.cost) : ""}
               <div class="job-item" class:completed={job.status === "completed"} class:error={job.status === "error"} data-job-id={job.id} tabindex="-1">
                 <div class="job-status">
                   {#if job.status === "running"}
@@ -104,17 +104,16 @@
                   <div class="job-prompt">{truncateDetail(job.detail)}</div>
                   {#if job.jobKey}<div class="job-phase" role="status">{job.status === "running" || job.status === "accepting" ? job.phase ?? jobStateLabel(job.status) : jobStateLabel(job.status)}{job.cancelRequested ? " · cancellation requested" : ""}</div>{/if}
                   {#if job.controlError}<div class="job-error" role="alert">{job.controlError}</div>{/if}
-                  {#if job.status === "error" && job.error}
+                  {#if job.error}
                     <div class="job-error">{job.error}</div>
                   {/if}
                   {#if job.status === "completed" && job.outputPath}
                     <div class="job-output">{basename(job.outputPath)}</div>
                   {/if}
                 </div>
-                <div class="job-time">{formatElapsed(job)}</div>
+                <div class="job-time">{formatElapsed(job)}{cost ? ` · ${cost}` : ""}</div>
+                {#if job.status === "completed" && job.reveal}<button class="clear-btn" onclick={() => { onClose(); void jobRevealController.show(job); }}>Show image</button>{/if}
                 {#if job.jobKey && ["accepting", "running", "recovering"].includes(job.status)}<button class="clear-btn" aria-label={`Cancel ${job.label}`} disabled={!!job.controlPending || job.cancelRequested} onclick={() => jobsStore.controlJob(job.id, "cancel")}>{job.cancelRequested ? "Cancel requested" : "Cancel"}</button>{/if}
-                {#if job.jobKey && job.status === "needs_attention"}<button class="clear-btn" onclick={() => { unresolvedOpen = true; }}>Inspect operation</button>{/if}
-                {#if job.jobKey && job.status === "needs_attention" && !isJobActive(job)}<button class="clear-btn" aria-label={`Dismiss ${job.label}`} disabled={!!job.controlPending} onclick={() => jobsStore.dismissJob(job.id)}>Dismiss</button>{/if}
                 {#if job.status === "error" && job.retry}
                   <button class="clear-btn retry-btn" aria-label={`Retry ${job.label}`} disabled={job.retrying || !!job.controlPending}
                     aria-busy={job.retrying} onclick={() => void retryJobAndRefocus(job.id, panel)}>Retry</button>
@@ -126,7 +125,6 @@
       </div>
     </div>
 </Modal>
-{#if unresolvedOpen}<AiOperationsDialog onClose={() => { unresolvedOpen = false; }} />{/if}
 
 <style>
   .panel {
@@ -321,6 +319,8 @@
 
   .job-time {
     flex-shrink: 0;
+    max-width: 45%;
+    overflow-wrap: anywhere;
     font-size: 12px;
     color: var(--text-tertiary);
     font-variant-numeric: tabular-nums;

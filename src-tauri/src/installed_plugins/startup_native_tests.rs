@@ -62,6 +62,7 @@ fn accepting_job(store: &Store) -> JobRecord {
             origin_window: "main.first".into(),
             revision: 0,
             source_revision: 0,
+            ownership_epoch: 0,
             created_at_ms: now,
             updated_at_ms: now,
             settled_at_ms: None,
@@ -69,6 +70,8 @@ fn accepting_job(store: &Store) -> JobRecord {
             state: JobState::Accepting,
             phase: Some("preparing".into()),
             output_path: None,
+            cost: None,
+            reveal: None,
             run_id: None,
             error: None,
         })

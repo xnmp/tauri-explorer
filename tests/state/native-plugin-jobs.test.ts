@@ -13,6 +13,64 @@ const record = (n = 1, revision = 1, state: NativeJobRecord["state"] = "running"
 function deferred<T>() { let resolve!: (v: T) => void; const promise = new Promise<T>((done) => { resolve=done; }); return { promise, resolve }; }
 afterEach(() => { jobsStore.applyNative([]); jobsStore.configureNativeControls(null); for (const j of [...jobsStore.jobs]) jobsStore.removeJob(j.id); });
 describe("native job revisions and ownership", () => {
+  it.each(["completed", "error"] as const)("accepts an authorized adoption followed by %s without reloading", (state) => {
+    const original = record(1, 1, "accepting");
+    const before = mergeNativeJobEvent(emptyNativeJobs(), { type: "updated", job: original });
+    const adopted = { ...record(1, 2, state), ownershipEpoch: 1, owner: { ...original.owner, digest: "b".repeat(64), incarnation: 4 } };
+    const after = mergeNativeJobEvent(before, { type: "updated", job: adopted });
+    expect(after.jobs.get(original.jobKey)).toEqual(adopted);
+    for (const stale of [
+      { ...original, revision: 3 },
+      { ...original, revision: 3, ownershipEpoch: 1 },
+      { ...adopted, revision: 3, ownershipEpoch: 0 },
+      { ...adopted, revision: 3, ownershipEpoch: -1 },
+    ]) expect(mergeNativeJobEvent(after, { type: "updated", job: stale })).toBe(after);
+  });
+
+  it.each([
+    ["discarded", "stopped"],
+    ["error", "delivery_failed"],
+    ["error", "storage_full"],
+    ["error", "failed"],
+    ["error", null],
+    ["cancelled", "cancelled"],
+    ["cancelled", null],
+    ["discarded", "discarded"],
+    ["discarded", "provider_result_discarded"],
+    ["discarded", null],
+  ] as const)("accepts proof-backed host completion without an observed run from %s/%s", (state, phase) => {
+    const settled = { ...record(1, 2, state), phase, runId: null, settledAtMs: 2 };
+    const before = mergeNativeJobEvent(emptyNativeJobs(), { type: "updated", job: settled });
+    const completed = { ...record(1, 3, "completed"), phase: "complete", runId: null, settledAtMs: 2 };
+    expect(mergeNativeJobEvent(before, { type: "updated", job: completed }).jobs.get(settled.jobKey)).toEqual(completed);
+    for (const invalid of [
+      { ...completed, revision: settled.revision },
+      { ...completed, revision: settled.revision - 1 },
+      { ...completed, operationId: "other-operation" },
+      { ...completed, outputPath: undefined },
+      { ...completed, runId: 0 },
+      { ...completed, runId: Number.MAX_SAFE_INTEGER + 1 },
+      { ...completed, owner: { ...completed.owner, incarnation: 4 } },
+    ]) expect(mergeNativeJobEvent(before, { type: "updated", job: invalid })).toBe(before);
+  });
+  it("corrects a settled Unknown to its late output without reopening other terminal outcomes", () => {
+    const stopped = { ...record(1, 2, "discarded"), phase: "stopped", settledAtMs: 2 };
+    const before = mergeNativeJobEvent(emptyNativeJobs(), { type: "updated", job: stopped });
+    const completed = { ...record(1, 3, "completed"), phase: "complete", settledAtMs: 2 };
+    const corrected = mergeNativeJobEvent(before, { type: "updated", job: completed });
+    expect(corrected.jobs.get(stopped.jobKey)).toMatchObject({ state: "completed", outputPath: "/generated/image.png", runId: 8 });
+    const deliveryFailed = mergeNativeJobEvent(emptyNativeJobs(), { type: "updated", job: { ...stopped, state: "error", phase: "delivery_failed" } });
+    expect(mergeNativeJobEvent(deliveryFailed, { type: "updated", job: completed }).jobs.get(stopped.jobKey)?.state).toBe("completed");
+    for (const job of [record(1, 4), { ...completed, outputPath: undefined }, { ...completed, runId: 0 }, { ...completed, owner: { ...completed.owner, packageId: "provider" } }]) {
+      expect(mergeNativeJobEvent(before, { type: "updated", job })).toBe(before);
+    }
+    for (const state of ["error", "cancelled", "completed"] as const) {
+      const retained = mergeNativeJobEvent(emptyNativeJobs(), { type: "updated", job: { ...stopped, state } });
+      expect(mergeNativeJobEvent(retained, { type: "updated", job: { ...completed, state: "discarded" } })).toBe(retained);
+    }
+    const explicit = mergeNativeJobEvent(emptyNativeJobs(), { type: "updated", job: { ...stopped, phase: "provider_result_discarded" } });
+    expect(mergeNativeJobEvent(explicit, { type: "updated", job: completed }).jobs.get(stopped.jobKey)).toEqual(completed);
+  });
   it("adopts a prepared estimate key once and rejects a changed cohort", () => {
     let state = mergeNativeJobEvent(emptyNativeJobs(), {type:"updated",job:record()});
     const pinned = {...record(1,2),estimateKey:"image-v1:fast"};
@@ -42,6 +100,21 @@ describe("native job revisions and ownership", () => {
   });
 });
 describe("owned native subscription",()=>{
+  it.each(["discarded", "error", "cancelled"] as const)("shows repaired %s history as Complete silently, without reload", async (state) => {
+    let receive!: (value: unknown) => void;
+    const stopped = { ...record(1, 2, state), phase: state === "error" ? "failed" : null, error: state === "error" ? "Historical delivery failure" : null, runId: null, settledAtMs: 2 };
+    const toast = vi.fn();
+    const snapshot = vi.fn(async () => ({ originWindow: "main", watermark: 2, jobs: [stopped] }));
+    const controller = createNativePluginJobsController({ watch: async fn => { receive = fn; return () => {}; }, snapshot, apply: records => jobsStore.applyNative(records), toast, error: () => {} });
+    await controller.init();
+    receive({ type: "updated", job: { ...record(1, 3, "completed"), phase: "complete", runId: null, settledAtMs: 2 } });
+    expect(jobsStore.jobs[0]).toMatchObject({ status: "completed", outputPath: "/generated/image.png", error: undefined });
+    expect(snapshot).toHaveBeenCalledTimes(1);
+    expect(toast).not.toHaveBeenCalled();
+    receive({ type: "updated", job: record(1, 4) });
+    expect(jobsStore.jobs[0].status).toBe("completed");
+    controller.dispose();
+  });
   it("subscribes before snapshot, merges the pending fresh completion and toasts once only in its origin window",async()=>{
     const read=deferred<{originWindow:string;watermark:number;jobs:NativeJobRecord[]}>();let receive!:(v:unknown)=>void;const calls:string[]=[],toasts:NativeJobRecord[]=[],applied:NativeJobRecord[][]=[];
     const controller=createNativePluginJobsController({watch:async(fn)=>{calls.push("watch");receive=fn;return()=>{};},snapshot:async()=>{calls.push("snapshot");return read.promise;},apply:(v)=>applied.push([...v]),toast:(v)=>toasts.push(v),error:()=>{}});
@@ -137,5 +210,46 @@ describe("settled recovery presentation", () => {
     expect(jobDuration(legacy, 5_000_000)).toBeNull();
     expect(jobDuration(active, 61_000)).toBe(60_000);
     expect(jobDuration(active, 121_000)).toBe(120_000);
+  });
+});
+
+it("publishes the delivery-loss report when a settled Unknown later succeeds and its consumer is explicitly removed", () => {
+  const stopped = { ...record(1, 2, "discarded"), phase: "stopped" };
+  const before = mergeNativeJobEvent(emptyNativeJobs(), { type: "updated", job: stopped });
+  const removed = { ...stopped, revision: 3, state: "error" as const, phase: "consumer_removed", error: "One image could not be delivered because its consumer plugin was disabled or uninstalled" };
+  const next = mergeNativeJobEvent(before, { type: "updated", job: removed });
+  expect(next.jobs.get(stopped.jobKey)).toEqual(removed);
+  expect(mergeNativeJobEvent(next, { type: "updated", job: stopped }).jobs.get(stopped.jobKey)).toEqual(removed);
+});
+
+it("shows the original output after storage-full recovery completes without a reload", () => {
+  const running = record(1, 2, "running");
+  const before = mergeNativeJobEvent(emptyNativeJobs(), { type: "updated", job: running });
+  const full = { ...running, revision: 3, state: "error" as const, phase: "storage_full", error: "AI image storage is full; recovery will retry automatically when capacity is available" };
+  const waiting = mergeNativeJobEvent(before, { type: "updated", job: full });
+  expect(waiting.jobs.get(full.jobKey)?.error).toContain("storage is full");
+  const complete = { ...full, revision: 4, state: "completed" as const, phase: "succeeded", error: null, outputPath: "/generated/original.png", runId: 7 };
+  expect(mergeNativeJobEvent(waiting, { type: "updated", job: complete }).jobs.get(full.jobKey)).toEqual(complete);
+});
+
+describe("optional job presentation projection", () => {
+  const cost = { amount: "0.045", currency: "USD", estimated: true, source: "bfl.credits" };
+  const reveal = { kind: "file" as const, path: "/generated/image.png" };
+  it("projects cost and reveal while loading old native records", () => {
+    jobsStore.applyNative([{ ...record(1, 2, "completed"), cost, reveal }, record(2, 3, "completed")]);
+    expect(jobsStore.jobs[0]).toMatchObject({ cost, reveal });
+    expect(jobsStore.jobs[1].cost).toBeUndefined(); expect(jobsStore.jobs[1].reveal).toBeUndefined();
+  });
+  it("drops malformed optional metadata without failing the completed job", () => {
+    jobsStore.applyNative([{ ...record(1, 2, "completed"), cost: { ...cost, amount: "-1" }, reveal: { kind: "file", path: "" } }]);
+    expect(jobsStore.jobs[0].status).toBe("completed"); expect(jobsStore.jobs[0].cost).toBeUndefined(); expect(jobsStore.jobs[0].reveal).toBeUndefined();
+  });
+  it("projects validated legacy completion metadata and includes cost in its toast", async () => {
+    const handlers = new Map<string, (value: any) => void>(); const messages: string[] = [];
+    const controller = createPluginJobsController({ ...windowJobSink, listen: async (name, handler) => { handlers.set(name, handler); return () => {}; }, success: message => messages.push(message), refresh: async () => {} });
+    await controller.accept({ kind: "openai-image", label: "image.png", detail: "" }, async () => ({ ok: true, data: 22 }));
+    handlers.get("openai-image-complete")!({ jobId: 22, outputPath: reveal.path, cost, reveal });
+    expect(jobsStore.jobs.find(job => job.id === 22)).toMatchObject({ status: "completed", cost, reveal });
+    expect(messages).toEqual(["image.png complete: image.png · ≈US$0.05"]); await controller.dispose();
   });
 });

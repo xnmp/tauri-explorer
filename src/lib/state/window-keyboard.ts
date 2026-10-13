@@ -1,16 +1,28 @@
+import { admitsCommandDestination } from "$lib/domain/command-admission";
 import { isModifierKey } from "$lib/domain/keyboard";
 import { getTerminalCommand } from "$lib/domain/terminal-keys";
-import { resolveWindowKey } from "$lib/domain/window-keys";
+import { allowsPaneDialogCommandInput } from "$lib/domain/pane-dialog-keys";
+import { resolveWindowKey, isNativeControlActivation } from "$lib/domain/window-keys";
+import type { Command } from "./commands.svelte";
+import type { ModalScope } from "./modal-ownership.svelte";
 import type { keybindingsStore as bindingsType } from "./keybindings.svelte";
 
 export interface WindowKeyboardDependencies {
   bindings: Pick<typeof bindingsType, "trackModifierKey" | "trackedMetaHeld" | "resetTrackedModifiers" | "matchesAnyBinding" | "matchesAnyChordPrefix" | "matchesChordPrefixForCommand" | "isChordActiveForCommand" | "isChordActive" | "cancelChord" | "findMatchingCommand">;
-  getCommand(id: string): { when?: () => boolean } | undefined;
+  getCommand(id: string): Pick<Command, "scope" | "paneIds" | "when" | "allowInDialogInput"> | undefined;
   executeCommand(id: string): Promise<unknown>;
-  dialogs: { readonly hasModalOpen: boolean; requestCloseTop(event?: KeyboardEvent): void; openJobsPanel(): void; openSettings(): void };
+  dialogs: {
+    readonly hasModalOpen: boolean;
+    isPaneBlocked(paneId: string): boolean;
+    inputScope?(event: Event, activePaneId: string): ModalScope | undefined;
+    subscribeOwnership?(listener: () => void): () => void;
+    requestCloseTop(event?: KeyboardEvent, scope?: ModalScope): void;
+    openJobsPanel(): void; openSettings(): void;
+  };
   terminal: { readonly enabled: boolean; toggle(): void };
   toggleDualPane(): void;
   getActiveExplorer(): { readonly showFilter: boolean; openFilter(): void; closeFilter(): void } | undefined;
+  getActivePaneId?(): string;
 }
 
 /** Own window keyboard subscriptions and transient modifier/chord state. */
@@ -19,7 +31,9 @@ export function startWindowKeyboard(target: EventTarget, dependencies: WindowKey
   let disposed = false;
   const isAvailable = (id: string) => {
     const command = dependencies.getCommand(id);
-    return command !== undefined && (!command.when || command.when());
+    return command !== undefined
+      && admitsCommandDestination(command, dependencies.getActivePaneId?.() ?? "", dialogs)
+      && (!command.when || command.when());
   };
   const inputContext = (event: Event) => {
     const element = event.target as HTMLElement | null;
@@ -37,6 +51,10 @@ export function startWindowKeyboard(target: EventTarget, dependencies: WindowKey
     };
   };
   const cancelChord = () => { if (!disposed) bindings.cancelChord(); };
+  const inputScope = (event: Event): ModalScope | undefined => dialogs.inputScope
+    ? dialogs.inputScope(event, dependencies.getActivePaneId?.() ?? "")
+    : dialogs.hasModalOpen ? null : undefined;
+  const stopOwnership = dialogs.subscribeOwnership?.(cancelChord);
 
   function handleKeydown(raw: Event): void {
     if (disposed) return;
@@ -44,17 +62,39 @@ export function startWindowKeyboard(target: EventTarget, dependencies: WindowKey
     // WebKitGTK reports Super separately from metaKey; track before routing.
     bindings.trackModifierKey(event, true);
     const { input, nativeButton, fileEntry, terminal: terminalFocus, separator, customButton, grid, media } = inputContext(event);
+    const scope = inputScope(event);
     // Custom controls own keys they explicitly accept. Unhandled commands
     // keep normal routing; accepted local input retires an unfinished chord.
-    if ((separator || customButton || grid || fileEntry || media || dialogs.hasModalOpen) && event.defaultPrevented) { bindings.cancelChord(); return; }
+    if ((separator || customButton || grid || fileEntry || media || scope !== undefined) && event.defaultPrevented) { bindings.cancelChord(); return; }
+    if (isNativeControlActivation(event, { nativeButton, fileEntry, trackedMetaHeld: bindings.trackedMetaHeld })) {
+      bindings.cancelChord(); return;
+    }
+    if (scope) {
+      if (event.key === "Escape") {
+        bindings.cancelChord(); event.preventDefault(); dialogs.requestCloseTop(event, scope); return;
+      }
+      const eligible = (id: string) => isAvailable(id) && allowsPaneDialogCommandInput(dependencies.getCommand(id), input);
+      if (bindings.matchesAnyBinding(event, eligible) || bindings.isChordActive) {
+        const command = bindings.findMatchingCommand(event, eligible);
+        if (command) {
+          event.preventDefault();
+          if (command !== "chord:waiting") void dependencies.executeCommand(command)
+            .catch(error => console.error("Keyboard command failed:", error));
+          return;
+        }
+      }
+      if (!isModifierKey(event.key)) bindings.cancelChord();
+      return; // Dialog controls (including Tab and submit chords) own the rest.
+    }
     const terminalCommand = terminalFocus ? getTerminalCommand(event, bindings, isAvailable) : undefined;
     const explorer = dependencies.getActiveExplorer();
     const chord = terminalFocus
       ? terminalCommand !== undefined && (bindings.isChordActiveForCommand(event, terminalCommand) || bindings.matchesChordPrefixForCommand(event, terminalCommand))
       : bindings.isChordActive || bindings.matchesAnyChordPrefix(event, isAvailable);
     const action = resolveWindowKey(event, {
-      input, nativeButton, fileEntry, trackedMetaHeld: bindings.trackedMetaHeld, terminal: terminalFocus, terminalCommand,
-      chord, modal: dialogs.hasModalOpen, filterOpen: explorer?.showFilter ?? false,
+      input, nativeButton, fileEntry, trackedMetaHeld: bindings.trackedMetaHeld,
+      terminal: terminalFocus && scope === undefined, terminalCommand,
+      chord, modal: scope === null, filterOpen: explorer?.showFilter ?? false,
       terminalEnabled: terminal.enabled,
     });
     if (action === "native-activation") {
@@ -62,7 +102,7 @@ export function startWindowKeyboard(target: EventTarget, dependencies: WindowKey
       return;
     }
     if (action === "pass") {
-      if (input || dialogs.hasModalOpen) bindings.cancelChord();
+      if (input || scope !== undefined) bindings.cancelChord();
       return;
     }
     if (action === "terminal") {
@@ -88,13 +128,13 @@ export function startWindowKeyboard(target: EventTarget, dependencies: WindowKey
     bindings.cancelChord();
     event.preventDefault();
     switch (action) {
-      case "toggle-terminal": terminal.toggle(); break;
+      case "toggle-terminal": if (isAvailable("view.toggleTerminal")) terminal.toggle(); break;
       case "close-dialogs": dialogs.requestCloseTop(event); break;
-      case "open-filter": if (explorer && !explorer.showFilter) explorer.openFilter(); break;
-      case "close-filter": explorer?.closeFilter(); break;
-      case "open-jobs": dialogs.openJobsPanel(); break;
-      case "open-settings": dialogs.openSettings(); break;
-      case "toggle-dual-pane": dependencies.toggleDualPane(); break;
+      case "open-filter": if (isAvailable("general.filterCurrentDir") && explorer && !explorer.showFilter) explorer.openFilter(); break;
+      case "close-filter": if (isAvailable("general.filterCurrentDir")) explorer?.closeFilter(); break;
+      case "open-jobs": if (isAvailable("general.openJobsPanel")) dialogs.openJobsPanel(); break;
+      case "open-settings": if (isAvailable("general.openSettings")) dialogs.openSettings(); break;
+      case "toggle-dual-pane": if (isAvailable("view.toggleDualPane")) dependencies.toggleDualPane(); break;
     }
   }
 
@@ -107,7 +147,7 @@ export function startWindowKeyboard(target: EventTarget, dependencies: WindowKey
   };
   const handleFocus = (event: Event) => {
     const context = inputContext(event);
-    if ((context.input && !context.terminal) || dialogs.hasModalOpen) cancelChord();
+    if ((context.input && !context.terminal) || inputScope(event) !== undefined) cancelChord();
   };
   target.addEventListener("keydown", handleKeydown);
   target.addEventListener("keyup", handleKeyup);
@@ -117,6 +157,7 @@ export function startWindowKeyboard(target: EventTarget, dependencies: WindowKey
   return () => {
     if (disposed) return;
     disposed = true;
+    stopOwnership?.();
     target.removeEventListener("keydown", handleKeydown);
     target.removeEventListener("keyup", handleKeyup);
     target.removeEventListener("blur", releaseInput);

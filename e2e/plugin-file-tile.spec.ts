@@ -23,6 +23,13 @@ async function mountTile(page: Page, size = "medium", selected = true) {
     document.body.append(grid);
     const calls: string[] = [];
     (window as any).__singleTileCalls = calls;
+    // This single-cell grid owns these keys. Leaving Enter unhandled invokes
+    // the underlying Explorer's Open command and its navigation focus return.
+    grid.addEventListener("keydown", (event) => {
+      if (event.key !== "ArrowDown" && event.key !== "Enter") return;
+      calls.push(`grid-key:${event.key}:${event.defaultPrevented}`);
+      event.preventDefault();
+    });
     sdk.modules.svelte.mount(sdk.modules["ui/file-tile"].default, {
       target: row,
       props: {
@@ -31,7 +38,7 @@ async function mountTile(page: Page, size = "medium", selected = true) {
         onopen: (entry: { path: string }) => calls.push(`open:${entry.path}`),
         onmenu: (entry: { path: string }, event: MouseEvent) => calls.push(`menu:${entry.path}:${event.defaultPrevented}`),
         onfocus: () => calls.push("focus"),
-        onkeydown: (event: KeyboardEvent) => calls.push(`key:${event.key}`),
+        onkeydown: (event: KeyboardEvent) => calls.push(`key:${event.key}:${event.defaultPrevented}`),
       },
     });
   }, { path: PATH, size, selected });
@@ -102,6 +109,7 @@ test.describe("Plugin single file tile", () => {
     await cell.dblclick();
     await cell.click({ button: "right" });
     await cell.focus();
+    await expect(cell).toBeFocused();
     await page.keyboard.press("ArrowDown");
     await page.keyboard.press("Enter");
     const calls = await page.evaluate(() => (window as any).__singleTileCalls as string[]);
@@ -111,8 +119,10 @@ test.describe("Plugin single file tile", () => {
       `select:${PATH}:false:false:false`,
       `open:${PATH}`,
       `menu:${PATH}:true`,
-      "key:ArrowDown", "key:Enter",
+      "key:ArrowDown:false", "grid-key:ArrowDown:false",
+      "key:Enter:false", "grid-key:Enter:false",
     ]);
     await expect(cell).toBeFocused();
+    await expect(page.locator(".crumb.current")).toHaveText("Pictures");
   });
 });

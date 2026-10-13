@@ -9,8 +9,21 @@ use std::{
 pub(crate) struct Store {
     pub(super) root: PathBuf,
     pub(super) limits: Limits,
+    pub(super) output_recovery: super::artifacts::OutputRecoveries,
+    pub(super) pending_success: super::receipts::PendingSuccess,
+    #[cfg(test)]
+    pub(crate) test_fs: std::sync::Arc<super::test_fs::TestFs>,
     #[cfg(test)]
     pub(super) fail_next_commit: std::sync::atomic::AtomicBool,
+    #[cfg(test)]
+    pub(super) fail_next_original_sync: std::sync::atomic::AtomicBool,
+    #[cfg(test)]
+    pub(super) pause_output_reservation: std::sync::Mutex<
+        Option<(
+            std::sync::Arc<std::sync::Barrier>,
+            std::sync::Arc<std::sync::Barrier>,
+        )>,
+    >,
     #[cfg(all(test, unix))]
     pub(super) fail_evidence_sync_at: std::sync::Mutex<Option<PathBuf>>,
 }
@@ -27,6 +40,14 @@ pub(super) fn decode<T: DeserializeOwned>(value: &str) -> Result<T> {
     serde_json::from_str(value).map_err(|_| reject("durable record is malformed or unsupported"))
 }
 impl Store {
+    pub(super) fn checkpoint(&self, name: &'static str) -> Result<()> {
+        #[cfg(test)]
+        {
+            self.test_fs.checkpoint(name)?;
+        }
+        let _ = name;
+        Ok(())
+    }
     pub fn open(root: PathBuf, limits: Limits) -> Result<Self> {
         crate::native_deadline::check()?;
         if limits.disk_bytes == 0
@@ -55,12 +76,21 @@ impl Store {
             fs::set_permissions(&root, fs::Permissions::from_mode(0o700))
                 .map_err(|_| reject("could not secure service directory"))?;
         }
+        let root =
+            dunce::canonicalize(&root).map_err(|_| reject("service directory is unreadable"))?;
         let store = Self {
-            root: dunce::canonicalize(&root)
-                .map_err(|_| reject("service directory is unreadable"))?,
+            output_recovery: super::artifacts::output_recovery_for_root(&root),
+            #[cfg(test)]
+            test_fs: super::test_fs::for_root(&root),
+            pending_success: super::receipts::pending_success_for_root(&root)?,
+            root,
             limits,
             #[cfg(test)]
             fail_next_commit: std::sync::atomic::AtomicBool::new(false),
+            #[cfg(test)]
+            fail_next_original_sync: std::sync::atomic::AtomicBool::new(false),
+            #[cfg(test)]
+            pause_output_reservation: Default::default(),
             #[cfg(all(test, unix))]
             fail_evidence_sync_at: std::sync::Mutex::new(None),
         };
@@ -194,6 +224,7 @@ impl Store {
         connection
             .execute_batch(super::receipts::DISMISSAL_TABLE)
             .map_err(sql)?;
+        super::host_spools::initialize(&connection)?;
         let integrity: String = connection
             .query_row("PRAGMA quick_check", [], |r| r.get(0))
             .map_err(sql)?;
@@ -201,7 +232,7 @@ impl Store {
             return Err(reject("durable ledger is corrupt"));
         }
         drop(connection);
-        for name in ["bytes", "stages", "leases"] {
+        for name in ["bytes", "stages", "leases", "host-spools"] {
             let path = store.root.join(name);
             if !path.exists() {
                 fs::create_dir(&path)
@@ -221,10 +252,7 @@ impl Store {
         }
         // Deserialization is part of startup reconciliation, before claims advertised.
         store.claims()?;
-        let invalid_execution:i64=store.connect()?.query_row("SELECT count(*) FROM operations WHERE exec_released NOT IN(0,1) OR (exec_released=1 AND (phase!='terminal' OR admission IS NULL OR json_extract(admission,'$.output') IS NOT NULL OR json_extract(admission,'$.needsAttention') IS NOT 1))",[],|r|r.get(0)).map_err(sql)?;
-        if invalid_execution != 0 {
-            return Err(reject("invalid retained execution claim"));
-        }
+        store.validate_execution_releases()?;
         store.validate_receipts()?;
         store.validate_intents()?;
         store.validate_jobs()?;
@@ -262,15 +290,16 @@ impl Store {
         for entry in entries {
             let name = entry.file_name();
             let name = name.to_string_lossy();
-            let inert = matches!(
-                name.as_ref(),
-                ".initialize.lock"
-                    | "ledger.sqlite"
-                    | "ledger.sqlite-wal"
-                    | "ledger.sqlite-shm"
-                    | "ledger.sqlite-journal"
-            ) || (matches!(name.as_ref(), "bytes" | "stages" | "leases")
-                && fs::read_dir(entry.path()).is_ok_and(|mut d| d.next().is_none()));
+            let inert =
+                matches!(
+                    name.as_ref(),
+                    ".initialize.lock"
+                        | "ledger.sqlite"
+                        | "ledger.sqlite-wal"
+                        | "ledger.sqlite-shm"
+                        | "ledger.sqlite-journal"
+                ) || (matches!(name.as_ref(), "bytes" | "stages" | "leases" | "host-spools")
+                    && fs::read_dir(entry.path()).is_ok_and(|mut d| d.next().is_none()));
             if !inert {
                 return Ok(false);
             }
@@ -325,10 +354,23 @@ impl Store {
         self.fail_next_commit
             .store(true, std::sync::atomic::Ordering::Relaxed);
     }
+    #[cfg(test)]
+    pub(crate) fn clear_write_failure(&self) {
+        self.fail_next_commit
+            .store(false, std::sync::atomic::Ordering::Relaxed);
+    }
+    #[cfg(test)]
+    pub(crate) fn fail_next_original_sync(&self) {
+        self.fail_next_original_sync
+            .store(true, std::sync::atomic::Ordering::Relaxed);
+    }
     /// Holds an artifact's IO lease, as a concurrent reader would, so tests
     /// can observe deferred byte collection.
     #[cfg(test)]
-    pub(crate) fn hold_artifact_io(&self, handle: &str) -> Result<super::artifacts::ArtifactLease> {
+    pub(crate) fn hold_artifact_io(
+        &self,
+        handle: &str,
+    ) -> Result<super::artifacts::ArtifactLease<'_>> {
         self.lease(handle)
     }
     pub(super) fn connect(&self) -> Result<Connection> {
@@ -399,6 +441,63 @@ impl Store {
         }
         Ok(Some(a))
     }
+    /// Fence the exact retired incarnation durably before its workers can
+    /// cross the final removal sweep. Existing records remain readable for
+    /// compatible recovery; old workers cannot create new custody or jobs.
+    pub fn retire_generation(&self, owner: &PackageGeneration) -> Result<()> {
+        generation(owner)?;
+        self.transaction(|tx| { tx.execute("INSERT OR IGNORE INTO retired_generations(package,digest,incarnation)VALUES(?1,?2,?3)",params![owner.package_id,owner.digest,owner.incarnation as i64]).map_err(sql)?; Ok(()) })
+    }
+    pub fn retire_package_generations(
+        &self,
+        package: &str,
+        native: Option<&PackageGeneration>,
+    ) -> Result<()> {
+        let mut generations = Vec::new();
+        if let Some(native) = native {
+            generation(native)?;
+            generations.push(native.clone());
+        }
+        let conn = self.connect()?;
+        let mut query = conn
+            .prepare("SELECT consumer,operation,owner FROM operations")
+            .map_err(sql)?;
+        let rows = query
+            .query_map([], |r| {
+                Ok((
+                    r.get::<_, String>(0)?,
+                    r.get::<_, String>(1)?,
+                    r.get::<_, String>(2)?,
+                ))
+            })
+            .map_err(sql)?
+            .collect::<std::result::Result<Vec<_>, _>>()
+            .map_err(sql)?;
+        for (consumer, op, owner) in rows {
+            generations.push(decode::<PackageGeneration>(&owner)?);
+            if let Some(a) = Self::record(&conn, &consumer, &op)? {
+                generations.extend([a.consumer, a.provider]);
+            }
+        }
+        generations.extend(self.jobs_in(&conn)?.into_iter().map(|j| j.owner));
+        drop(query);
+        drop(conn);
+        self.transaction(|tx| {
+            for owner in generations.iter().filter(|g|g.package_id == package) {
+                generation(owner)?;
+                tx.execute("INSERT OR IGNORE INTO retired_generations(package,digest,incarnation)VALUES(?1,?2,?3)",params![owner.package_id,owner.digest,owner.incarnation as i64]).map_err(sql)?;
+            }
+            Ok(())
+        })
+    }
+    pub(super) fn generation_admitted(conn: &Connection, owner: &PackageGeneration) -> Result<()> {
+        let retired: bool = conn.query_row("SELECT EXISTS(SELECT 1 FROM retired_generations WHERE package=?1 AND digest=?2 AND incarnation=?3)",params![owner.package_id,owner.digest,owner.incarnation as i64],|r|r.get(0)).map_err(sql)?;
+        if retired {
+            Err(reject("plugin incarnation was retired"))
+        } else {
+            Ok(())
+        }
+    }
     pub fn get(&self, consumer: &str, op: &str) -> Result<Option<Admission>> {
         if !identity(consumer) || !identity(op) {
             return Err(reject("invalid operation identity"));
@@ -427,7 +526,7 @@ impl Store {
         new_operation: bool,
     ) -> Result<()> {
         let bytes: i64 = conn
-            .query_row("SELECT coalesce(sum(bytes),0) FROM artifacts", [], |r| {
+            .query_row("SELECT (SELECT coalesce(sum(bytes),0) FROM artifacts)+(SELECT coalesce(sum(bytes),0) FROM host_spools)", [], |r| {
                 r.get(0)
             })
             .map_err(sql)?;
@@ -436,7 +535,11 @@ impl Store {
             .checked_add(additional_bytes)
             .is_none_or(|n| n > self.limits.disk_bytes)
         {
-            return Err(reject("artifact capacity reached"));
+            return Err(crate::error::AppError::Service {
+                code: "storage_full".into(),
+                message: "AI image storage is full; recovery will retry when capacity is available"
+                    .into(),
+            });
         }
         if new_operation {
             let (global, local): (i64, i64) = conn
@@ -447,7 +550,9 @@ impl Store {
             if global >= self.limits.operations as i64 || local >= self.limits.per_consumer as i64 {
                 // A terminal unknown outcome keeps its execution claim, and so its
                 // slot, until the user stops its recovery (plan §7.3, §21).
-                return Err(reject("operation capacity reached; wait for running AI work or resolve unconfirmed operations in AI Operations"));
+                return Err(reject(
+                    "operation capacity reached; wait for running AI work to finish",
+                ));
             }
         }
         Ok(())
@@ -482,6 +587,8 @@ impl Store {
                 }
                 return Ok(old);
             }
+            Self::generation_admitted(tx,&a.consumer)?;
+            Self::generation_admitted(tx,&a.provider)?;
             let owner: Option<String> = tx
                 .query_row("SELECT owner FROM operations WHERE consumer=?1 AND operation=?2", params![a.consumer.package_id, a.operation_id], |r| r.get(0))
                 .optional()
@@ -604,6 +711,16 @@ impl Store {
             if !same_owner(&a.consumer, caller) {
                 return Err(reject("operation owner does not match"));
             }
+            let released: bool = tx
+                .query_row(
+                    "SELECT exec_released FROM operations WHERE consumer=?1 AND operation=?2",
+                    params![caller.package_id, op],
+                    |r| r.get(0),
+                )
+                .map_err(sql)?;
+            if released {
+                return Err(reject("settled execution cannot be forwarded"));
+            }
             if a.phase != AdmissionPhase::Reserved {
                 return Ok((a, false));
             }
@@ -612,6 +729,8 @@ impl Store {
                     "preparation owner expired; create a new operation ID",
                 ));
             }
+            Self::generation_admitted(tx, &a.consumer)?;
+            Self::generation_admitted(tx, &a.provider)?;
             a.phase = AdmissionPhase::Forwarding;
             Self::persist(tx, &a)?;
             Ok((a, true))
@@ -739,29 +858,41 @@ impl Store {
         receipt: Option<&str>,
     ) -> Result<Admission> {
         let a = self.transaction(|tx| {
-            let mut a = Self::record(tx, consumer, op)?.ok_or_else(|| reject("operation is not admitted"))?;
-            if !same_owner(&a.provider, provider) || !matches!(disposition, "acquired" | "discarded") {
+            let mut a = Self::record(tx, consumer, op)?
+                .ok_or_else(|| reject("operation is not admitted"))?;
+            if !same_owner(&a.provider, provider)
+                || !matches!(disposition, "acquired" | "discarded")
+            {
                 return Err(reject("invalid handoff authority or disposition"));
             }
+            let delivery = Self::terminal_delivery_at(tx, &a)?;
+            match (disposition, &delivery) {
+                ("acquired", super::receipts::TerminalDelivery::Acquired(id))
+                    if Some(id.as_str()) == receipt => {}
+                ("acquired", _) => {
+                    return Err(reject("acquisition receipt does not prove this output"))
+                }
+                ("discarded", super::receipts::TerminalDelivery::Acquired(_)) => {
+                    return Err(reject("acquired output cannot be discarded"))
+                }
+                _ if receipt.is_some() => {
+                    return Err(reject("discard cannot use an acquisition receipt"))
+                }
+                _ => (),
+            }
             if a.phase == AdmissionPhase::Released {
-                if a.disposition.as_deref() != Some(disposition) || a.transfer_receipt.as_deref() != receipt {
+                if a.disposition.as_deref() == Some(disposition)
+                    && a.transfer_receipt.as_deref() == receipt
+                {
+                    return Ok(a);
+                }
+                // Repair a legacy discarded tombstone only with committed
+                // acquisition proof. Every other tombstone remains immutable.
+                if !matches!(delivery, super::receipts::TerminalDelivery::Acquired(_)) {
                     return Err(reject("handoff disposition conflicts with its tombstone"));
                 }
-                return Ok(a);
-            }
-            if a.phase != AdmissionPhase::Terminal {
+            } else if a.phase != AdmissionPhase::Terminal {
                 return Err(reject("only terminal handoffs may be released"));
-            }
-            if disposition == "acquired" {
-                let raw: Option<(String, String)> = tx
-                    .query_row("SELECT receipt,descriptor FROM evidence WHERE consumer=?1 AND operation=?2", params![consumer, op], |r| Ok((r.get(0)?, r.get(1)?)))
-                    .optional()
-                    .map_err(sql)?;
-                if raw.is_none_or(|(id, d)| Some(id.as_str()) != receipt || decode::<ArtifactDescriptor>(&d).ok() != a.output) {
-                    return Err(reject("acquisition receipt does not prove this output"));
-                }
-            } else if receipt.is_some() {
-                return Err(reject("discard cannot use an acquisition receipt"));
             }
             a.phase = AdmissionPhase::Released;
             a.disposition = Some(disposition.into());
@@ -780,6 +911,30 @@ impl Store {
             [package], |row| row.get(0),
         ).map_err(sql)?;
         Ok(!retained)
+    }
+    /// Complete participant inventory for lifecycle changes and replacement
+    /// recovery, including Released admissions and execution-released rows.
+    pub fn package_operations(&self, package: &str) -> Result<Vec<Admission>> {
+        let conn = self.connect()?;
+        let mut query = conn
+            .prepare("SELECT consumer,operation FROM operations WHERE admission IS NOT NULL")
+            .map_err(sql)?;
+        let rows = query
+            .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))
+            .map_err(sql)?
+            .collect::<std::result::Result<Vec<_>, _>>()
+            .map_err(sql)?;
+        rows.into_iter()
+            .filter_map(|(consumer, op)| match Self::record(&conn, &consumer, &op) {
+                Ok(Some(a))
+                    if a.consumer.package_id == package || a.provider.package_id == package =>
+                {
+                    Some(Ok(a))
+                }
+                Err(e) => Some(Err(e)),
+                _ => None,
+            })
+            .collect()
     }
     pub fn retained_operations(&self) -> Result<Vec<(Admission, u64, bool)>> {
         let conn = self.connect()?;
@@ -803,6 +958,92 @@ impl Store {
             let a = Self::record(&conn, &consumer, &operation)?
                 .ok_or_else(|| reject("missing retained operation"))?;
             result.push((a, created as u64, released != 0));
+        }
+        Ok(result)
+    }
+    pub fn auto_settlement_operations(&self) -> Result<Vec<(Admission, u64, bool)>> {
+        let conn = self.connect()?;
+        // A stale release disposition must not hide verified delivery, even
+        // when its presentation is already terminal. Once repaired, these rows
+        // leave the sweep rather than retrying an unavailable provider forever.
+        let mut query = conn.prepare(
+            "SELECT consumer,operation,created_at_ms,exec_released FROM operations
+             WHERE admission IS NOT NULL AND (
+               phase!='released'
+               OR EXISTS(
+                 SELECT 1 FROM presentation_jobs j
+                 WHERE j.owner=operations.consumer AND j.operation=operations.operation AND (
+                   json_extract(j.record,'$.state') IN ('accepting','running','recovering','needs_attention')
+                   OR (json_extract(j.record,'$.error') IS NULL AND json_extract(j.record,'$.state')='error')
+                   OR (json_extract(j.record,'$.state') IN ('discarded','error','cancelled')
+                     AND EXISTS(SELECT 1 FROM evidence e WHERE e.consumer=operations.consumer AND e.operation=operations.operation))
+                 )
+               )
+               OR EXISTS(
+                 SELECT 1 FROM evidence e
+                 WHERE e.consumer=operations.consumer AND e.operation=operations.operation AND (
+                   json_extract(admission,'$.disposition') IS NOT 'acquired'
+                   OR json_extract(admission,'$.transferReceipt') IS NOT e.receipt
+                   OR json_extract(admission,'$.needsAttention')=1
+                   OR EXISTS(SELECT 1 FROM provider_receipts p
+                     WHERE p.consumer=operations.consumer AND p.operation=operations.operation
+                       AND json_extract(p.status,'$.execution.state')='succeeded'
+                       AND json_extract(p.status,'$.delivery.state')!='acquired')
+                 )
+               )
+             ) ORDER BY created_at_ms ASC",
+        ).map_err(sql)?;
+        let rows = query
+            .query_map([], |r| {
+                Ok((
+                    r.get::<_, String>(0)?,
+                    r.get::<_, String>(1)?,
+                    r.get::<_, i64>(2)?,
+                    r.get::<_, i64>(3)?,
+                ))
+            })
+            .map_err(sql)?;
+        let mut result = Vec::new();
+        for row in rows {
+            let (consumer, operation, created, released) = row.map_err(sql)?;
+            if created < 0 || !matches!(released, 0 | 1) {
+                return Err(reject("invalid operation retention metadata"));
+            }
+            let a = Self::record(&conn, &consumer, &operation)?
+                .ok_or_else(|| reject("missing retained operation"))?;
+            let dismissed: bool = conn.query_row("SELECT EXISTS(SELECT 1 FROM dismissed_operations d WHERE d.consumer=?1 AND d.operation=?2 AND d.revision=coalesce((SELECT revision FROM provider_receipts p WHERE p.consumer=?1 AND p.operation=?2),0))", params![consumer, operation], |r| r.get(0)).map_err(sql)?;
+            if released != 0
+                && dismissed
+                && !self.retained_output_at(&conn, &consumer, &operation)?
+                && !self.has_unbound_host_output(&a.provider)?
+                && !self.has_operation_unbound_host_output(&consumer, &operation)?
+            {
+                continue;
+            }
+            result.push((a, created as u64, released != 0));
+        }
+        // An authoritative success can precede a failed receipt transaction.
+        // Its session witness overrides the old no-output settlement marker.
+        for (consumer, operation) in self.pending_success_keys()? {
+            if result
+                .iter()
+                .any(|(a, _, _)| a.consumer.package_id == consumer && a.operation_id == operation)
+            {
+                continue;
+            }
+            if let Some(a) = Self::record(&conn, &consumer, &operation)? {
+                if a.phase != AdmissionPhase::Released {
+                    let (created, released): (i64, bool) = conn.query_row(
+                        "SELECT created_at_ms,exec_released FROM operations WHERE consumer=?1 AND operation=?2",
+                        params![consumer, operation], |r| Ok((r.get(0)?, r.get(1)?))).map_err(sql)?;
+                    result.push((
+                        a,
+                        u64::try_from(created)
+                            .map_err(|_| reject("invalid operation retention metadata"))?,
+                        released,
+                    ));
+                }
+            }
         }
         Ok(result)
     }
@@ -837,6 +1078,7 @@ impl Store {
                 }
             })
     }
+    #[cfg(test)]
     pub fn busy(&self, package: &str) -> Result<bool> {
         if self.snapshot_jobs()?.jobs.iter().any(|j| {
             j.owner.package_id == package
@@ -880,6 +1122,19 @@ impl Store {
             let (consumer, op, released) = row.map_err(sql)?;
             if let Some(a) = Self::record(&conn, &consumer, &op)? {
                 if a.phase != AdmissionPhase::Released && (!released || a.output.is_some()) {
+                    claims.push(a);
+                }
+            }
+        }
+        for (consumer, operation) in self.pending_success_keys()? {
+            if claims
+                .iter()
+                .any(|a| a.consumer.package_id == consumer && a.operation_id == operation)
+            {
+                continue;
+            }
+            if let Some(a) = Self::record(&conn, &consumer, &operation)? {
+                if a.phase != AdmissionPhase::Released {
                     claims.push(a);
                 }
             }
@@ -937,6 +1192,7 @@ impl Store {
         }
         Ok(rows)
     }
+    #[cfg(test)]
     pub fn list_preparations(&self) -> Result<Vec<PackageGeneration>> {
         let mut owners = Vec::new();
         for (_, owner) in self.preparation_rows()? {

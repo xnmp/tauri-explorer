@@ -3,6 +3,8 @@
   Issue: tauri-explorer-41o, tauri-explorer-jqi
 -->
 <script lang="ts">
+  import { formatJobCost } from "$lib/domain/job-presentation";
+  import { jobRevealController } from "$lib/state/job-reveal";
   import {
     operationsManager,
     getOperationLabel,
@@ -13,13 +15,8 @@
   import { formatSize } from "$lib/domain/file";
   import { imageJobProgress, imageJobEstimateLabel, formatJobDuration, isTimingSettled } from "$lib/domain/image-job-progress";
   import { jobStateLabel, nativeJobTerminal } from "$lib/domain/native-plugin-jobs";
-  import { unresolvedIndicator } from "$lib/domain/ai-operations";
-  import { unresolvedAiCount } from "$lib/state/ai-operations.svelte";
-  import { onMount } from "svelte";
-  import AiOperationsDialog from "./AiOperationsDialog.svelte";
 
   let now = $state(Date.now());
-  let unresolvedOpen = $state(false);
 
   const operations = $derived(operationsManager.showProgressDialog ? operationsManager.operations : []);
   const imageJobs = $derived(jobsStore.jobs.filter((job) => job.presentation === "image"));
@@ -27,9 +24,6 @@
   // A retry in progress keeps its failed entry, and the panel, open.
   const hasActive = $derived(operationsManager.hasActiveOperations || imageJobs.some(isJobActive));
   let region: HTMLElement | undefined = $state();
-  const unresolved = $derived(unresolvedIndicator(unresolvedAiCount.count));
-
-  onMount(() => unresolvedAiCount.subscribe());
 
   // A settled job's duration is frozen: only unsettled jobs need a tick.
   const ticking = $derived(imageJobs.some((job) => !isTimingSettled(job)));
@@ -89,9 +83,6 @@
       <div class="dialog-header">
         <h3 class="dialog-title">{imageJobs.length ? operations.length ? "Background Operations" : "Image generation" : "File Operations"}</h3>
         <div class="header-actions">
-          {#if unresolved}
-            <button class="header-btn unresolved" aria-label={unresolved.label} onclick={() => { unresolvedOpen = true; }}>{unresolved.text}</button>
-          {/if}
           {#if operationsManager.hasActiveOperations}
             <button
               class="header-btn cancel-all"
@@ -228,6 +219,7 @@
         {/each}
         {#each imageJobs as job (job.jobKey ?? `${job.source}:${job.id}`)}
           {@const timing = imageJobProgress(job, jobsStore.jobs, now)}
+          {@const cost = job.status === "completed" ? formatJobCost(job.cost) : ""}
           <div class="operation-item" class:error={job.status === "error"} data-job-id={job.id} tabindex="-1">
             <div class="operation-info">
               <div class="operation-icon" aria-hidden="true">
@@ -248,18 +240,16 @@
                 {/if}
                 {#if job.jobKey && job.error}<div class="error-text">{job.error}</div>{/if}
                 {#if job.controlError}<div class="error-text" role="alert">{job.controlError}</div>{/if}
-                {#if timing.elapsedMs !== null}<div class="status-text">{formatJobDuration(timing.elapsedMs)} elapsed</div>{/if}
+                {#if timing.elapsedMs !== null}<div class="status-text job-timing">{formatJobDuration(timing.elapsedMs)} elapsed{cost ? ` · ${cost}` : ""}</div>{:else if cost}<div class="status-text job-timing">{cost}</div>{/if}
               </div>
             </div>
             {#if job.jobKey && ["accepting", "running", "recovering"].includes(job.status)}
               <button class="action-btn" aria-label={`Cancel ${job.label}`} disabled={!!job.controlPending || job.cancelRequested} onclick={() => jobsStore.controlJob(job.id, "cancel")}>×</button>
-            {:else if job.status === "needs_attention"}
-              <div class="operation-actions">
-                <button class="header-btn" onclick={() => { unresolvedOpen = true; }}>Inspect</button>
-                {#if !isJobActive(job)}<button class="action-btn" aria-label={`Dismiss ${job.label}`} disabled={!!job.controlPending} onclick={() => jobsStore.dismissJob(job.id)}>×</button>{/if}
-              </div>
             {:else if nativeJobTerminal(job.status)}
               <div class="operation-actions">
+                {#if job.status === "completed" && job.reveal}
+                  <button class="action-btn reveal" onclick={() => void jobRevealController.show(job)}>Show image</button>
+                {/if}
                 {#if job.status === "error" && job.retry}
                   <button class="action-btn retry" aria-label={`Retry ${job.label}`} title="Retry"
                     disabled={job.retrying || !!job.controlPending} aria-busy={job.retrying} onclick={() => void retryJobAndRefocus(job.id, region)}>
@@ -280,9 +270,10 @@
     </div>
   </div>
 {/if}
-{#if unresolvedOpen}<AiOperationsDialog onClose={() => { unresolvedOpen = false; }} />{/if}
 
 <style>
+  .job-timing { overflow-wrap: anywhere; }
+  .action-btn.reveal { width: auto; padding: 0 4px; font: inherit; font-size: 11px; white-space: nowrap; }
   .job-prompt { font-size: 12px; color: var(--text-secondary); margin: 0 0 6px; overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 2; line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
   @media (prefers-reduced-motion: reduce) { .progress-dialog-container, .spinner-small { animation: none !important; } }
   .progress-dialog-container {
@@ -355,10 +346,6 @@
   .header-btn:hover {
     background: var(--subtle-fill-secondary);
     color: var(--text-primary);
-  }
-
-  .header-btn.unresolved {
-    color: var(--system-caution-text, var(--system-caution));
   }
 
   .header-btn.cancel-all {

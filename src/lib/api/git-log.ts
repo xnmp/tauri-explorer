@@ -83,6 +83,12 @@ export interface GitRef {
   target: string;
 }
 
+/** Exact branch identity; remote names must not collide with local shorthands. */
+export interface MergeBaseBranch {
+  name: string;
+  remote: boolean;
+}
+
 export interface GitRefs {
   local_branches: GitRef[];
   remote_branches: GitRef[];
@@ -109,6 +115,13 @@ export async function gitLog(
 /** Fetch all branches (local + remote), tags, and HEAD for a repo. */
 export async function gitRefs(repoPath: string): Promise<GitRefs> {
   return invoke<GitRefs>("git_refs", { repoPath });
+}
+
+export async function gitMergeBase(
+  repoPath: string, first: MergeBaseBranch, second: MergeBaseBranch,
+): Promise<string | null> {
+  const ref = (branch: MergeBaseBranch) => `refs/${branch.remote ? "remotes" : "heads"}/${branch.name}`;
+  return invoke<string | null>("git_merge_base", { repoPath, firstRef: ref(first), secondRef: ref(second) });
 }
 
 export interface CommitFile {
@@ -408,3 +421,24 @@ export async function gitFailedCiCheckLog(
 ): Promise<FailedCiCheckLog> {
   return invoke<FailedCiCheckLog>("git_failed_ci_check_log", { repoRoot: repoPath, check });
 }
+
+/** Explicit GitHub mutation, confirmed by the user in the graph pane. */
+export type PrAction = { repoSlug: string } & (
+  | { action: "create"; headBranch: string; title: string; body: string; base: string }
+  | { action: "merge"; prNumber: number; method: "merge" | "squash" | "rebase" }
+  | { action: "approve"; prNumber: number });
+
+/** Run an explicitly confirmed PR action via the GitHub CLI. */
+export async function gitPrAction(repoPath: string, request: PrAction): Promise<string> {
+  return invoke<string>("git_pr_action", { repoRoot: repoPath, request });
+}
+
+export interface PrContext { repoSlug: string; headBranch: string | null }
+
+/** Capture repository and branch identity before asking for confirmation. */
+export async function gitPrContext(repoPath: string): Promise<PrContext> {
+  return invoke<PrContext>("git_pr_context", { repoRoot: repoPath });
+}
+
+/** A window's retained repository mutation outcome, independent of graph mounts. */
+export interface PrMutationResult { action: PrAction["action"]; output: string; prNumber?: number }

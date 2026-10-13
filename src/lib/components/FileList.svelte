@@ -7,13 +7,13 @@
   import { setFileListFocusReturn } from "$lib/state/file-list-focus-context";
   import { createDeferredFocusRequest, type DeferredFocusRequest } from "$lib/state/deferred-focus";
   import type { ExplorerInstance } from "$lib/state/explorer.svelte";
+  import { dropIntoDirectory } from "$lib/composables/use-dom-directory-drop";
   import { windowTabsManager } from "$lib/state/window-tabs.svelte";
   import { recentFilesStore } from "$lib/state/recent-files.svelte";
   import { frecencyStore } from "$lib/state/frecency.svelte";
   import { openFile, openImageWithSiblings } from "$lib/api/open";
   import { resolveActivation } from "$lib/api/activate";
   import { dragState } from "$lib/state/drag.svelte";
-  import { getDropSourcePaths, handleFileDropMany } from "$lib/state/drop-operations";
   import { useMarqueeSelection } from "$lib/composables/use-marquee-selection.svelte";
   import { useTypeAhead } from "$lib/composables/use-type-ahead.svelte";
   import { isImageFile } from "$lib/domain/file-types";
@@ -25,6 +25,7 @@
   import InlineNewFolder from "./InlineNewFolder.svelte";
   import PluginFileView from "./PluginFileView.svelte";
   import { fileViewRegistry } from "$lib/plugins/file-view-registry.svelte";
+  import type { FileViewPresentation } from "$lib/state/file-view-presentation.svelte";
   import { getPaneIdContext } from "$lib/state/pane-context";
   import { clickSelectionEffect } from "$lib/domain/workspace-selection";
 
@@ -32,16 +33,19 @@
 
   interface Props {
     explorer: ExplorerInstance;
+    presentation: FileViewPresentation;
     /** Scroll a selected entry into view; bound by ExplorerPane's keyboard navigation. */
     scrollToEntry?: (entry: FileEntry) => void;
   }
 
-  let { explorer, scrollToEntry = $bindable() }: Props = $props();
+  let { explorer, presentation, scrollToEntry = $bindable() }: Props = $props();
 
   const paneId = getPaneIdContext();
   // A plugin view replaces the listing only where it applies; elsewhere the
   // pane shows its built-in view while retaining the preference.
-  const pluginView = $derived(paneId ? fileViewRegistry.resolve(explorer.fileView, explorer.currentPath) : null);
+  const resolution = $derived(presentation.resolution);
+  const holdingView = $derived(resolution.kind === "hold");
+  const pluginView = $derived(paneId && resolution.kind === "plugin" ? fileViewRegistry.get(resolution.id) : null);
 
 
   // Drop target state for dropping files into current directory
@@ -256,7 +260,7 @@
   // ===================
 
   function handleBackgroundClick(event: MouseEvent): void {
-    if (pluginView) return;
+    if (pluginView || holdingView) return;
     if (
       marquee.isBackgroundClick(event.target as HTMLElement) &&
       !marquee.isDragging &&
@@ -279,7 +283,7 @@
   }
 
   function handleKeydown(event: KeyboardEvent): void {
-    if (pluginView || windowTabsManager.getActiveExplorer() !== explorer) return;
+    if (pluginView || holdingView || windowTabsManager.getActiveExplorer() !== explorer) return;
     typeAhead.handleKeydown(event);
   }
 
@@ -296,7 +300,7 @@
   }
 
   function handleMarqueeStart(event: MouseEvent): void {
-    if (pluginView) return;
+    if (pluginView || holdingView) return;
     const rect = contentRef?.getBoundingClientRect();
     if (!rect) return;
     cachedDragRect = rect;
@@ -349,10 +353,9 @@
   // ===================
 
   function handleListDragOver(event: DragEvent): void {
-    if (pluginView) return;
-    const types = event.dataTransfer?.types;
+    if (pluginView || holdingView) return;
     const crossWindow = dragState.readCrossWindow();
-    if (!types?.includes("application/x-explorer-path") && !types?.includes("Files") && !crossWindow) return;
+    if (!dragState.acceptsFileDrag(event.dataTransfer)) return;
 
     const target = event.target as HTMLElement;
     if (target.closest(".entry-item")) return;
@@ -378,32 +381,14 @@
   async function handleListDrop(event: DragEvent): Promise<void> {
     isDropTarget = false;
     // A plugin view owns its surface; the host never turns a drop on it into a move.
-    if (pluginView) return;
+    if (pluginView || holdingView) return;
 
     const target = event.target as HTMLElement;
     if (target.closest(".entry-item")) return;
 
     if (!event.dataTransfer) return;
 
-    const sourcePaths = getDropSourcePaths(event.dataTransfer);
-    if (sourcePaths.length === 0) return;
-
-    const currentPath = explorer.currentPath;
-    // Filter out sources already in this directory
-    const validPaths = sourcePaths.filter((p) => {
-      const sourceDir = parentDir(p);
-      return sourceDir !== currentPath;
-    });
-    if (validPaths.length === 0) return;
-
-    event.preventDefault();
-    dragState.clear();
-
-    // Multi-item background drops are one ordered native session (#163, #685),
-    // which inspects the real destination per item rather than a name snapshot.
-    await handleFileDropMany(validPaths, currentPath, false, {
-      onRefresh: () => windowTabsManager.refreshAllPanes(),
-    });
+    await dropIntoDirectory(event, explorer.currentPath, "listing-background", { onRefresh: () => windowTabsManager.refreshAllPanes() });
   }
 </script>
 
@@ -448,6 +433,8 @@
           Go back
         </button>
       </div>
+    {:else if holdingView && !explorer.error}
+      <!-- Neutral background only while eligibility is unresolved. -->
     {:else if pluginView && paneId && !explorer.error}
       {#key pluginView.id}
         <PluginFileView {explorer} {paneId} view={pluginView} onopen={handleDoubleClick} />

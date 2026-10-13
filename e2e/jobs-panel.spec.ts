@@ -19,7 +19,7 @@
  * long enough (past the 1.5s dialog-delay gate) for the dialog to appear.
  */
 import { test, expect, type Page } from "./fixtures";
-import { waitForEntries, pressShortcut, MULTI_SELECT_MODIFIER } from "./helpers";
+import { activeExplorerPane, waitForEntries, pressShortcut, MULTI_SELECT_MODIFIER } from "./helpers";
 
 /** Select the three Documents files that don't exist in Pictures. */
 async function selectThreeDocs(page: Page) {
@@ -131,4 +131,65 @@ test.describe("File-operation progress dialog", () => {
     );
     expect(copied.length).toBeLessThan(3);
   });
+});
+
+test("completed image jobs show cost in the notification and Jobs panel, and reveal the selected file", async ({ page }) => {
+  await page.goto("/?path=/home/user/Documents"); await waitForEntries(page);
+  await page.evaluate(async () => {
+    const { createPluginJobsController, windowJobSink } = await import("/src/lib/state/plugin-jobs.ts");
+    const handlers = new Map<string, (value: any) => void>();
+    const controller = createPluginJobsController({ ...windowJobSink, listen: async (name, handler) => { handlers.set(name, handler); return () => {}; } });
+    await controller.accept({ kind: "openai-image", label: "Generated image", detail: "A landscape", presentation: "image" }, async () => ({ ok: true, data: 99003 }));
+    handlers.get("openai-image-complete")!({ jobId: 99003, outputPath: "/home/user/Pictures/screenshot.png", cost: { amount: "0.075", currency: "USD", estimated: true, source: "ratecard:openai-images:2026-10-11" }, reveal: { kind: "file", path: "/home/user/Pictures/screenshot.png" } });
+    await controller.dispose();
+  });
+  await expect(page.locator(".toast").filter({ hasText: "Generated image complete: screenshot.png · ≈US$0.08" })).toBeVisible();
+  await page.keyboard.press("Control+j");
+  const panel = page.getByRole("dialog", { name: "Background Jobs", exact: true });
+  await expect(panel.locator('[data-job-id="99003"] .job-time')).toContainText("≈US$0.08");
+  await panel.getByRole("button", { name: "Show image", exact: true }).click();
+  await expect(panel).toBeHidden();
+  const pane = await activeExplorerPane(page);
+  await expect(pane.locator(".entry-item.selected")).toHaveText(/screenshot.png/);
+  await expect(pane.locator(".entry-item.selected")).toBeInViewport();
+});
+
+test("large valid costs remain inside both job panels on a narrow viewport", async ({ page }) => {
+  await page.setViewportSize({ width: 320, height: 800 });
+  await page.goto("/?path=/home/user/Documents"); await waitForEntries(page);
+  await page.evaluate(async () => {
+    const { jobsStore } = await import("/src/lib/state/jobs.svelte.ts");
+    jobsStore.addJob(99006, "Large cost image", "", "openai-image", "image");
+    jobsStore.completeJob(99006, "/home/user/Pictures/screenshot.png", { cost: { amount: `${"9".repeat(200)}.995`, currency: "USD", estimated: false, source: "fixture" }, reveal: { kind: "file", path: "/home/user/Pictures/screenshot.png" } });
+  });
+  const progress = page.getByRole("region", { name: "Background progress" });
+  await expect(progress).toContainText(`US$1${"0".repeat(200)}.00`);
+  expect(await progress.evaluate(el => el.scrollWidth <= el.clientWidth)).toBe(true);
+  await page.keyboard.press("Control+j");
+  const panel = page.getByRole("dialog", { name: "Background Jobs", exact: true });
+  await expect(panel.locator(".job-time")).toContainText(`US$1${"0".repeat(200)}.00`);
+  expect(await panel.evaluate(el => el.scrollWidth <= el.clientWidth)).toBe(true);
+  await panel.getByRole("button", { name: "Show image", exact: true }).click();
+  const pane = await activeExplorerPane(page);
+  await expect(pane.locator(".entry-item.selected")).toHaveText(/screenshot.png/);
+  await expect(pane.locator(".entry-item.selected")).toBeInViewport();
+});
+
+test("Show image recovers a folder listing hidden by a failed navigation", async ({ page }) => {
+  await page.goto("/?path=/home/user/Pictures"); await waitForEntries(page);
+  await page.evaluate(async () => {
+    const { windowTabsManager } = await import("/src/lib/state/window-tabs.svelte.ts");
+    const { jobsStore } = await import("/src/lib/state/jobs.svelte.ts");
+    await windowTabsManager.getActiveExplorer()!.navigateTo("/deleted");
+    jobsStore.addJob(99007, "Recovered image", "", "openai-image", "image");
+    jobsStore.completeJob(99007, "/home/user/Pictures/screenshot.png", {
+      reveal: { kind: "file", path: "/home/user/Pictures/screenshot.png" },
+    });
+  });
+  const pane = await activeExplorerPane(page);
+  await expect(pane).toContainText("Path not found: /deleted");
+  await page.getByRole("region", { name: "Background progress" }).getByRole("button", { name: "Show image", exact: true }).click();
+  await expect(pane).not.toContainText("Path not found: /deleted");
+  await expect(pane.locator(".entry-item.selected")).toHaveText(/screenshot.png/);
+  await expect(pane.locator(".entry-item.selected")).toBeInViewport();
 });

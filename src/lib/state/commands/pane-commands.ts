@@ -9,12 +9,18 @@ import { pasteEntries, type PasteSource } from "../paste-operations";
 import type { ExplorerInstance } from "../explorer.svelte";
 
 /** The explorer of the pane after the active one in visual order. */
-function getNextPaneExplorer(): ExplorerInstance | undefined {
+function getNextPaneId(): string | undefined {
   const ids = windowTabsManager.activePaneIds;
   if (ids.length <= 1) return undefined;
   const idx = ids.indexOf(windowTabsManager.activePaneId);
-  return windowTabsManager.getExplorer(ids[(idx + 1) % ids.length]);
+  return ids[(idx + 1) % ids.length];
 }
+
+function getNextPaneExplorer(): ExplorerInstance | undefined {
+  const id = getNextPaneId();
+  return id ? windowTabsManager.getExplorer(id) : undefined;
+}
+const transferPaneIds = () => [windowTabsManager.activePaneId, getNextPaneId()].filter((id): id is string => !!id);
 
 const activeTabIsExplorer = () => windowTabsManager.activeTab?.kind === "explorer";
 /** Focus can only move between panes when the tab has more than one. */
@@ -24,6 +30,8 @@ const activeTabIsSplit = () => windowTabsManager.dualPaneEnabled;
 export const paneCommands: Command[] = [
   {
     id: "view.toggleDualPane",
+    scope: "pane",
+    paneIds: () => windowTabsManager.dualPaneEnabled ? windowTabsManager.activePaneIds : [windowTabsManager.activePaneId],
     label: "Toggle Dual Pane",
     category: "view",
     shortcut: "Ctrl+Shift+D",
@@ -32,6 +40,8 @@ export const paneCommands: Command[] = [
   },
   {
     id: "view.switchPane",
+    scope: "window",
+    allowInDialogInput: true,
     label: "Focus Next Pane",
     category: "view",
     shortcut: "Alt+Right",
@@ -40,6 +50,7 @@ export const paneCommands: Command[] = [
   },
   {
     id: "pane.new",
+    scope: "pane",
     label: "New Pane",
     category: "view",
     shortcut: "Ctrl+M",
@@ -51,6 +62,7 @@ export const paneCommands: Command[] = [
   // rebindable in Settings → Keybindings like every other shortcut.
   {
     id: "pane.splitLeft",
+    scope: "pane",
     label: "Split Pane Left",
     category: "view",
     shortcut: "Cmd+Alt+L",
@@ -59,6 +71,7 @@ export const paneCommands: Command[] = [
   },
   {
     id: "pane.splitRight",
+    scope: "pane",
     label: "Split Pane Right",
     category: "view",
     shortcut: "Cmd+Alt+'",
@@ -67,6 +80,7 @@ export const paneCommands: Command[] = [
   },
   {
     id: "pane.splitUp",
+    scope: "pane",
     label: "Split Pane Up",
     category: "view",
     shortcut: "Cmd+Alt+P",
@@ -75,6 +89,7 @@ export const paneCommands: Command[] = [
   },
   {
     id: "pane.splitDown",
+    scope: "pane",
     label: "Split Pane Down",
     category: "view",
     shortcut: "Cmd+Alt+;",
@@ -87,6 +102,8 @@ export const paneCommands: Command[] = [
   // tab so a single-pane window leaves Alt+L/;/'/P alone.
   {
     id: "pane.focusLeft",
+    scope: "window",
+    allowInDialogInput: true,
     label: "Focus Pane Left",
     category: "view",
     shortcut: "Alt+L",
@@ -95,6 +112,8 @@ export const paneCommands: Command[] = [
   },
   {
     id: "pane.focusRight",
+    scope: "window",
+    allowInDialogInput: true,
     label: "Focus Pane Right",
     category: "view",
     shortcut: "Alt+'",
@@ -103,6 +122,8 @@ export const paneCommands: Command[] = [
   },
   {
     id: "pane.focusUp",
+    scope: "window",
+    allowInDialogInput: true,
     label: "Focus Pane Up",
     category: "view",
     shortcut: "Alt+P",
@@ -111,6 +132,8 @@ export const paneCommands: Command[] = [
   },
   {
     id: "pane.focusDown",
+    scope: "window",
+    allowInDialogInput: true,
     label: "Focus Pane Down",
     category: "view",
     shortcut: "Alt+;",
@@ -121,6 +144,7 @@ export const paneCommands: Command[] = [
     // Palette-only: Ctrl+W (Close Surface) covers the common case; this
     // stays for explicitly closing the focused pane.
     id: "pane.close",
+    scope: "pane",
     label: "Close Pane",
     category: "view",
     handler: () => windowTabsManager.closePane(),
@@ -161,6 +185,8 @@ async function transferToNextPane(move: boolean): Promise<void> {
 export const crossPaneCommands: Command[] = [
   {
     id: "pane.copyToOther",
+    scope: "pane",
+    paneIds: transferPaneIds,
     label: "Copy to Other Pane",
     category: "file",
     shortcut: "Ctrl+Shift+F5",
@@ -169,6 +195,8 @@ export const crossPaneCommands: Command[] = [
   },
   {
     id: "pane.moveToOther",
+    scope: "pane",
+    paneIds: transferPaneIds,
     label: "Move to Other Pane",
     category: "file",
     shortcut: "F6",

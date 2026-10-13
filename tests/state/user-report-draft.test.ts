@@ -35,7 +35,7 @@ describe("user report drafts", () => {
 
   it("blocks submission while any image read is pending across reopening", async () => {
     const store = createUserReportDraftStore();
-    store.update({ title: "Wait for selected images" });
+    store.update({ title: "Wait for selected attachments" });
     const files = deferredRead<UserReportAttachment[]>();
     const clipboard = deferredRead<UserReportAttachment>();
     const filesPromise = store.attachFiles([imageFile], files.read);
@@ -103,7 +103,7 @@ describe("user report drafts", () => {
     const store = createUserReportDraftStore();
     await expect(
       store.attachFiles([imageFile], () => Promise.reject(new Error("disk error"))),
-    ).resolves.toBe("Could not read the selected images. Try selecting them again.");
+    ).resolves.toBe("Could not read the selected attachments. Try selecting them again.");
     expect(store.readingAttachments).toBe(false);
     store.dispose();
   });
@@ -356,7 +356,7 @@ describe("user report drafts", () => {
       { ...image, name: "b.png" },
       { ...image, name: "c.png" },
     ]);
-    expect(await filesPromise).toBe("Attach up to 3 images.");
+    expect(await filesPromise).toBe("Attach up to 3 images and videos.");
     expect(store.attachments).toHaveLength(1);
     store.dispose();
   });
@@ -402,7 +402,7 @@ describe("user report drafts", () => {
     expect(store.attachments).toHaveLength(3);
 
     const error = await store.attachClipboard(() => Promise.resolve({ ...image, name: "clip.png" }));
-    expect(error).toBe("Attach up to 3 images.");
+    expect(error).toBe("Attach up to 3 images and videos.");
     expect(store.attachments).toHaveLength(3);
     store.dispose();
   });

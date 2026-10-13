@@ -134,6 +134,7 @@ fn seed(config: &Path, consumer: &PackageGeneration, provider: &PackageGeneratio
             origin_window: "main".into(),
             revision: 0,
             source_revision: 0,
+            ownership_epoch: 0,
             created_at_ms: timestamp,
             updated_at_ms: timestamp,
             settled_at_ms: None,
@@ -141,6 +142,8 @@ fn seed(config: &Path, consumer: &PackageGeneration, provider: &PackageGeneratio
             state: JobState::Accepting,
             phase: Some("preparing".into()),
             output_path: None,
+            cost: None,
+            reveal: None,
             run_id: None,
             error: None,
         })
@@ -252,7 +255,7 @@ fn native_startup_recovery_holds_readiness_and_shutdown_for_actual_io() {
     );
     for package in [CONSUMER, PROVIDER] {
         assert!(
-            super::super::service_host::mutation_allowed_in(
+            super::super::lifecycle::drain_idle(
                 super::super::service_host::store().unwrap(),
                 package
             )

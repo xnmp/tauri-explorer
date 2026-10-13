@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { startWindowSession } from "$lib/state/window-session";
 import { createForegroundGate, type ForegroundGate } from "$lib/state/page-foreground";
+import { fileViewRegistry } from "$lib/plugins/file-view-registry.svelte";
 
 const f = vi.hoisted(() => ({
   settings: vi.fn<() => Promise<void>>(), initTabs: vi.fn(() => ({})), view: vi.fn(),
@@ -63,12 +64,44 @@ beforeEach(() => {
   f.config.mockReturnValue(f.stopConfig); f.transfer.mockReturnValue(f.stopTransfer);
   f.setupWatch.mockReset(); f.cleanupDrop.mockReset();
   f.nativeSession.mockResolvedValue("session");
+  fileViewRegistry.clear();
   host = Object.assign(new EventTarget(), { location: { search: "?path=%2Fchild&viewMode=tiles" } });
   vi.stubGlobal("window", host);
 });
 afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); });
 
 describe("page session ownership", () => {
+  it("declares plugin discovery before initial tabs while settings are unresolved, and retires it immediately", () => {
+    const answers: unknown[] = [];
+    f.initTabs.mockImplementationOnce(() => {
+      answers.push(fileViewRegistry.presentation("trace.view", "/child", 0));
+      return {};
+    });
+    const session = startWindowSession(options());
+    expect(answers).toEqual([{ kind: "hold" }]);
+    expect(f.plugins).not.toHaveBeenCalled();
+    session.dispose();
+    expect(fileViewRegistry.presentation("trace.view", "/child", 0)).toEqual({ kind: "builtin" });
+  });
+
+  it("retires discovery even if plugin activation never settles", async () => {
+    f.plugins.mockImplementationOnce(() => new Promise(() => {}));
+    const session = startWindowSession(options());
+    resolveSettings(); await Promise.resolve();
+    expect(f.plugins).toHaveBeenCalledOnce();
+    expect(f.plugins.mock.calls[0]).toEqual([expect.any(Function)]);
+    expect(fileViewRegistry.presentation("trace.view", "/child", 0)).toEqual({ kind: "hold" });
+    session.dispose();
+    expect(fileViewRegistry.presentation("trace.view", "/child", 0)).toEqual({ kind: "builtin" });
+  });
+
+  it("releases discovery after successful startup without retiring the session", async () => {
+    const session = startWindowSession(options());
+    resolveSettings(); await vi.advanceTimersByTimeAsync(0);
+    expect(fileViewRegistry.presentation("trace.view", "/child", 0)).toEqual({ kind: "builtin" });
+    session.dispose();
+  });
+
   it("does not steal launch focus from a pane dialog that opened before readiness", async () => {
     Object.assign(host, { location: { search: "?path=/child&focusAddressBar=1" } });
     const focus = vi.fn(); host.addEventListener("explorer:focus-address-bar", focus);

@@ -1,0 +1,62 @@
+Host file-view eligibility barrier: independent-review fixes
+
+Regressions reproduced before the fixes with production client-compiled modules:
+- An expired scope re-entered hold when its retained Explorer's pane remounted.
+- A failed/disabled owner stayed pending behind overlapping discovery.
+- An unfinished initial listing bypassed the hold because currentPath was empty.
+
+Fixes:
+- Explorer owns and disposes presentation; pane remounts retain its scope.
+- Requested directory starts the scope before listing IO; failed navigation
+  restores eligibility to the retained directory.
+- Known owners supersede unrestricted discovery, including initially disabled
+  built-ins; manifest discovery and package leases hand off to individual owners.
+
+Final checks:
+- bun run check: 0 errors, 0 warnings.
+- bun run test: 431 unit files passed; 26,968 tests passed, 60 skipped.
+               3 performance files passed; 29 tests passed.
+- Independent adversarial review: all three contracts CONFIRMED; 4 focused
+  files / 65 tests passed, plus a native-discovery client-module probe.
+- ALL_VIEW_MODES=1 headless Chromium: 49 passed in the final combined run:
+  e2e/plugin-file-view-eligibility.spec.ts (8), e2e/plugin-file-views.spec.ts (9),
+  e2e/cross-pane-selection.spec.ts (32).
+- git diff --check: clean.
+
+All browser runs used a temporary config on localhost:1671. The config was
+removed afterwards. A detached-element timeout in an earlier expanded run
+passed on isolated rerun and on the final unchanged combined run.
+
+The browser fixture uses the real demo context/registry/pane renderer, including
+250 ms initial listing IPC. It does not qualify real native package protocol or
+TraceExplorer backend timing. Exact deadlines use client fake-timer tests.
+
+Screenshots inspected: pending-neutral.png shows /home/user with no built-in
+listing/spinner; eligible-plugin-view.png shows that directory's demo cards.
+
+Files changed in this review-fix pass (earlier uncommitted work retained):
+  src/lib/state/file-view-presentation.svelte.ts
+  src/lib/state/explorer.svelte.ts
+  src/lib/state/window-session.ts
+  src/lib/components/ExplorerPane.svelte
+  src/lib/plugins/file-view-registry.svelte.ts
+  src/lib/plugins/registry.svelte.ts
+  src/lib/plugins/installed.ts
+  tests/state/file-view-presentation-client.test.ts
+  tests/state/window-session.test.ts
+  tests/plugins/installed.test.ts
+  e2e/plugin-file-view-eligibility.spec.ts
+  docs/plugin-file-views.md
+  docs/code-map/map-feature.md
+  docs/code-map/map-folder.md
+  docs/lessons/view-eligibility-barrier-lifetimes.md
+  screenshots/view-eligibility-barrier/pending-neutral.png (refreshed)
+  screenshots/view-eligibility-barrier/eligible-plugin-view.png (refreshed)
+  screenshots/view-eligibility-barrier/verification.txt
+
+Environment: the sandbox blocked local socket/subprocess fixtures; the successful
+full runs used the required local permissions. The website Blob test's missing
+local dependency path was temporarily linked to the already installed root
+@vercel/blob, restoring its existing mock without downloading dependencies.
+That temporary link and its empty directories were removed after verification.
+No commits or pushes were made; no external service calls were required.

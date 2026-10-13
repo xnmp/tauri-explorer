@@ -102,6 +102,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `src/lib/state/job-reveal.ts` — lazy Show image entry point; cancellation also invalidates pending imports.
 - `src/lib/state/job-reveal-effects.ts` — deferred window-owned status refresh and workspace effects for Show image.
 - `src/lib/state/file-view-panes.ts` — mounted plugin-view pane handles shared with host reveal routing.
+- `src/lib/state/file-view-presentation.svelte.ts` — Explorer-owned, requested-directory/preference-scoped first-paint deadline surviving pane remounts; pending eligibility holds a neutral surface for at most 400ms.
 
 - `clipboard-image-progress.svelte.ts` — independent accepted image-paste lifetimes, retained until clipboard/write/listing settlement; shared by normal and explicit Paste Image.
 
@@ -358,6 +359,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `src/lib/domain/file-drop.ts` — validated internal payloads, full path-set verification and explicit DOM/native transport authority.
 - `src/lib/domain/native-drop-paths.ts` — filesystem-only path admission for native drops; excludes blob URLs, relative paths and traversal before any transfer, bookmark or terminal action.
 - `src/lib/domain/file-view-id.ts` — bounded, plugin-scoped file view id format, validated wherever ids are persisted with pane layouts.
+- `src/lib/domain/file-view-resolution.ts` — pure preferred-provider eligibility rule (boolean or pending) and bounded paint resolution.
 
 - `src/lib/domain/file-recovery.ts` — recovery snapshot, choice and native-port contracts with bounded lossless decimal-counter validation/ordering; inspection returns an ordered snapshot. Also formats retained sizes and summarizes storage against both retention budgets (`tests/domain/file-recovery-retention.test.ts`), and owns the confirmation copy for irreversible choices, including Forget for a stranded move discard (`tests/file-recovery-confirmation.test.ts`).
 
@@ -870,6 +872,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `src-tauri/src/process_ext/pipe_capture.rs` — shared Unix/Windows bounded stdout pipe capture with optional streaming and independently truncated prefix/suffix diagnostics; process-exit retirement drains queued bytes without a scheduling deadline.
 - `src-tauri/src/process_ext/windows_job.rs` — attach suspended launchers to kill-on-close JobObjects before descendants can start.
 - `src/lib/plugins/installed.ts` — load/remove installed contributions and synchronize package changes between windows.
+- `src/test-support/file-view-eligibility.svelte.ts` — reactive pending/answer and activation gate for browser file-view first-paint tests; imported only by the intercepted demo fixture.
 - `src/lib/plugins/runtime-sdk.ts`, `src/lib/plugins/svelte-runtime.d.ts` — frozen SDK and exact shared Svelte compiler/runtime bindings; host modules `ui/modal`, `ui/image-editor`, `ui/file-tiles` (capability `fileTiles`), `ui/file-tile` (capability `fileTile`, including `tileGridMetrics`); capability `tileSize` (`FileViewPane.tileSize`, file-tiles `size`); capability `jobRetry` (`PluginJobs.accept` registration `retry`).
 - `src/lib/components/InstalledPluginSettings.svelte` — install, enable, remove and activation errors in Settings.
 

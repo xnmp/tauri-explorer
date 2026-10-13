@@ -28,7 +28,6 @@ import ScmPanel from "./ScmPanel.svelte";
   import { gitRepoRoot } from "$lib/api/git";
 import { nextRemovableRoot } from "$lib/domain/drives";
   import { isVirtualPath } from "$lib/domain/virtual-path";
-  import { fileViewRegistry } from "$lib/plugins/file-view-registry.svelte";
 
   interface Props {
     paneId: PaneId;
@@ -75,7 +74,8 @@ import { nextRemovableRoot } from "$lib/domain/drives";
   // global `showScmPanel` default.
   const paneScmVisible = $derived(windowTabsManager.getPaneScmVisible(paneId));
 
-  const pluginViewActive = $derived(!!fileViewRegistry.resolve(paneExplorer.fileView, paneExplorer.currentPath));
+  const fileViewPresentation = paneExplorer.fileViewPresentation;
+  const pluginViewActive = $derived(fileViewPresentation.resolution.kind !== "builtin");
 
   let paneRef = $state<HTMLElement | null>(null);
   let fileListScrollToEntry = $state<((entry: import("$lib/domain/file").FileEntry) => void) | undefined>();
@@ -384,7 +384,7 @@ import { nextRemovableRoot } from "$lib/domain/drives";
       {#if settingsStore.showGitStatus && paneScmVisible}
         <ScmPanel {reserveInlineWidth} />
       {/if}
-      <FileList explorer={paneExplorer} bind:scrollToEntry={fileListScrollToEntry} />
+      <FileList explorer={paneExplorer} presentation={fileViewPresentation} bind:scrollToEntry={fileListScrollToEntry} />
     </div>
     <ContextMenu explorer={paneExplorer} />
   {/if}

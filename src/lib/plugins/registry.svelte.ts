@@ -21,6 +21,7 @@ import { themeFromImagePlugin } from "./theme-from-image";
 import { upscalePlugin } from "./upscale";
 import { refreshInstalledPackages, watchInstalledPackages } from "./installed";
 import { pluginJobsController } from "$lib/state/plugin-jobs";
+import { fileViewRegistry } from "./file-view-registry.svelte";
 
 /** Statically-imported built-in plugins (explicit imports — no dynamic load). */
 const BUILT_IN_PLUGINS: Plugin[] = [demoPlugin, nanoBananaPlugin, aiRenamePlugin, aiOrganizePlugin, themeFromImagePlugin, upscalePlugin];
@@ -72,6 +73,7 @@ function createPluginRegistry(
     const order = registrationOrders.get(plugin.id);
     if (order === undefined) return Promise.reject(new Error("Plugin is not registered"));
     const { ctx, dispose, reportFailure } = createPluginContext(plugin.id, plugin.name, order);
+    const finishLoading = fileViewRegistry.beginLoading([plugin.id]);
     // Plugin code can synchronously request shutdown or retry. Publish the
     // actual completion before invoking it so those operations join this run.
     let resolve!: () => void;
@@ -81,7 +83,7 @@ function createPluginRegistry(
       reject = onReject;
     });
     const activation: Activation = {
-      dispose,
+      dispose: () => { finishLoading(); dispose(); },
       promise: completion,
       cancelled: false,
       deactivated: false,
@@ -90,7 +92,7 @@ function createPluginRegistry(
     const deactivateActivation = () => {
       // A retry requested by cleanup must wait for this retired run to finish.
       activation.cancelled = true;
-      dispose();
+      activation.dispose();
       if (!activation.deactivated) {
         activation.deactivated = true;
         try {
@@ -116,6 +118,7 @@ function createPluginRegistry(
         deactivateActivation();
         reportFailure(err, "activation");
       } finally {
+        finishLoading();
         if (activating.get(plugin.id) === activation) activating.delete(plugin.id);
       }
     })();
@@ -167,8 +170,8 @@ function createPluginRegistry(
       for (const id of ids) registrationOrders.delete(id);
     },
     /** Activate all currently-enabled built-in plugins. Call once at startup. */
-    async initPlugins(): Promise<void> {
-      if (closed) return;
+    async initPlugins(discoveryComplete: () => void = () => {}): Promise<void> {
+      if (closed) { discoveryComplete(); return; }
       // A window owns native snapshots even when its consumer contribution
       // is absent. Initialization does not hold up unrelated activation.
       if (isTauri()) void jobLifecycle.init?.().catch((error) => console.error("[plugins] background job recovery unavailable:", error));
@@ -177,8 +180,17 @@ function createPluginRegistry(
       // contributions are placed by list position, not completion order.
       // Enablement is read as each one starts: an earlier plugin's activation
       // may have disabled a later one.
-      await Promise.all(registered.map((plugin) => (isEnabled(plugin) ? activate(plugin) : undefined)));
-      if (plugins === BUILT_IN_PLUGINS) { await watchInstalledPackages(registry); await refreshInstalledPackages(registry); }
+      fileViewRegistry.discoverOwners(registered.map((plugin) => plugin.id));
+      const builtins = Promise.all(registered.map((plugin) => (isEnabled(plugin) ? activate(plugin) : undefined)));
+      // Manifest discovery cannot wait behind a built-in activation. Once
+      // known, owner leases replace the window's unrestricted discovery lease.
+      const installed = plugins === BUILT_IN_PLUGINS
+        ? refreshInstalledPackages(registry, discoveryComplete)
+        : Promise.resolve(discoveryComplete());
+      if (plugins === BUILT_IN_PLUGINS) {
+        void watchInstalledPackages(registry).catch((error) => console.error("[plugins] package watch unavailable:", error));
+      }
+      await Promise.all([builtins, installed]);
     },
 
     dispose(): Promise<void> {

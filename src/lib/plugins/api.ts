@@ -25,7 +25,7 @@ import { inspectorRegistry, type InspectorContribution } from "./inspector-regis
 import { fileViewRegistry, type FileViewContribution } from "./file-view-registry.svelte";
 /** Capability "selectionAnchor": FileViewPane.setSelection accepts
  * `{ keepAnchor: true }` to replace selection without moving the range anchor or cursor. */
-export type { FileViewPane } from "./file-view-registry.svelte";
+export type { FileViewPane, FileViewContribution, FileViewEligibility } from "./file-view-registry.svelte";
 import { previewInfoRegistry, type PreviewInfoContribution } from "./preview-registry.svelte";
 import { toastStore, type ToastType } from "$lib/state/toast.svelte";
 import { readConfigFile } from "$lib/api/config";
@@ -318,7 +318,8 @@ export interface PluginContext {
   registerImageEditorTool(tool: ImageEditorTool): void;
   /** SDK 2: contribute a main file view. Its component receives a pane-scoped
    *  `pane` handle. Disposal returns panes to their built-in view and clears
-   *  the plugin's Preview targets. */
+   *  the plugin's Preview targets. Capability "fileViewEligibilityPending":
+   *  available may return "pending". */
   registerFileView?(view: FileViewContribution): void;
   /** SDK 2: contribute a Preview-info section for files or this plugin's targets. */
   registerPreviewInfo?(section: PreviewInfoContribution): void;

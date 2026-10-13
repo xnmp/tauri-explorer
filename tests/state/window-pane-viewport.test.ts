@@ -42,16 +42,16 @@ it("inline width leases add independently and stale cleanup cannot erase a repla
   expect(manager.captureState()).toEqual(saved);
 });
 
-it("publishes the canvas minimum before any viewport measurement and follows inline leases", () => {
+it("publishes layout minima before any viewport measurement and follows inline leases", () => {
   const manager = createWindowTabsManager(); managers.push(manager);
   manager.restoreFromState({ version: 3, activeTabId: "tab", tabs: [{ id: "tab", kind: "explorer", activePaneId: "pane",
     layout: { type: "leaf", id: "pane", path: "/home/user" } }] });
   // Rendering needs this in the first frame; geometry waits for a measurement.
   expect(manager.paneViewport.geometry).toBeUndefined();
-  expect(manager.paneViewport.minimum).toEqual({ width: 240, height: 0 });
+  expect(manager.paneViewport.minima?.get("pane")).toEqual({ width: 240, height: 0 });
   const scm = manager.paneViewport.reserveInlineWidth("pane");
   scm.update(280);
-  expect(manager.paneViewport.minimum).toEqual({ width: 520, height: 0 });
+  expect(manager.paneViewport.minima?.get("pane")).toEqual({ width: 520, height: 0 });
   scm.dispose();
-  expect(manager.paneViewport.minimum).toEqual({ width: 240, height: 0 });
+  expect(manager.paneViewport.minima?.get("pane")).toEqual({ width: 240, height: 0 });
 });

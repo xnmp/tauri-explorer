@@ -25,17 +25,18 @@
   const height = $derived(contentRect?.height ?? 0);
   const instance = $derived(windowTabsManager.activeTabInstance);
   const geometry = $derived(windowTabsManager.paneViewport.geometry);
-  const minimum = $derived(windowTabsManager.paneViewport.minimum);
+  const minima = $derived(windowTabsManager.paneViewport.minima);
+  const gap = $derived(settingsStore.islandMode ? 8 : 6);
   const dividers = usePaneDividers({ geometry: () => geometry, begin: windowTabsManager.beginSplitResize });
   $effect(() => {
-    const gap = settingsStore.islandMode ? 8 : 6;
+    const divider = gap;
     const measuredWidth = width, measuredHeight = height;
     untrack(dividers.cancel);
     // Geometry feeds reveal, directional focus and divider input; the canvas
     // itself is sized by CSS, so this deferral never shows a stale frame (#1061).
     // Commit outside ResizeObserver delivery so WebKit can finish the current layout.
     const frame = requestAnimationFrame(() => {
-      windowTabsManager.paneViewport.measure(measuredWidth, measuredHeight, gap);
+      windowTabsManager.paneViewport.measure(measuredWidth, measuredHeight, divider);
     });
     return () => cancelAnimationFrame(frame);
   });
@@ -68,15 +69,16 @@
 <div class="pane-container" class:multi-pane={multiPane}
   bind:this={viewport} bind:contentRect
   onscroll={dividers.cancel}
-  style:--pane-divider-size={`${geometry?.divider ?? 6}px`}>
+  style:--pane-divider-size={`${gap}px`}>
   {#if activeTab}
     <!-- A restored tab may reuse its saved ID; its old DOM/gestures still retire. -->
     {#key windowTabsManager.activeTabInstance}
+      {@const minimum = minima?.get(activeTab.layout.id)}
       <!-- CSS fills the viewport in the same layout pass that changes it; only
-           the minimum comes from script, so panes never paint at a stale size (#1061). -->
+           minima come from script, so panes never paint at a stale size (#1061). -->
       <div class="pane-tree" style:min-width="{minimum?.width ?? 0}px"
         style:min-height="{minimum?.height ?? 0}px">
-        <PaneLayoutView node={activeTab.layout} {geometry} {dividers} />
+        <PaneLayoutView node={activeTab.layout} {geometry} {minima} {dividers} />
       </div>
     {/key}
   {/if}

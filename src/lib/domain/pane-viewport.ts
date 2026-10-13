@@ -13,57 +13,62 @@ export interface PaneGeometry extends PaneSize {
 const nonnegative = (value: number) => Number.isFinite(value) ? Math.max(0, value) : 0;
 const clamp = (value: number, min: number, max: number) => Math.max(min, Math.min(max, value));
 
-/** Every subtree's minimum extent, bottom-up in one linear pass. */
-function subtreeMinima(root: PaneNode, gap: number, inlineWidths: ReadonlyMap<string, number>): Map<PaneNode, PaneSize> {
-  const minima = new Map<PaneNode, PaneSize>();
+/** Every node's subtree minimum, keyed by node id, bottom-up in one linear pass.
+ * It needs no viewport measurement, so rendering enforces these minima in CSS
+ * (canvas and split children) and follows a viewport change in the same layout
+ * pass; measured geometry lands a frame later and would paint panes at the
+ * previous viewport size (#1061). */
+export function paneMinima(root: PaneNode, divider = 6, inlineWidths: ReadonlyMap<string, number> = new Map()): ReadonlyMap<string, PaneSize> {
+  const gap = nonnegative(divider);
+  const minima = new Map<string, PaneSize>();
   function measure(node: PaneNode): PaneSize {
     if (node.type === "leaf") {
       // A lone pane always fills the viewport height, so its address bar never
       // scrolls out of view in a short window; the minimum only guards splits.
       const height = root.type === "leaf" ? 0 : MIN_PANE_SIZE.height;
       const minimum = { width: MIN_PANE_SIZE.width + nonnegative(inlineWidths.get(node.id) ?? 0), height };
-      minima.set(node, minimum);
+      minima.set(node.id, minimum);
       return minimum;
     }
     const a = measure(node.first), b = measure(node.second);
     const size = node.direction === "row"
       ? { width: a.width + gap + b.width, height: Math.max(a.height, b.height) }
       : { width: Math.max(a.width, b.width), height: a.height + gap + b.height };
-    minima.set(node, size);
+    minima.set(node.id, size);
     return size;
   }
   measure(root);
   return minima;
 }
 
-/** The workspace canvas's minimum size. It needs no viewport measurement, so the
- * canvas can fill the viewport in CSS and follow it in the same layout pass; a
- * measured size arrives a frame late and would paint panes at the previous
- * viewport size (#1061). `paneGeometry`'s canvas is this minimum or the viewport. */
-export function paneMinimum(root: PaneNode, divider = 6, inlineWidths: ReadonlyMap<string, number> = new Map()): PaneSize {
-  return subtreeMinima(root, nonnegative(divider), inlineWidths).get(root)!;
+/** The saved preference a split renders before descendant minima constrain it. */
+export function preferredSplitRatio(ratio: number): number {
+  return Number.isFinite(ratio) ? clamp(ratio, 0, 1) : 0.5;
 }
 
 /** Fit preferences to descendant constraints without changing the saved tree.
  * Two linear passes; minima add along splits rather than expanding inversely
- * with ratios, so a deeply unbalanced tree cannot require exponential space. */
+ * with ratios, so a deeply unbalanced tree cannot require exponential space.
+ * The canvas is max(viewport, root minimum) and each split clamps its preference
+ * so both children keep their minima: exactly what CSS flex resolution gives
+ * for grow factors ratio : 1 - ratio over min-sized children. */
 export function paneGeometry(root: PaneNode, viewport: PaneSize, divider = 6, inlineWidths: ReadonlyMap<string, number> = new Map()): PaneGeometry {
   const gap = nonnegative(divider);
-  const minima = subtreeMinima(root, gap, inlineWidths);
-  const minimum = minima.get(root)!;
+  const minima = paneMinima(root, gap, inlineWidths);
+  const minimum = minima.get(root.id)!;
   const width = Math.max(nonnegative(viewport.width), minimum.width);
   const height = Math.max(nonnegative(viewport.height), minimum.height);
   const panes = new Map<string, LeafRect>();
   const splits = new Map<string, SplitGeometry>();
   function place(node: PaneNode, rect: LeafRect): void {
     if (node.type === "leaf") { panes.set(node.id, rect); return; }
-    const a = minima.get(node.first) ?? MIN_PANE_SIZE;
-    const b = minima.get(node.second) ?? MIN_PANE_SIZE;
+    const a = minima.get(node.first.id) ?? MIN_PANE_SIZE;
+    const b = minima.get(node.second.id) ?? MIN_PANE_SIZE;
     const horizontal = node.direction === "row";
     const extent = (horizontal ? rect.w : rect.h) - gap;
     const min = (horizontal ? a.width : a.height) / extent;
     const max = 1 - (horizontal ? b.width : b.height) / extent;
-    const ratio = clamp(Number.isFinite(node.ratio) ? node.ratio : 0.5, min, max);
+    const ratio = clamp(preferredSplitRatio(node.ratio), min, max);
     splits.set(node.id, { rect, ratio, min: clamp(0.1, min, max), max: clamp(0.9, min, max) });
     const first = extent * ratio;
     if (horizontal) {

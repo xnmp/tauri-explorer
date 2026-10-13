@@ -19,20 +19,25 @@ stale frame the file list's width had not changed at all. Its test compared the
 rendered tracks to a CSS probe of the same stale row width, so it passed.
 
 The canvas now fills the scrollport through CSS (`flex: 1 0 0`, stretched
-across) with an inline minimum from `paneMinimum`, which needs no measurement.
-The layout that applies a viewport change also sizes the panes, and the file
-list's own ResizeObserver delivery settles the tile rows before paint. Measured
-geometry still drives reveal, directional focus and divider input, which are
-not painted state.
+across) with an inline minimum from `paneMinima`, which needs no measurement.
+Split children likewise paint the saved ratio as flex grow factors over
+inline subtree minima (the divider is `box-sizing: border-box`, so it occupies
+exactly the modelled gap). Flex resolution then applies the same clamp as
+`paneGeometry`, in the layout pass that changes the viewport. The layout that
+applies a viewport change therefore also sizes the panes, and the file list's
+own ResizeObserver delivery settles the tile rows before paint. Measured
+geometry still drives reveal, directional focus, divider input and ARIA
+values, none of which is painted size.
 
 Rule: never size painted layout from a ResizeObserver value committed in a
 later frame. Express it in CSS from inputs that are known before layout.
 
-Testing: `e2e/tiles-fullscreen-exit-frames.spec.ts` samples the tile grid in a
-ResizeObserver created after the app's observers, whose probe changes size
-every animation frame, so it reports the last script-visible state of every
-frame. It requires every frame after the change to equal the settled grid, for
-fullscreen exits by Escape, double-click and image click, docked Preview
-toggles and window resizes, in Chromium and WebKit. A sampler that only checks
+Testing: `e2e/tiles-fullscreen-exit-frames.spec.ts` samples the tile grid and
+pane widths in a ResizeObserver created after the app's observers, whose probe
+changes size every animation frame, so it reports each frame after the app's
+first-pass observer callbacks. It requires every frame after the change to
+equal the settled grid, for fullscreen exits by Escape, double-click and image
+click, docked Preview toggles, window resizes and a resize that makes a split
+pane's minimum bind, in Chromium and WebKit. A sampler that only checks
 consistency within one frame (tracks against a probe of the same width) cannot
 see a stale frame.

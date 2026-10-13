@@ -7,15 +7,24 @@
 -->
 <script lang="ts">
   import { someLeaf, type PaneNode } from "$lib/domain/pane-layout";
-  import type { PaneGeometry } from "$lib/domain/pane-viewport";
+  import { preferredSplitRatio, type PaneGeometry, type PaneSize } from "$lib/domain/pane-viewport";
   import type { PaneDividers } from "$lib/composables/use-pane-dividers.svelte";
   import { windowTabsManager } from "$lib/state/window-tabs.svelte";
   import ExplorerPane from "./ExplorerPane.svelte";
   import PaneLayoutView from "./PaneLayoutView.svelte";
 
-  const { node, geometry, dividers }: { node: PaneNode; geometry?: PaneGeometry; dividers: PaneDividers } = $props();
+  const { node, geometry, minima, dividers }: {
+    node: PaneNode; geometry?: PaneGeometry; minima?: ReadonlyMap<string, PaneSize>; dividers: PaneDividers;
+  } = $props();
   const materialized = $derived(someLeaf(node, windowTabsManager.isPaneReady));
   const split = $derived(geometry?.splits.get(node.id));
+  // Paint from the saved preference and measurement-free minima: CSS flex
+  // resolution then applies geometry's clamp in the same layout pass as a
+  // viewport change. `split` is a frame late and only serves input/ARIA (#1061).
+  const minimumExtent = (child: PaneNode) => {
+    const size = minima?.get(child.id);
+    return size ? `${node.type === "split" && node.direction === "column" ? size.height : size.width}px` : undefined;
+  };
 </script>
 
 {#if !materialized}
@@ -30,13 +39,14 @@
     <div role="alert">Unable to load this pane.</div>
   {/if}
 {:else}
+  {@const minimumProperty = node.direction === "row" ? "min-width" : "min-height"}
   <div
     class="pane-split {node.direction}"
     class:resizing={dividers.activeId === node.id}
-    style="--split-ratio: {split?.ratio ?? node.ratio}"
+    style="--split-ratio: {preferredSplitRatio(node.ratio)}"
   >
-    <div class="split-child first" id={`pane-region-${node.id}`}>
-      <PaneLayoutView node={node.first} {geometry} {dividers} />
+    <div class="split-child first" id={`pane-region-${node.id}`} style="{minimumProperty}: {minimumExtent(node.first) ?? 0}">
+      <PaneLayoutView node={node.first} {geometry} {minima} {dividers} />
     </div>
 
     <!-- svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_noninteractive_element_interactions -- WAI movable separator is a focusable range control with arrow/Home/End input. -->
@@ -60,8 +70,8 @@
       <div class="divider-handle"></div>
     </div>
 
-    <div class="split-child second">
-      <PaneLayoutView node={node.second} {geometry} {dividers} />
+    <div class="split-child second" style="{minimumProperty}: {minimumExtent(node.second) ?? 0}">
+      <PaneLayoutView node={node.second} {geometry} {minima} {dividers} />
     </div>
   </div>
 {/if}
@@ -117,6 +127,9 @@
   }
 
   .pane-divider {
+    /* Occupy exactly the modelled divider extent, borders included, so the
+       children's minima and the divider always fit the canvas minimum. */
+    box-sizing: border-box;
     touch-action: none;
     display: flex;
     align-items: center;

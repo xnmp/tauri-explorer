@@ -3,10 +3,10 @@
  * Files tiles laid out for the fullscreen width. The first frame after exit
  * must already be the settled grid: the same tiles at the same positions.
  *
- * A per-frame sampler records the tile grid at the end of each frame's
- * ResizeObserver delivery (the last script step before the browser paints),
- * through an observer created after the app's own observers. Its probe element
- * changes size every animation frame, so it reports every frame.
+ * A per-frame sampler records the tile grid during each frame's ResizeObserver
+ * delivery, through an observer created after the app's own observers, so it
+ * runs after their first-pass callbacks and just before the browser paints. Its
+ * probe element changes size every animation frame, so it reports every frame.
  */
 import { test, expect, type Page } from "./fixtures";
 import { waitForEntries, runPaletteCommand, pressShortcut } from "./helpers";
@@ -15,6 +15,7 @@ interface FrameSample {
   fullscreen: boolean;
   preview: boolean;
   viewport: number;
+  panes: number[];
   columns: string | null;
   content: [number, number] | null;
   tiles: [string, number, number, number, number][];
@@ -56,6 +57,7 @@ async function startSampling(page: Page) {
         fullscreen: !!document.querySelector(".preview-pane.fullscreen"),
         preview: !!document.querySelector(".preview-pane"),
         viewport: window.innerWidth,
+        panes: [...document.querySelectorAll(".explorer-pane")].map((pane) => Math.round(pane.getBoundingClientRect().width)),
         columns: document.querySelector(".tiles-view")?.getAttribute("data-columns") ?? null,
         content: content ? [content.clientWidth, content.clientHeight] : null,
         tiles: [...document.querySelectorAll<HTMLElement>(".tiles-view .tile-item")].map((tile) => {
@@ -162,4 +164,34 @@ test("first frame after a docked preview toggle or window resize is the settled 
     await page.setViewportSize({ width, height: 800 });
     expectNoStaleFrame(await stopSampling(page), (sample) => sample.viewport === width, `resize to ${width}px`);
   }
+});
+
+// Split panes paint their saved ratio clamped to each pane's minimum. A window
+// that narrows until the clamp binds must not paint the unclamped split first.
+test("first frame after a resize that constrains a split keeps both panes at their settled sizes", async ({ page }) => {
+  await page.setViewportSize({ width: 1600, height: 800 });
+  await page.goto("/?path=/home/tiles-fullscreen");
+  await waitForEntries(page);
+  if (await page.locator(".preview-pane").isVisible()) await pressShortcut(page, " ");
+  await expect(page.locator(".preview-pane")).toBeHidden();
+  const leaf = (id: string) => ({ type: "leaf", id, path: "/home/tiles-fullscreen" });
+  await page.evaluate(async (layout) => {
+    const load = new Function("return import('/src/lib/state/window-tabs.svelte.ts')");
+    (await load()).windowTabsManager.restoreFromState({ version: 3, activeTabId: "split-tab",
+      tabs: [{ id: "split-tab", kind: "explorer", activePaneId: "split-b", layout }] });
+  }, { type: "split", id: "split-root", direction: "row", ratio: 0.25, first: leaf("split-a"), second: leaf("split-b") });
+  await expect(page.locator(".explorer-pane")).toHaveCount(2);
+  await expect.poll(async () => (await page.locator(".explorer-pane").first().boundingBox())!.width).toBeGreaterThan(300);
+
+  await startSampling(page);
+  await page.setViewportSize({ width: 1100, height: 800 });
+  const samples = await stopSampling(page);
+  const first = samples.findIndex((sample) => sample.viewport === 1100);
+  expect(first, "sampled frames before the resize").toBeGreaterThan(0);
+  const after = samples.slice(first);
+  const settled = after[after.length - 1];
+  // The narrower window makes the first pane's 240px minimum bind.
+  expect(settled.panes[0]).toBeGreaterThanOrEqual(240);
+  expect(settled.panes[0]).toBeLessThan(250);
+  after.forEach((sample, frame) => expect(sample.panes, `frame ${frame} after the resize`).toEqual(settled.panes));
 });

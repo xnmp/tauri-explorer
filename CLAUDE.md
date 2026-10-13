@@ -328,7 +328,7 @@ sizes it should borrow from the message cell, not widen inline commit details.
 Native graph fixtures must wait for the reset view's `.file-list` before their
 repository is deleted, because reset navigation completes asynchronously.
 
-- Never size painted layout from a ResizeObserver measurement committed in a later frame: the pane canvas fills its scrollport in CSS with only `paneMinimum` from script, and measured `paneViewport.geometry` serves reveal/focus/dividers. Files grid width updates still render within ResizeObserver delivery (`flushSync`) (#1061). See `docs/lessons/1061-tile-layout-delivery.md`.
+- Never size painted layout from a ResizeObserver measurement committed in a later frame: the pane canvas fills its scrollport and split children flex by saved ratio, both in CSS with only `paneMinima` from script; measured `paneViewport.geometry` serves reveal/focus/divider input/ARIA. Files grid width updates still render within ResizeObserver delivery (`flushSync`) (#1061). See `docs/lessons/1061-tile-layout-delivery.md`.
 
 Git Graph PR mutations use `git_pr_action` through `gh` with an explicit selected
 GitHub repository and user confirmation. Creation requires an already-pushed

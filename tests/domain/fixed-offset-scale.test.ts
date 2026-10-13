@@ -1,5 +1,5 @@
-import { describe, expect, it } from "vitest";
-import { fixedMenuPosition, isSingleScaleFixedOffset } from "../../src/lib/domain/zoom";
+import { afterEach, describe, expect, it } from "vitest";
+import { fixedMenuPosition, isSingleScaleFixedOffset, probeSingleScaleFixedOffset } from "../../src/lib/domain/zoom";
 
 // A fixed overlay probed at left:0 then left:100px reports these rect lefts
 // and widths. Each engine model below is what that probe measures.
@@ -31,13 +31,6 @@ describe("isSingleScaleFixedOffset", () => {
 });
 
 describe("fixedMenuPosition with a caller padding", () => {
-  it("opens at the pointer on a single-scale engine at 120% (issue 1053)", () => {
-    const position = fixedMenuPosition({ x: 600, y: 120 }, { width: 1280, height: 720 },
-      { width: 200, height: 300 }, 1.2, true);
-    expect(position.x * 1.2).toBeCloseTo(600);
-    expect(position.y * 1.2).toBeCloseTo(120);
-  });
-
   it("keeps the requested on-screen margin from the right and bottom edges", () => {
     const zoom = 1.2;
     const viewport = { width: 1280, height: 720 };
@@ -46,4 +39,36 @@ describe("fixedMenuPosition with a caller padding", () => {
     expect(position.x * zoom + menu.width * zoom + 12).toBeCloseTo(viewport.width);
     expect(position.y * zoom + menu.height * zoom + 12).toBeCloseTo(viewport.height);
   });
+});
+
+describe("probeSingleScaleFixedOffset on a mounted overlay", () => {
+  afterEach(() => {
+    delete (globalThis as { document?: unknown }).document;
+  });
+
+  // A stand-in overlay whose rect responds to its inline left like each engine.
+  function overlay(zoom: number, model: ReturnType<(typeof models)[keyof typeof models]>) {
+    (globalThis as { document?: unknown }).document = {
+      documentElement: { style: { zoom: `${zoom * 100}%` } },
+    };
+    const style = { left: "37px" };
+    return {
+      style,
+      offsetWidth: OFFSET_WIDTH,
+      getBoundingClientRect: () => ({
+        left: (parseFloat(style.left) / 100) * model.shift,
+        width: model.width,
+      }),
+    } as unknown as HTMLElement;
+  }
+
+  for (const [name, measure] of Object.entries(models)) {
+    it(`classifies ${name} and restores the overlay's left`, () => {
+      const zoom = 1.2;
+      const m = measure(zoom);
+      const node = overlay(zoom, m);
+      expect(probeSingleScaleFixedOffset(node)).toBe(m.single);
+      expect(node.style.left).toBe("37px");
+    });
+  }
 });

@@ -12,7 +12,7 @@ apart, so the engine check put the menu at x/zoom² instead of x/zoom.
 **Fix:** the menu now probes its own mounted node
 (`probeSingleScaleFixedOffset` in `domain/zoom.ts`, the same probe the Details
 column popup uses) and places itself with `fixedMenuPosition`, passing the
-12 px edge margin. `submenuFlip` uses the probed mode too. Other overlays still
+12 on-screen px edge margin (legacy double-scale engines previously kept 12 offset units). `submenuFlip` uses the probed mode too. Other overlays still
 use the user-agent-based `clientToFixed`/`rectToFixed`.
 
 **Tests:** `tests/domain/fixed-offset-scale.test.ts` (classifier for each

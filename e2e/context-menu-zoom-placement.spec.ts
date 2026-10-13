@@ -54,16 +54,42 @@ for (const [index, zoom] of [120, 80].entries()) {
   });
 }
 
-test("Tiles/Medium context menu stays fully on-screen near the bottom-right at 120%", async ({ page }) => {
+test("Tiles/Medium context menu is clamped to the 12px edge margin at 120%", async ({ page }) => {
   await setZoom(page, 120);
   const viewport = page.viewportSize()!;
   const point = { x: viewport.width - 40, y: viewport.height - 40 };
   const menu = await openMenuAt(page, point);
   await expect.poll(async () => {
     const box = (await menu.boundingBox())!;
-    return box.x >= 0 && box.y >= 0
-      && box.x + box.width <= viewport.width && box.y + box.height <= viewport.height;
-  }).toBe(true);
+    return Math.max(
+      Math.abs(viewport.width - (box.x + box.width) - 12),
+      Math.abs(viewport.height - (box.y + box.height) - 12),
+    );
+  }).toBeLessThanOrEqual(2);
   await markPointer(page, point, 120);
   await page.screenshot({ path: "evidence/ac-3-tiles-context-menu-edge.png" });
+});
+
+test("submenus flip left exactly when they would overflow the viewport at 120%", async ({ page }) => {
+  await setZoom(page, 120);
+  const viewport = page.viewportSize()!;
+  const zoom = 1.2;
+  // The folder (background) menu has built-in view-mode submenus.
+  const probe = await openMenuAt(page, { x: 700, y: 500 });
+  const menuWidth = (await probe.boundingBox())!.width;
+  await page.keyboard.press("Escape");
+  await expect(page.locator(".context-menu")).toHaveCount(0);
+
+  // 200 is the component's submenu allowance (CSS px); the menu is placed at
+  // the pointer, so its right edge plus the submenu is pointer.x + width + 200*zoom.
+  const edge = viewport.width - 8 * zoom - menuWidth - 200 * zoom;
+  for (const [offset, flips] of [[-60, false], [60, true]] as const) {
+    const menu = await openMenuAt(page, { x: Math.round(edge + offset), y: 500 });
+    const box = (await menu.boundingBox())!;
+    expect(Math.abs(box.x - Math.round(edge + offset))).toBeLessThanOrEqual(2);
+    const wrapper = menu.locator(".submenu-wrapper").first();
+    await expect(wrapper).toHaveClass(flips ? /flip-left/ : /^(?!.*flip-left)/);
+    await page.keyboard.press("Escape");
+    await expect(page.locator(".context-menu")).toHaveCount(0);
+  }
 });

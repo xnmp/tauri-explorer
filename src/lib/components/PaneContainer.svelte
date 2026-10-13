@@ -25,13 +25,15 @@
   const height = $derived(contentRect?.height ?? 0);
   const instance = $derived(windowTabsManager.activeTabInstance);
   const geometry = $derived(windowTabsManager.paneViewport.geometry);
+  const minimum = $derived(windowTabsManager.paneViewport.minimum);
   const dividers = usePaneDividers({ geometry: () => geometry, begin: windowTabsManager.beginSplitResize });
   $effect(() => {
     const gap = settingsStore.islandMode ? 8 : 6;
     const measuredWidth = width, measuredHeight = height;
     untrack(dividers.cancel);
-    // Geometry resizes descendants (and can change workspace gutters). Commit
-    // outside ResizeObserver delivery so WebKit can finish the current layout.
+    // Geometry feeds reveal, directional focus and divider input; the canvas
+    // itself is sized by CSS, so this deferral never shows a stale frame (#1061).
+    // Commit outside ResizeObserver delivery so WebKit can finish the current layout.
     const frame = requestAnimationFrame(() => {
       windowTabsManager.paneViewport.measure(measuredWidth, measuredHeight, gap);
     });
@@ -70,8 +72,10 @@
   {#if activeTab}
     <!-- A restored tab may reuse its saved ID; its old DOM/gestures still retire. -->
     {#key windowTabsManager.activeTabInstance}
-      <div class="pane-tree" style:width={geometry ? `${geometry.width}px` : "100%"}
-        style:height={geometry ? `${geometry.height}px` : "100%"}>
+      <!-- CSS fills the viewport in the same layout pass that changes it; only
+           the minimum comes from script, so panes never paint at a stale size (#1061). -->
+      <div class="pane-tree" style:min-width="{minimum?.width ?? 0}px"
+        style:min-height="{minimum?.height ?? 0}px">
         <PaneLayoutView node={activeTab.layout} {geometry} {dividers} />
       </div>
     {/key}
@@ -89,9 +93,12 @@
     gap: 0;
   }
 
+  /* Fill the scrollport (stretched across, grown along); the inline minimum
+     makes it overflow and scroll only when the layout cannot fit. A zero basis
+     keeps tall listings from sizing the canvas by their content. */
   .pane-tree {
     display: flex;
-    flex: none;
+    flex: 1 0 0;
     min-width: 0;
     min-height: 0;
   }

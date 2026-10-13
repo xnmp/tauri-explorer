@@ -13,7 +13,10 @@ A separate presentation model determines what fits and how to reach it.
 The domain computes subtree minima bottom-up and places panes top-down. Leaf
 panes start at 240 × 200 CSS pixels; a row sums child widths plus its divider and
 takes their maximum height, while a column does the converse. The workspace canvas
-is at least that minimum and otherwise fills the available viewport. Rendered
+is at least that minimum and otherwise fills the available viewport. Rendering
+expresses that rule in CSS (fill the scrollport, with the measurement-free
+minimum inline), so the canvas follows a viewport change in the same layout
+pass; measured geometry arrives a frame later and must not size painted layout (#1061). Rendered
 ratios clamp the saved preference against descendant constraints using the extent
 remaining after the divider. This is two linear traversals, with linear canvas
 growth along each axis; extreme saved ratios do not cause exponential expansion.

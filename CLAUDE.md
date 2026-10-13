@@ -328,7 +328,7 @@ sizes it should borrow from the message cell, not widen inline commit details.
 Native graph fixtures must wait for the reset view's `.file-list` before their
 repository is deleted, because reset navigation completes asynchronously.
 
-- Files grid width updates must render within ResizeObserver delivery (`flushSync`); deferred row chunking can expose tracks from the fullscreen preview width on exit (#1061). See `docs/lessons/1061-tile-layout-delivery.md`.
+- Never size painted layout from a ResizeObserver measurement committed in a later frame: the pane canvas fills its scrollport in CSS with only `paneMinimum` from script, and measured `paneViewport.geometry` serves reveal/focus/dividers. Files grid width updates still render within ResizeObserver delivery (`flushSync`) (#1061). See `docs/lessons/1061-tile-layout-delivery.md`.
 
 Git Graph PR mutations use `git_pr_action` through `gh` with an explicit selected
 GitHub repository and user confirmation. Creation requires an already-pushed

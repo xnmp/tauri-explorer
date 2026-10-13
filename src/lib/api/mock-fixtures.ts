@@ -80,6 +80,20 @@ export const mockFiles: Record<string, FileEntry[]> = {
     file("many-people.csv", "/home/csv-preview/many-people.csv", 8192),
     file("wide.csv", "/home/csv-preview/wide.csv", 1024),
   ],
+  // Fullscreen preview exit (#1061): the reported folder shape. Its entries span
+  // several tile rows whose chunking differs between the docked and fullscreen
+  // Files widths.
+  "/home/tiles-fullscreen": [
+    ...["Config", "Content", "Plugins", "Saved", "Source", "Tools"].map((name) =>
+      dir(name, `/home/tiles-fullscreen/${name}`, true)),
+    file("AGENTS.md", "/home/tiles-fullscreen/AGENTS.md", 512),
+    ...Array.from({ length: 18 }, (_, index) => {
+      const name = `shot-${String(index + 1).padStart(2, "0")}.png`;
+      return file(name, `/home/tiles-fullscreen/${name}`, 65536);
+    }),
+    file("PalletPrototype.uproject", "/home/tiles-fullscreen/PalletPrototype.uproject", 1024),
+    file("README.md", "/home/tiles-fullscreen/README.md", 512),
+  ],
   // Preview containment (#792): every format with content wider or taller
   // than a narrow preview pane.
   "/home/preview-containment": [

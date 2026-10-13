@@ -165,24 +165,21 @@ for (const zoomLevel of [80, 150]) {
   test(`divider pointer geometry follows CSS zoom at ${zoomLevel}%`, async ({ page }) => {
     await page.setViewportSize({ width: 1200, height: 800 });
     await restore(page, 2);
-    const beforeCanvas = await page.locator(".pane-tree").evaluate(tree => (tree as HTMLElement).style.cssText);
+    const beforeWidth = await page.locator(".pane-container").evaluate(container => container.clientWidth);
     await page.evaluate(async zoom => {
       const load = new Function("return import('/src/lib/state/settings.svelte.ts')");
       (await load()).settingsStore.update({ zoomLevel: zoom });
     }, zoomLevel);
-    // Zoom updates CSS before ResizeObserver commits the new CSS-space canvas.
-    // The ratio remains 50% in both generations, so it is not a readiness gate.
-    let previousGeometry = "", stableSamples = 0;
-    await expect.poll(async () => {
-      const current = await page.locator(".pane-container").evaluate(container => {
-        const tree = container.querySelector<HTMLElement>(".pane-tree")!;
-        const rect = tree.getBoundingClientRect();
-        return `${tree.style.cssText}|${container.clientWidth}x${container.clientHeight}|${rect.width}x${rect.height}`;
-      });
-      stableSamples = current === previousGeometry && !current.startsWith(`${beforeCanvas}|`) ? stableSamples + 1 : 0;
-      previousGeometry = current;
-      return stableSamples;
-    }).toBeGreaterThanOrEqual(1);
+    // Zoom resizes the CSS-space canvas immediately; the measured geometry that
+    // divider input uses commits a frame later. The ratio remains 50% in both
+    // generations, so it is not a readiness gate.
+    await expect.poll(() => page.evaluate(async before => {
+      const load = new Function("return import('/src/lib/state/window-tabs.svelte.ts')");
+      const geometry = (await load()).windowTabsManager.paneViewport.geometry;
+      const container = document.querySelector<HTMLElement>(".pane-container")!;
+      return container.clientWidth !== before && !!geometry
+        && Math.abs(geometry.width - container.clientWidth) < 1 && Math.abs(geometry.height - container.clientHeight) < 1;
+    }, beforeWidth)).toBe(true);
     const divider = page.getByRole("separator", { name: "Resize panes" });
     await expect.poll(async () => Number(await divider.getAttribute("aria-valuenow"))).toBeCloseTo(50, 1);
     const split = (await page.locator(".pane-split").boundingBox())!;

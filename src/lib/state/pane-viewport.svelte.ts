@@ -1,5 +1,5 @@
 import type { PaneNode } from "$lib/domain/pane-layout";
-import { paneGeometry, type PaneSize } from "$lib/domain/pane-viewport";
+import { paneGeometry, paneMinimum, type PaneSize } from "$lib/domain/pane-viewport";
 
 export interface InlineWidthLease { update(width: number): void; dispose(): void }
 export type ReserveInlineWidth = () => InlineWidthLease;
@@ -18,8 +18,17 @@ export function createPaneViewport(getLayout: () => PaneNode | undefined) {
     const root = getLayout();
     return root && size ? paneGeometry(root, size, divider, widths) : undefined;
   });
+  // Rendering sizes the canvas from this, not from `geometry`: the viewport
+  // measurement behind `geometry` lands a frame after the viewport changes.
+  const minimum = $derived.by(() => {
+    const root = getLayout();
+    return root ? paneMinimum(root, divider, widths) : undefined;
+  });
   return {
+    /** Measured placement for reveal, directional focus and divider input. */
     get geometry() { return geometry; },
+    /** The workspace canvas's minimum, available before any measurement. */
+    get minimum() { return minimum; },
     inlineWidth(paneId: string) { return widths.get(paneId) ?? 0; },
     reserveInlineWidth(paneId: string): InlineWidthLease {
       const token = Symbol();

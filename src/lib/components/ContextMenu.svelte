@@ -19,7 +19,7 @@
   import type { FileEntry } from "$lib/domain/file";
   import { parentDir } from "$lib/domain/path";
   import { isImageFile } from "$lib/domain/file-types";
-  import { getZoomFactor, clientToFixed } from "$lib/domain/zoom";
+  import { getZoomFactor, fixedFromClient, fixedMenuPosition, isChromiumEngine, probeSingleScaleFixedOffset } from "$lib/domain/zoom";
   import type { ViewMode } from "$lib/state/types";
   import { fileViewRegistry } from "$lib/plugins/file-view-registry.svelte";
   import { getPaneIdContext } from "$lib/state/pane-context";
@@ -315,17 +315,18 @@
 
   const effectiveThumbnailSize = $derived(folderTileSize(explorer.currentPath));
 
+  // Whether this engine scales position:fixed offsets once (Chromium, current
+  // WebKitGTK/Safari) or twice (WKWebView, older WebKitGTK). Measured from the
+  // mounted menu, because the user-agent alone cannot tell WebKit versions apart.
+  let singleScale = $state(isChromiumEngine);
+
   // Compute submenu flip direction from the already-clamped menu position
-  // and viewport size. All values are in CSS pixels — no getBoundingClientRect
-  // needed, avoiding WebKitGTK zoom inconsistencies.
+  // and viewport size. All values are in the menu's fixed-CSS space — no
+  // getBoundingClientRect needed, avoiding WebKitGTK zoom inconsistencies.
   const submenuFlip = $derived.by(() => {
     if (!menuEl) return { flipLeft: false, flipUp: false };
-    // clientToFixed puts the viewport size into the same fixed-CSS space as
-    // the clamped coordinates, per engine (Chromium's clientWidth is already
-    // CSS px — dividing it by zoom again was the recurring "menu drifts
-    // under zoom" bug, see e2e/zoom-positioning.spec.ts).
-    const vw = clientToFixed(window.innerWidth);
-    const vh = clientToFixed(window.innerHeight);
+    const vw = fixedFromClient(window.innerWidth, getZoomFactor(), singleScale);
+    const vh = fixedFromClient(window.innerHeight, getZoomFactor(), singleScale);
     const menuW = menuEl.offsetWidth;
     const menuH = menuEl.offsetHeight;
     const submenuW = 200; // AI minimum width plus padding and borders
@@ -361,25 +362,17 @@
     // getBoundingClientRect.
     requestAnimationFrame(async () => {
       if (!menuEl) return;
-      // With CSS zoom, position:fixed coordinates are in CSS pixels but the
-      // visible viewport shrinks. clientToFixed converts the viewport size
-      // into that same fixed-CSS space per engine (one division on Chromium,
-      // two on WebKitGTK/WKWebView — mirroring the cursor conversion below).
-      // offsetWidth/Height are CSS pixels (unaffected by zoom).
-      const vw = clientToFixed(window.innerWidth);
-      const vh = clientToFixed(window.innerHeight);
-      const menuW = menuEl.offsetWidth;
-      const menuH = menuEl.offsetHeight;
-      const pad = 12;
       // rawX/rawY are the raw event.clientX/Y (the store no longer pre-divides).
-      // clientToFixed converts the cursor point into the position:fixed CSS space
-      // per webview engine (see zoom.ts).
-      let x = clientToFixed(rawX);
-      let y = clientToFixed(rawY);
-      if (x + menuW > vw - pad) x = vw - menuW - pad;
-      if (y + menuH > vh - pad) y = vh - menuH - pad;
-      if (x < pad) x = pad;
-      if (y < pad) y = pad;
+      // fixedMenuPosition converts the cursor, viewport and measured menu into
+      // the position:fixed CSS space of this engine (see zoom.ts).
+      const zoom = getZoomFactor();
+      singleScale = probeSingleScaleFixedOffset(menuEl);
+      const { x, y } = fixedMenuPosition(
+        { x: rawX, y: rawY },
+        { width: window.innerWidth, height: window.innerHeight },
+        { width: menuEl.offsetWidth, height: menuEl.offsetHeight },
+        zoom, singleScale, 12,
+      );
       clampedX = x;
       clampedY = y;
       menuVisible = true;

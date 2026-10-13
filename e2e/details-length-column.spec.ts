@@ -51,7 +51,11 @@ test("directories and documents keep an empty Length cell", async ({ page }) => 
 });
 
 test("column menu toggles the Length column", async ({ page }) => {
-  await openVideos(page);
+  // Use fresh-context defaults: seedSettings reapplies on reload and would
+  // overwrite the visibility preference this test needs to verify.
+  await page.setViewportSize({ width: 1440, height: 700 });
+  await page.goto("/?path=/home/user/Videos&viewMode=details");
+  await expect(page.locator(".details-view .entry-item").first()).toBeVisible();
   await page.locator(".details-view .column-headers").click({ button: "right" });
   const item = page.locator(".column-menu-item", { hasText: "Length" });
   await expect(item).toContainText("✓");
@@ -61,7 +65,13 @@ test("column menu toggles the Length column", async ({ page }) => {
   await item.click();
   await expect(page.locator(".details-view .column-header.length-column")).toHaveCount(0);
   await expect(page.locator(".details-view .length-cell")).toHaveCount(0);
+  await expect(page.locator(".column-header.resolution-column")).toBeVisible();
+  await expect(page.locator('.entry-item[data-path="/home/user/Videos/recording.mp4"] .resolution-cell')).toHaveText("—");
 
+  await page.reload();
+  await expect(page.locator(".details-view .entry-item").first()).toBeVisible();
+  await expect(page.locator(".details-view .length-cell")).toHaveCount(0);
+  await expect(page.locator(".column-header.resolution-column")).toBeVisible();
   await page.locator(".details-view .column-headers").click({ button: "right" });
   await page.locator(".column-menu-item", { hasText: "Length" }).click();
   await expect(page.locator(".details-view .column-header.length-column")).toBeVisible();
@@ -73,11 +83,14 @@ test("Length column resizes through its own separator", async ({ page }) => {
   const handle = page.getByRole("separator", { name: "Resize Length column" });
   const header = page.locator(".details-view .column-header-wrapper").filter({ has: page.locator(".length-column") });
   const cell = lengthCell(page, "recording.mp4");
+  const resolution = page.getByRole("separator", { name: "Resize Resolution column" });
+  const resolutionWidth = await resolution.getAttribute("aria-valuenow");
   const before = (await header.boundingBox())!.width;
   const cellBefore = (await cell.boundingBox())!.width;
   await handle.focus();
   for (let i = 0; i < 6; i++) await page.keyboard.press("ArrowRight");
   await expect.poll(async () => (await header.boundingBox())!.width - before).toBeCloseTo(60, 0);
   await expect.poll(async () => (await cell.boundingBox())!.width - cellBefore).toBeCloseTo(60, 0);
+  await expect(resolution).toHaveAttribute("aria-valuenow", resolutionWidth!);
   await page.locator(".details-view").screenshot({ path: `${EVIDENCE}/ac-3-length-column-resized.png` });
 });

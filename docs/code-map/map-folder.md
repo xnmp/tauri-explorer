@@ -35,6 +35,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `PluginFileView.svelte` — hosts a plugin file view (SDK 2) in place of a pane's listing, with a pane-scoped handle; error boundary offers retry or return to files, and Preview targets it owned are cleared on unmount.
 - `PluginPreviewTarget.svelte` — Preview of a plugin target (a non-file subject): image, details and explicit actions only, no file actions, opening, sibling stepping or dragging. Its chrome is placed in a vertical dock by `PreviewPane.svelte`'s grid rules. Its image fullscreens like a file image through the pane's controller: a 1024px thumbnail in the pane, the full-resolution image (loaded like a file image) once fullscreen (#1033).
 - `PreviewImageSurface.svelte` — the Preview pane's image surface (container, image, zoom indicator, fullscreen styles) shared by file images and plugin targets; event handling comes from `use-preview-fullscreen` (#1033).
+- `ImageResolutionCell.svelte` — lazy intrinsic image metadata for mounted Details rows.
 - `DetailsView.svelte` — virtual-scrolled table view (columns, resize, sort headers).
 - `ListView.svelte` — CSS-grid compact list view.
 - `TilesView.svelte` — row-virtualized tile view with thumbnails; renders through `TileSurface.svelte`/`TileVisual.svelte`; runs `scroll-jank-monitor.ts` during scroll and logs `tiles-scroll-jank` events only when jank occurred (#593).
@@ -188,6 +189,8 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `git-summary-cache.ts` — shared per-repo `git_status` (working-tree summary) fetch: in-flight dedup + short TTL, used by SCM store + git-graph so one change is one scan, not several (#431); Git-change events revoke cached/joinable reads, publication uses current-flight identity, and successful summaries use a bounded 64-entry LRU.
 - `scm.svelte.ts` — Source Control state (staged/unstaged/commit, #54).
 - `commit-panel.svelte.ts` — per-pane rune store holding the git-graph uncommitted-node commit editor's live state (#466); wraps `domain/commit-panel` transitions so the in-flight commit guard survives close+reopen (`begin()`/`resetIfIdle()`). Disposed with the pane (like `disposeScmStore`).
+- `image-resolution.ts` — bounded cancellable metadata queue and event-owned observation.
+- `image-resolution-service.ts` — metadata API admission and shared directory-change subscription.
 - `file-events.ts` — cross-window file-change broadcast (affected dirs → all windows).
 - `src/lib/state/copy-operations.ts` — the copy session over that shared presentation.
 - `src/lib/state/session-operations.ts` — the one presentation shared by both ordered sessions: operation panel, conflict prompts, incremental entries, refresh broadcast and completion reporting.
@@ -270,6 +273,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 ## src/lib/api/ — invoke() bridge to Rust. Thin IPC wrappers; grep here for Tauri command names.
 
 - `src/lib/api/native-file-drag.ts` — host native drag start channel and enriched receiver event contract.
+- `image-resolution.ts` — lazy source pixel metadata IPC; virtual paths are unavailable.
 
 - `pdf-preview.ts` — bounded native PDF bytes, lazy PDF.js worker/readiness, cancellable page rendering and validated native annotation-link dispatch (#728–#730).
 
@@ -417,6 +421,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `file-history.ts` — shared action, summary, receipt and HistoryPort types for the native history authority.
 - `virtual-layout.ts` — variable-height virtual list layout math (VirtualList).
 - `tile-layout.ts` — tile sizes (`THUMBNAIL_SIZE_CONFIG`, re-exported by settings), spacing/row-height `tileLayout()` and grid arrow-key `gridFocusStep()` shared by every tile grid; the SDK's `PaneTileSize`/`TileSizePreset` and `paneTileSize()`; `tileGridMetrics()` exposes minimum width, allocated cell height, gap and grid padding through `ui/file-tile`.
+- `image-resolution.ts` — source pixel shape, supported raster extensions and display formatting.
 - `detail-columns.ts` — Details column defaults, finite bounds, malformed-width normalization and visible grid projection.
 - `media-duration.ts` — Length-cell formatting (m:ss / h:mm:ss via `mediaTime`, empty when unknown) and the size+mtime cache revision (#995).
 - `resize-size.ts` — bounded scalar normalization, visual/model delta conversion and axis-aware keyboard sizing.
@@ -501,6 +506,8 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `src-tauri/windows-app-manifest.xml` — shared Common Controls v6 and Per-Monitor V2 DPI declarations.
 
 ## src-tauri/src/ — Rust backend. Tauri commands; all commands are `async fn`.
+
+- `files/image_resolution.rs` — bounded header-only intrinsic raster dimensions, no directory-listing overhead.
 
 - `main.rs` — binary entry (console-window guard).
 - `lib.rs` — app entry: builder, command registration, plugin setup. Grep here to find where a command is wired.

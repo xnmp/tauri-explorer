@@ -2,7 +2,7 @@
  * Shared helpers for e2e tests.
  */
 
-import { expect, type Page } from "@playwright/test";
+import { expect, type Locator, type Page } from "@playwright/test";
 
 /** The three view modes */
 export const ALL_VIEW_MODES = ["details", "list", "tiles"] as const;
@@ -206,4 +206,20 @@ export async function focusBeforeFileList(page: Page): Promise<void> {
     return previous ? { tag: previous.tagName, className: previous.className } : null;
   });
   expect(focused, "the file list must have a preceding sequential focus target").not.toBeNull();
+}
+
+/** Resolves once the element's client/scroll width has been unchanged for `quietMs`; WebKit resizes the pane after first paint. */
+export async function waitForStableWidth(scroller: Locator, quietMs = 400): Promise<void> {
+  await scroller.evaluate((element, quiet) => new Promise<void>((resolve) => {
+    const read = () => `${element.clientWidth}:${element.scrollWidth}`;
+    let last = read();
+    let since = performance.now();
+    const tick = () => {
+      const now = read();
+      if (now !== last) { last = now; since = performance.now(); }
+      if (performance.now() - since >= quiet) resolve();
+      else requestAnimationFrame(tick);
+    };
+    requestAnimationFrame(tick);
+  }), quietMs);
 }

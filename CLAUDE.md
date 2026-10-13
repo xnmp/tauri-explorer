@@ -372,6 +372,32 @@ resolution from the test module. Review checkouts may inherit dependencies from
 an ancestor; a checkout-relative node_modules/typescript path is not portable.
 Keep the real compiler and every cold/warm/error/recovery assertion intact.
 
+### Details image metadata (#994)
+
+Resolution uses `files::image_resolution::get_image_resolution`, a header-only
+read for PNG/JPEG/GIF/WebP/BMP (4 shared native slots, at most 1 MiB of input).
+Do not derive it from thumbnail dimensions or add it to eager directory scans.
+Virtualized cells own cancellable requests through `state/image-resolution.ts`.
+Directory reconciliation can retain entry identity when byte count and mtime are
+unchanged, so metadata must also invalidate through shared directory-change and
+local-mutation events. Header context-menu events must stop propagation to avoid
+opening the pane's file menu over the column menu.
+Details rows reveal their outer edge only on visible keyboard entry from outside
+the row grid. Native Tab focus can scroll clipping ancestors and hide the file
+identity at high zoom; aligning the outer edge also preserves its leading ring.
+Pointer selection and cursor moves within the grid must retain the user's
+horizontal column position and FileList's preventScroll ownership (ADR 0015).
+Do not relax the icon viewport, focus-ring or horizontal-scroll assertions.
+
+A virtual cursor jump can unmount the old focused row before FileList focuses
+its replacement. A null relatedTarget is not proof of external keyboard entry;
+keep its preventScroll behavior and require a known external focus origin for
+the native Tab reveal. Cover scrolled Ctrl+End/Home as well as mounted arrows.
+
+Details Length and Resolution are independent keyed columns. Keep header, row,
+width projection and saved visibility defaults in the same order; tests compare
+the complete defaults and verify that resizing or hiding one preserves the other.
+
 ### About command (#755)
 
 The About surface uses the existing `AppInfo` contract and `getAppInfo()` bridge

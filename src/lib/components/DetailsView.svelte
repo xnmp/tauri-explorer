@@ -89,7 +89,7 @@
     onkeydown={event => columnResize.keydown(column, event)}></div>
 {/snippet}
 
-<div id={viewId} class="details-view" class:resizing={columnResize.isResizing} style="--col-name: {columnResize.columnWidths.name}px; --col-date: {columnResize.columnWidths.date}px; --col-type: {columnResize.columnWidths.type}px; --col-size: {columnResize.columnWidths.size}px; --col-length: {columnResize.columnWidths.length}px; --details-grid-columns: {columnResize.gridTemplateColumns};">
+<div id={viewId} class="details-view" class:resizing={columnResize.isResizing} style="--col-name: {columnResize.columnWidths.name}px; --col-date: {columnResize.columnWidths.date}px; --col-type: {columnResize.columnWidths.type}px; --col-size: {columnResize.columnWidths.size}px; --col-length: {columnResize.columnWidths.length}px; --col-resolution: {columnResize.columnWidths.resolution}px; --details-grid-columns: {columnResize.gridTemplateColumns};">
   <!-- svelte-ignore a11y_no_static_element_interactions -->
   <div class="column-headers" style="grid-template-columns: {columnResize.gridTemplateColumns};" oncontextmenu={handleColumnHeaderContextMenu}>
     <div class="column-header-wrapper">
@@ -169,6 +169,12 @@
       {@render resizeHandle("length")}
     </div>
     {/if}
+    {#if settingsStore.columnVisibility.resolution}
+    <div class="column-header-wrapper">
+      <div class="column-header resolution-column"><span>Resolution</span></div>
+      {@render resizeHandle("resolution")}
+    </div>
+    {/if}
   </div>
 
   <!-- Column visibility context menu -->
@@ -192,6 +198,10 @@
       <button class="column-menu-item" onclick={() => { settingsStore.toggleColumn("length"); closeColumnMenu(); }}>
         <span class="column-menu-check">{settingsStore.columnVisibility.length ? "✓" : ""}</span>
         Length
+      </button>
+      <button class="column-menu-item" onclick={() => { settingsStore.toggleColumn("resolution"); closeColumnMenu(); }}>
+        <span class="column-menu-check">{settingsStore.columnVisibility.resolution ? "✓" : ""}</span>
+        Resolution
       </button>
     </div>
   {/if}

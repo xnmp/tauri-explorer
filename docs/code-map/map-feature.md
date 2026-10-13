@@ -17,6 +17,7 @@ backend for E2E/browser).
 
 - `components/FileList.svelte` — dispatches to Details/List/Tiles; owns deferred cursor focus and explicit reveal ownership across settled virtual layout changes; manual scroll intent releases reveal ownership
 - `components/EntryCell.svelte` — shared List/Tiles gridcell interaction and roving focus attributes
+- Resolution column: `components/ImageResolutionCell.svelte` → `state/image-resolution-service.ts` / `state/image-resolution.ts` → `api/image-resolution.ts` → `src-tauri/src/files/image_resolution.rs`; formatting/filtering in `domain/image-resolution.ts`. Shares directory-change observation; no pixel decoding or retained dimension cache.
 - `components/DetailsView.svelte` — virtual-scrolled table (columns, sort headers); `domain/detail-columns.ts` + `composables/use-column-resize.svelte.ts` project session-local widths through one keyed scalar resize owner
 - Details Length column (#995): `FileItem.svelte` requests `state/media-durations.svelte.ts` per rendered row → `api/media.ts` → `src-tauri/src/media_duration.rs`; `domain/media-duration.ts` formats. Durations are lazy row metadata, never listing fields.
 - `components/ListView.svelte` — CSS-grid columns view

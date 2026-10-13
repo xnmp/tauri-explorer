@@ -58,6 +58,7 @@ export interface ColumnVisibility {
   type: boolean;
   size: boolean;
   length: boolean;
+  resolution: boolean;
 }
 
 export interface Settings {
@@ -152,7 +153,7 @@ const DEFAULT_SETTINGS: Settings = {
   iconTheme: "default",
   backgroundImage: "",
   backgroundBlur: 0,
-  columnVisibility: { date: true, type: true, size: true, length: true },
+  columnVisibility: { date: true, type: true, size: true, length: true, resolution: true },
   listViewColumns: 0,
   listColumnMaxWidth: 250,
   viewMode: "details",

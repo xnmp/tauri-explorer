@@ -70,6 +70,7 @@ export interface MockControl {
   // ----- Preview / thumbnails: fixture overrides + action hooks -----
   /** Overrides `read_text_file` for the path under test. */
   previewReadText?: (path: string) => string | Promise<string>;
+  imageResolution?: (path: string) => { width: number; height: number } | null | Promise<{ width: number; height: number } | null>;
   /** Overrides `read_image_data_url` for the path under test. */
   previewReadImage?: (path: string) => string | Promise<string>;
   /** Overrides `get_preview_image` (default: every image is its own original). */

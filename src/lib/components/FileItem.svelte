@@ -3,6 +3,7 @@
   Issue: tauri-explorer-iw0, tauri-explorer-bae, tauri-explorer-h3n, tauri-explorer-x25
 -->
 <script lang="ts">
+  import ImageResolutionCell from "./ImageResolutionCell.svelte";
   import type { FileEntry } from "$lib/domain/file";
   import { formatSize } from "$lib/domain/file";
   import { getFileType, getFileIconColor, formatDate, formatAbsoluteDate, isVideoMediaFile } from "$lib/domain/file-types";
@@ -113,6 +114,18 @@
   class:selected
   class:drop-target={interactions.isDropTarget(entry.path)}
   class:copy-drop={interactions.isCopyDrop(entry.path)}
+  onfocus={(event) => {
+    // Native keyboard entry can reveal trailing columns and clip the file
+    // identity. Pointer selection and cursor moves within the grid must retain
+    // the user's horizontal position and FileList's preventScroll choice.
+    const grid = event.currentTarget.closest('[role="grid"]');
+    // A virtual jump can remove the old row before focus, leaving a null
+    // relatedTarget. That is still FileList-owned focus, not native Tab entry.
+    const fromOutsideGrid = event.relatedTarget instanceof Node && !grid?.contains(event.relatedTarget);
+    if (event.currentTarget.matches(":focus-visible") && fromOutsideGrid) {
+      event.currentTarget.scrollIntoView({ block: "nearest", inline: "start" });
+    }
+  }}
   onclick={handleClick}
   ondblclick={handleDoubleClick}
   oncontextmenu={(e) => interactions.handleContextMenu(e, entry)}
@@ -184,12 +197,15 @@
     {lengthText}
   </div>
   {/if}
+  {#if settingsStore.columnVisibility.resolution}
+    <div class="resolution-cell"><ImageResolutionCell {entry} /></div>
+  {/if}
 </div>
 
 <style>
   .file-item {
     display: grid;
-    grid-template-columns: var(--details-grid-columns, var(--col-name, 300px) var(--col-date, 180px) var(--col-type, 120px) var(--col-size, 90px) var(--col-length, 90px));
+    grid-template-columns: var(--details-grid-columns, var(--col-name, 300px) var(--col-date, 180px) var(--col-type, 120px) var(--col-size, 90px) var(--col-length, 90px) var(--col-resolution, 160px));
     gap: 0;
     align-items: center;
     padding: 4px 16px;
@@ -305,7 +321,8 @@
   .date-cell,
   .type-cell,
   .size-cell,
-  .length-cell {
+  .length-cell,
+  .resolution-cell {
     font-size: var(--font-size-caption);
     color: var(--text-tertiary);
     overflow: hidden;

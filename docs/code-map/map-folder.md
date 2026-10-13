@@ -26,6 +26,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 
 - `WindowDialogs.svelte` — typed lazy dialog host, crash boundaries, demand-loaded plugin mounting/shortcut help and window-level feedback, including portal mode.
 - `src/lib/components/PluginDialogMount.svelte` — retained contributed dialog host; private presentation context and pane-slot DOM portal with hidden/inert parking.
+- `AboutDialog.svelte` — lazy About modal showing the running application's version through the existing app-info IPC bridge; shared modal dismissal and focus ownership.
 - `OpenWithDialog.svelte` — accessible installed-application choice with captured filename, loading/empty/error feedback and unchanged-default messaging.
 
 - `FileList.svelte` — dispatches to Details/List/Tiles by view mode; hosts marquee, drop, empty-state. Central view entry.

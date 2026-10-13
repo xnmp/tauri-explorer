@@ -74,7 +74,9 @@ Rules that bite:
 - Terminal focus gives terminal-hosted applications ownership of every key except the small, availability-aware core-navigation allowlist in `domain/terminal-keys.ts` (Quick Open, Command Palette, previous/next tab, and the configured terminal-toggle chord). Keep the ownership decision shared by `+page.svelte` and `TerminalPanel.svelte`; chord prefixes and suffixes must be checked against the eligible command ID so other chords sharing a prefix stay terminal-owned, and a terminal-owned mismatching suffix must cancel the pending Explorer chord before another key can complete it.
 - Shortcut hints in command-owned UI must come from `getCommandShortcut(commandId)`, not hardcoded defaults, so persisted overrides and unbound commands remain consistent with window command dispatch.
 - Fixed overlays under root CSS zoom are engine-specific: `fixedFromClient` and `fixedFromRect` divide once only on Chromium; WKWebView uses two divisions, while WebKitGTK's CSS-space rect offsets its second scale. Keep the live Chromium check wired through the context-menu conversion (#493).
+- Details header column menus use `fixedMenuPosition` to convert pointer, viewport and rendered menu dimensions through `fixedFromClient`; legacy WebKit scales offsets twice but sizes once. Their synchronous mounted geometry probe selects single/double offset scaling relative to size scaling, supporting newer WebKit alongside native WebKit's legacy model without changing other overlays. Stop the header contextmenu event from bubbling into FileList, or its background menu covers the column controls (#993).
 - Zoomed image previews update their `transform` for every pointer move. Keep the compositor hint scoped to `.preview-image.zoomed`, so active panning stays smooth without retaining layers for every ordinary image preview (#635).
+- Column visibility tests must assert mounted row cells as well as headers: they render independently. Require nonempty rows, then check each column before hiding, while hidden, and after restoring (#993).
 - Vertical preview docks retain the persisted preferred height, but their rendered wrapper caps it to the center stack's available height minus a usable file region. Keep that allocation in the shared page layout rather than component-local resize state so zoom and window resizing cannot feed back into saved settings (#699).
 - Bookmarks have two drop surfaces: a specific `.bookmark-drop-target[data-path]` preserves bookmark identity so files transfer into it but folders pin, while empty `.quick-access` space remains a folder-pinning target. Resolve the row before its containing section so Linux native and macOS/Windows pointer drags agree (#675).
 - Bookmark feedback must state the action for the source kind: directory drags always say `Drop to pin`, including a targeted bookmark row; only files on a targeted row say `Move to bookmark`. Resolve that kind from in-memory drag state or the persisted cross-window fallback, matching native drop handling (#675).
@@ -252,6 +254,12 @@ profile can change its warning result.
 
 When a bug resists quick diagnosis: search `docs/lessons/` + the frozen `lessons_learnt.md` archive and commit history first, then add targeted logging/instrumentation before another fix attempt. Suite-wide test timeouts (~5 s) under parallel/CPU load are a known flake mode — rerun the failing files in isolation before treating them as regressions.
 
+The unit suite defaults to four workers to bound concurrent cold transforms;
+explicit Vitest worker overrides remain available, and perf tests stay serial.
+Runner setup gives only the compiler-command suite a ten-second compilation
+budget; it asserts exit status, not compiler speed. Existing behavioral test
+files remain unchanged and keep their five-second deadlines (#993 PR repair).
+
 For Windows native transfer waits, use one renderer-side observer through
 `executeAsync` to correlate the requested operation token or listing mutation.
 Retain failure JSON and screenshots under `e2e-tauri/logs/`, capturing the
@@ -389,3 +397,17 @@ the native Tab reveal. Cover scrolled Ctrl+End/Home as well as mounted arrows.
 Details Length and Resolution are independent keyed columns. Keep header, row,
 width projection and saved visibility defaults in the same order; tests compare
 the complete defaults and verify that resizing or hiding one preserves the other.
+
+### About command (#755)
+
+The About surface uses the existing `AppInfo` contract and `getAppInfo()` bridge
+(`get_app_info` returns the packaged Rust version). Keep this optional dialog
+lazy-loaded through `WindowDialogs.svelte`, with modal ownership provided by
+`Modal.svelte`; do not read package.json for the running application version.
+The store must include About in `hasModalOpen` and `closeAll`, including while
+its lazy import is pending. Add the flag to `anyModalOpen` and
+`closeUnmountedDialogs` so pane input blocking and mounted close guards share
+the same lifecycle. The command declares window scope for destination admission.
+Browser evidence for this surface must finish CSS
+animations (`page.screenshot({ animations: "disabled", ... })`): a visible DOM
+assertion can succeed on the first transparent frame of the shared modal fade.

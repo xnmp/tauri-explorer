@@ -20,7 +20,7 @@ const owner = (current = () => true): PreviewImageOwner => ({
 
 const always = () => true;
 
-const ready = (url: string): PreviewImageLoad => ({ status: "ready", url, viaBackend: false, resolution: "original" });
+const ready = (url: string): PreviewImageLoad => ({ status: "ready", url, viaBackend: false, resolution: "original", decoded: {} as HTMLImageElement });
 
 function rendition(path = "/w/huge.png", current?: () => boolean): ShownRendition {
   return { path, cacheBust: "1-2-0", owner: owner(current) };

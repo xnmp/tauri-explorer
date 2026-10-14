@@ -42,6 +42,15 @@ describe("content search against the real backend", () => {
       { timeoutMsg: "no streamed results appeared" },
     );
 
+    // 1 + 1 + 8 = 10 real matches across 3 files. The first streamed result
+    // is not the whole walk: one CI run read the dialog while it still said
+    // "Searching... 3 files scanned, 8 matches" with only many.txt rendered.
+    // Assert the listed files once the stream has delivered every match.
+    await browser.waitUntil(
+      async () => (await domText(".footer .stats")).includes("10 matches in 3 files"),
+      { timeoutMsg: "footer never reported the full match count" },
+    );
+
     const text = await domText(".content-search-dialog");
     expect(text).toContain("alpha.txt");
     expect(text).toContain("many.txt");
@@ -49,12 +58,6 @@ describe("content search against the real backend", () => {
     expect(text).toContain(path.join("sub", "beta.txt"));
     // Hidden files are excluded by the walker.
     expect(text).not.toContain(".secret.txt");
-
-    // 1 + 1 + 8 = 10 real matches across 3 files.
-    await browser.waitUntil(
-      async () => (await domText(".footer .stats")).includes("10 matches in 3 files"),
-      { timeoutMsg: "footer never reported the full match count" },
-    );
   });
 
   it("collapses the many-match file and expands it on demand", async () => {

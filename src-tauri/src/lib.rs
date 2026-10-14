@@ -35,6 +35,8 @@ mod github;
 mod image_crop;
 mod image_operation;
 mod installed_plugins;
+#[cfg(target_os = "linux")]
+mod jsc_workaround;
 mod native_deadline;
 mod native_file_drag;
 #[cfg(unix)]
@@ -173,6 +175,10 @@ pub fn run_with_process_entry(launch_dir: Option<String>, t_process_entry: std::
     // composited painting (#1057); see webkit_renderer.
     #[cfg(target_os = "linux")]
     let renderer_plan = webkit_renderer::apply();
+    // WebKitGTK 2.52's WebContent process aborts in JSC's collector with the
+    // DFG tier enabled (#1026); see jsc_workaround.
+    #[cfg(target_os = "linux")]
+    let jsc_plan = jsc_workaround::apply(webkit_renderer::runtime_version());
 
     let home_dir = dirs::home_dir()
         .unwrap_or_else(|| std::path::PathBuf::from("/"))
@@ -548,6 +554,8 @@ pub fn run_with_process_entry(launch_dir: Option<String>, t_process_entry: std::
                 renderer_plan.unset,
                 renderer_plan.reason,
             );
+            #[cfg(target_os = "linux")]
+            log::info!("Renderer(jsc): {jsc_plan:?}");
             // Before any window: the asset scope must serve Preview renditions
             // from the cache (its `$HOME/**/*` glob skips dot-dirs, #1054).
             thumbnails::preview_rendition::allow_rendition_assets(app);

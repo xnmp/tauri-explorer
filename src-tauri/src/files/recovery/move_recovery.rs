@@ -147,25 +147,33 @@ pub(super) fn reconcile(
         Err(refusal) if retirable => {
             let exits = Exits {
                 restorable: false,
-                refusal: Some(refusal.to_string()),
-                forget: true,
+                refusal: Some(refusal.error.to_string()),
+                forget: refusal.lasting,
             };
             let mut snapshot = retained(coordinator, execution.operation, exits, describe)?;
-            snapshot.error = matches!(request, Request::Restore(_)).then(|| diagnostic(refusal));
+            snapshot.error =
+                matches!(request, Request::Restore(_)).then(|| diagnostic(refusal.error));
             return Ok(snapshot);
         }
         // An unfinished restoration that can neither finish nor return
         // anything more would otherwise offer a Restore that never succeeds.
         Err(refusal) => {
-            let message = format!("{refusal} {}", forget_hint(&folders));
-            let error = matches!(request, Request::Restore(_)).then_some(refusal);
+            let (message, actions) = if refusal.lasting {
+                (
+                    format!("{} {}", refusal.error, forget_hint(&folders)),
+                    vec![RecoveryChoice::Release],
+                )
+            } else {
+                (refusal.error.to_string(), vec![RecoveryChoice::Restore])
+            };
+            let error = matches!(request, Request::Restore(_)).then_some(refusal.error);
             return answer(
                 coordinator,
                 &execution.operation,
                 None,
                 "attention",
                 &message,
-                vec![RecoveryChoice::Release],
+                actions,
                 error,
             );
         }
@@ -202,37 +210,49 @@ pub(super) fn reconcile(
     )
 }
 
-/// Restoration admission from the live endpoints of a retained record. A
-/// record whose roots cannot be reopened offers no Restore; Forget remains
-/// subject to the retained view's own successful observation (#795).
+/// Restoration admission from the live endpoints of a retained record. Only
+/// a lasting refusal from verified roots lets Forget end a restorable record;
+/// one whose roots cannot be reopened offers neither Restore nor Forget. A
+/// restored record has nothing left to return, so its retained view's own
+/// successful observation decides (#795).
 fn observe(operation: DurableOperation, restorable: bool) -> (DurableOperation, Exits) {
-    let mut exits = Exits {
-        forget: true,
-        ..Exits::default()
-    };
-    if !restorable || operation.state().retirement.is_some() {
-        return (operation, exits);
+    if operation.state().retirement.is_some() {
+        return (operation, Exits::default());
+    }
+    if !restorable {
+        let forget = operation.state().phase == Phase::Restored;
+        return (
+            operation,
+            Exits {
+                forget,
+                ..Exits::default()
+            },
+        );
     }
     match MoveExecution::try_reopen(operation) {
         Ok(execution) => {
-            match execution.admit_restoration() {
-                Ok(_) => exits.restorable = true,
-                Err(refusal) => exits.refusal = Some(refusal.to_string()),
-            }
+            let exits = match execution.admit_restoration() {
+                Ok(_) => Exits {
+                    restorable: true,
+                    ..Exits::default()
+                },
+                Err(refusal) => Exits {
+                    restorable: false,
+                    refusal: Some(refusal.error.to_string()),
+                    forget: refusal.lasting,
+                },
+            };
             (execution.operation, exits)
         }
-        Err(failure) => {
-            let (operation, error) = *failure;
-            exits.refusal = Some(diagnostic(error));
-            (operation, exits)
-        }
+        Err(failure) => (failure.0, Exits::default()),
     }
 }
 
 /// Forget a move record only after observing, under the same ownership, that
-/// nothing else can end it: Restore is refused from verified roots and, for a
-/// retained record, its discard is preserved. An unreadable volume or root
-/// is never proof of that, so such a record waits instead (#795).
+/// nothing else can end it: Restore is refused for a lasting reason from
+/// verified roots (or the move is already restored) and, for a retained
+/// record, its discard is preserved. An unreadable volume or root, or a
+/// refusal the user can resolve, is never proof of that (#795).
 pub(super) fn forget(
     coordinator: &Arc<Coordinator>,
     operation: DurableOperation,
@@ -255,15 +275,18 @@ pub(super) fn forget(
         .retirable();
     let operation = if restorable {
         match MoveExecution::try_reopen(operation) {
-            Ok(execution) if execution.admit_restoration().is_ok() => return refused(),
-            Ok(execution) => execution.operation,
-            // Unverifiable roots refuse Restore too, but only a retained
-            // record's own observation below can prove it stranded.
-            Err(failure) if retirable => failure.0,
+            Ok(execution) => match execution.admit_restoration() {
+                Err(refusal) if refusal.lasting => execution.operation,
+                _ => return refused(),
+            },
             Err(failure) => return reply(coordinator, None, Some(diagnostic(failure.1))),
         }
-    } else {
+    } else if operation.state().phase == Phase::Restored {
         operation
+    } else {
+        // Neither restorable nor restored: an interrupted forward move
+        // reconciles through its own executor.
+        return refused();
     };
     let operation = if retirable {
         let retirement = match Retirement::open(operation) {
@@ -274,10 +297,6 @@ pub(super) fn forget(
             return refused();
         }
         retirement.operation
-    } else if !restorable {
-        // Neither retained nor restorable: an interrupted forward move
-        // reconciles through its own executor.
-        return refused();
     } else {
         operation
     };

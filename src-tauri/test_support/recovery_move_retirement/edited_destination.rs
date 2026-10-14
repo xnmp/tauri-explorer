@@ -318,28 +318,101 @@ fn forget_is_refused_for_a_record_restore_or_discard_can_resolve() {
     assert_eq!(fs::read(f.roots[0].join("parked")).unwrap(), MOVED);
 }
 
-/// A discard interrupted after its decision and withdrawn on resumption,
-/// here because a new entry took the vacated source name, returns to a
-/// settled record that still has a working exit despite the edited
-/// destination.
+/// A discard interrupted after its decision and withdrawn on resumption (the
+/// destination was gone, so the parked source was its only copy) returns to a
+/// settled record. Once the user puts an edited destination back, that record
+/// offers exactly a Discard which ends it and keeps the edit.
 #[test]
 fn a_withdrawn_discard_with_an_edited_destination_keeps_a_working_exit() {
     let f = Fixture::new(true, true, false);
     crash_at(&f, "intent", || {});
-    edit(&f.target);
-    fs::write(&f.source, b"new entry at the source name").unwrap();
+    fs::remove_file(&f.target).unwrap();
     let withdrawn = resolve(&f, RecoveryChoice::Discard).expect("discard was not withdrawn");
     assert!(withdrawn.contains("withdrawn"), "{withdrawn}");
     assert!(state(&f).retirement.is_none());
+    fs::write(&f.target, EDIT).unwrap();
 
     let item = inspect(&f);
-    assert!(!item.actions.is_empty(), "{}", item.message);
-    // Once the source name is free again, the edited destination's Discard
-    // completes and keeps the edit.
+    assert_eq!(
+        item.actions,
+        vec![RecoveryChoice::Discard],
+        "{}",
+        item.message
+    );
+    assert!(resolve(&f, RecoveryChoice::Discard).is_none());
+
+    f.assert_retired();
+    assert_eq!(fs::read(&f.target).unwrap(), EDIT);
+    assert!(admitted(&f, &f.target));
+}
+
+/// A refusal the user can resolve is not stranding: a new entry at the source
+/// name offers no Forget, and Forget is refused, until the name is free again.
+#[test]
+fn a_reused_source_name_is_not_forgettable() {
+    let f = Fixture::new(true, false, false);
+    edit(&f.target);
+    fs::write(&f.source, b"new entry at the source name").unwrap();
+    let item = inspect(&f);
+    assert!(
+        item.actions.is_empty(),
+        "{:?}: {}",
+        item.actions,
+        item.message
+    );
+    assert!(
+        item.message.contains("Move or rename it"),
+        "{}",
+        item.message
+    );
+    let reply = service::resolve(
+        &f.coordinator,
+        &f.id,
+        item.generation,
+        RecoveryChoice::Release,
+    )
+    .unwrap();
+    assert!(reply.error.is_some());
+    assert_eq!(f.coordinator.inventory().unwrap().entries.len(), 1);
+    // Freeing the name restores the edited destination's Discard.
     fs::remove_file(&f.source).unwrap();
     assert!(resolve(&f, RecoveryChoice::Discard).is_none());
     f.assert_retired();
     assert_eq!(fs::read(&f.target).unwrap(), EDIT);
+}
+
+/// Unverifiable recovery roots are never proof that a record is stranded: it
+/// is preserved, with no Forget, rather than released.
+#[test]
+fn unverifiable_roots_are_never_forgettable() {
+    for attack in ["manifest", "missing-root"] {
+        let f = Fixture::new(true, true, false);
+        match attack {
+            "manifest" => fs::write(f.roots[0].join("manifest.intent"), b"corrupt").unwrap(),
+            "missing-root" => fs::rename(&f.roots[1], f.roots[1].with_extension("saved")).unwrap(),
+            _ => unreachable!(),
+        }
+        let item = inspect(&f);
+        assert!(
+            !item.actions.contains(&RecoveryChoice::Release),
+            "{attack}: {:?}: {}",
+            item.actions,
+            item.message
+        );
+        let reply = service::resolve(
+            &f.coordinator,
+            &f.id,
+            item.generation,
+            RecoveryChoice::Release,
+        )
+        .unwrap();
+        assert!(reply.error.is_some(), "{attack}");
+        assert_eq!(
+            f.coordinator.inventory().unwrap().entries.len(),
+            1,
+            "{attack}"
+        );
+    }
 }
 
 /// An interrupted discard resumed after the destination was edited finishes

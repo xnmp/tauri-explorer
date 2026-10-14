@@ -302,15 +302,18 @@ cannot succeed, nor keep claims on files it can no longer act on.
   the destination is edited instead of withdrawing.
 - **Forget ends what nothing else can.** Beyond a stopped discard,
   `RecoveryChoice::Release` is offered and accepted for a move record only
-  when, under the same ownership, Restore is refused from verified roots and a
-  retained record's discard is preserved by successful observation. That
-  covers a restoration stranded with the source home (an edit or growth that
-  raced Undo, or a record left by earlier builds), a restored cross-volume
-  move whose destination was deleted (no `publication` to retire), and a
-  settled record whose endpoints no longer allow either action. An
-  unobservable volume or root is never proof, so such a record waits. A
-  restoration whose source is still parked may always bring it home first.
-  Forget deletes nothing; its folders stay where they are listed.
+  when, under the same ownership, Restore is refused for a *lasting* reason
+  from verified roots (a changed or missing moved entry, retained original or
+  destination; once the source is home again, also a destination that no
+  longer fits or reads) or the move is already restored, and a retained
+  record's discard is preserved by successful observation. That covers a
+  restoration stranded with the source home (an edit or growth that raced
+  Undo, or a record left by earlier builds) and a restored cross-volume move
+  whose destination was deleted (no `publication` to retire). A refusal the
+  user can resolve, such as a new entry at the source name, and an
+  unobservable volume or unverifiable root are never proof, so such a record
+  waits. A restoration whose source is still parked may always bring it home
+  first. Forget deletes nothing; its folders stay where they are listed.
 - **Claims.** A settled record, now the only position an edited destination
   leaves it in, already releases its public endpoints once idle (only its
   private roots stay claimed). Discard or Forget then retires the record and

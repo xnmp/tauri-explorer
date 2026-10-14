@@ -29,7 +29,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `AboutDialog.svelte` — lazy About modal showing the running application's version through the existing app-info IPC bridge; shared modal dismissal and focus ownership.
 - `OpenWithDialog.svelte` — accessible installed-application choice with captured filename, loading/empty/error feedback and unchanged-default messaging.
 
-- `FileList.svelte` — dispatches to Details/List/Tiles by view mode; hosts marquee, drop, empty-state. Central view entry.
+- `FileList.svelte` — dispatches to Details/List/Tiles by view mode; hosts marquee (band drawn by transform-only layers from `domain/marquee-rect.ts`, #1051), drop, empty-state. Central view entry.
 - `PluginInspector.svelte` — selection-aware right-side host for plugin inspector contributions; hidden when none apply.
 - `src/lib/components/PluginContributionRoot.svelte` — establishes host-issued DOM ownership before mounting a contributed component; transparent wrapper for dialogs, file views, inspectors, Preview sections and editor tools.
 - `PluginFileView.svelte` — hosts a plugin file view (SDK 2) in place of a pane's listing, with a pane-scoped handle; error boundary offers retry or return to files, and Preview targets it owned are cleared on unmount.
@@ -445,6 +445,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `csv-preview.ts` — quoted CSV parser for PreviewPane table data, bounded to the preview's data-row limit (#666).
 - `pdf-preview.ts` — pure PDF fit, zoom-anchor, measured pointer coordinates, pan bounds and safe-link policy (#728–#730).
 - `markdown.ts` — safe markdown render for preview.
+- `marquee-rect.ts` — marquee band geometry as compositor-only `transform`s for five container-sized layers (fill + four 1px edges sized to the client box, scaled down so fractional zoom rasterises exactly); a resized band element repainted its layer over every image tile per frame on WebKitGTK (#1051).
 - `zoom.ts` — CSS zoom level utils.
 - `raf-coalesce.ts` — coalesce high-freq value streams via rAF.
 - `scroll-jank-monitor.ts` — pure rAF-gap sampler (rAF/cancel injected) reporting long-frame counts for scroll-jank diagnostics; wired into `TilesView.svelte` (#593).

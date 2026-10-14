@@ -48,6 +48,7 @@ backend for E2E/browser).
 - SDK 2 job retry (capability `jobRetry`): `PluginJobs.accept` registration `retry` (`plugins/api.ts`) → `state/plugin-jobs.ts` → `state/jobs.svelte.ts` `retryJob` → Retry on failed entries in `components/ProgressDialog.svelte` and `components/JobsPanel.svelte` via `composables/use-job-retry.ts` (`e2e/plugin-job-retry.spec.ts`). `ctx.jobs` is `scopePluginJobs(pluginId)`: disposing the context drops Retry from that plugin's entries.
 
 - `composables/use-marquee-selection.svelte.ts` — drag-rect candidate set + hit-testing
+- `domain/marquee-rect.ts` — band geometry as translate+scale transforms for container-sized fill/edge layers, so a pointer frame never resizes (and WebKitGTK never repaints) a layer over image tiles; `e2e/marquee-compositor-only.spec.ts` + `e2e/marquee-compositor-only-scrollbar.spec.ts` (shared `e2e/marquee-band-verify.ts`, `e2e/png-pixels.ts`) prove the rasterised band at fractional zoom and beside a classic scrollbar (#1051)
 - `composables/use-item-interactions.svelte.ts` — click/ctrl/shift selection, focus
 - `domain/file-list-navigation.ts` — pure cursor resolution and keyboard movement/selection intents
 - `state/file-list-focus-context.ts` — inline editor keyboard completion borrows FileList focus ownership across row replacement

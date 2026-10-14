@@ -19,6 +19,7 @@
   import { isImageFile } from "$lib/domain/file-types";
   import { parentDir, basename } from "$lib/domain/path";
   import { rectDimToCSS } from "$lib/domain/zoom";
+  import { marqueeLayerTransforms } from "$lib/domain/marquee-rect";
   import DetailsView from "./DetailsView.svelte";
   import ListView from "./ListView.svelte";
   import TilesView from "./TilesView.svelte";
@@ -99,6 +100,15 @@
 
   // Cached container rect for the duration of a marquee drag (avoids forced layout per mousemove)
   let cachedDragRect: DOMRect | null = null;
+  // The band layers are sized to the container (CSS px, the band's own
+  // coordinate space); their transforms scale that base down to the band.
+  // Read the client box, not the bounding rect: `width/height: 100%` resolve
+  // against the padding box, which excludes a scrollbar on `.content`.
+  let marqueeBase = $state.raw({ width: 0, height: 0 });
+  function setMarqueeBase(): void {
+    if (!contentRef) return;
+    marqueeBase = { width: contentRef.clientWidth, height: contentRef.clientHeight };
+  }
   // Cached marquee indices to skip redundant selectByIndices calls when the covered items haven't changed
   let lastMarqueeIndices: number[] | null = null;
 
@@ -112,6 +122,7 @@
       flushSync(() => { contentWidth = width; });
       if (cachedDragRect) {
         cachedDragRect = contentRef!.getBoundingClientRect();
+        setMarqueeBase();
       }
     });
     observer.observe(contentRef);
@@ -304,6 +315,7 @@
     const rect = contentRef?.getBoundingClientRect();
     if (!rect) return;
     cachedDragRect = rect;
+    setMarqueeBase();
     marquee.start(event, rect, marqueeHeaderHeight());
   }
 
@@ -511,12 +523,16 @@
       />
     {/if}
 
-    <!-- Marquee selection rectangle -->
+    <!-- Marquee selection rectangle. Five fixed-size layers moved and scaled
+         by transform only: resizing one element's width/height each frame
+         repainted its layer over every image tile beneath it (#1051). -->
     {#if marquee.isDragging && marquee.marqueeRect}
-      <div
-        class="marquee-rect"
-        style="transform: translate({marquee.marqueeRect.left}px, {marquee.marqueeRect.top}px); width: {marquee.marqueeRect.width}px; height: {marquee.marqueeRect.height}px;"
-      ></div>
+      {@const band = marqueeLayerTransforms(marquee.marqueeRect, marqueeBase)}
+      <div class="marquee-rect" style:transform={band.fill}></div>
+      <div class="marquee-edge horizontal" style:transform={band.top}></div>
+      <div class="marquee-edge horizontal" style:transform={band.bottom}></div>
+      <div class="marquee-edge vertical" style:transform={band.left}></div>
+      <div class="marquee-edge vertical" style:transform={band.right}></div>
     {/if}
   </div>
 </div>
@@ -562,17 +578,39 @@
     box-shadow: inset 0 0 0 2px var(--accent);
   }
 
-  /* Marquee selection rectangle */
-  .marquee-rect {
+  /* Marquee selection rectangle: compositor-only layers. Their intrinsic
+     size is the container's and never changes during a drag; `transform`
+     carries the band geometry (#1051). The fill's bounding box is still the
+     band, so test probes keep reading it. */
+  .marquee-rect,
+  .marquee-edge {
     position: absolute;
     left: 0;
     top: 0;
-    background: color-mix(in srgb, var(--accent) 15%, transparent);
-    border: 1px solid var(--accent);
-    border-radius: 2px;
+    transform-origin: 0 0;
     pointer-events: none;
     z-index: 10;
-    will-change: transform, width, height;
+    will-change: transform;
+  }
+
+  .marquee-rect {
+    width: 100%;
+    height: 100%;
+    background: color-mix(in srgb, var(--accent) 15%, transparent);
+  }
+
+  .marquee-edge {
+    background: var(--accent);
+  }
+
+  .marquee-edge.horizontal {
+    width: 100%;
+    height: 1px;
+  }
+
+  .marquee-edge.vertical {
+    width: 1px;
+    height: 100%;
   }
 
   /* Status states */

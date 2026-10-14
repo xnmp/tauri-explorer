@@ -44,12 +44,14 @@ jobs:
       pull-requests: read
     outputs:
       code: ${{ github.event_name != 'pull_request' && 'true' || steps.filter.outputs.code }}
+      clipboard: ${{ contains(steps.filter.outputs.code_files, 'clipboard') }}
     steps:
       - id: filter
         if: github.event_name == 'pull_request'
         uses: dorny/paths-filter@v3
         with:
           # A file is code unless it matches a docs exclusion.
+          list-files: json
           predicate-quantifier: every
           filters: |
             code:
@@ -63,10 +65,10 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # PRs run only the required `smoke (ubuntu-latest)` context (docs-only PRs
-        # report it with every step skipped); Windows runs on dev/main pushes and
-        # dispatches (tauri#1133). Non-PR events always count as code.
-        os: ${{ fromJSON(github.event_name == 'pull_request' && '["ubuntu-latest"]' || ((inputs.native_scope == 'clipboard' || inputs.native_scope == 'transfer') && '["windows-latest"]' || '["ubuntu-latest","windows-latest"]')) }}
+        # Clipboard changes also qualify Windows before merge: renderer mocks
+        # cannot prove native file-list ordering. Other PRs retain the required
+        # Linux-only context; non-PR events always count as code.
+        os: ${{ fromJSON(github.event_name == 'pull_request' && needs.changes.outputs.clipboard != 'true' && '["ubuntu-latest"]' || ((inputs.native_scope == 'clipboard' || inputs.native_scope == 'transfer') && '["windows-latest"]' || '["ubuntu-latest","windows-latest"]')) }}
     runs-on: ${{ matrix.os }}
     # The Windows debug build alone is ~12 minutes, so a 25-minute job cap left
     # no room for a full suite run: a step bound generous enough to let the
@@ -294,7 +296,7 @@ jobs:
         run: |
           cargo test --manifest-path src-tauri/Cargo.toml --lib -- --list > "$RUNNER_TEMP/windows-rust-contracts.list"
           contract_status=0
-          for filter in files::batch:: files::windows_paths:: files::restore_outcome files::trash_outcome git::tests::trash_untracked git::tests::directory_scope files::watch_observation:: git_watch::tests::native_observer; do
+          for filter in clipboard:: files::batch:: files::windows_paths:: files::restore_outcome files::trash_outcome git::tests::trash_untracked git::tests::directory_scope files::watch_observation:: git_watch::tests::native_observer; do
             # Cargo succeeds with zero matching tests. Fail explicitly when a
             # source/module move leaves one of these acceptance filters stale.
             if ! awk -v filter="$filter" 'index($0, filter) && /: test$/ { found = 1 } END { exit !found }' "$RUNNER_TEMP/windows-rust-contracts.list"; then
@@ -345,7 +347,7 @@ jobs:
         env:
           VITE_E2E_NO_WARM_PRIME: "1"
           RUST_LOG: debug
-          NATIVE_SCOPE: ${{ inputs.native_scope || 'all' }}
+          NATIVE_SCOPE: ${{ inputs.native_scope || (github.event_name == 'pull_request' && needs.changes.outputs.clipboard == 'true' && 'clipboard') || 'all' }}
           CLIPBOARD_RUNS: ${{ inputs.clipboard_runs || 1 }}
         run: |
           set -euo pipefail
@@ -357,7 +359,7 @@ jobs:
             failures=0
             for ((i = 1; i <= CLIPBOARD_RUNS; i++)); do
               printf 'Clipboard diagnostic session %s/%s\n' "$i" "$CLIPBOARD_RUNS"
-              if bunx wdio run e2e-tauri/wdio.conf.ts --spec e2e-tauri/specs/context-clipboard.spec.ts; then
+              if bunx wdio run e2e-tauri/wdio.conf.ts --spec e2e-tauri/specs/context-clipboard.spec.ts --spec e2e-tauri/specs/clipboard-cross-window.spec.ts; then
                 printf 'Clipboard diagnostic session %s passed\n' "$i"
               else
                 printf 'Clipboard diagnostic session %s failed\n' "$i"
@@ -441,6 +443,14 @@ jobs:
           path: |
             logs/
             e2e-tauri/logs/
+          if-no-files-found: ignore
+
+      - name: Upload cross-window clipboard acceptance
+        if: ${{ always() && needs.changes.outputs.code == 'true' }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: clipboard-cross-window-${{ matrix.os }}
+          path: evidence/835-*.png
           if-no-files-found: ignore
 
       - name: Upload native clipboard image acceptance

@@ -412,3 +412,11 @@ the same lifecycle. The command declares window scope for destination admission.
 Browser evidence for this surface must finish CSS
 animations (`page.screenshot({ animations: "disabled", ... })`): a visible DOM
 assertion can succeed on the first transparent frame of the shared modal fade.
+
+File clipboard writes are accepted by the process-wide Rust worker. Publish
+its revision invalidation from the accepted native job too: the originating
+renderer can close before its IPC response and otherwise leave surviving
+windows with stale clipboard state. Controlled ordering tests belong around
+`spawn_worker`'s backend, not only a serialized frontend mock. Native hook builds
+can hold a write with a hidden `.<filename>.clipboard-hold` sidecar (30-second
+failure guard); `.queued` and `.started` sidecars acknowledge native progress.

@@ -68,8 +68,10 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # Docs-only PRs need just the required ubuntu context, which reports with every step skipped.
-        os: ${{ fromJSON(needs.changes.outputs.code != 'true' && '["ubuntu-latest"]' || ((inputs.native_scope == 'clipboard' || inputs.native_scope == 'transfer') && '["windows-latest"]' || '["ubuntu-latest","windows-latest"]')) }}
+        # PRs run the required Linux context only (with every step skipped on a
+        # docs-only PR). Windows (~25-45 min) runs in the merge queue, on dev and
+        # on demand (#1133); `tauri-smoke` below is its required-check handle.
+        os: ${{ fromJSON(github.event_name == 'pull_request' && '["ubuntu-latest"]' || ((inputs.native_scope == 'clipboard' || inputs.native_scope == 'transfer') && '["windows-latest"]' || '["ubuntu-latest","windows-latest"]')) }}
     runs-on: ${{ matrix.os }}
     # The Windows debug build alone is ~12 minutes, so a 25-minute job cap left
     # no room for a full suite run: a step bound generous enough to let the
@@ -463,3 +465,19 @@ jobs:
           name: native-pdf-${{ matrix.os }}
           path: screenshots/fix/728-zooming-in-pdf-in-preview-isnt-centred/*native-windows*.png
           if-no-files-found: ignore
+
+  # Required-check handle for every smoke platform (#1133). The matrix context
+  # `smoke (windows-latest)` never appears on a PR, so the ruleset requires
+  # this one instead: skipped (passing) on PRs, and in the merge queue it
+  # requires the Linux and Windows smoke both to succeed.
+  tauri-smoke:
+    if: ${{ !cancelled() && github.event_name != 'pull_request' }}
+    needs: [changes, smoke]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Require every smoke platform
+        env:
+          CHANGES_RESULT: ${{ needs.changes.result }}
+          SMOKE_RESULT: ${{ needs.smoke.result }}
+        run: test "$CHANGES_RESULT" = success && test "$SMOKE_RESULT" = success

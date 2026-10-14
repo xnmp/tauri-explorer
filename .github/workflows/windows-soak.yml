@@ -1,12 +1,12 @@
 name: Windows bounded native soak
 
 on:
+  # Queue tier (#1133): the jobs below never run for a pull request; they run
+  # in the merge queue, on dev and on demand. The unfiltered pull_request
+  # trigger exists only so each job posts a skipped, and therefore passing,
+  # check that the ruleset can require without blocking PRs.
   pull_request:
     branches: [dev, main]
-    paths:
-      - '.github/workflows/windows-soak.yml'
-      - 'scripts/*native*'
-      - 'e2e-tauri/**'
   push:
     branches: [dev]
     paths:
@@ -25,7 +25,7 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  # merge_group ignores trigger-level paths, so queue runs apply the same
+  # merge_group ignores trigger-level paths, so queue runs apply the push
   # list here (keep it in sync). Runs only for merge_group; a failure leaves
   # the output empty, which the gated jobs treat as changed.
   changes:
@@ -46,7 +46,7 @@ jobs:
 
   bounded-soak:
     needs: changes
-    if: ${{ !cancelled() && (github.event_name != 'merge_group' || needs.changes.outputs.run != 'false') }}
+    if: ${{ !cancelled() && github.event_name != 'pull_request' && (github.event_name != 'merge_group' || needs.changes.outputs.run != 'false') }}
     runs-on: windows-latest
     timeout-minutes: 45
     steps:

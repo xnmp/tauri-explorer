@@ -14,11 +14,12 @@ on:
     paths:
       - "src-tauri/**"
       - ".github/workflows/rust-platforms.yml"
+  # Queue tier (#1133): the jobs below never run for a pull request; they run
+  # in the merge queue, on dev and on demand. The unfiltered pull_request
+  # trigger exists only so each job posts a skipped, and therefore passing,
+  # check that the ruleset can require without blocking PRs.
   pull_request:
     branches: [main, dev]
-    paths:
-      - "src-tauri/**"
-      - ".github/workflows/rust-platforms.yml"
   # Merge queue (#1133). head_ref is empty for merge_group, so the concurrency
   # group falls back to the entry's unique gh-readonly-queue/... ref and queue
   # entries never cancel each other or a PR run.
@@ -33,7 +34,7 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  # merge_group ignores trigger-level paths, so queue runs apply the same
+  # merge_group ignores trigger-level paths, so queue runs apply the push
   # list here (keep it in sync). Runs only for merge_group; a failure leaves
   # the output empty, which the gated jobs treat as changed.
   changes:
@@ -51,12 +52,12 @@ jobs:
             src-tauri/**
             .github/workflows/rust-platforms.yml
 
-  # Not `rust`: a matrix job skipped by its `if` (as here, in a merge group
-  # that leaves src-tauri alone) reports its bare job name, which would be a
-  # second check named like ci.yml's required `rust` context.
-  rust-platforms:
+  # Not `rust`: a matrix job skipped by its `if` (as here, on every PR and in
+  # a merge group that leaves src-tauri alone) reports its bare job name,
+  # which would be a second check named like ci.yml's required `rust` context.
+  rust-platforms-suite:
     needs: changes
-    if: ${{ !cancelled() && (github.event_name != 'merge_group' || needs.changes.outputs.run != 'false') }}
+    if: ${{ !cancelled() && github.event_name != 'pull_request' && (github.event_name != 'merge_group' || needs.changes.outputs.run != 'false') }}
     strategy:
       fail-fast: false
       matrix:
@@ -146,3 +147,24 @@ jobs:
             & fsutil.exe 8dot3name set $policy
             if ($LASTEXITCODE -ne 0) { throw "Could not restore original NTFS 8.3 policy $policy" }
           }
+
+  # Required-check handle (#1133): matrix contexts never appear on a PR, so the
+  # ruleset requires this one. Skipped (passing) on PRs; in the merge queue it
+  # requires both platforms unless the entry leaves the Rust inputs alone.
+  rust-platforms:
+    if: ${{ !cancelled() && github.event_name != 'pull_request' }}
+    needs: [changes, rust-platforms-suite]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Require every platform suite
+        env:
+          EVENT: ${{ github.event_name }}
+          RUST_INPUTS_CHANGED: ${{ needs.changes.outputs.run }}
+          SUITE_RESULT: ${{ needs.rust-platforms-suite.result }}
+        run: |
+          if [ "$EVENT" = merge_group ] && [ "$RUST_INPUTS_CHANGED" = false ]; then
+            test "$SUITE_RESULT" = skipped
+          else
+            test "$SUITE_RESULT" = success
+          fi

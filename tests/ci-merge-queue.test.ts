@@ -13,12 +13,11 @@ import { parse } from "yaml";
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const workflowsDir = join(root, ".github/workflows");
 
-// Neither produces a check a dev PR must pass: image-crop is a PR-only codec
-// probe and shared-ai-services runs its only job on workflow_dispatch.
-const NOT_QUEUED = new Set(["image-crop.yml", "shared-ai-services.yml"]);
+// image-crop is a non-required, PR-only codec probe.
+const NOT_QUEUED = new Set(["image-crop.yml"]);
 
 type Job = { needs?: string | string[]; if?: string; steps?: { uses?: string; with?: { patterns?: string } }[] };
-type Workflow = { on: Record<string, { paths?: string[] } | null>; jobs: Record<string, Job> };
+type Workflow = { on: Record<string, { paths?: string[]; branches?: string[] } | null>; jobs: Record<string, Job> };
 
 function workflows(): [string, Workflow][] {
   return readdirSync(workflowsDir)
@@ -36,13 +35,13 @@ describe("merge queue triggers", () => {
     expect(missing).toEqual([]);
   });
 
-  it("path-filtered queue workflows apply exactly their pull_request paths to merge groups", () => {
+  it("path-filtered queue workflows apply exactly their push paths to merge groups", () => {
     for (const [name, wf] of queued()) {
-      const paths = wf.on.pull_request?.paths;
-      if (!paths) continue;
       const filter = wf.jobs.changes?.steps?.find((step) => step.uses === "./.github/actions/merge-group-paths");
-      expect(filter, `${name} merge_group path filter`).toBeDefined();
-      const patterns = filter!.with!.patterns!.split("\n").filter(Boolean);
+      if (!filter) continue;
+      const paths = wf.on.push?.paths;
+      expect(paths, `${name} push paths`).toBeDefined();
+      const patterns = filter.with!.patterns!.split("\n").filter(Boolean);
       expect(patterns, name).toEqual(paths);
     }
   });
@@ -63,15 +62,59 @@ describe("merge queue triggers", () => {
   });
 
   it("gates every path-filtered job on the filter, running it when the filter fails", () => {
-    const gate = "${{ !cancelled() && (github.event_name != 'merge_group' || needs.changes.outputs.run != 'false') }}";
+    const gate =
+      "${{ !cancelled() && github.event_name != 'pull_request' && (github.event_name != 'merge_group' || needs.changes.outputs.run != 'false') }}";
     for (const [name, wf] of queued()) {
-      if (!wf.on.pull_request?.paths) continue;
+      if (!wf.jobs.changes?.steps?.some((step) => step.uses === "./.github/actions/merge-group-paths")) continue;
       for (const [id, job] of Object.entries(wf.jobs)) {
-        if (id === "changes") continue;
+        if (id === "changes" || [job.needs].flat().length > 1) continue;
         expect(job.needs, `${name}:${id}`).toBe("changes");
         expect(job.if, `${name}:${id}`).toBe(gate);
       }
     }
+  });
+});
+
+// Queue tier (#1133): suites too slow or too scarce (macOS, Windows) to run on
+// every PR push. They run in the merge queue, on dev and on demand.
+const QUEUE_TIER: Record<string, string[]> = {
+  "e2e-tauri.yml": ["tauri-smoke"],
+  "macos-smoke.yml": ["launch-smoke"],
+  "macos-native-ui.yml": ["native-ui"],
+  "rust-platforms.yml": ["rust-platforms-suite", "rust-platforms"],
+  "native-recovery.yml": ["recovery"],
+  "windows-soak.yml": ["bounded-soak"],
+  "windows-installer.yml": ["invocation"],
+  "perf.yml": ["perf-check", "tiles-scroll-perf"],
+};
+const SKIPS_PRS = "github.event_name != 'pull_request'";
+
+describe("cheap and expensive tiers", () => {
+  const byName = new Map(workflows());
+
+  it.each(Object.entries(QUEUE_TIER))("%s runs its queue-tier jobs everywhere but pull requests", (file, jobs) => {
+    const wf = byName.get(file)!;
+    for (const id of jobs) expect(wf.jobs[id]?.if, `${file}:${id}`).toContain(SKIPS_PRS);
+    expect(wf.on).toHaveProperty("merge_group");
+    expect(wf.on).toHaveProperty("workflow_dispatch");
+    expect((wf.on.push as { branches?: string[] }).branches).toContain("dev");
+    // Unfiltered, so each job posts its skipped (passing) check on every PR
+    // and the ruleset can require it in the merge queue without blocking PRs.
+    expect(wf.on.pull_request?.paths, file).toBeUndefined();
+  });
+
+  it("keeps the cheap tier on every pull request", () => {
+    const perPr = [
+      ...Object.entries(byName.get("ci.yml")!.jobs),
+      ["smoke", byName.get("e2e-tauri.yml")!.jobs.smoke] as const,
+    ];
+    for (const [id, job] of perPr) expect(job.if ?? "", id).not.toContain(SKIPS_PRS);
+  });
+
+  it("builds only the Linux smoke for a pull request", () => {
+    const os = (byName.get("e2e-tauri.yml")!.jobs.smoke as { strategy: { matrix: { os: string } } }).strategy.matrix.os;
+    expect(os.startsWith(`\${{ fromJSON(github.event_name == 'pull_request' && '["ubuntu-latest"]' ||`)).toBe(true);
+    expect(os).toContain(`'["ubuntu-latest","windows-latest"]'`);
   });
 });
 

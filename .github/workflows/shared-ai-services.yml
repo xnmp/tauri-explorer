@@ -1,14 +1,8 @@
 name: Shared AI native acceptance
 
+# Its only job runs on workflow_dispatch (it needs a TraceExplorer revision),
+# so PRs no longer start an empty run (#1133).
 on:
-  pull_request:
-    branches: [dev, main]
-    paths:
-      - 'src-tauri/src/ai/**'
-      - 'src-tauri/src/installed_plugins/**'
-      - 'src-tauri/src/service_state/**'
-      - 'src-tauri/test_support/legacy_trace_preflight.py'
-      - '.github/workflows/shared-ai-services.yml'
   push:
     branches: [dev, main]
     paths:

@@ -67,23 +67,34 @@ async function expectMatchingDelivery(page: Page) {
   for (const sample of samples) expect(sample.actual, JSON.stringify(sample)).toBe(sample.expected);
 }
 
+async function nextFrames(page: Page) {
+  await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
+}
+
+// Fullscreen leaves the Files area at its docked size: neither entering nor
+// leaving it resizes the tile surface, so no track has to catch up.
 for (const exit of ["Escape", "double-click"] as const) {
-  test(`tile tracks match restored width during fullscreen ${exit} exit`, async ({ page }) => {
+  test(`fullscreen ${exit} exit does not resize the tile surface`, async ({ page }) => {
     await openTiles(page);
     const selected = page.locator(".tile-item.selected");
     await expect(selected).toHaveCount(1);
     const before = await selected.innerText();
+    await nextFrames(page);
+    await clearSamples(page);
     await page.locator(".preview-image").click();
     await expect(page.locator(".preview-pane")).toHaveClass(/fullscreen/);
-    // Wait for the expanded background grid to settle before measuring exit.
-    await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
-    await clearSamples(page);
+    await nextFrames(page);
     if (exit === "Escape") await page.keyboard.press("Escape");
     // Target the pane handler directly: image descendants own their clicks.
     else await page.locator(".preview-pane").dispatchEvent("dblclick");
     await expect(page.locator(".preview-pane")).not.toHaveClass(/fullscreen/);
-    await expectMatchingDelivery(page);
+    await nextFrames(page);
+    expect(await page.evaluate(() =>
+      (window as unknown as { tileLayoutSamples: unknown[] }).tileLayoutSamples), "tile surface resizes").toEqual([]);
     await expect(selected).toHaveText(before);
+    // Positive control: the probe does observe a real resize.
+    await page.setViewportSize({ width: 900, height: 720 });
+    await expectMatchingDelivery(page);
     if (exit === "Escape") await page.screenshot({ path: "evidence/ac-1-fullscreen-exit-tiles.png" });
   });
 }

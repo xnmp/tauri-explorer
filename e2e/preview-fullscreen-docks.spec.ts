@@ -93,3 +93,75 @@ test.describe("Fullscreen preview dock geometry", () => {
     });
   }
 });
+
+/** Layout box of every workspace (explorer) pane, in document order. */
+async function workspacePaneRects(page: Page): Promise<DOMRect[]> {
+  return page.locator(".explorer-pane").evaluateAll((panes) =>
+    panes.map((pane) => pane.getBoundingClientRect().toJSON() as DOMRect));
+}
+
+/** Workspace pane rects once they hold for several frames. A window resize
+    restacks the inspector a few frames later, docked or fullscreen alike. */
+async function settledWorkspacePaneRects(page: Page): Promise<DOMRect[]> {
+  return page.evaluate(async () => {
+    const read = () => JSON.stringify([...document.querySelectorAll(".explorer-pane")]
+      .map((pane) => pane.getBoundingClientRect().toJSON()));
+    const frame = () => new Promise((resolve) => requestAnimationFrame(resolve));
+    let last = read();
+    for (let frames = 0, stable = 0; stable < 5; frames++) {
+      if (frames > 120) throw new Error("workspace panes never settled");
+      await frame();
+      const next = read();
+      stable = next === last ? stable + 1 : 0;
+      last = next;
+    }
+    return JSON.parse(last) as DOMRect[];
+  });
+}
+
+/* Fullscreen covers the workspace; it must not also resize it. The panes stay
+   laid out for the docked preview, so a plugin view under the overlay does not
+   reflow for a size it will never be shown at. */
+test.describe("Fullscreen preview leaves the workspace panes in place", () => {
+  for (const [dock, command] of [
+    ["right", null],
+    ["bottom", "Dock Preview Pane Bottom"],
+    ["top", "Dock Preview Pane Top"],
+  ] as const) {
+    test(`${dock} dock: workspace panes keep their size through fullscreen`, async ({ page }) => {
+      await openPicturesWithPreview(page);
+      if (command) await dockPreview(page, command);
+      const pane = page.locator(".preview-pane");
+      const image = await selectImage(page);
+      const docked = await workspacePaneRects(page);
+      expect(docked.length).toBeGreaterThan(0);
+
+      await image.click();
+      await expect(pane).toHaveClass(/fullscreen/);
+      await expectFullscreenViewport(page, pane);
+      expect(await workspacePaneRects(page)).toEqual(docked);
+
+      await page.locator(".preview-image").click();
+      await expect(pane).not.toHaveClass(/fullscreen/);
+      expect(await workspacePaneRects(page)).toEqual(docked);
+    });
+
+    test(`${dock} dock: a window resize during fullscreen lays the panes out as if docked`, async ({ page }) => {
+      await openPicturesWithPreview(page);
+      if (command) await dockPreview(page, command);
+      const pane = page.locator(".preview-pane");
+      const image = await selectImage(page);
+      const viewport = page.viewportSize()!;
+
+      await image.click();
+      await expect(pane).toHaveClass(/fullscreen/);
+      await page.setViewportSize({ width: viewport.width - 200, height: viewport.height - 120 });
+      await expectFullscreenViewport(page, pane);
+      const resizedFullscreen = await settledWorkspacePaneRects(page);
+
+      await page.locator(".preview-image").click();
+      await expect(pane).not.toHaveClass(/fullscreen/);
+      expect(await workspacePaneRects(page)).toEqual(resizedFullscreen);
+    });
+  }
+});

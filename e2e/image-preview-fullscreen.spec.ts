@@ -72,6 +72,23 @@ test.describe("Image preview click-to-fullscreen", () => {
     expect(bg).not.toBe("transparent");
   });
 
+  test("a click on the checkerboard around the picture does not enter fullscreen (#1078)", async ({ page }) => {
+    await openPicturesWithPreview(page);
+    const img = await selectAndWaitForImage(page, "photo1.jpg");
+    const pane = page.locator(".preview-pane");
+    const container = page.locator(".preview-image-container");
+
+    await expect(img).toHaveCSS("cursor", "zoom-in");
+    await expect(container).not.toHaveCSS("cursor", "zoom-in");
+
+    // The 20px padding around the picture is checkerboard background.
+    await container.click({ position: { x: 4, y: 4 } });
+    await expect(pane).not.toHaveClass(/fullscreen/);
+
+    await img.click();
+    await expect(pane).toHaveClass(/fullscreen/);
+  });
+
   test("Escape also exits the clicked-open fullscreen", async ({ page }) => {
     await openPicturesWithPreview(page);
     const img = await selectAndWaitForImage(page, "photo2.jpg");

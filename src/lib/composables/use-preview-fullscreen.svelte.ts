@@ -138,14 +138,19 @@ export function createPreviewFullscreen(options: PreviewFullscreenOptions = {}) 
     panning = false;
   }
 
-  /** A clean click at fit zoom toggles; a drag release or a click while zoomed does not. */
-  function click(event: ClickInput): void {
+  /**
+   * A clean click at fit zoom toggles, but entering fullscreen needs the click
+   * to land on the picture; in fullscreen any clean fit-zoom click exits. A
+   * drag release or a click while zoomed does not toggle.
+   */
+  function click(event: ClickInput, onPicture: boolean): void {
     event.stopPropagation();
     if (panMoved) {
       panMoved = false;
       return;
     }
     if (active && view.zoom > 1) return;
+    if (!active && !onPicture) return;
     toggle();
   }
 

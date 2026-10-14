@@ -21,7 +21,7 @@ import { openFile } from "$lib/api/open";
   import { toastStore } from "$lib/state/toast.svelte";
   import { isImageFile, isSvgFile, isTextFile, isPdfFile, isVideoFile, isVideoMediaFile, isZipFile, getFileType, formatDate } from "$lib/domain/file-types";
   import VideoIndicator from "./VideoIndicator.svelte";
-  import { formatSize, isSystemHidden, type FileEntry } from "$lib/domain/file";
+  import { formatResolution, formatSize, isSystemHidden, type FileEntry } from "$lib/domain/file";
   import { extractError } from "$lib/api/common";
   import { highlightCode, highlightDiffLine } from "$lib/domain/syntax-highlight";
   import { renderMarkdown } from "$lib/domain/markdown";
@@ -159,6 +159,14 @@ import { openFile } from "$lib/api/open";
 
   // Preview content state
   let previewImageUrl = $state<string | null>(null);
+  // Natural size reported by the <img>, keyed by URL so a held previous image
+  // or a new selection never shows another file's resolution (#1118).
+  let previewImageSize = $state<{ url: string; width: number; height: number } | null>(null);
+  const previewResolution = $derived(
+    previewImageUrl && previewImageSize?.url === previewImageUrl
+      ? formatResolution(previewImageSize.width, previewImageSize.height)
+      : "",
+  );
   // True while `previewImageUrl` is the previous file's image, kept on screen
   // while the next image loads and decodes. Blanking it in between left the
   // content empty for the decode and re-laid out the pane for those frames.
@@ -918,7 +926,8 @@ import { openFile } from "$lib/api/open";
           <VideoPreview path={previewVideo.path} name={previewVideo.name} fullscreen={fullscreen.active} ontogglefullscreen={fullscreen.toggle} />
         {/key}
       {:else if previewImageUrl}
-        <PreviewImageSurface src={previewImageUrl} alt={selectedFile.name} {fullscreen}>
+        <PreviewImageSurface src={previewImageUrl} alt={selectedFile.name} {fullscreen}
+          onresolution={(url, width, height) => (previewImageSize = { url, width, height })}>
           {#if previewImageNote}<p class="image-preview-note">{previewImageNote}</p>{/if}
           {#if previewImageHeld && showPreviewSpinner}
             <div class="preview-loading preview-loading-over-image"><div class="spinner"></div></div>
@@ -980,6 +989,14 @@ import { openFile } from "$lib/api/open";
           <div class="info-row">
             <span class="info-label">Size</span>
             <span class="info-value">{formatSize(selectedFile.size)}</span>
+          </div>
+        {/if}
+        {#if previewResolution}
+          <div class="info-row">
+            <!-- Short label: vertical docks give the metadata column ~80px, and a
+               longer one squeezes the figures to a sliver (#1118). -->
+            <span class="info-label">Pixels</span>
+            <span class="info-value">{previewResolution}</span>
           </div>
         {/if}
         <div class="info-row">

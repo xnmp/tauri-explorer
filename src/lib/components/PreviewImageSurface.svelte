@@ -14,9 +14,11 @@
     fullscreen: PreviewFullscreen;
     /** Overlays drawn over the image (notes, a loading spinner). */
     children?: Snippet;
+    /** Natural pixel size once the image has loaded (0×0 when unknown). */
+    onresolution?: (src: string, width: number, height: number) => void;
   }
 
-  let { src, alt, fullscreen, children }: Props = $props();
+  let { src, alt, fullscreen, children, onresolution }: Props = $props();
 </script>
 
 <!-- svelte-ignore a11y_no_static_element_interactions, a11y_click_events_have_key_events -->
@@ -39,6 +41,10 @@
     class:zoomed={fullscreen.active && fullscreen.zoom > 1}
     style:transform={fullscreen.transform}
     draggable="false"
+    onload={(e) => {
+      const img = e.currentTarget as HTMLImageElement;
+      onresolution?.(src, img.naturalWidth, img.naturalHeight);
+    }}
   />
   {@render children?.()}
   {#if fullscreen.active}

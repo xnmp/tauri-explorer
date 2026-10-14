@@ -5,6 +5,7 @@ pub(crate) mod ai;
 mod ai_organize;
 mod ai_rename;
 mod archive;
+mod child_env;
 mod clipboard;
 mod config;
 pub mod config_watch;

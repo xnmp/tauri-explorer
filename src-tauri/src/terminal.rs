@@ -724,6 +724,8 @@ fn spawn_shell_with(
         CommandBuilder::new(&shell)
     };
     cmd.env("TERM", "xterm-256color");
+    // The shell must not inherit renderer variables the app set for itself (#1079).
+    crate::child_env::scrub_pty(&mut cmd);
     if wsl_target.is_none() {
         if let Some(dir) = cwd.filter(|d| std::path::Path::new(d).is_dir()) {
             cmd.cwd(dir);

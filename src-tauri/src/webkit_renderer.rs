@@ -283,18 +283,63 @@ pub(crate) fn apply() -> RendererPlan {
         webkit: runtime_version(),
         nvidia_proprietary: std::path::Path::new("/sys/module/nvidia").exists(),
     };
-    let plan = plan(
-        host,
-        |name| std::env::var_os(name).map(|value| value.to_string_lossy().into_owned()),
-        has_usable_render_node,
+    // A self-restarted process inherits the variables its predecessor applied;
+    // those are the app's choice, not the user's (#1079).
+    let inherited = applied_marker(
+        std::env::var(crate::child_env::APPLIED_MARKER_VAR)
+            .ok()
+            .as_deref(),
     );
+    let get = |name: &str| {
+        (!inherited.contains(&name))
+            .then(|| std::env::var_os(name).map(|value| value.to_string_lossy().into_owned()))
+            .flatten()
+    };
+    let plan = plan(host, get, has_usable_render_node);
+    let app_set = app_set_names(&plan, get);
+    // Inherited choices that this run no longer makes must not linger.
+    for name in &inherited {
+        if !plan.set.iter().any(|(var, _)| var == name) {
+            std::env::remove_var(name);
+        }
+    }
     for name in &plan.unset {
         std::env::remove_var(name);
     }
     for (name, value) in plan.set {
         std::env::set_var(name, value);
     }
+    if app_set.is_empty() {
+        std::env::remove_var(crate::child_env::APPLIED_MARKER_VAR);
+    } else {
+        std::env::set_var(crate::child_env::APPLIED_MARKER_VAR, app_set.join(","));
+    }
+    crate::child_env::record_app_set(app_set);
     plan
+}
+
+/// Variables the plan sets that the user had not already set: exactly the ones
+/// children must not inherit. `get` reads the user's environment (with any
+/// restart-inherited app choices already hidden).
+pub(crate) fn app_set_names(
+    plan: &RendererPlan,
+    get: impl Fn(&str) -> Option<String>,
+) -> Vec<&'static str> {
+    plan.set
+        .iter()
+        .map(|(name, _)| *name)
+        .filter(|name| get(name).is_none())
+        .collect()
+}
+
+/// Known renderer variables named by the restart marker.
+fn applied_marker(marker: Option<&str>) -> Vec<&'static str> {
+    let listed: Vec<&str> = marker.into_iter().flat_map(|m| m.split(',')).collect();
+    USER_RENDERER_VARS
+        .iter()
+        .copied()
+        .filter(|var| listed.contains(var))
+        .collect()
 }
 
 #[cfg(test)]
@@ -335,6 +380,65 @@ mod tests {
 
     fn sets(plan: &RendererPlan, name: &str) -> bool {
         plan.set.iter().any(|(var, _)| *var == name)
+    }
+
+    #[test]
+    fn app_set_names_include_applied_and_exclude_user_set() {
+        let names = |plan: &RendererPlan, pairs: &[(&str, &str)]| app_set_names(plan, env(pairs));
+        // NVIDIA.
+        let nv = with_gpu(NVIDIA, env(&[]));
+        assert_eq!(
+            names(&nv, &[]),
+            [
+                "WEBKIT_DMABUF_RENDERER_FORCE_SHM",
+                "WEBKIT_FORCE_DMABUF_RENDERER"
+            ]
+        );
+        // Software GL.
+        let sw = without_gpu(NO_GPU, env(&[]));
+        assert_eq!(
+            names(&sw, &[]),
+            [
+                "WEBKIT_DISABLE_COMPOSITING_MODE",
+                "WEBKIT_DISABLE_DMABUF_RENDERER"
+            ]
+        );
+        // Old WebKitGTK on NVIDIA.
+        let old = with_gpu(
+            Host {
+                webkit: (2, 42),
+                ..NVIDIA
+            },
+            env(&[]),
+        );
+        assert_eq!(names(&old, &[]).len(), 2);
+        // cpu override: user already set the variable the override applies.
+        let cpu = with_gpu(MESA, env(&[(OVERRIDE_VAR, "cpu")]));
+        assert_eq!(names(&cpu, &[]), ["WEBKIT_SKIA_ENABLE_CPU_RENDERING"]);
+        assert!(names(&cpu, &[("WEBKIT_SKIA_ENABLE_CPU_RENDERING", "1")]).is_empty());
+        // Native / user-variable plans set nothing.
+        assert!(names(&with_gpu(MESA, env(&[])), &[]).is_empty());
+        let user = with_gpu(NVIDIA, env(&[("WEBKIT_DISABLE_COMPOSITING_MODE", "1")]));
+        assert!(names(&user, &[("WEBKIT_DISABLE_COMPOSITING_MODE", "1")]).is_empty());
+    }
+
+    #[test]
+    fn restart_marker_hides_inherited_app_choices_from_the_user_check() {
+        let inherited = applied_marker(Some(
+            "WEBKIT_DMABUF_RENDERER_FORCE_SHM,WEBKIT_FORCE_DMABUF_RENDERER,BOGUS",
+        ));
+        assert_eq!(inherited.len(), 2);
+        let raw = env(&[
+            ("WEBKIT_DMABUF_RENDERER_FORCE_SHM", "1"),
+            ("WEBKIT_FORCE_DMABUF_RENDERER", "1"),
+        ]);
+        let get = |name: &str| (!inherited.contains(&name)).then(|| raw(name)).flatten();
+        let plan = with_gpu(NVIDIA, get);
+        assert_eq!(plan.mode, RendererMode::SharedMemory);
+        assert!(!plan.reason.contains("set by the user"), "{}", plan.reason);
+        // Without the marker the same environment reads as the user's.
+        assert!(with_gpu(NVIDIA, &raw).reason.contains("set by the user"));
+        assert!(applied_marker(None).is_empty());
     }
 
     #[test]

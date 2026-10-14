@@ -184,6 +184,12 @@ fn launch_linux_trash_with_graphical_handler(directory: &std::path::Path) -> Res
         .into_iter()
         .chain(gio::AppInfo::recommended_for_type("inode/directory"))
         .chain(gio::AppInfo::all_for_type("inode/directory"));
+    // The file manager must not inherit renderer variables the app set for
+    // itself (#1079).
+    let context = gio::AppLaunchContext::new();
+    for name in crate::child_env::scrub_names() {
+        context.unsetenv(name);
+    }
     let mut seen = HashSet::new();
     let mut failures = Vec::new();
     for application in applications {
@@ -207,12 +213,9 @@ fn launch_linux_trash_with_graphical_handler(directory: &std::path::Path) -> Res
             continue;
         }
         let result = if application.supports_uris() {
-            application.launch_uris(&[uri.as_str()], None::<&gio::AppLaunchContext>)
+            application.launch_uris(&[uri.as_str()], Some(&context))
         } else {
-            application.launch(
-                &[gio::File::for_path(directory)],
-                None::<&gio::AppLaunchContext>,
-            )
+            application.launch(&[gio::File::for_path(directory)], Some(&context))
         };
         match result {
             Ok(()) => {
@@ -266,6 +269,7 @@ pub async fn open_recycle_bin() -> Result<(), AppError> {
             );
             let mut command = std::process::Command::new(launcher.program);
             command.args(&launcher.arguments);
+            crate::child_env::scrub_command(&mut command);
             match command.spawn() {
                 Ok(child) => {
                     let child_id = child.id();

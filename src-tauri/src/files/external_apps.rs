@@ -169,22 +169,22 @@ fn spawn_editor(
     // (std::path::absolute keeps symlinks intact and avoids \\?\ on Windows).
     let file_path = std::path::absolute(file_path)?;
     match editor.format {
-        LineFormat::GotoColon => std::process::Command::new(editor.binary)
+        LineFormat::GotoColon => scrubbed(editor.binary)
             .arg("--goto")
             .arg(format!("{}:{}", file_path.display(), line))
             .spawn()
             .map(reap_in_background),
-        LineFormat::PathColon => std::process::Command::new(editor.binary)
+        LineFormat::PathColon => scrubbed(editor.binary)
             .arg(format!("{}:{}", file_path.display(), line))
             .spawn()
             .map(reap_in_background),
-        LineFormat::PlusLine => std::process::Command::new(editor.binary)
+        LineFormat::PlusLine => scrubbed(editor.binary)
             .arg(format!("+{}", line))
             .arg("--")
             .arg(file_path)
             .spawn()
             .map(reap_in_background),
-        LineFormat::DashLLine => std::process::Command::new(editor.binary)
+        LineFormat::DashLLine => scrubbed(editor.binary)
             .arg("-l")
             .arg(line.to_string())
             .arg(file_path)
@@ -271,7 +271,7 @@ pub async fn open_file_with(path: String, app: String) -> Result<(), AppError> {
         return Err(AppError::NotFound(path));
     }
 
-    std::process::Command::new(&app)
+    scrubbed(&app)
         .arg(&file_path)
         .spawn()
         .map(reap_in_background)
@@ -392,7 +392,7 @@ fn open_image_with_siblings_blocking(path: String) -> Result<(), AppError> {
                     .unwrap_or(&desktop_file);
                 if MULTI_FILE_VIEWERS.contains(&app_name) {
                     // Launch viewer with all sibling images
-                    return std::process::Command::new(app_name)
+                    return scrubbed(app_name)
                         .args(&ordered)
                         .spawn()
                         .map(reap_in_background)
@@ -421,7 +421,7 @@ fn try_spawn_terminal(term: &str, dir: &std::path::Path) -> bool {
 
     #[cfg(not(target_os = "macos"))]
     {
-        let mut cmd = std::process::Command::new(term);
+        let mut cmd = scrubbed(term);
         cmd.current_dir(dir);
 
         // Several terminals open the *new* window at their own default directory
@@ -508,7 +508,7 @@ fn open_in_terminal_blocking(path: String, terminal: Option<String>) -> Result<(
             }
         }
         // Fallback: use x-terminal-emulator
-        std::process::Command::new("x-terminal-emulator")
+        scrubbed("x-terminal-emulator")
             .current_dir(&dir)
             .spawn()
             .map(reap_in_background)
@@ -649,7 +649,7 @@ fn desktop_file_dirs() -> Vec<PathBuf> {
 /// desktop-entry machinery instead. Returns true when launched successfully.
 #[cfg(target_os = "linux")]
 fn launch_desktop_file(desktop_file: &str, file_path: &std::path::Path) -> bool {
-    use std::process::{Command, Stdio};
+    use std::process::Stdio;
 
     // `gio launch` requires the full path to the .desktop file.
     if let Some(desktop_path) = desktop_file_dirs()
@@ -657,7 +657,7 @@ fn launch_desktop_file(desktop_file: &str, file_path: &std::path::Path) -> bool 
         .map(|dir| dir.join(desktop_file))
         .find(|candidate| candidate.exists())
     {
-        let status = Command::new("gio")
+        let status = scrubbed("gio")
             .arg("launch")
             .arg(&desktop_path)
             .arg(file_path)
@@ -670,7 +670,7 @@ fn launch_desktop_file(desktop_file: &str, file_path: &std::path::Path) -> bool 
     }
 
     // `gtk-launch` resolves the desktop file by name from standard dirs.
-    let status = Command::new("gtk-launch")
+    let status = scrubbed("gtk-launch")
         .arg(desktop_file)
         .arg(file_path)
         .stdout(Stdio::null())
@@ -720,6 +720,14 @@ fn resolve_xdg_desktop_by_extension(path: &std::path::Path) -> Option<String> {
     }
 
     Some(desktop_file)
+}
+
+/// A `Command` for launching a user-facing program, without the WebKitGTK
+/// renderer variables the app set for itself (#1079).
+fn scrubbed(program: impl AsRef<std::ffi::OsStr>) -> std::process::Command {
+    let mut command = std::process::Command::new(program);
+    crate::child_env::scrub_command(&mut command);
+    command
 }
 
 #[cfg(test)]

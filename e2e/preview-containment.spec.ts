@@ -522,7 +522,13 @@ for (const layout of CASES) {
         await selectEntry(page, format.name);
         await format.rendered(page);
         await expect(pane(page).locator(".preview-info .info-label")).toHaveText(
-          showPreviewInfo === false ? [] : format.name === "long-names" ? ["Modified"] : ["Size", "Modified"],
+          showPreviewInfo === false
+            ? []
+            : format.name === "long-names"
+              ? ["Modified"]
+              : format.name.endsWith(".png")
+                ? ["Size", "Pixels", "Modified"]
+                : ["Size", "Modified"],
         );
         await expectContained(page, format.name);
       });

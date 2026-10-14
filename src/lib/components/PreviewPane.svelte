@@ -1019,7 +1019,9 @@ import { openFile } from "$lib/api/open";
         {/if}
         {#if previewResolution}
           <div class="info-row">
-            <span class="info-label">Resolution</span>
+            <!-- Short label: vertical docks give the metadata column ~80px, and a
+               longer one squeezes the figures to a sliver (#1118). -->
+            <span class="info-label">Pixels</span>
             <span class="info-value">{previewResolution}</span>
           </div>
         {/if}

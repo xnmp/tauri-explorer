@@ -26,6 +26,9 @@
 //! JSC reads `JSC_<option>` from the environment when it initialises. The
 //! WebContent process inherits this process's environment, so the variable
 //! must be set before GTK/WebKit start, while the process is single-threaded.
+//! Like the `WEBKIT_*` renderer variables, it is also inherited by processes
+//! the app launches (terminal shells, Open With, plugin jobs); for those it
+//! only affects other JSC-based programs, and only on this WebKitGTK series.
 
 /// The JSC option that disables the DFG (and therefore FTL) tier.
 const DFG_VAR: &str = "JSC_useDFGJIT";

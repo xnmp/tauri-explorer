@@ -22,38 +22,88 @@ fn find(haystack: &[u8], needle: &[u8]) -> Option<usize> {
 pub fn sniff(sample: &[u8]) -> VideoCodecInfo {
     let mut info = VideoCodecInfo::default();
     if sample.len() >= 12 && &sample[4..8] == b"ftyp" {
-        info.container = Some(if &sample[8..12] == b"qt  " { "MOV" } else { "MP4" }.into());
+        info.container = Some(
+            if &sample[8..12] == b"qt  " {
+                "MOV"
+            } else {
+                "MP4"
+            }
+            .into(),
+        );
         // Sample entries in `stsd` use the codec FourCC directly.
         const VIDEO: &[(&[u8], &str)] = &[
-            (b"avc1", "H.264"), (b"hvc1", "H.265 (HEVC)"), (b"hev1", "H.265 (HEVC)"),
-            (b"av01", "AV1"), (b"vp09", "VP9"), (b"mp4v", "MPEG-4 Visual"),
-            (b"apch", "ProRes"), (b"apcn", "ProRes"), (b"apcs", "ProRes"), (b"ap4h", "ProRes"),
-            (b"dvh1", "Dolby Vision"), (b"dvhe", "Dolby Vision"),
+            (b"avc1", "H.264"),
+            (b"hvc1", "H.265 (HEVC)"),
+            (b"hev1", "H.265 (HEVC)"),
+            (b"av01", "AV1"),
+            (b"vp09", "VP9"),
+            (b"mp4v", "MPEG-4 Visual"),
+            (b"apch", "ProRes"),
+            (b"apcn", "ProRes"),
+            (b"apcs", "ProRes"),
+            (b"ap4h", "ProRes"),
+            (b"dvh1", "Dolby Vision"),
+            (b"dvhe", "Dolby Vision"),
         ];
         const AUDIO: &[(&[u8], &str)] = &[
-            (b"mp4a", "AAC"), (b"ac-3", "AC-3"), (b"ec-3", "E-AC-3"), (b"Opus", "Opus"),
-            (b"alac", "ALAC"), (b"fLaC", "FLAC"),
+            (b"mp4a", "AAC"),
+            (b"ac-3", "AC-3"),
+            (b"ec-3", "E-AC-3"),
+            (b"Opus", "Opus"),
+            (b"alac", "ALAC"),
+            (b"fLaC", "FLAC"),
         ];
-        info.video_codec = VIDEO.iter().find(|(k, _)| find(sample, k).is_some()).map(|(_, v)| (*v).into());
-        info.audio_codec = AUDIO.iter().find(|(k, _)| find(sample, k).is_some()).map(|(_, v)| (*v).into());
+        info.video_codec = VIDEO
+            .iter()
+            .find(|(k, _)| find(sample, k).is_some())
+            .map(|(_, v)| (*v).into());
+        info.audio_codec = AUDIO
+            .iter()
+            .find(|(k, _)| find(sample, k).is_some())
+            .map(|(_, v)| (*v).into());
     } else if sample.starts_with(&[0x1A, 0x45, 0xDF, 0xA3]) {
         let webm = find(sample, b"webm").is_some();
         info.container = Some(if webm { "WebM" } else { "Matroska" }.into());
         const VIDEO: &[(&[u8], &str)] = &[
-            (b"V_MPEGH/ISO/HEVC", "H.265 (HEVC)"), (b"V_MPEG4/ISO/AVC", "H.264"),
-            (b"V_VP9", "VP9"), (b"V_VP8", "VP8"), (b"V_AV1", "AV1"),
-            (b"V_MPEG4/ISO/ASP", "MPEG-4 Visual"), (b"V_MS/VFW/FOURCC", "VFW video"),
+            (b"V_MPEGH/ISO/HEVC", "H.265 (HEVC)"),
+            (b"V_MPEG4/ISO/AVC", "H.264"),
+            (b"V_VP9", "VP9"),
+            (b"V_VP8", "VP8"),
+            (b"V_AV1", "AV1"),
+            (b"V_MPEG4/ISO/ASP", "MPEG-4 Visual"),
+            (b"V_MS/VFW/FOURCC", "VFW video"),
         ];
         const AUDIO: &[(&[u8], &str)] = &[
-            (b"A_AAC", "AAC"), (b"A_OPUS", "Opus"), (b"A_VORBIS", "Vorbis"), (b"A_FLAC", "FLAC"),
-            (b"A_EAC3", "E-AC-3"), (b"A_AC3", "AC-3"), (b"A_DTS", "DTS"), (b"A_MPEG/L3", "MP3"),
+            (b"A_AAC", "AAC"),
+            (b"A_OPUS", "Opus"),
+            (b"A_VORBIS", "Vorbis"),
+            (b"A_FLAC", "FLAC"),
+            (b"A_EAC3", "E-AC-3"),
+            (b"A_AC3", "AC-3"),
+            (b"A_DTS", "DTS"),
+            (b"A_MPEG/L3", "MP3"),
         ];
-        info.video_codec = VIDEO.iter().find(|(k, _)| find(sample, k).is_some()).map(|(_, v)| (*v).into());
-        info.audio_codec = AUDIO.iter().find(|(k, _)| find(sample, k).is_some()).map(|(_, v)| (*v).into());
+        info.video_codec = VIDEO
+            .iter()
+            .find(|(k, _)| find(sample, k).is_some())
+            .map(|(_, v)| (*v).into());
+        info.audio_codec = AUDIO
+            .iter()
+            .find(|(k, _)| find(sample, k).is_some())
+            .map(|(_, v)| (*v).into());
     } else if sample.len() >= 12 && &sample[0..4] == b"RIFF" && &sample[8..12] == b"AVI " {
         info.container = Some("AVI".into());
-        for (k, v) in [(&b"H264"[..], "H.264"), (b"XVID", "Xvid"), (b"DIVX", "DivX"), (b"MJPG", "Motion JPEG"), (b"WMV3", "WMV")] {
-            if find(sample, k).is_some() { info.video_codec = Some(v.into()); break; }
+        for (k, v) in [
+            (&b"H264"[..], "H.264"),
+            (b"XVID", "Xvid"),
+            (b"DIVX", "DivX"),
+            (b"MJPG", "Motion JPEG"),
+            (b"WMV3", "WMV"),
+        ] {
+            if find(sample, k).is_some() {
+                info.video_codec = Some(v.into());
+                break;
+            }
         }
     }
     info
@@ -82,14 +132,22 @@ pub async fn probe_video_codec(path: String) -> VideoCodecInfo {
 /// Copies `source` to the user-chosen `destination`; the source is never modified.
 #[tauri::command]
 pub async fn save_file_copy(source: String, destination: String) -> Result<(), AppError> {
-    let (src, dst) = (std::path::PathBuf::from(&source), std::path::PathBuf::from(&destination));
+    let (src, dst) = (
+        std::path::PathBuf::from(&source),
+        std::path::PathBuf::from(&destination),
+    );
     if src == dst {
-        return Err(AppError::InvalidPath("Choose a different destination".into()));
+        return Err(AppError::InvalidPath(
+            "Choose a different destination".into(),
+        ));
     }
     if !src.is_file() {
         return Err(AppError::NotFound(source));
     }
-    tokio::fs::copy(&src, &dst).await.map(|_| ()).map_err(AppError::from)
+    tokio::fs::copy(&src, &dst)
+        .await
+        .map(|_| ())
+        .map_err(AppError::from)
 }
 
 #[cfg(test)]
@@ -129,10 +187,16 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         let (s, d) = (dir.join("a.mkv"), dir.join("b.mkv"));
         std::fs::write(&s, b"data").unwrap();
-        save_file_copy(s.to_string_lossy().into(), d.to_string_lossy().into()).await.unwrap();
+        save_file_copy(s.to_string_lossy().into(), d.to_string_lossy().into())
+            .await
+            .unwrap();
         assert_eq!(std::fs::read(&d).unwrap(), b"data");
         assert_eq!(std::fs::read(&s).unwrap(), b"data");
-        assert!(save_file_copy(s.to_string_lossy().into(), s.to_string_lossy().into()).await.is_err());
+        assert!(
+            save_file_copy(s.to_string_lossy().into(), s.to_string_lossy().into())
+                .await
+                .is_err()
+        );
         std::fs::remove_dir_all(dir).unwrap();
     }
 }

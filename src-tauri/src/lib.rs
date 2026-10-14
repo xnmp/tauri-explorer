@@ -244,7 +244,7 @@ pub fn run_with_process_entry(launch_dir: Option<String>, t_process_entry: std::
         renderer_owner::on_web_content_terminated(webview);
     });
     #[cfg(target_os = "linux")]
-    let builder = builder.plugin(renderer_owner::termination_log());
+    let builder = builder.plugin(renderer_owner::termination_recovery());
     // Every WebView sharing Windows' data directory must use the exact same
     // environment options. Inject the main window's attach-build arguments
     // into every spawning page so fresh and warm descendants preserve them.
@@ -304,7 +304,7 @@ pub fn run_with_process_entry(launch_dir: Option<String>, t_process_entry: std::
         .on_page_load(|webview, payload| {
             if payload.event() == tauri::webview::PageLoadEvent::Started {
                 renderer_owner::on_page_started(&webview.window());
-                #[cfg(target_os = "macos")]
+                #[cfg(any(target_os = "macos", target_os = "linux"))]
                 renderer_owner::on_document_committed(&webview.window(), payload.url());
             }
         })

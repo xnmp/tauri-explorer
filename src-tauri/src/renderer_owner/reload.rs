@@ -1,12 +1,14 @@
-//! Recovery of a window whose web-content process terminated (#942).
+//! Recovery of a window whose web-content process terminated (#942, #1138).
 //!
-//! WKWebView does not reload a page whose WebContent process died; Apple's
-//! guidance for `webViewWebContentProcessDidTerminate` is that the app reloads
-//! it. A page that crashes on every boot must not reload forever, so each
-//! concrete native window carries a sliding-window reload budget. The decision
-//! is pure; the macOS adapter below only logs and applies it.
+//! Neither WebKit port reloads a page whose web process died: Apple's guidance
+//! for `webViewWebContentProcessDidTerminate` is that the app reloads it, and
+//! WebKitGTK leaves a blank view after `web-process-terminated`. A page that
+//! crashes on every boot must not reload forever, so each concrete native
+//! window carries a sliding-window reload budget. The decision is pure;
+//! `WindowRecovery::on_terminated` is the one recovery path both ports share,
+//! and `recover` only supplies the native effects.
 use std::time::{Duration, Instant};
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 use tauri::Manager as _;
 
 /// Query marker telling the reloaded document it replaces a lost renderer, so
@@ -39,6 +41,17 @@ pub(crate) const RELOAD_LIMIT: ReloadLimit = ReloadLimit {
 #[derive(Clone, Debug, Default)]
 pub(crate) struct ReloadHistory(Vec<Instant>);
 
+/// Why a renderer went away, as far as recovery is concerned.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Termination {
+    /// A crash, a memory-limit or OOM kill, or a port that reports no reason
+    /// (macOS). The window is left blank unless it is recovered.
+    Lost,
+    /// The process was torn down on purpose through the WebKit API
+    /// (WebKitGTK's `TerminatedByApi`); whoever did it owns what comes next.
+    Deliberate,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Recovery {
     /// Load a fresh document; `attempt` counts reloads within the period.
@@ -48,6 +61,8 @@ pub(crate) enum Recovery {
     /// A parked warm window is not user-facing. Retire it; the pool replaces
     /// it on demand and a pending claim falls back to a fresh window.
     RetireParked,
+    /// A deliberate teardown: retire the generation, reload nothing.
+    Deliberate,
 }
 
 impl Recovery {
@@ -61,6 +76,7 @@ impl Recovery {
             Self::Reload { attempt } => format!("decision=reload attempt={attempt} {budget}"),
             Self::Exhausted { recent } => format!("decision=exhausted recent={recent} {budget}"),
             Self::RetireParked => "decision=retire-parked".to_owned(),
+            Self::Deliberate => "decision=none cause=terminated-by-api".to_owned(),
         }
     }
 }
@@ -69,10 +85,14 @@ impl Recovery {
 /// and the window's successor history; neither input is modified.
 pub(crate) fn plan(
     history: &ReloadHistory,
+    termination: Termination,
     parked: bool,
     limit: ReloadLimit,
     now: Instant,
 ) -> (Recovery, ReloadHistory) {
+    if termination == Termination::Deliberate {
+        return (Recovery::Deliberate, history.clone());
+    }
     if parked {
         return (Recovery::RetireParked, history.clone());
     }
@@ -114,24 +134,94 @@ pub(crate) fn recovery_url(current: &tauri::Url) -> Option<tauri::Url> {
     Some(next)
 }
 
+/// What a recovery decision does to the native window. The Tauri adapter
+/// below is the only production implementation; tests record the calls.
+pub(crate) trait RecoveryEffects {
+    /// Load `document`, or reload in place when no document was committed.
+    fn reload(&self, document: Option<tauri::Url>);
+    /// Destroy a parked warm window; the pool replaces it on demand.
+    fn retire_parked(&self);
+    fn log(&self, level: log::Level, line: &str);
+}
+
 /// Per native window: its reload budget and the last document it committed.
 /// Kept apart from the renderer scope so recording a document never changes
 /// generation numbering, and dropped with the window's resource table, so a
 /// reused label starts with a fresh budget.
-#[cfg(target_os = "macos")]
 #[derive(Default)]
-pub(super) struct WindowRecovery {
+pub(crate) struct WindowRecovery {
     reloads: std::sync::Mutex<ReloadHistory>,
     // WKWebView's URL getter is unusable after a crash: WebKit resets the
     // page load state, and Wry unwraps the then-nil URL. The committed URL
-    // from Tauri's page-load event is the one to restore.
+    // from Tauri's page-load event is the one to restore, on both ports.
     document: std::sync::Mutex<Option<tauri::Url>>,
 }
 
-#[cfg(target_os = "macos")]
 impl tauri::Resource for WindowRecovery {}
 
-#[cfg(target_os = "macos")]
+impl WindowRecovery {
+    /// Remember the document the window committed, for a later recovery.
+    pub(crate) fn record_document(&self, url: &tauri::Url) {
+        *self
+            .document
+            .lock()
+            .unwrap_or_else(|error| error.into_inner()) = Some(url.clone());
+    }
+
+    /// Decide, log and apply the recovery of one renderer termination. Every
+    /// decision is logged as `Renderer(recovery)`; a spent budget is logged
+    /// as an error and applies nothing, so a page that dies on every boot
+    /// stops instead of looping.
+    pub(crate) fn on_terminated(
+        &self,
+        window: &str,
+        webview: &str,
+        termination: Termination,
+        parked: bool,
+        now: Instant,
+        effects: &impl RecoveryEffects,
+    ) -> Recovery {
+        let decision = {
+            let mut history = self
+                .reloads
+                .lock()
+                .unwrap_or_else(|error| error.into_inner());
+            let (decision, next) = plan(&history, termination, parked, RELOAD_LIMIT, now);
+            *history = next;
+            decision
+        };
+        let line = format!(
+            "Renderer(recovery): window={window} webview={webview} {}",
+            decision.describe(RELOAD_LIMIT)
+        );
+        match decision {
+            Recovery::Deliberate => effects.log(log::Level::Info, &line),
+            Recovery::Exhausted { .. } => effects.log(log::Level::Error, &line),
+            Recovery::RetireParked => {
+                effects.log(log::Level::Warn, &line);
+                effects.retire_parked();
+            }
+            Recovery::Reload { .. } => {
+                let target = self
+                    .document
+                    .lock()
+                    .unwrap_or_else(|error| error.into_inner())
+                    .as_ref()
+                    .and_then(recovery_url);
+                let document = if target.is_some() {
+                    "recorded"
+                } else {
+                    "unrecorded"
+                };
+                effects.log(log::Level::Warn, &format!("{line} document={document}"));
+                effects.reload(target);
+            }
+        }
+        decision
+    }
+}
+
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 fn window_recovery<R: tauri::Runtime>(window: &tauri::Window<R>) -> std::sync::Arc<WindowRecovery> {
     let mut resources = window.resources_table();
     let existing = resources
@@ -145,79 +235,72 @@ fn window_recovery<R: tauri::Runtime>(window: &tauri::Window<R>) -> std::sync::A
 }
 
 /// Remember the document a window committed, for a later recovery.
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 pub(super) fn record_document<R: tauri::Runtime>(window: &tauri::Window<R>, url: &tauri::Url) {
-    let recovery = window_recovery(window);
-    *recovery
-        .document
-        .lock()
-        .unwrap_or_else(|error| error.into_inner()) = Some(url.clone());
+    window_recovery(window).record_document(url);
 }
 
-/// macOS adapter: called from Wry's `webViewWebContentProcessDidTerminate`.
-/// Every effect leaves the delegate callback first: navigation and window
-/// destruction round-trip through the event loop, which must not re-enter
-/// WebKit while it is still reporting the termination.
-#[cfg(target_os = "macos")]
-pub(super) fn recover(webview: &tauri::Webview) {
-    let window = webview.window();
-    let label = window.label().to_owned();
-    let parked = crate::warm_pool::is_parked(&label);
-    let recovery = window_recovery(&window);
-    let decision = {
-        let mut history = recovery
-            .reloads
-            .lock()
-            .unwrap_or_else(|error| error.into_inner());
-        let (decision, next) = plan(&history, parked, RELOAD_LIMIT, Instant::now());
-        *history = next;
-        decision
-    };
-    let target = recovery
-        .document
-        .lock()
-        .unwrap_or_else(|error| error.into_inner())
-        .as_ref()
-        .and_then(recovery_url);
-    let line = format!(
-        "Renderer(recovery): window={label} webview={} {}",
-        webview.label(),
-        decision.describe(RELOAD_LIMIT)
-    );
-    match decision {
-        Recovery::Exhausted { .. } => log::error!("{line}"),
-        Recovery::RetireParked => {
-            log::warn!("{line}");
-            let app = tauri::Manager::app_handle(webview).clone();
-            tauri::async_runtime::spawn(async move {
-                crate::warm_pool::retire_parked(&app, &label);
-            });
-        }
-        Recovery::Reload { .. } => {
-            let document = if target.is_some() {
-                "recorded"
-            } else {
-                "unrecorded"
+/// The native effects of a decision. Every effect leaves the termination
+/// callback first: navigation and window destruction round-trip through the
+/// event loop, which must not re-enter WebKit while it is still reporting the
+/// termination (WKWebView's delegate, WebKitGTK's signal emission).
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+struct NativeEffects<'a> {
+    webview: &'a tauri::Webview,
+    label: &'a str,
+}
+
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+impl RecoveryEffects for NativeEffects<'_> {
+    fn reload(&self, document: Option<tauri::Url>) {
+        let webview = self.webview.clone();
+        let label = self.label.to_owned();
+        tauri::async_runtime::spawn(async move {
+            // The lost document's PTYs are window-label scoped and the new
+            // document cannot reattach them; end them as a closing window
+            // does, before the new document can reserve its own.
+            crate::terminal::on_window_destroyed(&label);
+            // Without a committed document only WebKit's own reload of its
+            // back-forward item is possible; it lacks the marker.
+            let outcome = match document {
+                Some(url) => webview.navigate(url),
+                None => webview.reload(),
             };
-            log::warn!("{line} document={document}");
-            let webview = webview.clone();
-            tauri::async_runtime::spawn(async move {
-                // The lost document's PTYs are window-label scoped and the new
-                // document cannot reattach them; end them as a closing window
-                // does, before the new document can reserve its own.
-                crate::terminal::on_window_destroyed(&label);
-                // Without a committed document only WebKit's own reload of
-                // its back-forward item is possible; it lacks the marker.
-                let outcome = match target {
-                    Some(url) => webview.navigate(url),
-                    None => webview.reload(),
-                };
-                if let Err(error) = outcome {
-                    log::error!(
-                        "Renderer(recovery): window={label} decision=reload-failed error={error}"
-                    );
-                }
-            });
-        }
+            if let Err(error) = outcome {
+                log::error!(
+                    "Renderer(recovery): window={label} decision=reload-failed error={error}"
+                );
+            }
+        });
     }
+
+    fn retire_parked(&self) {
+        let app = self.webview.app_handle().clone();
+        let label = self.label.to_owned();
+        tauri::async_runtime::spawn(async move {
+            crate::warm_pool::retire_parked(&app, &label);
+        });
+    }
+
+    fn log(&self, level: log::Level, line: &str) {
+        log::log!(level, "{line}");
+    }
+}
+
+/// Native adapter for both WebKit ports, called from Wry's
+/// `webViewWebContentProcessDidTerminate` (macOS) and WebKitGTK's
+/// `web-process-terminated` (Linux).
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+pub(super) fn recover(webview: &tauri::Webview, termination: Termination) {
+    let window = webview.window();
+    let label = window.label();
+    let effects = NativeEffects { webview, label };
+    window_recovery(&window).on_terminated(
+        label,
+        webview.label(),
+        termination,
+        crate::warm_pool::is_parked(label),
+        Instant::now(),
+        &effects,
+    );
 }

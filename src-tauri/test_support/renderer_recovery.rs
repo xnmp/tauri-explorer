@@ -1,6 +1,7 @@
 //! Opt-in Linux acceptance harness for recovery of one retained native WebView.
 //! This module is compiled only with `e2e-renderer-recovery`; it does not define
-//! application crash-recovery policy.
+//! application crash-recovery policy. It never reloads the WebView: the reload
+//! after each kill is the product's own (`renderer_owner/reload.rs`, #1138).
 
 #[path = "file_recovery_crash.rs"]
 mod file_recovery;
@@ -41,6 +42,10 @@ struct CycleEvidence {
     new_lease_id: String,
     repo_root: String,
     old_lease_reclaimed: bool,
+    pre_crash_url: String,
+    recovered_url: String,
+    restored_path: String,
+    product_reload_logged: bool,
     old_acquire_rejected: bool,
     stale_release_ignored: bool,
     mutation_started_at: u128,
@@ -49,6 +54,17 @@ struct CycleEvidence {
     marker: String,
     entries: Vec<String>,
     file_recovery: Option<file_recovery::Evidence>,
+}
+
+/// A deliberate `webkit_web_view_terminate_web_process` after the crash
+/// cycles: the product retires it but must not reload (#1138).
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ApiTeardown {
+    termination_reason: String,
+    deliberate_logged: bool,
+    reloads_before: usize,
+    reloads_after: usize,
 }
 
 #[derive(Serialize)]
@@ -62,6 +78,8 @@ struct PublishedState {
     webview_address: String,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     cycles: Vec<CycleEvidence>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    api_teardown: Option<ApiTeardown>,
     #[serde(skip_serializing_if = "Option::is_none")]
     error: Option<String>,
 }
@@ -118,13 +136,14 @@ pub fn start(app: &tauri::AppHandle) -> Result<(), Box<dyn std::error::Error>> {
             let result =
                 run_scenario(&view, &directory_for_run, &identity, termination_receive).await;
             match result {
-                Ok(evidence) => {
+                Ok((evidence, api_teardown)) => {
                     if let Err(error) = publish(
                         &directory_for_run,
                         &identity,
                         "passed",
                         None,
                         evidence.clone(),
+                        Some(api_teardown),
                         None,
                     ) {
                         fail_and_exit(&app_for_run, &directory_for_run, &identity, evidence, error);
@@ -168,7 +187,7 @@ async fn run_scenario(
     directory: &Path,
     identity: &Identity,
     mut terminations: tokio::sync::mpsc::UnboundedReceiver<WebProcessTerminationReason>,
-) -> Result<Vec<CycleEvidence>, (Vec<CycleEvidence>, String)> {
+) -> Result<(Vec<CycleEvidence>, ApiTeardown), (Vec<CycleEvidence>, String)> {
     let mut evidence = Vec::new();
     let result = async {
         wait_for(view, "initial Explorer listing", || {
@@ -204,12 +223,19 @@ async fn run_scenario(
                 previous_lease.repo_root
             );
             let reclamations_before = log_occurrences(&previous_lease.log_dir, &reclamation)?;
+            let product_reload = recovery_line(identity, "decision=reload attempt=");
+            let reloads_before = log_occurrences(&previous_lease.log_dir, &product_reload)?;
+            let pre_crash_url = string_result(
+                &evaluate(view, "location.href").await?,
+                "pre-crash document URL",
+            )?;
             publish(
                 directory,
                 identity,
                 "armed",
                 Some(cycle),
                 evidence.clone(),
+                None,
                 None,
             )?;
 
@@ -221,25 +247,51 @@ async fn run_scenario(
                     "renderer ended for {reason:?}, not from the runner's crash signal"
                 ));
             }
-            wait_for_reclamation(
+            wait_for_log(
                 &previous_lease.log_dir,
                 &reclamation,
                 reclamations_before,
+                "old Git owner was not reclaimed",
             )
             .await?;
-
-            // This is test-controller behavior on the retained GTK object, not
-            // application recovery policy. A committed reload advances the
-            // production Git generation before the new realm can invoke IPC.
             if let Some(lease) = &previous_recovery {
                 file_recovery::wait_for_drop(lease).await?;
             }
-            view.reload();
-            wait_for(view, "recovered E2E hooks", || {
-                "document.documentElement.dataset.e2eHooksReady === 'true' && \
-                 typeof window.__TAURI_E2E_RECOVERY_REALM__ === 'undefined'".into()
+
+            // The product, not this controller, reloads the window: its
+            // recovery line names the recorded document it restores.
+            wait_for_log(
+                &previous_lease.log_dir,
+                &product_reload,
+                reloads_before,
+                "the application did not reload the lost renderer",
+            )
+            .await?;
+            if log_occurrences(&previous_lease.log_dir, "decision=exhausted")? > 0 {
+                return Err("renderer recovery exhausted its reload budget".into());
+            }
+            if log_occurrences(&previous_lease.log_dir, "document=unrecorded")? > 0 {
+                return Err("renderer recovery did not restore the committed document".into());
+            }
+            let pre_crash_url_json = encode(&pre_crash_url)?;
+            let recovered = wait_for_value(view, "document restored by product recovery", || {
+                format!(
+                    "(() => {{ const root = document.documentElement; \
+                     if (root.dataset.e2eHooksReady !== 'true' || \
+                       typeof window.__TAURI_E2E_RECOVERY_REALM__ !== 'undefined') return null; \
+                     const url = new URL(location.href); \
+                     if (url.searchParams.get('rendererRecovery') !== '1') return null; \
+                     const strip = value => {{ const next = new URL(value); \
+                       next.searchParams.delete('rendererRecovery'); next.hash = ''; return next.href; }}; \
+                     if (strip(location.href) !== strip({pre_crash_url_json})) return null; \
+                     const path = document.querySelector('.status-path')?.getAttribute('title'); \
+                     if (document.querySelectorAll('.explorer-pane').length !== 1 || !path) return null; \
+                     return {{ url: location.href, path }}; }})()"
+                )
             })
             .await?;
+            let recovered_url = required_string(&recovered, "url")?;
+            let restored_path = required_string(&recovered, "path")?;
 
             let current_session = operation(view, "native-session", "", "recovered-session").await?;
             let current_session = string_result(&current_session["result"], "recovered Git session")?;
@@ -345,6 +397,10 @@ async fn run_scenario(
                 new_lease_id: current_lease.id.clone(),
                 repo_root: current_lease.repo_root.clone(),
                 old_lease_reclaimed: true,
+                pre_crash_url,
+                recovered_url,
+                restored_path,
+                product_reload_logged: true,
                 old_acquire_rejected: true,
                 stale_release_ignored: true,
                 mutation_started_at,
@@ -360,13 +416,61 @@ async fn run_scenario(
         }
 
         save_snapshot(view, &directory.join("recovered.png")).await?;
-        Ok(())
+        tear_down_through_api(view, &mut terminations, &previous_lease.log_dir, identity).await
     }
     .await;
     match result {
-        Ok(()) => Ok(evidence),
+        Ok(api_teardown) => Ok((evidence, api_teardown)),
         Err(error) => Err((evidence, error)),
     }
+}
+
+/// The product's `Renderer(recovery)` line for this window, up to `decision`.
+fn recovery_line(identity: &Identity, decision: &str) -> String {
+    format!(
+        "Renderer(recovery): window={} webview={} {decision}",
+        identity.window_label, identity.window_label
+    )
+}
+
+/// End the renderer the way an API caller would. The decision is logged in
+/// the same signal emission that would have spawned a reload, so once it is
+/// logged a reload would already be on record; the pause also lets a stray
+/// one reach the log.
+async fn tear_down_through_api(
+    view: &WebView,
+    terminations: &mut tokio::sync::mpsc::UnboundedReceiver<WebProcessTerminationReason>,
+    log_dir: &Path,
+    identity: &Identity,
+) -> HarnessResult<ApiTeardown> {
+    while terminations.try_recv().is_ok() {}
+    let product_reload = recovery_line(identity, "decision=reload attempt=");
+    let deliberate = recovery_line(identity, "decision=none cause=terminated-by-api");
+    let reloads_before = log_occurrences(log_dir, &product_reload)?;
+    let deliberate_before = log_occurrences(log_dir, &deliberate)?;
+    view.terminate_web_process();
+    let reason = wait_for_termination(terminations).await?;
+    if reason != WebProcessTerminationReason::TerminatedByApi {
+        return Err(format!("API teardown reported {reason:?}"));
+    }
+    wait_for_log(
+        log_dir,
+        &deliberate,
+        deliberate_before,
+        "an API teardown was not recorded as deliberate",
+    )
+    .await?;
+    glib::timeout_future(Duration::from_secs(2)).await;
+    let reloads_after = log_occurrences(log_dir, &product_reload)?;
+    if reloads_after != reloads_before {
+        return Err("the application reloaded after a deliberate API teardown".into());
+    }
+    Ok(ApiTeardown {
+        termination_reason: format!("{reason:?}"),
+        deliberate_logged: true,
+        reloads_before,
+        reloads_after,
+    })
 }
 
 async fn acquire(view: &WebView, repository: &Path, token_prefix: &str) -> HarnessResult<Lease> {
@@ -530,10 +634,11 @@ where
     }
 }
 
-async fn wait_for_reclamation(
+async fn wait_for_log(
     log_dir: &Path,
     marker: &str,
     previous_count: usize,
+    failure: &str,
 ) -> HarnessResult<()> {
     let deadline = Instant::now() + STEP_TIMEOUT;
     loop {
@@ -541,7 +646,7 @@ async fn wait_for_reclamation(
             return Ok(());
         }
         if Instant::now() >= deadline {
-            return Err(format!("old Git owner was not reclaimed: {marker}"));
+            return Err(format!("{failure}: {marker}"));
         }
         glib::timeout_future(POLL_INTERVAL).await;
     }
@@ -629,6 +734,7 @@ fn publish(
     status: &'static str,
     cycle: Option<usize>,
     evidence: Vec<CycleEvidence>,
+    api_teardown: Option<ApiTeardown>,
     error: Option<String>,
 ) -> HarnessResult<()> {
     let state = PublishedState {
@@ -638,6 +744,7 @@ fn publish(
         window_label: identity.window_label.clone(),
         webview_address: identity.webview_address.clone(),
         cycles: evidence,
+        api_teardown,
         error,
     };
     let temporary = directory.join("state.tmp");
@@ -663,6 +770,7 @@ fn fail_and_exit(
         "failed",
         None,
         evidence,
+        None,
         Some(error.clone()),
     ) {
         log::error!("renderer recovery failed: {error}; state publication failed: {publish_error}");

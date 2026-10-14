@@ -126,7 +126,7 @@ impl PoolState {
 
     /// Not yet a committed user-facing window: ready, booting, retiring, or
     /// claimed with activation still unacknowledged (#942).
-    #[cfg(any(target_os = "macos", test))]
+    #[cfg(any(target_os = "macos", target_os = "linux", test))]
     fn parked(&self, label: &str) -> bool {
         label.starts_with(WARM_LABEL_PREFIX) && !self.activated.contains(label)
     }
@@ -307,7 +307,7 @@ pub fn on_window_destroyed(app: &AppHandle, destroyed_label: &str) {
 }
 
 /// Whether a window that lost its renderer should be retired, not reloaded.
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 pub fn is_parked(label: &str) -> bool {
     POOL.lock().unwrap_or_else(|e| e.into_inner()).parked(label)
 }
@@ -315,7 +315,7 @@ pub fn is_parked(label: &str) -> bool {
 /// Withdraw a parked window from claim admission before destroying it, so no
 /// claim can pick a window whose page is gone. A claim already in flight
 /// fails its acknowledgement and falls back to a fresh window.
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 pub fn retire_parked(app: &AppHandle, label: &str) {
     POOL.lock()
         .unwrap_or_else(|e| e.into_inner())

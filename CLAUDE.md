@@ -420,3 +420,7 @@ windows with stale clipboard state. Controlled ordering tests belong around
 `spawn_worker`'s backend, not only a serialized frontend mock. Native hook builds
 can hold a write with a hidden `.<filename>.clipboard-hold` sidecar (30-second
 failure guard); `.queued` and `.started` sidecars acknowledge native progress.
+
+PR native smoke checks stay Linux-only. New native specs are discovered by the
+full WDIO glob on dev-push Windows runs; the scoped `clipboard` dispatch selects
+only `context-clipboard.spec.ts`, so it does not qualify every clipboard spec.

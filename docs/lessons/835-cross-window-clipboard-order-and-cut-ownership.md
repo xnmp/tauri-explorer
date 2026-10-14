@@ -61,9 +61,14 @@ the integration base; these tests retain it rather than replace its design.
 bounded native write gates. It reads the platform clipboard independently,
 asserts both renderer stores without triggering reconciliation, pastes into
 both windows and verifies file bytes on disk, checks Cut movement, and closes
-a publishing window during its native write. Windows clipboard PRs run this
-contract before merge and upload their screenshots. Linux evidence is captured
-on a private Xvfb display.
+a publishing window during its native write. PR smoke checks remain Linux-only.
+Windows qualification runs after merge on dev pushes: `NATIVE_SCOPE=all` calls
+`bun run test:e2e:tauri`, whose `./specs/**/*.spec.ts` glob includes this spec.
+A full-scope Windows dispatch includes it too; the narrower `clipboard`
+dispatch selects only `context-clipboard.spec.ts`. No workflow changes are
+needed to discover the new spec. The existing Linux evidence was captured on
+a private Xvfb display and carries forward because this CI-policy correction
+does not change clipboard behavior.
 
 The original failure was also reproduced against the actual renderer module
 from the parent of the #844 integration (loaded temporarily, without changing

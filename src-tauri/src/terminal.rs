@@ -1576,6 +1576,9 @@ mod tests {
     #[test]
     #[cfg(unix)]
     fn pty_shell_runs_in_cwd_and_emits_output() {
+        // Hang guards only: a loaded CI host can starve the shell and reader
+        // threads well past 10s, and a guard that fires early reports a miss.
+        const HANG_GUARD: Duration = Duration::from_secs(30);
         let _cleanup = DestroyOnDrop("test-window");
         let dir = tempfile::tempdir().unwrap();
         let canonical = dir.path().canonicalize().unwrap();
@@ -1620,7 +1623,7 @@ mod tests {
         // This test covers cwd/output/exit, not startup typeahead. Wait for the
         // shell's initial output before sending input to its interactive prompt.
         ready_rx
-            .recv_timeout(Duration::from_secs(10))
+            .recv_timeout(HANG_GUARD)
             .expect("shell never produced initial output");
         drop(ready_rx);
 
@@ -1635,7 +1638,7 @@ mod tests {
         .unwrap();
 
         let exited = exit_rx
-            .recv_timeout(Duration::from_secs(10))
+            .recv_timeout(HANG_GUARD)
             .expect("shell never exited");
         release_output.send(()).unwrap();
 
@@ -1643,7 +1646,7 @@ mod tests {
         // Wait for that reader's channel to close, rather than draining only
         // the chunks that happened to arrive before the exit notification.
         let mut output = String::new();
-        let deadline = std::time::Instant::now() + Duration::from_secs(10);
+        let deadline = std::time::Instant::now() + HANG_GUARD;
         loop {
             let remaining = deadline.saturating_duration_since(std::time::Instant::now());
             match rx.recv_timeout(remaining) {

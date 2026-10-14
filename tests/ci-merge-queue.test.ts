@@ -47,6 +47,21 @@ describe("merge queue triggers", () => {
     }
   });
 
+  it("never gives two queue workflows' jobs the same check name", () => {
+    // A matrix job skipped by its `if` reports its bare job name, so a shared
+    // name could stand in for a required check from another workflow.
+    const owners = new Map<string, string[]>();
+    for (const [name, wf] of queued()) {
+      for (const [id, job] of Object.entries(wf.jobs)) {
+        if (id === "changes") continue;
+        const check = (job as { name?: string }).name?.replace(/ \(\$\{\{.*$/, "") ?? id;
+        owners.set(check, [...(owners.get(check) ?? []), name]);
+      }
+    }
+    const shared = [...owners].filter(([, files]) => files.length > 1);
+    expect(shared).toEqual([]);
+  });
+
   it("gates every path-filtered job on the filter, running it when the filter fails", () => {
     const gate = "${{ !cancelled() && (github.event_name != 'merge_group' || needs.changes.outputs.run != 'false') }}";
     for (const [name, wf] of queued()) {

@@ -51,7 +51,10 @@ jobs:
             src-tauri/**
             .github/workflows/rust-platforms.yml
 
-  rust:
+  # Not `rust`: a matrix job skipped by its `if` (as here, in a merge group
+  # that leaves src-tauri alone) reports its bare job name, which would be a
+  # second check named like ci.yml's required `rust` context.
+  rust-platforms:
     needs: changes
     if: ${{ !cancelled() && (github.event_name != 'merge_group' || needs.changes.outputs.run != 'false') }}
     strategy:

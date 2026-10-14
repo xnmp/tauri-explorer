@@ -15,6 +15,15 @@ const gate = process.env.TAURI_EXPLORER_E2E_SEARCH_WATCH_GATE;
     fs.mkdirSync(searchRoot);
     fs.mkdirSync(destination);
     fs.writeFileSync(path.join(searchRoot, "needle.txt"), "search");
+    // A real large-tree registration workload; cancellation can revoke its
+    // demand while the native gate holds admission.
+    for (let i = 0; i < 4096; i++) {
+      const leaf = path.join(searchRoot, `branch-${i}`, "nested");
+      fs.mkdirSync(leaf, { recursive: true });
+      fs.writeFileSync(path.join(leaf, "needle.txt"), "search");
+    }
+    const output = "screenshots/fix/quick-open-watch-navigation-stall";
+    fs.mkdirSync(output, { recursive: true });
     const marker = path.join(destination, "Navigation completed while search watch was blocked.txt");
     fs.writeFileSync(marker, "independent folder listing");
     const entered = gate!.replace(/\.[^/.]*$/, "") + ".entered";
@@ -36,14 +45,16 @@ const gate = process.env.TAURI_EXPLORER_E2E_SEARCH_WATCH_GATE;
       const elapsedMs = Date.now() - started;
       expect(fs.existsSync(gate!)).toBe(false);
       expect(elapsedMs).toBeLessThan(5_000);
-      const output = "screenshots/fix/1028-quick-find-watch-isolation";
-      fs.mkdirSync(output, { recursive: true });
+
       await browser.saveScreenshot(path.join(output, "navigation-during-recursive-registration.png"));
       expect(fs.existsSync(exited)).toBe(false);
       fs.writeFileSync(path.join(output, "native-result.json"), JSON.stringify({
-        marker, elapsedMs, recursiveRegistrationRoot: searchRoot,
-        registrationReleased: false, display: process.env.DISPLAY,
+        syntheticDirectories: 8192, destinationEntries: 1, elapsedMs,
+        registrationReleased: false, nativeGateStillBlocked: true,
       }, null, 2) + "\n");
+    } catch (error) {
+      await browser.saveScreenshot(path.join(output, "navigation-failure.png"));
+      throw error;
     } finally {
       // Release before navigating away/cleanup so the worker can finish and
       // the cancelled search cannot outlive its fixture.

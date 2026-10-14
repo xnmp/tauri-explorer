@@ -273,6 +273,7 @@ pub(super) struct Observation {
     covered: HashSet<PathBuf>,
     missing: HashMap<PathBuf, Retry>,
     rebuild_retry: Option<Retry>,
+    registration_admission: Box<dyn Fn(&Path) -> bool + Send>,
 }
 impl Observation {
     pub fn coverage(&self) -> Coverage {
@@ -293,8 +294,15 @@ impl Observation {
             covered: HashSet::new(),
             missing: HashMap::new(),
             rebuild_retry: None,
+            registration_admission: Box::new(|_| true),
         }
     }
+    /// The recursive worker supplies live demand checks. Native recovery can
+    /// install many roots in one operation, so admission belongs at each root.
+    pub fn set_registration_admission(&mut self, admit: impl Fn(&Path) -> bool + Send + 'static) {
+        self.registration_admission = Box::new(admit);
+    }
+
     pub fn healthy(&self, path: &Path) -> bool {
         self.source.healthy() && self.covered.contains(path)
     }
@@ -312,6 +320,9 @@ impl Observation {
         self.missing.values().map(|retry| retry.at).min()
     }
     pub fn add(&mut self, path: &Path, retain_failed: bool) -> notify::Result<()> {
+        if !(self.registration_admission)(path) {
+            return Err(unavailable(path));
+        }
         let new = self.desired.insert(path.to_path_buf());
         self.source
             .roots
@@ -360,6 +371,9 @@ impl Observation {
         }
     }
     fn install(&mut self, path: &Path, now: Instant, refresh: bool) -> notify::Result<()> {
+        if !(self.registration_admission)(path) {
+            return Err(unavailable(path));
+        }
         for (physical, mode) in self.required(path) {
             if self.physical.contains(&physical) {
                 continue;
@@ -393,11 +407,30 @@ impl Observation {
         });
         Ok(())
     }
-    pub fn remove(&mut self, path: &Path) -> notify::Result<()> {
-        let removed = self.desired.remove(path);
-        if !removed && self.mode == Mode::Recursive {
+    /// Batch retirement avoids rebuilding other obsolete overlapping roots.
+    pub fn remove_recursive_roots(&mut self, paths: &[PathBuf]) -> notify::Result<()> {
+        assert_eq!(self.mode, Mode::Recursive);
+        let mut changed = false;
+        for path in paths {
+            changed |= self.desired.remove(path);
+            self.source.roots.write().unwrap().remove(path);
+            self.covered.remove(path);
+            self.missing.remove(path);
+        }
+        if !changed {
             return Ok(());
         }
+        if !self.desired.is_empty() {
+            self.source.fault();
+        }
+        self.rebuild(Instant::now(), false)
+    }
+
+    pub fn remove(&mut self, path: &Path) -> notify::Result<()> {
+        if self.mode == Mode::Recursive {
+            return self.remove_recursive_roots(&[path.to_path_buf()]);
+        }
+        self.desired.remove(path);
         self.source.roots.write().unwrap().remove(path);
         self.covered.remove(path);
         self.missing.remove(path);
@@ -407,12 +440,6 @@ impl Observation {
             self.physical.clear();
             self.rebuild_retry = None;
             return Ok(());
-        }
-        if self.mode == Mode::Recursive {
-            // notify's overlapping recursive registrations share descendant OS
-            // watches. Rebuild every survivor, advancing each coverage epoch.
-            self.source.fault();
-            return self.rebuild(Instant::now(), false);
         }
         let needed: HashSet<PathBuf> = self
             .desired
@@ -479,7 +506,16 @@ impl Observation {
         // A failed recursive add can leave partial descendants. Discard that
         // candidate, exclude its failing root, and recover healthy siblings on a
         // fresh watcher. Each restart excludes one root, bounding the work.
-        let mut excluded = HashMap::new();
+        // An incremental recursive failure faults the shared source so its
+        // partial OS registrations can be discarded. Rebuild healthy siblings
+        // immediately, but do not turn that cleanup into a retry before the
+        // failed root's deadline (especially after watch-limit exhaustion).
+        let mut excluded: HashMap<_, _> = self
+            .missing
+            .iter()
+            .filter(|(_, retry)| self.mode == Mode::Recursive && retry.at > now)
+            .map(|(root, retry)| (root.clone(), retry.clone()))
+            .collect();
         let mut attempted = HashSet::new();
         loop {
             let source = Source::new(self.desired.clone(), self.mode, self.notify.clone());
@@ -516,6 +552,9 @@ impl Observation {
             });
             let mut partial = None;
             for root in roots {
+                if !(self.registration_admission)(root) {
+                    continue;
+                }
                 let mut complete = true;
                 for (path, mode) in self.required(root) {
                     if physical.contains(&path) {

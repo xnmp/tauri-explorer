@@ -412,3 +412,17 @@ the same lifecycle. The command declares window scope for destination admission.
 Browser evidence for this surface must finish CSS
 animations (`page.screenshot({ animations: "disabled", ... })`): a visible DOM
 assertion can succeed on the first transparent frame of the shared modal fade.
+
+Quick Open cancellation must reach recursive watch admission, not only the tree
+walk. Keep pending recursive demand tied to each search flag; a cancelled waiter
+can leave before an uninterruptible native registration returns. The recursive
+worker reconciles both cancellation and final pane-release identities before
+recovery, and batches obsolete overlapping roots into one removal so they cannot
+rebuild one another. Successful cache coverage remains pane-owned. Test this
+through the real streaming command as well as the injected native watcher seam
+(#1007, ADR 0013 and ADR 0014).
+
+Recursive recovery must also check live demand before each individual root's
+native registration: checking only around a multi-root recovery lets a blocked
+first root hide cancellation of later roots. Preserve the captured demand
+identity so final release/reacquisition cannot revive an obsolete operation.

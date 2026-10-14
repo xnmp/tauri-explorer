@@ -10,6 +10,7 @@ use std::time::{Duration, Instant};
 enum Failure {
     Generic,
     Missing,
+    WatchLimit,
 }
 
 impl Failure {
@@ -17,6 +18,7 @@ impl Failure {
         match self {
             Self::Generic => Error::generic("injected observation failure"),
             Self::Missing => Error::path_not_found(),
+            Self::WatchLimit => Error::new(notify::ErrorKind::MaxFilesWatch),
         }
     }
 }
@@ -43,6 +45,7 @@ struct NativeState {
     watch_failures: HashMap<PathBuf, VecDeque<Failure>>,
     during_watch: HashMap<PathBuf, VecDeque<DuringWatch>>,
     operations: Vec<NativeOperation>,
+    gates: HashMap<PathBuf, (mpsc::Sender<()>, mpsc::Receiver<()>)>,
 }
 
 #[derive(Clone, Default)]
@@ -86,6 +89,24 @@ impl NativeHarness {
             .push_back(failure);
     }
 
+    pub(crate) fn block_successful_watch_once(
+        &self,
+        path: &Path,
+    ) -> (mpsc::Receiver<()>, mpsc::Sender<()>) {
+        let (entered_tx, entered_rx) = mpsc::channel();
+        let (release_tx, release_rx) = mpsc::channel();
+        self.0
+            .lock()
+            .unwrap()
+            .gates
+            .insert(path.to_path_buf(), (entered_tx, release_rx));
+        (entered_rx, release_tx)
+    }
+
+    pub(crate) fn exhaust_watch_limit_once(&self, path: &Path) {
+        self.fail_watch_once(path, Failure::WatchLimit);
+    }
+
     fn error_during_watch_once(&self, path: &Path) {
         self.0
             .lock()
@@ -119,7 +140,7 @@ impl NativeHarness {
         self.0.lock().unwrap().next_generation
     }
 
-    fn registrations(&self, generation: usize) -> HashMap<PathBuf, RecursiveMode> {
+    pub(crate) fn registrations(&self, generation: usize) -> HashMap<PathBuf, RecursiveMode> {
         self.0
             .lock()
             .unwrap()
@@ -127,6 +148,16 @@ impl NativeHarness {
             .get(&generation)
             .cloned()
             .unwrap_or_default()
+    }
+
+    pub(crate) fn watch_count(&self, path: &Path) -> usize {
+        self.0
+            .lock()
+            .unwrap()
+            .operations
+            .iter()
+            .filter(|op| matches!(op, NativeOperation::Watch(_, watched, _) if watched == path))
+            .count()
     }
 
     fn operations(&self) -> Vec<NativeOperation> {
@@ -175,6 +206,11 @@ impl Watcher for FakeWatcher {
         }
         if let Some(failure) = failure {
             return Err(failure.error());
+        }
+        let gate = self.state.lock().unwrap().gates.remove(path);
+        if let Some((entered, release)) = gate {
+            entered.send(()).unwrap();
+            release.recv_timeout(Duration::from_secs(10)).unwrap();
         }
         self.state
             .lock()
@@ -1094,4 +1130,26 @@ fn wait_after_accepts_an_acknowledgement_delayed_past_the_old_five_second_guard(
     });
     receipt.wait_after(write_started);
     delayed.join().expect("delayed observation thread");
+}
+
+#[test]
+fn recursive_failed_install_rebuild_respects_retry_deadline() {
+    let healthy = PathBuf::from("/retry/healthy");
+    let failed = PathBuf::from("/retry/failed");
+    let mut fixture = fixture(Mode::Recursive);
+    fixture.observation.add(&healthy, true).unwrap();
+    fixture.native.exhaust_watch_limit_once(&failed);
+    assert!(fixture.observation.add(&failed, true).is_err());
+    let now = Instant::now();
+    fixture.observation.maintain(now);
+    assert!(fixture.observation.healthy(&healthy));
+    assert!(!fixture.observation.healthy(&failed));
+    assert_eq!(
+        fixture.native.watch_count(&failed),
+        1,
+        "discarding partial coverage must not bypass the failed root's backoff"
+    );
+    fixture.observation.maintain(now + Duration::from_secs(60));
+    assert!(fixture.observation.healthy(&failed));
+    assert_eq!(fixture.native.watch_count(&failed), 2);
 }

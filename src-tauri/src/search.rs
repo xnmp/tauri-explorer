@@ -910,7 +910,17 @@ async fn start_streaming_search_with_runtime<R: Runtime>(
 
         let mut pending_entries: Vec<Walked> = Vec::new();
 
-        let cache_eligible = crate::files::fs_watcher::ensure_search_cache_watched(&root_path);
+        let registration_started = std::time::Instant::now();
+        log::info!("quickfind: observation requested search_id={search_id} root={root_path:?}");
+        let cache_eligible = crate::files::fs_watcher::ensure_search_cache_watched_cancellable(
+            &root_path,
+            cancelled.clone(),
+        );
+        log::info!("quickfind: observation completed search_id={search_id} root={root_path:?} elapsed={}ms covered={cache_eligible} cancelled={}", registration_started.elapsed().as_millis(), cancelled.load(Ordering::Acquire));
+        if cancelled.load(Ordering::Acquire) {
+            SEARCHES.cleanup(search_id);
+            return;
+        }
         let cache_revision = cache_eligible.then(|| SEARCH_ENTRY_CACHE.begin_load(&root_path));
         let cached_entries = cache_eligible
             .then(|| SEARCH_ENTRY_CACHE.completed(&root_path))

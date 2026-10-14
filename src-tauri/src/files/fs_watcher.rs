@@ -145,6 +145,16 @@ fn is_test_watched(_path: &Path) -> bool {
 }
 
 pub(crate) fn ensure_search_cache_watched(path: &Path) -> bool {
+    ensure_search_cache_watched_cancellable(path, Arc::new(AtomicBool::new(false)))
+}
+
+pub(crate) fn ensure_search_cache_watched_cancellable(
+    path: &Path,
+    cancelled: Arc<AtomicBool>,
+) -> bool {
+    if cancelled.load(Ordering::Acquire) {
+        return false;
+    }
     if is_test_watched(path) {
         return true;
     }
@@ -152,13 +162,25 @@ pub(crate) fn ensure_search_cache_watched(path: &Path) -> bool {
     let Some(watcher) = FS_WATCHER.get() else {
         return false;
     };
-    ensure_search_watch(watcher, path)
+    ensure_search_watch_cancellable(watcher, path, cancelled)
 }
 
+#[cfg(test)]
 fn ensure_search_watch<C: CacheInvalidation>(
     watcher: &Mutex<DirectoryWatches<NativeObserver<C>>>,
     path: &Path,
 ) -> bool {
+    ensure_search_watch_cancellable(watcher, path, Arc::new(AtomicBool::new(false)))
+}
+
+fn ensure_search_watch_cancellable<C: CacheInvalidation>(
+    watcher: &Mutex<DirectoryWatches<NativeObserver<C>>>,
+    path: &Path,
+    cancelled: Arc<AtomicBool>,
+) -> bool {
+    if cancelled.load(Ordering::Acquire) {
+        return false;
+    }
     let path_string = path.to_string_lossy().to_string();
     let registration = {
         let Ok(watcher) = watcher.lock() else {
@@ -167,7 +189,7 @@ fn ensure_search_watch<C: CacheInvalidation>(
         if !watcher.covered(&path_string) {
             return false;
         }
-        watcher.observer.search.prepare(path)
+        watcher.observer.search.prepare_cancellable(path, cancelled)
     };
     // Recursive registration can traverse millions of directories. Never
     // retain the direct lease mutex while waiting for its independent worker.
@@ -532,11 +554,17 @@ pub async fn unwatch_directory(
 
 #[cfg(test)]
 #[path = "../../test_support/fs_watcher_changes.rs"]
-mod change_tests;
+pub(crate) mod change_tests;
 
 #[cfg(test)]
 pub(crate) fn native_search_change_for_test(
     path: &Path,
 ) -> super::watch_observation::tests::ChangeReceipt {
     super::watch_observation::tests::subscribe_changes(path, Mode::Recursive)
+}
+
+#[cfg(test)]
+pub(crate) fn settle_search_watch_for_test() {
+    let watcher = FS_WATCHER.get().unwrap().lock().unwrap();
+    watcher.observer.search.settle();
 }

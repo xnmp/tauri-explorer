@@ -148,6 +148,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `modal-ownership.svelte.ts` — shared input ownership for mounted and contributed modals; live surface admission precedes DOM suspension; closing releases only the corresponding registration.
 - `src/lib/state/modal-focus.ts` — pane dialog focus restoration tracks actual focus ownership across DOM detachment and releases listeners on cleanup; shared modal focus eligibility.
 - `src/lib/state/pane-dialogs.svelte.ts` — host-private pane capture handles, transient scope retirement, identity-bound overlay slots, retained portal mounts and shared inert registration for pane-owned content.
+- `src/lib/state/preview-diff-actions.ts` — Preview diff-header/hunk stage, unstage, discard admitted against the owning pane (`isPaneBlocked`); a covered owner makes them no-ops (#1099).
 - `src/lib/state/dialog-presentation-context.ts` — private scope/visibility/focus context inherited by the shared SDK Modal.
 - `run-after-close.ts` — runs a command chosen from a modal launcher (the command palette) only after the launcher has released the top modal surface, so the dialog it opens is not closed as the caller.
 - `open-with.svelte.ts` — captured application-choice sessions, late-result rejection and single launch lifecycle.

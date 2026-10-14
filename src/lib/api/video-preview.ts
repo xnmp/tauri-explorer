@@ -18,3 +18,17 @@ export function loadVideoPreview(path: string): VideoLoadJob {
     },
   }, pageForeground);
 }
+
+import type { VideoCodecInfo } from "$lib/domain/video-preview";
+
+export async function probeVideoCodec(path: string): Promise<VideoCodecInfo | null> {
+  try { return await invoke<VideoCodecInfo>("probe_video_codec", { path }); } catch { return null; }
+}
+
+/** Asks for a destination, then copies; resolves false when the user cancels. */
+export async function saveVideoCopy(path: string, name: string): Promise<boolean> {
+  const destination = await invoke<string | null>("pick_file", { options: { mode: "save", title: "Save a copy of video", filename: name } });
+  if (!destination) return false;
+  await invoke<void>("save_file_copy", { source: path, destination });
+  return true;
+}

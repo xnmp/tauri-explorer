@@ -2869,6 +2869,8 @@ if (typeof window !== "undefined") {
   take_pending_plugin_install_errors: () => [],
   take_window_launch_requests: () => [],
   pick_file: () => null,
+  probe_video_codec: () => ({ container: null, videoCodec: null, audioCodec: null }),
+  save_file_copy: () => undefined,
   install_plugin: () => { throw new Error("Install plugin packages in the native app"); },
   uninstall_plugin: () => undefined,
   set_plugin_package_enabled: () => undefined,

@@ -1,12 +1,12 @@
 <script lang="ts">
   import { onDestroy, untrack } from "svelte";
-  import { loadVideoPreview } from "$lib/api/video-preview";
+  import { loadVideoPreview, probeVideoCodec, saveVideoCopy } from "$lib/api/video-preview";
   import { openFile } from "$lib/api/open";
   import { extractError } from "$lib/api/common";
   import { dialogStore } from "$lib/state/dialogs.svelte";
   import { windowTabsManager } from "$lib/state/window-tabs.svelte";
   import { keybindingsStore } from "$lib/state/keybindings.svelte";
-  import { mediaTime, seekTime, videoClickAction, videoKeyAction } from "$lib/domain/video-preview";
+  import { unsupportedVideoMessage, mediaTime, seekTime, videoClickAction, videoKeyAction } from "$lib/domain/video-preview";
   import type { VideoSource } from "$lib/state/video-preview-lifetime";
   let { path, name, fullscreen, ontogglefullscreen }: {path:string;name:string;fullscreen:boolean;ontogglefullscreen:()=>void} = $props();
   let video = $state<HTMLVideoElement | null>(null);
@@ -83,11 +83,22 @@
       case "fullscreen": ontogglefullscreen(); break;
     }
   }
-  function mediaFailed() {
+  let unsupported = $state(false);
+  async function mediaFailed() {
     if (disposed) return;
-    fail(video?.error?.code === MediaError.MEDIA_ERR_DECODE || video?.error?.code === MediaError.MEDIA_ERR_SRC_NOT_SUPPORTED
-      ? "This video format or codec is not supported by your system."
-      : "Cannot load this video. It may have changed or become unavailable.");
+    const code = video?.error?.code;
+    if (code !== MediaError.MEDIA_ERR_DECODE && code !== MediaError.MEDIA_ERR_SRC_NOT_SUPPORTED) {
+      fail("Cannot load this video. It may have changed or become unavailable.");
+      return;
+    }
+    unsupported = true;
+    fail(unsupportedVideoMessage(null));
+    const info = await probeVideoCodec(path);
+    if (!disposed && info) error = unsupportedVideoMessage(info);
+  }
+  async function download() {
+    try { await saveVideoCopy(path, name); }
+    catch (cause) { if (!disposed) error = `Cannot save copy: ${extractError(cause)}`; }
   }
   function onStageClick(event: MouseEvent) {
     const target = event.target as HTMLElement;
@@ -110,7 +121,7 @@
       <track kind="captions" />
     </video>
     {#if error}
-      <div class="video-message" role="status"><span>{error}</span><button type="button" onclick={openExternal}>Open externally</button></div>
+      <div class="video-message" role="status"><span>{error}</span>{#if unsupported}<button type="button" onclick={download}>Download</button>{/if}<button type="button" onclick={openExternal}>Open externally</button></div>
     {:else if !ready}
       <div class="video-message" role="status">Loading video…</div>
     {/if}

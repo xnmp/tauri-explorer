@@ -722,6 +722,14 @@ fn resolve_xdg_desktop_by_extension(path: &std::path::Path) -> Option<String> {
     Some(desktop_file)
 }
 
+/// A `Command` for launching a user-facing program, without the WebKitGTK
+/// renderer variables the app set for itself (#1079).
+fn scrubbed(program: impl AsRef<std::ffi::OsStr>) -> std::process::Command {
+    let mut command = std::process::Command::new(program);
+    crate::child_env::scrub_command(&mut command);
+    command
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -736,12 +744,4 @@ mod tests {
         // Unknown extensions fall back to image/png
         assert_eq!(image_mime_for_extension("xyz"), "image/png");
     }
-}
-
-/// A `Command` for launching a user-facing program, without the WebKitGTK
-/// renderer variables the app set for itself (#1079).
-fn scrubbed(program: impl AsRef<std::ffi::OsStr>) -> std::process::Command {
-    let mut command = std::process::Command::new(program);
-    crate::child_env::scrub_command(&mut command);
-    command
 }

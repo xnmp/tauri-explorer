@@ -3,7 +3,8 @@
 Status: Accepted
 
 Governs: `src-tauri/src/files/watch_observation.rs`,
-`src-tauri/src/files/fs_watcher.rs`, `src-tauri/src/files/directory_watches.rs`
+`src-tauri/src/files/fs_watcher.rs`, `src-tauri/src/files/directory_watches.rs`,
+`src-tauri/src/files/search_observation.rs`
 
 Renderer-owned leases and observation health are separate concerns. The lease
 registry retains identity and release authority across an observation outage;
@@ -53,11 +54,27 @@ coverage. Actual filesystem changes retain ancestor/descendant invalidation.
 Refresh delivery follows the existing trailing debounce and pane refresh policy;
 this boundary introduces no new frontend refresh gate.
 
-Native delivery is eventual. The initial directory listing still precedes watch
-acknowledgment; callbacks captured during installation are covered here, but a
-mutation before native registration exists needs a separate listing/watch handoff
-contract. This decision does not establish macOS startup latency or platform-wide
-native acceptance.
+Native delivery is eventual. ADR 0014 supersedes the original listing-before-watch
+handoff: observed navigation now acquires its owned observation before scanning.
+A readable directory can still be browsed during an observation outage, with a
+refresh after recovery. This decision does not establish macOS startup latency
+or platform-wide native acceptance.
+
+Recursive registration and recovery run on a dedicated worker, outside direct
+lease coordination. Pending registration requests retain their search cancellation
+flags. A cancelled waiter need not wait for a native call to return; the worker
+then retires obsolete demand before recovery or coverage publication. Reconcile
+final lease identities at the same boundary, and batch obsolete overlapping roots
+so removal cannot reconstruct another root already scheduled for retirement.
+A live same-root requester preserves shared demand. Successful coverage belongs
+to the pane until its final lease is released; failed registration stays
+cancellable until the requesting search completes (#1007, #1028).
+
+The worker supplies an identity-aware admission predicate to Observation. Both
+incremental recovery and shared-watcher reconstruction check it before each
+root's native registration, because cancellation can arrive while an earlier
+root in the same operation is blocked. Direct observation retains unconditional
+admission; owned navigation lease ordering is unchanged.
 
 References: notify's [Watcher requirements](https://docs.rs/notify/latest/notify/trait.Watcher.html),
 [rescan contract](https://docs.rs/notify/latest/notify/struct.Event.html#method.need_rescan),

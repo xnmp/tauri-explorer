@@ -94,6 +94,10 @@ export interface MockControl {
   /** Real browser media URL; tests can delay source admission, not fake playback. */
   videoPreview?: (path: string) => string | Promise<string>;
   releasedVideoPreviews?: string[];
+  /** Overrides `probe_video_codec`. */
+  videoCodecProbe?: (path: string) => { container: string | null; videoCodec: string | null; audioCodec: string | null };
+  /** Destinations `save_file_copy` was asked to write. */
+  savedVideoCopies?: { source: string; destination: string }[];
   /** Action hook: bump the mtime/size of a previewed file to simulate an
    * external edit landing while its preview is open. */
   previewRevision?: (path: string) => void;

@@ -58,6 +58,7 @@ pub(crate) mod mutation;
 #[cfg_attr(any(target_os = "macos", windows), allow(dead_code, unused_imports))]
 mod native_directory;
 mod object_id;
+pub mod video_info;
 
 pub mod open_with;
 pub mod pdf_preview;

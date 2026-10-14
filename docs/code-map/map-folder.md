@@ -859,6 +859,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 
 - `src/lib/components/VideoPreview.svelte` — explicit native-decoder playback controls, focused media keys, error fallback and synchronous source detachment.
 - `src/lib/domain/video-preview.ts` — pure time/seek values and keyboard ownership, including held-key and Super handling.
+- `src-tauri/src/files/video_info.rs` — bounded head/tail codec sniffing (MP4/MOV, Matroska/WebM, AVI) and `save_file_copy` for the unsupported-codec preview state.
 - `src/lib/state/video-preview-lifetime.ts` — two-phase capability adoption and cancellation; rejects late source URLs and releases once.
 - `src/lib/api/video-preview.ts` — acknowledged native-session acquisition, scoped preparation and release IPC.
 - `src/test-support/video-preview-probe.ts` — hook-build-only DOM RPC observing native streaming counters.

@@ -370,6 +370,8 @@ pub fn run_with_process_entry(launch_dir: Option<String>, t_process_entry: std::
             files::media_preview::begin_video_preview,
             files::media_preview::prepare_video_preview,
             files::media_preview::release_video_preview,
+            files::video_info::probe_video_codec,
+            files::video_info::save_file_copy,
             file_mutation::write_text_file,
             file_mutation::create_symlink,
             files::file_ops::estimate_size,

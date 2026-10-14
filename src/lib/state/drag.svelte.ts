@@ -375,6 +375,12 @@ export const dragState = {
     };
   },
 
+  /** True while a captured DOM Drop of this session awaits its native start
+   * decision; that Drop, not a dragend fallback, owns the completion. */
+  hasDeferredDomDrop(sessionId: string): boolean {
+    return retained.has(sessionId);
+  },
+
   /** Read drag data from localStorage (cross-window fallback) */
   readCrossWindow(): DragData | null {
     return loadPersisted<DragData | null>(STORAGE_KEY, null);

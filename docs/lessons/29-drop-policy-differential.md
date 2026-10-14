@@ -1078,6 +1078,7 @@ nothing is pinned. There is no trustworthy successful-drop signal in that
 sequence. Keep the gesture cancelled rather than reconstructing a root-sidebar
 Drop that can override Escape or destination-change cancellation. This edge
 case is deferred for a separate issue.
+Resolved by #1101: see `docs/lessons/1101-quick-access-late-native-rejection.md`.
 
 `e2e/file-drag-carrier.spec.ts` now drags two selected real file-list entries to
 the Demo plugin's registered target. The application's `createHtml5FileDrag`

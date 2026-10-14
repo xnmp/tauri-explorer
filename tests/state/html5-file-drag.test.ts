@@ -40,7 +40,7 @@ describe("shared HTML5 filesystem source protocol", () => {
   });
 
   it("hands Linux app sources to native and preserves them through an early DOM dragend", () => {
-    vi.stubGlobal("window", { __TAURI_INTERNALS__: {} }); const source = createHtml5FileDrag();
+    vi.stubGlobal("window", Object.assign(new EventTarget(), { __TAURI_INTERNALS__: {} })); const source = createHtml5FileDrag();
     const document = new EventTarget(); vi.stubGlobal("document", document);
     const stop = listenSidebarDragEnd({ quickAccess: () => undefined, isDragOver: () => false, reset: vi.fn() });
     source.start({ dataTransfer: transfer() } as DragEvent, data); const original = dragState.current;

@@ -414,6 +414,119 @@ describe.each(dropPlatforms)("differential drop outcomes: %s", platform => {
     expect(io.outcomes).toEqual([]);
     expect(io.records).toEqual([]);
   });
+  // #1101: Linux can deliver only dragend over Quick Access while the native
+  // start is pending. A later rejection replays the pin only for a gesture that
+  // ended on that live Quick Access target without Escape.
+  async function pendingQuickAccessGesture(sourceKind: "listing-folder" | "miller-folder") {
+    const c: DropCase = { platform, source: sourceKind, target: "quick-access", modifier: "none", transport: "native-rejected" };
+    hit = target(c); sidebarOver = true;
+    let rejectStart!: (reason: string) => void, acceptStart!: () => void;
+    io.start.mockImplementationOnce(() => new Promise<void>((resolve, reject) => { rejectStart = reject; acceptStart = resolve; }));
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    win.addEventListener("drop", e => { void domDestination(e as DragEvent, c); });
+    const entry = { path: sourcePath, name: "item", kind: "directory" };
+    const source = sourceKind === "listing-folder"
+      ? modules.items.useItemInteractions({ getExplorer: () => ({ getSelectedEntries: () => [entry], refresh() {} }) })
+      : modules.html.createHtml5FileDrag();
+    const start = event("dragstart", transfer(), c, sourceNode);
+    if (sourceKind === "listing-folder") source.handleDragStart(start, entry, true); else source.start(start, entry);
+    sourceEnd = sourceKind === "listing-folder" ? source.handleDragEnd : source.end;
+    doc.dispatchEvent(start);
+    await flush();
+    const dragEnd = () => doc.dispatchEvent(event("dragend", transfer(), c, sourceNode));
+    const endSource = () => { sourceEnd!(); sourceEnd = undefined; };
+    return { c, start, dragEnd, endSource, reject: () => rejectStart("unavailable"), accept: () => acceptStart() };
+  }
+  const pendingSources = ["listing-folder", "miller-folder"] as const;
+  it.runIf(platform === "linux").each(pendingSources.flatMap(source =>
+    (["before-source-end", "after-source-end"] as const).map(rejection => ({ source, rejection }))),
+  )("dragend-only Quick Access completion pins once after late native rejection / $source / $rejection", async ({ source, rejection }) => {
+    const gesture = await pendingQuickAccessGesture(source);
+    gesture.dragEnd();
+    expect(io.outcomes).toEqual([]);
+    if (rejection === "before-source-end") { gesture.reject(); await flush(); }
+    gesture.endSource();
+    if (rejection === "after-source-end") gesture.reject();
+    await flush();
+    expect(io.outcomes).toEqual(["pin"]);
+    expect(io.records).toEqual([{ paths: [sourcePath] }]);
+    expect(io.start).toHaveBeenCalledTimes(1);
+  });
+  it.runIf(platform === "linux").each(pendingSources)("rejection before dragend still pins exactly once / %s", async source => {
+    const gesture = await pendingQuickAccessGesture(source);
+    gesture.reject(); await flush();
+    gesture.dragEnd(); gesture.endSource(); await flush();
+    expect(io.outcomes).toEqual(["pin"]);
+    expect(io.records).toEqual([{ paths: [sourcePath] }]);
+  });
+  it.runIf(platform === "linux").each(pendingSources)("accepted native start after dragend-only completion pins nothing / %s", async source => {
+    const gesture = await pendingQuickAccessGesture(source);
+    gesture.dragEnd(); gesture.accept(); await flush(); gesture.endSource(); await flush();
+    expect(io.outcomes).toEqual([]);
+  });
+  it.runIf(platform === "linux").each(pendingSources)("Escape at a Quick Access point cancels the deferred pin / %s", async source => {
+    const gesture = await pendingQuickAccessGesture(source);
+    // Unlike the zero-coordinate Escape rows, the end point is still inside
+    // Quick Access: only the captured cancellation can refuse the replay.
+    win.dispatchEvent(Object.assign(new Event("keydown"), { key: "Escape" }));
+    gesture.dragEnd(); gesture.reject(); await flush(); gesture.endSource(); await flush();
+    expect(io.outcomes).toEqual([]);
+    expect(io.records).toEqual([]);
+  });
+  it.runIf(platform === "linux").each(pendingSources.flatMap(source =>
+    (["disconnected", "replaced", "reowned"] as const).map(change => ({ source, change }))),
+  )("Quick Access destination $change before late rejection pins nothing / $source", async ({ source, change }) => {
+    const gesture = await pendingQuickAccessGesture(source);
+    const access = hit;
+    gesture.dragEnd();
+    if (change === "disconnected") Object.defineProperty(access, "isConnected", { value: false });
+    else if (change === "replaced") hit = dropElement("quick-access");
+    else cleanup.push(modules.targets.fileDropTargets.register(access, vi.fn()));
+    gesture.reject(); await flush(); gesture.endSource(); await flush();
+    expect(io.outcomes).toEqual([]);
+    expect(io.records).toEqual([]);
+  });
+  it.runIf(platform === "linux").each(pendingSources.flatMap(source =>
+    (["elsewhere", "zero-coordinates"] as const).map(point => ({ source, point }))),
+  )("stale Quick Access hover without an end point there pins nothing after late rejection / $source / $point", async ({ source, point }) => {
+    const gesture = await pendingQuickAccessGesture(source);
+    const outside = dropElement("entry-item directory", { "data-path": destPath }, dropElement("explorer-pane"));
+    (doc as any).elementFromPoint = () => outside;
+    const end = event("dragend", transfer(), gesture.c, sourceNode);
+    if (point === "zero-coordinates") Object.assign(end, { clientX: 0, clientY: 0 });
+    doc.dispatchEvent(end);
+    gesture.reject(); await flush(); gesture.endSource(); await flush();
+    expect(io.outcomes).toEqual([]);
+  });
+  it.runIf(platform === "linux").each(pendingSources)("a late readable Drop after the deferred pin cannot pin again / %s", async source => {
+    const gesture = await pendingQuickAccessGesture(source);
+    gesture.dragEnd(); gesture.reject(); await flush();
+    expect(io.outcomes).toEqual(["pin"]);
+    win.dispatchEvent(event("drop", gesture.start.dataTransfer!, gesture.c)); await flush();
+    gesture.endSource(); await flush();
+    expect(io.outcomes).toEqual(["pin"]);
+  });
+  it.runIf(platform === "linux").each(pendingSources)("a deferred bookmark Drop cancelled by row removal is not re-pinned by dragend / %s", async source => {
+    const gesture = await pendingQuickAccessGesture(source);
+    const access = hit;
+    const bookmark = dropElement("bookmark-drop-target", { "data-path": destPath }, access);
+    hit = bookmark;
+    win.dispatchEvent(event("drop", gesture.start.dataTransfer!, { ...gesture.c, target: "bookmark" }));
+    // The row vanished: the end point now resolves to the live Quick Access root.
+    Object.defineProperty(bookmark, "isConnected", { value: false });
+    (doc as any).elementFromPoint = () => access;
+    gesture.dragEnd();
+    gesture.reject(); await flush(); gesture.endSource(); await flush();
+    expect(modules.toast.toastStore.toasts.some((toast: { message: string }) => /destination changed/.test(toast.message))).toBe(true);
+    expect(io.outcomes).toEqual([]);
+  });
+  it.runIf(platform === "linux").each(pendingSources)("disposing the sidebar abandons a deferred pin / %s", async source => {
+    const gesture = await pendingQuickAccessGesture(source);
+    gesture.dragEnd();
+    cleanup.splice(1, 1)[0]();
+    gesture.reject(); await flush(); gesture.endSource(); await flush();
+    expect(io.outcomes).toEqual([]);
+  });
   it.each(dropDeferredUriCases.filter(c => c.platform === platform))("deferred URI drop after dragend / $target / $visibility", async c => {
     delete (win as any).__TAURI_INTERNALS__;
     hit = target(c);

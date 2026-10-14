@@ -277,7 +277,10 @@ export function useNativeDropHandler(deps: NativeDropDeps) {
     }
     if (!terminal) return;
     event.stopImmediatePropagation();
-    const data = deferredDomSources.has(event) || source?.sessionId === live?.sessionId ? source : null;
+    // The source window may already have handled its dragend and cleared the
+    // live source (#1095). A session recovered from unexpired shared history
+    // is then the only proof of identity; admission still claims it once.
+    const data = deferredDomSources.has(event) || !live || source?.sessionId === live.sessionId ? source : null;
     const livePaths = internalDragPaths(data, isWindows);
     const payload = event.dataTransfer ? domDropPaths(event.dataTransfer, isWindows) : null;
     // WebKit strips the Explorer MIME payload; admission then rests on the

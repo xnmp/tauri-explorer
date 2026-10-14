@@ -1090,3 +1090,14 @@ admission on Chromium and WebKit and fails if production HTML publishing or
 admission is removed. The former standalone HTML echo probe provided neither
 of those guarantees; its historical two-pass result above is not production
 acceptance evidence. Playwright is deferred to the user for this revision.
+
+## #1095: DOM drop after the source window's dragend
+
+`dropLateDomCases` (order `dom-after-dragend`, cross-window, Linux, registered
+plugin target) end the source window's gesture before the receiver's DOM drop.
+The receiver recovers the unexpired session from shared history via
+`dragState.domSource`; `handleDomDrop` must deliver with that recovered session
+when `latestSource()` is null instead of discarding it (admission still claims
+it once; expired sessions are rejected earlier by `expiredDomSource`). Rows use
+full DataTransfer visibility: a stripped URI-only drop is admitted only during a
+live HTML5 gesture, a separate fence left unchanged.

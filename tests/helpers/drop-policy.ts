@@ -7,6 +7,9 @@ export const dropTargets = ["folder", "breadcrumb", "tab", "bookmark", "quick-ac
 export const dropModifiers = ["none", "ctrl", "option"] as const;
 export const dropTransports = ["native-accepted", "native-rejected", "dom-only"] as const;
 export const dropDeliveryOrders = ["native-first", "dom-first", "native-late-after-dragend", "dom-only"] as const;
+/** Orders outside the Cartesian delivery table: the receiver's DOM drop arrives
+ * only after the source window handled its dragend and cleared its live source. */
+export const dropLateDomOrder = "dom-after-dragend" as const;
 export const dropPlatforms = ["linux", "mac", "windows"] as const;
 export const dropVisibilities = ["full", "stripped"] as const;
 export type DropCase = {
@@ -16,7 +19,7 @@ export type DropCase = {
   staleGesture?: "local" | "cross-window" | "retired" | "wrong-clock" | "mismatched-session";
   source: typeof dropSources[number]; target: typeof dropTargets[number];
   modifier: typeof dropModifiers[number]; transport: typeof dropTransports[number]; platform: typeof dropPlatforms[number];
-  deliveryOrder?: typeof dropDeliveryOrders[number];
+  deliveryOrder?: typeof dropDeliveryOrders[number] | typeof dropLateDomOrder;
   completionModal?: "window" | "destination-pane" | "other-pane";
   completionPath?: "sidebar-dragend";
   lifetime?: "expired";
@@ -30,7 +33,7 @@ const nonfile = (c: DropCase) => c.source === "text" || c.source === "plugin-sur
 // Native receiver delivery is separate from explicit native start: Linux
 // Recent reaches Wry through GTK with its session URN and source:null.
 export const nativeRoute = (c: DropCase) => !nonfile(c) && c.source !== "external-uri" && c.source !== "sidebar-bookmark"
-  && c.deliveryOrder !== "dom-only"
+  && c.deliveryOrder !== "dom-only" && c.deliveryOrder !== dropLateDomOrder
   && (c.transport === "native-accepted" || (c.source !== "external-file" && c.transport === "native-rejected" && c.platform === "linux"));
 const copy = (c: DropCase) => c.modifier === (c.platform === "mac" ? "option" : "ctrl");
 const pointer = (c: DropCase) => c.transport === "dom-only" && c.platform !== "linux" && explorer(c);
@@ -141,6 +144,15 @@ export const dropCrossWindowCases: DropCase[] = dropCases.filter(c =>
   && (c.transport !== "dom-only" || c.platform === "linux")
 ).concat(dropBoundaryCases).map(c => ({ ...c, window: "cross-window" }));
 
+/** #1095: Linux sources whose HTML5 gesture ends in window A before window B's
+ * DOM drop reaches a registered plugin target; B recovers it from shared history. */
+export const dropLateDomCases: DropCase[] = (["recent", "listing-file", "miller-file"] as const).map(source => ({
+  platform: "linux" as const, source, target: "plugin" as const, modifier: "none" as const,
+  transport: "native-rejected" as const, deliveryOrder: dropLateDomOrder, window: "cross-window" as const,
+  // Stripped URI-only drops still need a live HTML5 gesture for admission.
+  visibility: "full" as const,
+}));
+
 /** Policy belongs to the event-producing gesture, irrespective of callback
  * delivery order. These rows exercise production source state and routing. */
 export type TemporalDropCase = DropCase & {
@@ -244,7 +256,7 @@ export const withDropVisibility = (cases: readonly DropCase[]): DropCase[] => ca
   dropVisibilities.map(visibility => ({ ...c, visibility })));
 export const dropVisibilityCases = withDropVisibility([
   ...dropCases, ...dropDeliveryCases, ...dropRejectedDomCases, ...dropBoundaryCases, ...dropCrossWindowCases, ...dropPathCases,
-]);
+]).concat(dropLateDomCases);
 export const dropUriCases: DropCase[] = dropPlatforms.flatMap(platform =>
   (["local", "cross-window", "retired", "wrong-clock", "mismatched-session", undefined] as const).flatMap(staleGesture =>
     [false, true].flatMap(uriHtml => dropTargets.map(target => ({

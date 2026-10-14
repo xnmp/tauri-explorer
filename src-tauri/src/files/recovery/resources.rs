@@ -113,7 +113,12 @@ fn capture_parent_aliases(
         let name = prefix
             .file_name()
             .ok_or_else(|| invalid("Alias requires a name"))?;
-        let alias = capture(&parent.join(name), Access::Read, Scope::Entry)?;
+        let mut alias = capture(&parent.join(name), Access::Read, Scope::Entry)?;
+        // Path-only fence (#794): the link's inode may be freed and reused by an
+        // unrelated object while this record stays unresolved. Recording it as
+        // an object would then refuse that unrelated write. Trade-off: a
+        // hardlink to the symlink itself no longer fences by identity.
+        alias.object = None;
         *total = add_budget(*total, &alias.path.0, alias.ancestors.len())?;
         if request_count + aliases.len() >= MAX_CLAIMS {
             return Err(invalid(

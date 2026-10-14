@@ -99,8 +99,30 @@ impl SearchFilter {
 
 static SEARCH_ENTRY_CACHE: SearchEntryCache<Walked> = SearchEntryCache::new();
 
+/// Test-only shared state outlives the test that panicked while holding it.
+/// Recovering the guard keeps one failing test from cascading into siblings.
+#[cfg(test)]
+trait LockTestState<T> {
+    fn lock_test_state(&self) -> std::sync::MutexGuard<'_, T>;
+}
+
+#[cfg(test)]
+impl<T> LockTestState<T> for Mutex<T> {
+    fn lock_test_state(&self) -> std::sync::MutexGuard<'_, T> {
+        self.lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+}
+
 #[cfg(test)]
 static TEST_CACHE_COMMANDS: Mutex<()> = Mutex::new(());
+
+/// Every test that drives the shared cache commands takes the lock here, so a
+/// poisoned lock from a panicking sibling never fails the next test.
+#[cfg(test)]
+fn lock_test_cache_commands() -> std::sync::MutexGuard<'static, ()> {
+    TEST_CACHE_COMMANDS.lock_test_state()
+}
 
 #[cfg(test)]
 static TEST_WALK_COUNTS: std::sync::OnceLock<Mutex<std::collections::HashMap<PathBuf, usize>>> =
@@ -595,8 +617,7 @@ fn walk_entries(root_path: &Path) -> Vec<Walked> {
     {
         *TEST_WALK_COUNTS
             .get_or_init(|| Mutex::new(std::collections::HashMap::new()))
-            .lock()
-            .expect("test walk counts lock")
+            .lock_test_state()
             .entry(root_path.to_path_buf())
             .or_default() += 1;
     }
@@ -611,8 +632,7 @@ fn walk_entries(root_path: &Path) -> Vec<Walked> {
 fn walk_count_for_test(root_path: &Path) -> usize {
     TEST_WALK_COUNTS
         .get_or_init(|| Mutex::new(std::collections::HashMap::new()))
-        .lock()
-        .expect("test walk counts lock")
+        .lock_test_state()
         .get(root_path)
         .copied()
         .unwrap_or_default()
@@ -627,8 +647,7 @@ fn walk_streaming_entries(
     {
         *TEST_STREAM_WALK_COUNTS
             .get_or_init(|| Mutex::new(std::collections::HashMap::new()))
-            .lock()
-            .expect("test stream walk counts lock")
+            .lock_test_state()
             .entry(root_path.to_path_buf())
             .or_default() += 1;
     }
@@ -640,8 +659,7 @@ fn walk_streaming_entries(
         if !paused {
             let gate = TEST_STREAM_GATES
                 .get_or_init(|| Mutex::new(std::collections::HashMap::new()))
-                .lock()
-                .expect("test stream gates lock")
+                .lock_test_state()
                 .remove(root_path);
             if let Some(gate) = gate {
                 paused = true;
@@ -676,8 +694,7 @@ fn install_stream_gate_for_test(root_path: &Path) -> Arc<TestStreamGate> {
     });
     TEST_STREAM_GATES
         .get_or_init(|| Mutex::new(std::collections::HashMap::new()))
-        .lock()
-        .expect("test stream gates lock")
+        .lock_test_state()
         .insert(root_path.to_path_buf(), Arc::clone(&gate));
     gate
 }
@@ -686,8 +703,7 @@ fn install_stream_gate_for_test(root_path: &Path) -> Arc<TestStreamGate> {
 fn stream_walk_count_for_test(root_path: &Path) -> usize {
     TEST_STREAM_WALK_COUNTS
         .get_or_init(|| Mutex::new(std::collections::HashMap::new()))
-        .lock()
-        .expect("test stream walk counts lock")
+        .lock_test_state()
         .get(root_path)
         .copied()
         .unwrap_or_default()
@@ -1090,6 +1106,82 @@ mod tests {
     use super::*;
     use std::fs::{self, File};
     use tempfile::tempdir;
+
+    #[test]
+    fn shared_cache_command_lock_recovers_after_a_sibling_panicked_holding_it() {
+        let _ = std::panic::catch_unwind(|| {
+            let _guard = TEST_CACHE_COMMANDS.lock_test_state();
+            panic!("sibling test failure");
+        });
+        assert!(
+            TEST_CACHE_COMMANDS.is_poisoned(),
+            "the sibling must have poisoned the shared lock"
+        );
+        let _guard = lock_test_cache_commands();
+    }
+
+    #[test]
+    fn walk_count_bookkeeping_recovers_after_a_sibling_panicked_holding_it() {
+        let base = tempdir().expect("temporary walk root");
+        let root = visible_root(&base);
+        fs::write(root.join("entry.txt"), "entry").expect("walk fixture");
+        let _ = std::panic::catch_unwind(|| {
+            let _guard = TEST_WALK_COUNTS
+                .get_or_init(|| Mutex::new(std::collections::HashMap::new()))
+                .lock_test_state();
+            panic!("sibling test failure");
+        });
+        walk_entries(&root);
+        assert_eq!(walk_count_for_test(&root), 1);
+    }
+
+    #[test]
+    fn stream_walk_count_bookkeeping_recovers_after_a_sibling_panicked_holding_it() {
+        let base = tempdir().expect("temporary stream walk root");
+        let root = visible_root(&base);
+        fs::write(root.join("entry.txt"), "entry").expect("stream walk fixture");
+        let _ = std::panic::catch_unwind(|| {
+            let _guard = TEST_STREAM_WALK_COUNTS
+                .get_or_init(|| Mutex::new(std::collections::HashMap::new()))
+                .lock_test_state();
+            panic!("sibling test failure");
+        });
+        walk_streaming_entries(&root, &|| false, &mut |_| {});
+        assert_eq!(stream_walk_count_for_test(&root), 1);
+    }
+
+    #[test]
+    fn stream_gate_registration_recovers_after_a_sibling_panicked_holding_it() {
+        let base = tempdir().expect("temporary gated walk root");
+        let root = visible_root(&base);
+        fs::write(root.join("entry.txt"), "entry").expect("gated walk fixture");
+        let _ = std::panic::catch_unwind(|| {
+            let _guard = TEST_STREAM_GATES
+                .get_or_init(|| Mutex::new(std::collections::HashMap::new()))
+                .lock_test_state();
+            panic!("sibling test failure");
+        });
+        let gate = install_stream_gate_for_test(&root);
+        assert_eq!(
+            Arc::strong_count(&gate),
+            2,
+            "the gate must be registered in the recovered map"
+        );
+        // The walk consumes the registration on its first entry, then parks at
+        // the gate barriers, which the test thread must join to release it.
+        let walk_root = root.clone();
+        let walker = std::thread::spawn(move || {
+            walk_streaming_entries(&walk_root, &|| false, &mut |_| {});
+        });
+        gate.started.wait();
+        gate.release.wait();
+        walker.join().expect("gated walk completes");
+        assert_eq!(
+            Arc::strong_count(&gate),
+            1,
+            "the walk must consume the recovered gate registration"
+        );
+    }
 
     /// Helper: create a visible subdirectory inside a tempdir (tempdir names
     /// start with `.tmp` which jwalk's `skip_hidden` would filter).

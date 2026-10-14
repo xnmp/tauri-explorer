@@ -46,4 +46,6 @@ before the rejection resolves the live target as blocked.
 Unverified: whether physical WebKitGTK reports the negotiated effect, rather
 than `"none"`, on the dragend of a completed gesture that never dispatched
 Drop. If it reports `"none"`, this path fails closed: nothing is pinned,
-which is the pre-#1101 behaviour, and never a pin after cancellation.
+which is the pre-#1101 behaviour, and never a pin after cancellation. The same holds if
+WebKitGTK gives that dragend zero coordinates: the end point cannot be proven,
+so nothing is deferred.

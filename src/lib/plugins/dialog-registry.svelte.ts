@@ -143,6 +143,13 @@ export function createDialogRegistry(dependencies: {
       const existing = openDialogs.find(dialog => dialog.id === id);
       if (existing) {
         if (!existing.scope) throw new Error("Configuration dialog is already open");
+        // A caller retired during an await must not join (or close) a dialog
+        // another pane opened meanwhile: settle with an inert handle.
+        let retired = false;
+        caller?.onClosed(() => { retired = true; })();
+        if (retired) {
+          return { result: Promise.resolve<DialogResult>({ reason: "caller-closed" }), ownsDialog: false, close: () => {} };
+        }
         forward(existing);
         return sessionHandle(id, sessions.get(id) ?? managedSession(id, null), existing.owner === owner);
       }

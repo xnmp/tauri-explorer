@@ -13,8 +13,12 @@ destination, still pinned.
 `listenSidebarDragEnd` now defers the pin itself (`deferUntilRejected`), and
 only for a gesture known to have ended on that Quick Access:
 
-- **Cancellation is captured at dragend.** Escape seen on window capture since
-  the gesture's dragstart refuses the deferral.
+- **Cancellation is captured at dragend.** Its `dataTransfer.dropEffect` must
+  not be `"none"`. The HTML processing model reports `"none"` for a cancelled
+  drag (Escape, release outside any accepting target). A page `keydown` Escape
+  is not enough: GTK grabs the keyboard during a drag, so the page may never
+  see it. An observed Escape on window capture refuses the deferral as well.
+  Only directory sources defer, because Quick Access pins nothing else.
 - **The end point is the evidence, not hover.** The dragend coordinates must
   be non-zero and hit-test inside Quick Access. Cached `isDragOver` only gates
   the immediate (already-decided) path, as before. A zero-coordinate dragend
@@ -34,4 +38,12 @@ only for a gesture known to have ended on that Quick Access:
 
 Regression rows are in `tests/composables/drop-policy-differential.test.ts`
 (search `#1101`). Each guard was mutation-checked: removing it fails at least
-one row.
+one row. That includes the drop effect, Escape, directory-only, zero
+coordinates, end point containment, Quick Access identity and connection, row
+connection, deferred DOM Drop ownership and disposal. A window modal opened
+before the rejection resolves the live target as blocked.
+
+Unverified: whether physical WebKitGTK reports the negotiated effect, rather
+than `"none"`, on the dragend of a completed gesture that never dispatched
+Drop. If it reports `"none"`, this path fails closed: nothing is pinned,
+which is the pre-#1101 behaviour, and never a pin after cancellation.

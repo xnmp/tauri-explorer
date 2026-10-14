@@ -36,13 +36,17 @@ export function listenSidebarDragEnd(deps: {
 
   /** Linux can deliver only dragend while the native start is still pending
    * (#1101). Defer the pin to a rejection only for a gesture known to have
-   * ended on this Quick Access: no Escape, no source-owned deferred Drop, and
-   * the end point itself (not cached hover) inside it. The destination must
-   * still be the same live, sidebar-owned element when the decision arrives. */
+   * ended on this Quick Access: a completed (not "none") drop effect, no
+   * Escape, no source-owned deferred Drop, and the end point itself (not
+   * cached hover) inside it. The destination must still be the same live,
+   * sidebar-owned element when the decision arrives. */
   function deferUntilRejected(event: DragEvent, quickAccess: HTMLElement, source: DragData, cancelled: boolean): void {
     const live = dragState.latestSource();
-    if (cancelled || !source.sessionId || live?.sessionId !== source.sessionId || live.transport !== "native-pending"
-        || dragState.hasDeferredDomDrop(source.sessionId)) return;
+    // GTK grabs the keyboard during a drag, so Escape may never reach the
+    // page; dragend's dropEffect is the spec's cancellation signal.
+    const completed = !cancelled && !!event.dataTransfer && event.dataTransfer.dropEffect !== "none";
+    if (!completed || source.kind !== "directory" || !source.sessionId || live?.sessionId !== source.sessionId
+        || live.transport !== "native-pending" || dragState.hasDeferredDomDrop(source.sessionId)) return;
     const point = event.clientX > 0 && event.clientY > 0 ? document.elementFromPoint(event.clientX, event.clientY) : null;
     if (!point || !quickAccess.contains(point)) return;
     const pending = dragState.pendingNative();

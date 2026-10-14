@@ -623,3 +623,43 @@ fn private_directory_ensure_preserves_exclusion_through_parent_aliases() {
     assert!(conflicts(&ensure, &writer));
     assert!(conflicts(&writer, &ensure));
 }
+
+#[test]
+fn parent_alias_dependencies_fence_paths_without_claiming_object_identity() {
+    let temporary = tempfile::tempdir().unwrap();
+    let root = temporary.path();
+    fs::create_dir(root.join("actual")).unwrap();
+    symlink("actual", root.join("alias")).unwrap();
+    let captured = capture_requests(&[Request {
+        path: root.join("alias/file"),
+        access: Access::Write,
+        scope: Scope::Subtree,
+    }])
+    .unwrap();
+    let aliases: Vec<_> = captured
+        .iter()
+        .filter(|resource| resource.access == Access::Read && resource.scope == Scope::Entry)
+        .collect();
+    assert_eq!(aliases.len(), 1, "the parent symlink is the only alias");
+    let alias = aliases[0];
+    assert_eq!(alias.object, None, "aliases are path-only claims");
+    let mut index = ConflictIndex::default();
+    for resource in &captured {
+        index.insert(resource);
+    }
+    // A symlink inode freed and reused by an unrelated write must be admitted.
+    let link_inode = crate::files::file_identity::from_metadata(
+        &fs::symlink_metadata(root.join("alias")).unwrap(),
+    );
+    let reused = Resource {
+        path: NativePath(root.join("unrelated")),
+        object: Some(link_inode),
+        ancestors: alias.ancestors.clone(),
+        access: Access::Write,
+        scope: Scope::Subtree,
+    };
+    assert!(!index.conflicts(&reused));
+    // The alias path itself remains fenced against writers.
+    let on_path = capture(&root.join("alias"), Access::Write, Scope::Subtree).unwrap();
+    assert!(index.conflicts(&on_path));
+}

@@ -229,7 +229,9 @@ two actual WebKit renderer `SIGKILL` cycles. WebDriver cannot perform this check
 its session dies with the renderer. The controller never reloads the view; it
 waits for the application's own `Renderer(recovery) … decision=reload` line and
 verifies that the fresh JavaScript realm is the committed document with
-`rendererRecovery=1` (#1138). Acceptance requires fresh
+`rendererRecovery=1` (#1138). After both cycles it ends the renderer through
+`webkit_web_view_terminate_web_process` and requires the application's
+`decision=none cause=terminated-by-api` line and no further reload. Acceptance requires fresh
 repository-qualified Git leases, rejection of old-generation acquisition, and
 preservation of the new lease after a stale release. A real watcher receipt must
 contain the exact marker path and a backend observation time at or after the

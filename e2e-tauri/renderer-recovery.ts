@@ -57,6 +57,7 @@ type State = {
   windowLabel: string;
   webviewAddress: string;
   error?: string;
+  apiTeardown?: { terminationReason: string; deliberateLogged: boolean; reloadsBefore: number; reloadsAfter: number };
   [key: string]: unknown;
 };
 
@@ -100,6 +101,13 @@ function verifyEvidence(state: State): void {
     .map(line => JSON.parse(line) as { event: string; registration: string; pid: number });
   assert.ok(Array.isArray(state.cycles), "Missing per-cycle recovery evidence");
   assert.equal(state.cycles.length, 2, "Two recovery cycles must complete");
+  // A deliberate API teardown is retired but never reloaded (#1138).
+  const teardown = state.apiTeardown;
+  assert.ok(teardown, "Missing API teardown evidence");
+  assert.equal(teardown.terminationReason, "TerminatedByApi");
+  assert.equal(teardown.deliberateLogged, true);
+  assert.equal(teardown.reloadsBefore, 2, "Each crash cycle must have been reloaded by the application");
+  assert.equal(teardown.reloadsAfter, teardown.reloadsBefore, "An API teardown must not reload");
   const cycles = state.cycles as CycleEvidence[];
   for (const [index, cycle] of cycles.entries()) {
     assert.equal(cycle.cycle, index + 1);

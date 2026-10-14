@@ -27,7 +27,9 @@ Traps:
    again. The extra advance only skips an unused generation number, so the
    listener stays as the coverage proof rather than being folded in.
 3. **The harness must not reload.** It now waits for the product's
-   `Renderer(recovery) … decision=reload` line and the marked document. Its
+   `Renderer(recovery) … decision=reload` line and the marked document, and
+   finishes with a real `terminate_web_process` that must log
+   `decision=none cause=terminated-by-api` and no reload. Its
    file-recovery check ("old channel dropped before the replacement
    registered") still holds because the drop happens on retirement, while the
    replacement registers only after the new document boots.
@@ -35,6 +37,11 @@ Traps:
    persisted tabs, and navigation alone persists them only on the 30 s safety
    save; a crash cannot run `beforeunload`. The harness therefore asserts the
    restored committed document and a working pane, not an exact path.
+
+Known gap: the all-webview listener is connected through `with_webview`
+from `on_webview_ready`, which queues it on the main loop. A renderer that
+dies before that closure runs, while the first page is still loading, is
+logged by nobody and not recovered.
 
 The effects (navigate, retire a parked window, log) sit behind
 `RecoveryEffects`, so the decision-and-apply path is unit-tested with recorded

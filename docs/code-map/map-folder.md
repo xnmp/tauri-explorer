@@ -696,7 +696,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 ## src-tauri/test_support/ — opt-in native recovery acceptance
 
 - `src-tauri/test_support/renderer_reload.rs` — renderer-loss reload budget, parked-window retirement decision and recovery URL contracts (#942); recorded-effect tests of the shared recovery path: reload after a crash, none after API teardown, logged exhaustion, WebKitGTK reason classification (#1138).
-- `src-tauri/test_support/renderer_recovery.rs` — Linux controller retaining one GTK WebView across real renderer crashes; never reloads it, but waits for the product's logged reload of the committed document; bounded ownership/recovery/navigation assertions and native snapshot.
+- `src-tauri/test_support/renderer_recovery.rs` — Linux controller retaining one GTK WebView across real renderer crashes; never reloads it, but waits for the product's logged reload of the committed document, then requires an API teardown to stay unreloaded; bounded ownership/recovery/navigation assertions and native snapshot.
 - `src-tauri/test_support/file_history_gate.rs` — opt-in bounded barrier after real native forward or inverse admission; an external runner releases work independently of its invoking renderer.
 - `src-tauri/test_support/git_observation_probe.rs` — feature-only backend observation timestamps and paths attached to actual Git events for causal recovery acceptance.
 - `src-tauri/test_support/file_recovery_native.rs` — feature-only abandoned replacement fixture through the production executor; native registration IDs correlate actual IPC Channel send/drop receipts across renderer lifetimes.

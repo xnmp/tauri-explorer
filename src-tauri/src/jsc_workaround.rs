@@ -5,8 +5,9 @@
 //! on a GC marker thread, which is JSC's check for a cell pointer into a
 //! block that is no longer a live MarkedBlock. The page dies, usually about a
 //! second after launch, and the app logs `Renderer(web-content-terminated)
-//! ... reason=crashed`. Linux does not reload a lost page, so the window is
-//! left blank. On the Linux native smoke this surfaced as "page crash or hang"
+//! ... reason=crashed`. Until #1138 Linux did not reload a lost page, so the
+//! window was left blank; it is now reloaded, but every crash still costs the
+//! page its state. On the Linux native smoke this surfaced as "page crash or hang"
 //! in whichever spec was running at the time. In a single-profile CI loop that
 //! amplifies the crash (three full suites per job), every job had renderer
 //! crashes with WebKit's defaults. With the DFG tier disabled (`useDFGJIT=0`,

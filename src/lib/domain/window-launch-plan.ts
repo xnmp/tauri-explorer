@@ -12,7 +12,7 @@ export interface WindowLaunchPlan {
 
 /**
  * Query marker the native layer adds when it reloads a window whose renderer
- * process terminated (`src-tauri/src/renderer_owner/reload.rs`, #942). The
+ * process terminated (`src-tauri/src/renderer_owner/reload.rs`, #942, #1138). The
  * replacement document belongs to a window that already had a session.
  */
 export const RENDERER_RECOVERY_PARAM = "rendererRecovery";

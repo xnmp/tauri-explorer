@@ -1,6 +1,7 @@
 //! Opt-in Linux acceptance harness for recovery of one retained native WebView.
 //! This module is compiled only with `e2e-renderer-recovery`; it does not define
-//! application crash-recovery policy.
+//! application crash-recovery policy. It never reloads the WebView: the reload
+//! after each kill is the product's own (`renderer_owner/reload.rs`, #1138).
 
 #[path = "file_recovery_crash.rs"]
 mod file_recovery;
@@ -41,6 +42,10 @@ struct CycleEvidence {
     new_lease_id: String,
     repo_root: String,
     old_lease_reclaimed: bool,
+    pre_crash_url: String,
+    recovered_url: String,
+    restored_path: String,
+    product_reload_logged: bool,
     old_acquire_rejected: bool,
     stale_release_ignored: bool,
     mutation_started_at: u128,
@@ -204,6 +209,15 @@ async fn run_scenario(
                 previous_lease.repo_root
             );
             let reclamations_before = log_occurrences(&previous_lease.log_dir, &reclamation)?;
+            let product_reload = format!(
+                "Renderer(recovery): window={} webview={} decision=reload attempt=",
+                identity.window_label, identity.window_label
+            );
+            let reloads_before = log_occurrences(&previous_lease.log_dir, &product_reload)?;
+            let pre_crash_url = string_result(
+                &evaluate(view, "location.href").await?,
+                "pre-crash document URL",
+            )?;
             publish(
                 directory,
                 identity,
@@ -221,25 +235,51 @@ async fn run_scenario(
                     "renderer ended for {reason:?}, not from the runner's crash signal"
                 ));
             }
-            wait_for_reclamation(
+            wait_for_log(
                 &previous_lease.log_dir,
                 &reclamation,
                 reclamations_before,
+                "old Git owner was not reclaimed",
             )
             .await?;
-
-            // This is test-controller behavior on the retained GTK object, not
-            // application recovery policy. A committed reload advances the
-            // production Git generation before the new realm can invoke IPC.
             if let Some(lease) = &previous_recovery {
                 file_recovery::wait_for_drop(lease).await?;
             }
-            view.reload();
-            wait_for(view, "recovered E2E hooks", || {
-                "document.documentElement.dataset.e2eHooksReady === 'true' && \
-                 typeof window.__TAURI_E2E_RECOVERY_REALM__ === 'undefined'".into()
+
+            // The product, not this controller, reloads the window: its
+            // recovery line names the recorded document it restores.
+            wait_for_log(
+                &previous_lease.log_dir,
+                &product_reload,
+                reloads_before,
+                "the application did not reload the lost renderer",
+            )
+            .await?;
+            if log_occurrences(&previous_lease.log_dir, "decision=exhausted")? > 0 {
+                return Err("renderer recovery exhausted its reload budget".into());
+            }
+            if log_occurrences(&previous_lease.log_dir, "document=unrecorded")? > 0 {
+                return Err("renderer recovery did not restore the committed document".into());
+            }
+            let pre_crash_url_json = encode(&pre_crash_url)?;
+            let recovered = wait_for_value(view, "document restored by product recovery", || {
+                format!(
+                    "(() => {{ const root = document.documentElement; \
+                     if (root.dataset.e2eHooksReady !== 'true' || \
+                       typeof window.__TAURI_E2E_RECOVERY_REALM__ !== 'undefined') return null; \
+                     const url = new URL(location.href); \
+                     if (url.searchParams.get('rendererRecovery') !== '1') return null; \
+                     const strip = value => {{ const next = new URL(value); \
+                       next.searchParams.delete('rendererRecovery'); next.hash = ''; return next.href; }}; \
+                     if (strip(location.href) !== strip({pre_crash_url_json})) return null; \
+                     const path = document.querySelector('.status-path')?.getAttribute('title'); \
+                     if (document.querySelectorAll('.explorer-pane').length !== 1 || !path) return null; \
+                     return {{ url: location.href, path }}; }})()"
+                )
             })
             .await?;
+            let recovered_url = required_string(&recovered, "url")?;
+            let restored_path = required_string(&recovered, "path")?;
 
             let current_session = operation(view, "native-session", "", "recovered-session").await?;
             let current_session = string_result(&current_session["result"], "recovered Git session")?;
@@ -345,6 +385,10 @@ async fn run_scenario(
                 new_lease_id: current_lease.id.clone(),
                 repo_root: current_lease.repo_root.clone(),
                 old_lease_reclaimed: true,
+                pre_crash_url,
+                recovered_url,
+                restored_path,
+                product_reload_logged: true,
                 old_acquire_rejected: true,
                 stale_release_ignored: true,
                 mutation_started_at,
@@ -530,10 +574,11 @@ where
     }
 }
 
-async fn wait_for_reclamation(
+async fn wait_for_log(
     log_dir: &Path,
     marker: &str,
     previous_count: usize,
+    failure: &str,
 ) -> HarnessResult<()> {
     let deadline = Instant::now() + STEP_TIMEOUT;
     loop {
@@ -541,7 +586,7 @@ async fn wait_for_reclamation(
             return Ok(());
         }
         if Instant::now() >= deadline {
-            return Err(format!("old Git owner was not reclaimed: {marker}"));
+            return Err(format!("{failure}: {marker}"));
         }
         glib::timeout_future(POLL_INTERVAL).await;
     }

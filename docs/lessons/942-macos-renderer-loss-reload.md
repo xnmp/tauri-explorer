@@ -39,8 +39,8 @@ opens a fresh window instead. The user still gets one window; the recovered
 one is wasted.
 
 Linux logs every webview's loss in the same line format with WebKitGTK's
-reason, but does not reload: the `e2e-renderer-recovery` harness reloads its
-own WebView after asserting retirement, and an automatic reload would race it.
+reason, and since #1138 recovers it through the same path (see
+`1138-linux-renderer-loss-reload.md`).
 
 ## Qualification passed samples that lost their renderer
 

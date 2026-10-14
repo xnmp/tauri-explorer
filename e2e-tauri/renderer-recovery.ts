@@ -75,11 +75,15 @@ type CycleEvidence = {
   oldAcquireRejected: boolean;
   staleReleaseIgnored: boolean;
   oldLeaseReclaimed: boolean;
+  preCrashUrl: string;
+  recoveredUrl: string;
+  restoredPath: string;
+  productReloadLogged: boolean;
   entries: string[];
   fileRecovery: {
     oldRegistration: string; newRegistration: string;
     oldSession: string; newSession: string;
-    oldChannelDroppedBeforeReload: boolean; staleAcquireRejected: boolean; staleReleaseIgnored: boolean;
+    oldChannelDroppedBeforeReplacement: boolean; staleAcquireRejected: boolean; staleReleaseIgnored: boolean;
     operationId: string; beforeRevision: string; afterRevision: string; beforeGeneration: string; afterGeneration: string;
   };
 };
@@ -119,6 +123,20 @@ function verifyEvidence(state: State): void {
     assert.equal(cycle.oldAcquireRejected, true);
     assert.equal(cycle.staleReleaseIgnored, true);
     assert.equal(cycle.oldLeaseReclaimed, true);
+    // The application reloaded the lost renderer (#1138); the harness never
+    // does. It loads the committed document with the recovery marker.
+    assert.equal(cycle.productReloadLogged, true);
+    const recovered = new URL(cycle.recoveredUrl);
+    assert.equal(recovered.searchParams.get("rendererRecovery"), "1");
+    const committed = (value: string) => {
+      const url = new URL(value);
+      url.searchParams.delete("rendererRecovery");
+      url.hash = "";
+      return url.href;
+    };
+    assert.equal(committed(cycle.recoveredUrl), committed(cycle.preCrashUrl));
+    if (index > 0) assert.equal(cycle.preCrashUrl, cycles[index - 1].recoveredUrl);
+    assert.ok(cycle.restoredPath.length > 0, "Recovered document must restore an Explorer pane");
     assert.ok(Array.isArray(cycle.entries) && cycle.entries.every(entry => typeof entry === "string"));
     assert.ok(cycle.entries.includes(cycle.marker), "Recovered listing must show the observed mutation");
     const recovery = cycle.fileRecovery;
@@ -127,7 +145,7 @@ function verifyEvidence(state: State): void {
     assert.equal(recovery.newSession, cycle.newSession);
     assert.notEqual(recovery.oldRegistration, recovery.newRegistration);
     if (index > 0) assert.equal(recovery.oldRegistration, cycles[index - 1].fileRecovery.newRegistration);
-    assert.equal(recovery.oldChannelDroppedBeforeReload, true);
+    assert.equal(recovery.oldChannelDroppedBeforeReplacement, true);
     assert.equal(recovery.staleAcquireRejected, true);
     assert.equal(recovery.staleReleaseIgnored, true);
     assert.match(recovery.operationId, /^[0-9a-f]{64}$/);

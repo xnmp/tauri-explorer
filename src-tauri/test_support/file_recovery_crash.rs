@@ -25,7 +25,7 @@ pub(super) struct Evidence {
     new_registration: String,
     old_session: String,
     new_session: String,
-    old_channel_dropped_before_reload: bool,
+    old_channel_dropped_before_replacement: bool,
     stale_acquire_rejected: bool,
     stale_release_ignored: bool,
     operation_id: String,
@@ -126,7 +126,7 @@ pub(super) async fn wait_for_drop(lease: &Lease) -> HarnessResult<()> {
         if Instant::now() >= deadline {
             return Err("crashed renderer retained its native recovery channel".into());
         }
-        // Only native receipt reads run here; never touch JavaScript or reload.
+        // Only native receipt reads run here; never touch JavaScript.
         glib::timeout_future(POLL_INTERVAL).await;
     }
 }
@@ -210,7 +210,7 @@ pub(super) async fn verify(
         new_registration: current.registration.clone(),
         old_session: old.session.clone(),
         new_session: current.session.clone(),
-        old_channel_dropped_before_reload: true,
+        old_channel_dropped_before_replacement: true,
         stale_acquire_rejected: true,
         stale_release_ignored: true,
         operation_id: current.operation.clone(),

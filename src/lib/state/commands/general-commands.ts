@@ -12,7 +12,9 @@ import { dialogStore } from "../dialogs.svelte";
 import { terminalPanelStore } from "../terminal.svelte";
 import { openInTerminal } from "$lib/api/open";
 import { gitRepoRoot } from "$lib/api/git";
-import { gitFetch } from "$lib/api/git-log";
+import { extractError } from "$lib/api/common";
+import { gitFetch, gitIssuesUrl } from "$lib/api/git-log";
+import { openExternalUrl } from "$lib/api/crash";
 import { notifyLocalGitChange } from "$lib/state/git-refresh";
 import { runGitNetworkOperation } from "$lib/state/git-graph-refresh";
 import { toastStore } from "../toast.svelte";
@@ -150,6 +152,28 @@ export const gitGraphCommands: Command[] = [
         windowTabsManager.toggleGitGraphInActivePane(root.data);
       } else {
         toastStore.show("Not inside a git repository", "info");
+      }
+    },
+  },
+  {
+    id: "git.openIssues",
+    scope: "pane",
+    label: "Git: Open Issues in Browser",
+    category: "general",
+    when: () => !!getActiveExplorer(),
+    handler: async () => {
+      const path = getActiveExplorer()?.state.currentPath;
+      if (!path) return;
+      try {
+        const root = await gitRepoRoot(path);
+        const url = root.ok && root.data ? await gitIssuesUrl(root.data) : null;
+        if (!url) {
+          toastStore.show("No GitHub remote found for this folder", "info");
+          return;
+        }
+        await openExternalUrl(url);
+      } catch (err) {
+        toastStore.error(extractError(err));
       }
     },
   },

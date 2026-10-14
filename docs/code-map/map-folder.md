@@ -581,7 +581,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `git_watch/target.rs` — repository/private/shared-metadata discovery, non-overlapping watch roots, non-recursive parent coverage and metadata-only temporary-file filtering.
 - `git_actions.rs` — mutating git actions for commit-graph tab (VSCode parity); returns undo snapshots for branch/tag delete, branch rename, merge, and pull, and re-verifies refs/HEAD/clean-tree state before inverses (#513).
 - `git_common.rs` — shared git plumbing (used by git/git_log/git_actions).
-- `github.rs` — `git_open_prs`: open GitHub PRs for the repo's remote, for graph PR badges (#449); TTL-cached, silent-degrade.
+- `github.rs` — `git_open_prs`: open GitHub PRs for the repo's remote, for graph PR badges (#449); TTL-cached, silent-degrade. `git_issues_url`: the remote's github.com issues page for the "Git: Open Issues in Browser" palette command (#1055).
 
 ## website/ — static Vercel site and serverless functions.
 

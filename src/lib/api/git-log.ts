@@ -396,6 +396,12 @@ export async function gitOpenPrs(repoPath: string): Promise<OpenPr[]> {
   return invoke<OpenPr[]>("git_open_prs", { repoRoot: repoPath });
 }
 
+/** The github.com issues page of the repo's selected remote, or `null` when
+ *  it has no remote or the remote is not hosted on github.com (#1055). */
+export async function gitIssuesUrl(repoPath: string): Promise<string | null> {
+  return invoke<string | null>("git_issues_url", { repoRoot: repoPath });
+}
+
 /** A failed GitHub Actions check that has an inline log available. */
 export interface FailedCiCheck {
   name: string;

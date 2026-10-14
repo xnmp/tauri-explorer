@@ -2444,6 +2444,13 @@ if (typeof window !== "undefined") {
     return "";
   },
 
+  git_issues_url: (args: Record<string, unknown>) => {
+    const repoRoot = (args.repoRoot as string) ?? "";
+    return repoRoot.startsWith("/home/user/Documents/project")
+      ? "https://github.com/mock/project/issues"
+      : null;
+  },
+
   git_open_prs: (args: Record<string, unknown>) => {
     const repoRoot = (args.repoRoot as string) ?? "";
     if (!repoRoot.startsWith("/home/user/Documents/project")) return [];

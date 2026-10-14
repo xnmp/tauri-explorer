@@ -483,6 +483,7 @@ pub fn run_with_process_entry(launch_dir: Option<String>, t_process_entry: std::
             git_actions::git_branch_behind_upstream,
             git_log::git_branch_authors,
             github::git_open_prs,
+            github::git_issues_url,
             github::git_pr_action,
             github::git_pr_context,
             github::git_failed_ci_checks,

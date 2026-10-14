@@ -264,19 +264,23 @@ fn has_usable_render_node() -> bool {
     })
 }
 
-/// Apply the renderer plan to this process. Must run before GTK or WebKit is
-/// initialised and while the process is still single-threaded.
-pub(crate) fn apply() -> RendererPlan {
-    // SAFETY: these return the linked WebKitGTK runtime's version constants and
-    // need no initialisation.
-    let webkit = unsafe {
+/// The linked WebKitGTK runtime's `(major, minor)`.
+pub(crate) fn runtime_version() -> (u32, u32) {
+    // SAFETY: these return the runtime's version constants and need no
+    // initialisation.
+    unsafe {
         (
             webkit2gtk::ffi::webkit_get_major_version(),
             webkit2gtk::ffi::webkit_get_minor_version(),
         )
-    };
+    }
+}
+
+/// Apply the renderer plan to this process. Must run before GTK or WebKit is
+/// initialised and while the process is still single-threaded.
+pub(crate) fn apply() -> RendererPlan {
     let host = Host {
-        webkit,
+        webkit: runtime_version(),
         nvidia_proprietary: std::path::Path::new("/sys/module/nvidia").exists(),
     };
     let plan = plan(

@@ -26,7 +26,7 @@ on:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.ref_name }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 # Note: macOS is deliberately omitted. Official `tauri-driver` has no
 # WKWebView support (tauri-apps/tauri#7068). Re-add when a stable driver
@@ -63,8 +63,10 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # Docs-only PRs need just the required ubuntu context, which reports with every step skipped.
-        os: ${{ fromJSON(needs.changes.outputs.code != 'true' && '["ubuntu-latest"]' || ((inputs.native_scope == 'clipboard' || inputs.native_scope == 'transfer') && '["windows-latest"]' || '["ubuntu-latest","windows-latest"]')) }}
+        # PRs run only the required `smoke (ubuntu-latest)` context (docs-only PRs
+        # report it with every step skipped); Windows runs on dev/main pushes and
+        # dispatches (tauri#1133). Non-PR events always count as code.
+        os: ${{ fromJSON(github.event_name == 'pull_request' && '["ubuntu-latest"]' || ((inputs.native_scope == 'clipboard' || inputs.native_scope == 'transfer') && '["windows-latest"]' || '["ubuntu-latest","windows-latest"]')) }}
     runs-on: ${{ matrix.os }}
     # The Windows debug build alone is ~12 minutes, so a 25-minute job cap left
     # no room for a full suite run: a step bound generous enough to let the

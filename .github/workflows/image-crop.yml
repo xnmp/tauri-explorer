@@ -1,7 +1,7 @@
 name: Image crop native codecs
 
 on:
-  pull_request:
+  push:
     branches: [dev]
     paths:
       - "src-tauri/src/image_crop.rs"
@@ -13,21 +13,22 @@ on:
       - "src-tauri/Cargo.toml"
       - "src-tauri/Cargo.lock"
       - ".github/workflows/image-crop.yml"
-  # macOS is nightly/manual only: PRs run Linux and Windows.
+  # Not a required check, so it runs after merge (tauri#1133). macOS is
+  # nightly/manual only: dev pushes run Linux and Windows.
   schedule:
     - cron: "43 5 * * *"
   workflow_dispatch:
 
 concurrency:
   group: image-crop-${{ github.head_ref || github.ref_name }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   codecs:
     strategy:
       fail-fast: false
       matrix:
-        os: ${{ fromJSON(github.event_name == 'pull_request' && '["ubuntu-latest","windows-latest"]' || '["ubuntu-latest","windows-latest","macos-latest"]') }}
+        os: ${{ fromJSON(github.event_name == 'push' && '["ubuntu-latest","windows-latest"]' || '["ubuntu-latest","windows-latest","macos-latest"]') }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 45
     steps:

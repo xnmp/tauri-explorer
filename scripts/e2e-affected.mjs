@@ -1,35 +1,58 @@
 #!/usr/bin/env node
 // e2e-affected.mjs — select the E2E specs affected by a diff.
 //
-// Usage:  node scripts/e2e-affected.mjs [base]
-//   base defaults to "origin/dev". Diff is `git diff --name-only <base>...HEAD`.
+// Usage:  node scripts/e2e-affected.mjs [--strict] [base] [head]
+//   base defaults to "origin/dev", head to "HEAD".
+//   Diff is `git diff --name-only --no-renames <base>...<head>`.
+//   --strict (CI): any src/ change runs everything. Keyword clusters miss specs
+//   that exercise a component incidentally (#1131 review), so they only advise
+//   local runs; CI narrows only for changes that never ship in the frontend.
 //
 // Output (stdout): newline-separated spec paths (e.g. "e2e/foo.spec.ts"),
 //   OR the literal string "ALL" when the whole suite must run.
 // Diagnostics go to stderr.
 //
 // Selection rules (over-selection is safe; silent under-selection is not):
+//   0. A spec whose text names a changed file's repo path -> that spec, even
+//      when the file is otherwise ignored (e.g. tests/fixtures/*.json read by
+//      a spec).
 //   1. Changed e2e/*.spec.ts            -> the spec itself.
-//   2. Changed src-tauri/src/**         -> ALL (backend affects everything).
-//      Changed src/lib/api/mock-invoke.ts -> ALL (it is the test backend).
+//   2. Changed src/lib/api/mock-*.ts   -> ALL (the test backend).
+//      Changed e2e/ helpers or fixtures  -> ALL (shared by every spec).
 //      Changed a "central hub" file       -> ALL (map says: affects almost anything).
 //   3. Other changed src/** files       -> map to feature clusters via
 //      docs/code-map/map-feature.md, then to specs by scanning spec contents
 //      for cluster-derived keyword phrases. If a src file matches no cluster,
 //      or a matched cluster resolves to no spec -> ALL (+ warning).
-//   4. Build/config files (package.json, lockfile, *.config.*, tsconfig) -> ALL.
-//   5. Everything else (docs, screenshots, scripts, .claude, e2e-tauri) -> ignored.
+//      Under --strict, every src/** change -> ALL.
+//   4. Build/config files (package.json, lockfile, *.config.*, tsconfig) -> ALL,
+//      except Vitest configs, which the browser suite never loads. Scripts the
+//      dev server runs (named in vite.config.ts, playwright.config.ts or
+//      package.json, plus their relative imports) -> ALL.
+//   5. Files the browser suite never executes -> ignored: src-tauri/ (the
+//      suite runs against mock-invoke, never Rust; e2e-tauri covers the real
+//      backend), tests/, evidence/, docs, screenshots, scripts, .claude,
+//      e2e-tauri, .github, packaging, e2e-load (its own config), Nix and
+//      editor files.
+//   6. Changes to CI selection itself (ci.yml, e2e-shards.mjs,
+//      e2e-affected.mjs, map-feature.md) -> ALL.
+//   7. Anything else (an unknown top-level file)  -> ALL.
 //   If map-feature.md is missing -> ALL (+ warning).
 
 import { readFileSync, existsSync, readdirSync } from "node:fs";
 import { execSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
-import { dirname, join } from "node:path";
+import { dirname, join, posix } from "node:path";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const MAP_PATH = join(ROOT, "docs/code-map/map-feature.md");
 const E2E_DIR = join(ROOT, "e2e");
 
+/** @typedef {{ title: string, files: string[], phrases: Set<string> }} Cluster */
+/** @typedef {{ hubs: string[], clusters: Cluster[] }} CodeMap */
+/** @typedef {{ rel: string, content: string }} SpecEntry */
+
+/** @param {string} m */
 const warn = (m) => process.stderr.write(`[e2e-affected] ${m}\n`);
 
 // --- helpers -------------------------------------------------------------
@@ -44,6 +67,7 @@ const STOP = new Set([
 // Short tokens we still trust as distinctive.
 const SHORT_ALLOW = new Set(["scm", "git", "zip", "ai", "pty", "dnd"]);
 
+/** @param {string} s */
 const toKebab = (s) =>
   s
     .replace(/([a-z0-9])([A-Z])/g, "$1-$2")
@@ -51,10 +75,12 @@ const toKebab = (s) =>
     .replace(/(^-|-$)/g, "")
     .toLowerCase();
 
+/** @param {string} p */
 const okPhrase = (p) =>
   p && !STOP.has(p) && (p.length >= 4 || SHORT_ALLOW.has(p));
 
 // Strip a repo path down to a comparable basename (no dirs, no extensions).
+/** @param {string} token */
 function baseName(token) {
   let t = token.replace(/\/+$/, "");
   const seg = t.slice(t.lastIndexOf("/") + 1);
@@ -63,6 +89,10 @@ function baseName(token) {
 
 // Does a changed repo file correspond to a map file token? Map tokens for the
 // frontend omit the src/lib (or src/) prefix, so suffix matching is the workhorse.
+/**
+ * @param {string} file
+ * @param {string} token
+ */
 function fileMatchesToken(file, token) {
   const t = token.replace(/\/+$/, "");
   if (token.endsWith("/")) return file.includes(t + "/") || file.startsWith(t + "/");
@@ -72,8 +102,13 @@ function fileMatchesToken(file, token) {
 // --- parse map-feature.md ------------------------------------------------
 
 // Returns { hubs: string[], clusters: [{title, files, phrases:Set}] }
+/**
+ * @param {string} text
+ * @returns {CodeMap}
+ */
 export function parseMap(text) {
   const lines = text.split("\n");
+  /** @param {string} line */
   const backtickPaths = (line) => {
     const out = [];
     const re = /`([^`]+)`/g;
@@ -90,8 +125,11 @@ export function parseMap(text) {
     return out;
   };
 
+  /** @type {string[]} */
   const hubs = [];
+  /** @type {Cluster[]} */
   const clusters = [];
+  /** @type {Cluster | null} */
   let current = null;
   let inHubs = false;
 
@@ -151,6 +189,10 @@ export function loadSpecs() {
   return specs;
 }
 
+/**
+ * @param {Cluster} cluster
+ * @param {SpecEntry[]} specs
+ */
 function specsForCluster(cluster, specs) {
   const hits = [];
   for (const s of specs) {
@@ -163,12 +205,22 @@ function specsForCluster(cluster, specs) {
 
 // --- classification ------------------------------------------------------
 
-export function classify(changed, map, specs) {
+/**
+ * @param {string[]} changed
+ * @param {CodeMap} map
+ * @param {SpecEntry[]} specs
+ * @param {Set<string>} [devServerInputs]
+ * @param {{ strict?: boolean }} [options]
+ */
+export function classify(changed, map, specs, devServerInputs = new Set(), { strict = false } = {}) {
   const selected = new Set();
+  /** @type {string[]} */
   const warnings = [];
   let all = false;
+  /** @param {string} reason */
   const triggerAll = (reason) => { all = true; warnings.push(reason); };
 
+  /** @param {string} f */
   const isConfig = (f) =>
     /^package\.json$/.test(f) ||
     /^bun\.lock(b)?$/.test(f) ||
@@ -176,26 +228,47 @@ export function classify(changed, map, specs) {
     /^tsconfig.*\.json$/.test(f) ||
     /^svelte\.config\./.test(f);
 
+  /** @param {string} f */
   const isIgnored = (f) =>
     f.startsWith("docs/") ||
+    f.startsWith("src-tauri/") ||
+    f.startsWith("tests/") ||
+    f.startsWith("evidence/") ||
     f.startsWith("screenshots/") ||
     f.startsWith("scripts/") ||
     f.startsWith(".claude/") ||
     f.startsWith("e2e-tauri/") ||
     f.startsWith(".github/") ||
+    f.startsWith("packaging/") ||
+    f.startsWith("e2e-load/") ||
+    f.startsWith(".vscode/") ||
+    f === "playwright.load.config.ts" ||
+    f === "PKGBUILD" ||
+    /^flake\.(nix|lock)$/.test(f) ||
     /(^|\/)(README|CHANGELOG)\.md$/i.test(f) ||
     f.endsWith(".md");
 
   for (const f of changed) {
+    if (devServerInputs.has(f)) { triggerAll(`dev-server input change: ${f}`); continue; }
+    // A change to how CI selects or shards specs must prove itself on the full suite.
+    if (SELECTION_INPUTS.has(f)) {
+      triggerAll(`CI test-selection change: ${f}`);
+      continue;
+    }
+    // A spec that names this file reads it directly (fixtures outside e2e/).
+    const lower = f.toLowerCase();
+    for (const s of specs) if (s.content.includes(lower)) selected.add(s.rel);
+    if (/^vitest\.[\w.-]*config\.(ts|js|mjs|cjs)$/.test(f)) continue;
     if (/^e2e\/.+\.spec\.ts$/.test(f)) {
       if (existsSync(join(ROOT, f))) selected.add(f);
       continue;
     }
-    if (f.startsWith("src-tauri/src/")) { triggerAll(`backend change: ${f}`); continue; }
-    if (f === "src/lib/api/mock-invoke.ts") { triggerAll(`mock backend change: ${f}`); continue; }
+    if (f.startsWith("e2e/")) { triggerAll(`shared e2e support change: ${f}`); continue; }
+    if (/^src\/lib\/api\/mock-[\w.-]+\.ts$/.test(f)) { triggerAll(`mock backend change: ${f}`); continue; }
     if (map.hubs.some((h) => fileMatchesToken(f, h))) { triggerAll(`central-hub change: ${f}`); continue; }
 
     if (f.startsWith("src/")) {
+      if (strict) { triggerAll(`frontend source change (strict): ${f}`); continue; }
       const matched = map.clusters.filter((c) => c.files.some((t) => fileMatchesToken(f, t)));
       if (matched.length === 0) { triggerAll(`unmapped src file (no cluster): ${f}`); continue; }
       const clusterSpecs = [];
@@ -208,8 +281,8 @@ export function classify(changed, map, specs) {
       continue;
     }
 
-    if (isConfig(f)) { triggerAll(`build/config change: ${f}`); continue; }
     if (isIgnored(f)) continue;
+    if (isConfig(f)) { triggerAll(`build/config change: ${f}`); continue; }
     // Unknown top-level file — do not risk silent under-selection.
     triggerAll(`unrecognized change: ${f}`);
   }
@@ -217,22 +290,58 @@ export function classify(changed, map, specs) {
   return { all, selected, warnings };
 }
 
+// Files that decide which specs run; changing them must run everything.
+const SELECTION_INPUTS = new Set([
+  ".github/workflows/ci.yml",
+  "scripts/e2e-shards.mjs",
+  "scripts/e2e-affected.mjs",
+  "docs/code-map/map-feature.md",
+]);
+
+/**
+ * Repository scripts the Playwright dev server can execute: those named by
+ * vite.config.ts, playwright.config.ts or package.json (e.g. `prepare:pdf`,
+ * the release-hook guard), and the scripts they import relatively.
+ */
+export function devServerScripts(root = ROOT) {
+  /** @type {Set<string>} */
+  const inputs = new Set();
+  /** @param {string} file */
+  const read = (file) => { try { return readFileSync(join(root, file), "utf8"); } catch { return ""; } };
+  const pending = [];
+  for (const file of ["vite.config.ts", "playwright.config.ts", "package.json"]) {
+    for (const m of read(file).matchAll(/scripts\/[\w./-]+\.(?:mjs|cjs|js|ts|sh)/g)) pending.push(m[0]);
+  }
+  while (pending.length > 0) {
+    const script = /** @type {string} */ (pending.pop());
+    if (inputs.has(script)) continue;
+    inputs.add(script);
+    for (const m of read(script).matchAll(/(?:from|import\()\s*["'](\.{1,2}\/[^"']+)["']/g)) {
+      const target = posix.normalize(posix.join(posix.dirname(script), m[1]));
+      if (target.startsWith("scripts/")) pending.push(target);
+    }
+  }
+  return inputs;
+}
+
 // --- main ----------------------------------------------------------------
 
 function main() {
-  const base = process.argv[2] || "origin/dev";
-  // Optional head ref (default HEAD). The merge hook passes the feature branch
-  // so the diff is dev...<branch> while checked out on dev.
-  const head = process.argv[3] || "HEAD";
+  const args = process.argv.slice(2);
+  const strict = args.includes("--strict");
+  const [base = "origin/dev", head = "HEAD"] = args.filter((a) => a !== "--strict");
+  // head: the merge hook passes the feature branch so the diff is
+  // dev...<branch> while checked out on dev.
   let changed;
   try {
-    const out = execSync(`git diff --name-only ${base}...${head}`, {
+    // --no-renames: a rename reports both paths, so the old path's specs run too.
+    const out = execSync(`git diff --name-only --no-renames ${base}...${head}`, {
       cwd: ROOT,
       encoding: "utf8",
     });
     changed = out.split("\n").map((s) => s.trim()).filter(Boolean);
   } catch (e) {
-    warn(`git diff failed for ${base}...${head}: ${e.message}`);
+    warn(`git diff failed for ${base}...${head}: ${e instanceof Error ? e.message : String(e)}`);
     warn("falling back to ALL");
     process.stdout.write("ALL\n");
     return;
@@ -251,7 +360,7 @@ function main() {
 
   const map = parseMap(readFileSync(MAP_PATH, "utf8"));
   const specs = loadSpecs();
-  const { all, selected, warnings } = classify(changed, map, specs);
+  const { all, selected, warnings } = classify(changed, map, specs, devServerScripts(), { strict });
 
   for (const w of warnings) warn(w);
 

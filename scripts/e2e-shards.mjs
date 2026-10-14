@@ -16,6 +16,12 @@
 //     is then listed through Playwright itself (project = engine) and the step
 //     fails unless Playwright selects exactly the planned files: `--test-list`
 //     silently selects nothing for an entry it cannot resolve (#1123).
+//     With --only <file> (output of scripts/e2e-affected.mjs: "ALL" or one
+//     "e2e/<spec>" per line), only those specs are planned and a shard may be
+//     empty; the CI job then skips its install and test steps.
+//   node scripts/e2e-shards.mjs verify --engine webkit --list list.txt
+//     Lists the shard through Playwright itself (project = engine) and fails
+//     unless it selects exactly the planned files (also `plan --verify`).
 //   node scripts/e2e-shards.mjs record run1.log [run2.log ...]
 //     Rebuilds scripts/e2e-shard-timings.json from GitHub Actions logs
 //     (`gh run view <id> --log > run.log`) of successful CI runs. The browser
@@ -77,6 +83,22 @@ export function planShards(specs, timings, shardCount) {
   }
   for (const shard of shards) shard.specs.sort();
   return shards;
+}
+
+/**
+ * Restrict discovered specs to an e2e-affected selection. A selection naming
+ * `ALL` keeps every spec; otherwise the result is the listed specs that exist,
+ * with the `e2e/` prefix removed.
+ *
+ * @param {readonly string[]} discovered spec paths relative to e2e/
+ * @param {string} selection e2e-affected stdout
+ * @returns {{ all: boolean, specs: string[] }}
+ */
+export function restrictSpecs(discovered, selection) {
+  const lines = selection.split("\n").map((line) => line.trim()).filter(Boolean);
+  if (lines.includes("ALL")) return { all: true, specs: [...discovered] };
+  const wanted = new Set(lines.map((line) => line.replace(/^e2e\//, "")));
+  return { all: false, specs: discovered.filter((spec) => wanted.has(spec)) };
 }
 
 /**
@@ -249,21 +271,26 @@ function main(argv) {
   if (command === "plan") {
     const engine = option(args, "--engine");
     const out = option(args, "--out");
-    if (!engine || !out) throw new Error("plan needs --engine <name> --shard i/n --out <file> [--verify]");
+    if (!engine || !out) throw new Error("plan needs --engine <name> --shard i/n --out <file> [--only <file>] [--verify]");
     const { index, total } = parseShardArg(option(args, "--shard"));
     const timings = JSON.parse(readFileSync(TIMINGS_PATH, "utf8"))[engine] ?? {};
-    const specs = discoverSpecs();
+    const only = option(args, "--only");
+    const { all, specs } = only
+      ? restrictSpecs(discoverSpecs(), readFileSync(only, "utf8"))
+      : { all: true, specs: discoverSpecs() };
     const shard = planShards(specs, timings, total)[index - 1];
-    if (shard.specs.length === 0) throw new Error(`shard ${index}/${total} has no spec files`);
-    writeFileSync(out, `${shard.specs.join("\n")}\n`);
+    // A full-suite shard can only be empty if planning is broken; a selected
+    // subset legitimately leaves surplus shards with nothing to run.
+    if (all && shard.specs.length === 0) throw new Error(`shard ${index}/${total} has no spec files`);
+    writeFileSync(out, shard.specs.length ? `${shard.specs.join("\n")}\n` : "");
     const unknown = shard.specs.filter((spec) => !(spec in timings));
     process.stderr.write(
-      `[e2e-shards] ${engine} shard ${index}/${total}: ${shard.specs.length} of ${specs.length} spec files, ` +
+      `[e2e-shards] ${engine} shard ${index}/${total}: ${shard.specs.length} of ${specs.length} ${all ? "" : "selected "}spec files, ` +
         `~${Math.round(shard.seconds / 60)} min estimated` +
         (unknown.length ? `; untimed (median estimate): ${unknown.join(", ")}` : "") +
         "\n",
     );
-    if (args.includes("--verify")) {
+    if (args.includes("--verify") && shard.specs.length > 0) {
       const { missing, unexpected } = compareSelection(shard.specs, playwrightSelection(engine, out));
       if (missing.length || unexpected.length) {
         throw new Error(
@@ -273,6 +300,22 @@ function main(argv) {
       }
       process.stderr.write(`[e2e-shards] verified: Playwright selects all ${shard.specs.length} planned files\n`);
     }
+    return;
+  }
+  if (command === "verify") {
+    const engine = option(args, "--engine");
+    const list = option(args, "--list");
+    if (!engine || !list) throw new Error("verify needs --engine <name> --list <file>");
+    const planned = readFileSync(list, "utf8").split("\n").map((line) => line.trim()).filter(Boolean);
+    if (planned.length === 0) throw new Error(`${list} plans no spec files`);
+    const { missing, unexpected } = compareSelection(planned, playwrightSelection(engine, list));
+    if (missing.length || unexpected.length) {
+      throw new Error(
+        `Playwright does not select exactly this shard's plan (missing: ${missing.join(", ") || "none"}; ` +
+          `unexpected: ${unexpected.join(", ") || "none"})`,
+      );
+    }
+    process.stderr.write(`[e2e-shards] verified: Playwright selects all ${planned.length} planned files\n`);
     return;
   }
   if (command === "record") {
@@ -286,7 +329,7 @@ function main(argv) {
     }
     return;
   }
-  throw new Error("usage: e2e-shards.mjs plan --engine <name> --shard i/n --out <file> [--verify] | record <log...>");
+  throw new Error("usage: e2e-shards.mjs plan --engine <name> --shard i/n --out <file> [--only <file>] [--verify] | verify --engine <name> --list <file> | record <log...>");
 }
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {

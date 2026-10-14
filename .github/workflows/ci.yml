@@ -24,6 +24,10 @@ jobs:
       pull-requests: read
     outputs:
       code: ${{ github.event_name != 'pull_request' && 'true' || steps.filter.outputs.code }}
+      # Browser specs a PR can affect (scripts/e2e-affected.mjs, #1131): "ALL",
+      # "NONE" or space-separated e2e/ spec paths. Every non-PR event runs ALL,
+      # so dev keeps full Chromium and WebKit coverage after each merge.
+      e2e: ${{ github.event_name == 'pull_request' && steps.e2e.outputs.selection || 'ALL' }}
     steps:
       - id: filter
         if: github.event_name == 'pull_request'
@@ -37,6 +41,22 @@ jobs:
               - '!docs/**'
               - '!**/*.md'
               - '!output/**'
+
+      # The PR merge commit's first parent is the base tip, so HEAD^1...HEAD is
+      # exactly the PR's change. Any selector failure falls back to ALL.
+      - uses: actions/checkout@v7
+        if: github.event_name == 'pull_request'
+        with:
+          fetch-depth: 2
+
+      - id: e2e
+        if: github.event_name == 'pull_request'
+        run: |
+          if ! raw=$(node scripts/e2e-affected.mjs --strict HEAD^1 HEAD); then raw=ALL; fi
+          selection=$(tr '\n' ' ' <<< "$raw")
+          selection="${selection% }"
+          echo "selection=${selection:-NONE}" >> "$GITHUB_OUTPUT"
+          echo "Browser E2E selection: ${selection:-NONE}" >> "$GITHUB_STEP_SUMMARY"
 
   # Code maps are only useful while they are accurate: an agent that trusts a map
   # naming a moved file searches worse than one with no map at all. Two guards —
@@ -101,22 +121,43 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
+      # Plans only the specs this PR can affect (all of them outside PRs). A
+      # shard left with nothing to run skips the remaining steps and passes.
+      - name: Plan duration-balanced shard
+        id: plan
+        env:
+          E2E_SELECTION: ${{ needs.changes.outputs.e2e }}
+        run: |
+          tr ' ' '\n' <<< "$E2E_SELECTION" > "$RUNNER_TEMP/e2e-selection.txt"
+          node scripts/e2e-shards.mjs plan --engine chromium --shard ${{ matrix.shard }}/${{ strategy.job-total }} --only "$RUNNER_TEMP/e2e-selection.txt" --out "$RUNNER_TEMP/e2e-shard.txt"
+          if [ -s "$RUNNER_TEMP/e2e-shard.txt" ]; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "run=false" >> "$GITHUB_OUTPUT"
+            echo "No affected chromium specs in this shard." >> "$GITHUB_STEP_SUMMARY"
+          fi
+
       - uses: oven-sh/setup-bun@v2
+        if: steps.plan.outputs.run == 'true'
         with:
           bun-version: latest
 
       - name: Install dependencies
+        if: steps.plan.outputs.run == 'true'
         run: bun install --frozen-lockfile
 
       - name: Install Playwright browser
+        if: steps.plan.outputs.run == 'true'
         run: npx playwright install --with-deps chromium
 
-      # --verify fails the job unless Playwright selects exactly the planned
-      # files; --test-list silently runs nothing for an unresolvable entry.
-      - name: Plan duration-balanced shard
-        run: node scripts/e2e-shards.mjs plan --engine chromium --shard ${{ matrix.shard }}/${{ strategy.job-total }} --out "$RUNNER_TEMP/e2e-shard.txt" --verify
+      # Fails unless Playwright selects exactly the planned files; --test-list
+      # silently runs nothing for an unresolvable entry.
+      - name: Verify shard selection
+        if: steps.plan.outputs.run == 'true'
+        run: node scripts/e2e-shards.mjs verify --engine chromium --list "$RUNNER_TEMP/e2e-shard.txt"
 
       - name: E2E tests
+        if: steps.plan.outputs.run == 'true'
         run: npx playwright test --project=chromium --test-list "$RUNNER_TEMP/e2e-shard.txt" --reporter=line,html
 
       - name: Upload Playwright report on failure
@@ -169,22 +210,45 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
+      # Plans only the specs this PR can affect (all of them outside PRs). A
+      # shard left with nothing to run skips the remaining steps and passes.
+      - name: Plan duration-balanced shard
+        id: plan
+        env:
+          E2E_SELECTION: ${{ needs.changes.outputs.e2e }}
+        run: |
+          tr ' ' '\n' <<< "$E2E_SELECTION" > "$RUNNER_TEMP/e2e-selection.txt"
+          node scripts/e2e-shards.mjs plan --engine webkit --shard ${{ matrix.shard }}/${{ strategy.job-total }} --only "$RUNNER_TEMP/e2e-selection.txt" --out "$RUNNER_TEMP/e2e-shard.txt"
+          if [ -s "$RUNNER_TEMP/e2e-shard.txt" ]; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "run=false" >> "$GITHUB_OUTPUT"
+            echo "No affected webkit specs in this shard." >> "$GITHUB_STEP_SUMMARY"
+          fi
+
       - uses: oven-sh/setup-bun@v2
+        if: steps.plan.outputs.run == 'true'
         with:
           bun-version: latest
 
       - name: Install dependencies
+        if: steps.plan.outputs.run == 'true'
         run: bun install --frozen-lockfile
 
       - name: Install Playwright WebKit
+        if: steps.plan.outputs.run == 'true'
         run: npx playwright install --with-deps webkit
 
-      - name: Plan duration-balanced shard
+      # Fails unless Playwright selects exactly the planned files; --test-list
+      # silently runs nothing for an unresolvable entry.
+      - name: Verify shard selection
+        if: steps.plan.outputs.run == 'true'
         env:
           WEBKIT: "1"
-        run: node scripts/e2e-shards.mjs plan --engine webkit --shard ${{ matrix.shard }}/${{ strategy.job-total }} --out "$RUNNER_TEMP/e2e-shard.txt" --verify
+        run: node scripts/e2e-shards.mjs verify --engine webkit --list "$RUNNER_TEMP/e2e-shard.txt"
 
       - name: E2E tests (WebKit)
+        if: steps.plan.outputs.run == 'true'
         env:
           WEBKIT: "1"
           PW_VIDEO_HEADED: "1"

@@ -10,6 +10,7 @@ import {
   parseCiLog,
   parseShardArg,
   planShards,
+  restrictSpecs,
 } from "../scripts/e2e-shards.mjs";
 
 const flatten = (shards: { specs: string[] }[]) => shards.flatMap((shard) => shard.specs);
@@ -238,5 +239,29 @@ describe("compareSelection", () => {
 
   it("reports selected files outside the plan", () => {
     expect(compareSelection(["a.spec.ts"], ["a.spec.ts", "z.spec.ts"])).toEqual({ missing: [], unexpected: ["z.spec.ts"] });
+  });
+});
+
+describe("restrictSpecs", () => {
+  const discovered = ["a.spec.ts", "b.spec.ts", "nested/c.spec.ts"];
+
+  it("keeps every spec for an ALL selection", () => {
+    expect(restrictSpecs(discovered, "ALL\n")).toEqual({ all: true, specs: discovered });
+  });
+
+  it("keeps listed specs that exist, accepting the e2e/ prefix", () => {
+    expect(restrictSpecs(discovered, "e2e/b.spec.ts\n  e2e/nested/c.spec.ts\ne2e/gone.spec.ts\n")).toEqual({
+      all: false,
+      specs: ["b.spec.ts", "nested/c.spec.ts"],
+    });
+  });
+
+  it("selects nothing for NONE or an empty selection", () => {
+    expect(restrictSpecs(discovered, "NONE\n")).toEqual({ all: false, specs: [] });
+    expect(restrictSpecs(discovered, "")).toEqual({ all: false, specs: [] });
+  });
+
+  it("treats ALL anywhere in the selection as the full suite", () => {
+    expect(restrictSpecs(discovered, "e2e/a.spec.ts\nALL\n").all).toBe(true);
   });
 });

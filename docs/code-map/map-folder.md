@@ -816,7 +816,8 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `scripts/grant-macos-accessibility.sh` — CI-only, SIP-guarded Xcode Helper Accessibility grant for the Appium Mac2 pilot.
 - `.github/workflows/macos-native-ui.yml` — hosted macOS production bundle build, Appium Mac2 run and outcome artifact upload.
 - `scripts/run-native-soak.ts` — native soak configuration, run ownership and report finalization.
-- `scripts/e2e-shards.mjs` + `scripts/e2e-shard-timings.json` — CI browser shards as whole spec files balanced by recorded per-file CI durations (`plan` → `--test-list`; `record` refreshes timings from `gh run view --log`); contracts in `tests/e2e-shards.test.ts` (#1123).
+- `scripts/e2e-shards.mjs` + `scripts/e2e-shard-timings.json` — CI browser shards as whole spec files balanced by recorded per-file CI durations (`plan` → `--test-list`; `record` refreshes timings from `gh run view --log`); contracts in `tests/e2e-shards.test.ts` (#1123). On PRs each shard plans only the specs `scripts/e2e-affected.mjs` selects from the PR diff (`--only`), skipping when its share is empty; pushes run everything (#1131).
+- `scripts/e2e-affected.mjs` — maps a diff to affected browser specs through `map-feature.md` clusters; ignores files the mock-backed suite never executes (src-tauri, tests, evidence, docs) and falls back to ALL for mock-invoke, hubs, config, dev-server scripts, e2e support and CI selection changes; contracts in `tests/e2e-affected.test.ts`.
 - `tests/qualification/native-soak.test.ts` — native qualification inputs, binary provenance, report and startup-marker contracts.
 - `tests/qualification/native-runner-edge-cases.test.ts` — process exit, cleanup and artifact containment edge cases.
 - `tests/qualification/macos-startup-phase-attribution.test.ts` — correlated macOS startup phase decomposition, retained unattributed residual (bound scaled with launch length) and half-bounce verdicts.

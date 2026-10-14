@@ -373,6 +373,36 @@ for (const action of ["click", "Enter"] as const) {
   });
 }
 
+for (const outcome of ["path", "directory result"] as const) {
+  test(`Quick Open ${outcome} blocks navigation to covered A and permits uncovered B`, async ({ page }) => {
+    await page.goto("/?path=/home/user/Pictures"); await waitForEntries(page); await install(page);
+    await draft(page).fill("Preserved pane caller");
+    const quickOpen = page.locator(".quick-open-dialog");
+    const go = async (focusDialog: boolean) => {
+      if (focusDialog) await page.getByRole("button", { name: "Close test dialog" }).focus();
+      await page.keyboard.press("Control+p");
+      await expect(quickOpen).toBeVisible();
+      const input = quickOpen.locator("input").first();
+      if (outcome === "path") { await input.fill("/home/user/Downloads"); await input.press("Enter"); }
+      else {
+        await input.fill("vacation");
+        const row = quickOpen.locator(".result-item", { hasText: "vacation" }).first();
+        await expect(row).toBeVisible(); await row.click();
+      }
+      await expect(quickOpen).toBeHidden();
+    };
+    await go(true);
+    await expect(pane(page, 0).locator(".content")).toHaveAttribute("data-current-path", "/home/user/Pictures");
+    await expect(draft(page)).toHaveValue("Preserved pane caller");
+    await pane(page, 1).locator(".entry-item").first().click();
+    await expect(pane(page, 1)).toHaveClass(/active/);
+    await go(false);
+    await expect(pane(page, 1).locator(".content")).toHaveAttribute("data-current-path", outcome === "path" ? "/home/user/Downloads" : "/home/user/Pictures/vacation");
+    await expect(pane(page, 0).locator(".content")).toHaveAttribute("data-current-path", "/home/user/Pictures");
+    await expect(draft(page)).toHaveValue("Preserved pane caller");
+  });
+}
+
 for (const retirement of ["dialog", "pane"] as const) {
   test(`pane caller's image editor closes and releases the window when its ${retirement} retires`, async ({ page }) => {
     await page.goto("/?path=/home/user/Pictures"); await waitForEntries(page); await install(page);

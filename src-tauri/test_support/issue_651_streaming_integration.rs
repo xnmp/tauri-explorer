@@ -312,6 +312,31 @@ fn issue_651_real_streaming_command_reuses_refreshes_and_cancels_listings() {
     assert!(wait_for_done(&receiver, raced_id).contains(&"raced.txt".to_string()));
     assert_eq!(stream_walk_count_for_test(racing_root.path()), 2);
 
+    // Cancellation crosses the actual streaming command / watcher boundary.
+    // Reverting the cancellation-token forwarding leaves this root covered.
+    let registration_root = tempfile::tempdir().unwrap();
+    fs::write(registration_root.path().join("needle.txt"), "entry").unwrap();
+    let registration_lease = tauri::async_runtime::block_on(watch_directory(
+        registration_root.path().to_string_lossy().into_owned(),
+    ))
+    .unwrap();
+    let (entered, release) =
+        crate::files::fs_watcher::change_tests::gate_registration(registration_root.path());
+    let registration_id = start_search(&app_handle, registration_root.path(), "needle");
+    entered.recv_timeout(Duration::from_secs(5)).unwrap();
+    tauri::async_runtime::block_on(cancel_search(registration_id)).unwrap();
+    release.send(()).unwrap();
+    crate::files::fs_watcher::settle_search_watch_for_test();
+    assert!(
+        !crate::files::fs_watcher::is_search_cache_watched(registration_root.path()),
+        "cancelled streaming registration must leave no recursive demand"
+    );
+    assert!(SEARCH_ENTRY_CACHE
+        .completed(registration_root.path())
+        .is_none());
+    assert_eq!(stream_walk_count_for_test(registration_root.path()), 0);
+    tauri::async_runtime::block_on(unwatch_directory(registration_lease.id)).unwrap();
+
     fs::write(unwatched.path().join("before.txt"), "before").expect("unwatched fixture");
     let before_id = start_search(&app_handle, unwatched.path(), "before");
     assert!(wait_for_done(&receiver, before_id).contains(&"before.txt".to_string()));

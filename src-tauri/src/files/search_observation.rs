@@ -3,22 +3,57 @@
 use super::watch_observation::{Coverage, Observation};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::{mpsc, Arc, Mutex};
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    mpsc, Arc, Mutex,
+};
 use std::time::{Duration, Instant};
 
 type Demand = Arc<()>;
 
+struct Desired {
+    identity: Demand,
+    requests: Vec<Arc<AtomicBool>>,
+    retained: bool,
+}
+
+impl Desired {
+    fn wanted(&self) -> bool {
+        self.retained
+            || self
+                .requests
+                .iter()
+                .any(|flag| !flag.load(Ordering::Acquire))
+    }
+
+    fn reconcile(&mut self) {
+        self.requests.retain(|flag| !flag.load(Ordering::Acquire));
+        // An unsuccessful registration keeps recovery demand while its search
+        // can still cancel. Once an uncancelled search finishes, that demand
+        // belongs to the pane, just like successfully installed cache coverage.
+        self.retained |= self
+            .requests
+            .iter_mut()
+            .any(|flag| Arc::get_mut(flag).is_some_and(|flag| !*flag.get_mut()));
+        if self.retained {
+            self.requests.clear();
+        }
+    }
+}
+
 enum Command {
-    Ensure(PathBuf, Demand, mpsc::Sender<bool>),
+    Ensure(PathBuf, Demand, Arc<AtomicBool>, mpsc::Sender<bool>),
     Remove(PathBuf),
     #[cfg(test)]
     Barrier(mpsc::Sender<()>),
+    #[cfg(test)]
+    Maintain(Instant, Box<dyn FnOnce() + Send>, mpsc::Sender<()>),
     Stop,
 }
 
 #[derive(Default)]
 struct State {
-    desired: HashMap<PathBuf, Demand>,
+    desired: HashMap<PathBuf, Desired>,
     installed: HashMap<PathBuf, Demand>,
     coverage: Option<Coverage>,
 }
@@ -26,9 +61,11 @@ struct State {
 impl State {
     fn healthy(&self, path: &Path) -> bool {
         self.desired.get(path).is_some_and(|demand| {
-            self.installed
-                .get(path)
-                .is_some_and(|installed| Arc::ptr_eq(demand, installed))
+            demand.wanted()
+                && self
+                    .installed
+                    .get(path)
+                    .is_some_and(|installed| Arc::ptr_eq(&demand.identity, installed))
                 && self
                     .coverage
                     .as_ref()
@@ -42,12 +79,22 @@ pub(super) struct SearchObservation {
     state: Arc<Mutex<State>>,
 }
 
-pub(super) struct Registration(mpsc::Receiver<bool>);
+pub(super) struct Registration {
+    receive: mpsc::Receiver<bool>,
+    cancelled: Arc<AtomicBool>,
+}
 
 impl Registration {
     /// Call only after releasing the directory lease mutex.
     pub fn wait(self) -> bool {
-        self.0.recv().unwrap_or(false)
+        while !self.cancelled.load(Ordering::Acquire) {
+            match self.receive.recv_timeout(Duration::from_millis(20)) {
+                Ok(covered) => return covered && !self.cancelled.load(Ordering::Acquire),
+                Err(mpsc::RecvTimeoutError::Disconnected) => return false,
+                Err(mpsc::RecvTimeoutError::Timeout) => {}
+            }
+        }
+        false
     }
 }
 
@@ -72,24 +119,42 @@ impl SearchObservation {
                     Err(mpsc::RecvTimeoutError::Timeout) => None,
                     Err(mpsc::RecvTimeoutError::Disconnected) => break,
                 };
+                reconcile(&published, &mut installed, &mut observation);
                 let mut reply = None;
                 match command {
-                    Some(Command::Ensure(path, demand, send)) => {
+                    Some(Command::Ensure(path, demand, cancelled, send)) => {
                         let current = published
                             .lock()
                             .unwrap()
                             .desired
                             .get(&path)
-                            .is_some_and(|active| Arc::ptr_eq(active, &demand));
-                        if current {
+                            .is_some_and(|active| Arc::ptr_eq(&active.identity, &demand));
+                        if current && !cancelled.load(Ordering::Acquire) {
+                            let started = Instant::now();
+                            log::info!(
+                                "Recursive search watch registration started: path={path:?}"
+                            );
                             #[cfg(feature = "e2e-hooks")]
                             wait_for_native_test_gate(&path);
-                            let started = Instant::now();
+                            #[cfg(test)]
+                            super::fs_watcher::change_tests::wait_for_registration(&path);
+                            installed.insert(path.clone(), demand.clone());
+                            update_admission(&published, &installed, &mut observation);
                             let result = observation.add(&path, true);
-                            if started.elapsed() >= Duration::from_secs(1) || result.is_err() {
-                                log::warn!("Recursive search watch registration: path={path:?}, elapsed={}ms, result={result:?}", started.elapsed().as_millis());
+                            log::info!("Recursive search watch registration finished: path={path:?}, elapsed={}ms, result={result:?}", started.elapsed().as_millis());
+                            if result.is_ok() {
+                                if let Some(active) =
+                                    published.lock().unwrap().desired.get_mut(&path).filter(
+                                        |active| {
+                                            Arc::ptr_eq(&active.identity, &demand)
+                                                && active.wanted()
+                                        },
+                                    )
+                                {
+                                    active.retained = true;
+                                    active.requests.clear();
+                                }
                             }
-                            installed.insert(path.clone(), demand);
                         }
                         reply = Some((path, send));
                     }
@@ -98,6 +163,17 @@ impl SearchObservation {
                         let _ = observation.remove(&path);
                     }
                     Some(Command::Stop) => break,
+                    #[cfg(test)]
+                    Some(Command::Maintain(now, before, send)) => {
+                        before();
+                        observation.maintain(now);
+                        reconcile(&published, &mut installed, &mut observation);
+                        let mut state = published.lock().unwrap();
+                        state.installed = installed.clone();
+                        state.coverage = Some(observation.coverage());
+                        let _ = send.send(());
+                        continue;
+                    }
                     #[cfg(test)]
                     Some(Command::Barrier(send)) => {
                         let mut state = published.lock().unwrap();
@@ -108,6 +184,9 @@ impl SearchObservation {
                     }
                     None => {}
                 }
+                // Cancellation or final pane release can happen inside a slow
+                // add. Reclaim that demand before publishing or retrying it.
+                reconcile(&published, &mut installed, &mut observation);
                 // No shared-state lock is held during OS registration, rebuild,
                 // unwatch or watcher destruction. Late results retain the old
                 // demand identity and cannot cover a released/reacquired root.
@@ -123,7 +202,15 @@ impl SearchObservation {
                 // sibling. Replies above are delivered before any slow retry.
                 let now = Instant::now();
                 if observation.next_work_at(now).is_some_and(|at| at <= now) {
+                    let roots: Vec<_> = installed.keys().cloned().collect();
+                    let started = Instant::now();
+                    log::info!("Recursive search watch recovery started: roots={roots:?}");
                     observation.maintain(now);
+                    log::info!(
+                        "Recursive search watch recovery finished: roots={roots:?}, elapsed={}ms",
+                        started.elapsed().as_millis()
+                    );
+                    reconcile(&published, &mut installed, &mut observation);
                     let mut state = published.lock().unwrap();
                     state.coverage = Some(observation.coverage());
                 }
@@ -132,24 +219,48 @@ impl SearchObservation {
         Self { commands, state }
     }
 
+    #[cfg(test)]
     pub fn prepare(&self, path: &Path) -> Registration {
+        self.prepare_cancellable(path, Arc::new(AtomicBool::new(false)))
+    }
+
+    pub fn prepare_cancellable(&self, path: &Path, cancelled: Arc<AtomicBool>) -> Registration {
         let (send, receive) = mpsc::channel();
         let mut state = self.state.lock().unwrap();
-        if state.healthy(path) {
+        if cancelled.load(Ordering::Acquire) {
+            let _ = send.send(false);
+        } else if state.healthy(path) {
+            // Recovery may have installed coverage while the original failed
+            // requester was still running. This successful acquisition adopts
+            // it independently of that requester's later cancellation.
+            let desired = state.desired.get_mut(path).unwrap();
+            desired.retained = true;
+            desired.requests.clear();
             let _ = send.send(true);
         } else {
-            let demand = state
+            let desired = state
                 .desired
                 .entry(path.to_path_buf())
-                .or_insert_with(|| Arc::new(()))
-                .clone();
-            // Ordering demand changes and sends under this short lock preserves
-            // remove/reacquire order even when producers are different threads.
-            let _ = self
-                .commands
-                .send(Command::Ensure(path.to_path_buf(), demand, send));
+                .or_insert_with(|| Desired {
+                    identity: Arc::new(()),
+                    requests: Vec::new(),
+                    retained: false,
+                });
+            desired.reconcile();
+            if !desired.retained {
+                desired.requests.push(cancelled.clone());
+            }
+            let demand = desired.identity.clone();
+            // Demand changes and sends share this short lock, preserving the
+            // ordering of final release and same-path reacquisition.
+            let _ = self.commands.send(Command::Ensure(
+                path.to_path_buf(),
+                demand,
+                cancelled.clone(),
+                send,
+            ));
         }
-        Registration(receive)
+        Registration { receive, cancelled }
     }
 
     pub fn healthy(&self, path: &Path) -> bool {
@@ -174,10 +285,77 @@ impl SearchObservation {
     }
 
     #[cfg(test)]
+    pub fn maintain_for_test(&self, now: Instant) {
+        self.maintain_after_for_test(now, || {});
+    }
+
+    #[cfg(test)]
+    pub fn maintain_after_for_test(&self, now: Instant, before: impl FnOnce() + Send + 'static) {
+        let (send, receive) = mpsc::channel();
+        self.commands
+            .send(Command::Maintain(now, Box::new(before), send))
+            .unwrap();
+        receive.recv_timeout(Duration::from_secs(5)).unwrap();
+    }
+
+    #[cfg(test)]
     pub fn settle(&self) {
         let (send, receive) = mpsc::channel();
         self.commands.send(Command::Barrier(send)).unwrap();
         receive.recv_timeout(Duration::from_secs(5)).unwrap();
+    }
+}
+
+/// Snapshot operation identities, but recheck their current demand before each
+/// native root. A blocked sibling must not admit a later cancelled/released root.
+fn update_admission(
+    state: &Arc<Mutex<State>>,
+    installed: &HashMap<PathBuf, Demand>,
+    observation: &mut Observation,
+) {
+    let state = state.clone();
+    let identities = installed.clone();
+    observation.set_registration_admission(move |path| {
+        let state = state.lock().unwrap();
+        identities.get(path).is_some_and(|identity| {
+            state
+                .desired
+                .get(path)
+                .is_some_and(|desired| Arc::ptr_eq(identity, &desired.identity) && desired.wanted())
+        })
+    });
+}
+
+/// Only the worker touches Observation. Retire all obsolete roots together so
+/// removing overlapping cancelled roots cannot rebuild one another.
+fn reconcile(
+    state: &Arc<Mutex<State>>,
+    installed: &mut HashMap<PathBuf, Demand>,
+    observation: &mut Observation,
+) {
+    let obsolete = {
+        let mut state = state.lock().unwrap();
+        state.desired.retain(|_, desired| {
+            desired.reconcile();
+            desired.wanted()
+        });
+        installed
+            .iter()
+            .filter(|(path, demand)| {
+                !state
+                    .desired
+                    .get(*path)
+                    .is_some_and(|desired| Arc::ptr_eq(&desired.identity, demand))
+            })
+            .map(|(path, _)| path.clone())
+            .collect::<Vec<_>>()
+    };
+    for path in &obsolete {
+        installed.remove(path);
+    }
+    update_admission(state, installed, observation);
+    if !obsolete.is_empty() {
+        let _ = observation.remove_recursive_roots(&obsolete);
     }
 }
 

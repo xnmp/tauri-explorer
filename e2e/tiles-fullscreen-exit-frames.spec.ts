@@ -2,6 +2,8 @@
  * #1061: leaving the fullscreen image preview must not present a frame of the
  * Files tiles laid out for the fullscreen width. The first frame after exit
  * must already be the settled grid: the same tiles at the same positions.
+ * Fullscreen no longer resizes the Files area at all, so the grid under it
+ * must already be that settled grid.
  * Every dock edge, island mode and a fractional zoom must hold the same rule.
  *
  * `frame-sampler.ts` records the tile grid once per frame, just before paint.
@@ -101,10 +103,9 @@ for (const variant of variants) {
           expect(during.length, "sampled the fullscreen frames").toBeGreaterThan(0);
           expect(after.length, "sampled the frames after exit").toBeGreaterThan(5);
           const settled = after[after.length - 1];
-          // The scenario must actually change the Files area: fullscreen gives
-          // it the dock's space, and a side dock also more columns.
-          expect(during[0].content).not.toEqual(settled.content);
-          if (variant.dock === "right") expect(Number(during[0].columns)).toBeGreaterThan(Number(settled.columns));
+          // Fullscreen leaves the Files area at its docked size, so the grid
+          // under it is already the one exit reveals: same tracks, same tiles.
+          expect({ ...during[0], fullscreen: false }, "grid under fullscreen").toEqual(settled);
           expect(settled.tiles).toHaveLength(27);
 
           after.forEach((sample, frame) => {

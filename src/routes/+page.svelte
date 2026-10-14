@@ -750,8 +750,8 @@
     min-height: 0;
   }
 
-  /* Bottom/top dock: island is a column so the pane's inline height drives the
-     island height and the pane stretches to full column width. */
+  /* Bottom/top dock: island is a column so the preview dock's inline height
+     drives the island height and the dock stretches to full column width. */
   .preview-island.vertical {
     flex-direction: column;
     /* The child supplies its live draft size; constrain allocation without

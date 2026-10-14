@@ -762,6 +762,14 @@ import { openFile } from "$lib/api/open";
   });
 </script>
 
+<!-- The dock slot holds the preview's docked size in the layout, whether or
+     not the pane is in it: fullscreen lifts only the pane out of flow, so the
+     workspace panes keep the size they have while the preview is docked. -->
+<div
+  class="preview-dock"
+  class:vertical={isVertical}
+  style={isVertical ? `height: ${resize.value}px;` : `width: ${resize.value}px;`}
+>
 <!-- svelte-ignore a11y_no_static_element_interactions -->
 <div
   id={paneId}
@@ -771,9 +779,7 @@ import { openFile } from "$lib/api/open";
   class:vertical={isVertical}
   class:dock-bottom={position === "bottom"}
   class:dock-top={position === "top"}
-  style={isVertical
-    ? `height: ${resize.value}px; --preview-font-size: ${settingsStore.previewFontSize}px;`
-    : `width: ${resize.value}px; --preview-font-size: ${settingsStore.previewFontSize}px;`}
+  style={`--preview-font-size: ${settingsStore.previewFontSize}px;`}
   ondblclick={handlePaneDoubleClick}
 >
   {#if !fullscreen.active}
@@ -1008,6 +1014,7 @@ import { openFile } from "$lib/api/open";
     {/if}
   {/if}
 </div>
+</div>
 
 {#snippet previewSections()}
   {#if infoSections.length && previewSubject}
@@ -1023,11 +1030,30 @@ import { openFile } from "$lib/api/open";
 {/snippet}
 
 <style>
+  /* The layout box: holds the docked size in flow, even while the pane is
+     fullscreen. */
+  .preview-dock {
+    display: flex;
+    flex-shrink: 0;
+    min-width: 0;
+    min-height: 0;
+  }
+
+  /* Vertical docks fill the column width. Their height yields to the
+     column's available-space cap without changing the preferred size. */
+  .preview-dock.vertical {
+    flex-direction: column;
+    width: 100%;
+    flex-shrink: 1;
+  }
+
   .preview-pane {
     display: flex;
     flex-direction: column;
     position: relative;
-    flex-shrink: 0;
+    flex: 1 1 0;
+    min-width: 0;
+    min-height: 0;
     border-left: 1px solid var(--divider);
     background: var(--background-card-secondary);
     overflow: hidden;
@@ -1041,13 +1067,8 @@ import { openFile } from "$lib/api/open";
     user-select: none;
   }
 
-  /* Vertical docks fill the column width; the divider moves to the docked edge. */
+  /* Vertical docks: the divider moves to the docked edge. */
   .preview-pane.vertical {
-    width: 100%;
-    /* Honor the live inline height until the parent's available-space cap
-       requires shrinking. The preferred/draft value remains unchanged. */
-    min-height: 0;
-    flex-shrink: 1;
     border-left: none;
   }
 
@@ -1167,19 +1188,17 @@ import { openFile } from "$lib/api/open";
     border-bottom: 1px solid var(--divider);
   }
 
-  /* Fullscreen: cover the whole window (overrides the inline width). The
-     nested zoom cancels the root UI zoom — otherwise 100vw/100vh are laid out
-     pre-zoom and render zoom× the screen size, pushing the image off-center
-     and off-screen (#236). */
+  /* Fullscreen: cover the whole window. Only the pane leaves the layout; its
+     .preview-dock keeps the docked size, so the workspace panes underneath
+     neither resize nor reflow. The nested zoom cancels the root UI zoom —
+     otherwise 100vw/100vh are laid out pre-zoom and render zoom× the screen
+     size, pushing the image off-center and off-screen (#236). */
   .preview-pane.fullscreen {
     position: fixed;
     inset: 0;
     zoom: calc(1 / var(--app-zoom, 1));
-    width: 100vw !important;
-    /* Vertical docks set an inline height. It must not constrain the fixed
-       fullscreen surface; the right dock already needs the equivalent width
-       override above. */
-    height: 100vh !important;
+    width: 100vw;
+    height: 100vh;
     z-index: 1000;
     background: var(--background-solid, var(--background-card-secondary));
     border-left: none;
@@ -1368,9 +1387,11 @@ import { openFile } from "$lib/api/open";
     overflow: hidden;
   }
 
-  /* Hide the window tab bar / title bar while a preview is fullscreen. */
+  /* Hide the window tab bar / title bar while a preview is fullscreen. It
+     keeps its box: removing it would move the workspace panes up under the
+     fullscreen surface. */
   :global(html[data-preview-fullscreen] .titlebar) {
-    display: none !important;
+    visibility: hidden !important;
   }
 
   .preview-loading {

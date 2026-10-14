@@ -925,17 +925,32 @@ pub(crate) struct ChangeReceipt {
     receiver: mpsc::Receiver<Instant>,
 }
 
+/// Hang guard, not a latency budget: a loaded CI machine can delay the native
+/// callback by many seconds, so this only bounds a write that is never observed.
+const ACK_HANG_GUARD: Duration = Duration::from_secs(30);
+const _: () = assert!(
+    ACK_HANG_GUARD.as_secs() >= 30,
+    "hang guard must be at least 30 s"
+);
+
 impl ChangeReceipt {
     pub(crate) fn wait_after(&self, write_started: Instant) {
-        let deadline = Instant::now() + Duration::from_secs(5);
-        loop {
-            let observed_at = self
-                .receiver
-                .recv_timeout(deadline.saturating_duration_since(Instant::now()))
-                .expect("specific filesystem write was not acknowledged by recursive observation");
-            if observed_at >= write_started {
-                return;
-            }
+        wait_for_acknowledgement(&self.receiver, write_started, ACK_HANG_GUARD);
+    }
+}
+
+fn wait_for_acknowledgement(
+    receiver: &mpsc::Receiver<Instant>,
+    write_started: Instant,
+    hang_guard: Duration,
+) {
+    let deadline = Instant::now() + hang_guard;
+    loop {
+        let observed_at = receiver
+            .recv_timeout(deadline.saturating_duration_since(Instant::now()))
+            .expect("specific filesystem write was not acknowledged by recursive observation");
+        if observed_at >= write_started {
+            return;
         }
     }
 }
@@ -1031,4 +1046,52 @@ fn native_receipts_reject_unrelated_paths_modes_and_pre_write_observations() {
         receipt.receiver.try_recv().is_err(),
         "the stale receipt must have been discarded before accepting the specific write"
     );
+}
+
+#[test]
+fn acknowledgement_wait_returns_on_the_first_observation_at_or_after_the_write() {
+    let (sender, receiver) = mpsc::channel();
+    let write_started = Instant::now() + Duration::from_secs(1);
+    sender
+        .send(Instant::now())
+        .expect("stale observation delivered");
+    sender
+        .send(write_started)
+        .expect("fresh observation delivered");
+    wait_for_acknowledgement(&receiver, write_started, Duration::from_millis(50));
+}
+
+#[test]
+#[should_panic(
+    expected = "specific filesystem write was not acknowledged by recursive observation"
+)]
+fn acknowledgement_wait_ignores_pre_write_observations_until_the_hang_guard() {
+    let (sender, receiver) = mpsc::channel();
+    let write_started = Instant::now() + Duration::from_secs(1);
+    sender
+        .send(Instant::now())
+        .expect("stale observation delivered");
+    wait_for_acknowledgement(&receiver, write_started, Duration::from_millis(50));
+}
+
+#[test]
+#[should_panic(
+    expected = "specific filesystem write was not acknowledged by recursive observation"
+)]
+fn never_acknowledged_write_panics_at_the_hang_guard() {
+    let (_sender, receiver) = mpsc::channel::<Instant>();
+    wait_for_acknowledgement(&receiver, Instant::now(), Duration::from_millis(10));
+}
+
+#[test]
+fn wait_after_accepts_an_acknowledgement_delayed_past_the_old_five_second_guard() {
+    let path = PathBuf::from("/receipt-delayed-acknowledgement");
+    let receipt = subscribe_changes(&path, Mode::Recursive);
+    let write_started = Instant::now();
+    let delayed = std::thread::spawn(move || {
+        std::thread::sleep(Duration::from_secs(6));
+        record_change(Mode::Recursive, std::slice::from_ref(&path), Instant::now());
+    });
+    receipt.wait_after(write_started);
+    delayed.join().expect("delayed observation thread");
 }

@@ -1,4 +1,7 @@
-use super::{fuzzy_search_sync, walk_count_for_test, walk_streaming_entries, Walked};
+use super::{
+    fuzzy_search_sync, lock_test_cache_commands, walk_count_for_test, walk_streaming_entries,
+    Walked,
+};
 use crate::files::fs_watcher::{
     invalidate_directory_caches_for_change, mark_directory_watched_for_test,
 };
@@ -21,7 +24,7 @@ fn result_names(query: &str, root: &std::path::Path) -> Vec<String> {
 
 #[test]
 fn issue_651_search_command_reuses_a_completed_watched_listing() {
-    let _cache_guard = super::TEST_CACHE_COMMANDS.lock().unwrap();
+    let _cache_guard = lock_test_cache_commands();
     let root = tempfile::tempdir().expect("temporary search root");
     fs::write(root.path().join("alpha-report.txt"), "alpha").expect("alpha fixture");
     fs::write(root.path().join("beta-report.txt"), "beta").expect("beta fixture");
@@ -34,7 +37,7 @@ fn issue_651_search_command_reuses_a_completed_watched_listing() {
 
 #[test]
 fn issue_651_search_command_does_not_reuse_an_unwatched_listing() {
-    let _cache_guard = super::TEST_CACHE_COMMANDS.lock().unwrap();
+    let _cache_guard = lock_test_cache_commands();
     let root = tempfile::tempdir().expect("temporary search root");
     fs::write(root.path().join("before.txt"), "before").expect("initial fixture");
 
@@ -48,7 +51,7 @@ fn issue_651_search_command_does_not_reuse_an_unwatched_listing() {
 
 #[test]
 fn issue_651_watcher_invalidation_refreshes_search_command_results() {
-    let _cache_guard = super::TEST_CACHE_COMMANDS.lock().unwrap();
+    let _cache_guard = lock_test_cache_commands();
     let root = tempfile::tempdir().expect("temporary search root");
     fs::write(root.path().join("before.txt"), "before").expect("initial fixture");
     mark_directory_watched_for_test(root.path());
@@ -64,7 +67,7 @@ fn issue_651_watcher_invalidation_refreshes_search_command_results() {
 
 #[test]
 fn issue_651_cancelled_stream_walk_never_returns_a_partial_listing() {
-    let _cache_guard = super::TEST_CACHE_COMMANDS.lock().unwrap();
+    let _cache_guard = lock_test_cache_commands();
     let root = tempfile::tempdir().expect("temporary search root");
     for index in 0..100 {
         fs::write(

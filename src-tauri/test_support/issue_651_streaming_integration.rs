@@ -1,6 +1,6 @@
 use super::{
-    cancel_search, install_stream_gate_for_test, start_streaming_search_with_runtime,
-    stream_walk_count_for_test, SEARCH_ENTRY_CACHE,
+    cancel_search, install_stream_gate_for_test, lock_test_cache_commands,
+    start_streaming_search_with_runtime, stream_walk_count_for_test, SEARCH_ENTRY_CACHE,
 };
 use crate::files::fs_watcher::{
     acquire_directory, init_watcher, native_search_change_for_test, release_directory,
@@ -57,7 +57,7 @@ fn wait_for_revision_change(root: &Path, revision: u64) {
 
 #[test]
 fn issue_651_real_streaming_command_reuses_refreshes_and_cancels_listings() {
-    let _cache_guard = super::TEST_CACHE_COMMANDS.lock().unwrap();
+    let _cache_guard = lock_test_cache_commands();
     let app = tauri::test::mock_app();
     let app_handle = app.handle().clone();
     init_watcher(&app_handle);
@@ -324,7 +324,7 @@ fn issue_651_real_streaming_command_reuses_refreshes_and_cancels_listings() {
 
 #[test]
 fn issue_974_controlled_streaming_queries_reuse_and_invalidate_completed_listings() {
-    let _cache_guard = super::TEST_CACHE_COMMANDS.lock().unwrap();
+    let _cache_guard = lock_test_cache_commands();
     let app = tauri::test::mock_app();
     let app_handle = app.handle().clone();
     let (sender, receiver) = mpsc::channel();

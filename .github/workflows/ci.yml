@@ -5,6 +5,11 @@ on:
     branches: [dev, main]
   push:
     branches: [dev, main]
+  # Merge queue (#1133). head_ref is empty for merge_group, so the concurrency
+  # group falls back to the entry's unique gh-readonly-queue/... ref and queue
+  # entries never cancel each other or a PR run.
+  merge_group:
+    types: [checks_requested]
   workflow_dispatch:
 
 concurrency:

@@ -5,6 +5,11 @@ on:
     branches: [dev, main]
   push:
     branches: [dev, main]
+  # Merge queue (#1133). head_ref is empty for merge_group, so the concurrency
+  # group falls back to the entry's unique gh-readonly-queue/... ref and queue
+  # entries never cancel each other or a PR run.
+  merge_group:
+    types: [checks_requested]
   # Scoped dispatches diagnose #715 and #710; only the default full run counts toward
   # the W2.4 five-run Windows smoke gate.
   workflow_dispatch:
@@ -400,9 +405,11 @@ jobs:
       # Build outputs are safe to reuse after a GUI failure once both the
       # contracts and embedded binary build have succeeded. Save explicitly so
       # a failed contract/build can never publish an incomplete target cache.
+      # Never from merge_group: a cache saved under a gh-readonly-queue ref is
+      # visible only to that deleted ref, so it would just evict useful ones.
       - name: Save Rust target cache after native outcome
         id: save-rust-target-cache
-        if: ${{ needs.changes.outputs.code == 'true' && (always() && steps.native-contracts.outcome == 'success' && steps.build-tauri-binary.outcome == 'success') }}
+        if: ${{ needs.changes.outputs.code == 'true' && github.event_name != 'merge_group' && (always() && steps.native-contracts.outcome == 'success' && steps.build-tauri-binary.outcome == 'success') }}
         uses: actions/cache/save@v6
         with:
           path: src-tauri/target

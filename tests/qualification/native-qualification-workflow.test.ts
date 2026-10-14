@@ -73,7 +73,7 @@ describe("native qualification workflow cache and diagnostics (#694)", () => {
     expect(workflow).toContain("actions/cache/restore@v6");
     expect(save.uses).toBe("actions/cache/save@v6");
     expect(save.if).toBe(
-      "${{ needs.changes.outputs.code == 'true' && (always() && steps.native-contracts.outcome == 'success' && steps.build-tauri-binary.outcome == 'success') }}",
+      "${{ needs.changes.outputs.code == 'true' && github.event_name != 'merge_group' && (always() && steps.native-contracts.outcome == 'success' && steps.build-tauri-binary.outcome == 'success') }}",
     );
     expect(workflow).toContain("steps.rust-provenance.outputs.cache-key");
     expect(workflow).toContain("cache_save_outcome=");

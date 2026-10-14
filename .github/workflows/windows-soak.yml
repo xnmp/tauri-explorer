@@ -13,6 +13,11 @@ on:
       - '.github/workflows/windows-soak.yml'
       - 'scripts/*native*'
       - 'e2e-tauri/**'
+  # Merge queue (#1133). head_ref is empty for merge_group, so the concurrency
+  # group falls back to the entry's unique gh-readonly-queue/... ref and queue
+  # entries never cancel each other or a PR run.
+  merge_group:
+    types: [checks_requested]
   workflow_dispatch:
 
 concurrency:
@@ -20,7 +25,28 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # merge_group ignores trigger-level paths, so queue runs apply the same
+  # list here (keep it in sync). Runs only for merge_group; a failure leaves
+  # the output empty, which the gated jobs treat as changed.
+  changes:
+    if: github.event_name == 'merge_group'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      run: ${{ steps.paths.outputs.changed }}
+    steps:
+      - uses: actions/checkout@v7
+      - id: paths
+        uses: ./.github/actions/merge-group-paths
+        with:
+          patterns: |
+            .github/workflows/windows-soak.yml
+            scripts/*native*
+            e2e-tauri/**
+
   bounded-soak:
+    needs: changes
+    if: ${{ !cancelled() && (github.event_name != 'merge_group' || needs.changes.outputs.run != 'false') }}
     runs-on: windows-latest
     timeout-minutes: 45
     steps:
@@ -33,6 +59,8 @@ jobs:
         with:
           workspaces: src-tauri
           shared-key: windows-native-soak
+          # Queue-ref caches are visible only to their deleted ref.
+          save-if: ${{ github.event_name != 'merge_group' }}
       - name: Install frontend dependencies
         run: bun install --frozen-lockfile
       # This builder requires a clean source tree and records the actual binary

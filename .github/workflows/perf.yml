@@ -12,6 +12,11 @@ on:
       - 'scripts/perf-check.ts'
       - 'perf-baseline.json'
       - 'e2e/tiles-scroll-perf.spec.ts'
+  # Merge queue (#1133). head_ref is empty for merge_group, so the concurrency
+  # group falls back to the entry's unique gh-readonly-queue/... ref and queue
+  # entries never cancel each other or a PR run.
+  merge_group:
+    types: [checks_requested]
   workflow_dispatch:
 
 concurrency:
@@ -19,8 +24,35 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # merge_group ignores trigger-level paths, so queue runs apply the same
+  # list here (keep it in sync). Runs only for merge_group; a failure leaves
+  # the output empty, which the gated jobs treat as changed.
+  changes:
+    if: github.event_name == 'merge_group'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      run: ${{ steps.paths.outputs.changed }}
+    steps:
+      - uses: actions/checkout@v7
+      - id: paths
+        uses: ./.github/actions/merge-group-paths
+        with:
+          patterns: |
+            src/lib/state/**
+            src/lib/domain/**
+            src/lib/components/**
+            src/lib/api/**
+            src/lib/composables/**
+            tests/perf/**
+            scripts/perf-check.ts
+            perf-baseline.json
+            e2e/tiles-scroll-perf.spec.ts
+
   perf-check:
     name: Performance Regression Check
+    needs: changes
+    if: ${{ !cancelled() && (github.event_name != 'merge_group' || needs.changes.outputs.run != 'false') }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -46,6 +78,8 @@ jobs:
 
   tiles-scroll-perf:
     name: Tiles Scroll Perf (#593 regression guard)
+    needs: changes
+    if: ${{ !cancelled() && (github.event_name != 'merge_group' || needs.changes.outputs.run != 'false') }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:

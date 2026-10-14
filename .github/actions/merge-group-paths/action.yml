@@ -1,0 +1,46 @@
+name: Merge group path filter
+description: >-
+  Reports whether a merge group changes a file matching any of the given
+  patterns. merge_group events ignore trigger-level `paths` filters, so a
+  path-filtered workflow calls this to keep its queue runs as narrow as its
+  pull_request runs. Requires a checkout of the merge group head.
+inputs:
+  patterns:
+    description: >-
+      Newline-separated path globs, normally a copy of the workflow's `paths`
+      list. Bash matching lets `*` cross `/`, so a pattern can over-match the
+      GitHub glob it copies but never under-match it.
+    required: true
+outputs:
+  changed:
+    description: '"true" if a changed file matches, otherwise "false". Empty if the step failed; callers treat anything but "false" as changed.'
+    value: ${{ steps.match.outputs.changed }}
+runs:
+  using: composite
+  steps:
+    - id: match
+      shell: bash
+      env:
+        BASE_SHA: ${{ github.event.merge_group.base_sha }}
+        PATTERNS: ${{ inputs.patterns }}
+      run: |
+        set -euo pipefail
+        # base_sha is the queue's target tip, so this diff covers this entry and
+        # every entry ahead of it. Collect it before matching: a failed diff
+        # must fail the step (callers then run), never read as "no changes".
+        git fetch --no-tags --depth=1 origin "$BASE_SHA"
+        files="$(git diff --name-only "$BASE_SHA" HEAD)"
+        changed=false
+        while IFS= read -r file; do
+          [ -n "$file" ] || continue
+          while IFS= read -r pattern; do
+            [ -n "$pattern" ] || continue
+            # shellcheck disable=SC2053 # the unquoted right side is the glob
+            if [[ "$file" == $pattern ]]; then
+              changed=true
+              break 2
+            fi
+          done <<< "$PATTERNS"
+        done <<< "$files"
+        echo "changed=$changed" >> "$GITHUB_OUTPUT"
+        echo "Merge group touches watched paths: $changed" >> "$GITHUB_STEP_SUMMARY"

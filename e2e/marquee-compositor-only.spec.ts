@@ -28,7 +28,7 @@ for (const viewMode of VIEW_MODES) {
       if (viewMode !== "details") await switchViewMode(page, viewMode);
       for (let value = 100; value < zoom; value += 10) await pressShortcut(page, "=", { ctrlKey: true });
       await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
-      await dragAndVerifyBand(page, { bottomInset: 10 });
+      await dragAndVerifyBand(page, { bottomInset: 16 });
     });
   }
 }

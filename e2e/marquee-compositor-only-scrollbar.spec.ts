@@ -37,5 +37,5 @@ test("details with a horizontal scrollbar: band layers follow the scrollbar-excl
   expect(metrics.horizontalScrollbar).toBe(true);
   // Overlay scrollbars take no space; the scenario then has nothing to prove.
   test.skip(metrics.scrollbarHeight === 0, "overlay scrollbars leave the client box equal to the bounding box");
-  await dragAndVerifyBand(page, { bottomInset: metrics.scrollbarHeight + 20 });
+  await dragAndVerifyBand(page, { bottomInset: 20 });
 });

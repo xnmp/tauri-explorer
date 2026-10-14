@@ -38,3 +38,12 @@ Chromium hides scrollbars; the classic-scrollbar case needs its own spec with
 file level. Scope real-binary timing probes to one WebDriver session at a
 time; a second launch while the first driver still owns port 4444 reports
 "Maximum number of active sessions".
+
+When a test waits for a drag to settle, poll every side of the band, not only
+the far corner. For an up-left drag the right and bottom edges are the anchor,
+so a zero-size fill still sitting at the press point satisfies them. CI's
+WebKit job read the layers about 40ms after Playwright's synthetic moves,
+before the rAF-throttled update ran, and failed on the left edge by the whole
+drag width. Measure the drag start from the listing's client box too: at 130%
+zoom WebKit's Details view grows a horizontal scrollbar under the bounding
+rect's bottom edge.

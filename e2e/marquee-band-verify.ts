@@ -18,8 +18,13 @@ export async function dragAndVerifyBand(page: Page, options: { bottomInset: numb
     // Start on background at the pane's bottom-right, drag up-left across
     // the last row: a band as tall as the pane makes any base/size mismatch
     // (a few device pixels) measurable. Stay clear of a horizontal scrollbar
-    // on `.content`, which swallows pointer presses and paints its own track.
-    const start = { x: Math.round(box.right - 30), y: Math.round(box.bottom - bottomInset) };
+    // on `.content`, which swallows pointer presses and paints its own track:
+    // measure from the client box's bottom, converted into the rect space this
+    // engine reports under root zoom (WebKit's Details view at 130% has one).
+    const html = content as HTMLElement;
+    const rectPerCss = html.offsetHeight > 0 ? box.height / html.offsetHeight : 1;
+    const clientBottom = box.top + (html.clientTop + html.clientHeight) * rectPerCss;
+    const start = { x: Math.round(box.right - 30), y: Math.round(clientBottom - bottomInset) };
     const end = { x: Math.round(box.left + 40), y: Math.round(bottom - 20) };
     return {
       start, end, rowsBottom: bottom,
@@ -41,11 +46,20 @@ export async function dragAndVerifyBand(page: Page, options: { bottomInset: numb
   };
   const tolerance = 3;
   // The last rAF-throttled move may still be pending; wait for the rendered
-  // band to reach the drag's end before reading the layers.
+  // band to reach the drag's end before reading the layers. Check every side:
+  // for this up-left drag the right and bottom edges are the anchor, which a
+  // band that has not moved yet (a zero-size fill at the press point, as
+  // WebKit reports right after the synthetic moves) already satisfies.
   await expect
     .poll(async () => {
       const box = await band.boundingBox();
-      return box ? Math.abs(box.x + box.width - expected.right) + Math.abs(box.y + box.height - expected.bottom) : Infinity;
+      if (!box) return Infinity;
+      return Math.max(
+        Math.abs(box.x - expected.left),
+        Math.abs(box.y - expected.top),
+        Math.abs(box.x + box.width - expected.right),
+        Math.abs(box.y + box.height - expected.bottom),
+      );
     })
     .toBeLessThan(tolerance);
 

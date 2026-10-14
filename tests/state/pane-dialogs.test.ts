@@ -296,6 +296,28 @@ describe("scoped dialog ownership", () => {
     expect(f.registry.isOpen("child")).toBe(false);
     expect(await child.result).toEqual({ reason: "caller-closed" });
   });
+  it("a retired caller resuming after another pane opened the dialog cannot join or close it", async () => {
+    const f = fixture(); f.registry.register({ id: "dialog", component });
+    const plugin = Symbol("plugin");
+    const caller = f.ownership.registerSurface(() => {}, undefined, undefined, { scope: f.scopeA });
+    const captured = f.host.capture()!;
+    caller.release(); // A's surface closes while pane A stays alive.
+    f.registry.open("dialog", {}, { scope: "pane", pane: f.b }, plugin); // Another action opens B's dialog.
+    const late = f.registry.openManaged("dialog", {}, { scope: "pane", pane: captured }, plugin);
+    expect(late.ownsDialog).toBe(false);
+    expect(await late.result).toEqual({ reason: "caller-closed" });
+    late.close();
+    expect(f.registry.isOpen("dialog")).toBe(true);
+    expect(f.registry.openDialogs[0].scope).toBe(f.scopeB);
+  });
+  it("a live caller still opens and closes its own dialog", async () => {
+    const f = fixture(); f.registry.register({ id: "dialog", component });
+    f.ownership.registerSurface(() => {}, undefined, undefined, { scope: f.scopeA });
+    const session = f.registry.openManaged("dialog", {}, { scope: "pane", pane: f.host.capture()! });
+    expect(f.registry.isOpen("dialog")).toBe(true);
+    session.close();
+    expect(await session.result).toEqual({ reason: "caller-closed" });
+  });
   it("invalid captures are errors even when the same id already has a valid opening", () => {
     const f = fixture(); f.registry.register({ id: "dialog", component });
     f.registry.open("dialog", { draft: "first" }, { scope: "pane", pane: f.a });

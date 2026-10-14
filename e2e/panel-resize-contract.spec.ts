@@ -168,7 +168,7 @@ test("zoom change retires old-scale pointer work", async ({ page }) => {
 test("inline panels release geometry on hide and island hoist", async ({ page }) => {
   await openPanels(page);
   await page.setViewportSize({ width: 640, height: 600 });
-  const canvasWidth = () => page.locator(".pane-tree").evaluate(el => parseFloat((el as HTMLElement).style.width));
+  const canvasWidth = () => page.locator(".pane-tree").evaluate(el => parseFloat(getComputedStyle(el).width));
   await expect.poll(canvasWidth).toBe(720);
   await page.evaluate(async () => {
     const load = new Function("return import('/src/lib/state/window-tabs.svelte.ts')");
@@ -228,7 +228,14 @@ test("inline panel drag remains continuous while its contribution grows a narrow
 test("sidebar drag remains continuous with a scrolled constrained workspace", async ({ page }) => {
   await openPanels(page, 150);
   await page.setViewportSize({ width: 800, height: 600 });
-  await expect.poll(() => page.locator(".pane-tree").evaluate(el => parseFloat((el as HTMLElement).style.width))).toBe(720);
+  await expect.poll(() => page.locator(".pane-tree").evaluate(el => parseFloat(getComputedStyle(el).width))).toBe(720);
+  // CSS sizes the canvas at once; the measured geometry, and the active-pane
+  // reveal scroll it triggers, follow a frame later. Let that scroll land first.
+  await expect.poll(() => page.evaluate(async () => {
+    const load = new Function("return import('/src/lib/state/window-tabs.svelte.ts')");
+    return (await load()).windowTabsManager.paneViewport.geometry?.width;
+  })).toBe(720);
+  await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
   await page.locator(".pane-container").evaluate(el => { el.scrollLeft = 100; });
   await expect.poll(() => page.locator(".pane-container").evaluate(el => el.scrollLeft)).toBe(100);
   const handle = page.getByRole("separator", { name: "Resize sidebar", exact: true });

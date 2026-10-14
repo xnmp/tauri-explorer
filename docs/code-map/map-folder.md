@@ -58,8 +58,8 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `GitStatusBadge.svelte` — per-entry git status letter/color decoration.
 - `ExplorerPane.svelte` — one pane: navigation bar + FileList + preview; owns pane-scoped context.
 - `PanelResizeHandle.svelte` — shared focusable Sidebar/SCM/Miller separator with pointer capture wiring and keyboard range semantics.
-- `PaneContainer.svelte` — owns the measured, scrollable active workspace and one divider input lifetime.
-- `PaneLayoutView.svelte` — declarative split-tree renderer using shared constrained geometry and focusable separators (#228).
+- `PaneContainer.svelte` — owns the scrollable active workspace (CSS-filled canvas with a script minimum, #1061) and one divider input lifetime.
+- `PaneLayoutView.svelte` — declarative split-tree renderer: saved ratios flex over CSS minima (#1061), measured geometry for focusable separators (#228).
 - `NavigationBar.svelte` — per-pane back/fwd/up + breadcrumb strip + address bar.
 - `NavigationHistoryMenu.svelte` — full back/forward history dropdown.
 - `BreadcrumbAutocomplete.svelte` — editable address bar with directory autocomplete.
@@ -426,7 +426,8 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `detail-columns.ts` — Details column defaults, finite bounds, malformed-width normalization and visible grid projection.
 - `media-duration.ts` — Length-cell formatting (m:ss / h:mm:ss via `mediaTime`, empty when unknown) and the size+mtime cache revision (#995).
 - `resize-size.ts` — bounded scalar normalization, visual/model delta conversion and axis-aware keyboard sizing.
-- `pane-viewport.ts` — pure descendant minima, canvas placement, active-pane reveal and keyboard divider policy.
+- `scroll-moves-handle.ts` — which scrolls end a panel drag: the document's, an ancestor's or a synced scroller's, never an unrelated list's.
+- `pane-viewport.ts` — pure descendant minima (`paneMinima` sizes the rendered canvas and split children without measurement), canvas placement, active-pane reveal and keyboard divider policy.
 - `pane-layout.ts` — pane split-tree pure logic (#228).
 - `tab-title.ts` — VS Code-style tab title disambiguation.
 - `titlebar.ts` — title bar / tab strip visibility rules.

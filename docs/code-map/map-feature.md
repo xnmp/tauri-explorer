@@ -155,7 +155,7 @@ backend for E2E/browser).
 
 - `components/PaneContainer.svelte`, `components/PaneLayoutView.svelte`, `components/ExplorerPane.svelte` — pane tree render + focus
 - `domain/pane-layout.ts` — binary split-tree ops and directional neighbor policy (`splitLeaf`, `removeLeaf`, `leafSiblingContext`, `paneInDirection`)
-- `domain/pane-viewport.ts` → `state/pane-viewport.svelte.ts` — pure constrained canvas geometry and window-owned measurements shared by rendering, focus and dwindle; saved ratios remain preferences
+- `domain/pane-viewport.ts` → `state/pane-viewport.svelte.ts` — pure constrained canvas geometry and window-owned measurements shared by rendering, focus and dwindle; the rendered canvas size comes from the measurement-free minimum plus CSS fill, never from frame-late measurements (#1061); saved ratios remain preferences
 - `composables/use-inline-panel-width.svelte.ts` — inline SCM/Miller mounts reserve tokenized width contributions; hidden/hoisted surfaces release them without changing saved layout
 - `composables/use-pane-dividers.svelte.ts` — container-owned pointer/keyboard resizing, captured geometry and cancellation; `PaneContainer` locally reveals the active pane when the canvas overflows
 - `state/workspaces.svelte.ts` — saved workspace layouts (`workspacesStore`)
@@ -442,7 +442,7 @@ backend for E2E/browser).
 - `domain/drives.ts`; `api/drives.ts` (listDrives/mountDrive); `state/drive-opening.ts` (mount-before-navigation and errors); `src-tauri/src/files/drives.rs` (`list_drives`, `mount_drive`, `drive_updates_live`) + `linux_volumes.rs` (UDisks2 projection, merge, mount) + `linux_volume_monitor.rs` (cached subscription, mounted fallback) + `linux_mount_watch.rs` (mount-table change push) + `linux_gvfs_watch.rs` (GVfs MountTracker push)
 - `state/sidebar-views.svelte.ts` — which sidebar sections are shown/expanded
 - `components/sidebar-view-registry.ts` — sidebar-view id → icon + component (add a new section here)
-- `domain/resize-size.ts` → `state/scalar-resize.ts` → `composables/use-resize-owner.svelte.ts` — bounded scalar drafts with captured axis/scale, frame identity and shared DOM lifetime; `state/panel-resize.ts` + `composables/use-panel-resize.svelte.ts` adapt fixed/automatic localStorage widths, while `composables/use-controlled-size.svelte.ts` adapts Terminal/Preview settings and keyed Details sizes with final-only persistence, source supersession and conditional post-teardown finalization
+- `domain/resize-size.ts` → `state/scalar-resize.ts` → `composables/use-resize-owner.svelte.ts` (scroll cancellation through `domain/scroll-moves-handle.ts`) — bounded scalar drafts with captured axis/scale, frame identity and shared DOM lifetime; `state/panel-resize.ts` + `composables/use-panel-resize.svelte.ts` adapt fixed/automatic localStorage widths, while `composables/use-controlled-size.svelte.ts` adapts Terminal/Preview settings and keyed Details sizes with final-only persistence, source supersession and conditional post-teardown finalization
 - `state/resize-activity.svelte.ts` — owns active panel gesture leases so geometry updates cannot trigger automatic reveal and cancel the resize that caused them
 - `components/PanelResizeHandle.svelte` — shared Sidebar/SCM/Miller keyboard/pointer separator
 - FLOW: sidebar sections read their stores; drives polled from `listDrives` (drives.rs); bookmarks/recent persisted in localStorage; drop-onto-sidebar adds bookmark.

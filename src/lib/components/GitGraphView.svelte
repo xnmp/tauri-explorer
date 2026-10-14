@@ -426,12 +426,18 @@
   // auto (lane-derived) until first dragged, then a fixed width that clips
   // the lane overflow — deep histories can't squeeze the message column out.
   const resizeRegionId = $props.id();
-  const authorCol = usePersistedPanelWidth("git-graph-col-author", { min: 60, max: 320, default: 120, invert: true });
-  const dateCol = usePersistedPanelWidth("git-graph-col-date", { min: 56, max: 220, default: 84, invert: true });
+  // The header follows the body's scrollLeft from outside it, so a body scroll
+  // (including a clamp as a column narrows) moves the header's handles.
+  const headerScrollers = () => [scrollerEl];
+  const authorCol = usePersistedPanelWidth("git-graph-col-author", { min: 60, max: 320, default: 120, invert: true },
+    { scrollers: headerScrollers });
+  const dateCol = usePersistedPanelWidth("git-graph-col-date", { min: 56, max: 220, default: 84, invert: true },
+    { scrollers: headerScrollers });
   let graphClip = $state<HTMLElement>();
   const graphCol = usePersistedPanelWidth("git-graph-col-graph", { min: 28, max: 800, default: 56 }, {
     automaticWidth: () => graphWidth,
     element: () => graphClip ?? null,
+    scrollers: headerScrollers,
   });
   const effectiveGraphWidth = $derived(graphCol.value);
 

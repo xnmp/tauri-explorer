@@ -13,7 +13,12 @@ A separate presentation model determines what fits and how to reach it.
 The domain computes subtree minima bottom-up and places panes top-down. Leaf
 panes start at 240 × 200 CSS pixels; a row sums child widths plus its divider and
 takes their maximum height, while a column does the converse. The workspace canvas
-is at least that minimum and otherwise fills the available viewport. Rendered
+is at least that minimum and otherwise fills the available viewport. Rendering
+expresses these rules in CSS: the canvas fills the scrollport with the
+measurement-free minimum inline, and split children use the saved ratio as flex
+grow factors over their inline subtree minima, which resolves to the same clamp.
+Layout then follows a viewport change in the same pass; measured geometry
+arrives a frame later and must not size painted layout (#1061). Rendered
 ratios clamp the saved preference against descendant constraints using the extent
 remaining after the divider. This is two linear traversals, with linear canvas
 growth along each axis; extreme saved ratios do not cause exponential expansion.
@@ -24,7 +29,9 @@ directional focus and dwindle placement consume the same leaf rectangles, includ
 divider offsets. Before the first usable measurement, focus/dwindle retain their
 existing normalized/window-aspect fallback. A viewport resize updates presentation,
 not the captured workspace or saved ratios. The frontend measures native CSS client
-sizes, and island mode supplies its shared 8-pixel gap instead of the usual 6.
+sizes. The divider is not measured: `paneDividerSize` gives island mode's shared
+8-pixel gap instead of the usual 6, and both the CSS divider and the minima read
+it in the same render, so they never disagree for a frame (#1061).
 
 `PaneContainer` owns the scrollable workspace. Active-pane changes and completed
 geometry updates reveal that pane through local scroll coordinates; they do not

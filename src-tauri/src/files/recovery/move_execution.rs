@@ -10,7 +10,7 @@
 //! endpoints absent.
 use super::artifact_layout::{probe, ORIGINAL, PARKED, PUBLICATION};
 use super::{
-    checkpoint::{DurableKind, Effect, Event, Side, Sides},
+    checkpoint::{DurableKind, Effect, Event, Phase, Side, Sides},
     coordinator::DurableOperation,
     model::{EntryVersion, ObjectId, StagedPayload},
     move_model::{MoveSpec, Strategy},
@@ -41,6 +41,16 @@ pub(super) type Boundary = Box<dyn Fn(&'static str) -> Result<(), AppError> + Se
 /// [`MoveExecution::admit_restoration`] creates one, so no caller can reach
 /// restoration's durable effects without it.
 pub(super) struct AdmittedRestoration(());
+
+/// What [`MoveExecution::admit_endpoints`] proved.
+#[derive(Debug, Eq, PartialEq)]
+enum Admission {
+    /// Every endpoint restoration touches holds what it expects.
+    Checked,
+    /// An interrupted restoration can still return its private source; what
+    /// follows is reconciled, and may be refused, after the source is home.
+    ReturnsSourceFirst,
+}
 
 /// A user endpoint addressed through its retained parent handle. Reopening the
 /// public path instead would let a namespace substitution redirect the effect.
@@ -176,6 +186,24 @@ impl MoveExecution {
     /// a native owner never justifies replaying an interrupted effect; each
     /// method reconciles its own recorded phase against live endpoints.
     pub(super) fn reopen(operation: DurableOperation) -> Result<Self, AppError> {
+        Self::try_reopen(operation).map_err(|failure| failure.1)
+    }
+
+    /// [`Self::reopen`], handing the still-claimed operation back on failure.
+    pub(super) fn try_reopen(
+        operation: DurableOperation,
+    ) -> Result<Self, Box<(DurableOperation, AppError)>> {
+        match Self::open_roots(&operation) {
+            Ok(roots) => Ok(Self {
+                operation,
+                roots,
+                hook: None,
+            }),
+            Err(error) => Err(Box::new((operation, error))),
+        }
+    }
+
+    fn open_roots(operation: &DurableOperation) -> Result<Sides<Option<Root>>, AppError> {
         let spec = operation.intent().operation.move_spec()?.clone();
         let mut roots = Sides::default();
         for side in Self::planned(&spec) {
@@ -188,11 +216,7 @@ impl MoveExecution {
             root.verify_manifest(operation.intent())?;
             *roots.get_mut(side) = Some(root);
         }
-        Ok(Self {
-            operation,
-            roots,
-            hook: None,
-        })
+        Ok(roots)
     }
 
     #[cfg(test)]
@@ -448,7 +472,9 @@ impl MoveExecution {
     }
 
     /// The record's own exact inverse. Nothing is deleted before the source
-    /// exists again at its original name.
+    /// exists again at its original name. Production callers admit first and
+    /// keep the refusal, so only tests use this composition.
+    #[cfg(test)]
     pub(super) fn restore_move(&mut self) -> Result<(), AppError> {
         let admitted = self.admit_restoration()?;
         self.restore_admitted(admitted)
@@ -463,6 +489,12 @@ impl MoveExecution {
     /// under the bounds a discard captures, or the restored record could never
     /// be discarded (#760).
     pub(super) fn admit_restoration(&self) -> Result<AdmittedRestoration, AppError> {
+        if self.admit_endpoints()? == Admission::ReturnsSourceFirst {
+            // An interrupted restoration whose source is still private may
+            // always bring it home; a later refusal then leaves the record
+            // with the source public, where Forget can end it (#795).
+            return Ok(AdmittedRestoration(()));
+        }
         if let Some(target) = self.parkable_publication()? {
             self.admit_publication(&target).map_err(|error| {
                 let reason = if error.to_string().contains("budget") {
@@ -479,6 +511,106 @@ impl MoveExecution {
             })?;
         }
         Ok(AdmittedRestoration(()))
+    }
+
+    /// Read-only proof that restoration can finish from the endpoints it
+    /// touches, so Undo of a settled move either completes or changes nothing
+    /// (#795). The source name must be free (or already home), the moved entry
+    /// or its parked original exact, the destination the published payload or
+    /// absent, and any displaced original still retained exactly. A
+    /// destination edited after the move is user data that restoring would
+    /// hide, so Undo is refused and the settled record keeps its Discard.
+    fn admit_endpoints(&self) -> Result<Admission, AppError> {
+        let phase = self.operation.state().phase;
+        let resuming = phase == Phase::RestoreIntent;
+        if !resuming && !matches!(phase, Phase::Published | Phase::ParkIntent | Phase::Parked) {
+            // Other interrupted positions reconcile inside restoration itself.
+            return Ok(Admission::Checked);
+        }
+        let spec = self.spec()?;
+        let (source_path, target_path) = (spec.source.0.display(), spec.target.0.display());
+        let refuse = |reason: String| {
+            AppError::Other(format!(
+                "Undo cannot return '{source_path}': {reason}. Nothing was changed."
+            ))
+        };
+        let changed = || {
+            AppError::Other(format!(
+                "Undo cannot return '{source_path}': '{target_path}' changed after the move, and \
+                 Undo would hide those changes. Nothing was changed. To keep '{target_path}' as \
+                 it is, discard this move's recovery data in File Recovery; that permanently \
+                 deletes the retained original."
+            ))
+        };
+        let source = self.source()?;
+        let mut destination = self.target()?.probe()?;
+        let returning = match source.probe()? {
+            Some(observed) if observed == spec.source_version => false,
+            Some(_) => {
+                return Err(refuse(
+                    "another entry now has that name; move or rename it, then Undo again".into(),
+                ))
+            }
+            None => {
+                let retained = match spec.strategy {
+                    // The moved entry itself leaves the destination.
+                    Strategy::Rename => destination.take(),
+                    Strategy::CopyParked => {
+                        probe(self.require(Side::Source)?.directory(), OsStr::new(PARKED))?
+                    }
+                };
+                if retained.as_ref() != Some(&spec.source_version) {
+                    return Err(match (spec.strategy, retained) {
+                        (Strategy::Rename, Some(_)) => changed(),
+                        (Strategy::Rename, None) => {
+                            refuse(format!("'{target_path}' no longer exists"))
+                        }
+                        (Strategy::CopyParked, _) => {
+                            refuse("its retained original changed or is missing".into())
+                        }
+                    });
+                }
+                true
+            }
+        };
+        if resuming && returning {
+            return Ok(Admission::ReturnsSourceFirst);
+        }
+        if spec.strategy == Strategy::CopyParked {
+            let staged = self
+                .operation
+                .state()
+                .staged
+                .as_ref()
+                .ok_or_else(|| invalid("Move restoration lacks its staged payload"))?;
+            match &destination {
+                None => {}
+                // Parked as `publication`, leaving the destination free.
+                Some(observed)
+                    if *observed == staged.version
+                        || *observed == staged.published_version()? =>
+                {
+                    destination = None
+                }
+                Some(_) => return Err(changed()),
+            }
+        }
+        if let Some(original) = &spec.target_original {
+            match destination {
+                // Already republished by an interrupted restoration.
+                Some(observed) if &observed == original => {}
+                Some(_) => return Err(changed()),
+                None => {
+                    let root = self.require(Side::Target)?.directory();
+                    if probe(root, OsStr::new(ORIGINAL))?.as_ref() != Some(original) {
+                        return Err(refuse(format!(
+                            "the entry it replaced at '{target_path}' is no longer retained exactly"
+                        )));
+                    }
+                }
+            }
+        }
+        Ok(Admission::Checked)
     }
 
     /// The destination restoration would park as `publication`: present and

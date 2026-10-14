@@ -1,6 +1,7 @@
 /** Native recovery records are capabilities by ID, never renderer-owned paths.
- *  `release` forgets a move whose committed discard stopped before finishing:
- *  it removes only the record and its locks, never a file. */
+ *  `release` forgets a move that nothing else can resolve (a stopped discard,
+ *  or a restoration its edited destination stranded, #795): it removes only
+ *  the record and its locks, never a file. */
 export type FileRecoveryChoice = "restore" | "discard" | "release";
 
 /** Canonical SQLite counters cross IPC as decimal strings, without rounding. */
@@ -84,7 +85,9 @@ function listFolders(folders: string[]): string {
 }
 
 /** Irreversible choices are confirmed with copy stating exactly what is lost
- *  and what is kept. Restoring loses nothing, so it needs none. */
+ *  and what is kept. Restoring loses nothing, so it needs none. A discard never
+ *  touches a public endpoint, so a destination edited after a move survives
+ *  it (#795). */
 export function recoveryConfirmation(
   choice: FileRecoveryChoice,
   item: Pick<FileRecoveryItem, "retainedPath" | "retainedPaths">,
@@ -95,7 +98,7 @@ export function recoveryConfirmation(
     case "discard":
       return {
         title: "Discard this recovery record?",
-        body: "This permanently deletes any retained files and removes recovery and Undo for this operation. It cannot be undone.",
+        body: "This permanently deletes any retained files and removes recovery and Undo for this operation. Files at their visible locations, including any you changed since, are kept as they are. It cannot be undone.",
         confirm: "Discard recovery data",
       };
     case "release": {
@@ -105,7 +108,7 @@ export function recoveryConfirmation(
         : "Any remaining recovery files stay where they are for you to review or delete.";
       return {
         title: "Forget this recovery record?",
-        body: `Nothing is deleted. File Recovery stops tracking this move and releases its locks; its Undo is already gone. ${kept}`,
+        body: `Nothing is deleted. File Recovery stops tracking this move and releases its locks; Undo is no longer available for it. ${kept}`,
         confirm: "Forget record",
       };
     }

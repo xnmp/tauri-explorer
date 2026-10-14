@@ -16,6 +16,7 @@ use std::{fs, path::PathBuf, sync::Arc};
 
 mod fixtures;
 
+mod edited_destination;
 mod enforcement_observability;
 mod lifecycle;
 mod mount_boundary;

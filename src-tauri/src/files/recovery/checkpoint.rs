@@ -241,6 +241,12 @@ impl State {
             .is_some_and(|retirement| !retirement.completed)
     }
 
+    /// A started record outside retirement. Forgetting one deletes nothing;
+    /// only an owner that observed it stranded may do so (#795).
+    pub(super) fn strandable(&self) -> bool {
+        self.retirement.is_none() && !matches!(self.phase, Phase::Planned | Phase::Aborted)
+    }
+
     /// Only a completed retirement, or a preflight that removed every probe,
     /// may retire its durable record.
     pub(super) fn retirable_record(&self) -> bool {
@@ -319,6 +325,9 @@ pub(super) struct Endpoint<'a> {
     pub path: &'a NativePath,
     pub parent: Option<ObjectId>,
     pub versions: Vec<EntryVersion>,
+    /// A destination the user may have edited since: any present entry is
+    /// theirs and is never touched, so only its absence fails (#795).
+    pub user_owned: bool,
 }
 
 /// One durable operation kind. Implementations answer from immutable intent

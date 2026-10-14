@@ -6,7 +6,7 @@ use super::readonly_umask::{running_as_root, set_mode};
 use super::*;
 
 /// Eight nested directories holding the moved files.
-fn deep(root: &std::path::Path) -> PathBuf {
+pub(super) fn deep(root: &std::path::Path) -> PathBuf {
     let mut deepest = root.to_owned();
     for level in 0..8 {
         deepest.push(format!("{level}{}", "d".repeat(200)));
@@ -22,7 +22,7 @@ fn populate_deep(deepest: &std::path::Path, files: std::ops::Range<usize>) {
 
 /// The user keeps working inside the destination until it is deeper than any
 /// retirement plan may record.
-fn grow_past_plan(deepest: &std::path::Path) {
+pub(super) fn grow_past_plan(deepest: &std::path::Path) {
     super::planning_budget::unplannable_tree(&deepest.join("grown"));
 }
 
@@ -31,7 +31,7 @@ fn trim_growth(deepest: &std::path::Path) {
 }
 
 /// A cross-volume move of a tree that fits its retirement plans at admission.
-fn plannable_deep_move() -> Fixture {
+pub(super) fn plannable_deep_move() -> Fixture {
     Fixture::build(true, false, false, |source| {
         let deepest = deep(source);
         fs::create_dir_all(&deepest).unwrap();

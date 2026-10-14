@@ -195,9 +195,23 @@ fn operate(
         Request::Discard(_) => discard(coordinator, operation),
         // Decided from durable evidence alone: a stranded record's volume may
         // be the very thing that can no longer be observed.
-        Request::Release(_) => match operation.forget_retirement() {
-            Ok(()) => reply(coordinator, None, None),
-            Err(error) => reply(coordinator, None, Some(diagnostic(error))),
+        Request::Release(_) if operation.state().forgettable() => {
+            match operation.forget_retirement() {
+                Ok(()) => reply(coordinator, None, None),
+                Err(error) => reply(coordinator, None, Some(diagnostic(error))),
+            }
+        }
+        // Any other record is forgotten only once observation proves nothing
+        // else can end it (#795).
+        Request::Release(_) => match &operation.intent().operation {
+            OperationSpec::Move(_) => relocation::forget(coordinator, operation),
+            OperationSpec::CopyReplacement(_) => reply(
+                coordinator,
+                None,
+                Some(
+                    "Only a record whose discard stopped before finishing can be forgotten".into(),
+                ),
+            ),
         },
         Request::Inspect | Request::Restore(_) => {
             let restorable = operation
@@ -274,12 +288,25 @@ fn discard(
     }
 }
 
+/// What a kind observed from live endpoints about the ways out of a record,
+/// beyond its durable evidence (#795).
+#[derive(Default)]
+struct Exits {
+    /// Restoration may begin now.
+    restorable: bool,
+    /// Why restoration was refused before any effect; shown instead of the
+    /// ordinary description.
+    refusal: Option<String>,
+    /// The kind lets Forget end a record that neither Restore nor Discard can.
+    forget: bool,
+}
+
 /// The retention view of a settled or retiring record, identical for every
 /// kind except the message `describe` gives an ordinary retained record.
 fn retained(
     coordinator: &Arc<Coordinator>,
     operation: DurableOperation,
-    restorable: bool,
+    exits: Exits,
     describe: fn(&State, bool) -> &'static str,
 ) -> Result<RecoverySnapshot, AppError> {
     let intent = operation.intent().clone();
@@ -329,6 +356,24 @@ fn retained(
             format!("{reason}. {hint}"),
             vec![RecoveryChoice::Release],
         ),
+        // Nothing to discard safely: another exit must end it, or it waits.
+        (Eligibility::Preserved(reason), _) if state.retirement.is_none() => {
+            let reason = match &exits.refusal {
+                Some(refusal) => format!("{refusal} {reason}"),
+                None => reason.clone(),
+            };
+            if exits.restorable {
+                ("attention", reason, vec![RecoveryChoice::Restore])
+            } else if exits.forget {
+                (
+                    "attention",
+                    format!("{reason}. {hint}"),
+                    vec![RecoveryChoice::Release],
+                )
+            } else {
+                ("attention", reason, vec![])
+            }
+        }
         (Eligibility::Preserved(reason), _) => ("attention", reason.clone(), vec![]),
         (_, Some(error)) => (
             "attention",
@@ -340,7 +385,7 @@ fn retained(
             vec![RecoveryChoice::Discard, RecoveryChoice::Release],
         ),
         _ => {
-            let restorable = restorable && state.retirement.is_none();
+            let restorable = exits.restorable && state.retirement.is_none();
             let mut actions = Vec::new();
             if restorable {
                 actions.push(RecoveryChoice::Restore);
@@ -352,7 +397,10 @@ fn retained(
                     "Automatic cleanup of its retained recovery data could not start and \
                      will not be retried automatically: {reason}. Discard retries it."
                 ),
-                None => describe(state, restorable).to_owned(),
+                None => match &exits.refusal {
+                    Some(refusal) if state.retirement.is_none() => refusal.clone(),
+                    _ => describe(state, restorable).to_owned(),
+                },
             };
             ("retained", message, actions)
         }

@@ -42,8 +42,9 @@ fn invalid(message: &str) -> std::io::Error {
 pub(crate) enum RecoveryChoice {
     Restore,
     Discard,
-    /// Forget a move whose committed discard stopped before finishing. It
-    /// removes only the record, releasing its locks; files stay on disk.
+    /// Forget a move whose committed discard stopped before finishing, or
+    /// one observed to have no other working exit (#795). It removes only
+    /// the record, releasing its locks; files stay on disk.
     Release,
 }
 

@@ -90,7 +90,10 @@ user volume or advancing a generation.
 **User discard** is the only path that may destroy the sole surviving copy of a
 displaced original. It is an explicit, per-record action in File Recovery, is
 refused unless the *public* endpoint independently verifies as the expected live
-payload, and is otherwise identical in mechanism to automatic retirement.
+payload, and is otherwise identical in mechanism to automatic retirement. The
+one exception is a settled move's destination, which the user may edit: any
+present entry there is accepted and kept, and only its absence refuses (see
+"Edited move destinations" below).
 
 **Automatic retirement** may only remove artifacts that are provably redundant:
 a restored record's retained `publication` of a **regular file**, whose content
@@ -260,8 +263,9 @@ nothing and keeps Undo.
 
 **Forget** (`RecoveryChoice::Release`) is the escape hatch for a committed
 move discard that cannot finish: a persistent native error such as `EROFS`, a
-reused endpoint, or a volume that changed identity. It is offered only for such
-a stopped decision and is decided from durable evidence alone, because the
+reused endpoint, or a volume that changed identity. For such a stopped
+decision it is decided from durable evidence alone (its other, observed use is
+described under "Edited move destinations"), because the
 stranded volume may be exactly what cannot be observed. It removes the journal
 row and catalog evidence under exact ownership and touches nothing on disk. The
 record's locks are released, and any private folder it still names stays at its
@@ -272,6 +276,48 @@ source root was removed therefore names only the target's folder, and one
 stopped inside the source root names both. Undo was already consumed by the decision,
 so no recovery authority is lost. If the process dies between the two commits,
 the catalog-only residue is retired automatically once those folders are gone.
+
+### Edited move destinations (#795)
+
+A published move destination is user data: the user may keep working in it
+after the move. A record must never leave that user with only actions that
+cannot succeed, nor keep claims on files it can no longer act on.
+
+- **Undo is admitted from the live endpoints before any effect.**
+  `MoveExecution::admit_endpoints` runs read-only, before `BeginRestoration`,
+  for every settled position (`Published`, `ParkIntent`, `Parked`). The source
+  name must be free (or already hold the exact original), the moved entry or
+  its parked original exact, the destination the published payload or absent,
+  and any displaced original still retained exactly. Otherwise Undo and File
+  Recovery's Restore are refused with "Nothing was changed": the record stays
+  at its settled phase, never enters `RestoreIntent`, and keeps its history
+  entry. A destination edited after the move is refused this way because
+  returning the source would hide the edit. A deleted destination is not
+  refused: Undo returns the source and parks nothing.
+- **An edited destination keeps Discard.** A settled move's destination
+  endpoint is `user_owned`: Discard accepts any present entry there and keeps
+  it byte-for-byte, removing only the retained source copy, any displaced
+  original and the record (with its Undo). File Recovery shows the refusal in
+  place of Restore. An interrupted discard decision likewise finishes after
+  the destination is edited instead of withdrawing.
+- **Forget ends what nothing else can.** Beyond a stopped discard,
+  `RecoveryChoice::Release` is offered and accepted for a move record only
+  when, under the same ownership, Restore is refused from verified roots and a
+  retained record's discard is preserved by successful observation. That
+  covers a restoration stranded with the source home (an edit or growth that
+  raced Undo, or a record left by earlier builds), a restored cross-volume
+  move whose destination was deleted (no `publication` to retire), and a
+  settled record whose endpoints no longer allow either action. An
+  unobservable volume or root is never proof, so such a record waits. A
+  restoration whose source is still parked may always bring it home first.
+  Forget deletes nothing; its folders stay where they are listed.
+- **Claims.** A settled record, now the only position an edited destination
+  leaves it in, already releases its public endpoints once idle (only its
+  private roots stay claimed). Discard or Forget then retires the record and
+  every claim with it, so later operations on the destination are admitted.
+
+Behaviour for an unedited destination is unchanged, and all of this applies
+only to records created by the opt-in Linux `durable-recovery` feature.
 
 Observation verifies both recorded public parents, the expected source and
 target versions, exact private root identities and manifests, and the allowed
@@ -301,7 +347,8 @@ place and the same Undo still available, when it no longer fits; the settled
 record stays discardable, which keeps the destination. The walk is repeated
 immediately before the destination is parked. If the destination grew in
 between, restoration stops with the source already home and the destination
-still public, and the interrupted restoration can be retried once it fits.
+still public, and the interrupted restoration can be retried once it fits,
+or forgotten (see "Edited move destinations" below).
 Neither walk defends against an external writer racing the final
 walk-to-rename interval or writing into private storage. Each completed
 root releases its descendant plan; all later pending plans remain durable. This does not claim protection from an external same-user writer
@@ -321,8 +368,8 @@ Rust acceptance includes real same-volume/cross-volume files and directories,
 overwrite and restoration, changed endpoints, unexpected root children, missing
 roots, accounting stability, injected failures and subprocess kills at both
 roots' intent/removal/completion boundaries. Native UI acceptance covers actual
-file/directory move discard, accounting and preservation of externally edited
-endpoints. ADR 0020 describes the journaled per-volume capability preflight:
+file/directory move discard, accounting, and Discard of a record whose
+destination was edited externally, which keeps the edit. ADR 0020 describes the journaled per-volume capability preflight:
 interrupted probes permit only evidence-checked explicit cleanup, and aborted
 preflight records retire only after every planned probe name is absent.
 

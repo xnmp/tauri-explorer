@@ -367,6 +367,7 @@ impl DurableKind for ReplacementSpec {
             path: &self.target,
             parent: Some(self.parent),
             versions,
+            user_owned: false,
         }])
     }
 
@@ -376,6 +377,7 @@ impl DurableKind for ReplacementSpec {
             path: &self.source,
             parent: None,
             versions: vec![self.source_version.clone()],
+            user_owned: false,
         })
     }
 

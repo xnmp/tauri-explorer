@@ -50,3 +50,8 @@ export function unsupportedVideoMessage(info: VideoCodecInfo | null): string {
   const detail = parts.length ? `Codec — ${parts.join(", ")}${info?.container ? ` (${info.container})` : ""}.` : "Codec could not be determined.";
   return `This video format or codec is not supported by your system. ${detail}`;
 }
+
+/** MediaError codes 3 (decode) and 4 (source not supported) mean the codec cannot be played; others are load failures. */
+export function classifyVideoFailure(code: number | undefined): "unsupported" | "unavailable" {
+  return code === 3 || code === 4 ? "unsupported" : "unavailable";
+}

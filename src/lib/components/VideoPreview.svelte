@@ -6,7 +6,7 @@
   import { dialogStore } from "$lib/state/dialogs.svelte";
   import { windowTabsManager } from "$lib/state/window-tabs.svelte";
   import { keybindingsStore } from "$lib/state/keybindings.svelte";
-  import { unsupportedVideoMessage, mediaTime, seekTime, videoClickAction, videoKeyAction } from "$lib/domain/video-preview";
+  import { classifyVideoFailure, unsupportedVideoMessage, mediaTime, seekTime, videoClickAction, videoKeyAction } from "$lib/domain/video-preview";
   import type { VideoSource } from "$lib/state/video-preview-lifetime";
   let { path, name, fullscreen, ontogglefullscreen }: {path:string;name:string;fullscreen:boolean;ontogglefullscreen:()=>void} = $props();
   let video = $state<HTMLVideoElement | null>(null);
@@ -84,10 +84,10 @@
     }
   }
   let unsupported = $state(false);
+  let saveError = $state<string | null>(null);
   async function mediaFailed() {
     if (disposed) return;
-    const code = video?.error?.code;
-    if (code !== MediaError.MEDIA_ERR_DECODE && code !== MediaError.MEDIA_ERR_SRC_NOT_SUPPORTED) {
+    if (classifyVideoFailure(video?.error?.code) === "unavailable") {
       fail("Cannot load this video. It may have changed or become unavailable.");
       return;
     }
@@ -97,8 +97,9 @@
     if (!disposed && info) error = unsupportedVideoMessage(info);
   }
   async function download() {
+    saveError = null;
     try { await saveVideoCopy(path, name); }
-    catch (cause) { if (!disposed) error = `Cannot save copy: ${extractError(cause)}`; }
+    catch (cause) { if (!disposed) saveError = `Cannot save copy: ${extractError(cause)}`; }
   }
   function onStageClick(event: MouseEvent) {
     const target = event.target as HTMLElement;
@@ -121,7 +122,7 @@
       <track kind="captions" />
     </video>
     {#if error}
-      <div class="video-message" role="status"><span>{error}</span>{#if unsupported}<button type="button" onclick={download}>Download</button>{/if}<button type="button" onclick={openExternal}>Open externally</button></div>
+      <div class="video-message" role="status"><span>{error}</span>{#if saveError}<span class="save-error">{saveError}</span>{/if}{#if unsupported}<button type="button" onclick={download}>Download</button>{/if}<button type="button" onclick={openExternal}>Open externally</button></div>
     {:else if !ready}
       <div class="video-message" role="status">Loading video…</div>
     {/if}

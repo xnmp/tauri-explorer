@@ -2,6 +2,7 @@ import { invoke, virtualPathGuard } from "./common";
 import { getNativeResourceSession } from "./native-resource-session";
 import { createVideoLoadJob, type VideoLoadJob } from "$lib/state/video-preview-lifetime";
 import { pageForeground } from "$lib/state/page-foreground";
+import type { VideoCodecInfo } from "$lib/domain/video-preview";
 
 export function loadVideoPreview(path: string): VideoLoadJob {
   const guard = virtualPathGuard(path);
@@ -18,8 +19,6 @@ export function loadVideoPreview(path: string): VideoLoadJob {
     },
   }, pageForeground);
 }
-
-import type { VideoCodecInfo } from "$lib/domain/video-preview";
 
 export async function probeVideoCodec(path: string): Promise<VideoCodecInfo | null> {
   try { return await invoke<VideoCodecInfo>("probe_video_codec", { path }); } catch { return null; }

@@ -261,3 +261,32 @@ test("a playback rejection followed by a media error keeps its message and relea
   await expect(player.locator(".video-message")).toContainText("Cannot start playback: Playback unavailable");
   await expect.poll(() => page.evaluate(() => (window as unknown as {__mockControl?:MockControl}).__mockControl?.releasedVideoPreviews?.length)).toBe(1);
 });
+
+type Ctl = { __mockControl?: MockControl };
+test("decode failure names the codec, offers Download and saves a copy", async ({ page }) => {
+  await page.addInitScript(() => {
+    const c = ((window as unknown as Ctl).__mockControl ??= {});
+    c.videoPreview = () => "/src/lib/api/fixtures/preview-landmarks.pdf";
+    c.videoCodecProbe = () => ({ container: "MP4", videoCodec: "H.265 (HEVC)", audioCodec: "AAC" });
+  });
+  await openVideo(page, "details", "right", 100, false);
+  await expect(page.locator(".video-message")).toContainText("H.265 (HEVC)");
+  await page.screenshot({ path: "evidence/1011/unsupported-named-codec.png" });
+  await page.getByRole("button", { name: "Download", exact: true }).click();
+  await expect.poll(() => page.evaluate(() => (window as unknown as Ctl).__mockControl?.savedVideoCopies)).toEqual([
+    { source: "/home/user/Videos/recording.mp4", destination: "/home/user/Downloads/recording.mp4" }]);
+});
+test("unknown codec still shows unsupported message with Download", async ({ page }) => {
+  await page.addInitScript(() => { ((window as unknown as Ctl).__mockControl ??= {}).videoPreview = () => "/src/lib/api/fixtures/preview-landmarks.pdf"; });
+  await openVideo(page, "details", "right", 100, false);
+  await expect(page.locator(".video-message")).toContainText("Codec could not be determined");
+  await expect(page.getByRole("button", { name: "Download", exact: true })).toBeVisible();
+  await page.screenshot({ path: "evidence/1011/unsupported-unknown-codec.png" });
+});
+test("unavailable source shows no Download action", async ({ page }) => {
+  await page.addInitScript(() => { ((window as unknown as Ctl).__mockControl ??= {}).videoPreview = () => { throw new Error("Video file is unavailable"); }; });
+  await openVideo(page, "details", "right", 100, false);
+  await expect(page.locator(".video-message")).toContainText("Video file is unavailable");
+  await expect(page.getByRole("button", { name: "Download", exact: true })).toHaveCount(0);
+  await page.screenshot({ path: "evidence/1011/unavailable-no-download.png" });
+});

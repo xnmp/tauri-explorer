@@ -7,19 +7,8 @@ name: Native recovery (Linux)
 # A debug build with three features is ~12 minutes. Only the embedded frontend,
 # the Rust backend, the native harness and the build inputs can reach these
 # outcomes; the nightly run catches toolchain and dependency drift (#872).
+# Not a required check, so it runs after merge rather than on PRs (tauri#1133).
 on:
-  pull_request:
-    branches: [dev, main]
-    paths:
-      - "src/**"
-      - "src-tauri/**"
-      - "e2e-tauri/**"
-      - "package.json"
-      - "bun.lock"
-      - "svelte.config.js"
-      - "vite.config.ts"
-      - "tsconfig.json"
-      - ".github/workflows/native-recovery.yml"
   push:
     branches: [dev, main]
     paths:
@@ -38,7 +27,7 @@ on:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.ref_name }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   recovery:

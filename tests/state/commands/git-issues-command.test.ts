@@ -78,7 +78,8 @@ describe("git.openIssues (#1055)", () => {
   });
 
   it("reports a failed browser handoff instead of failing silently", async () => {
-    h.openExternalUrl.mockRejectedValue(new Error("no browser"));
+    // Tauri rejects with a serialized AppError object, not an Error instance.
+    h.openExternalUrl.mockRejectedValue({ kind: "other", message: "no browser" });
     await command.handler();
 
     expect(h.error).toHaveBeenCalledWith("no browser");

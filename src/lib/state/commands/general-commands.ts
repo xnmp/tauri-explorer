@@ -12,6 +12,7 @@ import { dialogStore } from "../dialogs.svelte";
 import { terminalPanelStore } from "../terminal.svelte";
 import { openInTerminal } from "$lib/api/open";
 import { gitRepoRoot } from "$lib/api/git";
+import { extractError } from "$lib/api/common";
 import { gitFetch, gitIssuesUrl } from "$lib/api/git-log";
 import { openExternalUrl } from "$lib/api/crash";
 import { notifyLocalGitChange } from "$lib/state/git-refresh";
@@ -172,7 +173,7 @@ export const gitGraphCommands: Command[] = [
         }
         await openExternalUrl(url);
       } catch (err) {
-        toastStore.error(err instanceof Error ? err.message : String(err));
+        toastStore.error(extractError(err));
       }
     },
   },

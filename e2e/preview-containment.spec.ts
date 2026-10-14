@@ -530,6 +530,12 @@ for (const layout of CASES) {
                 ? ["Size", "Pixels", "Modified"]
                 : ["Size", "Modified"],
         );
+        if (showPreviewInfo !== false && format.name.endsWith(".png")) {
+          // The value is the decoded image's real size, not just a label (#1118).
+          await expect(pane(page).locator(".preview-info .info-value").nth(1)).toHaveText(
+            format.name === "tall.png" ? "300 × 4000" : "4000 × 300",
+          );
+        }
         await expectContained(page, format.name);
       });
     }

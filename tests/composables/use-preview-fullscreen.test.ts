@@ -210,3 +210,38 @@ describe("createPreviewFullscreen", () => {
     expect([fs.panX, fs.panY]).toEqual([0, 0]);
   });
 });
+
+describe("createPreviewFullscreen with a text subject", () => {
+  it("keeps Left/Right stepping while the text is zoomed", () => {
+    const navigate = vi.fn();
+    const fs = createPreviewFullscreen({ navigate, subjectZoomsText: () => true });
+    fs.toggle();
+    fs.handleKey(key("+"));
+    expect(fs.zoom).toBeGreaterThan(1);
+    fs.handleKey(key("ArrowRight"));
+    fs.handleKey(key("ArrowLeft"));
+    expect(navigate.mock.calls).toEqual([[1], [-1]]);
+    expect(fs.panX).toBe(0);
+  });
+
+  it("Up/Down scroll the text through scrollSubject and consume the key", () => {
+    const scrollSubject = vi.fn();
+    const fs = createPreviewFullscreen({ scrollSubject, subjectZoomsText: () => true });
+    fs.toggle();
+    const down = key("ArrowDown");
+    fs.handleKey(down);
+    fs.handleKey(key("ArrowUp"));
+    expect(scrollSubject.mock.calls).toEqual([[KEY_PAN_STEP], [-KEY_PAN_STEP]]);
+    expect(down.preventDefault).toHaveBeenCalled();
+  });
+
+  it("the wheel zooms the text without a container", () => {
+    const fs = createPreviewFullscreen({ subjectZoomsText: () => true });
+    fs.toggle();
+    const event = wheel(-100);
+    fs.wheel(event);
+    expect(fs.zoom).toBeGreaterThan(1);
+    expect(fs.panX).toBe(0);
+    expect(event.preventDefault).toHaveBeenCalled();
+  });
+});

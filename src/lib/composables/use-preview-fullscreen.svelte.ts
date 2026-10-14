@@ -6,6 +6,8 @@
  * fit zoom, toggles it; Esc exits; +/- and 0 zoom; Ctrl+wheel zooms at the
  * cursor; drag and the arrow keys pan while zoomed. At the base zoom,
  * Left/Right call `navigate` (file sibling stepping), and do nothing without it.
+ * A text subject (#1039) zooms with the plain wheel too, never pans, always
+ * steps with Left/Right and scrolls with Up/Down.
  * The math lives in `domain/image-viewer-zoom.ts`.
  *
  * `createPreviewFullscreen` is the state and event handling, with no effects,
@@ -43,6 +45,10 @@ export interface PreviewFullscreenOptions {
   navigate?(delta: -1 | 1): void;
   /** True while the subject handles its own keys (PDF, video): only Esc stays ours. */
   subjectOwnsKeys?(): boolean;
+  /** True while the subject is reflowing text: wheel and +/- zoom it, Up/Down scroll it. */
+  subjectZoomsText?(): boolean;
+  /** Scrolls the text subject by `dy` pixels (Up/Down while `subjectZoomsText`). */
+  scrollSubject?(dy: number): void;
   /** True while keys belong to something else entirely (a modal dialog). */
   keysBlocked?(): boolean;
 }
@@ -76,7 +82,7 @@ export function createPreviewFullscreen(options: PreviewFullscreenOptions = {}) 
   }
 
   function zoomAt(zoom: number, clientX: number, clientY: number): void {
-    const offset = container ? centerOffset(container.getBoundingClientRect(), clientX, clientY) : null;
+    const offset = container && !options.subjectZoomsText?.() ? centerOffset(container.getBoundingClientRect(), clientX, clientY) : null;
     view = zoomAround(view, zoom, offset);
   }
 
@@ -84,7 +90,7 @@ export function createPreviewFullscreen(options: PreviewFullscreenOptions = {}) 
   function handleKey(event: KeyInput): void {
     if (!active || options.keysBlocked?.()) return;
     if (options.subjectOwnsKeys?.() && event.key !== "Escape") return;
-    const action = fullscreenKeyAction(event.key, view.zoom);
+    const action = fullscreenKeyAction(event.key, view.zoom, options.subjectZoomsText?.() ? "text" : "image");
     if (!action) return;
     event.preventDefault();
     event.stopImmediatePropagation();
@@ -93,6 +99,7 @@ export function createPreviewFullscreen(options: PreviewFullscreenOptions = {}) 
       case "zoom": view = withZoom(view, view.zoom * action.factor); break;
       case "reset": resetZoom(); break;
       case "pan": view = panBy(view, action.dx, action.dy); break;
+      case "scroll": options.scrollSubject?.(action.dy); break;
       case "step": options.navigate?.(action.delta); break;
     }
   }

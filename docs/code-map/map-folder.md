@@ -160,6 +160,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `types.ts` — shared explorer state types (ViewMode, pane shapes).
 - `pane-context.ts` — Svelte context for resolving the current pane inside components.
 - `pane-mutations.ts` — accepted file mutations: durable filesystem effects, per-path delete receipts/undo parents, navigation-owned pane publication and exact dialog-session completion.
+- `preview-diff-actions.ts` — Preview diff-header/hunk stage, unstage, discard admitted against the owning pane (`isPaneBlocked`); a covered owner makes them no-ops (#1099).
 - `pane-refresh.ts` — flicker-free re-list of current dir (streamed chunk accumulation).
 - `pane-sessions.ts` — manager-owned pane identities and deferred explorer resources; activation opens restored directories on demand, cleanup drains loads and pane stores (ADR 0002).
 - `pane-activation.ts` — cancellable post-paint scheduling of reserved panes; focused panes open immediately and large layouts materialize in bounded batches.

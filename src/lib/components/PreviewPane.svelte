@@ -28,6 +28,8 @@ import { openFile } from "$lib/api/open";
   import { settingsStore } from "$lib/state/settings.svelte";
   import { frecencyStore } from "$lib/state/frecency.svelte";
   import { getScmStore } from "$lib/state/scm.svelte";
+  import { dialogStore } from "$lib/state/dialogs.svelte";
+  import { createPreviewDiffActions, type HunkAction } from "$lib/state/preview-diff-actions";
   import { gitCommitFileDiff, gitCompareCommitFileDiff } from "$lib/api/git-log";
   import { logFrontendDiagnostic } from "$lib/api/frontend-log";
   import { getVideoThumbnailData } from "$lib/api/thumbnails";
@@ -264,52 +266,24 @@ import { openFile } from "$lib/api/open";
   // Diff header actions — restore the stage / unstage / discard / open-file
   // affordances directly on the diff so a file can be staged from its diff
   // (VSCode parity). Operates on the currently-open diff target.
-  async function stageFromDiff(): Promise<void> {
-    if (!activeDiff) return;
-    const path = activeDiff.path;
-    await scmStore.stage([path]);
-    // Follow the file to its staged diff so the view doesn't leave the user
-    // staring at an empty "unstaged" diff after the change moved to the index.
-    if (scmStore.summary.staged.some((e) => e.path === path)) {
-      scmStore.openDiff(path, true);
-    }
-  }
-  async function unstageFromDiff(): Promise<void> {
-    if (!activeDiff) return;
-    const path = activeDiff.path;
-    await scmStore.unstage([path]);
-    // Follow the file back to its worktree diff if it still has changes there.
-    const stillChanged =
-      scmStore.summary.changes.some((e) => e.path === path) ||
-      scmStore.summary.untracked.some((e) => e.path === path);
-    if (stillChanged) scmStore.openDiff(path, false);
-  }
-  async function discardFromDiff(): Promise<void> {
-    if (!activeDiff) return;
-    const r = await scmStore.discard([activeDiff.path]);
-    if (!r.ok) {
-      toastStore.error(`Discard failed: ${r.error}`);
-      return;
-    }
-    scmStore.closeDiff();
-  }
-  async function applyHunk(patch: string, action: "stage" | "unstage" | "discard"): Promise<void> {
-    if (!activeDiff) return;
-    if (action === "discard" && !window.confirm("Discard this hunk? This cannot be undone.")) return;
-    const path = activeDiff.path;
-    const r = await scmStore.applyPatch(patch, action);
-    if (!r.ok) {
-      toastStore.error(`${action[0].toUpperCase()}${action.slice(1)} hunk failed: ${r.error}`);
-      return;
-    }
-    const stillStaged = scmStore.summary.staged.some((entry) => entry.path === path);
-    const stillUnstaged = scmStore.summary.changes.some((entry) => entry.path === path);
-    // A partially changed file can exist in both buckets. Only switch the
-    // displayed side when the operation exhausted the current side.
-    if (action === "stage" && !stillUnstaged && stillStaged) scmStore.openDiff(path, true);
-    if (action === "unstage" && !stillStaged && stillUnstaged) scmStore.openDiff(path, false);
-    if (action === "discard" && !stillUnstaged) scmStore.closeDiff();
-  }
+  // Admission is against the pane owning the diff, shared with command routing.
+  let ownershipRevision = $state(0);
+  $effect(() => dialogStore.subscribeOwnership(() => { ownershipRevision++; }));
+  const diffActions = createPreviewDiffActions({
+    scm: () => scmStore,
+    ownerPaneId: () => windowTabsManager.activePaneId,
+    isPaneBlocked: (id) => dialogStore.isPaneBlocked(id),
+    onError: (message) => toastStore.error(message),
+    confirm: (message) => window.confirm(message),
+  });
+  const diffActionsBlocked = $derived.by(() => {
+    void ownershipRevision;
+    return diffActions.blocked();
+  });
+  const stageFromDiff = () => diffActions.stage();
+  const unstageFromDiff = () => diffActions.unstage();
+  const discardFromDiff = () => diffActions.discard();
+  const applyHunk = (patch: string, action: HunkAction) => diffActions.applyHunk(patch, action);
   async function openDiffFileInEditor(): Promise<void> {
     if (!activeDiff || !scmStore.repoRoot) return;
     const abs = `${scmStore.repoRoot.replace(/\/$/, "")}/${activeDiff.path}`;
@@ -832,13 +806,13 @@ import { openFile } from "$lib/api/open";
         <!-- Historical diff: stage/unstage/discard don't apply (#366). -->
         <button type="button" class="diff-action-btn" title="Close diff (Esc)" onclick={() => scmStore.closeCommitDiff()}>Close</button>
       {:else if activeDiff}
-        <button type="button" class="diff-action-btn" onclick={openDiffFileInEditor}>Open File</button>
+        <button type="button" class="diff-action-btn" disabled={diffActionsBlocked} onclick={openDiffFileInEditor}>Open File</button>
         {#if activeDiff.staged}
-          <button type="button" class="diff-action-btn" onclick={unstageFromDiff}>Unstage</button>
+          <button type="button" class="diff-action-btn" disabled={diffActionsBlocked} onclick={unstageFromDiff}>Unstage</button>
         {:else}
-          <button type="button" class="diff-action-btn" onclick={stageFromDiff}>Stage</button>
+          <button type="button" class="diff-action-btn" disabled={diffActionsBlocked} onclick={stageFromDiff}>Stage</button>
           {#if !diffParsed?.added}
-            <button type="button" class="diff-action-btn danger" onclick={discardFromDiff}>Discard</button>
+            <button type="button" class="diff-action-btn danger" disabled={diffActionsBlocked} onclick={discardFromDiff}>Discard</button>
           {/if}
         {/if}
         <button type="button" class="diff-action-btn" title="Close diff (Esc)" onclick={() => scmStore.closeDiff()}>Close</button>
@@ -868,11 +842,11 @@ import { openFile } from "$lib/api/open";
                   {#if activeDiff && hunk}
                     <span class="hunk-actions">
                       {#if activeDiff.staged}
-                        <button type="button" class="hunk-action" onclick={() => applyHunk(hunk.patch, "unstage")}>Unstage hunk</button>
+                        <button type="button" class="hunk-action" disabled={diffActionsBlocked} onclick={() => applyHunk(hunk.patch, "unstage")}>Unstage hunk</button>
                       {:else}
-                        <button type="button" class="hunk-action" onclick={() => applyHunk(hunk.patch, "stage")}>Stage hunk</button>
+                        <button type="button" class="hunk-action" disabled={diffActionsBlocked} onclick={() => applyHunk(hunk.patch, "stage")}>Stage hunk</button>
                         {#if !diffParsed?.added}
-                          <button type="button" class="hunk-action danger" onclick={() => applyHunk(hunk.patch, "discard")}>Discard hunk</button>
+                          <button type="button" class="hunk-action danger" disabled={diffActionsBlocked} onclick={() => applyHunk(hunk.patch, "discard")}>Discard hunk</button>
                         {/if}
                       {/if}
                     </span>

@@ -12,5 +12,5 @@ describe("native suite TypeScript gate (#690)", () => {
     );
 
     expect(result.status, result.stdout + result.stderr).toBe(0);
-  }, 35_000);
+  }, 35_000); // Hang guard for CPU-contended runs, not a speed budget.
 });

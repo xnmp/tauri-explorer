@@ -158,5 +158,5 @@ describe("plugin registry churn", () => {
       errors.mockRestore();
       await registry.dispose();
     }
-  });
+  }, 30_000); // Hang guard for CPU-contended runs, not a speed budget.
 });

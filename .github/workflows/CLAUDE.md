@@ -17,3 +17,23 @@ return 404 because administration permission is missing. A workflow edit cannot
 change branch protection.
 
 Run `bunx vitest run tests/ci-trigger-policy.test.ts` to validate admission.
+
+# PR test selection (#1175)
+
+On `pull_request`, ci.yml's `changes` job narrows each tier from the PR merge
+diff (`HEAD^1...HEAD`) and nothing else: `scripts/e2e-affected.mjs` (browser
+specs), `scripts/unit-affected.mjs` (`vitest related` inputs) and
+`scripts/rust-affected.mjs` (`cargo test -p` members via `cargo metadata`).
+Each publishes `ALL`, `NONE` or a list plus a reason, and every test step logs
+which it ran and why. Pushes and manual runs always use `ALL`. Any doubt is
+`ALL` for that tier: a selector failure, an unknown file type, an unusual path,
+or more than `TEST_SELECTION_MAX_FILES` (50, set on the `changes` job) changed
+files. A Rust `NONE` also skips the toolchain, fmt and clippy steps; the
+dorny/paths-filter docs-only gate is unchanged and runs first.
+
+`vitest related` follows imports only. Tests that read files as text are found
+by the selector's text scan (path or basename, or the directory for tests that
+list directories); a test reading a path it builds dynamically from neither is
+invisible to it, so name such inputs literally. Rust inputs outside `src-tauri/`
+count only when a string literal ends in their basename (`include_bytes!`,
+fixture joins), not when a comment mentions them.

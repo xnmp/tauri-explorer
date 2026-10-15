@@ -24,12 +24,27 @@ jobs:
     permissions:
       contents: read
       pull-requests: read
+    # Per-tier test selection (#1175). Every selector reads only the git diff,
+    # never PR text, labels or author claims, and any doubt runs that tier in
+    # full: a failed selector, an unknown file type, an unusual path, or more
+    # than TEST_SELECTION_MAX_FILES changed files.
+    env:
+      TEST_SELECTION_MAX_FILES: 50
     outputs:
       code: ${{ github.event_name != 'pull_request' && 'true' || steps.filter.outputs.code }}
       # Browser specs a PR can affect (scripts/e2e-affected.mjs, #1131): "ALL",
       # "NONE" or space-separated e2e/ spec paths. Every non-PR event runs ALL,
       # so dev keeps full Chromium and WebKit coverage after each merge.
-      e2e: ${{ github.event_name == 'pull_request' && steps.e2e.outputs.selection || 'ALL' }}
+      e2e: ${{ github.event_name == 'pull_request' && steps.select.outputs.e2e || 'ALL' }}
+      e2e-reason: ${{ github.event_name == 'pull_request' && steps.select.outputs.e2e-reason || format('{0} event runs every test', github.event_name) }}
+      # Vitest inputs for `vitest related` (scripts/unit-affected.mjs): "ALL",
+      # "NONE" or space-separated repo paths.
+      unit: ${{ github.event_name == 'pull_request' && steps.select.outputs.unit || 'ALL' }}
+      unit-reason: ${{ github.event_name == 'pull_request' && steps.select.outputs.unit-reason || format('{0} event runs every test', github.event_name) }}
+      # Cargo packages for `cargo test -p` (scripts/rust-affected.mjs): "ALL",
+      # "NONE" or space-separated workspace member names.
+      rust: ${{ github.event_name == 'pull_request' && steps.select.outputs.rust || 'ALL' }}
+      rust-reason: ${{ github.event_name == 'pull_request' && steps.select.outputs.rust-reason || format('{0} event runs every test', github.event_name) }}
     steps:
       - id: filter
         if: github.event_name == 'pull_request'
@@ -51,14 +66,35 @@ jobs:
         with:
           fetch-depth: 2
 
-      - id: e2e
+      # Each selector prints {mode, reason, items} JSON; a selector or parse
+      # failure selects the full tier. rust-affected runs `cargo metadata`
+      # (the runner image's cargo) only when a change reaches Rust.
+      - id: select
         if: github.event_name == 'pull_request'
         run: |
-          if ! raw=$(node scripts/e2e-affected.mjs --strict HEAD^1 HEAD); then raw=ALL; fi
-          selection=$(tr '\n' ' ' <<< "$raw")
-          selection="${selection% }"
-          echo "selection=${selection:-NONE}" >> "$GITHUB_OUTPUT"
-          echo "Browser E2E selection: ${selection:-NONE}" >> "$GITHUB_STEP_SUMMARY"
+          select_tier() {
+            local tier=$1 json mode
+            shift
+            if ! json=$(node "$@" --json --max-files "$TEST_SELECTION_MAX_FILES" HEAD^1 HEAD) ||
+               ! mode=$(jq -er '.mode' <<< "$json"); then
+              json='{"mode":"all","reason":"selection failed","items":[]}'
+              mode=all
+            fi
+            case "$mode" in
+              all) selection=ALL ;;
+              none) selection=NONE ;;
+              *) selection=$(jq -r '.items | join(" ")' <<< "$json") ;;
+            esac
+            reason=$(jq -r '.reason' <<< "$json")
+            echo "$tier=${selection:-NONE}" >> "$GITHUB_OUTPUT"
+            echo "$tier-reason=$reason" >> "$GITHUB_OUTPUT"
+            echo "$tier: ${selection:-NONE} ($reason)"
+            echo "- **$tier**: \`${selection:-NONE}\` — $reason" >> "$GITHUB_STEP_SUMMARY"
+          }
+          echo "### Test selection (limit $TEST_SELECTION_MAX_FILES changed files)" >> "$GITHUB_STEP_SUMMARY"
+          select_tier e2e scripts/e2e-affected.mjs --strict
+          select_tier unit scripts/unit-affected.mjs
+          select_tier rust scripts/rust-affected.mjs
 
   # Code maps are only useful while they are accurate: an agent that trusts a map
   # naming a moved file searches worse than one with no map at all. Two guards —
@@ -102,8 +138,25 @@ jobs:
       - name: Startup bundle budget
         run: bun run check:bundle
 
+      # PRs run only the tests whose import graph reaches a changed file, or
+      # that read it as text (scripts/unit-affected.mjs); other events run all.
       - name: Unit tests
-        run: bun run test
+        env:
+          UNIT_SELECTION: ${{ needs.changes.outputs.unit }}
+          UNIT_REASON: ${{ needs.changes.outputs.unit-reason }}
+        run: |
+          case "$UNIT_SELECTION" in
+            ALL)
+              echo "Unit tests: full suite ($UNIT_REASON)"
+              bun run test ;;
+            NONE)
+              echo "Unit tests: none selected ($UNIT_REASON)" ;;
+            *)
+              echo "Unit tests: selected subset ($UNIT_REASON): tests related to $UNIT_SELECTION"
+              read -ra inputs <<< "$UNIT_SELECTION"
+              bunx vitest related --run --passWithNoTests "${inputs[@]}"
+              bunx vitest related --run --passWithNoTests -c vitest.perf.config.ts "${inputs[@]}" ;;
+          esac
 
   # Keep one browser worker per runner; split the growing suite across runners
   # so contention-sensitive tests retain their existing execution conditions.
@@ -129,7 +182,13 @@ jobs:
         id: plan
         env:
           E2E_SELECTION: ${{ needs.changes.outputs.e2e }}
+          E2E_REASON: ${{ needs.changes.outputs.e2e-reason }}
         run: |
+          if [ "$E2E_SELECTION" = ALL ]; then
+            echo "chromium E2E: full suite ($E2E_REASON)"
+          else
+            echo "chromium E2E: selected subset ($E2E_REASON)"
+          fi
           tr ' ' '\n' <<< "$E2E_SELECTION" > "$RUNNER_TEMP/e2e-selection.txt"
           node scripts/e2e-shards.mjs plan --engine chromium --shard ${{ matrix.shard }}/${{ strategy.job-total }} --only "$RUNNER_TEMP/e2e-selection.txt" --out "$RUNNER_TEMP/e2e-shard.txt"
           if [ -s "$RUNNER_TEMP/e2e-shard.txt" ]; then
@@ -159,8 +218,17 @@ jobs:
         run: node scripts/e2e-shards.mjs verify --engine chromium --list "$RUNNER_TEMP/e2e-shard.txt"
 
       - name: E2E tests
-        if: steps.plan.outputs.run == 'true'
-        run: npx playwright test --project=chromium --test-list "$RUNNER_TEMP/e2e-shard.txt" --reporter=line,html
+        env:
+          E2E_SELECTION: ${{ needs.changes.outputs.e2e }}
+          E2E_REASON: ${{ needs.changes.outputs.e2e-reason }}
+        run: |
+          mode=$([ "$E2E_SELECTION" = ALL ] && echo "full suite" || echo "selected subset")
+          if [ "${{ steps.plan.outputs.run }}" != true ]; then
+            echo "E2E: nothing to run in this shard; $mode ($E2E_REASON)"
+            exit 0
+          fi
+          echo "E2E: $mode ($E2E_REASON), shard of $(wc -l < "$RUNNER_TEMP/e2e-shard.txt") spec file(s)"
+          npx playwright test --project=chromium --test-list "$RUNNER_TEMP/e2e-shard.txt" --reporter=line,html
 
       - name: Upload Playwright report on failure
         if: failure()
@@ -218,7 +286,13 @@ jobs:
         id: plan
         env:
           E2E_SELECTION: ${{ needs.changes.outputs.e2e }}
+          E2E_REASON: ${{ needs.changes.outputs.e2e-reason }}
         run: |
+          if [ "$E2E_SELECTION" = ALL ]; then
+            echo "webkit E2E: full suite ($E2E_REASON)"
+          else
+            echo "webkit E2E: selected subset ($E2E_REASON)"
+          fi
           tr ' ' '\n' <<< "$E2E_SELECTION" > "$RUNNER_TEMP/e2e-selection.txt"
           node scripts/e2e-shards.mjs plan --engine webkit --shard ${{ matrix.shard }}/${{ strategy.job-total }} --only "$RUNNER_TEMP/e2e-selection.txt" --out "$RUNNER_TEMP/e2e-shard.txt"
           if [ -s "$RUNNER_TEMP/e2e-shard.txt" ]; then
@@ -250,13 +324,21 @@ jobs:
         run: node scripts/e2e-shards.mjs verify --engine webkit --list "$RUNNER_TEMP/e2e-shard.txt"
 
       - name: E2E tests (WebKit)
-        if: steps.plan.outputs.run == 'true'
         env:
           WEBKIT: "1"
           PW_VIDEO_HEADED: "1"
+          E2E_SELECTION: ${{ needs.changes.outputs.e2e }}
+          E2E_REASON: ${{ needs.changes.outputs.e2e-reason }}
         # Only video decoder specs opt into GTK; other specs retain headless WPE.
         # The display belongs to this hosted runner and is destroyed after testing.
-        run: xvfb-run -a --server-args="-screen 0 1920x1080x24 -nolisten tcp" npx playwright test --project=webkit --test-list "$RUNNER_TEMP/e2e-shard.txt" --reporter=line,html
+        run: |
+          mode=$([ "$E2E_SELECTION" = ALL ] && echo "full suite" || echo "selected subset")
+          if [ "${{ steps.plan.outputs.run }}" != true ]; then
+            echo "WebKit E2E: nothing to run in this shard; $mode ($E2E_REASON)"
+            exit 0
+          fi
+          echo "WebKit E2E: $mode ($E2E_REASON), shard of $(wc -l < "$RUNNER_TEMP/e2e-shard.txt") spec file(s)"
+          xvfb-run -a --server-args="-screen 0 1920x1080x24 -nolisten tcp" npx playwright test --project=webkit --test-list "$RUNNER_TEMP/e2e-shard.txt" --reporter=line,html
 
       - name: Upload Playwright report on failure
         if: failure()
@@ -316,12 +398,16 @@ jobs:
           - suite: opt-in
             clippy-features: avif,durable-recovery,e2e-renderer-recovery,e2e-hooks
             test-features: avif,durable-recovery,e2e-hooks
+    env:
+      RUST_SELECTION: ${{ needs.changes.outputs.rust }}
+      RUST_REASON: ${{ needs.changes.outputs.rust-reason }}
     steps:
       - uses: actions/checkout@v7
 
       # nasm: required by turbojpeg-sys (x86 SIMD assembler).
       # libdav1d-dev: AVIF decode (image avif-native, Linux-only feature).
       - name: Install Tauri Linux system dependencies
+        if: env.RUST_SELECTION != 'NONE'
         run: |
           sudo apt-get update
           sudo apt-get install -y \
@@ -329,6 +415,7 @@ jobs:
             libjavascriptcoregtk-4.1-dev nasm libdav1d-dev
 
       - uses: dtolnay/rust-toolchain@stable
+        if: env.RUST_SELECTION != 'NONE'
         with:
           components: rustfmt, clippy
 
@@ -337,6 +424,7 @@ jobs:
       # Save only from dev so PR branches restore dev's caches instead of
       # adding ~1.5 GB entries each and evicting other workflows' caches.
       - uses: Swatinem/rust-cache@v2
+        if: env.RUST_SELECTION != 'NONE'
         with:
           workspaces: src-tauri
           key: ${{ matrix.suite }}
@@ -344,17 +432,34 @@ jobs:
 
       # tauri::generate_context! requires the frontendDist dir to exist.
       - name: Create empty frontend dist
+        if: env.RUST_SELECTION != 'NONE'
         run: mkdir -p build
 
       - name: Format check
-        if: ${{ matrix.suite == 'default' }}
+        if: matrix.suite == 'default' && env.RUST_SELECTION != 'NONE'
         run: cargo fmt --manifest-path src-tauri/Cargo.toml --all -- --check
 
       - name: Clippy
+        if: env.RUST_SELECTION != 'NONE'
         run: cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets --features ${{ matrix.clippy-features }} -- -D warnings
 
+      # PRs test only the packages the diff touches plus their dependents
+      # (scripts/rust-affected.mjs, from cargo metadata); NONE also skips the
+      # toolchain, build and clippy steps above. Other events run everything.
       - name: Rust tests
-        run: cargo test --manifest-path src-tauri/Cargo.toml --features ${{ matrix.test-features }}
+        run: |
+          case "$RUST_SELECTION" in
+            ALL)
+              echo "Rust tests: full suite ($RUST_REASON)"
+              cargo test --manifest-path src-tauri/Cargo.toml --features ${{ matrix.test-features }} ;;
+            NONE)
+              echo "Rust tests: none selected ($RUST_REASON)" ;;
+            *)
+              echo "Rust tests: selected packages $RUST_SELECTION ($RUST_REASON)"
+              packages=()
+              for p in $RUST_SELECTION; do packages+=(-p "$p"); done
+              cargo test --manifest-path src-tauri/Cargo.toml --features ${{ matrix.test-features }} "${packages[@]}" ;;
+          esac
 
   # Preserve the protected-branch check name and require every Rust suite.
   rust:

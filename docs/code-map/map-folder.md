@@ -604,7 +604,8 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `src-tauri/src/clipboard/content.rs` — report-screenshot image selection and paste-image-to-file over any `ClipboardReader`.
 - `src-tauri/src/clipboard/file_uri.rs` — `file://` URI list and `x-special/gnome-copied-files` encoding/decoding (Linux; tested everywhere).
 - `src-tauri/src/clipboard/linux/mod.rs` — `wl-clipboard`/`xclip` CLI adapter shared by the Linux backends, and the Linux text/image reader.
-- `src-tauri/src/clipboard/linux/wayland.rs` — Wayland file-list backend: a held `wl-copy --foreground` owner per write proves Cut while it runs (#877), `wl-paste` reads; simulated-compositor lifecycle tests and an ignored real test for a private `cage` session.
+- `src-tauri/src/clipboard/linux/data_control.rs` — the Wayland Cut owner: the app binary's private early mode (`main.rs` → `run_clipboard_owner`) is an `ext`/`wlr` data-control source offering the file list plus the write's private token type; exits when replaced, or with a distinct code when the compositor lacks data-control (#927).
+- `src-tauri/src/clipboard/linux/wayland.rs` — Wayland file-list backend: a held owner per write proves Cut by reading its token back while it runs (#877, #927); without data-control a `wl-copy --foreground` owner serves Copy and Cut is refused; `wl-paste` reads; simulated-compositor lifecycle/race tests and an ignored real test (private `cage`, or the in-process test compositor on a socket).
 - `src-tauri/src/clipboard/linux/x11.rs` — X11 file-list backend: `clipboard-rs` multi-target owner with the private Cut token, `x11rb` selection owner; ignored real-Xvfb coordinator test.
 - `src-tauri/src/clipboard/macos.rs` — macOS backend/reader: lossless Foundation file-URL encoding and ordered `NSPasteboard` item writes with a first-item private token and `changeCount` Cut ownership (#877), `clipboard-rs` file reads, `pbpaste`, `osascript`, and the AppleScript PNG parser; ignored real-pasteboard test run by rust-platforms CI.
 - `docs/reviews/846-macos-clipboard/README.md` — retained hosted native clipboard controls and positive ownership proof, including complete logs and source/dependency hashes.
@@ -623,6 +624,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `src-tauri/test_support/recovery_private_storage.rs` — real filesystem policy outcomes for retained files, hardlinks, retirement and widened permissions.
 - `src-tauri/test_support/native_directory_contract.rs` — cross-platform real filesystem contracts for retained anchors, exclusive creation/rename, removal kinds, existence and invalid-name rejection.
 - `src-tauri/test_support/preview_rendition.rs` — rendition sizing, encoding (alpha → PNG, ICC, 4:4:4, no halos), EXIF orientation, originals kept, cache keying, single decode under concurrency, and the asset scope serving a dot-directory cache (#1054).
+- `src-tauri/test_support/wayland_data_control_compositor.rs` — in-process `wayland-server` compositor with a seat and both data-control protocols; drives the Wayland Cut owner over the real wire protocol and can serve real `wl-clipboard` clients on a socket (#927).
 - `src-tauri/test_support/case_only_rename.rs` — runtime case-sensitivity contracts for rename, move, ordered-session conflicts and physical identity, shared by native-directory and recovery admission tests.
 
 - `mod.rs` — files module root + re-exports; `FileEntry` incl. `is_git_repo` and `metadata_to_entry`'s one-stat-per-directory git-repo-root detection (#463).

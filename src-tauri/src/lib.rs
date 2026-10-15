@@ -44,6 +44,12 @@ mod native_file_drag;
 mod process_supervisor;
 mod recovery_actor;
 
+/// Dispatch the private Wayland clipboard owner (#927) before initializing the
+/// application.
+pub fn run_clipboard_owner() -> Option<i32> {
+    clipboard::run_owner_mode()
+}
+
 /// Dispatch the private process anchor before initializing the application.
 pub fn run_process_supervisor() -> Option<i32> {
     #[cfg(unix)]

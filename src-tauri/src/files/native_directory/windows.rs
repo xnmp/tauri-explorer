@@ -33,21 +33,20 @@ use windows::{
     },
     Win32::{
         Foundation::{
-            ERROR_FILE_NOT_FOUND, ERROR_PATH_NOT_FOUND, HANDLE, STATUS_NO_MORE_FILES,
-            UNICODE_STRING,
+            ERROR_FILE_NOT_FOUND, ERROR_PATH_NOT_FOUND, HANDLE, NTSTATUS, STATUS_NO_MORE_FILES,
+            STATUS_NO_SUCH_FILE, UNICODE_STRING,
         },
         Security::SECURITY_DESCRIPTOR,
         Storage::FileSystem::{
-            ExtendedFileIdType, FileAttributeTagInfo, FileDispositionInfoEx, FileIdInfo,
-            GetFileInformationByHandleEx, GetVolumeInformationByHandleW, OpenFileById,
-            SetFileInformationByHandle, DELETE, FILE_ACCESS_RIGHTS, FILE_ATTRIBUTE_DIRECTORY,
-            FILE_ATTRIBUTE_NORMAL, FILE_ATTRIBUTE_REPARSE_POINT, FILE_ATTRIBUTE_TAG_INFO,
-            FILE_DISPOSITION_FLAG_DELETE, FILE_DISPOSITION_FLAG_POSIX_SEMANTICS,
-            FILE_DISPOSITION_INFO_EX, FILE_DISPOSITION_INFO_EX_FLAGS, FILE_FLAG_BACKUP_SEMANTICS,
-            FILE_FLAG_OPEN_REPARSE_POINT, FILE_GENERIC_READ, FILE_GENERIC_WRITE,
-            FILE_ID_DESCRIPTOR, FILE_ID_DESCRIPTOR_0, FILE_ID_INFO, FILE_LIST_DIRECTORY,
-            FILE_READ_ATTRIBUTES, FILE_SHARE_DELETE, FILE_SHARE_MODE, FILE_SHARE_READ,
-            FILE_SHARE_WRITE, FILE_TRAVERSE, READ_CONTROL, SYNCHRONIZE,
+            FileAttributeTagInfo, FileDispositionInfoEx, FileIdInfo, GetFileInformationByHandleEx,
+            GetVolumeInformationByHandleW, SetFileInformationByHandle, DELETE, FILE_ACCESS_RIGHTS,
+            FILE_ATTRIBUTE_DIRECTORY, FILE_ATTRIBUTE_NORMAL, FILE_ATTRIBUTE_REPARSE_POINT,
+            FILE_ATTRIBUTE_TAG_INFO, FILE_DISPOSITION_FLAG_DELETE,
+            FILE_DISPOSITION_FLAG_POSIX_SEMANTICS, FILE_DISPOSITION_INFO_EX,
+            FILE_DISPOSITION_INFO_EX_FLAGS, FILE_FLAG_BACKUP_SEMANTICS,
+            FILE_FLAG_OPEN_REPARSE_POINT, FILE_GENERIC_READ, FILE_GENERIC_WRITE, FILE_ID_INFO,
+            FILE_LIST_DIRECTORY, FILE_READ_ATTRIBUTES, FILE_SHARE_DELETE, FILE_SHARE_MODE,
+            FILE_SHARE_READ, FILE_SHARE_WRITE, FILE_TRAVERSE, READ_CONTROL, SYNCHRONIZE,
         },
         System::IO::IO_STATUS_BLOCK,
     },
@@ -312,51 +311,7 @@ impl Directory {
     /// linked-buffer layout:
     /// https://learn.microsoft.com/windows-hardware/drivers/ddi/ntifs/ns-ntifs-_file_names_information
     pub(crate) fn names(&self, maximum: usize) -> io::Result<Vec<OsString>> {
-        let directory = reopen_by_id(
-            &self.file,
-            (FILE_LIST_DIRECTORY | FILE_READ_ATTRIBUTES | SYNCHRONIZE).0,
-        )?;
-        let mut buffer = vec![0usize; ENUMERATION_BUFFER_BYTES.div_ceil(size_of::<usize>())];
-        let mut restart = true;
-        let mut names = Vec::new();
-
-        loop {
-            let mut status_block = IO_STATUS_BLOCK::default();
-            // The reopened handle is synchronous (no OVERLAPPED flag), so the
-            // stack status block and buffer cannot outlive this call.
-            let status = unsafe {
-                NtQueryDirectoryFile(
-                    file_handle(&directory),
-                    None,
-                    None,
-                    None,
-                    &mut status_block,
-                    buffer.as_mut_ptr().cast(),
-                    ENUMERATION_BUFFER_BYTES as u32,
-                    FileNamesInformation,
-                    false,
-                    None,
-                    restart,
-                )
-            };
-            restart = false;
-            if status == STATUS_NO_MORE_FILES {
-                return Ok(names);
-            }
-            if status.0 < 0 {
-                return Err(nt_error(status));
-            }
-
-            let returned = status_block.Information;
-            if returned == 0 || returned > ENUMERATION_BUFFER_BYTES {
-                return Err(invalid_data("Invalid Windows directory enumeration length"));
-            }
-            // SAFETY: every byte in the initialized usize allocation is valid to
-            // read as u8, and `returned` was checked against its byte capacity.
-            let returned_bytes =
-                unsafe { std::slice::from_raw_parts(buffer.as_ptr().cast::<u8>(), returned) };
-            parse_names(returned_bytes, maximum, &mut names)?;
-        }
+        enumerate(&reopen_directory(&self.file)?, maximum)
     }
 
     pub(crate) fn sync(&self) -> io::Result<()> {
@@ -383,6 +338,68 @@ impl Directory {
         }
         usize::try_from(maximum).map_err(|_| invalid_data("Invalid maximum component length"))
     }
+}
+
+fn enumerate(directory: &File, maximum: usize) -> io::Result<Vec<OsString>> {
+    let mut buffer = vec![0usize; ENUMERATION_BUFFER_BYTES.div_ceil(size_of::<usize>())];
+    let mut first = true;
+    let mut names = Vec::new();
+
+    loop {
+        let (status, returned) = query_names(directory, &mut buffer, first, false);
+        if enumeration_finished(status, first) {
+            return Ok(names);
+        }
+        first = false;
+        if status.0 < 0 {
+            return Err(nt_error(status));
+        }
+
+        if returned == 0 || returned > ENUMERATION_BUFFER_BYTES {
+            return Err(invalid_data("Invalid Windows directory enumeration length"));
+        }
+        // SAFETY: every byte in the initialized usize allocation is valid to
+        // read as u8, and `returned` was checked against its byte capacity.
+        let returned_bytes =
+            unsafe { std::slice::from_raw_parts(buffer.as_ptr().cast::<u8>(), returned) };
+        parse_names(returned_bytes, maximum, &mut names)?;
+    }
+}
+
+/// A volume root has no "." or ".." entries, so the first query of an empty
+/// FAT root reports STATUS_NO_SUCH_FILE rather than STATUS_NO_MORE_FILES
+/// (#793). Later in an enumeration that status is still an error.
+fn enumeration_finished(status: NTSTATUS, first: bool) -> bool {
+    status == STATUS_NO_MORE_FILES || (first && status == STATUS_NO_SUCH_FILE)
+}
+
+/// One `FileNamesInformation` query; returns the status and the byte count.
+fn query_names(
+    directory: &File,
+    buffer: &mut [usize],
+    restart: bool,
+    single: bool,
+) -> (NTSTATUS, usize) {
+    let length = size_of_val(buffer).min(u32::MAX as usize) as u32;
+    let mut status_block = IO_STATUS_BLOCK::default();
+    // The reopened handle is synchronous (no OVERLAPPED flag), so the stack
+    // status block and buffer cannot outlive this call.
+    let status = unsafe {
+        NtQueryDirectoryFile(
+            file_handle(directory),
+            None,
+            None,
+            None,
+            &mut status_block,
+            buffer.as_mut_ptr().cast(),
+            length,
+            FileNamesInformation,
+            single,
+            None,
+            restart,
+        )
+    };
+    (status, status_block.Information)
 }
 
 #[derive(Clone, Copy)]
@@ -415,6 +432,18 @@ fn open_relative(
     security: Option<*mut core::ffi::c_void>,
 ) -> io::Result<File> {
     let name = native_name(name)?;
+    create_relative(parent, &name, access, disposition, kind_options, security)
+}
+
+/// `NtCreateFile` relative to `parent`. An empty `name` opens `parent` itself.
+fn create_relative(
+    parent: &File,
+    name: &[u16],
+    access: FILE_ACCESS_RIGHTS,
+    disposition: NTCREATEFILE_CREATE_DISPOSITION,
+    kind_options: NTCREATEFILE_CREATE_OPTIONS,
+    security: Option<*mut core::ffi::c_void>,
+) -> io::Result<File> {
     let name_bytes = name
         .len()
         .checked_mul(size_of::<u16>())
@@ -423,7 +452,11 @@ fn open_relative(
     let unicode = UNICODE_STRING {
         Length: name_bytes,
         MaximumLength: name_bytes,
-        Buffer: PWSTR(name.as_ptr().cast_mut()),
+        Buffer: if name.is_empty() {
+            PWSTR::null()
+        } else {
+            PWSTR(name.as_ptr().cast_mut())
+        },
     };
     let attributes = OBJECT_ATTRIBUTES {
         Length: size_of::<OBJECT_ATTRIBUTES>() as u32,
@@ -609,37 +642,29 @@ fn file_id(file: &File) -> io::Result<FILE_ID_INFO> {
     Ok(identity)
 }
 
-/// Opens a second handle, with its own file object, to the entry behind
-/// `file`. `ReOpenFile` rejects directory handles with ERROR_ACCESS_DENIED on
-/// Windows (#772), so this opens by the 128-bit file ID instead. `file` keeps
-/// its entry from being released, but not every filesystem keeps an ID stable
-/// across a concurrent move, so the opened handle must report the same volume
-/// and ID or the reopen fails closed.
-fn reopen_by_id(file: &File, access: u32) -> io::Result<File> {
-    let identity = file_id(file)?;
-    let descriptor = FILE_ID_DESCRIPTOR {
-        dwSize: size_of::<FILE_ID_DESCRIPTOR>() as u32,
-        Type: ExtendedFileIdType,
-        Anonymous: FILE_ID_DESCRIPTOR_0 {
-            ExtendedFileId: identity.FileId,
-        },
-    };
-    // SAFETY: `file` is on the entry's volume and outlives the call, and the
-    // descriptor is initialized for the extended ID it declares.
-    let handle = unsafe {
-        OpenFileById(
-            file_handle(file),
-            &descriptor,
-            access,
-            SHARE_ALL,
-            None,
-            FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT,
-        )
-        .map_err(io_error)?
-    };
-    // SAFETY: OpenFileById returned a uniquely owned valid HANDLE.
-    let reopened = unsafe { File::from_raw_handle(handle.0) };
-    let opened = file_id(&reopened)?;
+/// Opens a second handle, with its own file object and so its own
+/// enumeration cursor, to the directory behind `directory`. `ReOpenFile`
+/// rejects directory handles with ERROR_ACCESS_DENIED (#772), and
+/// `OpenFileById` fails with STATUS_NOT_IMPLEMENTED on FAT, whose file IDs are
+/// not reversible (#793). An empty name relative to `RootDirectory` instead
+/// opens the related file itself, with no path or file-ID lookup. The opened
+/// handle must still report the same volume and ID or the reopen fails closed.
+fn reopen_directory(directory: &File) -> io::Result<File> {
+    let identity = file_id(directory)?;
+    let reopened = create_relative(
+        directory,
+        &[],
+        FILE_LIST_DIRECTORY | FILE_READ_ATTRIBUTES | SYNCHRONIZE,
+        FILE_OPEN,
+        FILE_DIRECTORY_FILE,
+        None,
+    )?;
+    ensure_same_entry(&identity, &reopened)?;
+    Ok(reopened)
+}
+
+fn ensure_same_entry(identity: &FILE_ID_INFO, reopened: &File) -> io::Result<()> {
+    let opened = file_id(reopened)?;
     if opened.VolumeSerialNumber != identity.VolumeSerialNumber
         || opened.FileId.Identifier != identity.FileId.Identifier
     {
@@ -647,7 +672,7 @@ fn reopen_by_id(file: &File, access: u32) -> io::Result<File> {
             "Reopened directory is no longer the anchored entry",
         ));
     }
-    Ok(reopened)
+    Ok(())
 }
 
 fn file_handle(file: &File) -> HANDLE {
@@ -703,6 +728,162 @@ mod tests {
 
         let out_of_bounds = record(128, &[b'a' as u16]);
         assert!(parse_names(&out_of_bounds, 2, &mut Vec::new()).is_err());
+    }
+
+    #[test]
+    fn only_a_first_query_treats_no_such_file_as_an_empty_listing() {
+        assert!(enumeration_finished(STATUS_NO_MORE_FILES, true));
+        assert!(enumeration_finished(STATUS_NO_MORE_FILES, false));
+        assert!(enumeration_finished(STATUS_NO_SUCH_FILE, true));
+        assert!(!enumeration_finished(STATUS_NO_SUCH_FILE, false));
+        assert!(!enumeration_finished(NTSTATUS(0), true));
+    }
+
+    /// #793: each reopen is its own file object, so exhausting one cursor
+    /// leaves another on the same directory at its start.
+    #[test]
+    fn reopened_directories_have_independent_cursors() {
+        let root = tempfile::tempdir().unwrap();
+        for name in ["a", "b", "c"] {
+            std::fs::write(root.path().join(name), name).unwrap();
+        }
+        let directory = Directory::open(root.path()).unwrap();
+        let first = reopen_directory(&directory.file).unwrap();
+        let second = reopen_directory(&directory.file).unwrap();
+        let mut buffer = [0usize; 512];
+
+        let mut consumed = 0;
+        loop {
+            let (status, _) = query_names(&first, &mut buffer, consumed == 0, true);
+            if status == STATUS_NO_MORE_FILES {
+                break;
+            }
+            assert!(status.is_ok(), "single-entry query failed: {status:?}");
+            consumed += 1;
+        }
+        assert!(consumed >= 3);
+        let (status, _) = query_names(&first, &mut buffer, false, true);
+        assert_eq!(
+            status, STATUS_NO_MORE_FILES,
+            "the first cursor is exhausted"
+        );
+
+        let (status, returned) = query_names(&second, &mut buffer, false, true);
+        assert!(status.is_ok(), "the second cursor was advanced: {status:?}");
+        assert!(returned > 0);
+
+        let mut names = enumerate(&second, 3).unwrap();
+        names.sort();
+        assert_eq!(names, [OsStr::new("a"), OsStr::new("b"), OsStr::new("c")]);
+        let mut names = directory.names(3).unwrap();
+        names.sort();
+        assert_eq!(names, [OsStr::new("a"), OsStr::new("b"), OsStr::new("c")]);
+    }
+
+    #[test]
+    fn reopened_entry_must_report_the_retained_identity() {
+        let root = tempfile::tempdir().unwrap();
+        let parent = Directory::open(root.path()).unwrap();
+        std::fs::create_dir(root.path().join("other")).unwrap();
+        let other = parent.open_existing(OsStr::new("other")).unwrap();
+        let identity = file_id(&parent.file).unwrap();
+
+        ensure_same_entry(&identity, &reopen_directory(&parent.file).unwrap()).unwrap();
+        let error = ensure_same_entry(&identity, &other.file).unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            "Reopened directory is no longer the anchored entry"
+        );
+    }
+
+    /// #793: FAT file IDs are not reversible, so `OpenFileById` cannot give
+    /// an enumeration its own cursor there. rust-platforms.yml formats a VHD
+    /// as FAT32 and names its root in `TAURI_FAT32_ROOT`.
+    #[test]
+    #[ignore = "requires a fresh FAT32 volume named by TAURI_FAT32_ROOT"]
+    fn fat32_volume_enumerates_without_reversible_file_ids() {
+        use windows::Win32::Storage::FileSystem::{
+            ExtendedFileIdType, OpenFileById, FILE_ID_DESCRIPTOR, FILE_ID_DESCRIPTOR_0,
+        };
+
+        let root = PathBuf::from(std::env::var_os("TAURI_FAT32_ROOT").unwrap());
+        let volume = Directory::open(&root).unwrap();
+        let mut file_system = [0u16; 32];
+        // SAFETY: the handle is live and the output buffer is writable.
+        unsafe {
+            GetVolumeInformationByHandleW(
+                file_handle(&volume.file),
+                None,
+                None,
+                None,
+                None,
+                Some(&mut file_system),
+            )
+            .unwrap();
+        }
+        let length = file_system.iter().position(|unit| *unit == 0).unwrap();
+        assert_eq!(String::from_utf16(&file_system[..length]).unwrap(), "FAT32");
+
+        // The volume really exercises the defect: the file-ID reopen fails.
+        let descriptor = FILE_ID_DESCRIPTOR {
+            dwSize: size_of::<FILE_ID_DESCRIPTOR>() as u32,
+            Type: ExtendedFileIdType,
+            Anonymous: FILE_ID_DESCRIPTOR_0 {
+                ExtendedFileId: file_id(&volume.file).unwrap().FileId,
+            },
+        };
+        // SAFETY: the descriptor is initialized for the ID it declares.
+        let by_id = unsafe {
+            OpenFileById(
+                file_handle(&volume.file),
+                &descriptor,
+                FILE_LIST_DIRECTORY.0,
+                SHARE_ALL,
+                None,
+                FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT,
+            )
+        };
+        let opened_by_id = match by_id {
+            Ok(handle) => {
+                // SAFETY: OpenFileById returned an owned handle; close it.
+                drop(unsafe { File::from_raw_handle(handle.0) });
+                true
+            }
+            Err(error) => {
+                println!("FAT32 OpenFileById failed as expected: {error}");
+                false
+            }
+        };
+        assert!(
+            !opened_by_id,
+            "OpenFileById unexpectedly succeeded on FAT32"
+        );
+
+        // A fresh root has no "." or ".." entries; an empty one reports
+        // STATUS_NO_SUCH_FILE on the first query.
+        let initial = volume.names(64).unwrap();
+        println!("fresh FAT32 root entries: {initial:?}");
+
+        std::fs::create_dir(root.join("recovery")).unwrap();
+        let recovery = volume.open_existing(OsStr::new("recovery")).unwrap();
+        assert!(recovery.names(0).unwrap().is_empty());
+        for name in ["first", "second"] {
+            std::fs::write(root.join("recovery").join(name), name).unwrap();
+        }
+        let mut names = recovery.names(2).unwrap();
+        names.sort();
+        assert_eq!(names, [OsStr::new("first"), OsStr::new("second")]);
+        assert!(recovery.names(1).is_err(), "the entry limit still applies");
+        assert!(volume
+            .names(64)
+            .unwrap()
+            .contains(&OsString::from("recovery")));
+        std::thread::scope(|scope| {
+            let first = scope.spawn(|| recovery.names(2).unwrap().len());
+            let second = scope.spawn(|| recovery.names(2).unwrap().len());
+            assert_eq!(first.join().unwrap(), 2);
+            assert_eq!(second.join().unwrap(), 2);
+        });
     }
 
     fn record(next: u32, name: &[u16]) -> Vec<u8> {

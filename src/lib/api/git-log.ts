@@ -10,7 +10,6 @@
 
 import { Channel } from "@tauri-apps/api/core";
 import { invoke, isTauri } from "./common";
-import type { BranchStatuses } from "$lib/domain/git-branch-status";
 import type { GitUndoAction } from "$lib/domain/git-graph-undo";
 import type { GitNetworkPhaseEvent } from "$lib/domain/git-network-operation";
 
@@ -239,12 +238,6 @@ export interface BranchAuthor {
 /** Branch → creator list for the author filter (#376). */
 export async function gitBranchAuthors(repoPath: string): Promise<BranchAuthor[]> {
   return invoke<BranchAuthor[]>("git_branch_authors", { repoPath });
-}
-
-export type { BranchStatus, BranchStatusEntry, BranchStatuses } from "$lib/domain/git-branch-status";
-
-export async function gitBranchStatuses(repoPath: string): Promise<BranchStatuses> {
-  return invoke<BranchStatuses>("git_branch_statuses", { repoPath });
 }
 
 /** Fetch from every remote with pruning (#370). */

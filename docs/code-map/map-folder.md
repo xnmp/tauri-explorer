@@ -566,6 +566,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `git_log.rs` — git history / commit-graph backend (#57).
 - `git_branch_status.rs` — `git_branch_statuses`: trunk-aware merged / squash-merged (patch-id) / stale classification with bounded searches (#1081).
 - `git_avatar.rs` — privacy-gated GitHub noreply/opt-in Gravatar resolution, bounded image validation, negative results, and restart-safe disk cache (#514).
+- `src/lib/api/git-branch-status.ts` — lazy graph-only IPC wrapper for `git_branch_statuses` (#1081); kept out of the startup `git-log.ts` chunk.
 - `src/lib/api/git-avatar.ts` — mock-aware IPC wrapper for best-effort author-avatar data (#514).
 - `git_watch.rs` — lazy Git observation adapter using shared renderer ownership; native factory and process shutdown.
 - `file_history/mod.rs` — application-owned history service, renderer channels and supervised native inverse execution.

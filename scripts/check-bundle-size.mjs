@@ -37,7 +37,13 @@ const STARTUP_RAW_BUDGET = 866_617;
 // Raised 278,400 -> 279,424 (+1 KiB) for #1061: pane minima and CSS-sized
 // split panes must apply on the first painted frame, so that code is startup
 // by nature (+279 bytes gzip over a dev that sat within ~300 bytes of the cap).
-const STARTUP_GZIP_BUDGET = 279_424;
+// Raised 279,424 -> 279,936 (+512 bytes) for #1081, which adds no startup
+// code: its graph-only IPC wrapper lives in a lazy module, and the startup
+// closure's raw size matches dev (828,435 vs 828,439 bytes). Gzip still moved
+// +85 bytes because content-hashed chunk names in eager import lists changed
+// and compress differently; dev measured 279,400-279,408, within 24 bytes of
+// the old cap, so any lazy-chunk change could fail on name churn alone.
+const STARTUP_GZIP_BUDGET = 279_936;
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const clientDir = resolve(repoRoot, ".svelte-kit/output/client");

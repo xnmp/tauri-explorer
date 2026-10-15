@@ -1,5 +1,6 @@
 import { test, expect } from "./fixtures";
 import { waitForEntries } from "./helpers";
+import type { MockControl } from "../src/lib/api/mock-control";
 
 async function openGraphViaPalette(page: import("@playwright/test").Page) {
   await page.keyboard.press("Control+Shift+p");
@@ -11,7 +12,19 @@ async function openGraphViaPalette(page: import("@playwright/test").Page) {
 }
 
 test("branch-status badges sit beside their chips and never mute rows (#1081)", async ({ page }) => {
-  await page.goto("/?path=/home/user/Documents/project&gitBranchStatusFixture=1");
+  // Presentational fixture: one of each badge. The mock reports `hotfix`
+  // 2 behind its upstream (git_branch_behind_upstream), hence stale.
+  await page.addInitScript(() => {
+    ((window as unknown as { __mockControl?: MockControl }).__mockControl ??= {}).branchStatuses = {
+      trunk: "origin/main",
+      statuses: [
+        { name: "experiment", remote: false, status: "squash_merged" },
+        { name: "feature", remote: false, status: "merged" },
+        { name: "hotfix", remote: false, status: "stale" },
+      ],
+    };
+  });
+  await page.goto("/?path=/home/user/Documents/project");
   await waitForEntries(page);
   await openGraphViaPalette(page);
 

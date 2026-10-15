@@ -2104,27 +2104,10 @@ if (typeof window !== "undefined") {
   // Mock: pretend 'hotfix' is 2 behind its remote so the pull offer shows.
   git_branch_behind_upstream: (args: Record<string, unknown>) =>
     args.name === "hotfix" ? 2 : args.name === "main" ? 0 : null,
-  // Branch-status badges (#1081). Empty by default so other graph specs keep
-  // their chip text; `?gitBranchStatusFixture=1` reports one of each badge.
-  // Presentational only: classification itself is proven by the Rust
-  // temp-repo tests in git_branch_status.rs.
-  git_branch_statuses: (args: Record<string, unknown>) => {
-    const repoPath = (args.repoPath as string) ?? "";
-    const fixture = typeof location !== "undefined"
-      && new URLSearchParams(location.search).has("gitBranchStatusFixture");
-    if (!fixture || !repoPath.startsWith("/home/user/Documents/project")) {
-      return { trunk: "main", statuses: [] };
-    }
-    return {
-      trunk: "origin/main",
-      statuses: [
-        { name: "experiment", remote: false, status: "squash_merged" },
-        { name: "feature", remote: false, status: "merged" },
-        // Mirrors git_branch_behind_upstream's "hotfix is 2 behind" pretence.
-        { name: "hotfix", remote: false, status: "stale" },
-      ],
-    };
-  },
+  // Branch-status badges (#1081): none unless a spec sets
+  // `__mockControl.branchStatuses`. Classification itself is proven by the
+  // Rust temp-repo tests in git_branch_status.rs.
+  git_branch_statuses: () => getMockControl().branchStatuses ?? { trunk: "main", statuses: [] },
   git_branch_authors: () => [
     { name: "main", author: "Alice Coder", remote: false },
     { name: "hotfix", author: "Alice Coder", remote: false },

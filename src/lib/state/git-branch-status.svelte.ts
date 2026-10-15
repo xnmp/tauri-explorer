@@ -1,4 +1,4 @@
-import { gitBranchStatuses, type BranchStatus, type BranchStatuses } from "$lib/api/git-log";
+import { gitBranchStatuses, type BranchStatus, type BranchStatuses } from "$lib/api/git-branch-status";
 import { indexBranchStatuses } from "$lib/domain/git-branch-status";
 
 export interface GitBranchStatusDependencies {

@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import type { BranchStatuses } from "$lib/api/git-log";
+import type { BranchStatuses } from "$lib/api/git-branch-status";
 import { branchStatusBadge, indexBranchStatuses } from "$lib/domain/git-branch-status";
 import { createGitBranchStatusSession } from "$lib/state/git-branch-status.svelte";
 

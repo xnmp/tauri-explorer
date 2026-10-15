@@ -931,6 +931,8 @@ TraceExplorer's image UI, provider adapters and SQLite journal are maintained in
 - `src-tauri/src/installed_plugins/service_graph_tests.rs` — service graph version, identity, optional dependency and cycle contracts.
 - `src-tauri/src/installed_plugins/service_host.rs` — host lifetime service store and legacy recovery compatibility.
 - `src-tauri/src/native_deadline.rs` — scoped monotonic native lock, queue and RPC budgets.
+- `src-tauri/src/native_file_drag/wayland_intent.rs` — GNOME Wayland per-gesture source keyboard channel; freezes the first post-grab focus modifier snapshot independently of GTK cache and OS actions.
+- `src-tauri/test_support/wayland_drag_intent_test.rs` — in-process Wayland compositor tests for late Ctrl, post-drop key changes, foreign connection/queue isolation and snapshot lifetime.
 - `src-tauri/src/native_file_drag.rs` — async OS drag start (rejects shortcut sources before export), synchronous platform-completion retirement, sequence-bearing provenance and per-window receiver snapshots emitted before frontend channel reordering.
 - `src-tauri/test_support/native_file_drag.rs` — native session ordering, completion-backlog interleavings, gesture-sequence admission, complete-set verification, successor retirement and later external same-path contracts.
 - `src-tauri/src/durable_dir.rs` — per-platform directory-entry durability barrier (Unix fsync, Windows writable directory-handle flush).

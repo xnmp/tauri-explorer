@@ -13,6 +13,9 @@ use std::{
 };
 use tauri::{ipc::Channel, Emitter, Manager};
 
+#[cfg(target_os = "linux")]
+mod wayland_intent;
+
 const EVENT: &str = "explorer-native-file-drag";
 
 struct ObservationClock {
@@ -234,6 +237,52 @@ impl Registry {
     }
     fn capture(&mut self, window: usize, event: &wry::DragDropEvent, copying: bool) {
         let observed_at = self.clock.now();
+        self.capture_with_intent(window, event, copying, observed_at, |source| {
+            #[cfg(target_os = "linux")]
+            {
+                wayland_intent::snapshot(&source.session_id)
+            }
+            #[cfg(not(target_os = "linux"))]
+            {
+                let _ = source;
+                None
+            }
+        });
+    }
+    fn capture_with_intent(
+        &mut self,
+        window: usize,
+        event: &wry::DragDropEvent,
+        copying: bool,
+        observed_at: f64,
+        intent: impl FnOnce(&Source) -> Option<Result<bool, String>>,
+    ) {
+        let mut copying = copying;
+        if let wry::DragDropEvent::Drop { paths, .. } = event {
+            if let Some(source) = self
+                .receivers
+                .get(&window.to_string())
+                .filter(|source| source.matches(paths))
+            {
+                match intent(&source.original) {
+                    Some(Ok(fresh)) => copying = fresh,
+                    Some(Err(error)) => {
+                        self.leave(&window.to_string());
+                        // Keep a FIFO receipt for the queued native Drop and
+                        // clear receiver feedback without authorizing a file
+                        // mutation. Omitting this slot could consume a later
+                        // gesture's Enter when the cancelled Drop is delivered.
+                        self.pending
+                            .entry(window)
+                            .or_default()
+                            .push_back((event.clone(), Event::Leave));
+                        log::warn!("{error}");
+                        return;
+                    }
+                    None => {}
+                }
+            }
+        }
         self.capture_at(window, event, copying, observed_at);
     }
     fn capture_at(
@@ -615,12 +664,20 @@ pub async fn start_file_drag(
     let callback_app = app.clone();
     app.run_on_main_thread(move || {
         #[cfg(target_os = "linux")]
+        let intent_id = source.as_ref().map(|source| source.session_id.clone());
+        #[cfg(target_os = "linux")]
+        let callback_intent_id = intent_id.clone();
+        #[cfg(target_os = "linux")]
         let native_window = window.gtk_window();
         #[cfg(not(target_os = "linux"))]
         let native_window = tauri::Result::Ok(window.clone());
         let result = native_window
             .map_err(|error| error.to_string())
             .and_then(|native_window| {
+                #[cfg(target_os = "linux")]
+                if let Some(source) = &source {
+                    wayland_intent::begin(&native_window, &source.session_id)?;
+                }
                 window
                     .state::<Sessions>()
                     .registry
@@ -646,6 +703,10 @@ pub async fn start_file_drag(
                     native_item,
                     image,
                     move |result, cursor_pos| {
+                        #[cfg(target_os = "linux")]
+                        if let Some(id) = &callback_intent_id {
+                            wayland_intent::finish(id);
+                        }
                         let app = callback_app.clone();
                         let on_event = on_event.clone();
                         let owner = app.clone();
@@ -680,6 +741,10 @@ pub async fn start_file_drag(
                 .map_err(|error| error.to_string())
             });
         if result.is_err() {
+            #[cfg(target_os = "linux")]
+            if let Some(id) = &intent_id {
+                wayland_intent::finish(id);
+            }
             window
                 .state::<Sessions>()
                 .registry

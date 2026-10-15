@@ -23,9 +23,10 @@ from dev's required contexts while retaining `frontend`, `rust`, `webkit`,
 split, then verify the branch endpoint reports that exact remaining list.
 Do not substitute a dummy success job for the removed heavy check.
 
-The prepared credential can read the dev branch's embedded protection summary,
-but reports `permissions.admin: false`; both reading protection directly and
-deleting the `launch-smoke` required context return HTTP 404. Repository edits
-cannot complete this external prerequisite. Keep the trigger change unpublished
-until an administrator removes the required heavy context or supplies a
-credential with repository administration write access.
+The prepared credential could read the dev branch's embedded protection summary,
+but lacked administration access; protection reads and writes returned HTTP 404.
+The owner then removed `launch-smoke`, as recorded in the
+[rollout confirmation](https://github.com/xnmp/tauri-explorer/issues/1133#issuecomment-6202744110).
+The branch endpoint confirmed the exact five remaining cheap required contexts
+before the workflow change was first pushed. This ordering prevents PRs from
+waiting on the removed heavy check without weakening the remaining requirements.

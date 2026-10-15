@@ -37,3 +37,45 @@ Explorer, replaces the clipboard from `xclip` with an external Copy of the
 same URI, then pastes into that directory. The original remains on disk and a
 new file with identical contents appears in the native listing. Its screenshot
 is in `screenshots/fix/clipboard-cross-window-order/`.
+
+## Completion after the originating window closes
+
+The ordered worker landed before this issue's final acceptance pass; platform
+follow-ups also added native Cut proof on Windows, macOS and Wayland. The
+remaining publication hole was that only the originating renderer broadcast
+a successful Copy/Cut. Its accepted native job survives cancellation, but its
+renderer continuation does not. The job now emits the revision invalidation
+before replying, so other windows reconcile even if the caller closes.
+
+`test_support/clipboard_order.rs` holds real worker writes at the backend seam,
+releases permits in both orders, and repeats all Copy/Cut pairs across 128
+selections, then drains a 256-write backlog with all newer permits released
+first. A reversed completion order is prevented by the FIFO worker;
+releasing B's permit before A's cannot make B overtake A. Paste snapshots from
+both callers see B, obsolete Cut claims fail, and external changes after
+settlement win. The cancelled-caller notification assertion failed before the
+native publication change. The original OS-ordering repair already exists on
+the integration base; these tests retain it rather than replace its design.
+
+`e2e-tauri/specs/clipboard-cross-window.spec.ts` runs two actual webviews with
+bounded native write gates. It reads the platform clipboard independently,
+asserts both renderer stores without triggering reconciliation, pastes into
+both windows and verifies file bytes on disk, checks Cut movement, and closes
+a publishing window during its native write. PR smoke checks remain Linux-only.
+Windows qualification runs after merge on dev pushes: `NATIVE_SCOPE=all` calls
+`bun run test:e2e:tauri`, whose `./specs/**/*.spec.ts` glob includes this spec.
+A full-scope Windows dispatch includes it too; the narrower `clipboard`
+dispatch selects only `context-clipboard.spec.ts`. No workflow changes are
+needed to discover the new spec. The existing Linux evidence was captured on
+a private Xvfb display and carries forward because this CI-policy correction
+does not change clipboard behavior.
+
+The original failure was also reproduced against the actual renderer module
+from the parent of the #844 integration (loaded temporarily, without changing
+branches). Two isolated imports used controlled deferred OS writes; B's write
+and broadcast finished before A was released. Both real historical stores
+contained `/B`, but `readOsFiles()` returned `[/A]`, failing the expected
+`[/B]` assertion. Only the OS adapter and event transport were mocked. The
+historical module and one-off runner were removed after this diagnostic;
+maintained regressions exercise today's production Rust worker and native
+windows rather than retaining a duplicate obsolete implementation.

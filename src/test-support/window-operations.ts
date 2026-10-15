@@ -11,6 +11,7 @@ export type WindowOperation =
   | "open-pair" | "tear-off" | "transfer" | "native-close" | "warm-prime" | "warm-open" | "warm-claim" | "warm-ready"
   | "watch-acquire" | "directory-watch-acquire" | "directory-watch-release" | "native-session"
   | "native-destroy" | "target-state" | "target-readiness" | "window-states" | "open-picker"
+  | "clipboard-copy" | "clipboard-cut" | "clipboard-state" | "clipboard-paste"
   | "open-unready" | "arm-transfer-close" | "fresh-open" | "collision-transfer";
 
 export interface WindowOperationRequest {
@@ -68,6 +69,28 @@ export function windowOperationHandlers(signal: AbortSignal): Record<WindowOpera
   };
 
   return {
+    "clipboard-copy": async ({ target }) => {
+      const { clipboardStore } = await whileActive(import("$lib/state/clipboard.svelte"));
+      const entry = windowTabsManager.getActiveExplorer()?.displayEntries.find(entry => entry.name === target);
+      if (!entry) throw new Error(`Clipboard fixture is not listed: ${target}`);
+      return clipboardStore.copy([entry]);
+    },
+    "clipboard-cut": async ({ target }) => {
+      const { clipboardStore } = await whileActive(import("$lib/state/clipboard.svelte"));
+      const entry = windowTabsManager.getActiveExplorer()?.displayEntries.find(entry => entry.name === target);
+      if (!entry) throw new Error(`Clipboard fixture is not listed: ${target}`);
+      return clipboardStore.cut([entry]);
+    },
+    "clipboard-state": async () => {
+      const { clipboardStore } = await whileActive(import("$lib/state/clipboard.svelte"));
+      // Read renderer state without reconciling: the test must prove broadcast.
+      return clipboardStore.content;
+    },
+    "clipboard-paste": async () => {
+      const explorer = windowTabsManager.getActiveExplorer();
+      if (!explorer) throw new Error("No active explorer");
+      return explorer.paste();
+    },
     "native-session": async () => {
       // Reuse the realm's production acknowledgement and summary channel.
       const { getNativeResourceSession } = await whileActive(import("$lib/api/native-resource-session"));

@@ -94,6 +94,8 @@ export interface MockControl {
   /** Real browser media URL; tests can delay source admission, not fake playback. */
   videoPreview?: (path: string) => string | Promise<string>;
   releasedVideoPreviews?: string[];
+  /** Overrides `prepare_video_audio_preview`; `null` (default) means no audio stream. */
+  videoAudioPreview?: (path: string) => string | null | Promise<string | null>;
   /** Overrides `probe_video_codec`. */
   videoCodecProbe?: (path: string) => { container: string | null; videoCodec: string | null; audioCodec: string | null };
   /** Destinations `save_file_copy` was asked to write. */

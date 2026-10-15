@@ -862,16 +862,19 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `src/lib/domain/video-preview.ts` — pure time/seek values and keyboard ownership, including held-key and Super handling.
 - `src-tauri/src/files/video_info.rs` — bounded head/tail codec sniffing (MP4/MOV, Matroska/WebM, AVI) and `save_file_copy` for the unsupported-codec preview state.
 - `src/lib/state/video-preview-lifetime.ts` — two-phase capability adoption and cancellation; rejects late source URLs and releases once.
+- `src/lib/state/video-companion-audio.ts` — Linux-only dropped-audio-track detection and the hidden `<audio>` follower (play/pause/seek/drift/volume/mute) (#1171).
 - `src/lib/api/video-preview.ts` — acknowledged native-session acquisition, scoped preparation and release IPC.
 - `src/test-support/video-preview-probe.ts` — hook-build-only DOM RPC observing native streaming counters.
 - `src-tauri/src/files/media_preview.rs` — window/renderer-owned playback capability commands and lazy loopback server.
 - `src-tauri/src/files/media_preview/http.rs` — bounded HTTP/1 byte-range responses, independent connection retirement and backpressure.
 - `src-tauri/src/files/media_preview/range.rs` — exact single-byte-range planning with malformed/unsatisfiable contracts.
 - `src-tauri/src/files/media_preview/service.rs` — scoped no-follow admission, pinned file identity, bounded workers and positioned chunk reads.
+- `src-tauri/src/files/media_preview/audio.rs` — ffmpeg decode of a video's first audio stream into a private, capability-owned Opus/FLAC file for WebKitGTK without the source codec's decoder (#1171).
 - `src-tauri/src/files/media_preview/metrics.rs` — native qualification-only read/chunk/connection/resource counters.
 - `src-tauri/test_support/media_preview.rs` — real TCP and filesystem contracts for ranges, concurrent seeks, scope, replacement, overload and retirement.
 - `e2e-tauri/video-observations.ts` — read-only native playback/transport observations, owned process RSS and unedited screenshot pixel qualification.
 - `e2e-tauri/specs/video-preview.spec.ts` — actual native decoder/range/lifetime and encoded large-file performance outcomes.
+- `e2e-tauri/specs/video-companion-audio.spec.ts` — opt-in native proof that an AAC video WebKitGTK cannot decode is audible through companion audio, follows volume/mute/fullscreen, and that native-audio and silent videos are left alone (#1171).
 - `e2e-tauri/specs/video-preview-lifecycle.spec.ts` — actual List/Tiles decoded selection, warm-window activation and playing-owner destruction with capability/file-handle retirement.
 
 - `src/lib/domain/image-generation-settings.ts` — provider-compatible image dimensions from resolution and source/explicit aspect ratio.

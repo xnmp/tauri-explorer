@@ -6,7 +6,22 @@
  * the "Mute merge commits" toggle still keys on a commit's parent count.
  */
 
-import type { BranchStatus, BranchStatusEntry } from "$lib/api/git-log";
+/** Trunk-aware branch classification (#1081). Mirrors
+ *  `src-tauri/src/git_branch_status.rs`; branches with no status are omitted. */
+export type BranchStatus = "merged" | "squash_merged" | "stale" | "unknown";
+
+export interface BranchStatusEntry {
+  /** Shorthand, e.g. `feature` or `origin/feature`. */
+  name: string;
+  remote: boolean;
+  status: BranchStatus;
+}
+
+export interface BranchStatuses {
+  /** Resolved trunk shorthand; null when none resolved (statuses is empty). */
+  trunk: string | null;
+  statuses: BranchStatusEntry[];
+}
 
 export interface BranchStatusBadge {
   readonly status: Exclude<BranchStatus, "unknown">;

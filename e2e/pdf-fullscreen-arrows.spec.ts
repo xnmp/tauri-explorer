@@ -93,13 +93,18 @@ test("fullscreen PDF arrows respect focused links, buttons and modal controls", 
   await page.keyboard.press("Control+,");
   const settings = page.locator(".settings-dialog");
   await expect(settings).toBeVisible();
-  const control = settings.locator("select").first();
+  // Async language-model settings insert selects before Theme. Keep every
+  // focus assertion attached to the same control as those sections load.
+  const control = settings.locator(".color-theme-select");
+  await control.scrollIntoViewIfNeeded();
   await control.focus();
+  await expect(control).toBeFocused();
   for (const key of ["ArrowRight", "ArrowLeft", "PageDown"]) {
     await page.keyboard.press(key);
     await expectPdfPage(page, 2);
     await expect(control).toBeFocused();
   }
+  await control.scrollIntoViewIfNeeded();
   await page.screenshot({ path: testInfo.outputPath("modal-owns-keys.png"), animations: "disabled" });
   await page.keyboard.press("Escape");
   await expect(settings).toBeHidden();

@@ -16,3 +16,10 @@ arrows at fit and enlarged zoom, including both boundaries. Separate cases cover
 focused links/buttons, a settings modal, page buttons, PageUp/PageDown, keyboard
 zoom/reset and docked sibling navigation. Existing image/text fullscreen tests
 cover their unchanged sibling behavior.
+
+CI exposed an unstable modal-test locator: `select.first()` initially targeted
+Theme, then resolved to a newly inserted language-model dropdown after its async
+load. The trace showed the original Theme select handling ArrowRight and changing
+the theme while the focus assertion checked another element. Target
+`.color-theme-select` explicitly and keep the focus, canvas and selection
+assertions; positional selectors do not preserve control identity during loading.

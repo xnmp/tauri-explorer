@@ -2104,6 +2104,10 @@ if (typeof window !== "undefined") {
   // Mock: pretend 'hotfix' is 2 behind its remote so the pull offer shows.
   git_branch_behind_upstream: (args: Record<string, unknown>) =>
     args.name === "hotfix" ? 2 : args.name === "main" ? 0 : null,
+  // Branch-status badges (#1081): none unless a spec sets
+  // `__mockControl.branchStatuses`. Classification itself is proven by the
+  // Rust temp-repo tests in git_branch_status.rs.
+  git_branch_statuses: () => getMockControl().branchStatuses ?? { trunk: "main", statuses: [] },
   git_branch_authors: () => [
     { name: "main", author: "Alice Coder", remote: false },
     { name: "hotfix", author: "Alice Coder", remote: false },

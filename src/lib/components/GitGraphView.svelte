@@ -89,6 +89,8 @@
     registerGraphUndoRequester,
   } from "$lib/state/git-graph-undo";
   import GitAuthorAvatar from "./GitAuthorAvatar.svelte";
+  import { createGitBranchStatusSession } from "$lib/state/git-branch-status.svelte";
+  import { branchStatusBadge } from "$lib/domain/git-branch-status";
 
   const { repoPath }: { repoPath: string } = $props();
 
@@ -115,6 +117,10 @@
   const prSession = createGitPrSession(untrack(() => repoPath));
   onDestroy(() => prSession.dispose());
   const prsByBranch = $derived(prSession.prsByBranch);
+  // Trunk-aware merged / squashed / stale badges (#1081), refreshed with every
+  // graph (re)load. Informational only: they never dim rows.
+  const branchStatusSession = createGitBranchStatusSession(untrack(() => repoPath));
+  onDestroy(() => branchStatusSession.dispose());
   const detailSession = createGitGraphDetail(untrack(() => repoPath), summaryConsumerId);
   onDestroy(() => detailSession.dispose());
   const selected = $derived(detailSession.selected);
@@ -196,7 +202,10 @@
     readQuery: () => untrack(() => ({ branches: branchFilter, localOnly, hideRemoteOnly, filePath: filePathFilter })),
     readBranches: () => untrack(() => branchSession.branches),
     refreshBranches: branchSession.refreshForQuery,
-    onReload: () => { void prSession.reloadBadges(); },
+    onReload: () => {
+      void prSession.reloadBadges();
+      void branchStatusSession.reload();
+    },
     onLoaded: branchSession.invalidate,
   });
   let hasCachedSnapshot = querySession.seeded;
@@ -723,6 +732,7 @@
     if (hasCachedSnapshot) {
       hasCachedSnapshot = false;
       void prSession.reloadBadges();
+      void branchStatusSession.reload();
       return;
     }
     // User filter handlers retire navigation themselves. The fork-point
@@ -1982,6 +1992,15 @@
           </button>
         {/snippet}
 
+        <!-- Branch-status badge (#1081): merged / squashed / stale, keyed by the
+             chip's branch shorthand. Never affects row muting. -->
+        {#snippet statusBadge(name: string)}
+          {@const badge = branchStatusBadge(branchStatusSession.statuses.get(name), branchStatusSession.trunk)}
+          {#if badge}
+            <span class="ref ref-status status-{badge.status}" data-branch-status={badge.status} title={badge.title}>{badge.label}</span>
+          {/if}
+        {/snippet}
+
         {#each visibleRows as { commit, index } (commit.oid)}
           {@const chips = chipsFor(commit.oid)}
           {@const synthetic = commit.oid === UNCOMMITTED}
@@ -2035,6 +2054,7 @@
                         <span class="ref-remote-sub" title="{remote}/{head.name} is at this commit">{remote}</span>
                       {/each}
                     </span>
+                    {@render statusBadge(head.name)}
                     {#if prForHead(head.name)}
                       {@render prBadge(commit, prForHead(head.name)!)}
                     {/if}
@@ -2050,6 +2070,7 @@
                         <path d="M4.5 12.5a3 3 0 0 1-.3-6 4 4 0 0 1 7.8-.9 2.9 2.9 0 0 1-.5 5.9z" />
                       </svg>{remote.name}
                     </span>
+                    {@render statusBadge(remote.name)}
                     {#if prForRemote(remote) && !rowPrNumbers.has(prForRemote(remote)!.number)}
                       {@render prBadge(commit, prForRemote(remote)!)}
                     {/if}
@@ -3691,6 +3712,28 @@
     background: color-mix(in srgb, #f59e0b 15%, transparent);
     color: #d97706;
     border-color: color-mix(in srgb, #f59e0b 40%, transparent);
+  }
+
+  /* Branch-status badges (#1081): small outlined pills beside the chip. */
+  .ref-status {
+    font-weight: 500;
+    background: transparent;
+  }
+
+  .ref-status.status-merged {
+    color: #a371f7;
+    border-color: color-mix(in srgb, #a371f7 45%, transparent);
+  }
+
+  .ref-status.status-squash_merged {
+    color: #8957e5;
+    border-color: color-mix(in srgb, #8957e5 45%, transparent);
+    border-style: dashed;
+  }
+
+  .ref-status.status-stale {
+    color: var(--text-secondary, #8b949e);
+    border-color: color-mix(in srgb, #8b949e 45%, transparent);
   }
 
   /* Open GitHub PR badge (#448): GitHub's PR purple. A <button>, not a

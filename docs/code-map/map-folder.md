@@ -122,6 +122,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `src/lib/state/git-graph-detail.svelte.ts` — Selected commit/comparison files, mutation refresh tokens and inline diff ownership.
 - `git-pr-mutations.svelte.ts` — repository-scoped pending PR mutation ownership and retained outcomes across graph mounts; uncertain retries require acknowledgement.
 - `git-pr-session.svelte.ts` — mounted GitHub badge, PR detail and CI log requests; immutable snapshots, invocation identities and disposal.
+- `git-branch-status.svelte.ts` — newest-reload-only owner of the graph's trunk-aware branch-status badges (#1081); disposal and superseded reloads cannot publish.
 - `git-graph-branches.svelte.ts` — lazy branch/author metadata and cancellable merge-base jump owner; known-coverage fallback and query/popover request coordination.
 
 - `window-startup.ts` — window-owned settings/theme/plugin startup; disposal prevents late settings from activating plugins.
@@ -411,6 +412,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `shortcut-recording.ts` — pure two-step recording transitions and shared chord deadline.
 - `git.ts` — git status letter/indicator conversion.
 - `git-graph.ts` — commit-graph lane layout (#58/#179).
+- `git-branch-status.ts` — branch-status badge presenter (merged / squashed / stale; `unknown` shows none) and status index (#1081).
 - `git-graph-comparison.ts` — pure normal-detail/comparison transitions, chronological pair ordering, and stale-request generation checks (#512).
 - `git-graph-undo.ts` — immutable undo snapshot union, pure bounded per-repository ledger, confirmation labels, and structural action comparison (#513).
 - `git-network-operation.ts` — shared IPC channel payload for crossing a Git network operation from cancellable network work into a protected local mutation (#528).
@@ -562,7 +564,9 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `plugin_job.rs` — shared plugin-job scaffolding: job-id alloc, output-path validation, timeout wrapper, complete/error events.
 - `git.rs` — SCM panel git backend: status/stage/commit/diff (#53). Status/diff delegate to native `wsl.exe git` (porcelain=v2 parser) for `\\wsl.localhost\…` repos, falling back to libgit2 (#398).
 - `git_log.rs` — git history / commit-graph backend (#57).
+- `git_branch_status.rs` — `git_branch_statuses`: trunk-aware merged / squash-merged (patch-id) / stale classification with bounded searches (#1081).
 - `git_avatar.rs` — privacy-gated GitHub noreply/opt-in Gravatar resolution, bounded image validation, negative results, and restart-safe disk cache (#514).
+- `src/lib/api/git-branch-status.ts` — lazy graph-only IPC wrapper for `git_branch_statuses` (#1081); kept out of the startup `git-log.ts` chunk.
 - `src/lib/api/git-avatar.ts` — mock-aware IPC wrapper for best-effort author-avatar data (#514).
 - `git_watch.rs` — lazy Git observation adapter using shared renderer ownership; native factory and process shutdown.
 - `file_history/mod.rs` — application-owned history service, renderer channels and supervised native inverse execution.
@@ -703,6 +707,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `src-tauri/test_support/renderer_reload.rs` — renderer-loss reload budget, parked-window retirement decision and recovery URL contracts (#942); recorded-effect tests of the shared recovery path: reload after a crash, none after API teardown, logged exhaustion, WebKitGTK reason classification (#1138).
 - `src-tauri/test_support/renderer_recovery.rs` — Linux controller retaining one GTK WebView across real renderer crashes; never reloads it, but waits for the product's logged reload of the committed document, then requires an API teardown to stay unreloaded; bounded ownership/recovery/navigation assertions and native snapshot.
 - `src-tauri/test_support/file_history_gate.rs` — opt-in bounded barrier after real native forward or inverse admission; an external runner releases work independently of its invoking renderer.
+- `src-tauri/test_support/git_branch_status_tests.rs` — temp-repo `classify_branches` tests (merge, squash, partial squash, stale, protected trunk, bounded searches) (#1081).
 - `src-tauri/test_support/git_observation_probe.rs` — feature-only backend observation timestamps and paths attached to actual Git events for causal recovery acceptance.
 - `src-tauri/test_support/file_recovery_native.rs` — feature-only abandoned replacement fixture through the production executor; native registration IDs correlate actual IPC Channel send/drop receipts across renderer lifetimes.
 - `src-tauri/test_support/file_recovery_crash.rs` — native receipt checks before retained-WebView reload after actual renderer death, followed by stale-session rejection and fresh durable-generation delivery.

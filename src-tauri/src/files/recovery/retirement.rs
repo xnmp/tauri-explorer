@@ -517,7 +517,7 @@ fn holds(endpoint: &Endpoint) -> Result<bool, AppError> {
     };
     unchanged(&Directory::open(parent_path)?)?;
     Ok(entry.map_or(endpoint.versions.is_empty(), |entry| {
-        endpoint.versions.contains(&entry)
+        endpoint.user_owned || endpoint.versions.contains(&entry)
     }))
 }
 

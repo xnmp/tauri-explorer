@@ -6,7 +6,7 @@ use super::super::{
     replacement_restoration::RestorationStep,
 };
 use super::{
-    answer, diagnostic, item, reply, retained, Coordinator, DurableOperation, Eligibility,
+    answer, diagnostic, item, reply, retained, Coordinator, DurableOperation, Eligibility, Exits,
     RecoveryChoice, RecoverySnapshot, Request, Retirement,
 };
 use crate::error::AppError;
@@ -23,7 +23,7 @@ pub(super) fn reconcile(
     // phase with no supported restoration needs no user-volume probes, but
     // its retained artifacts may still be explicitly discardable.
     if !restorable {
-        return retained(coordinator, operation, false, describe);
+        return retained(coordinator, operation, Exits::default(), describe);
     }
     let intent = operation.intent().clone();
     let generation = operation.generation();

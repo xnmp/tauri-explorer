@@ -130,13 +130,16 @@ gatedDescribe("Durable move retirement", [
     });
   }
 
-  it("preserves both recovery roots and a changed publication when reclaiming space", async () => {
+  it("reclaim keeps a changed publication, and the Discard it offers keeps the user's edit (#795)", async () => {
     const fixture = await moveFixture("changed", false);
     fs.writeFileSync(fixture.target, "external changed publication\n");
     await openRecovery(fixture.id);
     const before = await inventory();
-    await expect($(".recovery-item .status")).toHaveText(/attention/i);
-    await expect($(`[data-recovery-discard="${fixture.id}"]`)).not.toExist();
+    // The edited destination is user data: Undo is not offered, Discard is.
+    await expect($(".recovery-item .status")).toHaveText(/retained/i);
+    await expect($(".recovery-item")).toHaveText(expect.stringContaining("changed after the move"));
+    await expect($(".recovery-item").$("button=Restore")).not.toExist();
+    await expect($(`[data-recovery-discard="${fixture.id}"]`)).toExist();
     await $("[data-recovery-reclaim]").click();
     // This previously unmeasured record must be measured by the actual reclaim
     // request. An idle DOM alone could still describe the pre-click render.
@@ -144,19 +147,25 @@ gatedDescribe("Durable move retirement", [
       const current = await inventory();
       return BigInt(current.revision) > BigInt(before.revision)
         && current.items.some(item => item.id === fixture.id && item.retainedBytes !== null);
-    }, { timeoutMsg: "Reclaim did not publish measurement of the unresolved move" });
+    }, { timeoutMsg: "Reclaim did not publish measurement of the changed move" });
     await $(".recovery-dialog[aria-busy='false']").waitForExist();
     const after = await inventory();
-    assert.ok(after.items.some(item => item.id === fixture.id), "unresolved record must survive reclaim");
+    assert.ok(after.items.some(item => item.id === fixture.id), "only an explicit discard may remove a parked original");
     assert.equal(after.storage.records, before.storage.records);
     for (const root of fixture.retained) assert.ok(fs.existsSync(root));
     assert.equal(fs.readFileSync(path.join(roots(fixture.sourceDirectory)[0], "parked"), "utf8"), fixture.published);
     assert.equal(fs.readFileSync(path.join(roots(fixture.destination)[0], "original"), "utf8"), fixture.original);
     assert.equal(fs.readFileSync(fixture.target, "utf8"), "external changed publication\n");
     await $(`[data-recovery-inspect="${fixture.id}"]`).click();
-    await expect($(".recovery-item .status")).toHaveText(/attention/i);
-    await expect($(`[data-recovery-discard="${fixture.id}"]`)).not.toExist();
-    await browser.saveScreenshot(`${proof}/native-unresolved-preserved.png`);
+    await $(`[data-recovery-discard="${fixture.id}"]`).waitForDisplayed();
+    await browser.saveScreenshot(`${proof}/native-changed-publication-offers-discard.png`);
+    await $(`[data-recovery-discard="${fixture.id}"]`).click();
+    await $(".discard-confirmation .danger").click();
+    await browser.waitUntil(async () => !(await inventory()).items.some(item => item.id === fixture.id),
+      { timeoutMsg: "Discard of the changed move did not end its record" });
+    for (const root of fixture.retained) assert.ok(!fs.existsSync(root));
+    assert.equal(fs.readFileSync(fixture.target, "utf8"), "external changed publication\n");
+    assert.ok(!fs.existsSync(fixture.source));
     await closeRecovery();
   });
 });

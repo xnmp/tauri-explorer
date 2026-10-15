@@ -172,7 +172,9 @@ fn an_interrupted_decision_resumed_after_an_endpoint_change_withdraws_itself() {
         .coordinator
         .try_claim_history(&f.id, revision, HistoryPosition::Published)
         .is_err());
-    fs::write(&f.target, b"edited while the decision was pending").unwrap();
+    // Deleted, so the parked source is the only copy again; an edited
+    // destination would be kept and the decision would finish (#795).
+    fs::remove_file(&f.target).unwrap();
     // The explicit retry proves the change and returns the decision.
     let snapshot = service::inspect(&f.coordinator, &f.id).unwrap();
     let reply = service::resolve(

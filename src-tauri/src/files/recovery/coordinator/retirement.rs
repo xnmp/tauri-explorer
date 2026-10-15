@@ -33,6 +33,18 @@ impl DurableOperation {
         )
     }
 
+    /// Forget a move record that native observation found nothing else can
+    /// end: its Restore was refused before any effect and, once settled, its
+    /// discard is preserved (#795). The caller holds this owner across that
+    /// observation; the journal check here only fences retiring records,
+    /// which keep `forget_retirement`. Nothing on disk is touched.
+    pub(in crate::files::recovery) fn forget_stranded(self) -> Result<(), AppError> {
+        self.retire_where(
+            State::strandable,
+            "Only a record that nothing else can resolve can be forgotten",
+        )
+    }
+
     fn retire_where(
         self,
         allowed: fn(&State) -> bool,

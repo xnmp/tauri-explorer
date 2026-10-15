@@ -80,6 +80,8 @@ fn restoration_reclaims_only_redundant_regular_payloads_automatically() {
 
 #[test]
 fn edited_endpoints_foreign_children_and_missing_roots_preserve_everything() {
+    // An edited destination is user data a discard keeps (#795, see
+    // `edited_destination`); a missing one still preserves everything.
     for attack in [
         "target",
         "source",
@@ -90,7 +92,7 @@ fn edited_endpoints_foreign_children_and_missing_roots_preserve_everything() {
     ] {
         let f = Fixture::new(true, true, false);
         match attack {
-            "target" => fs::write(&f.target, b"user edited target").unwrap(),
+            "target" => fs::remove_file(&f.target).unwrap(),
             "source" => fs::write(&f.source, b"new source entry").unwrap(),
             "foreign" => fs::write(f.roots[0].join("unexpected"), b"foreign bytes").unwrap(),
             "manifest" => fs::write(f.roots[0].join("manifest.intent"), b"corrupt").unwrap(),
@@ -202,7 +204,8 @@ fn endpoint_changes_after_journal_intent_still_preserve_retained_bytes() {
     let f = Fixture::new(true, true, false);
     let result = f.retirement().retire_with(|label| {
         if label == "source-intent" {
-            fs::write(&f.target, b"changed after classification")?;
+            // A deleted destination leaves the parked source its only copy.
+            fs::remove_file(&f.target)?;
         }
         Ok(())
     });
@@ -347,7 +350,7 @@ fn preserved_retirement_accounts_for_all_surviving_bytes() {
     for boundary in ["source-intent", "source-completed"] {
         let f = Fixture::new(true, true, false);
         crash_at(&f, boundary, || {
-            fs::write(&f.target, b"changed during cleanup").unwrap();
+            fs::remove_file(&f.target).unwrap();
         });
         let usage = retirement::enforce(&f.coordinator).unwrap();
         assert_eq!(usage.records, 1);

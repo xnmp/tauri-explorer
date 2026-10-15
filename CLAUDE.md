@@ -224,6 +224,8 @@ The public report relay under `website/api/` uses `GITHUB_ISSUE_TOKEN` only for 
 **E2E tests assert outcomes**, not existence — a QuickOpen test verifies results appear for a query, not that the modal opened.
 
 Markdown preview content is inserted with `{@html}` in `PreviewPane.svelte`, so its element styles require `:global(...)`; keep heading and link colours on the existing theme variables and verify their computed colours in the browser.
+Fullscreen PDF horizontal arrows use `PdfPreview`'s page selection before zoomed pan or sibling navigation. Interactive-target guards belong in its shared key handler: excluding links only from window capture still lets their events bubble into the viewport handler (#1010).
+Settings browser tests must target named controls (for example `.color-theme-select`), not `select.first()`: async language-model settings insert earlier selects, changing the positional locator's identity between focus and assertion (#1010).
 Markdown frontmatter is parsed in `domain/markdown.ts` before Marked renders the document body. Only non-empty YAML maps made of scalar values or scalar arrays become the preview's properties panel; malformed, empty, or nested metadata falls back to ordinary Markdown rendering.
 
 The Linux FileChooser portal is selected through the user's

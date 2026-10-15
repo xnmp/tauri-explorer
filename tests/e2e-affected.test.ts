@@ -42,6 +42,8 @@ describe("classify", () => {
         "packaging/tauri-explorer.portal",
         "e2e-load/tab-fanout.spec.ts",
         "playwright.load.config.ts",
+        "e2e-sweep/perf-sweep.spec.ts",
+        "playwright.sweep.config.ts",
         "PKGBUILD",
         "flake.nix",
         ".vscode/settings.json",

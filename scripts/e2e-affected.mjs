@@ -32,8 +32,8 @@
 //   5. Files the browser suite never executes -> ignored: src-tauri/ (the
 //      suite runs against mock-invoke, never Rust; e2e-tauri covers the real
 //      backend), tests/, evidence/, docs, screenshots, scripts, .claude,
-//      e2e-tauri, .github, packaging, e2e-load (its own config), Nix and
-//      editor files.
+//      e2e-tauri, .github, packaging, e2e-load and e2e-sweep (their own
+//      configs), Nix and editor files.
 //   6. Changes to CI selection itself (ci.yml, e2e-shards.mjs,
 //      e2e-affected.mjs, map-feature.md) -> ALL.
 //   7. Anything else (an unknown top-level file)  -> ALL.
@@ -241,8 +241,10 @@ export function classify(changed, map, specs, devServerInputs = new Set(), { str
     f.startsWith(".github/") ||
     f.startsWith("packaging/") ||
     f.startsWith("e2e-load/") ||
+    f.startsWith("e2e-sweep/") ||
     f.startsWith(".vscode/") ||
     f === "playwright.load.config.ts" ||
+    f === "playwright.sweep.config.ts" ||
     f === "PKGBUILD" ||
     /^flake\.(nix|lock)$/.test(f) ||
     /(^|\/)(README|CHANGELOG)\.md$/i.test(f) ||

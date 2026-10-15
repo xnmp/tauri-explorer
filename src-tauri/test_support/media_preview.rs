@@ -859,3 +859,230 @@ async fn retirement_closes_a_genuinely_stalled_socket_and_releases_stream_admiss
         );
     }
 }
+
+// Companion audio (#1171): the production extractor runs a scripted ffmpeg so
+// decode success, fallback, absence and cancellation are deterministic.
+#[cfg(unix)]
+mod companion_audio {
+    use super::super::audio::{lists_audio_stream, sweep, Extractor};
+    use super::*;
+    use std::os::unix::fs::PermissionsExt;
+
+    /// Probe lists `streams`; an encode runs `encode` with `$out` as its output path.
+    fn fake_ffmpeg(root: &std::path::Path, streams: &str, encode: &str) -> std::path::PathBuf {
+        let script = root.join("ffmpeg");
+        fs::write(
+            &script,
+            format!(
+                "#!/bin/sh\necho \"$*\" >> \"{calls}\"\nfor a; do out=$a; done\ncase \" $* \" in\n  *\" -map \"*) {encode} ;;\n  *) printf '%s\\n' \"Input #0, mov,mp4, from 'clip.mp4':\" {streams} >&2; exit 1 ;;\nesac\n",
+                calls = root.join("calls").display(),
+            ),
+        )
+        .unwrap();
+        fs::set_permissions(&script, fs::Permissions::from_mode(0o755)).unwrap();
+        script
+    }
+    const VIDEO_AND_AAC: &str =
+        "'  Stream #0:0[0x1](und): Video: h264 (High), yuv420p, 1920x1080' '  Stream #0:1[0x2](und): Audio: aac (LC) (mp4a / 0x6134706D), 48000 Hz, stereo'";
+    const VIDEO_ONLY: &str = "'  Stream #0:0[0x1](und): Video: h264 (High), yuv420p, 1920x1080'";
+
+    struct Audio {
+        fixture: Fixture,
+        directory: std::path::PathBuf,
+        ffmpeg: std::path::PathBuf,
+        token: String,
+    }
+    impl Audio {
+        async fn new(streams: &str, encode: &str) -> Self {
+            let fixture = Fixture::new(b"video bytes").await;
+            let ffmpeg = fake_ffmpeg(fixture.root.path(), streams, encode);
+            let directory = fixture.root.path().join("derived");
+            let token = fixture.server.service.begin(fixture.owner.clone()).unwrap();
+            Self {
+                fixture,
+                directory,
+                ffmpeg,
+                token,
+            }
+        }
+        fn extractor(&self) -> Extractor {
+            Extractor {
+                ffmpeg: self.ffmpeg.clone(),
+                directory: self.directory.clone(),
+                stem: self.token.clone(),
+            }
+        }
+        async fn prepare(&self, allowed: bool) -> Result<bool, crate::error::AppError> {
+            let path = self
+                .fixture
+                .root
+                .path()
+                .join("clip.mp4")
+                .to_string_lossy()
+                .into_owned();
+            self.fixture
+                .server
+                .service
+                .prepare_audio(
+                    &self.token,
+                    &self.fixture.owner,
+                    path,
+                    move |_| allowed,
+                    self.extractor(),
+                )
+                .await
+        }
+        async fn get(&self) -> Reply {
+            request(&self.fixture.server, &self.token, "GET", "").await
+        }
+        fn derived(&self) -> Vec<String> {
+            fs::read_dir(&self.directory)
+                .map(|entries| {
+                    entries
+                        .flatten()
+                        .map(|entry| entry.file_name().to_string_lossy().into_owned())
+                        .collect()
+                })
+                .unwrap_or_default()
+        }
+        fn calls(&self) -> String {
+            fs::read_to_string(self.fixture.root.path().join("calls")).unwrap_or_default()
+        }
+    }
+
+    #[tokio::test]
+    async fn decoded_audio_is_served_as_its_own_capability_and_deleted_on_release() {
+        let audio = Audio::new(VIDEO_AND_AAC, "printf 'OPUS-AUDIO' > \"$out\"").await;
+        assert!(audio.prepare(true).await.unwrap());
+        let reply = audio.get().await;
+        assert_eq!(reply.status, 200, "{reply:?}");
+        assert_eq!(reply.body, b"OPUS-AUDIO");
+        assert_eq!(
+            reply.headers.get("content-type").map(String::as_str),
+            Some("audio/webm")
+        );
+        let calls = audio.calls();
+        assert!(
+            calls.contains("-map 0:a:0 -vn -sn -dn -ac 2 -c:a libopus"),
+            "{calls}"
+        );
+        assert_eq!(audio.derived(), [format!("{}.webm", audio.token)]);
+        // The source video itself is never written.
+        assert_eq!(
+            fs::read(audio.fixture.root.path().join("clip.mp4")).unwrap(),
+            b"video bytes"
+        );
+
+        audio
+            .fixture
+            .server
+            .service
+            .release(&audio.token, &audio.fixture.owner);
+        assert_eq!(audio.get().await.status, 404);
+        assert!(audio.derived().is_empty(), "{:?}", audio.derived());
+    }
+
+    #[tokio::test]
+    async fn an_ffmpeg_without_libopus_falls_back_to_flac() {
+        let audio = Audio::new(
+            VIDEO_AND_AAC,
+            "case \"$*\" in *libopus*) echo 'Unknown encoder libopus' >&2; printf partial > \"$out\"; exit 1 ;; esac; printf 'FLAC-AUDIO' > \"$out\"",
+        ).await;
+        assert!(audio.prepare(true).await.unwrap());
+        let reply = audio.get().await;
+        assert_eq!(reply.body, b"FLAC-AUDIO");
+        assert_eq!(
+            reply.headers.get("content-type").map(String::as_str),
+            Some("audio/flac")
+        );
+        assert_eq!(audio.derived(), [format!("{}.flac", audio.token)]);
+    }
+
+    #[tokio::test]
+    async fn a_video_without_audio_publishes_nothing_and_never_decodes() {
+        let audio = Audio::new(VIDEO_ONLY, "printf 'X' > \"$out\"").await;
+        assert!(!audio.prepare(true).await.unwrap());
+        assert_eq!(audio.get().await.status, 404);
+        assert!(!audio.calls().contains("-map"), "{}", audio.calls());
+        assert!(audio.derived().is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_failed_decode_reports_an_error_and_leaves_no_file() {
+        let audio = Audio::new(
+            VIDEO_AND_AAC,
+            "printf partial > \"$out\"; echo 'Invalid data found' >&2; exit 1",
+        )
+        .await;
+        let error = audio.prepare(true).await.unwrap_err().to_string();
+        assert!(error.contains("Invalid data found"), "{error}");
+        assert_eq!(audio.get().await.status, 404);
+        assert!(audio.derived().is_empty(), "{:?}", audio.derived());
+    }
+
+    #[tokio::test]
+    async fn denied_scope_never_runs_ffmpeg() {
+        let audio = Audio::new(VIDEO_AND_AAC, "printf 'X' > \"$out\"").await;
+        assert!(audio.prepare(false).await.is_err());
+        assert_eq!(audio.calls(), "");
+        assert_eq!(audio.get().await.status, 404);
+    }
+
+    #[tokio::test]
+    async fn release_during_decode_kills_ffmpeg_and_removes_partial_output() {
+        let audio =
+            Arc::new(Audio::new(VIDEO_AND_AAC, "printf partial > \"$out\"; sleep 30").await);
+        let running = audio.clone();
+        let prepared = tokio::spawn(async move { running.prepare(true).await });
+        let started = std::time::Instant::now();
+        while audio.derived().is_empty() {
+            assert!(
+                started.elapsed() < Duration::from_secs(10),
+                "decode never started"
+            );
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        audio
+            .fixture
+            .server
+            .service
+            .release(&audio.token, &audio.fixture.owner);
+        let result = tokio::time::timeout(Duration::from_secs(10), prepared)
+            .await
+            .expect("release did not interrupt the decode")
+            .unwrap();
+        assert!(result.is_err());
+        assert!(audio.derived().is_empty(), "{:?}", audio.derived());
+        assert!(started.elapsed() < Duration::from_secs(20));
+    }
+
+    #[test]
+    fn sweep_removes_old_leftovers_but_keeps_this_sessions_long_open_audio() {
+        let root = tempfile::tempdir().unwrap();
+        let day = Duration::from_secs(24 * 60 * 60);
+        let start = SystemTime::now() - 3 * day;
+        let write = |name: &str, modified: SystemTime| {
+            let file = fs::File::create(root.path().join(name)).unwrap();
+            file.set_modified(modified).unwrap();
+        };
+        write("crashed-session.webm", start - Duration::from_secs(60));
+        write("open-for-two-days.webm", start + Duration::from_secs(60));
+        sweep(root.path(), start, start + 2 * day).unwrap();
+        let mut left: Vec<_> = fs::read_dir(root.path())
+            .unwrap()
+            .flatten()
+            .map(|entry| entry.file_name().to_string_lossy().into_owned())
+            .collect();
+        left.sort();
+        // Only files older than a day AND from before this session are swept.
+        assert_eq!(left, ["open-for-two-days.webm"]);
+    }
+
+    #[test]
+    fn ffmpeg_stream_listing_distinguishes_audio_from_video_only_inputs() {
+        let with_audio = "Input #0, matroska,webm, from 'a.mkv':\n  Metadata:\n    title: Audio: not a stream\n  Duration: 00:00:20.02, start: 0.000000, bitrate: 431 kb/s\n  Stream #0:0: Video: vp8, yuv420p(tv, progressive), 320x240, SAR 1:1 DAR 4:3, 30 fps\n  Stream #0:1: Audio: aac (LC), 48000 Hz, mono, fltp (default)\nAt least one output file must be specified\n";
+        assert!(lists_audio_stream(with_audio));
+        let video_only = "Input #0, mov,mp4,m4a,3gp,3g2,mj2, from 'silent.mp4':\n  Metadata:\n    comment     : Audio: none\n  Stream #0:0[0x1](und): Video: h264 (High) (avc1 / 0x31637661), yuv420p, 320x240, 30 fps\n";
+        assert!(!lists_audio_stream(video_only));
+    }
+}

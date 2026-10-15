@@ -22,6 +22,7 @@ import { fileViewRegistry } from "$lib/plugins/file-view-registry.svelte";
 import { resolveFileCursor } from "$lib/domain/file-list-navigation";
 import { clampNumericSetting } from "$lib/domain/settings-numbers";
 import { SvelteSet } from "svelte/reactivity";
+import { untrack } from "svelte";
 import { toastStore } from "./toast.svelte";
 import { basename, toNativeSeparators } from "$lib/domain/path";
 import { isWindows } from "$lib/domain/platform";
@@ -566,6 +567,23 @@ function createExplorerState(seed?: ExplorerSeed) {
     return entries;
   }
 
+  // A marquee drag replaces the selection on every frame. Consumers that do
+  // real work per selection (the preview pane loads the file) read the settled
+  // selection instead: the one the gesture started from, until it ends (#1169).
+  let gestureSelection = $state.raw<FileEntry[] | null>(null);
+
+  function beginSelectionGesture(): void {
+    gestureSelection = untrack(getSelectedEntries);
+  }
+
+  function endSelectionGesture(): void {
+    gestureSelection = null;
+  }
+
+  function getSettledSelectedEntries(): FileEntry[] {
+    return gestureSelection ?? getSelectedEntries();
+  }
+
   function selectByIndices(indices: number[], addToSelection: boolean = false) {
     const nextSet = selection.selectByIndices(
       displayEntries,
@@ -964,6 +982,10 @@ function createExplorerState(seed?: ExplorerSeed) {
     clearSelection,
     isSelected,
     getSelectedEntries,
+    getSettledSelectedEntries,
+    beginSelectionGesture,
+    endSelectionGesture,
+    get selectionGestureActive() { return gestureSelection !== null; },
     captureMutation,
     selectByIndices,
     selectPaths,

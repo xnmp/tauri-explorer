@@ -43,7 +43,8 @@ export const BUILT_IN_THEMES = [
 /** Wait for the file list to be populated with entry items */
 export async function waitForEntries(page: Page) {
   await page.waitForSelector(".file-list");
-  await page.locator(".entry-item").first().waitFor({ timeout: 5000 });
+  // Hidden retained tabs (#1173) keep their rows mounted.
+  await page.locator(".entry-item:visible").first().waitFor({ timeout: 5000 });
 }
 
 /** Pane activation is manager state; `.active` only paints the split-pane border. */
@@ -77,15 +78,16 @@ export async function switchViewMode(page: Page, mode: ViewMode) {
 
   // Clear selection first — view options only appear in background context menu
   await page.keyboard.press("Escape");
-  await page.locator(".entry-item.selected").first().waitFor({ state: "detached", timeout: 2000 }).catch(() => {});
+  await page.locator(".entry-item.selected:visible").first().waitFor({ state: "detached", timeout: 2000 }).catch(() => {});
 
   // Right-click on genuinely empty space: just below the LAST entry's box.
   // A fixed midpoint breaks whenever the mock listing grows enough for rows
   // to reach it — the click then lands on an entry and opens the entry menu,
   // which has no View options (see #474; 173 list/tiles tests failed this way).
-  const content = page.locator(".file-list .content").first();
+  // `:visible` throughout: recently active tabs stay mounted but hidden (#1173).
+  const content = page.locator(".file-list .content:visible").first();
   const box = await content.boundingBox();
-  const lastEntry = page.locator(".entry-item").last();
+  const lastEntry = page.locator(".entry-item:visible").last();
   const lastBox = await lastEntry.boundingBox();
   let clickY = box ? Math.round(box.height / 2) : 300;
   if (box && lastBox) {
@@ -110,8 +112,8 @@ export async function switchViewMode(page: Page, mode: ViewMode) {
     list: ".list-view",
     tiles: ".tiles-view",
   };
-  await page.locator(viewSelector[mode]).waitFor({ timeout: 3000 });
-  await page.locator(".entry-item").first().waitFor({ timeout: 3000 });
+  await page.locator(`${viewSelector[mode]}:visible`).waitFor({ timeout: 3000 });
+  await page.locator(".entry-item:visible").first().waitFor({ timeout: 3000 });
 }
 
 /**
@@ -191,7 +193,8 @@ export async function applySettingsAndReload(
 /** Focus the last sequential focus target before the rows in DOM order. */
 export async function focusBeforeFileList(page: Page): Promise<void> {
   const focused = await page.evaluate(() => {
-    const rowViewport = document.querySelector(".file-list .file-rows");
+    // Recently active tabs stay mounted but hidden (#1173).
+    const rowViewport = document.querySelector(".pane-tree:not(.retained) .file-list .file-rows");
     if (!rowViewport) return null;
     const candidates = [...document.querySelectorAll<HTMLElement>(
       'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',

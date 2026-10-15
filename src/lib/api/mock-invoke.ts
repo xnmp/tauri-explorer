@@ -1638,6 +1638,14 @@ const mockCommands: Record<string, CommandHandler> = {
     if (!mockVideoCapabilities.has(token)) throw new Error("Video preview was released");
     return url;
   },
+  prepare_video_audio_preview: async (args) => {
+    const token = String(args.token);
+    if (!mockVideoCapabilities.has(token)) throw new Error("Video preview was released");
+    const url = await (getMockControl().videoAudioPreview?.(String(args.path)) ?? null);
+    if (!mockVideoCapabilities.has(token)) throw new Error("Video preview was released");
+    if (url === null) mockVideoCapabilities.delete(token);
+    return url;
+  },
   release_video_preview: (args) => {
     const token = String(args.token);
     if (mockVideoCapabilities.delete(token)) (getMockControl().releasedVideoPreviews ??= []).push(token);
@@ -2145,6 +2153,10 @@ if (typeof window !== "undefined") {
   // Mock: pretend 'hotfix' is 2 behind its remote so the pull offer shows.
   git_branch_behind_upstream: (args: Record<string, unknown>) =>
     args.name === "hotfix" ? 2 : args.name === "main" ? 0 : null,
+  // Branch-status badges (#1081): none unless a spec sets
+  // `__mockControl.branchStatuses`. Classification itself is proven by the
+  // Rust temp-repo tests in git_branch_status.rs.
+  git_branch_statuses: () => getMockControl().branchStatuses ?? { trunk: "main", statuses: [] },
   git_branch_authors: () => [
     { name: "main", author: "Alice Coder", remote: false },
     { name: "hotfix", author: "Alice Coder", remote: false },

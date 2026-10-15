@@ -24,6 +24,7 @@ function fixture(terminalFocus = false, ancestors: readonly string[] = [], owner
   const executeCommand = vi.fn(async (_id: string) => {});
   const available = new Set<string>(["view.toggleTerminal", "general.filterCurrentDir", "general.openJobsPanel", "general.openSettings", "view.toggleDualPane"]);
   const affectedPanes = new Map<string, () => readonly string[]>();
+  const whens = new Map<string, () => boolean>();
   const commandScopes = new Map<string, "pane" | "window">([["view.toggleTerminal", "pane"], ["general.filterCurrentDir", "pane"], ["general.openJobsPanel", "window"], ["general.openSettings", "window"], ["view.toggleDualPane", "pane"]]);
   let activePaneId = "a";
   const dialogs = {
@@ -40,7 +41,7 @@ function fixture(terminalFocus = false, ancestors: readonly string[] = [], owner
   };
   const stop = startWindowKeyboard(target, {
     bindings: keybindingsStore,
-    getCommand: (id) => available.has(id) ? { scope: commandScopes.get(id)!, paneIds: affectedPanes.get(id), allowInDialogInput: id === "view.switchPane" || id.startsWith("pane.focus") || /tabs\.(next|prev)Tab/.test(id) } : undefined,
+    getCommand: (id) => available.has(id) ? { scope: commandScopes.get(id)!, paneIds: affectedPanes.get(id), allowInDialogInput: id === "view.switchPane" || id.startsWith("pane.focus") || /tabs\.(next|prev)Tab/.test(id), when: whens.get(id) } : undefined,
     executeCommand,
     dialogs, terminal,
     toggleDualPane: vi.fn(),
@@ -57,7 +58,7 @@ function fixture(terminalFocus = false, ancestors: readonly string[] = [], owner
     target.dispatchEvent(event);
     return event;
   };
-  return { target, executeCommand, bind, press, stop, available, dialogs, terminal, explorer,
+  return { target, executeCommand, bind, press, stop, available, dialogs, terminal, explorer, whens,
     setAffectedPanes(id: string, panes: readonly string[]) { affectedPanes.set(id, () => panes); },
     setActivePane(id: string) { activePaneId = id; },
   };
@@ -192,6 +193,21 @@ describe("window keyboard ownership", () => {
     expect(f.dialogs.openSettings).not.toHaveBeenCalled();
     expect(f.explorer.openFilter).not.toHaveBeenCalled();
     expect(f.terminal.toggle).not.toHaveBeenCalled();
+  });
+
+  it("an unrelated key never evaluates chord availability guards (#1174)", () => {
+    // `when` guards such as selection checks scan the whole listing; running
+    // them for every chord on every arrow key made large folders lag.
+    const f = fixture();
+    const when = vi.fn(() => true);
+    f.bind("navigation.goUp", "Ctrl+K U");
+    f.whens.set("navigation.goUp", when);
+    f.press("ArrowDown");
+    f.press("Tab", { ctrlKey: true });
+    expect(when).not.toHaveBeenCalled();
+    f.press("k", { ctrlKey: true });
+    f.press("u");
+    expect(f.executeCommand).toHaveBeenCalledExactlyOnceWith("navigation.goUp");
   });
 
   it("a grid widget that handled an arrow key keeps it from window commands", () => {

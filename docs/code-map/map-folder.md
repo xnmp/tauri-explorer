@@ -58,7 +58,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `GitStatusBadge.svelte` — per-entry git status letter/color decoration.
 - `ExplorerPane.svelte` — one pane: navigation bar + FileList + preview; owns pane-scoped context.
 - `PanelResizeHandle.svelte` — shared focusable Sidebar/SCM/Miller separator with pointer capture wiring and keyboard range semantics.
-- `PaneContainer.svelte` — owns the scrollable active workspace (CSS-filled canvas with a script minimum, #1061) and one divider input lifetime.
+- `PaneContainer.svelte` — owns the scrollable active workspace (CSS-filled canvas with a script minimum, #1061) and one divider input lifetime; keeps recently active tabs mounted as hidden, inert `.pane-tree.retained` layers (#1173).
 - `PaneLayoutView.svelte` — declarative split-tree renderer: saved ratios flex over CSS minima (#1061), measured geometry for focusable separators (#228).
 - `NavigationBar.svelte` — per-pane back/fwd/up + breadcrumb strip + address bar.
 - `NavigationHistoryMenu.svelte` — full back/forward history dropdown.
@@ -122,6 +122,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `src/lib/state/git-graph-detail.svelte.ts` — Selected commit/comparison files, mutation refresh tokens and inline diff ownership.
 - `git-pr-mutations.svelte.ts` — repository-scoped pending PR mutation ownership and retained outcomes across graph mounts; uncertain retries require acknowledgement.
 - `git-pr-session.svelte.ts` — mounted GitHub badge, PR detail and CI log requests; immutable snapshots, invocation identities and disposal.
+- `git-branch-status.svelte.ts` — newest-reload-only owner of the graph's trunk-aware branch-status badges (#1081); disposal and superseded reloads cannot publish.
 - `git-graph-branches.svelte.ts` — lazy branch/author metadata and cancellable merge-base jump owner; known-coverage fallback and query/popover request coordination.
 
 - `window-startup.ts` — window-owned settings/theme/plugin startup; disposal prevents late settings from activating plugins.
@@ -415,6 +416,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `shortcut-recording.ts` — pure two-step recording transitions and shared chord deadline.
 - `git.ts` — git status letter/indicator conversion.
 - `git-graph.ts` — commit-graph lane layout (#58/#179).
+- `git-branch-status.ts` — branch-status badge presenter (merged / squashed / stale; `unknown` shows none) and status index (#1081).
 - `git-graph-comparison.ts` — pure normal-detail/comparison transitions, chronological pair ordering, and stale-request generation checks (#512).
 - `git-graph-undo.ts` — immutable undo snapshot union, pure bounded per-repository ledger, confirmation labels, and structural action comparison (#513).
 - `git-network-operation.ts` — shared IPC channel payload for crossing a Git network operation from cancellable network work into a protected local mutation (#528).
@@ -436,6 +438,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `pane-viewport.ts` — pure descendant minima (`paneMinima` sizes the rendered canvas and split children without measurement), canvas placement, active-pane reveal and keyboard divider policy.
 - `pane-layout.ts` — pane split-tree pure logic (#228).
 - `tab-title.ts` — VS Code-style tab title disambiguation.
+- `retained-tabs.ts` — which recently active tabs keep their pane tree mounted while hidden: stable render order plus LRU eviction (#1173).
 - `titlebar.ts` — title bar / tab strip visibility rules.
 - `config-reload.ts` — pure decision for whether an observed config-file change is an external edit or our own write echoing back (#599).
 - `settings-migration.ts` — versioned one-shot migrations for the persisted settings blob; `migrateSettings` + the append-only ledger (#506).
@@ -566,7 +569,9 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `plugin_job.rs` — shared plugin-job scaffolding: job-id alloc, output-path validation, timeout wrapper, complete/error events.
 - `git.rs` — SCM panel git backend: status/stage/commit/diff (#53). Status/diff delegate to native `wsl.exe git` (porcelain=v2 parser) for `\\wsl.localhost\…` repos, falling back to libgit2 (#398).
 - `git_log.rs` — git history / commit-graph backend (#57).
+- `git_branch_status.rs` — `git_branch_statuses`: trunk-aware merged / squash-merged (patch-id) / stale classification with bounded searches (#1081).
 - `git_avatar.rs` — privacy-gated GitHub noreply/opt-in Gravatar resolution, bounded image validation, negative results, and restart-safe disk cache (#514).
+- `src/lib/api/git-branch-status.ts` — lazy graph-only IPC wrapper for `git_branch_statuses` (#1081); kept out of the startup `git-log.ts` chunk.
 - `src/lib/api/git-avatar.ts` — mock-aware IPC wrapper for best-effort author-avatar data (#514).
 - `git_watch.rs` — lazy Git observation adapter using shared renderer ownership; native factory and process shutdown.
 - `file_history/mod.rs` — application-owned history service, renderer channels and supervised native inverse execution.
@@ -608,7 +613,8 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `src-tauri/src/clipboard/content.rs` — report-screenshot image selection and paste-image-to-file over any `ClipboardReader`.
 - `src-tauri/src/clipboard/file_uri.rs` — `file://` URI list and `x-special/gnome-copied-files` encoding/decoding (Linux; tested everywhere).
 - `src-tauri/src/clipboard/linux/mod.rs` — `wl-clipboard`/`xclip` CLI adapter shared by the Linux backends, and the Linux text/image reader.
-- `src-tauri/src/clipboard/linux/wayland.rs` — Wayland file-list backend: a held `wl-copy --foreground` owner per write proves Cut while it runs (#877), `wl-paste` reads; simulated-compositor lifecycle tests and an ignored real test for a private `cage` session.
+- `src-tauri/src/clipboard/linux/data_control.rs` — the Wayland Cut owner: the app binary's private early mode (`main.rs` → `run_clipboard_owner`) is an `ext`/`wlr` data-control source offering the file list plus the write's private token type; exits when replaced, or with a distinct code when the compositor lacks data-control (#927).
+- `src-tauri/src/clipboard/linux/wayland.rs` — Wayland file-list backend: a held owner per write proves Cut by reading its token back while it runs (#877, #927); without data-control a `wl-copy --foreground` owner serves Copy and Cut is refused; `wl-paste` reads; simulated-compositor lifecycle/race tests and an ignored real test (private `cage`, or the in-process test compositor on a socket).
 - `src-tauri/src/clipboard/linux/x11.rs` — X11 file-list backend: `clipboard-rs` multi-target owner with the private Cut token, `x11rb` selection owner; ignored real-Xvfb coordinator test.
 - `src-tauri/src/clipboard/macos.rs` — macOS backend/reader: lossless Foundation file-URL encoding and ordered `NSPasteboard` item writes with a first-item private token and `changeCount` Cut ownership (#877), `clipboard-rs` file reads, `pbpaste`, `osascript`, and the AppleScript PNG parser; ignored real-pasteboard test run by rust-platforms CI.
 - `docs/reviews/846-macos-clipboard/README.md` — retained hosted native clipboard controls and positive ownership proof, including complete logs and source/dependency hashes.
@@ -627,6 +633,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `src-tauri/test_support/recovery_private_storage.rs` — real filesystem policy outcomes for retained files, hardlinks, retirement and widened permissions.
 - `src-tauri/test_support/native_directory_contract.rs` — cross-platform real filesystem contracts for retained anchors, exclusive creation/rename, removal kinds, existence and invalid-name rejection.
 - `src-tauri/test_support/preview_rendition.rs` — rendition sizing, encoding (alpha → PNG, ICC, 4:4:4, no halos), EXIF orientation, originals kept, cache keying, single decode under concurrency, and the asset scope serving a dot-directory cache (#1054).
+- `src-tauri/test_support/wayland_data_control_compositor.rs` — in-process `wayland-server` compositor with a seat and both data-control protocols; drives the Wayland Cut owner over the real wire protocol and can serve real `wl-clipboard` clients on a socket (#927).
 - `src-tauri/test_support/case_only_rename.rs` — runtime case-sensitivity contracts for rename, move, ordered-session conflicts and physical identity, shared by native-directory and recovery admission tests.
 
 - `mod.rs` — files module root + re-exports; `FileEntry` incl. `is_git_repo` and `metadata_to_entry`'s one-stat-per-directory git-repo-root detection (#463).
@@ -708,6 +715,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `src-tauri/test_support/renderer_reload.rs` — renderer-loss reload budget, parked-window retirement decision and recovery URL contracts (#942); recorded-effect tests of the shared recovery path: reload after a crash, none after API teardown, logged exhaustion, WebKitGTK reason classification (#1138).
 - `src-tauri/test_support/renderer_recovery.rs` — Linux controller retaining one GTK WebView across real renderer crashes; never reloads it, but waits for the product's logged reload of the committed document, then requires an API teardown to stay unreloaded; bounded ownership/recovery/navigation assertions and native snapshot.
 - `src-tauri/test_support/file_history_gate.rs` — opt-in bounded barrier after real native forward or inverse admission; an external runner releases work independently of its invoking renderer.
+- `src-tauri/test_support/git_branch_status_tests.rs` — temp-repo `classify_branches` tests (merge, squash, partial squash, stale, protected trunk, bounded searches) (#1081).
 - `src-tauri/test_support/git_observation_probe.rs` — feature-only backend observation timestamps and paths attached to actual Git events for causal recovery acceptance.
 - `src-tauri/test_support/file_recovery_native.rs` — feature-only abandoned replacement fixture through the production executor; native registration IDs correlate actual IPC Channel send/drop receipts across renderer lifetimes.
 - `src-tauri/test_support/file_recovery_crash.rs` — native receipt checks before retained-WebView reload after actual renderer death, followed by stale-session rejection and fresh durable-generation delivery.
@@ -786,6 +794,9 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `src-tauri/src/files/recovery/subscriptions.rs` — bounded exact-renderer recovery channels; monotonic subscription tokens fence reordered registration/release, pending acknowledgements roll back, and native retirement releases listeners. Ordering, capacity, reentrant callback and retirement contracts in `src-tauri/test_support/recovery_subscriptions.rs`.
 
 ### Native qualification tooling
+
+- `e2e-tauri/native-clipboard.ts` — independent OS clipboard probes for cross-window smoke: bounded asynchronous Windows PowerShell reads/external Copy with serializable failure diagnostics; X11 URI-list probes.
+- `tests/e2e-tauri/native-clipboard.test.ts` — cold-shell completion, timeout diagnostics, output validation and literal-path contracts for the native clipboard probes.
 
 - `e2e-tauri/native-qualification.ts` — thin barrel re-exporting `e2e-tauri/native-qualification/*` (#886); import from it or the sibling modules interchangeably.
 - `e2e-tauri/native-qualification/types.ts` — shared qualification type/interface declarations and the soak scenario list.
@@ -869,16 +880,19 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `src/lib/domain/video-preview.ts` — pure time/seek values and keyboard ownership, including held-key and Super handling.
 - `src-tauri/src/files/video_info.rs` — bounded head/tail codec sniffing (MP4/MOV, Matroska/WebM, AVI) and `save_file_copy` for the unsupported-codec preview state.
 - `src/lib/state/video-preview-lifetime.ts` — two-phase capability adoption and cancellation; rejects late source URLs and releases once.
+- `src/lib/state/video-companion-audio.ts` — Linux-only dropped-audio-track detection and the hidden `<audio>` follower (play/pause/seek/drift/volume/mute) (#1171).
 - `src/lib/api/video-preview.ts` — acknowledged native-session acquisition, scoped preparation and release IPC.
 - `src/test-support/video-preview-probe.ts` — hook-build-only DOM RPC observing native streaming counters.
 - `src-tauri/src/files/media_preview.rs` — window/renderer-owned playback capability commands and lazy loopback server.
 - `src-tauri/src/files/media_preview/http.rs` — bounded HTTP/1 byte-range responses, independent connection retirement and backpressure.
 - `src-tauri/src/files/media_preview/range.rs` — exact single-byte-range planning with malformed/unsatisfiable contracts.
 - `src-tauri/src/files/media_preview/service.rs` — scoped no-follow admission, pinned file identity, bounded workers and positioned chunk reads.
+- `src-tauri/src/files/media_preview/audio.rs` — ffmpeg decode of a video's first audio stream into a private, capability-owned Opus/FLAC file for WebKitGTK without the source codec's decoder (#1171).
 - `src-tauri/src/files/media_preview/metrics.rs` — native qualification-only read/chunk/connection/resource counters.
 - `src-tauri/test_support/media_preview.rs` — real TCP and filesystem contracts for ranges, concurrent seeks, scope, replacement, overload and retirement.
 - `e2e-tauri/video-observations.ts` — read-only native playback/transport observations, owned process RSS and unedited screenshot pixel qualification.
 - `e2e-tauri/specs/video-preview.spec.ts` — actual native decoder/range/lifetime and encoded large-file performance outcomes.
+- `e2e-tauri/specs/video-companion-audio.spec.ts` — opt-in native proof that an AAC video WebKitGTK cannot decode is audible through companion audio, follows volume/mute/fullscreen, and that native-audio and silent videos are left alone (#1171).
 - `e2e-tauri/specs/video-preview-lifecycle.spec.ts` — actual List/Tiles decoded selection, warm-window activation and playing-owner destruction with capability/file-handle retirement.
 
 - `src/lib/domain/image-generation-settings.ts` — provider-compatible image dimensions from resolution and source/explicit aspect ratio.
@@ -936,6 +950,8 @@ TraceExplorer's image UI, provider adapters and SQLite journal are maintained in
 - `src-tauri/src/installed_plugins/service_graph_tests.rs` — service graph version, identity, optional dependency and cycle contracts.
 - `src-tauri/src/installed_plugins/service_host.rs` — host lifetime service store and legacy recovery compatibility.
 - `src-tauri/src/native_deadline.rs` — scoped monotonic native lock, queue and RPC budgets.
+- `src-tauri/src/native_file_drag/wayland_intent.rs` — GNOME Wayland per-gesture source keyboard channel; freezes the first post-grab focus modifier snapshot independently of GTK cache and OS actions.
+- `src-tauri/test_support/wayland_drag_intent_test.rs` — in-process Wayland compositor tests for late Ctrl, post-drop key changes, foreign connection/queue isolation and snapshot lifetime.
 - `src-tauri/src/native_file_drag.rs` — async OS drag start (rejects shortcut sources before export), synchronous platform-completion retirement, sequence-bearing provenance and per-window receiver snapshots emitted before frontend channel reordering.
 - `src-tauri/test_support/native_file_drag.rs` — native session ordering, completion-backlog interleavings, gesture-sequence admission, complete-set verification, successor retirement and later external same-path contracts.
 - `src-tauri/src/durable_dir.rs` — per-platform directory-entry durability barrier (Unix fsync, Windows writable directory-handle flush).

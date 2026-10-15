@@ -41,7 +41,7 @@
     return () => observer.disconnect();
   });
 
-  const entries = $derived(windowTabsManager.getActiveExplorer()?.getSelectedEntries() ?? []);
+  const entries = $derived(windowTabsManager.getActiveExplorer()?.getSettledSelectedEntries() ?? []);
   const contributions = $derived(inspectorRegistry.itemsFor(entries));
   $effect(() => { if (!contributions.length) untrack(resize.retire); });
 </script>

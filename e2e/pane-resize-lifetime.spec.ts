@@ -157,7 +157,7 @@ test.describe("Pane resize lifetime", () => {
     expect(geometry.first.width).toBeLessThan(geometry.second.width);
   });
 
-  test("tab switch unmounts a pending resize without changing either tab", async ({ page }) => {
+  test("tab switch cancels a pending resize without changing either tab", async ({ page }) => {
     const other = {
       id: "other-tab",
       kind: "explorer" as const,
@@ -174,7 +174,9 @@ test.describe("Pane resize lifetime", () => {
     await flushCapturedFrames(page);
     await page.mouse.up();
 
-    await expect(page.locator(".pane-split")).toHaveCount(0);
+    // The split tab stays mounted but hidden (#1173); its gesture still retires.
+    await expect(page.locator(".pane-tree:not(.retained) .pane-split")).toHaveCount(0);
+    await expect(page.locator(".pane-split.resizing")).toHaveCount(0);
     await expect(page.locator(".explorer-pane .entry-item", { hasText: "photo1.jpg" })).toBeVisible();
     expect(await ratio(page)).toBe(0.5);
   });

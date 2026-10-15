@@ -798,3 +798,171 @@ fn platform_observations_share_the_sampled_process_monotonic_clock() {
     let restart = Registry::default().clock_sample();
     assert_ne!(restart.id, after.id);
 }
+
+#[test]
+fn source_intent_overrides_stale_native_modifiers_at_the_drop_payload() {
+    // Ctrl pressed after handoff, held from the start, released before drop,
+    // and never pressed. The cached GTK value is deliberately wrong in three
+    // cases. Assert the event actually delivered to the frontend consumer.
+    for (cached, tracked) in [(false, true), (true, true), (true, false), (false, false)] {
+        let mut registry = Registry::default();
+        registry.begin(1, "source".into(), Some(source()));
+        registry.capture_at(
+            42,
+            &wry::DragDropEvent::Enter {
+                paths: paths(),
+                position: (20, 30),
+            },
+            cached,
+            1000.0,
+        );
+        registry
+            .take(
+                42,
+                &tauri::DragDropEvent::Enter {
+                    paths: paths(),
+                    position: tauri::PhysicalPosition { x: 20.0, y: 30.0 },
+                },
+            )
+            .unwrap();
+        registry.capture_with_intent(
+            42,
+            &wry::DragDropEvent::Drop {
+                paths: paths(),
+                position: (20, 30),
+            },
+            cached,
+            1001.0,
+            |source| {
+                assert_eq!(source.session_id, "first");
+                Some(Ok(tracked))
+            },
+        );
+        let payload = serde_json::to_value(
+            registry
+                .take(
+                    42,
+                    &tauri::DragDropEvent::Drop {
+                        paths: paths(),
+                        position: tauri::PhysicalPosition { x: 20.0, y: 30.0 },
+                    },
+                )
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(payload["copyModifier"], tracked, "cached={cached}");
+        assert_eq!(payload["source"]["sessionId"], "first");
+    }
+}
+
+#[test]
+fn external_drop_never_borrows_an_in_app_intent_channel() {
+    for cached in [false, true] {
+        let mut registry = Registry::default();
+        registry.capture_at(
+            42,
+            &wry::DragDropEvent::Enter {
+                paths: paths(),
+                position: (20, 30),
+            },
+            cached,
+            1000.0,
+        );
+        registry
+            .take(
+                42,
+                &tauri::DragDropEvent::Enter {
+                    paths: paths(),
+                    position: tauri::PhysicalPosition { x: 20.0, y: 30.0 },
+                },
+            )
+            .unwrap();
+        registry.capture_with_intent(
+            42,
+            &wry::DragDropEvent::Drop {
+                paths: paths(),
+                position: (20, 30),
+            },
+            cached,
+            1001.0,
+            |_| panic!("external source has no app-owned intent"),
+        );
+        let payload = serde_json::to_value(
+            registry
+                .take(
+                    42,
+                    &tauri::DragDropEvent::Drop {
+                        paths: paths(),
+                        position: tauri::PhysicalPosition { x: 20.0, y: 30.0 },
+                    },
+                )
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(payload["source"], serde_json::Value::Null);
+        assert_eq!(payload["copyModifier"], cached);
+    }
+}
+
+#[test]
+fn unavailable_fresh_intent_cannot_publish_a_destructive_guess() {
+    let mut registry = Registry::default();
+    registry.begin(1, "source".into(), Some(source()));
+    registry.capture_at(
+        42,
+        &wry::DragDropEvent::Enter {
+            paths: paths(),
+            position: (20, 30),
+        },
+        false,
+        1000.0,
+    );
+    registry
+        .take(
+            42,
+            &tauri::DragDropEvent::Enter {
+                paths: paths(),
+                position: tauri::PhysicalPosition { x: 20.0, y: 30.0 },
+            },
+        )
+        .unwrap();
+    registry.capture_with_intent(
+        42,
+        &wry::DragDropEvent::Drop {
+            paths: paths(),
+            position: (20, 30),
+        },
+        false,
+        1001.0,
+        |_| Some(Err("missing focus restoration".into())),
+    );
+    registry.capture_at(
+        42,
+        &wry::DragDropEvent::Enter {
+            paths: paths(),
+            position: (20, 30),
+        },
+        false,
+        1002.0,
+    );
+    assert!(matches!(
+        registry.take(
+            42,
+            &tauri::DragDropEvent::Drop {
+                paths: paths(),
+                position: tauri::PhysicalPosition { x: 20.0, y: 30.0 },
+            }
+        ),
+        Some(Event::Leave)
+    ));
+    assert!(matches!(
+        registry.take(
+            42,
+            &tauri::DragDropEvent::Enter {
+                paths: paths(),
+                position: tauri::PhysicalPosition { x: 20.0, y: 30.0 },
+            }
+        ),
+        Some(Event::Enter { .. })
+    ));
+}

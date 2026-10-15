@@ -153,6 +153,13 @@
   // Marquee selection composable
   const marquee = useMarqueeSelection();
 
+  // Selection consumers that load content (preview) wait for the drag to end.
+  $effect(() => {
+    if (!marquee.isDragging) return;
+    explorer.beginSelectionGesture();
+    return () => explorer.endSelectionGesture();
+  });
+
   // Type-ahead selection composable
   const typeAhead = useTypeAhead(
     () => explorer.displayEntries,
@@ -428,6 +435,7 @@
   <div
     class="content"
     class:drop-target={isDropTarget}
+    class:marquee-active={marquee.isDragging}
     data-current-path={explorer.currentPath}
     bind:this={contentRef}
     onwheelcapture={releaseCursorReveal}
@@ -585,6 +593,12 @@
   .content.drop-target {
     background: rgba(0, 120, 212, 0.08);
     box-shadow: inset 0 0 0 2px var(--accent);
+  }
+
+  /* During a marquee drag the pointer only drives the band: entries are not
+     hit-tested on every move and take no hover highlight under it (#1169). */
+  .content.marquee-active :global(.entry-item) {
+    pointer-events: none;
   }
 
   /* Marquee selection rectangle: compositor-only layers. Their intrinsic

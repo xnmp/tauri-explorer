@@ -5,11 +5,18 @@
 //! it (#279) and file Copy keeps working in-app.
 //!
 //! The file-list backends differ by session: see `wayland.rs` (a held
-//! `wl-copy --foreground` owner) and `x11.rs` (a `clipboard-rs` owner). Both
-//! prove Cut ownership (#835, #877).
+//! data-control owner, `data_control.rs`, with a `wl-copy --foreground`
+//! fallback) and `x11.rs` (a `clipboard-rs` owner). Both prove Cut ownership
+//! (#835, #877, #927).
 
+mod data_control;
 mod wayland;
 mod x11;
+
+/// Run the Wayland clipboard owner when this process was started as one.
+pub(in crate::clipboard) fn owner_mode() -> Option<i32> {
+    data_control::early_mode()
+}
 
 use super::backend::{ClipboardBackend, ClipboardReader};
 use super::file_uri::{

@@ -229,6 +229,29 @@ describe("keybindingsStore", () => {
     });
   });
 
+  describe("matchesAnyChordPrefix", () => {
+    // Availability guards can scan the whole listing (selection-dependent
+    // `when`s); evaluating them for every chord on every keydown made
+    // arrow-key navigation and Ctrl+Tab in large folders lag (#1174).
+    it("checks availability only for chords whose prefix the key matches", () => {
+      keybindingsStore.registerDefaults({ a: "Ctrl+K A", b: "Ctrl+K B", c: "Ctrl+J C", single: "Delete" });
+      const isAvailable = vi.fn((_id: string) => true);
+      const arrow = createKeyboardEvent({ key: "ArrowDown" }) as KeyboardEvent;
+      expect(keybindingsStore.matchesAnyChordPrefix(arrow, isAvailable)).toBe(false);
+      expect(isAvailable).not.toHaveBeenCalled();
+
+      const prefix = createKeyboardEvent({ key: "k", ctrlKey: true }) as KeyboardEvent;
+      expect(keybindingsStore.matchesAnyChordPrefix(prefix, isAvailable)).toBe(true);
+      expect(isAvailable.mock.calls.map(([id]) => id)).toEqual(["a"]);
+    });
+
+    it("an unavailable matching chord does not own its prefix", () => {
+      keybindingsStore.registerDefaults({ a: "Ctrl+K A", c: "Ctrl+J C" });
+      const prefix = createKeyboardEvent({ key: "k", ctrlKey: true }) as KeyboardEvent;
+      expect(keybindingsStore.matchesAnyChordPrefix(prefix, (id) => id !== "a")).toBe(false);
+    });
+  });
+
   describe("findMatchingCommand", () => {
     it("custom shared-prefix chords execute one suffix once and expire at the deadline", () => {
       vi.useFakeTimers();

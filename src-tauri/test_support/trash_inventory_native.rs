@@ -63,37 +63,48 @@ fn recycle_bin_listing_restores_exact_bytes_and_refuses_collisions() {
     assert_eq!(fs::read(&path).expect("restored"), b"exact recycled bytes");
 }
 
+/// Records a real move to `~/.Trash` the way the app's deletion does, lists
+/// the real Trash and restores through the Trash view. NSFileManager trashes
+/// here because Finder automation needs a user-granted permission.
 #[cfg(target_os = "macos")]
 #[test]
-fn macos_trash_lists_items_without_inventing_a_restore_destination() {
-    let Some(root) = dirs::home_dir().map(|home| home.join(".Trash")) else {
-        return;
+fn macos_trash_restores_an_item_the_app_recorded() {
+    use crate::{
+        error::AppError,
+        files::{admission::Runtime, trash_origins},
     };
-    let name = format!("trash-view-863-{}.txt", std::process::id());
-    let payload = root.join(&name);
-    if fs::write(&payload, b"disposable").is_err() {
-        // Without Full Disk Access the listing must say how to grant it.
-        let listing = publish(macos_inventory());
-        assert!(
-            listing.issues.iter().all(|issue| !issue.error.is_empty()),
-            "{listing:?}"
-        );
-        return;
-    }
+    use trash::macos::{DeleteMethod, TrashContextExtMacos};
+
+    let directory = tempfile::tempdir().expect("fixture directory");
+    // Canonical so the recorded original matches the restore destination.
+    let parent = fs::canonicalize(directory.path()).expect("fixture parent");
+    let path = parent.join(format!("trash-view-863-{}.txt", std::process::id()));
+    fs::write(&path, b"exact trashed bytes").expect("write fixture");
+    let mut context = trash::TrashContext::default();
+    context.set_delete_method(DeleteMethod::NsFileManager);
+    let store = trash_origins::Store::default_location().expect("record store");
+    let home_trash = dirs::home_dir().expect("home").join(".Trash");
+    trash_origins::trash_recorded(&path, &home_trash, &store, |source| {
+        context
+            .delete(source)
+            .map_err(|error| AppError::Other(error.to_string()))
+    })
+    .expect("trash fixture");
+    assert!(!path.exists());
+
     let listing = publish(macos_inventory());
-    let _ = fs::remove_file(&payload);
-    if let Some(issue) = listing.issues.first() {
-        assert!(issue.error.contains("Full Disk Access"), "{listing:?}");
-        return;
-    }
     let entry = listing
         .entries
         .iter()
-        .find(|entry| entry.name == name)
-        .unwrap_or_else(|| panic!("disposable item is not listed: {listing:?}"));
-    assert_eq!(entry.original_path, None);
-    assert_eq!(entry.size, 10);
-    let (requests, failures) = plan_restore(&[entry.id.clone()]);
-    assert!(requests.is_empty());
-    assert!(failures[0].error.contains("original location"));
+        .find(|entry| entry.original_path.as_deref() == path.to_str())
+        .unwrap_or_else(|| panic!("trashed fixture is not listed with its origin: {listing:?}"))
+        .clone();
+    assert!(entry.deleted_at.is_some());
+    let outcome = tauri::async_runtime::block_on(restore(
+        vec![entry.id],
+        &Runtime::new(directory.path().join("recovery")),
+    ))
+    .expect("restore batch");
+    assert!(outcome.failed.is_empty(), "{outcome:?}");
+    assert_eq!(fs::read(&path).expect("restored"), b"exact trashed bytes");
 }

@@ -42,8 +42,9 @@ const STARTUP_RAW_BUDGET = 866_617;
 // load lazily with the first Trash listing (~1.7 KiB gzip chunk); what stays
 // eager is the provider registration, Trash-aware Details headers and column,
 // the empty-state copy, the trashed-item open guard and menu scoping, +315
-// bytes gzip (279,721 total). Routing every lazy call through one module was
-// measured; a second Vite preload wrapper cost ~100 bytes.
+// bytes gzip (279,733 total with the keyboard open guards). Routing every
+// lazy call through one module was measured; a second Vite preload wrapper
+// cost ~100 bytes.
 const STARTUP_GZIP_BUDGET = 279_936;
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");

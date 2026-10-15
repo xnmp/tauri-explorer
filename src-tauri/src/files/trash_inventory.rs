@@ -13,7 +13,7 @@ use serde::Serialize;
 use sha2::{Digest, Sha256};
 use std::{
     collections::{HashMap, HashSet},
-    path::Path,
+    path::{Path, PathBuf},
     sync::{Arc, LazyLock, Mutex},
 };
 
@@ -49,9 +49,17 @@ pub struct TrashListing {
 
 pub(crate) struct Item {
     pub entry: TrashEntry,
-    /// Restore key (the original path) and the artifact the engine verifies.
     /// `None` when the platform did not record where the item came from.
-    pub restore: Option<(String, Arc<TrashArtifact>)>,
+    pub restore: Option<Restorable>,
+}
+
+/// Where a listed item restores to. Checks use the native destination;
+/// the display key only names the item in the batch outcome.
+#[derive(Clone)]
+pub(crate) struct Restorable {
+    pub key: String,
+    pub destination: PathBuf,
+    pub artifact: Arc<TrashArtifact>,
 }
 
 #[derive(Default)]
@@ -60,7 +68,7 @@ pub(crate) struct Inventory {
     pub issues: Vec<TrashIssue>,
 }
 
-type Registry = HashMap<String, Option<(String, Arc<TrashArtifact>)>>;
+type Registry = HashMap<String, Option<Restorable>>;
 
 /// Artifacts from the most recent listing, keyed by entry ID.
 static REGISTRY: LazyLock<Mutex<Registry>> = LazyLock::new(Default::default);
@@ -159,31 +167,47 @@ fn windows_inventory() -> Inventory {
                 size,
                 is_symlink: false,
             },
-            restore: Some((
-                original,
-                Arc::new(TrashArtifact::WindowsShell {
+            restore: Some(Restorable {
+                key: original,
+                destination: item.original_path(),
+                artifact: Arc::new(TrashArtifact::WindowsShell {
                     parsing_name_utf16: parsing_name,
                 }),
-            )),
+            }),
         });
     }
     inventory
 }
 
-/// macOS keeps original locations private to Finder, so items are listed
-/// without a restore destination (ADR 0019: no programmatic macOS restore).
+/// macOS keeps original locations private to Finder; items Tauri Explorer
+/// trashed itself restore through its own deletion record (#863).
 #[cfg(not(any(target_os = "linux", target_os = "windows")))]
 fn macos_inventory() -> Inventory {
-    use std::os::unix::ffi::OsStrExt;
-    let mut inventory = Inventory::default();
     let Some(root) = dirs::home_dir().map(|home| home.join(".Trash")) else {
+        let mut inventory = Inventory::default();
         inventory.issues.push(TrashIssue {
             source: "Trash".into(),
             error: "The home directory is unavailable".into(),
         });
         return inventory;
     };
-    let entries = match std::fs::read_dir(&root) {
+    let records = super::trash_origins::Store::default_location()
+        .map(|store| store.load())
+        .unwrap_or_default();
+    recorded_inventory(&root, &records)
+}
+
+/// List a trash folder whose origins come only from Tauri Explorer's own
+/// deletion records; other items are listed without a restore destination.
+#[cfg(unix)]
+#[cfg_attr(target_os = "linux", allow(dead_code))]
+pub(crate) fn recorded_inventory(
+    root: &Path,
+    records: &[super::trash_origins::Record],
+) -> Inventory {
+    use std::os::unix::ffi::OsStrExt;
+    let mut inventory = Inventory::default();
+    let entries = match std::fs::read_dir(root) {
         Ok(entries) => entries,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return inventory,
         Err(error) => {
@@ -203,15 +227,25 @@ fn macos_inventory() -> Inventory {
         if name == ".DS_Store" {
             continue;
         }
-        let Ok(metadata) = std::fs::symlink_metadata(entry.path()) else {
+        let path = entry.path();
+        let Ok(metadata) = std::fs::symlink_metadata(&path) else {
             continue;
         };
+        let record = records
+            .iter()
+            .find(|record| record.trashed == path && record.matches(&metadata));
         inventory.items.push(Item {
             entry: TrashEntry {
-                id: entry_id(&[entry.path().as_os_str().as_bytes()]),
-                name: name.to_string_lossy().into_owned(),
-                original_path: None,
-                deleted_at: None,
+                id: entry_id(&[path.as_os_str().as_bytes()]),
+                // A same-named item already in the Trash makes the system
+                // rename this one; show the name it will be restored under.
+                name: record
+                    .and_then(|record| record.original.file_name())
+                    .unwrap_or(&name)
+                    .to_string_lossy()
+                    .into_owned(),
+                original_path: record.map(|record| record.original.to_string_lossy().into_owned()),
+                deleted_at: record.map(|record| record.deleted_at.clone()),
                 kind: if metadata.is_dir() {
                     "directory"
                 } else {
@@ -220,7 +254,17 @@ fn macos_inventory() -> Inventory {
                 size: if metadata.is_dir() { 0 } else { metadata.len() },
                 is_symlink: metadata.file_type().is_symlink(),
             },
-            restore: None,
+            restore: record.map(|record| Restorable {
+                key: record.original.to_string_lossy().into_owned(),
+                destination: record.original.clone(),
+                artifact: Arc::new(TrashArtifact::Recorded {
+                    trashed: record.trashed.clone(),
+                    original: record.original.clone(),
+                    device: record.device,
+                    inode: record.inode,
+                    deleted_at: record.deleted_at.clone(),
+                }),
+            }),
         });
     }
     inventory
@@ -248,31 +292,37 @@ fn plan_restore_in(registry: &Registry, ids: &[String]) -> (Vec<RestoreRequest>,
             });
             continue;
         };
-        let Some((path, artifact)) = registered else {
+        let Some(Restorable {
+            key,
+            destination,
+            artifact,
+        }) = registered
+        else {
             failures.push(FileFailure {
                 path: id.clone(),
                 error: "The original location of this item was not recorded, so it cannot be restored here. Move it out of the Trash instead.".into(),
             });
             continue;
         };
-        if let Err(error) = restorable(Path::new(path)) {
+        if let Err(error) = restorable(destination) {
             failures.push(FileFailure {
-                path: path.clone(),
+                path: key.clone(),
                 error,
             });
             continue;
         }
-        if !destinations.insert(path.clone()) {
+        if !destinations.insert(destination.clone()) {
             failures.push(FileFailure {
-                path: path.clone(),
+                path: key.clone(),
                 error: format!(
-                    "Another selected item is being restored to {path}. Restore them one at a time."
+                    "Another selected item is being restored to {}. Restore them one at a time.",
+                    destination.display()
                 ),
             });
             continue;
         }
         requests.push(RestoreRequest {
-            path: path.clone(),
+            path: key.clone(),
             artifact: Arc::clone(artifact),
         });
     }
@@ -316,7 +366,7 @@ pub(crate) async fn restore(
     let mut outcome = if requests.is_empty() {
         FileBatchOutcome::default()
     } else {
-        super::trash::restore(requests, runtime).await?
+        super::trash::restore_to_existing_parents(requests, runtime).await?
     };
     outcome.failed.extend(refused);
     Ok(outcome)

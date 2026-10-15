@@ -27,6 +27,15 @@ pub(crate) enum TrashArtifact {
         /// Exact desktop-absolute Shell parsing name, without trailing NUL.
         parsing_name_utf16: Vec<u16>,
     },
+    /// An item Tauri Explorer trashed and recorded itself (macOS, #863).
+    #[cfg_attr(target_os = "windows", allow(dead_code))]
+    Recorded {
+        trashed: PathBuf,
+        original: PathBuf,
+        device: u64,
+        inode: u64,
+        deleted_at: String,
+    },
 }
 
 impl TrashArtifact {
@@ -41,7 +50,35 @@ impl TrashArtifact {
                     ..
                 } => root.capacity() + name.capacity() + original_path.capacity(),
                 Self::WindowsShell { parsing_name_utf16 } => parsing_name_utf16.capacity() * 2,
+                Self::Recorded {
+                    trashed,
+                    original,
+                    deleted_at,
+                    ..
+                } => trashed.capacity() + original.capacity() + deleted_at.capacity(),
             }
+    }
+
+    /// The deletion record behind a [`TrashArtifact::Recorded`] artifact.
+    #[cfg(unix)]
+    #[cfg_attr(target_os = "linux", allow(dead_code))]
+    pub(crate) fn as_recorded(&self) -> Option<super::trash_origins::Record> {
+        match self {
+            Self::Recorded {
+                trashed,
+                original,
+                device,
+                inode,
+                deleted_at,
+            } => Some(super::trash_origins::Record {
+                trashed: trashed.clone(),
+                original: original.clone(),
+                device: *device,
+                inode: *inode,
+                deleted_at: deleted_at.clone(),
+            }),
+            _ => None,
+        }
     }
 }
 

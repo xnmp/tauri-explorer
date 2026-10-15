@@ -5,8 +5,8 @@
 use super::{identity, version_at, Directory, INFO_SUFFIX, MAX_INFO_BYTES};
 use crate::files::{
     trash_artifact::TrashArtifact,
-    trash_inventory::{Inventory, Item, TrashEntry, TrashIssue},
-    trash_mounts::MountSnapshot,
+    trash_inventory::{Inventory, Item, Restorable, TrashEntry, TrashIssue},
+    trash_mounts::{Mount, MountSnapshot},
 };
 use sha2::{Digest, Sha256};
 use std::{
@@ -18,11 +18,12 @@ use std::{
         fs::MetadataExt,
     },
     path::{Component, Path, PathBuf},
-    sync::Arc,
+    sync::{mpsc, Arc},
+    time::{Duration, Instant},
 };
 
-/// Kernel and virtual filesystems never hold a user trash; probing some of
-/// them (autofs, network pseudo mounts) can also block or trigger automounts.
+/// Kernel, virtual and read-only image filesystems never hold a user trash;
+/// probing some of them (autofs) can also block or trigger automounts.
 const PSEUDO_FILESYSTEMS: &[&str] = &[
     "autofs",
     "binfmt_misc",
@@ -43,6 +44,7 @@ const PSEUDO_FILESYSTEMS: &[&str] = &[
     "rpc_pipefs",
     "securityfs",
     "selinuxfs",
+    "squashfs",
     "sysfs",
     "tracefs",
 ];
@@ -59,47 +61,80 @@ pub(crate) struct Source {
     pub topdir: Option<PathBuf>,
 }
 
-/// The home trash first, then each mount's per-user trash that exists.
-pub(crate) fn sources(data_home: &Path, mounts: &MountSnapshot) -> Vec<Source> {
+/// The per-user trash directories a mount's top directory holds (spec).
+pub(crate) fn mount_sources(top: &Path) -> Vec<Source> {
     let uid = unsafe { libc::geteuid() };
-    let mut sources = vec![Source {
-        root: data_home.join("Trash"),
-        topdir: None,
-    }];
-    for mount in mounts.mounts() {
-        if PSEUDO_FILESYSTEMS
-            .iter()
-            .any(|name| mount.filesystem.as_bytes() == name.as_bytes())
-        {
-            continue;
-        }
-        let top = &mount.mount_point;
-        let shared = top.join(".Trash");
-        // The shared .Trash must be a sticky real directory; a symlink or a
-        // world-writable non-sticky directory is not a valid trash (spec).
-        if std::fs::symlink_metadata(&shared)
-            .is_ok_and(|meta| meta.is_dir() && meta.mode() & libc::S_ISVTX != 0)
-        {
-            let root = shared.join(uid.to_string());
-            if root.is_dir() {
-                sources.push(Source {
-                    root,
-                    topdir: Some(top.clone()),
-                });
-            }
-        }
-        let root = top.join(format!(".Trash-{uid}"));
+    let mut sources = Vec::new();
+    let shared = top.join(".Trash");
+    // The shared .Trash must be a sticky real directory; a symlink or a
+    // non-sticky directory is not a valid trash.
+    if std::fs::symlink_metadata(&shared)
+        .is_ok_and(|meta| meta.is_dir() && meta.mode() & libc::S_ISVTX != 0)
+    {
+        let root = shared.join(uid.to_string());
         if std::fs::symlink_metadata(&root).is_ok_and(|meta| meta.is_dir()) {
             sources.push(Source {
                 root,
-                topdir: Some(top.clone()),
+                topdir: Some(top.to_owned()),
             });
         }
+    }
+    let root = top.join(format!(".Trash-{uid}"));
+    if std::fs::symlink_metadata(&root).is_ok_and(|meta| meta.is_dir()) {
+        sources.push(Source {
+            root,
+            topdir: Some(top.to_owned()),
+        });
     }
     sources
 }
 
-/// Enumerate the user's trash directories on this host.
+fn probes(mount: &Mount) -> bool {
+    !PSEUDO_FILESYSTEMS
+        .iter()
+        .any(|name| mount.filesystem.as_bytes() == name.as_bytes())
+}
+
+/// Scanned sources keyed by trash directory identity, for bind-mount dedupe.
+pub(crate) type Scanned = Vec<(Option<(u64, u64)>, Inventory)>;
+
+pub(crate) fn scan_keyed(sources: &[Source]) -> Scanned {
+    sources
+        .iter()
+        .map(|source| {
+            let key = std::fs::metadata(&source.root)
+                .ok()
+                .map(|meta| (meta.dev(), meta.ino()));
+            let mut inventory = Inventory::default();
+            scan(source, &mut inventory);
+            (key, inventory)
+        })
+        .collect()
+}
+
+/// Bind mounts that expose the same trash twice are listed once.
+fn merge(scanned: Scanned, seen: &mut HashSet<(u64, u64)>, into: &mut Inventory) {
+    for (key, inventory) in scanned {
+        if key.is_some_and(|key| !seen.insert(key)) {
+            continue;
+        }
+        into.items.extend(inventory.items);
+        into.issues.extend(inventory.issues);
+    }
+}
+
+/// Scan sources in order, listing a trash reached twice only once.
+#[cfg(test)]
+pub(crate) fn scan_sources(sources: &[Source], inventory: &mut Inventory) {
+    merge(scan_keyed(sources), &mut HashSet::new(), inventory);
+}
+
+/// How long the listing waits for mounted volumes; a stale network mount can
+/// block a stat indefinitely.
+const MOUNT_DEADLINE: Duration = Duration::from_secs(3);
+
+/// Enumerate the user's trash directories on this host. The home trash is
+/// read first and never waits for other volumes.
 pub(crate) fn list() -> Inventory {
     let mut inventory = Inventory::default();
     let Some(data_home) = dirs::data_dir().filter(|path| path.is_absolute()) else {
@@ -109,34 +144,66 @@ pub(crate) fn list() -> Inventory {
         });
         return inventory;
     };
-    let sources = match MountSnapshot::read() {
-        Ok(mounts) => sources(&data_home, &mounts),
-        Err(error) => {
-            inventory.issues.push(TrashIssue {
-                source: "Mounted volumes".into(),
-                error: format!("Trash on other volumes could not be found: {error}"),
-            });
-            vec![Source {
-                root: data_home.join("Trash"),
-                topdir: None,
-            }]
-        }
+    let mut seen = HashSet::new();
+    let home = Source {
+        root: data_home.join("Trash"),
+        topdir: None,
     };
-    scan_sources(&sources, &mut inventory);
+    merge(scan_keyed(&[home]), &mut seen, &mut inventory);
+    match MountSnapshot::read() {
+        Ok(mounts) => scan_mounts(
+            &mounts,
+            MOUNT_DEADLINE,
+            |top| scan_keyed(&mount_sources(top)),
+            &mut seen,
+            &mut inventory,
+        ),
+        Err(error) => inventory.issues.push(TrashIssue {
+            source: "Mounted volumes".into(),
+            error: format!("Trash on other volumes could not be found: {error}"),
+        }),
+    }
     inventory
 }
 
-/// Scan each source once; bind mounts that expose the same trash twice are
-/// listed under their first path only.
-pub(crate) fn scan_sources(sources: &[Source], inventory: &mut Inventory) {
-    let mut seen = HashSet::new();
-    for source in sources {
-        if let Ok(meta) = std::fs::metadata(&source.root) {
-            if !seen.insert((meta.dev(), meta.ino())) {
-                continue;
-            }
+/// Probe every mount in parallel. A volume that does not answer before
+/// `deadline` is reported and skipped; its probe thread is abandoned rather
+/// than holding the listing (a blocked stat cannot be cancelled).
+pub(crate) fn scan_mounts(
+    mounts: &MountSnapshot,
+    deadline: Duration,
+    probe: impl Fn(&Path) -> Scanned + Clone + Send + 'static,
+    seen: &mut HashSet<(u64, u64)>,
+    inventory: &mut Inventory,
+) {
+    let started = Instant::now();
+    let mut pending = Vec::new();
+    for mount in mounts.mounts().iter().filter(|mount| probes(mount)) {
+        let top = mount.mount_point.clone();
+        let (sender, receiver) = mpsc::channel();
+        let probe = probe.clone();
+        let task = top.clone();
+        let spawned = std::thread::Builder::new()
+            .name("trash-mount-probe".into())
+            .spawn(move || {
+                let _ = sender.send(probe(&task));
+            });
+        match spawned {
+            Ok(_) => pending.push((top, receiver)),
+            Err(error) => inventory.issues.push(TrashIssue {
+                source: top.display().to_string(),
+                error: format!("Could not check this volume's trash: {error}"),
+            }),
         }
-        scan(source, inventory);
+    }
+    for (top, receiver) in pending {
+        match receiver.recv_timeout(deadline.saturating_sub(started.elapsed())) {
+            Ok(scanned) => merge(scanned, seen, inventory),
+            Err(_) => inventory.issues.push(TrashIssue {
+                source: top.display().to_string(),
+                error: "This volume did not respond in time, so its trash is not shown".into(),
+            }),
+        }
     }
 }
 
@@ -306,7 +373,11 @@ fn read_item(
     };
     Ok(Item {
         entry,
-        restore: Some((original.to_string_lossy().into_owned(), Arc::new(artifact))),
+        restore: Some(Restorable {
+            key: original.to_string_lossy().into_owned(),
+            destination: original,
+            artifact: Arc::new(artifact),
+        }),
     })
 }
 

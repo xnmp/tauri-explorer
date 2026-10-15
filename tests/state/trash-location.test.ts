@@ -79,6 +79,22 @@ describe("listTrashLocation", () => {
     );
   });
 
+  it("reports a persisting source issue again when the Trash is reopened later", async () => {
+    let now = 1_000_000;
+    const issue = { source: "/mnt/nas/.Trash-1000", error: "This volume did not respond in time, so its trash is not shown" };
+    const port = ports({
+      list: async () => ({ ok: true, data: { ...LISTING, issues: [issue] } }),
+      now: () => now,
+    });
+    await listTrashLocation(TRASH_PATH, port);
+    now += 5_000;
+    await listTrashLocation(TRASH_PATH, port);
+    expect(port.error).toHaveBeenCalledTimes(1);
+    now += 60_000;
+    await listTrashLocation(TRASH_PATH, port);
+    expect(port.error).toHaveBeenCalledTimes(2);
+  });
+
   it("refuses to open a trashed folder in place", async () => {
     await expect(listTrashLocation("trash://a1", ports())).rejects.toThrow("Restore this folder");
   });
@@ -147,6 +163,9 @@ describe("Trash as an explorer location", () => {
     const trashOnly = (selection: FileEntry[]) => contextMenuItems.itemsFor(selection)
       .filter((item) => item.scope === "trash").map((item) => item.label);
     expect(trashOnly([...entries])).toEqual(["Restore"]);
+    const unrecorded = { ...entries[0], trash: { ...entries[0].trash!, originalPath: null, originalFolder: null } };
+    expect(trashOnly([unrecorded])).toEqual([]);
+    expect(trashOnly([entries[0], unrecorded])).toEqual([]);
     expect(trashOnly([])).toEqual(["Open in System File Manager"]);
     expect(trashOnly([{ name: "a", path: "/a", kind: "file", size: 0, modified: "" }])).toEqual([]);
 

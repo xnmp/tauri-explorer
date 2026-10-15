@@ -25,6 +25,11 @@
   that). The Trash view pre-checks and refuses an occupied destination or a
   missing original folder so the user is told instead; the engine still
   enforces no-replace atomically.
+- macOS has no programmatic access to Finder's "Put Back" location. A move
+  to `~/.Trash` keeps the inode, so the app records the item by device and
+  inode right after trashing it; never offer Restore for unrecorded items.
+- Probe mounted volumes for trash in parallel with a deadline: a stale NFS
+  or sshfs mount blocks `stat` indefinitely, which would hang the whole view.
 - Trash listing IDs are opaque hashes of the trash slot; the native registry
   is replaced on each listing. Tests that publish listings share that
   process-wide registry, so keep them in one test or test `plan_restore_in`

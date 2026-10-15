@@ -77,9 +77,13 @@ mod search_observation;
 pub mod shortcuts;
 pub mod trash;
 pub(crate) mod trash_artifact;
+// Records origins of items the app trashes; production use is macOS only.
 pub mod trash_inventory;
 #[cfg(target_os = "linux")]
 mod trash_mounts;
+#[cfg(unix)]
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+mod trash_origins;
 #[cfg(any(target_os = "windows", test))]
 mod trash_outcome;
 #[cfg(unix)]

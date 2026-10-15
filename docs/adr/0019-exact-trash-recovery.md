@@ -52,8 +52,14 @@ entry ID. Restore accepts IDs only, so renderer input still cannot supply an
 artifact. It refuses an occupied destination or a missing original folder
 before any effect, then runs the same exact engine, which re-verifies the
 artifact and publishes without replacement. Restores from the view are not
-recorded as undoable history. macOS lists `~/.Trash` without a restore
-destination because the original location is private to Finder.
+recorded as undoable history, and never recreate a missing original folder.
+
+macOS keeps original locations private to Finder, so Tauri Explorer keeps its
+own deletion record (`files/trash_origins.rs`): after trashing an item it finds
+it in `~/.Trash` by device and inode and records the trashed path, original
+path and identity. Only recorded items offer Restore; restore requires the same
+identity at the trashed path and renames without replacement. Items trashed by
+other applications, or onto other volumes, are listed without Restore.
 
 ## Limits and required follow-up
 

@@ -9,7 +9,11 @@ use crate::files::{
     },
     recovery::Runtime,
 };
-use std::{fs, path::PathBuf};
+use std::{
+    fs,
+    os::unix::{ffi::OsStrExt, fs::PermissionsExt},
+    path::PathBuf,
+};
 
 struct Fixture {
     scratch: tempfile::TempDir,
@@ -50,14 +54,17 @@ impl Fixture {
     }
 
     fn list(&self) -> TrashListing {
+        self.list_with(&[])
+    }
+
+    fn list_with(&self, mounted: &[Source]) -> TrashListing {
+        let mut sources = vec![Source {
+            root: self.trash_root(),
+            topdir: None,
+        }];
+        sources.extend_from_slice(mounted);
         let mut inventory = Inventory::default();
-        scan_sources(
-            &[Source {
-                root: self.trash_root(),
-                topdir: None,
-            }],
-            &mut inventory,
-        );
+        scan_sources(&sources, &mut inventory);
         publish(inventory)
     }
 
@@ -177,6 +184,54 @@ fn trash_view_restores_exact_items_and_never_overwrites() {
     assert!(!changed.exists());
     assert!(payload.exists(), "the trash item stays recoverable");
 
+    // A folder whose name is not UTF-8 is still the item's real destination.
+    let folder = fixture
+        .scratch
+        .path()
+        .join(std::ffi::OsStr::from_bytes(b"caf\xe9"));
+    fs::create_dir(&folder).unwrap();
+    let native = folder.join("menu.txt");
+    fs::write(&native, b"native bytes").unwrap();
+    fixture.trash(&native);
+    let listing = fixture.list();
+    let id = listing
+        .entries
+        .iter()
+        .find(|entry| entry.name == "menu.txt")
+        .unwrap()
+        .id
+        .clone();
+    let outcome = fixture.restore(vec![id]);
+    assert!(outcome.failed.is_empty(), "{outcome:?}");
+    assert_eq!(fs::read(&native).unwrap(), b"native bytes");
+
+    // Mounted-volume trash records are relative to the volume's top folder.
+    let top = fixture.path("volume");
+    let mounted = top.join(".Trash-1000");
+    for directory in [&mounted, &mounted.join("info"), &mounted.join("files")] {
+        fs::create_dir_all(directory).unwrap();
+        fs::set_permissions(directory, fs::Permissions::from_mode(0o700)).unwrap();
+    }
+    fs::create_dir_all(top.join("photos")).unwrap();
+    fs::write(mounted.join("files/beach.jpg"), b"jpeg bytes").unwrap();
+    fs::write(
+        mounted.join("info/beach.jpg.trashinfo"),
+        "[Trash Info]\nPath=photos/beach.jpg\nDeletionDate=2026-01-02T03:04:05\n",
+    )
+    .unwrap();
+    let source = Source {
+        root: mounted.clone(),
+        topdir: Some(top.clone()),
+    };
+    let listing = fixture.list_with(std::slice::from_ref(&source));
+    let destination = top.join("photos/beach.jpg");
+    let id = fixture.id_for(&listing, &destination);
+    let outcome = fixture.restore(vec![id]);
+    assert!(outcome.failed.is_empty(), "{outcome:?}");
+    assert_eq!(fs::read(&destination).unwrap(), b"jpeg bytes");
+    assert_eq!(fs::read_dir(mounted.join("files")).unwrap().count(), 0);
+    assert_eq!(fs::read_dir(mounted.join("info")).unwrap().count(), 0);
+
     // Stale or unknown IDs are refused without effects.
     let outcome = fixture.restore(vec!["not-a-listed-id".into()]);
     assert_eq!(outcome.failed.len(), 1);
@@ -196,12 +251,14 @@ fn duplicate_destinations_in_one_selection_restore_only_once() {
         .join("same.txt")
         .to_string_lossy()
         .into_owned();
+    let restorable = Restorable {
+        key: target.clone(),
+        destination: PathBuf::from(&target),
+        artifact,
+    };
     let registry = Registry::from([
-        (
-            "dup-1".into(),
-            Some((target.clone(), Arc::clone(&artifact))),
-        ),
-        ("dup-2".into(), Some((target, artifact))),
+        ("dup-1".into(), Some(restorable.clone())),
+        ("dup-2".into(), Some(restorable)),
     ]);
     let (requests, failures) = plan_restore_in(&registry, &["dup-1".into(), "dup-2".into()]);
     assert_eq!(requests.len(), 1);

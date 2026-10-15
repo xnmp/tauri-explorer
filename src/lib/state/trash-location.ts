@@ -27,6 +27,8 @@ export interface TrashPorts {
   error(message: string): void;
   /** Refresh open Trash views and the given real directories. */
   publish(directories: string[]): void;
+  /** Clock for issue re-reporting; tests supply their own. */
+  now?(): number;
 }
 
 /** Refresh every Trash view (it has no watcher) and other affected panes.
@@ -55,7 +57,8 @@ export function installTrashActions(menu: typeof contextMenuItems): void {
     label: "Restore",
     scope: "trash",
     icon: "M3 8a5 5 0 1 0 1.5-3.5M3 2.5V5h2.5",
-    when: (entries) => entries.length > 0 && entries.every((entry) => entry.trash),
+    // Offered only when every selected item has a recorded origin.
+    when: (entries) => entries.length > 0 && entries.every((entry) => entry.trash?.originalPath),
     handler: (entries) => { void restoreFromTrash(entries); },
   }, 0);
   // The external launcher stays reachable, e.g. for Finder's Put Back on macOS.
@@ -77,8 +80,10 @@ const defaultPorts: TrashPorts = {
   publish: (directories) => publishTrashChanged(directories),
 };
 
-// Issues are reported once per distinct message, not on every refresh.
-let reportedIssues: string | null = null;
+// A refresh repeats the same issue; report it again only after a while, so
+// reopening the Trash later still says which sources are missing.
+const ISSUE_REPEAT_MS = 60_000;
+let reportedIssues: { message: string; at: number } | null = null;
 
 /** Provider listing: the Trash root only; trashed folders open after restore. */
 export async function listTrashLocation(path: string, ports: TrashPorts = defaultPorts): Promise<DirectoryListing> {
@@ -88,8 +93,13 @@ export async function listTrashLocation(path: string, ports: TrashPorts = defaul
   const result = await ports.list();
   if (!result.ok) throw new Error(`Could not read the Trash: ${result.error}`);
   const issues = trashIssuesMessage(result.data.issues);
-  if (issues && issues !== reportedIssues) ports.error(issues);
-  reportedIssues = issues;
+  const now = (ports.now ?? Date.now)();
+  if (issues && (issues !== reportedIssues?.message || now - reportedIssues.at >= ISSUE_REPEAT_MS)) {
+    ports.error(issues);
+    reportedIssues = { message: issues, at: now };
+  } else if (!issues) {
+    reportedIssues = null;
+  }
   return toTrashListing(result.data);
 }
 

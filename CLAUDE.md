@@ -172,7 +172,10 @@ listener to be ready, then acknowledge every filesystem write at the
 application-side watcher callback before attributing listing counts to it. A
 receipt-count increase alone is insufficient: require its backend observation
 time to be at or after that specific write began so an older delayed event
-cannot advance the protocol.
+cannot advance the protocol. Recursive (Quick Open) coverage can be mid-rebuild after an
+overlapping root is released while still reporting healthy; arm it with
+`arm_search_watch_for_test` before taking the revision a write must advance
+(#1152).
 
 Anything whose failure mode involves races, watcher timing, git state, or cache staleness needs tier 3 or a Rust temp-repo test in `src-tauri` — a green mock E2E is not evidence for those.
 

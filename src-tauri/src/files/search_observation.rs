@@ -300,9 +300,25 @@ impl SearchObservation {
 
     #[cfg(test)]
     pub fn settle(&self) {
+        self.settled().wait();
+    }
+
+    /// Queue a barrier now; wait on it after releasing any caller-held lock.
+    #[cfg(test)]
+    pub fn settled(&self) -> Settled {
         let (send, receive) = mpsc::channel();
         self.commands.send(Command::Barrier(send)).unwrap();
-        receive.recv_timeout(Duration::from_secs(5)).unwrap();
+        Settled(receive)
+    }
+}
+
+#[cfg(test)]
+pub(super) struct Settled(mpsc::Receiver<()>);
+
+#[cfg(test)]
+impl Settled {
+    pub fn wait(self) {
+        self.0.recv_timeout(Duration::from_secs(5)).unwrap();
     }
 }
 

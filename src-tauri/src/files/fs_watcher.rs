@@ -568,3 +568,26 @@ pub(crate) fn settle_search_watch_for_test() {
     let watcher = FS_WATCHER.get().unwrap().lock().unwrap();
     watcher.observer.search.settle();
 }
+
+/// Test-only readiness fence for a real-watcher write. The published recursive
+/// coverage can still describe a generation whose rebuild is queued (an
+/// overlapping root was just released), so first drain the worker's queue,
+/// then arm and confirm healthy recursive coverage. A write before this can
+/// land between generations: the cache epoch still advances, but no per-path
+/// receipt is delivered (#1152).
+#[cfg(test)]
+fn arm_search_watch<C: CacheInvalidation>(
+    watcher: &Mutex<DirectoryWatches<NativeObserver<C>>>,
+    path: &Path,
+) -> bool {
+    let settled = watcher.lock().unwrap().observer.search.settled();
+    settled.wait();
+    ensure_search_watch(watcher, path)
+}
+
+#[cfg(test)]
+pub(crate) fn arm_search_watch_for_test(path: &Path) -> bool {
+    FS_WATCHER
+        .get()
+        .is_some_and(|watcher| arm_search_watch(watcher, path))
+}

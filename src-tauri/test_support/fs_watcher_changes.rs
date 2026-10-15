@@ -749,3 +749,147 @@ fn recovery_does_not_start_a_cancelled_later_root() {
         });
     }
 }
+
+/// Holds the recursive worker inside one root's native registration, so a
+/// command queued behind it (an overlap rebuild) stays unprocessed.
+/// One-shot (entered, release) handshake taken by the first gated registration.
+type Gate = Arc<Mutex<Option<(std::sync::mpsc::Sender<()>, std::sync::mpsc::Receiver<()>)>>>;
+
+struct GatedWatch {
+    inner: Box<dyn Watcher + Send>,
+    gated: PathBuf,
+    gate: Gate,
+}
+
+impl Watcher for GatedWatch {
+    fn new<F: notify::EventHandler>(_handler: F, _config: notify::Config) -> notify::Result<Self> {
+        Err(notify::Error::generic("use the injected factory"))
+    }
+    fn watch(&mut self, path: &Path, mode: notify::RecursiveMode) -> notify::Result<()> {
+        if path == self.gated {
+            if let Some((entered, release)) = self.gate.lock().unwrap().take() {
+                entered.send(()).unwrap();
+                release.recv_timeout(Duration::from_secs(10)).unwrap();
+            }
+        }
+        self.inner.watch(path, mode)
+    }
+    fn unwatch(&mut self, path: &Path) -> notify::Result<()> {
+        self.inner.unwatch(path)
+    }
+    fn kind() -> notify::WatcherKind {
+        notify::WatcherKind::NullWatcher
+    }
+}
+
+/// #1152: releasing an overlapping parent queues a rebuild of the surviving
+/// child, but the published coverage keeps reporting the old generation as
+/// healthy until the worker reaches it. A write in that gap reaches only the
+/// generation being retired: its cache epoch still advances, yet no per-path
+/// receipt is delivered. Arming must therefore wait out the queued rebuild.
+#[test]
+fn issue_1152_arming_waits_for_a_queued_overlap_rebuild_before_a_write() {
+    use super::super::watch_observation::tests::{subscribe_changes, NativeHarness};
+    use std::sync::mpsc;
+    let fixture = tempfile::tempdir().unwrap();
+    let parent = fixture.path().join("parent");
+    let child = parent.join("child");
+    let busy = fixture.path().join("busy");
+    std::fs::create_dir_all(&child).unwrap();
+    std::fs::create_dir(&busy).unwrap();
+    let cache = Arc::new(crate::search_cache::SearchEntryCache::<String>::new());
+    let direct = NativeHarness::default();
+    let recursive = NativeHarness::default();
+    let gate: Gate = Arc::new(Mutex::new(None));
+    let observer = NativeObserver::with_cache(cache.clone(), |mode| match mode {
+        Mode::Direct => direct.factory(),
+        Mode::Recursive => {
+            let factory = recursive.factory();
+            let (gated, gate) = (busy.clone(), gate.clone());
+            Box::new(move |callback| {
+                factory(callback).map(|inner| {
+                    Box::new(GatedWatch {
+                        inner,
+                        gated: gated.clone(),
+                        gate: gate.clone(),
+                    }) as Box<dyn Watcher + Send>
+                })
+            })
+        }
+    });
+    let watches = Arc::new(Mutex::new(DirectoryWatches::new(observer)));
+    let owner = Owner::default();
+    let lease = |path: &Path| {
+        watches
+            .lock()
+            .unwrap()
+            .acquire(&owner, path.to_string_lossy().into_owned())
+            .unwrap()
+    };
+    let parent_lease = lease(&parent);
+    lease(&child);
+    lease(&busy);
+    assert!(ensure_search_watch(&watches, &parent));
+    assert!(ensure_search_watch(&watches, &child));
+    let child_revision = cache.begin_load(&child);
+
+    let (entered_tx, entered_rx) = mpsc::channel();
+    let (release_tx, release_rx) = mpsc::channel();
+    *gate.lock().unwrap() = Some((entered_tx, release_rx));
+    let busy_watches = watches.clone();
+    let busy_path = busy.clone();
+    let busy_search = std::thread::spawn(move || ensure_search_watch(&busy_watches, &busy_path));
+    entered_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+    watches
+        .lock()
+        .unwrap()
+        .release(&owner, &parent_lease.id)
+        .unwrap();
+    assert!(
+        watches.lock().unwrap().observer.search.healthy(&child),
+        "the published coverage still describes the generation queued for rebuild"
+    );
+
+    let (armed_tx, armed_rx) = mpsc::channel();
+    let arming_watches = watches.clone();
+    let arming_path = child.clone();
+    let arming = std::thread::spawn(move || {
+        armed_tx
+            .send(arm_search_watch(&arming_watches, &arming_path))
+            .unwrap();
+    });
+    assert_eq!(
+        armed_rx.recv_timeout(Duration::from_millis(300)),
+        Err(mpsc::RecvTimeoutError::Timeout),
+        "arming must not report ready before the queued overlap rebuild runs"
+    );
+    release_tx.send(()).unwrap();
+    assert!(armed_rx.recv_timeout(Duration::from_secs(5)).unwrap());
+    arming.join().unwrap();
+    // Its final health check may land in the rebuild gap and decline
+    // caching; that is the uncovered-walk path, not part of this contract.
+    busy_search.join().unwrap();
+    assert_ne!(
+        cache.begin_load(&child),
+        child_revision,
+        "the rebuild invalidates the child's cache, covering writes in the gap"
+    );
+    cache.publish_if_unchanged(&child, Arc::new(vec!["stale".into()]), child_revision);
+    assert!(
+        cache.completed(&child).is_none(),
+        "a walk begun before the gap must not publish a listing that misses its writes"
+    );
+
+    let changed = child.join("after.txt");
+    let receipt = subscribe_changes(&changed, Mode::Recursive);
+    let write_started = Instant::now();
+    std::fs::write(&changed, "after").unwrap();
+    recursive.emit(
+        recursive.latest_generation(),
+        Ok(
+            notify::Event::new(notify::EventKind::Create(notify::event::CreateKind::File))
+                .add_path(changed),
+        ),
+    );
+    receipt.wait_after(write_started);
+}

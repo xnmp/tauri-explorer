@@ -1597,6 +1597,14 @@ const mockCommands: Record<string, CommandHandler> = {
     if (!mockVideoCapabilities.has(token)) throw new Error("Video preview was released");
     return url;
   },
+  prepare_video_audio_preview: async (args) => {
+    const token = String(args.token);
+    if (!mockVideoCapabilities.has(token)) throw new Error("Video preview was released");
+    const url = await (getMockControl().videoAudioPreview?.(String(args.path)) ?? null);
+    if (!mockVideoCapabilities.has(token)) throw new Error("Video preview was released");
+    if (url === null) mockVideoCapabilities.delete(token);
+    return url;
+  },
   release_video_preview: (args) => {
     const token = String(args.token);
     if (mockVideoCapabilities.delete(token)) (getMockControl().releasedVideoPreviews ??= []).push(token);

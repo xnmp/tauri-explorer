@@ -6,7 +6,7 @@ use std::{
     ffi::OsString,
     fs::File,
     io,
-    path::Path,
+    path::{Path, PathBuf},
     sync::{Arc, Mutex},
     time::{Duration, SystemTime},
 };
@@ -22,6 +22,8 @@ pub(super) struct Service {
     leases: Mutex<HashMap<String, Arc<Lease>>>,
     pub opens: Arc<Semaphore>,
     pub streams: Arc<Semaphore>,
+    /// Companion-audio decodes are CPU-heavy; queue rather than fan out.
+    transcodes: Arc<Semaphore>,
 }
 pub(super) struct Lease {
     pub renderer: Owner,
@@ -72,6 +74,15 @@ pub(super) struct MediaFile {
     pub size: u64,
     modified: SystemTime,
     pub mime: &'static str,
+    /// An app-owned derived file (companion audio) is deleted with its last use.
+    derived: Option<PathBuf>,
+}
+impl Drop for MediaFile {
+    fn drop(&mut self) {
+        if let Some(path) = &self.derived {
+            let _ = std::fs::remove_file(path);
+        }
+    }
 }
 pub(super) struct StreamFile {
     pub file: File,
@@ -88,6 +99,7 @@ impl Default for Service {
             leases: Mutex::new(HashMap::new()),
             opens: Arc::new(Semaphore::new(4)),
             streams: Arc::new(Semaphore::new(16)),
+            transcodes: Arc::new(Semaphore::new(1)),
         }
     }
 }
@@ -237,10 +249,7 @@ impl Service {
         path: String,
         allowed: impl Fn(&Path) -> bool + Send + 'static,
     ) -> Result<(), AppError> {
-        let lease = self
-            .lookup(token)
-            .filter(|lease| lease.renderer.same(owner))
-            .ok_or_else(|| unavailable("Video preview was released"))?;
+        let lease = self.owned(token, owner)?;
         // Busy admission leaves a provisional capability available for retry.
         // Once transitioned, every accepted worker retains this permit.
         let permit = self
@@ -248,6 +257,56 @@ impl Service {
             .clone()
             .try_acquire_owned()
             .map_err(|_| unavailable("Video file access is busy. Try again."))?;
+        Self::publish(lease, permit, move |_| {
+            MediaFile::open(Path::new(&path), allowed).map(Some)
+        })
+        .await
+        .map(|_| ())
+    }
+    /// Publishes a decoded companion audio track for `path` (#1171). Returns
+    /// false, retiring the capability, when the file has no audio stream.
+    pub async fn prepare_audio(
+        &self,
+        token: &str,
+        owner: &Owner,
+        path: String,
+        allowed: impl Fn(&Path) -> bool + Send + 'static,
+        extractor: super::audio::Extractor,
+    ) -> Result<bool, AppError> {
+        let lease = self.owned(token, owner)?;
+        // A previous selection's decoder is still being killed: wait for it,
+        // but never past this capability's own release.
+        let permit = tokio::select! {
+            _ = lease.retired() => return Err(unavailable("Video preview was released")),
+            permit = self.transcodes.clone().acquire_owned() => permit
+                .map_err(|_| unavailable("Audio extraction is unavailable"))?,
+        };
+        Self::publish(lease, permit, move |lease| {
+            if mime(Path::new(&path)).is_none() {
+                return Err(unavailable("This file type is not a video preview"));
+            }
+            let source = admitted_path(Path::new(&path), &allowed)?;
+            let Some((file, mime)) = extractor.extract(&source, || !lease.active())? else {
+                return Ok(None);
+            };
+            let media = MediaFile::open_derived(&file, mime);
+            if media.is_err() {
+                let _ = std::fs::remove_file(&file);
+            }
+            media.map(Some)
+        })
+        .await
+    }
+    fn owned(&self, token: &str, owner: &Owner) -> Result<Arc<Lease>, AppError> {
+        self.lookup(token)
+            .filter(|lease| lease.renderer.same(owner))
+            .ok_or_else(|| unavailable("Video preview was released"))
+    }
+    async fn publish(
+        lease: Arc<Lease>,
+        permit: OwnedSemaphorePermit,
+        open: impl FnOnce(&Lease) -> Result<Option<MediaFile>, AppError> + Send + 'static,
+    ) -> Result<bool, AppError> {
         {
             let mut phase = lease.phase.lock().unwrap();
             if !matches!(*phase, Phase::Provisional) {
@@ -262,7 +321,7 @@ impl Service {
             if !admitted.active() {
                 return Err(unavailable("Video preview was released"));
             }
-            MediaFile::open(Path::new(&path), allowed).map(Arc::new)
+            open(&admitted).map(|file| file.map(Arc::new))
         })
         .await;
         let mut phase = lease.phase.lock().unwrap();
@@ -270,9 +329,14 @@ impl Service {
             return Err(unavailable("Video preview was released"));
         }
         match result {
-            Ok(file) => {
+            Ok(Some(file)) => {
                 *phase = Phase::Ready(file);
-                Ok(())
+                Ok(true)
+            }
+            Ok(None) => {
+                *phase = Phase::Retired;
+                lease.lifetime.retire();
+                Ok(false)
             }
             Err(error) => {
                 *phase = Phase::Retired;
@@ -283,6 +347,21 @@ impl Service {
     }
 }
 
+/// The canonical target of a scope-admitted, user-selected path.
+fn admitted_path(path: &Path, allowed: &impl Fn(&Path) -> bool) -> Result<PathBuf, AppError> {
+    if !allowed(path) {
+        return Err(AppError::PermissionDenied(
+            "This location is outside the video preview scope".into(),
+        ));
+    }
+    let canonical = std::fs::canonicalize(path)?;
+    if !allowed(&canonical) {
+        return Err(AppError::PermissionDenied(
+            "The video target is outside the preview scope".into(),
+        ));
+    }
+    Ok(canonical)
+}
 fn mime(path: &Path) -> Option<&'static str> {
     match path.extension()?.to_str()?.to_ascii_lowercase().as_str() {
         "mp4" | "m4v" => Some("video/mp4"),
@@ -300,17 +379,21 @@ impl MediaFile {
     fn open(path: &Path, allowed: impl Fn(&Path) -> bool) -> Result<Self, AppError> {
         let mime =
             mime(path).ok_or_else(|| unavailable("This file type is not a video preview"))?;
-        if !allowed(path) {
-            return Err(AppError::PermissionDenied(
-                "This location is outside the video preview scope".into(),
-            ));
-        }
-        let canonical = std::fs::canonicalize(path)?;
-        if !allowed(&canonical) {
-            return Err(AppError::PermissionDenied(
-                "The video target is outside the preview scope".into(),
-            ));
-        }
+        Self::open_canonical(&admitted_path(path, &allowed)?, mime, None)
+    }
+    /// Takes ownership of an app-written file; it is removed when retired.
+    fn open_derived(path: &Path, mime: &'static str) -> Result<Self, AppError> {
+        Self::open_canonical(
+            &std::fs::canonicalize(path)?,
+            mime,
+            Some(path.to_path_buf()),
+        )
+    }
+    fn open_canonical(
+        canonical: &Path,
+        mime: &'static str,
+        derived: Option<PathBuf>,
+    ) -> Result<Self, AppError> {
         let parent = Directory::open(
             canonical
                 .parent()
@@ -333,6 +416,7 @@ impl MediaFile {
             name,
             original,
             mime,
+            derived,
         })
     }
     pub fn open_stream(&self, permit: OwnedSemaphorePermit) -> io::Result<Arc<StreamFile>> {

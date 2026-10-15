@@ -97,6 +97,8 @@ export interface MockControl {
   /** Overrides `git_branch_statuses` (#1081); default reports none. */
   branchStatuses?: BranchStatuses;
   releasedVideoPreviews?: string[];
+  /** Overrides `prepare_video_audio_preview`; `null` (default) means no audio stream. */
+  videoAudioPreview?: (path: string) => string | null | Promise<string | null>;
   /** Overrides `probe_video_codec`. */
   videoCodecProbe?: (path: string) => { container: string | null; videoCodec: string | null; audioCodec: string | null };
   /** Destinations `save_file_copy` was asked to write. */

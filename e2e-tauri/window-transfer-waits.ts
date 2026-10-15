@@ -85,7 +85,7 @@ export function waitForListingEntry(
     done(result);
   };
   function checkListing(): void {
-    const entries = document.querySelectorAll(".explorer-pane .entry-name");
+    const entries = document.querySelectorAll(".pane-tree:not(.retained) .explorer-pane .entry-name");
     const matches = [...entries].filter((entry) => request.match === "contains"
       ? entry.textContent?.includes(request.name)
       : entry.textContent === request.name);

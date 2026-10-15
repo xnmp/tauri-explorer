@@ -29,11 +29,38 @@ describe("Windows independent clipboard probe", () => {
     expect(settled).toBe(false);
     await vi.advanceTimersByTimeAsync(1_999);
     expect(await reading).toEqual(paths);
-    expect(child.execFile).toHaveBeenCalledExactlyOnceWith("powershell", expect.arrayContaining([
+    expect(child.execFile).toHaveBeenCalledTimes(1);
+    const [file, args, options, callback] = child.execFile.mock.calls[0];
+    expect(file).toBe("powershell");
+    expect(args).toEqual(expect.arrayContaining([
       "-NoProfile", "-NonInteractive", "-STA",
-      expect.stringContaining("Get-Clipboard -Format FileDropList"),
-    ]), expect.objectContaining({ timeout: 30_000, encoding: "utf8" }), expect.any(Function));
+      expect.stringContaining("DragQueryFileW"),
+    ]));
+    expect(options.timeout).toBe(30_000);
+    expect(options.encoding).toBe("utf8");
+    expect(callback).toBeTypeOf("function");
     expect(child.execFileSync).not.toHaveBeenCalled();
+  });
+
+  it("reads the eager CF_HDROP payload without invoking the stalled Shell clipboard cmdlet", async () => {
+    const paths = ["C:\\資料\\one.txt", "C:\\資料\\two.txt"];
+    child.execFile.mockImplementation((_file, args, _options, callback) => {
+      const script = args.at(-1) as string;
+      // The failing native run reached PowerShell but never returned from
+      // Get-Clipboard. Fail that command rather than accepting a new timeout.
+      if (/\bGet-Clipboard\b/.test(script)) {
+        callback(new Error("Shell clipboard cmdlet stalled"), "", "PowerShell ready");
+      } else {
+        callback(null, JSON.stringify(paths), "");
+      }
+    });
+    await expect(readNativeClipboardPaths("win32")).resolves.toEqual(paths);
+    const script = child.execFile.mock.calls[0][1].at(-1) as string;
+    expect(script).toContain("OpenClipboard");
+    expect(script).toContain("GetClipboardData(15)");
+    expect(script).toContain("DragQueryFileW");
+    expect(script).toMatch(/finally\s*\{\s*CloseClipboard\(\)/);
+    expect(child.execFile).toHaveBeenCalledTimes(1);
   });
 
   it("fails once with serializable timeout diagnostics instead of WDIO's circular JSON error", async () => {

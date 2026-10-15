@@ -789,7 +789,8 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 ### Native qualification tooling
 
 - `e2e-tauri/native-clipboard.ts` — independent OS clipboard probes for cross-window smoke: bounded asynchronous Windows PowerShell reads/external Copy with serializable failure diagnostics; X11 URI-list probes.
-- `tests/e2e-tauri/native-clipboard.test.ts` — cold-shell completion, timeout diagnostics, output validation and literal-path contracts for the native clipboard probes.
+- `e2e-tauri/windows-clipboard-read.ps1` — independent direct CF_HDROP/DragQueryFileW reader, avoiding stalled Shell clipboard cmdlets; real empty/single/multi-file Unicode contracts in `clipboard-cross-window.spec.ts`.
+- `tests/e2e-tauri/native-clipboard.test.ts` — cold-shell completion, direct Win32 command dispatch, timeout diagnostics, output validation and literal-path contracts for the native clipboard probes.
 
 - `e2e-tauri/native-qualification.ts` — thin barrel re-exporting `e2e-tauri/native-qualification/*` (#886); import from it or the sibling modules interchangeably.
 - `e2e-tauri/native-qualification/types.ts` — shared qualification type/interface declarations and the soak scenario list.

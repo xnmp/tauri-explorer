@@ -461,3 +461,11 @@ on failure. Node synchronous spawn errors can self-reference through `error`,
 and WDIO's own-property JSON serialization then hides the original timeout.
 Keep these probes independent of application IPC and never retry a failed
 clipboard observation (#1188).
+
+The #1194 smoke artifact reached the PowerShell-ready marker, then stalled in
+`Get-Clipboard -Format FileDropList` for the full 30-second budget. Read eager
+Windows file lists through `e2e-tauri/windows-clipboard-read.ps1` instead: it
+opens CF_HDROP directly, enumerates UTF-16 paths with DragQueryFileW and closes
+the clipboard in finally. Keep the independent native empty/single/multi-path
+oracle in `clipboard-cross-window.spec.ts`; mocked subprocess output cannot
+qualify the Win32 adapter. Do not extend the timeout or retry an observation.

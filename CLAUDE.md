@@ -242,6 +242,13 @@ SCM archive actions preserve each repo-relative path under `.archive/` and add
 
 ## Debugging
 
+Gate a platform-only Rust test module as a whole, including its imports and
+helpers. Gating only its test functions can leave unused imports under Windows
+`cargo clippy --all-targets -- -D warnings`. The child-env compiler regression
+imports the production source; `CHILD_ENV_TEST_TARGET=x86_64-pc-windows-msvc bunx
+vitest run tests/child-env-compile.test.ts` checks Windows metadata without a
+linker when that Rust standard-library target is installed (#1179).
+
 PTY output and exit notifications come from independent threads. Native tests
 that inspect the complete transcript must wait for the output channel to close
 as well as for the child exit; an exit notification does not mean the last

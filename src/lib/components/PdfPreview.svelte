@@ -142,13 +142,14 @@
     }
   }
   function keydown(event: KeyboardEvent): void {
-    if (event.ctrlKey || event.metaKey || event.altKey || event.target instanceof HTMLInputElement) return;
+    // Apply ownership to bubbled link events as well as fullscreen capture.
+    if (event.ctrlKey || event.metaKey || event.altKey || event.target instanceof Element && event.target.closest("button, a, input, textarea, select, [contenteditable]")) return;
     let handled = true;
     if (event.key === "+" || event.key === "=") changeZoom(view.zoom + 0.1);
     else if (event.key === "-" || event.key === "_") changeZoom(view.zoom - 0.1);
     else if (event.key === "0") view = PDF_FIT;
-    else if (event.key === "PageDown") void preview.selectPage(preview.state.pageNumber + 1);
-    else if (event.key === "PageUp") void preview.selectPage(preview.state.pageNumber - 1);
+    else if (event.key === "PageDown" || (fullscreen && event.key === "ArrowRight")) void preview.selectPage(preview.state.pageNumber + 1);
+    else if (event.key === "PageUp" || (fullscreen && event.key === "ArrowLeft")) void preview.selectPage(preview.state.pageNumber - 1);
     else if (event.key === "Home") void preview.selectPage(1);
     else if (event.key === "End") void preview.selectPage(preview.state.pageCount);
     else if (event.key === "Enter" && event.target === viewportEl) ontogglefullscreen();
@@ -163,7 +164,7 @@
   $effect(() => {
     if (!fullscreen) return;
     const listener = (event: KeyboardEvent) => {
-      if (dialogStore.isInputBlocked(event, windowTabsManager.activePaneId) || event.target instanceof Element && event.target.closest("button, a, input, textarea, select, [contenteditable]")) return;
+      if (dialogStore.isInputBlocked(event, windowTabsManager.activePaneId)) return;
       keydown(event);
       if (event.defaultPrevented) event.stopImmediatePropagation();
     };

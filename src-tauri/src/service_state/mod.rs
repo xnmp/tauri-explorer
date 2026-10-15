@@ -1,7 +1,7 @@
 //! Durable host ownership, independent of provider execution and plugin RPC.
 mod artifacts;
 mod host_spools;
-pub(crate) use host_spools::HostSpoolWriter;
+pub(crate) use host_spools::{HostSpoolWriter, CUSTODY_REFUSED};
 mod intents;
 pub(crate) mod job;
 mod job_store;

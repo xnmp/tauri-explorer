@@ -28,6 +28,12 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 | Runnable release binary               | `bun run build && cd src-tauri && cargo build --release --features tauri/custom-protocol` — a bare `cargo build --release` yields a DEV-mode binary that dials localhost:1420 (Tauri gates prod on the `custom-protocol` feature, which only the Tauri CLI passes)                                                                                                                                                               |
 | Rust tests only                       | `cd src-tauri && cargo test`                                                                                                                                                                                                                                                                                                                                                                                                     |
 
+When changing Rust code gated by `cfg(windows)`, also run
+`cd src-tauri && cargo xwin check --target x86_64-pc-windows-msvc --lib --tests`
+to type-check the Windows-only code from a Linux host. This requires
+`cargo-xwin` to be installed on the host; without it, Cargo reports `no such
+subcommand`. Windows CI remains the authority for Windows builds.
+
 ### WSL ↔ Windows: always `git push` after committing
 
 When developing in WSL (e.g. on the `windows` branch), the Windows side builds/tests by pulling from the remote — it does **not** see your WSL working tree. A commit that isn't pushed never reaches the Windows build, so the fix appears to "not work" when it simply never arrived.

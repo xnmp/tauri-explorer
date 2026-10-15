@@ -382,37 +382,84 @@ fn a_reused_source_name_is_not_forgettable() {
 }
 
 /// Unverifiable recovery roots are never proof that a record is stranded: it
-/// is preserved, with no Forget, rather than released.
+/// is preserved, with no Forget, rather than released, whether it is settled
+/// or restored without a publication.
 #[test]
 fn unverifiable_roots_are_never_forgettable() {
-    for attack in ["manifest", "missing-root"] {
-        let f = Fixture::new(true, true, false);
-        match attack {
-            "manifest" => fs::write(f.roots[0].join("manifest.intent"), b"corrupt").unwrap(),
-            "missing-root" => fs::rename(&f.roots[1], f.roots[1].with_extension("saved")).unwrap(),
-            _ => unreachable!(),
+    for restored in [false, true] {
+        for attack in ["manifest", "missing-root"] {
+            let label = format!("{attack} restored={restored}");
+            let f = Fixture::new(true, true, false);
+            if restored {
+                fs::remove_file(&f.target).unwrap();
+                history_undo(&f, effect_revision(&f)).unwrap();
+                assert_eq!(state(&f).phase, Phase::Restored, "{label}");
+            }
+            match attack {
+                "manifest" => fs::write(f.roots[0].join("manifest.intent"), b"corrupt").unwrap(),
+                "missing-root" => {
+                    fs::rename(&f.roots[1], f.roots[1].with_extension("saved")).unwrap()
+                }
+                _ => unreachable!(),
+            }
+            let item = inspect(&f);
+            assert!(
+                !item.actions.contains(&RecoveryChoice::Release),
+                "{label}: {:?}: {}",
+                item.actions,
+                item.message
+            );
+            let reply = service::resolve(
+                &f.coordinator,
+                &f.id,
+                item.generation,
+                RecoveryChoice::Release,
+            )
+            .unwrap();
+            assert!(reply.error.is_some(), "{label}");
+            assert_eq!(
+                f.coordinator.inventory().unwrap().entries.len(),
+                1,
+                "{label}"
+            );
         }
-        let item = inspect(&f);
-        assert!(
-            !item.actions.contains(&RecoveryChoice::Release),
-            "{attack}: {:?}: {}",
-            item.actions,
-            item.message
-        );
-        let reply = service::resolve(
-            &f.coordinator,
-            &f.id,
-            item.generation,
-            RecoveryChoice::Release,
-        )
-        .unwrap();
-        assert!(reply.error.is_some(), "{attack}");
-        assert_eq!(
-            f.coordinator.inventory().unwrap().entries.len(),
-            1,
-            "{attack}"
-        );
     }
+}
+
+/// A stranded restoration whose returned source the user has since edited
+/// can never verify that source again: Forget, not Restore, ends it, and the
+/// edit is kept.
+#[test]
+fn a_stranded_restoration_with_an_edited_returned_source_can_be_forgotten() {
+    let f = Fixture::new(true, false, false);
+    let target = f.target.clone();
+    let result = MoveExecution::reopen(f.claim())
+        .unwrap()
+        .with_boundary(Box::new(move |label| {
+            if label == "restore-intent" {
+                fs::write(&target, EDIT).unwrap();
+            }
+            Ok(())
+        }))
+        .restore_move();
+    assert!(result.is_err());
+    assert_eq!(state(&f).phase, Phase::RestoreIntent);
+    fs::write(&f.source, b"edited after its return").unwrap();
+
+    let item = inspect(&f);
+    assert_eq!(
+        item.actions,
+        vec![RecoveryChoice::Release],
+        "{}",
+        item.message
+    );
+    assert!(resolve(&f, RecoveryChoice::Release).is_none());
+
+    assert!(f.coordinator.inventory().unwrap().entries.is_empty());
+    assert_eq!(fs::read(&f.source).unwrap(), b"edited after its return");
+    assert_eq!(fs::read(&f.target).unwrap(), EDIT);
+    assert!(admitted(&f, &f.source));
+    assert!(admitted(&f, &f.target));
 }
 
 /// An interrupted discard resumed after the destination was edited finishes

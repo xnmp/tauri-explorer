@@ -305,7 +305,8 @@ cannot succeed, nor keep claims on files it can no longer act on.
   when, under the same ownership, Restore is refused for a *lasting* reason
   from verified roots (a changed or missing moved entry, retained original or
   destination; once the source is home again, also a destination that no
-  longer fits or reads) or the move is already restored, and a retained
+  longer fits or reads, or a returned source the user has edited since) or a
+  restored move whose verified target root holds no `publication`, and a retained
   record's discard is preserved by successful observation. That covers a
   restoration stranded with the source home (an edit or growth that raced
   Undo, or a record left by earlier builds) and a restored cross-volume move

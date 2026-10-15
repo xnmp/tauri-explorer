@@ -158,13 +158,15 @@ pub(super) fn reconcile(
         // An unfinished restoration that can neither finish nor return
         // anything more would otherwise offer a Restore that never succeeds.
         Err(refusal) => {
+            // Never offer a Restore that admission refuses now: a refusal
+            // the user can resolve waits for them, and Inspect asks again.
             let (message, actions) = if refusal.lasting {
                 (
                     format!("{} {}", refusal.error, forget_hint(&folders)),
                     vec![RecoveryChoice::Release],
                 )
             } else {
-                (refusal.error.to_string(), vec![RecoveryChoice::Restore])
+                (refusal.error.to_string(), vec![])
             };
             let error = matches!(request, Request::Restore(_)).then_some(refusal.error);
             return answer(
@@ -211,23 +213,27 @@ pub(super) fn reconcile(
 }
 
 /// Restoration admission from the live endpoints of a retained record. Only
-/// a lasting refusal from verified roots lets Forget end a restorable record;
-/// one whose roots cannot be reopened offers neither Restore nor Forget. A
-/// restored record has nothing left to return, so its retained view's own
-/// successful observation decides (#795).
+/// a lasting refusal from verified roots lets Forget end a restorable record,
+/// and only a verified missing `publication` a restored one; a record whose
+/// roots cannot be reopened offers neither Restore nor Forget (#795).
 fn observe(operation: DurableOperation, restorable: bool) -> (DurableOperation, Exits) {
     if operation.state().retirement.is_some() {
         return (operation, Exits::default());
     }
     if !restorable {
-        let forget = operation.state().phase == Phase::Restored;
-        return (
-            operation,
-            Exits {
-                forget,
-                ..Exits::default()
-            },
-        );
+        return match MoveExecution::try_reopen(operation) {
+            Ok(execution) => {
+                let forget = execution.restored_without_publication().unwrap_or(false);
+                (
+                    execution.operation,
+                    Exits {
+                        forget,
+                        ..Exits::default()
+                    },
+                )
+            }
+            Err(failure) => (failure.0, Exits::default()),
+        };
     }
     match MoveExecution::try_reopen(operation) {
         Ok(execution) => {
@@ -250,8 +256,8 @@ fn observe(operation: DurableOperation, restorable: bool) -> (DurableOperation, 
 
 /// Forget a move record only after observing, under the same ownership, that
 /// nothing else can end it: Restore is refused for a lasting reason from
-/// verified roots (or the move is already restored) and, for a retained
-/// record, its discard is preserved. An unreadable volume or root, or a
+/// verified roots (or a restored move verifiably retains no publication)
+/// and, for a retained record, its discard is preserved. An unreadable volume or root, or a
 /// refusal the user can resolve, is never proof of that (#795).
 pub(super) fn forget(
     coordinator: &Arc<Coordinator>,
@@ -282,7 +288,13 @@ pub(super) fn forget(
             Err(failure) => return reply(coordinator, None, Some(diagnostic(failure.1))),
         }
     } else if operation.state().phase == Phase::Restored {
-        operation
+        match MoveExecution::try_reopen(operation) {
+            Ok(execution) if execution.restored_without_publication().unwrap_or(false) => {
+                execution.operation
+            }
+            Ok(_) => return refused(),
+            Err(failure) => return reply(coordinator, None, Some(diagnostic(failure.1))),
+        }
     } else {
         // Neither restorable nor restored: an interrupted forward move
         // reconciles through its own executor.

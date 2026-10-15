@@ -588,6 +588,14 @@ impl MoveExecution {
         let mut destination = self.target()?.probe()?;
         let returning = match source.probe()? {
             Some(observed) if observed == spec.source_version => false,
+            // An interrupted restoration already returned this original and
+            // the user has changed it since: it can never verify again.
+            Some(observed) if resuming && observed.object == spec.source_version.object => {
+                return Err(refuse(format!(
+                    "'{source_path}' was already returned and has changed since, so this \
+                     restoration cannot finish"
+                )))
+            }
             // The user can free the name; nothing about the record is lost.
             Some(_) => {
                 return Err(Refusal::from(AppError::Other(format!(
@@ -660,6 +668,21 @@ impl MoveExecution {
             }
         }
         Ok(checked)
+    }
+
+    /// A restored cross-volume move whose destination was gone when Undo ran
+    /// retains no `publication`, so its retirement can never verify the
+    /// payload it expects; only Forget can end it (#795). Requires roots this
+    /// execution already reopened and verified.
+    pub(super) fn restored_without_publication(&self) -> Result<bool, AppError> {
+        if self.operation.state().phase != Phase::Restored
+            || self.spec()?.strategy != Strategy::CopyParked
+        {
+            return Ok(false);
+        }
+        let root = self.require(Side::Target)?;
+        root.verify_namespace()?;
+        Ok(probe(root.directory(), OsStr::new(PUBLICATION))?.is_none())
     }
 
     /// The destination restoration would park as `publication`: present and

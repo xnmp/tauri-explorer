@@ -508,7 +508,7 @@ fn the_blocking_worker_keeps_the_claim_after_its_supervisor_is_dropped() {
         .unwrap()
         .success());
     let output = fixture.base.join("pipe.zip");
-    let plan = compress_plan(&[pipe.clone()], output.clone());
+    let plan = compress_plan(std::slice::from_ref(&pipe), output.clone());
 
     let admission = fixture.admit(&plan).unwrap();
     let plan = plan

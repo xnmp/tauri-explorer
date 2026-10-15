@@ -262,6 +262,8 @@ pub(crate) fn recorded_inventory(
                     original: record.original.clone(),
                     device: record.device,
                     inode: record.inode,
+                    changed_seconds: record.changed_seconds,
+                    changed_nanos: record.changed_nanos,
                     deleted_at: record.deleted_at.clone(),
                 }),
             }),

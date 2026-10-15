@@ -29,6 +29,10 @@ pub(crate) struct Record {
     pub original: PathBuf,
     pub device: u64,
     pub inode: u64,
+    /// Change time of the trashed item after the move. Filesystems reuse
+    /// inode numbers, so a replacement at the same path can share them.
+    pub changed_seconds: i64,
+    pub changed_nanos: i64,
     /// RFC 3339 deletion time.
     pub deleted_at: String,
 }
@@ -36,7 +40,10 @@ pub(crate) struct Record {
 impl Record {
     /// Whether `metadata` (of the entry at `trashed`) is the recorded item.
     pub(crate) fn matches(&self, metadata: &std::fs::Metadata) -> bool {
-        metadata.dev() == self.device && metadata.ino() == self.inode
+        metadata.dev() == self.device
+            && metadata.ino() == self.inode
+            && metadata.ctime() == self.changed_seconds
+            && metadata.ctime_nsec() == self.changed_nanos
     }
 }
 
@@ -133,17 +140,21 @@ pub(crate) fn trash_recorded(
         entries
             .flatten()
             .map(|entry| entry.path())
-            .find(|candidate| {
-                std::fs::symlink_metadata(candidate)
-                    .is_ok_and(|meta| meta.dev() == before.dev() && meta.ino() == before.ino())
+            .find_map(|candidate| {
+                std::fs::symlink_metadata(&candidate)
+                    .ok()
+                    .filter(|meta| meta.dev() == before.dev() && meta.ino() == before.ino())
+                    .map(|meta| (candidate, meta))
             })
     });
-    if let Some(trashed) = landed {
+    if let Some((trashed, landed)) = landed {
         let record = Record {
             trashed,
             original,
-            device: before.dev(),
-            inode: before.ino(),
+            device: landed.dev(),
+            inode: landed.ino(),
+            changed_seconds: landed.ctime(),
+            changed_nanos: landed.ctime_nsec(),
             deleted_at: chrono::Local::now().to_rfc3339(),
         };
         if let Err(error) = store.add(record) {

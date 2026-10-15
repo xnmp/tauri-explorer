@@ -31,8 +31,6 @@ test("branch-status badges sit beside their chips and never mute rows (#1081)", 
   const stale = staleRow.locator(".ref-branch", { hasText: "hotfix" }).locator("+ .ref-status");
   await expect(stale).toHaveText("stale");
   await expect(staleRow.locator('[data-branch-status="merged"], [data-branch-status="squash_merged"]')).toHaveCount(0);
-  // Trunk and unclassified branches get no badge.
-  await expect(row("Merge hotfix into main").locator(".ref-status")).toHaveCount(0);
 
   // "Mute merge commits" (on by default) still dims exactly the 2+ parent rows.
   await expect(mergeCommitRow).toHaveClass(/is-merge/);

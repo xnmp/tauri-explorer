@@ -13,11 +13,15 @@
 //! keeps dimming exactly the rows with two or more parents.
 //!
 //! Work is bounded: the trunk first-parent walk and each branch's squash
-//! search stop at fixed limits, and a search that hits its limit reports
-//! `unknown` rather than guessing a positive status.
+//! search (the patch-id diffs) stop at fixed limits, and a search that hits its
+//! limit reports `unknown` rather than guessing a positive status. Ancestry
+//! checks use libgit2's date-pruned merge-base walks. Results are cached per
+//! repository until a branch tip, upstream or the trunk moves, and requests
+//! for one repository run single-flight, so reload bursts do not pile up.
 
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
+use std::sync::{Arc, LazyLock, Mutex};
 
 use git2::{BranchType, DiffOptions, Oid, Repository};
 use serde::Serialize;
@@ -236,23 +240,25 @@ fn is_stale(
     }
 }
 
-/// Trunk's first-parent chain, and whether the walk hit its limit.
+/// Trunk's first-parent chain, plus the first commit left uncollected when
+/// the walk hit its limit (every deeper chain commit is its ancestor).
 fn first_parent_chain(
     repo: &Repository,
     tip: Oid,
     limit: usize,
-) -> Result<(HashSet<Oid>, bool), AppError> {
+) -> Result<(HashSet<Oid>, Option<Oid>), AppError> {
     let mut walk = repo.revwalk().map_err(to_app_err)?;
     walk.simplify_first_parent().map_err(to_app_err)?;
     walk.push(tip).map_err(to_app_err)?;
     let mut chain = HashSet::new();
     for step in walk {
+        let oid = step.map_err(to_app_err)?;
         if chain.len() == limit {
-            return Ok((chain, true));
+            return Ok((chain, Some(oid)));
         }
-        chain.insert(step.map_err(to_app_err)?);
+        chain.insert(oid);
     }
-    Ok((chain, false))
+    Ok((chain, None))
 }
 
 fn tree_patch_id(repo: &Repository, old: Oid, new: Oid) -> Option<Oid> {
@@ -318,7 +324,7 @@ pub fn classify_branches(
     };
     let branches = gather(repo, &remotes);
     let upstreams = upstreams(repo, &branches);
-    let (chain, chain_truncated) = first_parent_chain(repo, trunk.tip, limits.first_parent)?;
+    let (chain, chain_rest) = first_parent_chain(repo, trunk.tip, limits.first_parent)?;
     let mut trunk_patch_ids = HashMap::new();
     let mut statuses = Vec::new();
 
@@ -335,9 +341,13 @@ pub fn classify_branches(
             .graph_descendant_of(trunk.tip, branch.tip)
             .unwrap_or(false)
         {
-            // Not found on the collected chain: when that chain was cut
-            // short, the tip may still lie further down trunk's own line.
-            Some(if chain_truncated {
+            // Not on the collected chain. When that chain was cut short, a
+            // tip at or below its uncollected rest may still lie on trunk's
+            // own line; any other tip was merged in above the cut.
+            let maybe_on_chain = chain_rest.is_some_and(|rest| {
+                rest == branch.tip || repo.graph_descendant_of(rest, branch.tip).unwrap_or(false)
+            });
+            Some(if maybe_on_chain {
                 BranchStatus::Unknown
             } else {
                 BranchStatus::Merged
@@ -370,15 +380,69 @@ pub fn classify_branches(
     })
 }
 
+/// Every input `classify_branches` reads besides the immutable object graph:
+/// the trunk, each branch tip and each upstream mapping.
+fn inputs_signature(repo: &Repository) -> String {
+    let remotes = remote_names(repo);
+    let trunk = resolve_trunk(repo, &remotes)
+        .map(|trunk| format!("{}={}", trunk.name, trunk.tip))
+        .unwrap_or_default();
+    let branches = gather(repo, &remotes);
+    let mut parts: Vec<String> = branches
+        .iter()
+        .map(|branch| format!("{}={}", branch.refname, branch.tip))
+        .chain(
+            upstreams(repo, &branches)
+                .into_iter()
+                .map(|(local, upstream)| format!("{local}>{upstream}")),
+        )
+        .collect();
+    parts.sort();
+    format!("{trunk}\n{}", parts.join("\n"))
+}
+
+type ResultCache = HashMap<String, (String, BranchStatuses)>;
+
+static RESULTS: LazyLock<Mutex<ResultCache>> = LazyLock::new(|| Mutex::new(HashMap::new()));
+static REPO_LOCKS: LazyLock<Mutex<HashMap<String, Arc<Mutex<()>>>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
+
+/// Single-flight, signature-cached classification. Every graph reload asks
+/// again (filter changes included), so concurrent requests for one repository
+/// run one at a time and reuse the last result while no classification input
+/// moved; a ref or upstream change recomputes.
+fn classify_cached(repo_path: &str, limits: ClassifyLimits) -> Result<BranchStatuses, AppError> {
+    let lock = REPO_LOCKS
+        .lock()
+        .map_err(|_| AppError::Other("branch status lock poisoned".into()))?
+        .entry(repo_path.to_string())
+        .or_default()
+        .clone();
+    let _guard = lock
+        .lock()
+        .map_err(|_| AppError::Other("branch status lock poisoned".into()))?;
+    let repo = open_repo(Path::new(repo_path))?;
+    let signature = inputs_signature(&repo);
+    if let Ok(cache) = RESULTS.lock() {
+        if let Some((cached, result)) = cache.get(repo_path) {
+            if *cached == signature {
+                return Ok(result.clone());
+            }
+        }
+    }
+    let result = classify_branches(&repo, limits)?;
+    if let Ok(mut cache) = RESULTS.lock() {
+        cache.insert(repo_path.to_string(), (signature, result.clone()));
+    }
+    Ok(result)
+}
+
 /// Merged / squash-merged / stale status per branch for the graph's badges.
 #[tauri::command]
 pub async fn git_branch_statuses(repo_path: String) -> Result<BranchStatuses, AppError> {
-    tokio::task::spawn_blocking(move || {
-        let repo = open_repo(Path::new(&repo_path))?;
-        classify_branches(&repo, DEFAULT_LIMITS)
-    })
-    .await
-    .map_err(|e| AppError::Other(format!("git branch status task join: {e}")))?
+    tokio::task::spawn_blocking(move || classify_cached(&repo_path, DEFAULT_LIMITS))
+        .await
+        .map_err(|e| AppError::Other(format!("git branch status task join: {e}")))?
 }
 
 #[cfg(test)]

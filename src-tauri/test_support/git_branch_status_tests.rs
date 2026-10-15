@@ -397,3 +397,100 @@ fn exhausted_first_parent_search_is_unknown() {
     );
     assert_eq!(status_of(&classify(p), "old"), None);
 }
+
+#[test]
+fn truncated_first_parent_walk_still_reports_recent_merges() {
+    let dir = repo();
+    let p = dir.path();
+    commit(p, "x.txt", "x\n", "older trunk work");
+    feature(p, "feature", &[("a.txt", "a\n")]);
+    git(
+        p,
+        &["merge", "-q", "--no-ff", "-m", "Merge feature", "feature"],
+    );
+    commit(p, "y.txt", "y\n", "after merge");
+
+    // The walk collects the tip and the merge, then stops: the merged side
+    // commit is not an ancestor of the uncollected rest, so it cannot lie on
+    // trunk's own line.
+    let limits = ClassifyLimits {
+        first_parent: 2,
+        squash: DEFAULT_LIMITS.squash,
+    };
+    assert_eq!(
+        status_of(&classify_with(p, limits), "feature"),
+        Some(BranchStatus::Merged)
+    );
+    // Cut above the merge, the verdict is honestly unknown.
+    let limits = ClassifyLimits {
+        first_parent: 1,
+        ..limits
+    };
+    assert_eq!(
+        status_of(&classify_with(p, limits), "feature"),
+        Some(BranchStatus::Unknown)
+    );
+}
+
+#[test]
+fn master_is_the_last_trunk_fallback() {
+    let dir = TempDir::new().unwrap();
+    let p = dir.path();
+    git(p, &["init", "-q", "-b", "master"]);
+    git(p, &["config", "user.name", "Test"]);
+    git(p, &["config", "user.email", "t@x"]);
+    git(p, &["config", "commit.gpgsign", "false"]);
+    git(p, &["config", "init.defaultBranch", "absent"]);
+    commit(p, "base.txt", "base\n", "base");
+    git(p, &["checkout", "-q", "-b", "feature"]);
+    commit(p, "a.txt", "a\n", "feature");
+    git(p, &["checkout", "-q", "master"]);
+    git(
+        p,
+        &["merge", "-q", "--no-ff", "-m", "Merge feature", "feature"],
+    );
+
+    let result = classify(p);
+    assert_eq!(result.trunk.as_deref(), Some("master"));
+    assert_eq!(status_of(&result, "feature"), Some(BranchStatus::Merged));
+
+    // With both present and no usable default, main precedes master.
+    git(p, &["branch", "main", "HEAD~1"]);
+    assert_eq!(classify(p).trunk.as_deref(), Some("main"));
+}
+
+#[test]
+fn cached_classification_follows_ref_and_upstream_changes() {
+    let dir = repo();
+    let p = dir.path();
+    let path = p.to_str().unwrap();
+    git(p, &["checkout", "-q", "-b", "feature"]);
+    let older = commit(p, "a.txt", "a\n", "feature 1");
+    let newer = commit(p, "a.txt", "a2\n", "feature 2");
+    git(p, &["checkout", "-q", "main"]);
+    assert!(classify_cached(path, DEFAULT_LIMITS)
+        .unwrap()
+        .statuses
+        .is_empty());
+
+    // Trunk tip moves: the merge must be seen, not the cached empty result.
+    git(
+        p,
+        &["merge", "-q", "--no-ff", "-m", "Merge feature", "feature"],
+    );
+    let merged = classify_cached(path, DEFAULT_LIMITS).unwrap();
+    assert_eq!(status_of(&merged, "feature"), Some(BranchStatus::Merged));
+    assert_eq!(classify_cached(path, DEFAULT_LIMITS).unwrap(), merged);
+
+    // Only the upstream mapping changes the verdict here.
+    git(p, &["branch", "-f", "feature", &older]);
+    remote_branch(p, "origin", "feature", &newer, None);
+    let untracked = classify_cached(path, DEFAULT_LIMITS).unwrap();
+    assert_eq!(status_of(&untracked, "feature"), Some(BranchStatus::Merged));
+    git(p, &["config", "branch.feature.remote", "origin"]);
+    git(p, &["config", "branch.feature.merge", "refs/heads/feature"]);
+    assert_eq!(
+        status_of(&classify_cached(path, DEFAULT_LIMITS).unwrap(), "feature"),
+        Some(BranchStatus::Stale)
+    );
+}

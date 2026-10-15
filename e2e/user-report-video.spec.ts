@@ -64,7 +64,7 @@ test("video rejection shows the relay reason and preserves the draft", async ({ 
   await expect(restored.getByText("recording.mp4", { exact: true })).toBeVisible();
 });
 
-test("oversized video explains the limit in the dialog before submission", async ({ page }) => {
+test("video size limits are explained locally and after relay rejection", async ({ page }) => {
   await page.goto("/");
   await waitForEntries(page);
   const dialog = await openReport(page);
@@ -75,4 +75,15 @@ test("oversized video explains the limit in the dialog before submission", async
   await expect(dialog.getByRole("img", { name: "Video attachment" })).toHaveCount(0);
   expect(await page.evaluate((key) => localStorage.getItem(key), MOCK_LOCAL_KEYS.submittedReport)).toBeNull();
   await dialog.screenshot({ path: process.env.CAPTURE_EVIDENCE ? "evidence/1170-video-size-limit.png" : "test-results/1170-video-size-limit.png", animations: "disabled" });
+  // A server rejection must retain its own explanation too; exercising only
+  // the local file-size check would miss the message lost during submission.
+  await dialog.locator('input[type="file"]').setInputFiles({ name: "recording.mp4", mimeType: "video/mp4", buffer: bytes });
+  await expect(dialog.getByText("recording.mp4", { exact: true })).toBeVisible();
+  const reason = "Attachment is too large (2 MiB maximum). Try a shorter clip or a recording at lower quality.";
+  await page.evaluate(({ kindKey, messageKey, reason }) => {
+    localStorage.setItem(kindKey, "malformed_input");
+    localStorage.setItem(messageKey, reason);
+  }, { kindKey: MOCK_LOCAL_KEYS.reportError, messageKey: MOCK_LOCAL_KEYS.reportErrorMessage, reason });
+  await dialog.getByRole("button", { name: "Submit", exact: true }).click();
+  await expect(page.locator(".toast.error")).toContainText(reason);
 });

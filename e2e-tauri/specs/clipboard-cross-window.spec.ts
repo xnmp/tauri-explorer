@@ -98,7 +98,9 @@ describe("cross-window clipboard ownership", () => {
         await seed("powershell", ["-NoProfile", "-NonInteractive", "-STA", "-Command", `
           $ErrorActionPreference = 'Stop'
           Add-Type -AssemblyName System.Windows.Forms
-          $paths = @(ConvertFrom-Json -InputObject $env:CLIP_PATHS)
+          # Windows PowerShell 5.1 emits the JSON array as one object. An outer
+          # @() nests it, casting empty/multiple paths to one invalid string.
+          [string[]]$paths = ConvertFrom-Json -InputObject $env:CLIP_PATHS
           if ($paths.Count -eq 0) {
             [System.Windows.Forms.Clipboard]::SetText('no file list')
           } else {

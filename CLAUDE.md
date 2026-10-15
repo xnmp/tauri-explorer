@@ -473,6 +473,10 @@ and WDIO's own-property JSON serialization then hides the original timeout.
 Keep these probes independent of application IPC and never retry a failed
 clipboard observation (#1188).
 
+Windows PowerShell 5.1 emits a `ConvertFrom-Json` array as one pipeline object.
+Assign it directly to `[string[]]`; wrapping it in `@(...)` nests the array and
+casts empty/multiple file paths into one invalid clipboard path (#1202).
+
 The #1194 smoke artifact reached the PowerShell-ready marker, then stalled in
 `Get-Clipboard -Format FileDropList` for the full 30-second budget. Read eager
 Windows file lists through `e2e-tauri/windows-clipboard-read.ps1` instead: it

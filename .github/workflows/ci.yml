@@ -7,8 +7,10 @@ on:
     branches: [dev, main]
   workflow_dispatch:
 
+# Only PRs share a group. Unique non-PR groups preserve every dev run,
+# including pending runs that GitHub would otherwise replace.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.head_ref || github.ref_name }}
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:

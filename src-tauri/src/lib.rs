@@ -26,6 +26,7 @@ mod gemini;
 pub mod git;
 pub mod git_actions;
 mod git_avatar;
+pub mod git_branch_status;
 mod git_common;
 pub mod git_log;
 #[cfg(all(target_os = "linux", feature = "e2e-renderer-recovery"))]
@@ -485,6 +486,7 @@ pub fn run_with_process_entry(launch_dir: Option<String>, t_process_entry: std::
             git_actions::git_pull,
             git_actions::git_branch_behind_upstream,
             git_log::git_branch_authors,
+            git_branch_status::git_branch_statuses,
             github::git_open_prs,
             github::git_issues_url,
             github::git_pr_action,

@@ -240,6 +240,27 @@ export async function gitBranchAuthors(repoPath: string): Promise<BranchAuthor[]
   return invoke<BranchAuthor[]>("git_branch_authors", { repoPath });
 }
 
+/** Trunk-aware branch classification (#1081). Mirrors
+ *  `src-tauri/src/git_branch_status.rs`; branches with no status are omitted. */
+export type BranchStatus = "merged" | "squash_merged" | "stale" | "unknown";
+
+export interface BranchStatusEntry {
+  /** Shorthand, e.g. `feature` or `origin/feature`. */
+  name: string;
+  remote: boolean;
+  status: BranchStatus;
+}
+
+export interface BranchStatuses {
+  /** Resolved trunk shorthand; null when none resolved (statuses is empty). */
+  trunk: string | null;
+  statuses: BranchStatusEntry[];
+}
+
+export async function gitBranchStatuses(repoPath: string): Promise<BranchStatuses> {
+  return invoke<BranchStatuses>("git_branch_statuses", { repoPath });
+}
+
 /** Fetch from every remote with pruning (#370). */
 export async function gitFetch(repoPath: string, taskId: number): Promise<void> {
   await invoke("git_fetch", { repoPath, taskId });

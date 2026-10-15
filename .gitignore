@@ -21,6 +21,7 @@ __pycache__/
 /playwright-report-load/
 /test-results/
 /test-results-load/
+/test-results-sweep/
 /qualification-results/
 /test-corpus/
 .vagrant/

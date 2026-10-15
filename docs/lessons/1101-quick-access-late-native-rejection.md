@@ -24,7 +24,7 @@ only for a gesture known to have ended on that Quick Access:
   the immediate (already-decided) path, as before. A zero-coordinate dragend
   (the cancel shape) or an end point elsewhere defers nothing.
 - **A deferred DOM Drop owns its gesture.** If window capture already deferred
-  a readable Drop for this session (`dragState.hasDeferredDomDrop`), dragend
+  a readable Drop for this session (`dragState.retains`), dragend
   stands aside. Otherwise a bookmark row removed before dragend lets the end
   point fall through to the Quick Access root, which would pin after the Drop
   itself was cancelled.

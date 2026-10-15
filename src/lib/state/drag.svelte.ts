@@ -377,7 +377,7 @@ export const dragState = {
 
   /** True while a captured DOM Drop of this session awaits its native start
    * decision; that Drop, not a dragend fallback, owns the completion. */
-  hasDeferredDomDrop(sessionId: string): boolean {
+  retains(sessionId: string): boolean {
     return retained.has(sessionId);
   },
 

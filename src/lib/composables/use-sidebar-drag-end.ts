@@ -10,8 +10,7 @@ function pinOnQuickAccess(quickAccess: HTMLElement, source: DragData): void {
   const receipt = admitFileDrop(target, source, "dom");
   if (!receipt) return;
   try {
-    const { kind, path, name } = source;
-    if (target?.type === "sidebar" && kind === "directory" && path) bookmarksStore.addBookmark(path, name);
+    if (target?.type === "sidebar" && source.kind === "directory" && source.path) bookmarksStore.addBookmark(source.path, source.name);
   } finally { receipt.finish(); }
 }
 
@@ -39,47 +38,36 @@ export function listenSidebarDragEnd(deps: {
    * ended on this Quick Access: a completed (not "none") drop effect, no
    * Escape, no source-owned deferred Drop, and the end point itself (not
    * cached hover) inside it. The destination must still be the same live,
-   * sidebar-owned element when the decision arrives. */
-  function deferUntilRejected(event: DragEvent, quickAccess: HTMLElement, source: DragData, cancelled: boolean): void {
+   * sidebar-owned element when the decision arrives. GTK grabs the keyboard
+   * during a drag, so Escape may never reach the page; dragend's dropEffect
+   * is the spec's cancellation signal. */
+  function deferUntilRejected(event: DragEvent, quickAccess: HTMLElement, source: DragData, point: Element | null): void {
     const live = dragState.latestSource();
-    // GTK grabs the keyboard during a drag, so Escape may never reach the
-    // page; dragend's dropEffect is the spec's cancellation signal.
-    const completed = !cancelled && !!event.dataTransfer && event.dataTransfer.dropEffect !== "none";
-    if (!completed || source.kind !== "directory" || !source.sessionId || live?.sessionId !== source.sessionId
-        || live.transport !== "native-pending" || dragState.hasDeferredDomDrop(source.sessionId)) return;
-    const point = event.clientX > 0 && event.clientY > 0 ? document.elementFromPoint(event.clientX, event.clientY) : null;
-    if (!point || !quickAccess.contains(point)) return;
-    const pending = dragState.pendingNative();
+    const pending = escaped || (event.dataTransfer?.dropEffect ?? "none") === "none" || source.kind !== "directory"
+      || live?.sessionId !== source.sessionId || live?.transport !== "native-pending"
+      || dragState.retains(source.sessionId!) || !quickAccess.contains(point) ? null : dragState.pendingNative();
     if (!pending) return;
-    let abandoned = false;
-    const cancel = () => { abandoned = true; pending.dispose(); };
+    // Disposal clears the set, so membership is the abandonment flag.
+    const cancel = () => pending.dispose();
     deferred.add(cancel);
     void pending.result.then(accepted => {
-      deferred.delete(cancel);
-      if (abandoned || accepted) return;
-      if (deps.quickAccess() !== quickAccess || !quickAccess.isConnected || !point.isConnected) {
-        toastStore.show("Drop cancelled because the destination changed. Drop the files again.");
-        return;
-      }
-      pinOnQuickAccess(quickAccess, source);
+      if (!deferred.delete(cancel) || accepted) return;
+      if (deps.quickAccess() === quickAccess && quickAccess.isConnected && point!.isConnected) pinOnQuickAccess(quickAccess, source);
+      else toastStore.show("Drop cancelled because the destination changed. Drop the files again.");
     });
   }
 
   function onDragEnd(event: DragEvent): void {
-    const cancelled = escaped;
-    escaped = false;
     // dragend receives a fresh, protected DataTransfer: getData cannot recover
     // the source identity. The source node is stable across its drag events.
     const endedSource = event.target ? sources.get(event.target) ?? null : null;
-    let overQuickAccess = deps.isDragOver();
     const quickAccess = deps.quickAccess();
-    if (!overQuickAccess && quickAccess && event.clientX > 0 && event.clientY > 0) {
-      overQuickAccess = quickAccess.contains(document.elementFromPoint(event.clientX, event.clientY));
-    }
-    if (overQuickAccess && quickAccess?.isConnected && endedSource) {
-      deferUntilRejected(event, quickAccess, endedSource, cancelled);
+    const point = event.clientX > 0 && event.clientY > 0 ? document.elementFromPoint(event.clientX, event.clientY) : null;
+    if ((deps.isDragOver() || quickAccess?.contains(point)) && quickAccess?.isConnected && endedSource) {
+      deferUntilRejected(event, quickAccess, endedSource, point);
       pinOnQuickAccess(quickAccess, endedSource);
     }
+    escaped = false;
     deps.reset();
     dragState.finish(endedSource);
     if (event.target) sources.delete(event.target);
@@ -91,6 +79,7 @@ export function listenSidebarDragEnd(deps: {
     document.removeEventListener("dragstart", onDragStart as EventListener);
     document.removeEventListener("dragend", onDragEnd, { capture: true });
     window.removeEventListener("keydown", onKeyDown, true);
+    // Release cross-window decision listeners; clearing abandons each pin.
     for (const cancel of deferred) cancel();
     deferred.clear();
   };

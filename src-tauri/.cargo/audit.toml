@@ -1,0 +1,22 @@
+[advisories]
+ignore = [
+    # GTK3 (gtk-rs 0.18) constrains this on Linux. GTK/glib are runtime-reachable,
+    # but the app and its native dependencies have no caller of VariantStrIter
+    # (including Variant::array_iter_str). Reassess when GTK3 is migrated or a
+    # VariantStrIter caller is introduced.
+    "RUSTSEC-2024-0429",
+    # Build-only proc-macro dependency of glib-macros/gtk3-macros; no runtime
+    # path. Reassess when those upstream macros remove it or migrate to a
+    # maintained diagnostics crate.
+    "RUSTSEC-2024-0370",
+]
+
+# Reachability notes for dependencies that may appear in GitHub's alert feed:
+# - serde_with 3.21.0 is present in the runtime graph through tauri-utils, but
+#   this tree does not use serde_with's affected KeyValueMap adapter. RustSec's
+#   zero-vulnerability result does not imply zero GitHub dependency alerts.
+# - Unicode support is runtime-reachable: tauri-utils uses urlpattern in
+#   RemoteUrlPattern parsing and capability URL matching (acl/mod.rs).
+#   Reassess when tauri-utils/urlpattern changes or a new advisory is reported.
+# - rand 0.7.3 is absent from the resolved application lockfile. Reassess if a
+#   future dependency update introduces it, including its production callers.

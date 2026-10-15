@@ -36,6 +36,12 @@ impl Runtime {
         }
     }
 
+    /// Journal inspection for admission tests: reservations not yet retired.
+    #[cfg(test)]
+    pub(crate) fn unretired_reservations(&self) -> Result<usize, AppError> {
+        self.coordinator()?.unretired_reservations()
+    }
+
     /// Production replacement policy. Transient copies obey their claims.
     pub(crate) fn copy_overwriting(
         &self,

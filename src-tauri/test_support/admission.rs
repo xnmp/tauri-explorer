@@ -264,4 +264,47 @@ mod linux {
         assert!(report.unretired.is_empty());
         assert!(f.claimable(&f.target()));
     }
+
+    #[test]
+    fn a_dropped_admission_leaves_its_journal_row_unlike_a_retired_one() {
+        let f = fixture();
+        assert_eq!(f.runtime.unretired_reservations().unwrap(), 0);
+        let admission = block(f.runtime.admit(write(&f.target()))).unwrap();
+        assert_eq!(f.runtime.unretired_reservations().unwrap(), 1);
+        drop(admission);
+        assert_eq!(
+            f.runtime.unretired_reservations().unwrap(),
+            1,
+            "dropping releases the in-memory handle but not the durable row"
+        );
+    }
+
+    #[test]
+    fn the_plain_path_retires_its_journal_row_rather_than_dropping_it() {
+        let f = fixture();
+        let seen = f.runtime.clone();
+        let during: Report = block(admitted_execute(probe(&f), &f.runtime, |_, _| async move {
+            Report {
+                executed: seen.unretired_reservations().unwrap() == 1,
+                ..Report::default()
+            }
+        }));
+        assert!(during.executed, "the row exists while the work runs");
+        assert!(during.unretired.is_empty());
+        assert_eq!(f.runtime.unretired_reservations().unwrap(), 0);
+    }
+
+    #[test]
+    fn the_prepared_path_retires_its_journal_row_rather_than_dropping_it() {
+        let f = fixture();
+        let resources =
+            crate::files::recovery::resources::capture_requests(&write(&f.target())).unwrap();
+        let report: Report = block(admitted_prepared(
+            &f.runtime,
+            move || Ok(((), resources.clone())),
+            |(), _| async { Report::default() },
+        ));
+        assert!(report.unretired.is_empty());
+        assert_eq!(f.runtime.unretired_reservations().unwrap(), 0);
+    }
 }

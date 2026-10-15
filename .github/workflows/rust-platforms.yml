@@ -104,3 +104,42 @@ jobs:
             & fsutil.exe 8dot3name set $policy
             if ($LASTEXITCODE -ne 0) { throw "Could not restore original NTFS 8.3 policy $policy" }
           }
+
+      # FAT file IDs are not reversible, so directory enumeration must not
+      # reopen by file ID (#793). Attach a fresh FAT32 VHD on the runner's
+      # administrator VM and require exactly one test run against it.
+      - name: FAT32 directory enumeration
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $used = (Get-PSDrive -PSProvider FileSystem).Name
+          $letter = [char[]]([int][char]'Z'..[int][char]'G') | Where-Object { $used -notcontains [string]$_ } | Select-Object -First 1
+          if (-not $letter) { throw "No free drive letter for the FAT32 volume" }
+          $vhd = Join-Path $env:RUNNER_TEMP 'fat32.vhdx'
+          $attach = Join-Path $env:RUNNER_TEMP 'fat32-attach.txt'
+          $detach = Join-Path $env:RUNNER_TEMP 'fat32-detach.txt'
+          @(
+            "create vdisk file=`"$vhd`" maximum=256 type=expandable",
+            "select vdisk file=`"$vhd`"",
+            "attach vdisk",
+            "create partition primary",
+            "format fs=fat32 quick label=FAT32TEST",
+            "assign letter=$letter"
+          ) | Set-Content -Encoding ascii $attach
+          @("select vdisk file=`"$vhd`"", "detach vdisk") | Set-Content -Encoding ascii $detach
+          try {
+            & diskpart.exe /s $attach | Out-Host
+            if ($LASTEXITCODE -ne 0) { throw "diskpart could not create the FAT32 volume" }
+            $volume = Get-Volume -DriveLetter $letter -ErrorAction Stop
+            if ($volume.FileSystem -ne 'FAT32') { throw "Test volume uses $($volume.FileSystem), not FAT32" }
+            $env:TAURI_FAT32_ROOT = "${letter}:\"
+            $result = & cargo.exe test --manifest-path src-tauri/Cargo.toml --lib fat32_volume_enumerates_without_reversible_file_ids -- --ignored --nocapture 2>&1
+            $testExit = $LASTEXITCODE
+            $result | Out-Host
+            if ($testExit -ne 0) { throw "FAT32 directory enumeration test failed" }
+            if (($result | Out-String) -notmatch 'test result: ok\. 1 passed; 0 failed;') {
+              throw "FAT32 directory enumeration test did not execute exactly once"
+            }
+          } finally {
+            & diskpart.exe /s $detach | Out-Host
+          }

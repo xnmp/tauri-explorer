@@ -1,24 +1,9 @@
 name: Windows installer
 
 on:
-  # PRs run only required checks (tauri#1133); this platform workflow keeps a
-  # PR trigger for its Windows-specific files. README edits run on dev.
-  pull_request:
-    paths:
-      - windows_install.ps1
-      - tests/windows-install-script.test.ts
-      - .github/workflows/windows-installer.yml
   push:
     branches: [dev]
-    paths:
-      - windows_install.ps1
-      - tests/windows-install-script.test.ts
-      - README.md
-      - .github/workflows/windows-installer.yml
-
-concurrency:
-  group: ${{ github.workflow }}-${{ github.head_ref || github.ref_name }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  workflow_dispatch:
 
 jobs:
   invocation:

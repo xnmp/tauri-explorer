@@ -135,6 +135,7 @@ zbus = { version = "5", default-features = false, features = ["tokio"] }
 webkit2gtk = { version = "2.0", features = ["v2_20"] }
 gtk = "0.18"
 gdkwayland-sys = "0.18"
+xkbcommon = { version = "0.9", default-features = false }
 gdkx11-sys = "0.18"
 tauri-plugin-single-instance = "2.5.2"
 
@@ -143,7 +144,7 @@ tauri-plugin-single-instance = "2.5.2"
 # matching bytes (clipboard/linux/data_control.rs, #927). Pure-Rust backend.
 # Gated like `clipboard::linux`, which serves every non-Windows, non-macOS OS.
 [target.'cfg(all(not(windows), not(target_os = "macos")))'.dependencies]
-wayland-client = "0.31"
+wayland-client = { version = "0.31", features = ["system"] }
 wayland-protocols = { version = "0.32", features = ["client", "staging"] }
 wayland-protocols-wlr = { version = "0.3", features = ["client"] }
 

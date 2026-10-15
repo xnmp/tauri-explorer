@@ -539,16 +539,23 @@ impl MoveExecution {
                 } else {
                     format!("it cannot be read safely ({error})")
                 };
+                // With the source already home, the destination is the
+                // user's to keep as it is: Forget ends the record instead.
+                let source_home = admission == Admission::SourceHome;
+                let exit = if source_home {
+                    "Fix the reported entry and Restore again, or Forget this record to keep it \
+                     where it is."
+                } else {
+                    "Fix the reported entry and Undo again, or discard this move's recovery data \
+                     to keep it where it is."
+                };
                 Refusal {
                     error: AppError::Other(format!(
                         "Undo cannot keep '{}' in File Recovery: {reason}. Nothing was changed. \
-                         Fix the reported entry and Undo again, or discard this move's recovery \
-                         data to keep it where it is.",
+                         {exit}",
                         target.path.display()
                     )),
-                    // With the source already home, the destination is the
-                    // user's to keep as it is.
-                    lasting: admission == Admission::SourceHome,
+                    lasting: source_home,
                 }
             })?;
         }
@@ -564,11 +571,22 @@ impl MoveExecution {
     /// hide, so Undo is refused and the settled record keeps its Discard.
     fn admit_endpoints(&self) -> Result<Admission, Refusal> {
         let phase = self.operation.state().phase;
-        let resuming = phase == Phase::RestoreIntent;
-        if !resuming && !matches!(phase, Phase::Published | Phase::ParkIntent | Phase::Parked) {
+        if !matches!(
+            phase,
+            Phase::Published | Phase::ParkIntent | Phase::Parked | Phase::RestoreIntent
+        ) {
             // Other interrupted positions reconcile inside restoration itself.
             return Ok(Admission::Checked);
         }
+        // Only a settled record keeps a Discard; an interrupted park or
+        // restoration (no disposal yet) returns a private source first and
+        // otherwise ends through Forget.
+        let resuming = self
+            .operation
+            .intent()
+            .checkpoint(self.operation.state())
+            .disposal()
+            .is_none();
         let spec = self.spec()?;
         let (source_path, target_path) = (spec.source.0.display(), spec.target.0.display());
         let refuse = |reason: String| {
@@ -577,11 +595,16 @@ impl MoveExecution {
             )))
         };
         let changed = || {
+            let exit = if resuming {
+                "Forget this record in File Recovery; nothing is deleted"
+            } else {
+                "discard this move's recovery data in File Recovery; that permanently deletes \
+                 the retained original"
+            };
             Refusal::lasting(AppError::Other(format!(
                 "Undo cannot return '{source_path}': '{target_path}' changed after the move, and \
                  Undo would hide those changes. Nothing was changed. To keep '{target_path}' as \
-                 it is, discard this move's recovery data in File Recovery; that permanently \
-                 deletes the retained original."
+                 it is, {exit}."
             )))
         };
         let source = self.source()?;

@@ -285,7 +285,8 @@ cannot succeed, nor keep claims on files it can no longer act on.
 
 - **Undo is admitted from the live endpoints before any effect.**
   `MoveExecution::admit_endpoints` runs read-only, before `BeginRestoration`,
-  for every settled position (`Published`, `ParkIntent`, `Parked`). The source
+  for every settled position (a disposal exists: `Parked`, or `Published`
+  without parking). The source
   name must be free (or already hold the exact original), the moved entry or
   its parked original exact, the destination the published payload or absent,
   and any displaced original still retained exactly. Otherwise Undo and File
@@ -314,7 +315,9 @@ cannot succeed, nor keep claims on files it can no longer act on.
   user can resolve, such as a new entry at the source name, and an
   unobservable volume or unverifiable root are never proof, so such a record
   waits. A restoration whose source is still parked may always bring it home
-  first. Forget deletes nothing; its folders stay where they are listed.
+  first; an interrupted park (`ParkIntent`, or a copy `Published` before
+  parking) is treated the same way, so its hidden original is never
+  forgotten. Forget deletes nothing; its folders stay where they are listed.
 - **Claims.** A settled record, now the only position an edited destination
   leaves it in, already releases its public endpoints once idle (only its
   private roots stay claimed). Discard or Forget then retires the record and

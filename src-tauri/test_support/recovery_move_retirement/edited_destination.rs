@@ -473,3 +473,50 @@ fn an_interrupted_discard_finishes_after_the_destination_is_edited() {
     f.assert_retired();
     assert_eq!(fs::read(&f.target).unwrap(), EDIT);
 }
+
+/// A park interrupted after the source was hidden is not settled: with an
+/// edited destination, Restore first brings the original home (keeping the
+/// edit public) and only then can Forget end the record (#795 review).
+#[test]
+fn an_interrupted_park_with_an_edited_destination_returns_the_source_first() {
+    let f = Fixture::interrupted_at("park");
+    assert_eq!(state(&f).phase, Phase::ParkIntent);
+    assert!(!f.source.exists(), "the source was parked");
+    edit(&f.target);
+
+    let item = inspect(&f);
+    assert_eq!(
+        item.actions,
+        vec![RecoveryChoice::Restore],
+        "{}",
+        item.message
+    );
+    let generation = item.generation;
+    let reply =
+        service::resolve(&f.coordinator, &f.id, generation, RecoveryChoice::Restore).unwrap();
+    assert!(
+        reply.error.is_some(),
+        "the edited destination cannot be parked"
+    );
+    assert_eq!(
+        fs::read(&f.source).unwrap(),
+        MOVED,
+        "the original came home"
+    );
+    assert_eq!(fs::read(&f.target).unwrap(), EDIT);
+
+    let item = inspect(&f);
+    assert_eq!(
+        item.actions,
+        vec![RecoveryChoice::Release],
+        "{}",
+        item.message
+    );
+    assert!(item.message.contains("Forget"), "{}", item.message);
+    assert!(!item.message.contains("discard"), "{}", item.message);
+    assert!(resolve(&f, RecoveryChoice::Release).is_none());
+    assert!(f.coordinator.inventory().unwrap().entries.is_empty());
+    assert_eq!(fs::read(&f.source).unwrap(), MOVED);
+    assert_eq!(fs::read(&f.target).unwrap(), EDIT);
+    assert!(admitted(&f, &f.target));
+}

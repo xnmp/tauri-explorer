@@ -25,11 +25,27 @@ impl Fixture {
             }
         })
     }
+    /// A cross-volume file move whose executor stops at `boundary`, after its
+    /// native effect but before the checkpoint that records it.
+    pub(super) fn interrupted_at(boundary: &'static str) -> Self {
+        Self::build_with(true, false, false, Some(boundary), |source| {
+            fs::write(source, MOVED).unwrap()
+        })
+    }
     /// `populate` creates the moved source entry; `directory` only shapes an overwritten target.
     pub(super) fn build(
         cross: bool,
         overwrite: bool,
         directory: bool,
+        populate: impl FnOnce(&std::path::Path),
+    ) -> Self {
+        Self::build_with(cross, overwrite, directory, None, populate)
+    }
+    fn build_with(
+        cross: bool,
+        overwrite: bool,
+        directory: bool,
+        stop: Option<&'static str>,
         populate: impl FnOnce(&std::path::Path),
     ) -> Self {
         let base = tempfile::tempdir().unwrap();
@@ -52,10 +68,21 @@ impl Fixture {
             Coordinator::open(&fs::canonicalize(base.path()).unwrap().join("recovery")).unwrap();
         let mut progress =
             crate::progress::ProgressTracker::new(None, "move", "cancelled", 0, 0, None);
-        PreparedMove::prepare(&coordinator, &source, &target)
-            .unwrap()
-            .execute(&mut progress)
-            .unwrap();
+        let prepared = PreparedMove::prepare(&coordinator, &source, &target).unwrap();
+        match stop {
+            None => drop(prepared.execute(&mut progress).unwrap()),
+            Some(stop) => {
+                let hook: crate::files::recovery::move_execution::Boundary =
+                    Box::new(move |label| {
+                        if label == stop {
+                            Err(AppError::Other(format!("interrupted at {stop}")))
+                        } else {
+                            Ok(())
+                        }
+                    });
+                assert!(prepared.execute_with(&mut progress, Some(hook)).is_err());
+            }
+        }
         let entry = coordinator.inventory().unwrap().entries.remove(0);
         let kind = entry.intent.operation.kind();
         let roots = [Side::Source, Side::Target]

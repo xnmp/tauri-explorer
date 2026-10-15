@@ -287,7 +287,7 @@ pub(super) fn forget(
             },
             Err(failure) => return reply(coordinator, None, Some(diagnostic(failure.1))),
         }
-    } else if operation.state().phase == Phase::Restored {
+    } else if retirable && operation.state().phase == Phase::Restored {
         match MoveExecution::try_reopen(operation) {
             Ok(execution) if execution.restored_without_publication().unwrap_or(false) => {
                 execution.operation

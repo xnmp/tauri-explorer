@@ -114,11 +114,14 @@ backend for E2E/browser).
 - `state/navigation.ts` — history stack, navigate/back/forward
 - FLOW: navigate mutates explorer.currentPath + history; breadcrumbs derived from currentPath; autocomplete lists dirs via `listDirectory`.
 
-## Recycle Bin
+## Recycle Bin / in-app Trash (#863)
 
-- `components/FilesSidebarView.svelte`, `state/recycle-bin.ts`, `api/open.ts` — sidebar action opens the native Recycle Bin and reports an IPC failure through `toastStore`.
-- `src-tauri/src/system.rs` — `open_recycle_bin`: Linux sends `trash:///` directly to FileManager1 for its native Trash view, falling back only on definite service unavailability to a registered graphical file manager opening the absolute `Trash/files` directory; Windows and macOS retain their native shell launchers.
-- FLOW: sidebar click → `openRecycleBinWithFeedback` → `open_recycle_bin` IPC → platform launcher; a terminal failure returns to the toast.
+- `components/FilesSidebarView.svelte` — the Recycle Bin item navigates the active pane to `trash://` (`domain/trash.ts`).
+- `state/trash-provider.ts` (eager), `state/trash-location.ts` (lazy), `plugins/fs-providers.ts` — built-in `trash` provider: lists through `api/trash.ts` → `list_trash`; tabs, history, sorting, selection and all three views use the ordinary explorer path. Restore / Open in System File Manager are `scope: "trash"` items in `state/context-menu-items.svelte.ts`, and `components/ContextMenu.svelte` shows only those in the Trash; `components/DetailsView.svelte` + `FileItem.svelte` relabel Date/Type as Date deleted / Original location; `FileList.svelte` owns the empty copy and refuses opening trashed items. Keep new Trash code in the lazy module: the startup gzip cap in `scripts/check-bundle-size.mjs` had 18 bytes of headroom.
+- `src-tauri/src/files/trash_inventory.rs`, `src-tauri/src/files/freedesktop_trash/inventory.rs` — native enumeration and ID→artifact registry; `src-tauri/src/file_mutation.rs` `restore_trash_items` runs `files/trash.rs` `restore` (exact engine, Linux admission) under `run_forward` with no history action so affected folders are published.
+- `state/pane-mutations.ts` — a non-permanent delete also publishes `trash://` so open Trash views refresh (they have no watcher).
+- `state/recycle-bin.ts`, `api/open.ts`, `src-tauri/src/system.rs` — `open_recycle_bin` remains as the external launcher: Linux sends `trash:///` directly to FileManager1, falling back only on definite service unavailability to a registered graphical file manager opening the absolute `Trash/files` directory; Windows and macOS retain their native shell launchers.
+- FLOW: sidebar click → `navigateTo("trash://")` → provider → `list_trash`; Restore → `restore_trash_items` → per-item outcome toast + `publishTrashChanged`.
 
 ## Window tabs
 

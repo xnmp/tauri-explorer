@@ -141,6 +141,8 @@ export interface MockControl {
   /** Command name -> error message. Injects a rejection instead of running
    * the command's handler. */
   failures?: Record<string, string>;
+  /** Unreadable trash sources `list_trash` reports beside its entries. */
+  trashIssues?: Array<{ source: string; error: string }>;
   /** Command name -> extra artificial latency in ms, on top of the base
    * simulated round-trip delay. Also settable via `?mockLatency=name:ms,...`. */
   latency?: Record<string, number>;

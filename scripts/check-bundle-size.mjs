@@ -37,7 +37,14 @@ const STARTUP_RAW_BUDGET = 866_617;
 // Raised 278,400 -> 279,424 (+1 KiB) for #1061: pane minima and CSS-sized
 // split panes must apply on the first painted frame, so that code is startup
 // by nature (+279 bytes gzip over a dev that sat within ~300 bytes of the cap).
-const STARTUP_GZIP_BUDGET = 279_424;
+// Raised 279,424 -> 279,936 (+512) for #863 (in-app Trash): dev measured
+// 279,406 (18 bytes of headroom). Listing, restore, menu actions and refresh
+// load lazily with the first Trash listing (~1.7 KiB gzip chunk); what stays
+// eager is the provider registration, Trash-aware Details headers and column,
+// the empty-state copy, the trashed-item open guard and menu scoping, +315
+// bytes gzip (279,721 total). Routing every lazy call through one module was
+// measured; a second Vite preload wrapper cost ~100 bytes.
+const STARTUP_GZIP_BUDGET = 279_936;
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const clientDir = resolve(repoRoot, ".svelte-kit/output/client");

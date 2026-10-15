@@ -43,6 +43,11 @@ impl MountSnapshot {
 
     /// Resolve against the kernel mount ID when available. Falling back to
     /// pathname containment is limited to kernels predating STATX_MNT_ID.
+    /// Every mount record, for discovering per-mount trash directories.
+    pub fn mounts(&self) -> &[Mount] {
+        &self.mounts
+    }
+
     pub fn resolve(&self, path: &Path) -> Result<&Mount, AppError> {
         if let Some(id) = mount_id(path)? {
             return self

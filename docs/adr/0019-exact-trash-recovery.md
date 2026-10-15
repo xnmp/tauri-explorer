@@ -42,6 +42,19 @@ when completed recovery cannot fit. For dependent batches, only a contiguous
 prefix in the next execution order may survive; skipping an oversized prerequisite
 to retain a later action is unsafe. Normal history trimming evicts older entries.
 
+## In-app Trash view (#863)
+
+The Trash view is the one place that enumerates trash, and it is user-driven
+restore, not a history inverse. `files/trash_inventory.rs` lists each source
+and keeps the natively captured artifact (Linux: metadata digest and identity
+plus payload version; Windows: the item's Shell parsing name) behind an opaque
+entry ID. Restore accepts IDs only, so renderer input still cannot supply an
+artifact. It refuses an occupied destination or a missing original folder
+before any effect, then runs the same exact engine, which re-verifies the
+artifact and publishes without replacement. Restores from the view are not
+recorded as undoable history. macOS lists `~/.Trash` without a restore
+destination because the original location is private to Finder.
+
 ## Limits and required follow-up
 
 This is live-session trash identity, not a durable transaction journal. Process

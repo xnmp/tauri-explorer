@@ -56,6 +56,7 @@ backend for E2E/browser).
 - `composables/use-type-ahead.svelte.ts` — type-to-select by name prefix
 - selection state stored on `explorer.svelte.ts` (`selectedPaths`, path anchor, independent path cursor)
 - FLOW: pointer events in item-interactions/marquee → mutate explorer selection set → views highlight via `selectedPaths`.
+- Settled selection: while a marquee drags, `FileList.svelte` holds `explorer.beginSelectionGesture()`; `PreviewPane.svelte` and `PluginInspector.svelte` read `getSettledSelectedEntries()` (the pre-drag selection until release), and `.content.marquee-active` stops entry hit-testing/hover under the pointer (#1169; `tests/state/selection-gesture.test.ts`, `e2e/marquee-preview-settle.spec.ts`)
 
 ## Directory listing & refresh/watcher events
 

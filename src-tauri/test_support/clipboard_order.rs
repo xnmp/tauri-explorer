@@ -194,10 +194,13 @@ fn rejected_publish_does_not_advertise_a_new_selection() {
         .blocking_recv()
         .unwrap()
         .is_err());
-    assert!(matches!(
-        notices.try_recv(),
-        Err(mpsc::TryRecvError::Disconnected)
-    ));
+    assert!(
+        matches!(
+            notices.recv_timeout(DEADLINE),
+            Err(mpsc::RecvTimeoutError::Disconnected)
+        ),
+        "a rejected publish must send no notification and drop its sender"
+    );
     assert!(snapshot(&queue).paths.is_empty());
 }
 

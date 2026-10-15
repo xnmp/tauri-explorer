@@ -1,0 +1,24 @@
+{
+  "fixtureDirectories": 8192,
+  "before": {
+    "configuration": "Controlled restoration of the pre-isolation shared-lock wait; not the prepared base",
+    "navigationElapsedMs": 15095.0,
+    "nativePendingPhase": "watch-lock",
+    "watchLockWaitMs": 15093,
+    "entriesListedWhileBlocked": 0,
+    "postObservationListingMicroseconds": 270.541,
+    "recursiveRegistrationMs": 15235,
+    "outcome": "Expected native navigation timeout; screenshot captured before releasing registration"
+  },
+  "after": {
+    "syntheticDirectories": 8192,
+    "destinationEntries": 1,
+    "elapsedMs": 150,
+    "registrationReleased": false,
+    "nativeGateStillBlocked": true,
+    "postObservationListingMicroseconds": 204.006,
+    "cancelledSearchObservationWaitMs": 60,
+    "recursiveRegistrationIncludingGateMs": 2588,
+    "outcome": "Native test passed; destination entry visible before gate release; cancelled root skipped native installation after gate release"
+  }
+}

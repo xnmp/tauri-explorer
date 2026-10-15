@@ -424,3 +424,328 @@ fn published_recursive_health_observes_native_callback_faults_immediately() {
     cache.publish_if_unchanged(root.path(), Arc::new(vec!["stale.txt".into()]), revision);
     assert!(cache.completed(root.path()).is_none());
 }
+
+#[test]
+fn cancelled_recursive_demand_is_not_installed_or_recovered() {
+    use super::super::watch_observation::tests::NativeHarness;
+    let root = tempfile::tempdir().unwrap();
+    let queued = root.path().join("queued");
+    std::fs::create_dir(&queued).unwrap();
+    let cache = Arc::new(crate::search_cache::SearchEntryCache::<String>::new());
+    let recursive = NativeHarness::default();
+    let direct = NativeHarness::default();
+    // Block inside the native root watch, after admission. Cancellation cannot
+    // interrupt this call, so cleanup must revoke its eventual cache coverage.
+    let (entered_rx, release_tx) = recursive.block_successful_watch_once(root.path());
+    let observer = NativeObserver::with_cache(cache.clone(), |mode| match mode {
+        Mode::Direct => direct.factory(),
+        Mode::Recursive => recursive.factory(),
+    });
+    let cancelled = Arc::new(AtomicBool::new(false));
+    let queued_cancelled = Arc::new(AtomicBool::new(false));
+    let revision = cache.begin_load(root.path());
+    let active = observer
+        .search
+        .prepare_cancellable(root.path(), cancelled.clone());
+    entered_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+    let queued_request = observer
+        .search
+        .prepare_cancellable(&queued, queued_cancelled.clone());
+    cancelled.store(true, Ordering::Release);
+    queued_cancelled.store(true, Ordering::Release);
+    release_tx.send(()).unwrap();
+    let active_result = active.wait();
+    let queued_result = queued_request.wait();
+    observer.search.settle();
+    assert!(
+        !active_result,
+        "cancelled in-flight registration cannot report coverage"
+    );
+    assert!(
+        !queued_result,
+        "cancelled queued registration cannot report coverage"
+    );
+    assert!(!observer.search.healthy(root.path()));
+    assert!(!observer.search.healthy(&queued));
+    assert!(
+        recursive
+            .registrations(recursive.latest_generation())
+            .is_empty(),
+        "cancelled demand must release physical watches and recovery demand"
+    );
+    // Queued work must not even enter native registration (unlike install then remove).
+    assert_eq!(recursive.watch_count(&queued), 0);
+    cache.publish_if_unchanged(root.path(), Arc::new(vec!["stale".into()]), revision);
+    assert!(cache.completed(root.path()).is_none());
+}
+
+#[test]
+fn cancelled_recursive_request_cannot_retire_a_live_same_root_request() {
+    let root = tempfile::tempdir().unwrap();
+    let cache = Arc::new(crate::search_cache::SearchEntryCache::<String>::new());
+    let (observer, _) = cache_observer(cache);
+    let cancelled = Arc::new(AtomicBool::new(true));
+    let rejected = observer.search.prepare_cancellable(root.path(), cancelled);
+    let live = observer.search.prepare(root.path());
+    assert!(
+        !rejected.wait(),
+        "already cancelled requests must not gain coverage"
+    );
+    assert!(live.wait());
+    assert!(observer.search.healthy(root.path()));
+}
+
+#[test]
+fn pending_same_root_cancellation_preserves_the_other_search() {
+    let root = tempfile::tempdir().unwrap();
+    let cache = Arc::new(crate::search_cache::SearchEntryCache::<String>::new());
+    let (observer, recursive) = cache_observer(cache);
+    let (entered, release) = recursive.block_successful_watch_once(root.path());
+    let cancelled = Arc::new(AtomicBool::new(false));
+    let original = observer
+        .search
+        .prepare_cancellable(root.path(), cancelled.clone());
+    entered.recv_timeout(Duration::from_secs(5)).unwrap();
+    let replacement = observer.search.prepare(root.path());
+    cancelled.store(true, Ordering::Release);
+    // A cancelled waiter must return even while the OS call remains blocked.
+    let (done_tx, done_rx) = std::sync::mpsc::channel();
+    let waiter = std::thread::spawn(move || done_tx.send(original.wait()).unwrap());
+    let before_release = done_rx.recv_timeout(Duration::from_secs(1));
+    release.send(()).unwrap();
+    waiter.join().unwrap();
+    assert!(!before_release.expect("cancelled search must stop waiting for native registration"));
+    assert!(replacement.wait());
+    assert!(observer.search.healthy(root.path()));
+    assert_eq!(recursive.watch_count(root.path()), 1);
+}
+
+#[test]
+fn watch_limit_recovery_does_not_block_navigation_and_cancelled_failures_do_not_retry() {
+    let root = tempfile::tempdir().unwrap();
+    let destination = tempfile::tempdir().unwrap();
+    std::fs::write(destination.path().join("visible.txt"), "entry").unwrap();
+    let cache = Arc::new(crate::search_cache::SearchEntryCache::<String>::new());
+    let (observer, recursive) = cache_observer(cache);
+    let mut watches = DirectoryWatches::new(observer);
+    let owner = Owner::default();
+    watches
+        .acquire(&owner, root.path().to_string_lossy().into_owned())
+        .unwrap();
+    recursive.exhaust_watch_limit_once(root.path());
+    let (entered, release) = recursive.block_successful_watch_once(root.path());
+    assert!(watches.observer.search.add(root.path(), true).is_err());
+    entered.recv_timeout(Duration::from_secs(5)).unwrap();
+    // Multiple new navigation leases and their listings complete during recovery.
+    for _ in 0..3 {
+        let lease = watches
+            .observe(&owner, destination.path().to_string_lossy().into_owned())
+            .unwrap();
+        assert_eq!(std::fs::read_dir(&lease.path).unwrap().count(), 1);
+        watches.release(&owner, &lease.id).unwrap();
+    }
+    release.send(()).unwrap();
+    watches.observer.search.settle();
+    assert!(watches.observer.search.healthy(root.path()));
+
+    let cancelled_root = tempfile::tempdir().unwrap();
+    recursive.exhaust_watch_limit_once(cancelled_root.path());
+    let cancelled = Arc::new(AtomicBool::new(false));
+    let failed = watches
+        .observer
+        .search
+        .prepare_cancellable(cancelled_root.path(), cancelled.clone());
+    assert!(!failed.wait());
+    cancelled.store(true, Ordering::Release);
+    watches.observer.search.settle();
+    // Force the deadline due through the worker's production recovery seam.
+    watches
+        .observer
+        .search
+        .maintain_for_test(Instant::now() + Duration::from_secs(60));
+    assert_eq!(recursive.watch_count(cancelled_root.path()), 1);
+    assert!(!watches.observer.search.healthy(cancelled_root.path()));
+    assert!(watches.observer.search.healthy(root.path()));
+}
+
+// Per-root gate on the real streaming-command path; no mock invocation or
+// substitute search implementation. Other concurrently running tests are free.
+type SearchGate = (std::sync::mpsc::Sender<()>, std::sync::mpsc::Receiver<()>);
+static SEARCH_GATES: OnceLock<Mutex<HashMap<PathBuf, SearchGate>>> = OnceLock::new();
+
+pub(crate) fn gate_registration(
+    path: &Path,
+) -> (std::sync::mpsc::Receiver<()>, std::sync::mpsc::Sender<()>) {
+    let (entered_tx, entered_rx) = std::sync::mpsc::channel();
+    let (release_tx, release_rx) = std::sync::mpsc::channel();
+    SEARCH_GATES
+        .get_or_init(Default::default)
+        .lock()
+        .unwrap()
+        .insert(path.to_path_buf(), (entered_tx, release_rx));
+    (entered_rx, release_tx)
+}
+
+pub(crate) fn wait_for_registration(path: &Path) {
+    let gate = SEARCH_GATES
+        .get_or_init(Default::default)
+        .lock()
+        .unwrap()
+        .remove(path);
+    if let Some((entered, release)) = gate {
+        entered.send(()).unwrap();
+        release.recv_timeout(Duration::from_secs(10)).unwrap();
+    }
+}
+
+#[test]
+fn healthy_acquisition_retains_recovered_demand_after_original_search_cancels() {
+    let root = tempfile::tempdir().unwrap();
+    let cache = Arc::new(crate::search_cache::SearchEntryCache::<String>::new());
+    let (observer, recursive) = cache_observer(cache);
+    recursive.exhaust_watch_limit_once(root.path());
+    let original = Arc::new(AtomicBool::new(false));
+    assert!(!observer
+        .search
+        .prepare_cancellable(root.path(), original.clone())
+        .wait());
+    observer
+        .search
+        .maintain_for_test(Instant::now() + Duration::from_secs(60));
+    assert!(observer.search.healthy(root.path()));
+    let second = Arc::new(AtomicBool::new(false));
+    assert!(observer
+        .search
+        .prepare_cancellable(root.path(), second.clone())
+        .wait());
+    original.store(true, Ordering::Release);
+    observer.search.settle();
+    assert!(
+        observer.search.healthy(root.path()),
+        "accepted recovered coverage belongs to the second search too"
+    );
+    assert!(recursive
+        .registrations(recursive.latest_generation())
+        .contains_key(root.path()));
+}
+
+#[test]
+fn retiring_cancelled_roots_together_never_rebuilds_another_cancelled_root() {
+    let fixture = tempfile::tempdir().unwrap();
+    let roots: Vec<_> = ["healthy", "cancel-a", "cancel-b", "blocker"]
+        .iter()
+        .map(|name| fixture.path().join(name))
+        .collect();
+    for root in &roots {
+        std::fs::create_dir(root).unwrap();
+    }
+    let cache = Arc::new(crate::search_cache::SearchEntryCache::<String>::new());
+    let (observer, recursive) = cache_observer(cache);
+    observer.search.add(&roots[0], true).unwrap();
+    let cancelled: Vec<_> = (0..2).map(|_| Arc::new(AtomicBool::new(false))).collect();
+    for (root, flag) in roots[1..3].iter().zip(&cancelled) {
+        recursive.exhaust_watch_limit_once(root);
+        assert!(!observer
+            .search
+            .prepare_cancellable(root, flag.clone())
+            .wait());
+    }
+    observer
+        .search
+        .maintain_for_test(Instant::now() + Duration::from_secs(60));
+    let counts: Vec<_> = roots[1..3]
+        .iter()
+        .map(|root| recursive.watch_count(root))
+        .collect();
+    let (entered, release) = recursive.block_successful_watch_once(&roots[3]);
+    let blocker = observer.search.prepare(&roots[3]);
+    entered.recv_timeout(Duration::from_secs(5)).unwrap();
+    for flag in &cancelled {
+        flag.store(true, Ordering::Release);
+    }
+    release.send(()).unwrap();
+    assert!(blocker.wait());
+    observer.search.settle();
+    for (root, count) in roots[1..3].iter().zip(counts) {
+        assert_eq!(
+            recursive.watch_count(root),
+            count,
+            "batch retirement must not re-register {root:?}"
+        );
+        assert!(!observer.search.healthy(root));
+    }
+    assert!(observer.search.healthy(&roots[0]));
+    assert!(observer.search.healthy(&roots[3]));
+}
+
+#[test]
+fn recovery_does_not_start_a_cancelled_later_root() {
+    for rebuild in [false, true] {
+        let fixture = tempfile::tempdir().unwrap();
+        let roots = [fixture.path().join("first"), fixture.path().join("second")];
+        for root in &roots {
+            std::fs::create_dir(root).unwrap();
+        }
+        let cache = Arc::new(crate::search_cache::SearchEntryCache::<String>::new());
+        let (observer, recursive) = cache_observer(cache);
+        let cancelled: Vec<_> = roots
+            .iter()
+            .map(|_| Arc::new(AtomicBool::new(false)))
+            .collect();
+        for (root, flag) in roots.iter().zip(&cancelled) {
+            recursive.exhaust_watch_limit_once(root);
+            assert!(!observer
+                .search
+                .prepare_cancellable(root, flag.clone())
+                .wait());
+        }
+        // Whichever unordered due root goes first blocks; cancel the other before
+        // the same production maintain call can start its native registration.
+        let (first_entered, first_release) = recursive.block_successful_watch_once(&roots[0]);
+        let (second_entered, second_release) = recursive.block_successful_watch_once(&roots[1]);
+        std::thread::scope(|scope| {
+            let native = recursive.clone();
+            let maintenance = scope.spawn(|| {
+                observer.search.maintain_after_for_test(
+                    Instant::now() + Duration::from_secs(60),
+                    move || {
+                        // Fault and recover in one worker command. Otherwise its
+                        // automatic tail maintenance can consume the fault first,
+                        // making both test arms exercise incremental installation.
+                        if rebuild {
+                            native.emit(
+                                native.latest_generation(),
+                                Err(notify::Error::generic("force shared-source rebuild")),
+                            );
+                        }
+                    },
+                )
+            });
+            let deadline = Instant::now() + Duration::from_secs(5);
+            let first = loop {
+                if first_entered.try_recv().is_ok() {
+                    break 0;
+                }
+                if second_entered.try_recv().is_ok() {
+                    break 1;
+                }
+                assert!(Instant::now() < deadline, "neither retry started");
+                std::thread::yield_now();
+            };
+            cancelled[1 - first].store(true, Ordering::Release);
+            // Release both gates so a regression fails its watch-count assertion,
+            // not an incidental timeout in the injected native watcher.
+            first_release.send(()).unwrap();
+            second_release.send(()).unwrap();
+            maintenance.join().unwrap();
+            observer.search.settle();
+            assert_eq!(
+                recursive.watch_count(&roots[1 - first]),
+                1,
+                "cancellation must be checked between native root registrations"
+            );
+            assert!(!observer.search.healthy(&roots[1 - first]));
+            assert!(observer.search.healthy(&roots[first]));
+        });
+    }
+}

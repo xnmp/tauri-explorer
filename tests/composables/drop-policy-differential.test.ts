@@ -4,7 +4,7 @@ vi.mock("$lib/state/drag-clock", async actual => ({ ...await actual<object>(), d
   initialize: async () => {}, ready: true,
   stamp: () => ({ clockId: `browser:${performance.timeOrigin}`, at: Math.floor(performance.timeOrigin + performance.now()), uncertainty: 0 }),
 } }));
-import { outgoingFilesystemCases, dropStaleFilesCases, dropDeferredUriCases, dropVisibilityCases, dropUriCases, dropUriHtmlCases, dropVisibilities, dropCases, dropSources, dropTargets, dropDeliveryOrders, dropDeliveryCases, dropRejectedDomCases, dropModalCompletionCases, dropBoundaryCases, dropCrossWindowCases, dropPathCases, dropTemporalCases, outgoingRecentCases, dropPlatforms, branchDropPolicy, devDropPolicy, nativeRoute, intendedDifferences, type DropCase, type Outcome } from "../helpers/drop-policy";
+import { outgoingFilesystemCases, dropStaleFilesCases, dropDeferredUriCases, dropVisibilityCases, dropUriCases, dropUriHtmlCases, dropVisibilities, dropCases, dropSources, dropTargets, dropDeliveryOrders, dropDeliveryCases, dropRejectedDomCases, dropModalCompletionCases, dropBoundaryCases, dropCrossWindowCases, dropLateDomCases, dropPathCases, dropTemporalCases, outgoingRecentCases, dropPlatforms, branchDropPolicy, devDropPolicy, nativeRoute, intendedDifferences, type DropCase, type Outcome } from "../helpers/drop-policy";
 import { dropElement } from "../helpers/drop-element";
 
 const io = vi.hoisted(() => ({ start: vi.fn(), listener: undefined as ((event: any) => void) | undefined,
@@ -223,6 +223,7 @@ async function run(c: DropCase): Promise<Outcome[]> {
   };
   if (c.completionPath === "sidebar-dragend") end();
   else if (c.deliveryOrder === "native-late-after-dragend") { await deliverDom(); end(); await deliverNative(); }
+  else if (c.deliveryOrder === "dom-after-dragend") { end(); await deliverDom(); }
   else if (c.deliveryOrder === "dom-first") { await deliverDom(); await deliverNative(); end(); }
   else { await deliverNative(); await deliverDom(); end(); }
   if (!io.outcomes.length && blockedSurface(c) && drop.stopped) io.outcomes.push("blocked");
@@ -630,7 +631,7 @@ describe.each(dropPlatforms)("differential drop outcomes: %s", platform => {
 
 it("every declared difference has exercised rows, and the Cartesian matrix is complete", () => {
   expect(dropCases).toHaveLength(3510);
-  expect(dropVisibilityCases).toHaveLength(2 * (dropCases.length + dropDeliveryCases.length + dropRejectedDomCases.length
+  expect(dropVisibilityCases).toHaveLength(dropLateDomCases.length + 2 * (dropCases.length + dropDeliveryCases.length + dropRejectedDomCases.length
     + dropBoundaryCases.length + dropCrossWindowCases.length + dropPathCases.length));
   for (const c of dropCases) {
     const rows = dropVisibilityCases.filter(row => row.platform === c.platform && row.source === c.source

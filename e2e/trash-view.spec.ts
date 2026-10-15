@@ -148,6 +148,19 @@ test.describe("In-app Trash (#863)", () => {
     );
   });
 
+  test("opening a trashed folder with Enter explains Restore and stays in the Trash", async ({ page }) => {
+    await page.goto("/?path=/home/user/Documents");
+    await waitForEntries(page);
+    await trash(page, "/home/user/Documents/project");
+    await openTrash(page);
+    await trashRow(page, "project").click();
+    await expect(page.locator(".entry-item.selected")).toHaveCount(1);
+    await page.keyboard.press("Enter");
+    await expect(page.getByText("Restore project to open it. Right-click it and choose Restore.")).toBeVisible();
+    await expect(page.locator(".status-path")).toHaveAttribute("title", "trash://");
+    await expect(trashRow(page, "project")).toHaveCount(1);
+  });
+
   test("keeps the system Trash launcher available from the Trash view", async ({ page }) => {
     await page.goto("/?path=/home/user/Documents");
     await waitForEntries(page);

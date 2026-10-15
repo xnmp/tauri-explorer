@@ -76,9 +76,14 @@ fn macos_trash_restores_an_item_the_app_recorded() {
     use trash::macos::{DeleteMethod, TrashContextExtMacos};
 
     let directory = tempfile::tempdir().expect("fixture directory");
-    // Canonical so the recorded original matches the restore destination.
-    let parent = fs::canonicalize(directory.path()).expect("fixture parent");
-    let path = parent.join(format!("trash-view-863-{}.txt", std::process::id()));
+    // The temporary folder is under the `/var` -> `/private/var` symlink;
+    // recording resolves it so restore can walk the real folders.
+    let path = directory
+        .path()
+        .join(format!("trash-view-863-{}.txt", std::process::id()));
+    let restored = fs::canonicalize(directory.path())
+        .expect("fixture parent")
+        .join(path.file_name().expect("fixture leaf"));
     fs::write(&path, b"exact trashed bytes").expect("write fixture");
     let mut context = trash::TrashContext::default();
     context.set_delete_method(DeleteMethod::NsFileManager);
@@ -93,10 +98,19 @@ fn macos_trash_restores_an_item_the_app_recorded() {
     assert!(!path.exists());
 
     let listing = publish(macos_inventory());
+    if listing
+        .issues
+        .iter()
+        .any(|issue| issue.error.contains("Full Disk Access"))
+    {
+        // The runner cannot read ~/.Trash, so nothing could be recorded.
+        eprintln!("skipped: this host denies access to ~/.Trash: {listing:?}");
+        return;
+    }
     let entry = listing
         .entries
         .iter()
-        .find(|entry| entry.original_path.as_deref() == path.to_str())
+        .find(|entry| entry.original_path.as_deref() == restored.to_str())
         .unwrap_or_else(|| panic!("trashed fixture is not listed with its origin: {listing:?}"))
         .clone();
     assert!(entry.deleted_at.is_some());
@@ -106,5 +120,8 @@ fn macos_trash_restores_an_item_the_app_recorded() {
     ))
     .expect("restore batch");
     assert!(outcome.failed.is_empty(), "{outcome:?}");
-    assert_eq!(fs::read(&path).expect("restored"), b"exact trashed bytes");
+    assert_eq!(
+        fs::read(&restored).expect("restored"),
+        b"exact trashed bytes"
+    );
 }

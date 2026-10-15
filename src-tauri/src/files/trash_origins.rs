@@ -81,7 +81,10 @@ impl Store {
             .parent()
             .ok_or_else(|| io::Error::other("record file has no folder"))?;
         std::fs::create_dir_all(parent)?;
-        let staging = self.path.with_extension("json.tmp");
+        // Per-process staging: another app process may be saving too.
+        let staging = self
+            .path
+            .with_extension(format!("json.{}.tmp", std::process::id()));
         std::fs::write(&staging, serde_json::to_vec(records)?)?;
         std::fs::rename(staging, &self.path)
     }
@@ -119,6 +122,12 @@ pub(crate) fn trash_recorded(
     trash: impl FnOnce(&Path) -> Result<(), AppError>,
 ) -> Result<(), AppError> {
     let before = std::fs::symlink_metadata(path)?;
+    // Restore walks folders without following symlinks, so record the
+    // resolved folder (macOS `/tmp` is `/private/tmp`), keeping the leaf.
+    let (Some(parent), Some(name)) = (path.parent(), path.file_name()) else {
+        return Err(AppError::InvalidPath(path.display().to_string()));
+    };
+    let original = std::fs::canonicalize(parent)?.join(name);
     trash(path)?;
     let landed = std::fs::read_dir(trash_dir).ok().and_then(|entries| {
         entries
@@ -132,7 +141,7 @@ pub(crate) fn trash_recorded(
     if let Some(trashed) = landed {
         let record = Record {
             trashed,
-            original: path.to_owned(),
+            original,
             device: before.dev(),
             inode: before.ino(),
             deleted_at: chrono::Local::now().to_rfc3339(),

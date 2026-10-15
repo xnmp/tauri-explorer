@@ -113,6 +113,24 @@ fn restore_refuses_collisions_missing_folders_and_replaced_items() {
 }
 
 #[test]
+fn an_item_deleted_through_a_symlinked_folder_restores_to_the_real_folder() {
+    let fixture = Fixture::new();
+    let real = fixture.scratch.path().join("private-docs");
+    fs::create_dir(&real).unwrap();
+    let link = fixture.scratch.path().join("docs-link");
+    std::os::unix::fs::symlink(&real, &link).unwrap();
+    fs::write(real.join("linked.txt"), b"through a link").unwrap();
+    fixture.trash(&link.join("linked.txt"), "linked.txt");
+
+    let record = fixture.record_for(&fs::canonicalize(&real).unwrap().join("linked.txt"));
+    restore(&record, &fixture.store).unwrap();
+    assert_eq!(
+        fs::read(real.join("linked.txt")).unwrap(),
+        b"through a link"
+    );
+}
+
+#[test]
 fn an_item_that_cannot_be_found_after_trashing_is_still_trashed() {
     let fixture = Fixture::new();
     let original = fixture.scratch.path().join("elsewhere.txt");

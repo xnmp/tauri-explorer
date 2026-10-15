@@ -10,7 +10,7 @@ use crate::files::{
 };
 use sha2::{Digest, Sha256};
 use std::{
-    collections::HashSet,
+    collections::{BTreeSet, HashSet},
     ffi::{OsStr, OsString},
     io::Read,
     os::unix::{
@@ -18,7 +18,7 @@ use std::{
         fs::MetadataExt,
     },
     path::{Component, Path, PathBuf},
-    sync::{mpsc, Arc},
+    sync::{mpsc, Arc, Mutex},
     time::{Duration, Instant},
 };
 
@@ -129,6 +129,9 @@ pub(crate) fn scan_sources(sources: &[Source], inventory: &mut Inventory) {
     merge(scan_keyed(sources), &mut HashSet::new(), inventory);
 }
 
+/// Mount points whose probe thread has not finished yet.
+static PROBING: Mutex<BTreeSet<PathBuf>> = Mutex::new(BTreeSet::new());
+
 /// How long the listing waits for mounted volumes; a stale network mount can
 /// block a stat indefinitely.
 const MOUNT_DEADLINE: Duration = Duration::from_secs(3);
@@ -180,14 +183,38 @@ pub(crate) fn scan_mounts(
     let mut pending = Vec::new();
     for mount in mounts.mounts().iter().filter(|mount| probes(mount)) {
         let top = mount.mount_point.clone();
+        // A probe still blocked from an earlier listing is not repeated, so
+        // refreshing while a mount hangs does not accumulate threads.
+        if !PROBING
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner())
+            .insert(top.clone())
+        {
+            inventory.issues.push(TrashIssue {
+                source: top.display().to_string(),
+                error: "This volume is still not responding, so its trash is not shown".into(),
+            });
+            continue;
+        }
         let (sender, receiver) = mpsc::channel();
         let probe = probe.clone();
         let task = top.clone();
         let spawned = std::thread::Builder::new()
             .name("trash-mount-probe".into())
             .spawn(move || {
-                let _ = sender.send(probe(&task));
+                let scanned = probe(&task);
+                PROBING
+                    .lock()
+                    .unwrap_or_else(|poison| poison.into_inner())
+                    .remove(&task);
+                let _ = sender.send(scanned);
             });
+        if spawned.is_err() {
+            PROBING
+                .lock()
+                .unwrap_or_else(|poison| poison.into_inner())
+                .remove(&top);
+        }
         match spawned {
             Ok(_) => pending.push((top, receiver)),
             Err(error) => inventory.issues.push(TrashIssue {

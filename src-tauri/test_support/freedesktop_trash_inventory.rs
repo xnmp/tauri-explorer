@@ -335,6 +335,27 @@ fn a_mount_that_does_not_answer_is_reported_without_hiding_other_volumes() {
         !probed.lock().unwrap().contains(&proc_fs),
         "pseudo filesystems are never probed"
     );
+
+    // Listing again while the mount still hangs does not start another probe.
+    let probes_before = probed.lock().unwrap().len();
+    let mut again = Inventory::default();
+    let still_probed = std::sync::Arc::clone(&probed);
+    scan_mounts(
+        &mounts,
+        Duration::from_millis(300),
+        move |top| {
+            still_probed.lock().unwrap().push(top.to_owned());
+            scan_keyed(&mount_sources(top))
+        },
+        &mut HashSet::new(),
+        &mut again,
+    );
+    assert_eq!(
+        probed.lock().unwrap().len(),
+        probes_before + 1,
+        "only the healthy mount"
+    );
+    assert!(again.issues[0].error.contains("still not responding"));
 }
 
 #[test]

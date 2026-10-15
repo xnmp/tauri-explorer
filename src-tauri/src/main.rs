@@ -5,6 +5,9 @@ fn main() {
     if let Some(status) = tauri_explorer_lib::run_process_supervisor() {
         std::process::exit(status);
     }
+    if let Some(status) = tauri_explorer_lib::run_clipboard_owner() {
+        std::process::exit(status);
+    }
     let t_main = std::time::Instant::now();
 
     // Capture cwd immediately — before Tauri or any library changes it.

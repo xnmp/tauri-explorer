@@ -37,6 +37,19 @@ mod macos;
 #[cfg(windows)]
 mod windows;
 
+/// Dispatch the private Wayland clipboard owner mode (#927) before
+/// initializing the application.
+pub fn run_owner_mode() -> Option<i32> {
+    #[cfg(all(not(windows), not(target_os = "macos")))]
+    {
+        linux::owner_mode()
+    }
+    #[cfg(any(windows, target_os = "macos"))]
+    {
+        None
+    }
+}
+
 #[cfg(all(not(windows), not(target_os = "macos")))]
 use linux as platform;
 #[cfg(target_os = "macos")]

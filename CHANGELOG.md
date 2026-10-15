@@ -2,6 +2,103 @@
 
 All notable changes to Tauri Explorer.
 
+## v1.12.0 — 2026-10-15
+
+This update adds plugin SDK 3 with shared AI services: installed plugins use
+one set of AI connections owned by Tauri Explorer, and the app keeps their
+work safe across crashes, upgrades and removal. Plugins can also open dialogs
+over a single pane and accept dropped files. Preview loads large images much
+faster and shows their resolution, and full screen behaves better. On Linux,
+scrolling and menus are smoother again and a crashed renderer reloads the
+window. It pairs with TraceExplorer v0.3.0, which requires this version.
+
+### Added
+
+- Plugin SDK 3 with shared AI services. Tauri Explorer now owns the text and
+  image generation connections (OpenAI-compatible endpoints, Codex CLI and
+  Claude Code), and plugins declare and use services such as
+  `image-generation` instead of each keeping its own credentials. Every AI
+  operation is recorded durably. A crash never reruns paid work, and
+  disabling, removing or upgrading a plugin never strands work it started.
+  Interrupted operations settle on their own without asking you. SDK 1 and
+  SDK 2 plugins keep working unchanged (#1048, #1052, #1063, #1072, #1073,
+  #1103).
+- Finished image jobs show their cost and a Show image action in the progress
+  dialog, the Jobs panel and the completion notification. Time estimates are
+  kept separately for each provider, model, size and set of inputs, and a job
+  that runs long says so instead of sitting at 100% (#1086, #1109).
+- New plugin capabilities, each feature-detectable: dialogs scoped to one pane
+  that leave the other panes usable (`paneDialogs`); drop targets for files
+  from panes or other apps (`fileDropTargets`); a single Tiles-view cell for
+  plugin-owned grids (`fileTile`); the combined selection across panes
+  (`combinedSelection`); selection updates that keep the range anchor
+  (`selectionAnchor`); a "pending" file-view eligibility that briefly holds
+  the pane's first paint instead of flashing the listing
+  (`fileViewEligibilityPending`); and opening the image editor directly in a
+  plugin's own tool (#1050, #1089, #1091, #1098, #1112, #1115).
+- Ctrl-clicking a file in another pane adds it to the selection without
+  moving focus or clearing the other panes (#1089).
+- Preview info and a new Details view Resolution column show image
+  dimensions, and a new Length column shows video durations (#995, #1065,
+  #1117, #1144).
+- When a video can't be played, Preview names its codec and offers Download
+  (#1140).
+- Git Graph can create, merge and approve pull requests through `gh`, and can
+  jump to the fork point of two branches. A new "Git: Open Issues in Browser"
+  command opens the repository's GitHub issues (#1055, #1088, #1090, #1122).
+- An About command shows the running app version (#999).
+- "Show hidden files" in the file list's right-click menu (#1116, #1126).
+- Report Issue accepts short MP4, WebM and MOV clips (#1074).
+
+### Changed
+
+- Preview shows a display-sized, cached copy of large images and loads full
+  resolution only for full screen or zoom, so stepping through big photos is
+  much faster. Going back to an image Preview has already shown no longer
+  reloads it (#1014, #1054, #1067, #1129).
+- In Preview, only a click on the picture itself enters full screen, and
+  clicking a video toggles full screen. Text reached in full screen keeps its
+  docked size and zooms with the mouse wheel (#1039, #1070, #1127, #1128).
+- Linux keeps WebKitGTK compositing on instead of turning it off everywhere,
+  which makes scrolling, drag selection and menus much smoother and stops
+  secondary windows turning white on NVIDIA. Machines without a GPU still use
+  CPU painting (#1057, #1060, #1077).
+- Context menus and dialogs open with a reveal that never flashes the content
+  underneath (#1062, #1066, #1080, #1085, #1087).
+
+### Fixed
+
+- Linux reloads the window after the WebKitGTK renderer crashes, as macOS
+  does, instead of leaving it blank. On WebKitGTK 2.52 the JavaScriptCore
+  setting behind most of those crashes is turned off (#1026, #1136, #1145).
+- WebKitGTK renderer settings the app makes no longer leak into the terminal
+  or the apps it launches (#1079, #1141).
+- Leaving full screen Preview no longer paints a stale frame or resizes the
+  hidden panes behind it (#1061, #1075, #1125, #1153).
+- Drag selection in folders of thousands of large pictures keeps up with the
+  pointer (#1149).
+- Folders no longer stay Loading for up to 30 seconds after a cancelled Quick
+  Open search (#1157).
+- Copy and Cut stay consistent across windows, even after closing the window
+  they came from (#1155).
+- Drops onto Quick Access and plugin drop targets are no longer lost when a
+  drag ends in an unusual order (#1095, #1158, #1159).
+- Quick Open and Preview's Stage/Discard actions respect a dialog open over a
+  pane (#1094, #1096, #1099, #1130, #1142, #1156).
+- No more false "crashed last time" notice on every startup (#1056, #1068).
+- Context menus and the Details column menu open at the pointer under
+  interface zoom (#1053, #1084, #1119).
+- The docked Preview image no longer shrinks when plugin info is long (#1120,
+  #1121).
+- A finished AI job's elapsed time stops counting (#1076).
+- Back and Forward tooltips show the shortcuts actually bound (#997).
+- Symlinked folder icons match real folders at the small tile size (#1064).
+- Config file watches survive retargeting a symlink to a nested folder
+  (#1001).
+- File Recovery (opt-in on Linux): an edited destination no longer leaves a
+  move record stuck, and an unresolved record no longer blocks unrelated
+  writes (#794, #1154, #1163).
+
 ## v1.11.6 — 2026-10-10
 
 Hotfix for folder loads that could stall for a minute after Quick Open searched

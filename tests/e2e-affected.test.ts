@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -136,5 +137,28 @@ describe("devServerScripts", () => {
 
   it("includes the repository's dev-server inputs", () => {
     expect(devServerScripts().has("scripts/prepare-pdf-assets.mjs")).toBe(true);
+  });
+});
+
+describe("e2e-affected CLI", () => {
+  const run = (...args: string[]) =>
+    execFileSync("node", ["scripts/e2e-affected.mjs", ...args], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] });
+
+  it("reports mode and reason as JSON for CI logs", () => {
+    expect(JSON.parse(run("--strict", "--json", "--max-files", "50", "HEAD", "HEAD"))).toEqual({
+      mode: "none",
+      reason: "no changes for HEAD...HEAD",
+      items: [],
+    });
+    expect(JSON.parse(run("--strict", "--json", "--max-files", "50", "no-such-ref-1175", "HEAD"))).toEqual({
+      mode: "all",
+      reason: "selection failed: git diff",
+      items: [],
+    });
+  });
+
+  it("keeps the plain ALL output for local runs", () => {
+    expect(run("no-such-ref-1175", "HEAD")).toBe("ALL\n");
+    expect(run("HEAD", "HEAD")).toBe("");
   });
 });

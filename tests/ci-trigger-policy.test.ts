@@ -36,7 +36,8 @@ describe("CI admission policy (#1133)", () => {
     expect(ci.jobs["frontend-checks"].steps).toEqual(expect.arrayContaining([
       expect.objectContaining({ run: "bun run check" }),
       expect.objectContaining({ run: "bun run lint:arch" }),
-      expect.objectContaining({ run: "bun run test" }),
+      // PRs may narrow the unit run (#1175); the full suite is still its ALL branch.
+      expect.objectContaining({ run: expect.stringContaining("bun run test ;;") }),
     ]));
     expect(ci.jobs["rust-suite"].steps).toEqual(expect.arrayContaining([
       expect.objectContaining({ run: "cargo fmt --manifest-path src-tauri/Cargo.toml --all -- --check" }),

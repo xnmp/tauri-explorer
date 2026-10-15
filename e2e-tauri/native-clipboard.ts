@@ -1,5 +1,6 @@
 /** Independent platform clipboard probes for native smoke assertions. */
 import { execFile, execFileSync } from "node:child_process";
+import { readFileSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 
 function powershellClipboard(
@@ -32,7 +33,7 @@ function powershellClipboard(
 export async function readNativeClipboardPaths(platform: NodeJS.Platform = process.platform): Promise<string[]> {
   if (platform === "win32") {
     const output = await powershellClipboard("read Windows file clipboard",
-      '[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new(); ConvertTo-Json -Compress -InputObject @(Get-Clipboard -Format FileDropList | ForEach-Object { $_.FullName })');
+      readFileSync(new URL("./windows-clipboard-read.ps1", import.meta.url), "utf8"));
     const paths: unknown = JSON.parse(output);
     if (!Array.isArray(paths) || !paths.every(value => typeof value === "string")) {
       throw new Error("Windows file clipboard probe did not return an array of paths");

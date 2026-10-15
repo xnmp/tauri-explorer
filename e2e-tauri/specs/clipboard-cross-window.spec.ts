@@ -2,6 +2,8 @@
 import { browser, $, expect } from "@wdio/globals";
 import fs from "node:fs";
 import path from "node:path";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 import { readNativeClipboardPaths, writeExternalClipboardCopy } from "../native-clipboard";
 import { createNativeFixtureDirectory } from "../native-qualification";
 import { navigateTo, windowOperation, switchToWindowLabel, closeOtherWindows, entryNames, entryPathSelector } from "./helpers";
@@ -78,6 +80,31 @@ describe("cross-window clipboard ownership", () => {
   });
   afterEach(() => releaseGates());
   after(async () => { if (main) await closeOtherWindows(main); });
+
+  if (process.platform === "win32") {
+    it("the independent reader preserves empty, single and ordered Unicode file lists", async () => {
+      const unicode = path.join(root, "資料 ' $literal.txt");
+      fs.writeFileSync(unicode, "Unicode clipboard payload\n");
+      const seed = promisify(execFile);
+      // An external WinForms owner supplies real native data. No app IPC or
+      // mocked JSON can stand in for the reader's CF_HDROP/UTF-16 handling.
+      for (const paths of [[], [unicode], [external, unicode]]) {
+        await seed("powershell", ["-NoProfile", "-NonInteractive", "-STA", "-Command", `
+          $ErrorActionPreference = 'Stop'
+          Add-Type -AssemblyName System.Windows.Forms
+          $paths = @(ConvertFrom-Json -InputObject $env:CLIP_PATHS)
+          if ($paths.Count -eq 0) {
+            [System.Windows.Forms.Clipboard]::SetText('no file list')
+          } else {
+            $files = [System.Collections.Specialized.StringCollection]::new()
+            $files.AddRange([string[]]$paths)
+            [System.Windows.Forms.Clipboard]::SetFileDropList($files)
+          }
+        `], { env: { ...process.env, CLIP_PATHS: JSON.stringify(paths) }, timeout: 30_000, killSignal: "SIGKILL" });
+        expect(await readNativeClipboardPaths()).toEqual(paths);
+      }
+    });
+  }
 
   it("both windows receive B and paste B from the native clipboard", async () => {
     await browser.switchToWindow(main);

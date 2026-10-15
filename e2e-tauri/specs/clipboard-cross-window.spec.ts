@@ -82,13 +82,19 @@ describe("cross-window clipboard ownership", () => {
   after(async () => { if (main) await closeOtherWindows(main); });
 
   if (process.platform === "win32") {
-    it("the independent reader preserves empty, single and ordered Unicode file lists", async () => {
-      const unicode = path.join(root, "資料 ' $literal.txt");
-      fs.writeFileSync(unicode, "Unicode clipboard payload\n");
-      const seed = promisify(execFile);
-      // An external WinForms owner supplies real native data. No app IPC or
-      // mocked JSON can stand in for the reader's CF_HDROP/UTF-16 handling.
-      for (const paths of [[], [unicode], [external, unicode]]) {
+    const unicode = path.join(root, "資料 ' $literal.txt");
+    // Each case owns its existing 60s test budget: two bounded cold shells
+    // must not share that budget with the other independent cases.
+    for (const [name, paths] of [
+      ["empty", []],
+      ["single Unicode", [unicode]],
+      ["ordered multi-file Unicode", [external, unicode]],
+    ] as const) {
+      it(`the independent reader preserves ${name} file lists`, async () => {
+        fs.writeFileSync(unicode, "Unicode clipboard payload\n");
+        const seed = promisify(execFile);
+        // An external WinForms owner supplies real native data. No app IPC or
+        // mocked JSON can stand in for the reader's CF_HDROP/UTF-16 handling.
         await seed("powershell", ["-NoProfile", "-NonInteractive", "-STA", "-Command", `
           $ErrorActionPreference = 'Stop'
           Add-Type -AssemblyName System.Windows.Forms
@@ -102,8 +108,8 @@ describe("cross-window clipboard ownership", () => {
           }
         `], { env: { ...process.env, CLIP_PATHS: JSON.stringify(paths) }, timeout: 30_000, killSignal: "SIGKILL" });
         expect(await readNativeClipboardPaths()).toEqual(paths);
-      }
-    });
+      });
+    }
   }
 
   it("both windows receive B and paste B from the native clipboard", async () => {

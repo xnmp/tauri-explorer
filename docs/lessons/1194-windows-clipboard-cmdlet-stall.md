@@ -24,7 +24,9 @@ which internal PowerShell/Shell operation blocked.
 The command-contract regression failed against the old reader before the fix.
 The real native spec also seeds empty, single and ordered multi-file payloads
 through external WinForms, including Unicode, spaces, quotes and dollar signs,
-and checks the reader's exact paths. Its existing app-driven cross-window Copy,
+and checks the reader's exact paths. Each payload has its own unchanged
+60-second test budget, so six successful cold shells cannot exhaust one test's
+deadline. Its existing app-driven cross-window Copy,
 Cut, external replacement, closing-originator and on-disk Paste assertions remain
 intact. Windows adapter qualification runs on the hosted disposable desktop;
 local mocked process tests establish dispatch/serialization, not Win32 behavior.

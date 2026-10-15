@@ -44,6 +44,8 @@ import type { Drive } from "./drives";
 import type { GitFileEntry, GitOpState } from "./git";
 import type { ImageCropCapture, ImageCropSave } from "./image-crop";
 import type { FileMutationReceipt } from "$lib/domain/file";
+import type { PreviewImageSource } from "$lib/domain/preview-rendition";
+import type { MockAiPresentation } from "./mock-ai-presentation";
 
 export interface MockGitState {
   branch: string;
@@ -63,11 +65,16 @@ export interface MockGitCommit {
 }
 
 export interface MockControl {
+  /** Private native-receipt fixtures; no provider execution or durable custody simulation. */
+  nativeAiPresentation?: MockAiPresentation;
   // ----- Preview / thumbnails: fixture overrides + action hooks -----
   /** Overrides `read_text_file` for the path under test. */
   previewReadText?: (path: string) => string | Promise<string>;
+  imageResolution?: (path: string) => { width: number; height: number } | null | Promise<{ width: number; height: number } | null>;
   /** Overrides `read_image_data_url` for the path under test. */
   previewReadImage?: (path: string) => string | Promise<string>;
+  /** Overrides `get_preview_image` (default: every image is its own original). */
+  previewImageSource?: (path: string, maxEdge: number) => PreviewImageSource | Promise<PreviewImageSource>;
   imageCropCapture?: (path: string) => ImageCropCapture | Promise<ImageCropCapture>;
   imageCropSave?: (request: ImageCropSave) => FileMutationReceipt | Promise<FileMutationReceipt>;
   /** Overrides filename collision checks for slow storage responses. */
@@ -87,6 +94,10 @@ export interface MockControl {
   /** Real browser media URL; tests can delay source admission, not fake playback. */
   videoPreview?: (path: string) => string | Promise<string>;
   releasedVideoPreviews?: string[];
+  /** Overrides `probe_video_codec`. */
+  videoCodecProbe?: (path: string) => { container: string | null; videoCodec: string | null; audioCodec: string | null };
+  /** Destinations `save_file_copy` was asked to write. */
+  savedVideoCopies?: { source: string; destination: string }[];
   /** Action hook: bump the mtime/size of a previewed file to simulate an
    * external edit landing while its preview is open. */
   previewRevision?: (path: string) => void;
@@ -175,6 +186,7 @@ export const MOCK_LOCAL_KEYS = {
   cutOwnershipUnavailable: "mock-cut-ownership-unavailable",
   /** "1" when set: `clipboard_has_image` reports true. */
   reportClipboardImage: "mock-report-clipboard-image",
+  reportClipboardVideo: "mock-report-clipboard-video",
   /** Error message: `open_recycle_bin` throws it. */
   openRecycleBinError: "mock-open-recycle-bin-error",
   /** JSON of the last `picker_respond` payload. */

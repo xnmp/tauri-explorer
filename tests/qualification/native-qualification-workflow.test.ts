@@ -50,7 +50,7 @@ describe("native qualification workflow cache and diagnostics (#694)", () => {
     const gui = stepNamed(steps, "Run smoke suite (Linux, isolated display and window manager)");
 
     expect(contracts["continue-on-error"]).toBe(true);
-    expect(diagnostics.if).toBe("always()");
+    expect(diagnostics.if).toBe("${{ always() && needs.changes.outputs.code == 'true' }}");
     expect(steps.indexOf(diagnostics)).toBeGreaterThan(steps.indexOf(build));
     expect(steps.indexOf(diagnostics)).toBeLessThan(steps.indexOf(gui));
     expect(workflow).toContain("native-contract-diagnostics-${{ matrix.os }}");
@@ -73,7 +73,7 @@ describe("native qualification workflow cache and diagnostics (#694)", () => {
     expect(workflow).toContain("actions/cache/restore@v6");
     expect(save.uses).toBe("actions/cache/save@v6");
     expect(save.if).toBe(
-      "${{ always() && steps.native-contracts.outcome == 'success' && steps.build-tauri-binary.outcome == 'success' }}",
+      "${{ needs.changes.outputs.code == 'true' && (always() && steps.native-contracts.outcome == 'success' && steps.build-tauri-binary.outcome == 'success') }}",
     );
     expect(workflow).toContain("steps.rust-provenance.outputs.cache-key");
     expect(workflow).toContain("cache_save_outcome=");
@@ -130,7 +130,7 @@ describe("native qualification workflow cache and diagnostics (#694)", () => {
     const fatalGate = stepNamed(steps, "Fail if native contracts failed");
 
     expect(fatalGate.if).toBe(
-      "${{ always() && steps.native-contracts.outcome == 'failure' }}",
+      "${{ needs.changes.outputs.code == 'true' && (always() && steps.native-contracts.outcome == 'failure') }}",
     );
     expect(fatalGate.run).toBe("exit 1");
     expect(steps.indexOf(fatalGate)).toBeGreaterThan(

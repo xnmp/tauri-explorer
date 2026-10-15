@@ -90,7 +90,7 @@ describe("plugin registry churn", () => {
       id: "churn-alpha", name: "alpha", description: "test", enabledByDefault: false,
       activate(ctx) {
         calls.alpha++;
-        ctx.registerCommand({
+        ctx.registerCommand({ scope: "pane",
           id: "plugin.churn-alpha.cmd", label: "alpha", category: "plugins", handler: () => {},
         });
         ctx.registerContextMenuItem({
@@ -158,5 +158,5 @@ describe("plugin registry churn", () => {
       errors.mockRestore();
       await registry.dispose();
     }
-  });
+  }, 30_000); // Hang guard for CPU-contended runs, not a speed budget.
 });

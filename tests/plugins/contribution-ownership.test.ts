@@ -7,7 +7,7 @@ import { dialogRegistry } from "$lib/plugins/dialog-registry.svelte";
 import { inspectorRegistry } from "$lib/plugins/inspector-registry.svelte";
 import { clearFsProviders, providerFor, registerFsProvider } from "$lib/plugins/fs-providers";
 
-const command = { id: "ownership-test", label: "Core", category: "general" as const, handler() {} };
+const command = { scope: "pane" as const, id: "ownership-test", label: "Core", category: "general" as const, handler() {} };
 afterEach(() => { unregisterCommand(command.id); contextMenuItems.clear(); dialogRegistry.clear(); inspectorRegistry.clear(); clearFsProviders(); });
 it("rejects a plugin command collision without replacing the core command", () => {
   registerCommand(command);

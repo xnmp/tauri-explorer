@@ -16,3 +16,16 @@ it("uses the acknowledged native session for acquisition, preparation and releas
   await vi.waitFor(() => expect(invoke).toHaveBeenCalledWith("release_video_preview",{sessionId:"session",token:"capability"}));
   expect(invoke).toHaveBeenCalledWith("prepare_video_preview",{sessionId:"session",token:"capability",path:"/movie.webm"});
 });
+import { saveVideoCopy, probeVideoCodec } from "$lib/api/video-preview";
+it("saves a copy to the chosen destination, and does nothing on cancel", async () => {
+  invoke.mockImplementation(async c => c === "pick_file" ? "/out/m.mkv" : undefined);
+  expect(await saveVideoCopy("/m.mkv", "m.mkv")).toBe(true);
+  expect(invoke).toHaveBeenCalledWith("save_file_copy", { source: "/m.mkv", destination: "/out/m.mkv" });
+  invoke.mockClear(); invoke.mockResolvedValue(null);
+  expect(await saveVideoCopy("/m.mkv", "m.mkv")).toBe(false);
+  expect(invoke).not.toHaveBeenCalledWith("save_file_copy", expect.anything());
+});
+it("probe failure yields null", async () => {
+  invoke.mockRejectedValue(new Error("x"));
+  expect(await probeVideoCodec("/m.mkv")).toBeNull();
+});

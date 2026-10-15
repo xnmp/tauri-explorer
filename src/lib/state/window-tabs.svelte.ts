@@ -10,6 +10,7 @@
  * workspace.
  */
 
+import { combinedSelection } from "$lib/domain/workspace-selection";
 import { SvelteMap } from "svelte/reactivity";
 import { createWindowClose, type NativeCloseSource } from "./window-close";
 import { createPaneActivationQueue, type PaneActivationScheduler } from "./pane-activation";
@@ -34,7 +35,10 @@ import {
 } from "$lib/domain/pane-layout";
 import { createExplorerState, type ExplorerInstance } from "./explorer.svelte";
 import { createPaneViewport } from "./pane-viewport.svelte";
+import { paneDividerSize } from "$lib/domain/pane-viewport";
 import { createPaneSessions } from "./pane-sessions";
+import { createPaneDialogHost } from "./pane-dialogs.svelte";
+import { modalOwnership } from "./modal-ownership.svelte";
 import {
   createCoalescedPersister,
   loadPersisted,
@@ -155,6 +159,7 @@ function createWindowTabsManager(options: {
       else paneReadiness.set(paneId, ready);
     },
     releasePane(paneId) {
+      paneDialogs.releasePane(paneId);
       disposeCommitPanelStore(paneId);
       dropGraphFileHistory(paneId);
       return disposeScmStore(paneId);
@@ -184,6 +189,9 @@ function createWindowTabsManager(options: {
       if (closing || disposal) return null;
       closing = true;
       paneActivation.cancel();
+      for (const tab of tabs) if (tab.kind === "explorer") {
+        for (const paneId of Object.keys(tab.panes)) paneDialogs.releasePane(paneId);
+      }
       return () => {
         if (disposal) return;
         closing = false;
@@ -230,12 +238,33 @@ function createWindowTabsManager(options: {
 
   const activeTab = $derived(tabs.find((t) => t.id === activeTabId) ?? null);
 
-  const paneViewport = createPaneViewport(() => activeTab?.kind === "explorer" ? activeTab.layout : undefined);
+  const paneViewport = createPaneViewport(
+    () => activeTab?.kind === "explorer" ? activeTab.layout : undefined,
+    () => paneDividerSize(settingsStore.islandMode),
+  );
 
   /** The active tab's focused pane id ("" for non-explorer tabs). */
   const activePaneId = $derived(
     activeTab?.kind === "explorer" ? activeTab.activePaneId : "",
   );
+
+  const paneDialogs = createPaneDialogHost({
+    ownership: modalOwnership,
+    activePaneId: () => activePaneId,
+    activeTab: () => activeTab?.[TAB_INSTANCE],
+    readPane: (paneId) => {
+      if (closing || disposal) return null;
+      const tab = tabs.find(tab => tab.kind === "explorer" && !!tab.panes[paneId]);
+      const explorer = sessions.get(paneId);
+      return tab && explorer ? { paneId, tab: tab[TAB_INSTANCE], explorer } : null;
+    },
+    activate: (identity) => {
+      const tab = tabs.find(tab => tab[TAB_INSTANCE] === identity.tab);
+      if (!tab) throw new Error("Dialog pane owner was disposed");
+      if (activeTabId !== tab.id) setActiveTab(tab.id);
+      setActivePane(identity.paneId);
+    },
+  });
 
   /** Pane ids of the active tab, in visual order. */
   const activePaneIds = $derived(
@@ -794,6 +823,9 @@ function createWindowTabsManager(options: {
 
     if (isLast) {
       const incarnation = tab[TAB_INSTANCE];
+      // The last tab retains its explorers for native-close rollback, but
+      // transient dialogs and captures end with the user's close request.
+      if (tab.kind === "explorer") for (const paneId of Object.keys(tab.panes)) paneDialogs.releasePane(paneId);
       if (!opts.snapshot) {
         // Ownership already moved: detach the source synchronously. If a new
         // tab opens while native close is loading, it keeps this window alive.
@@ -927,6 +959,7 @@ function createWindowTabsManager(options: {
   }
 
   function activateTabResources(tabId: string | null): void {
+    modalOwnership.scopeChanged();
     const tab = tabId ? findTab(tabId) : undefined;
     if (tab?.kind !== "explorer") { paneActivation.cancel(); return; }
     paneActivation.request(leafIds(tab.layout), tab.activePaneId);
@@ -1004,6 +1037,16 @@ function createWindowTabsManager(options: {
     return sessions.values();
   }
 
+  /** Selection from this window's active explorer tab only. */
+  function getCombinedSelection() {
+    const tab = activeTab;
+    if (tab?.kind !== "explorer") return [];
+    return combinedSelection(leafIds(tab.layout).map((id) => ({
+      id,
+      entries: getExplorer(id)?.getSelectedEntries() ?? [],
+    })), tab.activePaneId);
+  }
+
   /** Get the active explorer (active tab's active pane) */
   function getActiveExplorer(): ExplorerInstance | undefined {
     const tab = activeTab;
@@ -1041,6 +1084,8 @@ function createWindowTabsManager(options: {
     requireOpenWindow();
     sessions.activate(paneId);
     updateActiveExplorerTab((t) => ({ ...t, activePaneId: paneId }));
+    modalOwnership.scopeChanged();
+    paneDialogs.focusPane(paneId);
     saveState();
   }
 
@@ -1258,6 +1303,8 @@ function createWindowTabsManager(options: {
 
     // Pane state (active tab)
     paneViewport,
+    /** Private pane-dialog lifetime and DOM mounting service. */
+    paneDialogs,
     get activePaneId() {
       return activePaneId;
     },
@@ -1326,6 +1373,7 @@ function createWindowTabsManager(options: {
     getExplorer,
     isPaneReady: (paneId: PaneId): boolean => paneReadiness.get(paneId) === true,
     getActiveExplorer,
+    getCombinedSelection,
     getAllExplorers,
     refreshAllPanes,
 

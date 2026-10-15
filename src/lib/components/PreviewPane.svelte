@@ -3,12 +3,16 @@
   Issue: tauri-explorer-2c6b, tauri-explorer-xago, tauri-explorer-osjq
 -->
 <script lang="ts">
-  import { onDestroy } from "svelte";
+  import { onDestroy, untrack } from "svelte";
   import { useControlledSize } from "$lib/composables/use-controlled-size.svelte";
   import { previewResizeSpec } from "$lib/domain/preview-size";
   import { windowTabsManager } from "$lib/state/window-tabs.svelte";
   import { readTextFile, fetchDirectory } from "$lib/api/files";
-  import { decodeImage, loadPreviewImage } from "$lib/state/preview-image";
+  import { decodeImage, loadPreviewImage, type PreviewImageOptions, type PreviewImageReady } from "$lib/state/preview-image";
+  import { createFullResolutionUpgrade, type ShownRendition } from "$lib/state/preview-resolution";
+  import { createPreviewImageCache } from "$lib/state/preview-image-cache";
+  import { needsFullResolution, renditionMaxEdge } from "$lib/domain/preview-rendition";
+  import { createLatestOnlyRunner } from "$lib/domain/latest-only";
   import { usePreviewFullscreen } from "$lib/composables/use-preview-fullscreen.svelte";
   import PreviewImageSurface from "./PreviewImageSurface.svelte";
 import { gitDiff } from "$lib/api/git";
@@ -17,13 +21,15 @@ import { openFile } from "$lib/api/open";
   import { toastStore } from "$lib/state/toast.svelte";
   import { isImageFile, isSvgFile, isTextFile, isPdfFile, isVideoFile, isVideoMediaFile, isZipFile, getFileType, formatDate } from "$lib/domain/file-types";
   import VideoIndicator from "./VideoIndicator.svelte";
-  import { formatSize, isSystemHidden, type FileEntry } from "$lib/domain/file";
+  import { formatResolution, formatSize, isSystemHidden, type FileEntry } from "$lib/domain/file";
   import { extractError } from "$lib/api/common";
   import { highlightCode, highlightDiffLine } from "$lib/domain/syntax-highlight";
   import { renderMarkdown } from "$lib/domain/markdown";
   import { settingsStore } from "$lib/state/settings.svelte";
   import { frecencyStore } from "$lib/state/frecency.svelte";
   import { getScmStore } from "$lib/state/scm.svelte";
+  import { dialogStore } from "$lib/state/dialogs.svelte";
+  import { createPreviewDiffActions, type HunkAction } from "$lib/state/preview-diff-actions";
   import { gitCommitFileDiff, gitCompareCommitFileDiff } from "$lib/api/git-log";
   import { logFrontendDiagnostic } from "$lib/api/frontend-log";
   import { getVideoThumbnailData } from "$lib/api/thumbnails";
@@ -91,7 +97,12 @@ import { openFile } from "$lib/api/open";
     navigate: (delta) => navigateSibling(delta),
     // PDF and video previews own their keys in fullscreen; only Esc stays ours.
     subjectOwnsKeys: () => !!selectedFile && (isPdfFile(selectedFile) || isVideoMediaFile(selectedFile)),
+    // Text, markdown and code zoom with the wheel and scroll with Up/Down (#1039).
+    subjectZoomsText: () => textZoomable,
+    scrollSubject: (dy) => previewContentEl?.scrollBy({ top: dy }),
   });
+
+  let previewContentEl = $state<HTMLElement | null>(null);
 
   function handlePaneDoubleClick(event: MouseEvent): void {
     const target = event.target;
@@ -148,11 +159,32 @@ import { openFile } from "$lib/api/open";
 
   // Preview content state
   let previewImageUrl = $state<string | null>(null);
+  // Natural size reported by the <img>, keyed by URL so a held previous image
+  // or a new selection never shows another file's resolution (#1118).
+  let previewImageSize = $state<{ url: string; width: number; height: number } | null>(null);
+  const previewResolution = $derived(
+    previewImageUrl && previewImageSize?.url === previewImageUrl
+      ? formatResolution(previewImageSize.width, previewImageSize.height)
+      : "",
+  );
   // True while `previewImageUrl` is the previous file's image, kept on screen
   // while the next image loads and decodes. Blanking it in between left the
   // content empty for the decode and re-laid out the pane for those frames.
   let previewImageHeld = $state(false);
   let previewImageNote = $state<string | null>(null);
+  // Large images show a display-sized rendition (#1054); fullscreen and zoom
+  // swap in the original (state/preview-resolution). The runner keeps skipped
+  // selections from queueing rendition decodes in the backend.
+  let previewShowsRendition = $state(false);
+  let previewContentWidth = $state(0);
+  let previewContentHeight = $state(0);
+  const renditionRunner = createLatestOnlyRunner();
+  // Images this pane already showed, per file version: a revisit shows one
+  // synchronously instead of loading it again (#1014). Released on unmount.
+  const imageCache = createPreviewImageCache((url) => URL.revokeObjectURL(url));
+  const fullResolution = createFullResolutionUpgrade(async (path, cacheBust, owner) =>
+    imageCache.lookup(path, cacheBust, {}) ?? loadPreviewImage(path, cacheBust, owner),
+  );
   let previewText = $state<string | null>(null);
   let previewHighlightedHtml = $state<string | null>(null);
   let previewMarkdownHtml = $state<string | null>(null);
@@ -210,6 +242,14 @@ import { openFile } from "$lib/api/open";
   // Commit file diff routed from the git graph (#366); wins over the
   // working-tree diff when both are somehow set (openers clear the other).
   const commitDiff = $derived(scmStore.commitDiff);
+
+  /** The branch of the template that shows reflowing text: the only subject whose fullscreen zoom is a font zoom. */
+  const textZoomable = $derived(
+    !!selectedFile && !activeDiff && !commitDiff && !previewLoading &&
+    !previewPdf && !previewVideo && !previewImageUrl && previewFolderChildren.length === 0 &&
+    previewCsv === null &&
+    (previewMarkdownHtml !== null || previewHighlightedHtml !== null || previewText !== null),
+  );
   const diffPath = $derived(commitDiff?.path ?? activeDiff?.path ?? "");
   let diffParsed = $state<ParsedDiff | null>(null);
   let diffLoading = $state(false);
@@ -234,52 +274,24 @@ import { openFile } from "$lib/api/open";
   // Diff header actions — restore the stage / unstage / discard / open-file
   // affordances directly on the diff so a file can be staged from its diff
   // (VSCode parity). Operates on the currently-open diff target.
-  async function stageFromDiff(): Promise<void> {
-    if (!activeDiff) return;
-    const path = activeDiff.path;
-    await scmStore.stage([path]);
-    // Follow the file to its staged diff so the view doesn't leave the user
-    // staring at an empty "unstaged" diff after the change moved to the index.
-    if (scmStore.summary.staged.some((e) => e.path === path)) {
-      scmStore.openDiff(path, true);
-    }
-  }
-  async function unstageFromDiff(): Promise<void> {
-    if (!activeDiff) return;
-    const path = activeDiff.path;
-    await scmStore.unstage([path]);
-    // Follow the file back to its worktree diff if it still has changes there.
-    const stillChanged =
-      scmStore.summary.changes.some((e) => e.path === path) ||
-      scmStore.summary.untracked.some((e) => e.path === path);
-    if (stillChanged) scmStore.openDiff(path, false);
-  }
-  async function discardFromDiff(): Promise<void> {
-    if (!activeDiff) return;
-    const r = await scmStore.discard([activeDiff.path]);
-    if (!r.ok) {
-      toastStore.error(`Discard failed: ${r.error}`);
-      return;
-    }
-    scmStore.closeDiff();
-  }
-  async function applyHunk(patch: string, action: "stage" | "unstage" | "discard"): Promise<void> {
-    if (!activeDiff) return;
-    if (action === "discard" && !window.confirm("Discard this hunk? This cannot be undone.")) return;
-    const path = activeDiff.path;
-    const r = await scmStore.applyPatch(patch, action);
-    if (!r.ok) {
-      toastStore.error(`${action[0].toUpperCase()}${action.slice(1)} hunk failed: ${r.error}`);
-      return;
-    }
-    const stillStaged = scmStore.summary.staged.some((entry) => entry.path === path);
-    const stillUnstaged = scmStore.summary.changes.some((entry) => entry.path === path);
-    // A partially changed file can exist in both buckets. Only switch the
-    // displayed side when the operation exhausted the current side.
-    if (action === "stage" && !stillUnstaged && stillStaged) scmStore.openDiff(path, true);
-    if (action === "unstage" && !stillStaged && stillUnstaged) scmStore.openDiff(path, false);
-    if (action === "discard" && !stillUnstaged) scmStore.closeDiff();
-  }
+  // Admission is against the pane owning the diff, shared with command routing.
+  let ownershipRevision = $state(0);
+  $effect(() => dialogStore.subscribeOwnership(() => { ownershipRevision++; }));
+  const diffActions = createPreviewDiffActions({
+    scm: () => scmStore,
+    ownerPaneId: () => windowTabsManager.activePaneId,
+    isPaneBlocked: (id) => dialogStore.isPaneBlocked(id),
+    onError: (message) => toastStore.error(message),
+    confirm: (message) => window.confirm(message),
+  });
+  const diffActionsBlocked = $derived.by(() => {
+    void ownershipRevision;
+    return diffActions.blocked();
+  });
+  const stageFromDiff = () => diffActions.stage();
+  const unstageFromDiff = () => diffActions.unstage();
+  const discardFromDiff = () => diffActions.discard();
+  const applyHunk = (patch: string, action: HunkAction) => diffActions.applyHunk(patch, action);
   async function openDiffFileInEditor(): Promise<void> {
     if (!activeDiff || !scmStore.repoRoot) return;
     const abs = `${scmStore.repoRoot.replace(/\/$/, "")}/${activeDiff.path}`;
@@ -402,6 +414,7 @@ import { openFile } from "$lib/api/open";
       previewImageUrl = null;
       previewImageHeld = false;
       previewImageNote = null;
+      showingRendition(null);
       previewText = null;
       previewHighlightedHtml = null;
       previewMarkdownHtml = null;
@@ -428,6 +441,85 @@ import { openFile } from "$lib/api/open";
     previewImageHeld = false;
   }
 
+  /** Remembers a loaded file image (the cache takes its blob) and shows it. */
+  function showLoadedImage(request: PreviewRequest, path: string, cacheBust: string, options: PreviewImageOptions, image: PreviewImageReady): void {
+    previewLifetime.disownBlob(request, image.url);
+    imageCache.store(path, cacheBust, options, image);
+    showCachedImage(image);
+  }
+
+  /** Shows a remembered image for `file` (rendition state included); false on a miss. */
+  function showRememberedImage(request: PreviewRequest, file: FileEntry, cacheBust: string, options: PreviewImageOptions): boolean {
+    const image = imageCache.lookup(file.path, cacheBust, options);
+    if (!image) return false;
+    showCachedImage(image);
+    if (image.resolution === "rendition") showingRendition({ path: file.path, cacheBust, owner: imageOwner(request), request });
+    previewImageNote = imageNote(file, image);
+    return true;
+  }
+
+  function imageOwner(request: PreviewRequest) {
+    return {
+      isCurrent: () => previewLifetime.isCurrent(request),
+      adoptBlob: (url: string) => previewLifetime.adoptBlob(request, url),
+      releaseBlob: (url: string) => previewLifetime.releaseBlob(request, url),
+    };
+  }
+
+  function imageNote(file: FileEntry, image: PreviewImageReady): string | null {
+    return image.viaBackend && /\.avif$/i.test(file.name) ? "AVIF fallback preview shows the first frame." : null;
+  }
+
+  /** Shows an image the cache owns; any blob the lifetime still holds is released. */
+  function showCachedImage(image: PreviewImageReady): void {
+    previewLifetime.clearBlob();
+    previewImageUrl = image.url;
+    previewImageHeld = false;
+  }
+
+  // The rendition on screen and the request that showed it, so its upgrade
+  // can be remembered under that file version.
+  let shownRendition: (ShownRendition & { readonly request: PreviewRequest }) | null = null;
+
+  function showingRendition(rendition: typeof shownRendition): void {
+    shownRendition = rendition;
+    fullResolution.showing(rendition);
+    previewShowsRendition = rendition !== null;
+  }
+
+  // Fullscreen or zoom needs the original: decode it off-screen while the
+  // rendition stays up, then swap it in (#1054).
+  const wantsFullResolution = () => needsFullResolution({ fullscreen: fullscreen.active, zoom: fullscreen.zoom });
+  $effect(() => {
+    if (!previewShowsRendition || !wantsFullResolution()) return;
+    // Captured with the upgrade's target: the original is remembered under
+    // the version of the rendition it replaces.
+    const source = shownRendition;
+    void fullResolution.upgrade(wantsFullResolution).then((image) => {
+      // Re-checked at the swap: leaving fullscreen or moving to another file
+      // while the original decoded must keep what is on screen.
+      if (!image || !source || shownRendition !== source || !previewShowsRendition || !wantsFullResolution()) return;
+      showLoadedImage(source.request, source.path, source.cacheBust, {}, image);
+      previewShowsRendition = false;
+    });
+  });
+
+  /** The image request for `file`: a rendition sized for the surface, or the
+   * original while the viewer needs full resolution. Read untracked: the
+   * load effect must not re-run when the pane resizes or zooms. */
+  function imageLoadOptions(): PreviewImageOptions {
+    return untrack(() => {
+      if (needsFullResolution({ fullscreen: fullscreen.active, zoom: fullscreen.zoom })) return {};
+      const maxEdge = renditionMaxEdge({
+        width: previewContentWidth,
+        height: previewContentHeight,
+        devicePixelRatio: window.devicePixelRatio,
+        zoom: settingsStore.zoomLevel / 100,
+      });
+      return { rendition: { maxEdge, runner: renditionRunner } };
+    });
+  }
+
   /** Whether loadPreview shows this file as a plain image (its image branch). */
   function rendersAsImage(file: FileEntry): boolean {
     return file.kind !== "directory" && !isZipFile(file) && !isPdfFile(file) && !isVideoMediaFile(file)
@@ -448,6 +540,7 @@ import { openFile } from "$lib/api/open";
     }
     previewImageHeld = holdImage;
     previewImageNote = null;
+    showingRendition(null);
     previewText = null;
     previewHighlightedHtml = null;
     previewMarkdownHtml = null;
@@ -553,17 +646,23 @@ import { openFile } from "$lib/api/open";
     }
 
     if (isImageFile(file) || isSvgFile(file)) {
-      // Asset protocol first, then the backend read (cloud placeholders, and
-      // the only path in browser/E2E mode); see state/preview-image.
-      const image = await loadPreviewImage(file.path, bust, {
-        isCurrent: () => previewLifetime.isCurrent(request),
-        adoptBlob: (url) => previewLifetime.adoptBlob(request, url),
-        releaseBlob: (url) => previewLifetime.releaseBlob(request, url),
-      });
+      // A display-sized rendition for large images, else the original: asset
+      // protocol first, then the backend read (cloud placeholders, and the
+      // only path in browser/E2E mode); see state/preview-image.
+      // An image this pane already showed for this file version is shown at
+      // once, with no request (#1014).
+      const options = imageLoadOptions();
+      if (showRememberedImage(request, file, bust, options)) {
+        previewLoading = false;
+        return;
+      }
+      const owner = imageOwner(request);
+      const image = await loadPreviewImage(file.path, bust, owner, options);
       if (image.status === "stale") return;
       if (image.status === "ready") {
-        showImage(image.url);
-        previewImageNote = image.viaBackend && /\.avif$/i.test(file.name) ? "AVIF fallback preview shows the first frame." : null;
+        showLoadedImage(request, file.path, bust, options, image);
+        if (image.resolution === "rendition") showingRendition({ path: file.path, cacheBust: bust, owner, request });
+        previewImageNote = imageNote(file, image);
       } else {
         previewError = "Cannot preview image";
       }
@@ -659,9 +758,18 @@ import { openFile } from "$lib/api/open";
 
   onDestroy(() => {
     previewLifetime.dispose();
+    imageCache.clear();
   });
 </script>
 
+<!-- The dock slot holds the preview's docked size in the layout, whether or
+     not the pane is in it: fullscreen lifts only the pane out of flow, so the
+     workspace panes keep the size they have while the preview is docked. -->
+<div
+  class="preview-dock"
+  class:vertical={isVertical}
+  style={isVertical ? `height: ${resize.value}px;` : `width: ${resize.value}px;`}
+>
 <!-- svelte-ignore a11y_no_static_element_interactions -->
 <div
   id={paneId}
@@ -671,9 +779,7 @@ import { openFile } from "$lib/api/open";
   class:vertical={isVertical}
   class:dock-bottom={position === "bottom"}
   class:dock-top={position === "top"}
-  style={isVertical
-    ? `height: ${resize.value}px; --preview-font-size: ${settingsStore.previewFontSize}px;`
-    : `width: ${resize.value}px; --preview-font-size: ${settingsStore.previewFontSize}px;`}
+  style={`--preview-font-size: ${settingsStore.previewFontSize}px;`}
   ondblclick={handlePaneDoubleClick}
 >
   {#if !fullscreen.active}
@@ -692,6 +798,9 @@ import { openFile } from "$lib/api/open";
         <path d="M3 3L13 13M13 3L3 13" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
       </svg>
     </button>
+    {#if textZoomable}
+      <div class="fs-text-zoom-indicator">{Math.round(fullscreen.zoom * 100)}%</div>
+    {/if}
   {/if}
   {#if activeDiff || commitDiff}
     <div class="preview-header">
@@ -711,13 +820,13 @@ import { openFile } from "$lib/api/open";
         <!-- Historical diff: stage/unstage/discard don't apply (#366). -->
         <button type="button" class="diff-action-btn" title="Close diff (Esc)" onclick={() => scmStore.closeCommitDiff()}>Close</button>
       {:else if activeDiff}
-        <button type="button" class="diff-action-btn" onclick={openDiffFileInEditor}>Open File</button>
+        <button type="button" class="diff-action-btn" disabled={diffActionsBlocked} onclick={openDiffFileInEditor}>Open File</button>
         {#if activeDiff.staged}
-          <button type="button" class="diff-action-btn" onclick={unstageFromDiff}>Unstage</button>
+          <button type="button" class="diff-action-btn" disabled={diffActionsBlocked} onclick={unstageFromDiff}>Unstage</button>
         {:else}
-          <button type="button" class="diff-action-btn" onclick={stageFromDiff}>Stage</button>
+          <button type="button" class="diff-action-btn" disabled={diffActionsBlocked} onclick={stageFromDiff}>Stage</button>
           {#if !diffParsed?.added}
-            <button type="button" class="diff-action-btn danger" onclick={discardFromDiff}>Discard</button>
+            <button type="button" class="diff-action-btn danger" disabled={diffActionsBlocked} onclick={discardFromDiff}>Discard</button>
           {/if}
         {/if}
         <button type="button" class="diff-action-btn" title="Close diff (Esc)" onclick={() => scmStore.closeDiff()}>Close</button>
@@ -747,11 +856,11 @@ import { openFile } from "$lib/api/open";
                   {#if activeDiff && hunk}
                     <span class="hunk-actions">
                       {#if activeDiff.staged}
-                        <button type="button" class="hunk-action" onclick={() => applyHunk(hunk.patch, "unstage")}>Unstage hunk</button>
+                        <button type="button" class="hunk-action" disabled={diffActionsBlocked} onclick={() => applyHunk(hunk.patch, "unstage")}>Unstage hunk</button>
                       {:else}
-                        <button type="button" class="hunk-action" onclick={() => applyHunk(hunk.patch, "stage")}>Stage hunk</button>
+                        <button type="button" class="hunk-action" disabled={diffActionsBlocked} onclick={() => applyHunk(hunk.patch, "stage")}>Stage hunk</button>
                         {#if !diffParsed?.added}
-                          <button type="button" class="hunk-action danger" onclick={() => applyHunk(hunk.patch, "discard")}>Discard hunk</button>
+                          <button type="button" class="hunk-action danger" disabled={diffActionsBlocked} onclick={() => applyHunk(hunk.patch, "discard")}>Discard hunk</button>
                         {/if}
                       {/if}
                     </span>
@@ -799,7 +908,11 @@ import { openFile } from "$lib/api/open";
     {/if}
 
     <!-- svelte-ignore a11y_no_noninteractive_tabindex -- a scrollable region must be keyboard-focusable (WCAG 2.1.1, #797). -->
-    <div class="preview-content" role="region" aria-label="Preview of {selectedFile.name}{isVideoMediaFile(selectedFile) ? ' (video)' : ''}" aria-busy={previewLoading} tabindex="0">
+    <div class="preview-content" class:fs-text={fullscreen.active && textZoomable}
+      style:--fs-text-zoom={fullscreen.zoom}
+      onwheel={textZoomable ? fullscreen.wheel : undefined}
+      role="region" aria-label="Preview of {selectedFile.name}{isVideoMediaFile(selectedFile) ? ' (video)' : ''}" aria-busy={previewLoading} tabindex="0"
+      bind:this={previewContentEl} bind:clientWidth={previewContentWidth} bind:clientHeight={previewContentHeight}>
       {#if isVideoMediaFile(selectedFile)}
         <span class="video-preview-marker"><VideoIndicator /></span>
       {/if}
@@ -819,7 +932,8 @@ import { openFile } from "$lib/api/open";
           <VideoPreview path={previewVideo.path} name={previewVideo.name} fullscreen={fullscreen.active} ontogglefullscreen={fullscreen.toggle} />
         {/key}
       {:else if previewImageUrl}
-        <PreviewImageSurface src={previewImageUrl} alt={selectedFile.name} {fullscreen}>
+        <PreviewImageSurface src={previewImageUrl} alt={selectedFile.name} {fullscreen}
+          onresolution={(url, width, height) => (previewImageSize = { url, width, height })}>
           {#if previewImageNote}<p class="image-preview-note">{previewImageNote}</p>{/if}
           {#if previewImageHeld && showPreviewSpinner}
             <div class="preview-loading preview-loading-over-image"><div class="spinner"></div></div>
@@ -883,6 +997,14 @@ import { openFile } from "$lib/api/open";
             <span class="info-value">{formatSize(selectedFile.size)}</span>
           </div>
         {/if}
+        {#if previewResolution}
+          <div class="info-row">
+            <!-- Short label: vertical docks give the metadata column ~80px, and a
+               longer one squeezes the figures to a sliver (#1118). -->
+            <span class="info-label">Pixels</span>
+            <span class="info-value">{previewResolution}</span>
+          </div>
+        {/if}
         <div class="info-row">
           <span class="info-label">Modified</span>
           <span class="info-value">{formatDate(selectedFile.modified)}</span>
@@ -891,6 +1013,7 @@ import { openFile } from "$lib/api/open";
       {@render previewSections()}
     {/if}
   {/if}
+</div>
 </div>
 
 {#snippet previewSections()}
@@ -907,11 +1030,30 @@ import { openFile } from "$lib/api/open";
 {/snippet}
 
 <style>
+  /* The layout box: holds the docked size in flow, even while the pane is
+     fullscreen. */
+  .preview-dock {
+    display: flex;
+    flex-shrink: 0;
+    min-width: 0;
+    min-height: 0;
+  }
+
+  /* Vertical docks fill the column width. Their height yields to the
+     column's available-space cap without changing the preferred size. */
+  .preview-dock.vertical {
+    flex-direction: column;
+    width: 100%;
+    flex-shrink: 1;
+  }
+
   .preview-pane {
     display: flex;
     flex-direction: column;
     position: relative;
-    flex-shrink: 0;
+    flex: 1 1 0;
+    min-width: 0;
+    min-height: 0;
     border-left: 1px solid var(--divider);
     background: var(--background-card-secondary);
     overflow: hidden;
@@ -925,13 +1067,8 @@ import { openFile } from "$lib/api/open";
     user-select: none;
   }
 
-  /* Vertical docks fill the column width; the divider moves to the docked edge. */
+  /* Vertical docks: the divider moves to the docked edge. */
   .preview-pane.vertical {
-    width: 100%;
-    /* Honor the live inline height until the parent's available-space cap
-       requires shrinking. The preferred/draft value remains unchanged. */
-    min-height: 0;
-    flex-shrink: 1;
     border-left: none;
   }
 
@@ -1051,19 +1188,17 @@ import { openFile } from "$lib/api/open";
     border-bottom: 1px solid var(--divider);
   }
 
-  /* Fullscreen: cover the whole window (overrides the inline width). The
-     nested zoom cancels the root UI zoom — otherwise 100vw/100vh are laid out
-     pre-zoom and render zoom× the screen size, pushing the image off-center
-     and off-screen (#236). */
+  /* Fullscreen: cover the whole window. Only the pane leaves the layout; its
+     .preview-dock keeps the docked size, so the workspace panes underneath
+     neither resize nor reflow. The nested zoom cancels the root UI zoom —
+     otherwise 100vw/100vh are laid out pre-zoom and render zoom× the screen
+     size, pushing the image off-center and off-screen (#236). */
   .preview-pane.fullscreen {
     position: fixed;
     inset: 0;
     zoom: calc(1 / var(--app-zoom, 1));
-    width: 100vw !important;
-    /* Vertical docks set an inline height. It must not constrain the fixed
-       fullscreen surface; the right dock already needs the equivalent width
-       override above. */
-    height: 100vh !important;
+    width: 100vw;
+    height: 100vh;
     z-index: 1000;
     background: var(--background-solid, var(--background-card-secondary));
     border-left: none;
@@ -1215,6 +1350,34 @@ import { openFile } from "$lib/api/open";
   .preview-pane.fullscreen .preview-content {
     overflow: hidden;
   }
+  /* Fullscreen text (#1039). The pane cancels the root UI zoom so images fit
+     the screen, which would also shrink the text below its docked size; zoom
+     the text back by the app zoom, times the wheel zoom. The wheel zoom is
+     the only scroll gesture, so the content scrolls by key or scrollbar. */
+  .preview-pane.fullscreen .preview-content.fs-text {
+    overflow-x: hidden;
+    overflow-y: auto;
+  }
+  .preview-pane.fullscreen .preview-content.fs-text > :is(.preview-text, .preview-markdown) {
+    zoom: calc(var(--app-zoom, 1) * var(--fs-text-zoom, 1));
+  }
+  .preview-pane.fullscreen .preview-content.fs-text > .preview-truncated {
+    zoom: var(--app-zoom, 1);
+  }
+  .fs-text-zoom-indicator {
+    position: absolute;
+    bottom: 16px;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 1;
+    padding: 4px 12px;
+    border-radius: var(--radius-pill, 999px);
+    background: rgba(0, 0, 0, 0.55);
+    color: #fff;
+    font-size: 12px;
+    font-variant-numeric: tabular-nums;
+    pointer-events: none;
+  }
   /* PluginPreviewTarget renders its chrome as direct children of this pane
      (see the dock layout above); fullscreen hides it like the file chrome. */
   .preview-pane.fullscreen > :global(:is(.preview-header, .preview-info, .target-actions-area)) {
@@ -1224,9 +1387,11 @@ import { openFile } from "$lib/api/open";
     overflow: hidden;
   }
 
-  /* Hide the window tab bar / title bar while a preview is fullscreen. */
+  /* Hide the window tab bar / title bar while a preview is fullscreen. It
+     keeps its box: removing it would move the workspace panes up under the
+     fullscreen surface. */
   :global(html[data-preview-fullscreen] .titlebar) {
-    display: none !important;
+    visibility: hidden !important;
   }
 
   .preview-loading {
@@ -1540,9 +1705,14 @@ import { openFile } from "$lib/api/open";
     font-size: var(--font-size-caption);
   }
 
+  /* Stacked (side dock) layout: the sections region has a size derived from
+     the pane alone, never from what the sections contain, so the content
+     above it (the image) keeps the same box while the selection steps through
+     files whose Preview info differs in height. Longer info scrolls in here.
+     Vertical docks place it on a grid track instead (see above). */
   .preview-sections {
-    flex: 0 1 auto;
-    max-height: 55%;
+    flex: 0 1 min(40%, 24rem);
+    min-height: 0;
     overflow: auto;
     border-top: 1px solid var(--divider);
   }

@@ -19,7 +19,7 @@
   import type { FileEntry } from "$lib/domain/file";
   import { parentDir } from "$lib/domain/path";
   import { isImageFile } from "$lib/domain/file-types";
-  import { getZoomFactor, clientToFixed } from "$lib/domain/zoom";
+  import { getZoomFactor, fixedFromClient, fixedMenuPosition, isChromiumEngine, probeSingleScaleFixedOffset } from "$lib/domain/zoom";
   import type { ViewMode } from "$lib/state/types";
   import { fileViewRegistry } from "$lib/plugins/file-view-registry.svelte";
   import { getPaneIdContext } from "$lib/state/pane-context";
@@ -315,17 +315,18 @@
 
   const effectiveThumbnailSize = $derived(folderTileSize(explorer.currentPath));
 
+  // Whether this engine scales position:fixed offsets once (Chromium, current
+  // WebKitGTK/Safari) or twice (WKWebView, older WebKitGTK). Measured from the
+  // mounted menu, because the user-agent alone cannot tell WebKit versions apart.
+  let singleScale = $state(isChromiumEngine);
+
   // Compute submenu flip direction from the already-clamped menu position
-  // and viewport size. All values are in CSS pixels — no getBoundingClientRect
-  // needed, avoiding WebKitGTK zoom inconsistencies.
+  // and viewport size. All values are in the menu's fixed-CSS space — no
+  // getBoundingClientRect needed, avoiding WebKitGTK zoom inconsistencies.
   const submenuFlip = $derived.by(() => {
     if (!menuEl) return { flipLeft: false, flipUp: false };
-    // clientToFixed puts the viewport size into the same fixed-CSS space as
-    // the clamped coordinates, per engine (Chromium's clientWidth is already
-    // CSS px — dividing it by zoom again was the recurring "menu drifts
-    // under zoom" bug, see e2e/zoom-positioning.spec.ts).
-    const vw = clientToFixed(window.innerWidth);
-    const vh = clientToFixed(window.innerHeight);
+    const vw = fixedFromClient(window.innerWidth, getZoomFactor(), singleScale);
+    const vh = fixedFromClient(window.innerHeight, getZoomFactor(), singleScale);
     const menuW = menuEl.offsetWidth;
     const menuH = menuEl.offsetHeight;
     const submenuW = 200; // AI minimum width plus padding and borders
@@ -357,29 +358,21 @@
     // zoom-adjusted. The rAF callback below converts to CSS pixels.
 
     // Measure after layout, clamp, then reveal.
-    // Use offsetWidth/offsetHeight instead of getBoundingClientRect — the latter
-    // returns the animated (scaled-down) size due to the menuIn animation.
+    // Use offsetWidth/offsetHeight (layout size, untransformed) rather than
+    // getBoundingClientRect.
     requestAnimationFrame(async () => {
       if (!menuEl) return;
-      // With CSS zoom, position:fixed coordinates are in CSS pixels but the
-      // visible viewport shrinks. clientToFixed converts the viewport size
-      // into that same fixed-CSS space per engine (one division on Chromium,
-      // two on WebKitGTK/WKWebView — mirroring the cursor conversion below).
-      // offsetWidth/Height are CSS pixels (unaffected by zoom).
-      const vw = clientToFixed(window.innerWidth);
-      const vh = clientToFixed(window.innerHeight);
-      const menuW = menuEl.offsetWidth;
-      const menuH = menuEl.offsetHeight;
-      const pad = 12;
       // rawX/rawY are the raw event.clientX/Y (the store no longer pre-divides).
-      // clientToFixed converts the cursor point into the position:fixed CSS space
-      // per webview engine (see zoom.ts).
-      let x = clientToFixed(rawX);
-      let y = clientToFixed(rawY);
-      if (x + menuW > vw - pad) x = vw - menuW - pad;
-      if (y + menuH > vh - pad) y = vh - menuH - pad;
-      if (x < pad) x = pad;
-      if (y < pad) y = pad;
+      // fixedMenuPosition converts the cursor, viewport and measured menu into
+      // the position:fixed CSS space of this engine (see zoom.ts).
+      const zoom = getZoomFactor();
+      singleScale = probeSingleScaleFixedOffset(menuEl);
+      const { x, y } = fixedMenuPosition(
+        { x: rawX, y: rawY },
+        { width: window.innerWidth, height: window.innerHeight },
+        { width: menuEl.offsetWidth, height: menuEl.offsetHeight },
+        zoom, singleScale, 12,
+      );
       clampedX = x;
       clampedY = y;
       menuVisible = true;
@@ -425,6 +418,7 @@
   <div
     bind:this={menuEl}
     class="context-menu"
+    class:revealed={menuVisible}
     style="left: {clampedX}px; top: {clampedY}px; visibility: {menuVisible ? 'visible' : 'hidden'};"
     role="menu"
     tabindex="-1"
@@ -779,6 +773,24 @@
           {/if}
         </button>
       {/each}
+      <button
+        class="menu-item"
+        class:selected={settingsStore.showHidden}
+        onclick={() => { settingsStore.toggleHidden(); contextMenuStore.close(); }}
+        role="menuitemcheckbox"
+        aria-checked={settingsStore.showHidden}
+      >
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+          <path d="M1.5 8C2.8 5.4 5.2 3.5 8 3.5C10.8 3.5 13.2 5.4 14.5 8C13.2 10.6 10.8 12.5 8 12.5C5.2 12.5 2.8 10.6 1.5 8Z" stroke="currentColor" stroke-width="1.25" stroke-linejoin="round"/>
+          <circle cx="8" cy="8" r="2" stroke="currentColor" stroke-width="1.25"/>
+        </svg>
+        <span>Show hidden files</span>
+        {#if settingsStore.showHidden}
+          <svg class="check-icon" width="12" height="12" viewBox="0 0 12 12" fill="none">
+            <path d="M2.5 6L5 8.5L9.5 3.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+        {/if}
+      </button>
     {/if}
 
     {#if pluginMenuItems.length > 0}
@@ -863,20 +875,30 @@
     border: 1px solid var(--surface-stroke-flyout);
     border-radius: var(--radius-lg);
     box-shadow: var(--shadow-flyout);
-    animation: menuIn 100ms cubic-bezier(0, 0, 0, 1);
   }
-  .menu-item:focus-visible { outline: 2px solid var(--focus-stroke-outer); outline-offset: -2px; }
-
-  @keyframes menuIn {
+  /* Entrance: a downward clip reveal plus a short slide. Never animate
+     opacity, transform or filter on a blurred menu surface or its contents:
+     WebKitGTK composites those animations, and when one ends it drops the
+     backdrop-filter surface for a frame, so the menu blinked see-through
+     ~100 ms after opening (#1062). clip-path and margin repaint on the main
+     thread instead, with no layer to tear down. The menu is mounted hidden for
+     one measuring frame (clamp effect), so the reveal starts only once it is
+     visible. */
+  .context-menu.revealed {
+    animation: menuReveal 140ms cubic-bezier(0, 0, 0, 1);
+  }
+  @keyframes menuReveal {
     from {
-      opacity: 0;
-      transform: scale(0.95) translateY(-4px);
+      clip-path: inset(0 0 100% 0 round var(--radius-lg));
+      margin-top: -6px;
     }
     to {
-      opacity: 1;
-      transform: scale(1) translateY(0);
+      /* Outset so the flyout shadow is not clipped in the final frames. */
+      clip-path: inset(-40px round var(--radius-lg));
+      margin-top: 0;
     }
   }
+  .menu-item:focus-visible { outline: 2px solid var(--focus-stroke-outer); outline-offset: -2px; }
 
   .menu-item {
     display: flex;
@@ -971,7 +993,12 @@
     border: 1px solid var(--surface-stroke-flyout);
     border-radius: var(--radius-lg);
     box-shadow: var(--shadow-flyout);
-    animation: menuIn 100ms cubic-bezier(0, 0, 0, 1);
+    /* Same reveal as the main menu (see menuReveal). */
+    animation: menuReveal 140ms cubic-bezier(0, 0, 0, 1);
+  }
+  /* After both animated rules, so it wins the cascade. */
+  @media (prefers-reduced-motion: reduce) {
+    .context-menu.revealed, .submenu { animation: none; }
   }
 
   .ai-submenu {

@@ -17,6 +17,9 @@
 <script lang="ts">
   import "./modal.css";
   import { modalOwnership } from "$lib/state/modal-ownership.svelte";
+  import { dialogStore } from "$lib/state/dialogs.svelte";
+  import { getDialogPresentation } from "$lib/state/dialog-presentation-context";
+  import { canRestoreModalFocus as canRestoreFocus, createPaneDialogFocusRestore } from "$lib/state/modal-focus";
   import { untrack, type Snippet } from "svelte";
 
   interface Props {
@@ -61,9 +64,25 @@
   }: Props = $props();
 
   let overlayRef = $state<HTMLElement | null>(null);
+  const presentation = getDialogPresentation();
+  const scope = presentation?.scope ?? null;
+  let ownership = $state.raw<ReturnType<typeof modalOwnership.registerSurface> | null>(null);
+  const top = $derived(ownership?.isTop() ?? false);
+  let lastFocused: HTMLElement | null = null;
 
   $effect(() => {
-    if (open) return untrack(() => modalOwnership.register(() => onClose(), canClose));
+    if (!open) return;
+    const owner = untrack(() => modalOwnership.registerSurface((event) => {
+      if (event) handleKeydown(event);
+      else if (canClose()) onClose();
+      focusOwnedSurface();
+    }, () => canClose(), focusOwnedSurface, {
+      scope, presentation: presentation?.presentation,
+      available: () => presentation?.visible ?? true,
+      element: () => overlayRef, focus: focusOwnedSurface,
+    }));
+    ownership = owner;
+    return () => { owner.release(); ownership=null; };
   });
 
   // `:not([tabindex="-1"])` on every clause so an element opted out of the tab
@@ -80,12 +99,6 @@
       // offsetParent is null for display:none subtrees (e.g. inactive tabs)
       (el) => el.offsetParent !== null
     );
-  }
-
-  function canRestoreFocus(element: HTMLElement): boolean {
-    if (!element.isConnected || element.closest("[inert], [aria-hidden='true']")) return false;
-    if (element.matches(":disabled")) return false;
-    return element === document.body || element.offsetParent !== null;
   }
 
   /** Keep Tab inside the dialog: cycle through focusable elements. */
@@ -106,13 +119,14 @@
   }
 
   function handleKeydown(event: KeyboardEvent): void {
+    if (!ownership?.isTop()) return;
     if (event.key === "Escape" && closeOnEscape) {
       event.preventDefault();
       event.stopPropagation();
-      onClose();
+      if (canClose()) onClose();
       return;
     }
-    if (event.key === "Tab") {
+    if (event.key === "Tab" && !scope) {
       trapTab(event);
       return;
     }
@@ -120,7 +134,8 @@
   }
 
   function handleBackdropClick(event: MouseEvent): void {
-    if (closeOnBackdrop && event.target === event.currentTarget) {
+    if (!ownership?.isTop()) return;
+    if (canClose() && closeOnBackdrop && event.target === event.currentTarget) {
       onClose();
     }
   }
@@ -131,12 +146,10 @@
     if (!open || !overlayRef) return;
     const ref = overlayRef;
     const previous = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-    queueMicrotask(() => {
-      if (ref.isConnected && !ref.contains(document.activeElement)) {
-        const target =
-          ref.querySelector<HTMLElement>("[autofocus], [data-autofocus]") ?? ref;
-        target.focus();
-      }
+    if (scope && presentation) return createPaneDialogFocusRestore(ref, previous, scope.paneId, {
+      isActive: () => presentation.isActive(),
+      isUncovered: () => !dialogStore.isPaneBlocked(scope.paneId),
+      focusUncovered: () => presentation.focusUncovered(),
     });
     return () => {
       if (previous && canRestoreFocus(previous)) {
@@ -148,6 +161,25 @@
       }
     };
   });
+  // A global key may arrive while focus is on the document (e.g. after a
+  // disabled control lost focus). Restore the owning surface after a veto.
+  function focusOwnedSurface(): void {
+    const ref = overlayRef;
+    if (!ref) return;
+    queueMicrotask(() => {
+      if (!ownership?.isTop() || (scope && !presentation?.isActive()) || !ref.isConnected || ref.contains(document.activeElement)) return;
+      const remembered = lastFocused;
+      const preferred = ref.querySelector<HTMLElement>("[autofocus], [data-autofocus]");
+      const target = remembered && ref.contains(remembered) && canRestoreFocus(remembered)
+        ? remembered
+        : preferred && canRestoreFocus(preferred) ? preferred : ref;
+      target.focus();
+    });
+  }
+
+  $effect(() => {
+    if (open && overlayRef && top && (!scope || presentation?.isActive())) focusOwnedSurface();
+  });
 </script>
 
 {#if open}
@@ -156,21 +188,28 @@
     bind:this={overlayRef}
     class="modal-overlay {overlayClass}"
     class:top-aligned={align === "top"}
+    class:suspended={!top}
+    class:pane-scoped={!!scope}
     style:--modal-top-offset={topOffset}
-    {role}
-    aria-modal="true"
+    role={scope ? "dialog" : role}
+    aria-modal={top && !scope ? "true" : undefined}
+    aria-hidden={!top ? "true" : undefined}
+    inert={!top}
     aria-label={label}
     aria-labelledby={labelledby}
     aria-describedby={describedby}
     tabindex="-1"
     onkeydown={handleKeydown}
     onclick={handleBackdropClick}
+    onfocusin={(event)=>{ if(top && event.target instanceof HTMLElement) lastFocused=event.target; }}
   >
     {@render children()}
   </div>
 {/if}
 
 <style>
+  .modal-overlay.suspended { visibility:hidden; pointer-events:none; }
+  .modal-overlay.pane-scoped { position: absolute; }
   .modal-overlay {
     position: fixed;
     inset: 0;
@@ -180,8 +219,15 @@
     align-items: center;
     justify-content: center;
     z-index: var(--z-modal, 1000);
-    animation: modal-overlay-in 150ms cubic-bezier(0, 0, 0, 1);
     outline: none;
+  }
+
+  /* Keep the blurred backdrop static. Ending opacity/transform animations on
+     it or its contents can drop a WebKitGTK surface for a frame (#1080).
+     Installed plugins may ship older entrance CSS; the modal owns their safe
+     entrance without requiring every plugin to ship a matching fix. */
+  .modal-overlay > :global(.plugin-dialog) {
+    animation: modal-card-in 150ms cubic-bezier(0, 0, 0, 1);
   }
 
   .modal-overlay.top-aligned {
@@ -194,13 +240,8 @@
     animation: none;
   }
 
-  @keyframes modal-overlay-in {
-    from {
-      opacity: 0;
-    }
-    to {
-      opacity: 1;
-    }
+  @media (prefers-reduced-motion: reduce) {
+    .modal-overlay > :global(.plugin-dialog) { animation: none; }
   }
 
   @media (prefers-color-scheme: dark) {

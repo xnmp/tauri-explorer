@@ -27,12 +27,25 @@ function containerAtOrigin(): HTMLElement {
 describe("createPreviewFullscreen", () => {
   it("a clean click at fit zoom enters and leaves fullscreen", () => {
     const fs = createPreviewFullscreen();
-    fs.click(click());
+    fs.click(click(), true);
     expect(fs.active).toBe(true);
     expect(fs.transform).toBe("scale(1)");
-    fs.click(click());
+    fs.click(click(), true);
     expect(fs.active).toBe(false);
     expect(fs.transform).toBe("");
+  });
+
+  it("a click on the background around the picture does not enter fullscreen", () => {
+    const fs = createPreviewFullscreen();
+    fs.click(click(), false);
+    expect(fs.active).toBe(false);
+  });
+
+  it("a click on the background still leaves fullscreen at fit zoom", () => {
+    const fs = createPreviewFullscreen();
+    fs.click(click(), true);
+    fs.click(click(), false);
+    expect(fs.active).toBe(false);
   });
 
   it("toggle runs onToggle; Esc and exit do not, and both reset the zoom", () => {
@@ -119,10 +132,29 @@ describe("createPreviewFullscreen", () => {
   });
 
   it("blocked keys (a modal is open) are left alone, Esc included", () => {
-    const fs = createPreviewFullscreen({ keysBlocked: () => true });
+    let blocked = false;
+    const fs = createPreviewFullscreen({ keysBlocked: () => blocked });
     fs.toggle();
+    blocked = true;
     fs.handleKey(key("Escape"));
     expect(fs.active).toBe(true);
+  });
+
+  it.each(["toggle", "click"] as const)("cannot enter fullscreen via %s while the pane is covered", input => {
+    let blocked = true;
+    const onToggle = vi.fn();
+    const fs = createPreviewFullscreen({ keysBlocked: () => blocked, onToggle });
+    if (input === "toggle") fs.toggle(); else fs.click(click(), true);
+    expect(fs.active).toBe(false);
+    expect(onToggle).not.toHaveBeenCalled();
+    const escape = key("Escape");
+    fs.handleKey(escape);
+    expect(escape.preventDefault).not.toHaveBeenCalled();
+    blocked = false;
+    fs.toggle();
+    expect(fs.active).toBe(true);
+    fs.handleKey(key("Escape"));
+    expect(fs.active).toBe(false);
   });
 
   it("wheel zooms only in fullscreen, at the cursor", () => {
@@ -153,7 +185,7 @@ describe("createPreviewFullscreen", () => {
     fs.pointerUp();
     expect(fs.panning).toBe(false);
     expect([fs.panX, fs.panY]).toEqual([30, -10]);
-    fs.click(click());
+    fs.click(click(), true);
     expect(fs.active).toBe(true);
   });
 
@@ -165,9 +197,9 @@ describe("createPreviewFullscreen", () => {
     fs.pointerMove({ clientX: 40, clientY: 0 });
     fs.pointerUp();
     fs.handleKey(key("0"));
-    fs.click(click()); // the drag's own click
+    fs.click(click(), true); // the drag's own click
     expect(fs.active).toBe(true);
-    fs.click(click());
+    fs.click(click(), true);
     expect(fs.active).toBe(false);
   });
 
@@ -175,7 +207,7 @@ describe("createPreviewFullscreen", () => {
     const fs = createPreviewFullscreen();
     fs.toggle();
     fs.handleKey(key("+"));
-    fs.click(click());
+    fs.click(click(), true);
     expect(fs.active).toBe(true);
   });
 
@@ -189,5 +221,40 @@ describe("createPreviewFullscreen", () => {
     expect(fs.panning).toBe(false);
     fs.pointerMove({ clientX: 500, clientY: 500 });
     expect([fs.panX, fs.panY]).toEqual([0, 0]);
+  });
+});
+
+describe("createPreviewFullscreen with a text subject", () => {
+  it("keeps Left/Right stepping while the text is zoomed", () => {
+    const navigate = vi.fn();
+    const fs = createPreviewFullscreen({ navigate, subjectZoomsText: () => true });
+    fs.toggle();
+    fs.handleKey(key("+"));
+    expect(fs.zoom).toBeGreaterThan(1);
+    fs.handleKey(key("ArrowRight"));
+    fs.handleKey(key("ArrowLeft"));
+    expect(navigate.mock.calls).toEqual([[1], [-1]]);
+    expect(fs.panX).toBe(0);
+  });
+
+  it("Up/Down scroll the text through scrollSubject and consume the key", () => {
+    const scrollSubject = vi.fn();
+    const fs = createPreviewFullscreen({ scrollSubject, subjectZoomsText: () => true });
+    fs.toggle();
+    const down = key("ArrowDown");
+    fs.handleKey(down);
+    fs.handleKey(key("ArrowUp"));
+    expect(scrollSubject.mock.calls).toEqual([[KEY_PAN_STEP], [-KEY_PAN_STEP]]);
+    expect(down.preventDefault).toHaveBeenCalled();
+  });
+
+  it("the wheel zooms the text without a container", () => {
+    const fs = createPreviewFullscreen({ subjectZoomsText: () => true });
+    fs.toggle();
+    const event = wheel(-100);
+    fs.wheel(event);
+    expect(fs.zoom).toBeGreaterThan(1);
+    expect(fs.panX).toBe(0);
+    expect(event.preventDefault).toHaveBeenCalled();
   });
 });

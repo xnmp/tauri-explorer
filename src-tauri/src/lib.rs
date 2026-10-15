@@ -1,9 +1,11 @@
 //! Tauri Explorer app entry point.
 //! Issue: tauri-explorer-nv2y, tauri-explorer-hgt6, tauri-explorer-im3m, tauri-explorer-bo8l, tauri-explorer-yclf
 
+pub(crate) mod ai;
 mod ai_organize;
 mod ai_rename;
 mod archive;
+mod child_env;
 mod clipboard;
 mod config;
 pub mod config_watch;
@@ -18,6 +20,7 @@ mod file_picker;
 mod shared_history;
 // pub: criterion benches (src-tauri/benches/) call into
 // files::dir_listing::{scan_directory_parallel, sort_entries} directly.
+mod durable_dir;
 pub mod files;
 mod gemini;
 pub mod git;
@@ -33,7 +36,27 @@ mod github;
 mod image_crop;
 mod image_operation;
 mod installed_plugins;
+#[cfg(target_os = "linux")]
+mod jsc_workaround;
+mod native_deadline;
+mod native_file_drag;
+#[cfg(unix)]
+mod process_supervisor;
+mod recovery_actor;
+
+/// Dispatch the private process anchor before initializing the application.
+pub fn run_process_supervisor() -> Option<i32> {
+    #[cfg(unix)]
+    {
+        process_supervisor::early_mode()
+    }
+    #[cfg(not(unix))]
+    {
+        None
+    }
+}
 mod load_diagnostics;
+mod media_duration;
 mod nano_banana;
 mod palette;
 mod platform;
@@ -46,9 +69,12 @@ mod renderer_owner;
 #[cfg(all(target_os = "linux", feature = "e2e-renderer-recovery"))]
 #[path = "../test_support/renderer_recovery.rs"]
 mod renderer_recovery;
+mod service_state;
 mod update_check;
 mod upscale;
 mod user_report;
+#[cfg(target_os = "linux")]
+mod webkit_renderer;
 mod window_launch;
 /// Non-Linux stub so the command registry stays platform-independent.
 #[cfg(not(target_os = "linux"))]
@@ -146,12 +172,14 @@ pub fn run_with_process_entry(launch_dir: Option<String>, t_process_entry: std::
         .map(|duration| duration.as_secs_f64() * 1000.0)
         .unwrap_or(f64::NAN);
 
-    // Fix webkit2gtk Wayland protocol errors on Linux compositors (Hyprland, Sway, etc.)
+    // Avoid WebKitGTK's DMABuf Wayland protocol errors without giving up
+    // composited painting (#1057); see webkit_renderer.
     #[cfg(target_os = "linux")]
-    {
-        std::env::set_var("WEBKIT_DISABLE_COMPOSITING_MODE", "1");
-        std::env::set_var("WEBKIT_DISABLE_DMABUF_RENDERER", "1");
-    }
+    let renderer_plan = webkit_renderer::apply();
+    // WebKitGTK 2.52's WebContent process aborts in JSC's collector with the
+    // DFG tier enabled (#1026); see jsc_workaround.
+    #[cfg(target_os = "linux")]
+    let jsc_plan = jsc_workaround::apply(webkit_renderer::runtime_version());
 
     let home_dir = dirs::home_dir()
         .unwrap_or_else(|| std::path::PathBuf::from("/"))
@@ -216,7 +244,7 @@ pub fn run_with_process_entry(launch_dir: Option<String>, t_process_entry: std::
         renderer_owner::on_web_content_terminated(webview);
     });
     #[cfg(target_os = "linux")]
-    let builder = builder.plugin(renderer_owner::termination_log());
+    let builder = builder.plugin(renderer_owner::termination_recovery());
     // Every WebView sharing Windows' data directory must use the exact same
     // environment options. Inject the main window's attach-build arguments
     // into every spawning page so fresh and warm descendants preserve them.
@@ -233,6 +261,7 @@ pub fn run_with_process_entry(launch_dir: Option<String>, t_process_entry: std::
     builder
         .manage(LaunchCwd(launch_cwd_for_state))
         .manage(window_launch::Requests::default())
+        .manage(native_file_drag::Sessions::default())
         .manage(system::StartupClock {
             started: t_start,
             epoch_ms: t_start_epoch_ms,
@@ -263,23 +292,34 @@ pub fn run_with_process_entry(launch_dir: Option<String>, t_process_entry: std::
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_drag::init())
         .on_window_event(|window, event| {
+            native_file_drag::on_window_event(window, event);
             if matches!(event, tauri::WindowEvent::Focused(true)) {
                 installed_plugins::notify_pending_errors(window);
             }
             if matches!(event, tauri::WindowEvent::Destroyed) {
+                ai::cancel_caller(&format!("settings:{}", window.label()));
                 renderer_owner::on_window_destroyed(window);
             }
         })
         .on_page_load(|webview, payload| {
             if payload.event() == tauri::webview::PageLoadEvent::Started {
                 renderer_owner::on_page_started(&webview.window());
-                #[cfg(target_os = "macos")]
+                #[cfg(any(target_os = "macos", target_os = "linux"))]
                 renderer_owner::on_document_committed(&webview.window(), payload.url());
             }
         })
         .invoke_handler(tauri::generate_handler![
+            ai::ai_connections_read,
+            ai::ai_connections_save,
+            ai::ai_connection_set_credential,
+            ai::ai_connection_clear_credential,
+            ai::ai_connection_check,
+            ai::ai_connection_test,
+            ai::ai_connection_cancel_test,
             // Launch info
             get_launch_cwd,
+            native_file_drag::start_file_drag,
+            native_file_drag::native_file_drag_clock,
             get_log_dir,
             system::get_app_info,
             user_report::submit_user_report,
@@ -320,6 +360,7 @@ pub fn run_with_process_entry(launch_dir: Option<String>, t_process_entry: std::
             file_mutation::cancel_copy_session,
             files::file_ops::read_text_file,
             files::file_ops::read_image_data_url,
+            files::image_resolution::get_image_resolution,
             files::image_crop::capture_image_crop,
             file_mutation::save_image_crop,
             files::pdf_preview::read_pdf_bytes,
@@ -329,6 +370,8 @@ pub fn run_with_process_entry(launch_dir: Option<String>, t_process_entry: std::
             files::media_preview::begin_video_preview,
             files::media_preview::prepare_video_preview,
             files::media_preview::release_video_preview,
+            files::video_info::probe_video_codec,
+            files::video_info::save_file_copy,
             file_mutation::write_text_file,
             file_mutation::create_symlink,
             files::file_ops::estimate_size,
@@ -363,16 +406,20 @@ pub fn run_with_process_entry(launch_dir: Option<String>, t_process_entry: std::
             clipboard::clipboard_release_cut,
             clipboard::clipboard_has_image,
             clipboard::clipboard_read_report_image,
+            clipboard::clipboard_has_report_attachment,
+            clipboard::clipboard_read_report_attachment,
             clipboard::clipboard_paste_image,
             // Thumbnails
             thumbnails::get_thumbnail,
             thumbnails::get_thumbnail_data,
             thumbnails::get_micro_thumbnail,
             thumbnails::get_video_thumbnail_data,
+            media_duration::get_media_durations,
             thumbnails::get_folder_preview,
             thumbnails::set_ffmpeg_path,
             thumbnails::clear_thumbnail_cache,
             thumbnails::get_thumbnail_cache_stats,
+            thumbnails::preview_rendition::get_preview_image,
             // Archive operations
             archive::compress_to_zip,
             archive::cancel_compress,
@@ -413,6 +460,7 @@ pub fn run_with_process_entry(launch_dir: Option<String>, t_process_entry: std::
             git_avatar::git_author_avatar,
             git_log::git_log,
             git_log::git_refs,
+            git_log::git_merge_base,
             git_log::git_commit_files,
             git_log::git_commit_file_diff,
             git_log::git_compare_commit_files,
@@ -438,6 +486,9 @@ pub fn run_with_process_entry(launch_dir: Option<String>, t_process_entry: std::
             git_actions::git_branch_behind_upstream,
             git_log::git_branch_authors,
             github::git_open_prs,
+            github::git_issues_url,
+            github::git_pr_action,
+            github::git_pr_context,
             github::git_failed_ci_checks,
             github::git_failed_ci_check_log,
             git_actions::git_delete_branch,
@@ -469,6 +520,13 @@ pub fn run_with_process_entry(launch_dir: Option<String>, t_process_entry: std::
             installed_plugins::uninstall_plugin,
             installed_plugins::set_plugin_package_enabled,
             installed_plugins::plugin_backend_invoke,
+            installed_plugins::plugin_jobs_snapshot,
+            installed_plugins::plugin_job_reveal,
+            installed_plugins::plugin_job_cancel,
+            installed_plugins::plugin_job_resume,
+            installed_plugins::plugin_job_dismiss,
+            installed_plugins::ai_operations_snapshot,
+            installed_plugins::ai_operation_resolve,
             // Window appearance
             set_window_theme,
             // Pre-warmed window pool
@@ -488,7 +546,23 @@ pub fn run_with_process_entry(launch_dir: Option<String>, t_process_entry: std::
             terminal::terminal_status,
         ])
         .setup(move |app| {
+            native_file_drag::install_snapshots(app.handle().clone());
             let t_setup = std::time::Instant::now();
+            // First in setup: portal mode returns early below, and a renderer
+            // crash after window creation is exactly when this line matters.
+            #[cfg(target_os = "linux")]
+            log::info!(
+                "Renderer(webkit): mode={:?} set={:?} unset={:?} reason={}",
+                renderer_plan.mode,
+                renderer_plan.set,
+                renderer_plan.unset,
+                renderer_plan.reason,
+            );
+            #[cfg(target_os = "linux")]
+            log::info!("Renderer(jsc): {jsc_plan:?}");
+            // Before any window: the asset scope must serve Preview renditions
+            // from the cache (its `$HOME/**/*` glob skips dot-dirs, #1054).
+            thumbnails::preview_rendition::allow_rendition_assets(app);
             installed_plugins::initialize(app.handle().clone())?;
 
             // Before any window exists, so every mutation command can admit.
@@ -668,7 +742,7 @@ pub fn run_with_process_entry(launch_dir: Option<String>, t_process_entry: std::
         .build(tauri::generate_context!())
         .expect("error while running tauri application")
         .run(|app, event| {
-            if matches!(&event,tauri::RunEvent::Exit){installed_plugins::shutdown();}
+            if matches!(&event,tauri::RunEvent::Exit){ai::cancel_all();installed_plugins::shutdown();}
             // Portal mode has no persistent window: closing a picker window
             // must not exit the service, or the D-Bus name would drop.
             if portal::is_portal_mode() {

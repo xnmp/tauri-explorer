@@ -131,6 +131,7 @@ export const nanoBananaPlugin: Plugin = {
 
     // 5. Command-palette entry.
     ctx.registerCommand({
+      scope: "pane",
       id: "plugin.nano-banana.edit",
       label: "Nano Banana: Edit Image…",
       category: "plugins",

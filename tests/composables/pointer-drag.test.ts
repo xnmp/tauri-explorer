@@ -13,13 +13,13 @@ vi.mock("$lib/state/settings.svelte", () => ({
   settingsStore: { zoomLevel: 100 },
 }));
 
-vi.mock("$lib/state/drag.svelte", () => ({
-  dragState: {
-    current: null,
-    start: vi.fn(),
-    clear: vi.fn(),
-  },
-}));
+vi.mock("$lib/state/drag.svelte", async original => {
+  const module = await original<typeof import("$lib/state/drag.svelte")>();
+  vi.spyOn(module.dragState, "start");
+  vi.spyOn(module.dragState, "clear");
+  vi.spyOn(module.dragState, "finish");
+  return module;
+});
 
 vi.mock("$lib/state/bookmarks.svelte", () => ({
   bookmarksStore: { addBookmark: vi.fn() },
@@ -37,6 +37,7 @@ vi.mock("$lib/composables/use-native-drop-target.svelte", () => ({
   resolveDropTargetAtPoint: vi.fn().mockReturnValue(null),
   highlightTargetAtPoint: vi.fn(),
   clearHighlights: vi.fn(),
+  captureHighlightCleanup: () => vi.fn(),
 }));
 
 import { usePointerDrag } from "$lib/composables/use-pointer-drag.svelte";
@@ -274,7 +275,7 @@ describe("usePointerDrag", () => {
     expect(requested).toEqual([]); // nothing was asked to transfer
   });
 
-  it("option+mouseup triggers copy (altKey=true)", async () => {
+  it("Ctrl pressed after pointer drag start copies at mouseup", async () => {
     vi.mocked(resolveDropTargetAtPoint).mockReturnValue({ type: "folder", path: "/home/user/Docs" });
 
     const explorer = makeMockExplorer();
@@ -283,7 +284,7 @@ describe("usePointerDrag", () => {
 
     drag.handlePointerDown(makeMouseEvent({ clientX: 100, clientY: 100 }), entry, false);
     fireWindowEvent("mousemove", { clientX: 110, clientY: 100 });
-    await fireWindowEvent("mouseup", { clientX: 200, clientY: 200, altKey: true });
+    await fireWindowEvent("mouseup", { clientX: 200, clientY: 200, ctrlKey: true });
 
     expect(handleFileDropMany).toHaveBeenCalledWith(
       ["/home/user/file.txt"],

@@ -3,6 +3,7 @@
   Issue: tauri-explorer-iw0, tauri-explorer-jql, tauri-explorer-bae, tauri-explorer-h3n, tauri-explorer-w3t, tauri-explorer-npjh, tauri-explorer-1ex, tauri-explorer-auj, tauri-explorer-npjh.4
 -->
 <script lang="ts">
+  import { jobRevealController } from "$lib/state/job-reveal";
   import "@fontsource-variable/inter/index.css";
   import { onMount } from "svelte";
   import { startWindowSession } from "$lib/state/window-session";
@@ -237,7 +238,7 @@
     if (hooks) void hooks.then(({ prepareWindowSessionProbe }) => start(prepareWindowSessionProbe))
       .catch((error) => console.error("Window probe initialization failed:", error));
     else start();
-    return () => { lifetime.abort(); session?.dispose(); session = undefined; };
+    return () => { jobRevealController.abort(); lifetime.abort(); session?.dispose(); session = undefined; };
   });
 </script>
 
@@ -258,8 +259,8 @@
       <Sidebar />
     {/if}
     {#if millerAsLeftIsland && leftExplorer}
-      <div class="miller-island">
-        <MillerColumns explorer={leftExplorer} />
+      <div class="miller-island" data-pane-id={windowTabsManager.activePaneId}>
+        <MillerColumns explorer={leftExplorer} paneId={windowTabsManager.activePaneId} />
       </div>
     {/if}
     {#snippet paneAndPreview()}
@@ -749,8 +750,8 @@
     min-height: 0;
   }
 
-  /* Bottom/top dock: island is a column so the pane's inline height drives the
-     island height and the pane stretches to full column width. */
+  /* Bottom/top dock: island is a column so the preview dock's inline height
+     drives the island height and the dock stretches to full column width. */
   .preview-island.vertical {
     flex-direction: column;
     /* The child supplies its live draft size; constrain allocation without

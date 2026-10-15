@@ -9,10 +9,8 @@
   import type { ExplorerInstance } from "$lib/state/explorer.svelte";
   import type { useItemInteractions } from "$lib/composables/use-item-interactions.svelte";
   import type { usePointerDrag } from "$lib/composables/use-pointer-drag.svelte";
-  import { isInClipboard, isClipboardCut } from "$lib/composables/use-item-interactions.svelte";
-  import { manualHiddenStore } from "$lib/state/manual-hidden.svelte";
-  import { settingsStore } from "$lib/state/settings.svelte";
-  import { emptyFolderResolver } from "$lib/state/empty-folders.svelte";
+  import { useEntryAppearance } from "$lib/composables/use-entry-appearance.svelte";
+  import EntrySymlinkBadge from "./EntrySymlinkBadge.svelte";
   import { dialogStore } from "$lib/state/dialogs.svelte";
   import { usesPointerDrag, usesHtml5Drag } from "$lib/domain/platform";
   import { isVideoMediaFile } from "$lib/domain/file-types";
@@ -50,15 +48,7 @@
 
   const isRenaming = $derived(dialogStore.renamingEntry?.path === entry.path);
 
-  // Emptiness is resolved lazily now that listings no longer carry it (#129).
-  // Re-request when hidden-file visibility changes so the resolver reprobes.
-  $effect(() => {
-    settingsStore.showHidden;
-    emptyFolderResolver.request(entry);
-  });
-  const isEmptyFolder = $derived(
-    entry.kind === "directory" && emptyFolderResolver.isEmpty(entry.path) === true,
-  );
+  const appearance = useEntryAppearance(() => entry, () => explorer.currentPath);
 </script>
 
 <!-- svelte-ignore a11y_click_events_have_key_events -- FileList owns cursor navigation; the window command router owns configurable Open/Preview and selection commands. -->
@@ -73,10 +63,10 @@
   aria-colindex={column}
   class:directory={entry.kind === "directory"}
   class:selected={explorer.isSelected(entry)}
-  class:cut={isClipboardCut(entry)}
-  class:in-clipboard={isInClipboard(entry)}
-  class:hidden-entry={entry.name.startsWith(".") || manualHiddenStore.isHidden(explorer.currentPath, entry.name)}
-  class:empty-folder={isEmptyFolder}
+  class:cut={appearance.cut}
+  class:in-clipboard={appearance.inClipboard}
+  class:hidden-entry={appearance.hidden}
+  class:empty-folder={appearance.emptyFolder}
   class:drop-target={interactions.isDropTarget(entry.path)}
   class:copy-drop={interactions.isCopyDrop(entry.path)}
   draggable={usesHtml5Drag}
@@ -91,25 +81,5 @@
   onmousedown={usesPointerDrag ? (e) => { e.stopPropagation(); pointerDrag!.handlePointerDown(e, entry, explorer.isSelected(entry)); } : undefined}
 >
   {@render children()}
-  {#if entry.is_symlink && !isRenaming && entry.kind !== "directory"}
-    <div class="symlink-badge" title={entry.symlink_target ? `Link to ${entry.symlink_target}` : "Symbolic link"}>
-      <svg width="10" height="10" viewBox="0 0 10 10" fill="none">
-        <path d="M7 3L3 7M3 3L3 7L7 7" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/>
-      </svg>
-    </div>
-  {/if}
+  <EntrySymlinkBadge {entry} renaming={isRenaming} />
 </div>
-
-<style>
-  /* Symlink badge — mirrors the Details view (FileItem) indicator */
-  .symlink-badge {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    width: 14px;
-    height: 14px;
-    color: var(--text-tertiary);
-    flex-shrink: 0;
-    opacity: 0.7;
-  }
-</style>

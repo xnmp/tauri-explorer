@@ -9,7 +9,7 @@
   import { windowTabsManager } from "$lib/state/window-tabs.svelte";
   import { settingsStore } from "$lib/state/settings.svelte";
   import { resizeActivity } from "$lib/state/resize-activity.svelte";
-  import { revealPane } from "$lib/domain/pane-viewport";
+  import { paneDividerSize, revealPane } from "$lib/domain/pane-viewport";
   import { usePaneDividers } from "$lib/composables/use-pane-dividers.svelte";
   import PaneLayoutView from "./PaneLayoutView.svelte";
 
@@ -25,15 +25,17 @@
   const height = $derived(contentRect?.height ?? 0);
   const instance = $derived(windowTabsManager.activeTabInstance);
   const geometry = $derived(windowTabsManager.paneViewport.geometry);
+  const minima = $derived(windowTabsManager.paneViewport.minima);
+  const gap = $derived(paneDividerSize(settingsStore.islandMode));
   const dividers = usePaneDividers({ geometry: () => geometry, begin: windowTabsManager.beginSplitResize });
   $effect(() => {
-    const gap = settingsStore.islandMode ? 8 : 6;
     const measuredWidth = width, measuredHeight = height;
     untrack(dividers.cancel);
-    // Geometry resizes descendants (and can change workspace gutters). Commit
-    // outside ResizeObserver delivery so WebKit can finish the current layout.
+    // Geometry feeds reveal, directional focus and divider input; the canvas
+    // itself is sized by CSS, so this deferral never shows a stale frame (#1061).
+    // Commit outside ResizeObserver delivery so WebKit can finish the current layout.
     const frame = requestAnimationFrame(() => {
-      windowTabsManager.paneViewport.measure(measuredWidth, measuredHeight, gap);
+      windowTabsManager.paneViewport.measure(measuredWidth, measuredHeight);
     });
     return () => cancelAnimationFrame(frame);
   });
@@ -66,13 +68,16 @@
 <div class="pane-container" class:multi-pane={multiPane}
   bind:this={viewport} bind:contentRect
   onscroll={dividers.cancel}
-  style:--pane-divider-size={`${geometry?.divider ?? 6}px`}>
+  style:--pane-divider-size={`${gap}px`}>
   {#if activeTab}
     <!-- A restored tab may reuse its saved ID; its old DOM/gestures still retire. -->
     {#key windowTabsManager.activeTabInstance}
-      <div class="pane-tree" style:width={geometry ? `${geometry.width}px` : "100%"}
-        style:height={geometry ? `${geometry.height}px` : "100%"}>
-        <PaneLayoutView node={activeTab.layout} {geometry} {dividers} />
+      {@const minimum = minima?.get(activeTab.layout.id)}
+      <!-- CSS fills the viewport in the same layout pass that changes it; only
+           minima come from script, so panes never paint at a stale size (#1061). -->
+      <div class="pane-tree" style:min-width="{minimum?.width ?? 0}px"
+        style:min-height="{minimum?.height ?? 0}px">
+        <PaneLayoutView node={activeTab.layout} {geometry} {minima} {dividers} />
       </div>
     {/key}
   {/if}
@@ -89,9 +94,12 @@
     gap: 0;
   }
 
+  /* Fill the scrollport (stretched across, grown along); the inline minimum
+     makes it overflow and scroll only when the layout cannot fit. A zero basis
+     keeps tall listings from sizing the canvas by their content. */
   .pane-tree {
     display: flex;
-    flex: none;
+    flex: 1 0 0;
     min-width: 0;
     min-height: 0;
   }

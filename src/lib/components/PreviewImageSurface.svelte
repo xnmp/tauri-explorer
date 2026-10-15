@@ -1,8 +1,9 @@
 <!--
   The Preview pane's image surface, shared by file images and plugin Preview
   targets (#1033). It owns click/pan/zoom through the pane's fullscreen
-  controller; the pane's double-click policy leaves it alone. Clicking at fit
-  zoom toggles fullscreen (#219).
+  controller; the pane's double-click policy leaves it alone. Clicking the
+  picture at fit zoom toggles fullscreen (#219); the checkerboard around it does
+  not enter fullscreen (#1078).
 -->
 <script lang="ts">
   import type { Snippet } from "svelte";
@@ -14,9 +15,12 @@
     fullscreen: PreviewFullscreen;
     /** Overlays drawn over the image (notes, a loading spinner). */
     children?: Snippet;
+    /** Natural pixel size once the image has loaded (0×0 when unknown). */
+    onresolution?: (src: string, width: number, height: number) => void;
   }
 
-  let { src, alt, fullscreen, children }: Props = $props();
+  let { src, alt, fullscreen, children, onresolution }: Props = $props();
+  let picture: HTMLImageElement | undefined = $state();
 </script>
 
 <!-- svelte-ignore a11y_no_static_element_interactions, a11y_click_events_have_key_events -->
@@ -26,19 +30,24 @@
   class:panning={fullscreen.panning}
   bind:this={fullscreen.container}
   onwheel={fullscreen.wheel}
-  onclick={fullscreen.click}
+  onclick={(event) => fullscreen.click(event, event.target === picture)}
   onpointerdown={fullscreen.pointerDown}
   onpointermove={fullscreen.pointerMove}
   onpointerup={fullscreen.pointerUp}
   onpointercancel={fullscreen.pointerUp}
 >
   <img
+    bind:this={picture}
     {src}
     {alt}
     class="preview-image"
     class:zoomed={fullscreen.active && fullscreen.zoom > 1}
     style:transform={fullscreen.transform}
     draggable="false"
+    onload={(e) => {
+      const img = e.currentTarget as HTMLImageElement;
+      onresolution?.(src, img.naturalWidth, img.naturalHeight);
+    }}
   />
   {@render children?.()}
   {#if fullscreen.active}
@@ -56,8 +65,6 @@
        expanding this flex item and forcing the preview pane to scroll. */
     min-height: 0;
     padding: 20px;
-    /* Click toggles front-and-center (#219). */
-    cursor: zoom-in;
     background:
       repeating-conic-gradient(
         rgba(255, 255, 255, 0.03) 0% 25%,
@@ -65,12 +72,14 @@
       ) 50% / 12px 12px;
   }
 
+  /* Click toggles front-and-center (#219); only the picture takes the click (#1078). */
   .preview-image {
     max-width: 100%;
     max-height: 100%;
     object-fit: contain;
     border-radius: var(--radius-sm);
     box-shadow: var(--shadow-card);
+    cursor: zoom-in;
   }
 
   /* Fullscreen: fill the whole fullscreen pane and centre the image both

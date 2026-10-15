@@ -226,8 +226,12 @@ GDK_BACKEND=x11 xvfb-run -a --server-args="-screen 0 1280x1024x24" \
 
 The runner retains one native GTK WebView and one application PID while it drives
 two actual WebKit renderer `SIGKILL` cycles. WebDriver cannot perform this check:
-its session dies with the renderer, so the controller reloads the same retained
-view and verifies each fresh JavaScript realm. Acceptance requires fresh
+its session dies with the renderer. The controller never reloads the view; it
+waits for the application's own `Renderer(recovery) … decision=reload` line and
+verifies that the fresh JavaScript realm is the committed document with
+`rendererRecovery=1` (#1138). After both cycles it ends the renderer through
+`webkit_web_view_terminate_web_process` and requires the application's
+`decision=none cause=terminated-by-api` line and no further reload. Acceptance requires fresh
 repository-qualified Git leases, rejection of old-generation acquisition, and
 preservation of the new lease after a stale release. A real watcher receipt must
 contain the exact marker path and a backend observation time at or after the
@@ -235,9 +239,8 @@ filesystem write began; the expected repository listing verifies navigation.
 
 Each run uses isolated runtime directories and writes the protocol state, native
 application log, and final recovery screenshot there (the runner copies the
-screenshot into the branch's evidence path on success). This is controlled test
-reload coverage; it does not ship automatic crash-recovery behavior and is not a
-Windows or macOS acceptance path.
+screenshot into the branch's evidence path on success). It is the acceptance
+path for the shipped Linux crash recovery, not a Windows or macOS one.
 
 ## Native shared file-history acceptance
 

@@ -11,6 +11,7 @@
   import { settingsStore } from "$lib/state/settings.svelte";
   import { useColumnResize } from "$lib/composables/use-column-resize.svelte";
   import { DETAIL_COLUMNS, type ColumnKey } from "$lib/domain/detail-columns";
+  import { fixedMenuPosition, getZoomFactor, probeSingleScaleFixedOffset } from "$lib/domain/zoom";
   import FileItem from "./FileItem.svelte";
   import VirtualList from "./VirtualList.svelte";
   import InlineNewFolder, { NEW_FOLDER_SENTINEL, isNewFolderSentinel } from "./InlineNewFolder.svelte";
@@ -51,11 +52,27 @@
 
   function handleColumnHeaderContextMenu(event: MouseEvent) {
     event.preventDefault();
+    // FileList treats any non-entry right-click as background; the column menu
+    // owns header right-clicks, so the folder menu must not open over it.
+    event.stopPropagation();
     columnMenuPos = { x: event.clientX, y: event.clientY };
   }
 
   function closeColumnMenu() {
     columnMenuPos = null;
+  }
+
+  function positionColumnMenu(node: HTMLDivElement) {
+    if (!columnMenuPos) return;
+    // The pointer, viewport and measured menu must share fixed-CSS space; the
+    // probe selects the engine's single or double fixed-offset scaling.
+    const zoom = getZoomFactor();
+    const singleScale = probeSingleScaleFixedOffset(node);
+    const position = fixedMenuPosition(columnMenuPos,
+      { width: window.innerWidth, height: window.innerHeight },
+      { width: node.offsetWidth, height: node.offsetHeight }, zoom, singleScale);
+    node.style.left = `${position.x}px`;
+    node.style.top = `${position.y}px`;
   }
 </script>
 
@@ -72,7 +89,7 @@
     onkeydown={event => columnResize.keydown(column, event)}></div>
 {/snippet}
 
-<div id={viewId} class="details-view" class:resizing={columnResize.isResizing} style="--col-name: {columnResize.columnWidths.name}px; --col-date: {columnResize.columnWidths.date}px; --col-type: {columnResize.columnWidths.type}px; --col-size: {columnResize.columnWidths.size}px; --details-grid-columns: {columnResize.gridTemplateColumns};">
+<div id={viewId} class="details-view" class:resizing={columnResize.isResizing} style="--col-name: {columnResize.columnWidths.name}px; --col-date: {columnResize.columnWidths.date}px; --col-type: {columnResize.columnWidths.type}px; --col-size: {columnResize.columnWidths.size}px; --col-length: {columnResize.columnWidths.length}px; --col-resolution: {columnResize.columnWidths.resolution}px; --details-grid-columns: {columnResize.gridTemplateColumns};">
   <!-- svelte-ignore a11y_no_static_element_interactions -->
   <div class="column-headers" style="grid-template-columns: {columnResize.gridTemplateColumns};" oncontextmenu={handleColumnHeaderContextMenu}>
     <div class="column-header-wrapper">
@@ -144,14 +161,28 @@
       {@render resizeHandle("size")}
     </div>
     {/if}
+    {#if settingsStore.columnVisibility.length}
+    <div class="column-header-wrapper">
+      <div class="column-header length-column">
+        <span>Length</span>
+      </div>
+      {@render resizeHandle("length")}
+    </div>
+    {/if}
+    {#if settingsStore.columnVisibility.resolution}
+    <div class="column-header-wrapper">
+      <div class="column-header resolution-column"><span>Resolution</span></div>
+      {@render resizeHandle("resolution")}
+    </div>
+    {/if}
   </div>
 
   <!-- Column visibility context menu -->
   {#if columnMenuPos}
     <!-- svelte-ignore a11y_no_static_element_interactions -->
     <!-- svelte-ignore a11y_click_events_have_key_events -- click-outside backdrop pattern (matches CaretPicker/NavigationHistoryMenu); Escape/Tab away is not the primary dismiss path but the menu items themselves remain keyboard-focusable -->
-    <div class="column-menu-backdrop" onclick={closeColumnMenu} oncontextmenu={(e) => { e.preventDefault(); closeColumnMenu(); }}></div>
-    <div class="column-menu" style="left: {columnMenuPos.x}px; top: {columnMenuPos.y}px;">
+    <div class="column-menu-backdrop" onclick={closeColumnMenu} oncontextmenu={(e) => { e.preventDefault(); e.stopPropagation(); closeColumnMenu(); }}></div>
+    <div class="column-menu" use:positionColumnMenu>
       <button class="column-menu-item" onclick={() => { settingsStore.toggleColumn("date"); closeColumnMenu(); }}>
         <span class="column-menu-check">{settingsStore.columnVisibility.date ? "✓" : ""}</span>
         Date modified
@@ -163,6 +194,14 @@
       <button class="column-menu-item" onclick={() => { settingsStore.toggleColumn("size"); closeColumnMenu(); }}>
         <span class="column-menu-check">{settingsStore.columnVisibility.size ? "✓" : ""}</span>
         Size
+      </button>
+      <button class="column-menu-item" onclick={() => { settingsStore.toggleColumn("length"); closeColumnMenu(); }}>
+        <span class="column-menu-check">{settingsStore.columnVisibility.length ? "✓" : ""}</span>
+        Length
+      </button>
+      <button class="column-menu-item" onclick={() => { settingsStore.toggleColumn("resolution"); closeColumnMenu(); }}>
+        <span class="column-menu-check">{settingsStore.columnVisibility.resolution ? "✓" : ""}</span>
+        Resolution
       </button>
     </div>
   {/if}

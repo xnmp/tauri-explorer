@@ -2,7 +2,7 @@
  * Shared helpers for e2e tests.
  */
 
-import { expect, type Page } from "@playwright/test";
+import { expect, type Locator, type Page } from "@playwright/test";
 
 /** The three view modes */
 export const ALL_VIEW_MODES = ["details", "list", "tiles"] as const;
@@ -44,6 +44,15 @@ export const BUILT_IN_THEMES = [
 export async function waitForEntries(page: Page) {
   await page.waitForSelector(".file-list");
   await page.locator(".entry-item").first().waitFor({ timeout: 5000 });
+}
+
+/** Pane activation is manager state; `.active` only paints the split-pane border. */
+export async function activeExplorerPane(page: Page) {
+  const paneId = await page.evaluate(async () => {
+    const { windowTabsManager } = await import("/src/lib/state/window-tabs.svelte.ts");
+    return windowTabsManager.activePaneId;
+  });
+  return page.locator(`.explorer-pane[data-pane-id="${paneId}"]`);
 }
 
 /** Execute a selection-aware action through the real command palette. */
@@ -197,4 +206,20 @@ export async function focusBeforeFileList(page: Page): Promise<void> {
     return previous ? { tag: previous.tagName, className: previous.className } : null;
   });
   expect(focused, "the file list must have a preceding sequential focus target").not.toBeNull();
+}
+
+/** Resolves once the element's client/scroll width has been unchanged for `quietMs`; WebKit resizes the pane after first paint. */
+export async function waitForStableWidth(scroller: Locator, quietMs = 400): Promise<void> {
+  await scroller.evaluate((element, quiet) => new Promise<void>((resolve) => {
+    const read = () => `${element.clientWidth}:${element.scrollWidth}`;
+    let last = read();
+    let since = performance.now();
+    const tick = () => {
+      const now = read();
+      if (now !== last) { last = now; since = performance.now(); }
+      if (performance.now() - since >= quiet) resolve();
+      else requestAnimationFrame(tick);
+    };
+    requestAnimationFrame(tick);
+  }), quietMs);
 }

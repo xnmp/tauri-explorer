@@ -1,0 +1,5 @@
+# 1106: test watch acknowledgements need a hang guard, and shared test locks must recover
+
+- `ChangeReceipt::wait_after` (test_support/watch_observation.rs) waits for the native watcher to acknowledge a specific write. Its deadline is a hang guard (`ACK_HANG_GUARD`, 30 s, with a compile-time floor), not a latency budget. Measured under a CPU hog per core, acknowledged writes landed within about 3 ms of the write starting, so the guard only bounds a write that is never observed.
+- The shared test mutexes in search.rs must recover from poisoning: take `TEST_CACHE_COMMANDS` through `lock_test_cache_commands()` and the walk-count and stream-gate maps through `LockTestState::lock_test_state`. A panic while holding one poisons it, and without recovery every sibling test then fails with an unrelated `PoisonError`.
+- Under load a write can still go unacknowledged entirely (about 1 in 30 loaded runs of the real streaming search test). That times out at the guard with the same message. The guard does not cure it; the suspected lost native notification is tracked in #1152.

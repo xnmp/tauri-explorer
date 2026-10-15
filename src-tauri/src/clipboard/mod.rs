@@ -48,6 +48,7 @@ use crate::error::AppError;
 use backend::ClipboardBackend;
 use coordinator::{FileClipboardCoordinator, FileClipboardSnapshot};
 use std::sync::mpsc;
+use tauri::Emitter;
 use tokio::sync::oneshot;
 
 #[tauri::command]
@@ -70,31 +71,50 @@ pub async fn clipboard_has_image() -> Result<bool, AppError> {
 #[tauri::command]
 pub async fn clipboard_read_report_image(
 ) -> Result<crate::user_report::ReportAttachment, crate::user_report::SubmitReportError> {
-    let (bytes, media_type) =
-        tokio::task::spawn_blocking(|| content::read_report_image(platform::reader().as_ref()))
-            .await
-            .map_err(|error| {
-                crate::user_report::SubmitReportError::new(
-                    "clipboard_unavailable",
-                    format!("Clipboard task failed: {error}"),
-                )
-            })?
-            .ok_or_else(|| {
-                crate::user_report::SubmitReportError::new(
-                    "clipboard_unavailable",
-                    "No image data in clipboard",
-                )
-            })?;
-    let extension = if media_type == "image/jpeg" {
-        "jpg"
-    } else {
-        "png"
-    };
-    crate::user_report::attachment_from_image_bytes(
-        format!("Clipboard screenshot.{extension}"),
-        media_type,
-        bytes,
-    )
+    tokio::task::spawn_blocking(|| {
+        content::read_report_image_attachment(platform::reader().as_ref())
+    })
+    .await
+    .map_err(|error| {
+        crate::user_report::SubmitReportError::new(
+            "clipboard_unavailable",
+            format!("Clipboard task failed: {error}"),
+        )
+    })?
+}
+
+/// Report attachments include clipboard screenshots and copied video files.
+#[tauri::command]
+pub async fn clipboard_has_report_attachment() -> Result<bool, AppError> {
+    let paths = clipboard_snapshot()
+        .await
+        .map(|snapshot| snapshot.paths)
+        .unwrap_or_default();
+    tokio::task::spawn_blocking(move || {
+        content::has_report_attachment(&paths, platform::reader().as_ref())
+    })
+    .await
+    .map_err(|error| AppError::Other(format!("Clipboard task failed: {error}")))?
+}
+
+#[tauri::command]
+pub async fn clipboard_read_report_attachment(
+) -> Result<crate::user_report::ReportAttachment, crate::user_report::SubmitReportError> {
+    // A failed file-list probe must not hide either the image or its error.
+    let paths = clipboard_snapshot()
+        .await
+        .map(|snapshot| snapshot.paths)
+        .unwrap_or_default();
+    tokio::task::spawn_blocking(move || {
+        content::read_report_attachment(&paths, platform::reader().as_ref())
+    })
+    .await
+    .map_err(|error| {
+        crate::user_report::SubmitReportError::new(
+            "clipboard_unavailable",
+            format!("Clipboard task failed: {error}"),
+        )
+    })?
 }
 
 /// Paste clipboard image data to a file in the given directory.
@@ -126,6 +146,7 @@ enum FileClipboardJob {
         entries: Vec<serde_json::Value>,
         operation: String,
         reply: oneshot::Sender<Result<FileClipboardSnapshot, AppError>>,
+        notify: Box<dyn FnOnce(u64) + Send>,
     },
     Snapshot {
         reply: oneshot::Sender<Result<FileClipboardSnapshot, AppError>>,
@@ -170,8 +191,15 @@ impl FileClipboardJob {
                 entries,
                 operation,
                 reply,
+                notify,
             } => {
-                let _ = reply.send(coordinator.publish(entries, &operation));
+                let result = publish_selection(coordinator, entries, &operation);
+                if let Ok(snapshot) = &result {
+                    // Publication belongs to accepted native work, not its
+                    // renderer: closing that window must not strand peers.
+                    notify(snapshot.revision);
+                }
+                let _ = reply.send(result);
             }
             Self::Snapshot { reply } => {
                 let _ = reply.send(coordinator.snapshot());
@@ -195,6 +223,37 @@ impl FileClipboardJob {
             }
         }
     }
+}
+
+fn publish_selection(
+    coordinator: &mut FileClipboardCoordinator,
+    entries: Vec<serde_json::Value>,
+    operation: &str,
+) -> Result<FileClipboardSnapshot, AppError> {
+    #[cfg(feature = "e2e-hooks")]
+    if let Some(gate) = publish_gate(&entries) {
+        std::fs::write(gate.with_extension("started"), b"")?;
+        let started = std::time::Instant::now();
+        while gate.exists() {
+            if started.elapsed() > std::time::Duration::from_secs(30) {
+                return Err(AppError::Other(
+                    "Clipboard test write gate timed out".into(),
+                ));
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+    }
+    coordinator.publish(entries, operation)
+}
+
+/// Hook builds only: a fixture can hold a native write without replacing the
+/// platform clipboard. Hidden sidecars are explicit opt-in and bounded above.
+#[cfg(feature = "e2e-hooks")]
+fn publish_gate(entries: &[serde_json::Value]) -> Option<std::path::PathBuf> {
+    let path = std::path::Path::new(entries.first()?.get("path")?.as_str()?);
+    let name = path.file_name()?.to_str()?;
+    let gate = path.with_file_name(format!(".{name}.clipboard-hold"));
+    gate.exists().then_some(gate)
 }
 
 /// Start a worker that applies jobs in submission order. The backend is
@@ -248,13 +307,26 @@ async fn request<T>(
 
 #[tauri::command]
 pub async fn clipboard_publish(
+    app: tauri::AppHandle,
     entries: Vec<serde_json::Value>,
     operation: String,
 ) -> Result<FileClipboardSnapshot, AppError> {
+    #[cfg(feature = "e2e-hooks")]
+    if let Some(gate) = publish_gate(&entries) {
+        std::fs::write(gate.with_extension("queued"), b"")?;
+    }
     request(clipboard_queue(), |reply| FileClipboardJob::Publish {
         entries,
         operation,
         reply,
+        notify: Box::new(move |revision| {
+            if let Err(error) = app.emit(
+                "app://clipboard-sync",
+                serde_json::json!({ "revision": revision }),
+            ) {
+                log::warn!("clipboard publication event failed: {error}");
+            }
+        }),
     })
     .await?
 }
@@ -344,6 +416,7 @@ mod worker_tests {
             entries,
             operation,
             reply,
+            notify: Box::new(|_| {}),
         }
     }
 
@@ -439,3 +512,7 @@ mod worker_tests {
         assert!(matches!(error, AppError::WorkerFailed(_)), "{error}");
     }
 }
+
+#[cfg(test)]
+#[path = "../../test_support/clipboard_order.rs"]
+mod order_tests;

@@ -2,7 +2,7 @@
 
 Status: Accepted
 
-Governs: `src-tauri/src/git_actions.rs`, `src/lib/domain/git-network-operation.ts`, `src/lib/state/git-graph-refresh.ts`, `src/lib/components/GitGraphView.svelte`
+Governs: `src-tauri/src/github.rs`, `src/lib/state/git-pr-mutations.svelte.ts`, `src/lib/state/git-pr-session.svelte.ts`, `src/lib/api/git-log.ts`, `src-tauri/src/git_actions.rs`, `src/lib/domain/git-network-operation.ts`, `src/lib/state/git-graph-refresh.ts`, `src/lib/components/GitGraphView.svelte`
 
 ## Context
 
@@ -90,3 +90,51 @@ inherently distributed and can have an uncertain outcome; the application says
 so and reconciles rather than guessing. New cancellable Git mutations must define
 their local commit boundary, uncertain external outcomes, and temp-repository
 crash-point tests before joining this lifecycle.
+
+
+## GitHub PR mutation boundary (#1082)
+
+Create, merge and approve are remote GitHub mutations, not local Git changes.
+They run `gh` with `--repo github.com/owner/name`, bound to the confirmed badge
+repository or current branch context. The default CLI hostname cannot retarget
+that confirmation. No local branch deletion or undo is implied; a successful
+merge command may have queued a merge rather than completed it.
+
+A repository owner survives pane disposal in each window. Pending admission,
+outcomes and uncertain errors remain observable on remount. Disposal unregisters
+only badge refresh observers; it neither cancels nor repeats the command. The
+Rust process additionally holds one admission guard per case-insensitive GitHub
+repository across all windows and worktrees until the child is reaped and badges
+invalidated. This process-wide guard refuses concurrent submissions before spawn.
+It is not a cross-process or across-restart exactly-once guarantee. If pipe
+collection or waiting fails before reap can be established, native admission
+fails closed until process exit; checking GitHub alone does not unlock that
+native target while an unobserved child could still be running.
+
+Before spawn, validation, admission and executable failures are known refusals
+and may be retried. After spawn, any failure is conservatively uncertain:
+GitHub may have accepted the mutation before its acknowledgement was lost.
+There is no automatic retry. Badge invalidation and reload reconcile the visible
+remote state; an uncertain retry requires the user to confirm they checked
+GitHub. A refresh is not proof of non-acceptance (approval could already exist,
+a PR may be outside the bounded list, or a merge could be queued).
+
+Window teardown does not kill the native blocking task; its process guard
+continues to own work even when that window cannot receive the result. Closing
+the whole app or a process crash can lose both acknowledgement and admission.
+On restart no mutation is replayed; inspect GitHub before resubmitting. Results
+are retained for this window session, not persisted as a durable operation log.
+
+| Boundary | Observable contract | Behavioral proof |
+| --- | --- | --- |
+| Pre-spawn validation/executable failure | No accepted mutation, actionable error, admission released | `pr_actions_refuse_stale_or_detached_head_before_spawning`, `pr_actions_success_invalidates_badges_and_missing_cli_is_actionable` |
+| Remote acceptance then lost acknowledgement | Accepted marker written once; uncertain error, cache invalidated; no replay | `pr_actions_repair_accepted_then_lost_ack_is_uncertain_and_never_replayed`; deferred uncertainty/remount test in `git-pr-mutation-repair.test.ts` |
+| Pane teardown while pending | Remount stays busy, duplicate refused, eventual outcome and refreshed badge observable | Deferred remount test in `git-pr-mutation-repair.test.ts`; `git-graph-pr-mutation-repair.spec.ts` |
+| Another window/worktree while pending | Second native invocation refused without spawning, allowed only after reap | `pr_actions_repair_other_windows_are_refused_until_child_is_reaped` (detached native worker independent of mounted caller) |
+| Concurrent panes | One command runs, both panes observe its outcome | Simultaneous session test in `git-pr-mutation-repair.test.ts` |
+| Uncertain retry | Warning retained across remount; retry blocked until explicit check acknowledgement | Deferred uncertainty/remount test and browser uncertainty test |
+| Process loss/restart | No automatic replay; remote state must be inspected | Structural policy: no persisted replay queue or startup mutation dispatch; no claim of crash recovery/exactly-once delivery |
+
+The native lost-ack fixture records simulated remote acceptance *before* failing,
+so it tests the distributed uncertainty boundary rather than just CLI rejection.
+The browser suite is UI proof; it does not claim a real GitHub mutation occurred.

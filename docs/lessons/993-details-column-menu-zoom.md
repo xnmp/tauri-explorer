@@ -1,0 +1,54 @@
+# Details column menu under interface zoom
+
+## Placement contract
+
+The Details header column-selection menu takes viewport-space mouse coordinates.
+A fixed overlay must convert those through the shared engine-aware
+`fixedFromClient` helper before assigning CSS left/top.
+Measure the mounted menu in CSS space with offsetWidth/offsetHeight and clamp
+against viewport dimensions converted through the same helper. Preserve column
+visibility actions and the 100% placement control.
+
+Regression proof belongs at the rendered Details header popup, not solely at
+zoom arithmetic helpers. Exercise zoom above/below 100% and viewport edges.
+
+## WebKit versions and event ownership
+
+Playwright's Safari 26.4 proxy scales fixed offsets once, unlike the native
+double-scale model retained by the shared helper. Select the helper's mode from
+the mounted popup's offset response relative to its size response. Comparing
+offsets to size scaling also accommodates older CSS-space rects. The synchronous
+probe completes before paint; other overlays retain their existing conversion.
+
+The header contextmenu event must stop at the header. Otherwise FileList opens
+its background menu over the column controls. Assert that competing menu is
+absent. Near the viewport edge, choose input inside the header, clear of WebKit's
+non-overlay scrollbar; the popup itself must still fit entirely onscreen.
+
+## Legacy edge clamping
+
+Legacy fixed offsets scale twice but menu dimensions scale once. Convert the
+rendered menu dimensions (`offsetWidth * zoom`, likewise height) through the
+same fixed-coordinate helper as the pointer and viewport before subtraction.
+Subtracting raw layout dimensions overflowed the right/bottom edges below 100%.
+`fixedMenuPosition` owns this calculation; regression tests assert resulting
+viewport bounds for single-offset and both legacy WebKit models.
+
+## Toggle evidence
+
+Containment evidence alone does not show that columns disappear and return.
+Capture each optional column's hidden and restored states after its behavioral
+assertion, while the menu is dismissed so it cannot cover the Size header.
+Keep these images mapped to the same acceptance criterion as edge containment.
+Headers and row cells render independently. Assert a nonempty set of mounted
+rows and each column's cell count before hiding, while hidden, and after
+restoring, before capturing its state.
+
+## Integration with the Length column
+
+Keep the Length column and its backdrop right-click propagation guard when
+merging the zoom-positioned popup. The popup's measured dimensions include all
+currently available controls, so the extra Length control needs no hardcoded
+menu height. Preserve the unit runner's ordered projects alongside its worker
+limit; the ordering tests verify complete, nonduplicated test discovery and
+phase admission with both one and multiple workers.

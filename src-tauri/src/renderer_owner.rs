@@ -1,6 +1,6 @@
 //! One native-window resource owns the current renderer incarnation. Resource
 //! services share its cancellation identity, without retaining native windows.
-#[cfg(any(target_os = "macos", test))]
+#[cfg(any(target_os = "macos", target_os = "linux", test))]
 mod reload;
 mod scope;
 #[cfg(any(target_os = "linux", target_os = "windows"))]
@@ -117,9 +117,9 @@ pub fn on_page_started<R: Runtime>(window: &Window<R>) {
 }
 
 /// One line per renderer loss, for every webview, in the format the startup
-/// qualifier fails on. Neither WebKit port reloads a terminated page and
-/// neither Wry adapter logs one, so this is the only record of it (#936). The
-/// epoch and app-run times correlate it with the `Startup(...)` markers.
+/// qualifier fails on. Neither Wry adapter logs a terminated page, so this is
+/// the only record of the loss itself (#936). The epoch and app-run times
+/// correlate it with the `Startup(...)` markers.
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 fn log_termination<R: Runtime>(
     app: &tauri::AppHandle<R>,
@@ -139,59 +139,83 @@ fn log_termination<R: Runtime>(
     );
 }
 
+/// The one recovery path for both WebKit ports (#942, #1138): record the loss,
+/// retire the lost generation exactly as a document boundary does, then
+/// recover the window under its reload budget. A deliberate API teardown is
+/// retired too, but never reloaded.
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+fn on_renderer_terminated(
+    webview: &tauri::Webview,
+    reason: Option<&str>,
+    termination: reload::Termination,
+) {
+    let window = webview.window();
+    log_termination(
+        webview.app_handle(),
+        window.label(),
+        webview.label(),
+        reason,
+    );
+    on_page_started(&window);
+    reload::recover(webview, termination);
+}
+
 /// macOS reports WebContent loss through Wry's navigation delegate rather than
-/// a per-page signal. Retire the lost generation exactly as a document
-/// boundary does, then recover the window under its reload budget (#942).
+/// a per-page signal, and no reason: every loss is recovered.
 #[cfg(target_os = "macos")]
 pub fn on_web_content_terminated(webview: &tauri::Webview) {
-    let window = webview.window();
-    // WKNavigationDelegate reports no reason.
-    log_termination(webview.app_handle(), window.label(), webview.label(), None);
-    on_page_started(&window);
-    reload::recover(webview);
+    on_renderer_terminated(webview, None, reload::Termination::Lost);
 }
 
 /// WebKitGTK's `web-process-terminated` for every webview, not only pages
 /// that acquire native ownership (whose lazy listener in `termination.rs`
-/// retires their generation). Linux logs the loss but does not reload: the
-/// `e2e-renderer-recovery` harness reloads its retained WebView itself after
-/// asserting retirement, and a product reload would race it (#942).
+/// also retires their generation; the extra advance only skips an unused
+/// generation number). Connected when the webview is created, so it runs
+/// before that listener and before any page can acknowledge a session.
 #[cfg(target_os = "linux")]
-pub fn termination_log<R: Runtime>() -> tauri::plugin::TauriPlugin<R> {
-    tauri::plugin::Builder::new("renderer-termination-log")
+pub fn termination_recovery() -> tauri::plugin::TauriPlugin<tauri::Wry> {
+    tauri::plugin::Builder::new("renderer-termination-recovery")
         .on_webview_ready(|webview| {
-            let app = webview.app_handle().clone();
-            let window = webview.window().label().to_owned();
-            let label = webview.label().to_owned();
-            let failed = label.clone();
+            let failed = webview.label().to_owned();
+            let target = webview.clone();
             if let Err(error) = webview.with_webview(move |native| {
                 use webkit2gtk::WebViewExt;
                 native
                     .inner()
                     .connect_web_process_terminated(move |_, reason| {
-                        let reason = linux_termination_reason(reason);
-                        log_termination(&app, &window, &label, Some(&reason));
+                        let (reason, termination) = linux_termination(reason);
+                        on_renderer_terminated(&target, Some(&reason), termination);
                     });
             }) {
-                log::warn!("Renderer termination logging unavailable for {failed}: {error}");
+                log::warn!("Renderer termination recovery unavailable for {failed}: {error}");
             }
         })
         .build()
 }
 
+/// WebKitGTK's reason as logged, and whether the loss is recovered: only an
+/// API teardown (`webkit_web_view_terminate_web_process`) is deliberate.
 #[cfg(target_os = "linux")]
-fn linux_termination_reason(reason: webkit2gtk::WebProcessTerminationReason) -> String {
+fn linux_termination(
+    reason: webkit2gtk::WebProcessTerminationReason,
+) -> (String, reload::Termination) {
     use webkit2gtk::WebProcessTerminationReason as Reason;
-    match reason {
+    let termination = if reason == Reason::TerminatedByApi {
+        reload::Termination::Deliberate
+    } else {
+        reload::Termination::Lost
+    };
+    let reason = match reason {
         Reason::Crashed => "crashed".into(),
         Reason::ExceededMemoryLimit => "exceeded-memory-limit".into(),
         Reason::TerminatedByApi => "terminated-by-api".into(),
         other => format!("{other:?}").to_lowercase(),
-    }
+    };
+    (reason, termination)
 }
 
-/// The committed document a renderer-loss reload restores (macOS, #942).
-#[cfg(target_os = "macos")]
+/// The committed document a renderer-loss reload restores (#942, #1138).
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 pub fn on_document_committed<R: Runtime>(window: &Window<R>, url: &tauri::Url) {
     reload::record_document(window, url);
 }

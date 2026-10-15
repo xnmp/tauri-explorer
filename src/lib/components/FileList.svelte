@@ -3,44 +3,50 @@
   Issue: tauri-explorer-iw0, tauri-explorer-x25, tauri-explorer-as45, tauri-explorer-1k9k, tauri-explorer-im3m, tauri-explorer-9djf.5
 -->
 <script lang="ts">
-  import { tick, onDestroy } from "svelte";
+  import { flushSync, tick, onDestroy } from "svelte";
   import { setFileListFocusReturn } from "$lib/state/file-list-focus-context";
   import { createDeferredFocusRequest, type DeferredFocusRequest } from "$lib/state/deferred-focus";
   import type { ExplorerInstance } from "$lib/state/explorer.svelte";
+  import { dropIntoDirectory } from "$lib/composables/use-dom-directory-drop";
   import { windowTabsManager } from "$lib/state/window-tabs.svelte";
   import { recentFilesStore } from "$lib/state/recent-files.svelte";
   import { frecencyStore } from "$lib/state/frecency.svelte";
   import { openFile, openImageWithSiblings } from "$lib/api/open";
   import { resolveActivation } from "$lib/api/activate";
   import { dragState } from "$lib/state/drag.svelte";
-  import { getDropSourcePaths, handleFileDropMany } from "$lib/state/drop-operations";
   import { useMarqueeSelection } from "$lib/composables/use-marquee-selection.svelte";
   import { useTypeAhead } from "$lib/composables/use-type-ahead.svelte";
   import { isImageFile } from "$lib/domain/file-types";
   import { parentDir, basename } from "$lib/domain/path";
   import { rectDimToCSS } from "$lib/domain/zoom";
+  import { marqueeLayerTransforms } from "$lib/domain/marquee-rect";
   import DetailsView from "./DetailsView.svelte";
   import ListView from "./ListView.svelte";
   import TilesView from "./TilesView.svelte";
   import InlineNewFolder from "./InlineNewFolder.svelte";
   import PluginFileView from "./PluginFileView.svelte";
   import { fileViewRegistry } from "$lib/plugins/file-view-registry.svelte";
+  import type { FileViewPresentation } from "$lib/state/file-view-presentation.svelte";
   import { getPaneIdContext } from "$lib/state/pane-context";
+  import { clickSelectionEffect } from "$lib/domain/workspace-selection";
 
   import type { FileEntry } from "$lib/domain/file";
 
   interface Props {
     explorer: ExplorerInstance;
+    presentation: FileViewPresentation;
     /** Scroll a selected entry into view; bound by ExplorerPane's keyboard navigation. */
     scrollToEntry?: (entry: FileEntry) => void;
   }
 
-  let { explorer, scrollToEntry = $bindable() }: Props = $props();
+  let { explorer, presentation, scrollToEntry = $bindable() }: Props = $props();
 
   const paneId = getPaneIdContext();
   // A plugin view replaces the listing only where it applies; elsewhere the
   // pane shows its built-in view while retaining the preference.
-  const pluginView = $derived(paneId ? fileViewRegistry.resolve(explorer.fileView, explorer.currentPath) : null);
+  const resolution = $derived(presentation.resolution);
+  const holdingView = $derived(resolution.kind === "hold");
+  const pluginView = $derived(paneId && resolution.kind === "plugin" ? fileViewRegistry.get(resolution.id) : null);
 
 
   // Drop target state for dropping files into current directory
@@ -94,6 +100,15 @@
 
   // Cached container rect for the duration of a marquee drag (avoids forced layout per mousemove)
   let cachedDragRect: DOMRect | null = null;
+  // The band layers are sized to the container (CSS px, the band's own
+  // coordinate space); their transforms scale that base down to the band.
+  // Read the client box, not the bounding rect: `width/height: 100%` resolve
+  // against the padding box, which excludes a scrollbar on `.content`.
+  let marqueeBase = $state.raw({ width: 0, height: 0 });
+  function setMarqueeBase(): void {
+    if (!contentRef) return;
+    marqueeBase = { width: contentRef.clientWidth, height: contentRef.clientHeight };
+  }
   // Cached marquee indices to skip redundant selectByIndices calls when the covered items haven't changed
   let lastMarqueeIndices: number[] | null = null;
 
@@ -101,9 +116,13 @@
     if (!contentRef) return;
     const observer = new ResizeObserver((entries) => {
       const width = entries[0]?.contentRect.width ?? 0;
-      contentWidth = width;
+      // ResizeObserver runs after layout and before paint. Commit both the
+      // column count and row chunking in this delivery, so a restored preview
+      // dock cannot paint rows sized for the previous (fullscreen) width.
+      flushSync(() => { contentWidth = width; });
       if (cachedDragRect) {
         cachedDragRect = contentRef!.getBoundingClientRect();
+        setMarqueeBase();
       }
     });
     observer.observe(contentRef);
@@ -218,15 +237,13 @@
   }
 
   function handleClick(entry: FileEntry, event: MouseEvent): void {
+    const effect = clickSelectionEffect(event, paneId ?? "", windowTabsManager.activePaneId);
     retainCursorReveal(entry);
-    explorer.selectEntry(entry, {
-      ctrlKey: event.ctrlKey || event.metaKey,
-      shiftKey: event.shiftKey,
-    });
+    explorer.selectEntry(entry, effect.selectionModifiers);
     // Windows/macOS pointer-drag acquisition prevents mousedown's default
     // action, so those engines do not focus the clicked gridcell themselves.
     // Keep DOM focus aligned with the cursor regardless of drag backend.
-    (event.currentTarget as HTMLElement | null)?.focus({ preventScroll: true });
+    if (effect.focusPane) (event.currentTarget as HTMLElement | null)?.focus({ preventScroll: true });
   }
 
   async function handleDoubleClick(entry: FileEntry): Promise<void> {
@@ -254,7 +271,7 @@
   // ===================
 
   function handleBackgroundClick(event: MouseEvent): void {
-    if (pluginView) return;
+    if (pluginView || holdingView) return;
     if (
       marquee.isBackgroundClick(event.target as HTMLElement) &&
       !marquee.isDragging &&
@@ -277,7 +294,7 @@
   }
 
   function handleKeydown(event: KeyboardEvent): void {
-    if (pluginView) return;
+    if (pluginView || holdingView || windowTabsManager.getActiveExplorer() !== explorer) return;
     typeAhead.handleKeydown(event);
   }
 
@@ -294,10 +311,11 @@
   }
 
   function handleMarqueeStart(event: MouseEvent): void {
-    if (pluginView) return;
+    if (pluginView || holdingView) return;
     const rect = contentRef?.getBoundingClientRect();
     if (!rect) return;
     cachedDragRect = rect;
+    setMarqueeBase();
     marquee.start(event, rect, marqueeHeaderHeight());
   }
 
@@ -347,10 +365,9 @@
   // ===================
 
   function handleListDragOver(event: DragEvent): void {
-    if (pluginView) return;
-    const types = event.dataTransfer?.types;
+    if (pluginView || holdingView) return;
     const crossWindow = dragState.readCrossWindow();
-    if (!types?.includes("application/x-explorer-path") && !types?.includes("Files") && !crossWindow) return;
+    if (!dragState.acceptsFileDrag(event.dataTransfer)) return;
 
     const target = event.target as HTMLElement;
     if (target.closest(".entry-item")) return;
@@ -376,32 +393,14 @@
   async function handleListDrop(event: DragEvent): Promise<void> {
     isDropTarget = false;
     // A plugin view owns its surface; the host never turns a drop on it into a move.
-    if (pluginView) return;
+    if (pluginView || holdingView) return;
 
     const target = event.target as HTMLElement;
     if (target.closest(".entry-item")) return;
 
     if (!event.dataTransfer) return;
 
-    const sourcePaths = getDropSourcePaths(event.dataTransfer);
-    if (sourcePaths.length === 0) return;
-
-    const currentPath = explorer.currentPath;
-    // Filter out sources already in this directory
-    const validPaths = sourcePaths.filter((p) => {
-      const sourceDir = parentDir(p);
-      return sourceDir !== currentPath;
-    });
-    if (validPaths.length === 0) return;
-
-    event.preventDefault();
-    dragState.clear();
-
-    // Multi-item background drops are one ordered native session (#163, #685),
-    // which inspects the real destination per item rather than a name snapshot.
-    await handleFileDropMany(validPaths, currentPath, false, {
-      onRefresh: () => windowTabsManager.refreshAllPanes(),
-    });
+    await dropIntoDirectory(event, explorer.currentPath, "listing-background", { onRefresh: () => windowTabsManager.refreshAllPanes() });
   }
 </script>
 
@@ -446,6 +445,8 @@
           Go back
         </button>
       </div>
+    {:else if holdingView && !explorer.error}
+      <!-- Neutral background only while eligibility is unresolved. -->
     {:else if pluginView && paneId && !explorer.error}
       {#key pluginView.id}
         <PluginFileView {explorer} {paneId} view={pluginView} onopen={handleDoubleClick} />
@@ -522,12 +523,16 @@
       />
     {/if}
 
-    <!-- Marquee selection rectangle -->
+    <!-- Marquee selection rectangle. Five fixed-size layers moved and scaled
+         by transform only: resizing one element's width/height each frame
+         repainted its layer over every image tile beneath it (#1051). -->
     {#if marquee.isDragging && marquee.marqueeRect}
-      <div
-        class="marquee-rect"
-        style="transform: translate({marquee.marqueeRect.left}px, {marquee.marqueeRect.top}px); width: {marquee.marqueeRect.width}px; height: {marquee.marqueeRect.height}px;"
-      ></div>
+      {@const band = marqueeLayerTransforms(marquee.marqueeRect, marqueeBase)}
+      <div class="marquee-rect" style:transform={band.fill}></div>
+      <div class="marquee-edge horizontal" style:transform={band.top}></div>
+      <div class="marquee-edge horizontal" style:transform={band.bottom}></div>
+      <div class="marquee-edge vertical" style:transform={band.left}></div>
+      <div class="marquee-edge vertical" style:transform={band.right}></div>
     {/if}
   </div>
 </div>
@@ -573,17 +578,39 @@
     box-shadow: inset 0 0 0 2px var(--accent);
   }
 
-  /* Marquee selection rectangle */
-  .marquee-rect {
+  /* Marquee selection rectangle: compositor-only layers. Their intrinsic
+     size is the container's and never changes during a drag; `transform`
+     carries the band geometry (#1051). The fill's bounding box is still the
+     band, so test probes keep reading it. */
+  .marquee-rect,
+  .marquee-edge {
     position: absolute;
     left: 0;
     top: 0;
-    background: color-mix(in srgb, var(--accent) 15%, transparent);
-    border: 1px solid var(--accent);
-    border-radius: 2px;
+    transform-origin: 0 0;
     pointer-events: none;
     z-index: 10;
-    will-change: transform, width, height;
+    will-change: transform;
+  }
+
+  .marquee-rect {
+    width: 100%;
+    height: 100%;
+    background: color-mix(in srgb, var(--accent) 15%, transparent);
+  }
+
+  .marquee-edge {
+    background: var(--accent);
+  }
+
+  .marquee-edge.horizontal {
+    width: 100%;
+    height: 1px;
+  }
+
+  .marquee-edge.vertical {
+    width: 1px;
+    height: 100%;
   }
 
   /* Status states */

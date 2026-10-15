@@ -3,6 +3,8 @@
   Issue: tauri-explorer-41o, tauri-explorer-jqi
 -->
 <script lang="ts">
+  import { formatJobCost } from "$lib/domain/job-presentation";
+  import { jobRevealController } from "$lib/state/job-reveal";
   import {
     operationsManager,
     getOperationLabel,
@@ -11,7 +13,8 @@
   import { isJobActive, jobsStore } from "$lib/state/jobs.svelte";
   import { retryJobAndRefocus } from "$lib/composables/use-job-retry";
   import { formatSize } from "$lib/domain/file";
-  import { imageJobProgress, formatJobDuration } from "$lib/domain/image-job-progress";
+  import { imageJobProgress, imageJobEstimateLabel, formatJobDuration, isTimingSettled } from "$lib/domain/image-job-progress";
+  import { jobStateLabel, nativeJobTerminal } from "$lib/domain/native-plugin-jobs";
 
   let now = $state(Date.now());
 
@@ -22,8 +25,11 @@
   const hasActive = $derived(operationsManager.hasActiveOperations || imageJobs.some(isJobActive));
   let region: HTMLElement | undefined = $state();
 
+  // A settled job's duration is frozen: only unsettled jobs need a tick.
+  const ticking = $derived(imageJobs.some((job) => !isTimingSettled(job)));
+
   $effect(() => {
-    if (!imageJobs.some(job => job.status === "running")) return;
+    if (!ticking) return;
     now = Date.now();
     const timer = setInterval(() => { now = Date.now(); }, 1000);
     return () => clearInterval(timer);
@@ -211,33 +217,42 @@
             </div>
           </div>
         {/each}
-        {#each imageJobs as job (job.id)}
+        {#each imageJobs as job (job.jobKey ?? `${job.source}:${job.id}`)}
           {@const timing = imageJobProgress(job, jobsStore.jobs, now)}
+          {@const cost = job.status === "completed" ? formatJobCost(job.cost) : ""}
           <div class="operation-item" class:error={job.status === "error"} data-job-id={job.id} tabindex="-1">
             <div class="operation-info">
               <div class="operation-icon" aria-hidden="true">
                 {#if job.status === "running"}<div class="spinner-small"></div>
-                {:else if job.status === "completed"}✓{:else}!{/if}
+                {:else if job.status === "completed"}✓{:else if job.status === "error"}!{:else}○{/if}
               </div>
               <div class="operation-details">
                 <div class="operation-name"><span class="file-name">{job.label}</span></div>
                 <p class="job-prompt">{job.detail}</p>
                 {#if job.status === "running"}
-                  <div class="progress-bar-container" role="progressbar" aria-label="Estimated image generation progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow={timing.percent} aria-valuetext={`${timing.percent}% estimated`}>
+                  <div class="progress-bar-container" role="progressbar" aria-label="Estimated image generation progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow={timing.percent} aria-valuetext={imageJobEstimateLabel(timing)}>
                     <div class="progress-bar" style:width={`${timing.percent}%`}></div>
                   </div>
-                  <div class="progress-text">~{timing.percent}% estimated · {timing.overdue ? "Taking longer than estimated" : `~${formatJobDuration(timing.remainingMs)} remaining`}</div>
+                  <div class="progress-text">{imageJobEstimateLabel(timing)}</div>
+                  {#if job.jobKey}<div class="status-text" role="status">{job.phase ?? jobStateLabel(job.status)}{job.cancelRequested ? " · cancellation requested" : ""}</div>{/if}
                 {:else}
-                  <div class="status-text" role="status">{job.status === "completed" ? "Complete" : job.error}</div>
+                  <div class="status-text" role="status">{job.jobKey ? (job.status === "accepting" ? job.phase ?? jobStateLabel(job.status) : jobStateLabel(job.status)) : job.status === "completed" ? "Complete" : job.error}{job.cancelRequested ? " · cancellation requested" : ""}</div>
                 {/if}
-                <div class="status-text">{formatJobDuration(timing.elapsedMs)} elapsed</div>
+                {#if job.jobKey && job.error}<div class="error-text">{job.error}</div>{/if}
+                {#if job.controlError}<div class="error-text" role="alert">{job.controlError}</div>{/if}
+                {#if timing.elapsedMs !== null}<div class="status-text job-timing">{formatJobDuration(timing.elapsedMs)} elapsed{cost ? ` · ${cost}` : ""}</div>{:else if cost}<div class="status-text job-timing">{cost}</div>{/if}
               </div>
             </div>
-            {#if job.status !== "running"}
+            {#if job.jobKey && ["accepting", "running", "recovering"].includes(job.status)}
+              <button class="action-btn" aria-label={`Cancel ${job.label}`} disabled={!!job.controlPending || job.cancelRequested} onclick={() => jobsStore.controlJob(job.id, "cancel")}>×</button>
+            {:else if nativeJobTerminal(job.status)}
               <div class="operation-actions">
+                {#if job.status === "completed" && job.reveal}
+                  <button class="action-btn reveal" onclick={() => void jobRevealController.show(job)}>Show image</button>
+                {/if}
                 {#if job.status === "error" && job.retry}
                   <button class="action-btn retry" aria-label={`Retry ${job.label}`} title="Retry"
-                    disabled={job.retrying} aria-busy={job.retrying} onclick={() => void retryJobAndRefocus(job.id, region)}>
+                    disabled={job.retrying || !!job.controlPending} aria-busy={job.retrying} onclick={() => void retryJobAndRefocus(job.id, region)}>
                     <svg width="12" height="12" viewBox="0 0 16 16" fill="none" aria-hidden="true">
                       <path d="M2 8C2 4.69 4.69 2 8 2C10.22 2 12.16 3.21 13.2 5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
                       <path d="M14 8C14 11.31 11.31 14 8 14C5.78 14 3.84 12.79 2.8 11" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
@@ -246,7 +261,7 @@
                     </svg>
                   </button>
                 {/if}
-                <button class="action-btn" aria-label={`Dismiss ${job.label}`} disabled={job.retrying} onclick={() => jobsStore.dismissJob(job.id)}>×</button>
+                <button class="action-btn" aria-label={`Dismiss ${job.label}`} disabled={job.retrying || !!job.controlPending} onclick={() => jobsStore.dismissJob(job.id)}>×</button>
               </div>
             {/if}
           </div>
@@ -257,6 +272,8 @@
 {/if}
 
 <style>
+  .job-timing { overflow-wrap: anywhere; }
+  .action-btn.reveal { width: auto; padding: 0 4px; font: inherit; font-size: 11px; white-space: nowrap; }
   .job-prompt { font-size: 12px; color: var(--text-secondary); margin: 0 0 6px; overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 2; line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
   @media (prefers-reduced-motion: reduce) { .progress-dialog-container, .spinner-small { animation: none !important; } }
   .progress-dialog-container {

@@ -12,6 +12,11 @@ describe("recovery confirmations", () => {
     expect(copy.body).toContain("Undo");
   });
 
+  it("discard says files at their visible locations, including edited ones, are kept (#795)", () => {
+    const copy = recoveryConfirmation("discard", { retainedPath: "/r" })!;
+    expect(copy.body).toContain("Files at their visible locations, including any you changed since, are kept");
+  });
+
   it("forgetting states that nothing is deleted and names where the files stay", () => {
     const copy = recoveryConfirmation("release", { retainedPath: "/volume/.tauri-explorer-recovery-9e41" })!;
     expect(copy.title).toMatch(/Forget/);

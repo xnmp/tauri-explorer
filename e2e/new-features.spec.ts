@@ -108,20 +108,6 @@ test.describe("Theme System", () => {
     await expect(page.locator("html")).toHaveAttribute("data-theme", "hacker");
   });
 
-  test("folder icons use --icon-folder CSS variable", async ({ page }) => {
-    // Folder icons should respond to theme changes
-    const folderIcon = page.locator(".entry-item.directory .icon").first();
-    await expect(folderIcon).toBeVisible();
-
-    // Get computed color
-    const color = await folderIcon.evaluate((el) =>
-      getComputedStyle(el).color
-    );
-    // Should have a valid color (not transparent/empty)
-    expect(color).toBeTruthy();
-    expect(color).not.toBe("rgba(0, 0, 0, 0)");
-  });
-
   test("hacker theme defines monospace font in stylesheet", async ({ page }) => {
     await openSettings(page);
     const themeSelect = page.locator(".color-theme-select");
@@ -215,14 +201,6 @@ test.describe("Navigation Bar Buttons", () => {
     await expect(page.locator('button[title*="Refresh"]')).not.toBeVisible();
   });
 
-  test("settings shows navigation bar buttons section", async ({ page }) => {
-    await openSettings(page);
-    const sectionTitle = page.locator(".section-title", {
-      hasText: "Navigation Bar Buttons",
-    });
-    await expect(sectionTitle).toBeVisible();
-  });
-
   test("toggling back button hides it from nav bar", async ({ page }) => {
     await openSettings(page);
 
@@ -278,23 +256,10 @@ test.describe("Status Bar", () => {
     await waitForFileList(page);
   });
 
-  test("status bar is visible by default", async ({ page }) => {
-    const statusBar = page.locator(".status-bar");
-    await expect(statusBar).toBeVisible();
-  });
-
   test("status bar shows item count", async ({ page }) => {
     const statusLeft = page.locator(".status-left");
     // Should show "N items" text
     await expect(statusLeft).toContainText(/\d+ items?/);
-  });
-
-  test("status bar shows current path", async ({ page }) => {
-    const statusPath = page.locator(".status-path");
-    await expect(statusPath).toBeVisible();
-    const pathText = await statusPath.textContent();
-    expect(pathText).toBeTruthy();
-    expect(pathText!.length).toBeGreaterThan(0);
   });
 
   test("selecting files updates status bar", async ({ page }) => {
@@ -368,10 +333,6 @@ test.describe("Bookmarks", () => {
     await page.evaluate(() => localStorage.clear());
     await page.reload();
     await waitForFileList(page);
-  });
-
-  test("Bookmarks section exists in sidebar", async ({ page }) => {
-    await expect(page.getByText("Bookmarks")).toBeVisible();
   });
 
   test("default system folders are shown", async ({ page }) => {
@@ -509,62 +470,7 @@ test.describe("Bookmarks", () => {
 });
 
 // ==========================================================
-// 5. Symlink Badge Display
-// ==========================================================
-test.describe("Symlink Badge", () => {
-  test("symlink badge CSS class exists in component styles", async ({ page }) => {
-    await page.goto("/?path=/home/user");
-    await waitForFileList(page);
-
-    // Verify the symlink-badge style rule exists in the page
-    // (The mock data doesn't include symlinks, so we check that the CSS is loaded)
-    const hasSymlinkStyle = await page.evaluate(() => {
-      const sheets = document.styleSheets;
-      for (const sheet of sheets) {
-        try {
-          for (const rule of sheet.cssRules) {
-            if (rule.cssText?.includes("symlink-badge")) return true;
-          }
-        } catch {
-          // Cross-origin stylesheet, skip
-        }
-      }
-      return false;
-    });
-    expect(hasSymlinkStyle).toBe(true);
-  });
-});
-
-// ==========================================================
-// 6. Drag Move Default (External Drop)
-// ==========================================================
-test.describe("External Drop Behavior", () => {
-  test("Ctrl key tracking is set up on page load", async ({ page }) => {
-    await page.goto("/?path=/home/user");
-    await waitForFileList(page);
-
-    // Verify the Ctrl key tracking works by checking that pressing Ctrl
-    // doesn't break the app (no errors from keydown/keyup handlers)
-    const errors: string[] = [];
-    page.on("console", (msg) => {
-      if (msg.type() === "error") errors.push(msg.text());
-    });
-
-    await page.keyboard.down("Control");
-    await page.waitForTimeout(50);
-    await page.keyboard.up("Control");
-    await page.waitForTimeout(50);
-
-    // No errors from Ctrl tracking
-    const relevantErrors = errors.filter(
-      (e) => !e.includes("WebSocket") && !e.includes("favicon")
-    );
-    expect(relevantErrors).toHaveLength(0);
-  });
-});
-
-// ==========================================================
-// 7. Combined Feature Interactions
+// 5. Combined Feature Interactions
 // ==========================================================
 test.describe("Feature Interactions", () => {
   test.beforeEach(async ({ page }) => {

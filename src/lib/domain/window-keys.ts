@@ -19,6 +19,12 @@ export interface WindowKeyContext {
 export type WindowKeyAction = "native-activation" | "pass" | "terminal" | "toggle-terminal" | "close-dialogs"
   | "open-filter" | "close-filter" | "open-jobs" | "open-settings" | "toggle-dual-pane" | "command";
 
+/** Native buttons generate activation after key dispatch, including inside dialogs. */
+export function isNativeControlActivation(event: WindowKey, context: Pick<WindowKeyContext, "nativeButton" | "fileEntry" | "trackedMetaHeld">): boolean {
+  return context.nativeButton && !context.fileEntry && !context.trackedMetaHeld && !event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey
+    && (event.key === "Enter" || event.key === " ");
+}
+
 /** Ordered window shortcut policy, independent of DOM, stores and dispatch.
  * Surface controls precede ordinary command matching. Terminal applications,
  * modals and editable controls retain their established ownership boundaries. */
@@ -27,8 +33,7 @@ export function resolveWindowKey(event: WindowKey, context: WindowKeyContext): W
   // Native controls generate their click after key dispatch. Consuming Enter
   // or Space as an Explorer command would prevent that activation entirely.
   // File entries use those keys for Open and Preview through the command owner.
-  if (context.nativeButton && !context.fileEntry && !context.trackedMetaHeld && !primary && !event.altKey && !event.shiftKey
-    && (event.key === "Enter" || event.key === " ")) return "native-activation";
+  if (isNativeControlActivation(event, context)) return "native-activation";
   const terminalToggle = (event.key === "`" || event.code === "Backquote") && primary && !context.modal;
   if (context.terminal) {
     if (terminalToggle && !context.chord) return context.terminalEnabled ? "toggle-terminal" : "pass";

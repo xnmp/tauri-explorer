@@ -1,7 +1,9 @@
 name: Performance Tests
 
+# Not a required check, so it runs after merge rather than on PRs (tauri#1133).
 on:
-  pull_request:
+  push:
+    branches: [dev]
     paths:
       - 'src/lib/state/**'
       - 'src/lib/domain/**'
@@ -16,12 +18,13 @@ on:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.ref_name }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   perf-check:
     name: Performance Regression Check
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
 
@@ -46,6 +49,7 @@ jobs:
   tiles-scroll-perf:
     name: Tiles Scroll Perf (#593 regression guard)
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
 

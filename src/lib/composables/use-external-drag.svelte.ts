@@ -3,8 +3,9 @@
  * HTML5 dragstart only reaches in-webview targets — this plugin opens a real OS drag session.
  */
 
-import { startDrag } from "@crabnebula/tauri-plugin-drag";
+import { startFileDrag } from "$lib/api/native-file-drag";
 import { isWindows } from "$lib/domain/platform";
+import { dragState } from "$lib/state/drag.svelte";
 
 // 1×1 transparent PNG. The plugin requires a valid image for the drag preview;
 // an empty string deserializes to a bogus PathBuf and fails at runtime on some platforms.
@@ -35,11 +36,24 @@ function normalizeForWindowsShell(path: string): string {
 }
 
 export async function startExternalDrag(paths: string[], iconPath?: string): Promise<void> {
-  if (!isTauri() || paths.length === 0) return;
+  const gesture = dragState.current;
+  // OS Link effects are not portable (GTK Wayland maps Link to Copy).
+  // Shortcut authority must never export the underlying filesystem object.
+  if (!isTauri() || paths.length === 0 || gesture?.nativeCopyPolicy === "link") return;
+  const lease = dragState.beginNative(gesture);
   const item = isWindows ? paths.map(normalizeForWindowsShell) : paths;
   try {
-    await startDrag({ item, icon: iconPath || TRANSPARENT_PNG });
+    // The command resolves on START on GTK/WKWebView. Only the result channel
+    // marks drop/cancel; treating command completion as drag completion would
+    // retire the source before any receiver sees it.
+    await new Promise<void>((resolve, reject) => {
+      void startFileDrag({ item, icon: iconPath || TRANSPARENT_PNG }, () => {
+        lease.complete();
+        resolve();
+      }, gesture).then(lease.acknowledge, reject);
+    });
   } catch (err) {
     console.warn("External drag failed:", err);
+    lease.failed();
   }
 }

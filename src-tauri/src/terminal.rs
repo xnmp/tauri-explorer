@@ -724,6 +724,8 @@ fn spawn_shell_with(
         CommandBuilder::new(&shell)
     };
     cmd.env("TERM", "xterm-256color");
+    // The shell must not inherit renderer variables the app set for itself (#1079).
+    crate::child_env::scrub_pty(&mut cmd);
     if wsl_target.is_none() {
         if let Some(dir) = cwd.filter(|d| std::path::Path::new(d).is_dir()) {
             cmd.cwd(dir);
@@ -1576,10 +1578,28 @@ mod tests {
     #[test]
     #[cfg(unix)]
     fn pty_shell_runs_in_cwd_and_emits_output() {
+        // Hang guards only: a loaded CI host can starve the shell and reader
+        // threads well past 10s, and a guard that fires early reports a miss.
+        const HANG_GUARD: Duration = Duration::from_secs(30);
+        let _cleanup = DestroyOnDrop("test-window");
         let dir = tempfile::tempdir().unwrap();
         let canonical = dir.path().canonicalize().unwrap();
         let (tx, rx) = mpsc::channel::<String>();
         let (exit_tx, exit_rx) = mpsc::channel::<Option<u32>>();
+        let (pty_tx, pty_rx) = mpsc::channel::<String>();
+        let (ready_tx, ready_rx) = mpsc::channel::<()>();
+        // Delay only test-side delivery until exit. Blocking the production
+        // reader itself can fill the PTY buffer and prevent the shell exiting.
+        let (release_output, output_gate) = mpsc::channel::<()>();
+        let forwarder = std::thread::spawn(move || {
+            if output_gate.recv().is_ok() {
+                for chunk in pty_rx {
+                    if tx.send(chunk).is_err() {
+                        break;
+                    }
+                }
+            }
+        });
 
         let (id, token) = reserve_started("test-window");
         let id = spawn_shell_with(
@@ -1591,7 +1611,8 @@ mod tests {
             80,
             24,
             move |chunk| {
-                let _ = tx.send(chunk);
+                let _ = ready_tx.send(());
+                let _ = pty_tx.send(chunk);
             },
             move |code| {
                 let _ = exit_tx.send(code);
@@ -1601,31 +1622,54 @@ mod tests {
         .expect("spawn failed")
         .id;
 
-        write_terminal(id, "test-window", 0, b"pwd && exit\n".to_vec()).unwrap();
+        // This test covers cwd/output/exit, not startup typeahead. Wait for the
+        // shell's initial output before sending input to its interactive prompt.
+        ready_rx
+            .recv_timeout(HANG_GUARD)
+            .expect("shell never produced initial output");
+        drop(ready_rx);
 
+        // Exceed a PTY buffer so a blocked output reader prevents shell exit
+        // even on platforms that can exit with a short final output pending.
+        write_terminal(
+            id,
+            "test-window",
+            0,
+            b"printf '%65536s\\n' ''; pwd && exit\n".to_vec(),
+        )
+        .unwrap();
+
+        let exited = exit_rx
+            .recv_timeout(HANG_GUARD)
+            .expect("shell never exited");
+        release_output.send(()).unwrap();
+
+        // Reaping the child does not join its independent output reader.
+        // Wait for that reader's channel to close, rather than draining only
+        // the chunks that happened to arrive before the exit notification.
         let mut output = String::new();
-        let deadline = std::time::Instant::now() + Duration::from_secs(10);
-        let exited = loop {
-            if let Ok(code) = exit_rx.try_recv() {
-                break code;
+        let deadline = std::time::Instant::now() + HANG_GUARD;
+        loop {
+            let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+            match rx.recv_timeout(remaining) {
+                Ok(chunk) => output.push_str(&chunk),
+                Err(mpsc::RecvTimeoutError::Disconnected) => break,
+                Err(mpsc::RecvTimeoutError::Timeout) => {
+                    panic!("PTY output never finished; output: {output}");
+                }
             }
-            if let Ok(chunk) = rx.recv_timeout(Duration::from_millis(100)) {
-                output.push_str(&chunk);
-            }
-            assert!(
-                std::time::Instant::now() < deadline,
-                "shell never exited; output: {output}"
-            );
-        };
-        while let Ok(chunk) = rx.try_recv() {
-            output.push_str(&chunk);
         }
+        forwarder.join().expect("output forwarder panicked");
 
+        assert!(
+            output.contains(&" ".repeat(65536)),
+            "the large output payload should be delivered completely"
+        );
         assert!(
             output.contains(&*canonical.to_string_lossy()),
             "pwd output should contain the spawn cwd; got: {output}"
         );
-        assert!(exited.is_some(), "exit code should be reported");
+        assert_eq!(exited, Some(0), "pwd and shell exit should succeed");
         assert!(
             !terminals()
                 .lock()

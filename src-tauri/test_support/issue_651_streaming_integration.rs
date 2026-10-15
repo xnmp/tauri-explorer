@@ -1,10 +1,10 @@
 use super::{
-    cancel_search, install_stream_gate_for_test, start_streaming_search_with_runtime,
-    stream_walk_count_for_test, SEARCH_ENTRY_CACHE,
+    cancel_search, install_stream_gate_for_test, lock_test_cache_commands,
+    start_streaming_search_with_runtime, stream_walk_count_for_test, SEARCH_ENTRY_CACHE,
 };
 use crate::files::fs_watcher::{
-    acquire_directory, init_watcher, native_search_change_for_test, release_directory,
-    retire_owners,
+    acquire_directory, arm_search_watch_for_test, init_watcher, native_search_change_for_test,
+    release_directory, retire_owners,
 };
 use serde_json::Value;
 use std::fs;
@@ -43,6 +43,17 @@ fn wait_for_done(receiver: &Receiver<String>, search_id: u64) -> Vec<String> {
     }
 }
 
+/// Arm before taking the revision a write must advance: arming can itself
+/// rebuild coverage (and advance the epoch) after an overlapping root's
+/// release, and a write that lands before the rebuild is never acknowledged
+/// by the generation being retired (#1152).
+fn arm_recursive_watch(root: &Path) {
+    assert!(
+        arm_search_watch_for_test(root),
+        "recursive watch must be armed before the write it acknowledges"
+    );
+}
+
 fn wait_for_revision_change(root: &Path, revision: u64) {
     let deadline = Instant::now() + Duration::from_secs(5);
     while SEARCH_ENTRY_CACHE.begin_load(root) == revision {
@@ -57,7 +68,7 @@ fn wait_for_revision_change(root: &Path, revision: u64) {
 
 #[test]
 fn issue_651_real_streaming_command_reuses_refreshes_and_cancels_listings() {
-    let _cache_guard = super::TEST_CACHE_COMMANDS.lock().unwrap();
+    let _cache_guard = lock_test_cache_commands();
     let app = tauri::test::mock_app();
     let app_handle = app.handle().clone();
     init_watcher(&app_handle);
@@ -110,6 +121,7 @@ fn issue_651_real_streaming_command_reuses_refreshes_and_cancels_listings() {
     let beta_id = start_search(&app_handle, watched.path(), "beta");
     assert!(wait_for_done(&receiver, beta_id).contains(&"beta.txt".to_string()));
 
+    arm_recursive_watch(watched.path());
     let revision = SEARCH_ENTRY_CACHE.begin_load(watched.path());
     let changed = watched.path().join("after.txt");
     let receipt = native_search_change_for_test(&changed);
@@ -120,6 +132,7 @@ fn issue_651_real_streaming_command_reuses_refreshes_and_cancels_listings() {
     let after_id = start_search(&app_handle, watched.path(), "after");
     assert!(wait_for_done(&receiver, after_id).contains(&"after.txt".to_string()));
 
+    arm_recursive_watch(watched.path());
     let revision = SEARCH_ENTRY_CACHE.begin_load(watched.path());
     let changed = nested.join("after-nested.txt");
     let receipt = native_search_change_for_test(&changed);
@@ -159,6 +172,7 @@ fn issue_651_real_streaming_command_reuses_refreshes_and_cancels_listings() {
     let child_recache_id = start_search(&app_handle, &overlap_child, "before-overlap");
     assert!(wait_for_done(&receiver, child_recache_id).contains(&"before-overlap.txt".to_string()));
 
+    arm_recursive_watch(&overlap_child);
     let revision = SEARCH_ENTRY_CACHE.begin_load(&overlap_child);
     let changed = overlap_deep.join("after-overlap.txt");
     let receipt = native_search_change_for_test(&changed);
@@ -224,6 +238,7 @@ fn issue_651_real_streaming_command_reuses_refreshes_and_cancels_listings() {
     assert!(wait_for_done(&receiver, shared_reuse_id)
         .contains(&"before-owner-retirement.txt".to_string()));
 
+    arm_recursive_watch(retired.path());
     let revision = SEARCH_ENTRY_CACHE.begin_load(retired.path());
     let changed = retired.path().join("cold-trigger.txt");
     let receipt = native_search_change_for_test(&changed);
@@ -295,6 +310,7 @@ fn issue_651_real_streaming_command_reuses_refreshes_and_cancels_listings() {
     // The cold walk establishes recursive coverage before reaching this gate,
     // which itself advances the epoch. Observe only invalidation after that
     // transition so registration cannot stand in for receipt of our write.
+    arm_recursive_watch(racing_root.path());
     let revision = SEARCH_ENTRY_CACHE.begin_load(racing_root.path());
     let changed = racing_root.path().join("raced.txt");
     let receipt = native_search_change_for_test(&changed);
@@ -312,6 +328,31 @@ fn issue_651_real_streaming_command_reuses_refreshes_and_cancels_listings() {
     assert!(wait_for_done(&receiver, raced_id).contains(&"raced.txt".to_string()));
     assert_eq!(stream_walk_count_for_test(racing_root.path()), 2);
 
+    // Cancellation crosses the actual streaming command / watcher boundary.
+    // Reverting the cancellation-token forwarding leaves this root covered.
+    let registration_root = tempfile::tempdir().unwrap();
+    fs::write(registration_root.path().join("needle.txt"), "entry").unwrap();
+    let registration_lease = tauri::async_runtime::block_on(watch_directory(
+        registration_root.path().to_string_lossy().into_owned(),
+    ))
+    .unwrap();
+    let (entered, release) =
+        crate::files::fs_watcher::change_tests::gate_registration(registration_root.path());
+    let registration_id = start_search(&app_handle, registration_root.path(), "needle");
+    entered.recv_timeout(Duration::from_secs(5)).unwrap();
+    tauri::async_runtime::block_on(cancel_search(registration_id)).unwrap();
+    release.send(()).unwrap();
+    crate::files::fs_watcher::settle_search_watch_for_test();
+    assert!(
+        !crate::files::fs_watcher::is_search_cache_watched(registration_root.path()),
+        "cancelled streaming registration must leave no recursive demand"
+    );
+    assert!(SEARCH_ENTRY_CACHE
+        .completed(registration_root.path())
+        .is_none());
+    assert_eq!(stream_walk_count_for_test(registration_root.path()), 0);
+    tauri::async_runtime::block_on(unwatch_directory(registration_lease.id)).unwrap();
+
     fs::write(unwatched.path().join("before.txt"), "before").expect("unwatched fixture");
     let before_id = start_search(&app_handle, unwatched.path(), "before");
     assert!(wait_for_done(&receiver, before_id).contains(&"before.txt".to_string()));
@@ -324,7 +365,7 @@ fn issue_651_real_streaming_command_reuses_refreshes_and_cancels_listings() {
 
 #[test]
 fn issue_974_controlled_streaming_queries_reuse_and_invalidate_completed_listings() {
-    let _cache_guard = super::TEST_CACHE_COMMANDS.lock().unwrap();
+    let _cache_guard = lock_test_cache_commands();
     let app = tauri::test::mock_app();
     let app_handle = app.handle().clone();
     let (sender, receiver) = mpsc::channel();

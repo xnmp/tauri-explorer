@@ -35,6 +35,7 @@ mod freedesktop_trash;
 pub mod fs_watcher;
 pub mod git_status;
 pub(crate) mod image_crop;
+pub mod image_resolution;
 #[cfg(target_os = "linux")]
 pub mod linux_gvfs_watch;
 #[cfg(target_os = "linux")]
@@ -57,6 +58,7 @@ pub(crate) mod mutation;
 #[cfg_attr(any(target_os = "macos", windows), allow(dead_code, unused_imports))]
 mod native_directory;
 mod object_id;
+pub mod video_info;
 
 pub mod open_with;
 pub mod pdf_preview;
@@ -301,4 +303,11 @@ pub struct SizeEstimate {
     pub file_count: u64,
     #[serde(rename = "totalBytes")]
     pub total_bytes: u64,
+}
+
+/// Test accounting uses the native object identity so hard links count once.
+#[cfg(test)]
+pub(crate) fn model_file_identity(path: &std::path::Path) -> std::io::Result<String> {
+    let file = std::fs::File::open(path)?;
+    serde_json::to_string(&file_identity::of_file(&file)?).map_err(std::io::Error::other)
 }

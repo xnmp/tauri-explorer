@@ -7,13 +7,16 @@
 //!
 //! Use: `Command::new("git").no_console().args(...)`. No-op on non-Windows.
 
-use std::io::Read;
+use std::io::Write;
 use std::process::{Command, Output, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
-use crate::error::AppError;
+use crate::error::{AppError, ProcessRunError};
+#[path = "process_ext/pipe_capture.rs"]
+pub(crate) mod pipe_capture;
 #[cfg(windows)]
+#[path = "process_ext/windows_job.rs"]
 mod windows_job;
 
 /// Mark a `Command` so it does not pop a console window on Windows.
@@ -61,8 +64,83 @@ pub(crate) fn output_controlled(
     limits: (usize, usize),
     cancel_message: &'static str,
 ) -> Result<Output, AppError> {
+    output_with_stdin(command, cancelled, limits, cancel_message, Stdio::null())
+}
+
+/// The owned text service supplies a bounded private prompt file as stdin.
+/// File-backed input cannot block a writer thread or exceed argv limits.
+pub(crate) fn output_with_stdin(
+    command: &mut Command,
+    cancelled: impl Fn() -> bool,
+    limits: (usize, usize),
+    cancel_message: &'static str,
+    stdin: Stdio,
+) -> Result<Output, AppError> {
+    run(
+        command,
+        cancelled,
+        limits,
+        cancel_message,
+        Input::Stdio(stdin),
+        Completion::OutputClosed,
+        None,
+    )
+    .map_err(ProcessRunError::into_error)
+}
+
+/// Owned run for plugin processes. With `input`, stdin is a pipe that receives
+/// exactly those bytes and is then closed; without it, stdin is null. Failures
+/// are classified by whether the program could have executed. A completed
+/// child's original exit and output remain authoritative after cancellation.
+pub(crate) fn output_with_input_streaming(
+    command: &mut Command,
+    cancelled: impl Fn() -> bool,
+    limits: (usize, usize),
+    cancel_message: &'static str,
+    input: Option<Vec<u8>>,
+    stdout_sink: Option<std::fs::File>,
+) -> Result<Output, ProcessRunError> {
+    let input = match input {
+        Some(bytes) => Input::Bytes(bytes),
+        None => Input::Stdio(Stdio::null()),
+    };
+    run(
+        command,
+        cancelled,
+        limits,
+        cancel_message,
+        input,
+        Completion::ChildExited,
+        stdout_sink,
+    )
+}
+
+enum Input {
+    Stdio(Stdio),
+    Bytes(Vec<u8>),
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Completion {
+    // Generic scans remain cancellable while descendants hold their pipes.
+    OutputClosed,
+    // An owned plugin CLI's exit is authoritative. Retire descendants and
+    // retain completed bytes even when its owner concurrently retires.
+    ChildExited,
+}
+
+fn run(
+    command: &mut Command,
+    cancelled: impl Fn() -> bool,
+    limits: (usize, usize),
+    cancel_message: &'static str,
+    input: Input,
+    completion: Completion,
+    stdout_sink: Option<std::fs::File>,
+) -> Result<Output, ProcessRunError> {
+    use ProcessRunError::{NotStarted, Started};
     if cancelled() {
-        return Err(AppError::Other(cancel_message.into()));
+        return Err(NotStarted(AppError::Other(cancel_message.into())));
     }
 
     #[cfg(unix)]
@@ -77,49 +155,147 @@ pub(crate) fn output_controlled(
     let owned_job = {
         use std::os::windows::process::CommandExt;
         command.creation_flags(0x0800_0000 | 0x0000_0004); // NO_WINDOW | SUSPENDED
-        windows_job::Job::new()?
+        windows_job::Job::new().map_err(|cause| NotStarted(cause.into()))?
     };
+    let (stdin, bytes) = match input {
+        Input::Stdio(stdin) => (stdin, None),
+        Input::Bytes(bytes) => (Stdio::piped(), Some(bytes)),
+    };
+    // std reports exec failures through spawn: an error means nothing ran.
     let mut child = command
-        .stdin(Stdio::null())
+        .stdin(stdin)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
-        .map_err(AppError::from)?;
+        .map_err(|cause| NotStarted(cause.into()))?;
     #[cfg(windows)]
     if let Err(error) = owned_job.attach_and_resume(&mut child) {
-        owned_job.terminate();
+        // The primary thread was created suspended and never resumed.
         let _ = child.kill();
+        owned_job.terminate();
         let _ = child.wait();
-        return Err(error.into());
+        return Err(NotStarted(error.into()));
     }
     let pid = child.id();
     let terminate = |child: &mut std::process::Child| {
         #[cfg(windows)]
-        owned_job.terminate();
+        {
+            // TerminateProcess uses nonzero code 1. Kill the launcher before
+            // the job-close fallback, whose exit code is unspecified.
+            let _ = child.kill();
+            owned_job.terminate();
+        }
         terminate_process_tree(child, pid);
     };
-    let mut stdout = child
+    let writer = match (bytes, child.stdin.take()) {
+        (None, _) => None,
+        (Some(bytes), Some(pipe)) => match write_input(pipe, bytes) {
+            Ok(writer) => Some(writer),
+            Err(error) => {
+                terminate(&mut child);
+                let _ = child.wait();
+                return Err(Started(error.into()));
+            }
+        },
+        (Some(_), None) => {
+            terminate(&mut child);
+            let _ = child.wait();
+            return Err(Started(AppError::Other(
+                "child stdin pipe unavailable".into(),
+            )));
+        }
+    };
+    // On Windows the job's descendants are retired as soon as the launcher
+    // exits; Unix keeps the group until its pipes reach EOF.
+    let launcher_exited = || {
+        #[cfg(windows)]
+        owned_job.terminate();
+    };
+    let result = supervise(
+        &mut child,
+        &terminate,
+        &launcher_exited,
+        cancelled,
+        SupervisionParams {
+            limits,
+            cancel_message,
+            completion,
+            stdout_sink,
+        },
+    );
+    if let Some(writer) = writer {
+        // Termination closed every reader of stdin, so a blocked write fails
+        // promptly; never join a writer an escaped descendant still blocks.
+        finish_workers([writer]);
+    }
+    result.map_err(Started)
+}
+
+/// Blocking write on its own thread, then close stdin. A child that exits or
+/// closes stdin without reading yields a broken pipe: an ordinary outcome.
+fn write_input(
+    mut pipe: std::process::ChildStdin,
+    bytes: Vec<u8>,
+) -> std::io::Result<std::thread::JoinHandle<()>> {
+    std::thread::Builder::new()
+        .name("owned-process-input".into())
+        .spawn(move || {
+            let _ = pipe.write_all(&bytes);
+        })
+}
+
+struct SupervisionParams {
+    limits: (usize, usize),
+    cancel_message: &'static str,
+    completion: Completion,
+    stdout_sink: Option<std::fs::File>,
+}
+
+fn supervise(
+    child: &mut std::process::Child,
+    terminate: &impl Fn(&mut std::process::Child),
+    launcher_exited: &impl Fn(),
+    cancelled: impl Fn() -> bool,
+    params: SupervisionParams,
+) -> Result<Output, AppError> {
+    let SupervisionParams {
+        limits,
+        cancel_message,
+        completion,
+        stdout_sink,
+    } = params;
+    let stdout = child
         .stdout
         .take()
         .ok_or_else(|| AppError::Other("child stdout pipe unavailable".into()))?;
-    let mut stderr = child
+    let stderr = child
         .stderr
         .take()
         .ok_or_else(|| AppError::Other("child stderr pipe unavailable".into()))?;
     let overflow = std::sync::Arc::new(AtomicBool::new(false));
-    let stdout_overflow = overflow.clone();
-    let stderr_overflow = overflow.clone();
-    let stdout_reader =
-        std::thread::spawn(move || read_bounded(&mut stdout, limits.0, &stdout_overflow));
-    let stderr_reader =
-        std::thread::spawn(move || read_bounded(&mut stderr, limits.1, &stderr_overflow));
+    let mut readers = match pipe_capture::Readers::new_streaming(
+        stdout,
+        stderr,
+        limits,
+        overflow.clone(),
+        stdout_sink,
+    ) {
+        Ok(readers) => readers,
+        Err(error) => {
+            terminate(child);
+            let _ = child.wait();
+            return Err(error.into());
+        }
+    };
 
     let mut exited = None;
     loop {
-        if cancelled() || overflow.load(Ordering::Relaxed) {
-            terminate(&mut child);
+        let cancellation = cancelled();
+        if overflow.load(Ordering::Relaxed)
+            || (cancellation && completion == Completion::OutputClosed)
+        {
+            terminate(child);
             let _ = child.wait();
-            drain_readers(stdout_reader, stderr_reader);
             return Err(AppError::Other(
                 if overflow.load(Ordering::Relaxed) {
                     "Child output exceeded its limit"
@@ -131,35 +307,30 @@ pub(crate) fn output_controlled(
         }
 
         if exited.is_none() {
-            match exited_without_reaping(&mut child) {
+            match exited_without_reaping(child) {
                 Ok(true) => {
-                    #[cfg(windows)]
-                    owned_job.terminate();
+                    launcher_exited();
+                    if completion == Completion::ChildExited {
+                        terminate(child);
+                        readers.retire();
+                    }
                     exited = Some(Instant::now());
                 }
                 Ok(false) => {}
                 Err(error) => {
-                    terminate(&mut child);
+                    terminate(child);
                     let _ = child.wait();
-                    drain_readers(stdout_reader, stderr_reader);
                     return Err(AppError::from(error));
                 }
             }
         }
         if let Some(since) = exited {
-            if stdout_reader.is_finished() && stderr_reader.is_finished() {
+            if completion == Completion::ChildExited || readers.is_finished() {
                 // Kill redirected descendants before reaping the launcher.
                 // WNOWAIT keeps its PID/group identity reserved through cleanup.
-                terminate(&mut child);
+                terminate(child);
                 let status = child.wait()?;
-                let stdout = stdout_reader
-                    .join()
-                    .map_err(|_| AppError::Other("child stdout reader panicked".into()))?
-                    .map_err(AppError::from)?;
-                let stderr = stderr_reader
-                    .join()
-                    .map_err(|_| AppError::Other("child stderr reader panicked".into()))?
-                    .map_err(AppError::from)?;
+                let (stdout, stderr) = readers.finish()?;
                 if overflow.load(Ordering::Relaxed) {
                     return Err(AppError::Other("Child output exceeded its limit".into()));
                 }
@@ -172,13 +343,30 @@ pub(crate) fn output_controlled(
             // The launcher may exit while a descendant retains its pipes.
             // Continue observing cancellation until EOF, then bound that drain.
             if since.elapsed() >= Duration::from_secs(5) {
-                terminate(&mut child);
+                terminate(child);
                 let _ = child.wait();
-                drain_readers(stdout_reader, stderr_reader);
                 return Err(AppError::Other(
                     "Child output pipes remained open after exit".into(),
                 ));
             }
+        }
+        if cancellation && !(completion == Completion::ChildExited && exited.is_some()) {
+            terminate(child);
+            if completion == Completion::ChildExited {
+                let status = reap_after_cancellation(|| child.wait(), cancel_message)?;
+                readers.retire();
+                let (stdout, stderr) = readers.finish()?;
+                if overflow.load(Ordering::Relaxed) {
+                    return Err(AppError::Other("Child output exceeded its limit".into()));
+                }
+                return Ok(Output {
+                    status,
+                    stdout,
+                    stderr,
+                });
+            }
+            let _ = child.wait();
+            return Err(AppError::Other(cancel_message.into()));
         }
         std::thread::sleep(Duration::from_millis(10));
     }
@@ -212,37 +400,27 @@ fn exited_without_reaping(child: &mut std::process::Child) -> std::io::Result<bo
     Ok(child.try_wait()?.is_some())
 }
 
-/// Never join a blocked pipe reader after termination: an independently
-/// detached descendant can hold a pipe even after the owned group is killed.
-fn drain_readers<T>(stdout: std::thread::JoinHandle<T>, stderr: std::thread::JoinHandle<T>) {
-    let deadline = Instant::now() + Duration::from_secs(1);
-    while !(stdout.is_finished() && stderr.is_finished()) && Instant::now() < deadline {
-        std::thread::sleep(Duration::from_millis(10));
-    }
-    if stdout.is_finished() {
-        let _ = stdout.join();
-    }
-    if stderr.is_finished() {
-        let _ = stderr.join();
+/// Reap after signalling; a stale running observation cannot erase natural success.
+pub(crate) fn reap_after_cancellation(
+    reap: impl FnOnce() -> std::io::Result<std::process::ExitStatus>,
+    cancel_message: &str,
+) -> Result<std::process::ExitStatus, AppError> {
+    let status = reap()?;
+    if status.success() {
+        Ok(status)
+    } else {
+        Err(AppError::Other(cancel_message.into()))
     }
 }
 
-fn read_bounded(
-    reader: &mut impl Read,
-    limit: usize,
-    overflow: &AtomicBool,
-) -> std::io::Result<Vec<u8>> {
-    let mut bytes = Vec::new();
-    let mut chunk = [0u8; 8192];
-    loop {
-        let count = reader.read(&mut chunk)?;
-        if count == 0 {
-            return Ok(bytes);
-        }
-        let remaining = limit.saturating_sub(bytes.len());
-        bytes.extend_from_slice(&chunk[..count.min(remaining)]);
-        if count > remaining {
-            overflow.store(true, Ordering::Relaxed);
+fn finish_workers<T, const N: usize>(workers: [std::thread::JoinHandle<T>; N]) {
+    let deadline = Instant::now() + Duration::from_secs(1);
+    while !workers.iter().all(|worker| worker.is_finished()) && Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    for worker in workers {
+        if worker.is_finished() {
+            let _ = worker.join();
         }
     }
 }
@@ -267,6 +445,29 @@ fn terminate_process_tree(child: &mut std::process::Child, _pid: u32) {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn cancellation_reaps_success_after_a_stale_running_observation() {
+        #[cfg(unix)]
+        use std::os::unix::process::ExitStatusExt;
+        #[cfg(windows)]
+        use std::os::windows::process::ExitStatusExt;
+        let reaped = std::cell::Cell::new(false);
+        let status = super::reap_after_cancellation(
+            || {
+                reaped.set(true);
+                Ok(std::process::ExitStatus::from_raw(0))
+            },
+            "cancelled",
+        )
+        .expect("OS reported natural success after the stale observation");
+        assert!(reaped.get());
+        assert!(status.success());
+        assert!(super::reap_after_cancellation(
+            || Ok(std::process::ExitStatus::from_raw(1)),
+            "cancelled"
+        )
+        .is_err());
+    }
     use super::output_cancellable;
     #[cfg(unix)]
     use super::output_controlled;
@@ -370,6 +571,31 @@ mod tests {
     use std::sync::Arc;
     use std::time::{Duration, Instant};
 
+    #[cfg(unix)]
+    #[test]
+    fn completed_png_remains_captured_when_close_wins_reader_scheduling() {
+        use std::io::Write;
+        use std::os::unix::net::UnixStream;
+        let png = include_bytes!("../../static/favicon.png");
+        let (output, mut writer) = UnixStream::pair().unwrap();
+        writer.write_all(png).unwrap();
+        drop(writer);
+        let overflow = Arc::new(AtomicBool::new(false));
+        // A successful child has exited but its output reader has not run.
+        let bytes = super::pipe_capture::spawn_streaming(
+            output,
+            png.len(),
+            overflow,
+            Arc::new(AtomicBool::new(true)),
+            None,
+        )
+        .unwrap()
+        .join()
+        .unwrap()
+        .unwrap();
+        assert_eq!(bytes, png);
+    }
+
     #[test]
     fn cancellation_terminates_a_running_child_promptly() {
         let cancelled = Arc::new(AtomicBool::new(false));
@@ -425,6 +651,72 @@ mod tests {
 
         assert!(output.status.success());
         assert_eq!(String::from_utf8_lossy(&output.stdout), "observable-output");
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn completed_plugin_output_survives_cancellation_before_exit_is_observed() {
+        let root = tempfile::tempdir().unwrap();
+        let pid_file = root.path().join("pid");
+        let mut command = Command::new("sh");
+        command.args([
+            "-c",
+            "echo $$ > \"$1\"; printf completed-paid-output; exit 0",
+            "fixture",
+        ]);
+        command.arg(&pid_file);
+        let calls = std::cell::Cell::new(0);
+        let output = super::output_with_input_streaming(
+            &mut command,
+            || {
+                calls.set(calls.get() + 1);
+                if calls.get() == 1 {
+                    return false;
+                }
+                // Hold the host's first poll until the child has finished; do
+                // not reap it, so production still owns the exit observation.
+                let deadline = Instant::now() + Duration::from_secs(3);
+                loop {
+                    if let Ok(pid) = std::fs::read_to_string(&pid_file)
+                        .and_then(|pid| pid.trim().parse::<i32>().map_err(std::io::Error::other))
+                    {
+                        if std::fs::read_to_string(format!("/proc/{pid}/stat")).is_ok_and(|stat| {
+                            stat.rsplit_once(')')
+                                .unwrap()
+                                .1
+                                .trim_start()
+                                .starts_with('Z')
+                        }) {
+                            let mut info = std::mem::MaybeUninit::<libc::siginfo_t>::zeroed();
+                            assert_eq!(
+                                unsafe {
+                                    libc::waitid(
+                                        libc::P_PID,
+                                        pid as libc::id_t,
+                                        info.as_mut_ptr(),
+                                        libc::WEXITED | libc::WNOHANG | libc::WNOWAIT,
+                                    )
+                                },
+                                0
+                            );
+                            let info = unsafe { info.assume_init() };
+                            assert_eq!(info.si_code, libc::CLD_EXITED);
+                            assert_eq!(unsafe { info.si_status() }, 0);
+                            return true;
+                        }
+                    }
+                    assert!(Instant::now() < deadline, "fixture child did not exit");
+                    std::thread::sleep(Duration::from_millis(1));
+                }
+            },
+            (1024, 1024),
+            "plugin retired",
+            None,
+            None,
+        )
+        .expect("completed paid execution must retain its original output");
+        assert!(output.status.success());
+        assert_eq!(output.stdout, b"completed-paid-output");
     }
 
     #[cfg(unix)]

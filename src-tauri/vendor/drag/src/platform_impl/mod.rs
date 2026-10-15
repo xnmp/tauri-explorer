@@ -12,3 +12,5 @@ mod platform;
 #[path = "macos/mod.rs"]
 mod platform;
 pub use platform::start_drag;
+#[cfg(target_os = "windows")]
+pub use platform::start_drag_prepared;

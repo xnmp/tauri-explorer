@@ -12,7 +12,9 @@ import { dialogStore } from "../dialogs.svelte";
 import { terminalPanelStore } from "../terminal.svelte";
 import { openInTerminal } from "$lib/api/open";
 import { gitRepoRoot } from "$lib/api/git";
-import { gitFetch } from "$lib/api/git-log";
+import { extractError } from "$lib/api/common";
+import { gitFetch, gitIssuesUrl } from "$lib/api/git-log";
+import { openExternalUrl } from "$lib/api/crash";
 import { notifyLocalGitChange } from "$lib/state/git-refresh";
 import { runGitNetworkOperation } from "$lib/state/git-graph-refresh";
 import { toastStore } from "../toast.svelte";
@@ -24,6 +26,7 @@ import { getLogDir } from "$lib/api/environment";
 export const windowCommands: Command[] = [
   {
     id: "window.newWindow",
+    scope: "window",
     label: "New Window",
     category: "general",
     shortcut: "Ctrl+N",
@@ -44,6 +47,7 @@ export const windowCommands: Command[] = [
 export const tabCommands: Command[] = [
   {
     id: "tabs.newTab",
+    scope: "window",
     label: "New Tab",
     category: "general",
     shortcut: "Ctrl+T",
@@ -53,6 +57,7 @@ export const tabCommands: Command[] = [
     // Ghostty-style (#229): closes the focused pane when the active tab has
     // several, otherwise closes the tab.
     id: "surface.close",
+    scope: "pane",
     label: "Close Surface",
     category: "general",
     shortcut: "Ctrl+W",
@@ -60,6 +65,7 @@ export const tabCommands: Command[] = [
   },
   {
     id: "tabs.closeTab",
+    scope: "window",
     label: "Close Tab",
     category: "general",
     shortcut: "Ctrl+Shift+W",
@@ -69,6 +75,7 @@ export const tabCommands: Command[] = [
     // Restores the most recently closed pane back into its split position;
     // restores the last closed tab when that close is more recent (#229).
     id: "tabs.restoreClosedTab",
+    scope: "window",
     label: "Restore Closed Pane or Tab",
     category: "general",
     shortcut: "Ctrl+Shift+T",
@@ -82,6 +89,8 @@ export const tabCommands: Command[] = [
   },
   {
     id: "tabs.nextTab",
+    scope: "window",
+    allowInDialogInput: true,
     label: "Next Tab",
     category: "general",
     shortcut: "Ctrl+Tab",
@@ -90,6 +99,8 @@ export const tabCommands: Command[] = [
   },
   {
     id: "tabs.nextTabAlt",
+    scope: "window",
+    allowInDialogInput: true,
     label: "Next Tab",
     category: "general",
     shortcut: "Ctrl+PageDown",
@@ -98,6 +109,8 @@ export const tabCommands: Command[] = [
   },
   {
     id: "tabs.prevTab",
+    scope: "window",
+    allowInDialogInput: true,
     label: "Previous Tab",
     category: "general",
     shortcut: "Ctrl+Shift+Tab",
@@ -106,6 +119,8 @@ export const tabCommands: Command[] = [
   },
   {
     id: "tabs.prevTabAlt",
+    scope: "window",
+    allowInDialogInput: true,
     label: "Previous Tab",
     category: "general",
     shortcut: "Ctrl+PageUp",
@@ -119,6 +134,7 @@ export const tabCommands: Command[] = [
 export const gitGraphCommands: Command[] = [
   {
     id: "git.showGraph",
+    scope: "pane",
     label: "Git: Toggle Commit Graph",
     category: "general",
     shortcut: "Ctrl+Alt+G",
@@ -140,7 +156,30 @@ export const gitGraphCommands: Command[] = [
     },
   },
   {
+    id: "git.openIssues",
+    scope: "pane",
+    label: "Git: Open Issues in Browser",
+    category: "general",
+    when: () => !!getActiveExplorer(),
+    handler: async () => {
+      const path = getActiveExplorer()?.state.currentPath;
+      if (!path) return;
+      try {
+        const root = await gitRepoRoot(path);
+        const url = root.ok && root.data ? await gitIssuesUrl(root.data) : null;
+        if (!url) {
+          toastStore.show("No GitHub remote found for this folder", "info");
+          return;
+        }
+        await openExternalUrl(url);
+      } catch (err) {
+        toastStore.error(extractError(err));
+      }
+    },
+  },
+  {
     id: "git.fetch",
+    scope: "pane",
     label: "Git: Fetch from Origin",
     category: "general",
     handler: async () => {
@@ -175,6 +214,7 @@ export const gitGraphCommands: Command[] = [
 export const bookmarkCommands: Command[] = [
   {
     id: "bookmarks.addCurrent",
+    scope: "pane",
     label: "Bookmark Current Folder",
     category: "bookmarks",
     handler: () => {
@@ -190,6 +230,7 @@ export const bookmarkCommands: Command[] = [
   },
   {
     id: "bookmarks.removeCurrent",
+    scope: "pane",
     label: "Remove Current Bookmark",
     category: "bookmarks",
     handler: () => {
@@ -209,6 +250,7 @@ export const bookmarkCommands: Command[] = [
 export const recentCommands: Command[] = [
   {
     id: "recent.openRecent",
+    scope: "window",
     label: "Open Recent...",
     category: "general",
     handler: () => {
@@ -217,6 +259,7 @@ export const recentCommands: Command[] = [
   },
   {
     id: "recent.clearHistory",
+    scope: "window",
     label: "Clear Recent Files",
     category: "general",
     handler: () => recentFilesStore.clear(),
@@ -230,6 +273,7 @@ export const workspaceCommands: Command[] = [
     // One palette entry (#229): opens a second menu listing the saved
     // workspaces; picking one restores its layout.
     id: "workspace.openNamed",
+    scope: "window",
     label: "Workspaces: Open...",
     category: "general",
     when: () => workspacesStore.count > 0,
@@ -246,6 +290,7 @@ export const workspaceCommands: Command[] = [
   },
   {
     id: "workspace.open",
+    scope: "window",
     label: "Workspaces: Manage...",
     category: "general",
     handler: () => {
@@ -254,6 +299,7 @@ export const workspaceCommands: Command[] = [
   },
   {
     id: "workspace.saveQuick",
+    scope: "window",
     label: "Workspaces: Save Current Layout",
     category: "general",
     handler: () => {
@@ -266,6 +312,7 @@ export const workspaceCommands: Command[] = [
 export const terminalCommands: Command[] = [
   {
     id: "general.openTerminal",
+    scope: "pane",
     label: "Terminal Here",
     category: "general",
     shortcut: "Alt+M T",
@@ -286,6 +333,7 @@ export const terminalCommands: Command[] = [
   },
   {
     id: "general.insertPathsIntoTerminal",
+    scope: "pane",
     label: "Insert Selected Paths into Terminal",
     category: "general",
     shortcut: "Alt+T",
@@ -303,7 +351,16 @@ export const terminalCommands: Command[] = [
 /** General dialog commands */
 export const generalDialogCommands: Command[] = [
   {
+    id: "general.openJobsPanel",
+    scope: "window",
+    label: "Jobs Panel",
+    category: "general",
+    handler: () => dialogStore.openJobsPanel(),
+  },
+
+  {
     id: "plugins.installPackage",
+    scope: "window",
     label: "Install Plugin…",
     category: "plugins",
     handler: async () => {
@@ -318,31 +375,43 @@ export const generalDialogCommands: Command[] = [
     },
   },
   {
+    id: "help.about",
+    scope: "window",
+    label: "About",
+    category: "general",
+    handler: () => dialogStore.openAbout(),
+  },
+  {
     id: "general.openSettings",
+    scope: "window",
     label: "Settings",
     category: "general",
     handler: () => dialogStore.openSettings(),
   },
   {
     id: "plugins.openSettings",
+    scope: "window",
     label: "Plugins",
     category: "plugins",
     handler: () => dialogStore.openPlugins(),
   },
   {
     id: "general.openKeybindings",
+    scope: "window",
     label: "Keyboard Shortcuts",
     category: "general",
     handler: () => dialogStore.openKeybindings(),
   },
   {
     id: "general.fileRecovery",
+    scope: "window",
     label: "File Recovery",
     category: "general",
     handler: () => dialogStore.openFileRecovery(),
   },
   {
     id: "help.reportIssue",
+    scope: "window",
     label: "Report Issue",
     category: "general",
     shortcut: "Alt+I",
@@ -352,6 +421,7 @@ export const generalDialogCommands: Command[] = [
   },
   {
     id: "help.openLogs",
+    scope: "pane",
     label: "Open Logs Folder",
     category: "general",
     handler: async () => {
@@ -361,6 +431,7 @@ export const generalDialogCommands: Command[] = [
   },
   {
     id: "help.shortcuts",
+    scope: "window",
     label: "Keyboard Shortcut Reference",
     category: "general",
     shortcut: "Ctrl+/",
@@ -370,6 +441,7 @@ export const generalDialogCommands: Command[] = [
   },
   {
     id: "general.openQuickOpen",
+    scope: "window",
     label: "Quick Open",
     category: "general",
     shortcut: "Ctrl+P",
@@ -380,6 +452,7 @@ export const generalDialogCommands: Command[] = [
   },
   {
     id: "general.openCommandPalette",
+    scope: "window",
     label: "Command Palette",
     category: "general",
     shortcut: "Ctrl+Shift+P",
@@ -390,6 +463,7 @@ export const generalDialogCommands: Command[] = [
   },
   {
     id: "general.openContentSearch",
+    scope: "pane",
     label: "Search in Files",
     category: "general",
     shortcut: "Ctrl+Shift+F",
@@ -399,6 +473,7 @@ export const generalDialogCommands: Command[] = [
   },
   {
     id: "general.filterCurrentDir",
+    scope: "pane",
     label: "Filter Current Directory",
     category: "general",
     shortcut: "Ctrl+F",

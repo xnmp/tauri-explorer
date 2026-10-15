@@ -250,6 +250,7 @@ mod clipboard_coordinator_x11_tests {
                 entries: vec![entry("/tmp/survives.txt")],
                 operation: "copy".into(),
                 reply,
+                notify: Box::new(|_| {}),
             })
             .unwrap();
         drop(received);

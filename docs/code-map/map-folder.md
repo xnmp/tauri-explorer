@@ -24,22 +24,28 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 
 - `src/lib/components/FileRecoveryDialog.svelte`, `src/lib/components/FileRecoveryNotice.svelte` — page-owned recovery inspection/choices, stable async-action focus and persistent attention notice; deferred mounting uses WindowDialogs and the status-bar snippet or standalone attention row.
 
-- `WindowDialogs.svelte` — typed lazy dialog host, crash boundaries, plugin dialogs and window-level feedback, including portal mode.
+- `WindowDialogs.svelte` — typed lazy dialog host, crash boundaries, demand-loaded plugin mounting/shortcut help and window-level feedback, including portal mode.
+- `src/lib/components/PluginDialogMount.svelte` — retained contributed dialog host; private presentation context and pane-slot DOM portal with hidden/inert parking.
+- `AboutDialog.svelte` — lazy About modal showing the running application's version through the existing app-info IPC bridge; shared modal dismissal and focus ownership.
 - `OpenWithDialog.svelte` — accessible installed-application choice with captured filename, loading/empty/error feedback and unchanged-default messaging.
 
-- `FileList.svelte` — dispatches to Details/List/Tiles by view mode; hosts marquee, drop, empty-state. Central view entry.
+- `FileList.svelte` — dispatches to Details/List/Tiles by view mode; hosts marquee (band drawn by transform-only layers from `domain/marquee-rect.ts`, #1051), drop, empty-state. Central view entry.
 - `PluginInspector.svelte` — selection-aware right-side host for plugin inspector contributions; hidden when none apply.
+- `src/lib/components/PluginContributionRoot.svelte` — establishes host-issued DOM ownership before mounting a contributed component; transparent wrapper for dialogs, file views, inspectors, Preview sections and editor tools.
 - `PluginFileView.svelte` — hosts a plugin file view (SDK 2) in place of a pane's listing, with a pane-scoped handle; error boundary offers retry or return to files, and Preview targets it owned are cleared on unmount.
 - `PluginPreviewTarget.svelte` — Preview of a plugin target (a non-file subject): image, details and explicit actions only, no file actions, opening, sibling stepping or dragging. Its chrome is placed in a vertical dock by `PreviewPane.svelte`'s grid rules. Its image fullscreens like a file image through the pane's controller: a 1024px thumbnail in the pane, the full-resolution image (loaded like a file image) once fullscreen (#1033).
 - `PreviewImageSurface.svelte` — the Preview pane's image surface (container, image, zoom indicator, fullscreen styles) shared by file images and plugin targets; event handling comes from `use-preview-fullscreen` (#1033).
+- `ImageResolutionCell.svelte` — lazy intrinsic image metadata for mounted Details rows.
 - `DetailsView.svelte` — virtual-scrolled table view (columns, resize, sort headers).
 - `ListView.svelte` — CSS-grid compact list view.
 - `TilesView.svelte` — row-virtualized tile view with thumbnails; renders through `TileSurface.svelte`/`TileVisual.svelte`; runs `scroll-jank-monitor.ts` during scroll and logs `tiles-scroll-jank` events only when jank occurred (#593).
 - `TileSurface.svelte` — tile-grid root: publishes `domain/tile-layout.ts` as tile CSS variables and owns all `.tile-item` chrome (hover, selected underline, ghosted/cut/drop states, icon scaling) for TilesView and FileTiles.
 - `TileVisual.svelte` — one tile's icon block (image/video thumbnail, folder preview, FileIcon, video marker) and name; the name defaults to `EntryNameLabel`, TilesView passes `EntryName`.
+- `src/lib/components/FileTile.svelte` — SDK module `ui/file-tile` (capability `fileTile`): one standalone gridcell, shared TileSurface/TileVisual, pane rename and clipboard/hidden/empty-folder appearance; the plugin owns rows, grid and keyboard navigation.
+- `src/lib/components/EntrySymlinkBadge.svelte` — shared file symlink indicator for EntryCell and FileTile, hidden during rename.
 - `FileTiles.svelte` — the SDK module `ui/file-tiles`: non-virtualized Tiles-view tiles for plugin sections, callbacks for select/open/menu, own-width columns, roving focus; size from the `size` prop, else the enclosing plugin view's context, else the global setting.
 - `VirtualList.svelte` — variable-height windowed scroller with persistent extent canvas; publishes scroll/layout settlement for marquee hit testing and cursor reveal. Perf-critical.
-- `MillerColumns.svelte` — column/Miller-columns browsing mode.
+- `MillerColumns.svelte` — column/Miller-columns browsing mode; owner identity and pane-content modality follow both inline and hoisted rendering.
 - `FileItem.svelte` — single entry row/tile (icon, name, badges, selection state).
 - `EntryCell.svelte` — shared List/Tiles gridcell with roving focus, selection semantics and drag-drop interactions.
 - `EntryName.svelte` — shared inline rename input/display across all views.
@@ -52,8 +58,8 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `GitStatusBadge.svelte` — per-entry git status letter/color decoration.
 - `ExplorerPane.svelte` — one pane: navigation bar + FileList + preview; owns pane-scoped context.
 - `PanelResizeHandle.svelte` — shared focusable Sidebar/SCM/Miller separator with pointer capture wiring and keyboard range semantics.
-- `PaneContainer.svelte` — owns the measured, scrollable active workspace and one divider input lifetime.
-- `PaneLayoutView.svelte` — declarative split-tree renderer using shared constrained geometry and focusable separators (#228).
+- `PaneContainer.svelte` — owns the scrollable active workspace (CSS-filled canvas with a script minimum, #1061) and one divider input lifetime.
+- `PaneLayoutView.svelte` — declarative split-tree renderer: saved ratios flex over CSS minima (#1061), measured geometry for focusable separators (#228).
 - `NavigationBar.svelte` — per-pane back/fwd/up + breadcrumb strip + address bar.
 - `NavigationHistoryMenu.svelte` — full back/forward history dropdown.
 - `BreadcrumbAutocomplete.svelte` — editable address bar with directory autocomplete.
@@ -95,6 +101,11 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 
 ## src/lib/state/ — Svelte 5 runes stores + pure pane logic. Business state lives here.
 
+- `src/lib/state/job-reveal.ts` — lazy Show image entry point; cancellation also invalidates pending imports.
+- `src/lib/state/job-reveal-effects.ts` — deferred window-owned status refresh and workspace effects for Show image.
+- `src/lib/state/file-view-panes.ts` — mounted plugin-view pane handles shared with host reveal routing.
+- `src/lib/state/file-view-presentation.svelte.ts` — Explorer-owned, requested-directory/preference-scoped first-paint deadline surviving pane remounts; pending eligibility holds a neutral surface for at most 400ms.
+
 - `clipboard-image-progress.svelte.ts` — independent accepted image-paste lifetimes, retained until clipboard/write/listing settlement; shared by normal and explicit Paste Image.
 
 - `src/lib/state/file-recovery.svelte.ts` — page-created revision-ordered recovery state, explicit inspection/action capabilities and independently retired subscription lifetimes; no module-global active store.
@@ -107,10 +118,11 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 
 - `lazy-dialog.svelte.ts` — per-host pending import ownership, retained constructors and demand-aware failure publication.
 
-- `git-graph-query.svelte.ts` — mounted history/pagination owner; shared reloader, captured query/walk, partial log paint, page-zero cache and invocation-scoped cleanup.
+- `git-graph-query.svelte.ts` — mounted history/pagination owner, including merge-base target paging; shared reloader, captured query/walk, partial log paint, page-zero cache and invocation-scoped cleanup.
 - `src/lib/state/git-graph-detail.svelte.ts` — Selected commit/comparison files, mutation refresh tokens and inline diff ownership.
+- `git-pr-mutations.svelte.ts` — repository-scoped pending PR mutation ownership and retained outcomes across graph mounts; uncertain retries require acknowledgement.
 - `git-pr-session.svelte.ts` — mounted GitHub badge, PR detail and CI log requests; immutable snapshots, invocation identities and disposal.
-- `git-graph-branches.svelte.ts` — lazy branch/author metadata owner; known-coverage fallback and query/popover request coordination.
+- `git-graph-branches.svelte.ts` — lazy branch/author metadata and cancellable merge-base jump owner; known-coverage fallback and query/popover request coordination.
 
 - `window-startup.ts` — window-owned settings/theme/plugin startup; disposal prevents late settings from activating plugins.
 - `window-session.ts` — composes page subscriptions, startup, one-shot launch address-bar focus, command readiness and post-readiness warm priming with rollback/teardown.
@@ -124,14 +136,21 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `git-graph-coverage.ts` — repository observation leases shared by pending graph reads and retained snapshots; listener/watch acknowledgement precedes reads, final release drains acquisition, and UNC polling roots stay uncached.
 - `directory-watch.ts` — generic ordered path-lease ownership plus the directory adapter; retains exact release authority across failed teardown and drains late acquisition; reused by Git, thumbnails, Miller columns and drives.
 - `preview-lifetime.ts` — full-revision preview request and object-URL ownership; stale results cannot publish or revoke a replacement.
-- `preview-image.ts` — full-resolution Preview image load for files and plugin targets: asset protocol + off-screen decode, then the backend `read_image_data_url` fallback (paths outside the asset scope, cloud placeholders; the only path in browser mode); blob ownership through the caller's lifetime (#1033).
+- `preview-image.ts` — Preview image load for files and plugin targets: optional display-sized rendition first (`get_preview_image`, any failure falls back to the original, #1054), then asset protocol + off-screen decode, then the backend `read_image_data_url` fallback (paths outside the asset scope, cloud placeholders; the only path in browser mode); blob ownership through the caller's lifetime (#1033).
+- `preview-image-cache.ts` — pane-scoped memory of shown Preview images per file version (path + mtime/size/local revision; original or rendition-at-edge): a revisit is a synchronous hit with no request; bounded by count and decoded pixels, never evicts the on-screen entry, owns and revokes its blobs, cleared on unmount (#1014).
+- `preview-resolution.ts` — full resolution on demand: loads the shown rendition's original once, off-screen, and hands it back only while that rendition is still shown (#1054).
 - `terminal-key-handler.ts` — xterm key adapter: eligible command ownership precedes clipboard/readline effects, with modifier tracking and chord retirement.
 - `pdf-preview.svelte.ts` — latest-document/page intent and detached-canvas render lifetimes; releases departed pages and cancels owned PDF workers (#728–#730).
 - `terminal-session.ts` — frontend terminal reservation/listener/spawn lifetime; drains late resources and serializes restart/stop. Owns the session's only input path (`domain/terminal-input-queue.ts`): opened at start/restart so typeahead is kept, attached at reservation, closed on stop/exit; `insert` builds text (path insertions) in the spawned shell's dialect and holds it across an exited shell for the next start (#709, #882).
 - `repo-root-cache.svelte.ts` — bounded reactive repository discovery with positive/negative TTL, shared probes and invalidation-safe publication.
 - `owned-registry.ts` — framework-free contribution registration identity; old disposers cannot remove replacements even when values are reused.
 - `ordered-registry.ts` — owned contributions sorted by plugin list position, then registration; shared by context-menu items and plugin settings sections.
-- `modal-ownership.svelte.ts` — shared input ownership for mounted and contributed modals; closing releases only the corresponding registration.
+- `modal-ownership.svelte.ts` — shared input ownership for mounted and contributed modals; live surface admission precedes DOM suspension; closing releases only the corresponding registration.
+- `src/lib/state/modal-focus.ts` — pane dialog focus restoration tracks actual focus ownership across DOM detachment and releases listeners on cleanup; shared modal focus eligibility.
+- `src/lib/state/pane-dialogs.svelte.ts` — host-private pane capture handles, transient scope retirement, identity-bound overlay slots, retained portal mounts and shared inert registration for pane-owned content.
+- `src/lib/state/preview-diff-actions.ts` — Preview diff-header/hunk stage, unstage, discard admitted against the owning pane (`isPaneBlocked`); a covered owner makes them no-ops (#1099).
+- `src/lib/state/dialog-presentation-context.ts` — private scope/visibility/focus context inherited by the shared SDK Modal.
+- `run-after-close.ts` — runs a command chosen from a modal launcher (the command palette) only after the launcher has released the top modal surface, so the dialog it opens is not closed as the caller.
 - `open-with.svelte.ts` — captured application-choice sessions, late-result rejection and single launch lifecycle.
 
 - `recycle-bin.ts` — turns the native Recycle Bin IPC result into a user-visible failure toast; called by `FilesSidebarView.svelte`.
@@ -154,6 +173,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `directory-events.ts` — shared native directory event subscription with explicit readiness, retry and late-listener retirement.
 - `directory-listing.ts` — complete directory snapshots, queued-request supersession, teardown and observation transfer.
 - `navigation.ts` — pure back/forward history utilities.
+- `src/lib/state/pane-pointer-focus.ts` — pointer gesture focus ownership without cancelling native drag acquisition.
 - `selection.ts` — pure selection math (range/toggle/anchor).
 - `sort-prefs.ts` — per-directory sort preference persistence.
 - `refresh-manager.ts` — dedupe/debounce/rate-limit directory refresh requests.
@@ -171,15 +191,24 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `git-summary-cache.ts` — shared per-repo `git_status` (working-tree summary) fetch: in-flight dedup + short TTL, used by SCM store + git-graph so one change is one scan, not several (#431); Git-change events revoke cached/joinable reads, publication uses current-flight identity, and successful summaries use a bounded 64-entry LRU.
 - `scm.svelte.ts` — Source Control state (staged/unstaged/commit, #54).
 - `commit-panel.svelte.ts` — per-pane rune store holding the git-graph uncommitted-node commit editor's live state (#466); wraps `domain/commit-panel` transitions so the in-flight commit guard survives close+reopen (`begin()`/`resetIfIdle()`). Disposed with the pane (like `disposeScmStore`).
+- `image-resolution.ts` — bounded cancellable metadata queue and event-owned observation.
+- `image-resolution-service.ts` — metadata API admission and shared directory-change subscription.
 - `file-events.ts` — cross-window file-change broadcast (affected dirs → all windows).
 - `src/lib/state/copy-operations.ts` — the copy session over that shared presentation.
 - `src/lib/state/session-operations.ts` — the one presentation shared by both ordered sessions: operation panel, conflict prompts, incremental entries, refresh broadcast and completion reporting.
 - `src/lib/state/move-operations.ts` — the move session over it: deduplicated sources, vacated source directories refreshed, no renderer-owned inverse; also the plugin `PluginWorkspace.moveFile` path (#881).
 - `paste-operations.ts` — clipboard-mode dispatch to the copy or move session and cut-clipboard release.
+- `src/lib/state/html5-file-drag.svelte.ts` — listing/Miller filesystem source MIME and native handoff; Recent private link MIME without OS filesystem export; source lifetime protocol.
+- `src/lib/state/sidebar-navigation.ts` — sidebar mouse/keyboard navigation through the active pane's modal ownership gate.
+- `src/lib/state/quick-open-navigation.ts` — Quick Open directory/path navigation: closes Quick Open, then admits the destination pane via `admitsCommandDestination` (#1096).
+- `src/lib/state/plugin-dom-ownership.ts` — host-issued component/root identities and nearest-root plugin ownership, shared by mounted contributions and file-drop API admission.
+- `src/lib/state/file-drop-targets.svelte.ts` — plugin element registrations, terminal disabled/modal resolution and idempotent teardown.
+- `src/lib/state/dispatch-file-drop.ts` — shared native/DOM/pointer completion admission, immutable plugin delivery and gesture-scoped async cleanup.
 - `drop-operations.ts` — drop source-path extraction and dispatch to the copy or move session.
 - `conflict-resolver.svelte.ts` — paste conflict resolution state (overwrite/skip/cancel).
 - `clipboard.svelte.ts` — cross-pane/window revisioned file clipboard state and Cut ownership reconciliation.
-- `drag.svelte.ts` — shared in-app drag state (DragData; dataTransfer is unreliable in Tauri).
+- `src/lib/state/drag-clock.ts` — native process clock calibration with renderer performance.now, IPC uncertainty bounds and runtime identity.
+- `drag.svelte.ts` — shared drag state, cross-window gesture sequence, HTML5 observation history, bounded shared completion receipts and native provenance expiry (dataTransfer is unreliable in Tauri).
 - `undo.svelte.ts` — revisioned native-history projection; queued writes retain their receipts so Undo targets the entry captured at intent.
 - `undo-helpers.ts` — pure completion labels for renderer and native-only history actions.
 - `tests/state/undo-helpers.test.ts` — completion labels for native replacement history and recursive batch presentation; executable renderer input remains the separate UndoAction contract.
@@ -189,7 +218,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `context-menu.svelte.ts` — context menu open state + position.
 - `context-menu-items.svelte.ts` — registry for plugin-provided context-menu items.
 - `command-definitions.ts` — command palette command definitions (assembles command modules).
-- `commands.svelte.ts` — command registry + palette store.
+- `commands.svelte.ts` — command registry + palette store; required destination scope and optional affected-pane resolver govern execution and keyboard admission.
 - `commands/shared.ts` — shared helpers for command modules.
 - `commands/file-commands.ts` — file ops commands (new/rename/delete/copy...).
 - `commands/navigation-commands.ts` — navigation commands (back/fwd/up/goto).
@@ -227,6 +256,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `folder-tile-size.ts` — a folder's effective tile size (valid override, else global `thumbnailSize`) for TilesView, the context menu, "Tile View: Set Size" and `FileViewPane.tileSize`.
 - `tile-size-context.ts` — Svelte context carrying the pane's tile size from PluginFileView to `ui/file-tiles` without `size`.
 - `empty-folders.svelte.ts` — lazy empty-folder resolver (avoids per-subdir read_dir, #129).
+- `media-durations.svelte.ts` — lazy, batched, revision-cached (size+mtime) video-duration resolver for the Details Length column; rendered rows request, listings never carry durations (#995).
 - `manual-hidden.svelte.ts` — per-folder manually-hidden entry registry.
 - `settings.svelte.ts` — global settings store (toggles, defaults). Very hot for feature flags. `reloadFromDisk()` adopts external settings.json edits (#599).
 - `window-size.svelte.ts` — reactive `window.innerWidth`/`innerHeight` tracker (`windowSizeStore`); `+page.svelte` syncs on mount/resize. Feeds preview-pane auto-dock (#467).
@@ -245,6 +275,9 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 
 ## src/lib/api/ — invoke() bridge to Rust. Thin IPC wrappers; grep here for Tauri command names.
 
+- `src/lib/api/native-file-drag.ts` — host native drag start channel and enriched receiver event contract.
+- `image-resolution.ts` — lazy source pixel metadata IPC; virtual paths are unavailable.
+
 - `pdf-preview.ts` — bounded native PDF bytes, lazy PDF.js worker/readiness, cancellable page rendering and validated native annotation-link dispatch (#728–#730).
 
 - `src/lib/api/file-recovery.ts` — recovery IPC facade with exact renderer/subscription identities and failed-ack cleanup; list/inspect/restore and renderer-bound subscription commands are registered; page-owned UI activation is deferred until foreground readiness or explicit demand.
@@ -262,6 +295,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `file-mutations.ts` — acknowledged forward mutation IPC; applies the settled native history summary before returning a receipt or warning.
 - `directory-wire.ts` — validates compact native listing columns and reconstructs exact immutable domain entries.
 - `files.ts` — all file-op IPC (list, create, rename, copy, move, delete, estimate), including typed per-path trash/restore outcomes. Hot.
+- `media.ts` — `get_media_durations` IPC wrapper (Details Length column, #995).
 - `frontend-log.ts` — forwards diagnosable webview failures to the native rotating log.
 - `load-diagnostics.ts` — `record_slow_load` / `recent_slow_loads` IPC for slow directory-load records (#1022).
 - `e2e-hooks.ts` — the single frontend E2E hook gate: `E2E_HOOKS_ENABLED` (literal `VITE_E2E_HOOKS === "1"`, not DEV) and `loadE2EHooks()`, the only importer of `src/test-support/`; documents the orphan-chunk rule (#457, #884).
@@ -294,6 +328,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `use-lazy-dialog.svelte.ts` — binds one dialog open predicate to its loader and retires it with the host effect.
 - `use-preview-fullscreen.svelte.ts` — Preview fullscreen controller shared by file images and plugin targets: toggle/exit, zoom/pan state, wheel/pointer/click handlers and keys (`createPreviewFullscreen`, effect-free and unit-tested), plus the window key listener and `data-preview-fullscreen` attribute (`usePreviewFullscreen`) (#1033).
 
+- `src/lib/composables/use-entry-appearance.svelte.ts` — reactive clipboard, manually-hidden/dotfile and empty-folder appearance shared by EntryCell and FileTile.
 - `use-item-interactions.svelte.ts` — shared click/select/activate logic across views.
 - `use-inline-rename.svelte.ts` — inline rename edit lifecycle.
 - `use-job-retry.ts` — Retry for a failed job entry; moves focus to the replacement entry (or the panel) after success.
@@ -302,7 +337,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `use-column-resize.svelte.ts` — One keyed resize owner with session-local Details widths, visibility projection and ordered retirement.
 - `use-progressive-render.svelte.ts` — chunked render to avoid freeze on huge dirs.
 - `use-drop-target.svelte.ts` — directory-entry drop-target behavior.
-- `use-native-drop-target.svelte.ts` — position-based drop target detection.
+- `use-native-drop-target.svelte.ts` — position-based drop target detection, shared pane/window owner resolution and live modality admission for deferred destinations.
 - `use-native-drop-handler.ts` — handle native (external) OS file drops.
 - `src/lib/composables/observe-active-directory.svelte.ts` — lifecycle-owned plugin observation of the active workspace directory without polling or cloning its listing.
 - `use-external-drop.svelte.ts` — external file drops into the app.
@@ -310,6 +345,9 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `use-pointer-drag.svelte.ts` — pointer-event drag for macOS (in-app DnD). [modified on branch]
 - `use-pointer-intent.svelte.ts` — pointer-vs-keyboard intent for pickers.
 - `use-sidebar-drag.svelte.ts` — lightweight sidebar-item pointer drag (macOS).
+- `src/lib/composables/use-sidebar-drag-end.ts` — source-bound document dragend capture, bookmark fallback and gesture retirement.
+- `src/lib/composables/use-sidebar-file-drop.ts` — MIME-scoped Quick Access pinning and bookmark reorder, independent of retained file consumers.
+- `src/lib/composables/use-dom-directory-drop.ts` — shared importable folder/breadcrumb/tab/listing/Miller DOM transfer destinations and copy policies.
 - `use-content-search.svelte.ts` — content-search stream lifecycle for the dialog.
 - `use-file-watchers.ts` — subscribe file-change/event listeners.
 - `use-window-lifecycle.ts` — window lifecycle (focus/close/resize) handlers.
@@ -322,12 +360,18 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 
 ## src/lib/domain/ — pure logic, no framework deps. Test + reuse here.
 
-- `src/lib/domain/image-job-progress.ts` — elapsed image-job timing and explicitly estimated progress from bounded successful-job history.
+- `src/lib/domain/job-presentation.ts` — validates optional job cost/reveal metadata and formats exact decimal money.
+- `src/lib/domain/job-reveal.ts` — pure pane choice, present-file selection, reveal routing and latest-click cancellation policy.
+
+- `src/lib/domain/image-job-progress.ts` — elapsed image-job timing and explicitly estimated progress; median of the latest 20 successful completions with ≥3 samples, keyed cohort → source → 120s, plus overdue estimate wording.
+- `src/lib/domain/file-drop.ts` — validated internal payloads, full path-set verification and explicit DOM/native transport authority.
 - `src/lib/domain/native-drop-paths.ts` — filesystem-only path admission for native drops; excludes blob URLs, relative paths and traversal before any transfer, bookmark or terminal action.
 - `src/lib/domain/file-view-id.ts` — bounded, plugin-scoped file view id format, validated wherever ids are persisted with pane layouts.
+- `src/lib/domain/file-view-resolution.ts` — pure preferred-provider eligibility rule (boolean or pending) and bounded paint resolution.
 
 - `src/lib/domain/file-recovery.ts` — recovery snapshot, choice and native-port contracts with bounded lossless decimal-counter validation/ordering; inspection returns an ordered snapshot. Also formats retained sizes and summarizes storage against both retention budgets (`tests/domain/file-recovery-retention.test.ts`), and owns the confirmation copy for irreversible choices, including Forget for a stranded move discard (`tests/file-recovery-confirmation.test.ts`).
 
+- `src/lib/domain/workspace-selection.ts` — pure cross-pane click focus policy and focused-first, path-deduplicated active-tab selection.
 - `file-list-navigation.ts` — independent path cursor and pure keyboard movement/selection intents for all file-list views.
 
 - `window-keys.ts` — pure ordered window-key routing policy for native button activation, terminal, modal, editable and filter contexts.
@@ -343,7 +387,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `file-types.ts` — extension→type/category detection + display; `isGitRepoFolder` (git-repo folder icon selection, #463).
 - `open-with.ts` — single-file selection eligibility and explicit Linux-only application-choice availability.
 - `relative-time.ts` — shared compact elapsed-time labels for file metadata, today's git commits, and PR comments.
-- `path.ts` — path normalization/join/parent/relative helpers.
+- `path.ts` — path normalization/join/parent/relative helpers, including native parent/equality helpers that retain POSIX backslashes.
 - `paste-source.ts` — pure file-list Paste source selection: the app's own Copy/Cut while the system clipboard mirrors it (or, for Copy only, when it cannot be read), otherwise an external file list (#865).
 - `platform.ts` — isMac/isWindows/isLinux detection.
 - `wsl.ts` — WSL path recognition.
@@ -379,10 +423,13 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `src/lib/domain/copy-session.ts` — ordered native session event, conflict-decision and positional result contracts, plus the copy and move incomplete-session presentations.
 - `file-history.ts` — shared action, summary, receipt and HistoryPort types for the native history authority.
 - `virtual-layout.ts` — variable-height virtual list layout math (VirtualList).
-- `tile-layout.ts` — tile sizes (`THUMBNAIL_SIZE_CONFIG`, re-exported by settings), spacing/row-height `tileLayout()` and grid arrow-key `gridFocusStep()` shared by every tile grid; the SDK's `PaneTileSize`/`TileSizePreset` and `paneTileSize()`.
+- `tile-layout.ts` — tile sizes (`THUMBNAIL_SIZE_CONFIG`, re-exported by settings), spacing/row-height `tileLayout()` and grid arrow-key `gridFocusStep()` shared by every tile grid; the SDK's `PaneTileSize`/`TileSizePreset` and `paneTileSize()`; `tileGridMetrics()` exposes minimum width, allocated cell height, gap and grid padding through `ui/file-tile`.
+- `image-resolution.ts` — source pixel shape, supported raster extensions and display formatting.
 - `detail-columns.ts` — Details column defaults, finite bounds, malformed-width normalization and visible grid projection.
+- `media-duration.ts` — Length-cell formatting (m:ss / h:mm:ss via `mediaTime`, empty when unknown) and the size+mtime cache revision (#995).
 - `resize-size.ts` — bounded scalar normalization, visual/model delta conversion and axis-aware keyboard sizing.
-- `pane-viewport.ts` — pure descendant minima, canvas placement, active-pane reveal and keyboard divider policy.
+- `scroll-moves-handle.ts` — which scrolls end a panel drag: the document's, an ancestor's or a synced scroller's, never an unrelated list's.
+- `pane-viewport.ts` — pure descendant minima (`paneMinima` sizes the rendered canvas and split children without measurement), canvas placement, active-pane reveal and keyboard divider policy.
 - `pane-layout.ts` — pane split-tree pure logic (#228).
 - `tab-title.ts` — VS Code-style tab title disambiguation.
 - `titlebar.ts` — title bar / tab strip visibility rules.
@@ -399,6 +446,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `csv-preview.ts` — quoted CSV parser for PreviewPane table data, bounded to the preview's data-row limit (#666).
 - `pdf-preview.ts` — pure PDF fit, zoom-anchor, measured pointer coordinates, pan bounds and safe-link policy (#728–#730).
 - `markdown.ts` — safe markdown render for preview.
+- `marquee-rect.ts` — marquee band geometry as compositor-only `transform`s for five container-sized layers (fill + four 1px edges sized to the client box, scaled down so fractional zoom rasterises exactly); a resized band element repainted its layer over every image tile per frame on WebKitGTK (#1051).
 - `zoom.ts` — CSS zoom level utils.
 - `raf-coalesce.ts` — coalesce high-freq value streams via rAF.
 - `scroll-jank-monitor.ts` — pure rAF-gap sampler (rAF/cancel injected) reporting long-frame counts for scroll-jank diagnostics; wired into `TilesView.svelte` (#593).
@@ -407,6 +455,8 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `terminal-command.ts` — shell command construction/quoting for terminal.
 - `terminal-cwd-sync.ts` — "terminal follows explorer" cwd decision (#149).
 - `terminal-keys.ts` — terminal vs app key-ownership rules (#249/#260).
+- `preview-rendition.ts` — Preview rendition policy: surface CSS size × devicePixelRatio × app zoom → 1024/2048/3072 edge buckets; which paths may have one (mirrors the backend's extensions, never virtual paths); fullscreen/zoom need the original (#1054).
+- `latest-only.ts` — one task in flight, only the newest waiting task runs next; skipped Preview selections never queue rendition decodes (#1054).
 - `ordered-writer.ts` — one-in-flight, coalescing ordered stream over an IPC transport that does not preserve call order; PTY input (#709).
 - `terminal-input-queue.ts` — the terminal's one input queue: strings and promises (paste reads, insertions) in call order, held until the terminal has an id, sent through an ordered writer with gap-free `terminal_write` sequence numbers; unsent input never crosses to a successor stream (#882).
 - `terminal-paste.ts` — per-platform paste source order with injected browser/native readers, and xterm-equivalent paste bytes (CR line endings, bracketed paste) (#732, #882).
@@ -422,14 +472,16 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 
 - `api.ts` — plugin API surface exposed to plugins; the context reports a command or menu action failure under the plugin's name and logs it (#782).
 - `registry.svelte.ts` — built-in plugin lifecycle; published activation/shutdown drains, terminal admission and context-first reentrant teardown. Startup activations run together so one hung plugin blocks no other; contributions are placed by list position, not completion order (#782).
-- `dialog-registry.svelte.ts` — registry for plugin modal dialogs.
+- `dialog-registry.svelte.ts` — registry for plugin modal dialogs; PluginContext wiring injects the window-owned pane host.
 - `settings-registry.svelte.ts` — registry for plugin settings sections.
 - `inspector-registry.svelte.ts` — ordered, owner-disposed registry for selection-aware inspector contributions.
 - `file-view-registry.svelte.ts` — SDK 2 file view contributions (ordered, owner-disposed) and the pane handle type a view receives.
 - `preview-registry.svelte.ts` — SDK 2 Preview extension points: plugin preview targets (non-file subjects) and Preview-info sections.
 - `src/lib/plugins/image-editor-registry.svelte.ts` — ordered, owner-disposed image editing tool contributions with immutable captured source revisions and opaque service ports.
+- `src/lib/domain/plugin-image-editor.ts` — rules for `ctx.presentation.openImageEditor`: a plugin opens the editor directly only in a tool it registered, for one absolute file path.
 - `fs-providers.ts` — virtual-filesystem provider registry + dispatch.
-- `demo/index.ts` — demo plugin exercising every contribution seam.
+- `demo/index.ts` — demo plugin exercising every contribution seam; view components load only on activation.
+- `src/lib/plugins/demo/DemoFileDropTarget.svelte` — contributed drop acceptance surface with enabled gating and visible ordered path/source receipts.
 - `demo/DemoFileView.svelte` + `demo/DemoPreviewInfo.svelte` — demo file view and Preview-info section exercising the SDK 2 seams.
 - `ai-organize/index.ts` + `AiOrganizeDialog.svelte` — AI organize plugin (#158).
 - `ai-rename/index.ts` + `AiRenameDialog.svelte` — AI rename plugin (#145).
@@ -460,16 +512,20 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 
 ## src-tauri/src/ — Rust backend. Tauri commands; all commands are `async fn`.
 
+- `files/image_resolution.rs` — bounded header-only intrinsic raster dimensions, no directory-listing overhead.
+
 - `main.rs` — binary entry (console-window guard).
 - `lib.rs` — app entry: builder, command registration, plugin setup. Grep here to find where a command is wired.
 - `error.rs` — unified command error type.
 - `config.rs` — JSON config file persistence.
-- `config_watch.rs` — watches the config dir and emits `config-file-changed` for `settings.json` / `themes/*.css` so external edits apply live (#599); `watched_config_name` is the allowlist.
+- `config_watch.rs` — watches the config dir and emits `config-file-changed` for reloadable JSON / `themes/*.css` so external edits apply live (#599); `watched_config_name` is the allowlist. Symlink handover restores surviving descendant coverage after recursive ancestor retirement (#938, ADR 0004); Linux contracts live in `src-tauri/test_support/config_watch_nested_roots_test.rs`.
 - `search.rs` — fuzzy search (nucleo). Two-pass walk: fast pass, then build-output trees (`target`, `node_modules`, …) deferred + score-penalized (#393); WSL UNC roots delegate the walk to the distro's `find` (#414); complete walks feed the shared listing cache (#651).
 - `search_cache.rs` — bounded five-second cache of completed recursive Quick Open listings for watched roots; per-root invalidation revisions prevent an in-flight cold walk from republishing stale entries without discarding unrelated roots, and incomplete/cancelled walks are never published (#651).
 - `wsl.rs` — WSL UNC path parsing (`\\wsl.localhost\<distro>\…` → distro + Linux path), shared by terminal/search/git delegation.
 - `content_search.rs` — grep-across-files (ripgrep/grep crate).
-- `thumbnails.rs` — image/video thumbnail generation + cache; `with_decode_gate` clamps concurrent decodes to `cores/4` (2-8, override `TAURI_EXPLORER_DECODE_PERMITS`, 0=off) and lowers decode-thread priority to avoid starving the webview compositor; `diag` module logs slow (`>100ms`) requests + rolling aggregates (#593). Hot.
+- `thumbnails.rs` — image/video thumbnail generation + cache; `with_decode_gate` clamps concurrent decodes to `cores/4` (2-8, override `TAURI_EXPLORER_DECODE_PERMITS`, 0=off) and lowers decode-thread priority to avoid starving the webview compositor; `diag` module logs slow (`>100ms`) requests + rolling aggregates (#593); disk-cache pruning by write count or bytes written. Hot.
+- `thumbnails/preview_rendition.rs` — `get_preview_image`: bounded header-only check, then a cached display-sized JPEG (4:4:4) / PNG (premultiplied downscale) rendition of large still rasters, ICC profile kept, in the thumbnail cache's `previews/` subdirectory with its own 300 MB budget (namespaced key, inflight lock, decode gate); small/animated/CMYK/GIF/AVIF/SVG/rotated non-JPEG stay originals. `allow_rendition_assets` (called first in `lib.rs` setup) adds that directory to the asset scope, which `$HOME/**/*` misses on Unix (leading-dot rule) (#1054).
+- `media_duration.rs` — `get_media_durations`: native MP4 `mvhd` / Matroska `Info/Duration` header parsing with bounded sibling scans, ffmpeg `Duration:` fallback via `thumbnails::ffmpeg_path` with a kill deadline and capped stderr; bounds per ADR 0028 (#995).
 - `palette.rs` — dominant-color extraction for themes (#203).
 - `src-tauri/src/platform.rs` — host capabilities that shape recorded history: `TRASH_RESTORE_SUPPORTED` and the `TrashRestore` value passed to history admission (macOS has no trash restore).
 - `wallpaper.rs` — set desktop wallpaper (mac/Linux/Windows).
@@ -518,15 +574,18 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `file_history/execution.rs` — injected native inverse execution with ordered completed/opposite/remaining partitions.
 - `file_history/retention.rs` — complete history-entry budget for forward and inverse recovery; preserves unfinished work and a dependency-safe prefix of the opposite execution with explicit warnings.
 - `src-tauri/src/diagnostics.rs` — bounded, ordered completion diagnostics, independent of batch failures; lazy formatting stops at the output limit; bounded panic descriptions are shared by worker and replacement execution.
-- `renderer_owner.rs` — concrete-window resource identity and acknowledged sessions shared by directory/Git leases; nonblocking lifecycle retirement; the shared `Renderer(web-content-terminated)` log line (macOS hook, Linux all-webview plugin with reason).
+- `webkit_renderer.rs` — Linux-only pure WebKitGTK renderer policy applied before GTK starts: NVIDIA proprietary → shared-memory DMABuf (composited) on WebKitGTK ≥2.44 or legacy disable vars below; other GPUs keep WebKit defaults; never overrides user `WEBKIT_*` vars; `TAURI_EXPLORER_WEBKIT_RENDERER` escape hatch; logs `Renderer(webkit)` (#1057).
+- `child_env.rs` — records the WebKitGTK renderer vars the app set itself (never user-set ones) and strips them (plus the restart marker) from child environments via `scrub_command`/`scrub_pty`/`scrub_names` at terminal, external-app and Linux trash launch seams (#1079).
+- `jsc_workaround.rs` — Linux-only pure JavaScriptCore policy applied before GTK starts: on the WebKitGTK 2.52 series sets `JSC_useDFGJIT=0` (WebContent GC aborts in `MarkedBlock::aboutToMarkSlow`, #1026) unless the user set it; logs `Renderer(jsc)`.
+- `renderer_owner.rs` — concrete-window resource identity and acknowledged sessions shared by directory/Git leases; nonblocking lifecycle retirement; `on_renderer_terminated`, the one renderer-loss path (log `Renderer(web-content-terminated)`, retire, recover) for the macOS hook and the Linux all-webview `termination_recovery` plugin (WebKitGTK reason; `terminated-by-api` is never reloaded).
 - `renderer_owner/termination.rs` — lazy acknowledged native renderer termination listeners; weak ownership, cancellation-safe installation and main-renderer-only WebView2 filtering.
 - `renderer_owner/scope.rs` — pure renderer generation and terminal native-window retirement; obsolete session IDs cannot resolve an owner.
-- `renderer_owner/reload.rs` — macOS WebContent-loss recovery (#942): pure per-window reload budget (3 per 60 s) and recovery document URL (`warm` removed, `rendererRecovery=1` added), plus the adapter that reloads the last committed document, retires parked warm windows and logs `Renderer(recovery)`.
+- `renderer_owner/reload.rs` — macOS + Linux web-process-loss recovery (#942, #1138): pure per-window reload budget (3 per 60 s, API teardown exempt) and recovery document URL (`warm` removed, `rendererRecovery=1` added); `WindowRecovery::on_terminated` decides, logs `Renderer(recovery)` and applies through `RecoveryEffects`, whose native adapter reloads the last committed document or retires parked warm windows.
 - `git_watch/service.rs` — dedicated worker owns window-scoped leases, shared observers, cancellation/reclamation, coalesced event flags, debounce/recovery deadlines and invalidation delivery retries.
 - `git_watch/target.rs` — repository/private/shared-metadata discovery, non-overlapping watch roots, non-recursive parent coverage and metadata-only temporary-file filtering.
 - `git_actions.rs` — mutating git actions for commit-graph tab (VSCode parity); returns undo snapshots for branch/tag delete, branch rename, merge, and pull, and re-verifies refs/HEAD/clean-tree state before inverses (#513).
 - `git_common.rs` — shared git plumbing (used by git/git_log/git_actions).
-- `github.rs` — `git_open_prs`: open GitHub PRs for the repo's remote, for graph PR badges (#449); TTL-cached, silent-degrade.
+- `github.rs` — `git_open_prs`: open GitHub PRs for the repo's remote, for graph PR badges (#449); TTL-cached, silent-degrade. `git_issues_url`: the remote's github.com issues page for the "Git: Open Issues in Browser" palette command (#1055).
 
 ## website/ — static Vercel site and serverless functions.
 
@@ -563,6 +622,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `src-tauri/src/files/recovery/private_storage/windows.rs` — Windows protected ACL, kind/reparse, hardlink and delete-pending evidence checks through retained handles.
 - `src-tauri/test_support/recovery_private_storage.rs` — real filesystem policy outcomes for retained files, hardlinks, retirement and widened permissions.
 - `src-tauri/test_support/native_directory_contract.rs` — cross-platform real filesystem contracts for retained anchors, exclusive creation/rename, removal kinds, existence and invalid-name rejection.
+- `src-tauri/test_support/preview_rendition.rs` — rendition sizing, encoding (alpha → PNG, ICC, 4:4:4, no halos), EXIF orientation, originals kept, cache keying, single decode under concurrency, and the asset scope serving a dot-directory cache (#1054).
 - `src-tauri/test_support/case_only_rename.rs` — runtime case-sensitivity contracts for rename, move, ordered-session conflicts and physical identity, shared by native-directory and recovery admission tests.
 
 - `mod.rs` — files module root + re-exports; `FileEntry` incl. `is_git_repo` and `metadata_to_entry`'s one-stat-per-directory git-repo-root detection (#463).
@@ -638,8 +698,8 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 
 ## src-tauri/test_support/ — opt-in native recovery acceptance
 
-- `src-tauri/test_support/renderer_reload.rs` — renderer-loss reload budget, parked-window retirement decision and recovery URL contracts (#942).
-- `src-tauri/test_support/renderer_recovery.rs` — Linux controller retaining one GTK WebView across real renderer crashes; bounded ownership/recovery/navigation assertions and native snapshot.
+- `src-tauri/test_support/renderer_reload.rs` — renderer-loss reload budget, parked-window retirement decision and recovery URL contracts (#942); recorded-effect tests of the shared recovery path: reload after a crash, none after API teardown, logged exhaustion, WebKitGTK reason classification (#1138).
+- `src-tauri/test_support/renderer_recovery.rs` — Linux controller retaining one GTK WebView across real renderer crashes; never reloads it, but waits for the product's logged reload of the committed document, then requires an API teardown to stay unreloaded; bounded ownership/recovery/navigation assertions and native snapshot.
 - `src-tauri/test_support/file_history_gate.rs` — opt-in bounded barrier after real native forward or inverse admission; an external runner releases work independently of its invoking renderer.
 - `src-tauri/test_support/git_observation_probe.rs` — feature-only backend observation timestamps and paths attached to actual Git events for causal recovery acceptance.
 - `src-tauri/test_support/file_recovery_native.rs` — feature-only abandoned replacement fixture through the production executor; native registration IDs correlate actual IPC Channel send/drop receipts across renderer lifetimes.
@@ -683,7 +743,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `src-tauri/src/files/recovery/move_capability.rs` — journaled real exclusive-rename qualification before move effects; exact interrupted-probe inspection and explicit cleanup.
 - `src-tauri/test_support/recovery_move_capability.rs` — real rename/error preservation, legacy byte compatibility, cross-volume process-kill and namespace-substitution contracts.
 - `src-tauri/src/files/recovery/move_cleanup.rs` — every kind's bounded native descendant snapshot: compact parent-index plan encoding charged at its exact size against a per-root share of one decision (`allowance`), admission walks, validated durable deletion plan and identity-checked resumption that refuses newly added/modified children; removal admits each entry against the plan through `src-tauri/src/files/tree_removal.rs`.
-- `src-tauri/test_support/recovery_move_retirement/` — native filesystem contracts for move retirement, split by concern (#887) and sharing `fixtures.rs`'s `Fixture` helper: `mod.rs` (included from `retirement.rs` as `move_tests`) re-exports the generic retirement for every submodule; `fixtures.rs` builds/claims/retires a completed move; `lifecycle.rs` covers completion, restoration, subprocess-kill crash/resume replay and foreign-descendant preservation; `readonly_umask.rs` covers read-only payload discard refusal, restrictive-umask cleanup (also subprocess-based) and rootless-move forgetting; `planning_budget.rs` covers unplannable trees, decision withdrawal, journal headroom and stranded/forgotten discards; `mount_boundary.rs` covers unmounted endpoints, bind mounts on one device, payloads/mount points crossed by a move and mounts inside retained payloads (all ignored, namespace-only); `undo.rs` covers Undo refusal for a destination grown past its retirement plan and why it names a refused destination; `enforcement_observability.rs` covers enforcement retries for unresumable interruptions and root/parent identity that cannot be opened.
+- `src-tauri/test_support/recovery_move_retirement/` — native filesystem contracts for move retirement, split by concern (#887) and sharing `fixtures.rs`'s `Fixture` helper: `mod.rs` (included from `retirement.rs` as `move_tests`) re-exports the generic retirement for every submodule; `fixtures.rs` builds/claims/retires a completed move; `lifecycle.rs` covers completion, restoration, subprocess-kill crash/resume replay and foreign-descendant preservation; `readonly_umask.rs` covers read-only payload discard refusal, restrictive-umask cleanup (also subprocess-based) and rootless-move forgetting; `planning_budget.rs` covers unplannable trees, decision withdrawal, journal headroom and stranded/forgotten discards; `mount_boundary.rs` covers unmounted endpoints, bind mounts on one device, payloads/mount points crossed by a move and mounts inside retained payloads (all ignored, namespace-only); `undo.rs` covers Undo refusal for a destination grown past its retirement plan and why it names a refused destination; `edited_destination.rs` covers a destination edited, deleted or grown after the move: Undo refused before any effect, the Discard that keeps the edit, Forget for stranded restorations and claim release (#795); `enforcement_observability.rs` covers enforcement retries for unresumable interruptions and root/parent identity that cannot be opened.
 - `src-tauri/src/files/recovery/move_execution.rs` — concrete durable move executor: creates/reopens private artifact roots, stages a cross-filesystem copy, displaces an overwritten destination, publishes, parks the source, removes a parked source and restores as the record's exact inverse. Real process-kill boundary contracts in `src-tauri/test_support/recovery_move_execution.rs`.
 - `src-tauri/src/files/recovery/forward_move.rs` — production durable-move orchestration: admission, binding a `MoveSpec` from admitted paths, promotion and execution; produces the `FileMutationReceipt` carrying a `MoveRecoveryReceipt`. Real-filesystem contracts in `src-tauri/test_support/recovery_forward_move.rs`.
 - `src-tauri/src/files/recovery/native_path.rs` — bounded lossless native entry paths tagged with the operating system; rejects cross-OS records before decoding authority.
@@ -743,6 +803,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `e2e-tauri/gated-suites.ts` — run/skip/fail decision for native suites that need an opt-in build or fixture directory; `TAURI_E2E_REQUIRE_GATED=1` turns a missing prerequisite into a named failure (#774). Contracts in `tests/qualification/gated-suites.test.ts`.
 - `e2e-tauri/specs/gated-describe.ts` — `gatedDescribe`, the Mocha adapter over that decision; separate from `specs/helpers.ts` because qualification tests import the helpers without Mocha types.
 - `e2e-tauri/external-job-fixture.ts` — Linux native-test `PATH` fixture for a deterministic long-running fake Gemini CLI.
+- `e2e-tauri/crop-pixel-oracle.ts` — serializable, bounded first-frame pixel and intrinsic-preview observers for native crop verification; preserves exact comparisons when decoder promises stall.
 - `e2e-tauri/specs/external-job-timeout.spec.ts` — real CLI timeout/reap, withheld output and Jobs-panel error outcome.
 - `e2e-tauri/diagnostics/artifact.ts` — shared best-effort diagnostic artifact writer: per-investigation log directory, ADR 0021 hashed file names, never masks the documented failure. Contract in `tests/qualification/diagnostic-artifact.test.ts`.
 - `e2e-tauri/diagnostics/process-timeline.ts` — process-only `/proc` session-loss sampler: renderer/driver classification, bounded rolling samples, PID+start-time renderer lifetimes (`Retire-when: #781 closed`).
@@ -761,6 +822,8 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `scripts/grant-macos-accessibility.sh` — CI-only, SIP-guarded Xcode Helper Accessibility grant for the Appium Mac2 pilot.
 - `.github/workflows/macos-native-ui.yml` — hosted macOS production bundle build, Appium Mac2 run and outcome artifact upload.
 - `scripts/run-native-soak.ts` — native soak configuration, run ownership and report finalization.
+- `scripts/e2e-shards.mjs` + `scripts/e2e-shard-timings.json` — CI browser shards as whole spec files balanced by recorded per-file CI durations (`plan` → `--test-list`; `record` refreshes timings from `gh run view --log`); contracts in `tests/e2e-shards.test.ts` (#1123). On PRs each shard plans only the specs `scripts/e2e-affected.mjs` selects from the PR diff (`--only`), skipping when its share is empty; pushes run everything (#1131).
+- `scripts/e2e-affected.mjs` — maps a diff to affected browser specs through `map-feature.md` clusters; ignores files the mock-backed suite never executes (src-tauri, tests, evidence, docs) and falls back to ALL for mock-invoke, hubs, config, dev-server scripts, e2e support and CI selection changes; contracts in `tests/e2e-affected.test.ts`.
 - `tests/qualification/native-soak.test.ts` — native qualification inputs, binary provenance, report and startup-marker contracts.
 - `tests/qualification/native-runner-edge-cases.test.ts` — process exit, cleanup and artifact containment edge cases.
 - `tests/qualification/macos-startup-phase-attribution.test.ts` — correlated macOS startup phase decomposition, retained unattributed residual (bound scaled with launch length) and half-bounce verdicts.
@@ -797,6 +860,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 
 - `src/lib/components/VideoPreview.svelte` — explicit native-decoder playback controls, focused media keys, error fallback and synchronous source detachment.
 - `src/lib/domain/video-preview.ts` — pure time/seek values and keyboard ownership, including held-key and Super handling.
+- `src-tauri/src/files/video_info.rs` — bounded head/tail codec sniffing (MP4/MOV, Matroska/WebM, AVI) and `save_file_copy` for the unsupported-codec preview state.
 - `src/lib/state/video-preview-lifetime.ts` — two-phase capability adoption and cancellation; rejects late source URLs and releases once.
 - `src/lib/api/video-preview.ts` — acknowledged native-session acquisition, scoped preparation and release IPC.
 - `src/test-support/video-preview-probe.ts` — hook-build-only DOM RPC observing native streaming counters.
@@ -823,11 +887,84 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `src-tauri/src/installed_plugins/lifecycle.rs` — declared state snapshots, preflight/commit/rollback journal and interrupted upgrade recovery.
 - `src-tauri/src/installed_plugins/provenance.rs` — optional recording facade and host-retained publisher leases for core edits/rename.
 - `src-tauri/src/file_picker.rs` — owned native open/save picker requests; replies are scoped to their creating window.
+- `src-tauri/src/process_ext/pipe_capture.rs` — shared Unix/Windows bounded stdout pipe capture with optional streaming and independently truncated prefix/suffix diagnostics; process-exit retirement drains queued bytes without a scheduling deadline.
 - `src-tauri/src/process_ext/windows_job.rs` — attach suspended launchers to kill-on-close JobObjects before descendants can start.
 - `src/lib/plugins/installed.ts` — load/remove installed contributions and synchronize package changes between windows.
-- `src/lib/plugins/runtime-sdk.ts`, `src/lib/plugins/svelte-runtime.d.ts` — frozen SDK and exact shared Svelte compiler/runtime bindings; host modules `ui/modal`, `ui/image-editor`, `ui/file-tiles` (capability `fileTiles`); capability `tileSize` (`FileViewPane.tileSize`, file-tiles `size`); capability `jobRetry` (`PluginJobs.accept` registration `retry`).
+- `src/test-support/file-view-eligibility.svelte.ts` — reactive pending/answer and activation gate for browser file-view first-paint tests; imported only by the intercepted demo fixture.
+- `src/lib/plugins/runtime-sdk.ts`, `src/lib/plugins/svelte-runtime.d.ts` — frozen SDK and exact shared Svelte compiler/runtime bindings; host modules `ui/modal`, `ui/image-editor`, `ui/file-tiles` (capability `fileTiles`), `ui/file-tile` (capability `fileTile`, including `tileGridMetrics`); capability `tileSize` (`FileViewPane.tileSize`, file-tiles `size`); capability `jobRetry` (`PluginJobs.accept` registration `retry`).
 - `src/lib/components/InstalledPluginSettings.svelte` — install, enable, remove and activation errors in Settings.
 
 TraceExplorer's image UI, provider adapters and SQLite journal are maintained in https://github.com/xnmp/TraceExplorer rather than compiled into this host. Core crop outcomes remain covered in `e2e/image-crop.spec.ts` and `e2e/image-editor.spec.ts`.
 
 - `src/lib/domain/settings-search.ts` — shared multi-token substring/subsequence filtering for general and plugin Settings.
+
+## Shared text services — new files
+
+- `src/lib/components/ai/LanguageModelsSettings.svelte` — global language-model profiles, default/enabled controls and explicit check/test actions in Settings.
+- `src/lib/components/ai/TextProfileEditor.svelte` — protocol-specific endpoint/model/executable, credential source and write-only key controls.
+- `src/lib/domain/text-connections.ts` — pure profile/config validation and discriminated public text contracts.
+- `src/lib/api/text-connections.ts` — typed native settings/credential/check/test commands and revision subscriptions.
+- `src/lib/api/mock-text-connections.ts` — isolated browser fixture using the public validation/revision rules.
+- `src/lib/state/text-connections.ts` — dirty draft/CAS, stale result/cancellation and cross-window event reconciliation.
+- `src-tauri/src/ai/mod.rs` — native short-text service admission, owned cancellation/deadlines, settings commands and safe committed revision notifications.
+- `src-tauri/src/ai/domain.rs` — native profile/request contracts, URL/default validation, non-secret context identity and safe errors.
+- `src-tauri/src/ai/storage.rs` — cross-process locking, synced config replacement/CAS and resumable copy-if-unset legacy preferences.
+- `src-tauri/src/ai/credentials.rs` — owner-scoped OS secrets and injectable test store; no secret reads in public settings output.
+- `src-tauri/src/ai/adapters.rs` — bounded cancellable text HTTP and dispatch to the CLI adapter.
+- `src-tauri/src/ai/cli.rs` — Codex/Claude Code CLI text adapter: isolation argv, allowlisted environment, managed-policy refusal, cached help probe, owned run and final-text parsing ([isolation notes](../shared-ai-cli-text-isolation.md)).
+- `src-tauri/src/ai/cli_tests.rs` — fake-CLI isolation, refusal, typed-failure and process-tree reaping tests.
+- `src-tauri/src/ai/tests.rs` — native local HTTP/fake CLI, cancellation, capacity, credential uncertainty, cross-process CAS and migration outcome tests.
+- `src-tauri/src/installed_plugins/text_service.rs` — active-only native reverse-text bridge with trusted incarnation identity and reserved cancellation capacity.
+- `src-tauri/src/installed_plugins/process_run.rs` — `host.process.run` validation, admission, owned execution with bounded stdin, and typed pre-spawn refusal codes.
+
+### Shared AI services implementation checkpoint
+
+- `src-tauri/src/ai/image_migration.rs` — native receipt-gated legacy image connection cutover, write fencing and rollback import epochs.
+- `src-tauri/src/installed_plugins/ai_operations.rs` — automatic original-output recovery, idle settlement and compatible retained-operation controls.
+- `src-tauri/src/installed_plugins/diagnostics.rs` — bounded broker stderr storage and safe error classification.
+- `src-tauri/src/installed_plugins/job_bridge.rs` — qualified native job registration, receipt observation, replacement-authority adoption, controls and origin snapshots.
+- `src-tauri/src/installed_plugins/service_bridge.rs` — declared reverse-service routing, artifact callbacks and original-operation recovery.
+- `src-tauri/src/installed_plugins/service_bridge_tests.rs` — private ledger and fake-transport fixtures for the real image service business boundary.
+- `src-tauri/src/installed_plugins/service_graph.rs` — pure declared service dependency, enablement and pre-admission replacement compatibility validation.
+- `src-tauri/src/installed_plugins/service_graph_tests.rs` — service graph version, identity, optional dependency and cycle contracts.
+- `src-tauri/src/installed_plugins/service_host.rs` — host lifetime service store and legacy recovery compatibility.
+- `src-tauri/src/native_deadline.rs` — scoped monotonic native lock, queue and RPC budgets.
+- `src-tauri/src/native_file_drag.rs` — async OS drag start (rejects shortcut sources before export), synchronous platform-completion retirement, sequence-bearing provenance and per-window receiver snapshots emitted before frontend channel reordering.
+- `src-tauri/test_support/native_file_drag.rs` — native session ordering, completion-backlog interleavings, gesture-sequence admission, complete-set verification, successor retirement and later external same-path contracts.
+- `src-tauri/src/durable_dir.rs` — per-platform directory-entry durability barrier (Unix fsync, Windows writable directory-handle flush).
+- `src-tauri/src/process_supervisor.rs` — Unix parent-death process group anchor and bounded owned CLI output.
+- `src-tauri/src/recovery_actor.rs` — fixed-worker generation recovery ownership, queue limits and original deadlines.
+- `src-tauri/src/service_state/artifacts.rs` — captured inputs, reserved output stages, sealing, acquisition proof and retained artifact custody.
+- `src-tauri/src/service_state/host_spools.rs` — shared atomic sealed-sidecar completion commit and derived identity recovery, immutable recorded stdout/stderr custody and empty-stream repair, generation-scoped recovery, persistence checkpoints, writer pins and quota-visible collection.
+- `src-tauri/src/service_state/intents.rs` — immutable semantic admission identities and replay-conflict validation.
+- `src-tauri/src/service_state/job.rs` — durable host job presentation and snapshot wire records.
+- `src-tauri/src/service_state/job_store.rs` — transactional job revisions, acquired-output completion, participant-removal terminalization, quota-full delivery presentation, recovery and pruning.
+- `src-tauri/src/service_state/mod.rs` — service ledger module boundary.
+- `src-tauri/src/service_state/model.rs` — native package generations, artifact descriptors, admissions and quotas.
+- `src-tauri/src/service_state/receipt.rs` — pure automatic settlement policy and strict canonical provider receipt validation including bounded Codex diagnostics.
+- `src-tauri/src/service_state/receipts.rs` — durable monotonic receipt acceptance, shared session success witnesses, compatible preparation adoption grants, explicit participant removal, automatic dismissal and immutable execution evidence.
+- `src-tauri/src/service_state/request.rs` — credential-free image request semantics and input/option validation.
+- `src-tauri/src/service_state/rules.rs` — pure service ownership, phase, identity and quota rules.
+- `src-tauri/src/service_state/store.rs` — SQLite service ownership transactions, all-phase participant inventory, durable generation retirement, retention and execution claims.
+- `src-tauri/src/service_state/tests.rs` — private native ledger, custody, restart, corruption and commit-failure fixtures.
+- `src-tauri/src/service_state/test_fs.rs` — per-ledger filesystem fault and power-loss oracle for creation, partial writes, rename, and unlink; tracks entry and content durability separately.
+- `src/lib/api/mock-ai-presentation.ts` — mock command parity for native jobs and automatic AI settlement.
+- `src/lib/api/native-plugin-jobs.ts` — native job snapshots, events and immutable-key controls.
+- `src/lib/domain/ai-operations.ts` — native AI operation fixture metadata validation and action capabilities.
+- `src/lib/domain/native-plugin-jobs.ts` — strict native job validation and revision merge rules.
+- `src/lib/state/native-plugin-jobs.ts` — subscribe-before-snapshot job reconciliation and origin-scoped notifications.
+- `src/test-support/modal/DirtyCloseDialog.svelte` — browser fixture for dirty nested modal ownership.
+- `src/test-support/modal/PaneTestDialog.svelte` — contributed pane-dialog acceptance fixture with persistent draft, guarded close and local submit behavior.
+
+- `src-tauri/src/installed_plugins/backend_native_tests.rs` — isolated actual Wry/production-broker fixture for held private validation, reverse quarantine, independent controls, rollback, retirement and publisher-aware shutdown.
+- `src-tauri/src/installed_plugins/backend_native_recovery_tests.rs` — actual Wry fixture seeding startup claims: readiness held until recovery, shutdown waits for in-flight recovery IO, no paid start.
+- `src-tauri/src/installed_plugins/mutation_matrix_tests.rs` — provider/consumer × lifecycle action × every phase/job state invariants, crash recovery, late workers and incompatible required dependencies.
+- `src-tauri/src/installed_plugins/ai_operations_model_tests.rs` — shrinking Proptest reference machine over real pre-admission, admission, artifact, job, recovery and lifecycle transitions; phased persistence, admission-free spools and independent work/delivery/byte/quota oracles.
+- `src-tauri/src/installed_plugins/mutation_native_tests.rs` — actual Wry fixture: explicit removal cancels active work and releases custody without an AI veto.
+- `src-tauri/src/installed_plugins/service_native_tests.rs` — actual Wry fixture: per-consumer status timeouts, transport-loss recovery, reverse RPC correlation and routing without Trace.
+- `src-tauri/src/installed_plugins/service_native_kill_tests.rs` — actual Wry fixture: consumer SIGKILLed while the provider runs; both cancel/success gate orders settle once, without failure, replayed start or a retained artifact lease.
+- `src-tauri/src/installed_plugins/startup_native_tests.rs` — actual Wry fixtures: unreadable AI storage keeps legacy backends and retries; startup recovery errors degrade instead of failing setup; a process without the profile never recovers live claims.
+
+- `src/lib/domain/pane-dialog-keys.ts` — editable pane-dialog command input policy from registry declarations, independent of destination modality.
+
+- `src/lib/domain/command-admission.ts` — shared pane/window destination admission, consumed by registry execution and keyboard routing.

@@ -77,6 +77,42 @@ test("blur retires preview input before later movement", async ({ page }) => {
   expect(await preferences(page)).toEqual(before);
 });
 
+// A capture-phase scroll listener ends the drag when a scroll moves its handle.
+// A file list scrolling inside the shrinking workspace (keeping its selection in
+// view) does not move the handle and must not end, or commit, the drag.
+test("an unrelated list scroll does not end a top preview drag", async ({ page }) => {
+  await openPreview(page, "top");
+  const pane = page.locator(".preview-pane"), initial = (await pane.boundingBox())!.height;
+  const before = await preferences(page), { x, y } = await begin(page);
+  await page.mouse.move(x, y + 30);
+  await expect.poll(async () => (await pane.boundingBox())!.height - initial).toBeCloseTo(30, 0);
+  await page.locator(".file-list .virtual-viewport").first().evaluate(viewport => new Promise<void>(resolve => {
+    viewport.addEventListener("scroll", () => resolve(), { once: true });
+    viewport.scrollTop = viewport.scrollTop > 0 ? 0 : 1;
+    if (viewport.scrollHeight <= viewport.clientHeight) viewport.dispatchEvent(new Event("scroll"));
+  }));
+  await page.mouse.move(x, y + 60);
+  await expect.poll(async () => (await pane.boundingBox())!.height - initial).toBeCloseTo(60, 0);
+  expect(await preferences(page)).toEqual(before);
+  await page.mouse.up();
+  await expect.poll(async () => (await preferences(page)).height).toBeCloseTo(300, 1);
+});
+
+test("a scroll that carries the handle ends the preview drag where it was", async ({ page }) => {
+  await openPreview(page, "top");
+  const pane = page.locator(".preview-pane"), initial = (await pane.boundingBox())!.height;
+  const { x, y } = await begin(page);
+  await page.mouse.move(x, y + 30);
+  await expect.poll(async () => (await pane.boundingBox())!.height - initial).toBeCloseTo(30, 0);
+  // The preview pane is an ancestor of its handle.
+  await pane.evaluate(element => element.dispatchEvent(new Event("scroll")));
+  await expect.poll(async () => (await preferences(page)).height).toBeCloseTo(270, 1);
+  await page.mouse.move(x, y + 60);
+  await page.mouse.up();
+  await expect.poll(async () => (await pane.boundingBox())!.height - initial).toBeCloseTo(30, 0);
+  expect((await preferences(page)).height).toBeCloseTo(270, 1);
+});
+
 test("switching top to bottom discards the old-direction draft", async ({ page }) => {
   await openPreview(page, "top");
   const { x, y } = await begin(page);

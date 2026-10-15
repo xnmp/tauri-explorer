@@ -196,3 +196,13 @@ export function formatSize(bytes: number): string {
   const formatted = value % 1 === 0 ? value.toFixed(0) : value.toFixed(1);
   return `${formatted} ${units[i]}`;
 }
+
+/**
+ * "W × H" pixel resolution for the Preview info row (#1118), or "" when the
+ * dimensions are unknown (zero for SVGs without intrinsic size, non-finite).
+ */
+export function formatResolution(width: number, height: number): string {
+  if (!Number.isFinite(width) || !Number.isFinite(height)) return "";
+  if (width <= 0 || height <= 0) return "";
+  return `${Math.round(width)} × ${Math.round(height)}`;
+}

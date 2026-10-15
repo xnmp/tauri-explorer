@@ -6,6 +6,8 @@
  * fit zoom, toggles it; Esc exits; +/- and 0 zoom; Ctrl+wheel zooms at the
  * cursor; drag and the arrow keys pan while zoomed. At the base zoom,
  * Left/Right call `navigate` (file sibling stepping), and do nothing without it.
+ * A text subject (#1039) zooms with the plain wheel too, never pans, always
+ * steps with Left/Right and scrolls with Up/Down.
  * The math lives in `domain/image-viewer-zoom.ts`.
  *
  * `createPreviewFullscreen` is the state and event handling, with no effects,
@@ -27,6 +29,8 @@ import {
   type ZoomView,
 } from "$lib/domain/image-viewer-zoom";
 import { dialogStore } from "$lib/state/dialogs.svelte";
+import { modalOwnership } from "$lib/state/modal-ownership.svelte";
+import { windowTabsManager } from "$lib/state/window-tabs.svelte";
 
 /** The parts of a DOM event the handlers read, so tests can pass plain objects. */
 type KeyInput = Pick<KeyboardEvent, "key" | "preventDefault" | "stopImmediatePropagation">;
@@ -41,6 +45,10 @@ export interface PreviewFullscreenOptions {
   navigate?(delta: -1 | 1): void;
   /** True while the subject handles its own keys (PDF, video): only Esc stays ours. */
   subjectOwnsKeys?(): boolean;
+  /** True while the subject is reflowing text: wheel and +/- zoom it, Up/Down scroll it. */
+  subjectZoomsText?(): boolean;
+  /** Scrolls the text subject by `dy` pixels (Up/Down while `subjectZoomsText`). */
+  scrollSubject?(dy: number): void;
   /** True while keys belong to something else entirely (a modal dialog). */
   keysBlocked?(): boolean;
 }
@@ -62,6 +70,7 @@ export function createPreviewFullscreen(options: PreviewFullscreenOptions = {}) 
   }
 
   function toggle(): void {
+    if (!active && options.keysBlocked?.()) return;
     options.onToggle?.();
     active = !active;
     resetZoom();
@@ -73,7 +82,7 @@ export function createPreviewFullscreen(options: PreviewFullscreenOptions = {}) 
   }
 
   function zoomAt(zoom: number, clientX: number, clientY: number): void {
-    const offset = container ? centerOffset(container.getBoundingClientRect(), clientX, clientY) : null;
+    const offset = container && !options.subjectZoomsText?.() ? centerOffset(container.getBoundingClientRect(), clientX, clientY) : null;
     view = zoomAround(view, zoom, offset);
   }
 
@@ -81,7 +90,7 @@ export function createPreviewFullscreen(options: PreviewFullscreenOptions = {}) 
   function handleKey(event: KeyInput): void {
     if (!active || options.keysBlocked?.()) return;
     if (options.subjectOwnsKeys?.() && event.key !== "Escape") return;
-    const action = fullscreenKeyAction(event.key, view.zoom);
+    const action = fullscreenKeyAction(event.key, view.zoom, options.subjectZoomsText?.() ? "text" : "image");
     if (!action) return;
     event.preventDefault();
     event.stopImmediatePropagation();
@@ -90,6 +99,7 @@ export function createPreviewFullscreen(options: PreviewFullscreenOptions = {}) 
       case "zoom": view = withZoom(view, view.zoom * action.factor); break;
       case "reset": resetZoom(); break;
       case "pan": view = panBy(view, action.dx, action.dy); break;
+      case "scroll": options.scrollSubject?.(action.dy); break;
       case "step": options.navigate?.(action.delta); break;
     }
   }
@@ -128,14 +138,19 @@ export function createPreviewFullscreen(options: PreviewFullscreenOptions = {}) 
     panning = false;
   }
 
-  /** A clean click at fit zoom toggles; a drag release or a click while zoomed does not. */
-  function click(event: ClickInput): void {
+  /**
+   * A clean click at fit zoom toggles, but entering fullscreen needs the click
+   * to land on the picture; in fullscreen any clean fit-zoom click exits. A
+   * drag release or a click while zoomed does not toggle.
+   */
+  function click(event: ClickInput, onPicture: boolean): void {
     event.stopPropagation();
     if (panMoved) {
       panMoved = false;
       return;
     }
     if (active && view.zoom > 1) return;
+    if (!active && !onPicture) return;
     toggle();
   }
 
@@ -165,13 +180,21 @@ export type PreviewFullscreen = ReturnType<typeof createPreviewFullscreen>;
 
 /** `createPreviewFullscreen` plus its window listener and chrome-hiding attribute. */
 export function usePreviewFullscreen(options: PreviewFullscreenOptions = {}): PreviewFullscreen {
-  const fullscreen = createPreviewFullscreen({ keysBlocked: () => dialogStore.hasModalOpen, ...options });
+  const paneCovered = () => modalOwnership.hasPaneOpen(windowTabsManager.activePaneId);
+  const keysBlocked = () => paneCovered() || !!options.keysBlocked?.();
+  const fullscreen = createPreviewFullscreen({ ...options, keysBlocked });
+
+  // Pane dialogs need the preview out of their way before paint. Window modals
+  // own keys while open, but preserve the fullscreen viewer underneath.
+  $effect(() => { if (fullscreen.active && paneCovered()) fullscreen.exit(); });
 
   // Capture phase + stopImmediatePropagation so the viewer's keys win over the
   // global keyboard handler in +page.svelte.
   $effect(() => {
     if (!fullscreen.active) return;
-    const onKey = (event: KeyboardEvent) => fullscreen.handleKey(event);
+    const onKey = (event: KeyboardEvent) => {
+      if (!dialogStore.isInputBlocked(event, windowTabsManager.activePaneId)) fullscreen.handleKey(event);
+    };
     window.addEventListener("keydown", onKey, { capture: true });
     return () => window.removeEventListener("keydown", onKey, { capture: true });
   });

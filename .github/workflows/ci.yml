@@ -9,9 +9,55 @@ on:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.ref_name }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  # Docs-only PRs skip the heavy suites. Required status contexts must still
+  # report, and a skipped matrix job never expands its contexts, so required
+  # jobs keep running and gate their steps on this output instead. Anything not
+  # matching the docs patterns, and every non-PR event, counts as code.
+  changes:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      code: ${{ github.event_name != 'pull_request' && 'true' || steps.filter.outputs.code }}
+      # Browser specs a PR can affect (scripts/e2e-affected.mjs, #1131): "ALL",
+      # "NONE" or space-separated e2e/ spec paths. Every non-PR event runs ALL,
+      # so dev keeps full Chromium and WebKit coverage after each merge.
+      e2e: ${{ github.event_name == 'pull_request' && steps.e2e.outputs.selection || 'ALL' }}
+    steps:
+      - id: filter
+        if: github.event_name == 'pull_request'
+        uses: dorny/paths-filter@v3
+        with:
+          # A file is code unless it matches a docs exclusion.
+          predicate-quantifier: every
+          filters: |
+            code:
+              - '**'
+              - '!docs/**'
+              - '!**/*.md'
+              - '!output/**'
+
+      # The PR merge commit's first parent is the base tip, so HEAD^1...HEAD is
+      # exactly the PR's change. Any selector failure falls back to ALL.
+      - uses: actions/checkout@v7
+        if: github.event_name == 'pull_request'
+        with:
+          fetch-depth: 2
+
+      - id: e2e
+        if: github.event_name == 'pull_request'
+        run: |
+          if ! raw=$(node scripts/e2e-affected.mjs --strict HEAD^1 HEAD); then raw=ALL; fi
+          selection=$(tr '\n' ' ' <<< "$raw")
+          selection="${selection% }"
+          echo "selection=${selection:-NONE}" >> "$GITHUB_OUTPUT"
+          echo "Browser E2E selection: ${selection:-NONE}" >> "$GITHUB_STEP_SUMMARY"
+
   # Code maps are only useful while they are accurate: an agent that trusts a map
   # naming a moved file searches worse than one with no map at all. Two guards —
   # references (every file a map names exists) and coverage (every source file is
@@ -26,6 +72,8 @@ jobs:
         run: python3 docs/code-map/validate.py --coverage
 
   frontend-checks:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -58,7 +106,12 @@ jobs:
   # Keep one browser worker per runner; split the growing suite across runners
   # so contention-sensitive tests retain their existing execution conditions.
   # Two shards of 561 tests ran 19-20m and began hitting the timeout.
+  # Shards are whole spec files balanced by recorded CI duration
+  # (scripts/e2e-shards.mjs, #1123): Playwright's count-based --shard left one
+  # shard ~1.8x longer than another, and the slowest shard sets wall time.
   chromium:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     strategy:
@@ -68,18 +121,44 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
+      # Plans only the specs this PR can affect (all of them outside PRs). A
+      # shard left with nothing to run skips the remaining steps and passes.
+      - name: Plan duration-balanced shard
+        id: plan
+        env:
+          E2E_SELECTION: ${{ needs.changes.outputs.e2e }}
+        run: |
+          tr ' ' '\n' <<< "$E2E_SELECTION" > "$RUNNER_TEMP/e2e-selection.txt"
+          node scripts/e2e-shards.mjs plan --engine chromium --shard ${{ matrix.shard }}/${{ strategy.job-total }} --only "$RUNNER_TEMP/e2e-selection.txt" --out "$RUNNER_TEMP/e2e-shard.txt"
+          if [ -s "$RUNNER_TEMP/e2e-shard.txt" ]; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "run=false" >> "$GITHUB_OUTPUT"
+            echo "No affected chromium specs in this shard." >> "$GITHUB_STEP_SUMMARY"
+          fi
+
       - uses: oven-sh/setup-bun@v2
+        if: steps.plan.outputs.run == 'true'
         with:
           bun-version: latest
 
       - name: Install dependencies
+        if: steps.plan.outputs.run == 'true'
         run: bun install --frozen-lockfile
 
       - name: Install Playwright browser
+        if: steps.plan.outputs.run == 'true'
         run: npx playwright install --with-deps chromium
 
+      # Fails unless Playwright selects exactly the planned files; --test-list
+      # silently runs nothing for an unresolvable entry.
+      - name: Verify shard selection
+        if: steps.plan.outputs.run == 'true'
+        run: node scripts/e2e-shards.mjs verify --engine chromium --list "$RUNNER_TEMP/e2e-shard.txt"
+
       - name: E2E tests
-        run: npx playwright test --shard=${{ matrix.shard }}/3 --reporter=line,html
+        if: steps.plan.outputs.run == 'true'
+        run: npx playwright test --project=chromium --test-list "$RUNNER_TEMP/e2e-shard.txt" --reporter=line,html
 
       - name: Upload Playwright report on failure
         if: failure()
@@ -92,48 +171,90 @@ jobs:
   # Preserve the protected-branch check name and require every Chromium shard.
   frontend:
     if: always()
-    needs: [frontend-checks, chromium]
+    needs: [changes, frontend-checks, chromium]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
+      # Upstream jobs are skipped only on a docs-only PR; on code every one must
+      # succeed, so a failed, cancelled or skipped shard still fails this check.
       - name: Require frontend validation and browser outcomes
         env:
+          CHANGES_RESULT: ${{ needs.changes.result }}
+          CODE: ${{ needs.changes.outputs.code }}
           CHECKS_RESULT: ${{ needs.frontend-checks.result }}
           CHROMIUM_RESULT: ${{ needs.chromium.result }}
-        run: test "$CHECKS_RESULT" = success && test "$CHROMIUM_RESULT" = success
+        run: |
+          test "$CHANGES_RESULT" = success
+          if [ "$CODE" = true ]; then
+            test "$CHECKS_RESULT" = success && test "$CHROMIUM_RESULT" = success
+          else
+            test "$CHECKS_RESULT" = skipped && test "$CHROMIUM_RESULT" = skipped
+          fi
 
   # WebKit ≈ WKWebView — the closest automated proxy for the macOS webview
   # (no WKWebView WebDriver exists). Catches Safari-family CSS/JS breakage.
   webkit-tests:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
     # The full 777-test suite exceeded 40m, and two shards still ran 24-38m,
     # so runner contention pushed them past the bound (#932). Keep one worker
-    # on each runner and the per-runner bound; partition four ways for headroom.
+    # on each runner and the per-runner bound. Five duration-balanced shards
+    # (~20m each from recorded CI timings, #1123) replace four count-based
+    # ones whose slowest ran 30m.
     timeout-minutes: 40
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3, 4]
+        shard: [1, 2, 3, 4, 5]
     steps:
       - uses: actions/checkout@v7
 
+      # Plans only the specs this PR can affect (all of them outside PRs). A
+      # shard left with nothing to run skips the remaining steps and passes.
+      - name: Plan duration-balanced shard
+        id: plan
+        env:
+          E2E_SELECTION: ${{ needs.changes.outputs.e2e }}
+        run: |
+          tr ' ' '\n' <<< "$E2E_SELECTION" > "$RUNNER_TEMP/e2e-selection.txt"
+          node scripts/e2e-shards.mjs plan --engine webkit --shard ${{ matrix.shard }}/${{ strategy.job-total }} --only "$RUNNER_TEMP/e2e-selection.txt" --out "$RUNNER_TEMP/e2e-shard.txt"
+          if [ -s "$RUNNER_TEMP/e2e-shard.txt" ]; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "run=false" >> "$GITHUB_OUTPUT"
+            echo "No affected webkit specs in this shard." >> "$GITHUB_STEP_SUMMARY"
+          fi
+
       - uses: oven-sh/setup-bun@v2
+        if: steps.plan.outputs.run == 'true'
         with:
           bun-version: latest
 
       - name: Install dependencies
+        if: steps.plan.outputs.run == 'true'
         run: bun install --frozen-lockfile
 
       - name: Install Playwright WebKit
+        if: steps.plan.outputs.run == 'true'
         run: npx playwright install --with-deps webkit
 
+      # Fails unless Playwright selects exactly the planned files; --test-list
+      # silently runs nothing for an unresolvable entry.
+      - name: Verify shard selection
+        if: steps.plan.outputs.run == 'true'
+        env:
+          WEBKIT: "1"
+        run: node scripts/e2e-shards.mjs verify --engine webkit --list "$RUNNER_TEMP/e2e-shard.txt"
+
       - name: E2E tests (WebKit)
+        if: steps.plan.outputs.run == 'true'
         env:
           WEBKIT: "1"
           PW_VIDEO_HEADED: "1"
         # Only video decoder specs opt into GTK; other specs retain headless WPE.
         # The display belongs to this hosted runner and is destroyed after testing.
-        run: xvfb-run -a --server-args="-screen 0 1920x1080x24 -nolisten tcp" npx playwright test --project=webkit --shard=${{ matrix.shard }}/4 --reporter=line,html
+        run: xvfb-run -a --server-args="-screen 0 1920x1080x24 -nolisten tcp" npx playwright test --project=webkit --test-list "$RUNNER_TEMP/e2e-shard.txt" --reporter=line,html
 
       - name: Upload Playwright report on failure
         if: failure()
@@ -146,18 +267,53 @@ jobs:
   # WebKit is also a protected context: every shard must complete successfully.
   webkit:
     if: always()
-    needs: [webkit-tests]
+    needs: [changes, webkit-tests]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
       - name: Require all WebKit browser outcomes
         env:
+          CHANGES_RESULT: ${{ needs.changes.result }}
+          CODE: ${{ needs.changes.outputs.code }}
           WEBKIT_RESULT: ${{ needs.webkit-tests.result }}
-        run: test "$WEBKIT_RESULT" = success
+        run: |
+          test "$CHANGES_RESULT" = success
+          if [ "$CODE" = true ]; then
+            test "$WEBKIT_RESULT" = success
+          else
+            test "$WEBKIT_RESULT" = skipped
+          fi
 
-  rust:
+  # The default-feature and opt-in feature suites each compile a different lib
+  # test binary and run the full ~6 min lib suite, so run them on parallel
+  # runners rather than back to back (#1123). Both stay full passes:
+  # `not(feature = "durable-recovery")` tests exist only in the default suite.
+  rust-suite:
+    name: rust-suite (${{ matrix.suite }})
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    # A cold cache build plus the lib suite has exceeded 30 minutes.
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # --features avif keeps the (default-off) AVIF code linted and
+          # tested; this runner has a current dav1d. The release build ships
+          # without it.
+          - suite: default
+            clippy-features: avif
+            test-features: avif
+          # Keep the deferred recovery policy verified without enabling it in
+          # release artifacts. Default-policy capacity coverage runs in the
+          # default suite. durable-recovery is read only on Linux, like this
+          # runner (ADR 0020). e2e-hooks (#884) rides along so the hook-build
+          # branches are linted and unit-tested on Linux too; it is absent
+          # from release artifacts.
+          - suite: opt-in
+            clippy-features: avif,durable-recovery,e2e-renderer-recovery,e2e-hooks
+            test-features: avif,durable-recovery,e2e-hooks
     steps:
       - uses: actions/checkout@v7
 
@@ -174,32 +330,48 @@ jobs:
         with:
           components: rustfmt, clippy
 
+      # Each suite builds different feature artifacts; separate cache keys
+      # keep the two matrix jobs from overwriting each other's target dir.
+      # Save only from dev so PR branches restore dev's caches instead of
+      # adding ~1.5 GB entries each and evicting other workflows' caches.
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: src-tauri
+          key: ${{ matrix.suite }}
+          save-if: ${{ github.ref == 'refs/heads/dev' }}
 
       # tauri::generate_context! requires the frontendDist dir to exist.
       - name: Create empty frontend dist
         run: mkdir -p build
 
       - name: Format check
+        if: ${{ matrix.suite == 'default' }}
         run: cargo fmt --manifest-path src-tauri/Cargo.toml --all -- --check
 
-      # --features avif keeps the (default-off) AVIF code linted and tested;
-      # this runner has a current dav1d. The release build ships without it.
       - name: Clippy
-        run: cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets --features avif -- -D warnings
+        run: cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets --features ${{ matrix.clippy-features }} -- -D warnings
 
       - name: Rust tests
-        run: cargo test --manifest-path src-tauri/Cargo.toml --features avif
+        run: cargo test --manifest-path src-tauri/Cargo.toml --features ${{ matrix.test-features }}
 
-      # Keep the deferred recovery policy verified without enabling it in
-      # release artifacts. Default-policy capacity coverage runs above.
-      # durable-recovery is read only on Linux, like this runner (ADR 0020).
-      # e2e-hooks (#884) rides along so the hook-build branches are linted
-      # and unit-tested on Linux too; it is absent from release artifacts.
-      - name: Opt-in recovery Clippy
-        run: cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets --features avif,durable-recovery,e2e-renderer-recovery,e2e-hooks -- -D warnings
-
-      - name: Opt-in recovery tests
-        run: cargo test --manifest-path src-tauri/Cargo.toml --features avif,durable-recovery,e2e-hooks
+  # Preserve the protected-branch check name and require every Rust suite.
+  rust:
+    if: always()
+    needs: [changes, rust-suite]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      # Skipped only on a docs-only PR; on code every suite must succeed, so a
+      # failed, cancelled or skipped suite still fails this check.
+      - name: Require all Rust suite outcomes
+        env:
+          CHANGES_RESULT: ${{ needs.changes.result }}
+          CODE: ${{ needs.changes.outputs.code }}
+          RUST_RESULT: ${{ needs.rust-suite.result }}
+        run: |
+          test "$CHANGES_RESULT" = success
+          if [ "$CODE" = true ]; then
+            test "$RUST_RESULT" = success
+          else
+            test "$RUST_RESULT" = skipped
+          fi

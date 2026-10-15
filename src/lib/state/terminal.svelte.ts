@@ -9,6 +9,7 @@
 
 import { createDeferredFocusRequest, type DeferredFocusRequest } from "./deferred-focus";
 import { dialogStore } from "./dialogs.svelte";
+import { windowTabsManager } from "./window-tabs.svelte";
 
 export class TerminalPanelStore {
   visible = $state(false);
@@ -19,7 +20,7 @@ export class TerminalPanelStore {
   constructor(private requestFocus: () => DeferredFocusRequest = () =>
     // Input owns the request, not activeElement identity: an older navigation
     // may still restore listing focus while this panel's chunk is loading.
-    createDeferredFocusRequest(window, () => !dialogStore.hasModalOpen)) {}
+    createDeferredFocusRequest(window, () => !dialogStore.isPaneBlocked(windowTabsManager.activePaneId))) {}
 
   /** Registered by the mounted TerminalPanel: types text into the shell
    *  prompt. Focus follows the separately owned opening request (#265). */

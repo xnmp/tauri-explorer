@@ -1,11 +1,12 @@
 <script lang="ts">
   import { onDestroy, untrack } from "svelte";
-  import { loadVideoPreview } from "$lib/api/video-preview";
+  import { loadVideoPreview, probeVideoCodec, saveVideoCopy } from "$lib/api/video-preview";
   import { openFile } from "$lib/api/open";
   import { extractError } from "$lib/api/common";
   import { dialogStore } from "$lib/state/dialogs.svelte";
+  import { windowTabsManager } from "$lib/state/window-tabs.svelte";
   import { keybindingsStore } from "$lib/state/keybindings.svelte";
-  import { mediaTime, seekTime, videoKeyAction } from "$lib/domain/video-preview";
+  import { classifyVideoFailure, unsupportedVideoMessage, mediaTime, seekTime, videoClickAction, videoKeyAction } from "$lib/domain/video-preview";
   import type { VideoSource } from "$lib/state/video-preview-lifetime";
   let { path, name, fullscreen, ontogglefullscreen }: {path:string;name:string;fullscreen:boolean;ontogglefullscreen:()=>void} = $props();
   let video = $state<HTMLVideoElement | null>(null);
@@ -63,7 +64,7 @@
   function setVolume(value: number) { if (video) {video.volume = Math.max(0,Math.min(1,value));if (value > 0) video.muted = false;} }
   function toggleMute() { if (video) video.muted = !video.muted; }
   function onKey(event: KeyboardEvent) {
-    if (dialogStore.hasModalOpen) return;
+    if (dialogStore.isInputBlocked(event, windowTabsManager.activePaneId)) return;
     const target = event.target as HTMLElement;
     const action = videoKeyAction(event,target.tagName === "INPUT" ? "range" : target.closest("button") ? "button" : "surface", keybindingsStore.trackedMetaHeld);
     if (!action) return;
@@ -82,11 +83,28 @@
       case "fullscreen": ontogglefullscreen(); break;
     }
   }
-  function mediaFailed() {
+  let unsupported = $state(false);
+  let saveError = $state<string | null>(null);
+  async function mediaFailed() {
     if (disposed) return;
-    fail(video?.error?.code === MediaError.MEDIA_ERR_DECODE || video?.error?.code === MediaError.MEDIA_ERR_SRC_NOT_SUPPORTED
-      ? "This video format or codec is not supported by your system."
-      : "Cannot load this video. It may have changed or become unavailable.");
+    if (classifyVideoFailure(video?.error?.code) === "unavailable") {
+      fail("Cannot load this video. It may have changed or become unavailable.");
+      return;
+    }
+    unsupported = true;
+    fail(unsupportedVideoMessage(null));
+    const info = await probeVideoCodec(path);
+    if (!disposed && info) error = unsupportedVideoMessage(info);
+  }
+  async function download() {
+    saveError = null;
+    try { await saveVideoCopy(path, name); }
+    catch (cause) { if (!disposed) saveError = `Cannot save copy: ${extractError(cause)}`; }
+  }
+  function onStageClick(event: MouseEvent) {
+    const target = event.target as HTMLElement;
+    const control = target instanceof HTMLVideoElement ? "surface" : target.closest("button") ? "button" : "message";
+    if (videoClickAction(control) === "fullscreen") ontogglefullscreen();
   }
   async function openExternal() {
     const result = await openFile(path);
@@ -96,14 +114,15 @@
 
 <!-- svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_noninteractive_element_interactions -- focusable media group owns playback shortcuts; its controls retain native input behavior. -->
 <div class="video-preview" role="group" aria-label="Video player for {name}" tabindex="0" onkeydown={onKey}>
-  <div class="video-stage" class:failed={!!error}>
+  <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -- pointer shortcut; the focusable group's F key and the fullscreen button are the keyboard path. -->
+  <div class="video-stage" class:failed={!!error} onclick={onStageClick}>
     <video bind:this={video} src={source?.url} preload="metadata" playsinline aria-label="Video preview of {name}"
       onloadedmetadata={sync} onloadeddata={sync} ondurationchange={sync} ontimeupdate={sync}
       onplay={sync} onpause={sync} onended={sync} onvolumechange={sync} onseeked={sync} onerror={mediaFailed}>
       <track kind="captions" />
     </video>
     {#if error}
-      <div class="video-message" role="status"><span>{error}</span><button type="button" onclick={openExternal}>Open externally</button></div>
+      <div class="video-message" role="status"><span>{error}</span>{#if saveError}<span class="save-error">{saveError}</span>{/if}{#if unsupported}<button type="button" onclick={download}>Download</button>{/if}<button type="button" onclick={openExternal}>Open externally</button></div>
     {:else if !ready}
       <div class="video-message" role="status">Loading video…</div>
     {/if}

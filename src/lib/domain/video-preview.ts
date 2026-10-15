@@ -24,6 +24,10 @@ export function videoKeyAction(
     ? "consume" : action;
 }
 
+export function videoClickAction(control: "surface" | "button" | "message"): VideoAction | null {
+  return control === "surface" ? "fullscreen" : null;
+}
+
 export function mediaTime(seconds: number): string {
   if (!Number.isFinite(seconds) || seconds < 0) return "0:00";
   const value = Math.floor(seconds);
@@ -36,4 +40,18 @@ export function mediaTime(seconds: number): string {
 export function seekTime(time: number, duration: number): number {
   if (!Number.isFinite(duration) || duration <= 0) return 0;
   return Math.max(0, Math.min(duration, Number.isFinite(time) ? time : 0));
+}
+
+export interface VideoCodecInfo { container: string | null; videoCodec: string | null; audioCodec: string | null; }
+
+/** Unsupported-state message; names the codec when the probe found one. */
+export function unsupportedVideoMessage(info: VideoCodecInfo | null): string {
+  const parts = [info?.videoCodec && `video: ${info.videoCodec}`, info?.audioCodec && `audio: ${info.audioCodec}`].filter(Boolean);
+  const detail = parts.length ? `Codec — ${parts.join(", ")}${info?.container ? ` (${info.container})` : ""}.` : "Codec could not be determined.";
+  return `This video format or codec is not supported by your system. ${detail}`;
+}
+
+/** MediaError codes 3 (decode) and 4 (source not supported) mean the codec cannot be played; others are load failures. */
+export function classifyVideoFailure(code: number | undefined): "unsupported" | "unavailable" {
+  return code === 3 || code === 4 ? "unsupported" : "unavailable";
 }

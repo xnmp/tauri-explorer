@@ -2284,6 +2284,55 @@ impl WebView {
   }
 }
 
+/// LOCAL PATCH: preserve platform callback metadata before Tauri queues events.
+/// The observer does not replace the ordinary Wry drag/drop handler.
+pub mod drag_drop_snapshot {
+  use super::DragDropEvent;
+  use std::sync::{Arc, Mutex};
+
+  /// Native top-level window ID, event, and callback-time copy modifier.
+  pub type Observer = Arc<dyn Fn(usize, &DragDropEvent, bool) + Send + Sync>;
+  static OBSERVER: Mutex<Option<Observer>> = Mutex::new(None);
+
+  /// Install the host observer before creating webviews.
+  pub fn set_observer(observer: Option<Observer>) {
+    *OBSERVER.lock().unwrap_or_else(|poison| poison.into_inner()) = observer;
+  }
+
+  /// Invoke a platform event's observer before the normal queued handler.
+  pub fn dispatch(
+    window: usize,
+    copy_modifier: bool,
+    event: DragDropEvent,
+    handler: &dyn Fn(DragDropEvent) -> bool,
+  ) -> bool {
+    let observer = OBSERVER
+      .lock()
+      .unwrap_or_else(|poison| poison.into_inner())
+      .clone();
+    if let Some(observer) = observer {
+      observer(window, &event, copy_modifier);
+    }
+    handler(event)
+  }
+
+  /// Deferred platform callbacks must check the original receiver's lifetime
+  /// before using its recyclable native ID. The platform supplies identity
+  /// from weak references to the original view and top-level window.
+  pub fn dispatch_deferred(
+    window: usize,
+    copy_modifier: bool,
+    event: DragDropEvent,
+    original_receiver: impl FnOnce() -> Option<usize>,
+    handler: &dyn Fn(DragDropEvent) -> bool,
+  ) -> bool {
+    if original_receiver() != Some(window) {
+      return false;
+    }
+    dispatch(window, copy_modifier, event, handler)
+  }
+}
+
 /// An event describing drag and drop operations on the webview.
 #[non_exhaustive]
 #[derive(Debug, Clone)]

@@ -1,7 +1,11 @@
 import { afterEach, expect, it } from "vitest";
 import { createWindowTabsManager } from "$lib/state/window-tabs.svelte";
+import { settingsStore } from "$lib/state/settings.svelte";
 const managers: ReturnType<typeof createWindowTabsManager>[] = [];
-afterEach(async () => { for (const manager of managers.splice(0)) await manager.dispose(); });
+afterEach(async () => {
+  settingsStore.update({ floatingIslands: false });
+  for (const manager of managers.splice(0)) await manager.dispose();
+});
 
 it("focus follows constrained visible neighbors and viewport changes preserve saved ratios", () => {
   const manager = createWindowTabsManager(); managers.push(manager);
@@ -10,10 +14,10 @@ it("focus follows constrained visible neighbors and viewport changes preserve sa
     first: { type: "split" as const, id: "left", direction: "column" as const, ratio: 0.1, first: leaf("a"), second: leaf("b") },
     second: { type: "split" as const, id: "right", direction: "column" as const, ratio: 0.9, first: leaf("c"), second: leaf("d") } };
   manager.restoreFromState({ version: 3, tabs: [{ id: "tab", kind: "explorer", layout, activePaneId: "b" }], activeTabId: "tab" });
-  manager.paneViewport.measure(800, 300, 6);
+  manager.paneViewport.measure(800, 300);
   manager.focusPaneInDirection("right");
   expect(manager.activePaneId).toBe("d");
-  manager.paneViewport.measure(1200, 3000, 8);
+  manager.paneViewport.measure(1200, 3000);
   manager.setActivePane("b");
   manager.focusPaneInDirection("right");
   expect(manager.activePaneId).toBe("c");
@@ -24,7 +28,7 @@ it("inline width leases add independently and stale cleanup cannot erase a repla
   const manager = createWindowTabsManager(); managers.push(manager);
   manager.restoreFromState({ version: 3, activeTabId: "tab", tabs: [{ id: "tab", kind: "explorer", activePaneId: "pane",
     layout: { type: "leaf", id: "pane", path: "/home/user" } }] });
-  manager.paneViewport.measure(240, 200, 6);
+  manager.paneViewport.measure(240, 200);
   const saved = manager.captureState();
   const miller = manager.paneViewport.reserveInlineWidth("pane");
   const scm = manager.paneViewport.reserveInlineWidth("pane");
@@ -40,4 +44,34 @@ it("inline width leases add independently and stale cleanup cannot erase a repla
   scm.dispose(); replacement.dispose();
   expect(manager.paneViewport.geometry?.width).toBe(240);
   expect(manager.captureState()).toEqual(saved);
+});
+
+it("publishes layout minima before any viewport measurement and follows inline leases", () => {
+  const manager = createWindowTabsManager(); managers.push(manager);
+  manager.restoreFromState({ version: 3, activeTabId: "tab", tabs: [{ id: "tab", kind: "explorer", activePaneId: "pane",
+    layout: { type: "leaf", id: "pane", path: "/home/user" } }] });
+  // Rendering needs this in the first frame; geometry waits for a measurement.
+  expect(manager.paneViewport.geometry).toBeUndefined();
+  expect(manager.paneViewport.minima?.get("pane")).toEqual({ width: 240, height: 0 });
+  const scm = manager.paneViewport.reserveInlineWidth("pane");
+  scm.update(280);
+  expect(manager.paneViewport.minima?.get("pane")).toEqual({ width: 520, height: 0 });
+  scm.dispose();
+  expect(manager.paneViewport.minima?.get("pane")).toEqual({ width: 240, height: 0 });
+});
+
+it("minima follow the island-mode divider width without waiting for a measurement", () => {
+  const manager = createWindowTabsManager(); managers.push(manager);
+  const leaf = (id: string) => ({ type: "leaf" as const, id, path: "/home/user" });
+  manager.restoreFromState({ version: 3, activeTabId: "tab", tabs: [{ id: "tab", kind: "explorer", activePaneId: "a",
+    layout: { type: "split", id: "root", direction: "row", ratio: 0.5, first: leaf("a"),
+      second: { type: "split", id: "right", direction: "row", ratio: 0.5, first: leaf("b"), second: leaf("c") } } }] });
+  manager.paneViewport.measure(900, 400);
+  // Three 240px panes with two 6px dividers.
+  expect(manager.paneViewport.minima?.get("root")).toEqual({ width: 732, height: 200 });
+  settingsStore.update({ floatingIslands: true });
+  // The CSS divider widens to 8px in this render; the minima must widen with it.
+  expect(manager.paneViewport.minima?.get("root")).toEqual({ width: 736, height: 200 });
+  expect(manager.paneViewport.minima?.get("right")).toEqual({ width: 488, height: 200 });
+  expect(manager.paneViewport.geometry?.divider).toBe(8);
 });

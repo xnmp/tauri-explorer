@@ -265,8 +265,8 @@ describe("traceGraphLineage — observable branch trace", () => {
     ).toEqual({ rows: new Set(), segments: [] });
   });
 
-  it("classifies a deep, many-branch history within an interactive hover budget", () => {
-    const groups = 750;
+  /** `groups` stacked 3-way merges: many branches, each spanning many points. */
+  const manyBranchHistory = (groups: number) => {
     const rows: GraphCommitLike[] = [];
     for (let group = 0; group < groups; group++) {
       const next = group + 1 < groups ? `merge-${group + 1}` : "root";
@@ -276,21 +276,57 @@ describe("traceGraphLineage — observable branch trace", () => {
       rows.push(c(`extra-${group}`, next));
     }
     rows.push(c("root"));
-    const layout = assignLayout(rows, "merge-0");
+    return { rows, layout: assignLayout(rows, "merge-0") };
+  };
+
+  /** Layout whose branch points and vertices count every read (load-independent work). */
+  const countingLayout = (layout: ReturnType<typeof assignLayout>) => {
+    const counter = { reads: 0 };
+    const count = <T extends object>(target: T): T =>
+      new Proxy(target, {
+        get(obj, key, receiver) {
+          counter.reads++;
+          return Reflect.get(obj, key, receiver);
+        },
+      });
+    return {
+      counter,
+      layout: {
+        ...layout,
+        vertices: count(layout.vertices),
+        branches: layout.branches.map((b) => ({ ...b, points: count(b.points) })),
+      },
+    };
+  };
+
+  it("classifies a deep, many-branch history", () => {
+    const groups = 750;
+    const { rows, layout } = manyBranchHistory(groups);
     expect(layout.laneCount).toBeGreaterThanOrEqual(3);
     expect(layout.branches.length).toBeGreaterThan(groups);
 
-    const started = performance.now();
     const trace = traceGraphLineage(rows, layout, 0);
-    const elapsed = performance.now() - started;
 
     expect(trace.rows.has(0)).toBe(true);
     expect(trace.rows.has(2)).toBe(false);
     expect(trace.rows.has(rows.length - 1)).toBe(true);
     expect(trace.segments.length).toBeGreaterThan(0);
-    // The prior repeated branch×point scans are superlinear on this valid
-    // three-lane layout; the indexed classifier remains comfortably bounded.
-    expect(elapsed).toBeLessThan(150);
+  });
+
+  it("scales its branch/vertex reads roughly linearly with history size", () => {
+    // Deterministic work count instead of wall-clock time: a repeated
+    // branch×point scan makes 4x the input cost ~16x the reads; the indexed
+    // classifier stays near 4x regardless of host load.
+    const reads = (groups: number) => {
+      const { rows, layout } = manyBranchHistory(groups);
+      const counted = countingLayout(layout);
+      traceGraphLineage(rows, counted.layout, 0);
+      return counted.counter.reads;
+    };
+    const small = reads(250);
+    const large = reads(1000);
+    expect(small).toBeGreaterThan(0);
+    expect(large / small).toBeLessThanOrEqual(5);
   });
 });
 

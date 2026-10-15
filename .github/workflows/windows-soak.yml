@@ -1,12 +1,7 @@
 name: Windows bounded native soak
 
+# Not a required check, so it runs after merge rather than on PRs (tauri#1133).
 on:
-  pull_request:
-    branches: [dev, main]
-    paths:
-      - '.github/workflows/windows-soak.yml'
-      - 'scripts/*native*'
-      - 'e2e-tauri/**'
   push:
     branches: [dev]
     paths:
@@ -17,7 +12,7 @@ on:
 
 concurrency:
   group: windows-soak-${{ github.head_ref || github.ref_name }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   bounded-soak:

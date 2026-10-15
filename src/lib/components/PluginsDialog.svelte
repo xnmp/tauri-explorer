@@ -63,4 +63,5 @@
   .close-btn:hover { background: var(--subtle-fill-secondary); }
   .close-btn:focus-visible { outline: 2px solid var(--focus-stroke-outer); outline-offset: -2px; }
   .dialog-content { min-height: 0; overflow: auto; padding: 20px; }
+  @media (max-width: 600px) { header { flex-wrap: wrap; } .plugins-search { max-width: none; } }
 </style>

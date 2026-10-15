@@ -1,3 +1,10 @@
+import type { OpenPr, PrAction } from "./git-log";
+let mockCreatedPr: OpenPr | null = null;
+const mockMergedPrs = new Set<number>();
+const mockApprovedPrs = new Set<number>();
+import { createMockTextConnections } from "./mock-text-connections";
+import { createMockAiPresentation } from "./mock-ai-presentation";
+import type { AiResolution } from "$lib/domain/ai-operations";
 import pdfFixtureUrl from "./fixtures/preview-landmarks.pdf?url";
 import videoFixtureUrl from "./fixtures/video-preview.webm?url";
 /**
@@ -49,6 +56,9 @@ const mockSlowLoads: SlowLoadRecord[] = [];
 
 const mutationReceipt = (entry: FileEntry): FileMutationReceipt => ({ path: entry.path, entry });
 const mockImageCrop = createMockImageCrop(mockFiles, nextTimestamp);
+const mockAiPresentation = () => getMockControl().nativeAiPresentation ??= createMockAiPresentation((name, value) => {
+  if (typeof window !== "undefined") window.dispatchEvent(new CustomEvent(name, { detail: value }));
+});
 
 /** Relocate one entry's mock listing state. Backs the `move_entries` session
  *  mock's per-item relocation, and is injected into `createMockFileHistory`
@@ -118,6 +128,11 @@ function mockBatch(paths: string[], operation: (path: string) => void): FileBatc
   return result;
 }
 
+
+const MOCK_MEDIA_DURATIONS: Record<string, number> = {
+  "/home/user/Videos/recording.mp4": 754.4,
+  "/home/user/Videos/tutorial.mkv": 3725.2,
+};
 
 if (typeof window !== "undefined") {
   const control = getMockControl();
@@ -1068,7 +1083,27 @@ function mockDirectoryListing(raw: string): CompactDirectoryListing {
   return encodeDirectoryListing({ path, entries: sortListing(getDirectoryEntries(path)) });
 }
 
+const mockTextConnections = createMockTextConnections();
 const mockCommands: Record<string, CommandHandler> = {
+  // A browser has no native window to start an OS drag. Match a failed
+  // native start (Result<(), String>): reject without a completion callback
+  // so the source retains DOM-drop authority. Never fake a successful lease.
+  native_file_drag_clock: () => ({ id: `browser:${performance.timeOrigin}`, now: performance.timeOrigin + performance.now() }),
+  start_file_drag: () => { throw "Native file dragging is unavailable in the browser"; },
+  plugin_jobs_snapshot: () => mockAiPresentation().snapshot(),
+  plugin_job_reveal: (args) => mockAiPresentation().snapshot().jobs.find(job => job.jobKey === args.jobKey)?.reveal ?? null,
+  plugin_job_cancel: (args) => mockAiPresentation().cancel(String(args.jobKey)),
+  plugin_job_dismiss: (args) => mockAiPresentation().dismiss(String(args.jobKey)),
+  plugin_job_resume: (args) => mockAiPresentation().resume(String(args.jobKey)),
+  ai_operations_snapshot: () => mockAiPresentation().operationSnapshot(),
+  ai_operation_resolve: (args) => mockAiPresentation().resolve(String(args.consumerPackage), String(args.operationId), args.action as AiResolution),
+  ai_connections_read: () => mockTextConnections.read(),
+  ai_connections_save: ({ configuration, expectedRevision }) => mockTextConnections.save(configuration, expectedRevision),
+  ai_connection_set_credential: ({ profileId, key, expectedRevision }) => mockTextConnections.credential(profileId, key, expectedRevision),
+  ai_connection_clear_credential: ({ profileId, expectedRevision }) => mockTextConnections.credential(profileId, null, expectedRevision),
+  ai_connection_check: ({ profileId }) => mockTextConnections.check(profileId),
+  ai_connection_test: ({ profileId, expectedConfigurationRevision }) => mockTextConnections.test(profileId, expectedConfigurationRevision),
+  ai_connection_cancel_test: () => undefined,
   get_home_directory: () => "/home/user",
   get_launch_cwd: () => "/home/user",
   list_drives: () => {
@@ -1204,6 +1239,11 @@ const mockCommands: Record<string, CommandHandler> = {
   warm_pool_shutdown: () => undefined,
 
   list_directory: (args) => mockDirectoryListing(args.path as string),
+
+  // Details Length column (#995): fixed durations so views render stable text;
+  // `unreadable.avi` models a video whose container metadata cannot be read.
+  get_media_durations: (args) =>
+    (args.paths as string[]).map((path) => MOCK_MEDIA_DURATIONS[path] ?? null),
 
   is_directory_empty: (args) => {
     const path = args.path as string;
@@ -1489,6 +1529,12 @@ const mockCommands: Record<string, CommandHandler> = {
 
   cancel_content_search: () => {},
 
+  // Source header fixture is intentionally independent of thumbnail dimensions.
+  get_image_resolution: (args) => getMockControl().imageResolution
+    ? getMockControl().imageResolution!(String(args.path))
+    : /\.(png|jpe?g|gif|webp|bmp)$/i.test(String(args.path))
+    ? { width: 1920, height: 1080 } : null,
+
   get_thumbnail: () => {
     throw new Error("Thumbnails not available in mock mode");
   },
@@ -1556,6 +1602,14 @@ const mockCommands: Record<string, CommandHandler> = {
     if (mockVideoCapabilities.delete(token)) (getMockControl().releasedVideoPreviews ??= []).push(token);
   },
   open_pdf_link: (args) => { getMockControl().openedPdfUrl = String(args.url); },
+
+  get_preview_image: (args) => {
+    // Browser/E2E mode has no rendition generator; every image is shown as
+    // its own original (through `read_image_data_url`) unless a test says so.
+    const hook = getMockControl().previewImageSource;
+    if (hook) return hook((args.path as string) ?? "", Number(args.maxEdge));
+    return { kind: "original" };
+  },
 
   read_image_data_url: (args) => {
     const hook = getMockControl().previewReadImage;
@@ -2305,6 +2359,30 @@ if (typeof window !== "undefined") {
     };
   },
 
+  git_merge_base: (args: Record<string, unknown>) => {
+    const resolve = (name: string) => Object.entries(MOCK_GRAPH_REFS).find(([, refs]) =>
+      refs.some((ref) => `refs/${ref.kind === "RemoteBranch" ? "remotes" : "heads"}/${ref.name}` === name),
+    )?.[0];
+    const first = resolve(args.firstRef as string);
+    const second = resolve(args.secondRef as string);
+    if (!first || !second) throw new Error("Branch not found");
+    const graph = mockCommitGraph();
+    const ancestors = (tip: string) => {
+      const seen = new Set<string>();
+      const pending = [tip];
+      while (pending.length) {
+        const oid = pending.pop()!;
+        if (seen.has(oid)) continue;
+        seen.add(oid);
+        pending.push(...(graph.find((commit) => commit.oid === oid)?.parents ?? []));
+      }
+      return seen;
+    };
+    const left = ancestors(first);
+    const right = ancestors(second);
+    return graph.find((commit) => left.has(commit.oid) && right.has(commit.oid))?.oid ?? null;
+  },
+
   git_refs: (args: Record<string, unknown>) => {
     const repoPath = (args.repoPath as string) ?? "";
     const loadIdx = loadRepoIndex(repoPath);
@@ -2353,6 +2431,26 @@ if (typeof window !== "undefined") {
   // in e2e. #7 exercises a passing/approved/commented PR, #12 a failing draft
   // (draft styling wins over CI color), #15 the tokenless case (all status
   // fields null → plain purple badge, pending kept for label coverage).
+  git_pr_context: () => ({ repoSlug: "mock/project", headBranch: mockDetached ? null : (MOCK_GRAPH_REFS[mockHeadOid()] ?? []).find(ref => ref.kind === "LocalBranch")?.name ?? null }),
+
+  git_pr_action: (args: Record<string, unknown>) => {
+    const request = args.request as PrAction;
+    if (request.action === "create") {
+      mockCreatedPr = { number: 99, title: request.title, headRef: request.headBranch, baseRef: request.base, htmlUrl: "https://github.com/mock/project/pull/99", draft: false, ciStatus: null, reviewDecision: null, commentCount: 0, body: request.body };
+      return mockCreatedPr.htmlUrl;
+    }
+    if (request.action === "merge" && !new URLSearchParams(window.location.search).has("gitPrMergeQueued")) mockMergedPrs.add(request.prNumber);
+    else if (request.action === "approve") mockApprovedPrs.add(request.prNumber);
+    return "";
+  },
+
+  git_issues_url: (args: Record<string, unknown>) => {
+    const repoRoot = (args.repoRoot as string) ?? "";
+    return repoRoot.startsWith("/home/user/Documents/project")
+      ? "https://github.com/mock/project/issues"
+      : null;
+  },
+
   git_open_prs: (args: Record<string, unknown>) => {
     const repoRoot = (args.repoRoot as string) ?? "";
     if (!repoRoot.startsWith("/home/user/Documents/project")) return [];
@@ -2463,7 +2561,8 @@ if (typeof window !== "undefined") {
         comments: [],
         reviewThreads: null,
       },
-    ];
+      ...(mockCreatedPr ? [mockCreatedPr] : []),
+    ].filter(pr => !mockMergedPrs.has(pr.number)).map(pr => mockApprovedPrs.has(pr.number) ? { ...pr, reviewDecision: "approved" } : pr);
   },
 
   git_failed_ci_checks: (args: Record<string, unknown>) => {
@@ -2737,6 +2836,12 @@ if (typeof window !== "undefined") {
   clipboard_has_image: () =>
     localStorage.getItem(MOCK_LOCAL_KEYS.reportClipboardImage) === "1",
 
+  clipboard_has_report_attachment: () => localStorage.getItem(MOCK_LOCAL_KEYS.reportClipboardVideo) === "1" || localStorage.getItem(MOCK_LOCAL_KEYS.reportClipboardImage) === "1",
+
+  clipboard_read_report_attachment: () => localStorage.getItem(MOCK_LOCAL_KEYS.reportClipboardVideo) === "1"
+    ? { name: "Copied video.mp4", mediaType: "video/mp4", data: "AAAAGGZ0eXBpc29tAAAAAGlzb21tcDQy" }
+    : { name: "Clipboard screenshot.png", mediaType: "image/png", data: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=" },
+
   clipboard_read_report_image: () => ({
     name: "Clipboard screenshot.png",
     mediaType: "image/png",
@@ -2763,7 +2868,9 @@ if (typeof window !== "undefined") {
   list_installed_plugins: () => [],
   take_pending_plugin_install_errors: () => [],
   take_window_launch_requests: () => [],
-  pick_file: () => null,
+  pick_file: (args) => ((args.options as { mode?: string; filename?: string } | undefined)?.mode === "save" ? `/home/user/Downloads/${(args.options as { filename?: string }).filename}` : null),
+  probe_video_codec: (args) => getMockControl().videoCodecProbe?.(String(args.path)) ?? ({ container: null, videoCodec: null, audioCodec: null }),
+  save_file_copy: (args) => { (getMockControl().savedVideoCopies ??= []).push({ source: String(args.source), destination: String(args.destination) }); },
   install_plugin: () => { throw new Error("Install plugin packages in the native app"); },
   uninstall_plugin: () => undefined,
   set_plugin_package_enabled: () => undefined,

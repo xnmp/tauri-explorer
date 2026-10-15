@@ -8,7 +8,7 @@
  * previous window.dispatchEvent custom event pattern.
  */
 
-import { modalOwnership } from "./modal-ownership.svelte";
+import { modalOwnership, type ModalScope } from "./modal-ownership.svelte";
 import { openWithStore } from "./open-with.svelte";
 import type { FileEntry } from "$lib/domain/file";
 
@@ -38,6 +38,7 @@ function createDialogStore() {
   let quickOpenOpen = $state(false);
   let commandPaletteOpen = $state(false);
   let settingsOpen = $state(false);
+  let aboutOpen = $state(false);
   let contentSearchOpen = $state(false);
   let workspaceOpen = $state(false);
   let bulkRenameOpen = $state(false);
@@ -50,7 +51,26 @@ function createDialogStore() {
   let pickerConfig = $state<PickerConfig | null>(null);
   let userReportOpen = $state(false);
   let fileRecoveryOpen = $state(false);
-  let imageEditorTarget = $state.raw<{ path: string; name: string } | null>(null);
+  /** `tool` opens a plugin editor tool directly instead of crop. */
+  let imageEditorTarget = $state.raw<{ path: string; name: string; tool?: string } | null>(null);
+  // Plugin requests wait for their own editor opening to close.
+  const imageEditorClosed = new Map<object, () => void>();
+
+  function releaseImageEditor(target: object | null): void {
+    if (!target) return;
+    imageEditorClosed.get(target)?.();
+    imageEditorClosed.delete(target);
+  }
+
+  function closeImageEditor(target: object | null = imageEditorTarget): void {
+    if (target !== imageEditorTarget) return;
+    imageEditorTarget = null;
+    releaseImageEditor(target);
+  }
+
+  function anyModalOpen(): boolean {
+    return openWithStore.isOpen || modalOwnership.hasOpen || imageEditorTarget !== null || shortcutsOpen || keybindingsOpen || pluginsOpen || activeDialog !== null || quickOpenOpen || commandPaletteOpen || settingsOpen || aboutOpen || contentSearchOpen || workspaceOpen || bulkRenameOpen || jobsPanelOpen || themePickerOpen || pickerConfig !== null || userReportOpen || fileRecoveryOpen;
+  }
 
   function closeIfActive(dialogType: DialogType, session = fileOperationSession): void {
     if (activeDialog === dialogType && session === fileOperationSession) {
@@ -60,6 +80,33 @@ function createDialogStore() {
       targetEntries = [];
       permanentDelete = false;
     }
+  }
+
+  function closeUnmountedDialogs(): void {
+    releaseImageEditor(imageEditorTarget);
+    imageEditorTarget = null;
+    openWithStore.close();
+    shortcutsOpen = false;
+    activeDialog = null;
+    pluginsOpen = false;
+    keybindingsOpen = false;
+    fileOperationSession = null;
+    permanentDelete = false;
+    targetEntry = null;
+    targetEntries = [];
+    quickOpenOpen = false;
+    commandPaletteOpen = false;
+    settingsOpen = false;
+    aboutOpen = false;
+    contentSearchOpen = false;
+    workspaceOpen = false;
+    bulkRenameOpen = false;
+    bulkRenameItems = [];
+    jobsPanelOpen = false;
+    themePickerOpen = false;
+    pickerConfig = null;
+    userReportOpen = false;
+    fileRecoveryOpen = false;
   }
 
   return {
@@ -106,6 +153,9 @@ function createDialogStore() {
     get isShortcutsOpen() {
       return shortcutsOpen;
     },
+    get isAboutOpen() {
+      return aboutOpen;
+    },
     get isSettingsOpen() {
       return settingsOpen;
     },
@@ -145,11 +195,28 @@ function createDialogStore() {
 
     openImageEditor(entry: FileEntry): void {
       commandPaletteOpen = false;
+      // A replaced plugin opening is closed, so its caller still settles.
+      releaseImageEditor(imageEditorTarget);
       imageEditorTarget = { path: entry.path, name: entry.name };
     },
 
-    closeImageEditor(target = imageEditorTarget): void {
-      if (target === imageEditorTarget) imageEditorTarget = null;
+    /**
+     * Opens the editor directly in a plugin's tool. `closed` settles when that
+     * opening closes, however it closes; `close` closes only that opening.
+     */
+    openImageEditorTool(path: string, name: string, tool: string): { closed: Promise<void>; close: () => void } {
+      if (imageEditorTarget) throw new Error("Close the open image editor first");
+      commandPaletteOpen = false;
+      // It would register above a modal drawn over it and take its focus/Escape.
+      if (anyModalOpen()) throw new Error("Close the open dialog first");
+      const target = { path, name, tool };
+      const closed = new Promise<void>((resolve) => imageEditorClosed.set(target, resolve));
+      imageEditorTarget = target;
+      return { closed, close: () => closeImageEditor(target) };
+    },
+
+    closeImageEditor(target: object | null = imageEditorTarget): void {
+      closeImageEditor(target);
     },
 
     // File operation actions
@@ -177,8 +244,19 @@ function createDialogStore() {
 
     /** True when any modal dialog is open (file ops or overlays). */
     get hasModalOpen(): boolean {
-      return openWithStore.isOpen || modalOwnership.hasOpen || imageEditorTarget !== null || shortcutsOpen || keybindingsOpen || pluginsOpen || activeDialog !== null || quickOpenOpen || commandPaletteOpen || settingsOpen || contentSearchOpen || workspaceOpen || bulkRenameOpen || jobsPanelOpen || themePickerOpen || pickerConfig !== null || userReportOpen || fileRecoveryOpen;
+      return anyModalOpen();
     },
+    /** Pane input includes window modals, but never another pane's bucket. */
+    isPaneBlocked(paneId: string): boolean {
+      return anyModalOpen() || modalOwnership.hasPaneOpen(paneId);
+    },
+    inputScope(event: Event, activePaneId: string): ModalScope | undefined {
+      return anyModalOpen() ? null : modalOwnership.inputScope(event, activePaneId);
+    },
+    isInputBlocked(event: Event, activePaneId: string): boolean {
+      return this.inputScope(event, activePaneId) !== undefined;
+    },
+    subscribeOwnership: modalOwnership.subscribe,
 
     // Overlay dialog actions
     openQuickOpen(): void {
@@ -195,6 +273,15 @@ function createDialogStore() {
 
     closeCommandPalette(): void {
       commandPaletteOpen = false;
+    },
+
+    openAbout(): void {
+      commandPaletteOpen = false;
+      aboutOpen = true;
+    },
+
+    closeAbout(): void {
+      aboutOpen = false;
     },
 
     openSettings(): void {
@@ -305,32 +392,16 @@ function createDialogStore() {
 
     closeFileRecovery(): void { fileRecoveryOpen = false; },
 
+    requestCloseTop(event?: KeyboardEvent, scope: ModalScope = null): void {
+      if (!modalOwnership.requestTopClose(event, scope) && !scope) closeUnmountedDialogs();
+    },
+
     closeAll(): void {
       modalOwnership.closeAll();
-      // Rendered editors close through their modal's canClose contract. Clear
-      // an opening that has not mounted yet, while retaining an accepted save.
-      if (!modalOwnership.hasOpen) imageEditorTarget = null;
-      openWithStore.close();
-      shortcutsOpen = false;
-      activeDialog = null;
-      pluginsOpen = false;
-      keybindingsOpen = false;
-      fileOperationSession = null;
-      permanentDelete = false;
-      targetEntry = null;
-      targetEntries = [];
-      quickOpenOpen = false;
-      commandPaletteOpen = false;
-      settingsOpen = false;
-      contentSearchOpen = false;
-      workspaceOpen = false;
-      bulkRenameOpen = false;
-      bulkRenameItems = [];
-      jobsPanelOpen = false;
-      themePickerOpen = false;
-      pickerConfig = null;
-      userReportOpen = false;
-      fileRecoveryOpen = false;
+      // Mounted close guards own the outcome. A veto or pending unmount must
+      // retain every suspended built-in flag and its caller's draft.
+      if (modalOwnership.hasOpen) return;
+      closeUnmountedDialogs();
     },
   };
 }

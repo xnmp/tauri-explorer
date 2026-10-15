@@ -26,17 +26,47 @@ on:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.ref_name }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 # Note: macOS is deliberately omitted. Official `tauri-driver` has no
 # WKWebView support (tauri-apps/tauri#7068). Re-add when a stable driver
 # exists or if macOS regressions justify the CrabNebula subscription.
 jobs:
+  # Docs-only PRs skip the heavy suites. Required status contexts must still
+  # report, and a skipped matrix job never expands its contexts, so required
+  # jobs keep running and gate their steps on this output instead. Anything not
+  # matching the docs patterns, and every non-PR event, counts as code.
+  changes:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      code: ${{ github.event_name != 'pull_request' && 'true' || steps.filter.outputs.code }}
+    steps:
+      - id: filter
+        if: github.event_name == 'pull_request'
+        uses: dorny/paths-filter@v3
+        with:
+          # A file is code unless it matches a docs exclusion.
+          predicate-quantifier: every
+          filters: |
+            code:
+              - '**'
+              - '!docs/**'
+              - '!**/*.md'
+              - '!output/**'
+
   smoke:
+    needs: changes
     strategy:
       fail-fast: false
       matrix:
-        os: ${{ fromJSON((inputs.native_scope == 'clipboard' || inputs.native_scope == 'transfer') && '["windows-latest"]' || '["ubuntu-latest","windows-latest"]') }}
+        # PRs run only the required `smoke (ubuntu-latest)` context (docs-only PRs
+        # report it with every step skipped); Windows runs on dev/main pushes and
+        # dispatches (tauri#1133). Non-PR events always count as code.
+        os: ${{ fromJSON(github.event_name == 'pull_request' && '["ubuntu-latest"]' || ((inputs.native_scope == 'clipboard' || inputs.native_scope == 'transfer') && '["windows-latest"]' || '["ubuntu-latest","windows-latest"]')) }}
     runs-on: ${{ matrix.os }}
     # The Windows debug build alone is ~12 minutes, so a 25-minute job cap left
     # no room for a full suite run: a step bound generous enough to let the
@@ -46,12 +76,15 @@ jobs:
     timeout-minutes: 50
     steps:
       - uses: actions/checkout@v7
+        if: ${{ needs.changes.outputs.code == 'true' }}
 
       - uses: oven-sh/setup-bun@v2
+        if: ${{ needs.changes.outputs.code == 'true' }}
         with:
           bun-version: latest
 
       - uses: dtolnay/rust-toolchain@stable
+        if: ${{ needs.changes.outputs.code == 'true' }}
         with:
           components: clippy
 
@@ -59,6 +92,7 @@ jobs:
       # Keep the raw identity in the diagnostic artifact and use its digest in
       # the key so stable-channel updates cannot restore incompatible outputs.
       - name: Record Rust cache identity
+        if: ${{ needs.changes.outputs.code == 'true' }}
         id: rust-provenance
         shell: bash
         run: |
@@ -77,6 +111,7 @@ jobs:
       # save a binary-less cache, which later runs then restored (ENOENT at
       # spawn). tauri-driver is now installed unconditionally below.
       - name: Cache cargo registry
+        if: ${{ needs.changes.outputs.code == 'true' }}
         id: cargo-registry-cache
         uses: actions/cache@v6
         with:
@@ -87,6 +122,7 @@ jobs:
           restore-keys: ${{ runner.os }}-cargo-registry-
 
       - name: Restore Rust target cache
+        if: ${{ needs.changes.outputs.code == 'true' }}
         id: rust-target-cache
         uses: actions/cache/restore@v6
         with:
@@ -97,7 +133,7 @@ jobs:
       # moved to turbojpeg. Without it the cargo build fails in cmake.
       # (AVIF/dav1d is a default-off feature, so no libdav1d-dev needed here.)
       - name: Install Linux WebKit driver
-        if: runner.os == 'Linux'
+        if: ${{ needs.changes.outputs.code == 'true' && (runner.os == 'Linux') }}
         run: |
           sudo apt-get update
           sudo apt-get install -y \
@@ -105,7 +141,7 @@ jobs:
             libjavascriptcoregtk-4.1-dev webkit2gtk-driver xvfb openbox x11-utils xclip xdotool dbus-daemon nasm libavif-bin
 
       - name: Install independent Windows AVIF decoder
-        if: runner.os == 'Windows'
+        if: ${{ needs.changes.outputs.code == 'true' && (runner.os == 'Windows') }}
         shell: pwsh
         run: |
           $archive = Join-Path $env:RUNNER_TEMP 'libavif-1.4.2.zip'
@@ -125,7 +161,7 @@ jobs:
       # Linux uses tauri-driver as its WebDriver proxy. Windows attaches
       # msedgedriver directly to the WebView2 CDP endpoint below.
       - name: Install tauri-driver
-        if: runner.os == 'Linux'
+        if: ${{ needs.changes.outputs.code == 'true' && (runner.os == 'Linux') }}
         shell: bash
         run: |
           cargo install tauri-driver --locked
@@ -134,6 +170,7 @@ jobs:
       # bun.lock (text format) records optional deps for every platform,
       # so the same lockfile installs correctly on Linux and Windows.
       - name: Install frontend dependencies
+        if: ${{ needs.changes.outputs.code == 'true' }}
         shell: bash
         run: bun install --frozen-lockfile
 
@@ -141,6 +178,7 @@ jobs:
       # independent binary/GUI result or its diagnostics. The final gate below
       # restores its fatal status after those independent checks complete.
       - name: Run native contracts
+        if: ${{ needs.changes.outputs.code == 'true' }}
         id: native-contracts
         continue-on-error: true
         shell: bash
@@ -174,6 +212,7 @@ jobs:
       # first place. Release builds set neither, so the hooks are absent from
       # shipped binaries.
       - name: Build Tauri binary (debug, embedded frontend, no bundle)
+        if: ${{ needs.changes.outputs.code == 'true' }}
         id: build-tauri-binary
         shell: bash
         env:
@@ -200,7 +239,7 @@ jobs:
       # Upload this before the GUI suite so contract/build failures can be
       # diagnosed while the independent native outcome is still running.
       - name: Collect native qualification diagnostics
-        if: always()
+        if: ${{ always() && needs.changes.outputs.code == 'true' }}
         shell: bash
         run: |
           {
@@ -239,7 +278,7 @@ jobs:
           EOF
 
       - name: Upload native contract diagnostics
-        if: always()
+        if: ${{ always() && needs.changes.outputs.code == 'true' }}
         uses: actions/upload-artifact@v7
         with:
           name: native-contract-diagnostics-${{ matrix.os }}-${{ github.sha }}-${{ github.run_attempt }}
@@ -250,7 +289,7 @@ jobs:
       # destination preservation. Exercise the actual Windows adapter, including
       # a collision introduced after MoveItem queues the restore.
       - name: Windows native restore and watcher contracts
-        if: runner.os == 'Windows'
+        if: ${{ needs.changes.outputs.code == 'true' && (runner.os == 'Windows') }}
         shell: bash
         run: |
           cargo test --manifest-path src-tauri/Cargo.toml --lib -- --list > "$RUNNER_TEMP/windows-rust-contracts.list"
@@ -270,11 +309,11 @@ jobs:
 
       # Test failures remain fatal, but do not hide independent lint/UI results.
       - name: Windows Rust lint
-        if: ${{ !cancelled() && runner.os == 'Windows' && steps.build-tauri-binary.outcome == 'success' }}
+        if: ${{ needs.changes.outputs.code == 'true' && (!cancelled() && runner.os == 'Windows' && steps.build-tauri-binary.outcome == 'success') }}
         run: cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets --features e2e-hooks,e2e-webview2-attach -- -D warnings
 
       - name: Run smoke suite (Linux, isolated display and window manager)
-        if: runner.os == 'Linux'
+        if: ${{ needs.changes.outputs.code == 'true' && (runner.os == 'Linux') }}
         # 36 isolated native sessions take ~30s each just to start WebKitGTK
         # on hosted runners. The old 15m cap stopped before the final 10 specs.
         timeout-minutes: 30
@@ -287,7 +326,7 @@ jobs:
       # hard-rejects mismatches. Download the driver matching the runtime.
       - name: Install msedgedriver matching the WebView2 runtime
         id: webview_driver
-        if: ${{ !cancelled() && runner.os == 'Windows' && steps.build-tauri-binary.outcome == 'success' }}
+        if: ${{ needs.changes.outputs.code == 'true' && (!cancelled() && runner.os == 'Windows' && steps.build-tauri-binary.outcome == 'success') }}
         shell: pwsh
         run: |
           $key = 'HKLM:\SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}'
@@ -300,7 +339,7 @@ jobs:
       # Keep the WebView2 suite's bound separate from WebKitGTK session costs
       # and leave time for failure evidence before the overall job cap.
       - name: Run smoke suite (Windows)
-        if: ${{ !cancelled() && runner.os == 'Windows' && steps.build-tauri-binary.outcome == 'success' && steps.webview_driver.outcome == 'success' }}
+        if: ${{ needs.changes.outputs.code == 'true' && (!cancelled() && runner.os == 'Windows' && steps.build-tauri-binary.outcome == 'success' && steps.webview_driver.outcome == 'success') }}
         timeout-minutes: 15
         shell: bash
         env:
@@ -341,7 +380,7 @@ jobs:
       # Tauri writes frontend/native failures outside the checkout. In particular,
       # WebKitWebDriver need not forward the app's stdout to tauri-driver.
       - name: Collect native application logs
-        if: always()
+        if: ${{ always() && needs.changes.outputs.code == 'true' }}
         shell: bash
         run: |
           node --input-type=module <<'JS'
@@ -365,14 +404,14 @@ jobs:
       # a failed contract/build can never publish an incomplete target cache.
       - name: Save Rust target cache after native outcome
         id: save-rust-target-cache
-        if: ${{ always() && steps.native-contracts.outcome == 'success' && steps.build-tauri-binary.outcome == 'success' }}
+        if: ${{ needs.changes.outputs.code == 'true' && (always() && steps.native-contracts.outcome == 'success' && steps.build-tauri-binary.outcome == 'success') }}
         uses: actions/cache/save@v6
         with:
           path: src-tauri/target
           key: ${{ runner.os }}-${{ runner.arch }}-target-debug-${{ steps.rust-provenance.outputs.cache-key }}-${{ hashFiles('src-tauri/Cargo.lock', 'src-tauri/Cargo.toml', 'src-tauri/tauri.conf.json') }}
 
       - name: Record native cache outcome
-        if: always()
+        if: ${{ always() && needs.changes.outputs.code == 'true' }}
         shell: bash
         run: |
           {
@@ -382,7 +421,7 @@ jobs:
           } > native-contract-diagnostics/cache-outcome.txt
 
       - name: Upload native cache outcome
-        if: always()
+        if: ${{ always() && needs.changes.outputs.code == 'true' }}
         uses: actions/upload-artifact@v7
         with:
           name: native-cache-outcome-${{ matrix.os }}-${{ github.sha }}-${{ github.run_attempt }}
@@ -390,12 +429,12 @@ jobs:
           if-no-files-found: error
 
       - name: Fail if native contracts failed
-        if: ${{ always() && steps.native-contracts.outcome == 'failure' }}
+        if: ${{ needs.changes.outputs.code == 'true' && (always() && steps.native-contracts.outcome == 'failure') }}
         shell: bash
         run: exit 1
 
       - name: Upload WDIO logs
-        if: always()
+        if: ${{ always() && needs.changes.outputs.code == 'true' }}
         uses: actions/upload-artifact@v7
         with:
           name: wdio-logs-${{ matrix.os }}
@@ -405,7 +444,7 @@ jobs:
           if-no-files-found: ignore
 
       - name: Upload native clipboard image acceptance
-        if: ${{ always() && runner.os == 'Windows' }}
+        if: ${{ needs.changes.outputs.code == 'true' && (always() && runner.os == 'Windows') }}
         uses: actions/upload-artifact@v7
         with:
           name: clipboard-image-acceptance-windows
@@ -413,7 +452,7 @@ jobs:
           if-no-files-found: ignore
 
       - name: Upload native PDF acceptance
-        if: always()
+        if: ${{ always() && needs.changes.outputs.code == 'true' }}
         uses: actions/upload-artifact@v7
         with:
           name: native-pdf-${{ matrix.os }}

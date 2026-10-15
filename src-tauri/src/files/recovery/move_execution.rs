@@ -10,7 +10,7 @@
 //! endpoints absent.
 use super::artifact_layout::{probe, ORIGINAL, PARKED, PUBLICATION};
 use super::{
-    checkpoint::{DurableKind, Effect, Event, Side, Sides},
+    checkpoint::{DurableKind, Effect, Event, Phase, Side, Sides},
     coordinator::DurableOperation,
     model::{EntryVersion, ObjectId, StagedPayload},
     move_model::{MoveSpec, Strategy},
@@ -41,6 +41,52 @@ pub(super) type Boundary = Box<dyn Fn(&'static str) -> Result<(), AppError> + Se
 /// [`MoveExecution::admit_restoration`] creates one, so no caller can reach
 /// restoration's durable effects without it.
 pub(super) struct AdmittedRestoration(());
+
+/// Why restoration was refused before any effect (#795).
+pub(super) struct Refusal {
+    pub(super) error: AppError,
+    /// The endpoints themselves rule restoration out: a changed or missing
+    /// moved entry, retained original or destination, or, once the source is
+    /// home again, a destination that cannot be kept. Only these can strand a
+    /// record; a reused source name or an observation error can be resolved.
+    pub(super) lasting: bool,
+}
+
+impl Refusal {
+    fn lasting(error: AppError) -> Self {
+        Self {
+            error,
+            lasting: true,
+        }
+    }
+}
+
+impl From<AppError> for Refusal {
+    fn from(error: AppError) -> Self {
+        Self {
+            error,
+            lasting: false,
+        }
+    }
+}
+
+impl From<Refusal> for AppError {
+    fn from(refusal: Refusal) -> Self {
+        refusal.error
+    }
+}
+
+/// What [`MoveExecution::admit_endpoints`] proved.
+#[derive(Debug, Eq, PartialEq)]
+enum Admission {
+    /// Every endpoint restoration touches holds what it expects.
+    Checked,
+    /// As `Checked`, for an interrupted restoration whose source is home.
+    SourceHome,
+    /// An interrupted restoration can still return its private source; what
+    /// follows is reconciled, and may be refused, after the source is home.
+    ReturnsSourceFirst,
+}
 
 /// A user endpoint addressed through its retained parent handle. Reopening the
 /// public path instead would let a namespace substitution redirect the effect.
@@ -176,6 +222,24 @@ impl MoveExecution {
     /// a native owner never justifies replaying an interrupted effect; each
     /// method reconciles its own recorded phase against live endpoints.
     pub(super) fn reopen(operation: DurableOperation) -> Result<Self, AppError> {
+        Self::try_reopen(operation).map_err(|failure| failure.1)
+    }
+
+    /// [`Self::reopen`], handing the still-claimed operation back on failure.
+    pub(super) fn try_reopen(
+        operation: DurableOperation,
+    ) -> Result<Self, Box<(DurableOperation, AppError)>> {
+        match Self::open_roots(&operation) {
+            Ok(roots) => Ok(Self {
+                operation,
+                roots,
+                hook: None,
+            }),
+            Err(error) => Err(Box::new((operation, error))),
+        }
+    }
+
+    fn open_roots(operation: &DurableOperation) -> Result<Sides<Option<Root>>, AppError> {
         let spec = operation.intent().operation.move_spec()?.clone();
         let mut roots = Sides::default();
         for side in Self::planned(&spec) {
@@ -188,11 +252,7 @@ impl MoveExecution {
             root.verify_manifest(operation.intent())?;
             *roots.get_mut(side) = Some(root);
         }
-        Ok(Self {
-            operation,
-            roots,
-            hook: None,
-        })
+        Ok(roots)
     }
 
     #[cfg(test)]
@@ -448,7 +508,9 @@ impl MoveExecution {
     }
 
     /// The record's own exact inverse. Nothing is deleted before the source
-    /// exists again at its original name.
+    /// exists again at its original name. Production callers admit first and
+    /// keep the refusal, so only tests use this composition.
+    #[cfg(test)]
     pub(super) fn restore_move(&mut self) -> Result<(), AppError> {
         let admitted = self.admit_restoration()?;
         self.restore_admitted(admitted)
@@ -462,7 +524,14 @@ impl MoveExecution {
     /// change after the move's own admission. It must fit a retirement plan
     /// under the bounds a discard captures, or the restored record could never
     /// be discarded (#760).
-    pub(super) fn admit_restoration(&self) -> Result<AdmittedRestoration, AppError> {
+    pub(super) fn admit_restoration(&self) -> Result<AdmittedRestoration, Refusal> {
+        let admission = self.admit_endpoints()?;
+        if admission == Admission::ReturnsSourceFirst {
+            // An interrupted restoration whose source is still private may
+            // always bring it home; a later refusal then leaves the record
+            // with the source public, where Forget can end it (#795).
+            return Ok(AdmittedRestoration(()));
+        }
         if let Some(target) = self.parkable_publication()? {
             self.admit_publication(&target).map_err(|error| {
                 let reason = if error.to_string().contains("budget") {
@@ -470,15 +539,173 @@ impl MoveExecution {
                 } else {
                     format!("it cannot be read safely ({error})")
                 };
-                AppError::Other(format!(
-                    "Undo cannot keep '{}' in File Recovery: {reason}. Nothing was changed. \
-                     Fix the reported entry and Undo again, or discard this move's recovery data \
-                     to keep it where it is.",
-                    target.path.display()
-                ))
+                // With the source already home, the destination is the
+                // user's to keep as it is: Forget ends the record instead.
+                let source_home = admission == Admission::SourceHome;
+                let exit = if source_home {
+                    "Fix the reported entry and Restore again, or Forget this record to keep it \
+                     where it is."
+                } else {
+                    "Fix the reported entry and Undo again, or discard this move's recovery data \
+                     to keep it where it is."
+                };
+                Refusal {
+                    error: AppError::Other(format!(
+                        "Undo cannot keep '{}' in File Recovery: {reason}. Nothing was changed. \
+                         {exit}",
+                        target.path.display()
+                    )),
+                    lasting: source_home,
+                }
             })?;
         }
         Ok(AdmittedRestoration(()))
+    }
+
+    /// Read-only proof that restoration can finish from the endpoints it
+    /// touches, so Undo of a settled move either completes or changes nothing
+    /// (#795). The source name must be free (or already home), the moved entry
+    /// or its parked original exact, the destination the published payload or
+    /// absent, and any displaced original still retained exactly. A
+    /// destination edited after the move is user data that restoring would
+    /// hide, so Undo is refused and the settled record keeps its Discard.
+    fn admit_endpoints(&self) -> Result<Admission, Refusal> {
+        let phase = self.operation.state().phase;
+        if !matches!(
+            phase,
+            Phase::Published | Phase::ParkIntent | Phase::Parked | Phase::RestoreIntent
+        ) {
+            // Other interrupted positions reconcile inside restoration itself.
+            return Ok(Admission::Checked);
+        }
+        // Only a settled record keeps a Discard; an interrupted park or
+        // restoration (no disposal yet) returns a private source first and
+        // otherwise ends through Forget.
+        let resuming = self
+            .operation
+            .intent()
+            .checkpoint(self.operation.state())
+            .disposal()
+            .is_none();
+        let spec = self.spec()?;
+        let (source_path, target_path) = (spec.source.0.display(), spec.target.0.display());
+        let refuse = |reason: String| {
+            Refusal::lasting(AppError::Other(format!(
+                "Undo cannot return '{source_path}': {reason}. Nothing was changed."
+            )))
+        };
+        let changed = || {
+            let exit = if resuming {
+                "Forget this record in File Recovery; nothing is deleted"
+            } else {
+                "discard this move's recovery data in File Recovery; that permanently deletes \
+                 the retained original"
+            };
+            Refusal::lasting(AppError::Other(format!(
+                "Undo cannot return '{source_path}': '{target_path}' changed after the move, and \
+                 Undo would hide those changes. Nothing was changed. To keep '{target_path}' as \
+                 it is, {exit}."
+            )))
+        };
+        let source = self.source()?;
+        let mut destination = self.target()?.probe()?;
+        let returning = match source.probe()? {
+            Some(observed) if observed == spec.source_version => false,
+            // An interrupted restoration already returned this original and
+            // the user has changed it since: it can never verify again.
+            Some(observed) if resuming && observed.object == spec.source_version.object => {
+                return Err(refuse(format!(
+                    "'{source_path}' was already returned and has changed since, so this \
+                     restoration cannot finish"
+                )))
+            }
+            // The user can free the name; nothing about the record is lost.
+            Some(_) => {
+                return Err(Refusal::from(AppError::Other(format!(
+                    "Undo cannot return '{source_path}': another entry now has that name. \
+                     Nothing was changed. Move or rename it, then Undo again."
+                ))))
+            }
+            None => {
+                let retained = match spec.strategy {
+                    // The moved entry itself leaves the destination.
+                    Strategy::Rename => destination.take(),
+                    Strategy::CopyParked => {
+                        probe(self.require(Side::Source)?.directory(), OsStr::new(PARKED))?
+                    }
+                };
+                if retained.as_ref() != Some(&spec.source_version) {
+                    return Err(match (spec.strategy, retained) {
+                        (Strategy::Rename, Some(_)) => changed(),
+                        (Strategy::Rename, None) => {
+                            refuse(format!("'{target_path}' no longer exists"))
+                        }
+                        (Strategy::CopyParked, _) => {
+                            refuse("its retained original changed or is missing".into())
+                        }
+                    });
+                }
+                true
+            }
+        };
+        if resuming && returning {
+            return Ok(Admission::ReturnsSourceFirst);
+        }
+        let checked = if resuming {
+            Admission::SourceHome
+        } else {
+            Admission::Checked
+        };
+        if spec.strategy == Strategy::CopyParked {
+            let staged = self
+                .operation
+                .state()
+                .staged
+                .as_ref()
+                .ok_or_else(|| invalid("Move restoration lacks its staged payload"))?;
+            match &destination {
+                None => {}
+                // Parked as `publication`, leaving the destination free.
+                Some(observed)
+                    if *observed == staged.version
+                        || *observed == staged.published_version().map_err(AppError::from)? =>
+                {
+                    destination = None
+                }
+                Some(_) => return Err(changed()),
+            }
+        }
+        if let Some(original) = &spec.target_original {
+            match destination {
+                // Already republished by an interrupted restoration.
+                Some(observed) if &observed == original => {}
+                Some(_) => return Err(changed()),
+                None => {
+                    let root = self.require(Side::Target)?.directory();
+                    if probe(root, OsStr::new(ORIGINAL))?.as_ref() != Some(original) {
+                        return Err(refuse(format!(
+                            "the entry it replaced at '{target_path}' is no longer retained exactly"
+                        )));
+                    }
+                }
+            }
+        }
+        Ok(checked)
+    }
+
+    /// A restored cross-volume move whose destination was gone when Undo ran
+    /// retains no `publication`, so its retirement can never verify the
+    /// payload it expects; only Forget can end it (#795). Requires roots this
+    /// execution already reopened and verified.
+    pub(super) fn restored_without_publication(&self) -> Result<bool, AppError> {
+        if self.operation.state().phase != Phase::Restored
+            || self.spec()?.strategy != Strategy::CopyParked
+        {
+            return Ok(false);
+        }
+        let root = self.require(Side::Target)?;
+        root.verify_namespace()?;
+        Ok(probe(root.directory(), OsStr::new(PUBLICATION))?.is_none())
     }
 
     /// The destination restoration would park as `publication`: present and

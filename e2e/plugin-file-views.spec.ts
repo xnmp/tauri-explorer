@@ -86,6 +86,28 @@ test.describe("Plugin file views (demo plugin)", () => {
     await expect(menu.locator('.menu-item:has-text("Demo: Greet Selection")')).toBeVisible();
   });
 
+  test("pane setSelection can retain the cursor and Shift-range anchor", async ({ page }) => {
+    await setDemoPluginEnabled(page, true);
+    await chooseDemoView(page);
+    const cards = page.getByTestId("demo-file-view").locator(".card[data-path]");
+    const paths = await cards.evaluateAll(elements => elements.map(element => element.getAttribute("data-path")!));
+    expect(paths.length).toBeGreaterThan(2);
+    await cards.first().click();
+    const focusedPath = await page.evaluate(async paths => {
+      const { windowTabsManager } = await import("/src/lib/state/window-tabs.svelte.ts");
+      const { mountedFileViewPane } = await import("/src/lib/state/file-view-panes.ts");
+      const pane = mountedFileViewPane(windowTabsManager.activePaneId, "demo.cards")!;
+      pane.setSelection([paths[1], "/unlisted"], paths[1], { keepAnchor: true });
+      // The cursor is unselected, so the pane reports the first selected entry.
+      return pane.focusedPath;
+    }, paths);
+    expect(focusedPath).toBe(paths[1]);
+    await expect(cards.nth(1)).toHaveClass(/selected/);
+    await expect(cards.first()).not.toHaveClass(/selected/);
+    await cards.last().click({ modifiers: ["Shift"] });
+    await expect(page.getByTestId("demo-file-view").locator(".card.selected[data-path]")).toHaveCount(paths.length);
+  });
+
   test("Preview targets show plugin subjects with explicit actions, not as files", async ({ page }) => {
     await setDemoPluginEnabled(page, true);
     await chooseDemoView(page);

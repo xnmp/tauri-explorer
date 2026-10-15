@@ -6,12 +6,10 @@
  */
 
 import type { FileEntry } from "$lib/domain/file";
-import { isMac, isWindows } from "$lib/domain/platform";
 import type { ExplorerInstance } from "$lib/state/explorer.svelte";
 import { clipboardStore } from "$lib/state/clipboard.svelte";
-import { dragState } from "$lib/state/drag.svelte";
+import { createHtml5FileDrag } from "$lib/state/html5-file-drag.svelte";
 import { useDropTarget } from "./use-drop-target.svelte";
-import { startExternalDrag } from "./use-external-drag.svelte";
 import { createDragGhost } from "./use-pointer-drag.svelte";
 
 interface ItemInteractionsDeps {
@@ -34,75 +32,41 @@ export function useItemInteractions(deps: ItemInteractionsDeps) {
   // Shared drop-target behavior
   const dropTarget = useDropTarget({ onRefresh: refreshPanes });
 
+  const sourceDrag = createHtml5FileDrag(refreshPanes, "move");
+
   // --- Drag source handlers ---
 
   function handleDragStart(event: DragEvent, entry: FileEntry, isSelected: boolean): void {
-    if (!event.dataTransfer) return;
+    const transfer = event.dataTransfer;
+    if (!transfer) return;
     const explorer = getExplorer();
     const selectedEntries = explorer.getSelectedEntries();
     const isMulti = selectedEntries.length > 1 && isSelected;
     const paths = isMulti ? selectedEntries.map((e) => e.path) : [entry.path];
 
-    event.dataTransfer.setData("application/x-explorer-path", entry.path);
-    event.dataTransfer.setData("application/x-explorer-name", entry.name);
-    event.dataTransfer.setData("application/x-explorer-kind", entry.kind);
-    if (isMulti) {
-      event.dataTransfer.setData("application/x-explorer-paths", JSON.stringify(paths));
-    }
-    // file:// URIs for external apps (Finder, VSCode, etc.) via native pasteboard bridge
-    const uriList = paths.map((p) => "file://" + encodeURI(p)).join("\r\n");
-    event.dataTransfer.setData("text/uri-list", uriList);
-    event.dataTransfer.effectAllowed = "all";
-
-    dragState.start({ path: entry.path, name: entry.name, kind: entry.kind, paths: isMulti ? paths : undefined });
-
-    // Custom drag ghost (#258, #269): the engine's default drag image is an
-    // opaque snapshot of the row under the cursor. Replace it for EVERY drag —
-    // multi-drags get a fanned stack + count badge, single drags the icon +
-    // name — so all ghosts share the same translucency and the drop target
-    // stays visible underneath. The element must be rendered when
-    // setDragImage snapshots it — park it off-screen and remove it on the
-    // next tick.
-    if (typeof document !== "undefined" && typeof event.dataTransfer.setDragImage === "function") {
-      const ghost = createDragGhost(
-        event.currentTarget as HTMLElement,
-        isMulti ? `${paths.length} items` : entry.name,
-        isMulti ? paths.length : 1,
-      );
-      ghost.style.left = "-1000px";
-      ghost.style.top = "-1000px";
-      event.dataTransfer.setDragImage(ghost, 30, 30);
-      setTimeout(() => ghost.remove(), 0);
-    }
-
-    // Per-engine in-app drag strategy:
-    //
-    // - Windows (WebView2 = Chromium): use plain HTML5 DnD, exactly like the dev
-    //   browser. The DOM dragover/drop handlers on folders, miller columns,
-    //   breadcrumbs, tabs and the sidebar all work, and the engine renders a
-    //   native drag ghost. We must NOT start the OLE drag here: that turns the
-    //   gesture into an OS-level drag which Tauri (dragDropEnabled defaults true)
-    //   intercepts, suppressing the DOM drag events — which is exactly what left
-    //   the cursor stuck on "cancel" and only the polling-based sidebar working.
-    //   Trade-off: dragging files OUT to Explorer needs OLE and is not supported
-    //   on Windows for now (none of the in-app targets need it).
-    //
-    // - Linux (WebKitGTK): in-app DnD goes through the native drag session +
-    //   Tauri onDragDropEvent (see use-native-drop-handler), so start it here.
-    //
-    // - macOS: handled by the pointer-drag composable, not this HTML5 path.
-    if (!isMac && !isWindows) {
-      void startExternalDrag(paths);
-    }
+    sourceDrag.start(event, { path: entry.path, name: entry.name, kind: entry.kind, paths: isMulti ? paths : undefined }, () => {
+      // Custom drag ghost (#258, #269): the engine's default drag image is an
+      // opaque snapshot of the row under the cursor. Replace it for EVERY drag —
+      // multi-drags get a fanned stack + count badge, single drags the icon +
+      // name — so all ghosts share the same translucency and the drop target
+      // stays visible underneath. The element must be rendered when
+      // setDragImage snapshots it — park it off-screen and remove it on the
+      // next tick.
+      if (typeof document !== "undefined" && typeof transfer.setDragImage === "function") {
+        const ghost = createDragGhost(
+          event.currentTarget as HTMLElement,
+          isMulti ? `${paths.length} items` : entry.name,
+          isMulti ? paths.length : 1,
+        );
+        ghost.style.left = "-1000px";
+        ghost.style.top = "-1000px";
+        transfer.setDragImage(ghost, 30, 30);
+        setTimeout(() => ghost.remove(), 0);
+      }
+    });
   }
 
-  function handleDragEnd(): void {
-    // Sidebar's document-level dragend runs in capture phase and reads
-    // `dragState.current` before this bubble-phase handler fires, so
-    // clearing synchronously is safe.
-    dragState.clear();
-    refreshPanes();
-  }
+  const handleDragEnd = sourceDrag.end;
 
   // --- Context menu ---
 

@@ -470,9 +470,22 @@ mod recovery_admission {
                 assert!(!target.exists());
                 assert_eq!(fs::read(&source).unwrap(), b"original bytes");
                 held.finish().unwrap();
-                let completed = entry_outcome(plan(), &runtime).await;
+                // This test covers admission and the file worker. The public
+                // entry wrapper also consults optional installed-plugin state
+                // after a successful rename, which is outside this contract
+                // and would make the test depend on the process config dir.
+                let completed = settle_entry(
+                    admission::admitted_execute(plan(), &runtime, execute_owned).await,
+                );
                 assert_eq!(completed.result.unwrap().path, native(&target));
-                assert!(completed.warning.is_none());
+                if kind == "rename" {
+                    assert!(completed.warning.as_deref().is_none_or(|warning| {
+                        warning
+                            == "Rename completed, but Trace could not update its locator: Plugin AI services are unavailable in this process; this plugin waits for their recovery"
+                    }));
+                } else {
+                    assert!(completed.warning.is_none());
+                }
                 if kind == "directory" {
                     assert!(target.is_dir());
                 } else {

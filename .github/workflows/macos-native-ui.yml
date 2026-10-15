@@ -1,8 +1,8 @@
 name: macOS Native UI
 
 # The hosted Mac pilot is the most expensive job and is not a required check.
-# It runs for backend, harness and build-input changes, and weekly so that
-# frontend-only regressions on WKWebView still surface (#872).
+# It runs on dev pushes for backend, harness and build-input changes, and
+# weekly so that frontend-only regressions on WKWebView still surface (#872).
 on:
   push:
     branches: [dev]
@@ -22,23 +22,14 @@ on:
       - "package.json"
       - "bun.lock"
       - ".github/workflows/macos-native-ui.yml"
+  # PRs run only required checks (tauri#1133); this platform workflow keeps a
+  # PR trigger for its macOS-specific harness files.
   pull_request:
     branches: [dev]
     paths:
-      - "src-tauri/**"
       - "e2e-tauri/macos-*.ts"
       - "e2e-tauri/macos-display.swift"
-      - "e2e-tauri/*pdf*screenshot*.py"
-      - "src/lib/components/PdfPreview.svelte"
-      - "src/lib/components/PreviewPane.svelte"
-      - "src/lib/api/pdf-preview*"
-      - "src/lib/state/pdf-preview*"
-      - "src/lib/domain/pdf-preview*"
-      - "src/lib/api/fixtures/preview-landmarks.pdf"
-      - "scripts/prepare-pdf-assets.mjs"
       - "scripts/grant-macos-accessibility.sh"
-      - "package.json"
-      - "bun.lock"
       - ".github/workflows/macos-native-ui.yml"
   schedule:
     - cron: "23 4 * * 1"
@@ -46,7 +37,7 @@ on:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.ref_name }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   native-ui:

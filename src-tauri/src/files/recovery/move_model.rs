@@ -243,8 +243,12 @@ impl DurableKind for MoveSpec {
         }
     }
 
+    /// A settled forward record's destination is user data once published:
+    /// a discard removes only the retained source and displaced original, so
+    /// an edited destination is kept and only its absence refuses (#795).
     fn endpoints(&self, state: &State) -> io::Result<Vec<Endpoint<'_>>> {
-        let (source, target) = if state.phase == Phase::Restored {
+        let restored = state.phase == Phase::Restored;
+        let (source, target) = if restored {
             (
                 vec![self.source_version.clone()],
                 self.target_original.iter().cloned().collect(),
@@ -262,11 +266,13 @@ impl DurableKind for MoveSpec {
                 path: &self.source,
                 parent: Some(self.source_parent),
                 versions: source,
+                user_owned: false,
             },
             Endpoint {
                 path: &self.target,
                 parent: Some(self.target_parent),
                 versions: target,
+                user_owned: !restored,
             },
         ])
     }

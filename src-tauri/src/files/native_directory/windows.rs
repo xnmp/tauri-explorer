@@ -382,8 +382,9 @@ fn query_names(
 ) -> (NTSTATUS, usize) {
     let length = size_of_val(buffer).min(u32::MAX as usize) as u32;
     let mut status_block = IO_STATUS_BLOCK::default();
-    // The reopened handle is synchronous (no OVERLAPPED flag), so the stack
-    // status block and buffer cannot outlive this call.
+    // SAFETY: the reopened handle is synchronous (no OVERLAPPED flag), so the
+    // stack status block and buffer outlive this call, and `length` never
+    // exceeds the buffer's byte size.
     let status = unsafe {
         NtQueryDirectoryFile(
             file_handle(directory),
@@ -859,10 +860,14 @@ mod tests {
             "OpenFileById unexpectedly succeeded on FAT32"
         );
 
-        // A fresh root has no "." or ".." entries; an empty one reports
-        // STATUS_NO_SUCH_FILE on the first query.
-        let initial = volume.names(64).unwrap();
-        println!("fresh FAT32 root entries: {initial:?}");
+        // A root has no "." or ".." entries, so an empty one reports
+        // STATUS_NO_SUCH_FILE on the first query. Windows may have created
+        // System Volume Information on mount; FAT has no ACLs to keep it.
+        let system = root.join("System Volume Information");
+        if system.exists() {
+            std::fs::remove_dir_all(&system).unwrap();
+        }
+        assert!(volume.names(64).unwrap().is_empty());
 
         std::fs::create_dir(root.join("recovery")).unwrap();
         let recovery = volume.open_existing(OsStr::new("recovery")).unwrap();

@@ -34,6 +34,7 @@ import {
   leafSiblingContext,
 } from "$lib/domain/pane-layout";
 import { createExplorerState, type ExplorerInstance } from "./explorer.svelte";
+import { emptyRetainedTabs, retainTabs } from "$lib/domain/retained-tabs";
 import { createPaneViewport } from "./pane-viewport.svelte";
 import { paneDividerSize } from "$lib/domain/pane-viewport";
 import { createPaneSessions } from "./pane-sessions";
@@ -237,6 +238,16 @@ function createWindowTabsManager(options: {
   }
 
   const activeTab = $derived(tabs.find((t) => t.id === activeTabId) ?? null);
+
+  // Recently active tabs stay mounted while hidden, so switching back to one
+  // does not rebuild its pane tree (#1173). Folded on read: an active tab
+  // that was never rendered never needed retaining.
+  let retention = emptyRetainedTabs<symbol>();
+  const retainedTabs = $derived.by(() => {
+    const live = new Map(tabs.map((tab) => [tab[TAB_INSTANCE], tab]));
+    retention = retainTabs(retention, activeTab?.[TAB_INSTANCE] ?? null, (key) => live.has(key));
+    return retention.mounted.map((key) => live.get(key)!);
+  });
 
   const paneViewport = createPaneViewport(
     () => activeTab?.kind === "explorer" ? activeTab.layout : undefined,
@@ -1296,6 +1307,14 @@ function createWindowTabsManager(options: {
     /** Mount identity survives edits but changes when a saved tab is revived. */
     get activeTabInstance() {
       return activeTab?.[TAB_INSTANCE];
+    },
+    /** Tabs whose pane trees stay mounted, in stable render order (#1173). */
+    get retainedTabs(): readonly WindowTab[] {
+      return retainedTabs;
+    },
+    /** Mount identity of a tab from `tabs` or `retainedTabs`. */
+    tabInstance(tab: WindowTab): symbol | undefined {
+      return (tab as Partial<ManagedTab>)[TAB_INSTANCE];
     },
     get totalTabCount() {
       return tabs.length;

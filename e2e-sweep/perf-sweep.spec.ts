@@ -100,7 +100,8 @@ async function measure(page: Page, name: string, action: () => Promise<void>): P
 }
 
 async function waitForRows(page: Page, text?: string): Promise<void> {
-  const rows = page.locator(".entry-item");
+  // `:visible`: recently active tabs stay mounted but hidden (#1173).
+  const rows = page.locator(".entry-item:visible");
   await (text ? rows.filter({ hasText: text }).first() : rows.first()).waitFor({ timeout: 30_000 });
 }
 
@@ -226,7 +227,8 @@ test("marquee selection", async ({ page }) => {
   await waitForRows(page, "Documents");
   const viewport = page.locator(".virtual-viewport").first();
   const box = (await viewport.boundingBox())!;
-  const rows = page.locator(".entry-item");
+  // `:visible`: recently active tabs stay mounted but hidden (#1173).
+  const rows = page.locator(".entry-item:visible");
   const last = (await rows.last().boundingBox())!;
   const startY = Math.min(box.y + box.height - 10, last.y + last.height + 40);
   for (let i = 0; i < RUNS; i++) {

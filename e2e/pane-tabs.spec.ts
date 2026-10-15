@@ -8,7 +8,8 @@
 
 import { test, expect, type Page } from "./fixtures";
 
-const panes = (page: Page) => page.locator(".explorer-pane");
+// Recently active tabs stay mounted but hidden (#1173): count the shown tab's panes.
+const panes = (page: Page) => page.locator(".pane-tree:not(.retained) .explorer-pane");
 
 async function openDualPane(page: Page): Promise<void> {
   await page.goto("/?path=/home/user");

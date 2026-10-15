@@ -70,7 +70,7 @@ export async function captureDiagnostics(
         statusPaths: [...document.querySelectorAll(".status-path")].map((node) => ({
           text: node.textContent, title: node.getAttribute("title"),
         })),
-        panes: [...document.querySelectorAll(".explorer-pane")].map((pane) => ({
+        panes: [...document.querySelectorAll(".pane-tree:not(.retained) .explorer-pane")].map((pane) => ({
           classes: pane.className,
           text: pane.textContent?.slice(0, 1_500),
           html: pane.innerHTML.slice(0, 3_000),

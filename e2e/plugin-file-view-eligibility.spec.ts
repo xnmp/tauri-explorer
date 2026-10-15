@@ -98,7 +98,8 @@ for (const mode of ["details", "list", "tiles"]) {
     });
     await page.clock.runFor(100);
     await page.locator('.file-list .content[data-current-path="/home/user/Pictures"]').waitFor();
-    await expect(page.locator(".file-list .content")).toBeEmpty();
+    // The previous tab stays mounted but hidden (#1173); the new tab's pane holds.
+    await expect(page.locator('.file-list .content[data-current-path="/home/user/Pictures"]')).toBeEmpty();
     await answer(page, "/home/user/Pictures", true);
     await expect(view.locator('.card[data-path="/home/user/Pictures/screenshot.png"]')).toBeVisible();
     expect(await page.evaluate(() => (window as any).__wrongFileViewPaints)).toEqual([]);

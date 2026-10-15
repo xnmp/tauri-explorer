@@ -76,8 +76,8 @@ async function sourceShape(): Promise<{
   return browser.execute(() => ({
     activeTabId: document.querySelector<HTMLElement>(".tab.active")?.dataset.tabId ?? null,
     activePath: document.querySelector<HTMLElement>(".status-path")?.title ?? null,
-    paneCount: document.querySelectorAll(".explorer-pane").length,
-    entries: [...document.querySelectorAll<HTMLElement>(".explorer-pane .entry-name")]
+    paneCount: document.querySelectorAll(".pane-tree:not(.retained) .explorer-pane").length,
+    entries: [...document.querySelectorAll<HTMLElement>(".pane-tree:not(.retained) .explorer-pane .entry-name")]
       .map(node => node.textContent ?? "").sort(),
   }));
 }
@@ -99,11 +99,11 @@ describe("native window transfer rejection", () => {
     await browser.keys(["Control", "t"]);
     await browser.waitUntil(async () => await browser.execute((expectedTabs) =>
       document.querySelectorAll(".tab-list > .tab").length === expectedTabs
-        && document.querySelectorAll(".explorer-pane").length === 1,
+        && document.querySelectorAll(".pane-tree:not(.retained) .explorer-pane").length === 1,
     previousTabs + 1), { timeoutMsg: "fresh transfer source did not have exactly one pane" });
     await browser.keys(["Control", "m"]);
     await browser.waitUntil(async () =>
-      await browser.execute(() => document.querySelectorAll(".explorer-pane").length === 2));
+      await browser.execute(() => document.querySelectorAll(".pane-tree:not(.retained) .explorer-pane").length === 2));
     await navigateTo(rightDirectory);
     baseline = await sourceShape();
     expect(baseline.activeTabId).not.toBeNull();
@@ -133,7 +133,7 @@ describe("native window transfer rejection", () => {
     expect(shape.paneCount).toBe(baseline.paneCount);
     expect(shape.entries).toEqual(expect.arrayContaining(["left.txt", "right.txt"]));
     fs.writeFileSync(path.join(rightDirectory, marker), marker);
-    await browser.waitUntil(async () => (await domTexts(".explorer-pane .entry-name")).includes(marker), {
+    await browser.waitUntil(async () => (await domTexts(".pane-tree:not(.retained) .explorer-pane .entry-name")).includes(marker), {
       timeout: 20_000, timeoutMsg: `source watcher did not render ${marker}`,
     });
   }
@@ -173,9 +173,9 @@ describe("native window transfer rejection", () => {
     const activated = await operation("warm-open", warmDirectory) as { kind: string; label: string };
     expect(activated).toEqual({ kind: "warm", label: parked.label });
     await browser.switchToWindow(parked.handle);
-    expect(await browser.execute(() => document.querySelectorAll(".explorer-pane").length)).toBe(1);
+    expect(await browser.execute(() => document.querySelectorAll(".pane-tree:not(.retained) .explorer-pane").length)).toBe(1);
     expect(await browser.execute(() => document.querySelectorAll(".tab-list > .tab").length)).toBe(1);
-    expect(await domTexts(".explorer-pane .entry-name")).toContain("warm.txt");
+    expect(await domTexts(".pane-tree:not(.retained) .explorer-pane .entry-name")).toContain("warm.txt");
     await browser.switchToWindow(sourceHandle);
     await verifySourceOwnsTab("after-warm-activation.txt");
   });
@@ -230,11 +230,11 @@ describe("native window transfer rejection", () => {
       opened.label), {
       timeout: 20_000, timeoutMsg: "formerly unready destination did not initialize",
     });
-    await browser.waitUntil(async () => (await domTexts(".explorer-pane .entry-name")).includes("warm.txt"), {
+    await browser.waitUntil(async () => (await domTexts(".pane-tree:not(.retained) .explorer-pane .entry-name")).includes("warm.txt"), {
       timeout: 20_000, timeoutMsg: "formerly unready destination did not list its requested directory",
     });
     expect(await browser.execute(() => document.querySelectorAll(".tab-list > .tab").length)).toBe(1);
-    expect(await browser.execute(() => document.querySelectorAll(".explorer-pane").length)).toBe(1);
+    expect(await browser.execute(() => document.querySelectorAll(".pane-tree:not(.retained) .explorer-pane").length)).toBe(1);
     expect(await browser.execute(() => document.querySelector(".status-path")?.getAttribute("title")))
       .toBe(warmDirectory);
     await browser.switchToWindow(sourceHandle);
@@ -244,7 +244,7 @@ describe("native window transfer rejection", () => {
     await browser.switchToWindow(sourceHandle);
     const opened = await operation("fresh-open", warmDirectory) as { kind: string; label: string };
     const targetHandle = await switchToWindowLabel(opened.label);
-    await browser.waitUntil(async () => (await domTexts(".explorer-pane .entry-name")).includes("warm.txt"), {
+    await browser.waitUntil(async () => (await domTexts(".pane-tree:not(.retained) .explorer-pane .entry-name")).includes("warm.txt"), {
       timeout: 20_000, timeoutMsg: "closing destination did not list its requested directory",
     });
     const armToken = crypto.randomUUID();
@@ -281,7 +281,7 @@ describe("native window transfer rejection", () => {
     const opened = await operation("fresh-open", warmDirectory) as { kind: string; label: string };
     expect(opened.kind).toBe("fresh");
     const targetHandle = await switchToWindowLabel(opened.label);
-    await browser.waitUntil(async () => (await domTexts(".explorer-pane .entry-name")).includes("warm.txt"), {
+    await browser.waitUntil(async () => (await domTexts(".pane-tree:not(.retained) .explorer-pane .entry-name")).includes("warm.txt"), {
       timeout: 20_000, timeoutMsg: "collision target did not list its requested directory",
     });
     const targetBefore = await sourceShape();
@@ -306,7 +306,7 @@ describe("native window transfer rejection", () => {
     expect(targetAfter.entries).toContain("warm.txt");
     fs.writeFileSync(path.join(warmDirectory, "target-survived-collision.txt"), "target watcher");
     await browser.waitUntil(async () =>
-      (await domTexts(".explorer-pane .entry-name")).includes("target-survived-collision.txt"), {
+      (await domTexts(".pane-tree:not(.retained) .explorer-pane .entry-name")).includes("target-survived-collision.txt"), {
       timeout: 20_000, timeoutMsg: "collision target watcher did not remain live",
     });
     fs.mkdirSync("screenshots/refactor/repo-health-cleanup", { recursive: true });

@@ -13,21 +13,21 @@ for (const mode of VIEW_MODES) {
       await expect(page.locator(".tab")).toHaveCount(2);
       if (action === "switch by click") await page.locator(".tab").first().click();
       if (action === "switch by shortcut") await page.keyboard.press("Control+Shift+Tab");
-      await expect(page.locator('.entry-item[data-path="/home/user/Documents"]')).toBeVisible();
+      await expect(page.locator('.entry-item[data-path="/home/user/Documents"]:visible')).toBeVisible();
 
       await expect(page.locator(".path-input")).toHaveCount(0);
       await focusBeforeFileList(page);
       await page.keyboard.press("Tab");
       await expect(page.locator(".file-list .entry-item:focus")).toHaveCount(1);
       await page.keyboard.type("Doc");
-      await expect(page.locator('.entry-item[data-path="/home/user/Documents"]')).toHaveClass(/selected/);
+      await expect(page.locator('.entry-item[data-path="/home/user/Documents"]:visible')).toHaveClass(/selected/);
       await expect(page.locator(".path-input")).toHaveCount(0);
       if (process.env.CAPTURE_TAB_FOCUS && mode === "details" && action === "switch by shortcut") {
         await page.screenshot({ path: "screenshots/fix/tab-address-focus/keyboard-browsing.png" });
       }
       await page.keyboard.press("Enter");
       await expect(page.locator(".status-path")).toHaveAttribute("title", "/home/user/Documents");
-      await expect(page.locator('.entry-item[data-path="/home/user/Documents/project"]')).toBeVisible();
+      await expect(page.locator('.entry-item[data-path="/home/user/Documents/project"]:visible')).toBeVisible();
       await page.keyboard.press("Control+l");
       await expect(page.locator(".path-input")).toBeFocused();
       await expect(page.locator(".path-input")).toHaveValue("/home/user/Documents");
@@ -67,7 +67,7 @@ test("opening a tab during slow window startup cancels pending address selection
   await expect(page.locator(".tab")).toHaveCount(1);
   await page.keyboard.press("Control+t");
   await expect(page.locator(".tab")).toHaveCount(2);
-  await expect(page.locator(".entry-item").first()).toBeVisible();
+  await expect(page.locator(".entry-item:visible").first()).toBeVisible();
   await expect(page.locator(".path-input")).toHaveCount(0);
   await page.keyboard.press("Control+l");
   await expect(page.locator(".path-input")).toBeFocused();

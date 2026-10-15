@@ -312,6 +312,22 @@ impl Coordinator {
     }
 }
 
+#[cfg(test)]
+impl Coordinator {
+    /// Durable reservation rows still in the journal: one per admission that
+    /// was not explicitly retired by `finish`.
+    pub(super) fn unretired_reservations(&self) -> Result<usize, AppError> {
+        self.admitted(|inner| {
+            Ok(inner
+                .journal
+                .records()?
+                .iter()
+                .filter(|row| row.kind == RecordKind::Reservation)
+                .count())
+        })
+    }
+}
+
 impl Reservation {
     pub(super) fn paths(&self) -> impl Iterator<Item = &Path> {
         self.resources

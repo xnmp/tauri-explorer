@@ -126,14 +126,35 @@ async fn run_archive(
         window.app_handle().clone()
     };
     let runtime = admission::runtime(window)?;
+    run_admitted(
+        owner,
+        runtime,
+        Some(app),
+        potential_directories,
+        job_id,
+        job,
+    )
+    .await
+}
+
+/// The window-free body of [`run_archive`]: every archive effect runs through
+/// `admitted_execute`. Tests enter here with a bare `Runtime`.
+async fn run_admitted(
+    owner: Owner,
+    runtime: admission::Runtime,
+    app: Option<tauri::AppHandle>,
+    potential_directories: Vec<String>,
+    job_id: Option<u64>,
+    job: Job,
+) -> Result<MutationReply<String>, AppError> {
     let supervisor = owner.clone();
     file_history::run_forward(owner, false, potential_directories, async move {
         let plan = match crate::files::run_blocking(move || Ok(job.select())).await {
             Ok(plan) => plan,
             Err(error) => return rejected(error),
         };
-        admission::admitted_execute(plan, &runtime, |plan, _owner| async move {
-            Archived(execute(plan, Some(app), job_id, supervisor).await)
+        admission::admitted_execute(plan, &runtime, |plan, admitted| async move {
+            Archived(execute(plan, app, job_id, supervisor, admitted).await)
         })
         .await
         .0
@@ -177,6 +198,7 @@ async fn execute(
     app: Option<tauri::AppHandle>,
     job_id: Option<u64>,
     supervisor: Owner,
+    admitted: admission::Owner,
 ) -> MutationOutcome<String> {
     let registry = registry_for(plan.request());
     // Registration is owned by this async supervisor, so a duplicate client id
@@ -192,7 +214,12 @@ async fn execute(
     let affected = plan.affected_dirs();
     let flag = Arc::clone(&cancelled);
     let mut task = Box::pin(tokio::task::spawn_blocking(move || {
-        run_plan(&plan, app.as_ref(), job_id.unwrap_or(0), &flag)
+        let result = run_plan(&plan, app.as_ref(), job_id.unwrap_or(0), &flag);
+        // The admission's claim lives as long as this worker, not only the
+        // supervising future: dropping the supervisor must not release
+        // ownership while the blocking job is still writing.
+        let _ = &admitted;
+        result
     }));
     // A retired renderer must not leave an archive job writing into a
     // directory nobody is watching. The blocking worker owns its own cleanup.

@@ -264,7 +264,7 @@ fn a_retired_renderer_cancels_the_job_and_releases_its_claim() {
         tauri::async_runtime::spawn(async move {
             supervisor.retire();
         });
-        execute(plan, None, Some(686_001), owner).await
+        execute(plan, None, Some(686_001), owner, admission.context()).await
     });
 
     // Either the worker finished first or it was cancelled; both must settle.
@@ -427,4 +427,115 @@ fn an_extraction_folder_taken_after_selection_is_never_merged_into_or_deleted() 
     assert!(result.is_err(), "an occupied destination must fail closed");
     assert!(!touched);
     assert_eq!(fs::read(output.join("keep.txt")).unwrap(), b"keep");
+}
+
+fn registered_renderer() -> Owner {
+    let owner = Owner::default();
+    file_history::register(owner.clone(), tauri::ipc::Channel::new(|_| Ok(()))).unwrap();
+    owner
+}
+
+fn compress_job(source: &Path) -> Job {
+    Job::Compress(CompressRequest::new(vec![source.to_string_lossy().into_owned()]).unwrap())
+}
+
+fn directories(fixture: &Fixture) -> Vec<String> {
+    vec![fixture.base.to_string_lossy().into_owned()]
+}
+
+#[test]
+fn the_run_path_refuses_conflicting_ownership_before_any_filesystem_work() {
+    let fixture = fixture();
+    let source = fixture.base.join("docs");
+    fs::create_dir(&source).unwrap();
+    fs::write(source.join("a.txt"), b"a").unwrap();
+    // Another managed operation owns the source; only `admitted_execute`
+    // consults ownership, so a run path that bypasses it would archive anyway.
+    let held = fixture.competitor(&source, Access::Write);
+
+    let error = tauri::async_runtime::block_on(run_admitted(
+        registered_renderer(),
+        fixture.runtime.clone(),
+        None,
+        directories(&fixture),
+        None,
+        compress_job(&source),
+    ))
+    .err()
+    .expect("a conflicting owner must refuse the archive");
+    assert!(error.to_string().contains("owns these files"), "{error}");
+    assert!(
+        !fixture.base.join("docs.zip").exists(),
+        "a refused archive must not touch the filesystem"
+    );
+    held.finish().unwrap();
+}
+
+#[test]
+fn a_successful_run_completes_and_retires_its_journal_row() {
+    let fixture = fixture();
+    let source = fixture.base.join("docs");
+    fs::create_dir(&source).unwrap();
+    fs::write(source.join("a.txt"), b"a").unwrap();
+
+    let reply = tauri::async_runtime::block_on(run_admitted(
+        registered_renderer(),
+        fixture.runtime.clone(),
+        None,
+        directories(&fixture),
+        None,
+        compress_job(&source),
+    ))
+    .expect("archive");
+    let output = fixture.base.join("docs.zip");
+    assert_eq!(reply.result, output.to_string_lossy());
+    assert!(output.exists());
+    assert!(reply.warning.is_none(), "{:?}", reply.warning);
+    assert_eq!(fixture.runtime.unretired_reservations().unwrap(), 0);
+    assert!(fixture.claims(&output, Access::Write));
+}
+
+#[test]
+fn the_blocking_worker_keeps_the_claim_after_its_supervisor_is_dropped() {
+    use std::process::Command;
+    let fixture = fixture();
+    // Opening a FIFO for reading blocks until a writer appears, which parks
+    // the worker inside `run_plan` deterministically.
+    let pipe = fixture.base.join("pipe");
+    assert!(Command::new("mkfifo")
+        .arg(&pipe)
+        .status()
+        .unwrap()
+        .success());
+    let output = fixture.base.join("pipe.zip");
+    let plan = compress_plan(std::slice::from_ref(&pipe), output.clone());
+
+    let admission = fixture.admit(&plan).unwrap();
+    let plan = plan
+        .resolve(admission.paths().map(Path::to_path_buf))
+        .unwrap();
+    let context = admission.context();
+    drop(admission);
+
+    tauri::async_runtime::block_on(async {
+        let supervised = execute(plan, None, None, Owner::default(), context);
+        // The supervisor is abandoned while the worker is parked on the pipe.
+        assert!(
+            tokio::time::timeout(std::time::Duration::from_millis(300), supervised)
+                .await
+                .is_err()
+        );
+    });
+    assert!(
+        !fixture.claims(&output, Access::Write),
+        "the worker still owns the claim although its supervisor is gone"
+    );
+
+    // Release the worker: a writer that closes at once gives it EOF.
+    drop(fs::OpenOptions::new().write(true).open(&pipe).unwrap());
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    while !fixture.claims(&output, Access::Write) {
+        assert!(std::time::Instant::now() < deadline, "claim never released");
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
 }

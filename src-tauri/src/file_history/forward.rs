@@ -79,3 +79,7 @@ pub(crate) async fn run_forward<T: Send + 'static>(
         outcome.result.map(|result| MutationReply { result, history, warning })
     }).await.map_err(|error| AppError::Other(format!("Native file mutation task failed: {error}")))?
 }
+
+#[cfg(test)]
+#[path = "../../test_support/file_history_forward_host.rs"]
+mod host_tests;

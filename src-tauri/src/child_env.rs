@@ -47,14 +47,13 @@ pub(crate) fn scrub_pty(command: &mut portable_pty::CommandBuilder) {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, unix))]
 mod tests {
     use super::*;
 
     /// A spawned child must not see an app-set variable but must see a
     /// user-set one.
     #[test]
-    #[cfg(unix)]
     fn child_does_not_see_app_set_variable_but_sees_user_set_one() {
         std::env::set_var("WEBKIT_FORCE_DMABUF_RENDERER", "1"); // app-set
         std::env::set_var("WEBKIT_DISABLE_COMPOSITING_MODE", "user"); // user-set
@@ -74,7 +73,6 @@ mod tests {
         );
     }
 
-    #[cfg(unix)]
     fn record_app_set_for_test(names: Vec<&'static str>) {
         let _ = APP_SET.set(names);
     }

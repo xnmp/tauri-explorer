@@ -157,7 +157,7 @@
       if ((draft.attachments?.length ?? 0) > 0) {
         const fallbackUrl = userReportFallbackUrl(draft);
         toastStore.show(
-          `${userReportAttachmentFailureMessage(error.kind)}${fallbackUrl ? " Opening GitHub; add the attachments there manually." : ""}`,
+          `${userReportAttachmentFailureMessage(error.kind, error.message)}${fallbackUrl ? " Opening GitHub; add the attachments there manually." : ""}`,
           "error",
           { duration: 8000 },
         );

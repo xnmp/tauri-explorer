@@ -123,9 +123,11 @@ function validateAttachments(input) {
       throw new ReportError("malformed_input", "Attachment data is invalid");
     }
     const buffer = Buffer.from(record.data, "base64");
+    if (buffer.length > REPORT_LIMITS.maxAttachmentBytes) {
+      throw new ReportError("malformed_input", "Attachment is too large (2 MiB maximum). Try a shorter clip or a recording at lower quality.");
+    }
     if (buffer.toString("base64") !== record.data
       || buffer.length === 0
-      || buffer.length > REPORT_LIMITS.maxAttachmentBytes
       || !hasMediaMagic(/** @type {string} */ (mediaType), buffer)) {
       throw new ReportError("malformed_input", "Attachment data is invalid");
     }

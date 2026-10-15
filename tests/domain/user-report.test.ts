@@ -99,6 +99,19 @@ describe("userReportAttachmentFailureMessage", () => {
   });
 });
 
+describe("attachment rejection details (#1170)", () => {
+  it.each([
+    ["malformed_input" as const, "Attachment type is invalid"],
+    ["malformed_input" as const, "Video is too large (2 MiB maximum). Try a shorter clip."],
+    ["server_rejected" as const, "Attachment hosting is not configured"],
+  ])("preserves the %s reason and retry guidance", (kind, reason) => {
+    const notice = userReportAttachmentFailureMessage(kind, reason);
+    expect(notice).toContain(reason);
+    expect(notice).toContain("Your text is saved");
+    expect(notice).toContain("window closes");
+  });
+});
+
 describe("report limits (shared contract)", () => {
   it("match the native boundary and relay", async () => {
     const { default: contract } = await import("../contract/fixtures/report_relay.json");

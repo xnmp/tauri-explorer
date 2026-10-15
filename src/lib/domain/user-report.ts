@@ -124,8 +124,11 @@ export function userReportFallbackNotice(kind: UserReportErrorKind | undefined):
 
 export function userReportAttachmentFailureMessage(
   kind: UserReportErrorKind | undefined,
+  detail?: string,
 ): string {
   const retry = "Your text is saved; images and videos remain available until this window closes.";
+  const message = detail?.trim();
+  const reason = message ? ` Reason: ${message}${/[.!?]$/.test(message) ? "" : "."}` : "";
   if (kind === "attachment_uploader_unavailable") {
     return `Could not reach an attachment uploader. ${retry}`;
   }
@@ -133,7 +136,7 @@ export function userReportAttachmentFailureMessage(
     return `Could not upload the attachment. ${retry}`;
   }
   if (kind === "malformed_input") {
-    return `One of your attached images or videos is not valid. ${retry} Reopen Report Issue, remove it, and try again.`;
+    return `One of your attached images or videos is not valid.${reason} ${retry} Reopen Report Issue, remove it, and try again.`;
   }
   if (kind === "daily_cap") {
     return `Reports are temporarily unavailable. ${retry}`;
@@ -144,7 +147,7 @@ export function userReportAttachmentFailureMessage(
   if (kind === "rate_limited") {
     return `Too many reports were submitted. ${retry} Try again later.`;
   }
-  return `Could not submit the report with its attachments. ${retry}`;
+  return `Could not submit the report with its attachments.${reason} ${retry}`;
 }
 
 const REPO_ISSUES_URL = "https://github.com/xnmp/tauri-explorer/issues/new";

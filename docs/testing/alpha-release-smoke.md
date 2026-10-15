@@ -24,6 +24,10 @@ and `website/app.js` from the release commit. A successful redeploy must not
 serve the old `b21a59cf` snapshot. A read-only GET to `/api/report` must reach
 the function and return 405 with `Allow: POST` and a `method_not_allowed` JSON
 body; Vercel's plain-text `NOT_FOUND` 404 means the report path is absent.
+Also run the [video-admission probe](../lessons/1170-report-relay-video-deployment.md#probe-without-creating-an-issue-or-uploading-anything):
+a route can pass GET/405 while an older image-only relay still rejects videos.
+The deliberately invalid second attachment must remain in that probe so it
+cannot upload media or create an issue.
 Exercise the deployed download control with a failed GitHub API lookup and
 confirm it opens the releases page. Record the deployment URL or identifier,
 response status, and source commit alongside the installer hash.

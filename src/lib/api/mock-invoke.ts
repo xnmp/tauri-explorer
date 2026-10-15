@@ -1205,9 +1205,9 @@ const mockCommands: Record<string, CommandHandler> = {
     if (error) {
       throw {
         kind: error,
-        message: error === "daily_cap"
+        message: localStorage.getItem(MOCK_LOCAL_KEYS.reportErrorMessage) ?? (error === "daily_cap"
           ? "Reports are temporarily unavailable"
-          : "Unable to submit report",
+          : "Unable to submit report"),
       };
     }
     return {

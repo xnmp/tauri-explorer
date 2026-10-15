@@ -179,6 +179,8 @@ export const MOCK_LOCAL_KEYS = {
   openedUrl: "mock-opened-url",
   /** Error kind string: `submit_user_report` throws `{ kind, message }`. */
   reportError: "mock-report-error",
+  /** Optional detailed rejection reason returned with `reportError`. */
+  reportErrorMessage: "mock-report-error-message",
   /** JSON of the last `submit_user_report` payload. */
   submittedReport: "mock-submitted-report",
   /** "1" when set: `check_for_update` reports a newer release. */

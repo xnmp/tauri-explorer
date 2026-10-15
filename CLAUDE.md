@@ -114,6 +114,11 @@ Rules that bite:
   deploy the relay alongside the app. ADR 0029 governs copied-file authority,
   bounded reads, signature limits, public disclosure and upload cleanup/uncertainty.
   See `docs/lessons/1059-report-video-attachments.md`.
+  A deployed image-only relay can still reject videos accepted by the app (#1170).
+  Preserve the native/relay error message in attachment-failure feedback; the
+  error kind alone hides deployment and size-limit failures. A GET/405 health
+  check does not prove video support: use the deliberately invalid second
+  attachment probe in `docs/lessons/1170-report-relay-video-deployment.md`.
 - The root Vitest suite imports the report relay from `website/`; keep its
   `@vercel/blob` runtime and compatible Undici major in the root test-harness
   dev dependencies as well as the independently deployed website package.

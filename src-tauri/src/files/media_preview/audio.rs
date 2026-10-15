@@ -10,6 +10,7 @@ use crate::{error::AppError, process_ext::NoConsole};
 use std::{
     path::{Path, PathBuf},
     process::Command,
+    sync::LazyLock,
     time::{Duration, SystemTime},
 };
 
@@ -105,17 +106,30 @@ impl Extractor {
 
 /// Creates the private directory and removes stale leftovers from earlier sessions.
 fn prepare_directory(directory: &Path) -> Result<(), AppError> {
+    static SESSION_START: LazyLock<SystemTime> = LazyLock::new(SystemTime::now);
     let mut builder = std::fs::DirBuilder::new();
     builder.recursive(true);
     #[cfg(unix)]
     std::os::unix::fs::DirBuilderExt::mode(&mut builder, 0o700);
     builder.create(directory)?;
-    let now = SystemTime::now();
+    sweep(directory, *SESSION_START, SystemTime::now())
+}
+
+/// Removes files written before `session_start` and older than [`STALE_AFTER`].
+/// A file this session wrote can still back a long-open preview, so it is kept.
+pub(super) fn sweep(
+    directory: &Path,
+    session_start: SystemTime,
+    now: SystemTime,
+) -> Result<(), AppError> {
     for entry in std::fs::read_dir(directory)?.flatten() {
         let stale = entry
             .metadata()
             .and_then(|metadata| metadata.modified())
-            .is_ok_and(|modified| now.duration_since(modified).unwrap_or_default() > STALE_AFTER);
+            .is_ok_and(|modified| {
+                modified < session_start
+                    && now.duration_since(modified).unwrap_or_default() > STALE_AFTER
+            });
         if stale {
             let _ = std::fs::remove_file(entry.path());
         }

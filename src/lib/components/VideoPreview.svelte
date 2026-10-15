@@ -191,7 +191,7 @@
     <div class="sound">
       {#if audioNote}
         <span class="audio-note" role="status" title={audioNote === "preparing" ? "Decoding this video's audio track" : audioNote.error}>
-          {audioNote === "preparing" ? "Preparing audio…" : "No audio"}</span>
+          {audioNote === "preparing" ? "Preparing audio…" : "Audio unavailable"}</span>
       {/if}
       <button type="button" aria-label={muted ? "Unmute video" : "Mute video"} title="Mute (M)" disabled={!ready || !!error} onclick={toggleMute}>{muted ? "Muted" : "Sound"}</button>
       <input type="range" aria-label="Video volume" min="0" max="1" step="0.05" value={volume} disabled={!ready || !!error}

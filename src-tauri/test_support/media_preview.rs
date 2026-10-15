@@ -864,7 +864,7 @@ async fn retirement_closes_a_genuinely_stalled_socket_and_releases_stream_admiss
 // decode success, fallback, absence and cancellation are deterministic.
 #[cfg(unix)]
 mod companion_audio {
-    use super::super::audio::{lists_audio_stream, Extractor};
+    use super::super::audio::{lists_audio_stream, sweep, Extractor};
     use super::*;
     use std::os::unix::fs::PermissionsExt;
 
@@ -1054,6 +1054,28 @@ mod companion_audio {
         assert!(result.is_err());
         assert!(audio.derived().is_empty(), "{:?}", audio.derived());
         assert!(started.elapsed() < Duration::from_secs(20));
+    }
+
+    #[test]
+    fn sweep_removes_old_leftovers_but_keeps_this_sessions_long_open_audio() {
+        let root = tempfile::tempdir().unwrap();
+        let day = Duration::from_secs(24 * 60 * 60);
+        let start = SystemTime::now() - 3 * day;
+        let write = |name: &str, modified: SystemTime| {
+            let file = fs::File::create(root.path().join(name)).unwrap();
+            file.set_modified(modified).unwrap();
+        };
+        write("crashed-session.webm", start - Duration::from_secs(60));
+        write("open-for-two-days.webm", start + Duration::from_secs(60));
+        sweep(root.path(), start, start + 2 * day).unwrap();
+        let mut left: Vec<_> = fs::read_dir(root.path())
+            .unwrap()
+            .flatten()
+            .map(|entry| entry.file_name().to_string_lossy().into_owned())
+            .collect();
+        left.sort();
+        // Only files older than a day AND from before this session are swept.
+        assert_eq!(left, ["open-for-two-days.webm"]);
     }
 
     #[test]

@@ -212,10 +212,10 @@ crash images whose settlement committed before the former separate release step.
 Nonzero unbound replies cannot remain charged after all associated work settles.
 
 Commit explicit custody and the spool reservation in one transaction, before
-starting the process. Without custody fields, derive ownership from all nonreleased
-admissions for the provider package, including fenced admissions and compatible
-digest replacements. A unique admission is recorded; multiple possible admissions
-refuse the process before it starts and require explicit custody fields. Consumer
+starting the process. (Superseded by #1172: a run without custody fields is no
+longer bound by inference. Inferring from all nonreleased admissions captured
+settled Unknown history and concurrent operations, refusing every custody-less
+run. Legacy inferred rows below still exist in old ledgers.) Consumer
 removal releases its bound or uniquely inferred originals while other consumers
 sharing the provider retain theirs. Legacy ambiguous metadata cannot establish
 which consumer paid for the original; preserve it until its possible owners are

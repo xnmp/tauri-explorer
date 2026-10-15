@@ -1890,10 +1890,11 @@ impl Broker {
                 self.installed.manifest.sdk_version >= 3,
                 request.output_custody(),
             )
-            .map_err(|_| {
+            .map_err(|cause| {
+                log::warn!("Plugin process output reservation refused: {cause}");
                 refusal(
                     code::NOT_STARTED,
-                    "Plugin output spool is unavailable or its custody is ambiguous",
+                    super::process_run::spool_refusal_message(&cause),
                 )
             })?,
         );
@@ -2821,7 +2822,7 @@ fn start_broker(
     };
     let initialized = broker.call(
         "initialize",
-        json!({"protocolVersion":1,"activeRunIds":if validation_only {vec![]} else {super::provenance::active_runs(id)},"processService":true,"processStdin":super::process_run::stdin_capability(),"processRecovery":{"version":1,"owner":broker.generation()},"textService":{"version":1},"serviceService":{"version":1,"receiptBillingV1":true},"artifactService":{"version":1},"credentialService":{"version":1},"jobService":{"version":1,"estimateKey":true,"revealV1":true,"costV1":true},"hostControl":{"token":broker.control_token},"validationOnly":validation_only,"deferRecovery":deferred}),
+        json!({"protocolVersion":1,"activeRunIds":if validation_only {vec![]} else {super::provenance::active_runs(id)},"processService":true,"processStdin":super::process_run::stdin_capability(),"processCustody":super::process_run::custody_capability(),"processRecovery":{"version":1,"owner":broker.generation()},"textService":{"version":1},"serviceService":{"version":1,"receiptBillingV1":true},"artifactService":{"version":1},"credentialService":{"version":1},"jobService":{"version":1,"estimateKey":true,"revealV1":true,"costV1":true},"hostControl":{"token":broker.control_token},"validationOnly":validation_only,"deferRecovery":deferred}),
     );
     // Legacy reconciliation serialization must not survive into failure cleanup.
     drop(ownership);

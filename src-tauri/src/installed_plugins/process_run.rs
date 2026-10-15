@@ -28,6 +28,30 @@ pub(super) fn stdin_capability() -> Value {
     json!({"version":1,"maxBytes":STDIN_MAX_BYTES})
 }
 
+/// Advertised in `initialize` as `processCustody`: the host accepts
+/// `consumerPackageId`/`operationId` and binds a run to an operation only when
+/// it names one (#1172). Plugins detect it by capability, never by version.
+pub(super) fn custody_capability() -> Value {
+    json!({"version":1})
+}
+
+/// The user-facing reason an output reservation refused a process. Custody
+/// refusals and a full store already carry one; any other cause is internal
+/// detail, which the caller logs instead.
+pub(super) fn spool_refusal_message(cause: &AppError) -> &str {
+    match cause {
+        AppError::Service { code, message } if code == crate::service_state::CUSTODY_REFUSED => {
+            message
+        }
+        AppError::Service { code, .. } if code == "storage_full" => {
+            "AI output storage is full, so the process was not started"
+        }
+        _ => {
+            "Tauri Explorer could not reserve storage for the process output, so it was not started"
+        }
+    }
+}
+
 /// Wire codes for `host.process.run` errors (`error.data.code`). Every code
 /// except `INTERRUPTED` and `PROTOCOL_ERROR` proves the program never ran.
 pub(super) mod code {
@@ -220,6 +244,62 @@ mod tests {
         time::{Duration, Instant},
     };
 
+    #[test]
+    fn output_refusals_keep_their_user_facing_reason() {
+        let custody = AppError::Service {
+            code: crate::service_state::CUSTODY_REFUSED.into(),
+            message:
+                "The AI operation this process was started for has already finished or was stopped"
+                    .into(),
+        };
+        assert_eq!(
+            spool_refusal_message(&custody),
+            "The AI operation this process was started for has already finished or was stopped"
+        );
+        let full = AppError::Service {
+            code: "storage_full".into(),
+            message: "AI image storage is full; recovery will retry when capacity is available"
+                .into(),
+        };
+        assert!(spool_refusal_message(&full).contains("storage is full"));
+        // Internal detail (paths, SQL) never reaches the plugin or the user.
+        for internal in [
+            AppError::Other("Service state: database is locked at /home/user/x".into()),
+            AppError::Service {
+                code: "other".into(),
+                message: "/private/path".into(),
+            },
+        ] {
+            let message = spool_refusal_message(&internal);
+            assert!(!message.contains('/'), "{message}");
+            assert!(message.contains("not started"), "{message}");
+        }
+    }
+    #[test]
+    fn custody_fields_are_accepted_only_as_a_pair() {
+        let program = if cfg!(windows) {
+            r"C:\tool.exe"
+        } else {
+            "/bin/true"
+        };
+        let mut both = request(program, &[], None);
+        both["consumerPackageId"] = json!("xnmp.trace");
+        both["operationId"] = json!("op-1");
+        assert_eq!(
+            parse(&both).unwrap().output_custody(),
+            Some(("xnmp.trace", "op-1"))
+        );
+        assert_eq!(
+            parse(&request(program, &[], None))
+                .unwrap()
+                .output_custody(),
+            None
+        );
+        let mut half = request(program, &[], None);
+        half["operationId"] = json!("op-1");
+        assert_eq!(code_of(parse(&half).err().unwrap()), code::INVALID_REQUEST);
+        assert_eq!(custody_capability(), json!({"version":1}));
+    }
     fn request(program: &str, args: &[&str], stdin: Option<String>) -> Value {
         json!({"program":program,"args":args,"cwd":null,"env":[],"stdoutLimit":1024*1024,"stderrLimit":1024,"stdin":stdin})
     }

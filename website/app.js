@@ -6,6 +6,7 @@
 
 const REPO = "https://github.com/xnmp/tauri-explorer";
 const RELEASE_PAGE = `${REPO}/releases/latest`;
+const PLUGIN_RELEASES = "https://github.com/xnmp/TraceExplorer/releases/latest";
 
 /* Asset filenames embed the version. Until GitHub's API resolves the current
    assets, link to the release page instead of guessing a stale filename. */
@@ -256,6 +257,11 @@ ${shot("terminal.png", "The terminal panel, themed with the app, opened at the f
 <p>Details, list, and tiles views — all virtualized, so directories with
 tens of thousands of entries scroll at 60fps. Thumbnails are generated
 in Rust with an on-disk cache.</p>
+<p>Details view has <strong>Resolution</strong> and <strong>Length</strong>
+columns, so photos show their dimensions and videos their duration without
+opening anything. Preview shows an image's resolution too, loads big photos
+fast, and when a video won't play, it names the codec and offers Download
+instead of shrugging.</p>
 <p><strong>Switch views right here:</strong> the four buttons in this toolbar —
 Details, List, Tiles, and Miller Columns. And everything resizes: drag the
 edges of the sidebar, this preview pane, the terminal, the columns.</p>
@@ -300,17 +306,76 @@ this one is a Linux superpower.</p>
 `,
         },
         {
-          name: "ai-plugins.md", kind: "file", size: "2 KB", badge: "optional",
+          name: "ai-plugins.md", kind: "file", size: "3 KB", badge: "optional",
           content: `
-<h1>AI, as plugins, off by default</h1>
-<p>Rename suggestions from file contents, destination suggestions when
-organizing, and image editing via Gemini — each an <em>optional plugin</em> you
-enable per-feature with your own API key (or <code>GEMINI_API_KEY</code> env var,
-never written to disk).</p>
-<p><strong>Try the demo:</strong> right-click any file → <em>AI Rename</em>. The
-suggestions really do come from the file's contents (no network — the real
-plugin makes the Gemini call with your key).</p>
+<h1>AI: optional, shared, crash-safe</h1>
+<p class="lede">Set up a model once. Plugins share it. A crash never reruns paid work.</p>
+<p>Tauri Explorer owns the AI connections: an OpenAI-compatible endpoint with
+your key, or the Codex CLI or Claude Code you're already signed in to.
+Plugins share them instead of each keeping its own keys: a plugin declares a
+service it needs, such as <em>image generation</em>, and uses the connection
+you set up for it.</p>
+<p>Every AI operation is recorded durably. If the app crashes halfway through
+a job, it doesn't rerun paid work when it comes back; interrupted operations
+settle on their own, without asking you. Disabling, removing or upgrading a
+plugin never strands work it started.</p>
+<p>Finished image jobs show what they cost and offer <em>Show image</em>, in the
+progress dialog, the Jobs panel and the notification. Failed ones can offer
+<em>Retry</em>.</p>
+<p>For image edits and a provenance graph of them, see
+<code>plugins.md</code> next door.</p>
+<p><strong>Try the demo:</strong> right-click any file → <em>AI Rename</em>, the
+built-in rename suggester. The suggestions really do come from the file's
+contents (no network here; the real plugin calls Gemini with your key).</p>
 ${shot("ai-rename.png", "AI rename: pick from suggestions derived from the file's contents.")}
+<p class="note">All of it is optional. Nothing goes to a model until you use an AI
+feature or install a plugin that offers one, and then only to a connection
+you set up. No telemetry, as ever: see <code>trust/</code>.</p>
+`,
+        },
+        {
+          name: "plugins.md", kind: "file", size: "4 KB", badge: ".teplugin",
+          content: `
+<h1>Plugins: Trace view & Image Generation</h1>
+<p class="lede">Install a <code>.teplugin</code>, get a new way to look at a folder.</p>
+<p>Plugins are packages you add with <em>Install Plugin…</em> in the command
+palette. Before any plugin code runs, the installer checks its platform, SDK
+version, archive contents and file digests. Settings has a Plugins section to
+enable, disable or remove them.</p>
+<h2>TraceExplorer: the Trace view</h2>
+<p>A folder of AI edits is a family tree, so Trace shows it as one. It replaces
+the folder's listing with a provenance graph. Each lineage is a stack with an
+image count; click it and the stack opens in place, with edits running down
+from the original. Files without a history sit alongside, as usual.</p>
+<ul>
+  <li>Inputs from other folders show as small round reference badges.</li>
+  <li>Preview shows the prompt, with the settings and inputs under
+  <em>Trace details</em>.</li>
+  <li>New outputs start unsaved: keep the ones you like, discard the rest.</li>
+  <li><strong>Zero blink.</strong> Trace works out the whole next view before
+  showing anything. Opening stacks, switching folders or resizing never
+  flashes a half-drawn frame, and only your own actions animate.</li>
+</ul>
+<p><em>Toggle Trace View</em> in the palette, or <kbd>Alt+M</kbd> then
+<kbd>P</kbd>.</p>
+${shot("trace-view.png", "The Trace view: a stack opened in place, one edit selected, its prompt and settings in Preview. (Test data: the pictures are colour swatches.)")}
+<h2>Image Generation</h2>
+<p>AI image edits and brand-new images, through Codex, OpenAI, Nano Banana
+(Gemini) or Flux (Black Forest Labs), set up in one connections dialog.
+Keys can come from a command instead of a settings field.</p>
+<p>Select one to eight images and press <kbd>Ctrl+E</kbd>. They become numbered
+inputs, so a prompt can say "put the hat in Image 1 on the man in Image 2".
+Drop more images onto the dialog; reorder or remove them on hover. With
+nothing selected, <kbd>Ctrl+E</kbd> makes a new image from a prompt.
+<kbd>Ctrl+Enter</kbd> generates.</p>
+<p>The dialog opens over its own pane, so the other pane stays usable. Jobs
+run in the background; each shows its cost when done, and <em>Show image</em>
+takes you to the result.</p>
+${shot("ai-edit.png", "AI Edit with three numbered inputs, opened over one pane. (Test data again.)")}
+<p class="note">Both need Tauri Explorer 1.12 or later, and TraceExplorer uses
+Image Generation for its edits, so install both. MIT-licensed; the AI
+provider bills you as usual.
+<a href="${PLUGIN_RELEASES}">Get them on GitHub ↗</a></p>
 `,
         },
       ],
@@ -332,6 +397,9 @@ ${shot("ai-rename.png", "AI rename: pick from suggestions derived from the file'
         shotFile("cheatsheet.png", "35 KB", "The live shortcut cheatsheet."),
         shotFile("context-menu.png", "28 KB", "Context menu with git actions."),
         shotFile("ai-rename.png", "32 KB", "AI rename suggestions (optional plugin)."),
+        shotFile("trace-view.png", "14 KB", "The Trace view plugin: a folder's edits as a provenance graph."),
+        shotFile("trace-view-dark.png", "14 KB", "The Trace view, dark theme."),
+        shotFile("ai-edit.png", "24 KB", "Image Generation: AI Edit with numbered inputs, over one pane."),
         shotFile("file-picker.png", "13 KB", "As the Linux system file picker."),
         shotFile("picker-quickopen.png", "25 KB", "Ctrl+P — inside the system file picker."),
       ],
@@ -344,8 +412,8 @@ ${shot("ai-rename.png", "AI rename: pick from suggestions derived from the file'
           content: `
 <h1>No telemetry. Actually none.</h1>
 <p>There is no background telemetry. The app checks GitHub for updates at most
-once a day. Git remote operations, enabled AI plugins, and the in-app Report
-Issue command also use the network when you choose them.</p>
+once a day. Git remote operations, AI features on a connection you set up, and
+the in-app Report Issue command also use the network when you choose them.</p>
 <p>Submitted reports and selected images become public GitHub issues and public
 image URLs. Crash reports and logs stay local unless you choose to share them.</p>
 `,
@@ -366,13 +434,19 @@ on Linux, Windows and macOS in CI.</p>
       name: "CHANGELOG.md", kind: "file", size: "6 KB",
       content: `
 <h1>Current release</h1>
-<p>Highlights:</p>
+<p>Highlights from 1.12:</p>
 <ul>
-  <li>Per-pane tabs with live window detach</li>
-  <li>Git commit graph with context actions</li>
-  <li>Local crash reporting, update notices, shortcut cheatsheet</li>
-  <li>macOS boot fix (1.0.1) — per-platform security scopes</li>
+  <li>Plugin SDK 3 with shared AI services: the app owns the connections,
+  and a crash never reruns paid work (see <code>features/ai-plugins.md</code>)</li>
+  <li>Image jobs show their cost and a <em>Show image</em> action</li>
+  <li>Plugins can open dialogs over one pane and accept dropped files</li>
+  <li>Resolution and Length columns in Details view; Preview shows resolution
+  and loads large images much faster</li>
+  <li>Git Graph creates, merges and approves pull requests through <code>gh</code></li>
+  <li>Smoother scrolling and menus on Linux</li>
 </ul>
+<p>Pairs with TraceExplorer 0.3.0 and Image Generation 0.1.0 (see
+<code>features/plugins.md</code>).</p>
 <p><a href="${REPO}/blob/main/CHANGELOG.md">Full changelog on GitHub ↗</a></p>
 `,
     },
@@ -744,11 +818,21 @@ function qoRender() {
   list._items = scored.slice(0, 12);
 }
 
+/* The plugins page, held by identity so a session rename or move still finds it. */
+const PLUGINS_PAGE = ALL_FILES.find((f) => f.node.name === "plugins.md").node;
+function showPlugins() {
+  const hit = ALL_FILES.find((f) => f.node === PLUGINS_PAGE);
+  if (!hit) { toast("The plugins page has wandered off. <kbd>Ctrl+P</kbd> → <code>plugins</code> finds it."); return; }
+  navigate(hit.path.slice(0, -1));
+  openEntry(hit.node);
+}
+
 /* palette */
 const COMMANDS = [
   { cat: "GET", label: "Download for Linux (AppImage)", run: () => download(DL.linux) },
   { cat: "GET", label: "Download for Windows (MSI)", run: () => download(DL.win) },
   { cat: "GET", label: "Download for macOS (dmg)", run: () => download(DL.mac) },
+  { cat: "GET", label: "Get Plugins (TraceExplorer, Image Generation)", run: () => window.open(PLUGIN_RELEASES, "_blank") },
   { cat: "VIEW", label: "Cycle Theme", run: toggleTheme },
   ...THEMES.map((t) => ({
     cat: "THEME",
@@ -759,6 +843,7 @@ const COMMANDS = [
   { cat: "VIEW", label: "Open Screenshots (Thumbnail Demo)", run: () => { navigate(["screenshots"]); } },
   { cat: "VIEW", label: "Toggle Terminal", run: () => toggleTerminal() },
   { cat: "VIEW", label: "Show Commit Graph", run: openGraph },
+  { cat: "VIEW", label: "Show Plugins (Trace View, Image Generation)", run: showPlugins },
   { cat: "VIEW", label: "Show Source Control", run: () => { sideMode = "git"; if (hiddenBars.has("sidebar")) toggleBar("sidebar", "Sidebar"); render(); } },
   { cat: "GO", label: "Search in Files (Ctrl+Shift+F)", run: () => { cs.open(); csIndex = 0; } },
   { cat: "GO", label: "Go to Path (Ctrl+L)", run: editPath },
@@ -2051,7 +2136,7 @@ const TOUR_STEPS = [
   {
     title: "This site is the app",
     body: `Everything on this page is a working copy of Tauri Explorer — same layout,
-      same shortcuts. Sixty seconds, twelve stops. <kbd>→</kbd> next, <kbd>←</kbd> back, <kbd>Esc</kbd> bails.`,
+      same shortcuts. Sixty seconds, thirteen stops. <kbd>→</kbd> next, <kbd>←</kbd> back, <kbd>Esc</kbd> bails.`,
   },
   {
     title: "The sidebar",
@@ -2073,8 +2158,8 @@ const TOUR_STEPS = [
   },
   {
     title: "The preview pane",
-    body: `Selecting a file previews it instantly — images, code, documents. Drag the
-      divider to resize; this page remembers, and so does the app.`,
+    body: `Selecting a file previews it instantly — images (with their resolution),
+      video, code, documents. Drag the divider to resize; this page remembers, and so does the app.`,
     prep: () => { navigate([]); openEntry(FS.children[0]); },
     target: () => $("preview"),
   },
@@ -2124,6 +2209,14 @@ const TOUR_STEPS = [
     },
     dual: true,
     target: () => $("filelist2"),
+  },
+  {
+    title: "Plugins",
+    body: `Install a <code>.teplugin</code> and a folder can become something else:
+      the Trace view draws your AI image edits as a family tree. AI runs on
+      connections you set up once, and stays optional.`,
+    prep: showPlugins,
+    target: () => $("preview"),
   },
   {
     title: "Themes are plain CSS",

@@ -74,6 +74,7 @@ mod tests {
         );
     }
 
+    #[cfg(unix)]
     fn record_app_set_for_test(names: Vec<&'static str>) {
         let _ = APP_SET.set(names);
     }

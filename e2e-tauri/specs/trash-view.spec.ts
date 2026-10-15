@@ -21,7 +21,7 @@ const samePath = (left: string, right: string) =>
 
 /** The Trash row named `name`, or undefined while it is not listed. */
 async function trashRow(name: string) {
-  for (const row of await $$(".entry-item").getElements()) {
+  for (const row of await $$(".pane-tree:not(.retained) .entry-item").getElements()) {
     const text = ((await row.$(".entry-name").getProperty("textContent")) as string | null)?.trim();
     if (text === name) return row;
   }
@@ -62,6 +62,9 @@ async function clickMenuItem(label: string): Promise<void> {
 
     // Open the Trash from the sidebar in a second tab, so the first tab stays
     // open on the destination folder.
+    // Sessions restore earlier specs' tabs, so remember this one by identity.
+    const destinationTab = await $(".tab.active").getAttribute("data-tab-id");
+    expect(destinationTab).not.toBeNull();
     const tabs = (await $$(".tab").getElements()).length;
     await $('button[title^="New Tab"]').click();
     await browser.waitUntil(async () => (await $$(".tab").getElements()).length === tabs + 1, {
@@ -89,8 +92,11 @@ async function clickMenuItem(label: string): Promise<void> {
       timeout: 15_000, timeoutMsg: "the restored item is still listed in the Trash",
     });
 
-    // The first tab never navigated; its listing shows the restored file.
-    await (await $$(".tab").getElements())[0].click();
+    // The destination tab never navigated; its listing shows the restored file.
+    await $(`.tab[data-tab-id="${destinationTab}"]`).click();
+    await browser.waitUntil(async () => (await $(".tab.active").getAttribute("data-tab-id")) === destinationTab, {
+      timeoutMsg: "the destination tab did not become active",
+    });
     await browser.waitUntil(async () => (await entryNames()).includes(name), {
       timeout: 15_000, timeoutMsg: "the destination pane did not show the restored file",
     });

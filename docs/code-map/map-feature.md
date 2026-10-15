@@ -145,6 +145,7 @@ backend for E2E/browser).
 - `state/closed-tabs.ts` — reopen-closed-tab stack
 - `state/tab-transfer.ts` — drag tab across windows (`sendTabToWindow`, `initTabTransferListener`, screen-pos hit-test)
 - `domain/tab-title.ts` — compute tab label from path
+- `domain/retained-tabs.ts` → `windowTabsManager.retainedTabs` → `components/PaneContainer.svelte` — recently active tabs stay mounted but hidden (`.pane-tree.retained`, inert), so a switch only toggles visibility; `e2e/tab-switch-retained.spec.ts` pins row identity, scroll offset, no listing IPC and the switch budget (#1173)
 - `state/tab-display.svelte.ts` — tab title/icon derivation: git-root decoration, VS Code-style disambiguation, multi-pane joining
 - `state/window-title.svelte.ts` — resolves launch-home context and synchronizes the OS window title with the active tab/pane directory
 - `state/window-close.ts` — common titlebar, last-tab and native-close lifecycle; blocks transfer admission until destruction or recovery

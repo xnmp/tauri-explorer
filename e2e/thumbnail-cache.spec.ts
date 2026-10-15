@@ -68,8 +68,9 @@ test.describe("Thumbnail cache", () => {
     await page.keyboard.press("Control+t");
 
     // The new tab shows the same directory seeded from the source pane; its
-    // thumbnails must hydrate synchronously from the shared cache.
-    await expect(page.locator(".thumbnail-container img")).toHaveCount(imgCount);
+    // thumbnails must hydrate synchronously from the shared cache. The source
+    // tab stays mounted but hidden (#1173), so count the shown tab's tiles.
+    await expect(page.locator(".pane-tree:not(.retained) .thumbnail-container img")).toHaveCount(imgCount);
     await expect(page.locator(".thumbnail-placeholder")).toHaveCount(0);
   });
 

@@ -323,10 +323,14 @@ function createKeybindingsStore() {
     return matchesShortcut(event, chord.suffix, matchOpts);
   }
 
-  /** Side-effect-free ownership check for configured chord prefixes. */
+  /**
+   * Side-effect-free ownership check for configured chord prefixes. Runs on
+   * every window keydown, so match the key before evaluating availability:
+   * `when` guards can scan the whole listing (#1174).
+   */
   function matchesAnyChordPrefix(event: KeyboardEvent, isAvailable?: (id: string) => boolean): boolean {
     return !event.repeat && Object.keys(defaultShortcuts).some((id) =>
-      (!isAvailable || isAvailable(id)) && matchesChordPrefixForCommand(event, id));
+      matchesChordPrefixForCommand(event, id) && (!isAvailable || isAvailable(id)));
   }
 
   /**

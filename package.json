@@ -29,6 +29,7 @@
     "test:qualify:macos-startup": "bun run scripts/qualify-macos-startup.ts",
     "build:native:qualification": "bun run scripts/build-native-qualification.ts",
     "test:load": "scripts/fsync-safe.sh playwright test -c playwright.load.config.ts",
+    "perf:sweep": "playwright test -c playwright.sweep.config.ts",
     "lint:arch": "node scripts/arch-lint.mjs --strict",
     "perf:check": "bun run scripts/perf-check.ts",
     "perf:baseline": "bun run scripts/perf-check.ts --update",

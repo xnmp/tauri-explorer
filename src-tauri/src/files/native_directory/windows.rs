@@ -33,20 +33,23 @@ use windows::{
     },
     Win32::{
         Foundation::{
-            ERROR_FILE_NOT_FOUND, ERROR_PATH_NOT_FOUND, HANDLE, NTSTATUS, STATUS_NO_MORE_FILES,
+            ERROR_FILE_NOT_FOUND, ERROR_INVALID_FUNCTION, ERROR_INVALID_PARAMETER,
+            ERROR_NOT_SUPPORTED, ERROR_PATH_NOT_FOUND, HANDLE, NTSTATUS, STATUS_NO_MORE_FILES,
             STATUS_NO_SUCH_FILE, UNICODE_STRING,
         },
         Security::SECURITY_DESCRIPTOR,
         Storage::FileSystem::{
-            FileAttributeTagInfo, FileDispositionInfoEx, FileIdInfo, GetFileInformationByHandleEx,
-            GetVolumeInformationByHandleW, SetFileInformationByHandle, DELETE, FILE_ACCESS_RIGHTS,
-            FILE_ATTRIBUTE_DIRECTORY, FILE_ATTRIBUTE_NORMAL, FILE_ATTRIBUTE_REPARSE_POINT,
-            FILE_ATTRIBUTE_TAG_INFO, FILE_DISPOSITION_FLAG_DELETE,
-            FILE_DISPOSITION_FLAG_POSIX_SEMANTICS, FILE_DISPOSITION_INFO_EX,
-            FILE_DISPOSITION_INFO_EX_FLAGS, FILE_FLAG_BACKUP_SEMANTICS,
-            FILE_FLAG_OPEN_REPARSE_POINT, FILE_GENERIC_READ, FILE_GENERIC_WRITE, FILE_ID_INFO,
-            FILE_LIST_DIRECTORY, FILE_READ_ATTRIBUTES, FILE_SHARE_DELETE, FILE_SHARE_MODE,
-            FILE_SHARE_READ, FILE_SHARE_WRITE, FILE_TRAVERSE, READ_CONTROL, SYNCHRONIZE,
+            FileAttributeTagInfo, FileBasicInfo, FileDispositionInfoEx, FileIdInfo,
+            GetFileInformationByHandle, GetFileInformationByHandleEx,
+            GetVolumeInformationByHandleW, SetFileInformationByHandle, BY_HANDLE_FILE_INFORMATION,
+            DELETE, FILE_ACCESS_RIGHTS, FILE_ATTRIBUTE_DIRECTORY, FILE_ATTRIBUTE_NORMAL,
+            FILE_ATTRIBUTE_REPARSE_POINT, FILE_ATTRIBUTE_TAG_INFO, FILE_BASIC_INFO,
+            FILE_DISPOSITION_FLAG_DELETE, FILE_DISPOSITION_FLAG_POSIX_SEMANTICS,
+            FILE_DISPOSITION_INFO_EX, FILE_DISPOSITION_INFO_EX_FLAGS, FILE_FLAG_BACKUP_SEMANTICS,
+            FILE_FLAG_OPEN_REPARSE_POINT, FILE_GENERIC_READ, FILE_GENERIC_WRITE, FILE_ID_128,
+            FILE_ID_INFO, FILE_LIST_DIRECTORY, FILE_READ_ATTRIBUTES, FILE_SHARE_DELETE,
+            FILE_SHARE_MODE, FILE_SHARE_READ, FILE_SHARE_WRITE, FILE_TRAVERSE, READ_CONTROL,
+            SYNCHRONIZE,
         },
         System::IO::IO_STATUS_BLOCK,
     },
@@ -505,16 +508,50 @@ fn create_relative(
 fn attributes(file: &File) -> io::Result<FILE_ATTRIBUTE_TAG_INFO> {
     let mut information = FILE_ATTRIBUTE_TAG_INFO::default();
     // SAFETY: information is correctly sized and writable for this synchronous query.
-    unsafe {
+    let tagged = unsafe {
         GetFileInformationByHandleEx(
             file_handle(file),
             FileAttributeTagInfo,
             ptr::from_mut(&mut information).cast(),
             size_of::<FILE_ATTRIBUTE_TAG_INFO>() as u32,
         )
-        .map_err(io_error)?;
+        .map_err(io_error)
+    };
+    match tagged {
+        Ok(()) => Ok(information),
+        // FAT has no reparse points and rejects the tag class (#793); its
+        // basic information still carries the attributes.
+        Err(error) if is_unsupported_class(&error) => {
+            let mut basic = FILE_BASIC_INFO::default();
+            // SAFETY: basic is correctly sized and writable for this synchronous query.
+            unsafe {
+                GetFileInformationByHandleEx(
+                    file_handle(file),
+                    FileBasicInfo,
+                    ptr::from_mut(&mut basic).cast(),
+                    size_of::<FILE_BASIC_INFO>() as u32,
+                )
+                .map_err(io_error)?;
+            }
+            Ok(FILE_ATTRIBUTE_TAG_INFO {
+                FileAttributes: basic.FileAttributes,
+                ReparseTag: 0,
+            })
+        }
+        Err(error) => Err(error),
     }
-    Ok(information)
+}
+
+/// The status a filesystem returns for an information class it does not
+/// implement. FastFAT answers STATUS_INVALID_PARAMETER (#793).
+fn is_unsupported_class(error: &io::Error) -> bool {
+    matches!(
+        error.raw_os_error(),
+        Some(code)
+            if code == ERROR_INVALID_PARAMETER.0 as i32
+                || code == ERROR_INVALID_FUNCTION.0 as i32
+                || code == ERROR_NOT_SUPPORTED.0 as i32
+    )
 }
 
 fn ensure_kind(file: &File, expected: EntryKind, reject_reparse: bool) -> io::Result<()> {
@@ -627,20 +664,49 @@ fn aligned_storage(bytes: usize) -> Vec<usize> {
     vec![0; bytes.div_ceil(size_of::<usize>())]
 }
 
+/// The volume serial and 128-bit file ID. Filesystems without
+/// `FileIdInformation`, such as FAT (#793), fall back to the 64-bit file
+/// index, zero-extended, which is what they would report there.
 fn file_id(file: &File) -> io::Result<FILE_ID_INFO> {
     let mut identity = FILE_ID_INFO::default();
     // SAFETY: the handle is valid and the output buffer is exactly one
     // FILE_ID_INFO for the synchronous call.
-    unsafe {
+    let extended = unsafe {
         GetFileInformationByHandleEx(
             file_handle(file),
             FileIdInfo,
             ptr::from_mut(&mut identity).cast(),
             size_of::<FILE_ID_INFO>() as u32,
         )
-        .map_err(io_error)?;
+        .map_err(io_error)
+    };
+    match extended {
+        Ok(()) => Ok(identity),
+        Err(error) if is_unsupported_class(&error) => {
+            let mut information = BY_HANDLE_FILE_INFORMATION::default();
+            // SAFETY: the handle is valid and the output buffer is writable
+            // for the synchronous call.
+            unsafe {
+                GetFileInformationByHandle(file_handle(file), &mut information)
+                    .map_err(io_error)?;
+            }
+            Ok(indexed_file_id(&information))
+        }
+        Err(error) => Err(error),
     }
-    Ok(identity)
+}
+
+fn indexed_file_id(information: &BY_HANDLE_FILE_INFORMATION) -> FILE_ID_INFO {
+    let index =
+        (u64::from(information.nFileIndexHigh) << 32) | u64::from(information.nFileIndexLow);
+    let mut identifier = [0u8; 16];
+    identifier[..8].copy_from_slice(&index.to_le_bytes());
+    FILE_ID_INFO {
+        VolumeSerialNumber: u64::from(information.dwVolumeSerialNumber),
+        FileId: FILE_ID_128 {
+            Identifier: identifier,
+        },
+    }
 }
 
 /// Opens a second handle, with its own file object and so its own
@@ -732,6 +798,35 @@ mod tests {
     }
 
     #[test]
+    fn unsupported_information_classes_fall_back_and_other_errors_do_not() {
+        for code in [
+            ERROR_INVALID_PARAMETER,
+            ERROR_INVALID_FUNCTION,
+            ERROR_NOT_SUPPORTED,
+        ] {
+            assert!(is_unsupported_class(&io::Error::from_raw_os_error(
+                code.0 as i32
+            )));
+        }
+        assert!(!is_unsupported_class(&io::Error::from_raw_os_error(
+            ERROR_FILE_NOT_FOUND.0 as i32
+        )));
+        assert!(!is_unsupported_class(&io::Error::other("other")));
+
+        let identity = indexed_file_id(&BY_HANDLE_FILE_INFORMATION {
+            dwVolumeSerialNumber: 0xabcd_1234,
+            nFileIndexHigh: 0x0102_0304,
+            nFileIndexLow: 0x0506_0708,
+            ..Default::default()
+        });
+        assert_eq!(identity.VolumeSerialNumber, 0xabcd_1234);
+        assert_eq!(
+            identity.FileId.Identifier,
+            [8, 7, 6, 5, 4, 3, 2, 1, 0, 0, 0, 0, 0, 0, 0, 0]
+        );
+    }
+
+    #[test]
     fn only_a_first_query_treats_no_such_file_as_an_empty_listing() {
         assert!(enumeration_finished(STATUS_NO_MORE_FILES, true));
         assert!(enumeration_finished(STATUS_NO_MORE_FILES, false));
@@ -808,7 +903,7 @@ mod tests {
         };
 
         let root = PathBuf::from(std::env::var_os("TAURI_FAT32_ROOT").unwrap());
-        let volume = Directory::open(&root).unwrap();
+        let volume = Directory::open(&root).expect("open the FAT32 root");
         let mut file_system = [0u16; 32];
         // SAFETY: the handle is live and the output buffer is writable.
         unsafe {
@@ -830,7 +925,7 @@ mod tests {
             dwSize: size_of::<FILE_ID_DESCRIPTOR>() as u32,
             Type: ExtendedFileIdType,
             Anonymous: FILE_ID_DESCRIPTOR_0 {
-                ExtendedFileId: file_id(&volume.file).unwrap().FileId,
+                ExtendedFileId: file_id(&volume.file).expect("FAT32 root identity").FileId,
             },
         };
         // SAFETY: the descriptor is initialized for the ID it declares.
@@ -867,11 +962,16 @@ mod tests {
         if system.exists() {
             std::fs::remove_dir_all(&system).unwrap();
         }
-        assert!(volume.names(64).unwrap().is_empty());
+        assert!(volume.names(64).expect("list the empty root").is_empty());
 
         std::fs::create_dir(root.join("recovery")).unwrap();
-        let recovery = volume.open_existing(OsStr::new("recovery")).unwrap();
-        assert!(recovery.names(0).unwrap().is_empty());
+        let recovery = volume
+            .open_existing(OsStr::new("recovery"))
+            .expect("open a FAT32 subdirectory");
+        assert!(recovery
+            .names(0)
+            .expect("list an empty subdirectory")
+            .is_empty());
         for name in ["first", "second"] {
             std::fs::write(root.join("recovery").join(name), name).unwrap();
         }

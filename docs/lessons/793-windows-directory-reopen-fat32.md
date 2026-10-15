@@ -15,3 +15,11 @@ Treat it as empty only on the first query.
 NTFS runners never hit either path. `rust-platforms.yml` attaches a FAT32 VHD
 with `diskpart` and runs the ignored
 `fat32_volume_enumerates_without_reversible_file_ids` test against it.
+
+FastFAT also rejects some `GetFileInformationByHandleEx` classes with
+ERROR_INVALID_PARAMETER: the first FAT32 run on CI failed in
+`Directory::open` on the FAT root, before `names()` was reached. `attributes`
+falls back to `FileBasicInfo`, which FAT has no reparse points to need a tag
+for, and `file_id` falls back to `GetFileInformationByHandle`'s volume serial
+and 64-bit file index. Only those "unsupported class" errors fall back; every
+other failure still fails closed.

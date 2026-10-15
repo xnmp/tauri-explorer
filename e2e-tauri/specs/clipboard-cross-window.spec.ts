@@ -2,8 +2,7 @@
 import { browser, $, expect } from "@wdio/globals";
 import fs from "node:fs";
 import path from "node:path";
-import { execFileSync } from "node:child_process";
-import { pathToFileURL } from "node:url";
+import { readNativeClipboardPaths, writeExternalClipboardCopy } from "../native-clipboard";
 import { createNativeFixtureDirectory } from "../native-qualification";
 import { navigateTo, windowOperation, switchToWindowLabel, closeOtherWindows, entryNames, entryPathSelector } from "./helpers";
 
@@ -15,25 +14,6 @@ const external = path.join(root, "external.txt");
 const destinationA = path.join(root, "paste-in-A");
 const destinationB = path.join(root, "paste-in-B");
 
-function nativePaths(): string[] {
-  if (process.platform === "win32") {
-    return JSON.parse(execFileSync("powershell", ["-NoProfile", "-NonInteractive", "-STA", "-Command",
-      "[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new(); ConvertTo-Json -Compress -InputObject @(Get-Clipboard -Format FileDropList | ForEach-Object { $_.FullName })"], { encoding: "utf8", timeout: 10_000 }));
-  }
-  const text = execFileSync("xclip", ["-selection", "clipboard", "-t", "text/uri-list", "-o"], { encoding: "utf8", timeout: 10_000 });
-  return text.trim().split(/\r?\n/).filter(line => !line.startsWith("#"))
-    .map(uri => decodeURIComponent(new URL(uri).pathname));
-}
-
-function externalCopy(): void {
-  if (process.platform === "win32") {
-    execFileSync("powershell", ["-NoProfile", "-NonInteractive", "-STA", "-Command", "Set-Clipboard -LiteralPath $env:CLIP_PATH"],
-      { env: { ...process.env, CLIP_PATH: external }, timeout: 10_000 });
-  } else {
-    execFileSync("xclip", ["-selection", "clipboard", "-t", "text/uri-list", "-i"],
-      { input: `${pathToFileURL(external).href}\n`, stdio: ["pipe", "ignore", "ignore"], timeout: 10_000 });
-  }
-}
 
 function gate(file: string, phase: "hold" | "queued" | "started"): string {
   return path.join(path.dirname(file), `.${path.basename(file)}.${phase === "hold" ? "clipboard-hold" : phase}`);
@@ -115,7 +95,7 @@ describe("cross-window clipboard ownership", () => {
     await finishPublish(second);
     await browser.switchToWindow(main);
     await finishPublish(first);
-    expect(nativePaths()).toEqual([b]);
+    expect(await readNativeClipboardPaths()).toEqual([b]);
     await browser.switchToWindow(child);
     await $(entryPathSelector(b)).click();
     await evidence("latest-copy-selection");
@@ -152,7 +132,7 @@ describe("cross-window clipboard ownership", () => {
     await finishPublish(first);
     await browser.switchToWindow(child);
     await expectSelection(b, "cut");
-    expect(nativePaths()).toEqual([b]);
+    expect(await readNativeClipboardPaths()).toEqual([b]);
     await browser.switchToWindow(main);
     await expectSelection(b, "cut");
     const moved = path.join(root, "moved");
@@ -165,7 +145,7 @@ describe("cross-window clipboard ownership", () => {
     expect(fs.existsSync(a)).toBe(true);
     await browser.waitUntil(async () => (await entryNames()).includes("latest.txt"));
     await evidence("cut-paste");
-    externalCopy();
+    await writeExternalClipboardCopy(external);
     expect(await windowOperation("clipboard-paste")).toBeNull();
     expect(fs.readFileSync(path.join(moved, "external.txt"), "utf8")).toBe("external payload\n");
     expect(fs.existsSync(external)).toBe(true);
@@ -186,6 +166,6 @@ describe("cross-window clipboard ownership", () => {
     await browser.switchToWindow(main);
     // This reads state only: a paste/snapshot here would mask a lost broadcast.
     await expectSelection(a, "copy");
-    expect(nativePaths()).toEqual([a]);
+    expect(await readNativeClipboardPaths()).toEqual([a]);
   });
 });

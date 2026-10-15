@@ -448,3 +448,11 @@ Recursive recovery must also check live demand before each individual root's
 native registration: checking only around a multi-root recovery lets a blocked
 first root hide cancellation of later roots. Preserve the captured demand
 identity so final release/reacquisition cannot revive an obsolete operation.
+
+Independent Windows native clipboard probes must await PowerShell asynchronously.
+The first shell/module launch can exhaust a ten-second subprocess budget; include
+startup in the bounded probe budget and preserve scalar code/signal/stdout/stderr
+on failure. Node synchronous spawn errors can self-reference through `error`,
+and WDIO's own-property JSON serialization then hides the original timeout.
+Keep these probes independent of application IPC and never retry a failed
+clipboard observation (#1188).

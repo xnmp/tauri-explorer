@@ -73,8 +73,9 @@ a path built at runtime is invisible to the scan, so name it literally or drop
 the exclusion.
 
 Trust: GitHub's artifact service, rather than a workflow boolean or an
-outside-checkout directory, enforces ownership. Only successful `ci.yml` push
-attempts on protected `dev` in this repository are eligible producers. Restore
+outside-checkout directory, enforces ownership. Only `ci.yml` push
+attempts on protected `dev` in this repository are eligible producers. Each
+artifact carries a target-specific passing result, checked before replay. Restore
 queries those runs and downloads an artifact by its API ID from that run;
 PRs cannot create artifacts in a dev run with their runtime credentials.
 Even if a PR enables saving or uploads a matching name, its artifacts never
@@ -83,22 +84,34 @@ their writes safely would require a protected producer outside PR code.
 Do not switch back to `actions/cache` prefix restore: a PR can shadow a dev
 key with a forged pass in its own merge-ref cache on a later run.
 
-Artifacts use `trusted-test-cache-v2-<os>-<arch>-<image>-<image version>-<target>-<run>-<attempt>`.
-Restore searches the latest 30 dev pushes without a conclusion filter and
-also includes the current rerun even when it falls outside that window. A
-run becomes queued/in progress again during reruns, so verify the producing
-attempt named in each artifact through GitHub's workflow-attempt API, rather
-than requiring the run's current conclusion to be success. Only completed,
-successful attempts with matching run, source commit, workflow, dev branch and
-repository provenance are accepted; a newer unfinished/failed attempt cannot
-shadow an older passing artifact. Keep the platform and target prefix exact.
-Missing artifacts, API failures and expired artifacts are misses. A cold first run is expected until this reaches dev.
+Artifacts use `trusted-test-cache-v3-<os>-<arch>-<image>-<image version>-<target>-<run>-<attempt>`.
+Restore computes the requested target's hash with Turborepo, then searches
+artifacts across the latest 30 dev pushes plus the current rerun if older.
+`UNIT_SELECTION` is job-wide so restore and execution hash the same selection;
+browser shard selection and Rust feature/selection variables are also available
+before restore. Keep these environments aligned.
+
+A run becomes queued/in progress again during reruns, so verify the producing
+attempt's provenance through GitHub's workflow-attempt API rather than filtering
+by current conclusion. Completed attempts may have unrelated failed jobs: accept
+the target's own `result.json` proof of a newly passing execution, not an overall
+workflow-success requirement. `pack` refuses failed, cached or read-only results
+and includes only that result's cache entry in `entries.tar`. GitHub's run-owned
+artifact service is the authorization boundary for this record; PR artifacts
+remain ineligible regardless of their contents or name.
+
+Restore keeps looking across artifacts and attempts until the record's target,
+task and hash match the request and its unexpired cache entry is present. A
+newer archive for another hash cannot hide an older match, even when concurrent
+dev runs restored the same initial cache. Invalid records and unavailable or
+expired entries are misses. The v3 schema deliberately ignores older artifacts
+without a per-target pass record; the first dev production starts cold.
 PR-specific inputs with no dev-produced result run normally on every attempt;
 this trades cache hit rate for an enforceable write boundary without new secrets
 or repository administration. The local Turborepo directory remains outside
 the checkout to ignore committed cache files.
 
-Each saved artifact contains `entries.tar` to preserve entry creation times
+Each saved artifact contains `result.json` and `entries.tar` to preserve entry creation times
 through zip transport. Entries expire 30 days after creation, including on
 read-only runs. Prune before the probe so an expired hit cannot skip setup;
 `GITHUB_ENV` carries `TEST_CACHE_PROBED_AT` into execution so crossing the TTL

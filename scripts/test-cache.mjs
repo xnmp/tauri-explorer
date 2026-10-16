@@ -15,7 +15,7 @@
 // failed task. This script only decides access and reports:
 //   - Only protected dev pushes publish result artifacts. PRs and local runs
 //     cannot upload artifacts into those runs: GitHub enforces run ownership.
-//   - Restore downloads an artifact by ID from a successful dev CI attempt,
+//   - Restore verifies a target pass record from a protected-dev CI attempt,
 //     never from GitHub's shared cache namespace or from a PR workflow run.
 //   - TEST_CACHE_READ=false re-runs every target (bypass).
 //   - The local Turborepo directory lives outside the checkout (RUNNER_TEMP).
@@ -24,12 +24,12 @@
 // See .github/workflows/CLAUDE.md for detecting a stale hit and bypassing.
 
 import { execFileSync, spawnSync } from "node:child_process";
-import { appendFileSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, relative, resolve, isAbsolute } from "node:path";
 import { fileURLToPath } from "node:url";
 
-export const CACHE_VERSION = "v2";
+export const CACHE_VERSION = "v3";
 /**
  * Entries older than this are dropped before probing or executing. The tar
  * envelope keeps file times and hits save nothing, so age counts from creation; a
@@ -230,8 +230,22 @@ export function staleEntries(files, now, maxAgeMs) {
     .sort();
 }
 
+/** @param {string} target */
+function targetTask(target) {
+  if (target === "unit") return "ci:unit";
+  if (/^rust-(default|opt-in)$/.test(target)) return "ci:rust";
+  if (/^(chromium|webkit)-[1-9]\d*$/.test(target)) return "ci:e2e";
+  throw new Error(`test-cache: unknown target ${target}`);
+}
+
+/** @param {any} record @param {string} target */
+function passingRecord(record, target) {
+  return record?.target === target && record.task === targetTask(target) && record.passed === true &&
+    record.exitCode === 0 && record.stored === true && record.cached === false && /^[a-f0-9]{16,64}$/.test(record.hash);
+}
+
 /**
- * Restore only artifacts owned by successful protected-dev CI push attempts.
+ * Restore only verified target passes owned by protected-dev CI push attempts.
  * GitHub's artifact service binds IDs to runs; PR runtime credentials cannot
  * create an artifact in a dev run. Names/prefixes alone are not authorization.
  * Search a bounded 30-run window plus the current rerun; verify the producing
@@ -239,15 +253,19 @@ export function staleEntries(files, now, maxAgeMs) {
  * @param {Record<string, string | undefined>} env
  * @param {string} target
  * @param {typeof fetch} [fetchApi]
+ * @param {string} [workspace]
  */
-export async function restoreCache(env, target, fetchApi = fetch) {
+export async function restoreCache(env, target, fetchApi = fetch, workspace = process.cwd()) {
   if (!trust(env).read || !env.GH_TOKEN || !env.GITHUB_REPOSITORY) return false;
   const dir = cacheDir(env);
-  assertOutsideWorkspace(dir, process.cwd());
+  assertOutsideWorkspace(dir, workspace);
   // Never mix restored content with entries planted earlier in this job.
   rmSync(dir, { recursive: true, force: true });
   mkdirSync(dir, { recursive: true });
   const { prefix } = cacheKeys(env, target);
+  const task = targetTask(target);
+  const expectedHash = dryRun(task, { read: false, write: false }, turboEnv(task, env), workspace)?.tasks?.[0]?.hash;
+  if (!expectedHash) throw new Error(`test-cache: could not hash ${target} before restore`);
   const api = `https://api.github.com/repos/${env.GITHUB_REPOSITORY}`;
   const headers = { Authorization: `Bearer ${env.GH_TOKEN}`, Accept: "application/vnd.github+json" };
   const get = async (/** @type {string} */ path) => {
@@ -276,29 +294,31 @@ export async function restoreCache(env, target, fetchApi = fetch) {
       a.name.startsWith(namePrefix) && /^[1-9]\d*$/.test(a.name.slice(namePrefix.length)))
       .sort((/** @type {any} */ a, /** @type {any} */ b) =>
         Number(b.name.slice(namePrefix.length)) - Number(a.name.slice(namePrefix.length)));
-    let artifact;
-    for (const candidate of candidates) {
-      const number = Number(candidate.name.slice(namePrefix.length));
+    for (const artifact of candidates) {
+      const number = Number(artifact.name.slice(namePrefix.length));
       if (!Number.isSafeInteger(number) || number > run.run_attempt) continue;
       const attempt = number === run.run_attempt ? run :
         await (await get(`/actions/runs/${run.id}/attempts/${number}`)).json();
       if (!trusted(attempt) || attempt.id !== run.id || attempt.run_attempt !== number ||
-          attempt.head_sha !== run.head_sha || attempt.status !== "completed" || attempt.conclusion !== "success") continue;
-      artifact = candidate;
-      break;
+          attempt.head_sha !== run.head_sha || attempt.status !== "completed") continue;
+      const zip = await (await get(`/actions/artifacts/${artifact.id}/zip`)).arrayBuffer();
+      const staging = mkdtempSync(join(dirname(dir), "test-cache-restore-"));
+      try {
+        writeFileSync(join(staging, "artifact.zip"), Buffer.from(zip));
+        execFileSync("unzip", ["-q", join(staging, "artifact.zip"), "-d", staging]);
+        // Protected-dev pack publishes this record only for a newly passing
+        // target. Unrelated job/attempt failures do not invalidate that result.
+        const record = JSON.parse(readFileSync(join(staging, "result.json"), "utf8"));
+        if (!passingRecord(record, target) || record.hash !== expectedHash) continue;
+        execFileSync("tar", ["-xf", join(staging, "entries.tar"), "-C", dir]);
+        prune(dir, Date.now());
+        if (existsSync(join(dir, `${expectedHash}.tar.zst`))) return true;
+      } catch (error) {
+        console.warn(`Test-result artifact unavailable; trying another: ${error instanceof Error ? error.message : error}`);
+      } finally {
+        rmSync(staging, { recursive: true, force: true });
+      }
     }
-    if (!artifact) continue;
-    const zip = await (await get(`/actions/artifacts/${artifact.id}/zip`)).arrayBuffer();
-    const staging = mkdtempSync(join(dirname(dir), "test-cache-restore-"));
-    try {
-      writeFileSync(join(staging, "artifact.zip"), Buffer.from(zip));
-      execFileSync("unzip", ["-q", join(staging, "artifact.zip"), "-d", staging]);
-      // A tar envelope preserves creation times across artifact zip transport.
-      execFileSync("tar", ["-xf", join(staging, "entries.tar"), "-C", dir]);
-    } finally {
-      rmSync(staging, { recursive: true, force: true });
-    }
-    return true;
   }
   return false;
 }
@@ -310,8 +330,13 @@ function pack(opts) {
   const archiveDir = join(process.env.RUNNER_TEMP || tmpdir(), "test-cache-archive", opts.target);
   cacheKeys(process.env, opts.target);
   mkdirSync(archiveDir, { recursive: true });
-  execFileSync("tar", ["-cf", join(archiveDir, "entries.tar"), "-C", dir, "."]);
-  setOutputs({ archive: join(archiveDir, "entries.tar") });
+  const record = JSON.parse(readFileSync(join(reportDir(process.env), `${opts.target}.json`), "utf8"));
+  if (!passingRecord(record, opts.target)) throw new Error("test-cache: only a newly passing target may be published");
+  if (!existsSync(join(dir, `${record.hash}.tar.zst`))) throw new Error("test-cache: passing target has no cache entry");
+  const entries = readdirSync(dir).filter((name) => name === `${record.hash}.tar.zst` || name === `${record.hash}-meta.json`);
+  execFileSync("tar", ["-cf", join(archiveDir, "entries.tar"), "-C", dir, ...entries]);
+  writeFileSync(join(archiveDir, "result.json"), `${JSON.stringify(record)}\n`);
+  setOutputs({ archive: archiveDir });
 }
 
 // ---- CLI ----------------------------------------------------------------
@@ -345,15 +370,15 @@ function parseArgs(argv) {
   return { opts, rest };
 }
 
-/** @param {string} task */
-function turboEnv(task) {
+/** @param {string} task @param {NodeJS.ProcessEnv} [sourceEnv] */
+function turboEnv(task, sourceEnv = process.env) {
   const exec = (/** @type {string} */ cmd, /** @type {string[]} */ args) =>
-    execFileSync(cmd, args, { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] });
+    execFileSync(cmd, args, { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], env: sourceEnv });
   const kinds = TASK_TOOLCHAINS[/** @type {keyof typeof TASK_TOOLCHAINS} */ (task)];
   if (!kinds) throw new Error(`test-cache: unknown task ${task}`);
   return {
-    ...process.env,
-    TEST_CACHE_TOOLCHAIN: toolchainFingerprint(kinds, exec, process.env.TEST_CACHE_APT_PACKAGES),
+    ...sourceEnv,
+    TEST_CACHE_TOOLCHAIN: toolchainFingerprint(kinds, exec, sourceEnv.TEST_CACHE_APT_PACKAGES),
     TURBO_TELEMETRY_DISABLED: "1",
   };
 }
@@ -381,12 +406,13 @@ function prune(dir, now) {
  * @param {string} task
  * @param {{ read: boolean, write: boolean }} access
  * @param {NodeJS.ProcessEnv} env
+ * @param {string} [workspace]
  */
-function dryRun(task, access, env) {
-  const dir = cacheDir(process.env);
-  assertOutsideWorkspace(dir, process.cwd());
+function dryRun(task, access, env, workspace = process.cwd()) {
+  const dir = cacheDir(env);
+  assertOutsideWorkspace(dir, workspace);
   const result = spawnSync(TURBO, [...turboArgs(task, dir, access), "--dry=json"], {
-    encoding: "utf8", env, maxBuffer: 256 * 1024 * 1024,
+    encoding: "utf8", env, cwd: workspace, maxBuffer: 256 * 1024 * 1024,
   });
   try {
     return JSON.parse(result.stdout);

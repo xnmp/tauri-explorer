@@ -11,7 +11,7 @@ writes. Neither can a directory outside the checkout: running PR code can write
 there. GitHub's merge-ref isolation protects dev from PR-created shared caches,
 but it still allows a forged pass to satisfy subsequent runs of the same PR.
 
-Result artifacts are now accepted only from successful CI push attempts on protected
+Result artifacts are accepted only from CI push attempts on protected
 dev in this repository, selected using GitHub API provenance and downloaded by
 artifact ID. GitHub's artifact service prevents PR runtime credentials from
 uploading into a dev run. Same-repo PRs are read-only too; accepting their results
@@ -28,7 +28,21 @@ filtered by `status=success` loses its earlier passing artifacts while the rerun
 is queued/in progress. Discover dev push runs independently of conclusion,
 include the current rerun even if it is older than the discovery window, and
 verify each artifact's producing attempt through the workflow-attempt API.
-Check its completed/successful state and source/workflow/repository provenance
-before restoring; the current attempt's state does not invalidate an earlier
-successful one. A real-Turborepo regression verifies replay without executing the
+Check its completed state and source/workflow/repository provenance before
+restoring; verify the target's passing result independently of other jobs. A real-Turborepo regression verifies replay without executing the
 test command while a later attempt is in progress.
+
+Whole-workflow success is too broad a reuse condition: a failed browser shard
+must not invalidate an independently passing unit target. Protected-dev `pack`
+now publishes a checked per-target `result.json` alongside just that execution's
+entry. Restore verifies target, task, passing status and requested Turborepo hash.
+The record is trustworthy because GitHub binds it to a protected-dev producer,
+not because JSON is self-authenticating. Failed target records cannot publish.
+
+Concurrent dev runs may each restore an initial archive, then publish disjoint
+new hashes. Restoring only the newest archive loses valid entries from older
+runs. Compute the requested hash before restore and continue across artifacts
+and attempts until finding a matching unexpired entry. Make input-selection env
+available before restore as well as before execution. Real independent-archive
+regressions cover both different runs and different attempts; the wrong archive
+must not cause command execution when an older matching pass remains available.

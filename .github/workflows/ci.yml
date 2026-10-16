@@ -131,6 +131,10 @@ jobs:
     if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    # Restore computes the same input hash as execution.
+    env:
+      UNIT_SELECTION: ${{ needs.changes.outputs.unit }}
+      UNIT_REASON: ${{ needs.changes.outputs.unit-reason }}
     steps:
       - uses: actions/checkout@v7
 
@@ -170,9 +174,6 @@ jobs:
       # passing result.
       - name: Unit tests
         id: test-cache-run
-        env:
-          UNIT_SELECTION: ${{ needs.changes.outputs.unit }}
-          UNIT_REASON: ${{ needs.changes.outputs.unit-reason }}
         run: |
           case "$UNIT_SELECTION" in
             ALL)

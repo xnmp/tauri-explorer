@@ -69,8 +69,8 @@ describe("cache keys", () => {
   it("scopes every key to OS, architecture and runner image", () => {
     const linux = cacheKeys({ ...LINUX, GITHUB_RUN_ID: "7", GITHUB_RUN_ATTEMPT: "2" }, "unit");
     expect(linux).toEqual({
-      prefix: "test-cache-v2-Linux-X64-ubuntu24-20261012.1-unit-",
-      key: "test-cache-v2-Linux-X64-ubuntu24-20261012.1-unit-7-2",
+      prefix: "test-cache-v3-Linux-X64-ubuntu24-20261012.1-unit-",
+      key: "test-cache-v3-Linux-X64-ubuntu24-20261012.1-unit-7-2",
     });
     const variants = [
       { ...LINUX, RUNNER_OS: "Windows", ImageOS: "win25" },
@@ -292,6 +292,16 @@ describe("Turborepo task cache", () => {
     return readFileSync(out, "utf8");
   };
 
+  const publishedArchive = (seed: string, target: string, name: string) => {
+    const packed = spawnSync(process.execPath, [SCRIPT, "pack", "--target", target], {
+      cwd: fixture, encoding: "utf8", env: { ...base, RUNNER_TEMP: scratch, TEST_CACHE_DIR: seed, TEST_CACHE_REPORT_DIR: reportDir },
+    });
+    expect(packed.status, packed.stderr).toBe(0);
+    const zip = join(scratch, `${name}.zip`);
+    execFileSync("zip", ["-qr", zip, "."], { cwd: join(scratch, "test-cache-archive", target) });
+    return zip;
+  };
+
   it("uses the installed Turborepo binary", () => {
     expect(existsSync(TURBO)).toBe(true);
   });
@@ -462,7 +472,7 @@ describe("Turborepo task cache", () => {
     ["fork push", { head_repository: { full_name: "attacker/fork" } }, false],
     ["manual run", { event: "workflow_dispatch" }, false],
     ["main push", { head_branch: "main" }, false],
-    ["failed dev push", { conclusion: "failure" }, false],
+    ["failed dev push with a passing target", { conclusion: "failure" }, true],
     ["protected dev push", {}, true],
   ])("restores a passing entry only with trusted run ownership: %s", async (_label, overrides, allowed) => {
     // Produce a real passing Turborepo entry, as malicious PR code could do.
@@ -470,16 +480,9 @@ describe("Turborepo task cache", () => {
     expect(cache("ci:unit", "unit", { TEST_CACHE_DIR: forged }).status).toBe(0);
     const created = new Date(Date.now() - 2 * 86_400_000);
     for (const name of readdirSync(forged)) utimesSync(join(forged, name), created, created);
-    const archive = join(scratch, "entries.tar");
-    const packed = spawnSync(process.execPath, [SCRIPT, "pack", "--target", "unit"], {
-      cwd: fixture, encoding: "utf8", env: { ...base, RUNNER_TEMP: scratch, TEST_CACHE_DIR: forged },
-    });
-    expect(packed.status).toBe(0);
-    cpSync(join(scratch, "test-cache-archive/unit/entries.tar"), archive);
-    const zip = join(scratch, "forged.zip");
-    execFileSync("zip", ["-q", zip, "entries.tar"], { cwd: scratch });
+    const zip = publishedArchive(forged, "unit", "forged");
     const downloaded: string[] = [];
-    const env = { ...LINUX, GITHUB_REPOSITORY: "xnmp/tauri-explorer", GH_TOKEN: "read-only", TEST_CACHE_DIR: cacheDir, TEST_CACHE_WRITE: "true" };
+    const env = { ...base, GITHUB_REPOSITORY: "xnmp/tauri-explorer", GH_TOKEN: "read-only", TEST_CACHE_DIR: cacheDir, TEST_CACHE_WRITE: "true" };
     const prefix = cacheKeys(env, "unit").prefix;
     const fetchApi = async (url: string | URL | Request) => {
       const path = String(url);
@@ -492,7 +495,7 @@ describe("Turborepo task cache", () => {
       if (path.includes("/artifacts")) return Response.json({ artifacts: [{ id: 99, name: `trusted-${prefix}9-1`, expired: false }] });
       return new Response(readFileSync(zip));
     };
-    expect(await cacheModule.restoreCache(env, "unit", fetchApi)).toBe(allowed);
+    expect(await cacheModule.restoreCache(env, "unit", fetchApi, fixture)).toBe(allowed);
     if (allowed) {
       for (const name of readdirSync(cacheDir)) {
         expect(statSync(join(cacheDir, name)).mtimeMs).toBeLessThan(Date.now() - 86_400_000);
@@ -510,7 +513,7 @@ describe("Turborepo task cache", () => {
     ["queued rerun", "queued", false, {}, true, {}],
     ["failed current rerun", "completed", false, {}, true, {}],
     ["older rerun outside the discovery window", "in_progress", true, {}, true, {}],
-    ["failed previous attempt", "in_progress", false, { conclusion: "failure" }, false, {}],
+    ["failed previous attempt with a passing target", "in_progress", false, { conclusion: "failure" }, true, {}],
     ["unfinished previous attempt", "in_progress", false, { status: "in_progress" }, false, {}],
     ["previous attempt from a PR", "in_progress", false, { event: "pull_request" }, false, {}],
     ["previous attempt from a fork", "in_progress", false, { head_repository: { full_name: "attacker/fork" } }, false, {}],
@@ -523,11 +526,9 @@ describe("Turborepo task cache", () => {
     const seed = mkdtempSync(join(scratch, "previous-attempt-"));
     const first = cache("ci:unit", "unit", { TEST_CACHE_DIR: seed });
     expect(first.status).toBe(0);
-    execFileSync("tar", ["-cf", join(scratch, "entries.tar"), "-C", seed, "."]);
-    const zip = join(scratch, "previous-attempt.zip");
-    execFileSync("zip", ["-q", zip, "entries.tar"], { cwd: scratch });
+    const zip = publishedArchive(seed, "unit", "previous-attempt");
     const env = {
-      ...LINUX, GITHUB_REPOSITORY: "xnmp/tauri-explorer", GH_TOKEN: "read-only", TEST_CACHE_DIR: cacheDir,
+      ...base, GITHUB_REPOSITORY: "xnmp/tauri-explorer", GH_TOKEN: "read-only", TEST_CACHE_DIR: cacheDir,
       GITHUB_RUN_ID: "9", GITHUB_RUN_ATTEMPT: "2",
     };
     const producer = {
@@ -549,15 +550,12 @@ describe("Turborepo task cache", () => {
         ...producer, run_attempt: 1, status: "completed", conclusion: "success", ...overrides,
       });
       if (path.endsWith("/artifacts")) return Response.json({ artifacts: [
-        // A newer artifact from the unfinished/failed current attempt cannot
-        // shadow the verified passing artifact from the previous attempt.
-        { id: 100, name: `trusted-${cacheKeys(env, "unit").prefix}9-2`, expired: false },
         { id: 99, name: `trusted-${cacheKeys(env, "unit").prefix}9-1`, expired: false },
       ] });
       if (path.endsWith("/artifacts/99/zip")) return new Response(readFileSync(zip));
       throw new Error(`Unexpected API request: ${path}`);
     };
-    expect(await cacheModule.restoreCache(env, "unit", fetchApi)).toBe(allowed);
+    expect(await cacheModule.restoreCache(env, "unit", fetchApi, fixture)).toBe(allowed);
     const result = cache("ci:unit", "unit", { TEST_CACHE_WRITE: "false", FAIL: "3" });
     expect(result.status === 0).toBe(allowed);
     expect(result.record).toMatchObject({ cached: allowed, passed: allowed, hash: first.record.hash });
@@ -566,6 +564,135 @@ describe("Turborepo task cache", () => {
     expect(requested.includes("/repos/xnmp/tauri-explorer/actions/runs/9/attempts/1"))
       .toBe(Object.keys(currentOverrides).length === 0);
     expect(requested.includes("/repos/xnmp/tauri-explorer/actions/artifacts/99/zip")).toBe(allowed);
+  }, 60_000);
+
+  it("reuses the passing target when another target made the attempt fail", async () => {
+    const seed = mkdtempSync(join(scratch, "passing-target-"));
+    expect(cache("ci:unit", "unit", { TEST_CACHE_DIR: seed }).status).toBe(0);
+    const archive = publishedArchive(seed, "unit", "passing-target");
+    const failed = cache("ci:e2e", "chromium-1", { FAIL: "3" });
+    expect(failed.record).toMatchObject({ passed: false, stored: false });
+    const rejected = spawnSync(process.execPath, [SCRIPT, "pack", "--target", "chromium-1"], {
+      cwd: fixture, encoding: "utf8", env: { ...base, RUNNER_TEMP: scratch, TEST_CACHE_DIR: cacheDir, TEST_CACHE_REPORT_DIR: reportDir },
+    });
+    expect(rejected.status).not.toBe(0);
+    expect(rejected.stderr).toContain("only a newly passing target");
+    const env = { ...base, GITHUB_REPOSITORY: "xnmp/tauri-explorer", GH_TOKEN: "read-only", TEST_CACHE_DIR: cacheDir };
+    const producer = { id: 9, event: "push", head_branch: "dev", head_repository: { full_name: env.GITHUB_REPOSITORY },
+      path: ".github/workflows/ci.yml", head_sha: "same-input", run_attempt: 1, status: "completed", conclusion: "failure" };
+    const fetchApi = async (url: string | URL | Request) => {
+      const path = new URL(String(url)).pathname;
+      if (path.endsWith("/workflows/ci.yml/runs")) return Response.json({ workflow_runs: [producer] });
+      if (path.endsWith("/artifacts")) return Response.json({ artifacts: [
+        { id: 99, name: `trusted-${cacheKeys(env, "unit").prefix}9-1`, expired: false },
+      ] });
+      if (path.endsWith("/zip")) return new Response(readFileSync(archive));
+      throw new Error(`Unexpected API request: ${path}`);
+    };
+    expect(await cacheModule.restoreCache(env, "unit", fetchApi, fixture)).toBe(true);
+    const unit = cache("ci:unit", "unit", { TEST_CACHE_WRITE: "false", FAIL: "3" });
+    expect(unit.status).toBe(0);
+    expect(unit.record).toMatchObject({ cached: true, passed: true });
+    expect(await cacheModule.restoreCache(env, "chromium-1", fetchApi, fixture)).toBe(false);
+    const browser = cache("ci:e2e", "chromium-1", { TEST_CACHE_WRITE: "false", FAIL: "3" });
+    expect(browser.status).not.toBe(0);
+    expect(browser.record).toMatchObject({ cached: false, passed: false });
+    expect(runs()).toEqual(["ci:unit", "ci:e2e", "ci:e2e"]);
+  }, 60_000);
+
+  it.each(["runs", "attempts"])("searches independent archives across %s for the requested hash", async (kind) => {
+    const older = mkdtempSync(join(scratch, "older-result-"));
+    const newer = mkdtempSync(join(scratch, "newer-result-"));
+    const first = cache("ci:unit", "unit", { TEST_CACHE_DIR: older });
+    const zipA = publishedArchive(older, "unit", "older-result");
+    const second = cache("ci:unit", "unit", { TEST_CACHE_DIR: newer, UNIT_SELECTION: "src/lib/a.ts" });
+    const zipB = publishedArchive(newer, "unit", "newer-result");
+    expect(second.record.hash).not.toBe(first.record.hash);
+    const env = { ...base, GITHUB_REPOSITORY: "xnmp/tauri-explorer", GH_TOKEN: "read-only", TEST_CACHE_DIR: cacheDir };
+    const producer = { id: 9, event: "push", head_branch: "dev", head_repository: { full_name: env.GITHUB_REPOSITORY },
+      path: ".github/workflows/ci.yml", head_sha: "same-input", run_attempt: kind === "attempts" ? 2 : 1,
+      status: "completed", conclusion: "success" };
+    const downloads: number[] = [];
+    const fetchApi = async (url: string | URL | Request) => {
+      const path = new URL(String(url)).pathname;
+      if (path.endsWith("/workflows/ci.yml/runs")) return Response.json({ workflow_runs:
+        kind === "attempts" ? [producer] : [producer, { ...producer, id: 8 }] });
+      if (path.endsWith("/attempts/1")) return Response.json({ ...producer, run_attempt: 1 });
+      if (path.endsWith("/artifacts")) {
+        const prefix = cacheKeys(env, "unit").prefix;
+        return Response.json({ artifacts: kind === "attempts" ? [
+          { id: 99, name: `trusted-${prefix}9-2`, expired: false },
+          { id: 98, name: `trusted-${prefix}9-1`, expired: false },
+        ] : [{ id: path.includes("/runs/9/") ? 99 : 98,
+          name: `trusted-${prefix}${path.includes("/runs/9/") ? 9 : 8}-1`, expired: false }] });
+      }
+      const artifact = Number(path.match(/artifacts\/(\d+)\/zip$/)?.[1]);
+      if (artifact) { downloads.push(artifact); return new Response(readFileSync(artifact === 99 ? zipB : zipA)); }
+      throw new Error(`Unexpected API request: ${path}`);
+    };
+    expect(await cacheModule.restoreCache(env, "unit", fetchApi, fixture)).toBe(true);
+    const result = cache("ci:unit", "unit", { TEST_CACHE_WRITE: "false", FAIL: "3" });
+    expect(result.status).toBe(0);
+    expect(result.record).toMatchObject({ cached: true, passed: true, hash: first.record.hash });
+    expect(runs()).toEqual(["ci:unit", "ci:unit"]);
+    expect(downloads).toEqual([99, 98]);
+  }, 60_000);
+
+  it.each([
+    { passed: false }, { exitCode: 3 }, { target: "chromium-1" }, { task: "ci:e2e" },
+    { cached: true }, { stored: false }, { hash: "../outside" },
+  ])("does not replay an artifact without a valid target pass record: %o", async (override) => {
+    const seed = mkdtempSync(join(scratch, "invalid-record-"));
+    const first = cache("ci:unit", "unit", { TEST_CACHE_DIR: seed });
+    const zip = publishedArchive(seed, "unit", "invalid-record");
+    const archiveDir = join(scratch, "test-cache-archive/unit");
+    writeFileSync(join(archiveDir, "result.json"), JSON.stringify({ ...first.record, ...override }));
+    execFileSync("zip", ["-q", zip, "result.json"], { cwd: archiveDir });
+    const env = { ...base, GITHUB_REPOSITORY: "xnmp/tauri-explorer", GH_TOKEN: "read-only", TEST_CACHE_DIR: cacheDir };
+    const producer = { id: 9, event: "push", head_branch: "dev", head_repository: { full_name: env.GITHUB_REPOSITORY },
+      path: ".github/workflows/ci.yml", head_sha: "same-input", run_attempt: 1, status: "completed", conclusion: "failure" };
+    const fetchApi = async (url: string | URL | Request) => {
+      const path = new URL(String(url)).pathname;
+      if (path.endsWith("/workflows/ci.yml/runs")) return Response.json({ workflow_runs: [producer] });
+      if (path.endsWith("/artifacts")) return Response.json({ artifacts: [
+        { id: 99, name: `trusted-${cacheKeys(env, "unit").prefix}9-1`, expired: false },
+      ] });
+      if (path.endsWith("/zip")) return new Response(readFileSync(zip));
+      throw new Error(`Unexpected API request: ${path}`);
+    };
+    expect(await cacheModule.restoreCache(env, "unit", fetchApi, fixture)).toBe(false);
+    const result = cache("ci:unit", "unit", { TEST_CACHE_WRITE: "false", FAIL: "3" });
+    expect(result.status).not.toBe(0);
+    expect(result.record).toMatchObject({ cached: false, passed: false });
+    expect(runs()).toEqual(["ci:unit", "ci:unit"]);
+  }, 60_000);
+
+  it.each([
+    ["ci:rust", "rust-default", { RUST_SUITE: "default" }],
+    ["ci:rust", "rust-opt-in", { RUST_SUITE: "opt-in", RUST_TEST_FEATURES: "avif,durable-recovery,e2e-hooks" }],
+    ["ci:e2e", "chromium-1", {}],
+    ["ci:e2e", "webkit-1", { E2E_ENGINE: "webkit", WEBKIT: "1", PW_VIDEO_HEADED: "1" }],
+  ])("restores the producing environment for %s / %s", async (task, target, selection) => {
+    const seed = mkdtempSync(join(scratch, "target-environment-"));
+    const first = cache(task, target, { ...selection, TEST_CACHE_DIR: seed });
+    const zip = publishedArchive(seed, target, "target-environment");
+    const env = { ...base, ...selection, GITHUB_REPOSITORY: "xnmp/tauri-explorer", GH_TOKEN: "read-only", TEST_CACHE_DIR: cacheDir };
+    const producer = { id: 9, event: "push", head_branch: "dev", head_repository: { full_name: env.GITHUB_REPOSITORY },
+      path: ".github/workflows/ci.yml", head_sha: "same-input", run_attempt: 1, status: "completed", conclusion: "failure" };
+    const fetchApi = async (url: string | URL | Request) => {
+      const path = new URL(String(url)).pathname;
+      if (path.endsWith("/workflows/ci.yml/runs")) return Response.json({ workflow_runs: [producer] });
+      if (path.endsWith("/artifacts")) return Response.json({ artifacts: [
+        { id: 99, name: `trusted-${cacheKeys(env, target).prefix}9-1`, expired: false },
+      ] });
+      if (path.endsWith("/zip")) return new Response(readFileSync(zip));
+      throw new Error(`Unexpected API request: ${path}`);
+    };
+    expect(await cacheModule.restoreCache(env, target, fetchApi, fixture)).toBe(true);
+    const result = cache(task, target, { ...selection, TEST_CACHE_WRITE: "false", FAIL: "3" });
+    expect(result.status).toBe(0);
+    expect(result.record).toMatchObject({ cached: true, passed: true, hash: first.record.hash });
+    expect(runs()).toEqual([task]);
   }, 60_000);
 
   it("explains a target's hash with the files and env vars it covers", () => {
@@ -791,6 +918,15 @@ describe("ci.yml cache wiring", () => {
     const upload = all.find((s) => s.uses?.startsWith("actions/upload-artifact@") && String(s.with?.name).startsWith("test-cache-"));
     expect(upload?.with).toMatchObject({ name: `test-cache-${target}`, "if-no-files-found": "ignore" });
     expect(upload?.if).toBe("always()");
+  });
+
+  it("hashes the same unit selection during restore and execution", () => {
+    const job = ci.jobs["frontend-checks"];
+    const restore = steps("frontend-checks").find((s) => s.name === "Restore test-result cache");
+    const run = steps("frontend-checks").find((s) => s.id === "test-cache-run");
+    const effective = (step: Step | undefined) => ({ ...ci.env, ...job.env, ...step?.env });
+    expect(effective(restore).UNIT_SELECTION).toBe("${{ needs.changes.outputs.unit }}");
+    expect(effective(run).UNIT_SELECTION).toBe(effective(restore).UNIT_SELECTION);
   });
 
   it("summarises the hit rate across every cached target", () => {

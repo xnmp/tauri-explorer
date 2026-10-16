@@ -110,7 +110,8 @@ describe("unit test step", () => {
   const unit = step("frontend-checks", (s) => s.name === "Unit tests");
 
   it("reads the selection from the changes job", () => {
-    expect(unit.env).toEqual({
+    // Restore and execution both need the selection before hashing inputs.
+    expect(ci.jobs["frontend-checks"].env).toEqual({
       UNIT_SELECTION: "${{ needs.changes.outputs.unit }}",
       UNIT_REASON: "${{ needs.changes.outputs.unit-reason }}",
     });

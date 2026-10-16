@@ -19,6 +19,8 @@ export interface ContextMenuItem {
   icon?: string;
   /** Optional submenu group used to keep related contributed actions together. */
   group?: ContextMenuItemGroup;
+  /** `"trash"` items appear only in the in-app Trash, which shows no others (#863). */
+  scope?: "trash";
   /** Predicate: shown only when it returns true for the current selection. */
   when: (entries: FileEntry[]) => boolean;
   handler: (entries: FileEntry[]) => void | Promise<void>;

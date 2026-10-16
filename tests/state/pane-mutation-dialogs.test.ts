@@ -358,7 +358,7 @@ describe("deferred delete ownership", () => {
       expect([...explorer.selectedPaths]).toEqual([current.path]);
       expect(dialogStore.isDeleteOpen).toBe(true);
       expect(dialogStore.deletingEntry?.path).toBe(secondVictim.path);
-      expect(changes).toEqual([["/A"]]);
+      expect(changes).toEqual([["/A", "trash://"]]);
       expect(mocks.deleteEntries).toHaveBeenCalledExactlyOnceWith([victim.path], false);
       expect(history.port.push).not.toHaveBeenCalled();
       expect(explorer.currentPath).toBe("/B");
@@ -389,7 +389,7 @@ describe("deferred delete ownership", () => {
 
       expect(dialogStore.isDeleteOpen).toBe(true);
       expect(dialogStore.deletingEntry?.path).toBe(other.path);
-      expect(changes).toEqual([["/A"]]);
+      expect(changes).toEqual([["/A", "trash://"]]);
       expect(mocks.deleteEntries).toHaveBeenCalledExactlyOnceWith([victim.path], false);
       expect(history.port.push).not.toHaveBeenCalled();
     } finally {
@@ -431,7 +431,8 @@ describe("deferred delete ownership", () => {
     try {
       expect(await explorer.confirmDelete([external], false)).toBeNull();
       expect(explorer.displayEntries.map(({ path }) => path)).toEqual([current.path]);
-      expect(changes).toEqual([["/Miller"]]);
+      // Trashing also changes the in-app Trash location (#863).
+      expect(changes).toEqual([["/Miller", "trash://"]]);
       expect(mocks.deleteEntries).toHaveBeenCalledExactlyOnceWith([external.path], false);
       expect(history.port.push).not.toHaveBeenCalled();
     } finally {
@@ -465,7 +466,7 @@ describe("deferred delete ownership", () => {
         [first.path, second.path, uncertain.path],
         false,
       );
-      expect(changes).toEqual([["/A", "/C"]]);
+      expect(changes).toEqual([["/A", "/C", "trash://"]]);
       expect(history.port.push).not.toHaveBeenCalled();
     } finally {
       unsubscribe();
@@ -549,7 +550,7 @@ describe("bulk trash receipts", () => {
         removed.path,
         failed.path,
       ]);
-      expect(changes).toEqual([["/A"]]);
+      expect(changes).toEqual([["/A", "trash://"]]);
       expect(mocks.deleteEntries).toHaveBeenCalledExactlyOnceWith(
         [removed.path, failed.path],
         false,

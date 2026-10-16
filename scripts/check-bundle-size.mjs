@@ -43,7 +43,14 @@ const STARTUP_RAW_BUDGET = 866_617;
 // +85 bytes because content-hashed chunk names in eager import lists changed
 // and compress differently; dev measured 279,400-279,408, within 24 bytes of
 // the old cap, so any lazy-chunk change could fail on name churn alone.
-const STARTUP_GZIP_BUDGET = 279_936;
+// Raised 279,936 -> 280,448 (+512) for #863 (in-app Trash): dev measured
+// 279,766. Listing, restore, menu actions and refresh load lazily with the
+// first Trash listing (~1.7 KiB gzip chunk); what stays eager is the provider
+// registration, Trash-aware Details headers and column, the empty-state copy,
+// the trashed-item open guards and menu scoping, +278 bytes gzip (280,044
+// total). Routing every lazy call through one module was measured; a second
+// Vite preload wrapper cost ~100 bytes.
+const STARTUP_GZIP_BUDGET = 280_448;
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const clientDir = resolve(repoRoot, ".svelte-kit/output/client");

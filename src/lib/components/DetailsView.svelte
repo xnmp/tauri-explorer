@@ -17,6 +17,7 @@
   import InlineNewFolder, { NEW_FOLDER_SENTINEL, isNewFolderSentinel } from "./InlineNewFolder.svelte";
 
   import type { FileEntry } from "$lib/domain/file";
+  import { isTrashPath } from "$lib/domain/virtual-path";
 
   interface Props {
     explorer: ExplorerInstance;
@@ -37,6 +38,7 @@
   containsIndex = (index) => rowContainsIndex?.(index + (explorer.isCreatingFolder ? 1 : 0)) ?? false;
 
   const viewId = $props.id();
+  const inTrash = $derived(isTrashPath(explorer.currentPath));
 
   // Column resize composable
   const columnResize = useColumnResize(undefined, () => settingsStore.columnVisibility);
@@ -118,7 +120,7 @@
         onclick={() => explorer.setSorting("modified")}
         class:active={explorer.sortBy === "modified"}
       >
-        <span>Date modified</span>
+        <span>{inTrash ? "Date deleted" : "Date modified"}</span>
         {#if explorer.sortBy === "modified"}
           <svg width="10" height="10" viewBox="0 0 10 10" fill="none" class="sort-indicator">
             {#if explorer.sortAscending}
@@ -135,7 +137,7 @@
     {#if settingsStore.columnVisibility.type}
     <div class="column-header-wrapper">
       <div class="column-header type-column">
-        <span>Type</span>
+        <span>{inTrash ? "Original location" : "Type"}</span>
       </div>
       {@render resizeHandle("type")}
     </div>

@@ -83,8 +83,9 @@ function relocateMockEntry(source: string, destDir: string): FileMutationReceipt
   return mutationReceipt(newEntry);
 }
 
-interface MockTrashItem { entry: FileEntry; listings: [string, FileEntry[]][] }
+interface MockTrashItem { entry: FileEntry; listings: [string, FileEntry[]][]; id: string; deletedAt: string }
 const mockTrash = new Map<string, MockTrashItem[]>();
+let mockTrashSequence = 0;
 
 function removeMockEntry(path: string, toTrash: boolean): void {
   const parent = parentDir(path);
@@ -94,7 +95,7 @@ function removeMockEntry(path: string, toTrash: boolean): void {
   const listings = Object.entries(mockFiles).filter(([directory]) => directory === path || directory.startsWith(`${path}/`));
   if (toTrash) {
     const versions = mockTrash.get(path) ?? [];
-    versions.push({ entry, listings });
+    versions.push({ entry, listings, id: `mock-trash-${++mockTrashSequence}`, deletedAt: new Date().toISOString() });
     mockTrash.set(path, versions);
   }
   mockFiles[parent] = entries.filter((candidate) => candidate.path !== path);
@@ -113,6 +114,46 @@ function restoreMockEntry(path: string): void {
   for (const [directory, listing] of item.listings) mockFiles[directory] = listing;
   versions!.pop();
   if (!versions!.length) mockTrash.delete(path);
+}
+
+/** In-app Trash view (#863): the mock trash as `list_trash` reports it. */
+function listMockTrash() {
+  const entries = [...mockTrash].flatMap(([originalPath, versions]) => versions.map((item) => ({
+    id: item.id, name: item.entry.name, originalPath, deletedAt: item.deletedAt,
+    kind: item.entry.kind, size: item.entry.kind === "file" ? item.entry.size : 0,
+    isSymlink: item.entry.is_symlink === true,
+  })));
+  return { entries, issues: getMockControl().trashIssues ?? [] };
+}
+
+/** Mirrors the native refusals: never overwrite, never invent a parent. */
+function restoreMockTrashItems(ids: string[]): FileBatchOutcome {
+  const result: FileBatchOutcome = { succeeded: [], failed: [] };
+  for (const id of ids) {
+    const found = [...mockTrash].find(([, versions]) => versions.some((item) => item.id === id));
+    if (!found) {
+      result.failed.push({ path: id, error: "This item is no longer in the trash list. Refresh the Trash and try again." });
+      continue;
+    }
+    const [path, versions] = found;
+    const parent = parentDir(path);
+    const entries = mockFiles[parent];
+    if (!entries) {
+      result.failed.push({ path, error: `The original folder ${parent} no longer exists or its drive is not mounted. Restore or recreate that folder first.` });
+      continue;
+    }
+    if (entries.some((entry) => entry.path === path)) {
+      result.failed.push({ path, error: `${path} already exists. Rename or move it, then restore again.` });
+      continue;
+    }
+    const index = versions.findIndex((item) => item.id === id);
+    const [item] = versions.splice(index, 1);
+    if (!versions.length) mockTrash.delete(path);
+    mockFiles[parent] = [...entries, item.entry];
+    for (const [directory, listing] of item.listings) mockFiles[directory] = listing;
+    result.succeeded.push(path);
+  }
+  return result;
 }
 
 function mockBatch(paths: string[], operation: (path: string) => void): FileBatchOutcome {
@@ -2871,6 +2912,9 @@ if (typeof window !== "undefined") {
     localStorage.setItem("mock-open-with-launch", JSON.stringify(args));
   },
 
+  list_trash: () => listMockTrash(),
+  restore_trash_items: (args) => restoreMockTrashItems(args.ids as string[]),
+
   open_recycle_bin: () => {
     const error = localStorage.getItem(MOCK_LOCAL_KEYS.openRecycleBinError);
     if (error) throw new Error(error);
@@ -3079,6 +3123,10 @@ export async function mockInvoke<T>(cmd: string, args?: Record<string, unknown>)
     const action: UndoAction | null = args!.permanent ? null
       : actions.length === 1 ? actions[0] : { type: "batch", actions, label: "Delete" };
     return { result, history: mockFileHistory.push(action).summary } as T;
+  }
+  if (cmd === "restore_trash_items") {
+    // Restoring from the Trash view records no undoable action.
+    return { result, history: mockFileHistory.summary() } as T;
   }
   if (["compress_to_zip", "extract_archive"].includes(cmd)) {
     // Archive operations mutate but have no inverse yet, so they advance

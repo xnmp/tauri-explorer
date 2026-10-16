@@ -17,6 +17,7 @@
   import { saveFocusedWindowState } from "$lib/state/focused-window";
   import { terminalPanelStore } from "$lib/state/terminal.svelte";
   import { setFfmpegPath } from "$lib/api/system";
+  import { installTrashLocation } from "$lib/state/trash-provider";
   import "$lib/themes/index.css";
   import WindowDialogs from "$lib/components/WindowDialogs.svelte";
   import TitleBar from "$lib/components/TitleBar.svelte";
@@ -34,6 +35,9 @@
   // First milestone: the app bundle has parsed and begun executing. The gap
   // from boot t0 to here is the JS download+parse cost the lazy-loading targets.
   markStartup("bundle-exec");
+
+  // Before any tab restore can navigate to the in-app Trash (#863).
+  installTrashLocation();
 
   const leftExplorer = $derived(windowTabsManager.getActiveExplorer());
   const launchHomePath = resolveLaunchHomePath();

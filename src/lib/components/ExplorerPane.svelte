@@ -28,6 +28,7 @@ import ScmPanel from "./ScmPanel.svelte";
   import { gitRepoRoot } from "$lib/api/git";
 import { nextRemovableRoot } from "$lib/domain/drives";
   import { isVirtualPath } from "$lib/domain/virtual-path";
+  import { explainTrashedOpen } from "$lib/state/trash-provider";
 
   interface Props {
     paneId: PaneId;
@@ -300,7 +301,13 @@ import { nextRemovableRoot } from "$lib/domain/drives";
     if (!move) return;
     event.preventDefault();
     if (move.kind === "parent") { void paneExplorer.goUp(); return; }
-    if (move.kind === "open") { void paneExplorer.navigateTo(entries[move.index].path); return; }
+    if (move.kind === "open") {
+      const target = entries[move.index];
+      // A trashed folder opens only after Restore (#863).
+      if (target.trash) explainTrashedOpen(target);
+      else void paneExplorer.navigateTo(target.path);
+      return;
+    }
     const entry = entries[move.index];
     if (move.selection === "preserve") {
       paneExplorer.focusEntry(entry);

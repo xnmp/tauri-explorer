@@ -28,6 +28,7 @@
   import { openWithStore } from "$lib/state/open-with.svelte";
   import { openWithUnavailableReason } from "$lib/domain/open-with";
   import { isMac, isWindows } from "$lib/domain/platform";
+  import { isTrashPath } from "$lib/domain/virtual-path";
 
   interface Props {
     explorer: ExplorerInstance;
@@ -37,7 +38,9 @@
 
   // Plugin-contributed context-menu items whose `when` predicate passes for the
   // current selection. AI contributions are grouped into their own submenu.
-  const pluginMenuItems = $derived(contextMenuItems.itemsFor(explorer.getSelectedEntries()));
+  // The in-app Trash (#863) shows only its own contributed actions.
+  const inTrash = $derived(isTrashPath(explorer.currentPath));
+  const pluginMenuItems = $derived(contextMenuItems.itemsFor(explorer.getSelectedEntries()).filter((item) => (item.scope === "trash") === inTrash));
   const aiPluginMenuItems = $derived(pluginMenuItems.filter((item) => item.group === "ai"));
   const ungroupedPluginMenuItems = $derived(pluginMenuItems.filter((item) => item.group !== "ai"));
 
@@ -424,7 +427,7 @@
     tabindex="-1"
     onkeydown={handleMenuKeydown}
   >
-    {#if hasSelection}
+    {#if hasSelection && !inTrash}
       {#if selectedFile}
         <!-- Open file with default application -->
         <button class="menu-item" onclick={handleOpenDefault} role="menuitem">
@@ -580,6 +583,7 @@
     {/if}
 
     {#if !hasSelection}
+      {#if !inTrash}
       <!-- Background right-click: directory-level actions -->
       <button class="menu-item" onclick={handlePaste} role="menuitem">
         <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
@@ -618,6 +622,7 @@
         </svg>
         <span>Open in Terminal</span>
       </button>
+      {/if}
 
       <div class="menu-divider"></div>
 
@@ -951,6 +956,11 @@
     height: 1px;
     margin: 4px 8px;
     background: var(--divider);
+  }
+
+  /* A menu that starts with contributed actions (the Trash) needs no rule. */
+  .context-menu > .menu-divider:first-child {
+    display: none;
   }
 
   .menu-section-label {

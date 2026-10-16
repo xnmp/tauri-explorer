@@ -13,6 +13,7 @@
  * Issue: refactor/audit-tier4-splits (#212)
  */
 
+import { TRASH_PATH } from "./virtual-path";
 import { directoryKey, basename } from "./path";
 
 export interface TabTitleItem {
@@ -41,6 +42,11 @@ export function disambiguateTabTitles(items: TabTitleItem[]): Map<string, string
   // Group items by basename; only colliding groups need disambiguation.
   const groups = new Map<string, TabTitleItem[]>();
   for (const item of items) {
+    // The in-app Trash has a fixed name rather than a path basename (#863).
+    if (item.path === TRASH_PATH) {
+      result.set(item.id, extractFolderName(item.path));
+      continue;
+    }
     const segs = segments(item.path);
     const base = segs[segs.length - 1] ?? item.path;
     const group = groups.get(base);
@@ -114,6 +120,7 @@ export function gitTabDisplay(
 /** Folder name for a tab title: basename, with the original fallbacks —
  *  root stays "/", empty becomes "Explorer" (#278/#281). */
 export function extractFolderName(path: string): string {
+  if (path === TRASH_PATH) return "Trash";
   const name = basename(path);
   return name && name !== "/" ? name : path || "Explorer";
 }

@@ -154,7 +154,9 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `run-after-close.ts` — runs a command chosen from a modal launcher (the command palette) only after the launcher has released the top modal surface, so the dialog it opens is not closed as the caller.
 - `open-with.svelte.ts` — captured application-choice sessions, late-result rejection and single launch lifecycle.
 
-- `recycle-bin.ts` — turns the native Recycle Bin IPC result into a user-visible failure toast; called by `FilesSidebarView.svelte`.
+- `recycle-bin.ts` — turns the native Recycle Bin IPC result into a user-visible failure toast; called by the Trash view's "Open in System File Manager" action (`trash-location.ts`).
+- `trash-provider.ts` — eager half of the in-app Trash (#863): registers the built-in `trash://` fs provider (installed by `+page.svelte`) and lazily loads `trash-location.ts`, passing it the startup-graph context-menu registry.
+- `trash-location.ts` — lazy half of the in-app Trash: lists through `list_trash`, reports unreadable sources once, registers the `scope: "trash"` Restore / Open in System File Manager menu actions, restores selected entries and refreshes open Trash views through the local file-change subscription. Contracts in `tests/state/trash-location.test.ts`.
 - `git-graph-component.ts` — resolved lazy graph component cache with an injected importer; coalesces first loads and preserves synchronous cached remounts.
 - `git-commit-files-cache.ts` — importable 50-entry LRU for immutable commit file lists; shared across graph remounts and behavior-tested through an injected loader.
 
@@ -322,6 +324,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `update.ts` — GitHub-release update check (once/day throttle, #185).
 - `warm-pool.ts` — warm-window pool IPC wrappers.
 - `open.ts` — open files in the default/chosen app, image viewer (with siblings), or a terminal.
+- `trash.ts` — `list_trash` / `restore_trash_items` IPC for the in-app Trash; restore is a native mutation reply keyed by opaque entry IDs.
 - `system.ts` — OS/window-shell plumbing: picker response, native window theme, ffmpeg path. Not filesystem.
 
 ## src/lib/composables/ — reusable behavior modules (`.svelte.ts` = runes-aware).
@@ -392,7 +395,8 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `paste-source.ts` — pure file-list Paste source selection: the app's own Copy/Cut while the system clipboard mirrors it (or, for Copy only, when it cannot be read), otherwise an external file list (#865).
 - `platform.ts` — isMac/isWindows/isLinux detection.
 - `wsl.ts` — WSL path recognition.
-- `virtual-path.ts` — virtual (plugin-provided) path parsing.
+- `virtual-path.ts` — virtual (plugin-provided) path parsing, plus the eager `TRASH_PATH` / `isTrashPath` for the built-in Trash.
+- `trash.ts` — pure in-app Trash mapping (#863): `trash://` paths, trash wire entries → `FileEntry` with `trash` origin metadata, original-folder column text, source-issue and restore-outcome messages. Contracts in `tests/domain/trash.test.ts`.
 - `drives.ts` — pure removable-drive tracking (isUnderRoot).
 - `load-diagnostics.ts` — pure slow directory-load traces (#1022): phase spans, 5 s threshold, frontend record, culprit diagnosis, bounded report text and chronological trace IDs. Contracts in `tests/domain/load-diagnostics.test.ts`.
 - `bookmark-drop-feedback.ts` — bookmark drop action feedback and effective local/cross-window drag-kind resolution (#675).
@@ -662,6 +666,8 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `src-tauri/src/files/batch/receipts.rs` — generic ordered receipt slots owned outside worker unwinding; shared by deletion and replacement execution, preserving family-specific stop, artifact and error policy.
 - `batch/model.rs` — bounded stable batch admission, component-aware overlap rejection, and succeeded/failed/uncertain/unstarted outcome partitions.
 - `trash.rs` — platform trash dispatch and exact receipt restore; Linux context setup and selection execution share one pooled job; ordered per-path outcomes and explicit UNC permanent-removal warnings (ADR 0017).
+- `trash_inventory.rs` — in-app Trash (#863): `list_trash` enumerates the platform trash (Linux Freedesktop sources, Windows Recycle Bin via `trash::os_limited`, macOS `~/.Trash`, restorable only for items recorded by `trash_origins.rs`), registers each listed artifact behind an opaque ID, and `restore_trash_items` (in `file_mutation.rs`) refuses occupied destinations/missing parents before the exact restore engine runs. Real-filesystem contracts in `src-tauri/test_support/trash_inventory.rs` (Linux) and `src-tauri/test_support/trash_inventory_native.rs` (Windows, macOS).
+- `trash_origins.rs` — Tauri Explorer's own record of where items it trashed came from (#863; macOS production use): identity lookup in the trash folder after deletion, an atomically replaced JSON record file, and identity-checked no-replace restore. Portable Unix logic tested in `src-tauri/test_support/trash_origins.rs`.
 - `trash_artifact.rs` — native-only trash identities, restore requests and successful trash/restore receipts; restore can carry a fresh publication identity for its next inverse.
 - `freedesktop_trash.rs` — Linux exact trash receipts, exclusive metadata publication, descriptor-relative no-replace moves, identity verification and restore.
 - `src-tauri/src/files/freedesktop_trash/plan.rs` — read-only source/layout/candidate preparation; explicit directory create/open/repair steps, predeclared shared/personal fallback and mount-aware identity revalidation before exact execution.
@@ -672,6 +678,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `windows_paths.rs` — Windows ordinal path comparison and component-aware alias/ancestor rejection before destructive batch admission; receipt spellings remain unchanged.
 - `trash_outcome.rs` — pure Windows delete callback classification; committed recovery warnings remain distinct from uncertain and unchanged outcomes.
 - `restore_outcome.rs` — pure interpretation of Shell item completion, cancellation, source mismatch, and overwrite/merge veto evidence.
+- `src-tauri/src/files/freedesktop_trash/inventory.rs` — read-only Freedesktop trash enumeration: home trash plus per-mount `.Trash/$uid`/`.Trash-$uid`, `.trashinfo` parsing, per-source issues, deadline-bounded parallel mount probing, and the exact artifact (metadata digest/identity, payload version) each listed item restores through. Tests in `src-tauri/test_support/freedesktop_trash_inventory.rs`.
 - `src-tauri/src/files/freedesktop_trash/restoration.rs` — immutable exact restoration plans, per-resource shared admission, descriptor-relative missing-parent creation and per-batch identity-checked parent reuse; native target authority stays separate from display receipt keys.
 - `fs_watcher.rs` — blocking native directory watch adapter, coalesced retirement cleanup and recursive search-cache coverage; directory-changed events preserve mutation priority and observation time.
 - `directory_watches.rs` — renderer-owned directory lease identities, shared registrations, cancellation, failed-release retry and retired-observer reconstruction.

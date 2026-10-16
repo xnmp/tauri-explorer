@@ -10,6 +10,7 @@ import { windowTabsManager } from "../window-tabs.svelte";
 import { requestGraphUndo } from "../git-graph-undo";
 import { activePaneIsGraph } from "./active-pane";
 import { isCroppableImage } from "$lib/domain/file-types";
+import { explainTrashedOpen } from "../trash-provider";
 
 function selectedCropImage() {
   const selected = getActiveExplorer()?.getSelectedEntries() ?? [];
@@ -116,7 +117,9 @@ export const fileCommands: Command[] = [
     handler: async () => {
       const explorer = getActiveExplorer();
       const selected = explorer?.getSelectedEntries()[0];
-      if (selected) {
+      // A trashed item opens only after Restore (#863).
+      if (selected?.trash) explainTrashedOpen(selected);
+      else if (selected) {
         // Follow Windows .lnk shortcuts to their target (no-op otherwise).
         const { resolveActivation } = await import("$lib/api/activate");
         const target = await resolveActivation(selected);

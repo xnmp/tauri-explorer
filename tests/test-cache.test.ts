@@ -7,6 +7,7 @@ import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { parse } from "yaml";
+import * as cacheModule from "../scripts/test-cache.mjs";
 import {
   TRUSTED_WRITE, assertOutsideWorkspace, cacheKeys, cacheMode, describeRecord, formatReport, staleEntries,
   taskRecord, toolchainFingerprint, trust,
@@ -68,8 +69,8 @@ describe("cache keys", () => {
   it("scopes every key to OS, architecture and runner image", () => {
     const linux = cacheKeys({ ...LINUX, GITHUB_RUN_ID: "7", GITHUB_RUN_ATTEMPT: "2" }, "unit");
     expect(linux).toEqual({
-      prefix: "test-cache-v1-Linux-X64-ubuntu24-20261012.1-unit-",
-      key: "test-cache-v1-Linux-X64-ubuntu24-20261012.1-unit-7-2",
+      prefix: "test-cache-v2-Linux-X64-ubuntu24-20261012.1-unit-",
+      key: "test-cache-v2-Linux-X64-ubuntu24-20261012.1-unit-7-2",
     });
     const variants = [
       { ...LINUX, RUNNER_OS: "Windows", ImageOS: "win25" },
@@ -78,7 +79,7 @@ describe("cache keys", () => {
     ];
     for (const env of variants) {
       const other = cacheKeys(env, "unit");
-      // restore-keys match by prefix: neither platform may restore the other's entries.
+      // Artifact names match by prefix: neither platform may restore the other's entries.
       expect(other.key.startsWith(linux.prefix)).toBe(false);
       expect(linux.key.startsWith(other.prefix)).toBe(false);
     }
@@ -164,7 +165,7 @@ describe("run records and the report", () => {
 });
 
 describe("pruning", () => {
-  it("drops whole entries unused for longer than the limit", () => {
+  it("drops whole entries older than the limit", () => {
     const day = 86_400_000;
     const now = 100 * day;
     const files = [
@@ -416,18 +417,91 @@ describe("Turborepo task cache", () => {
     expect(runs()).toHaveLength(3);
   }, 60_000);
 
-  it("drops expired entries only in runs that may write", () => {
+  it.each(["true", "false"])("expires a passing entry before setup is decided (write=%s)", (writeAccess) => {
+    // Model CI's probe -> conditional dependency setup -> execution contract.
+    // The command fails if a miss executes before its dependency is installed.
+    write("scripts/ci-test-e2e.sh", 'test -f "$DEPENDENCY" || exit 7\necho executed >> "$RUNS_LOG"\n');
+    const dependency = join(scratch, "browser-installed");
+    writeFileSync(dependency, "installed");
+    const env = { TEST_CACHE_WRITE: writeAccess, DEPENDENCY: dependency };
+    expect(cache("ci:e2e", "chromium-1", { ...env, TEST_CACHE_WRITE: "true" }).status).toBe(0);
+    rmSync(dependency);
     const old = new Date(Date.now() - 40 * 86_400_000);
-    const plant = () => {
-      writeFileSync(join(cacheDir, "0123456789abcdef.tar.zst"), "");
-      utimesSync(join(cacheDir, "0123456789abcdef.tar.zst"), old, old);
+    for (const name of readdirSync(cacheDir)) utimesSync(join(cacheDir, name), old, old);
+    const output = probe("ci:e2e", "chromium-1", env);
+    if (output.includes("hit=false")) writeFileSync(dependency, "installed");
+    const executed = cache("ci:e2e", "chromium-1", env);
+    expect(output).toContain("hit=false");
+    expect(executed.status).toBe(0);
+    expect(executed.record).toMatchObject({ cached: false, passed: true });
+    expect(runs()).toEqual(["executed", "executed"]);
+  }, 60_000);
+
+  it("keeps a probed hit valid if expiration is crossed while setup is skipped", () => {
+    const first = cache("ci:e2e", "chromium-1");
+    const now = Date.now();
+    const almostExpired = new Date(now - cacheModule.PRUNE_AFTER_MS + 5_000);
+    for (const name of readdirSync(cacheDir)) utimesSync(join(cacheDir, name), almostExpired, almostExpired);
+    const envFile = join(scratch, "github-env");
+    writeFileSync(envFile, "");
+    expect(probe("ci:e2e", "chromium-1", { GITHUB_ENV: envFile })).toContain("hit=true");
+    const checkedAt = readFileSync(envFile, "utf8").match(/TEST_CACHE_PROBED_AT=(\d+)/)?.[1];
+    expect(checkedAt).toBeDefined();
+    // Simulate crossing the TTL after the probe without sleeping for 5s:
+    // make the entry stale now, but still valid at the recorded probe cutoff.
+    const edge = new Date(Number(checkedAt) - cacheModule.PRUNE_AFTER_MS + 1);
+    for (const name of readdirSync(cacheDir)) utimesSync(join(cacheDir, name), edge, edge);
+    const result = cache("ci:e2e", "chromium-1", { TEST_CACHE_PROBED_AT: checkedAt! });
+    expect(result.record).toMatchObject({ cached: true, passed: true, hash: first.record.hash });
+    expect(runs()).toEqual(["ci:e2e"]);
+  }, 60_000);
+
+  it.each([
+    ["same-repo PR", { event: "pull_request" }, false],
+    ["fork PR", { event: "pull_request", head_repository: { full_name: "attacker/fork" } }, false],
+    ["fork push", { head_repository: { full_name: "attacker/fork" } }, false],
+    ["manual run", { event: "workflow_dispatch" }, false],
+    ["main push", { head_branch: "main" }, false],
+    ["failed dev push", { conclusion: "failure" }, false],
+    ["protected dev push", {}, true],
+  ])("restores a passing entry only with trusted run ownership: %s", async (_label, overrides, allowed) => {
+    // Produce a real passing Turborepo entry, as malicious PR code could do.
+    const forged = mkdtempSync(join(scratch, "forged-"));
+    expect(cache("ci:unit", "unit", { TEST_CACHE_DIR: forged }).status).toBe(0);
+    const created = new Date(Date.now() - 2 * 86_400_000);
+    for (const name of readdirSync(forged)) utimesSync(join(forged, name), created, created);
+    const archive = join(scratch, "entries.tar");
+    const packed = spawnSync(process.execPath, [SCRIPT, "pack", "--target", "unit"], {
+      cwd: fixture, encoding: "utf8", env: { ...base, RUNNER_TEMP: scratch, TEST_CACHE_DIR: forged },
+    });
+    expect(packed.status).toBe(0);
+    cpSync(join(scratch, "test-cache-archive/unit/entries.tar"), archive);
+    const zip = join(scratch, "forged.zip");
+    execFileSync("zip", ["-q", zip, "entries.tar"], { cwd: scratch });
+    const downloaded: string[] = [];
+    const env = { ...LINUX, GITHUB_REPOSITORY: "xnmp/tauri-explorer", GH_TOKEN: "read-only", TEST_CACHE_DIR: cacheDir, TEST_CACHE_WRITE: "true" };
+    const prefix = cacheKeys(env, "unit").prefix;
+    const fetchApi = async (url: string | URL | Request) => {
+      const path = String(url);
+      downloaded.push(path);
+      if (path.includes("/workflows/ci.yml/runs?")) return Response.json({ workflow_runs: [
+        { id: 9, event: "push", head_branch: "dev", conclusion: "success", head_repository: { full_name: env.GITHUB_REPOSITORY }, ...overrides },
+      ] });
+      if (path.endsWith("/zip")) return new Response(readFileSync(zip));
+      if (path.includes("/artifacts")) return Response.json({ artifacts: [{ id: 99, name: `trusted-${prefix}9-1`, expired: false }] });
+      return new Response(readFileSync(zip));
     };
-    plant();
-    cache("ci:unit", "unit", { TEST_CACHE_WRITE: "false" });
-    expect(readdirSync(cacheDir)).toContain("0123456789abcdef.tar.zst");
-    cache("ci:unit", "unit");
-    expect(readdirSync(cacheDir)).not.toContain("0123456789abcdef.tar.zst");
-    expect(readdirSync(cacheDir).length).toBeGreaterThan(0);
+    expect(await cacheModule.restoreCache(env, "unit", fetchApi)).toBe(allowed);
+    if (allowed) {
+      for (const name of readdirSync(cacheDir)) {
+        expect(statSync(join(cacheDir, name)).mtimeMs).toBeLessThan(Date.now() - 86_400_000);
+      }
+    }
+    const result = cache("ci:unit", "unit", { TEST_CACHE_WRITE: "false", FAIL: "3" });
+    // A forged pass must never conceal the failing command on a later run.
+    expect(result.status === 0).toBe(allowed);
+    expect(result.record).toMatchObject({ cached: allowed, passed: allowed });
+    expect(downloaded.some((url) => url.includes("/artifacts/99/zip"))).toBe(allowed);
   }, 60_000);
 
   it("explains a target's hash with the files and env vars it covers", () => {
@@ -596,7 +670,7 @@ describe("ci.yml cache wiring", () => {
   };
 
   it.each([
-    ["dev push", "true"], ["same-repo PR", "true"], ["main push", "false"], ["fork PR", "false"], ["manual run", "false"],
+    ["dev push", "true"], ["same-repo PR", "false"], ["main push", "false"], ["fork PR", "false"], ["manual run", "false"],
   ] as const)("lets a %s write: %s", (event, writes) => {
     expect(ci.env.TEST_CACHE_WRITE).toBe(`\${{ ${TRUSTED_WRITE} }}`);
     expect(evaluate(ci.env.TEST_CACHE_WRITE, { github: events[event] })).toBe(writes);
@@ -620,7 +694,7 @@ describe("ci.yml cache wiring", () => {
     const all = steps(job);
     const probe = all.findIndex((s) => s.id === "test-cache-probe");
     const setup = all.findIndex((s) => (s.name ?? s.uses) === name);
-    expect(probe).toBeGreaterThan(all.findIndex((s) => s.uses?.startsWith("actions/cache/restore@")));
+    expect(probe).toBeGreaterThan(all.findIndex((s) => s.name === "Restore test-result cache"));
     expect(setup).toBeGreaterThan(probe);
     expect(all[setup].if).toMatch(/&& steps\.test-cache-probe\.outputs\.hit != 'true'$/);
     expect(all[probe].run).toMatch(/^node scripts\/test-cache\.mjs probe --task ci:(e2e|rust) --target "/);
@@ -630,20 +704,24 @@ describe("ci.yml cache wiring", () => {
     const all = steps(job);
     const key = all.find((s) => s.id === "test-cache-key");
     expect(key?.run).toBe(`node scripts/test-cache.mjs key --target "${target}"`);
-    const restore = all.find((s) => s.uses?.startsWith("actions/cache/restore@"));
-    expect(restore?.with).toEqual({
-      path: "${{ steps.test-cache-key.outputs.dir }}",
-      key: "${{ steps.test-cache-key.outputs.key }}",
-      "restore-keys": "${{ steps.test-cache-key.outputs.prefix }}",
-    });
+    const restore = all.find((s) => s.name === "Restore test-result cache");
+    expect(restore?.run).toBe(`node scripts/test-cache.mjs restore --target "${target}"`);
+    expect(restore?.env).toEqual({ GH_TOKEN: "${{ github.token }}" });
     const run = all.find((s) => s.id === "test-cache-run");
     expect(run?.run).toContain(`node scripts/test-cache.mjs run --task ci:`);
     expect(run?.run).toContain(`--target "${target}"`);
-    const save = all.find((s) => s.uses?.startsWith("actions/cache/save@"));
+    const save = all.find((s) => s.name === "Save test-result cache");
     expect(save?.if).toBe("success() && env.TEST_CACHE_WRITE == 'true' && steps.test-cache-run.outputs.stored == 'true'");
-    expect(save?.with).toEqual({ path: "${{ steps.test-cache-key.outputs.dir }}", key: "${{ steps.test-cache-key.outputs.key }}" });
-    // actions/cache (restore + post-job save) would save from any run, forks included.
-    expect(all.filter((s) => s.uses?.startsWith("actions/cache@") && JSON.stringify(s.with).includes("test-cache"))).toEqual([]);
+    expect(save?.uses).toBe("actions/upload-artifact@v7");
+    expect(save?.with).toEqual({
+      path: "${{ steps.test-cache-pack.outputs.archive }}", name: "trusted-${{ steps.test-cache-key.outputs.key }}",
+      "retention-days": 30, "if-no-files-found": "error",
+    });
+    const pack = all.find((s) => s.id === "test-cache-pack");
+    expect(pack?.run).toBe(`node scripts/test-cache.mjs pack --target "${target}"`);
+    expect(pack?.if).toBe(save?.if);
+    // No shared cache namespace may satisfy a test-result check.
+    expect(all.filter((s) => s.uses?.startsWith("actions/cache"))).toEqual([]);
     expect(all.indexOf(restore as Step)).toBeLessThan(all.indexOf(run as Step));
     expect(all.indexOf(run as Step)).toBeLessThan(all.indexOf(save as Step));
     const upload = all.find((s) => s.uses?.startsWith("actions/upload-artifact@") && String(s.with?.name).startsWith("test-cache-"));

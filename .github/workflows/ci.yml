@@ -12,13 +12,16 @@ on:
         type: boolean
         default: true
 
-# Test-result cache (#1176, scripts/test-cache.mjs). Turborepo hashes each
-# test target's inputs (turbo.json) and replays a passing result for an
-# unchanged hash. Only dev pushes and same-repo PRs store results; fork PRs
-# and manual runs only read. TEST_CACHE_READ is false when a manual run
-# unticks test_cache or the repository variable TEST_CACHE is `off`.
+# GitHub binds result artifacts to their producing run. Restore accepts only
+# successful CI pushes to protected dev, never PR artifacts or shared caches.
+# PR credentials cannot upload into those dev runs, even if PR code enables
+# TEST_CACHE_WRITE. The flag below is an optimization, not authorization.
+permissions:
+  contents: read
+  actions: read
+
 env:
-  TEST_CACHE_WRITE: ${{ (github.event_name == 'push' && github.ref == 'refs/heads/dev') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository) }}
+  TEST_CACHE_WRITE: ${{ github.event_name == 'push' && github.ref == 'refs/heads/dev' }}
   TEST_CACHE_READ: ${{ vars.TEST_CACHE != 'off' && !(github.event_name == 'workflow_dispatch' && !inputs.test_cache) }}
 
 # Only PRs share a group. Unique non-PR groups preserve every dev run,
@@ -157,11 +160,9 @@ jobs:
         run: node scripts/test-cache.mjs key --target "unit"
 
       - name: Restore test-result cache
-        uses: actions/cache/restore@v6
-        with:
-          path: ${{ steps.test-cache-key.outputs.dir }}
-          key: ${{ steps.test-cache-key.outputs.key }}
-          restore-keys: ${{ steps.test-cache-key.outputs.prefix }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/test-cache.mjs restore --target "unit"
 
       # PRs run only the tests whose import graph reaches a changed file, or
       # that read it as text (scripts/unit-affected.mjs); other events run all.
@@ -184,12 +185,19 @@ jobs:
           esac
           node scripts/test-cache.mjs run --task ci:unit --target "unit"
 
+      - name: Pack test-result cache
+        id: test-cache-pack
+        if: success() && env.TEST_CACHE_WRITE == 'true' && steps.test-cache-run.outputs.stored == 'true'
+        run: node scripts/test-cache.mjs pack --target "unit"
+
       - name: Save test-result cache
         if: success() && env.TEST_CACHE_WRITE == 'true' && steps.test-cache-run.outputs.stored == 'true'
-        uses: actions/cache/save@v6
+        uses: actions/upload-artifact@v7
         with:
-          path: ${{ steps.test-cache-key.outputs.dir }}
-          key: ${{ steps.test-cache-key.outputs.key }}
+          name: trusted-${{ steps.test-cache-key.outputs.key }}
+          path: ${{ steps.test-cache-pack.outputs.archive }}
+          retention-days: 30
+          if-no-files-found: error
 
       - name: Upload test-result cache record
         if: always()
@@ -259,11 +267,9 @@ jobs:
 
       - name: Restore test-result cache
         if: steps.plan.outputs.run == 'true'
-        uses: actions/cache/restore@v6
-        with:
-          path: ${{ steps.test-cache-key.outputs.dir }}
-          key: ${{ steps.test-cache-key.outputs.key }}
-          restore-keys: ${{ steps.test-cache-key.outputs.prefix }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/test-cache.mjs restore --target "chromium-${{ matrix.shard }}"
 
       # A hit replays the shard's passing result, so its browser is not needed.
       - name: Probe test-result cache
@@ -291,12 +297,19 @@ jobs:
           echo "E2E: $mode ($E2E_REASON), shard of $(wc -l < "$RUNNER_TEMP/e2e-shard.txt") spec file(s)"
           node scripts/test-cache.mjs run --task ci:e2e --target "chromium-${{ matrix.shard }}"
 
+      - name: Pack test-result cache
+        id: test-cache-pack
+        if: success() && env.TEST_CACHE_WRITE == 'true' && steps.test-cache-run.outputs.stored == 'true'
+        run: node scripts/test-cache.mjs pack --target "chromium-${{ matrix.shard }}"
+
       - name: Save test-result cache
         if: success() && env.TEST_CACHE_WRITE == 'true' && steps.test-cache-run.outputs.stored == 'true'
-        uses: actions/cache/save@v6
+        uses: actions/upload-artifact@v7
         with:
-          path: ${{ steps.test-cache-key.outputs.dir }}
-          key: ${{ steps.test-cache-key.outputs.key }}
+          name: trusted-${{ steps.test-cache-key.outputs.key }}
+          path: ${{ steps.test-cache-pack.outputs.archive }}
+          retention-days: 30
+          if-no-files-found: error
 
       - name: Upload test-result cache record
         if: always()
@@ -401,11 +414,9 @@ jobs:
 
       - name: Restore test-result cache
         if: steps.plan.outputs.run == 'true'
-        uses: actions/cache/restore@v6
-        with:
-          path: ${{ steps.test-cache-key.outputs.dir }}
-          key: ${{ steps.test-cache-key.outputs.key }}
-          restore-keys: ${{ steps.test-cache-key.outputs.prefix }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/test-cache.mjs restore --target "webkit-${{ matrix.shard }}"
 
       # A hit replays the shard's passing result, so its browser is not needed.
       - name: Probe test-result cache
@@ -433,12 +444,19 @@ jobs:
           echo "WebKit E2E: $mode ($E2E_REASON), shard of $(wc -l < "$RUNNER_TEMP/e2e-shard.txt") spec file(s)"
           node scripts/test-cache.mjs run --task ci:e2e --target "webkit-${{ matrix.shard }}"
 
+      - name: Pack test-result cache
+        id: test-cache-pack
+        if: success() && env.TEST_CACHE_WRITE == 'true' && steps.test-cache-run.outputs.stored == 'true'
+        run: node scripts/test-cache.mjs pack --target "webkit-${{ matrix.shard }}"
+
       - name: Save test-result cache
         if: success() && env.TEST_CACHE_WRITE == 'true' && steps.test-cache-run.outputs.stored == 'true'
-        uses: actions/cache/save@v6
+        uses: actions/upload-artifact@v7
         with:
-          path: ${{ steps.test-cache-key.outputs.dir }}
-          key: ${{ steps.test-cache-key.outputs.key }}
+          name: trusted-${{ steps.test-cache-key.outputs.key }}
+          path: ${{ steps.test-cache-pack.outputs.archive }}
+          retention-days: 30
+          if-no-files-found: error
 
       - name: Upload test-result cache record
         if: always()
@@ -548,11 +566,9 @@ jobs:
 
       - name: Restore test-result cache
         if: env.RUST_SELECTION != 'NONE'
-        uses: actions/cache/restore@v6
-        with:
-          path: ${{ steps.test-cache-key.outputs.dir }}
-          key: ${{ steps.test-cache-key.outputs.key }}
-          restore-keys: ${{ steps.test-cache-key.outputs.prefix }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/test-cache.mjs restore --target "rust-${{ matrix.suite }}"
 
       # A hit replays the suite's passing result, so neither the system
       # libraries nor the ~1.5 GB build cache are needed.
@@ -600,12 +616,19 @@ jobs:
           esac
           node scripts/test-cache.mjs run --task ci:rust --target "rust-${{ matrix.suite }}"
 
+      - name: Pack test-result cache
+        id: test-cache-pack
+        if: success() && env.TEST_CACHE_WRITE == 'true' && steps.test-cache-run.outputs.stored == 'true'
+        run: node scripts/test-cache.mjs pack --target "rust-${{ matrix.suite }}"
+
       - name: Save test-result cache
         if: success() && env.TEST_CACHE_WRITE == 'true' && steps.test-cache-run.outputs.stored == 'true'
-        uses: actions/cache/save@v6
+        uses: actions/upload-artifact@v7
         with:
-          path: ${{ steps.test-cache-key.outputs.dir }}
-          key: ${{ steps.test-cache-key.outputs.key }}
+          name: trusted-${{ steps.test-cache-key.outputs.key }}
+          path: ${{ steps.test-cache-pack.outputs.archive }}
+          retention-days: 30
+          if-no-files-found: error
 
       - name: Upload test-result cache record
         if: always()

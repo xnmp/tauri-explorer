@@ -2,7 +2,9 @@
 // test-cache.mjs — CI test-result cache over Turborepo task hashing (#1176).
 //
 // Usage:
-//   node scripts/test-cache.mjs key   --target <name>                 GitHub cache key, prefix and dir
+//   node scripts/test-cache.mjs key   --target <name>                 artifact key, prefix and dir
+//   node scripts/test-cache.mjs restore --target <name>               restore a protected-dev artifact
+//   node scripts/test-cache.mjs pack --target <name>                  preserve entries for upload
 //   node scripts/test-cache.mjs probe --task <ci:task> --target <name> hit=true|false before setup
 //   node scripts/test-cache.mjs run   --task <ci:task> --target <name> run or replay the target
 //   node scripts/test-cache.mjs explain --task <ci:task>               hash, hashed files and env
@@ -11,34 +13,32 @@
 // Turborepo computes each target's hash from the inputs and env vars turbo.json
 // names, and replays a passing result for an unchanged hash; it never stores a
 // failed task. This script only decides access and reports:
-//   - CI sets TEST_CACHE_WRITE=true for dev pushes and same-repo PRs. Every
-//     other run (fork PRs, manual runs, local machines) reads but never writes.
+//   - Only protected dev pushes publish result artifacts. PRs and local runs
+//     cannot upload artifacts into those runs: GitHub enforces run ownership.
+//   - Restore downloads an artifact by ID from a successful dev push of CI,
+//     never from GitHub's shared cache namespace or from a PR workflow run.
 //   - TEST_CACHE_READ=false re-runs every target (bypass).
-//   - The cache lives outside the checkout (RUNNER_TEMP), so files committed
-//     in a PR can never be read as cache entries; ci.yml restores and saves it
-//     with actions/cache, keyed by OS, architecture and runner image.
+//   - The local Turborepo directory lives outside the checkout (RUNNER_TEMP).
 //   - TEST_CACHE_TOOLCHAIN (hashed via turbo.json's globalEnv) carries the
 //     versions of the tools a target runs on.
 // See .github/workflows/CLAUDE.md for detecting a stale hit and bypassing.
 
 import { execFileSync, spawnSync } from "node:child_process";
-import { appendFileSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { appendFileSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, relative, resolve, isAbsolute } from "node:path";
 import { fileURLToPath } from "node:url";
 
-export const CACHE_VERSION = "v1";
+export const CACHE_VERSION = "v2";
 /**
- * Entries older than this are dropped before a trusted save. actions/cache
- * keeps file times and a hit saves nothing, so age counts from creation; a
+ * Entries older than this are dropped before probing or executing. The tar
+ * envelope keeps file times and hits save nothing, so age counts from creation; a
  * dropped entry re-runs once and is stored afresh.
  */
 export const PRUNE_AFTER_MS = 30 * 86_400_000;
 
 /** The only runs whose results may be stored (ci.yml's TEST_CACHE_WRITE). */
-export const TRUSTED_WRITE =
-  "(github.event_name == 'push' && github.ref == 'refs/heads/dev') || " +
-  "(github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)";
+export const TRUSTED_WRITE = "github.event_name == 'push' && github.ref == 'refs/heads/dev'";
 
 /** Tool versions each target's result depends on. */
 const TASK_TOOLCHAINS = {
@@ -95,8 +95,8 @@ function platformId(env) {
 }
 
 /**
- * GitHub cache key for one target. Keys are immutable, so every run saves a
- * new key; restore-keys picks the newest entry sharing the platform prefix.
+ * Artifact key for one target. Each producing run uploads a distinct name;
+ * restore picks a matching platform prefix only within eligible dev runs.
  * @param {Record<string, string | undefined>} env
  * @param {string} target
  */
@@ -214,7 +214,7 @@ export function formatReport(records) {
 }
 
 /**
- * Cache files whose entry (all files sharing a hash) has gone unused too long.
+ * Cache files whose entry (all files sharing a hash) was created too long ago.
  * @param {{ name: string, mtimeMs: number }[]} files
  * @param {number} now
  * @param {number} maxAgeMs
@@ -228,6 +228,64 @@ export function staleEntries(files, now, maxAgeMs) {
     .filter((f) => now - /** @type {number} */ (newest.get(entry(f.name))) > maxAgeMs)
     .map((f) => f.name)
     .sort();
+}
+
+/**
+ * Restore only artifacts owned by successful protected-dev CI push runs.
+ * GitHub's artifact service binds IDs to runs; PR runtime credentials cannot
+ * create an artifact in a dev run. Names/prefixes alone are not authorization.
+ * Search a bounded 30-run window; a missing/expired result is just a miss.
+ * @param {Record<string, string | undefined>} env
+ * @param {string} target
+ * @param {typeof fetch} [fetchApi]
+ */
+export async function restoreCache(env, target, fetchApi = fetch) {
+  if (!trust(env).read || !env.GH_TOKEN || !env.GITHUB_REPOSITORY) return false;
+  const dir = cacheDir(env);
+  assertOutsideWorkspace(dir, process.cwd());
+  // Never mix restored content with entries planted earlier in this job.
+  rmSync(dir, { recursive: true, force: true });
+  mkdirSync(dir, { recursive: true });
+  const { prefix } = cacheKeys(env, target);
+  const api = `https://api.github.com/repos/${env.GITHUB_REPOSITORY}`;
+  const headers = { Authorization: `Bearer ${env.GH_TOKEN}`, Accept: "application/vnd.github+json" };
+  const get = async (/** @type {string} */ path) => {
+    const response = await fetchApi(`${api}${path}`, { headers, signal: AbortSignal.timeout(30_000) });
+    if (!response.ok) throw new Error(`GitHub artifact request failed (${response.status})`);
+    return response;
+  };
+  const data = await (await get("/actions/workflows/ci.yml/runs?branch=dev&event=push&status=success&per_page=30")).json();
+  for (const run of data.workflow_runs) {
+    if (run.event !== "push" || run.head_branch !== "dev" || run.conclusion !== "success" ||
+        run.head_repository?.full_name !== env.GITHUB_REPOSITORY) continue;
+    const list = await (await get(`/actions/runs/${run.id}/artifacts?per_page=100`)).json();
+    const artifact = list.artifacts.find((/** @type {any} */ a) =>
+      !a.expired && a.name.startsWith(`trusted-${prefix}${run.id}-`));
+    if (!artifact) continue;
+    const zip = await (await get(`/actions/artifacts/${artifact.id}/zip`)).arrayBuffer();
+    const staging = mkdtempSync(join(dirname(dir), "test-cache-restore-"));
+    try {
+      writeFileSync(join(staging, "artifact.zip"), Buffer.from(zip));
+      execFileSync("unzip", ["-q", join(staging, "artifact.zip"), "-d", staging]);
+      // A tar envelope preserves creation times across artifact zip transport.
+      execFileSync("tar", ["-xf", join(staging, "entries.tar"), "-C", dir]);
+    } finally {
+      rmSync(staging, { recursive: true, force: true });
+    }
+    return true;
+  }
+  return false;
+}
+
+/** @param {Record<string, string>} opts */
+function pack(opts) {
+  const dir = cacheDir(process.env);
+  assertOutsideWorkspace(dir, process.cwd());
+  const archiveDir = join(process.env.RUNNER_TEMP || tmpdir(), "test-cache-archive", opts.target);
+  cacheKeys(process.env, opts.target);
+  mkdirSync(archiveDir, { recursive: true });
+  execFileSync("tar", ["-cf", join(archiveDir, "entries.tar"), "-C", dir, "."]);
+  setOutputs({ archive: join(archiveDir, "entries.tar") });
 }
 
 // ---- CLI ----------------------------------------------------------------
@@ -315,6 +373,14 @@ function dryRun(task, access, env) {
 /** @param {Record<string, string>} opts */
 function probe(opts) {
   const access = trust(process.env);
+  const dir = cacheDir(process.env);
+  assertOutsideWorkspace(dir, process.cwd());
+  mkdirSync(dir, { recursive: true });
+  const checkedAt = Date.now();
+  prune(dir, checkedAt);
+  // Execution must use this same cutoff: crossing the TTL between probe and
+  // run must not turn a hit into a miss after dependency setup was skipped.
+  if (process.env.GITHUB_ENV) appendFileSync(process.env.GITHUB_ENV, `TEST_CACHE_PROBED_AT=${checkedAt}\n`);
   const task = dryRun(opts.task, access, turboEnv(opts.task))?.tasks?.[0];
   const hash = task?.hash ?? "unknown";
   const hit = Boolean(task) && access.read && task.cache?.status === "HIT";
@@ -350,7 +416,8 @@ function run(opts) {
   assertOutsideWorkspace(dir, process.cwd());
   cacheKeys(process.env, opts.target);
   mkdirSync(dir, { recursive: true });
-  if (access.write) prune(dir, Date.now());
+  const checkedAt = Number(process.env.TEST_CACHE_PROBED_AT);
+  prune(dir, Number.isFinite(checkedAt) && checkedAt > 0 ? checkedAt : Date.now());
   const runs = join(process.cwd(), ".turbo", "runs");
   const listRuns = () => { try { return new Set(readdirSync(runs)); } catch { return new Set(); } };
   const before = listRuns();
@@ -399,13 +466,24 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === resolve(process.argv[1
     if (command === "key") {
       const { key, prefix } = cacheKeys(process.env, opts.target);
       const dir = cacheDir(process.env);
-      console.log(`Test-result cache key ${key} (restores the newest ${prefix}*) in ${dir}`);
+      console.log(`Test-result artifact key ${key} (trusted dev prefix ${prefix}) in ${dir}`);
       setOutputs({ key, prefix, dir });
-    } else if (command === "probe") probe(opts);
+    } else if (command === "restore") {
+      try {
+        const restored = await restoreCache(process.env, opts.target);
+        console.log(`Trusted dev test-result artifact: ${restored ? "restored" : "unavailable (cache miss)"}`);
+      } catch (error) {
+        // Cache transport is optional; a failed download must execute tests.
+        assertOutsideWorkspace(cacheDir(process.env), process.cwd());
+        rmSync(cacheDir(process.env), { recursive: true, force: true });
+        console.warn(`Test-result restore unavailable; running tests: ${error instanceof Error ? error.message : error}`);
+      }
+    } else if (command === "pack") pack(opts);
+    else if (command === "probe") probe(opts);
     else if (command === "run") run(opts);
     else if (command === "explain") explain(opts);
     else if (command === "report") report(rest[0] ?? reportDir(process.env));
-    else throw new Error("usage: test-cache.mjs key|probe|run|explain|report (see the header comment)");
+    else throw new Error("usage: test-cache.mjs key|restore|pack|probe|run|explain|report (see the header comment)");
   } catch (error) {
     console.error(error instanceof Error ? error.message : error);
     process.exit(2);

@@ -72,17 +72,33 @@ changing each dependency re-runs the target. A test that reads a file through
 a path built at runtime is invisible to the scan, so name it literally or drop
 the exclusion.
 
-Trust: the cache directory is `$RUNNER_TEMP/turbo-test-cache`, outside the
-checkout (the script refuses a path inside it), so files a PR commits can
-never be read as entries. `actions/cache/restore` and `actions/cache/save` are
-split, and the save runs only when `TEST_CACHE_WRITE` is true (dev pushes and
-same-repo PRs) and the run stored a new result. Fork PRs, main pushes and
-manual runs read only (`--cache=local:r`); local machines have no access to the
-CI cache. GitHub scopes a PR's cache entries to that PR's merge ref, so even a
-PR that edits this workflow cannot write an entry that dev or another PR reads.
-Keys are `test-cache-v1-<os>-<arch>-<image>-<image version>-<target>-<run>`, so
-a Linux result can never satisfy a Windows or macOS job. Trusted runs drop
-entries older than 30 days before saving.
+Trust: GitHub's artifact service, rather than a workflow boolean or an
+outside-checkout directory, enforces ownership. Only successful `ci.yml` push
+runs on protected `dev` in this repository are eligible producers. Restore
+queries those runs and downloads an artifact by its API ID from that run;
+PRs cannot create artifacts in a dev run with their runtime credentials.
+Even if a PR enables saving or uploads a matching name, its artifacts never
+enter the eligible producer set. Same-repo PRs are also read-only: permitting
+their writes safely would require a protected producer outside PR code.
+Do not switch back to `actions/cache` prefix restore: a PR can shadow a dev
+key with a forged pass in its own merge-ref cache on a later run.
+
+Artifacts use `trusted-test-cache-v2-<os>-<arch>-<image>-<image version>-<target>-<run>-<attempt>`.
+Restore searches the latest 30 successful dev pushes, keeps the platform and
+target prefix exact, and treats missing artifacts, API failures and expired
+artifacts as misses. A cold first run is expected until this reaches dev.
+PR-specific inputs with no dev-produced result run normally on every attempt;
+this trades cache hit rate for an enforceable write boundary without new secrets
+or repository administration. The local Turborepo directory remains outside
+the checkout to ignore committed cache files.
+
+Each saved artifact contains `entries.tar` to preserve entry creation times
+through zip transport. Entries expire 30 days after creation, including on
+read-only runs. Prune before the probe so an expired hit cannot skip setup;
+`GITHUB_ENV` carries `TEST_CACHE_PROBED_AT` into execution so crossing the TTL
+between probe and run cannot invalidate a hit after dependencies were skipped.
+The artifact retention is also 30 days. Keep cache data names outside the
+`test-cache-*` report-artifact pattern.
 
 Reading the cache: every cached job's step summary has one line per target,
 and the `test-cache` job summarises the hit rate, the targets served from the

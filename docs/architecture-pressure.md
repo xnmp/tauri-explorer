@@ -56,7 +56,8 @@ git log --since=<date> --until=<date> --no-merges --format='@@%H %s' --name-only
   `state/preview-content.ts`. Fullscreen, dock geometry and diff mode are out
   of scope.
 - **Reconsideration trigger:** more than 8 `fix:` commits to the file within 60
-  days, with at least two caused by cross-format state. **Crossed**, so it is
+  days, with at least two caused by cross-format state (here #1067 and #1192;
+  #1024 and #1129 show the same pressure but were not titled `fix:`). **Crossed**, so it is
   filed as #1206.
 - **Expiry:** close this entry when #1206 lands. If #1206 is still unscheduled
   on 2027-01-16, re-check the trend before keeping the entry.
@@ -92,7 +93,7 @@ git log --since=<date> --until=<date> --no-merges --format='@@%H %s' --name-only
   workaround, with #1137 open to retire it) and #1145. The environment leak
   #1079/#1141 had two CI follow-ups (#1178, #1180). The scrub is opt-in at
   four call sites (`terminal.rs`, `system.rs`, `files/external_apps.rs`, and
-  the `system.rs` launcher loop), while roughly 25 other modules spawn
+  the `system.rs` launcher loop), while about 30 other modules spawn
   processes directly.
 - **Trend:** new (all since 2026-10-11) and driven by the upstream WebKitGTK
   2.52 releases.
@@ -106,8 +107,8 @@ git log --since=<date> --until=<date> --no-merges --format='@@%H %s' --name-only
 
 ### Durable file recovery (`src-tauri/src/files/recovery/`) — defer
 
-- **Seam:** the durable move/copy recovery engine (43 files, about 12.5k
-  lines). ADRs 0018–0020, 0023 and 0026 are still *Proposed*.
+- **Seam:** the durable move/copy recovery engine (48 Rust files, about
+  14.3k lines). ADRs 0018–0020, 0023 and 0026 are still *Proposed*.
 - **Evidence:** consolidation landed in #874/#946 (one checkpoint engine), #875
   (one tree removal), #878/#940 (one admitted-execute seam) and #880/#943 (the
   feature is opt-in and Linux-only). Since then there have been two fixes:
@@ -131,7 +132,7 @@ git log --since=<date> --until=<date> --no-merges --format='@@%H %s' --name-only
   `+page.svelte` 35 / 21 / 4, `explorer.svelte.ts` 26 / 8 / 4,
   `FileItem.svelte` 23 / 2 / 1, `MillerColumns.svelte` 20 / 4 / 0. The drop
   follows the ownership ADRs 0010 (page session), 0011 (viewport geometry), 0014 (observed navigation) and
-  0015 (keyboard cursor), and the retained-tab work in #1173.
+  0015 (keyboard cursor), and the retained-tab work in #1173 (landed as #1193).
 - **Trend:** falling.
 - **Candidate intervention:** none; the ADRs above are the intervention.
 - **Reconsideration trigger:** more than 6 `fix:` commits to any one of these

@@ -12,7 +12,12 @@ display name to the original folder. That path is unsuitable for either the
 Trash row's original path or collision checks and restore.
 
 Read `System.FileName` (`PKEY_FileName`) from the same Shell item before
-projecting the inventory. Do not infer an extension from the display name or
+projecting the inventory. The item must come from Recycle Bin namespace
+enumeration. Reopening its desktop-absolute parsing name loses that namespace:
+the Windows qualification of the first fix returned the physical `$R...txt`
+payload name instead of the original. Enumerate once and join exact names to
+the existing inventory by their opaque parsing identities. Do not infer an
+extension from the display name or
 the renamed trash payload: repeated extensions and extensionless names make
 that ambiguous. If the property cannot be read, report a partial inventory
 issue rather than constructing a guessed restore destination. Keep the opaque
@@ -27,3 +32,9 @@ origin, refuses an occupied destination, restores the bytes and checks the
 item has left the Recycle Bin. It now repeats for `.txt`, `.txt.txt`, no
 extension, and a folder containing a file. This stays in the full Windows Rust
 suite; no job or test is skipped.
+
+The real native GUI spec now deletes both `.txt` and `.txt.txt` fixtures,
+asserts the complete visible names and original locations, captures both rows,
+then restores each distinct payload. The Windows manual `trash` scope uploads
+the capture plus source provenance in its WDIO artifact for collection into
+`evidence/`; a browser mock or an earlier Linux capture cannot prove this fix.

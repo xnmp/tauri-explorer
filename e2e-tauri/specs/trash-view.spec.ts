@@ -1,8 +1,8 @@
 /**
- * In-app Trash against the real backend (#863): a disposable file deleted
- * through the app appears in the Trash opened from the sidebar with its
- * original location, and Restore returns the exact bytes to that path, drops
- * the Trash row and refreshes a pane still open on the destination folder.
+ * In-app Trash against the real backend (#863, #1208): disposable .txt and
+ * .txt.txt files deleted through the app appear with their complete names and
+ * original locations. Restore returns each exact payload to its original path,
+ * drops its Trash row and refreshes the destination pane.
  *
  * This covers the real chain browser Playwright cannot: the `list_trash` IPC
  * and its serde shape, the Trash-scoped context-menu action, the
@@ -43,22 +43,30 @@ async function clickMenuItem(label: string): Promise<void> {
 (process.platform === "darwin" ? describe.skip : describe)("in-app Trash against the real backend (#863)", () => {
   // Under $HOME so the item and its Trash share a device on Linux.
   const directory = createNativeFixtureDirectory("tauri-explorer-trash-view-");
-  const name = `trash-view-863-${process.pid}-${Date.now()}.txt`;
-  const original = path.join(directory, name);
-  const bytes = Buffer.from("disposable trash-view bytes \u0000ÿ\n", "latin1");
+  // Short names keep both complete extensions legible in native evidence.
+  const fixtures = [".txt", ".txt.txt"].map((suffix) => {
+    const name = `trash-${process.pid}${suffix}`;
+    return {
+      name,
+      original: path.join(directory, name),
+      bytes: Buffer.from(`disposable ${suffix} bytes \u0000ÿ\n`, "latin1"),
+    };
+  });
 
-  it("lists an item the app deleted, restores its exact bytes and refreshes the destination", async () => {
-    fs.writeFileSync(original, bytes);
+  it("lists complete filenames the app deleted, restores their exact bytes and refreshes the destination", async () => {
+    for (const { original, bytes } of fixtures) fs.writeFileSync(original, bytes);
     await navigateTo(directory);
-    await $(entryPathSelector(original)).waitForExist({ timeout: 15_000 });
-    await browser.execute(
-      (entryPath) => window.dispatchEvent(new CustomEvent("e2e-file-op", { detail: { op: "delete", path: entryPath } })),
-      original,
-    );
-    await browser.waitUntil(() => !fs.existsSync(original), {
-      timeout: 25_000, timeoutMsg: "the app did not move the disposable file to the Trash",
-    });
-    await $(entryPathSelector(original)).waitForExist({ reverse: true, timeout: 15_000 });
+    for (const { original } of fixtures) {
+      await $(entryPathSelector(original)).waitForExist({ timeout: 15_000 });
+      await browser.execute(
+        (entryPath) => window.dispatchEvent(new CustomEvent("e2e-file-op", { detail: { op: "delete", path: entryPath } })),
+        original,
+      );
+      await browser.waitUntil(() => !fs.existsSync(original), {
+        timeout: 25_000, timeoutMsg: "the app did not move the disposable file to the Trash",
+      });
+      await $(entryPathSelector(original)).waitForExist({ reverse: true, timeout: 15_000 });
+    }
 
     // Open the Trash from the sidebar in a second tab, so the first tab stays
     // open on the destination folder.
@@ -74,32 +82,55 @@ async function clickMenuItem(label: string): Promise<void> {
     await browser.waitUntil(async () => (await $(".status-path").getAttribute("title")) === "trash://", {
       timeoutMsg: "the sidebar did not open the in-app Trash",
     });
-    await browser.waitUntil(async () => (await trashRow(name)) !== undefined, {
-      timeout: 20_000, timeoutMsg: "the deleted file is not listed in the Trash",
-    });
-    const row = (await trashRow(name))!;
-    const location = ((await row.$(".type-cell").getProperty("textContent")) as string | null)?.trim() ?? "";
-    expect(samePath(location, directory)).toBe(true);
+    for (const { name } of fixtures) {
+      await browser.waitUntil(async () => (await trashRow(name)) !== undefined, {
+        timeout: 20_000, timeoutMsg: "the deleted file is not listed in the Trash",
+      });
+      const row = (await trashRow(name))!;
+      const location = ((await row.$(".type-cell").getProperty("textContent")) as string | null)?.trim() ?? "";
+      expect(samePath(location, directory)).toBe(true);
+      // A matching textContent alone can still produce a clipped screenshot.
+      const label = await row.$(".name-text");
+      const width = Number(await label.getProperty("clientWidth"));
+      expect(width).toBeGreaterThan(0);
+      expect(Number(await label.getProperty("scrollWidth"))).toBeLessThanOrEqual(width);
+      await expect(row).toBeDisplayed();
+    }
     await browser.saveScreenshot("e2e-tauri/logs/863-trash-view-native.png");
+    if (isWindows) {
+      await browser.saveScreenshot("e2e-tauri/logs/1208-trash-filenames-native-windows.png");
+      fs.writeFileSync("e2e-tauri/logs/1208-trash-filenames-native-windows.json", JSON.stringify({
+        platform: process.platform,
+        sourceCommit: process.env.GITHUB_SHA ?? null,
+        capturedAt: new Date().toISOString(),
+        names: fixtures.map(({ name }) => name),
+        originalDirectory: directory,
+      }, null, 2));
+    }
 
-    await row.click({ button: "right" });
-    await clickMenuItem("Restore");
-    await browser.waitUntil(() => fs.existsSync(original), {
-      timeout: 25_000, timeoutMsg: "Restore did not return the file to its original path",
-    });
-    expect(fs.readFileSync(original).equals(bytes)).toBe(true);
-    await browser.waitUntil(async () => (await trashRow(name)) === undefined, {
-      timeout: 15_000, timeoutMsg: "the restored item is still listed in the Trash",
-    });
+    for (const { name, original, bytes } of fixtures) {
+      const row = (await trashRow(name))!;
+      await row.click({ button: "right" });
+      await clickMenuItem("Restore");
+      await browser.waitUntil(() => fs.existsSync(original), {
+        timeout: 25_000, timeoutMsg: "Restore did not return the file to its original path",
+      });
+      expect(fs.readFileSync(original).equals(bytes)).toBe(true);
+      await browser.waitUntil(async () => (await trashRow(name)) === undefined, {
+        timeout: 15_000, timeoutMsg: "the restored item is still listed in the Trash",
+      });
+    }
 
     // The destination tab never navigated; its listing shows the restored file.
     await $(`.tab[data-tab-id="${destinationTab}"]`).click();
     await browser.waitUntil(async () => (await $(".tab.active").getAttribute("data-tab-id")) === destinationTab, {
       timeoutMsg: "the destination tab did not become active",
     });
-    await browser.waitUntil(async () => (await entryNames()).includes(name), {
-      timeout: 15_000, timeoutMsg: "the destination pane did not show the restored file",
-    });
+    for (const { name } of fixtures) {
+      await browser.waitUntil(async () => (await entryNames()).includes(name), {
+        timeout: 15_000, timeoutMsg: "the destination pane did not show the restored file",
+      });
+    }
     expect(await $(".status-path").getAttribute("title")).toBe(directory);
   });
 });

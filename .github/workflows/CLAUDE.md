@@ -18,6 +18,10 @@ change branch protection.
 
 Run `bunx vitest run tests/ci-trigger-policy.test.ts` to validate admission.
 
+The native smoke workflow's manual `trash` scope runs the real Windows Trash
+spec alone and uploads its filename capture and provenance in the WDIO logs.
+It preserves the full suite for dev pushes and the default `all` dispatch.
+
 # PR test selection (#1175)
 
 On `pull_request`, ci.yml's `changes` job narrows each tier from the PR merge

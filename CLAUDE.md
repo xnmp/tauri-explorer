@@ -262,7 +262,9 @@ SCM archive actions preserve each repo-relative path under `.archive/` and add
 Windows Recycle Bin inventory must read `System.FileName` (`PKEY_FileName`)
 from the Shell item. `trash::list()` supplies a `SIGDN_PARENTRELATIVE` display
 name, which can omit registered extensions; joining it to the original parent
-silently changes the restore destination. Keep the real Recycle Bin regression
+silently changes the restore destination. Query the enumerated Recycle Bin
+namespace item: reopening its parsing path gives a filesystem item whose name
+is the physical `$R...` payload. Keep the real Recycle Bin regression
 covering ordinary, repeated and absent extensions (#1208, ADR 0019).
 
 Gate a platform-only Rust test module as a whole, including its imports and

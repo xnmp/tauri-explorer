@@ -13,54 +13,81 @@ fn recycle_bin_listing_restores_exact_bytes_and_refuses_collisions() {
     use std::cmp::Ordering;
 
     let directory = tempfile::tempdir().expect("fixture directory");
-    let path = directory
-        .path()
-        .join(format!("trash-view-863-{}.txt", std::process::id()));
-    fs::write(&path, b"exact recycled bytes").expect("write fixture");
-    let recycled = path.clone();
-    std::thread::spawn(move || {
-        let apartment = StaApartment::new().expect("STA");
-        delete_item(&apartment, &recycled).expect("recycle fixture");
-    })
-    .join()
-    .expect("recycle thread");
-    assert!(!path.exists());
-
-    // The Shell may report expanded 8.3 ancestors; compare native identities.
-    let expected = WindowsPathKey::new(
-        &fs::canonicalize(directory.path())
-            .expect("fixture parent")
-            .join(path.file_name().expect("fixture leaf")),
-    );
-    let listing = publish(windows_inventory());
-    let entry = listing
-        .entries
-        .iter()
-        .find(|entry| {
-            entry.original_path.as_deref().is_some_and(|original| {
-                WindowsPathKey::new(Path::new(original))
-                    .compare(&expected)
-                    .is_ok_and(|ordering| ordering == Ordering::Equal)
-            })
+    // Shell display names hide registered extensions on a default Windows
+    // profile. Repeated extensions also catch attempts to guess the suffix.
+    for (suffix, is_directory) in [
+        (".txt", false),
+        (".txt.txt", false),
+        ("", false),
+        (".folder", true),
+    ] {
+        let path = directory
+            .path()
+            .join(format!("trash-view-863-{}{suffix}", std::process::id()));
+        let payload = if is_directory {
+            fs::create_dir(&path).expect("fixture folder");
+            path.join("child.txt")
+        } else {
+            path.clone()
+        };
+        fs::write(&payload, b"exact recycled bytes").expect("write fixture");
+        let recycled = path.clone();
+        std::thread::spawn(move || {
+            let apartment = StaApartment::new().expect("STA");
+            delete_item(&apartment, &recycled).expect("recycle fixture");
         })
-        .unwrap_or_else(|| panic!("recycled fixture is not listed: {listing:?}"))
-        .clone();
-    assert_eq!(entry.kind, "file");
-    assert!(entry.deleted_at.is_some());
-    let runtime = Runtime::new(directory.path().join("recovery"));
+        .join()
+        .expect("recycle thread");
+        assert!(!path.exists());
 
-    fs::write(&path, b"newer file").expect("occupy destination");
-    let outcome = tauri::async_runtime::block_on(restore(vec![entry.id.clone()], &runtime))
-        .expect("restore batch");
-    assert!(outcome.succeeded.is_empty(), "{outcome:?}");
-    assert!(outcome.failed[0].error.contains("already exists"));
-    assert_eq!(fs::read(&path).expect("occupant"), b"newer file");
+        // The Shell may report expanded 8.3 ancestors; compare native identities.
+        let expected = WindowsPathKey::new(
+            &fs::canonicalize(directory.path())
+                .expect("fixture parent")
+                .join(path.file_name().expect("fixture leaf")),
+        );
+        let listing = publish(windows_inventory());
+        let entry = listing
+            .entries
+            .iter()
+            .find(|entry| {
+                entry.original_path.as_deref().is_some_and(|original| {
+                    WindowsPathKey::new(Path::new(original))
+                        .compare(&expected)
+                        .is_ok_and(|ordering| ordering == Ordering::Equal)
+                })
+            })
+            .unwrap_or_else(|| panic!("recycled fixture is not listed: {listing:?}"))
+            .clone();
+        assert_eq!(entry.name, path.file_name().unwrap().to_str().unwrap());
+        assert_eq!(entry.kind, if is_directory { "directory" } else { "file" });
+        assert!(entry.deleted_at.is_some());
+        let runtime = Runtime::new(directory.path().join("recovery"));
 
-    fs::remove_file(&path).expect("clear destination");
-    let outcome =
-        tauri::async_runtime::block_on(restore(vec![entry.id], &runtime)).expect("restore batch");
-    assert!(outcome.failed.is_empty(), "{outcome:?}");
-    assert_eq!(fs::read(&path).expect("restored"), b"exact recycled bytes");
+        fs::write(&path, b"newer file").expect("occupy destination");
+        let outcome = tauri::async_runtime::block_on(restore(vec![entry.id.clone()], &runtime))
+            .expect("restore batch");
+        assert!(outcome.succeeded.is_empty(), "{outcome:?}");
+        assert!(outcome.failed[0].error.contains("already exists"));
+        assert_eq!(fs::read(&path).expect("occupant"), b"newer file");
+
+        fs::remove_file(&path).expect("clear destination");
+        let outcome = tauri::async_runtime::block_on(restore(vec![entry.id.clone()], &runtime))
+            .expect("restore batch");
+        assert!(outcome.failed.is_empty(), "{outcome:?}");
+        assert_eq!(outcome.succeeded.len(), 1);
+        assert_eq!(
+            fs::read(&payload).expect("restored"),
+            b"exact recycled bytes"
+        );
+        assert!(
+            !windows_inventory()
+                .items
+                .iter()
+                .any(|item| item.entry.id == entry.id),
+            "restored item must leave the Recycle Bin"
+        );
+    }
 }
 
 /// Records a real move to `~/.Trash` the way the app's deletion does, lists

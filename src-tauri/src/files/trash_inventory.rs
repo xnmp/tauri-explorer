@@ -141,11 +141,26 @@ fn windows_inventory() -> Inventory {
             return inventory;
         }
     };
-    for item in items {
+    for mut item in items {
         let parsing_name: Vec<u16> = item.id.encode_wide().collect();
         if parsing_name.is_empty() || parsing_name.contains(&0) {
             continue;
         }
+        // trash::list uses SIGDN_PARENTRELATIVE, whose display name can hide
+        // extensions. Never use it to construct a restore destination.
+        item.name = match windows_original_name(&parsing_name) {
+            Ok(name) => name,
+            Err(error) => {
+                inventory.issues.push(TrashIssue {
+                    source: "Recycle Bin".into(),
+                    error: format!(
+                        "Could not read the original name of {:?}: {error}",
+                        item.name
+                    ),
+                });
+                continue;
+            }
+        };
         let (kind, size) = match trash::os_limited::metadata(&item).map(|metadata| metadata.size) {
             Ok(trash::TrashItemSize::Entries(_)) => ("directory", 0),
             Ok(trash::TrashItemSize::Bytes(bytes)) => ("file", bytes),
@@ -177,6 +192,38 @@ fn windows_inventory() -> Inventory {
         });
     }
     inventory
+}
+
+#[cfg(target_os = "windows")]
+fn windows_original_name(parsing_name: &[u16]) -> Result<std::ffi::OsString, String> {
+    use std::{ffi::OsString, os::windows::ffi::OsStringExt, path::Component};
+    use windows::{
+        core::PCWSTR,
+        Win32::{
+            Storage::EnhancedStorage::PKEY_FileName,
+            System::Com::CoTaskMemFree,
+            UI::Shell::{IShellItem2, SHCreateItemFromParsingName},
+        },
+    };
+
+    // trash::list initialized COM on this thread. All Shell objects stay here.
+    let terminated: Vec<u16> = parsing_name.iter().copied().chain(Some(0)).collect();
+    let item: IShellItem2 =
+        unsafe { SHCreateItemFromParsingName(PCWSTR(terminated.as_ptr()), None) }
+            .map_err(|error| error.to_string())?;
+    let value = unsafe { item.GetString(&PKEY_FileName) }.map_err(|error| error.to_string())?;
+    if value.is_null() {
+        return Err("the Shell did not provide an original filename".into());
+    }
+    let name = unsafe { OsString::from_wide(value.as_wide()) };
+    unsafe { CoTaskMemFree(Some(value.as_ptr().cast())) };
+    let mut components = Path::new(&name).components();
+    if !matches!(components.next(), Some(Component::Normal(leaf)) if leaf == name)
+        || components.next().is_some()
+    {
+        return Err("the Shell did not provide an original filename".into());
+    }
+    Ok(name)
 }
 
 /// macOS keeps original locations private to Finder; items Tauri Explorer

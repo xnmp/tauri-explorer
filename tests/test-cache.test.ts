@@ -485,7 +485,8 @@ describe("Turborepo task cache", () => {
       const path = String(url);
       downloaded.push(path);
       if (path.includes("/workflows/ci.yml/runs?")) return Response.json({ workflow_runs: [
-        { id: 9, event: "push", head_branch: "dev", conclusion: "success", head_repository: { full_name: env.GITHUB_REPOSITORY }, ...overrides },
+        { id: 9, event: "push", head_branch: "dev", conclusion: "success", head_repository: { full_name: env.GITHUB_REPOSITORY },
+          status: "completed", run_attempt: 1, path: ".github/workflows/ci.yml", head_sha: "same-input", ...overrides },
       ] });
       if (path.endsWith("/zip")) return new Response(readFileSync(zip));
       if (path.includes("/artifacts")) return Response.json({ artifacts: [{ id: 99, name: `trusted-${prefix}9-1`, expired: false }] });
@@ -502,6 +503,69 @@ describe("Turborepo task cache", () => {
     expect(result.status === 0).toBe(allowed);
     expect(result.record).toMatchObject({ cached: allowed, passed: allowed });
     expect(downloaded.some((url) => url.includes("/artifacts/99/zip"))).toBe(allowed);
+  }, 60_000);
+
+  it.each([
+    ["in-progress rerun", "in_progress", false, {}, true, {}],
+    ["queued rerun", "queued", false, {}, true, {}],
+    ["failed current rerun", "completed", false, {}, true, {}],
+    ["older rerun outside the discovery window", "in_progress", true, {}, true, {}],
+    ["failed previous attempt", "in_progress", false, { conclusion: "failure" }, false, {}],
+    ["unfinished previous attempt", "in_progress", false, { status: "in_progress" }, false, {}],
+    ["previous attempt from a PR", "in_progress", false, { event: "pull_request" }, false, {}],
+    ["previous attempt from a fork", "in_progress", false, { head_repository: { full_name: "attacker/fork" } }, false, {}],
+    ["previous attempt from another workflow", "in_progress", false, { path: ".github/workflows/other.yml" }, false, {}],
+    ["previous attempt for another input", "in_progress", false, { head_sha: "different-input" }, false, {}],
+    ["previous attempt with a mismatched number", "in_progress", false, { run_attempt: 2 }, false, {}],
+    ["current PR outside the discovery window", "in_progress", true, {}, false, { event: "pull_request" }],
+    ["different current workflow outside the discovery window", "in_progress", true, {}, false, { path: ".github/workflows/other.yml" }],
+  ])("verifies previous-attempt results: %s", async (_label, status, outsideWindow, overrides, allowed, currentOverrides) => {
+    const seed = mkdtempSync(join(scratch, "previous-attempt-"));
+    const first = cache("ci:unit", "unit", { TEST_CACHE_DIR: seed });
+    expect(first.status).toBe(0);
+    execFileSync("tar", ["-cf", join(scratch, "entries.tar"), "-C", seed, "."]);
+    const zip = join(scratch, "previous-attempt.zip");
+    execFileSync("zip", ["-q", zip, "entries.tar"], { cwd: scratch });
+    const env = {
+      ...LINUX, GITHUB_REPOSITORY: "xnmp/tauri-explorer", GH_TOKEN: "read-only", TEST_CACHE_DIR: cacheDir,
+      GITHUB_RUN_ID: "9", GITHUB_RUN_ATTEMPT: "2",
+    };
+    const producer = {
+      id: 9, event: "push", head_branch: "dev", head_repository: { full_name: env.GITHUB_REPOSITORY },
+      path: ".github/workflows/ci.yml", head_sha: "same-input", run_attempt: 2, status,
+      conclusion: status === "completed" ? "failure" : null, ...currentOverrides,
+    };
+    const requested: string[] = [];
+    const fetchApi = async (url: string | URL | Request) => {
+      const path = new URL(String(url)).pathname;
+      requested.push(path);
+      if (path.endsWith("/workflows/ci.yml/runs")) {
+        // GitHub's conclusion-filtered listing hides a currently running rerun.
+        const hidden = outsideWindow || new URL(String(url)).searchParams.get("status") === "success";
+        return Response.json({ workflow_runs: hidden ? [] : [producer] });
+      }
+      if (path.endsWith("/actions/runs/9")) return Response.json(producer);
+      if (path.endsWith("/attempts/1")) return Response.json({
+        ...producer, run_attempt: 1, status: "completed", conclusion: "success", ...overrides,
+      });
+      if (path.endsWith("/artifacts")) return Response.json({ artifacts: [
+        // A newer artifact from the unfinished/failed current attempt cannot
+        // shadow the verified passing artifact from the previous attempt.
+        { id: 100, name: `trusted-${cacheKeys(env, "unit").prefix}9-2`, expired: false },
+        { id: 99, name: `trusted-${cacheKeys(env, "unit").prefix}9-1`, expired: false },
+      ] });
+      if (path.endsWith("/artifacts/99/zip")) return new Response(readFileSync(zip));
+      throw new Error(`Unexpected API request: ${path}`);
+    };
+    expect(await cacheModule.restoreCache(env, "unit", fetchApi)).toBe(allowed);
+    const result = cache("ci:unit", "unit", { TEST_CACHE_WRITE: "false", FAIL: "3" });
+    expect(result.status === 0).toBe(allowed);
+    expect(result.record).toMatchObject({ cached: allowed, passed: allowed, hash: first.record.hash });
+    // The replay must skip the command, whose second execution would fail.
+    expect(runs()).toHaveLength(allowed ? 1 : 2);
+    expect(requested.includes("/repos/xnmp/tauri-explorer/actions/runs/9/attempts/1"))
+      .toBe(Object.keys(currentOverrides).length === 0);
+    expect(requested.includes("/repos/xnmp/tauri-explorer/actions/artifacts/99/zip")).toBe(allowed);
   }, 60_000);
 
   it("explains a target's hash with the files and env vars it covers", () => {

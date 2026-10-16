@@ -15,7 +15,7 @@
 // failed task. This script only decides access and reports:
 //   - Only protected dev pushes publish result artifacts. PRs and local runs
 //     cannot upload artifacts into those runs: GitHub enforces run ownership.
-//   - Restore downloads an artifact by ID from a successful dev push of CI,
+//   - Restore downloads an artifact by ID from a successful dev CI attempt,
 //     never from GitHub's shared cache namespace or from a PR workflow run.
 //   - TEST_CACHE_READ=false re-runs every target (bypass).
 //   - The local Turborepo directory lives outside the checkout (RUNNER_TEMP).
@@ -231,10 +231,11 @@ export function staleEntries(files, now, maxAgeMs) {
 }
 
 /**
- * Restore only artifacts owned by successful protected-dev CI push runs.
+ * Restore only artifacts owned by successful protected-dev CI push attempts.
  * GitHub's artifact service binds IDs to runs; PR runtime credentials cannot
  * create an artifact in a dev run. Names/prefixes alone are not authorization.
- * Search a bounded 30-run window; a missing/expired result is just a miss.
+ * Search a bounded 30-run window plus the current rerun; verify the producing
+ * attempt independently of the run's mutable status. Missing results miss.
  * @param {Record<string, string | undefined>} env
  * @param {string} target
  * @param {typeof fetch} [fetchApi]
@@ -254,13 +255,38 @@ export async function restoreCache(env, target, fetchApi = fetch) {
     if (!response.ok) throw new Error(`GitHub artifact request failed (${response.status})`);
     return response;
   };
-  const data = await (await get("/actions/workflows/ci.yml/runs?branch=dev&event=push&status=success&per_page=30")).json();
-  for (const run of data.workflow_runs) {
-    if (run.event !== "push" || run.head_branch !== "dev" || run.conclusion !== "success" ||
-        run.head_repository?.full_name !== env.GITHUB_REPOSITORY) continue;
+  // Do not filter by conclusion: rerunning changes the run's current status,
+  // while earlier successful attempts and their artifacts remain valid.
+  const data = await (await get("/actions/workflows/ci.yml/runs?branch=dev&event=push&per_page=30")).json();
+  const runs = data.workflow_runs;
+  if (/^\d+$/.test(env.GITHUB_RUN_ID ?? "") && Number(env.GITHUB_RUN_ATTEMPT) > 1) {
+    // An old run being rerun can fall outside the recent-runs window.
+    const index = runs.findIndex((/** @type {any} */ r) => String(r.id) === env.GITHUB_RUN_ID);
+    const current = index >= 0 ? runs.splice(index, 1)[0] :
+      await (await get(`/actions/runs/${env.GITHUB_RUN_ID}`)).json();
+    runs.unshift(current);
+  }
+  const trusted = (/** @type {any} */ run) => run.event === "push" && run.head_branch === "dev" &&
+    run.head_repository?.full_name === env.GITHUB_REPOSITORY && run.path === ".github/workflows/ci.yml";
+  for (const run of runs) {
+    if (!trusted(run)) continue;
     const list = await (await get(`/actions/runs/${run.id}/artifacts?per_page=100`)).json();
-    const artifact = list.artifacts.find((/** @type {any} */ a) =>
-      !a.expired && a.name.startsWith(`trusted-${prefix}${run.id}-`));
+    const namePrefix = `trusted-${prefix}${run.id}-`;
+    const candidates = list.artifacts.filter((/** @type {any} */ a) => !a.expired &&
+      a.name.startsWith(namePrefix) && /^[1-9]\d*$/.test(a.name.slice(namePrefix.length)))
+      .sort((/** @type {any} */ a, /** @type {any} */ b) =>
+        Number(b.name.slice(namePrefix.length)) - Number(a.name.slice(namePrefix.length)));
+    let artifact;
+    for (const candidate of candidates) {
+      const number = Number(candidate.name.slice(namePrefix.length));
+      if (!Number.isSafeInteger(number) || number > run.run_attempt) continue;
+      const attempt = number === run.run_attempt ? run :
+        await (await get(`/actions/runs/${run.id}/attempts/${number}`)).json();
+      if (!trusted(attempt) || attempt.id !== run.id || attempt.run_attempt !== number ||
+          attempt.head_sha !== run.head_sha || attempt.status !== "completed" || attempt.conclusion !== "success") continue;
+      artifact = candidate;
+      break;
+    }
     if (!artifact) continue;
     const zip = await (await get(`/actions/artifacts/${artifact.id}/zip`)).arrayBuffer();
     const staging = mkdtempSync(join(dirname(dir), "test-cache-restore-"));

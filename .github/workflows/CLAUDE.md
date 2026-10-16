@@ -74,7 +74,7 @@ the exclusion.
 
 Trust: GitHub's artifact service, rather than a workflow boolean or an
 outside-checkout directory, enforces ownership. Only successful `ci.yml` push
-runs on protected `dev` in this repository are eligible producers. Restore
+attempts on protected `dev` in this repository are eligible producers. Restore
 queries those runs and downloads an artifact by its API ID from that run;
 PRs cannot create artifacts in a dev run with their runtime credentials.
 Even if a PR enables saving or uploads a matching name, its artifacts never
@@ -84,9 +84,15 @@ Do not switch back to `actions/cache` prefix restore: a PR can shadow a dev
 key with a forged pass in its own merge-ref cache on a later run.
 
 Artifacts use `trusted-test-cache-v2-<os>-<arch>-<image>-<image version>-<target>-<run>-<attempt>`.
-Restore searches the latest 30 successful dev pushes, keeps the platform and
-target prefix exact, and treats missing artifacts, API failures and expired
-artifacts as misses. A cold first run is expected until this reaches dev.
+Restore searches the latest 30 dev pushes without a conclusion filter and
+also includes the current rerun even when it falls outside that window. A
+run becomes queued/in progress again during reruns, so verify the producing
+attempt named in each artifact through GitHub's workflow-attempt API, rather
+than requiring the run's current conclusion to be success. Only completed,
+successful attempts with matching run, source commit, workflow, dev branch and
+repository provenance are accepted; a newer unfinished/failed attempt cannot
+shadow an older passing artifact. Keep the platform and target prefix exact.
+Missing artifacts, API failures and expired artifacts are misses. A cold first run is expected until this reaches dev.
 PR-specific inputs with no dev-produced result run normally on every attempt;
 this trades cache hit rate for an enforceable write boundary without new secrets
 or repository administration. The local Turborepo directory remains outside

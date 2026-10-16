@@ -2,6 +2,62 @@
 
 All notable changes to Tauri Explorer.
 
+## v1.12.1 — 2026-10-16
+
+Trash and Recycle Bin now open inside Tauri Explorer, with original locations
+and restore actions. Switching between recent tabs preserves their file lists
+and scroll positions, and keyboard navigation and drag selection do less work.
+This release also fixes silent Linux video previews, adds fullscreen PDF page
+shortcuts, and improves clipboard and drag-and-drop reliability.
+
+### Added
+
+- An in-app Trash / Recycle Bin location with Details, List and Tiles views,
+  original locations, deletion dates and Restore. Restore refuses occupied
+  destinations and missing original folders. On macOS, restore is available
+  for items Tauri Explorer trashed and recorded; other items can be managed
+  through Open in System File Manager (#863, #1183).
+- Left and Right arrows change pages in fullscreen PDF previews, while open
+  dialogs retain ownership of their keyboard input (#1010, #1186).
+
+### Changed
+
+- Recently active tabs keep their file lists mounted, preserving scroll
+  positions and avoiding a rebuild when switching back (#1173, #1193).
+- Git Graph classifies merged, stale and squash-merged branches against the
+  configured trunk instead of assuming a single merge style (#1081, #1185).
+- CI selects affected tests on pull requests, runs the full suites on dev
+  pushes, and reuses verified passing results for unchanged inputs (#1133,
+  #1175, #1176, #1196, #1201, #1204).
+
+### Fixed
+
+- Linux video previews play supported audio through a synchronized companion
+  stream when the preview video has no native audio track (#1171, #1190).
+- Keyboard shortcuts check availability only for matching prefixes, avoiding
+  repeated full-directory scans during navigation (#1174, #1191).
+- Drag selection holds the previous preview until release, avoiding expensive
+  image and plugin preview loads during the drag (#1169, #1192).
+- Wayland Cut verifies a unique clipboard-write token rather than matching
+  file-list bytes, so an external Copy of the same files cannot authorize a
+  move (#927, #1184).
+- Native file drags on GNOME retain the intended Copy or Move action when
+  source focus returns (#1100, #1187).
+- Windows clipboard probes have bounded waits and preserve timeout errors;
+  native tests read file-drop paths without the stalled Shell cmdlet (#1188,
+  #1189, #1194, #1195, #1202, #1203).
+- Windows directory identity checks fall back for information classes FAT32
+  does not support (#793, #1181).
+- Windows Recycle Bin listings preserve exact original filenames, including
+  extensions hidden by Explorer settings (#1208, #1210).
+- Report Issue preserves attachment rejection details, including video size
+  limits, instead of replacing them with a generic submission error (#1170,
+  #1197).
+- Plugin process execution no longer infers operation custody from an
+  unrelated operation; spool access follows explicit ownership (#1172, #1177).
+- Unix-only child-environment tests no longer break Windows builds (#1179,
+  #1178, #1180).
+
 ## v1.12.0 — 2026-10-15
 
 This update adds plugin SDK 3 with shared AI services: installed plugins use

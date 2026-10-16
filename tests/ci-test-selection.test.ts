@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -18,7 +18,7 @@ const step = (job: string, pick: (s: Step) => boolean): Step => {
 let dir: string;
 beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), "ci-test-selection-"));
-  for (const tool of ["bun", "bunx", "cargo", "npx", "xvfb-run"]) {
+  for (const tool of ["bun", "bunx", "cargo", "npx", "xvfb-run", "node"]) {
     writeFileSync(join(dir, tool), `#!/bin/sh\necho "${tool} $*" >> "${dir}/calls"\n`);
     chmodSync(join(dir, tool), 0o755);
   }
@@ -28,6 +28,14 @@ afterEach(() => rmSync(dir, { recursive: true, force: true }));
 const calls = () => {
   try { return readFileSync(join(dir, "calls"), "utf8").trim().split("\n"); } catch { return []; }
 };
+
+/** Run a repository script under bash with the same recording stubs. */
+function runScript(script: string, env: Record<string, string>) {
+  return execFileSync("bash", [new URL(`../${script}`, import.meta.url).pathname], {
+    encoding: "utf8",
+    env: { PATH: `${dir}:${process.env.PATH}`, ...env },
+  });
+}
 
 /** Run a step's script with GitHub expressions replaced by fixed values. */
 function runStep(script: string, env: Record<string, string>, expressions: Record<string, string> = {}) {
@@ -108,19 +116,28 @@ describe("unit test step", () => {
     });
   });
 
+  // The step says why, then runs scripts/ci-test-unit.sh through the cache.
+  const cached = "node scripts/test-cache.mjs run --task ci:unit --target unit";
+
   it("runs the full suite for ALL and says why", () => {
     const log = runStep(unit.run as string, { UNIT_SELECTION: "ALL", UNIT_REASON: "push event runs every test" });
     expect(log).toContain("Unit tests: full suite (push event runs every test)");
-    expect(calls()).toEqual(["bun run test"]);
+    expect(calls()).toEqual([cached]);
+    runScript("scripts/ci-test-unit.sh", { UNIT_SELECTION: "ALL" });
+    expect(calls()).toEqual([cached, "bun run test"]);
   });
 
   it("runs only tests related to the selected inputs, in both Vitest configs", () => {
+    const selection = "src/lib/domain/zoom.ts tests/domain/zoom.test.ts";
     const log = runStep(unit.run as string, {
-      UNIT_SELECTION: "src/lib/domain/zoom.ts tests/domain/zoom.test.ts",
+      UNIT_SELECTION: selection,
       UNIT_REASON: "tests related to 2 input(s) from 2 changed file(s)",
     });
     expect(log).toContain("Unit tests: selected subset (tests related to 2 input(s) from 2 changed file(s))");
+    expect(calls()).toEqual([cached]);
+    runScript("scripts/ci-test-unit.sh", { UNIT_SELECTION: selection });
     expect(calls()).toEqual([
+      cached,
       "bunx vitest related --run --passWithNoTests src/lib/domain/zoom.ts tests/domain/zoom.test.ts",
       "bunx vitest related --run --passWithNoTests -c vitest.perf.config.ts src/lib/domain/zoom.ts tests/domain/zoom.test.ts",
     ]);
@@ -136,25 +153,48 @@ describe("unit test step", () => {
 describe("Rust test step", () => {
   const job = ci.jobs["rust-suite"];
   const rust = step("rust-suite", (s) => s.name === "Rust tests");
-  const features = { "matrix.test-features": "avif" };
+  const features = { "matrix.suite": "default" };
+  const cached = "node scripts/test-cache.mjs run --task ci:rust --target rust-default";
+  const suite = { RUST_SUITE: "default", RUST_CLIPPY_FEATURES: "avif", RUST_TEST_FEATURES: "avif" };
+  const lint = [
+    "cargo fmt --manifest-path src-tauri/Cargo.toml --all -- --check",
+    "cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets --features avif -- -D warnings",
+  ];
 
   it("reads the selection from the changes job", () => {
-    expect(job.env).toEqual({
+    expect(job.env).toMatchObject({
       RUST_SELECTION: "${{ needs.changes.outputs.rust }}",
       RUST_REASON: "${{ needs.changes.outputs.rust-reason }}",
+      RUST_SUITE: "${{ matrix.suite }}",
+      RUST_CLIPPY_FEATURES: "${{ matrix.clippy-features }}",
+      RUST_TEST_FEATURES: "${{ matrix.test-features }}",
     });
   });
 
   it("runs the full workspace for ALL and says why", () => {
     const log = runStep(rust.run as string, { RUST_SELECTION: "ALL", RUST_REASON: "workspace-wide Cargo change: src-tauri/Cargo.lock" }, features);
     expect(log).toContain("Rust tests: full suite (workspace-wide Cargo change: src-tauri/Cargo.lock)");
-    expect(calls()).toEqual(["cargo test --manifest-path src-tauri/Cargo.toml --features avif"]);
+    expect(calls()).toEqual([cached]);
+    runScript("scripts/ci-test-rust.sh", { ...suite, RUST_SELECTION: "ALL" });
+    expect(calls()).toEqual([cached, ...lint, "cargo test --manifest-path src-tauri/Cargo.toml --features avif"]);
   });
 
   it("tests only the selected packages", () => {
     const log = runStep(rust.run as string, { RUST_SELECTION: "helper tauri-explorer", RUST_REASON: "changed crate(s) helper and their dependents" }, features);
     expect(log).toContain("Rust tests: selected packages helper tauri-explorer (changed crate(s) helper and their dependents)");
-    expect(calls()).toEqual(["cargo test --manifest-path src-tauri/Cargo.toml --features avif -p helper -p tauri-explorer"]);
+    expect(calls()).toEqual([cached]);
+    runScript("scripts/ci-test-rust.sh", { ...suite, RUST_SELECTION: "helper tauri-explorer" });
+    expect(calls()).toEqual([cached, ...lint, "cargo test --manifest-path src-tauri/Cargo.toml --features avif -p helper -p tauri-explorer"]);
+  });
+
+  it("formats only in the default suite and lints with the suite's clippy features", () => {
+    runScript("scripts/ci-test-rust.sh", {
+      RUST_SUITE: "opt-in", RUST_CLIPPY_FEATURES: "avif,e2e-hooks", RUST_TEST_FEATURES: "avif", RUST_SELECTION: "ALL",
+    });
+    expect(calls()).toEqual([
+      "cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets --features avif,e2e-hooks -- -D warnings",
+      "cargo test --manifest-path src-tauri/Cargo.toml --features avif",
+    ]);
   });
 
   it("skips the toolchain, build and tests when nothing reaches Rust, and says why", () => {
@@ -163,13 +203,19 @@ describe("Rust test step", () => {
     expect(calls()).toEqual([]);
     const gated = (job.steps as Step[]).filter((s) => s.if?.includes("env.RUST_SELECTION != 'NONE'")).map((s) => s.name ?? s["uses" as keyof Step]);
     expect(gated).toEqual([
-      "Install Tauri Linux system dependencies",
+      "oven-sh/setup-bun@v2",
+      "Install dependencies",
       "dtolnay/rust-toolchain@stable",
+      "Refresh apt package index",
+      "Test-result cache key",
+      "Restore test-result cache",
+      "Probe test-result cache",
+      "Install Tauri Linux system dependencies",
       "Swatinem/rust-cache@v2",
       "Create empty frontend dist",
-      "Format check",
-      "Clippy",
     ]);
+    runScript("scripts/ci-test-rust.sh", { RUST_SUITE: "default", RUST_SELECTION: "NONE" });
+    expect(calls()).toEqual([]);
   });
 });
 
@@ -179,15 +225,31 @@ describe.each([
 ])("%s browser step", (job, name, label) => {
   const e2e = step(job, (s) => s.name === name);
 
-  it("runs its planned shard and states whether it is the full suite", () => {
+  const engine = job === "chromium" ? "chromium" : "webkit";
+  const shard = { "steps.plan.outputs.run": "true", "matrix.shard": "2" };
+
+  it("runs its planned shard through the cache and states whether it is the full suite", () => {
     writeFileSync(join(dir, "e2e-shard.txt"), "e2e/a.spec.ts\ne2e/b.spec.ts\n");
-    const log = runStep(e2e.run as string, { E2E_SELECTION: "ALL", E2E_REASON: "push event runs every test" }, { "steps.plan.outputs.run": "true" });
+    const log = runStep(e2e.run as string, { E2E_SELECTION: "ALL", E2E_REASON: "push event runs every test" }, shard);
     expect(log).toContain(`${label}: full suite (push event runs every test), shard of 2 spec file(s)`);
-    expect(calls().join("\n")).toContain("playwright test");
+    expect(calls()).toEqual([`node scripts/test-cache.mjs run --task ci:e2e --target ${engine}-2`]);
+    expect(ci.jobs[job].env.E2E_ENGINE).toBe(engine);
+  });
+
+  it("verifies and runs exactly the shard's specs in the cached script", () => {
+    runScript("scripts/ci-test-e2e.sh", { E2E_ENGINE: engine, E2E_SHARD_SPECS: "e2e/a.spec.ts\ne2e/b.spec.ts" });
+    const [verify, run] = calls();
+    expect(verify).toMatch(new RegExp(`^node scripts/e2e-shards.mjs verify --engine ${engine} --list \\S+$`));
+    const list = verify.split(" ").at(-1) as string;
+    const test = engine === "webkit"
+      ? `xvfb-run -a --server-args=-screen 0 1920x1080x24 -nolisten tcp npx playwright test --project=webkit --test-list ${list} --reporter=line,html`
+      : `npx playwright test --project=chromium --test-list ${list} --reporter=line,html`;
+    expect(run).toBe(test);
+    expect(existsSync(list)).toBe(false);
   });
 
   it("logs a selected subset with nothing left in this shard and runs nothing", () => {
-    const log = runStep(e2e.run as string, { E2E_SELECTION: "e2e/a.spec.ts", E2E_REASON: "1 spec(s) from 1 changed file(s)" }, { "steps.plan.outputs.run": "false" });
+    const log = runStep(e2e.run as string, { E2E_SELECTION: "e2e/a.spec.ts", E2E_REASON: "1 spec(s) from 1 changed file(s)" }, { "steps.plan.outputs.run": "false", "matrix.shard": "2" });
     expect(log).toContain(`${label}: nothing to run in this shard; selected subset (1 spec(s) from 1 changed file(s))`);
     expect(calls()).toEqual([]);
   });

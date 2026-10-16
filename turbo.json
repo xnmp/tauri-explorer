@@ -1,0 +1,71 @@
+{
+  "$schema": "https://turborepo.com/schema.json",
+  "globalEnv": [
+    "RUNNER_OS",
+    "RUNNER_ARCH",
+    "ImageOS",
+    "ImageVersion",
+    "TEST_CACHE_TOOLCHAIN"
+  ],
+  "tasks": {
+    "ci:unit": {
+      "env": [
+        "UNIT_SELECTION"
+      ],
+      "inputs": [
+        "$TURBO_DEFAULT$",
+        "!evidence/**",
+        "!screenshots/**",
+        "!docs/lessons/**",
+        "!docs/lessons_learnt.md",
+        "!website/img/**"
+      ],
+      "outputs": []
+    },
+    "ci:rust": {
+      "env": [
+        "RUST_SUITE",
+        "RUST_SELECTION",
+        "RUST_CLIPPY_FEATURES",
+        "RUST_TEST_FEATURES"
+      ],
+      "inputs": [
+        "$TURBO_DEFAULT$",
+        "!docs/**",
+        "!*.md",
+        "!evidence/**",
+        "!screenshots/**",
+        "!src/**",
+        "!e2e/**",
+        "!e2e-load/**",
+        "!e2e-sweep/**",
+        "!website/**",
+        "!tests/**/*.ts"
+      ],
+      "outputs": []
+    },
+    "ci:e2e": {
+      "env": [
+        "E2E_ENGINE",
+        "E2E_SHARD_SPECS",
+        "WEBKIT",
+        "PW_VIDEO_HEADED",
+        "ALL_VIEW_MODES"
+      ],
+      "inputs": [
+        "$TURBO_DEFAULT$",
+        "!docs/**",
+        "!**/*.md",
+        "!evidence/**",
+        "!screenshots/**",
+        "!src-tauri/**",
+        "!website/**",
+        "!tests/**/*.test.ts",
+        "!e2e-load/**",
+        "!e2e-sweep/**",
+        "!e2e-tauri/specs/**"
+      ],
+      "outputs": []
+    }
+  }
+}

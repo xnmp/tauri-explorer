@@ -101,6 +101,9 @@ describe("selectRust", () => {
     ["tools/stray.rs", "Rust file outside src-tauri/: tools/stray.rs"],
     [".github/workflows/ci.yml", "CI test-selection change: .github/workflows/ci.yml"],
     ["scripts/rust-affected.mjs", "CI test-selection change: scripts/rust-affected.mjs"],
+    ["turbo.json", "CI test-selection change: turbo.json"],
+    ["scripts/test-cache.mjs", "CI test-selection change: scripts/test-cache.mjs"],
+    ["scripts/ci-test-rust.sh", "CI test-selection change: scripts/ci-test-rust.sh"],
     ["src-tauri/icons/icon.unknownext", "unknown file type: src-tauri/icons/icon.unknownext"],
   ])("runs the full workspace for %s", (file, reason) => {
     const { result, load } = select(["src-tauri/crates/helper/src/lib.rs", file]);

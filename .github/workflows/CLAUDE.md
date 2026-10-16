@@ -37,3 +37,50 @@ list directories); a test reading a path it builds dynamically from neither is
 invisible to it, so name such inputs literally. Rust inputs outside `src-tauri/`
 count only when a string literal ends in their basename (`include_bytes!`,
 fixture joins), not when a comment mentions them.
+
+# Test-result cache (#1176)
+
+ci.yml runs the unit tests, each Rust suite (fmt, clippy, tests) and each
+browser shard through `scripts/test-cache.mjs run --task ci:<target>`, which
+runs the matching `turbo.json` task. Turborepo hashes the task's inputs (every
+git-tracked file minus the task's `!` exclusions), `package.json`, `bun.lock`,
+`turbo.json`, and the env vars it lists: the selection (`UNIT_SELECTION`,
+`RUST_SELECTION`, the shard's `E2E_SHARD_SPECS`), feature flags, `RUNNER_OS`,
+`RUNNER_ARCH`, `ImageOS`, `ImageVersion` and `TEST_CACHE_TOOLCHAIN` (bun/node,
+or rustc/cargo plus the apt candidate versions of `TEST_CACHE_APT_PACKAGES`).
+An unchanged hash replays the passing log and reports
+`<target>: passed from the test-result cache`. Turborepo never stores a failed
+task, so a failure always re-runs. Browser and Rust jobs probe first and skip
+browser, apt and build-cache setup on a hit.
+
+Trust: the cache directory is `$RUNNER_TEMP/turbo-test-cache`, outside the
+checkout (the script refuses a path inside it), so files a PR commits can
+never be read as entries. `actions/cache/restore` and `actions/cache/save` are
+split, and the save runs only when `TEST_CACHE_WRITE` is true (dev pushes and
+same-repo PRs) and the run stored a new result. Fork PRs and manual runs read
+only (`--cache=local:r`), and local machines have no access to the CI cache.
+GitHub scopes a PR's cache entries to that PR's merge ref, so even a PR that
+edits this workflow cannot write an entry that dev or another PR reads. Keys
+are `test-cache-v1-<os>-<arch>-<image>-<image version>-<target>-<run>`, so a
+Linux result can never satisfy a Windows or macOS job. Bump `CACHE_VERSION` in
+the script to discard every entry.
+
+Each exclusion in `turbo.json` must cover only files the target never reads:
+`tests/test-cache.test.ts` scans each target's readers for repository paths
+and fails when one falls under an exclusion. A test that reads a file through a
+path it builds at runtime is invisible to that scan, so name it literally or
+drop the exclusion.
+
+Reading the cache: every cached job's step summary has one line per target,
+and the `test-cache` job summarises the hit rate, the targets served from the
+cache, the time saved and the time executed. Each record (hash, hit, duration)
+is uploaded as the `test-cache-<target>` artifact.
+
+Suspected stale hit: compare the hash in the summary with
+`bunx turbo run ci:unit --dry=json --env-mode=loose --dangerously-disable-package-manager-check`
+(substitute the target's task and set the job's env vars). The output lists
+every hashed file and env var; a file the target reads but that is missing
+there means the task's inputs are too narrow. To bypass the cache, dispatch CI
+manually with `test_cache` unticked, or set the repository variable
+`TEST_CACHE=off` to disable reads everywhere until it is removed. Locally, run
+the suite directly (`bun run test`, `cargo test`), which never uses the cache.

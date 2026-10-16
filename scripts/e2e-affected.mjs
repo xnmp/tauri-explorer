@@ -38,7 +38,8 @@
 //      e2e-tauri, .github, packaging, e2e-load and e2e-sweep (their own
 //      configs), Nix and editor files.
 //   6. Changes to CI selection itself (ci.yml, e2e-shards.mjs,
-//      e2e-affected.mjs, test-selection.mjs, map-feature.md) -> ALL.
+//      e2e-affected.mjs, test-selection.mjs, map-feature.md) or the
+//      test-result cache wiring (turbo.json, test-cache.mjs, ci-test-e2e.sh) -> ALL.
 //   7. Anything else (an unknown top-level file)  -> ALL.
 //   If map-feature.md is missing -> ALL (+ warning).
 
@@ -302,6 +303,10 @@ const SELECTION_INPUTS = new Set([
   "scripts/e2e-affected.mjs",
   "scripts/test-selection.mjs",
   "docs/code-map/map-feature.md",
+  // How the target runs through the test-result cache (#1176).
+  "turbo.json",
+  "scripts/test-cache.mjs",
+  "scripts/ci-test-e2e.sh",
 ]);
 
 /**

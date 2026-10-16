@@ -7,7 +7,8 @@
 //
 // Rules, in order (over-selection is safe; silent under-selection is not):
 //   1. Shared escalations (too many files, unusual path, unknown type) -> all.
-//   2. CI selection itself (ci.yml, this script, test-selection.mjs) -> all.
+//   2. CI selection itself (ci.yml, this script, test-selection.mjs) or the
+//      test-result cache wiring (turbo.json, test-cache.mjs, ci-test-rust.sh) -> all.
 //   3. Cargo.lock, the workspace Cargo.toml, toolchain or .cargo config -> all.
 //   4. A Rust source or manifest outside src-tauri/ -> all (no known crate).
 //   5. A file under src-tauri/ touches the local package whose directory most
@@ -37,6 +38,10 @@ const SELECTION_INPUTS = new Set([
   ".github/workflows/ci.yml",
   "scripts/rust-affected.mjs",
   "scripts/test-selection.mjs",
+  // How the target runs through the test-result cache (#1176).
+  "turbo.json",
+  "scripts/test-cache.mjs",
+  "scripts/ci-test-rust.sh",
 ]);
 
 /** @param {string} f */

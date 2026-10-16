@@ -8,7 +8,8 @@
 //
 // Rules, in order (over-selection is safe; silent under-selection is not):
 //   1. Shared escalations (too many files, unusual path, unknown type) -> all.
-//   2. CI selection itself (ci.yml, this script, test-selection.mjs) -> all.
+//   2. CI selection itself (ci.yml, this script, test-selection.mjs) or the
+//      test-result cache wiring (turbo.json, test-cache.mjs, ci-test-unit.sh) -> all.
 //   3. Config and lockfiles (package.json, bun.lock, vite/vitest/svelte
 //      configs, tsconfig, bunfig) -> all: they change how every test runs.
 //   4. Anything under tests/ that is not a *.test.ts / *.bench.ts file is
@@ -34,6 +35,10 @@ const SELECTION_INPUTS = new Set([
   ".github/workflows/ci.yml",
   "scripts/unit-affected.mjs",
   "scripts/test-selection.mjs",
+  // How the target runs through the test-result cache (#1176).
+  "turbo.json",
+  "scripts/test-cache.mjs",
+  "scripts/ci-test-unit.sh",
 ]);
 
 /** @param {string} f */

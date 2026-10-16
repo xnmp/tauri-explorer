@@ -36,14 +36,22 @@ describe("CI admission policy (#1133)", () => {
     expect(ci.jobs["frontend-checks"].steps).toEqual(expect.arrayContaining([
       expect.objectContaining({ run: "bun run check" }),
       expect.objectContaining({ run: "bun run lint:arch" }),
-      // PRs may narrow the unit run (#1175); the full suite is still its ALL branch.
-      expect.objectContaining({ run: expect.stringContaining("bun run test ;;") }),
+      // Unit tests and the Rust suite run through the test-result cache (#1176).
+      expect.objectContaining({ run: expect.stringContaining("test-cache.mjs run --task ci:unit") }),
     ]));
     expect(ci.jobs["rust-suite"].steps).toEqual(expect.arrayContaining([
-      expect.objectContaining({ run: "cargo fmt --manifest-path src-tauri/Cargo.toml --all -- --check" }),
-      expect.objectContaining({ run: expect.stringContaining("cargo clippy ") }),
-      expect.objectContaining({ run: expect.stringContaining("cargo test ") }),
+      expect.objectContaining({ run: expect.stringContaining("test-cache.mjs run --task ci:rust") }),
     ]));
+    const scripts = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")).scripts;
+    expect(scripts["ci:unit"]).toBe("bash scripts/ci-test-unit.sh");
+    expect(scripts["ci:rust"]).toBe("bash scripts/ci-test-rust.sh");
+    const script = (file: string) => readFileSync(new URL(`../scripts/${file}`, import.meta.url), "utf8");
+    // PRs may narrow the unit run (#1175); the full suite is still its ALL branch.
+    expect(script("ci-test-unit.sh")).toContain("bun run test ;;");
+    const rust = script("ci-test-rust.sh");
+    expect(rust).toContain('cargo fmt --manifest-path "$manifest" --all -- --check');
+    expect(rust).toContain("cargo clippy ");
+    expect(rust).toContain("cargo test ");
     const native = load("e2e-tauri.yml");
     expect(native.on.pull_request.branches).toContain("dev");
     expect(native.on.push).toEqual({ branches: ["dev"] });

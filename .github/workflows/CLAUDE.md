@@ -17,12 +17,6 @@ return 404 because administration permission is missing. A workflow edit cannot
 change branch protection.
 
 Run `bunx vitest run tests/ci-trigger-policy.test.ts` to validate admission.
-Manual native diagnostic scopes are also pinned by
-`tests/qualification/native-qualification-workflow.test.ts`; keep both contracts current.
-
-The native smoke workflow's manual `trash` scope runs the real Windows Trash
-spec alone and uploads its filename capture and provenance in the WDIO logs.
-It preserves the full suite for dev pushes and the default `all` dispatch.
 
 # PR test selection (#1175)
 

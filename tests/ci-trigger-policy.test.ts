@@ -48,18 +48,11 @@ describe("CI admission policy (#1133)", () => {
     expect(native.on.pull_request.branches).toContain("dev");
     expect(native.on.push).toEqual({ branches: ["dev"] });
     expect(Object.hasOwn(native.on, "workflow_dispatch")).toBe(true);
-    expect(native.on.workflow_dispatch.inputs.native_scope.options).toContain("trash");
     // Pin the actual runner admission expression, including the full Windows
     // suite on dev and the existing scoped manual diagnostic runs.
     expect(native.jobs.smoke.strategy.matrix.os).toBe(
-      "${{ fromJSON(github.event_name == 'pull_request' && '[\"ubuntu-latest\"]' || ((inputs.native_scope == 'clipboard' || inputs.native_scope == 'transfer' || inputs.native_scope == 'trash') && '[\"windows-latest\"]' || '[\"ubuntu-latest\",\"windows-latest\"]')) }}",
+      "${{ fromJSON(github.event_name == 'pull_request' && '[\"ubuntu-latest\"]' || ((inputs.native_scope == 'clipboard' || inputs.native_scope == 'transfer') && '[\"windows-latest\"]' || '[\"ubuntu-latest\",\"windows-latest\"]')) }}",
     );
-    expect(native.jobs.smoke.steps).toEqual(expect.arrayContaining([
-      expect.objectContaining({
-        name: "Run smoke suite (Windows)",
-        run: expect.stringContaining("bunx wdio run e2e-tauri/wdio.conf.ts --spec e2e-tauri/specs/trash-view.spec.ts"),
-      }),
-    ]));
   });
 
   it.each(heavy)("runs %s on every dev push and manual dispatch", (file) => {

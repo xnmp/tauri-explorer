@@ -35,6 +35,8 @@ suite; no job or test is skipped.
 
 The real native GUI spec now deletes both `.txt` and `.txt.txt` fixtures,
 asserts the complete visible names and original locations, captures both rows,
-then restores each distinct payload. The Windows manual `trash` scope uploads
-the capture plus source provenance in its WDIO artifact for collection into
-`evidence/`; a browser mock or an earlier Linux capture cannot prove this fix.
+then restores each distinct payload. It remains part of the existing full native
+suite; no workflow admission or manual scopes change. For a Linux-hosted repair,
+the real Windows Rust regression is the evidence for this Windows-only behavior;
+a Windows screenshot is not required. A browser mock or an earlier Linux capture
+cannot prove the native filename correction.

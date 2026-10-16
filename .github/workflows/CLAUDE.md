@@ -37,3 +37,105 @@ list directories); a test reading a path it builds dynamically from neither is
 invisible to it, so name such inputs literally. Rust inputs outside `src-tauri/`
 count only when a string literal ends in their basename (`include_bytes!`,
 fixture joins), not when a comment mentions them.
+
+# Test-result cache (#1176)
+
+ci.yml runs the unit tests, each Rust suite (fmt, clippy, tests) and each
+browser shard through `scripts/test-cache.mjs run --task ci:<target>`, which
+runs the matching `turbo.json` task. Turborepo hashes the task's inputs (every
+git-tracked file minus the task's `!` exclusions), the root `package.json` and
+`bun.lock` (always, for every task), the task definition, and the env vars it
+lists: the selection (`UNIT_SELECTION`, `RUST_SELECTION`, the shard's
+`E2E_SHARD_SPECS`), feature flags, `RUNNER_OS`, `RUNNER_ARCH`, `ImageOS`,
+`ImageVersion` and `TEST_CACHE_TOOLCHAIN` (bun/node, or rustc/cargo plus the
+apt candidate versions of `TEST_CACHE_APT_PACKAGES`). An unchanged hash
+replays the passing log and reports `<target>: passed from the test-result
+cache`. Turborepo never stores a failed task, so a failure always re-runs.
+Browser and Rust jobs probe first and skip browser, apt and build-cache setup
+on a hit; the Rust job installs bun dependencies only to get Turborepo.
+
+Inputs stay `$TURBO_DEFAULT$` plus exclusions: explicit include globs also hash
+git-ignored files such as `src-tauri/target`, which rust-cache restores between
+the probe and the run. The unit target reads ADRs, the README, workflows,
+`website/api` and Rust sources as text contracts, so those are its inputs; the
+Rust target excludes the frontend, browser specs, docs and the website; the
+browser target excludes Rust, the website, docs, workflows and unit tests.
+Environment that is neither a file nor a listed env var (Playwright's apt
+dependencies, the `python3`/`rustc` some unit tests call) is covered only by
+`ImageVersion`.
+
+Each exclusion must cover only files the target never reads.
+`tests/test-cache.test.ts` asks Turborepo which files each target hashes and
+fails when a file named in a reader's string literal, or a listed lockfile,
+config or runner script, is missing; its scratch-repository tests check that
+changing each dependency re-runs the target. A test that reads a file through
+a path built at runtime is invisible to the scan, so name it literally or drop
+the exclusion.
+
+Trust: GitHub's artifact service, rather than a workflow boolean or an
+outside-checkout directory, enforces ownership. Only `ci.yml` push
+attempts on protected `dev` in this repository are eligible producers. Each
+artifact carries a target-specific passing result, checked before replay. Restore
+queries those runs and downloads an artifact by its API ID from that run;
+PRs cannot create artifacts in a dev run with their runtime credentials.
+Even if a PR enables saving or uploads a matching name, its artifacts never
+enter the eligible producer set. Same-repo PRs are also read-only: permitting
+their writes safely would require a protected producer outside PR code.
+Do not switch back to `actions/cache` prefix restore: a PR can shadow a dev
+key with a forged pass in its own merge-ref cache on a later run.
+
+Artifacts use `trusted-test-cache-v3-<os>-<arch>-<image>-<image version>-<target>-<run>-<attempt>`.
+Restore computes the requested target's hash with Turborepo, then searches
+artifacts across the latest 30 dev pushes plus the current rerun if older.
+`UNIT_SELECTION` is job-wide so restore and execution hash the same selection;
+browser shard selection and Rust feature/selection variables are also available
+before restore. Keep these environments aligned.
+
+A run becomes queued/in progress again during reruns, so verify the producing
+attempt's provenance through GitHub's workflow-attempt API rather than filtering
+by current conclusion. Completed attempts may have unrelated failed jobs: accept
+the target's own `result.json` proof of a newly passing execution, not an overall
+workflow-success requirement. `pack` refuses failed, cached or read-only results
+and includes only that result's cache entry in `entries.tar`. GitHub's run-owned
+artifact service is the authorization boundary for this record; PR artifacts
+remain ineligible regardless of their contents or name.
+
+Restore keeps looking across artifacts and attempts until the record's target,
+task and hash match the request and its unexpired cache entry is present. A
+newer archive for another hash cannot hide an older match, even when concurrent
+dev runs restored the same initial cache. Invalid records and unavailable or
+expired entries are misses. The v3 schema deliberately ignores older artifacts
+without a per-target pass record; the first dev production starts cold.
+PR-specific inputs with no dev-produced result run normally on every attempt;
+this trades cache hit rate for an enforceable write boundary without new secrets
+or repository administration. The local Turborepo directory remains outside
+the checkout to ignore committed cache files.
+
+Each saved artifact contains `result.json` and `entries.tar` to preserve entry creation times
+through zip transport. Entries expire 30 days after creation, including on
+read-only runs. Prune before the probe so an expired hit cannot skip setup;
+`GITHUB_ENV` carries `TEST_CACHE_PROBED_AT` into execution so crossing the TTL
+between probe and run cannot invalidate a hit after dependencies were skipped.
+The artifact retention is also 30 days. Keep cache data names outside the
+`test-cache-*` report-artifact pattern.
+
+Reading the cache: every cached job's step summary has one line per target,
+and the `test-cache` job summarises the hit rate, the targets served from the
+cache, the time saved and the time executed. Each record (hash, hit, duration)
+is uploaded as the `test-cache-<target>` artifact.
+
+Suspected stale hit: check out the commit and run
+`node scripts/test-cache.mjs explain --task ci:<target>` with the job's env
+(`UNIT_SELECTION`, `RUST_*`, `E2E_ENGINE`/`E2E_SHARD_SPECS`, and the
+`RUNNER_*`/`Image*` values from the job log). It prints the hash, the toolchain
+fingerprint, and every hashed file and env var, computed exactly as CI does; a
+file the target reads but that is missing there means the task's inputs are too
+narrow. Fix `turbo.json` (the changed task definition invalidates that task),
+or bump `CACHE_VERSION` in the script to discard every entry.
+
+Bypassing: dispatch CI manually with `test_cache` unticked to re-run every
+target once. That run is read-only, so it does not replace a stale entry. Set
+the repository variable `TEST_CACHE=off` to stop reads everywhere; dev pushes
+then re-run every target and store fresh results, which replaces stale
+entries. Remove the variable afterwards. Locally, run the suite directly
+(`bun run test`, `cargo test`); that never uses the cache.

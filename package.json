@@ -39,7 +39,10 @@
     "start:clean": "bash scripts/dev.sh --clean",
     "tauri": "tauri",
     "install-app": "tauri build && sudo rm -rf /Applications/tauri-explorer.app && cp -R src-tauri/target/release/bundle/macos/tauri-explorer.app /Applications/ && fileicon set /Applications/tauri-explorer.app src-tauri/icons/icon.png && killall Dock",
-    "prepare:pdf": "node scripts/prepare-pdf-assets.mjs"
+    "prepare:pdf": "node scripts/prepare-pdf-assets.mjs",
+    "ci:unit": "bash scripts/ci-test-unit.sh",
+    "ci:rust": "bash scripts/ci-test-rust.sh",
+    "ci:e2e": "bash scripts/ci-test-e2e.sh"
   },
   "license": "MIT",
   "dependencies": {
@@ -70,6 +73,7 @@
     "cheerio": "1.2.0",
     "svelte": "5.56.3",
     "svelte-check": "4.7.6",
+    "turbo": "^2.11.8",
     "typescript": "~6.0.3",
     "undici": "^6.28.1",
     "vite": "^8.1.4",

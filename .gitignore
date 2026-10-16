@@ -77,3 +77,6 @@ e2e-tauri/logs/
 
 # Locally bundled PDF.js resources, regenerated for dev/build
 /static/generated/pdfjs/
+
+# Turborepo run summaries and logs (CI test-result cache, #1176)
+.turbo/

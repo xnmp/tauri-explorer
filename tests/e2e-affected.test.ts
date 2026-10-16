@@ -90,6 +90,9 @@ describe("classify", () => {
     ["the shard planner", "scripts/e2e-shards.mjs"],
     ["the spec selector", "scripts/e2e-affected.mjs"],
     ["the feature map the selector reads", "docs/code-map/map-feature.md"],
+    ["the test-result cache config", "turbo.json"],
+    ["the test-result cache wrapper", "scripts/test-cache.mjs"],
+    ["the cached browser-shard runner", "scripts/ci-test-e2e.sh"],
     ["an unknown top-level file", "website/api/report.js"],
   ])("runs everything for %s", (_label, file) => {
     expect(select([SPEC, file])).toBe("ALL");

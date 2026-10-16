@@ -305,6 +305,8 @@ backend for E2E/browser).
 
 ## Preview pane
 
+- `src/lib/domain/preview-kind.ts` classifies files once by precedence; dispatch and the image-hold policy share that classification. `src/lib/state/preview-content.ts` produces atomic `PreviewContent` replacements, owns format loading/lazy viewers and the image cache/lifetime/upgrade seams; `PreviewPane.svelte` renders by `content.kind` (#1206).
+
 - `components/PdfPreview.svelte`, `state/pdf-preview.svelte.ts`, `domain/pdf-preview.ts`, `api/pdf-preview.ts`, `src-tauri/src/files/pdf_preview.rs` — lazy read-only PDF.js canvas preview: explicit owned module worker, bounded binary transport, latest page/document/render lifetimes, centered zoom and measured pointer pan, annotation links and image-consistent fullscreen framing (#728–#730). `scripts/prepare-pdf-assets.mjs` prepares offline fonts/CMaps; native app CSP permits packaged workers. Native proof uses the private software Wayland runner in `e2e-tauri/run-scaled-selection.py` and `wdio.pdf-preview.conf.ts`.
 - Supported-platform PDF proof also uses the hosted Windows native suite and `e2e-tauri/macos-pdf-preview.ts` through Appium Mac2/XCTest. `e2e-tauri/macos-display.swift` measures display geometry; `e2e-tauri/pdf_screenshot.py` reads native page landmarks without browser scripting or modifying screenshots, with negative controls in `e2e-tauri/test_pdf_screenshot.py`.
 
@@ -331,7 +333,7 @@ backend for E2E/browser).
 - `domain/diff.ts`, `domain/markdown.ts` — diff parsing, markdown render
 - `api/files.ts` (readTextFile, readImageAsBlobUrl, listArchiveContents, gitDiff); `state/preview-image.ts` drives `readImageAsBlobUrl` as the image fallback
 - `themes/syntax.css` — shared hljs token colors
-- FLOW: selection change → PreviewPane fetches content by type → CSV parses to a shared-column virtual table or text highlights/renders. 512KB read cap, 200 CSV data-row cap, 50KB highlight cap.
+- FLOW: selection change → preview-content classifies and loads a content union → PreviewPane renders by kind → CSV parses to a shared-column virtual table or text highlights/renders. 512KB read cap, 200 CSV data-row cap, 50KB highlight cap.
 
 ## Miller columns
 

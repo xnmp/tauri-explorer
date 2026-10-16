@@ -99,10 +99,27 @@ pub(crate) fn prepare(
     prepare_with(requests, || {})
 }
 
+/// Like [`prepare`], but an item whose original folder is gone fails instead
+/// of recreating it: the in-app Trash view never invents a folder (#863).
+/// Execution creates only folders prepared as missing, so none are created.
+pub(crate) fn prepare_existing_parents(
+    requests: &[RestoreRequest],
+) -> Result<(PreparedSelection, Vec<Resource>), AppError> {
+    prepare_parents(requests, false, || {})
+}
+
 /// `between` runs after targets are resolved and before claims are captured:
 /// the seam where an external alias retarget could split the two observations.
 fn prepare_with(
     requests: &[RestoreRequest],
+    between: impl FnMut(),
+) -> Result<(PreparedSelection, Vec<Resource>), AppError> {
+    prepare_parents(requests, true, between)
+}
+
+fn prepare_parents(
+    requests: &[RestoreRequest],
+    create_parents: bool,
     mut between: impl FnMut(),
 ) -> Result<(PreparedSelection, Vec<Resource>), AppError> {
     let mut claims = Claims::default();
@@ -124,7 +141,7 @@ fn prepare_with(
             Scope::Subtree,
             SelectionRole::Exclusive,
         )?;
-        let item = Prepared::new(request.clone());
+        let item = Prepared::new(request.clone(), create_parents);
         if let Ok(prepared) = &item {
             let TrashArtifact::Freedesktop {
                 root,
@@ -245,7 +262,7 @@ impl PreparedSelection {
 }
 
 impl Prepared {
-    fn new(request: RestoreRequest) -> Result<Self, AppError> {
+    fn new(request: RestoreRequest, create_parents: bool) -> Result<Self, AppError> {
         let TrashArtifact::Freedesktop {
             root,
             name,
@@ -271,11 +288,16 @@ impl Prepared {
         let info = root_directory.open_existing(OsStr::new("info"))?;
         let files = root_directory.open_existing(OsStr::new("files"))?;
         verify_artifact(&request, &info, &files)?;
-        let parents = Parents::new(
-            target
-                .parent()
-                .ok_or_else(|| AppError::InvalidPath(request.path.clone()))?,
-        )?;
+        let parent = target
+            .parent()
+            .ok_or_else(|| AppError::InvalidPath(request.path.clone()))?;
+        let parents = Parents::new(parent)?;
+        if !create_parents && !parents.missing.is_empty() {
+            return Err(AppError::NotFound(format!(
+                "The original folder {} no longer exists or its drive is not mounted. Restore or recreate that folder first.",
+                parent.display()
+            )));
+        }
         Ok(Self {
             request,
             target,
@@ -501,7 +523,7 @@ pub(super) fn restore(
     effects: &DirectoryEffects,
     before_publish: impl FnOnce() -> Result<(), AppError>,
 ) -> Result<TrashSuccess, AppError> {
-    Prepared::new(request.clone())?.execute(&mut HashMap::new(), effects, before_publish)
+    Prepared::new(request.clone(), true)?.execute(&mut HashMap::new(), effects, before_publish)
 }
 
 #[cfg(test)]

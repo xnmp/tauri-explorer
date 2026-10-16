@@ -2,7 +2,7 @@ import { beforeEach, expect, it, vi } from "vitest";
 const { invoke, getSession, guard } = vi.hoisted(() => ({invoke:vi.fn(),getSession:vi.fn(),guard:vi.fn()}));
 vi.mock("$lib/api/common", () => ({invoke,virtualPathGuard:guard}));
 vi.mock("$lib/api/native-resource-session", () => ({getNativeResourceSession:getSession}));
-import { loadVideoPreview } from "$lib/api/video-preview";
+import { loadVideoAudio, loadVideoPreview, NoVideoAudio } from "$lib/api/video-preview";
 beforeEach(() => {vi.clearAllMocks();guard.mockReturnValue(null);getSession.mockResolvedValue("session");});
 it("rejects virtual locations before starting a native session or capability", async () => {
   guard.mockReturnValue({error:"Virtual locations cannot preview video"});
@@ -28,4 +28,14 @@ it("saves a copy to the chosen destination, and does nothing on cancel", async (
 it("probe failure yields null", async () => {
   invoke.mockRejectedValue(new Error("x"));
   expect(await probeVideoCodec("/m.mkv")).toBeNull();
+});
+it("companion audio uses its own capability and reports a file without audio (#1171)", async () => {
+  invoke.mockImplementation(async command => command === "begin_video_preview" ? "audio-capability" : command === "prepare_video_audio_preview" ? "http://127.0.0.1/media/audio-capability" : undefined);
+  const source = await loadVideoAudio("/movie.mp4").promise;
+  expect(source.url).toBe("http://127.0.0.1/media/audio-capability");
+  expect(invoke).toHaveBeenCalledWith("prepare_video_audio_preview", { sessionId: "session", token: "audio-capability", path: "/movie.mp4" });
+  source.release();
+  await vi.waitFor(() => expect(invoke).toHaveBeenCalledWith("release_video_preview", { sessionId: "session", token: "audio-capability" }));
+  invoke.mockImplementation(async command => command === "begin_video_preview" ? "silent" : null);
+  await expect(loadVideoAudio("/silent.mp4").promise).rejects.toBeInstanceOf(NoVideoAudio);
 });

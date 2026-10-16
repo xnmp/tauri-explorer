@@ -1,4 +1,5 @@
 //! Window-owned local media capabilities. JavaScript receives URLs, never video bytes.
+mod audio;
 mod http;
 #[cfg(feature = "e2e-hooks")]
 mod metrics;
@@ -59,6 +60,41 @@ pub async fn prepare_video_preview(
         .prepare(&token, &owner, path, move |path| scope.is_allowed(path))
         .await?;
     Ok(format!("http://{}/media/{}", server.address, token))
+}
+/// Companion audio for a video whose own audio track the WebView dropped
+/// (#1171). `None` when the file has no audio stream; the capability is retired.
+#[tauri::command]
+pub async fn prepare_video_audio_preview(
+    window: tauri::Window,
+    session_id: String,
+    token: String,
+    path: String,
+) -> Result<Option<String>, AppError> {
+    let owner = renderer_owner::acquire_owner(&window, &session_id)?;
+    let scope = window.asset_protocol_scope();
+    let extractor = audio::Extractor {
+        ffmpeg: crate::thumbnails::ffmpeg_path().ok_or_else(|| {
+            AppError::Other(
+                "Cannot play this video's audio: install GStreamer's libav plugins (gst-libav) or ffmpeg"
+                    .into(),
+            )
+        })?,
+        directory: audio::directory()
+            .ok_or_else(|| AppError::Other("No cache directory for video audio".into()))?,
+        stem: token.clone(),
+    };
+    let server = server().await?;
+    let published = server
+        .service
+        .prepare_audio(
+            &token,
+            &owner,
+            path,
+            move |path| scope.is_allowed(path),
+            extractor,
+        )
+        .await?;
+    Ok(published.then(|| format!("http://{}/media/{}", server.address, token)))
 }
 #[tauri::command]
 pub async fn release_video_preview(window: tauri::Window, session_id: String, token: String) {

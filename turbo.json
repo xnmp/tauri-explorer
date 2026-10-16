@@ -1,0 +1,119 @@
+{
+  "$schema": "https://turborepo.com/schema.json",
+  "globalEnv": [
+    "RUNNER_OS",
+    "RUNNER_ARCH",
+    "ImageOS",
+    "ImageVersion",
+    "TEST_CACHE_TOOLCHAIN"
+  ],
+  "tasks": {
+    "ci:unit": {
+      "env": [
+        "UNIT_SELECTION"
+      ],
+      "inputs": [
+        "$TURBO_DEFAULT$",
+        "!evidence/**",
+        "!screenshots/**",
+        "!**/CLAUDE.md",
+        "!AGENTS.md",
+        "!CHANGELOG.md",
+        "!CONTRIBUTING.md",
+        "!SECURITY.md",
+        "!new_todo.md",
+        "!docs/*.md",
+        "!docs/*.jpg",
+        "!docs/archive/**",
+        "!docs/execution-plans/**",
+        "!docs/handoffs/**",
+        "!docs/handovers/**",
+        "!docs/lessons/**",
+        "!docs/lessons_learnt.md",
+        "!docs/reviews/**",
+        "!docs/screenshots/**",
+        "!website/img/**",
+        "!website/index.html",
+        "!website/app.js",
+        "!website/style.css",
+        "!website/favicon.png",
+        "!src-tauri/screenshots/**"
+      ],
+      "outputs": []
+    },
+    "ci:rust": {
+      "env": [
+        "RUST_SUITE",
+        "RUST_SELECTION",
+        "RUST_CLIPPY_FEATURES",
+        "RUST_TEST_FEATURES"
+      ],
+      "inputs": [
+        "$TURBO_DEFAULT$",
+        "!*.md",
+        "!*.ts",
+        "!*.js",
+        "!*.json",
+        "!*.sh",
+        "!*.ps1",
+        "!flake.*",
+        "!PKGBUILD",
+        "!LICENSE",
+        "!.envrc",
+        "!.claude/**",
+        "!.github/**",
+        "!.vscode/**",
+        "!docs/**",
+        "!evidence/**",
+        "!screenshots/**",
+        "!packaging/**",
+        "!qualification-results/**",
+        "!src/**",
+        "!e2e/**",
+        "!e2e-load/**",
+        "!e2e-sweep/**",
+        "!website/**",
+        "!e2e-tauri/*",
+        "!e2e-tauri/diagnostics/**",
+        "!e2e-tauri/native-qualification/**",
+        "!e2e-tauri/probe/**",
+        "!e2e-tauri/soak/**",
+        "!e2e-tauri/specs/**",
+        "!scripts/*.mjs",
+        "!scripts/*.ts",
+        "!scripts/*.json",
+        "!tests/**/*.ts",
+        "!tests/**/*.md",
+        "!src-tauri/**/CLAUDE.md",
+        "!src-tauri/screenshots/**"
+      ],
+      "outputs": []
+    },
+    "ci:e2e": {
+      "env": [
+        "E2E_ENGINE",
+        "E2E_SHARD_SPECS",
+        "WEBKIT",
+        "PW_VIDEO_HEADED",
+        "ALL_VIEW_MODES"
+      ],
+      "inputs": [
+        "$TURBO_DEFAULT$",
+        "!**/*.md",
+        "!docs/**",
+        "!evidence/**",
+        "!screenshots/**",
+        "!.claude/**",
+        "!.github/**",
+        "!packaging/**",
+        "!src-tauri/**",
+        "!website/**",
+        "!tests/**/*.test.ts",
+        "!e2e-load/**",
+        "!e2e-sweep/**",
+        "!e2e-tauri/specs/**"
+      ],
+      "outputs": []
+    }
+  }
+}

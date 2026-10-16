@@ -156,9 +156,10 @@ export async function domTexts(selector: string): Promise<string[]> {
   );
 }
 
-/** Visible file/folder names in the active listing (CSS-clip-immune). */
+/** Visible file/folder names in the active listing (CSS-clip-immune). Hidden
+ * retained tabs (#1173) keep their rows mounted, so read the shown tab only. */
 export async function entryNames(): Promise<string[]> {
-  return await domTexts(".entry-item .entry-name");
+  return await domTexts(".pane-tree:not(.retained) .entry-item .entry-name");
 }
 
 /**

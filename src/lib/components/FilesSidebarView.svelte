@@ -23,8 +23,7 @@
   import { loadPersisted, savePersisted } from "$lib/state/persisted";
   import { useSidebarDrag } from "$lib/composables/use-sidebar-drag.svelte";
   import { usesPointerDrag, usesHtml5Drag } from "$lib/domain/platform";
-  import { openRecycleBin } from "$lib/api/open";
-  import { openRecycleBinWithFeedback } from "$lib/state/recycle-bin";
+  import { TRASH_PATH } from "$lib/domain/virtual-path";
   import { toastStore } from "$lib/state/toast.svelte";
   import { getBookmarkDropHint, getEffectiveDragKind } from "$lib/domain/bookmark-drop-feedback";
   import { isExplorerFileTransfer } from "$lib/domain/file-drop";
@@ -40,8 +39,9 @@
     refresh: drivesStore.refresh,
   });
 
+  // The Trash opens in the active pane, not an external file manager (#863).
   function handleOpenRecycleBin() {
-    void openRecycleBinWithFeedback(openRecycleBin, toastStore.error);
+    navigateTo(TRASH_PATH);
   }
 
   // Null until the one-time `get_home_directory` query resolves. Never

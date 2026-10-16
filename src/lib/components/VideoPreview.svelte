@@ -1,13 +1,15 @@
 <script lang="ts">
   import { onDestroy, untrack } from "svelte";
-  import { loadVideoPreview, probeVideoCodec, saveVideoCopy } from "$lib/api/video-preview";
+  import { loadVideoAudio, loadVideoPreview, NoVideoAudio, probeVideoCodec, saveVideoCopy } from "$lib/api/video-preview";
   import { openFile } from "$lib/api/open";
   import { extractError } from "$lib/api/common";
   import { dialogStore } from "$lib/state/dialogs.svelte";
   import { windowTabsManager } from "$lib/state/window-tabs.svelte";
   import { keybindingsStore } from "$lib/state/keybindings.svelte";
   import { classifyVideoFailure, unsupportedVideoMessage, mediaTime, seekTime, videoClickAction, videoKeyAction } from "$lib/domain/video-preview";
-  import type { VideoSource } from "$lib/state/video-preview-lifetime";
+  import type { VideoLoadJob, VideoSource } from "$lib/state/video-preview-lifetime";
+  import { followVideo, needsCompanionAudio } from "$lib/state/video-companion-audio";
+  import { isMac, isWindows } from "$lib/domain/platform";
   let { path, name, fullscreen, ontogglefullscreen }: {path:string;name:string;fullscreen:boolean;ontogglefullscreen:()=>void} = $props();
   let video = $state<HTMLVideoElement | null>(null);
   let source = $state<VideoSource | null>(null);
@@ -18,6 +20,12 @@
   let duration = $state(0);
   let volume = $state(1);
   let muted = $state(false);
+  // Companion audio when WebKitGTK dropped an undecodable audio track (#1171).
+  let audio = $state<HTMLAudioElement | null>(null);
+  let companion = $state<VideoSource | null>(null);
+  let audioNote = $state<"preparing" | { error: string } | null>(null);
+  let audioJob: VideoLoadJob | null = null;
+  const platform = isWindows ? "windows" : isMac ? "macos" : "linux";
   // PreviewPane keys this component by the complete file revision.
   const job = untrack(() => loadVideoPreview(path));
   let disposed = false;
@@ -28,7 +36,48 @@
     disposed = true;
     detachSource();
   });
+  function detachAudio() {
+    if (audio) {
+      audio.pause();
+      if (audio.hasAttribute("src")) { audio.removeAttribute("src"); audio.load(); }
+    }
+    companion?.release();
+    companion = null;
+    audioJob?.cancel();
+    if (audioNote === "preparing") audioNote = null;
+  }
+  /** Once the pipeline can play, a missing native audio track asks for companion audio. */
+  function checkAudio() {
+    if (!video || disposed || audioJob || error || !needsCompanionAudio(video, platform)) return;
+    const job = audioJob = loadVideoAudio(path);
+    audioNote = "preparing";
+    job.promise.then(value => {
+      if (disposed || audioJob !== job || !video || !needsCompanionAudio(video, platform)) { value.release(); return; }
+      companion = value;
+      audioNote = null;
+    }).catch(cause => {
+      if (disposed || audioJob !== job || audioNote !== "preparing") return;
+      audioNote = cause instanceof NoVideoAudio ? null : { error: extractError(cause) };
+    });
+  }
+  function audioFailed() {
+    if (disposed || !companion) return;
+    detachAudio();
+    audioNote = { error: "The decoded audio could not be played" };
+  }
+  $effect(() => {
+    // A native track that appears later wins; never play both.
+    const tracks = (video as (HTMLVideoElement & { audioTracks?: EventTarget }) | null)?.audioTracks;
+    if (!tracks?.addEventListener) return;
+    tracks.addEventListener("addtrack", detachAudio);
+    return () => tracks.removeEventListener("addtrack", detachAudio);
+  });
+  $effect(() => {
+    if (!video || !audio || !companion) return;
+    return followVideo(video, audio);
+  });
   function detachSource() {
+    detachAudio();
     if (video) {
       video.pause();
       if (video.hasAttribute("src")) { video.removeAttribute("src"); video.load(); }
@@ -118,9 +167,10 @@
   <div class="video-stage" class:failed={!!error} onclick={onStageClick}>
     <video bind:this={video} src={source?.url} preload="metadata" playsinline aria-label="Video preview of {name}"
       onloadedmetadata={sync} onloadeddata={sync} ondurationchange={sync} ontimeupdate={sync}
-      onplay={sync} onpause={sync} onended={sync} onvolumechange={sync} onseeked={sync} onerror={mediaFailed}>
+      oncanplay={checkAudio} onplaying={checkAudio} onplay={sync} onpause={sync} onended={sync} onvolumechange={sync} onseeked={sync} onerror={mediaFailed}>
       <track kind="captions" />
     </video>
+    <audio bind:this={audio} src={companion?.url} preload="auto" onerror={audioFailed}></audio>
     {#if error}
       <div class="video-message" role="status"><span>{error}</span>{#if saveError}<span class="save-error">{saveError}</span>{/if}{#if unsupported}<button type="button" onclick={download}>Download</button>{/if}<button type="button" onclick={openExternal}>Open externally</button></div>
     {:else if !ready}
@@ -139,6 +189,10 @@
       min="0" max={duration || 1} step="0.1" value={current} disabled={!ready || duration <= 0 || !!error}
       oninput={event => seek(event.currentTarget.valueAsNumber)} />
     <div class="sound">
+      {#if audioNote}
+        <span class="audio-note" role="status" title={audioNote === "preparing" ? "Decoding this video's audio track" : audioNote.error}>
+          {audioNote === "preparing" ? "Preparing audio…" : "Audio unavailable"}</span>
+      {/if}
       <button type="button" aria-label={muted ? "Unmute video" : "Mute video"} title="Mute (M)" disabled={!ready || !!error} onclick={toggleMute}>{muted ? "Muted" : "Sound"}</button>
       <input type="range" aria-label="Video volume" min="0" max="1" step="0.05" value={volume} disabled={!ready || !!error}
         oninput={event => setVolume(event.currentTarget.valueAsNumber)} />
@@ -159,6 +213,7 @@
   .seek {min-width:0;width:100%;}
   .sound {display:flex;align-items:center;gap:4px;}
   .sound input {width:64px;}
+  .audio-note {font-size:var(--font-size-caption);color:var(--text-secondary);white-space:nowrap;}
   button {min-width:28px;min-height:28px;border:0;border-radius:4px;padding:0 6px;background:transparent;color:var(--text-secondary);font:inherit;font-size:var(--font-size-caption);cursor:pointer;}
   button:hover:enabled {background:var(--subtle-fill-tertiary);color:var(--text-primary);}
   button:disabled {opacity:0.4;cursor:default;}

@@ -26,7 +26,7 @@ it("keeps all upload limits for videos and rejects MOV declared as MP4", () => {
   const input = report(...clips[0]);
   expect(() => validateReport({ ...input, attachments: Array(4).fill(input.attachments[0]) })).toThrow(/3/);
   const large = Buffer.alloc(2097153); Buffer.from(clips[0][1], "hex").copy(large);
-  expect(() => validateReport({ ...input, attachments: [{ ...input.attachments[0], data: large.toString("base64") }] })).toThrow(/invalid/);
+  expect(() => validateReport({ ...input, attachments: [{ ...input.attachments[0], data: large.toString("base64") }] })).toThrow(/2 MiB.*shorter clip/);
   const atLimit = { ...input.attachments[0], data: large.subarray(0, 2097152).toString("base64") };
   expect(validateReport({ ...input, attachments: [atLimit] }).attachments[0].bytes).toHaveLength(2097152);
   expect(() => validateReport({ ...input, attachments: [atLimit, atLimit] })).toThrow(/3 MiB/);

@@ -2,13 +2,15 @@ import { expect, test, type Page } from "./fixtures";
 
 const HOME = "/?path=/home/user";
 
+// Recently active tabs stay mounted but hidden (#1173): `:visible` selects the
+// shown tab's listing.
 async function openDistinctTabs(page: Page): Promise<void> {
   await page.goto(HOME);
-  await page.locator(".entry-item").first().waitFor();
+  await page.locator(".entry-item:visible").first().waitFor();
   await page.keyboard.press("Control+t");
   await expect(page.locator(".tab")).toHaveCount(2);
-  await page.locator('.entry-item[data-path="/home/user/Documents"]').dblclick();
-  await expect(page.locator('.entry-item[data-path="/home/user/Documents/project"]')).toBeVisible();
+  await page.locator('.entry-item[data-path=\"/home/user/Documents\"]:visible').dblclick();
+  await expect(page.locator('.entry-item[data-path=\"/home/user/Documents/project\"]:visible')).toBeVisible();
 }
 
 test.describe("Window tab close ownership", () => {
@@ -34,7 +36,7 @@ test.describe("Window tab close ownership", () => {
 
     expect(stateAfterClick).toEqual({ tabCount: 1, activePath: "/home/user" });
     await expect(
-      page.locator('.entry-item[data-path="/home/user/Documents"]'),
+      page.locator('.entry-item[data-path=\"/home/user/Documents\"]:visible'),
     ).toBeVisible();
     await expect(
       page.locator('.entry-item[data-path="/home/user/Documents/project"]'),
@@ -69,13 +71,13 @@ test.describe("Window tab close ownership", () => {
     }, { id: activeId!, state: persisted });
 
     await expect(page.locator(`.tab[data-tab-id="${activeId}"]`)).toHaveCount(1);
-    await expect(page.locator('.entry-item[data-path="/home/user/Documents/project"]')).toBeVisible();
+    await expect(page.locator('.entry-item[data-path=\"/home/user/Documents/project\"]:visible')).toBeVisible();
 
     // The old implementation's delayed callback fires at 200 ms and targets
     // only the stable ID, so it removes the replacement incarnation here.
     await page.waitForTimeout(260);
     await expect(page.locator(`.tab[data-tab-id="${activeId}"]`)).toHaveCount(1);
-    await expect(page.locator('.entry-item[data-path="/home/user/Documents/project"]')).toBeVisible();
+    await expect(page.locator('.entry-item[data-path=\"/home/user/Documents/project\"]:visible')).toBeVisible();
   });
 
   test("outro is contextual, skips initial mount, and allows rapid undo", async ({
@@ -113,7 +115,7 @@ test.describe("Window tab close ownership", () => {
     });
 
     await page.goto(HOME);
-    await page.locator(".entry-item").first().waitFor();
+    await page.locator(".entry-item:visible").first().waitFor();
     await page.waitForTimeout(520);
     const initialAnimations = await page.evaluate(() =>
       (window as unknown as {
@@ -123,8 +125,8 @@ test.describe("Window tab close ownership", () => {
     expect(initialAnimations).toHaveLength(0);
 
     await page.keyboard.press("Control+t");
-    await page.locator('.entry-item[data-path="/home/user/Documents"]').dblclick();
-    await expect(page.locator('.entry-item[data-path="/home/user/Documents/project"]')).toBeVisible();
+    await page.locator('.entry-item[data-path=\"/home/user/Documents\"]:visible').dblclick();
+    await expect(page.locator('.entry-item[data-path=\"/home/user/Documents/project\"]:visible')).toBeVisible();
 
     // Capture the real outro at its start, before browser-driver round trips
     // can consume its 120ms lifetime. Svelte dispatches outrostart immediately
@@ -145,7 +147,7 @@ test.describe("Window tab close ownership", () => {
       return captured;
     });
     await page.locator(".tab.active .tab-close").click();
-    await expect(page.locator('.entry-item[data-path="/home/user/Documents"]')).toBeVisible();
+    await expect(page.locator('.entry-item[data-path=\"/home/user/Documents\"]:visible')).toBeVisible();
     await expect.poll(() => outro.evaluate((animations) =>
       animations.filter((animation) => animation.playState === "paused").length,
     )).toBeGreaterThan(0);
@@ -157,7 +159,7 @@ test.describe("Window tab close ownership", () => {
     }
 
     await page.keyboard.press("Control+Shift+t");
-    await expect(page.locator('.entry-item[data-path="/home/user/Documents/project"]')).toBeVisible();
+    await expect(page.locator('.entry-item[data-path=\"/home/user/Documents/project\"]:visible')).toBeVisible();
     // Undo must publish the restored directory before the old visual cleanup.
     // Now complete only the captured outro and verify it retires the old DOM
     // without deleting the restored tab incarnation.

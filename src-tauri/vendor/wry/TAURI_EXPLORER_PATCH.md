@@ -33,6 +33,14 @@ the enriched payload is published. Missing/mismatched snapshots are discarded.
 Never replace this with a keyboard query during queued Tauri dispatch: Windows
 `DoDragDrop` buffers those events until the drag loop returns.
 
+For GNOME Wayland in-app native gestures, the host overrides the Drop modifier
+with its gesture-bound `wl_keyboard` focus-restoration snapshot (#1100).
+Mutter consumes keyboard events during the grab, so neither this GDK cache
+nor frontend key listeners see a late Ctrl change. The separate source
+connection channel freezes the first post-grab Enter/Modifiers pair, not a
+later keyboard query. Preserve the existing GTK acknowledgement and non-file
+pass-through; negotiated actions must not become copy/move intent.
+
 The bridge lives in `src/lib.rs` and each platform's `drag_drop.rs`. The host
 depends directly on the same patched Wry version; keep `Cargo.toml`'s direct
 dependency aligned when upgrading. Targeted host regressions are in

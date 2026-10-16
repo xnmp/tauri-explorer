@@ -68,3 +68,17 @@ export function virtualBreadcrumbs(
   }
   return result;
 }
+
+// ---------------------------------------------------------------------------
+// Built-in in-app Trash location (#863). Listing/restore mapping lives in
+// `trash.ts`; only path recognition is here so the startup bundle stays small.
+// ---------------------------------------------------------------------------
+
+/** Canonical Trash location; the breadcrumb root navigates to this spelling.
+ * The provider always lists under this lowercase spelling. */
+export const TRASH_PATH = "trash://";
+
+/** True for the Trash root and any path inside it. */
+export function isTrashPath(path: string): boolean {
+  return path.startsWith(TRASH_PATH);
+}

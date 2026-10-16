@@ -36,7 +36,7 @@ If a matching TraceExplorer `.teplugin` exists in `$HOME/Repos/TraceExplorer/pac
 
 The default Arch package build timestamp follows the latest Git commit, or `package.json` modification time for source archives. Set `SOURCE_DATE_EPOCH` explicitly to override it.
 
-File Cut verifies native clipboard ownership before moving the source, on X11, Wayland (with `wl-clipboard`), Windows, and macOS. If another program changes the clipboard between Cut and Paste, Paste copies instead of moving. Where ownership cannot be proven (for example, a remote-desktop session that re-renders every clipboard change), Cut reports it and Copy remains available.
+File Cut verifies native clipboard ownership before moving the source, on X11, Wayland (with `wl-clipboard`, on compositors that support the clipboard data-control protocol, such as Sway, Hyprland and KDE Plasma), Windows, and macOS. On Wayland compositors without data-control, Cut is refused and Copy remains available. If another program changes the clipboard between Cut and Paste, Paste copies instead of moving. Where ownership cannot be proven (for example, a remote-desktop session that re-renders every clipboard change), Cut reports it and Copy remains available.
 
 ## Use as system file picker
 

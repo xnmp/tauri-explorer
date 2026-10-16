@@ -68,7 +68,8 @@
   // unrelated state (selection, clipboard, drop-target) never re-format.
   const dateText = $derived(formatDate(entry.modified));
   const absoluteDateText = $derived(formatAbsoluteDate(entry.modified));
-  const typeText = $derived(getFileType(entry));
+  // Trash rows show where the item came from in place of its type (#863).
+  const typeText = $derived(entry.trash ? entry.trash.originalFolder ?? "Unknown" : getFileType(entry));
   const sizeText = $derived(entry.kind === "file" ? formatSize(entry.size) : "");
 
   // Video length is probed lazily for rendered rows only, and only while the

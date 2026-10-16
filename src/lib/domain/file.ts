@@ -23,6 +23,20 @@ export interface FileEntry {
   readonly is_empty?: boolean;
   /** True when this directory is a git repo root (has a `.git` dir or file). */
   readonly is_git_repo?: boolean;
+  /** Present only on entries of the in-app Trash location (#863). */
+  readonly trash?: TrashEntryInfo;
+}
+
+/** Where a trashed entry came from; its `path` is a `trash://` identity. */
+export interface TrashEntryInfo {
+  /** Opaque native ID; restore resolves it to the captured trash artifact. */
+  readonly id: string;
+  /** Null when the platform did not record the original location. */
+  readonly originalPath: string | null;
+  /** ISO 8601, or null when the deletion time is unknown. */
+  readonly deletedAt: string | null;
+  /** The folder shown in the "Original location" column. */
+  readonly originalFolder: string | null;
 }
 
 export interface DirectoryListing {

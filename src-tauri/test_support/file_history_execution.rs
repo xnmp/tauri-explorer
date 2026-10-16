@@ -295,6 +295,7 @@ fn artifact_id(artifact: &TrashArtifact) -> String {
             String::from_utf16(parsing_name_utf16).expect("fixture artifact is valid UTF-16")
         }
         TrashArtifact::Freedesktop { name, .. } => name.to_string_lossy().into_owned(),
+        TrashArtifact::Recorded { trashed, .. } => trashed.to_string_lossy().into_owned(),
     }
 }
 

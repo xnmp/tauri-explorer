@@ -46,6 +46,7 @@ import type { ImageCropCapture, ImageCropSave } from "./image-crop";
 import type { FileMutationReceipt } from "$lib/domain/file";
 import type { PreviewImageSource } from "$lib/domain/preview-rendition";
 import type { MockAiPresentation } from "./mock-ai-presentation";
+import type { BranchStatuses } from "$lib/domain/git-branch-status";
 
 export interface MockGitState {
   branch: string;
@@ -93,7 +94,11 @@ export interface MockControl {
   videoThumbnail?: (path: string, size?: number) => string | Promise<string>;
   /** Real browser media URL; tests can delay source admission, not fake playback. */
   videoPreview?: (path: string) => string | Promise<string>;
+  /** Overrides `git_branch_statuses` (#1081); default reports none. */
+  branchStatuses?: BranchStatuses;
   releasedVideoPreviews?: string[];
+  /** Overrides `prepare_video_audio_preview`; `null` (default) means no audio stream. */
+  videoAudioPreview?: (path: string) => string | null | Promise<string | null>;
   /** Overrides `probe_video_codec`. */
   videoCodecProbe?: (path: string) => { container: string | null; videoCodec: string | null; audioCodec: string | null };
   /** Destinations `save_file_copy` was asked to write. */
@@ -141,6 +146,8 @@ export interface MockControl {
   /** Command name -> error message. Injects a rejection instead of running
    * the command's handler. */
   failures?: Record<string, string>;
+  /** Unreadable trash sources `list_trash` reports beside its entries. */
+  trashIssues?: Array<{ source: string; error: string }>;
   /** Command name -> extra artificial latency in ms, on top of the base
    * simulated round-trip delay. Also settable via `?mockLatency=name:ms,...`. */
   latency?: Record<string, number>;
@@ -174,6 +181,8 @@ export const MOCK_LOCAL_KEYS = {
   openedUrl: "mock-opened-url",
   /** Error kind string: `submit_user_report` throws `{ kind, message }`. */
   reportError: "mock-report-error",
+  /** Optional detailed rejection reason returned with `reportError`. */
+  reportErrorMessage: "mock-report-error-message",
   /** JSON of the last `submit_user_report` payload. */
   submittedReport: "mock-submitted-report",
   /** "1" when set: `check_for_update` reports a newer release. */

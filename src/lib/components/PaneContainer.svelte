@@ -15,7 +15,6 @@
 
   // The git graph is no longer a tab kind — panes render it themselves
   // when their gitGraph flag is set (#272).
-  const activeTab = $derived(windowTabsManager.activeTab);
   const multiPane = $derived(windowTabsManager.dualPaneEnabled);
   let viewport = $state<HTMLElement>();
   // Preserve fractional CSS pixels under root zoom. Integer client dimensions
@@ -42,6 +41,10 @@
   $effect(() => {
     instance;
     untrack(dividers.cancel);
+    // Unmounting used to drop focus with the old tree. A retained tree is
+    // inert; do not depend on each engine's inert focus fixup (#1173).
+    const focused = document.activeElement;
+    if (focused instanceof HTMLElement && focused.closest(".pane-tree.retained")) focused.blur();
   });
   $effect(() => { geometry; dividers.reconcile(); });
   $effect(() => {
@@ -69,22 +72,27 @@
   bind:this={viewport} bind:contentRect
   onscroll={dividers.cancel}
   style:--pane-divider-size={`${gap}px`}>
-  {#if activeTab}
-    <!-- A restored tab may reuse its saved ID; its old DOM/gestures still retire. -->
-    {#key windowTabsManager.activeTabInstance}
-      {@const minimum = minima?.get(activeTab.layout.id)}
-      <!-- CSS fills the viewport in the same layout pass that changes it; only
-           minima come from script, so panes never paint at a stale size (#1061). -->
-      <div class="pane-tree" style:min-width="{minimum?.width ?? 0}px"
-        style:min-height="{minimum?.height ?? 0}px">
-        <PaneLayoutView node={activeTab.layout} {geometry} {minima} {dividers} />
-      </div>
-    {/key}
-  {/if}
+  <!-- Recently active tabs stay mounted but hidden, so switching back only
+       toggles visibility instead of rebuilding the tree (#1173). Keyed by mount
+       identity: a restored tab may reuse its saved ID, and its old DOM/gestures
+       still retire. -->
+  {#each windowTabsManager.retainedTabs as tab (windowTabsManager.tabInstance(tab))}
+    {@const shown = windowTabsManager.tabInstance(tab) === instance}
+    {@const minimum = shown ? minima?.get(tab.layout.id) : undefined}
+    <!-- CSS fills the viewport in the same layout pass that changes it; only
+         minima come from script, so panes never paint at a stale size (#1061). -->
+    <div class="pane-tree" class:retained={!shown} inert={!shown}
+      style:min-width="{minimum?.width ?? 0}px"
+      style:min-height="{minimum?.height ?? 0}px">
+      <PaneLayoutView node={tab.layout} geometry={shown ? geometry : undefined}
+        minima={shown ? minima : undefined} {dividers} />
+    </div>
+  {/each}
 </div>
 
 <style>
   .pane-container {
+    position: relative;
     display: flex;
     flex-direction: column;
     flex: 1;
@@ -102,6 +110,16 @@
     flex: 1 0 0;
     min-width: 0;
     min-height: 0;
+  }
+
+  /* A retained tab keeps its layout, scroll offsets and row DOM under the
+     visible one; content-visibility lets the engine skip its rendering. */
+  .pane-tree.retained {
+    position: absolute;
+    inset: 0;
+    visibility: hidden;
+    content-visibility: hidden;
+    pointer-events: none;
   }
 
   /* Vibrancy: main content island */

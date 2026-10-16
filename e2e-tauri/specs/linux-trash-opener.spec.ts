@@ -1,4 +1,4 @@
-import { browser, $, expect } from "@wdio/globals";
+import { browser, $, $$, expect } from "@wdio/globals";
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
@@ -38,6 +38,26 @@ function visibleNames(): string[] {
   return JSON.parse(execFileSync("python3", ["e2e-tauri/fixtures/trash-accessibility.py"], { encoding: "utf8", timeout: 5000 }));
 }
 
+/**
+ * The sidebar opens the in-app Trash (#863); the external file manager is
+ * launched from the Trash view's background context menu.
+ */
+async function openSystemTrash(): Promise<void> {
+  await $('button[aria-label="Open Recycle Bin"]').click();
+  await browser.waitUntil(async () => (await $(".status-path").getAttribute("title")) === "trash://", {
+    timeoutMsg: "the sidebar did not open the in-app Trash",
+  });
+  await $(".file-list .content").click({ button: "right", x: 40, y: 400 });
+  await $(".context-menu").waitForDisplayed({ timeout: 5000 });
+  for (const item of await $$(".context-menu .menu-item").getElements()) {
+    if (((await item.getProperty("textContent")) as string | null)?.trim() === "Open in System File Manager") {
+      await item.click();
+      return;
+    }
+  }
+  throw new Error("Open in System File Manager is not offered in the Trash view");
+}
+
 (enabled ? describe : describe.skip)("Arch graphical Trash acceptance (#723, #733)", function () {
   this.bail(true);
   let directory: string;
@@ -74,7 +94,7 @@ function visibleNames(): string[] {
   });
 
   it(`${scenario}: chooses a graphical surface or reports unavailable without mutating files`, async () => {
-    await $('button[aria-label="Open Recycle Bin"]').click();
+    await openSystemTrash();
     if (scenario === "missing" || scenario === "failed") {
       const error = $('.toast.error');
       await error.waitForDisplayed();
@@ -100,7 +120,8 @@ function visibleNames(): string[] {
     }
     expect(fs.existsSync(original)).toBe(false);
     expect(fs.readFileSync(payload, "utf8")).toBe(bytes);
-    expect(await $('.status-path').getAttribute("title")).toBe(directory);
+    // Launching the system Trash leaves the pane on the in-app Trash.
+    expect(await $('.status-path').getAttribute("title")).toBe("trash://");
   });
 
   it(`${scenario}: empty Trash opens without an unknown-URI error`, async function () {
@@ -111,14 +132,15 @@ function visibleNames(): string[] {
     fs.unlinkSync(path.join(process.env.XDG_DATA_HOME!, "Trash", "info", `${path.basename(payload)}.trashinfo`));
     // A previously launched Thunar may now own its native D-Bus service.
     // Verify the empty user-visible result and both Trash source counts.
-    await $('button[aria-label="Open Recycle Bin"]').click();
+    await openSystemTrash();
     await browser.waitUntil(() => windows().some(window => !previousWindowIds.has(window.id) && /Thunar/.test(window.properties) && /"(?:Trash|files) - Thunar"/.test(window.properties)), { timeoutMsg: "Empty Trash action did not open a new graphical window" });
     const reopened = windows().find(window => !previousWindowIds.has(window.id) && /Thunar/.test(window.properties))!;
     assertHelperIsolation(reopened.properties);
     await browser.waitUntil(() => !visibleNames().some(value => value.includes(name)), { timeoutMsg: "Graphical Trash did not observe removal of the disposable fixture" });
     expect(windows().some(window => /Thunar/.test(window.properties))).toBe(true);
     expect(await $('.toast.error').isExisting()).toBe(false);
-    expect(await $('.status-path').getAttribute("title")).toBe(directory);
+    // Launching the system Trash leaves the pane on the in-app Trash.
+    expect(await $('.status-path').getAttribute("title")).toBe("trash://");
     expect(privateTrashCount()).toBe(0);
     expect(fs.readdirSync(path.dirname(payload))).toHaveLength(0);
     execFileSync("ffmpeg", ["-hide_banner", "-loglevel", "error", "-f", "x11grab", "-video_size", "1600x1000", "-i", process.env.DISPLAY!, "-frames:v", "1", "-y", `${proof}/${scenario}-graphical-empty.png`]);

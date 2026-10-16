@@ -55,9 +55,9 @@ enum Command {
     ProviderComplete(u8),
     Publish(u8, u8, bool),
     Spool(u8),
-    UnboundRepair(u8),
+    FencedRepair(u8),
     ReplacementSpool(u8),
-    AmbiguousSpool(u8),
+    CustodylessBesideLive(u8),
     ReplacementCollision(u8),
     Probe(bool),
     WorkerActive(u8, bool, bool),
@@ -128,9 +128,9 @@ impl Command {
             Self::Publish(_, 3, false) => "publish-cancelled",
             Self::Publish(..) => "publish",
             Self::Spool(_) => "host-spool",
-            Self::UnboundRepair(_) => "fenced-unbound-repair",
-            Self::ReplacementSpool(_) => "replacement-provider-unbound-spool",
-            Self::AmbiguousSpool(_) => "ambiguous-unbound-refusal",
+            Self::FencedRepair(_) => "fenced-repair",
+            Self::ReplacementSpool(_) => "replacement-provider-repair-spool",
+            Self::CustodylessBesideLive(_) => "custodyless-beside-live-operations",
             Self::ReplacementCollision(_) => "provider-request-counter-collision",
             Self::Probe(true) => "healthy-probe",
             Self::Probe(false) => "unhealthy-probe",
@@ -294,9 +294,9 @@ fn commands(max_steps: usize) -> impl Strategy<Value = Vec<Command>> {
             4 => slot.clone().prop_map(Command::ProviderComplete),
             6 => (slot.clone(), 0u8..4, any::<bool>()).prop_map(|(s,o,f)| Command::Publish(s,o,f)),
             2 => slot.clone().prop_map(Command::Spool), 3 => any::<bool>().prop_map(Command::Probe),
-            2 => slot.clone().prop_map(Command::UnboundRepair),
+            2 => slot.clone().prop_map(Command::FencedRepair),
             2 => slot.clone().prop_map(Command::ReplacementSpool),
-            2 => slot.clone().prop_map(Command::AmbiguousSpool),
+            2 => slot.clone().prop_map(Command::CustodylessBesideLive),
             2 => slot.clone().prop_map(Command::ReplacementCollision),
             3 => (slot.clone(), any::<bool>(), any::<bool>()).prop_map(|(s,p,a)| Command::WorkerActive(s,p,a)),
             3 => slot.clone().prop_map(Command::Acquire),
@@ -543,7 +543,7 @@ struct Operation {
     descriptor: Option<ArtifactDescriptor>,
     spool: Option<String>,
     spool_owner: Option<PackageGeneration>,
-    extra_spools: Vec<String>,
+    collision_reply: bool,
     native_attempts: u64,
     unpaid_repair: bool,
     spool_phase: u8,
@@ -1014,7 +1014,7 @@ impl Machine {
             descriptor: None,
             spool: None,
             spool_owner: None,
-            extra_spools: vec![],
+            collision_reply: false,
             native_attempts: 0,
             unpaid_repair: false,
             spool_phase: 0,
@@ -2012,26 +2012,14 @@ impl Machine {
                             "explicit reservation lost requested operation custody",
                         ));
                     }
-                    if !linked && admission.phase != AdmissionPhase::Released {
-                        return Err(fail(
-                            "unbound reservation lost active selected operation custody",
-                        ));
-                    }
-                    let linked_elsewhere: bool = conn.query_row(
+                    // Custody is never inferred (#1172): a reservation that
+                    // names no operation is linked to none, live or settled.
+                    let linked_anywhere: bool = conn.query_row(
                         "SELECT consumer IS NOT NULL OR EXISTS(SELECT 1 FROM host_spool_admissions WHERE handle=?1) FROM host_spools WHERE handle=?1",
                         [&handle], |r| r.get(0),
                     ).unwrap();
-                    if !linked && linked_elsewhere {
-                        // Capacity admission is not child invocation. This
-                        // fixture cannot execute a selected operation's recipe
-                        // against another operation's custody. Abort before
-                        // starting a writer/child; never call it custodyless.
-                        checked(
-                            self.store()
-                                .abandon_unsealed_host_spool(&owner.package_id, &handle),
-                        )?;
-                        self.applied += 1;
-                        return Ok(());
+                    if !bound && linked_anywhere {
+                        return Err(fail("custody-less reservation was bound to an operation"));
                     }
                     if !linked {
                         // A truly independent CLI fixture has its own output,
@@ -2081,10 +2069,9 @@ impl Machine {
                     if expected_capacity(&error)
                         || self.sync_failure
                         || self.unlink_failure
-                        || !bound
-                            && error
-                                .to_string()
-                                .contains("host output custody is ambiguous")
+                        || bound
+                            && matches!(&error, crate::error::AppError::Service { code, .. }
+                                if code == crate::service_state::CUSTODY_REFUSED)
                         || error.to_string().contains("plugin incarnation was retired")
                         || error.to_string().contains("host process")
                         || error.to_string().contains("provider") => {}
@@ -2333,7 +2320,7 @@ impl Machine {
                 || op.host_released
                 || op.provider_rejected()
                 || op.spool_phase != 29
-                || !op.extra_spools.is_empty()
+                || op.collision_reply
                 || op.spool_owner.as_ref().unwrap().digest == owner.digest
                 || self.sync_failure
                 || self.unlink_failure
@@ -2361,14 +2348,7 @@ impl Machine {
         )?;
         let (handle, _) = match self.store().reserve_host_spool(&owner, &request, 4096) {
             Ok(reservation) => reservation,
-            Err(error)
-                if expected_capacity(&error)
-                    || error
-                        .to_string()
-                        .contains("host output custody is ambiguous") =>
-            {
-                return Ok(())
-            }
+            Err(error) if expected_capacity(&error) => return Ok(()),
             Err(error) => return Err(fail(error.to_string())),
         };
         let actor = checked(SpoolActor::new(
@@ -2383,9 +2363,20 @@ impl Machine {
             checked(actor.phase(phase))?;
         }
         drop(actor);
-        self.operations.borrow_mut()[index]
-            .extra_spools
-            .push(handle);
+        // The unrelated reply names no operation, so it is a standalone
+        // custody-less spool that its provider releases, never the operation's.
+        self.operations.borrow_mut()[index].collision_reply = true;
+        self.custodyless.push(CustodylessSpool {
+            owner: owner.clone(),
+            handle,
+            original: image_bytes(251),
+            phase: 29,
+            writer: None,
+            removed: false,
+            released: false,
+            valid: true,
+            durable: true,
+        });
         let result = checked(self.store().host_spool_result_for_operation(
             &owner.package_id,
             &request,
@@ -2984,9 +2975,9 @@ impl Machine {
             | Command::ProviderComplete(s)
             | Command::Publish(s, ..)
             | Command::Spool(s)
-            | Command::UnboundRepair(s)
+            | Command::FencedRepair(s)
             | Command::ReplacementSpool(s)
-            | Command::AmbiguousSpool(s)
+            | Command::CustodylessBesideLive(s)
             | Command::ReplacementCollision(s)
             | Command::WorkerActive(s, true, _)
             | Command::CancelExitRace(s, ..)
@@ -3098,7 +3089,7 @@ impl Machine {
                 }
             }
             Command::Spool(s) => self.complete_spool(s, true)?,
-            Command::UnboundRepair(s) => {
+            Command::FencedRepair(s) => {
                 if let Some(index) = self.index(s) {
                     let (consumer, operation) = {
                         let ops = self.operations.borrow();
@@ -3113,7 +3104,9 @@ impl Machine {
                             ops[index].native_context = NativeContext::Recovery;
                             ops[index].native_intent = NativeIntent::LocalReconstruction;
                         }
-                        self.complete_spool(s, false)?;
+                        // Repair names its operation; the recovery permit
+                        // admits that custody for the fenced admission.
+                        self.complete_spool(s, true)?;
                     }
                 }
             }
@@ -3129,11 +3122,11 @@ impl Machine {
                             ops[index].native_context = NativeContext::Recovery;
                             ops[index].native_intent = NativeIntent::LocalReconstruction;
                         }
-                        self.complete_spool(s, false)?;
+                        self.complete_spool(s, true)?;
                     }
                 }
             }
-            Command::AmbiguousSpool(s) => {
+            Command::CustodylessBesideLive(s) => {
                 if let Some(index) = self.index(s) {
                     let candidates = checked(
                         self.store()
@@ -3146,14 +3139,11 @@ impl Machine {
                     })
                     .count();
                     if candidates > 1 && self.operations.borrow()[index].spool.is_none() {
-                        let charge = self.charges();
-                        let disk = self.disk_bytes();
+                        // Several live operations no longer make a custody-less
+                        // process ambiguous: it is standalone, never theirs.
                         self.spool_phase(Command::SpoolReserve(s, false, false))?;
-                        if self.operations.borrow()[index].spool.is_some()
-                            || self.charges() != charge
-                            || self.disk_bytes() != disk
-                        {
-                            return Err(fail("ambiguous unbound request created output or quota"));
+                        if self.operations.borrow()[index].spool.is_some() {
+                            return Err(fail("custody-less request became operation output"));
                         }
                     }
                 }
@@ -3857,7 +3847,6 @@ impl Machine {
         let spool_exists = op
             .spool
             .iter()
-            .chain(op.extra_spools.iter())
             .any(|h| root.join("host-spools").join(h).exists());
         let artifact_exists = op.stage.as_ref().is_some_and(|stage| {
             PathBuf::from(&stage.path).exists()
@@ -4463,9 +4452,9 @@ const REQUIRED_TRANSITIONS: &[&str] = &[
     "publish-failed",
     "publish-cancelled",
     "host-spool",
-    "fenced-unbound-repair",
-    "replacement-provider-unbound-spool",
-    "ambiguous-unbound-refusal",
+    "fenced-repair",
+    "replacement-provider-repair-spool",
+    "custodyless-beside-live-operations",
     "provider-request-counter-collision",
     "healthy-probe",
     "unhealthy-probe",
@@ -4720,9 +4709,12 @@ fn coverage_campaign(totals: &mut BTreeMap<&'static str, u64>) -> Result<(), Tes
                 *totals.entry(family).or_default() += hits;
             }
         }
-        collect_trace(vec![Command::Sweep, Command::UnboundRepair(0)], totals)?;
+        collect_trace(vec![Command::Sweep, Command::FencedRepair(0)], totals)?;
         collect_trace(
-            vec![Command::SharedConsumerAdmit, Command::AmbiguousSpool(0)],
+            vec![
+                Command::SharedConsumerAdmit,
+                Command::CustodylessBesideLive(0),
+            ],
             totals,
         )?;
         collect_trace(
@@ -4819,7 +4811,7 @@ fn coverage_campaign(totals: &mut BTreeMap<&'static str, u64>) -> Result<(), Tes
             )?;
             collect_trace(
                 vec![
-                    Command::SpoolReserve(0, bound, false),
+                    Command::SpoolReserve(0, true, false),
                     Command::SpoolReply(0),
                     Command::SpoolReplyStep(0, 2),
                     Command::SpoolReplyStep(0, 3),
@@ -5108,7 +5100,7 @@ fn model_standalone_unbound_spool_does_not_revive_settled_execution() {
 }
 
 #[test]
-fn model_unbound_fixture_cannot_run_selected_recipe_against_other_custody() {
+fn model_custodyless_spool_beside_live_operation_is_standalone() {
     let mut m = Machine::new();
     for command in [
         Command::Admit(1, false),
@@ -5118,21 +5110,16 @@ fn model_unbound_fixture_cannot_run_selected_recipe_against_other_custody() {
     ] {
         m.apply(command).unwrap();
     }
-    let charge = m.charges();
     m.apply(Command::SpoolReserve(1, false, false)).unwrap();
-    assert!(
-        m.custodyless.is_empty(),
-        "other admission custody is never standalone"
+    assert_eq!(
+        m.custodyless.len(),
+        1,
+        "a live admission must not capture a custody-less process"
     );
     for op in m.operations.borrow().iter() {
         assert!(op.spool.is_none());
-        assert_eq!(
-            op.native_paid_starts.get(),
-            0,
-            "fixture must abort before child invocation"
-        );
+        assert_eq!(op.native_paid_starts.get(), 0);
     }
-    assert_eq!(m.charges(), charge);
     m.quiesce().unwrap();
 }
 
@@ -5301,7 +5288,7 @@ fn ai_operations_reference_state_machine_deep() {
 }
 
 #[test]
-fn model_removal_cleans_unbound_provider_spool() {
+fn model_removal_cleans_legacy_inferred_provider_spool() {
     let mut m = Machine::new();
     m.admit(0, false).unwrap();
     {
@@ -5310,6 +5297,10 @@ fn model_removal_cleans_unbound_provider_spool() {
         let (handle, path) = m
             .store()
             .reserve_host_spool(&op.provider, "host:opaque", 4096)
+            .unwrap();
+        // A ledger from a host that inferred custody (before #1172).
+        m.store()
+            .link_legacy_inferred_custody(&handle, &op.consumer.package_id, &op.id)
             .unwrap();
         fs::write(path.join("stdout"), &op.original).unwrap();
         fs::write(path.join("stderr"), []).unwrap();
@@ -5337,7 +5328,7 @@ fn model_terminal_provider_outcome_cannot_start_native_writer() {
 }
 
 #[test]
-fn model_replacement_provider_unbound_reply_delivers_original() {
+fn model_replacement_provider_repair_reply_delivers_original() {
     let mut m = Machine::new();
     m.admit(0, false).unwrap();
     m.apply(Command::Upgrade(true, true, false)).unwrap();
@@ -5354,7 +5345,7 @@ fn model_replacement_provider_unbound_reply_delivers_original() {
 }
 
 #[test]
-fn model_replacement_provider_unbound_reply_is_removed_with_consumer() {
+fn model_replacement_provider_repair_reply_is_removed_with_consumer() {
     let mut m = Machine::new();
     m.admit(0, false).unwrap();
     m.apply(Command::Upgrade(true, true, false)).unwrap();
@@ -5372,7 +5363,7 @@ fn model_replacement_provider_unbound_reply_is_removed_with_consumer() {
 }
 
 #[test]
-fn model_fenced_unknown_unbound_repair_conserves_original() {
+fn model_fenced_unknown_repair_conserves_original() {
     let mut m = Machine::new();
     m.admit(0, false).unwrap();
     m.apply(Command::Sweep).unwrap();
@@ -5381,7 +5372,7 @@ fn model_fenced_unknown_unbound_repair_conserves_original() {
         (ops[0].consumer.package_id.clone(), ops[0].id.clone())
     };
     assert!(m.store().execution_released(&consumer, &operation).unwrap());
-    m.apply(Command::UnboundRepair(0)).unwrap();
+    m.apply(Command::FencedRepair(0)).unwrap();
     assert!(m.operations.borrow()[0].unpaid_repair);
     assert!(m.operations.borrow()[0].valid_original);
     m.quiesce().unwrap();
@@ -5392,11 +5383,11 @@ fn model_fenced_unknown_unbound_repair_conserves_original() {
 }
 
 #[test]
-fn model_fenced_unknown_unbound_repair_is_removed_with_consumer() {
+fn model_fenced_unknown_repair_is_removed_with_consumer() {
     let mut m = Machine::new();
     m.admit(0, false).unwrap();
     m.apply(Command::Sweep).unwrap();
-    m.apply(Command::UnboundRepair(0)).unwrap();
+    m.apply(Command::FencedRepair(0)).unwrap();
     assert!(m.operations.borrow()[0].unpaid_repair);
     m.apply(Command::Enable(false, false)).unwrap();
     m.quiesce().unwrap();
@@ -5427,117 +5418,11 @@ fn model_refused_native_attempt_uses_fresh_reverse_call_identity() {
 #[test]
 fn model_terminal_provider_rejects_late_reserved_reply() {
     for outcome in [2, 3] {
-        for bound in [false, true] {
-            let mut m = Machine::new();
-            m.admit(0, false).unwrap();
-            m.apply(Command::SpoolReserve(0, bound, false)).unwrap();
-            m.apply(Command::Publish(0, outcome, true)).unwrap();
-            for phase in [
-                Command::SpoolReply(0),
-                Command::SpoolReplyStep(0, 2),
-                Command::SpoolReplyStep(0, 3),
-                Command::SpoolReplyStep(0, 4),
-                Command::SpoolReplyStep(0, 5),
-                Command::SpoolReplyStep(0, 6),
-                Command::SpoolReplyStep(0, 7),
-                Command::SpoolReplyStep(0, 8),
-                Command::SpoolReplyStep(0, 9),
-                Command::SpoolReplyStep(0, 10),
-                Command::SpoolReplyStep(0, 11),
-                Command::SpoolReplyStep(0, 12),
-                Command::SpoolReplyStep(0, 13),
-                Command::SpoolReplyStep(0, 14),
-                Command::SpoolReplyStep(0, 15),
-                Command::SpoolReplyStep(0, 16),
-                Command::SpoolReplyStep(0, 17),
-                Command::SpoolPending(0),
-                Command::SpoolFsync(0),
-                Command::SpoolManifest(0),
-                Command::SpoolManifestStep(0, 2),
-                Command::SpoolManifestStep(0, 3),
-                Command::SpoolManifestStep(0, 4),
-                Command::SpoolManifestStep(0, 5),
-                Command::SpoolManifestStep(0, 6),
-                Command::SpoolManifestStep(0, 7),
-                Command::SpoolManifestStep(0, 8),
-                Command::SpoolSeal(0),
-            ] {
-                m.apply(phase).unwrap();
-            }
-            assert!(!m.operations.borrow()[0].paid_success);
-            assert!(!m.operations.borrow()[0].valid_original);
-            assert!(m.operations.borrow()[0].captured_process_reply);
-            let ops = m.operations.borrow();
-            let op = &ops[0];
-            assert_eq!(
-                fs::read(
-                    m.fixture
-                        .profile
-                        .path()
-                        .join("service-state/host-spools")
-                        .join(op.spool.as_ref().unwrap())
-                        .join("stdout"),
-                )
-                .unwrap(),
-                op.original,
-            );
-            drop(ops);
-            m.quiesce().unwrap();
-            assert_eq!(m.charges(), 0);
-            assert_eq!(m.disk_bytes(), 0);
-        }
-    }
-}
-
-#[test]
-fn model_provider_rejection_fences_late_raw_native_reply() {
-    for outcome in [2, 3] {
         let mut m = Machine::new();
         m.admit(0, false).unwrap();
-        for command in [
-            Command::SpoolReserve(0, false, false),
-            Command::Publish(0, outcome, false),
-            Command::Sweep,
-            Command::Spool(0),
-        ] {
-            m.apply(command).unwrap();
-        }
-        assert!(m.operations.borrow()[0].captured_process_reply);
-        assert!(!m.operations.borrow()[0].paid_success);
-        assert!(!m.operations.borrow()[0].valid_original);
-        m.quiesce().unwrap();
-        assert_eq!(m.charges(), 0);
-        assert_eq!(m.disk_bytes(), 0);
-    }
-}
-
-#[test]
-fn model_replacement_request_counter_collision_delivers_pinned_original() {
-    for bound in [false, true] {
-        let mut m = Machine::new();
-        m.admit(0, false).unwrap();
-        m.complete_spool(0, bound).unwrap();
-        m.apply(Command::Upgrade(true, true, false)).unwrap();
-        m.apply(Command::ReplacementCollision(0)).unwrap();
-        assert_eq!(m.operations.borrow()[0].extra_spools.len(), 1);
-        m.quiesce().unwrap();
-        let ops = m.operations.borrow();
-        let op = &ops[0];
-        assert_eq!(fs::read(&op.copy).unwrap(), op.original);
-        assert_eq!(op.starts.get(), 1);
-        assert_eq!(op.delivery_effects.get(), 1);
-        assert_eq!(m.charges(), 0);
-        assert_eq!(m.disk_bytes(), 0);
-    }
-}
-
-#[test]
-fn model_host_only_unknown_success_emits_one_removal_notice() {
-    for bound in [false, true] {
-        let mut m = Machine::new();
-        m.admit(0, false).unwrap();
-        for command in [
-            Command::SpoolReserve(0, bound, false),
+        m.apply(Command::SpoolReserve(0, true, false)).unwrap();
+        m.apply(Command::Publish(0, outcome, true)).unwrap();
+        for phase in [
             Command::SpoolReply(0),
             Command::SpoolReplyStep(0, 2),
             Command::SpoolReplyStep(0, 3),
@@ -5566,19 +5451,120 @@ fn model_host_only_unknown_success_emits_one_removal_notice() {
             Command::SpoolManifestStep(0, 7),
             Command::SpoolManifestStep(0, 8),
             Command::SpoolSeal(0),
-            Command::Publish(0, 1, false),
-            Command::Enable(false, false),
+        ] {
+            m.apply(phase).unwrap();
+        }
+        assert!(!m.operations.borrow()[0].paid_success);
+        assert!(!m.operations.borrow()[0].valid_original);
+        assert!(m.operations.borrow()[0].captured_process_reply);
+        let ops = m.operations.borrow();
+        let op = &ops[0];
+        assert_eq!(
+            fs::read(
+                m.fixture
+                    .profile
+                    .path()
+                    .join("service-state/host-spools")
+                    .join(op.spool.as_ref().unwrap())
+                    .join("stdout"),
+            )
+            .unwrap(),
+            op.original,
+        );
+        drop(ops);
+        m.quiesce().unwrap();
+        assert_eq!(m.charges(), 0);
+        assert_eq!(m.disk_bytes(), 0);
+    }
+}
+
+#[test]
+fn model_provider_rejection_fences_late_raw_native_reply() {
+    for outcome in [2, 3] {
+        let mut m = Machine::new();
+        m.admit(0, false).unwrap();
+        for command in [
+            Command::SpoolReserve(0, true, false),
+            Command::Publish(0, outcome, false),
+            Command::Sweep,
+            Command::Spool(0),
         ] {
             m.apply(command).unwrap();
         }
+        assert!(m.operations.borrow()[0].captured_process_reply);
+        assert!(!m.operations.borrow()[0].paid_success);
+        assert!(!m.operations.borrow()[0].valid_original);
         m.quiesce().unwrap();
-        let id = m.operations.borrow()[0].id.clone();
-        assert_eq!(
-            m.notices.get(&id),
-            Some(&1),
-            "durable original had no emitted undelivered notice (bound={bound})"
-        );
+        assert_eq!(m.charges(), 0);
+        assert_eq!(m.disk_bytes(), 0);
     }
+}
+
+#[test]
+fn model_replacement_request_counter_collision_delivers_pinned_original() {
+    let mut m = Machine::new();
+    m.admit(0, false).unwrap();
+    m.complete_spool(0, true).unwrap();
+    m.apply(Command::Upgrade(true, true, false)).unwrap();
+    m.apply(Command::ReplacementCollision(0)).unwrap();
+    assert!(m.operations.borrow()[0].collision_reply);
+    assert_eq!(m.custodyless.len(), 1);
+    m.quiesce().unwrap();
+    let ops = m.operations.borrow();
+    let op = &ops[0];
+    assert_eq!(fs::read(&op.copy).unwrap(), op.original);
+    assert_eq!(op.starts.get(), 1);
+    assert_eq!(op.delivery_effects.get(), 1);
+    assert_eq!(m.charges(), 0);
+    assert_eq!(m.disk_bytes(), 0);
+}
+
+#[test]
+fn model_host_only_unknown_success_emits_one_removal_notice() {
+    let mut m = Machine::new();
+    m.admit(0, false).unwrap();
+    for command in [
+        Command::SpoolReserve(0, true, false),
+        Command::SpoolReply(0),
+        Command::SpoolReplyStep(0, 2),
+        Command::SpoolReplyStep(0, 3),
+        Command::SpoolReplyStep(0, 4),
+        Command::SpoolReplyStep(0, 5),
+        Command::SpoolReplyStep(0, 6),
+        Command::SpoolReplyStep(0, 7),
+        Command::SpoolReplyStep(0, 8),
+        Command::SpoolReplyStep(0, 9),
+        Command::SpoolReplyStep(0, 10),
+        Command::SpoolReplyStep(0, 11),
+        Command::SpoolReplyStep(0, 12),
+        Command::SpoolReplyStep(0, 13),
+        Command::SpoolReplyStep(0, 14),
+        Command::SpoolReplyStep(0, 15),
+        Command::SpoolReplyStep(0, 16),
+        Command::SpoolReplyStep(0, 17),
+        Command::SpoolPending(0),
+        Command::SpoolFsync(0),
+        Command::SpoolManifest(0),
+        Command::SpoolManifestStep(0, 2),
+        Command::SpoolManifestStep(0, 3),
+        Command::SpoolManifestStep(0, 4),
+        Command::SpoolManifestStep(0, 5),
+        Command::SpoolManifestStep(0, 6),
+        Command::SpoolManifestStep(0, 7),
+        Command::SpoolManifestStep(0, 8),
+        Command::SpoolSeal(0),
+        Command::Publish(0, 1, false),
+        Command::Enable(false, false),
+    ] {
+        m.apply(command).unwrap();
+    }
+    m.quiesce().unwrap();
+    let id = m.operations.borrow()[0].id.clone();
+    assert_eq!(
+        m.notices.get(&id),
+        Some(&1),
+        "durable original had no emitted undelivered notice"
+    );
 }
 
 #[test]
@@ -5600,15 +5586,17 @@ fn model_shared_provider_removal_preserves_only_surviving_custody() {
             ops[1].spool.clone().unwrap(),
         )
     };
+    // A custody-less run beside both live operations belongs to neither.
     let charge = m.charges();
     let disk = m.disk_bytes();
-    let refusal = m
+    let (opaque, _) = m
         .store()
         .reserve_host_spool(&provider, "opaque-shared-provider-reply", 4096)
-        .unwrap_err();
-    assert!(refusal
-        .to_string()
-        .contains("host output custody is ambiguous"));
+        .unwrap();
+    m.store()
+        .abandon_unsealed_host_spool(&provider.package_id, &opaque)
+        .unwrap();
+    m.store().sweep_host_spools(|_| true).unwrap();
     assert_eq!(m.charges(), charge);
     assert_eq!(m.disk_bytes(), disk);
     m.apply(Command::Enable(false, false)).unwrap();
@@ -5874,7 +5862,7 @@ fn model_idle_fenced_operation_cannot_create_a_fresh_paid_native_dispatch() {
     let disk = m.disk_bytes();
     let before_starts = m.operations.borrow()[index].native_paid_starts.get();
     let attempts = m.operations.borrow()[index].native_attempts;
-    m.apply(Command::SpoolReserve(2, false, false)).unwrap();
+    m.apply(Command::SpoolReserve(2, true, false)).unwrap();
     let ops = m.operations.borrow();
     assert!(ops[index].writer.is_none());
     assert!(ops[index].spool.is_none());
@@ -5895,11 +5883,10 @@ fn model_restart_cannot_synthesize_initial_paid_work_in_a_new_provider_generatio
     assert_ne!(m.generation(Role::Provider).unwrap(), original);
     let charge = m.charges();
     m.apply(Command::SpoolReserve(0, true, false)).unwrap();
-    m.apply(Command::SpoolReserve(0, false, false)).unwrap();
     let ops = m.operations.borrow();
     assert!(ops[0].writer.is_none());
     assert_eq!(ops[0].native_paid_starts.get(), 0);
-    assert_eq!(ops[0].native_attempts, 2);
+    assert_eq!(ops[0].native_attempts, 1);
     assert_eq!(m.charges(), charge);
     drop(ops);
     m.quiesce().unwrap();

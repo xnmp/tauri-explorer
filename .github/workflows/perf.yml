@@ -4,21 +4,7 @@ name: Performance Tests
 on:
   push:
     branches: [dev]
-    paths:
-      - 'src/lib/state/**'
-      - 'src/lib/domain/**'
-      - 'src/lib/components/**'
-      - 'src/lib/api/**'
-      - 'src/lib/composables/**'
-      - 'tests/perf/**'
-      - 'scripts/perf-check.ts'
-      - 'perf-baseline.json'
-      - 'e2e/tiles-scroll-perf.spec.ts'
   workflow_dispatch:
-
-concurrency:
-  group: ${{ github.workflow }}-${{ github.head_ref || github.ref_name }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   perf-check:

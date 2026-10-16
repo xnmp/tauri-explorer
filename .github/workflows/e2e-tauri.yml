@@ -4,7 +4,7 @@ on:
   pull_request:
     branches: [dev, main]
   push:
-    branches: [dev, main]
+    branches: [dev]
   # Scoped dispatches diagnose #715 and #710; only the default full run counts toward
   # the W2.4 five-run Windows smoke gate.
   workflow_dispatch:
@@ -24,8 +24,10 @@ on:
         required: true
         default: 1
 
+# Only PRs share a group. Unique non-PR groups preserve every dev run,
+# including pending runs that GitHub would otherwise replace.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.head_ref || github.ref_name }}
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 # Note: macOS is deliberately omitted. Official `tauri-driver` has no
@@ -64,7 +66,7 @@ jobs:
       fail-fast: false
       matrix:
         # PRs run only the required `smoke (ubuntu-latest)` context (docs-only PRs
-        # report it with every step skipped); Windows runs on dev/main pushes and
+        # report it with every step skipped); Windows runs on dev pushes and
         # dispatches (tauri#1133). Non-PR events always count as code.
         os: ${{ fromJSON(github.event_name == 'pull_request' && '["ubuntu-latest"]' || ((inputs.native_scope == 'clipboard' || inputs.native_scope == 'transfer') && '["windows-latest"]' || '["ubuntu-latest","windows-latest"]')) }}
     runs-on: ${{ matrix.os }}
@@ -294,7 +296,7 @@ jobs:
         run: |
           cargo test --manifest-path src-tauri/Cargo.toml --lib -- --list > "$RUNNER_TEMP/windows-rust-contracts.list"
           contract_status=0
-          for filter in files::batch:: files::windows_paths:: files::restore_outcome files::trash_outcome git::tests::trash_untracked git::tests::directory_scope files::watch_observation:: git_watch::tests::native_observer; do
+          for filter in files::batch:: files::windows_paths:: files::restore_outcome files::trash_outcome files::trash_inventory:: git::tests::trash_untracked git::tests::directory_scope files::watch_observation:: git_watch::tests::native_observer; do
             # Cargo succeeds with zero matching tests. Fail explicitly when a
             # source/module move leaves one of these acceptance filters stale.
             if ! awk -v filter="$filter" 'index($0, filter) && /: test$/ { found = 1 } END { exit !found }' "$RUNNER_TEMP/windows-rust-contracts.list"; then

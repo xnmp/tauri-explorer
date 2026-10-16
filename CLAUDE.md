@@ -21,11 +21,18 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 | Extended native soak (opt-in)         | From a clean worktree run `bun run build:native:qualification`, then `SOAK_DURATION_MS=14400000 SOAK_SEED=<repro-seed> SOAK_EXPECTED_DISPLAY_SCALE=<native-scale> bun run test:e2e:tauri:soak` (`SOAK_MAX_CYCLES=1` gives a bounded real-native check; the runner verifies the generated build manifest, and reports/screenshots land in `qualification-results/`)                                                               |
 | Performance tests                     | `bun run test:perf`                                                                                                                                                                                                                                                                                                                                                                                                              |
 | High-load stress tests                | `bun run test:load` (own Playwright config on :1430; many git-graph tabs, leak churn, CPU throttle, 256MB heap cap; `LOAD_CYCLES=N` scales churn)                                                                                                                                                                                                                                                                                |
+| Interaction perf sweep                | `bun run perf:sweep` (own config on :1440, `PORT` overrides; `PERF_SWEEP_OUT=f.json` writes medians). Copy `e2e-sweep/` + `playwright.sweep.config.ts` into an old release checkout to A/B; compare `taskMs` from concurrent runs (#1174) |
 | Rust criterion benches                | `bun run bench:rust` (baselines recorded in `src-tauri/benches/*.rs` header comments)                                                                                                                                                                                                                                                                                                                                            |
 | Bundle-size budget check              | `bun run check:bundle` (builds frontend, fails if main chunk gzip exceeds budget in `scripts/check-bundle-size.mjs` or the release build contains E2E hook code)                                                                                                                                                                                                                                                                                                             |
 | Rust build only                       | `cd src-tauri && cargo build`                                                                                                                                                                                                                                                                                                                                                                                                    |
 | Runnable release binary               | `bun run build && cd src-tauri && cargo build --release --features tauri/custom-protocol` — a bare `cargo build --release` yields a DEV-mode binary that dials localhost:1420 (Tauri gates prod on the `custom-protocol` feature, which only the Tauri CLI passes)                                                                                                                                                               |
 | Rust tests only                       | `cd src-tauri && cargo test`                                                                                                                                                                                                                                                                                                                                                                                                     |
+
+When changing Rust code gated by `cfg(windows)`, also run
+`cd src-tauri && cargo xwin check --target x86_64-pc-windows-msvc --lib --tests`
+to type-check the Windows-only code from a Linux host. This requires
+`cargo-xwin` to be installed on the host; without it, Cargo reports `no such
+subcommand`. Windows CI remains the authority for Windows builds.
 
 ### WSL ↔ Windows: always `git push` after committing
 
@@ -48,6 +55,7 @@ Rules that bite:
 - Refresh policy is split deliberately: WHEN=`refresh-manager`, WHETHER=`pane-watch`, HOW=`pane-refresh`. Don't add a fourth gate, and don't build private refresh stacks inside components — the git graph did, and it produced #431/#432.
 - Watcher callbacks are delayed work: capture the explorer path when queuing a refresh and drop the callback if that explorer navigates before it runs. Preserve the backend observation time too: notify delivery can lag behind a trailing listing, and treating an already-covered change as new work creates a third refresh. Otherwise an event attributed to the old directory refreshes the new one and corrupts both directories' cadence.
 - Pane focus is **state, not DOM focus**: `ExplorerPane` gates its window-level keydown listener on `windowTabsManager.activePaneId === paneId`, so moving focus between panes is `setActivePane` alone — calling `.focus()` on the pane element is neither necessary nor sufficient. Assert on `.explorer-pane.active`, not on `document.activeElement`.
+- Recently active window tabs stay mounted as hidden, inert `.pane-tree.retained` layers (`domain/retained-tabs.ts`, #1173), so a tab switch only toggles visibility. Their rows, panes and per-pane effects are live while hidden: scope DOM queries and E2E locators to the shown tab (`.pane-tree:not(.retained)` or Playwright `:visible`), and gate window-level per-pane handlers on manager state such as `activePaneId`, never on being mounted.
 - ExplorerPane owns window-level file-list shortcuts, but FileList owns each virtualized view's scroller. Selection jumps that can target an unmounted row must use FileList's bound `scrollToEntry` seam so the selected entry is rendered and visible before focus moves to it.
 - Native window titles have two phases: every creation path (Rust main, fresh child, parked warm window) must seed the requested title before visibility, then the page's reactive `window-title` sync follows the active explorer path across navigation/tab/pane changes.
 - Native qualification must bind resource sampling to the verified manifest binary, retain run-specific driver output on failures, and normalize Rust `Duration` units before calculating startup percentiles. macOS cold-start attribution correlates native monotonic readiness with browser wall-clock boundaries: retain the residual as `unattributedMs`, keep foreground and warm samples separate, and never describe two animation-frame callbacks as compositor-presented pixels or a Dock bounce. The pre-`run` interval is its own `processEntryMs` phase (main.rs hands `run_with_process_entry` its entry instant); time before `main()` is outside every in-process clock and comes only from the runbook's launch recording. Startup marks belong to one owner: `window-session` records `mount`/`settings-ready`/`commands-ready`, `+page.svelte` only `bundle-exec`/`list-ready`/`app-ready`. `startup-timing` mirrors each recorded main-window mark (plus a bounded heartbeat) as a `Startup(webview-progress)` line; this adds no marks and changes no ownership, and the attributed parser must never read progress lines — only `startup-progress.ts` does, to describe a timeout (#936). One parser serves both the readiness predicate and the report: an independent readiness regex drifted from the emitted log format and would have failed every Mac sample (#696). A timeout reports that parser's last rejection, the last progress mark, and bounded `stall-evidence.ts` captures taken before the app is stopped; a capture failure only adds a clause to the timeout, never replaces it. Reject a residual below -(5ms + 500 ppm × launch total) — the wall-clock slew bound measured in CI (#936) — and any duplicated webview marker rather than publish a plausible decomposition, and let a `missed` measured half-bounce deadline fail the run while `unqualified` stays non-fatal. Interactive Mac evidence is ingested only from inside the qualification root and must match the verified binary SHA-256, hardware model, normal Launch Services method, sample count, and per-sample recording/trace plus functional-frame/input times. Per ADR 0021, raw replay seeds never become path components; signal exits, rejected force-kills, and children still alive after the force timeout fail the run, with process output preserved. WebdriverIO does not turn ordinary `afterSession` rejection into a failing command, so owned-process cleanup errors cross the worker/launcher boundary through run-scoped state checked by `onComplete`.
@@ -61,7 +69,8 @@ Rules that bite:
 - macOS and Linux recover a terminated web process through one shared path (`renderer_owner::on_renderer_terminated`) by reloading the window's last committed document without `warm` and with `rendererRecovery=1`, under a per-window budget; parked warm windows are retired instead, and a WebKitGTK `terminated-by-api` teardown is never reloaded (`renderer_owner/reload.rs`, #942, #1138). Test harnesses must not reload a crashed WebView themselves; that would race the product's reload. Never read `WKWebView.URL` after termination (Wry unwraps a reset URL), and read every one-shot launch query parameter through `launchRequest` in `domain/window-launch-plan.ts` so a recovered document restores its session instead of replaying the launch. macOS and Linux (all webviews, with WebKitGTK's reason) log every loss as `Renderer(web-content-terminated)`; the startup qualifier never measures a sample containing it, records and replaces a recovered loss (one main document booted after it, by boot epoch rather than log order, reaches native-ready once), and fails an unrecovered loss or more than 3 recovered ones (ADR 0021).
 - Investigation-only scaffolding carries `Retire-when: #NNN closed`; when closing an issue, grep for its tag and delete or promote what it marks (CONTRIBUTING.md).
 - New-window address-bar focus likewise has fresh and warm paths: fresh children request it through their launch URL, while activated warm windows dispatch the request only after the requested navigation and native focus. Wait for the explorer's initial path before mounting `BreadcrumbAutocomplete`, because it captures that path only on mount.
-- Recycle Bin launch is platform-specific and belongs in `system::open_recycle_bin`: Windows uses `shell:RecycleBinFolder`, macOS opens `~/.Trash`, and Linux requests the native `trash:///` view through FileManager1. On definite service unavailability, launch a registered graphical file manager for the absolute Freedesktop `Trash/files` directory (#660, #672, #757).
+- The sidebar Recycle Bin opens the in-app `trash://` location (#863), served by the built-in fs provider `state/trash-provider.ts`, which lazily loads `state/trash-location.ts` (listing, restore, menu actions) to keep the startup bundle under its cap. Restore sends only opaque entry IDs; the native registry maps them to artifacts captured by that listing, so the renderer can never name a trash payload (ADR 0019). A trash view has no watcher: anything that changes the trash publishes `trash://` through `broadcastFileChange`, and a failed trash listing is not a history entry.
+- The external Recycle Bin launch (Trash view → "Open in System File Manager") is platform-specific and belongs in `system::open_recycle_bin`: Windows uses `shell:RecycleBinFolder`, macOS opens `~/.Trash`, and Linux requests the native `trash:///` view through FileManager1. On definite service unavailability, launch a registered graphical file manager for the absolute Freedesktop `Trash/files` directory (#660, #672, #757).
 - Do not use generic `gio open trash:///` or `xdg-open` on `Trash/files` as proof of a graphical Trash view: the former can dispatch to a handler that rejects the URI asynchronously, while the latter can open a terminal as the directory MIME default. Treat uncertain FileManager1 responses as errors rather than launching a second manager (#660, #672, #757).
 - Keep state machines and caches out of component-local scope (`<script module>` in a `.svelte` file is not a state layer). If it can't be unit-tested through an import, it will eventually be wrong unobserved (#444).
 - Rust test modules included with `#[path]` from production modules belong in `src-tauri/test_support/`, not Cargo's auto-discovered `src-tauri/tests/`. Keeping source-included modules under `tests/` makes `cargo clippy --all-targets` compile them again as standalone integration crates, where their `super`/`crate` imports are invalid.
@@ -79,6 +88,7 @@ Rules that bite:
 - The marquee band is five container-sized layers that only ever change `transform` (`domain/marquee-rect.ts`). Writing `width`/`height` on a band element resizes a composited layer every pointer frame, and WebKitGTK repaints it over every image tile beneath, so drag-selecting in a large picture folder trailed the pointer (#1051). Keep the layers container-sized (the client box, so scale stays about ≤ 1): a 1px base rasterises to a whole device pixel under fractional zoom and paints the band too small while DOM measurements still look right. Tests read the band through `getBoundingClientRect()`, which includes the transform, and sample pixels at 130% zoom.
 - Column visibility tests must assert mounted row cells as well as headers: they render independently. Require nonempty rows, then check each column before hiding, while hidden, and after restoring (#993).
 - Vertical preview docks retain the persisted preferred height, but their rendered wrapper caps it to the center stack's available height minus a usable file region. Keep that allocation in the shared page layout rather than component-local resize state so zoom and window resizing cannot feed back into saved settings (#699).
+- GNOME Wayland native drags consume keyboard events in Mutter. In-app copy intent comes from the source connection's first `wl_keyboard` Enter/Modifiers pair after the grab releases (`native_file_drag/wayland_intent.rs`), frozen by focus serial; querying GTK or tracking DOM keys during the grab is stale. Keep this channel independent of OS action negotiation and retain the result through source completion. Missing restoration cancels the in-app drop rather than guessing a destructive move (#1100).
 - Bookmarks have two drop surfaces: a specific `.bookmark-drop-target[data-path]` preserves bookmark identity so files transfer into it but folders pin, while empty `.quick-access` space remains a folder-pinning target. Resolve the row before its containing section so Linux native and macOS/Windows pointer drags agree (#675).
 - Bookmark feedback must state the action for the source kind: directory drags always say `Drop to pin`, including a targeted bookmark row; only files on a targeted row say `Move to bookmark`. Resolve that kind from in-memory drag state or the persisted cross-window fallback, matching native drop handling (#675).
 - Repository-folder Git badges are rendered directly by `FileIcon.svelte` in every directory view. Keep their compact corner geometry and their `--icon-git-badge` / `--icon-git-badge-glyph` theme overrides together when polishing the SVG (#601).
@@ -96,7 +106,7 @@ Rules that bite:
   diff: normalize the chosen commits to older → newer before requesting both
   the changed-file list and every per-file patch, including preview-pane routes.
 - Git-graph undo snapshots come from the Rust mutation command, stay session/repository-scoped in `state/git-graph-undo.ts`, and are re-verified by `git_undo` before the inverse. Merge/pull undo requires unchanged HEAD + a clean tree; tag deletion records the raw tag-object OID so annotated tags restore exactly (#513).
-- Git-graph tabs remount on activation; their snapshot cache must retain the supported 12-tab load fan-out so switching back can paint cached history instead of starting a new git-log request. External watcher changes evict the snapshot; valid cached remounts skip the redundant graph reload (#505).
+- Git-graph tabs remount on activation once evicted from the retained-tab set; their snapshot cache must retain the supported 12-tab load fan-out so switching back can paint cached history instead of starting a new git-log request. External watcher changes evict the snapshot; valid cached remounts skip the redundant graph reload (#505).
 - Git-graph fetch, pull, and remote-branch push share one client-ID network-operation lifecycle in `git-graph-refresh.ts`. Per ADR 0006, fetch enumerates `fetch --all`-eligible remotes (respecting `skipFetchAll`/`skipDefaultUpdate`) and updates each one atomically; ordinary remote errors are aggregated after later remotes run, while cancellation stops immediately between remotes. Only the unbounded network phase is killable: pull receives a per-invocation IPC phase channel before starting, then must deliver the transition from atomic fetch to local fast-forward (or fail closed before moving HEAD) so the banner switches to “Finishing Git pull…” and removes the now-ineffective Cancel control while preserving completed-pull undo; remote-delete cancellation reports that the remote may already have applied it (#528).
 - User-report images and videos are hosted as public Vercel Blobs before the relay creates
   the GitHub issue. Production therefore needs `BLOB_READ_WRITE_TOKEN` as well
@@ -111,6 +121,11 @@ Rules that bite:
   deploy the relay alongside the app. ADR 0029 governs copied-file authority,
   bounded reads, signature limits, public disclosure and upload cleanup/uncertainty.
   See `docs/lessons/1059-report-video-attachments.md`.
+  A deployed image-only relay can still reject videos accepted by the app (#1170).
+  Preserve the native/relay error message in attachment-failure feedback; the
+  error kind alone hides deployment and size-limit failures. A GET/405 health
+  check does not prove video support: use the deliberately invalid second
+  attachment probe in `docs/lessons/1170-report-relay-video-deployment.md`.
 - The root Vitest suite imports the report relay from `website/`; keep its
   `@vercel/blob` runtime and compatible Undici major in the root test-harness
   dev dependencies as well as the independently deployed website package.
@@ -223,6 +238,8 @@ The public report relay under `website/api/` uses `GITHUB_ISSUE_TOKEN` only for 
 **E2E tests assert outcomes**, not existence — a QuickOpen test verifies results appear for a query, not that the modal opened.
 
 Markdown preview content is inserted with `{@html}` in `PreviewPane.svelte`, so its element styles require `:global(...)`; keep heading and link colours on the existing theme variables and verify their computed colours in the browser.
+Fullscreen PDF horizontal arrows use `PdfPreview`'s page selection before zoomed pan or sibling navigation. Interactive-target guards belong in its shared key handler: excluding links only from window capture still lets their events bubble into the viewport handler (#1010).
+Settings browser tests must target named controls (for example `.color-theme-select`), not `select.first()`: async language-model settings insert earlier selects, changing the positional locator's identity between focus and assertion (#1010).
 Markdown frontmatter is parsed in `domain/markdown.ts` before Marked renders the document body. Only non-empty YAML maps made of scalar values or scalar arrays become the preview's properties panel; malformed, empty, or nested metadata falls back to ordinary Markdown rendering.
 
 The Linux FileChooser portal is selected through the user's
@@ -241,6 +258,21 @@ SCM archive actions preserve each repo-relative path under `.archive/` and add
 - Squash-merge conflicts in `map-feature.md` are usually both-append — resolve as a union, checking for line-level supersedes. (`lessons_learnt.md` is frozen; lessons are per-issue files now, which cannot conflict.)
 
 ## Debugging
+
+Windows Recycle Bin inventory must read `System.FileName` (`PKEY_FileName`)
+from the Shell item. `trash::list()` supplies a `SIGDN_PARENTRELATIVE` display
+name, which can omit registered extensions; joining it to the original parent
+silently changes the restore destination. Query the enumerated Recycle Bin
+namespace item: reopening its parsing path gives a filesystem item whose name
+is the physical `$R...` payload. Keep the real Recycle Bin regression
+covering ordinary, repeated and absent extensions (#1208, ADR 0019).
+
+Gate a platform-only Rust test module as a whole, including its imports and
+helpers. Gating only its test functions can leave unused imports under Windows
+`cargo clippy --all-targets -- -D warnings`. The child-env compiler regression
+imports the production source; `CHILD_ENV_TEST_TARGET=x86_64-pc-windows-msvc bunx
+vitest run tests/child-env-compile.test.ts` checks Windows metadata without a
+linker when that Rust standard-library target is installed (#1179).
 
 PTY output and exit notifications come from independent threads. Native tests
 that inspect the complete transcript must wait for the output channel to close
@@ -441,3 +473,23 @@ Recursive recovery must also check live demand before each individual root's
 native registration: checking only around a multi-root recovery lets a blocked
 first root hide cancellation of later roots. Preserve the captured demand
 identity so final release/reacquisition cannot revive an obsolete operation.
+
+Independent Windows native clipboard probes must await PowerShell asynchronously.
+The first shell/module launch can exhaust a ten-second subprocess budget; include
+startup in the bounded probe budget and preserve scalar code/signal/stdout/stderr
+on failure. Node synchronous spawn errors can self-reference through `error`,
+and WDIO's own-property JSON serialization then hides the original timeout.
+Keep these probes independent of application IPC and never retry a failed
+clipboard observation (#1188).
+
+Windows PowerShell 5.1 emits a `ConvertFrom-Json` array as one pipeline object.
+Assign it directly to `[string[]]`; wrapping it in `@(...)` nests the array and
+casts empty/multiple file paths into one invalid clipboard path (#1202).
+
+The #1194 smoke artifact reached the PowerShell-ready marker, then stalled in
+`Get-Clipboard -Format FileDropList` for the full 30-second budget. Read eager
+Windows file lists through `e2e-tauri/windows-clipboard-read.ps1` instead: it
+opens CF_HDROP directly, enumerates UTF-16 paths with DragQueryFileW and closes
+the clipboard in finally. Keep the independent native empty/single/multi-path
+oracle in `clipboard-cross-window.spec.ts`; mocked subprocess output cannot
+qualify the Win32 adapter. Do not extend the timeout or retry an observation.

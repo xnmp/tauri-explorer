@@ -13,6 +13,23 @@ use std::{
 
 pub(super) const TABLE: &str = "CREATE TABLE IF NOT EXISTS host_spools(handle TEXT PRIMARY KEY,package TEXT NOT NULL,owner TEXT NOT NULL,request_id TEXT NOT NULL,limit_bytes INTEGER NOT NULL,bytes INTEGER NOT NULL,status TEXT NOT NULL,process_status INTEGER,UNIQUE(owner,request_id));";
 
+/// `AppError::Service` code for a process whose explicit operation custody
+/// cannot be granted. Its message is user-facing: it names the reason.
+pub(crate) const CUSTODY_REFUSED: &str = "process_custody_refused";
+
+fn custody_refused(message: &str) -> crate::error::AppError {
+    crate::error::AppError::Service {
+        code: CUSTODY_REFUSED.into(),
+        message: message.into(),
+    }
+}
+const OPERATION_UNKNOWN: &str =
+    "The AI operation this process was started for is not known to Tauri Explorer";
+const OPERATION_INACTIVE: &str =
+    "The AI operation this process was started for has already finished or was stopped";
+const OPERATION_OTHER_OWNER: &str =
+    "Only the plugin instance running this AI operation can start processes for it";
+
 pub(super) fn initialize(conn: &rusqlite::Connection) -> Result<()> {
     conn.execute_batch(TABLE).map_err(sql)?;
     let mut q = conn
@@ -378,7 +395,10 @@ impl Store {
     }
 
     /// Explicit custody and its reservation are one decision. A custody-less
-    /// call is safe only when at most one admission can own its original bytes.
+    /// run is bound to no operation: custody is never inferred, because
+    /// settled Unknown history stays unreleased by design and live operations
+    /// run concurrently (#1172). Refusals of explicit custody carry
+    /// `CUSTODY_REFUSED` with a user-facing reason.
     pub fn reserve_pinned_host_spool_with_custody(
         &self,
         owner: &PackageGeneration,
@@ -390,35 +410,6 @@ impl Store {
         if !identity(request_id) || limit > MAX_SPOOL {
             return Err(reject("invalid host output reservation"));
         }
-        let admission = custody
-            .map(|(consumer, operation)| {
-                let a = self
-                    .get(consumer, operation)?
-                    .ok_or_else(|| reject("host process admission disappeared"))?;
-                if a.provider.package_id != owner.package_id
-                    || a.provider != *owner && !self.original_writer_active(consumer, operation)?
-                {
-                    return Err(reject(
-                        "host process requires the original provider or an unpaid recovery permit",
-                    ));
-                }
-                if !matches!(
-                    a.phase,
-                    AdmissionPhase::Forwarding | AdmissionPhase::Accepted
-                ) || self.execution_released(consumer, operation)?
-                {
-                    if self.original_writer_active(consumer, operation)?
-                        && a.phase != AdmissionPhase::Released
-                    {
-                        return Ok(a);
-                    }
-                    return Err(reject(
-                        "host process requires an active forwarded admission",
-                    ));
-                }
-                Ok(a)
-            })
-            .transpose()?;
         let mut random = [0u8; 24];
         getrandom::fill(&mut random).map_err(|_| reject("host output identity unavailable"))?;
         let handle = hex::encode(random);
@@ -428,34 +419,26 @@ impl Store {
         let writer = self.pin_host_spool(&handle)?;
         self.transaction(|tx| {
             Self::generation_admitted(tx,owner)?;
-            let candidates = if let Some(a) = &admission {
-                let current = Self::record(tx,&a.consumer.package_id,&a.operation_id)?.ok_or_else(|| reject("host process admission disappeared"))?;
-                let released: bool = tx.query_row("SELECT exec_released FROM operations WHERE consumer=?1 AND operation=?2", params![a.consumer.package_id,a.operation_id], |r| r.get(0)).map_err(sql)?;
-                if current != *a || released && !self.original_writer_active(&a.consumer.package_id, &a.operation_id)? { return Err(reject("host process admission changed before execution")); }
-                if current.provider != *owner && !self.original_writer_active(&a.consumer.package_id, &a.operation_id)? {
-                    return Err(reject("host process requires the original execution generation or an unpaid recovery permit"));
+            // Custody is decided from one read inside this transaction, so a
+            // concurrent Forwarding -> Accepted step cannot refuse a live run.
+            if let Some((consumer, operation)) = custody {
+                let current = Self::record(tx, consumer, operation)?.ok_or_else(|| custody_refused(OPERATION_UNKNOWN))?;
+                let released: bool = tx.query_row("SELECT exec_released FROM operations WHERE consumer=?1 AND operation=?2", params![consumer, operation], |r| r.get(0)).map_err(sql)?;
+                // An unpaid recovery permit may act for a fenced admission or
+                // a compatible replacement of its original provider.
+                let permit = self.original_writer_active(consumer, operation)?;
+                if current.provider.package_id != owner.package_id || current.provider != *owner && !permit {
+                    return Err(custody_refused(OPERATION_OTHER_OWNER));
                 }
-                vec![(a.consumer.package_id.clone(), a.operation_id.clone())]
-            } else {
-                let mut q = tx.prepare("SELECT consumer,operation FROM operations WHERE json_extract(admission,'$.provider.packageId')=?1 AND phase!='released'").map_err(sql)?;
-                let candidates = q.query_map([&owner.package_id], |r| Ok((r.get::<_,String>(0)?,r.get::<_,String>(1)?))).map_err(sql)?.collect::<std::result::Result<Vec<_>,_>>().map_err(sql)?;
-                if candidates.len() > 1 { return Err(reject("host output custody is ambiguous; supply consumer and operation")); }
-                candidates
-            };
-            for (consumer, operation) in &candidates {
-                let a = Self::record(tx, consumer, operation)?.ok_or_else(|| reject("host process admission disappeared"))?;
-                let released: bool = tx.query_row("SELECT exec_released FROM operations WHERE consumer=?1 AND operation=?2",params![consumer,operation],|r|r.get(0)).map_err(sql)?;
-                if Self::provider_receipt_at(tx,&a)?.is_some_and(|receipt| matches!(receipt["execution"]["state"].as_str(),Some("failed"|"cancelled"))) {
-                    return Err(reject("host process cannot restart a terminal provider execution"));
-                }
-
-                if (released || a.provider != *owner || !matches!(a.phase, AdmissionPhase::Forwarding | AdmissionPhase::Accepted)) && !self.original_writer_active(consumer, operation)? {
-                    return Err(reject("host process requires an active original execution or an unpaid recovery permit"));
+                let active = matches!(current.phase, AdmissionPhase::Forwarding | AdmissionPhase::Accepted) && !released;
+                let terminal_receipt = Self::provider_receipt_at(tx, &current)?.is_some_and(|receipt| matches!(receipt["execution"]["state"].as_str(), Some("failed"|"cancelled")));
+                if current.phase == AdmissionPhase::Released || !active && !permit || terminal_receipt {
+                    return Err(custody_refused(OPERATION_INACTIVE));
                 }
             }
             self.quota(tx,&owner.package_id,limit,false)?;
             tx.execute("INSERT INTO host_spools(handle,package,owner,request_id,limit_bytes,bytes,status,custody_recorded,consumer,operation) VALUES(?1,?2,?3,?4,?5,?5,'reserved',1,?6,?7)",params![handle,owner.package_id,encode(owner)?,request_id,limit as i64,custody.map(|c| c.0),custody.map(|c| c.1)]).map_err(sql)?;
-            for (consumer, operation) in candidates {
+            if let Some((consumer, operation)) = custody {
                 tx.execute("INSERT INTO host_spool_admissions VALUES(?1,?2,?3)", params![handle,consumer,operation]).map_err(sql)?;
             }
             Ok(())
@@ -472,6 +455,25 @@ impl Store {
             return Err(cause);
         }
         Ok((handle, path, writer))
+    }
+
+    /// Ledgers written by hosts that inferred custody (before #1172) link
+    /// custody-less spools to admissions. Tests recreate such rows here.
+    #[cfg(test)]
+    pub fn link_legacy_inferred_custody(
+        &self,
+        handle: &str,
+        consumer: &str,
+        operation: &str,
+    ) -> Result<()> {
+        self.transaction(|tx| {
+            tx.execute(
+                "INSERT INTO host_spool_admissions VALUES(?1,?2,?3)",
+                params![handle, consumer, operation],
+            )
+            .map_err(sql)?;
+            Ok(())
+        })
     }
 
     #[cfg(test)]
@@ -2115,26 +2117,7 @@ mod tests {
         }
     }
     #[test]
-    fn ambiguous_unbound_custody_is_refused_before_reserving_output() {
-        let (_root, store) = store();
-        forwarded(&store, "fixture.first", "op-first");
-        forwarded(&store, "fixture.second", "op-second");
-        assert!(
-            store
-                .reserve_host_spool(&owner(), "host:ambiguous", 1024)
-                .is_err(),
-            "ambiguous unbound process admitted without an owner"
-        );
-        assert_eq!(charged(&store), 0);
-        assert_eq!(
-            fs::read_dir(store.root.join("host-spools"))
-                .unwrap()
-                .count(),
-            0
-        );
-    }
-    #[test]
-    fn compatible_replacement_unbound_reply_stays_tied_to_fenced_admission() {
+    fn compatible_replacement_repair_reply_stays_tied_to_fenced_admission() {
         let (_root, store) = store();
         let consumer = "fixture.replacement-custody";
         let operation = "op-replacement";
@@ -2153,16 +2136,21 @@ mod tests {
         };
         let admission = store.get(consumer, operation).unwrap().unwrap();
         let _repair = store.output_recovery_guard(&admission).unwrap();
+        // The recovery permit admits the replacement's explicit custody for
+        // the fenced operation; it never needs to be inferred.
         let (handle, path) = store
-            .reserve_host_spool(&replacement, "host:unpaid-repair", 1024)
+            .reserve_host_spool_with_custody(
+                &replacement,
+                "host:unpaid-repair",
+                1024,
+                Some((consumer, operation)),
+            )
             .unwrap();
         fs::write(path.join("stdout"), b"unpaid original recovery").unwrap();
         fs::write(path.join("stderr"), []).unwrap();
         store.seal_host_spool(&replacement, &handle, 0).unwrap();
         assert!(
-            store
-                .has_operation_unbound_host_output(consumer, operation)
-                .unwrap(),
+            store.has_bound_host_output(consumer, operation).unwrap(),
             "replacement reply escaped original admission"
         );
         let reply = store
@@ -2414,10 +2402,13 @@ mod tests {
         assert!(!path.exists());
     }
     #[test]
-    fn removal_releases_unbound_spools_reachable_from_admissions() {
+    fn removal_releases_legacy_inferred_spools_reachable_from_admissions() {
         let (_root, store) = store();
         forwarded(&store, "fixture.legacy-consumer", "op-legacy");
-        let (_, path) = complete(&store, "host:unbound-removal");
+        let (handle, path) = complete(&store, "host:unbound-removal");
+        store
+            .link_legacy_inferred_custody(&handle, "fixture.legacy-consumer", "op-legacy")
+            .unwrap();
         store
             .abandon_package_outputs("fixture.legacy-consumer")
             .unwrap();
@@ -2430,7 +2421,7 @@ mod tests {
         assert!(!path.exists());
     }
     #[test]
-    fn removal_collects_unbound_reply_from_restarted_same_digest_provider() {
+    fn removal_collects_repair_reply_from_restarted_same_digest_provider() {
         let (_root, store) = store();
         forwarded(&store, "fixture.reincarnated-consumer", "op-reincarnated");
         let restarted = PackageGeneration {
@@ -2443,7 +2434,12 @@ mod tests {
             .map(|a| store.output_recovery_guard(a).unwrap())
             .collect();
         let (handle, path) = store
-            .reserve_host_spool(&restarted, "host:reincarnated", 1024)
+            .reserve_host_spool_with_custody(
+                &restarted,
+                "host:reincarnated",
+                1024,
+                Some(("fixture.reincarnated-consumer", "op-reincarnated")),
+            )
             .unwrap();
         fs::write(path.join("stdout"), b"restarted provider original").unwrap();
         fs::write(path.join("stderr"), []).unwrap();
@@ -2483,13 +2479,18 @@ mod tests {
         assert!(!path.exists());
     }
     #[test]
-    fn rejected_unbound_reply_does_not_leak_after_settlement() {
+    fn rejected_operation_reply_does_not_leak_after_settlement() {
         let (_root, store) = store();
         let consumer = "fixture.nonzero-consumer";
         let operation = "op-nonzero";
         forwarded(&store, consumer, operation);
         let (handle, path) = store
-            .reserve_host_spool(&owner(), "host:nonzero", 1024)
+            .reserve_host_spool_with_custody(
+                &owner(),
+                "host:nonzero",
+                1024,
+                Some((consumer, operation)),
+            )
             .unwrap();
         fs::write(path.join("stdout"), b"nonzero CLI output").unwrap();
         fs::write(path.join("stderr"), b"diagnostic").unwrap();
@@ -2505,7 +2506,7 @@ mod tests {
         assert_eq!(
             charged(&store),
             0,
-            "settled nonzero unbound reply leaked quota"
+            "settled nonzero operation reply leaked quota"
         );
         assert!(!path.exists());
     }
@@ -2945,5 +2946,162 @@ mod tests {
         store.sweep_host_spools(|_| false).unwrap();
         assert!(store.has_unbound_host_output(&owner()).unwrap());
         assert_eq!(charged(&store), 34);
+    }
+
+    /// The state a cancelled-after-dispatch test generation leaves behind:
+    /// Unknown, Terminal, execution released and dismissed. History is
+    /// retained by design; it is not live work.
+    fn settled_unknown(store: &Store, consumer: &str, operation: &str) {
+        forwarded(store, consumer, operation);
+        let receipt = json!({"version":1,"operationId":operation,"requestFingerprint":"d".repeat(64),"provider":{"packageId":owner().package_id,"serviceId":"image-generation","major":1},"revision":3,"execution":{"state":"unknown","error":{"code":"cancelled_after_dispatch","message":"Codex image turn was cancelled after it started; it will not be replayed","correlationId":null}},"delivery":{"state":"none"}});
+        store
+            .observe_receipt(&owner(), consumer, operation, 3, receipt)
+            .unwrap();
+        if store.get(consumer, operation).unwrap().unwrap().phase != AdmissionPhase::Terminal {
+            store
+                .terminal(&owner(), consumer, operation, None, true)
+                .unwrap();
+        }
+        store
+            .auto_settle_operation(consumer, operation, true)
+            .unwrap();
+        let settled = store.get(consumer, operation).unwrap().unwrap();
+        assert_eq!(settled.phase, AdmissionPhase::Terminal);
+        assert!(store.execution_released(consumer, operation).unwrap());
+    }
+    fn admissions_of(store: &Store, handle: &str) -> Vec<(String, String)> {
+        let conn = store.connect().unwrap();
+        let mut query = conn
+            .prepare("SELECT consumer,operation FROM host_spool_admissions WHERE handle=?1")
+            .unwrap();
+        query
+            .query_map([handle], |r| Ok((r.get(0)?, r.get(1)?)))
+            .unwrap()
+            .collect::<std::result::Result<Vec<_>, _>>()
+            .unwrap()
+    }
+    #[test]
+    fn settled_history_does_not_capture_a_custody_less_process() {
+        let (_root, store) = store();
+        settled_unknown(&store, "fixture.settled-test", "op-settled");
+        let (handle, _path) = store
+            .reserve_host_spool(&owner(), "host:login-status", 1024)
+            .expect("settled Unknown history refused an unrelated process");
+        assert!(admissions_of(&store, &handle).is_empty());
+    }
+    #[test]
+    fn custody_less_process_is_never_bound_to_live_operations() {
+        let (_root, store) = store();
+        settled_unknown(&store, "fixture.settled-test", "op-settled");
+        forwarded(&store, "fixture.live", "op-live");
+        forwarded(&store, "fixture.other-live", "op-other-live");
+        let (handle, _path) = store
+            .reserve_host_spool(&owner(), "host:login-status", 1024)
+            .expect("live operations made a custody-less process ambiguous");
+        assert!(admissions_of(&store, &handle).is_empty());
+    }
+    #[test]
+    fn explicit_custody_binds_only_its_live_operation() {
+        let (_root, store) = store();
+        settled_unknown(&store, "fixture.settled-test", "op-settled");
+        forwarded(&store, "fixture.live", "op-live");
+        forwarded(&store, "fixture.other-live", "op-other-live");
+        let (handle, _path) = store
+            .reserve_host_spool_with_custody(
+                &owner(),
+                "host:image-turn",
+                1024,
+                Some(("fixture.live", "op-live")),
+            )
+            .unwrap();
+        assert_eq!(
+            admissions_of(&store, &handle),
+            vec![("fixture.live".to_owned(), "op-live".to_owned())]
+        );
+    }
+    #[test]
+    fn explicit_custody_admits_a_forwarding_operation_before_its_start_reply() {
+        let (_root, store) = store();
+        let caller = PackageGeneration {
+            package_id: "fixture.forwarding".into(),
+            digest: "c".repeat(64),
+            incarnation: 7,
+        };
+        store
+            .reserve(Admission {
+                consumer: caller.clone(),
+                provider: owner(),
+                target: ServiceTarget {
+                    package_id: owner().package_id,
+                    service_id: "image-generation".into(),
+                    major: 1,
+                },
+                operation_id: "op-forwarding".into(),
+                fingerprint: "d".repeat(64),
+                phase: AdmissionPhase::Reserved,
+                inputs: vec![],
+                output: None,
+                needs_attention: false,
+                disposition: None,
+                transfer_receipt: None,
+            })
+            .unwrap();
+        store.claim_forwarding(&caller, "op-forwarding").unwrap();
+        // The provider's worker can run before the host reconciles the start
+        // reply that moves the admission to Accepted.
+        let (handle, _path) = store
+            .reserve_host_spool_with_custody(
+                &owner(),
+                "host:early-login-status",
+                1024,
+                Some(("fixture.forwarding", "op-forwarding")),
+            )
+            .unwrap();
+        store
+            .accepted(&owner(), "fixture.forwarding", "op-forwarding")
+            .unwrap();
+        assert_eq!(
+            admissions_of(&store, &handle),
+            vec![("fixture.forwarding".to_owned(), "op-forwarding".to_owned())]
+        );
+    }
+    #[test]
+    fn explicit_custody_from_another_provider_generation_is_refused() {
+        let (_root, store) = store();
+        forwarded(&store, "fixture.live", "op-live");
+        let restarted = PackageGeneration {
+            incarnation: owner().incarnation + 1,
+            ..owner()
+        };
+        let refusal = store
+            .reserve_host_spool_with_custody(
+                &restarted,
+                "host:restarted",
+                1024,
+                Some(("fixture.live", "op-live")),
+            )
+            .expect_err("a new provider generation started paid work without a permit");
+        assert!(
+            matches!(&refusal, crate::error::AppError::Service { code, .. } if code == CUSTODY_REFUSED)
+        );
+        assert_eq!(charged(&store), 0);
+    }
+    #[test]
+    fn explicit_custody_for_settled_history_is_refused_with_its_reason() {
+        let (_root, store) = store();
+        settled_unknown(&store, "fixture.settled-test", "op-settled");
+        let refusal = store
+            .reserve_host_spool_with_custody(
+                &owner(),
+                "host:late-turn",
+                1024,
+                Some(("fixture.settled-test", "op-settled")),
+            )
+            .expect_err("settled operation admitted new process work");
+        assert!(
+            matches!(&refusal, crate::error::AppError::Service { code, .. } if code == CUSTODY_REFUSED),
+            "custody refusal lost its reason: {refusal}"
+        );
+        assert_eq!(charged(&store), 0);
     }
 }

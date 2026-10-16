@@ -164,9 +164,9 @@ describe("native window transfer ownership", function () {
     await browser.switchToWindow(mainHandle);
     await navigateTo(sourceDirectory);
     await browser.keys(["Control", "t"]);
-    await $(".explorer-pane .file-list").waitForExist();
+    await $(".pane-tree:not(.retained) .explorer-pane .file-list").waitForExist();
     await browser.keys(["Control", "m"]);
-    await browser.waitUntil(async () => await browser.execute(() => document.querySelectorAll(".explorer-pane").length) >= 2);
+    await browser.waitUntil(async () => await browser.execute(() => document.querySelectorAll(".pane-tree:not(.retained) .explorer-pane").length) >= 2);
     await navigateTo(destinationDirectory);
     const before = await tabCount();
     const moved = await operation("tear-off") as { moved: boolean; target: string };
@@ -175,7 +175,7 @@ describe("native window transfer ownership", function () {
       { timeoutMsg: "transferred split tab did not leave its source strip" });
     await switchToLabel(moved.target);
     await browser.waitUntil(async () => {
-      const names = await domTexts(".explorer-pane .entry-name");
+      const names = await domTexts(".pane-tree:not(.retained) .explorer-pane .entry-name");
       return names.includes("source.txt") && names.includes("destination.txt");
     }, { timeoutMsg: "the adopted split tab lost a pane or its directory" });
     fs.mkdirSync("screenshots/refactor/repo-health-cleanup", { recursive: true });
@@ -194,13 +194,13 @@ describe("native window transfer ownership", function () {
     for (let index = 1; index < largeLayoutDirectories.length; index += 1) {
       await browser.keys(["Control", "m"]);
       await browser.waitUntil(async () =>
-        await browser.execute(() => document.querySelectorAll(".explorer-pane").length) === index + 1,
+        await browser.execute(() => document.querySelectorAll(".pane-tree:not(.retained) .explorer-pane").length) === index + 1,
       { timeoutMsg: `split pane ${index} did not appear` });
       await navigateTo(largeLayoutDirectories[index]);
       await listingHas(`pane-${index}.txt`);
     }
 
-    const panes = await browser.execute(() => [...document.querySelectorAll(".explorer-pane")].map((pane) => ({
+    const panes = await browser.execute(() => [...document.querySelectorAll(".pane-tree:not(.retained) .explorer-pane")].map((pane) => ({
       active: pane.classList.contains("active"),
       entries: [...pane.querySelectorAll(".entry-name")].map((entry) => entry.textContent),
     })));
@@ -232,7 +232,7 @@ describe("native window transfer ownership", function () {
       { timeout: 20_000, timeoutMsg: "focused restored directory did not become usable" });
 
       await browser.waitUntil(async () => {
-        const panes = await browser.execute(() => [...document.querySelectorAll(".explorer-pane")].map((pane) => ({
+        const panes = await browser.execute(() => [...document.querySelectorAll(".pane-tree:not(.retained) .explorer-pane")].map((pane) => ({
           active: pane.classList.contains("active"),
           entries: [...pane.querySelectorAll(".entry-name")].map((entry) => entry.textContent),
         })));

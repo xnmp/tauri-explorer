@@ -129,11 +129,13 @@ import { openFile } from "$lib/api/open";
     fullscreen.resetZoom();
   }
 
-  /** Currently selected file from the active explorer */
+  /** Currently selected file from the active explorer. A marquee drag only
+   *  updates it when the drag ends: loading every file the band crosses
+   *  stalled the drag (#1169). */
   const selectedFile = $derived.by((): FileEntry | null => {
     const explorer = windowTabsManager.getActiveExplorer();
     if (!explorer) return null;
-    const selected = explorer.getSelectedEntries();
+    const selected = explorer.getSettledSelectedEntries();
     return selected.length === 1 ? selected[0] : null;
   });
 

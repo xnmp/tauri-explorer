@@ -1,8 +1,11 @@
 #!/usr/bin/env node
 // e2e-affected.mjs — select the E2E specs affected by a diff.
 //
-// Usage:  node scripts/e2e-affected.mjs [--strict] [base] [head]
+// Usage:  node scripts/e2e-affected.mjs [--strict] [--json] [--max-files N] [base] [head]
 //   base defaults to "origin/dev", head to "HEAD".
+//   --json: print a test-selection.mjs Selection (mode, reason, items) instead.
+//   --max-files N (CI): also apply the escalations every CI tier shares —
+//   more than N changed files, an unusual path or an unknown file type -> ALL.
 //   Diff is `git diff --name-only --no-renames <base>...<head>`.
 //   --strict (CI): any src/ change runs everything. Keyword clusters miss specs
 //   that exercise a component incidentally (#1131 review), so they only advise
@@ -32,17 +35,18 @@
 //   5. Files the browser suite never executes -> ignored: src-tauri/ (the
 //      suite runs against mock-invoke, never Rust; e2e-tauri covers the real
 //      backend), tests/, evidence/, docs, screenshots, scripts, .claude,
-//      e2e-tauri, .github, packaging, e2e-load (its own config), Nix and
-//      editor files.
+//      e2e-tauri, .github, packaging, e2e-load and e2e-sweep (their own
+//      configs), Nix and editor files.
 //   6. Changes to CI selection itself (ci.yml, e2e-shards.mjs,
-//      e2e-affected.mjs, map-feature.md) -> ALL.
+//      e2e-affected.mjs, test-selection.mjs, map-feature.md) or the
+//      test-result cache wiring (turbo.json, test-cache.mjs, ci-test-e2e.sh) -> ALL.
 //   7. Anything else (an unknown top-level file)  -> ALL.
 //   If map-feature.md is missing -> ALL (+ warning).
 
 import { readFileSync, existsSync, readdirSync } from "node:fs";
-import { execSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { dirname, join, posix } from "node:path";
+import { allOf, gitChangedFiles, parseArgs, sharedEscalation } from "./test-selection.mjs";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const MAP_PATH = join(ROOT, "docs/code-map/map-feature.md");
@@ -241,8 +245,10 @@ export function classify(changed, map, specs, devServerInputs = new Set(), { str
     f.startsWith(".github/") ||
     f.startsWith("packaging/") ||
     f.startsWith("e2e-load/") ||
+    f.startsWith("e2e-sweep/") ||
     f.startsWith(".vscode/") ||
     f === "playwright.load.config.ts" ||
+    f === "playwright.sweep.config.ts" ||
     f === "PKGBUILD" ||
     /^flake\.(nix|lock)$/.test(f) ||
     /(^|\/)(README|CHANGELOG)\.md$/i.test(f) ||
@@ -295,7 +301,12 @@ const SELECTION_INPUTS = new Set([
   ".github/workflows/ci.yml",
   "scripts/e2e-shards.mjs",
   "scripts/e2e-affected.mjs",
+  "scripts/test-selection.mjs",
   "docs/code-map/map-feature.md",
+  // How the target runs through the test-result cache (#1176).
+  "turbo.json",
+  "scripts/test-cache.mjs",
+  "scripts/ci-test-e2e.sh",
 ]);
 
 /**
@@ -327,34 +338,42 @@ export function devServerScripts(root = ROOT) {
 // --- main ----------------------------------------------------------------
 
 function main() {
-  const args = process.argv.slice(2);
-  const strict = args.includes("--strict");
-  const [base = "origin/dev", head = "HEAD"] = args.filter((a) => a !== "--strict");
+  const { base, head, maxFiles, flags } = parseArgs(process.argv.slice(2));
+  const strict = flags.has("--strict");
+  // --max-files (CI) also applies the escalations every tier shares (#1175).
+  const shared = process.argv.includes("--max-files");
   // head: the merge hook passes the feature branch so the diff is
   // dev...<branch> while checked out on dev.
+  /** @param {{ mode: "all" | "selected" | "none", reason: string, items: string[] }} result */
+  const emit = (result) => {
+    warn(`selection: ${result.mode}: ${result.reason}`);
+    if (flags.has("--json")) process.stdout.write(JSON.stringify(result) + "\n");
+    else if (result.mode === "all") process.stdout.write("ALL\n");
+    else process.stdout.write(result.items.join("\n") + (result.items.length ? "\n" : ""));
+  };
   let changed;
   try {
-    // --no-renames: a rename reports both paths, so the old path's specs run too.
-    const out = execSync(`git diff --name-only --no-renames ${base}...${head}`, {
-      cwd: ROOT,
-      encoding: "utf8",
-    });
-    changed = out.split("\n").map((s) => s.trim()).filter(Boolean);
+    changed = gitChangedFiles(base, head, ROOT);
   } catch (e) {
     warn(`git diff failed for ${base}...${head}: ${e instanceof Error ? e.message : String(e)}`);
-    warn("falling back to ALL");
-    process.stdout.write("ALL\n");
+    emit({ mode: "all", reason: "selection failed: git diff", items: [] });
     return;
   }
 
   if (changed.length === 0) {
-    warn(`no changes for ${base}...${head}; nothing affected`);
-    return; // empty output
+    emit({ mode: "none", reason: `no changes for ${base}...${head}`, items: [] });
+    return;
+  }
+
+  const escalation = shared ? sharedEscalation(changed, maxFiles) : null;
+  if (escalation) {
+    emit(allOf([escalation]));
+    return;
   }
 
   if (!existsSync(MAP_PATH)) {
-    warn(`missing ${MAP_PATH}; cannot map src changes — falling back to ALL`);
-    process.stdout.write("ALL\n");
+    warn(`missing ${MAP_PATH}; cannot map src changes`);
+    emit({ mode: "all", reason: "missing docs/code-map/map-feature.md", items: [] });
     return;
   }
 
@@ -365,14 +384,14 @@ function main() {
   for (const w of warnings) warn(w);
 
   if (all) {
-    warn(`selection: ALL (${warnings.length} escalation reason(s) above)`);
-    process.stdout.write("ALL\n");
+    emit(allOf(warnings));
     return;
   }
 
   const list = [...selected].sort();
-  warn(`selection: ${list.length} spec(s) from ${changed.length} changed file(s)`);
-  process.stdout.write(list.join("\n") + (list.length ? "\n" : ""));
+  emit(list.length
+    ? { mode: "selected", reason: `${list.length} spec(s) from ${changed.length} changed file(s)`, items: list }
+    : { mode: "none", reason: `none of ${changed.length} changed file(s) reaches a browser spec`, items: [] });
 }
 
 // Run only when invoked directly (not when imported by tests).

@@ -26,6 +26,7 @@ mod gemini;
 pub mod git;
 pub mod git_actions;
 mod git_avatar;
+pub mod git_branch_status;
 mod git_common;
 pub mod git_log;
 #[cfg(all(target_os = "linux", feature = "e2e-renderer-recovery"))]
@@ -43,6 +44,12 @@ mod native_file_drag;
 #[cfg(unix)]
 mod process_supervisor;
 mod recovery_actor;
+
+/// Dispatch the private Wayland clipboard owner (#927) before initializing the
+/// application.
+pub fn run_clipboard_owner() -> Option<i32> {
+    clipboard::run_owner_mode()
+}
 
 /// Dispatch the private process anchor before initializing the application.
 pub fn run_process_supervisor() -> Option<i32> {
@@ -336,6 +343,8 @@ pub fn run_with_process_entry(launch_dir: Option<String>, t_process_entry: std::
             log_startup_progress,
             // Trash operations
             file_mutation::delete_entries,
+            file_mutation::restore_trash_items,
+            files::trash_inventory::list_trash,
             files::recovery::commands::file_recovery_list,
             files::recovery::commands::file_recovery_retire_eligible,
             files::recovery::commands::file_recovery_subscribe,
@@ -369,6 +378,7 @@ pub fn run_with_process_entry(launch_dir: Option<String>, t_process_entry: std::
             files::media_preview::e2e_video_preview_stats,
             files::media_preview::begin_video_preview,
             files::media_preview::prepare_video_preview,
+            files::media_preview::prepare_video_audio_preview,
             files::media_preview::release_video_preview,
             files::video_info::probe_video_codec,
             files::video_info::save_file_copy,
@@ -485,6 +495,7 @@ pub fn run_with_process_entry(launch_dir: Option<String>, t_process_entry: std::
             git_actions::git_pull,
             git_actions::git_branch_behind_upstream,
             git_log::git_branch_authors,
+            git_branch_status::git_branch_statuses,
             github::git_open_prs,
             github::git_issues_url,
             github::git_pr_action,

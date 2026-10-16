@@ -33,7 +33,7 @@ for (const mode of VIEW_MODES) {
 
     await page.locator(".tab").nth(1).click();
     await switchViewMode(page, mode);
-    await expect(page.locator(`.${mode}-view`)).toBeVisible();
+    await expect(page.locator(`.${mode}-view:visible`)).toBeVisible();
     await expect(page.locator('.entry-item[data-path="/home/user/Documents/report.pdf"]')).toBeVisible();
     await page.locator('.entry-item[data-path="/home/user/Documents/project"]').dblclick();
     await expect(page.locator('.entry-item[data-path="/home/user/Documents/project/package.json"]')).toBeVisible();
@@ -81,7 +81,8 @@ for (const mode of VIEW_MODES) {
     await waitForEntries(page);
     await page.locator(".tab").nth(1).click();
 
-    const panes = page.locator(".explorer-pane");
+    // The home tab stays mounted but hidden (#1173).
+    const panes = page.locator(".explorer-pane:visible");
     await expect(panes).toHaveCount(2);
     await expect(panes.first().locator('.entry-item[data-path="/home/user/Documents/report.pdf"]')).toBeVisible();
     await expect(panes.nth(1).locator('.entry-item[data-path="/home/user/Downloads/archive.zip"]')).toBeVisible();

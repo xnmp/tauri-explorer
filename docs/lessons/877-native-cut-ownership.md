@@ -40,7 +40,8 @@ its own write still owns the clipboard, through the `owner_token` seam from
   - An identical external Copy can land after we publish but before `wl-copy`
     handles `cancelled`. Until the child exits, `owner_token` still vouches
     for it.
-  - Known residual (found in review, not fixed): the read-back proves
+  - Known residual (found in review; fixed by #927, see
+    [the per-write identity lesson](927-wayland-cut-per-write-identity.md)): the read-back proves
     publication by content, not by source. It needs a `wl-copy` that stays
     alive but never publishes (wedged), and byte-identical data that another
     client offers after the baseline read and within the 2 s poll window.

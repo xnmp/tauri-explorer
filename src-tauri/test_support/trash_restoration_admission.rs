@@ -307,7 +307,7 @@ fn partial_parent_creation_failure_preserves_refresh_effects_and_original_payloa
     let mut f = Fixture::new();
     let request = f.trash("parent/blocked/deep/item");
     fs::remove_dir_all(f.root.path().join("parent")).unwrap();
-    let prepared = Prepared::new(request.clone()).unwrap();
+    let prepared = Prepared::new(request.clone(), true).unwrap();
     let mut parents = Some(prepared.parents);
     let outcome = tauri::async_runtime::block_on(batch::run_with_effects(
         BatchPlan::new(vec![request.path.clone()]).unwrap(),
@@ -368,4 +368,21 @@ fn an_alias_retargeted_between_resolution_and_claim_capture_cannot_restore() {
     assert!(!f.root.path().join("physical/item").exists());
     assert!(!foreign.join("item").exists());
     assert!(artifact_paths(&request).0.exists());
+}
+
+#[test]
+fn trash_view_preparation_refuses_a_missing_parent_instead_of_creating_it() {
+    let mut f = Fixture::new();
+    let request = f.trash("gone/item");
+    let target = PathBuf::from(&request.path);
+    let parent = target.parent().unwrap().to_owned();
+    fs::remove_dir(&parent).unwrap();
+    let (payload, _) = artifact_paths(&request);
+    let (mut plan, _claims) = prepare_existing_parents(std::slice::from_ref(&request)).unwrap();
+    let error = plan
+        .execute_next(&request.path, &DirectoryEffects::default())
+        .unwrap_err();
+    assert!(error.to_string().contains("no longer exists"), "{error}");
+    assert!(!parent.exists(), "the missing folder is not recreated");
+    assert!(payload.exists());
 }

@@ -31,6 +31,8 @@
   import { clickSelectionEffect } from "$lib/domain/workspace-selection";
 
   import type { FileEntry } from "$lib/domain/file";
+  import { isTrashPath } from "$lib/domain/virtual-path";
+  import { explainTrashedOpen } from "$lib/state/trash-provider";
 
   interface Props {
     explorer: ExplorerInstance;
@@ -151,6 +153,13 @@
   // Marquee selection composable
   const marquee = useMarqueeSelection();
 
+  // Selection consumers that load content (preview) wait for the drag to end.
+  $effect(() => {
+    if (!marquee.isDragging) return;
+    explorer.beginSelectionGesture();
+    return () => explorer.endSelectionGesture();
+  });
+
   // Type-ahead selection composable
   const typeAhead = useTypeAhead(
     () => explorer.displayEntries,
@@ -247,6 +256,11 @@
   }
 
   async function handleDoubleClick(entry: FileEntry): Promise<void> {
+    // Trashed items are not openable in place; Restore brings them back (#863).
+    if (entry.trash) {
+      explainTrashedOpen(entry);
+      return;
+    }
     // Follow Windows .lnk shortcuts to their target (no-op for other entries).
     const target = await resolveActivation(entry);
     if (target.kind === "directory") {
@@ -269,6 +283,8 @@
   // ===================
   // Background interaction handlers
   // ===================
+
+  const inTrash = $derived(isTrashPath(explorer.currentPath));
 
   function handleBackgroundClick(event: MouseEvent): void {
     if (pluginView || holdingView) return;
@@ -419,6 +435,7 @@
   <div
     class="content"
     class:drop-target={isDropTarget}
+    class:marquee-active={marquee.isDragging}
     data-current-path={explorer.currentPath}
     bind:this={contentRef}
     onwheelcapture={releaseCursorReveal}
@@ -474,7 +491,7 @@
           <path d="M8 16C8 13.7909 9.79086 12 12 12H19.1716C19.702 12 20.2107 12.2107 20.5858 12.5858L23 15H36C38.2091 15 40 16.7909 40 19V34C40 36.2091 38.2091 38 36 38H12C9.79086 38 8 36.2091 8 34V16Z" stroke="currentColor" stroke-width="2" opacity="0.3"/>
           <path d="M20 27H28" stroke="currentColor" stroke-width="2" stroke-linecap="round" opacity="0.5"/>
         </svg>
-        <span>This folder is empty</span>
+        <span>{inTrash ? "The Trash is empty" : "This folder is empty"}</span>
         <button class="go-up-button" onclick={() => explorer.goBack()}>
           <svg width="14" height="14" viewBox="0 0 16 16" fill="none">
             <path d="M10 3L5 8L10 13" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
@@ -576,6 +593,12 @@
   .content.drop-target {
     background: rgba(0, 120, 212, 0.08);
     box-shadow: inset 0 0 0 2px var(--accent);
+  }
+
+  /* During a marquee drag the pointer only drives the band: entries are not
+     hit-tested on every move and take no hover highlight under it (#1169). */
+  .content.marquee-active :global(.entry-item) {
+    pointer-events: none;
   }
 
   /* Marquee selection rectangle: compositor-only layers. Their intrinsic

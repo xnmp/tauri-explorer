@@ -7,6 +7,7 @@
  * borrow the exact editor opening that admitted the operation.
  */
 
+import { TRASH_PATH } from "$lib/domain/virtual-path";
 import { createDirectory, createEmptyFile, renameEntry as apiRenameEntry, deleteEntries, createSymlink as apiCreateSymlink } from "$lib/api/files";
 import { extractArchive as apiExtractArchive, compressToZip as apiCompressToZip, cancelCompress as apiCancelCompress, cancelExtract as apiCancelExtract, type ZipProgressEvent } from "$lib/api/archive";
 import { type ApiResult } from "$lib/api/common";
@@ -135,7 +136,9 @@ export function createPaneMutations(ctx: PaneMutationContext) {
     const removed = batch.data.succeeded;
     const error = fileBatchError(batch.data);
     const affected = affectedBatchPaths(batch.data);
-    if (affected.length) broadcastFileChange([...new Set(affected.map(parentDir))]);
+    // Moving to trash also changes the in-app Trash location, which has no watcher.
+    const trashChanged = !requestedPermanent && affected.length > 0;
+    if (affected.length) broadcastFileChange([...new Set(affected.map(parentDir)), ...(trashChanged ? [TRASH_PATH] : [])]);
 
     if (removed.length > 0) {
       const deletedPaths = new Set(removed);

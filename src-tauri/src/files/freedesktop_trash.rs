@@ -26,6 +26,7 @@ use std::{
 const INFO_SUFFIX: &[u8] = b".trashinfo";
 const MAX_INFO_BYTES: u64 = 1024 * 1024;
 
+pub(crate) mod inventory;
 mod plan;
 pub(crate) mod restoration;
 mod selection;
@@ -41,6 +42,16 @@ impl Context {
         let data_home = dirs::data_dir()
             .filter(|path| path.is_absolute())
             .ok_or_else(|| AppError::InvalidPath("XDG data directory is unavailable".into()))?;
+        Ok(Self {
+            mounts: MountSnapshot::read()?,
+            data_home,
+        })
+    }
+
+    /// A context whose home trash lives under `data_home`, for real
+    /// filesystem tests that must not touch the user's trash.
+    #[cfg(test)]
+    pub(crate) fn for_data_home(data_home: PathBuf) -> Result<Self, AppError> {
         Ok(Self {
             mounts: MountSnapshot::read()?,
             data_home,

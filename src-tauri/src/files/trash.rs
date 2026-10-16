@@ -30,6 +30,20 @@ fn trash_path(path: &str) -> Result<(), AppError> {
     let pathbuf = PathBuf::from(path);
     // lstat preserves broken symlinks and reports actual permission/IO errors.
     std::fs::symlink_metadata(&pathbuf)?;
+    // Record where the item landed so the in-app Trash can restore it (#863).
+    if !super::is_network_share(&pathbuf) {
+        if let (Some(store), Some(home)) = (
+            super::trash_origins::Store::default_location(),
+            dirs::home_dir(),
+        ) {
+            return super::trash_origins::trash_recorded(
+                &pathbuf,
+                &home.join(".Trash"),
+                &store,
+                trash_or_remove,
+            );
+        }
+    }
     trash_or_remove(&pathbuf)
 }
 
@@ -265,6 +279,31 @@ pub(crate) async fn restore(
     }
 }
 
+/// Restore listed Trash-view items (#863) without recreating a missing
+/// original folder; otherwise identical to [`restore`].
+pub(crate) async fn restore_to_existing_parents(
+    requests: Vec<RestoreRequest>,
+    runtime: &Runtime,
+) -> Result<FileBatchOutcome, AppError> {
+    #[cfg(target_os = "linux")]
+    {
+        let plan = restore_plan(&requests)?;
+        run_prepared(
+            plan,
+            runtime,
+            move || super::freedesktop_trash::restoration::prepare_existing_parents(&requests),
+            |selection, path, effects| selection.execute_next(path, effects),
+        )
+        .await
+    }
+    // Neither the Windows Shell move nor the macOS rename creates a parent.
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = runtime;
+        restore_entries(requests).await
+    }
+}
+
 #[cfg(not(target_os = "linux"))]
 pub(crate) async fn restore_entries(
     requests: Vec<RestoreRequest>,
@@ -288,12 +327,21 @@ pub(crate) async fn restore_entries(
         )
         .await
     }
+    // Only items Tauri Explorer trashed and recorded carry a restore artifact.
     #[cfg(not(target_os = "windows"))]
     {
-        let _ = (plan, requests);
-        Err(AppError::Other(
-            "Cannot restore trash on this platform".into(),
-        ))
+        let store = super::trash_origins::Store::default_location();
+        Ok(batch::run(plan, move |path| {
+            let record = requests[path]
+                .artifact
+                .as_recorded()
+                .ok_or_else(|| AppError::Other("Cannot restore trash on this platform".into()))?;
+            let store = store.as_ref().ok_or_else(|| {
+                AppError::Other("The application data folder is unavailable".into())
+            })?;
+            super::trash_origins::restore(&record, store)
+        })
+        .await)
     }
 }
 

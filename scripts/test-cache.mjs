@@ -5,6 +5,7 @@
 //   node scripts/test-cache.mjs key   --target <name>                 GitHub cache key, prefix and dir
 //   node scripts/test-cache.mjs probe --task <ci:task> --target <name> hit=true|false before setup
 //   node scripts/test-cache.mjs run   --task <ci:task> --target <name> run or replay the target
+//   node scripts/test-cache.mjs explain --task <ci:task>               hash, hashed files and env
 //   node scripts/test-cache.mjs report <dir>                          hit-rate summary of a run
 //
 // Turborepo computes each target's hash from the inputs and env vars turbo.json
@@ -21,13 +22,17 @@
 // See .github/workflows/CLAUDE.md for detecting a stale hit and bypassing.
 
 import { execFileSync, spawnSync } from "node:child_process";
-import { appendFileSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
+import { appendFileSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, relative, resolve, isAbsolute } from "node:path";
 import { fileURLToPath } from "node:url";
 
 export const CACHE_VERSION = "v1";
-/** Entries unused for this long are dropped before a trusted save. */
+/**
+ * Entries older than this are dropped before a trusted save. actions/cache
+ * keeps file times and a hit saves nothing, so age counts from creation; a
+ * dropped entry re-runs once and is stored afresh.
+ */
 export const PRUNE_AFTER_MS = 30 * 86_400_000;
 
 /** The only runs whose results may be stored (ci.yml's TEST_CACHE_WRITE). */
@@ -287,31 +292,55 @@ function prune(dir, now) {
   for (const name of staleEntries(files, now, PRUNE_AFTER_MS)) rmSync(join(dir, name), { force: true });
 }
 
-/** @param {string} dir @param {string} hash */
-function touch(dir, hash) {
-  const now = new Date();
-  for (const name of readdirSync(dir)) if (name.startsWith(hash)) utimesSync(join(dir, name), now, now);
+/**
+ * Turborepo's dry run with the same arguments and env as `run`.
+ * @param {string} task
+ * @param {{ read: boolean, write: boolean }} access
+ * @param {NodeJS.ProcessEnv} env
+ */
+function dryRun(task, access, env) {
+  const dir = cacheDir(process.env);
+  assertOutsideWorkspace(dir, process.cwd());
+  const result = spawnSync(TURBO, [...turboArgs(task, dir, access), "--dry=json"], {
+    encoding: "utf8", env, maxBuffer: 256 * 1024 * 1024,
+  });
+  try {
+    return JSON.parse(result.stdout);
+  } catch {
+    process.stderr.write(result.stderr);
+    return null;
+  }
 }
 
 /** @param {Record<string, string>} opts */
 function probe(opts) {
   const access = trust(process.env);
-  const dir = cacheDir(process.env);
-  assertOutsideWorkspace(dir, process.cwd());
-  const result = spawnSync(TURBO, [...turboArgs(opts.task, dir, access), "--dry=json"], {
-    encoding: "utf8", env: turboEnv(opts.task), maxBuffer: 256 * 1024 * 1024,
-  });
-  let hash = "unknown";
-  let hit = false;
-  try {
-    const task = JSON.parse(result.stdout).tasks[0];
-    hash = task.hash;
-    hit = access.read && task.cache?.status === "HIT";
-  } catch {
-    process.stderr.write(result.stderr);
-  }
+  const task = dryRun(opts.task, access, turboEnv(opts.task))?.tasks?.[0];
+  const hash = task?.hash ?? "unknown";
+  const hit = Boolean(task) && access.read && task.cache?.status === "HIT";
   console.log(`Test-result cache probe for ${opts.target}: ${hit ? "HIT" : "MISS"} (hash ${hash})`);
   setOutputs({ hit: String(hit), hash });
+}
+
+/**
+ * Print what a target's hash covers, computed with the same env as CI, so a
+ * suspected stale hit can be checked against the files the target reads.
+ * @param {Record<string, string>} opts
+ */
+function explain(opts) {
+  const env = turboEnv(opts.task);
+  const summary = dryRun(opts.task, { read: true, write: false }, env);
+  if (!summary) throw new Error(`test-cache: Turborepo could not hash ${opts.task}`);
+  const task = summary.tasks[0];
+  console.log(JSON.stringify({
+    task: task.taskId,
+    hash: task.hash,
+    toolchain: env.TEST_CACHE_TOOLCHAIN,
+    env: task.environmentVariables,
+    globalFiles: summary.globalCacheInputs.files,
+    globalEnv: summary.globalCacheInputs.environmentVariables,
+    files: task.inputs,
+  }, null, 2));
 }
 
 /** @param {Record<string, string>} opts */
@@ -337,7 +366,6 @@ function run(opts) {
     process.exit(status || 1);
   }
   const record = taskRecord(JSON.parse(readFileSync(join(runs, summaryFile), "utf8")), opts.target, access);
-  if (record.cached) touch(dir, record.hash);
   const line = describeRecord(record);
   console.log(line);
   const out = reportDir(process.env);
@@ -375,8 +403,9 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === resolve(process.argv[1
       setOutputs({ key, prefix, dir });
     } else if (command === "probe") probe(opts);
     else if (command === "run") run(opts);
+    else if (command === "explain") explain(opts);
     else if (command === "report") report(rest[0] ?? reportDir(process.env));
-    else throw new Error("usage: test-cache.mjs key|probe|run|report (see the header comment)");
+    else throw new Error("usage: test-cache.mjs key|probe|run|explain|report (see the header comment)");
   } catch (error) {
     console.error(error instanceof Error ? error.message : error);
     process.exit(2);

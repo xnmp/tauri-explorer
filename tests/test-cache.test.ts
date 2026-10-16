@@ -1,6 +1,6 @@
 import { execFileSync, spawnSync } from "node:child_process";
 import {
-  chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync,
+  chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, utimesSync, writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, relative, resolve } from "node:path";
@@ -22,6 +22,22 @@ const turbo = JSON.parse(readFileSync(join(ROOT, "turbo.json"), "utf8"));
 const ci = parse(readFileSync(join(ROOT, ".github/workflows/ci.yml"), "utf8"));
 
 const LINUX = { RUNNER_OS: "Linux", RUNNER_ARCH: "X64", ImageOS: "ubuntu24", ImageVersion: "20261012.1" };
+const TURBO = join(ROOT, "node_modules/.bin/turbo");
+
+/** A scratch repository shaped like this one, for the real-Turborepo tests. */
+const FIXTURE_FILES = [
+  "tsconfig.json", "vite.config.ts", "svelte.config.js", "playwright.config.ts", "vitest.config.ts",
+  "README.md", "CHANGELOG.md", "CLAUDE.md",
+  "src/lib/a.ts", "static/favicon.png",
+  "src-tauri/src/lib.rs", "src-tauri/Cargo.lock", "src-tauri/Cargo.toml", "src-tauri/tauri.conf.json",
+  "src-tauri/CLAUDE.md", "src-tauri/vendor/wry/PATCH.md",
+  "tests/a.test.ts", "tests/fixtures/x.json", "tests/contract/fixtures/c.json",
+  "e2e/a.spec.ts", "e2e-tauri/fixtures/doc.pdf", "e2e-tauri/specs/n.spec.ts",
+  "scripts/e2e-shards.mjs", "scripts/e2e-shard-timings.json",
+  "docs/guide.md", "docs/adr/0001-x.md", "docs/lessons/1-x.md",
+  "website/index.html", "website/api/report.js", "website/bun.lock",
+  "evidence/1-proof.png", ".github/workflows/ci.yml",
+];
 
 describe("cache access", () => {
   it("writes only when CI marks the run trusted, and reads unless bypassed", () => {
@@ -164,7 +180,6 @@ describe("pruning", () => {
 // The real Turborepo, the real turbo.json and the real package.json wiring,
 // against a scratch repository whose test scripts only count their runs.
 describe("Turborepo task cache", () => {
-  const TURBO = join(ROOT, "node_modules/.bin/turbo");
   let fixture: string;
   let scratch: string;
   let cacheDir: string;
@@ -207,10 +222,7 @@ describe("Turborepo task cache", () => {
       expect(scripts[script]).toBe(`bash ${rel}`);
       write(rel, `echo "${script}" >> "$RUNS_LOG"\necho "${script} output"\nexit "\${FAIL:-0}"\n`);
     }
-    for (const rel of [
-      "src/lib/a.ts", "src-tauri/src/lib.rs", "src-tauri/Cargo.lock", "docs/guide.md", "README.md",
-      "website/index.html", "e2e/a.spec.ts", "tests/a.test.ts", "evidence/1-proof.png",
-    ]) write(rel, `// ${rel}\n`);
+    for (const rel of FIXTURE_FILES) write(rel, rel.endsWith(".json") ? "{}\n" : `// ${rel}\n`);
     git("init", "-q");
     git("add", "-A");
     git("commit", "-qm", "fixture");
@@ -243,6 +255,17 @@ describe("Turborepo task cache", () => {
   });
 
   const runs = () => (existsSync(runsLog) ? readFileSync(runsLog, "utf8").trim().split("\n") : []);
+  /** Edit a fixture file, or create it if the fixture lacks it. */
+  const change = (rel: string) => {
+    if (rel === "package.json") {
+      const manifest = JSON.parse(readFileSync(join(fixture, rel), "utf8"));
+      write(rel, JSON.stringify({ ...manifest, version: "2.0.0" }));
+    } else if (rel.endsWith(".json") || rel.endsWith(".lock")) {
+      write(rel, '{"changed":true}\n');
+    } else {
+      write(rel, `${existsSync(join(fixture, rel)) ? readFileSync(join(fixture, rel), "utf8") : ""}# changed\n`);
+    }
+  };
   const cache = (task: string, target: string, env: Record<string, string> = {}) => {
     const out = join(scratch, "github-output");
     rmSync(out, { force: true });
@@ -309,6 +332,24 @@ describe("Turborepo task cache", () => {
     expect(runs()).toEqual(["ci:unit", "ci:unit"]);
   }, 60_000);
 
+  it.each([
+    ...["bun.lock", "package.json", "website/bun.lock", "vitest.config.ts", "tsconfig.json", "scripts/ci-test-unit.sh",
+      "src-tauri/src/lib.rs"].map((f) => ["ci:unit", "unit", f]),
+    ...["src-tauri/Cargo.lock", "src-tauri/Cargo.toml", "src-tauri/tauri.conf.json", "src-tauri/.cargo/config.toml",
+      "rust-toolchain.toml", ".cargo/config.toml", "scripts/ci-test-rust.sh", "tests/contract/fixtures/c.json",
+      "e2e-tauri/fixtures/doc.pdf", "static/favicon.png", "src-tauri/vendor/wry/PATCH.md", "bun.lock",
+    ].map((f) => ["ci:rust", "rust-default", f]),
+    ...["bun.lock", "package.json", "playwright.config.ts", "vite.config.ts", "svelte.config.js", "tsconfig.json",
+      "static/favicon.png", "scripts/ci-test-e2e.sh", "scripts/e2e-shards.mjs", "scripts/e2e-shard-timings.json",
+      "tests/fixtures/x.json", "e2e-tauri/fixtures/doc.pdf",
+    ].map((f) => ["ci:e2e", "chromium-1", f]),
+  ])("re-runs %s (%s) when %s changes", (task, target, file) => {
+    cache(task, target);
+    change(file);
+    expect(cache(task, target).record).toMatchObject({ cached: false, passed: true });
+    expect(runs()).toEqual([task, task]);
+  }, 60_000);
+
   it("re-runs the Rust target when the Rust toolchain or a system library changes", () => {
     cache("ci:rust", "rust-default");
     cache("ci:rust", "rust-default", { FAKE_RUSTC: "1.91.0" });
@@ -317,20 +358,30 @@ describe("Turborepo task cache", () => {
     expect(runs()).toEqual(["ci:rust", "ci:rust", "ci:rust", "ci:rust"]);
   }, 60_000);
 
+  // Unit tests read ADRs, the README, workflows, website/api and Rust sources
+  // as text contracts, so those files are inputs of the unit target.
   it.each([
-    ["docs", "docs/guide.md", ["ci:unit"]],
-    ["a README", "README.md", ["ci:unit"]],
+    ["docs", "docs/guide.md", []],
+    ["lessons", "docs/lessons/1-x.md", []],
+    ["an ADR the unit tests read", "docs/adr/0001-x.md", ["ci:unit"]],
+    ["the README the unit tests read", "README.md", ["ci:unit"]],
+    ["the changelog", "CHANGELOG.md", []],
+    ["a folder CLAUDE.md", "src-tauri/CLAUDE.md", []],
     ["committed evidence", "evidence/1-proof.png", []],
-    ["the website package", "website/index.html", ["ci:unit"]],
+    ["the website page", "website/index.html", []],
+    ["the website API the unit tests import", "website/api/report.js", ["ci:unit"]],
     ["the frontend package", "src/lib/a.ts", ["ci:unit", "ci:e2e"]],
     ["the Rust package", "src-tauri/src/lib.rs", ["ci:unit", "ci:rust"]],
     ["a unit test", "tests/a.test.ts", ["ci:unit"]],
     ["a browser spec", "e2e/a.spec.ts", ["ci:unit", "ci:e2e"]],
+    ["a native spec", "e2e-tauri/specs/n.spec.ts", ["ci:unit"]],
+    ["the workflow", ".github/workflows/ci.yml", ["ci:unit"]],
+    ["a shared test fixture", "tests/fixtures/x.json", ["ci:unit", "ci:rust", "ci:e2e"]],
   ])("a change to %s re-runs only the targets that read it", (_label, file, rerun) => {
     const targets = [["ci:unit", "unit"], ["ci:rust", "rust-default"], ["ci:e2e", "chromium-1"]];
     for (const [task, target] of targets) cache(task, target);
     rmSync(runsLog);
-    write(file, "changed\n");
+    change(file);
     git("commit", "-qam", "change");
     try {
       for (const [task, target] of targets) cache(task, target);
@@ -365,6 +416,33 @@ describe("Turborepo task cache", () => {
     expect(runs()).toHaveLength(3);
   }, 60_000);
 
+  it("drops expired entries only in runs that may write", () => {
+    const old = new Date(Date.now() - 40 * 86_400_000);
+    const plant = () => {
+      writeFileSync(join(cacheDir, "0123456789abcdef.tar.zst"), "");
+      utimesSync(join(cacheDir, "0123456789abcdef.tar.zst"), old, old);
+    };
+    plant();
+    cache("ci:unit", "unit", { TEST_CACHE_WRITE: "false" });
+    expect(readdirSync(cacheDir)).toContain("0123456789abcdef.tar.zst");
+    cache("ci:unit", "unit");
+    expect(readdirSync(cacheDir)).not.toContain("0123456789abcdef.tar.zst");
+    expect(readdirSync(cacheDir).length).toBeGreaterThan(0);
+  }, 60_000);
+
+  it("explains a target's hash with the files and env vars it covers", () => {
+    const stored = cache("ci:rust", "rust-default");
+    const result = spawnSync(process.execPath, [SCRIPT, "explain", "--task", "ci:rust"], {
+      cwd: fixture, encoding: "utf8", env: { ...base, TEST_CACHE_DIR: cacheDir },
+    });
+    const explained = JSON.parse(result.stdout);
+    expect(explained.hash).toBe(stored.record.hash);
+    expect(explained.toolchain).toContain("rustc 1.90.0");
+    expect(Object.keys(explained.files)).toEqual(expect.arrayContaining(["src-tauri/src/lib.rs", "scripts/ci-test-rust.sh"]));
+    expect(Object.keys(explained.files)).not.toContain("src/lib/a.ts");
+    expect(explained.env.configured.join(" ")).toContain("RUST_SUITE=");
+  }, 60_000);
+
   it("re-runs every target when the cache read is bypassed", () => {
     cache("ci:unit", "unit");
     expect(probe("ci:unit", "unit", { TEST_CACHE_READ: "false" })).toContain("hit=false");
@@ -391,7 +469,10 @@ describe("turbo.json", () => {
   it("hashes the platform, runner image and toolchain into every target", () => {
     expect(turbo.globalEnv).toEqual(expect.arrayContaining(["RUNNER_OS", "RUNNER_ARCH", "ImageOS", "ImageVersion", "TEST_CACHE_TOOLCHAIN"]));
     for (const task of ["ci:unit", "ci:rust", "ci:e2e"]) {
+      // $TURBO_DEFAULT$ hashes git-tracked files only; explicit include globs
+      // would also hash ignored build output such as src-tauri/target.
       expect(turbo.tasks[task].inputs[0]).toBe("$TURBO_DEFAULT$");
+      expect(turbo.tasks[task].inputs.slice(1).every((g: string) => g.startsWith("!"))).toBe(true);
       expect(turbo.tasks[task].outputs).toEqual([]);
       expect(turbo.tasks[task]).not.toHaveProperty("cache");
     }
@@ -400,52 +481,85 @@ describe("turbo.json", () => {
   });
 
   // An exclusion is safe only while nothing the target runs reads the excluded
-  // files. Scan each target's readers for repository paths in string literals.
-  const readers: Record<string, { dirs: string[]; files: string[]; bases: string[] }> = {
-    "ci:unit": { dirs: ["tests", "scripts"], files: ["vitest.config.ts", "vitest.perf.config.ts"], bases: [""] },
-    "ci:rust": { dirs: ["src-tauri/src", "src-tauri/tests", "src-tauri/test_support", "src-tauri/benches"], files: ["src-tauri/build.rs"], bases: ["src-tauri"] },
-    "ci:e2e": { dirs: ["e2e", "src"], files: ["playwright.config.ts", "vite.config.ts", "svelte.config.js", "scripts/e2e-shards.mjs"], bases: [""] },
+  // files. Ask the real Turborepo which repository files each target hashes,
+  // then scan the target's readers for repository paths in string literals.
+  // Paths resolve from the reading file and from the target's working
+  // directory; bare file names resolve from the working directory only where
+  // the target reads root files by name (the unit tests read README.md).
+  const readers: Record<string, { dirs: string[]; files: string[]; cwd: string; bareFromCwd: boolean }> = {
+    "ci:unit": { dirs: ["tests", "scripts"], files: ["vitest.config.ts", "vitest.perf.config.ts"], cwd: "", bareFromCwd: true },
+    "ci:rust": {
+      dirs: ["src-tauri/src", "src-tauri/tests", "src-tauri/test_support", "src-tauri/benches"],
+      files: ["src-tauri/build.rs"], cwd: "src-tauri", bareFromCwd: true,
+    },
+    "ci:e2e": {
+      dirs: ["e2e", "src"], files: ["playwright.config.ts", "vite.config.ts", "svelte.config.js", "scripts/e2e-shards.mjs"],
+      cwd: "", bareFromCwd: false,
+    },
   };
-  const globToRegExp = (glob: string) => new RegExp(`^${glob
-    .replace(/[.+^${}()|[\]\\]/g, "\\$&")
-    .replace(/\*\*\//g, "\u0000")
-    .replace(/\*\*/g, ".*")
-    .replace(/\*/g, "[^/]*")
-    .replace(/\u0000/g, "(?:.*/)?")}$`);
+  // Files every target's result depends on beyond its readers' literals.
+  const required: Record<string, string[]> = {
+    "ci:unit": ["package.json", "bun.lock", "website/package.json", "website/bun.lock", "tsconfig.json", "vitest.config.ts",
+      "vitest.perf.config.ts", "svelte.config.js", "vite.config.ts", "scripts/ci-test-unit.sh"],
+    "ci:rust": ["package.json", "bun.lock", "src-tauri/Cargo.toml", "src-tauri/Cargo.lock", "src-tauri/.cargo/audit.toml",
+      "src-tauri/build.rs", "src-tauri/tauri.conf.json", "src-tauri/tauri.linux.conf.json", "scripts/ci-test-rust.sh"],
+    "ci:e2e": ["package.json", "bun.lock", "tsconfig.json", "playwright.config.ts", "vite.config.ts", "svelte.config.js",
+      "scripts/ci-test-e2e.sh", "scripts/e2e-shards.mjs", "scripts/e2e-shard-timings.json", "scripts/prepare-pdf-assets.mjs"],
+  };
+  // Strings that name files without reading them: a selector fixture, and
+  // this file's scratch-repository paths.
+  const notReads: Record<string, string[] | "all"> = {
+    "tests/rust-affected.test.ts": ["CLAUDE.md"],
+    "tests/test-cache.test.ts": "all",
+  };
+  const hashed = (task: string) => {
+    const dry = spawnSync(TURBO, [
+      "run", task, "--dry=json", "--env-mode=loose", "--dangerously-disable-package-manager-check",
+      `--cache-dir=${join(tmpdir(), "test-cache-guard")}`,
+    ], { cwd: ROOT, encoding: "utf8", env: { ...process.env, TURBO_TELEMETRY_DISABLED: "1" }, maxBuffer: 256 * 1024 * 1024 });
+    const summary = JSON.parse(dry.stdout);
+    return new Set([...Object.keys(summary.tasks[0].inputs), ...Object.keys(summary.globalCacheInputs.files)]);
+  };
   const walk = (rel: string): string[] => readdirSync(join(ROOT, rel), { withFileTypes: true }).flatMap((e) => {
     const child = `${rel}/${e.name}`;
     if (e.isDirectory()) return e.name === "node_modules" || e.name === "target" ? [] : walk(child);
     return /\.(ts|js|mjs|svelte|rs)$/.test(e.name) ? [child] : [];
   });
+  const tracked = new Set(execFileSync("git", ["ls-files"], { cwd: ROOT, encoding: "utf8" }).split("\n"));
 
-  it.each(Object.keys(readers))("excludes nothing that %s reads", (task) => {
-    const excluded = (turbo.tasks[task].inputs as string[]).filter((g) => g.startsWith("!")).map((g) => globToRegExp(g.slice(1)));
-    const { dirs, files, bases } = readers[task];
-    const violations: string[] = [];
+  it.each(Object.keys(readers))("hashes every file %s reads", (task) => {
+    const inputs = hashed(task);
+    expect(required[task].filter((f) => !inputs.has(f))).toEqual([]);
+    const { dirs, files } = readers[task];
+    const violations = new Set<string>();
     for (const file of [...dirs.flatMap(walk), ...files]) {
+      if (notReads[file] === "all") continue;
       // Comments name files without reading them.
       const content = readFileSync(join(ROOT, file), "utf8")
         .replace(/\/\*[\s\S]*?\*\//g, "")
         .replace(/^\s*\/\/.*$/gm, "");
-      for (const match of content.matchAll(/["'`]([^"'`\s]*\/[^"'`\s]*)["'`]/g)) {
-        const literal = match[1];
+      for (const match of content.matchAll(/["'`]([^"'`\s]*\/[^"'`\s]*|[\w.-]+\.[A-Za-z0-9]+)["'`]/g)) {
+        const literal = match[1].split(/[?#]/)[0];
+        if (notReads[file]?.includes(literal)) continue;
         // Screenshot destinations and path-prefix tests are not reads.
         const before = content.slice(Math.max(0, (match.index ?? 0) - 120), match.index);
         if (/screenshot\(\s*\{[^}]*$/.test(before) || /startsWith\(\s*$/.test(before)) continue;
-        // Browser specs save acceptance screenshots into evidence/ through
-        // capture helpers; it is their output directory, never read back.
-        if (task === "ci:e2e" && /^evidence\/[^/]+\.png$/.test(literal)) continue;
-        for (const from of [dirname(file), ...bases]) {
-          const abs = resolve(ROOT, from, literal.split(/[?#]/)[0]);
-          const rel = relative(ROOT, abs);
-          if (rel.startsWith("..") || !existsSync(abs)) continue;
-          const probes = statSync(abs).isDirectory() ? [`${rel}/x`] : [rel];
-          if (probes.some((p) => excluded.some((re) => re.test(p)))) violations.push(`${file} reads ${rel}`);
+        // Browser specs save acceptance and issue screenshots into evidence/
+        // and screenshots/ through capture helpers; they never read them back.
+        if (task === "ci:e2e" && /^(evidence|screenshots)\//.test(literal)) continue;
+        const { cwd, bareFromCwd } = readers[task];
+        const bases = literal.includes("/") || bareFromCwd ? [dirname(file), cwd] : [dirname(file)];
+        for (const from of bases) {
+          const rel = relative(ROOT, resolve(ROOT, from, literal));
+          if (rel.startsWith("..") || !existsSync(join(ROOT, rel))) continue;
+          const isDir = statSync(join(ROOT, rel)).isDirectory();
+          const read = isDir ? [...tracked].filter((f) => f.startsWith(`${rel}/`)) : tracked.has(rel) ? [rel] : [];
+          if (read.length > 0 && !read.some((f) => inputs.has(f))) violations.add(`${file} reads ${rel}`);
         }
       }
     }
-    expect(violations).toEqual([]);
-  });
+    expect([...violations]).toEqual([]);
+  }, 60_000);
 });
 
 describe("ci.yml cache wiring", () => {
@@ -458,19 +572,58 @@ describe("ci.yml cache wiring", () => {
     "rust-suite": "rust-${{ matrix.suite }}",
   };
 
-  it("lets only dev pushes and same-repository pull requests write", () => {
+  /**
+   * Evaluate a workflow-level `${{ }}` expression. These use only ==, !=, &&,
+   * ||, ! and quoted strings, which mean the same in JavaScript once equality
+   * is strict and a missing property reads as undefined (GitHub's null).
+   */
+  const evaluate = (expression: string, context: { github: object; inputs?: object; vars?: object }) => {
+    const body = expression.replace(/^\$\{\{\s*|\s*\}\}$/g, "").replace(/==/g, "===").replace(/!=(?!=)/g, "!==");
+    const js = body.replace(/\b(github|inputs|vars)((?:\.[\w-]+)+)/g, (_m, root: string, path: string) =>
+      `${root}${path.split(".").slice(1).map((k) => `?.[${JSON.stringify(k)}]`).join("")}`);
+    return String(new Function("github", "inputs", "vars", `return (${js});`)(context.github, context.inputs ?? {}, context.vars ?? {}));
+  };
+  const pr = (fullName: string) => ({
+    event_name: "pull_request", ref: "refs/pull/7/merge", repository: "xnmp/tauri-explorer",
+    event: { pull_request: { head: { repo: { full_name: fullName } } } },
+  });
+  const events = {
+    "dev push": { event_name: "push", ref: "refs/heads/dev", repository: "xnmp/tauri-explorer", event: {} },
+    "main push": { event_name: "push", ref: "refs/heads/main", repository: "xnmp/tauri-explorer", event: {} },
+    "same-repo PR": pr("xnmp/tauri-explorer"),
+    "fork PR": pr("someone/tauri-explorer"),
+    "manual run": { event_name: "workflow_dispatch", ref: "refs/heads/dev", repository: "xnmp/tauri-explorer", event: {} },
+  };
+
+  it.each([
+    ["dev push", "true"], ["same-repo PR", "true"], ["main push", "false"], ["fork PR", "false"], ["manual run", "false"],
+  ] as const)("lets a %s write: %s", (event, writes) => {
     expect(ci.env.TEST_CACHE_WRITE).toBe(`\${{ ${TRUSTED_WRITE} }}`);
-    expect(TRUSTED_WRITE).toBe(
-      "(github.event_name == 'push' && github.ref == 'refs/heads/dev') || " +
-      "(github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)",
-    );
+    expect(evaluate(ci.env.TEST_CACHE_WRITE, { github: events[event] })).toBe(writes);
   });
 
-  it("can bypass cache reads for a manual run or the whole repository", () => {
+  it("reads unless a manual run unticks test_cache or the repository turns it off", () => {
     expect(ci.on.workflow_dispatch.inputs.test_cache).toMatchObject({ type: "boolean", default: true });
-    expect(ci.env.TEST_CACHE_READ).toBe(
-      "${{ vars.TEST_CACHE != 'off' && !(github.event_name == 'workflow_dispatch' && !inputs.test_cache) }}",
-    );
+    const read = (github: object, inputs: object = {}, vars: object = {}) => evaluate(ci.env.TEST_CACHE_READ, { github, inputs, vars });
+    for (const event of Object.values(events)) expect(read(event, event.event_name === "workflow_dispatch" ? { test_cache: true } : {})).toBe("true");
+    expect(read(events["manual run"], { test_cache: false })).toBe("false");
+    expect(read(events["dev push"], {}, { TEST_CACHE: "off" })).toBe("false");
+    expect(read(events["fork PR"], {}, { TEST_CACHE: "off" })).toBe("false");
+  });
+
+  it.each([
+    ["chromium", "Install Playwright browser"],
+    ["webkit-tests", "Install Playwright WebKit"],
+    ["rust-suite", "Install Tauri Linux system dependencies"],
+    ["rust-suite", "Swatinem/rust-cache@v2"],
+  ])("%s skips '%s' only on a probed cache hit", (job, name) => {
+    const all = steps(job);
+    const probe = all.findIndex((s) => s.id === "test-cache-probe");
+    const setup = all.findIndex((s) => (s.name ?? s.uses) === name);
+    expect(probe).toBeGreaterThan(all.findIndex((s) => s.uses?.startsWith("actions/cache/restore@")));
+    expect(setup).toBeGreaterThan(probe);
+    expect(all[setup].if).toMatch(/&& steps\.test-cache-probe\.outputs\.hit != 'true'$/);
+    expect(all[probe].run).toMatch(/^node scripts\/test-cache\.mjs probe --task ci:(e2e|rust) --target "/);
   });
 
   it.each(Object.entries(targets))("%s restores by platform prefix and saves only trusted new results", (job, target) => {

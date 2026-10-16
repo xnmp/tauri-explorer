@@ -141,11 +141,39 @@ fn windows_inventory() -> Inventory {
             return inventory;
         }
     };
-    for item in items {
+    let mut names = match windows_original_names() {
+        Ok(names) => names,
+        Err(error) => {
+            inventory.issues.push(TrashIssue {
+                source: "Recycle Bin".into(),
+                error: format!("Could not read original Recycle Bin names: {error}"),
+            });
+            return inventory;
+        }
+    };
+    for mut item in items {
         let parsing_name: Vec<u16> = item.id.encode_wide().collect();
         if parsing_name.is_empty() || parsing_name.contains(&0) {
             continue;
         }
+        // trash::list uses SIGDN_PARENTRELATIVE, whose display name can hide
+        // extensions. Never use it to construct a restore destination.
+        item.name = match names
+            .remove(&parsing_name)
+            .unwrap_or_else(|| Err("the item is no longer in the Recycle Bin".into()))
+        {
+            Ok(name) => name,
+            Err(error) => {
+                inventory.issues.push(TrashIssue {
+                    source: "Recycle Bin".into(),
+                    error: format!(
+                        "Could not read the original name of {:?}: {error}",
+                        item.name
+                    ),
+                });
+                continue;
+            }
+        };
         let (kind, size) = match trash::os_limited::metadata(&item).map(|metadata| metadata.size) {
             Ok(trash::TrashItemSize::Entries(_)) => ("directory", 0),
             Ok(trash::TrashItemSize::Bytes(bytes)) => ("file", bytes),
@@ -177,6 +205,77 @@ fn windows_inventory() -> Inventory {
         });
     }
     inventory
+}
+
+#[cfg(target_os = "windows")]
+type WindowsOriginalNames = HashMap<Vec<u16>, Result<std::ffi::OsString, String>>;
+
+#[cfg(target_os = "windows")]
+fn windows_original_names() -> Result<WindowsOriginalNames, String> {
+    use windows::{
+        core::Interface,
+        Win32::{
+            System::Com::CoTaskMemFree,
+            UI::Shell::{
+                BHID_EnumItems, FOLDERID_RecycleBinFolder, IEnumShellItems, IShellItem,
+                IShellItem2, SHGetKnownFolderItem, KF_FLAG_DEFAULT, SIGDN_DESKTOPABSOLUTEPARSING,
+            },
+        },
+    };
+
+    // trash::list initialized COM on this thread. Query the namespace items
+    // themselves: reopening their parsing paths produces filesystem items
+    // whose FileName is the physical $R... payload, not the original name.
+    let bin: IShellItem =
+        unsafe { SHGetKnownFolderItem(&FOLDERID_RecycleBinFolder, KF_FLAG_DEFAULT, None) }
+            .map_err(|error| error.to_string())?;
+    let enumeration: IEnumShellItems =
+        unsafe { bin.BindToHandler(None, &BHID_EnumItems) }.map_err(|error| error.to_string())?;
+    let mut names = HashMap::new();
+    loop {
+        let mut fetched = 0;
+        let mut next = [None];
+        unsafe { enumeration.Next(&mut next, Some(&mut fetched)) }
+            .map_err(|error| error.to_string())?;
+        if fetched == 0 {
+            return Ok(names);
+        }
+        let item: IShellItem2 = next[0]
+            .take()
+            .ok_or("the Shell returned no enumerated item")?
+            .cast()
+            .map_err(|error| error.to_string())?;
+        let parsing = unsafe { item.GetDisplayName(SIGDN_DESKTOPABSOLUTEPARSING) }
+            .map_err(|error| error.to_string())?;
+        if parsing.is_null() {
+            return Err("the Shell returned no item identity".into());
+        }
+        let key = unsafe { parsing.as_wide().to_vec() };
+        unsafe { CoTaskMemFree(Some(parsing.as_ptr().cast())) };
+        names.insert(key, windows_original_name(&item));
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn windows_original_name(
+    item: &windows::Win32::UI::Shell::IShellItem2,
+) -> Result<std::ffi::OsString, String> {
+    use std::{ffi::OsString, os::windows::ffi::OsStringExt, path::Component};
+    use windows::Win32::{Storage::EnhancedStorage::PKEY_FileName, System::Com::CoTaskMemFree};
+
+    let value = unsafe { item.GetString(&PKEY_FileName) }.map_err(|error| error.to_string())?;
+    if value.is_null() {
+        return Err("the Shell did not provide an original filename".into());
+    }
+    let name = unsafe { OsString::from_wide(value.as_wide()) };
+    unsafe { CoTaskMemFree(Some(value.as_ptr().cast())) };
+    let mut components = Path::new(&name).components();
+    if !matches!(components.next(), Some(Component::Normal(leaf)) if leaf == name)
+        || components.next().is_some()
+    {
+        return Err("the Shell did not provide an original filename".into());
+    }
+    Ok(name)
 }
 
 /// macOS keeps original locations private to Finder; items Tauri Explorer

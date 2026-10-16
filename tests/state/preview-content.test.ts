@@ -1,0 +1,179 @@
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import type { FileEntry } from "$lib/domain/file";
+const mocks = vi.hoisted(() => ({ readTextFile: vi.fn(), fetchDirectory: vi.fn(), listArchiveContents: vi.fn(), loadPreviewImage: vi.fn(), decodeImage: vi.fn(), getVideoThumbnailData: vi.fn() }));
+vi.mock("$lib/api/files", () => ({ readTextFile: mocks.readTextFile, fetchDirectory: mocks.fetchDirectory }));
+vi.mock("$lib/api/archive", () => ({ listArchiveContents: mocks.listArchiveContents }));
+vi.mock("$lib/api/thumbnails", () => ({ getVideoThumbnailData: mocks.getVideoThumbnailData }));
+vi.mock("$lib/state/preview-image", () => ({ loadPreviewImage: mocks.loadPreviewImage, decodeImage: mocks.decodeImage }));
+vi.mock("$lib/api/frontend-log", () => ({ logFrontendDiagnostic: vi.fn() }));
+vi.mock("$lib/components/PdfPreview.svelte", () => ({ default: function Pdf() {} }));
+vi.mock("$lib/components/VideoPreview.svelte", () => ({ default: function Video() {} }));
+import { createPreviewContentLoader, type PreviewContent } from "$lib/state/preview-content";
+const file = (name: string, kind: FileEntry["kind"] = "file"): FileEntry => ({ name, path: `/${name}`, kind, size: 12, modified: "today" });
+const ready = (url: string, resolution: "original" | "rendition" = "original") => ({ status: "ready", url, viaBackend: true, resolution, decoded: { naturalWidth: 100, naturalHeight: 100 } });
+function surface() {
+  let content: PreviewContent = { kind: "empty" };
+  const revoked = vi.fn();
+  const loader = createPreviewContentLoader(revoked);
+  return { loader, revoked, get content() { return content; }, load: (entry: FileEntry, revision = 0) => loader.load(entry, content, { localRevision: revision, imageOptions: {} }, next => { content = next; }) };
+}
+beforeEach(() => { vi.resetAllMocks(); });
+
+describe("preview content dispatch and replacement", () => {
+  it("replaces image content and its hold with the next format, without leftover metadata", async () => {
+    const s = surface();
+    mocks.loadPreviewImage.mockResolvedValue(ready("blob:photo"));
+    await s.load(file("a.avif"));
+    expect(s.content).toMatchObject({ kind: "image", url: "blob:photo", note: "AVIF fallback preview shows the first frame.", held: false });
+    let resolve!: (value: unknown) => void;
+    mocks.loadPreviewImage.mockReturnValue(new Promise(r => { resolve = r; }));
+    const pending = s.load(file("b.png"));
+    expect(s.content).toMatchObject({ kind: "image", url: "blob:photo", note: null, held: true, rendition: null });
+    mocks.readTextFile.mockResolvedValue({ ok: true, data: "# Title" });
+    await s.load(file("a.md"));
+    expect(s.content).toMatchObject({ kind: "markdown", html: expect.stringContaining("<h1>Title</h1>"), truncatedLines: 0 });
+    resolve(ready("blob:late"));
+    await pending;
+    expect(s.content.kind).toBe("markdown");
+    expect(s.revoked).toHaveBeenCalledWith("blob:late");
+    s.loader.dispose();
+    expect(s.revoked).toHaveBeenCalledWith("blob:photo");
+  });
+
+  it("drops a held image when its replacement fails", async () => {
+    const s = surface();
+    mocks.loadPreviewImage.mockResolvedValueOnce(ready("blob:a")).mockResolvedValueOnce({ status: "failed" });
+    await s.load(file("a.png")); await s.load(file("b.png"));
+    expect(s.content).toEqual({ kind: "error", message: "Cannot preview image" });
+  });
+
+  it("returns cached images synchronously and versions them by local revisions", async () => {
+    const s = surface(); mocks.loadPreviewImage.mockResolvedValue(ready("blob:a"));
+    await s.load(file("a.png")); await s.load(file("a.exe"));
+    const pending = s.load(file("a.png"));
+    expect(s.content).toMatchObject({ kind: "image", url: "blob:a", held: false });
+    await pending;
+    expect(mocks.loadPreviewImage).toHaveBeenCalledTimes(1);
+    await s.load(file("a.png"), 1);
+    expect(mocks.loadPreviewImage).toHaveBeenCalledTimes(2);
+  });
+
+  it("owns audio art through decoding and releases it on a non-image selection", async () => {
+    const s = surface(); mocks.getVideoThumbnailData.mockResolvedValue({ ok: true, data: "blob:cover" });
+    await s.load(file("a.mp3"));
+    expect(mocks.getVideoThumbnailData).toHaveBeenCalledWith("/a.mp3", 1024);
+    expect(mocks.decodeImage).toHaveBeenCalledWith("blob:cover");
+    expect(s.content).toMatchObject({ kind: "audio-cover", url: "blob:cover", held: false });
+    await s.load(file("a.exe"));
+    expect(s.content).toEqual({ kind: "unsupported" });
+    expect(s.revoked).toHaveBeenCalledWith("blob:cover");
+  });
+
+  it("collapses folder chains and presents archives through the folder result", async () => {
+    const s = surface();
+    mocks.fetchDirectory.mockResolvedValueOnce({ ok: true, data: { entries: [file("nested", "directory")] } }).mockResolvedValueOnce({ ok: true, data: { entries: [file("a.txt")] } });
+    await s.load(file("folder", "directory"));
+    expect(s.content).toEqual({ kind: "directory", entries: [file("a.txt")], collapsedRoot: "nested", collapsedNote: "single subfolder" });
+    mocks.listArchiveContents.mockResolvedValue({ ok: true, data: { entries: [file("b.txt")], rootFolder: "root" } });
+    await s.load(file("a.zip"));
+    expect(s.content).toEqual({ kind: "zip", entries: [file("b.txt")], collapsedRoot: "root", collapsedNote: "single top-level folder" });
+  });
+
+  it("parses CSV before truncation and replaces its row label with text line truncation", async () => {
+    const s = surface();
+    mocks.readTextFile.mockResolvedValueOnce({ ok: true, data: 'a,b\n"line1\nline2",c\n' + 'x,y\n'.repeat(202) });
+    await s.load(file("a.csv"));
+    expect(s.content).toMatchObject({ kind: "csv", csv: { rows: expect.arrayContaining([["line1\nline2", "c"]]) }, truncatedLabel: "rows", truncatedLines: 203 });
+    mocks.readTextFile.mockResolvedValueOnce({ ok: true, data: "hello\n".repeat(205) });
+    await s.load(file("a.txt"));
+    expect(s.content).toMatchObject({ kind: "code", truncatedLabel: "lines", truncatedLines: 206 });
+    expect(mocks.readTextFile).toHaveBeenLastCalledWith("/a.txt", 524288);
+  });
+
+  it.each(["a.pdf", "a.mp4"])("loads the lazy viewer for %s with the full file revision", async name => {
+    const s = surface(); await s.load(file(name), 7);
+    expect(s.content).toMatchObject({ kind: name.endsWith("pdf") ? "pdf" : "video", path: `/${name}`, component: expect.any(Function), key: expect.stringContaining("today|12") });
+    expect(mocks.loadPreviewImage).not.toHaveBeenCalled();
+    expect(mocks.getVideoThumbnailData).not.toHaveBeenCalled();
+  });
+
+  it("upgrades renditions while rejecting an upgrade superseded by a new selection", async () => {
+    const s = surface(); mocks.loadPreviewImage.mockResolvedValueOnce(ready("blob:small", "rendition")).mockResolvedValueOnce(ready("blob:full"));
+    await s.load(file("a.png"));
+    const source = s.content;
+    expect(source).toMatchObject({ rendition: expect.objectContaining({ path: "/a.png" }) });
+    const upgraded = await s.loader.upgrade(source, () => true);
+    expect(upgraded).toMatchObject({ kind: "image", url: "blob:full", rendition: null });
+    mocks.loadPreviewImage.mockResolvedValueOnce(ready("blob:small2", "rendition"));
+    await s.load(file("b.png"));
+    let resolve!: (value: unknown) => void;
+    mocks.loadPreviewImage.mockReturnValueOnce(new Promise(r => { resolve = r; }));
+    const pending = s.loader.upgrade(s.content, () => true);
+    await s.load(file("a.exe"));
+    resolve(ready("blob:stale-full"));
+    expect(await pending).toBeNull();
+    expect(s.content.kind).toBe("unsupported");
+    expect(s.revoked).toHaveBeenCalledWith("blob:stale-full");
+  });
+
+  it("clears image holds before loading a dedicated PDF viewer", async () => {
+    const s = surface(); mocks.loadPreviewImage.mockResolvedValue(ready("blob:a"));
+    await s.load(file("a.png"));
+    const pending = s.load(file("a.pdf"));
+    expect(s.content).toEqual({ kind: "loading" });
+    await pending;
+    expect(s.content).toMatchObject({ kind: "pdf", path: "/a.pdf" });
+  });
+
+  it("reports failed reads as an error replacement for every non-image loader", async () => {
+    const s = surface();
+    mocks.readTextFile.mockResolvedValue({ ok: false, error: "text denied" });
+    await s.load(file("a.txt"));
+    expect(s.content).toEqual({ kind: "error", message: "text denied" });
+    mocks.fetchDirectory.mockResolvedValue({ ok: false, error: "folder denied" });
+    await s.load(file("folder", "directory"));
+    expect(s.content).toEqual({ kind: "error", message: "folder denied" });
+    mocks.listArchiveContents.mockResolvedValue({ ok: false, error: "archive denied" });
+    await s.load(file("a.zip"));
+    expect(s.content).toEqual({ kind: "error", message: "archive denied" });
+    mocks.getVideoThumbnailData.mockResolvedValue({ ok: false, error: "no cover" });
+    await s.load(file("a.mp3"));
+    expect(s.content).toEqual({ kind: "error", message: "Cannot preview video" });
+  });
+
+  it("keeps malformed CSV on the highlighted path and large text on plain text", async () => {
+    const s = surface();
+    mocks.readTextFile.mockResolvedValueOnce({ ok: true, data: 'a,b\n"unterminated' });
+    await s.load(file("a.csv"));
+    expect(s.content).toMatchObject({ kind: "code", html: expect.stringContaining("unterminated"), truncatedLabel: "lines" });
+    const text = "a".repeat(50_000);
+    mocks.readTextFile.mockResolvedValueOnce({ ok: true, data: text });
+    await s.load(file("a.txt"));
+    expect(s.content).toEqual({ kind: "text", text, truncatedLabel: "lines", truncatedLines: 0 });
+  });
+
+  it("discards and releases cover art decoded after a newer file revision", async () => {
+    const s = surface(); let decoded!: () => void;
+    mocks.getVideoThumbnailData.mockResolvedValue({ ok: true, data: "blob:old-cover" });
+    mocks.decodeImage.mockReturnValue(new Promise<void>(resolve => { decoded = resolve; }));
+    const pending = s.load(file("a.mp3"));
+    // Let the old request adopt its blob and enter decoding.
+    await Promise.resolve();
+    mocks.readTextFile.mockResolvedValue({ ok: true, data: "new contents" });
+    await s.load(file("new.txt"));
+    decoded(); await pending;
+    expect(s.content.kind).toBe("code");
+    if (s.content.kind === "code") expect(s.content.html.replace(/<[^>]+>/g, "")).toBe("new contents");
+    expect(s.revoked).toHaveBeenCalledWith("blob:old-cover");
+  });
+
+  it("reset and disposal invalidate delayed results", async () => {
+    const s = surface(); let resolve!: (value: unknown) => void;
+    mocks.getVideoThumbnailData.mockReturnValue(new Promise(r => { resolve = r; }));
+    const pending = s.load(file("a.mp3"));
+    expect(s.loader.clear()).toEqual({ kind: "empty" });
+    s.loader.dispose(); resolve({ ok: true, data: "blob:late" }); await pending;
+    expect(s.content.kind).toBe("loading"); // no publication after reset/disposal
+    expect(s.revoked).toHaveBeenCalledWith("blob:late");
+  });
+});

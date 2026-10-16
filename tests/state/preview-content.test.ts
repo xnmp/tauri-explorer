@@ -6,16 +6,16 @@ vi.mock("$lib/api/archive", () => ({ listArchiveContents: mocks.listArchiveConte
 vi.mock("$lib/api/thumbnails", () => ({ getVideoThumbnailData: mocks.getVideoThumbnailData }));
 vi.mock("$lib/state/preview-image", () => ({ loadPreviewImage: mocks.loadPreviewImage, decodeImage: mocks.decodeImage }));
 vi.mock("$lib/api/frontend-log", () => ({ logFrontendDiagnostic: vi.fn() }));
-vi.mock("$lib/components/PdfPreview.svelte", () => ({ default: function Pdf() {} }));
-vi.mock("$lib/components/VideoPreview.svelte", () => ({ default: function Video() {} }));
 import { createPreviewContentLoader, type PreviewContent } from "$lib/state/preview-content";
 const file = (name: string, kind: FileEntry["kind"] = "file"): FileEntry => ({ name, path: `/${name}`, kind, size: 12, modified: "today" });
 const ready = (url: string, resolution: "original" | "rendition" = "original") => ({ status: "ready", url, viaBackend: true, resolution, decoded: { naturalWidth: 100, naturalHeight: 100 } });
-function surface() {
-  let content: PreviewContent = { kind: "empty" };
+const Pdf = function Pdf() {};
+const Video = function Video() {};
+function surface(viewers = { pdf: vi.fn(async () => Pdf), video: vi.fn(async () => Video) }) {
+  let content: PreviewContent<typeof Pdf, typeof Video> = { kind: "empty" };
   const revoked = vi.fn();
-  const loader = createPreviewContentLoader(revoked);
-  return { loader, revoked, get content() { return content; }, load: (entry: FileEntry, revision = 0) => loader.load(entry, content, { localRevision: revision, imageOptions: {} }, next => { content = next; }) };
+  const loader = createPreviewContentLoader(revoked, viewers);
+  return { loader, revoked, viewers, get content() { return content; }, load: (entry: FileEntry, revision = 0) => loader.load(entry, content, { localRevision: revision, imageOptions: {} }, next => { content = next; }) };
 }
 beforeEach(() => { vi.resetAllMocks(); });
 
@@ -95,6 +95,38 @@ describe("preview content dispatch and replacement", () => {
     expect(s.content).toMatchObject({ kind: name.endsWith("pdf") ? "pdf" : "video", path: `/${name}`, component: expect.any(Function), key: expect.stringContaining("today|12") });
     expect(mocks.loadPreviewImage).not.toHaveBeenCalled();
     expect(mocks.getVideoThumbnailData).not.toHaveBeenCalled();
+  });
+
+  it("uses only the selected viewer factory and publishes its returned component", async () => {
+    const s = surface();
+    expect(s.viewers.pdf).not.toHaveBeenCalled();
+    expect(s.viewers.video).not.toHaveBeenCalled();
+    await s.load(file("a.pdf"));
+    expect(s.viewers.pdf).toHaveBeenCalledTimes(1);
+    expect(s.viewers.video).not.toHaveBeenCalled();
+    expect(s.content).toMatchObject({ kind: "pdf", component: Pdf });
+    await s.load(file("a.mp4"));
+    expect(s.viewers.pdf).toHaveBeenCalledTimes(1);
+    expect(s.viewers.video).toHaveBeenCalledTimes(1);
+    expect(s.content).toMatchObject({ kind: "video", component: Video });
+  });
+
+  it.each(["pdf", "video"] as const)("reports a rejected %s viewer factory without retaining old content", async kind => {
+    const s = surface();
+    s.viewers[kind].mockRejectedValueOnce(new Error("viewer unavailable"));
+    await s.load(file(kind === "pdf" ? "a.pdf" : "a.mp4"));
+    expect(s.content).toEqual({ kind: "error", message: `Cannot preview ${kind === "pdf" ? "PDF" : "video"}: viewer unavailable` });
+  });
+
+  it("discards a lazy viewer that resolves after a different format is selected", async () => {
+    const s = surface(); let resolve!: (viewer: typeof Pdf) => void;
+    s.viewers.pdf.mockReturnValueOnce(new Promise(r => { resolve = r; }));
+    const pending = s.load(file("a.pdf"));
+    expect(s.content).toEqual({ kind: "loading" });
+    mocks.readTextFile.mockResolvedValue({ ok: true, data: "replacement" });
+    await s.load(file("a.txt"));
+    resolve(Pdf); await pending;
+    expect(s.content).toMatchObject({ kind: "code", html: expect.stringContaining("replacement") });
   });
 
   it("upgrades renditions while rejecting an upgrade superseded by a new selection", async () => {

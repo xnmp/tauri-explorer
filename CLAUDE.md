@@ -77,6 +77,8 @@ Rules that bite:
   image holds/cache ownership and rendition upgrades live in `state/preview-content.ts`;
   replace `PreviewContent` as a whole. Keep selection-effect reads of content and
   geometry untracked so publishing a preview cannot start another request (#1206).
+  Supply lazy PDF/video viewer factories from the component; even type-only
+  component imports in state violate the architecture boundary (`bun run lint:arch`).
 - Rust test modules included with `#[path]` from production modules belong in `src-tauri/test_support/`, not Cargo's auto-discovered `src-tauri/tests/`. Keeping source-included modules under `tests/` makes `cargo clippy --all-targets` compile them again as standalone integration crates, where their `super`/`crate` imports are invalid.
 - The native crate is a desktop application library with no Rust doctest examples; keep `[lib] doctest = false` so shared qualification target caches cannot feed a zero-test rustdoc harness mixed-feature Tauri artifacts. Unit and integration tests remain under ordinary `cargo test` targets.
 - Progress toasts must bypass the generic opacity entrance animation so accepted long-running work is visible immediately. Under load, WebKit can strand an entrance animation on its zero-opacity first frame; keep motion on the progress spinner instead.

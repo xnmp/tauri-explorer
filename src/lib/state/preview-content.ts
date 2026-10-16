@@ -23,23 +23,32 @@ export type ImageContent = {
   readonly held: boolean;
   readonly rendition: Rendition | null;
 };
-export type PreviewContent =
+type TextContent =
+  | ({ readonly kind: "csv"; readonly csv: CsvPreview } & Truncation)
+  | ({ readonly kind: "markdown" | "code"; readonly html: string } & Truncation)
+  | ({ readonly kind: "text"; readonly text: string } & Truncation);
+
+/** Viewers are supplied by the UI layer; state does not import components. */
+export interface PreviewViewers<PdfViewer, VideoViewer> {
+  pdf(): Promise<PdfViewer>;
+  video(): Promise<VideoViewer>;
+}
+
+export type PreviewContent<PdfViewer = unknown, VideoViewer = unknown> =
   | { readonly kind: "empty" | "loading" | "unsupported" }
   | { readonly kind: "error"; readonly message: string }
   | ImageContent
   | { readonly kind: "directory" | "zip"; readonly entries: readonly FileEntry[]; readonly collapsedRoot: string | null; readonly collapsedNote: string | null }
-  | { readonly kind: "pdf"; readonly path: string; readonly key: string; readonly component: typeof import("$lib/components/PdfPreview.svelte").default }
-  | { readonly kind: "video"; readonly path: string; readonly name: string; readonly key: string; readonly component: typeof import("$lib/components/VideoPreview.svelte").default }
-  | ({ readonly kind: "csv"; readonly csv: CsvPreview } & Truncation)
-  | ({ readonly kind: "markdown" | "code"; readonly html: string } & Truncation)
-  | ({ readonly kind: "text"; readonly text: string } & Truncation);
+  | { readonly kind: "pdf"; readonly path: string; readonly key: string; readonly component: PdfViewer }
+  | { readonly kind: "video"; readonly path: string; readonly name: string; readonly key: string; readonly component: VideoViewer }
+  | TextContent;
 
 export interface PreviewContentOptions {
   readonly localRevision: number;
   readonly imageOptions: PreviewImageOptions;
 }
 
-function textContent(file: FileEntry, kind: PreviewKind, text: string): PreviewContent {
+function textContent(file: FileEntry, kind: PreviewKind, text: string): TextContent {
   if (kind === "csv") {
     const csv = parseCsvPreview(text);
     if (csv) return { kind: "csv", csv, truncatedLines: csv.totalRows > csv.rows.length ? csv.totalRows : 0, truncatedLabel: "rows" };
@@ -58,7 +67,11 @@ function textContent(file: FileEntry, kind: PreviewKind, text: string): PreviewC
   return { kind: "text", text: displayText, ...truncation };
 }
 
-export function createPreviewContentLoader(revokeObjectUrl: (url: string) => void) {
+export function createPreviewContentLoader<PdfViewer, VideoViewer>(
+  revokeObjectUrl: (url: string) => void,
+  viewers: PreviewViewers<PdfViewer, VideoViewer>,
+) {
+  type Content = PreviewContent<PdfViewer, VideoViewer>;
   const lifetime = createPreviewLifetime(revokeObjectUrl);
   const cache = createPreviewImageCache(revokeObjectUrl);
   const fullResolution = createFullResolutionUpgrade(async (path, bust, owner) => {
@@ -95,7 +108,7 @@ export function createPreviewContentLoader(revokeObjectUrl: (url: string) => voi
     return imageContent(request, file, bust, image);
   }
 
-  async function loadKind(file: FileEntry, kind: PreviewKind, request: PreviewRequest, options: PreviewContentOptions): Promise<PreviewContent | null> {
+  async function loadKind(file: FileEntry, kind: PreviewKind, request: PreviewRequest, options: PreviewContentOptions): Promise<Content | null> {
     switch (kind) {
       case "directory": {
         let path = file.path;
@@ -123,13 +136,13 @@ export function createPreviewContentLoader(revokeObjectUrl: (url: string) => voi
       }
       case "pdf":
         try {
-          const component = await import("$lib/components/PdfPreview.svelte");
-          return { kind, path: file.path, key: request.key, component: component.default };
+          const component = await viewers.pdf();
+          return { kind, path: file.path, key: request.key, component };
         } catch (error) { return { kind: "error", message: `Cannot preview PDF: ${error instanceof Error ? error.message : String(error)}` }; }
       case "video":
         try {
-          const component = await import("$lib/components/VideoPreview.svelte");
-          return { kind, path: file.path, name: file.name, key: `${request.key}|${options.localRevision}`, component: component.default };
+          const component = await viewers.video();
+          return { kind, path: file.path, name: file.name, key: `${request.key}|${options.localRevision}`, component };
         } catch (error) { return { kind: "error", message: `Cannot preview video: ${extractError(error)}` }; }
       case "image": {
         const bust = `${file.modified}-${file.size}-${options.localRevision}`;
@@ -167,7 +180,7 @@ export function createPreviewContentLoader(revokeObjectUrl: (url: string) => voi
 
   return {
     /** Publishes replacements atomically; obsolete requests never publish. Cache hits are synchronous. */
-    async load(file: FileEntry, previous: PreviewContent, options: PreviewContentOptions, publish: (content: PreviewContent) => void): Promise<void> {
+    async load(file: FileEntry, previous: Content, options: PreviewContentOptions, publish: (content: Content) => void): Promise<void> {
       const request = lifetime.begin(`${file.path}|${file.modified}|${file.size}`);
       const kind = classifyPreview(file);
       fullResolution.showing(null);
@@ -189,14 +202,14 @@ export function createPreviewContentLoader(revokeObjectUrl: (url: string) => voi
       if (content.kind === "error") lifetime.clearBlob();
       publish(content);
     },
-    async upgrade(content: PreviewContent, wanted: () => boolean): Promise<PreviewContent | null> {
+    async upgrade(content: Content, wanted: () => boolean): Promise<Content | null> {
       if (content.kind !== "image" || !content.rendition) return null;
       const source = content.rendition;
       const image = await fullResolution.upgrade(wanted);
       if (!image) return null;
       return remember(source.request, source.file, source.cacheBust, {}, image);
     },
-    clear(): PreviewContent {
+    clear(): Content {
       lifetime.invalidate(); lifetime.clearBlob(); fullResolution.showing(null);
       return { kind: "empty" };
     },

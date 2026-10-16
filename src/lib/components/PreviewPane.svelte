@@ -152,8 +152,14 @@ import { openFile } from "$lib/api/open";
   );
 
   // One replacement owns all format data, loading/held state and errors.
-  let content = $state<PreviewContent>({ kind: "empty" });
-  const contentLoader = createPreviewContentLoader((url) => URL.revokeObjectURL(url));
+  let content = $state<PreviewContent<
+    typeof import("./PdfPreview.svelte").default,
+    typeof import("./VideoPreview.svelte").default
+  >>({ kind: "empty" });
+  const contentLoader = createPreviewContentLoader((url) => URL.revokeObjectURL(url), {
+    pdf: async () => (await import("./PdfPreview.svelte")).default,
+    video: async () => (await import("./VideoPreview.svelte")).default,
+  });
   // Natural size is DOM measurement, keyed by URL so held/replaced images
   // cannot show another file's resolution (#1118).
   let previewImageSize = $state<{ url: string; width: number; height: number } | null>(null);

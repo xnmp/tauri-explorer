@@ -3186,6 +3186,7 @@ async function invokeMockCommand<T>(cmd: string, args?: Record<string, unknown>)
     const control = getMockControl();
     control.invokeCounts ??= {};
     control.invokeCounts[cmd] = (control.invokeCounts[cmd] ?? 0) + 1;
+    control.invokeArgs?.[cmd]?.push({ ...args });
   }
 
   await waitForMockLatency(cmd);

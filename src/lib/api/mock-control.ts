@@ -145,6 +145,9 @@ export interface MockControl {
   // ----- Cross-cutting test instrumentation -----
   /** Per-command invocation counter, incremented by every `mockInvoke` call. */
   invokeCounts?: Record<string, number>;
+  /** Command name -> each call's arguments, logged only for the commands a test
+   * seeds with an array (`invokeArgs = { get_thumbnail_data: [] }`). */
+  invokeArgs?: Record<string, Record<string, unknown>[]>;
   /** Command name -> error message. Injects a rejection instead of running
    * the command's handler. */
   failures?: Record<string, string>;

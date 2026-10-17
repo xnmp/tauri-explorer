@@ -7,50 +7,16 @@
   2. IntersectionObserver fires → request micro thumbnail (16x16, pixelated)
   3. Micro thumbnail appears instantly → request full thumbnail (cache hit from pre-warm)
   4. Full thumbnail cross-fades in over 150ms
+
+  The loads themselves, their concurrency pools and their publication to the
+  shared cache live in state/thumbnail-loads.ts: this tile only watches the load
+  for its key while it is mounted and on screen.
 -->
-<script lang="ts" module>
-  import { getMicroThumbnail, getThumbnailData, getVideoThumbnailData } from "$lib/api/thumbnails";
-
-  // Dual concurrency pools: micro is fast (small payload), full is heavier.
-  // The pools are the cancellation seam (#136): queued work re-checks
-  // visibility when its slot frees, so a fast scroll-past doesn't decode every
-  // tile it crossed. Keep requests per-item — batching them into one IPC call
-  // was measured in #593 to make scroll pacing WORSE (responses arrive as one
-  // clump that blocks the main thread) even though it improves throughput.
-  // The backend additionally bounds decode concurrency globally (decode gate
-  // in thumbnails.rs), so pool width here is about response pacing, not CPU.
-  function createPool(max: number) {
-    let active = 0;
-    const queue: Array<() => void> = [];
-
-    return {
-      acquire(): Promise<void> {
-        if (active < max) {
-          active++;
-          return Promise.resolve();
-        }
-        return new Promise((resolve) => {
-          queue.push(() => {
-            active++;
-            resolve();
-          });
-        });
-      },
-      release(): void {
-        active--;
-        const next = queue.shift();
-        if (next) next();
-      },
-    };
-  }
-
-  const microPool = createPool(8);
-  const fullPool = createPool(4);
-</script>
-
 <script lang="ts">
-  import { onDestroy, untrack, type Snippet } from "svelte";
-  import { getThumbnailCache, setThumbnailCache } from "$lib/state/thumbnail-cache";
+  import { untrack, type Snippet } from "svelte";
+  import { getMicroThumbnail, getThumbnailData, getVideoThumbnailData } from "$lib/api/thumbnails";
+  import { getThumbnailCache } from "$lib/state/thumbnail-cache";
+  import { thumbnailLoads, type ThumbnailRequests, type ThumbnailState } from "$lib/state/thumbnail-loads";
 
   /**
    * "image"  — progressive micro+full image thumbnail (default).
@@ -102,8 +68,7 @@
   // Track viewport membership BOTH ways (no disconnect-on-first-intersect):
   // a fast scroll through a large folder intersects every tile once, and a
   // latched `visible` would queue thumbnail work for all of them. Leaving the
-  // viewport lets queued work bail (see the acquire guards below); re-entering
-  // re-triggers the load effect.
+  // viewport stops watching, so queued work bails; re-entering watches again.
   $effect(() => {
     if (!containerEl) return;
 
@@ -121,20 +86,9 @@
   // Reload key: changes when path, kind, size, or quality changes
   const reloadKey = $derived(`${kind}:${path}:${backendSize}:${quality}`);
 
-  // Load-state bookkeeping so visibility toggles don't duplicate work:
-  // a key is loaded (terminal: success or error), in flight, or neither.
+  // The key whose load settled here (success or error): visibility toggles
+  // never retry it, and a loaded thumbnail stays through them (#247).
   let loadedKey: string | null = null;
-  let inflightKey: string | null = null;
-
-  // Loads resume after awaits, possibly after this tile has unmounted (a
-  // virtual-list rechunk, a closed Tiles panel). A component-owned derived is
-  // not a safe guard then (Svelte's derived_inert): check liveness first, and
-  // a destroyed tile's response is simply stale.
-  let alive = true;
-  onDestroy(() => {
-    alive = false;
-  });
-  const stale = (key: string): boolean => !alive || key !== reloadKey;
 
   // Hydrate synchronously from the shared LRU cache at mount: remounts
   // (virtual-list rechunk, fullscreen-preview exit, duplicating a tab) must
@@ -158,141 +112,41 @@
     }
   }
 
-  // Load thumbnails when visible, unless this key is already loaded/loading
+  /** Show a load's state. Only a watching (so mounted) tile is called. */
+  function show(key: string, loadKind: ThumbnailKind, loadPath: string, state: ThumbnailState) {
+    if (state.full !== fullUrl) {
+      fullUrl = state.full;
+      fullLoaded = state.cached && state.full !== null; // cache hit — no cross-fade (#259)
+    }
+    microUrl = state.micro;
+    loading = !state.settled;
+    error = state.error !== null;
+    if (!state.settled) return;
+    loadedKey = key; // terminal either way — don't retry on scroll wiggle
+    if (state.error !== null && loadKind === "video") {
+      // Diagnostic: surfaces backend reasons (e.g. "ffmpeg not found",
+      // "no album art") in the dev console so missing thumbnails are explainable.
+      console.warn(`[thumbnail] ${loadKind} thumbnail unavailable for ${loadPath}: ${state.error}`);
+      onunavailable?.();
+    }
+  }
+
+  // Watch the load for this key while on screen, unless it already settled here.
+  // Unmounting, leaving the screen or a new key unsubscribes; the load itself
+  // still publishes whatever it completes to the shared cache.
   $effect(() => {
-    if (!visible || reloadKey === loadedKey || reloadKey === inflightKey) return;
-    if (kind === "image") {
-      loadProgressiveThumbnail();
-    } else {
-      loadSingleThumbnail();
-    }
+    if (!visible) return;
+    const key = reloadKey;
+    if (key === loadedKey) return;
+    const loadKind = kind, loadPath = path, loadSize = backendSize, loadQuality = quality;
+    const requests: ThumbnailRequests = loadKind === "image"
+      ? { micro: () => getMicroThumbnail(loadPath, loadSize, loadQuality), full: () => getThumbnailData(loadPath, loadSize, loadQuality) }
+      : { full: () => getVideoThumbnailData(loadPath, loadSize, loadQuality) };
+    return untrack(() => thumbnailLoads.watch(key, requests, {
+      visible: () => visible,
+      update: state => show(key, loadKind, loadPath, state),
+    }));
   });
-
-  // Video thumbnails are single-shot (no micro pre-warm). On failure we notify
-  // the parent so it can fall back to its own file-type icon.
-  async function loadSingleThumbnail() {
-    const currentPath = path;
-    const currentKey = reloadKey;
-    inflightKey = currentKey;
-
-    try {
-      const cached = getThumbnailCache(currentKey);
-      if (cached?.full) {
-        microUrl = null;
-        fullUrl = cached.full;
-        fullLoaded = true; // cache hit — no cross-fade (#259)
-        loading = false;
-        error = false;
-        loadedKey = currentKey;
-        return;
-      }
-
-      loading = true;
-      error = false;
-      microUrl = null;
-      fullUrl = null;
-      fullLoaded = false;
-
-      await fullPool.acquire();
-      try {
-        // Scrolled out of view (or props changed) while queued — skip the
-        // fetch; the load effect retries if the tile comes back into view.
-        if (stale(currentKey) || !visible) return;
-
-        const result = await getVideoThumbnailData(currentPath, backendSize, quality);
-        if (stale(currentKey)) return;
-
-        if (result.ok) {
-          fullUrl = result.data;
-          setThumbnailCache(currentKey, { micro: null, full: fullUrl });
-        } else {
-          // Diagnostic: surfaces backend reasons (e.g. "ffmpeg not found",
-          // "no album art") in the dev console so missing thumbnails are explainable.
-          console.warn(`[thumbnail] ${kind} thumbnail unavailable for ${currentPath}: ${result.error}`);
-          error = true;
-          onunavailable?.();
-        }
-        loadedKey = currentKey; // terminal either way — don't retry on scroll wiggle
-      } finally {
-        fullPool.release();
-      }
-    } finally {
-      if (inflightKey === currentKey) inflightKey = null;
-      if (!stale(currentKey)) loading = false;
-    }
-  }
-
-  async function loadProgressiveThumbnail() {
-    const currentPath = path;
-    // Stale-response guard compares the FULL reload key (path + size + quality):
-    // comparing only path lets a slow old-size response win over a newer size.
-    const currentKey = reloadKey;
-    inflightKey = currentKey;
-
-    try {
-      // Check frontend cache (survives renames without backend re-generation)
-      const cached = getThumbnailCache(currentKey);
-      if (cached?.full) {
-        microUrl = cached.micro;
-        fullUrl = cached.full;
-        fullLoaded = true; // cache hit — no cross-fade (#259)
-        loading = false;
-        error = false;
-        loadedKey = currentKey;
-        return;
-      }
-
-      loading = true;
-      error = false;
-      microUrl = null;
-      fullUrl = null;
-      fullLoaded = false;
-
-      // Stage 1: micro thumbnail (fast, pixelated preview)
-      await microPool.acquire();
-      try {
-        // Scrolled out of view (or props changed) while queued — skip the
-        // fetch; the load effect retries if the tile comes back into view.
-        if (stale(currentKey) || !visible) return;
-
-        const microResult = await getMicroThumbnail(currentPath, backendSize, quality);
-        if (stale(currentKey)) return;
-
-        if (microResult.ok) {
-          microUrl = microResult.data;
-        }
-      } finally {
-        microPool.release();
-      }
-
-      // Stage 2: full thumbnail (should be a cache hit from micro's pre-warm)
-      await fullPool.acquire();
-      try {
-        if (stale(currentKey) || (!visible && !microUrl)) return;
-
-        const fullResult = await getThumbnailData(currentPath, backendSize, quality);
-        if (stale(currentKey)) return;
-
-        if (fullResult.ok) {
-          fullUrl = fullResult.data;
-        } else if (!microUrl) {
-          error = true;
-        }
-      } finally {
-        fullPool.release();
-      }
-
-      if (!stale(currentKey) && (fullUrl || microUrl || error)) {
-        loadedKey = currentKey; // terminal — error included, no scroll-wiggle retries
-        if (fullUrl || microUrl) {
-          setThumbnailCache(currentKey, { micro: microUrl, full: fullUrl });
-        }
-      }
-    } finally {
-      if (inflightKey === currentKey) inflightKey = null;
-      if (!stale(currentKey)) loading = false;
-    }
-  }
 </script>
 
 <div class="thumbnail-container" style="--size: {size}px" bind:this={containerEl}>

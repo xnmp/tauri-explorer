@@ -6,11 +6,8 @@ import { isVirtualPath } from "$lib/domain/virtual-path";
 import { directoryEvents, type DirectoryChange, type DirectorySubscription } from "./directory-events";
 import { pathComparison } from "$lib/domain/path";
 import { isWindows } from "$lib/domain/platform";
-import { createGitRepoWatch } from "./git-repo-watch";
-import { repoRootCache } from "./repo-root-cache.svelte";
-import { ensureGitWatcherListener } from "./git-refresh";
 import { createDirectoryWatch } from "./directory-watch";
-import { choosePeekWatches } from "$lib/domain/folder-peek";
+import type { createPeekWatch } from "./pane-peek-watch";
 import { cancelRefreshSubscriber, requestRefresh } from "./refresh-manager";
 
 type Refresh = (options: { silent: boolean }) => void | Promise<void>;
@@ -50,105 +47,16 @@ export function createPaneWatch(deps: PaneWatchDependencies) {
   const releaseCommand = deps.release ?? unwatchDirectory;
   const schedule = deps.schedule ?? requestRefresh;
   let key = {};
-  type PeekSlot = { path: string; key: object; ready: boolean; initialized: boolean; watch: ReturnType<typeof createDirectoryWatch> | null };
-  const peeks = new Map<string, PeekSlot>();
-  const retiredPeeks = new Set<ReturnType<typeof createDirectoryWatch>>();
-  let watchTail = Promise.resolve();
-  let desiredWatches = new Set<string>();
-  const unmatchedPeeks = new Map<string, DirectoryChange>();
-  const gitWatches = new Map<string, ReturnType<typeof createGitRepoWatch>>();
-
-  function requestPeek(slot: PeekSlot, change: DirectoryChange = { path: slot.path }): void {
-    if (!slot.ready) { remember({ ...change, path: slot.path }); return; }
-    const identity = slot.key;
-    schedule(options => {
-      if (destroyed || pending || peeks.get(slot.path) !== slot || slot.key !== identity) return false;
-      if (!slot.ready) { remember({ ...change, path: slot.path }); return false; }
-      return deps.refreshPath?.(slot.path, options);
-    }, slot.path, true, slot.key, change.observedAt, change.origin);
-  }
-  function releasePeek(path: string): void {
-    const slot = peeks.get(path);
-    if (!slot) return;
-    peeks.delete(path);
-    dirty.delete(path);
-    cancelRefreshSubscriber(path, slot.key);
-    if (slot.watch) retiredPeeks.add(slot.watch);
+  let peeks: ReturnType<typeof createPeekWatch> | undefined;
+  function enablePeeks(factory: typeof createPeekWatch): void {
+    peeks ??= factory({
+      blocked: () => destroyed || pending !== null,
+      prepare: path => prepare(path, subscription),
+      refreshPath: deps.refreshPath, createWatch: deps.createWatch, schedule, mergeChange,
+    });
   }
   function reconcilePeeks(paths: readonly string[], order: ReadonlyMap<string, number>): void {
-    const wanted = new Set(destroyed || pending ? [] : paths);
-    for (const path of peeks.keys()) if (!wanted.has(path)) releasePeek(path);
-    for (const path of wanted) if (!peeks.has(path)) peeks.set(path, { path, key: {}, ready: false, initialized: false, watch: null });
-    desiredWatches = new Set(choosePeekWatches([...wanted], order));
-    watchTail = watchTail.then(async () => {
-      for (const slot of peeks.values()) {
-        if (slot.watch && !desiredWatches.has(slot.path)) {
-          retiredPeeks.add(slot.watch); slot.watch = null;
-        }
-      }
-      let drained = true;
-      for (const owner of retiredPeeks) {
-        try { await owner.destroy(); retiredPeeks.delete(owner); }
-        catch { drained = false; }
-      }
-      for (const slot of peeks.values()) {
-        if (destroyed || pending) break;
-        let needsScan = !slot.initialized;
-        if (drained && desiredWatches.has(slot.path) && !slot.watch?.held) {
-          slot.ready = false;
-          const owner = slot.watch ?? (deps.createWatch ?? createDirectoryWatch)();
-          slot.watch = owner;
-          try { await prepare(slot.path, subscription); await owner.update(slot.path); }
-          catch (error) { console.error("Peek observation failed:", error); }
-          if (peeks.get(slot.path) !== slot) { retiredPeeks.add(owner); continue; }
-          if (owner.held) {
-            cancelRefreshSubscriber(slot.path, slot.key);
-            slot.key = {};
-            needsScan = true;
-          }
-        }
-        slot.ready = true;
-        slot.initialized = true;
-        {
-          const resolved = slot.watch?.held?.lease.path;
-          const aliasChange = resolved ? unmatchedPeeks.get(resolved) : undefined;
-          const change = aliasChange ? mergeChange(dirty.get(slot.path), { ...aliasChange, path: slot.path }) : dirty.get(slot.path);
-          dirty.delete(slot.path);
-          if (resolved) unmatchedPeeks.delete(resolved);
-          if (needsScan || change) requestPeek(slot, change);
-        }
-      }
-      if (isTauri()) {
-        const roots = new Set<string>();
-        for (const slot of peeks.values()) {
-          if (!slot.watch?.held || !desiredWatches.has(slot.path)) continue;
-          await repoRootCache.ensure(slot.path);
-          if (peeks.get(slot.path) !== slot || !desiredWatches.has(slot.path)) continue;
-          const root = repoRootCache.get(slot.path);
-          if (root) roots.add(root);
-        }
-        for (const [root, owner] of gitWatches) {
-          if (!roots.has(root)) {
-            try { await owner.destroy(); gitWatches.delete(root); }
-            catch (error) { console.error("Peek Git release failed:", error); }
-          }
-        }
-        if (roots.size && await ensureGitWatcherListener()) {
-          for (const root of roots) {
-            if (destroyed || pending) continue;
-            const owner = gitWatches.get(root) ?? createGitRepoWatch();
-            if (owner.held) continue;
-            gitWatches.set(root, owner);
-            try { await owner.update(root); } catch (error) { console.error("Peek Git observation failed:", error); }
-          }
-        }
-      }
-      if ([...peeks.values()].every(slot => slot.ready)) unmatchedPeeks.clear();
-      // A collapse may have happened while acquisition was pending.
-      for (const owner of retiredPeeks) {
-        try { await owner.destroy(); retiredPeeks.delete(owner); } catch { /* retained for retry */ }
-      }
-    }).catch(error => console.error("Peek observation reconciliation failed:", error));
+    peeks?.reconcile(destroyed || pending ? [] : paths, order);
   }
   let committed: { path: string; lease: DirectoryWatchLease | null } | null = null;
   let pending: Navigation | null = null;
@@ -192,12 +100,7 @@ export function createPaneWatch(deps: PaneWatchDependencies) {
   }
   function changed(change: DirectoryChange): void {
     if (destroyed) return;
-    const peek = [...peeks.values()].find(slot => slot.path === change.path || slot.watch?.held?.lease.path === change.path);
-    if (peek) { requestPeek(peek, change); return; }
-    if (!pending && committed?.path !== change.path && [...peeks.values()].some(slot => !slot.ready)
-      && (unmatchedPeeks.has(change.path) || unmatchedPeeks.size < MAX_PENDING_UNMATCHED_CHANGES)) {
-      unmatchedPeeks.set(change.path, mergeChange(unmatchedPeeks.get(change.path), change));
-    }
+    if (peeks?.changed(change)) return;
     if (pending) {
       // Observation starts before the listing returns its resolved lease path.
       // Retain unmatched events during that handoff; accept() rekeys the one
@@ -224,7 +127,6 @@ export function createPaneWatch(deps: PaneWatchDependencies) {
   });
 
   function begin(path: string) {
-    for (const peekPath of peeks.keys()) releasePeek(peekPath);
     reconcilePeeks([], new Map());
     if (committed) cancelRefreshSubscriber(committed.path, key);
     key = {};
@@ -301,19 +203,19 @@ export function createPaneWatch(deps: PaneWatchDependencies) {
   return {
     begin,
     changed,
+    enablePeeks,
     reconcilePeeks,
-    invalidatePeeks() { for (const path of peeks.keys()) releasePeek(path); reconcilePeeks([], new Map()); },
+    invalidatePeeks() { reconcilePeeks([], new Map()); },
     requestPath(path: string) {
-      const slot = [...peeks.values()].find(slot => pathComparison(isWindows).same(slot.path, path));
+      if (peeks?.requestPath(path)) return;
       const root = committed?.path ?? deps.currentPath?.();
-      if (slot) requestPeek(slot);
-      else if (root && pathComparison(isWindows).same(root, path)) request({ path: root });
+      if (root && pathComparison(isWindows).same(root, path)) request({ path: root });
     },
     refreshPeeks(explicit: boolean) {
-      for (const slot of peeks.values()) if (explicit || !slot.watch?.held) requestPeek(slot);
+      peeks?.refresh(explicit);
     },
     peekSnapshot() {
-      return [...peeks.values()].map(slot => ({ path: slot.path, ready: slot.ready, lease: slot.watch?.held?.lease ?? null }));
+      return peeks?.snapshot() ?? [];
     },
     allowRefresh(path: string): boolean {
       if (destroyed) return false;
@@ -324,7 +226,6 @@ export function createPaneWatch(deps: PaneWatchDependencies) {
     destroy(): Promise<void> {
       if (disposal) return disposal;
       destroyed = true;
-      for (const path of peeks.keys()) releasePeek(path);
       if (committed) cancelRefreshSubscriber(committed.path, key);
       reconcilePeeks([], new Map());
       subscription.stop();
@@ -338,11 +239,7 @@ export function createPaneWatch(deps: PaneWatchDependencies) {
       const attempt = (async () => {
         // An in-flight observed reply still owns a possible lease. Its caller
         // always closes the ticket, including rejected/stale results.
-        await watchTail;
-        const cleanup = await Promise.allSettled([
-          ...[...gitWatches].map(async ([root, owner]) => { await owner.destroy(); gitWatches.delete(root); }),
-          ...[...retiredPeeks].map(async owner => { await owner.destroy(); retiredPeeks.delete(owner); }),
-        ]);
+        const cleanup = await Promise.allSettled([peeks?.destroy()]);
         await Promise.all([...navigations].map((navigation) => navigation.done));
         while (releases.size) await Promise.all([...releases]);
         for (const lease of retired.values()) attemptRelease(lease);

@@ -31,7 +31,7 @@ export const viewCommands: Command[] = [
   {
     id: "view.peekFolder", scope: "pane", label: "Peek into Folder", category: "view",
     when: () => !!getActiveExplorer()?.peekCommandTarget,
-    handler: () => { const explorer = getActiveExplorer(); if (explorer?.peekCommandTarget) explorer.togglePeek(explorer.peekCommandTarget); },
+    handler: () => { const explorer = getActiveExplorer(); if (explorer?.peekCommandTarget) return explorer.togglePeek(explorer.peekCommandTarget); },
   },
   {
     id: "view.collapseAllPeeks", scope: "pane", label: "Collapse All Peeks", category: "view",

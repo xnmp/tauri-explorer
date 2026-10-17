@@ -1,9 +1,11 @@
 /** Session-only folder expansion policies and fixed-height tree row geometry. */
-import type { FileEntry, ViewMode } from "./file";
+import type { FileEntry } from "./file";
+import { flatPeekEntries } from "./folder-peek-flat";
+import type { PeekCapability } from "./folder-peek-flat";
+export { peekCapability, resolvePeekCommandTarget, resolvePeekEscape, entryIndicesForRows } from "./folder-peek-flat";
+export type { PeekCapability } from "./folder-peek-flat";
 import { pathComparison } from "./path";
 
-export type PeekCapability = "none" | "tree" | "top-level";
-export const peekCapability = (mode: ViewMode): PeekCapability => mode === "details" ? "tree" : "none";
 export type ExpandedPaths = ReadonlyMap<string, number>;
 export interface PeekMeta { depth: number; parentPath: string }
 export interface PeekListing {
@@ -65,6 +67,7 @@ export function flattenPeekEntries(options: {
   capability: PeekCapability;
   windows: boolean;
 }): PeekTree {
+  if (options.capability === "none") return flatPeekEntries(options.root, options.entries);
   const paths = pathComparison(options.windows);
   const entries: FileEntry[] = [];
   const meta = new Map<string, PeekMeta>();
@@ -79,28 +82,17 @@ export function flattenPeekEntries(options: {
     const key = paths.key(entry.path);
     // Flat virtual/provider roots are still valid listings; tree admission is
     // stricter, rejecting malformed and cross-parent backend data.
-    if (seen.has(key ?? entry.path) || (options.capability !== "none" && (!key || !paths.sameParent(entry.path, frame.parent)))) continue;
+    if (seen.has(key ?? entry.path) || (!key || !paths.sameParent(entry.path, frame.parent))) continue;
     seen.add(key ?? entry.path);
     indices.set(entry.path, entries.length);
     entries.push(entry);
     meta.set(entry.path, { depth: frame.depth, parentPath: frame.parent });
-    if (entry.kind !== "directory" || options.capability === "none" || (options.capability === "top-level" && frame.depth > 0) || !options.expanded.has(entry.path)) continue;
+    if (entry.kind !== "directory" || (options.capability === "top-level" && frame.depth > 0) || !options.expanded.has(entry.path)) continue;
     expanded.push(entry.path);
     const children = options.listing(entry.path);
     if (children) stack.push({ items: options.project(children, entry.path), offset: 0, parent: entry.path, depth: frame.depth + 1 });
   }
-  return { entries: options.capability === "none" ? options.entries : entries, meta, indices, expanded };
-}
-
-export function resolvePeekCommandTarget(entry: FileEntry | null | undefined, meta: ReadonlyMap<string, PeekMeta>): string | null {
-  if (!entry) return null;
-  if (entry.kind === "directory") return entry.path;
-  const placement = meta.get(entry.path);
-  return placement && placement.depth > 0 ? placement.parentPath : null;
-}
-export function resolvePeekEscape(entry: FileEntry | null | undefined, meta: ReadonlyMap<string, PeekMeta>): string | null {
-  const placement = entry && meta.get(entry.path);
-  return placement && placement.depth > 0 ? placement.parentPath : null;
+  return { entries, meta, indices, expanded };
 }
 
 export type PeekRow = ({ kind: "entry"; key: string; entry: FileEntry; entryIndex: number; expanded: boolean } & PeekMeta)
@@ -134,8 +126,4 @@ export function buildPeekRows(tree: PeekTree, listing: (path: string) => PeekLis
   });
   for (const group of active) group.endRow = rows.length;
   return { rows, entryToRow, rowToEntry: rows.map(row => row.kind === "entry" ? row.entryIndex : null), groups };
-}
-
-export function entryIndicesForRows(layout: PeekRows, rows: readonly number[]): number[] {
-  return rows.flatMap(row => layout.rowToEntry[row] == null ? [] : [layout.rowToEntry[row]!]);
 }

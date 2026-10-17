@@ -27,7 +27,7 @@ import { toastStore } from "./toast.svelte";
 import { gitStatusStore } from "./git-status.svelte";
 import { operationRoots } from "$lib/domain/file-operation-selection";
 import { createFolderPeekState } from "./folder-peek.svelte";
-import { flattenPeekEntries, buildPeekRows, peekCapability, resolvePeekCommandTarget, resolvePeekEscape } from "$lib/domain/folder-peek";
+import { flatPeekEntries, flatPeekRows, peekCapability, resolvePeekCommandTarget, resolvePeekEscape } from "$lib/domain/folder-peek-flat";
 import { isVirtualPath } from "$lib/domain/virtual-path";
 import { providerFor } from "$lib/plugins/fs-providers";
 import { basename, toNativeSeparators, pathComparison } from "$lib/domain/path";
@@ -189,14 +189,14 @@ function createExplorerState(seed?: ExplorerSeed, isFileListingSurface: () => bo
 
   const capability = $derived(isFileListingSurface() && fileViewPresentation.resolution.kind === "builtin"
     && !isVirtualPath(coreState.currentPath) && !providerFor(coreState.currentPath) ? peekCapability(coreState.viewMode) : "none");
-  const peekTree = $derived(flattenPeekEntries({
+  const peekTree = $derived(peek.policies?.flattenPeekEntries({
     root: coreState.currentPath, entries: ownDisplayEntries, expanded: peek.expanded,
     listing: path => peek.listing(path)?.entries,
     project: (entries, parent) => sortEntries(visibleEntriesFor(entries, parent), coreState.sortBy, coreState.sortAscending),
     capability: peek.expanded.size ? capability : "none", windows: isWindows,
-  }));
+  }) ?? flatPeekEntries(coreState.currentPath, ownDisplayEntries));
   const displayEntries = $derived(peekTree.entries as FileEntry[]);
-  const detailRows = $derived(buildPeekRows(peekTree, peek.listing, creationSession !== null));
+  const detailRows = $derived(peek.policies?.buildPeekRows(peekTree, peek.listing, creationSession !== null) ?? flatPeekRows(peekTree, creationSession !== null));
 
   function pruneHiddenChildren(before: typeof peekTree, after: readonly FileEntry[]) {
     const visible = new Set(after.map(e => e.path));
@@ -211,15 +211,24 @@ function createExplorerState(seed?: ExplorerSeed, isFileListingSurface: () => bo
       coreState.cursorPath = path; coreState.selectionAnchorPath = null;
     }
   }
-  function togglePeek(path: string) {
+  let peekIntent = 0;
+  async function togglePeek(path: string) {
+    if (!peek.policies) {
+      const generation = navGeneration;
+      const intent = peekIntent;
+      await peek.activate();
+      if (destroyed || generation !== navGeneration || intent !== peekIntent) return;
+    }
     const entry = displayEntries.find(e => e.path === path);
     if (capability === "none" || entry?.kind !== "directory" || isVirtualPath(path) || providerFor(path)) return;
+    if (peek.watchFactory) watch.enablePeeks(peek.watchFactory);
     const before = peekTree;
     peek.toggle(path);
     pruneHiddenChildren(before, displayEntries);
     reconcilePeekResources();
   }
   function collapseAllPeeks() {
+    peekIntent++;
     const before = peekTree;
     peek.collapseAll(coreState.currentPath);
     pruneHiddenChildren(before, displayEntries);
@@ -228,7 +237,7 @@ function createExplorerState(seed?: ExplorerSeed, isFileListingSurface: () => bo
   function reconcilePeekResources() {
     const reachable = coreState.loading ? [] : peekTree.expanded;
     peek.reconcile(reachable);
-    watch.reconcilePeeks(reachable, peek.expanded);
+    return watch.reconcilePeeks(reachable, peek.expanded);
   }
   const disposePeekEffects = $effect.root(() => {
     let previous: { root: string; tree: typeof peekTree } | undefined;
@@ -625,6 +634,7 @@ function createExplorerState(seed?: ExplorerSeed, isFileListingSurface: () => bo
   // new panes) changes solely via the explicit "Set Current View Mode as
   // Default" command, never as a side effect of switching one pane's view.
   function setViewMode(mode: ViewMode) {
+    if (mode !== coreState.viewMode) peekIntent++;
     const before = peekTree;
     coreState.viewMode = mode;
     pruneHiddenChildren(before, displayEntries);
@@ -981,6 +991,7 @@ function createExplorerState(seed?: ExplorerSeed, isFileListingSurface: () => bo
     get peekCommandTarget() { return capability !== "none" ? resolvePeekCommandTarget(focusedEntry, peekTree.meta) : null; },
     get canEscapePeek() { return capability !== "none" && resolvePeekEscape(focusedEntry, peekTree.meta) !== null; },
     escapeSelectionOrPeek() {
+      if (creationSession) { cancelInlineNewFolder(); return; }
       if (coreState.selectedPaths.size) { clearSelection(); return; }
       const parent = resolvePeekEscape(focusedEntry, peekTree.meta);
       if (!parent) return;
@@ -1046,7 +1057,7 @@ function createExplorerState(seed?: ExplorerSeed, isFileListingSurface: () => bo
     /** A malformed id is treated as the built-in view rather than stored. */
     setFileView(id: string | null) {
       const next = id !== null && isFileViewId(id) ? id : null;
-      if (next !== fileView) previewTarget = null;
+      if (next !== fileView) { previewTarget = null; peekIntent++; }
       fileViewChoice = next;
     },
     /** The plugin preview target for the current folder, if any. */

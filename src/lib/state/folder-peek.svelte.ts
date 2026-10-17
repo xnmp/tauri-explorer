@@ -1,84 +1,33 @@
-/** Per-Explorer membership and listing resources. Refresh policy stays in the
- * shared WHEN/WHETHER/HOW owners; this store only owns publication lifetimes. */
-import { pathComparison } from "$lib/domain/path";
+/** Per-pane facade; listing resources and tree policies load on the first peek. */
 import type { FileEntry } from "$lib/domain/file";
-import { toggleExpanded, collapseSubtree, pruneExpanded, type PeekListing } from "$lib/domain/folder-peek";
-import { createDirectoryListing } from "./directory-listing";
-import { gitStatusStore } from "./git-status.svelte";
-import type { RefreshTarget } from "./pane-refresh";
+import type { createFolderPeekSession } from "./folder-peek-session.svelte";
 
+const emptyExpanded: ReadonlyMap<string, number> = new Map();
 export function createFolderPeekState(windows: boolean) {
-  let expanded = $state.raw<ReadonlyMap<string, number>>(new Map());
-  let snapshots = $state.raw<ReadonlyMap<string, PeekListing>>(new Map());
-  let ordinal = 0;
+  let session = $state.raw<ReturnType<typeof createFolderPeekSession> | null>(null);
+  let loading: Promise<void> | undefined;
   let disposed = false;
-  const resources = new Map<string, { target: RefreshTarget; retire(): Promise<void> }>();
-  const retiring = new Set<Promise<void>>();
-  const retired = new Set<{ retire(): Promise<void> }>();
-
-  function publish(path: string, listing: PeekListing) {
-    snapshots = new Map(snapshots).set(path, listing);
-  }
-  function retire(path: string) {
-    const resource = resources.get(path);
-    if (!resource) return;
-    resources.delete(path);
-    const next = new Map(snapshots); next.delete(path); snapshots = next;
-    retired.add(resource);
-    const task = resource.retire().then(() => { retired.delete(resource); }, error => {
-      console.error("Peek listing cleanup failed:", error);
-    }).finally(() => retiring.delete(task));
-    retiring.add(task);
-  }
-  function reconcile(paths: readonly string[]) {
-    const desired = new Set(disposed ? [] : paths);
-    for (const path of resources.keys()) if (!desired.has(path)) retire(path);
-    for (const path of desired) {
-      if (resources.has(path)) continue;
-      const owner = createDirectoryListing();
-      const releaseGit = gitStatusStore.trackDirectory(path);
-      void gitStatusStore.fetchForDirectory(path);
-      let timer: ReturnType<typeof setTimeout> | undefined;
-      const current = () => !disposed && resources.get(path)?.target === target;
-      const settle = () => { clearTimeout(timer); timer = undefined; };
-      const target: RefreshTarget = {
-        dirListing: owner,
-        current,
-        get entries() { return snapshots.get(path)?.entries ?? []; },
-        set entries(entries: readonly FileEntry[]) {
-          if (!current()) return;
-          settle(); publish(path, { status: "loaded", entries });
-        },
-        fail(error: string) {
-          if (!current()) return;
-          settle(); publish(path, { status: "error", entries: [], error });
-        },
-      };
-      resources.set(path, { target, retire: () => { settle(); releaseGit(); return owner.cleanup(); } });
-      publish(path, { status: "loading", entries: [], showLoading: false });
-      timer = setTimeout(() => {
-        if (current() && snapshots.get(path)?.status === "loading") publish(path, { status: "loading", entries: [], showLoading: true });
-      }, 150);
-    }
-  }
   return {
-    get expanded() { return expanded; },
-    toggle(path: string) { if (!disposed) expanded = toggleExpanded(expanded, path, ++ordinal); },
-    collapse(path: string) { if (expanded.has(path)) { const next = new Map(expanded); next.delete(path); expanded = next; } },
-    collapseAll(root: string) { expanded = collapseSubtree(expanded, root, windows); },
-    prune(parent: string, entries: readonly FileEntry[]) {
-      const next = pruneExpanded(expanded, parent, entries, windows);
-      if (next.size !== expanded.size) expanded = next;
+    get watchFactory() { return session?.watchFactory; },
+    get policies() { return session?.policies; },
+    get expanded() { return session?.expanded ?? emptyExpanded; },
+    activate(): Promise<void> {
+      if (session || disposed) return Promise.resolve();
+      return loading ??= import("./folder-peek-session.svelte").then(({ createFolderPeekSession }) => {
+        if (!disposed) session = createFolderPeekSession(windows);
+      }).finally(() => { loading = undefined; });
     },
-    listing(path: string) { return snapshots.get(path); },
-    target(path: string) { return [...resources].find(([key]) => pathComparison(windows).same(key, path))?.[1].target; },
-    reconcile,
+    toggle(path: string) { session?.toggle(path); },
+    collapse(path: string) { session?.collapse(path); },
+    collapseAll(root: string) { session?.collapseAll(root); },
+    prune(parent: string, entries: readonly FileEntry[]) { session?.prune(parent, entries); },
+    listing(path: string) { return session?.listing(path); },
+    target(path: string) { return session?.target(path); },
+    reconcile(paths: readonly string[]) { session?.reconcile(paths); },
     async dispose() {
-      disposed = true; reconcile([]);
-      await Promise.all([...retiring]);
-      const results = await Promise.allSettled([...retired].map(async resource => { await resource.retire(); retired.delete(resource); }));
-      const failure = results.find(result => result.status === "rejected");
-      if (failure?.status === "rejected") throw failure.reason;
+      disposed = true;
+      await loading;
+      await session?.dispose();
     },
   };
 }

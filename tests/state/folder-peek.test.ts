@@ -2,10 +2,10 @@ import { afterEach, expect, it, vi } from "vitest";
 import { createFolderPeekState } from "$lib/state/folder-peek.svelte";
 vi.mock("$lib/state/git-status.svelte", () => ({ gitStatusStore: { trackDirectory: () => () => {}, fetchForDirectory: vi.fn() } }));
 const stores: ReturnType<typeof createFolderPeekState>[] = [];
-const create = () => { const state = createFolderPeekState(false); stores.push(state); return state; };
+const create = async () => { const state = createFolderPeekState(false); stores.push(state); await state.activate(); return state; };
 afterEach(async () => { await Promise.all(stores.splice(0).map(s => s.dispose())); vi.useRealTimers(); });
 it("keeps per-pane membership independent of reachable resources and releases stale identities", async () => {
-  const a = create(), b = create();
+  const a = await create(), b = await create();
   a.toggle("/r/a"); a.toggle("/r/a/n");
   a.reconcile(["/r/a"]);
   const first = a.target("/r/a")!;
@@ -20,7 +20,7 @@ it("keeps per-pane membership independent of reachable resources and releases st
 });
 it("delays loading, rejects retired responses, and clears delayed timers on dispose", async () => {
   vi.useFakeTimers();
-  const state = create(); state.toggle("/r/a"); state.reconcile(["/r/a"]);
+  const state = await create(); state.toggle("/r/a"); state.reconcile(["/r/a"]);
   const target = state.target("/r/a")!;
   expect(state.listing("/r/a")?.showLoading).toBe(false);
   await vi.advanceTimersByTimeAsync(149);

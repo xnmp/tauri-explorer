@@ -20,15 +20,12 @@
   import { parentDir, basename } from "$lib/domain/path";
   import { rectDimToCSS } from "$lib/domain/zoom";
   import { marqueeLayerTransforms } from "$lib/domain/marquee-rect";
-  import DetailsView from "./DetailsView.svelte";
-  import ListView from "./ListView.svelte";
-  import TilesView from "./TilesView.svelte";
   import InlineNewFolder from "./InlineNewFolder.svelte";
   import PluginFileView from "./PluginFileView.svelte";
   import { fileViewRegistry } from "$lib/plugins/file-view-registry.svelte";
   import type { FileViewPresentation } from "$lib/state/file-view-presentation.svelte";
   import { getPaneIdContext } from "$lib/state/pane-context";
-  import { entryIndicesForRows } from "$lib/domain/folder-peek";
+  import { entryIndicesForRows } from "$lib/domain/folder-peek-flat";
   import { clickSelectionEffect } from "$lib/domain/workspace-selection";
 
   import type { FileEntry } from "$lib/domain/file";
@@ -506,6 +503,7 @@
         <InlineNewFolder {explorer} variant="details" />
       </div>
     {:else if explorer.viewMode === "details"}
+      {#await import("./DetailsView.svelte") then { default: DetailsView }}
       <DetailsView
         {explorer}
         onitemclick={handleClick}
@@ -516,7 +514,9 @@
         bind:containsIndex={viewContainsIndex}
         bind:scrollToIndex={viewScrollToIndex}
       />
+      {/await}
     {:else if explorer.viewMode === "list"}
+      {#await import("./ListView.svelte") then { default: ListView }}
       <ListView
         {explorer}
         {contentWidth}
@@ -528,7 +528,9 @@
         bind:containsIndex={viewContainsIndex}
         bind:scrollToIndex={viewScrollToIndex}
       />
+      {/await}
     {:else}
+      {#await import("./TilesView.svelte") then { default: TilesView }}
       <TilesView
         {explorer}
         {contentWidth}
@@ -540,6 +542,7 @@
         bind:containsIndex={viewContainsIndex}
         bind:scrollToIndex={viewScrollToIndex}
       />
+      {/await}
     {/if}
 
     <!-- Marquee selection rectangle. Five fixed-size layers moved and scaled

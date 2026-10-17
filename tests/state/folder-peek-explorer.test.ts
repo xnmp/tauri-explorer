@@ -28,22 +28,27 @@ async function compileClient(modulePath: string, overrides: Record<string, unkno
       : specifier.startsWith(".") ? new URL(specifier, filename).pathname : specifier;
     imports[specifier] = overrides[specifier] ?? (specifier === "svelte" ? { untrack: client.untrack } : await import(/* @vite-ignore */ target));
   }
+  for (const [, specifier] of javascript.matchAll(/import\(["']([^"']+)["']\)/g)) {
+    const target = specifier.startsWith(".") ? new URL(specifier, filename).pathname : specifier;
+    imports[specifier] = overrides[specifier] ?? await import(/* @vite-ignore */ target);
+  }
   const compiled = compileModule(javascript, { generate: "client" }).js.code
     .replace("import * as $ from 'svelte/internal/client';", "")
     .replace(/import (\{[^}]+\}|\* as \w+) from ["']([^"']+)["'];/g, (_, names, specifier) => names.startsWith("{") ? `const ${names.replaceAll(" as ", ": ")} = imports[${JSON.stringify(specifier)}];` : `const ${names.slice(5)} = imports[${JSON.stringify(specifier)}];`)
-    .replace(/export\s+\{[^}]*\}[^;]*;/g, "").replaceAll("export ", "");
-  return new Function("$", "imports", compiled + `\nreturn { ${modulePath === "folder-peek.svelte" ? "createFolderPeekState" : "createExplorerState"} };`)(client, imports);
+    .replace(/export\s+\{[^}]*\}[^;]*;/g, "").replaceAll("export ", "").replace(/import\(["']([^"']+)["']\)/g, (_, specifier) => `Promise.resolve(imports[${JSON.stringify(specifier)}])`);
+  return new Function("$", "imports", compiled + `\nreturn { ${modulePath === "folder-peek-session.svelte" ? "createFolderPeekSession" : modulePath === "folder-peek.svelte" ? "createFolderPeekState" : "createExplorerState"} };`)(client, imports);
 }
 
 const create = () => { let pane!: ExplorerInstance; effects.push(client.effect_root(() => { pane = createExplorerState({ currentPath: "/r", entries: [a, b], sortBy: "name", sortAscending: true, viewMode: "details" }); client.render_effect(() => { pane.displayEntries; pane.detailRows; }); })); panes.push(pane); return pane; };
 async function settle(ms = 200) { flushSync(); await vi.advanceTimersByTimeAsync(ms); flushSync(); }
 beforeEach(async () => {
-  const peek = await compileClient("folder-peek.svelte");
+  const session = await compileClient("folder-peek-session.svelte");
+  const peek = await compileClient("folder-peek.svelte", { "./folder-peek-session.svelte": session });
   createExplorerState = (await compileClient("explorer.svelte", { "./folder-peek.svelte": peek })).createExplorerState as typeof createExplorerState;
   vi.useFakeTimers(); loads.length = 0; settingsStore.reset(); source.current = async path => ({ ok: true, path, entries: trees[path] ?? [] }); });
 afterEach(async () => { await Promise.all(panes.splice(0).map(p => p.destroy())); cancelPendingRefreshes(); vi.useRealTimers(); settingsStore.reset(); effects.splice(0).forEach(dispose => dispose()); });
 it("persists membership through navigation/back/view switches, stays pane-local, and drops invisible selection", async () => {
-  const pane = create(); pane.togglePeek(a.path); await settle();
+  const pane = create(); await pane.togglePeek(a.path); await settle();
   expect(pane.displayEntries).toContain(child);
   pane.selectEntry(child); pane.setViewMode("list");
   expect([...pane.selectedPaths]).toEqual([]); expect(pane.focusedEntry?.path).toBe(a.path);
@@ -54,31 +59,49 @@ it("persists membership through navigation/back/view switches, stays pane-local,
   expect(pane.currentPath).toBe("/r"); expect(pane.expandedPaths.has(a.path)).toBe(true); expect(pane.displayEntries).toContain(child);
 });
 it("repairs hidden anchors without selecting the folder and keeps other selection levels through refresh", async () => {
-  const pane = create(); pane.togglePeek(a.path); await settle(); pane.selectEntry(child); pane.focusEntry(b);
-  pane.togglePeek(a.path); expect(pane.focusedEntry?.path).toBe(a.path); expect([...pane.selectedPaths]).toEqual([]); expect(pane.state.selectionAnchorPath).toBeNull();
-  pane.togglePeek(a.path); await settle(2200); pane.selectPaths([child.path, b.path], child.path);
+  const pane = create(); await pane.togglePeek(a.path); await settle(); pane.selectEntry(child); pane.focusEntry(b);
+  await pane.togglePeek(a.path); expect(pane.focusedEntry?.path).toBe(a.path); expect([...pane.selectedPaths]).toEqual([]); expect(pane.state.selectionAnchorPath).toBeNull();
+  await pane.togglePeek(a.path); await settle(2200); pane.selectPaths([child.path, b.path], child.path);
   await pane.refresh({ silent: true }); flushSync(); expect([...pane.selectedPaths]).toEqual([child.path, b.path]);
   pane.collapseAllPeeks(); expect([...pane.selectedPaths]).toEqual([b.path]); expect(pane.state.selectionAnchorPath).toBeNull();
 });
 it("rejects late success/error responses from collapsed and replaced resources", async () => {
   const pane = create(); let release!: (value: DirectoryListingResult) => void;
   source.current = path => path === a.path ? new Promise(resolve => { release = resolve; }) : Promise.resolve({ ok: true, path, entries: [] });
-  pane.togglePeek(a.path); await settle();
-  pane.togglePeek(a.path); source.current = async path => ({ ok: true, path, entries: [entry(path + "/new", "file")] });
-  pane.togglePeek(a.path); await settle();
+  await pane.togglePeek(a.path); await settle();
+  await pane.togglePeek(a.path); source.current = async path => ({ ok: true, path, entries: [entry(path + "/new", "file")] });
+  await pane.togglePeek(a.path); await settle();
   release({ ok: true, path: a.path, entries: [child] }); await settle(2200);
   expect(pane.displayEntries.map(e => e.path)).toContain("/r/a/new"); expect(pane.displayEntries).not.toContain(child);
 });
 it("prunes deleted remembered branches and their selected descendants after a raw parent refresh", async () => {
-  const pane = create(); pane.togglePeek(a.path); await settle(); pane.selectEntry(child);
+  const pane = create(); await pane.togglePeek(a.path); await settle(); pane.selectEntry(child);
   source.current = async path => ({ ok: true, path, entries: path === "/r" ? [b] : [] });
   await pane.refresh({ silent: true }); await settle();
   expect(pane.expandedPaths.has(a.path)).toBe(false); expect([...pane.selectedPaths]).toEqual([]); expect(pane.peekWatchSnapshot()).toEqual([]);
 });
 it("keeps root-only name filtering and rejects invisible requested paths", async () => {
-  const pane = create(); pane.togglePeek(a.path); await settle();
+  const pane = create(); await pane.togglePeek(a.path); await settle();
   pane.setFilter("a"); await settle(); expect(pane.displayEntries).toContain(child); expect(pane.ownDisplayEntries).toEqual([a]);
   pane.selectAll(); expect([...pane.selectedPaths]).toEqual([a.path]);
   pane.selectPaths(["/not-visible"]); expect([...pane.selectedPaths]).toEqual([]);
   pane.setFilter("b"); await settle(); expect(pane.displayEntries).toEqual([b]); expect(pane.expandedPaths.has(a.path)).toBe(true); expect(pane.peekWatchSnapshot()).toEqual([]);
+});
+it.each(["collapse", "view", "navigation", "destroy"])("does not revive a first toggle after %s while its module is loading", async action => {
+  const session = await compileClient("folder-peek-session.svelte");
+  let release!: (session: Record<string, unknown>) => void;
+  const pending = new Promise<Record<string, unknown>>(resolve => { release = resolve; });
+  const peek = await compileClient("folder-peek.svelte", { "./folder-peek-session.svelte": pending });
+  createExplorerState = (await compileClient("explorer.svelte", { "./folder-peek.svelte": peek })).createExplorerState as typeof createExplorerState;
+  const pane = create();
+  const opening = pane.togglePeek(a.path);
+  let closing: Promise<void> | undefined;
+  if (action === "collapse") pane.collapseAllPeeks();
+  if (action === "view") { pane.setViewMode("list"); pane.setViewMode("details"); }
+  if (action === "navigation") await pane.navigateTo("/elsewhere");
+  if (action === "destroy") closing = pane.destroy();
+  release(session); await opening; await closing; await settle();
+  expect(pane.expandedPaths.size).toBe(0);
+  expect(pane.peekWatchSnapshot()).toEqual([]);
+  expect(loads).not.toContain(a.path);
 });

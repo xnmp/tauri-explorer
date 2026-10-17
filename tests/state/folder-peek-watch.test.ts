@@ -1,5 +1,9 @@
 import { expect, it, vi } from "vitest";
-import { createPaneWatch } from "$lib/state/pane-watch";
+import { createPaneWatch as createBasePaneWatch } from "$lib/state/pane-watch";
+import { createPeekWatch } from "$lib/state/pane-peek-watch";
+const createPaneWatch = (deps: Parameters<typeof createBasePaneWatch>[0]) => {
+  const watch = createBasePaneWatch(deps); watch.enablePeeks(createPeekWatch); return watch;
+};
 import { createPathWatch } from "$lib/state/directory-watch";
 import type { DirectoryWatchLease } from "$lib/api/files";
 import type { requestRefresh } from "$lib/state/refresh-manager";
@@ -90,7 +94,7 @@ it("promotion retains a post-acquisition scan despite an older event and in-flig
   try {
     const paths = Array.from({ length: 17 }, (_, i) => `/r/${i}`);
     const order = new Map(paths.map((path, i) => [path, i]));
-    watch.reconcilePeeks(paths, order); await drain(); await vi.advanceTimersByTimeAsync(150);
+    await watch.reconcilePeeks(paths, order); await drain(); await vi.advanceTimersByTimeAsync(150);
     expect(refreshPath.mock.calls.filter(([path]) => path === "/r/0")).toHaveLength(1);
     watch.reconcilePeeks(paths.slice(0, 16), order); await drain();
     watch.changed({ path: "/r/0", observedAt: 50, origin: "watcher" });

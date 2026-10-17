@@ -45,3 +45,10 @@ use `.list-scroller`, so e2e code that must tell them apart keys on
 `.list-canvas` (column flow only). E2E loops cover both through
 `VIEW_VARIANTS`/`ALL_VIEW_VARIANTS` in `e2e/helpers.ts`; `folder-peek-setting.spec.ts`
 asserts the live switch.
+
+## Review follow-ups
+
+- `$derived` compares by identity: a derived `{start,end}` object from `listColumnRange` re-created every mounted wrapper on each scroll frame. Derive primitives (`rangeStart`/`rangeEnd`) so scrolling inside the mounted window does no per-item work (`tests/composables/use-list-columns.test.ts`).
+- Wheel to scrollLeft needs a sub-pixel carry (`listWheelStep`); browsers round `scrollLeft +=` per direction, so fractional deltas stalled one way. Horizontal-dominant gestures, Ctrl-wheel and range ends must not `preventDefault`.
+- Start optional-view chunks (`components/view-loaders.ts`) when the view is known, not after the listing settles.
+- A DOM `dragend` retires drop feedback unless it is positively a stale echo (`domain/drop-feedback.ts`); a sessionless native hover no longer blocks it.

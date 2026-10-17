@@ -401,13 +401,13 @@ test("Tiles panels: 10,000 entries", async ({ page }) => {
       && ![...root.querySelectorAll<HTMLElement>('.tile-panel')].some(el => el.style.opacity);
   }, pane);
   const caret = page.locator(`${pane} .tile-row .entry-item[data-path="/perf/huge-10000/folder-00016"] .peek-caret`);
-  for (let i = 0; i < RUNS; i++) {
-    await page.setViewportSize({ width: 1280, height: 800 });
-    await page.goto('/?path=/perf/huge-10000&viewMode=tiles');
-    await waitForRows(page);
+  const classic = async () => {
     await folderPeek(false);
     await page.locator(`${pane} .tiles-view:not(.tile-panels-view)`).waitFor();
+    await home();
     await measure(page, 'tiles: 30 scroll frames (Folder Peek off)', scrollFrames);
+  };
+  const peek = async () => {
     await folderPeek(true);
     await page.locator(`${pane} .tile-panels-view`).waitFor();
     await home();
@@ -427,5 +427,14 @@ test("Tiles panels: 10,000 entries", async ({ page }) => {
       await page.locator(`${pane} .tile-panel`).waitFor({ state: 'detached' });
       await motionDone();
     });
+  };
+  for (let i = 0; i < RUNS; i++) {
+    await page.setViewportSize({ width: 1280, height: 800 });
+    await page.goto('/?path=/perf/huge-10000&viewMode=tiles');
+    await waitForRows(page);
+    // Alternate which renderer runs first: the first case on a fresh page runs
+    // markedly slower (warm-up), and always measuring classic first charged
+    // that to classic alone, understating the peek renderer's cost.
+    if (i % 2 === 0) { await classic(); await peek(); } else { await peek(); await classic(); }
   }
 });

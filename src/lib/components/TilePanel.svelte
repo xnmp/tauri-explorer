@@ -42,7 +42,7 @@
     ongripkey: (key: string) => boolean;
     onclose: () => void;
     onlabel: () => void;
-    tile: Snippet<[FileEntry, number, number]>;
+    tile: Snippet<[FileEntry, number]>;
   }
   let {
     box, spec, folder, entries, mini, surface, bandHeight, gripBounds, offsets, scrollTop, dragging,
@@ -125,7 +125,7 @@
             style:grid-template-columns="repeat({spec.cols}, {mini.track}px)">
             {#each row.items as item (item.entry.path)}
               <div class="tile-panel-slot" style:grid-column={(item.offset % spec.cols) + 1}>
-                {@render tile(item.entry, item.index, (item.offset % spec.cols) + 1)}
+                {@render tile(item.entry, item.index)}
               </div>
             {/each}
           </div>

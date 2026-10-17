@@ -14,7 +14,7 @@
   import type { FileEntry } from "$lib/domain/file";
   import { autoFillColumns } from "$lib/domain/virtual-layout";
   import { tileLayout, TILE_GRID_PAD_X } from "$lib/domain/tile-layout";
-  import { miniSurfaceLayout, type PanelBox, type TileGroup } from "$lib/domain/tile-panels";
+  import { miniSurfaceLayout, type GroupGeometry, type PanelBox, type TileGroup } from "$lib/domain/tile-panels";
   import type { TileNavigationSnapshot } from "$lib/domain/tile-panel-navigation";
   import { useTilePanels } from "$lib/composables/use-tile-panels.svelte";
   import { useTilesScrollJank, useUnavailableThumbs } from "$lib/composables/use-tile-view-support.svelte";
@@ -113,6 +113,8 @@
     tiles.setHot(owner && model.panels.has(owner) ? owner : null);
   }
 
+  /** A group the geometry has not caught up with yet: its row alone. */
+  const NO_GEOMETRY: GroupGeometry = { height: 0, rowTop: 0, boxes: [] };
   const above = (boxes: readonly PanelBox[]) => boxes.filter(box => box.side === "above");
   const after = (boxes: readonly PanelBox[]) => boxes.filter(box => box.side !== "above");
 </script>
@@ -129,17 +131,18 @@
     onclick={() => toggle(entry.path)}></button>
 {/snippet}
 
-{#snippet tile(entry: FileEntry, index: number, column: number, mini: boolean)}
-  <EntryCell column={mini ? undefined : column} class={mini ? "tile-item tile-mini" : "tile-item"} {index} {entry} {explorer} {interactions} {pointerDrag} {onitemclick} {onitemdblclick}>
-    <TileVisual {entry} layout={mini ? surface : layout} videoUnavailable={thumbs.has(entry.path)} onvideounavailable={() => thumbs.mark(entry.path)}>
-      {#snippet name()}<EntryName {entry} {explorer} variant="tiles" bold={!mini && model.panels.has(entry.path)} />{/snippet}
-      {#snippet badge()}{#if !mini && entry.kind === "directory" && explorer.peekCaretsShown}{@render caret(entry)}{/if}{/snippet}
+<!-- A panel's mini tile: no caret (Tiles peeks top-level folders only) and no
+     aria-colindex (the panel's columns are not the grid's). The grid's own
+     tiles are written inline in the row, so a row costs what a classic row
+     does plus the caret: no snippet block per tile. -->
+{#snippet miniTile(entry: FileEntry, index: number)}
+  <EntryCell class="tile-item tile-mini" {index} {entry} {explorer} {interactions} {pointerDrag} {onitemclick} {onitemdblclick}>
+    <TileVisual {entry} layout={surface} videoUnavailable={thumbs.has(entry.path)} onvideounavailable={() => thumbs.mark(entry.path)}>
+      {#snippet name()}<EntryName {entry} {explorer} variant="tiles" />{/snippet}
     </TileVisual>
     <GitStatusBadge entryName={entry.name} />
   </EntryCell>
 {/snippet}
-
-{#snippet miniTile(entry: FileEntry, index: number, column: number)}{@render tile(entry, index, column, true)}{/snippet}
 
 {#snippet panel(box: PanelBox)}
   {@const spec = model.panels.get(box.path)}
@@ -179,26 +182,33 @@
     bind:scrollToOffset={tiles.scrollToOffset}
   >
     {#snippet children(group, g)}
-      {@const geometry = tiles.geometry[g]}
-      {#if geometry}
-        <div class="tile-group">
-          {#if geometry.boxes.length}
-            <TilePanelOutlines {geometry} metrics={model.metrics} compact={tiles.compact} hot={tiles.hot} live={model.panels} />
-          {/if}
+      {@const geometry = tiles.geometry[g] ?? NO_GEOMETRY}
+      <div class="tile-group">
+        {#if geometry.boxes.length}
+          <TilePanelOutlines {geometry} metrics={model.metrics} compact={tiles.compact} hot={tiles.hot} live={model.panels} />
           {#each above(geometry.boxes) as box (box.path)}{@render panel(box)}{/each}
-          <div role="row" aria-rowindex={uniform ? g + 1 : undefined} class="tile-row" style:top="{geometry.rowTop}px"
-            style:grid-template-columns="repeat({columns}, minmax(0, 1fr))" style:gap="var(--tile-gap)">
-            {#each tiles.cells(group) as cell, col (cell.key)}
-              {#if cell.entry === null || cell.index === null}
-                <div role="gridcell"><InlineNewFolder {explorer} variant="tiles" /></div>
-              {:else}
-                {@render tile(cell.entry, cell.index, col + 1, false)}
-              {/if}
-            {/each}
-          </div>
-          {#each after(geometry.boxes) as box (box.path)}{@render panel(box)}{/each}
+        {/if}
+        <div role="row" aria-rowindex={uniform ? g + 1 : undefined} class="tile-row"
+          style="top: {geometry.rowTop}px; grid-template-columns: repeat({columns}, minmax(0, 1fr)); gap: var(--tile-gap);">
+          {#each tiles.cells(group) as cell, col (cell.key)}
+            {#if cell.entry === null || cell.index === null}
+              <div role="gridcell"><InlineNewFolder {explorer} variant="tiles" /></div>
+            {:else}
+              {#snippet folderCaret()}{@render caret(cell.entry!)}{/snippet}
+              <EntryCell column={col + 1} class="tile-item" index={cell.index} entry={cell.entry} {explorer} {interactions} {pointerDrag} {onitemclick} {onitemdblclick}>
+                <TileVisual entry={cell.entry} {layout} videoUnavailable={thumbs.has(cell.entry.path)} onvideounavailable={() => thumbs.mark(cell.entry!.path)}
+                  badge={cell.entry.kind === "directory" && explorer.peekCaretsShown ? folderCaret : undefined}>
+                  {#snippet name()}<EntryName entry={cell.entry!} {explorer} variant="tiles" bold={model.panels.has(cell.entry!.path)} />{/snippet}
+                </TileVisual>
+                <GitStatusBadge entryName={cell.entry.name} />
+              </EntryCell>
+            {/if}
+          {/each}
         </div>
-      {/if}
+        {#if geometry.boxes.length}
+          {#each after(geometry.boxes) as box (box.path)}{@render panel(box)}{/each}
+        {/if}
+      </div>
     {/snippet}
   </VirtualList>
 </TileSurface>

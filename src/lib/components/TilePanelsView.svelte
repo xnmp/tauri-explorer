@@ -1,0 +1,238 @@
+<!--
+  Tiles with Folder Peek on (#1241, spec §9): an open top-level folder shows
+  its contents in a panel in a band above or below its grid row, or stacked
+  under it. Each grid row and its bands is one variable-height VirtualList
+  item, so a row's outlines and ribbons (which only ever join the row to its
+  own bands) stay local to it. With no panel open the rows match the classic
+  view (TilesView, which still renders Tiles with Folder Peek off).
+  Layout, outlines, navigation and motion are pure (domain/tile-panel*.ts);
+  scroll, preview, hover and motion state live in useTilePanels.
+-->
+<script lang="ts">
+  import { onDestroy } from "svelte";
+  import type { ExplorerInstance } from "$lib/state/explorer.svelte";
+  import type { FileEntry } from "$lib/domain/file";
+  import { autoFillColumns } from "$lib/domain/virtual-layout";
+  import { tileLayout, TILE_GRID_PAD_X } from "$lib/domain/tile-layout";
+  import { miniSurfaceLayout, type PanelBox, type TileGroup } from "$lib/domain/tile-panels";
+  import type { TileNavigationSnapshot } from "$lib/domain/tile-panel-navigation";
+  import { useTilePanels } from "$lib/composables/use-tile-panels.svelte";
+  import { useTilesScrollJank, useUnavailableThumbs } from "$lib/composables/use-tile-view-support.svelte";
+  import { useItemInteractions } from "$lib/composables/use-item-interactions.svelte";
+  import { usePointerDrag } from "$lib/composables/use-pointer-drag.svelte";
+  import { usesPointerDrag } from "$lib/domain/platform";
+  import { folderTileSize } from "$lib/state/folder-tile-size";
+  import { windowTabsManager } from "$lib/state/window-tabs.svelte";
+  import { getPaneIdContext } from "$lib/state/pane-context";
+  import EntryCell from "./EntryCell.svelte";
+  import EntryName from "./EntryName.svelte";
+  import GitStatusBadge from "./GitStatusBadge.svelte";
+  import InlineNewFolder from "./InlineNewFolder.svelte";
+  import TilePanel from "./TilePanel.svelte";
+  import TilePanelGhost from "./TilePanelGhost.svelte";
+  import TilePanelOutlines from "./TilePanelOutlines.svelte";
+  import TileSurface from "./TileSurface.svelte";
+  import TileVisual from "./TileVisual.svelte";
+  import VirtualList from "./VirtualList.svelte";
+
+  interface Props {
+    explorer: ExplorerInstance;
+    contentWidth: number;
+    onitemclick: (entry: FileEntry, event: MouseEvent) => void;
+    onitemdblclick: (entry: FileEntry) => void;
+    scrollToIndex?: (index: number) => void;
+    containsIndex?: (index: number) => boolean;
+    /** Spatial arrow navigation while a panel is open (null otherwise). */
+    getNavigation?: () => TileNavigationSnapshot | null;
+    fallbackTabStop: boolean;
+    onviewportscroll?: () => void;
+    onlayoutchange?: () => void;
+  }
+  let {
+    explorer, contentWidth, onitemclick, onitemdblclick, scrollToIndex = $bindable(), containsIndex = $bindable(),
+    getNavigation = $bindable(), fallbackTabStop, onviewportscroll, onlayoutchange,
+  }: Props = $props();
+
+  const paneId = getPaneIdContext();
+  const refreshPanes = () => windowTabsManager.refreshAllPanes();
+  const interactions = useItemInteractions({ getExplorer: () => explorer, refreshPanes, selectOnContextMenu: true });
+  const pointerDrag = usesPointerDrag ? usePointerDrag({ getExplorer: () => explorer, refreshPanes }) : null;
+
+  const effectiveThumbnailSize = $derived(folderTileSize(explorer.currentPath));
+  const layout = $derived(tileLayout(effectiveThumbnailSize));
+  // The classic view's column count (the pane's content width, not the
+  // scrollport's), so turning Folder Peek on or opening a panel never reflows.
+  const columns = $derived(autoFillColumns(contentWidth - TILE_GRID_PAD_X, layout.gridMinWidth, layout.gap));
+
+  let rootEl: HTMLDivElement | undefined = $state();
+  const viewport = () => rootEl?.querySelector<HTMLElement>(".tiles-scroller") ?? null;
+  const tiles = useTilePanels({
+    getExplorer: () => explorer,
+    getColumns: () => columns,
+    getLayout: () => layout,
+    getContentWidth: () => contentWidth,
+    getViewport: viewport,
+    onviewportscroll: () => onviewportscroll?.(),
+    onlayoutchange: () => onlayoutchange?.(),
+  });
+  const model = $derived(tiles.model);
+  const surface = $derived(miniSurfaceLayout(layout, model.mini));
+  const banded = $derived(model.panels.size > 0);
+
+  const thumbs = useUnavailableThumbs(() => explorer.currentPath);
+  useTilesScrollJank(() => rootEl, () => ({ entries: explorer.displayEntries.length, thumbnailSize: effectiveThumbnailSize }));
+
+  const revealIndex = (index: number) => tiles.revealEntry(index);
+  const contains = (index: number) => tiles.containsEntry(index);
+  const navigation = () => tiles.navigation();
+  scrollToIndex = revealIndex;
+  containsIndex = contains;
+  getNavigation = navigation;
+  onDestroy(() => {
+    // The incoming view can install its bindings before the outgoing view dies.
+    if (getNavigation === navigation) getNavigation = undefined;
+    if (containsIndex === contains) containsIndex = undefined;
+    if (scrollToIndex === revealIndex) scrollToIndex = undefined;
+  });
+
+  function toggle(path: string): void {
+    if (paneId) windowTabsManager.setActivePane(paneId);
+    void explorer.togglePeek(path);
+  }
+
+  /** Hover emphasis (#503: immediate): a parent tile, any part of its panel, or its ribbon. */
+  function hover(event: PointerEvent): void {
+    const target = event.target instanceof Element ? event.target : null;
+    const owner = (target?.closest("[data-panel-owner]") as HTMLElement | SVGElement | null)?.dataset.panelOwner
+      ?? target?.closest<HTMLElement>(".tile-item[data-path]")?.dataset.path;
+    tiles.setHot(owner && model.panels.has(owner) ? owner : null);
+  }
+
+  const above = (boxes: readonly PanelBox[]) => boxes.filter(box => box.side === "above");
+  const after = (boxes: readonly PanelBox[]) => boxes.filter(box => box.side !== "above");
+</script>
+
+{#snippet caret(entry: FileEntry)}
+  {@const spec = model.panels.get(entry.path)}
+  <!-- A pointer affordance only (as in Details and List): never a tab stop,
+       and its mousedown keeps focus where it was. -->
+  <button class="peek-caret tile-caret" type="button" draggable={false} tabindex="-1"
+    class:open={!!spec} class:down={spec && spec.side !== "above"} class:up={spec?.side === "above"}
+    aria-expanded={!!spec} aria-label={`${spec ? "Collapse" : "Expand"} ${entry.name}`}
+    onmousedown={(event) => event.preventDefault()}
+    onclick={() => toggle(entry.path)}>
+    <svg width="11" height="11" viewBox="0 0 10 10" fill="none" aria-hidden="true">
+      <path d="M3.5 2 6.5 5 3.5 8" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" />
+    </svg>
+  </button>
+{/snippet}
+
+{#snippet tile(entry: FileEntry, index: number, column: number, mini: boolean)}
+  <EntryCell {column} class={mini ? "tile-item tile-mini" : "tile-item"} {index} {entry} {explorer} {interactions} {pointerDrag} {onitemclick} {onitemdblclick}>
+    <TileVisual {entry} layout={mini ? surface : layout} videoUnavailable={thumbs.has(entry.path)} onvideounavailable={() => thumbs.mark(entry.path)}>
+      {#snippet name()}<EntryName {entry} {explorer} variant="tiles" bold={!mini && model.panels.has(entry.path)} />{/snippet}
+      {#snippet badge()}{#if !mini && entry.kind === "directory" && explorer.peekCaretsShown}{@render caret(entry)}{/if}{/snippet}
+    </TileVisual>
+    <GitStatusBadge entryName={entry.name} />
+  </EntryCell>
+{/snippet}
+
+{#snippet miniTile(entry: FileEntry, index: number, column: number)}{@render tile(entry, index, column, true)}{/snippet}
+
+{#snippet panel(box: PanelBox)}
+  {@const spec = model.panels.get(box.path)}
+  {@const folder = spec ? explorer.displayEntries[spec.entryIndex] : undefined}
+  {#if spec && folder}
+    {@const band = tiles.bandExtent(box.path)}
+    <TilePanel {box} {spec} {folder} entries={explorer.displayEntries} mini={model.mini} {surface} bounds={model.bounds}
+      bandHeight={band.height} bandContent={band.content}
+      offsets={tiles.panelOffsets(box.path, box)} scrollTop={tiles.panelScrollTop(box.path)} dragging={tiles.gripping(box.path)}
+      {interactions} tile={miniTile}
+      onscrolltop={(top) => tiles.setPanelScrollTop(box.path, top)}
+      ongripstart={() => tiles.startGrip(box.path)}
+      ongrippreview={(height) => tiles.previewGrip(box.path, height)}
+      ongripend={(height) => tiles.endGrip(box.path, height)}
+      onclose={() => toggle(box.path)}
+      onlabel={() => tiles.revealParent(box.path)} />
+  {:else}
+    {@const ghost = tiles.ghosts.get(box.path)}
+    {#if ghost}<TilePanelGhost {box} {ghost} mini={model.mini} {surface} />{/if}
+  {/if}
+{/snippet}
+
+<TileSurface class="tiles-view tile-panels-view" fill {layout} bind:element={rootEl} data-columns={columns}
+  onpointerover={hover} onpointerleave={() => tiles.setHot(null)}>
+  <VirtualList
+    class="tiles-scroller file-rows{banded ? ' banded' : ''}"
+    role="grid" aria-label="Files" aria-multiselectable={true}
+    aria-rowcount={model.groups.length} aria-colcount={columns}
+    tabindex={fallbackTabStop ? 0 : -1}
+    bind:containsIndex={tiles.rowContainsIndex}
+    items={model.groups as TileGroup[]}
+    itemHeight={layout.rowHeight}
+    getItemHeight={(_group, index) => tiles.geometry[index]?.height ?? layout.rowHeight}
+    itemOverflow="visible"
+    viewportPadding="8px"
+    getKey={(group) => group.key}
+    onviewportsize={tiles.setViewportSize}
+    {onviewportscroll}
+    bind:scrollToOffset={tiles.scrollToOffset}
+  >
+    {#snippet children(group, g)}
+      {@const geometry = tiles.geometry[g]}
+      {#if geometry}
+        <div class="tile-group">
+          {#if geometry.boxes.length}
+            <TilePanelOutlines {geometry} metrics={model.metrics} compact={tiles.compact} hot={tiles.hot} live={model.panels} />
+          {/if}
+          {#each above(geometry.boxes) as box (box.path)}{@render panel(box)}{/each}
+          <div role="row" aria-rowindex={g + 1} class="tile-row" style:top="{geometry.rowTop}px"
+            style:grid-template-columns="repeat({columns}, minmax(0, 1fr))" style:gap="var(--tile-gap)">
+            {#each tiles.cells(group) as cell, col (cell.key)}
+              {#if cell.entry === null || cell.index === null}
+                <div role="gridcell"><InlineNewFolder {explorer} variant="tiles" /></div>
+              {:else}
+                {@render tile(cell.entry, cell.index, col + 1, false)}
+              {/if}
+            {/each}
+          </div>
+          {#each after(geometry.boxes) as box (box.path)}{@render panel(box)}{/each}
+        </div>
+      {/if}
+    {/snippet}
+  </VirtualList>
+</TileSurface>
+
+<style>
+  /* No browser scroll anchoring: useTilePanels keeps the toggled row in place.
+     While a band exists the scrollbar track stays, so the row width cannot
+     oscillate with the content height. */
+  :global(.tile-panels-view .tiles-scroller) { overflow-anchor: none; }
+  :global(.tile-panels-view .tiles-scroller.banded) { overflow-y: scroll; }
+  .tile-group { position: absolute; inset: 0; }
+  .tile-row { position: absolute; left: 0; right: 0; }
+
+  /* The Tiles caret (spec §9.3): a small round badge on the icon's corner,
+     pointing right when closed and toward its panel when open. */
+  .tile-caret {
+    position: absolute;
+    right: -6px;
+    bottom: -3px;
+    z-index: 1;
+    display: grid;
+    place-items: center;
+    width: 20px;
+    height: 20px;
+    padding: 0;
+    border-radius: 50%;
+    border: 1px solid var(--control-stroke);
+    background: var(--background-solid);
+    color: var(--text-secondary);
+    box-shadow: 0 1px 2px var(--shadow-subtle);
+    cursor: pointer;
+  }
+  .tile-caret:hover { border-color: var(--accent); color: var(--text-primary); }
+  .tile-caret.open { border-color: var(--accent); color: var(--accent-text); }
+  .tile-caret.down svg { transform: rotate(90deg); }
+  .tile-caret.up svg { transform: rotate(-90deg); }
+</style>

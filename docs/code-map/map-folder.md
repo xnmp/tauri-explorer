@@ -42,6 +42,11 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `ListCardGrip.svelte` — a List card's bottom-edge grip control (separator with arrow/Home/End keys), rendered inside the folder's header treeitem because a tree owns only groups and treeitems; its drag session lives in `use-list-columns`.
 - `ListView.svelte` — classic row-major List (Folder Peek off); `listViewColumns`/`listColumnMaxWidth` apply here only.
 - `TilesView.svelte` — row-virtualized tile view with thumbnails; renders through `TileSurface.svelte`/`TileVisual.svelte`; runs `scroll-jank-monitor.ts` during scroll and logs `tiles-scroll-jank` events only when jank occurred (#593).
+- `TilePanelsView.svelte` — Tiles with Folder Peek on (#1241): row groups (a grid row plus its bands) as variable-height VirtualList items; Tiles carets, open panels (`TilePanel`), closing ghosts (`TilePanelGhost`) and each group's `TilePanelOutlines`; exposes reveal/contains and the spatial `TileNavigationSnapshot`. Classic `TilesView` still renders Tiles with Folder Peek off.
+- `TilePanel.svelte` — one open folder's Tiles panel: mini-tile grid (`role=rowgroup`, windowed rows, nested mini `TileSurface`) with List-card fades and "+N more", the stacked label (× and scroll-to-parent) and the grip; the whole panel is the folder's `.peek-drop-target` and context-menu surface.
+- `TilePanelGrip.svelte` — a Tiles panel's far-edge resize separator (row > gridcell > separator): pointer preview of the whole band, arrow/Home/End keys, clamped by `tile-panels.ts`.
+- `TilePanelGhost.svelte` — a closing Tiles panel's inert, aria-hidden copy (captured entries, no identity classes/data/ARIA) that collapses with the motion frame.
+- `TilePanelOutlines.svelte` — one row group's SVG tab-and-page outlines, accent gradients and stacked ribbons from `tile-panel-outline.ts`; only the ribbon's hit stroke takes the pointer (hover emphasis).
 - `view-loaders.svelte.ts` — memoised, retryable dynamic imports for every built-in view renderer (Details, List columns, classic List, Tiles); FileList starts the chunk in parallel with the listing, and settled renderers are published reactively so later mounts render them in the same flush.
 - `TileSurface.svelte` — tile-grid root: publishes `domain/tile-layout.ts` as tile CSS variables and owns all `.tile-item` chrome (hover, selected underline, ghosted/cut/drop states, icon scaling) for TilesView and FileTiles.
 - `TileVisual.svelte` — one tile's icon block (image/video thumbnail, folder preview, FileIcon, video marker) and name; the name defaults to `EntryNameLabel`, TilesView passes `EntryName`.
@@ -379,6 +384,8 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `surface-drop-feedback.ts` — drop feedback for a List card's own surface: target resolution (nested pseudo-row or the card's folder, never a row) and retiring feedback when the pointer reaches a row inside it.
 - `use-list-motion.svelte.ts` — applies `domain/list-motion.ts` plans to the List canvas for user peek toggles only (FLIP, conveyor clip, card growth, sanitized ghosts in an inert layer, finish-on-interrupt).
 - `use-row-grid-view.svelte.ts` — shared virtualization wiring (rows, DnD, new-folder sentinel, scrollToIndex) for Tiles view.
+- `use-tile-panels.svelte.ts` — Tiles panels (#1241): builds `buildTilePanelModel` from the peek rows and the measured scrollport (RO + flushSync), keeps sides, owns panel scroll offsets/windows, grip preview, hover, reveal/contains, the navigation snapshot and the open/close motion (frames from `tile-panel-motion.ts`, ghosts, row anchoring).
+- `use-tile-view-support.svelte.ts` — shared by both Tiles renderers: unavailable video thumbnails (reset per directory) and the `tiles-scroll-jank` diagnostics (#593).
 
 ## src/lib/domain/ — pure logic, no framework deps. Test + reuse here.
 
@@ -456,6 +463,10 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `drop-feedback.ts` — pure decision for whether a DOM dragend may retire drop-hover feedback (stale echo vs cancelled drag).
 - `virtual-layout.ts` — variable-height virtual list layout math (VirtualList).
 - `tile-layout.ts` — tile sizes (`THUMBNAIL_SIZE_CONFIG`, re-exported by settings), spacing/row-height `tileLayout()` and grid arrow-key `gridFocusStep()` shared by every tile grid; the SDK's `PaneTileSize`/`TileSizePreset` and `paneTileSize()`; `tileGridMetrics()` exposes minimum width, allocated cell height, gap and grid padding through `ui/file-tile`.
+- `tile-panels.ts` — Tiles panels (#1241, spec §9): band feasibility/splits, below→above→stacked placement with kept sides, mini-tile sizing and height clamps, row/tab/segment x geometry, ribbon channels, `buildTilePanelModel` (groups, boxes, entry locations), fades and "+N more".
+- `tile-panel-outline.ts` — Tiles tab-and-page outline paths (flush snap, fillets), ribbon routing geometry and accent gradients per row group.
+- `tile-panel-navigation.ts` — Tiles spatial arrow navigation over grid tiles and visible panel items (enter/leave panels, in-panel grid steps, reading-order wrap) and panel reveal offsets.
+- `tile-panel-motion.ts` — Tiles panel motion: geometry mixing (opening grows from its row, closing collapses), animate/changed predicates, 150ms ease-out.
 - `image-resolution.ts` — source pixel shape, supported raster extensions and display formatting.
 - `detail-columns.ts` — Details column defaults, finite bounds, malformed-width normalization and visible grid projection.
 - `media-duration.ts` — Length-cell formatting (m:ss / h:mm:ss via `mediaTime`, empty when unknown) and the size+mtime cache revision (#995).

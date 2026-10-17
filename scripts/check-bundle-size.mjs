@@ -53,8 +53,8 @@ const STARTUP_RAW_BUDGET = 866_617;
 // Raised 280,448 -> 281,472 (+1 KiB) for #1246 (selectable icon packs).
 // Clean dev at 12f562f6 measured 831,174 raw / 280,433 gzip (15 bytes of
 // headroom). Four-pack dispatch, preview state and shared folder decorations
-// measure 827,636 raw / 280,991 gzip: raw decreases 3,538 bytes, gzip rises
-// 558 bytes. Both colorful artwork catalogs are external SVG sprites; picker
+// measure 827,331 raw / 280,946 gzip: raw decreases 3,843 bytes, gzip rises
+// 513 bytes. Both colorful artwork catalogs are external SVG sprites; picker
 // descriptions remain lazy. The remaining behavior must paint on startup.
 const STARTUP_GZIP_BUDGET = 281_472;
 

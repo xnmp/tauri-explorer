@@ -13,6 +13,14 @@ describe('icon artwork contract',()=>{
     expect(sprite).toBe(await buildIconSprite(pack));
     for(const id of FILE_ICON_IDENTITIES.filter(id=>pack!=='material'||id!=='folder')) expect(sprite,`missing ${id}`).toContain(`<symbol id="${id}"`);
   });
+  it('ships the complete upstream permission notice inside the distributed Catppuccin sprite',async()=>{
+    const license=await readFile('src/lib/components/icons/catppuccin/LICENSE.txt','utf8');
+    const sprite=await buildIconSprite('catppuccin');
+    expect(sprite).toContain('<metadata>');
+    expect(sprite).toContain(license.trim());
+    expect(sprite).toContain('Copyright (c) 2023 Catppuccin');
+    expect(sprite).toContain('Copyright (c) 2023 thang-nm');
+  });
   it('keeps local SVG definition IDs independent between icons',()=>{
     const svg='<svg viewBox="0 0 16 16"><defs><clipPath id="clip"><path d="M0 0h1"/></clipPath></defs><g clip-path="url(#clip)"/></svg>';
     const sprite=renderIconSprite({one:svg,two:svg});

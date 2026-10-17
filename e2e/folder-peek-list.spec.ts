@@ -383,6 +383,81 @@ test("with Folder Peek off List is the classic row-major grid without cards", as
   await expect(page.locator(`${shown} .list-scroller .peek-caret`).first()).toBeVisible();
 });
 
+/** Whether a slot lies horizontally inside the List's scrollport. */
+const inView = (page: Page, path: string) => slot(page, path).evaluate(el => {
+  const port = el.closest(".list-scroller")!.getBoundingClientRect(), box = el.getBoundingClientRect();
+  return box.left >= port.left - 0.5 && box.right <= port.right + 0.5;
+});
+const activePath = (page: Page) => page.evaluate(() => (document.activeElement as HTMLElement | null)?.dataset?.path ?? document.activeElement?.tagName ?? null);
+
+test("closing a card keeps keyboard focus on its header: caret, carets-off click and Escape", async ({ page }) => {
+  await open(page);
+  // Caret click on the focused header.
+  await row(page, `${root}/Career`).click();
+  await toggle(page, `${root}/Career`);
+  await expect.poll(() => activePath(page)).toBe(`${root}/Career`);
+  await toggle(page, `${root}/Career`);
+  expect(await activePath(page)).toBe(`${root}/Career`);
+  // Escape from a nested row closes its card and lands on the header.
+  await toggle(page, `${root}/Archive`);
+  await row(page, `${root}/Archive/2019`).click();
+  await expect.poll(() => activePath(page)).toBe(`${root}/Archive/2019`);
+  await page.keyboard.press("Escape"); // clears the selection
+  await expect(page.locator(`${shown} .entry-item.selected`)).toHaveCount(0);
+  await page.keyboard.press("Escape"); // steps out: closes the card, cursor on its header
+  await expect(row(page, `${root}/Archive`)).toHaveAttribute("aria-expanded", "false");
+  await settled(page);
+  expect(await activePath(page)).toBe(`${root}/Archive`);
+  // Carets off: a plain click opens, a second click closes.
+  await setting(page, { folderPeekCarets: false });
+  await row(page, `${root}/Codex`).click();
+  await expect(row(page, `${root}/Codex`)).toHaveAttribute("aria-expanded", "true");
+  await settled(page);
+  await row(page, `${root}/Codex`).click();
+  await expect(row(page, `${root}/Codex`)).toHaveAttribute("aria-expanded", "false");
+  await settled(page);
+  expect(await activePath(page)).toBe(`${root}/Codex`);
+});
+
+test("a card that wraps once its slow listing settles is revealed, though motion has stopped", async ({ page }) => {
+  await open(page, root, { width: 720, height: 430 });
+  await page.evaluate(async () => {
+    const { getMockControl } = await import("/src/lib/api/mock-control.ts");
+    getMockControl().latency = { list_directory_fresh: 2500 };
+  });
+  await caret(page, `${root}/Personal`).click();
+  // Past the motion window (1.5s) the card still fits at [0,5] with its Loading row.
+  await page.waitForTimeout(1700);
+  expect((await placements(page))[`${root}/Personal`]).toEqual([0, 5]);
+  await expect.poll(() => explorerCall<string>(page, "return explorer.peekStatus(value) ?? 'none'", `${root}/Personal`), { timeout: 8000 }).toBe("loaded");
+  await settled(page);
+  expect((await placements(page))[`${root}/Personal`]).toEqual([1, 0]);
+  await expect.poll(() => inView(page, `${root}/Personal`)).toBe(true);
+});
+
+test("an open whose motion a layout change interrupts is still revealed", async ({ page }) => {
+  await open(page, root, { width: 720, height: 430 });
+  const interrupted = await page.evaluate(async ([selector, path]) => {
+    const pane = document.querySelector(selector)!;
+    const moving = () => !!pane.querySelector(".list-motion-layer")!.childElementCount || [...pane.querySelectorAll<HTMLElement>(".list-slot")].some(el => el.style.transform);
+    (pane.querySelector(`.entry-item[data-path="${path}"] .peek-caret`) as HTMLElement).click();
+    for (let i = 0; i < 30 && !moving(); i++) await new Promise(resolve => requestAnimationFrame(resolve));
+    const started = performance.now();
+    // A refresh that adds a file after every folder changes the layout under the motion.
+    const { mockFiles } = await import("/src/lib/api/mock-fixtures.ts");
+    const parent = path.slice(0, path.lastIndexOf("/"));
+    mockFiles[parent] = [...mockFiles[parent], { ...mockFiles[parent].at(-1)!, name: "zz-late.txt", path: `${parent}/zz-late.txt` }];
+    const { windowTabsManager } = await import("/src/lib/state/window-tabs.svelte.ts");
+    await windowTabsManager.getActiveExplorer()!.refresh();
+    await new Promise(resolve => requestAnimationFrame(resolve));
+    return { cut: performance.now() - started < 200, stopped: !moving() };
+  }, [shown, `${root}/Personal`] as const);
+  expect(interrupted).toEqual({ cut: true, stopped: true });
+  await settled(page);
+  expect((await placements(page))[`${root}/Personal`]).toEqual([1, 0]);
+  await expect.poll(() => inView(page, `${root}/Personal`)).toBe(true);
+});
+
 test("only visible columns animate, with sanitized ghosts on the conveyor and an instant reduced-motion path", async ({ page }) => {
   await open(page, root, { width: 720, height: 430 });
   // Sample the first animation frames after a user toggle.

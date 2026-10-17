@@ -24,7 +24,8 @@ test.beforeEach(async ({ page }) => {
     const seen: number[] = [];
     (window as unknown as { __peekLoading: number[] }).__peekLoading = seen;
     new MutationObserver(() => {
-      if ([...document.querySelectorAll(".peek-state")].some(node => node.textContent?.includes("Loading…"))) seen.push(performance.now());
+      // Details and List (card pseudo-row) Loading rows.
+      if ([...document.querySelectorAll(".peek-state, .list-peek-state")].some(node => node.textContent?.includes("Loading…"))) seen.push(performance.now());
     }).observe(document.body, { subtree: true, childList: true, characterData: true });
   });
 });
@@ -47,7 +48,7 @@ test("collapse and re-open inside the watcher interval are immediate", async ({ 
   expect(await loadingSeen(page)).toEqual([]);
 });
 
-test("returning from List to Details restores the peek without Loading", async ({ page }) => {
+test("List shows the open peek as a card, and returning to Details restores it, without Loading", async ({ page }) => {
   await caret(page, "Alpha").click();
   await expect(row(page, `${root}/Alpha/same.txt`)).toBeVisible();
   for (const mode of ["list", "details"] as const) {
@@ -55,7 +56,11 @@ test("returning from List to Details restores the peek without Loading", async (
       const { windowTabsManager } = await import("/src/lib/state/window-tabs.svelte.ts");
       windowTabsManager.getActiveExplorer()!.setViewMode(mode);
     }, mode);
-    if (mode === "list") await expect(row(page, `${root}/Alpha/same.txt`)).toHaveCount(0);
+    if (mode === "list") {
+      // List loads lazily: wait for its canvas, then for the settled card (#1240).
+      await expect(page.locator(".pane-tree:not(.retained) .list-canvas")).toBeVisible();
+      await expect(page.locator(`.pane-tree:not(.retained) [data-card-scroll] .entry-item[data-path="${root}/Alpha/same.txt"]`)).toBeVisible();
+    }
   }
   await expect(row(page, `${root}/Alpha/same.txt`)).toBeVisible();
   expect(await loadingSeen(page)).toEqual([]);

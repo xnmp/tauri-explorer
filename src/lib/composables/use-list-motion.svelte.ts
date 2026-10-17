@@ -2,7 +2,8 @@
  * Applies the pure List open/close plan (`domain/list-motion.ts`, #1240) to the
  * DOM. User peek toggles animate (an open stays armed while its listing loads);
  * every other layout change — refresh, navigation, restore, a card resize, a
- * change of rows per column — and reduced motion are instant.
+ * change of rows per column — and reduced motion are instant. Which changes
+ * animate and which card is revealed is decided by the pure `stepMotionArm`.
  *
  * Ghost rule (spec §8.4): snapshots of departing items live only in the inert,
  * aria-hidden layer this composable owns. Clones lose every identity class and
@@ -14,9 +15,10 @@
 import { onDestroy, untrack } from "svelte";
 import { LIST_COLUMN_STRIDE, LIST_SLOT_HEIGHT, type ListFlowModel } from "$lib/domain/list-column-flow";
 import {
-  columnClip, easeOutCubic, LIST_MOTION_MS, listMotionSnapshot, motionRows, planListMotion,
-  type GhostMotion, type LiveMotion, type MotionSnapshot, type MotionStep,
+  columnClip, easeOutCubic, LIST_MOTION_MS, listMotionSnapshot, motionArmAt, motionRows, planListMotion, stepMotionArm,
+  type GhostMotion, type LiveMotion, type MotionArm, type MotionSnapshot, type MotionStep,
 } from "$lib/domain/list-motion";
+import { isInsideDir, samePath } from "$lib/domain/path";
 
 interface ListMotionDeps {
   getModel: () => ListFlowModel;
@@ -32,8 +34,6 @@ interface ListMotionDeps {
   revealCard: (path: string, smooth: boolean) => void;
 }
 
-/** An opened folder's listing may arrive after its toggle; it still animates. */
-const ARM_MS = 1500;
 /** Classes that make an element a target of live queries. */
 const IDENTITY_CLASSES = ["entry-item", "list-item", "list-slot", "peek-drop-target", "drop-target"];
 
@@ -52,11 +52,20 @@ function sanitize(root: HTMLElement): void {
 
 const prefersReducedMotion = () => typeof matchMedia === "function" && matchMedia("(prefers-reduced-motion: reduce)").matches;
 
+/** The top-level card that is `path` or contains it. */
+function cardOf(model: ListFlowModel, path: string): string | null {
+  for (const item of model.items) {
+    if (item.card && (samePath(path, item.card.path) || isInsideDir(path, item.card.path))) return item.card.path;
+  }
+  return null;
+}
+
 export function useListMotion(deps: ListMotionDeps) {
-  let last: MotionSnapshot | null = null;
-  let seen = untrack(() => deps.getChange()?.serial ?? null);
-  let armed: { path: string; until: number } | null = null;
-  let pending: { steps: MotionStep[]; ghosts: Map<string, { el: HTMLElement; scrollTop: number }> } | null = null;
+  // The previous layout, snapshotted only when a motion is planned, so layouts
+  // that never animate (no user toggle) cost nothing here.
+  let lastModel: ListFlowModel | null = null;
+  let arm: MotionArm = motionArmAt(untrack(() => deps.getChange()?.serial ?? null));
+  let pending: { steps: MotionStep[]; ghosts: Map<string, { el: HTMLElement; scrollTop: number }>; snapshot: MotionSnapshot } | null = null;
   let revealPath: string | null = null;
   let frame = 0;
   /** Live slots and card scroll areas carrying inline motion styles. */
@@ -95,21 +104,18 @@ export function useListMotion(deps: ListMotionDeps) {
     const model = deps.getModel();
     const change = deps.getChange();
     untrack(() => {
-      const next = listMotionSnapshot(model);
-      const now = performance.now();
-      const user = change !== null && change.serial !== seen;
-      if (change) seen = change.serial;
-      if (user) armed = { path: change.path, until: now + ARM_MS };
-      if (armed && now > armed.until) armed = null;
+      // A reveal the interrupted motion owed survives the interruption.
+      const carried = settleReveal;
       finish(false);
-      const steps = armed && !prefersReducedMotion() ? planListMotion(last, next, deps.columnVisible) : null;
-      const opened = armed && model.items.some(item => item.card?.path === armed!.path) ? armed.path : null;
-      // The change that settles the folder's listing is its last animated one.
-      if (armed && deps.getStatus(armed.path) !== "loading") armed = null;
-      last = next;
+      const step = stepMotionArm(arm, { change, now: performance.now(), status: deps.getStatus, cardOf: path => cardOf(model, path), carried });
+      arm = step.next;
+      const previous = lastModel;
+      lastModel = model;
+      const snapshot = step.animate && previous && !prefersReducedMotion() ? listMotionSnapshot(model) : null;
+      const steps = snapshot ? planListMotion(listMotionSnapshot(previous!), snapshot, deps.columnVisible) : null;
       const canvas = deps.getCanvas();
-      pending = steps && canvas ? { steps, ghosts: capture(steps, canvas) } : null;
-      revealPath = opened;
+      pending = steps && snapshot && canvas ? { steps, ghosts: capture(steps, canvas), snapshot } : null;
+      revealPath = step.reveal;
     });
   });
 
@@ -144,7 +150,8 @@ export function useListMotion(deps: ListMotionDeps) {
 
   function start(plan: NonNullable<typeof pending>): boolean {
     const canvas = deps.getCanvas(), layer = deps.getLayer();
-    if (!canvas || !layer || !last) return false;
+    if (!canvas || !layer) return false;
+    const last = plan.snapshot;
     const slots = liveSlots(canvas);
     const columnHeight = last.R * LIST_SLOT_HEIGHT;
     const runs: Run[] = [];
@@ -158,6 +165,8 @@ export function useListMotion(deps: ListMotionDeps) {
       if (step.ghost && ghost) {
         ghost.el.style.left = `${step.ghost.column * LIST_COLUMN_STRIDE}px`;
         ghost.el.style.top = `${step.ghost.row * LIST_SLOT_HEIGHT}px`;
+        // Closing in place: the live header shows through; only the body and box shrink.
+        if (step.ghost.bodyOnly) for (const header of ghost.el.querySelectorAll<HTMLElement>(":scope > .list-entry")) header.style.visibility = "hidden";
         layer.append(ghost.el);
         ghosts.push(ghost.el);
         const scroll = ghost.el.querySelector<HTMLElement>(".list-card-scroll");
@@ -175,7 +184,6 @@ export function useListMotion(deps: ListMotionDeps) {
         const rows = motion.rowsFrom === null ? null : motionRows(motion.rowsFrom, motion.rowsTo, e);
         run.el.style.transform = `translateY(${y}px)`;
         if (run.scroll && rows !== null) run.scroll.style.height = `${rows * LIST_SLOT_HEIGHT}px`;
-        if (run.kind === "live" && run.motion.hidden) run.el.style.visibility = "hidden";
         // Travelling items stay inside their column (conveyor); others never leave it.
         if (run.kind === "ghost" || run.motion.clipColumn !== null) {
           const height = (rows === null ? 0 : rows) * LIST_SLOT_HEIGHT + LIST_SLOT_HEIGHT;

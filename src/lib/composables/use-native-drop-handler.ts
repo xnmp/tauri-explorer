@@ -9,6 +9,7 @@ import type { ExplorerInstance } from "$lib/state/explorer.svelte";
 import { useExternalDrop } from "$lib/composables/use-external-drop.svelte";
 import { resolveDropTarget, resolveDropTargetFromElement, captureDropDestination, highlightTarget, highlightTargetAtPoint, clearHighlights, captureHighlightCleanup } from "$lib/composables/use-native-drop-target.svelte";
 import { dropHover } from "$lib/state/drop-hover";
+import { shouldRetireOnDragEnd } from "$lib/domain/drop-feedback";
 import { dragState, type DragData } from "$lib/state/drag.svelte";
 import { handleFileDropMany } from "$lib/state/drop-operations";
 import { isCopyModifier as isCopyMod, isMac, isWindows } from "$lib/domain/platform";
@@ -311,10 +312,7 @@ export function useNativeDropHandler(deps: NativeDropDeps) {
     const live = dragState.latestSource();
     // Retire feedback only. Native Drop may still need its captured provenance,
     // and a delayed old DOM event cannot retire a successor's hover.
-    if ((endedSession && live?.sessionId && endedSession !== live.sessionId)
-      || (hoverPosition && !hoverSession)) return;
-    if (hoverSession && ((endedSession && endedSession !== hoverSession)
-      || (!endedSession && live?.sessionId !== hoverSession))) return;
+    if (!shouldRetireOnDragEnd({ endedSession: endedSession || undefined, liveSession: live?.sessionId, hoverSession, hovering: !!hoverPosition })) return;
     dropHover.clear(refreshHover);
     hoverPosition = null;
     clearHighlights();

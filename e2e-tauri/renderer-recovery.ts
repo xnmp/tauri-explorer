@@ -4,11 +4,11 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import assert from "node:assert/strict";
-import { exactApplicationPid, isolatedProcessEnvironment, processStartTime, terminateRendererDescendants } from "./native-process";
+import { exactApplicationPid, isolatedProcessEnvironment, nativeApplicationPath, processStartTime, terminateRendererDescendants } from "./native-process";
 
 if (process.platform !== "linux") throw new Error("Native renderer recovery acceptance requires Linux");
 
-const application = fs.realpathSync(path.resolve("src-tauri/target/debug/tauri-explorer"));
+const application = nativeApplicationPath();
 const runDirectory = fs.mkdtempSync(path.join(os.tmpdir(), "explorer-renderer-recovery-"));
 const fixture = path.join(runDirectory, "case");
 const config = path.join(runDirectory, "config");

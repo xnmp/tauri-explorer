@@ -28,6 +28,16 @@ field was expected on every OS. Keep the stale-identity and modifier contracts
 active everywhere; require GTK provenance on Linux and its omission elsewhere.
 Do not skip the tests or change production metadata to satisfy the fixture.
 
+An explicit Cargo host target moves the executable below its target triple.
+Every native process probe must resolve the same verified build manifest as
+WebDriver; a hardcoded `target/debug` path either misses the test app or risks
+targeting a different binary. Keep exact executable and isolated-profile checks.
+
+The bundle gate also exposed timestamp noise: SvelteKit's default version changes
+chunk hashes without source changes. Use the package release version for this
+embedded desktop SPA. Two builds then produce identical client files and satisfy
+the existing raw/gzip caps; do not raise caps or normalize measured assets.
+
 See [the acceptance audit and outstanding boundaries](../testing/dnd-acceptance.md).
 Xvfb establishes GTK X11 behavior, not Windows/macOS pointer sources, GNOME
 Wayland, external-app interoperability or hook-free release artifacts.

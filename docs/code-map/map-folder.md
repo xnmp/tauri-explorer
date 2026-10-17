@@ -40,6 +40,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `ListColumnsView.svelte` — Folder Peek List: column-major listbox with horizontal windowing and shared reveal/navigation snapshot.
 - `ListView.svelte` — classic row-major List (Folder Peek off); `listViewColumns`/`listColumnMaxWidth` apply here only.
 - `TilesView.svelte` — row-virtualized tile view with thumbnails; renders through `TileSurface.svelte`/`TileVisual.svelte`; runs `scroll-jank-monitor.ts` during scroll and logs `tiles-scroll-jank` events only when jank occurred (#593).
+- `view-loaders.ts` — memoised dynamic imports for the optional view renderers (List columns, List, Tiles); FileList starts the chunk in parallel with the listing.
 - `TileSurface.svelte` — tile-grid root: publishes `domain/tile-layout.ts` as tile CSS variables and owns all `.tile-item` chrome (hover, selected underline, ghosted/cut/drop states, icon scaling) for TilesView and FileTiles.
 - `TileVisual.svelte` — one tile's icon block (image/video thumbnail, folder preview, FileIcon, video marker) and name; the name defaults to `EntryNameLabel`, TilesView passes `EntryName`.
 - `src/lib/components/FileTile.svelte` — SDK module `ui/file-tile` (capability `fileTile`): one standalone gridcell, shared TileSurface/TileVisual, pane rename and clipboard/hidden/empty-folder appearance; the plugin owns rows, grid and keyboard navigation.
@@ -440,7 +441,8 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `file-batch-outcome.ts` — typed successful/failed path receipt and aggregate error formatting for best-effort file mutations.
 - `src/lib/domain/copy-session.ts` — ordered native session event, conflict-decision and positional result contracts, plus the copy and move incomplete-session presentations.
 - `file-history.ts` — shared action, summary, receipt and HistoryPort types for the native history authority.
-- `list-column-flow.ts` — slot-aware column prefix scan, span lookup, List keyboard movement, wheel normalization and viewport math.
+- `list-column-flow.ts` — slot-aware column prefix scan, span lookup, List keyboard movement, wheel mapping (`listWheelStep`: sub-pixel carry, native passthrough) and viewport math.
+- `drop-feedback.ts` — pure decision for whether a DOM dragend may retire drop-hover feedback (stale echo vs cancelled drag).
 - `virtual-layout.ts` — variable-height virtual list layout math (VirtualList).
 - `tile-layout.ts` — tile sizes (`THUMBNAIL_SIZE_CONFIG`, re-exported by settings), spacing/row-height `tileLayout()` and grid arrow-key `gridFocusStep()` shared by every tile grid; the SDK's `PaneTileSize`/`TileSizePreset` and `paneTileSize()`; `tileGridMetrics()` exposes minimum width, allocated cell height, gap and grid padding through `ui/file-tile`.
 - `image-resolution.ts` — source pixel shape, supported raster extensions and display formatting.

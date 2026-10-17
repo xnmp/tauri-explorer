@@ -272,7 +272,7 @@ describe("filesystem source to registered native/DOM listener lifecycle", () => 
 
   it("a pointer source handed to native honors drop-time Ctrl", async () => {
     Object.assign(doc, { createElement: () => ({ style: {}, remove: vi.fn() }), body: { appendChild: vi.fn() } });
-    const source = usePointerDrag({ getExplorer: () => ({ getSelectedEntries: () => [entry], currentPath: "/source", refresh: vi.fn() }) as any });
+    const source = usePointerDrag({ getExplorer: () => ({ getSelectedEntries: () => [entry], currentPath: "/source", refresh: vi.fn(), entryMeta: new Map([[entry.path, { depth: 0 }]]) }) as any });
     const down = Object.assign(new Event("mousedown", { cancelable: true }), { button: 0, clientX: 20, clientY: 30 });
     source.handlePointerDown(down as MouseEvent, entry, true);
     win.dispatchEvent(Object.assign(new Event("mousemove"), { clientX: -10, clientY: 30 }));

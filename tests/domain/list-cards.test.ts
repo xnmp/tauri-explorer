@@ -2,10 +2,10 @@ import { describe, expect, it } from "vitest";
 import type { FileEntry } from "$lib/domain/file";
 import { buildPeekRows, flattenPeekEntries, type PeekListing } from "$lib/domain/folder-peek";
 import { flatPeekEntries, flatPeekRows } from "$lib/domain/folder-peek-flat";
-import { columnFlow, resolveListMove, type ListFlowModel } from "$lib/domain/list-column-flow";
+import { columnFlow, resolveListMove, LIST_COLUMN_STRIDE, LIST_COLUMN_WIDTH, LIST_SLOT_HEIGHT, type ListFlowModel } from "$lib/domain/list-column-flow";
 import {
   buildListModel, buildListStructure, sizeListModel, cardFades, cardMaxRows, cardMoreCount, cardRevealTop, cardVisibleRows, cardWheelConsumes,
-  cardWindow, gripKeyRows, gripRows, rememberCardRows, LIST_CARD_DEFAULT_ROWS,
+  cardWindow, gripKeyRows, gripRows, rememberCardRows, springCardFits, springWrapBridges, LIST_CARD_DEFAULT_ROWS,
 } from "$lib/domain/list-cards";
 
 // ---------------------------------------------------------------------------
@@ -131,32 +131,91 @@ describe("buildListModel (ports the mock selfTest)", () => {
     expect(positions(ai)["freeze-fix-guide.md"]).toEqual([1, 5]);
     expect(ai.layout.atSlot(0, 5)).toBeUndefined();
   });
-  it("a spring-loaded card that does not fit shrinks in place instead of wrapping (#1242)", () => {
-    const rows = rowsFor(TOP, ["AI Draft Archive"]).rows;
-    const spring = (path: string) => path === `${ROOT}/AI Draft Archive`;
-    const fit = sizeListModel(buildListStructure(rows), 6, () => undefined, spring);
-    // The header keeps its place (column 0, row 5); the card holds only the rows left.
-    expect(positions(fit)["AI Draft Archive"]).toEqual([0, 5]);
-    const index = fit.items.findIndex(item => item.card);
-    expect(fit.layout.byIndex[index].slots).toBe(1);
-    expect(fit.items[index].card).toMatchObject({ visibleRows: 0 });
-    expect(positions(fit)["freeze-fix-guide.md"]).toEqual([1, 0]);
-    // Two rows left: header plus one visible row.
-    const career = sizeListModel(buildListStructure(rowsFor(TOP, ["Personal"]).rows), 6, () => undefined, path => path === `${ROOT}/Personal`);
-    expect(positions(career).Personal).toEqual([0, 3]);
-    expect(career.items[3].card).toMatchObject({ visibleRows: 2 });
-    // An ordinary card in the same place still wraps, and a fitting card that fits is unchanged.
-    expect(positions(sizeListModel(buildListStructure(rows), 6, () => undefined))["AI Draft Archive"]).toEqual([1, 0]);
-    const inbox = rowsFor(TOP, ["Inbox"]).rows;
-    expect(sizeListModel(buildListStructure(inbox), 21, () => undefined, () => true).layout.byIndex)
-      .toEqual(sizeListModel(buildListStructure(inbox), 21, () => undefined).layout.byIndex);
+  // Spring-loaded peeks (#1242): `springCardFits` from the drag's temporary paths.
+  const springModel = (top: readonly FileEntry[], expanded: readonly string[], temporary: readonly string[], R: number, listing = listingOf) => {
+    const { rows } = rowsFor(top, expanded, listing);
+    const structure = buildListStructure(rows);
+    const paths = temporary.map(path => `${ROOT}/${path}`);
+    return { model: sizeListModel(structure, R, () => undefined, springCardFits(structure, rows, paths)), paths };
+  };
+  it("a temporary card keeps its place when its header and two rows fit there, shrinking to the rows left", () => {
+    // Personal (row 3 of 6) has three slots left: header plus two rows, in place.
+    const { model } = springModel(TOP, ["Personal"], ["Personal"], 6);
+    expect(positions(model).Personal).toEqual([0, 3]);
+    expect(model.items[3].card).toMatchObject({ visibleRows: 2 });
+    // An ordinary card in the same place wraps; a temporary card that fits is unchanged.
+    expect(positions(modelFor(["Personal"])).Personal).toEqual([1, 0]);
+    expect(springModel(TOP, ["Inbox"], ["Inbox"], 21).model.layout.byIndex).toEqual(modelFor(["Inbox"], 21).layout.byIndex);
   });
-  it("columnFlow shrinks only cards with a valid minimum, and never below it", () => {
-    const item = (slots: number, min?: number) => ({ slots, card: slots > 1, ...(min === undefined ? {} : { min }) });
-    const flow = (specs: { slots: number; card: boolean; min?: number }[]) => columnFlow(specs, 6, spec => spec).byIndex.map(p => [p.column, p.row, p.slots]);
-    expect(flow([item(1), item(1), item(1), item(5, 1)])).toEqual([[0, 0, 1], [0, 1, 1], [0, 2, 1], [0, 3, 3]]);
-    expect(flow([item(1), item(1), item(1), item(5, 4)])).toEqual([[0, 0, 1], [0, 1, 1], [0, 2, 1], [1, 0, 5]]);
-    for (const min of [0, -1, 1.5, Number.NaN]) expect(flow([item(1), item(1), item(1), item(5, min)])).toEqual([[0, 0, 1], [0, 1, 1], [0, 2, 1], [1, 0, 5]]);
+  it("a temporary card with fewer than two rows left starts the next column, whatever its listing holds", () => {
+    // AI Draft Archive sits in the column's last row: no header-only card.
+    const { model, paths } = springModel(TOP, ["AI Draft Archive"], ["AI Draft Archive"], 6);
+    expect(positions(model)["AI Draft Archive"]).toEqual([1, 0]);
+    expect(model.items[5].card!.visibleRows).toBe(cardMaxRows(6));
+    expect(springWrapBridges(model, paths).length).toBeGreaterThan(0);
+    // Two slots left fit a one-row folder, but the choice must not change as its
+    // listing loads (a header-only Loading card, then its row): it wraps both times.
+    const top = [F("a"), F("b"), F("c"), F("d"), D("One"), F("z")];
+    const one = (status: "loading" | "loaded") => (path: string): PeekListing | undefined => path === `${ROOT}/One`
+      ? (status === "loaded" ? { status, entries: [F("One/x")] } : { status, entries: [], showLoading: false }) : undefined;
+    for (const status of ["loading", "loaded"] as const) {
+      expect(positions(springModel(top, ["One"], ["One"], 6, one(status)).model).One).toEqual([1, 0]);
+      // A user card there stays in place: it fits.
+      expect(positions(buildListModel(rowsFor(top, ["One"], one(status)).rows, 6, () => undefined)).One).toEqual([0, 4]);
+    }
+  });
+  it("a card holding a temporary peek keeps its place, so springing a nested folder never moves the card", () => {
+    // Career (rows 1..5 of 6) grows when Applications springs open inside it.
+    const before = modelFor(["Career"]);
+    const { model } = springModel(TOP, ["Career", "Career/Applications"], ["Career/Applications"], 6);
+    expect(positions(model).Career).toEqual(positions(before).Career);
+    expect(model.layout.byIndex[1].slots).toBe(before.layout.byIndex[1].slots);
+    // At R=4 the grown user card wraps; holding the temporary peek it stays.
+    expect(positions(modelFor(["Career"], 4)).Career).toEqual([0, 1]);
+    expect(positions(modelFor(["Career", "Career/Applications"], 4)).Career).toEqual([0, 1]);
+    expect(positions(springModel(TOP, ["Career", "Career/Applications"], ["Career/Applications"], 4).model).Career).toEqual([0, 1]);
+    const plain = rowsFor(TOP, ["Career"]).rows;
+    expect(springCardFits(buildListStructure(plain), plain, [])).toBeUndefined();
+  });
+  it("bridges a wrapped temporary card from its vacated slot: both columns' spare rows and the gap channel", () => {
+    const { model, paths } = springModel(TOP, ["AI Draft Archive"], ["AI Draft Archive"], 6);
+    const [H, W, S] = [LIST_SLOT_HEIGHT, LIST_COLUMN_WIDTH, LIST_COLUMN_STRIDE];
+    const path = `${ROOT}/AI Draft Archive`;
+    expect(model.layout.byIndex[5].slots).toBe(5);
+    expect(springWrapBridges(model, paths)).toEqual([
+      { path, left: 0, top: 5 * H, width: S, height: H }, // its old slot and the gap beside it
+      { path, left: S, top: 5 * H, width: W, height: H }, // below the card in its new column
+      { path, left: W, top: 0, width: S - W, height: 5 * H }, // the gap channel up to the card
+    ]);
+    // Only temporary cards that wrapped are bridged: not a user card, not one in place.
+    expect(springWrapBridges(modelFor(["AI Draft Archive"]), [`${ROOT}/Inbox`])).toEqual([]);
+    expect(springWrapBridges(springModel(TOP, ["Personal"], ["Personal"], 6).model, [`${ROOT}/Personal`])).toEqual([]);
+    expect(springWrapBridges(model, [])).toEqual([]);
+  });
+  it("a minimal reveal of a wrapped card leaves a pointer from its old slot inside a bridge or on the card", () => {
+    const { model, paths } = springModel(TOP, ["AI Draft Archive"], ["AI Draft Archive"], 6);
+    const bridges = springWrapBridges(model, paths);
+    const card = model.layout.byIndex[5];
+    const left = card.column * LIST_COLUMN_STRIDE;
+    const onCard = (x: number, y: number) => x >= left && x < left + LIST_COLUMN_WIDTH && y < card.slots * LIST_SLOT_HEIGHT;
+    const inside = (x: number, y: number) => onCard(x, y) || bridges.some(b => x >= b.left && x < b.left + b.width && y >= b.top && y < b.top + b.height);
+    // Any point of the old slot, shifted right by any scroll up to the card column's far edge.
+    for (let x = 0; x < LIST_COLUMN_WIDTH; x += 13) {
+      for (let shift = 0; x + shift < left + LIST_COLUMN_WIDTH; shift += 17) expect(inside(x + shift, 5.5 * LIST_SLOT_HEIGHT)).toBe(true);
+    }
+  });
+  it("columnFlow keeps a card with a valid fit in place while that many slots are left, else wraps it", () => {
+    const item = (slots: number, fit?: number) => ({ slots, card: slots > 1, ...(fit === undefined ? {} : { fit }) });
+    const flow = (specs: { slots: number; card: boolean; fit?: number }[]) => columnFlow(specs, 6, spec => spec).byIndex.map(p => [p.column, p.row, p.slots]);
+    const three = [item(1), item(1), item(1)];
+    expect(flow([...three, item(5, 1)])).toEqual([[0, 0, 1], [0, 1, 1], [0, 2, 1], [0, 3, 3]]);
+    expect(flow([...three, item(5, 4)])).toEqual([[0, 0, 1], [0, 1, 1], [0, 2, 1], [1, 0, 5]]);
+    // Fewer than `fit` slots left wraps even a card that would fit there.
+    expect(flow([...three, item(1), item(2, 3)])).toEqual([[0, 0, 1], [0, 1, 1], [0, 2, 1], [0, 3, 1], [1, 0, 2]]);
+    expect(flow([...three, item(1), item(2)])).toEqual([[0, 0, 1], [0, 1, 1], [0, 2, 1], [0, 3, 1], [0, 4, 2]]);
+    // A fit larger than a column never leaves an empty column.
+    expect(flow([item(3, 9)])).toEqual([[0, 0, 3]]);
+    for (const fit of [0, -1, 1.5, Number.NaN]) expect(flow([...three, item(5, fit)])).toEqual([[0, 0, 1], [0, 1, 1], [0, 2, 1], [1, 0, 5]]);
     // A plain item never shrinks or grows.
     expect(flow([item(1), item(1, 1)])).toEqual([[0, 0, 1], [0, 1, 1]]);
   });

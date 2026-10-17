@@ -49,10 +49,12 @@ const startDrag = (page: Page, name = "drag-me.txt") => page.evaluate(async ([pa
  * relatedTarget null, as WebKit does. Returns the hit element's identifying
  * attributes (`row:` a Details row wrapper, `bridge:` a spring bridge). */
 type At = { fx?: number; fy?: number; below?: number; dx?: number; dy?: number; related?: boolean };
-async function dragTo(page: Page, selector: string, at: At = {}, types: string[] = ["dragover"]) {
+type Point = { x: number; y: number };
+/** `selector` may instead be a viewport point (CSS px), for a slot an element left. */
+async function dragTo(page: Page, selector: string | Point, at: At = {}, types: string[] = ["dragover"]) {
   return page.evaluate(([target, point, events]) => {
     const w = window as unknown as { __spring: { transfer: DataTransfer; last: Element | null } };
-    const box = document.querySelector(target)!.getBoundingClientRect();
+    const box = typeof target === "string" ? document.querySelector(target)!.getBoundingClientRect() : new DOMRect(target.x, target.y, 0, 0);
     const x = box.left + box.width * (point.fx ?? 0.5) + (point.dx ?? 0);
     const y = (point.below !== undefined ? box.bottom + point.below : box.top + box.height * (point.fy ?? 0.5)) + (point.dy ?? 0);
     const hit = document.elementFromPoint(x, y)!;
@@ -76,7 +78,20 @@ const leaveWindow = (page: Page) => page.evaluate(() => {
   w.__spring.last?.dispatchEvent(new DragEvent("dragleave", { bubbles: true, cancelable: true, dataTransfer: w.__spring.transfer, relatedTarget: null }));
   w.__spring.last = null;
 });
-const dropOn = (page: Page, selector: string, at = {}) => dragTo(page, selector, at, ["dragover", "drop"]);
+const dropOn = (page: Page, selector: string | Point, at = {}) => dragTo(page, selector, at, ["dragover", "drop"]);
+const centerOf = async (page: Page, selector: string): Promise<Point> => {
+  const box = (await page.locator(selector).boundingBox())!;
+  return { x: box.x + box.width / 2, y: box.y + box.height / 2 };
+};
+/** The spring stays exactly `paths` while the drag keeps hovering `point`
+ * (a re-layout that moved the hovered row away would close and re-spring it). */
+async function holdsOpen(page: Page, point: Point | string, paths: string[], samples = 6) {
+  for (let i = 0; i < samples; i++) {
+    await dragTo(page, point);
+    expect(await springPeeks(page)).toEqual(paths);
+    await page.waitForTimeout(150);
+  }
+}
 /** The source's dragend (a drop's, or Escape/cancel's: dropEffect none). */
 const endDrag = (page: Page) => page.evaluate(() => {
   const w = window as unknown as { __spring: { transfer: DataTransfer } };
@@ -489,4 +504,74 @@ base("pointer drag (macOS): a source deleted elsewhere mid-drag cancels the drag
   await expect(page.locator(".toast.error")).toHaveCount(0);
   expect(errors).toEqual([]);
   await context.close();
+});
+
+// A spring open must never move the hovered row out from under the pointer.
+test.describe("list: spring cards keep the hovered row in place", () => {
+  const hasRows = (page: Page, rows: number) => expect(page.locator(`${shown} .list-view`)).toHaveAttribute("data-rows", String(rows));
+
+  test("a folder springing open inside a user card keeps the card in its column (R=7)", async ({ page }) => {
+    await page.setViewportSize({ width: 900, height: 330 });
+    await page.goto(`/?path=${root}&viewMode=list`);
+    await expect(page.locator(views.list.folder(P("Inbox")))).toBeVisible();
+    await hasRows(page, 7);
+    await explorer(page, "return explorer.togglePeek(value)", P("Inbox"));
+    await expect(page.locator(views.list.child(P("Inbox/Nested")))).toBeVisible();
+    // The card's opening motion has settled (it clips and moves the live slots).
+    await expect(page.locator(`${shown} .list-motion-layer > *, ${shown} [data-motion-key][style*="transform"], ${shown} [data-motion-key][style*="clip-path"]`)).toHaveCount(0);
+    const header = await centerOf(page, views.list.folder(P("Inbox")));
+    const nested = await centerOf(page, views.list.child(P("Inbox/Nested")));
+    await startDrag(page);
+    expect(await dragTo(page, nested)).toBe(P("Inbox/Nested"));
+    await opened(page, [P("Inbox/Nested")]);
+    // The card grew by Nested's row: it shrank in place instead of wrapping.
+    expect(await centerOf(page, views.list.folder(P("Inbox")))).toEqual(header);
+    expect(await centerOf(page, views.list.child(P("Inbox/Nested")))).toEqual(nested);
+    await holdsOpen(page, nested, [P("Inbox/Nested")]);
+    await endDrag(page);
+    await opened(page, []);
+    expect(await explorer<string[]>(page, "return [...explorer.expandedPaths]")).toEqual([P("Inbox")]);
+  });
+
+  for (const [label, width] of [["the next column in view", 900], ["a reveal scroll to the next column", 600]] as const) {
+    test(`a folder in a column's last row springs into the next column, stays open over its old slot and takes a drop (${label})`, async ({ page }) => {
+      await page.setViewportSize({ width, height: 250 });
+      await page.goto(`/?path=${root}&viewMode=list`);
+      await expect(page.locator(views.list.folder(P("Inbox")))).toBeVisible();
+      await hasRows(page, 4);
+      // Archive, Bulk, Empty, Inbox: Inbox holds column 0's last row.
+      const slot = await centerOf(page, views.list.folder(P("Inbox")));
+      await startDrag(page);
+      await dragTo(page, slot);
+      await opened(page, [P("Inbox")]);
+      // Not a header-only card: the card starts column 1 and is fully in view.
+      const card = page.locator(views.list.surface(P("Inbox")));
+      await expect(card).toBeVisible();
+      await expect(page.locator(views.list.child(P("Inbox/alpha.txt")))).toBeVisible();
+      await expect.poll(async () => page.evaluate(([cardSelector, scroller]) => {
+        const a = document.querySelector(cardSelector)!.getBoundingClientRect(), b = document.querySelector(scroller)!.getBoundingClientRect();
+        return a.left >= b.left - 0.5 && a.right <= b.right + 0.5;
+      }, [views.list.surface(P("Inbox")), `${shown} .list-scroller`] as const)).toBe(true);
+      // The vacated slot is inside the peek, so the wrap (and its reveal) does not close it.
+      expect(await dragTo(page, slot)).toMatch(new RegExp(`^(bridge:)?${P("Inbox")}$`));
+      await holdsOpen(page, slot, [P("Inbox")]);
+      // Sideways along the old row, then up into the card: never outside the peek.
+      const alpha = await centerOf(page, views.list.child(P("Inbox/alpha.txt")));
+      for (let x = slot.x; Math.abs(x - alpha.x) > 1; x += Math.sign(alpha.x - x) * Math.min(30, Math.abs(alpha.x - x))) {
+        await dragTo(page, { x, y: slot.y });
+        expect(await springPeeks(page)).toEqual([P("Inbox")]);
+      }
+      for (let y = slot.y; y > alpha.y; y -= 12) {
+        expect(await dragTo(page, { x: alpha.x, y })).toMatch(new RegExp(`^(bridge:)?${P("Inbox")}(/|$)`));
+        expect(await springPeeks(page)).toEqual([P("Inbox")]);
+      }
+      await dragTo(page, views.list.child(P("Inbox/alpha.txt")));
+      await dropOn(page, views.list.child(P("Inbox/alpha.txt")));
+      await expect.poll(() => listing(page, P("Inbox"))).toContain("drag-me.txt");
+      await endDrag(page);
+      await opened(page, []);
+      // Closed, Inbox is back in column 0's last row.
+      await expect(page.locator(`${shown} .list-spring-bridge`)).toHaveCount(0);
+    });
+  }
 });

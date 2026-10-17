@@ -4,7 +4,7 @@
  * scroll-edge and reveal policies shared by rendering, keyboard and motion.
  */
 import type { PeekRows } from "./folder-peek";
-import { columnFlow, LIST_SLOT_HEIGHT, type ListCardSpec, type ListFlowModel, type ListTopItem } from "./list-column-flow";
+import { columnFlow, LIST_COLUMN_GAP, LIST_COLUMN_STRIDE, LIST_COLUMN_WIDTH, LIST_SLOT_HEIGHT, type ListCardSpec, type ListFlowModel, type ListTopItem } from "./list-column-flow";
 
 export const LIST_CARD_DEFAULT_ROWS = 6;
 /** Scroll-edge fade mask height (CSS px). */
@@ -74,10 +74,10 @@ export function buildListStructure(rows: PeekRows): ListStructure {
 
 /** Sizes a structure's cards for R rows per column and flows it. Plain items are
  * reused as they are (they have no size), so with no open card nothing per item
- * is allocated beyond the flow's placements. A card for which `fitsInPlace`
- * holds (a spring-loaded peek, #1242) shrinks to the rows left in its column,
- * down to its header alone, rather than moving its header to the next column. */
-export function sizeListModel(structure: ListStructure, R: number, preferredOf: (path: string) => number | undefined, fitsInPlace?: (path: string) => boolean): ListFlowModel {
+ * is allocated beyond the flow's placements. `fitOf` gives a card a `fit`
+ * (`SlotSpec`): it keeps its place while that many slots are left in its column,
+ * shrinking to the rows left there (`springCardFits`). */
+export function sizeListModel(structure: ListStructure, R: number, preferredOf: (path: string) => number | undefined, fitOf?: (path: string) => number | undefined): ListFlowModel {
   let items: readonly ListTopItem[];
   if (!structure.cards.length) items = structure.items as readonly ListTopItem[]; // every card is null
   else {
@@ -88,13 +88,16 @@ export function sizeListModel(structure: ListStructure, R: number, preferredOf: 
     }
     items = sized;
   }
-  const fitting = fitsInPlace && structure.cards.length ? new Set(structure.cards.filter(index => fitsInPlace(items[index].card!.path))) : null;
+  const fits = fitOf && structure.cards.length ? new Map(structure.cards.flatMap(index => {
+    const fit = fitOf(items[index].card!.path);
+    return fit === undefined ? [] : [[index, fit] as const];
+  })) : null;
   const layout = columnFlow(items, R, (item, index) => item.card
-    ? { slots: 1 + item.card.visibleRows, card: true, ...(fitting?.has(index) ? { min: 1 } : {}) }
+    ? { slots: 1 + item.card.visibleRows, card: true, ...(fits?.has(index) ? { fit: fits.get(index)! } : {}) }
     : { slots: 1, card: false });
-  if (fitting?.size) {
+  if (fits?.size) {
     // A shrunk card shows only the rows its placement holds.
-    const shrunk = [...fitting].filter(index => layout.byIndex[index].slots !== 1 + items[index].card!.visibleRows);
+    const shrunk = [...fits.keys()].filter(index => layout.byIndex[index].slots !== 1 + items[index].card!.visibleRows);
     if (shrunk.length) {
       const sized = items.slice() as ListTopItem[];
       for (const index of shrunk) sized[index] = { ...items[index], card: { ...items[index].card!, visibleRows: layout.byIndex[index].slots - 1 } };
@@ -103,6 +106,66 @@ export function sizeListModel(structure: ListStructure, R: number, preferredOf: 
   }
   return { layout, items, rowEntry: structure.rowEntry, entryItem: structure.entryItem, entryOffset: structure.entryOffset };
 }
+
+/** Slots a drag's own temporary card needs left in its column to open in place:
+ * its header and two rows. */
+export const SPRING_CARD_FIT = 3;
+
+/**
+ * Spring-loaded peeks (#1242) never move the row a drag holds. A top-level card
+ * holding a temporary peek below its header keeps its place (`fit` 1), shrinking
+ * to the rows left in its column, so springing a nested folder cannot push the
+ * card into the next column. A temporary card opens in place too, unless fewer
+ * than two of its rows would show there: then it starts the next column as a
+ * user card would (`SPRING_CARD_FIT`), bridged from the slot it left
+ * (`springWrapBridges`). Undefined while no temporary peek is open in a card.
+ */
+export function springCardFits(structure: ListStructure, rows: PeekRows, temporary: readonly string[]): ((path: string) => number | undefined) | undefined {
+  if (!temporary.length || !structure.cards.length) return undefined;
+  const open = new Set(temporary);
+  const fits = new Map<string, number>();
+  for (const index of structure.cards) {
+    const card = structure.items[index].card!;
+    if (open.has(card.path)) { fits.set(card.path, SPRING_CARD_FIT); continue; }
+    for (let row = card.start; row < card.end; row++) {
+      const content = rows.rows[row];
+      if (content?.kind === "entry" && open.has(content.entry.path)) { fits.set(card.path, 1); break; }
+    }
+  }
+  return fits.size ? path => fits.get(path) : undefined;
+}
+
+/** A transparent canvas region (CSS px) that counts as inside a temporary peek. */
+export interface ListSpringBridge { readonly path: string; readonly left: number; readonly top: number; readonly width: number; readonly height: number }
+
+/**
+ * Bridges for temporary cards that started the next column. The folder's
+ * vacated rows and the column gap beside them, the rows below the card in its
+ * new column, and the gap channel up to the card count as inside the peek, so
+ * the wrap does not close it under a pointer still on the folder's old slot.
+ * The band spans both columns, so revealing the card (the least sideways scroll
+ * that shows its column) leaves the pointer inside it or on the card.
+ */
+export function springWrapBridges(model: ListFlowModel, temporary: readonly string[]): readonly ListSpringBridge[] {
+  if (!temporary.length) return [];
+  const R = model.layout.rows;
+  const bridges: ListSpringBridge[] = [];
+  model.items.forEach((item, index) => {
+    if (!item.card || index === 0 || !temporary.includes(item.card.path)) return;
+    const placement = model.layout.byIndex[index], previous = model.layout.byIndex[index - 1];
+    const vacated = previous.row + previous.slots;
+    if (placement.row !== 0 || previous.column !== placement.column - 1 || vacated >= R) return;
+    const path = item.card.path, column = previous.column, below = Math.max(vacated, placement.slots);
+    const x = column * LIST_COLUMN_STRIDE;
+    bridges.push({ path, left: x, top: vacated * LIST_SLOT_HEIGHT, width: LIST_COLUMN_STRIDE, height: (R - vacated) * LIST_SLOT_HEIGHT });
+    if (below < R) bridges.push({ path, left: x + LIST_COLUMN_STRIDE, top: below * LIST_SLOT_HEIGHT, width: LIST_COLUMN_WIDTH, height: (R - below) * LIST_SLOT_HEIGHT });
+    bridges.push({ path, left: x + LIST_COLUMN_WIDTH, top: 0, width: LIST_COLUMN_GAP, height: vacated * LIST_SLOT_HEIGHT });
+  });
+  return bridges;
+}
+
+/** Whether temporary card `path` started the next column (and is revealed). */
+export const springCardWrapped = (bridges: readonly ListSpringBridge[], path: string): boolean => bridges.some(bridge => bridge.path === path);
 
 export function buildListModel(rows: PeekRows, R: number, preferredOf: (path: string) => number | undefined): ListFlowModel {
   return sizeListModel(buildListStructure(rows), R, preferredOf);

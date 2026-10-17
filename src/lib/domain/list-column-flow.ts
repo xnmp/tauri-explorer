@@ -8,11 +8,12 @@ export const LIST_COLUMN_STRIDE = LIST_COLUMN_WIDTH + LIST_COLUMN_GAP;
 export const LIST_PADDING_X = 8;
 export const LIST_PADDING_Y = 6;
 
-/** `min`: a card that does not fit the rows left in its column may shrink to as
- * few as `min` slots (at least its header) and stay there instead of starting the
- * next column. Spring-loaded cards (#1242) use it: their header must stay under
- * the drag that opened them. */
-export type SlotSpec = Readonly<{ slots: number; card: boolean; min?: number }>;
+/** `fit`: a card that keeps its place whenever at least `fit` slots are left in
+ * its column, shrinking to them if it is taller; with fewer left it starts the
+ * next column even when it would fit, so the choice does not change as its
+ * listing loads. Spring-loaded peeks (#1242) use it so the row a drag holds
+ * stays under the pointer (`springCardFits`). */
+export type SlotSpec = Readonly<{ slots: number; card: boolean; fit?: number }>;
 export type ListPlacement = Readonly<{ index: number; column: number; row: number; slots: number }>;
 export interface ColumnFlowLayout {
   readonly rows: number;
@@ -33,11 +34,11 @@ export function columnFlow<T>(items: readonly T[], R: number, slotsOf: (item: T,
       throw new RangeError("Entries must fit one column; plain items use one slot");
     }
     let slots = spec.slots;
-    if (row + slots > R) {
-      const fit = spec.card && spec.min !== undefined && Number.isSafeInteger(spec.min) && spec.min >= 1 && R - row >= spec.min;
-      if (fit) slots = R - row;
-      else { column++; row = 0; }
-    }
+    const fit = spec.card && spec.fit !== undefined && Number.isSafeInteger(spec.fit) && spec.fit >= 1 ? spec.fit : null;
+    if (fit !== null) {
+      if (row > 0 && R - row < fit) { column++; row = 0; }
+      slots = Math.min(slots, R - row);
+    } else if (row + slots > R) { column++; row = 0; }
     const placement = { index, column, row, slots };
     (columns[column] ??= []).push(placement);
     byIndex.push(placement);

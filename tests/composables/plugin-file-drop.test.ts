@@ -227,7 +227,7 @@ describe("plugin pointer drops", () => {
 
   it("delivers two selected files in order without transferring, using raw client coordinates", async () => {
     const handler = register();
-    const explorer = { currentPath: "/source", getSelectedEntries: () => paths.map(entry), refresh: vi.fn() } as any;
+    const explorer = { currentPath: "/source", getSelectedEntries: () => paths.map(entry), refresh: vi.fn(), entryMeta: new Map(paths.map(path => [path, { depth: 0 }])) } as any;
     const drag = usePointerDrag({ getExplorer: () => explorer });
     drag.handlePointerDown({ button: 0, clientX: 10, clientY: 10, preventDefault: vi.fn(), currentTarget: { querySelector: () => null } } as any, entry(paths[1]), true);
     await fire("mousemove", { clientX: 20, clientY: 30 });

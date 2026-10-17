@@ -67,6 +67,9 @@
   // A peek caret or List card grip inside the cell is its own control: never a
   // row click, double click or drag (mirrors FileItem).
   const isPeekControl = (event: Event) => event.target instanceof Element && !!event.target.closest(".peek-caret, .list-card-grip");
+  // dragstart targets the draggable row itself, not where the press began, so
+  // a press on a control is noted when it starts.
+  let pressedControl = false;
 </script>
 
 <!-- svelte-ignore a11y_no_noninteractive_tabindex -- Roving composite focus is managed by FileList. -->
@@ -97,7 +100,8 @@
   onclick={(e) => { if (!isPeekControl(e)) onitemclick(entry, e); }}
   ondblclick={(e) => { if (!isRenaming && !isPeekControl(e)) onitemdblclick(entry); }}
   oncontextmenu={(e) => interactions.handleContextMenu(e, entry)}
-  ondragstart={usesHtml5Drag ? (e) => { if (isPeekControl(e)) e.preventDefault(); else interactions.handleDragStart(e, entry, explorer.isSelected(entry)); } : undefined}
+  onpointerdowncapture={(e) => { pressedControl = isPeekControl(e); }}
+  ondragstart={usesHtml5Drag ? (e) => { if (pressedControl || isPeekControl(e)) e.preventDefault(); else interactions.handleDragStart(e, entry, explorer.isSelected(entry)); } : undefined}
   ondragend={usesHtml5Drag ? interactions.handleDragEnd : undefined}
   ondragenter={(e) => interactions.handleDragEnter(e, entry)}
   ondragover={(e) => interactions.handleDragOver(e, entry)}

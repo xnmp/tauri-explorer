@@ -66,6 +66,11 @@ shown the new height, so animating its commit would snap back first.
 
 ## Card scroll state
 
+A card scroll changes which rows are mounted just as a sideways scroll does, so
+`setCardScrollTop` notifies FileList (`onviewportscroll`: tab-stop fallback,
+marquee) and drop hover once per frame. A grip preview whose card closes before
+its cancel arrives is dropped with the card's other per-card state.
+
 `useListColumns` owns card offsets. Reveal writes the offset synchronously
 (`cardRevealTop`), so the row is in the card's mounted window when FileList
 focuses it a tick later; `ListCard` applies the offset to the DOM in an effect
@@ -87,7 +92,9 @@ the grip resolve against the slot (`.list-place`, or a card's `.list-row`),
 which puts the grip on the card's bottom edge without measuring. A renaming
 row rises by its slot's `z-index` for the same reason. The grip and caret are
 excluded from row clicks, double clicks and drags (`EntryCell`'s
-`isPeekControl`).
+`isPeekControl`). `dragstart` targets the draggable row, not the element under
+the press, so `EntryCell` notes at `pointerdown` (capture) whether the press
+began on a control; checking `dragstart.target` alone never matches.
 
 The idle `.list-motion-layer` (absolute, full canvas) must be `display: none`
 while empty: axe reports every row's text as "overlapped by another element"

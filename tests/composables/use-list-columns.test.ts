@@ -124,9 +124,47 @@ describe("useListColumns cards", () => {
     client.flush();
     expect(columns.isCovered("entry:/d/f0")).toBe(false);
     columns.setCardScrollTop("/d/open", 90);
+    // A preview whose card closes before its grip's cancel arrives is dropped.
+    columns.setPreview("/d/open", 7);
     current = flatPeekRows(flatPeekEntries("/d", entries(5)), false);
     client.flush(() => client.set(source, 1));
     expect(columns.cardScrollTop("/d/open")).toBe(0);
+    expect(columns.previewRows("/d/open")).toBeNull();
+    current = rows;
+    client.flush(() => client.set(source, 2));
+    expect(columns.model.items[0].card?.visibleRows).toBe(6);
+    expect(columns.previewRows("/d/open")).toBeNull();
+    expect(columns.isCovered("entry:/d/f0")).toBe(false);
+    dispose();
+  });
+
+  it("tells FileList after a card scroll changes the mounted rows, once per frame", async () => {
+    let frame: FrameRequestCallback | undefined;
+    vi.stubGlobal("requestAnimationFrame", (cb: FrameRequestCallback) => { frame = cb; return 1; });
+    const listeners = new Map<string, (event: unknown) => void>();
+    let resize!: (entries: unknown[]) => void;
+    vi.stubGlobal("ResizeObserver", class { constructor(cb: typeof resize) { resize = cb; } observe() {} disconnect() {} });
+    vi.stubGlobal("getComputedStyle", () => ({ width: "800px" }));
+    const element = { scrollLeft: 0, scrollTop: 0, scrollWidth: 10000, clientWidth: 800, clientHeight: 300, isConnected: true,
+      getClientRects: () => [{}], addEventListener: (n: string, fn: (e: unknown) => void) => listeners.set(n, fn), removeEventListener: () => {}, querySelector: () => ({}) };
+    const onviewportscroll = vi.fn();
+    let columns!: ReturnType<typeof useListColumns>;
+    const dispose = client.effect_root(() => {
+      columns = create({ getRows: () => cardRows(40, 20), getPreferredRows: () => undefined, getPinnedPaths: () => [], onviewportscroll });
+      columns.attach(element as unknown as HTMLElement);
+    });
+    client.flush(() => resize([{ contentRect: { width: 800, height: 300 } }]));
+    await client.tick();
+    onviewportscroll.mockClear();
+    frame = undefined;
+    columns.setCardScrollTop("/d/open", 30);
+    columns.setCardScrollTop("/d/open", 60);
+    columns.setCardScrollTop("/d/open", 60); // unchanged: no further work
+    expect(frame).toBeDefined();
+    client.flush(() => frame!(0));
+    await client.tick();
+    await client.tick();
+    expect(onviewportscroll).toHaveBeenCalledTimes(1);
     dispose();
   });
 });

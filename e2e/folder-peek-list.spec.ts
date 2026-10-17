@@ -223,6 +223,11 @@ test("the grip resizes in whole rows, previews only its card, is remembered and 
   const grip = slot(page, `${root}/Archive`).getByRole("separator", { name: "Resize Archive" });
   await expect(grip).toHaveAttribute("aria-valuenow", "6");
   await expect(grip).toHaveAttribute("aria-valuemax", String(Math.floor(0.7 * R)));
+  // Pressing the grip, which sits inside the folder's draggable row, never starts a file drag.
+  await page.evaluate(() => {
+    (window as unknown as { fileDrags: number }).fileDrags = 0;
+    document.addEventListener("dragstart", event => { if (!event.defaultPrevented) (window as unknown as { fileDrags: number }).fileDrags++; });
+  });
   const before = await placements(page);
   const box = (await grip.boundingBox())!;
   await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
@@ -267,6 +272,7 @@ test("the grip resizes in whole rows, previews only its card, is remembered and 
   await expect(row(page, `${root}/Archive`)).toHaveAttribute("aria-expanded", "true");
   await expect(row(page, `${root}/Archive`)).not.toHaveClass(/selected/);
   await expect(grip).toHaveAttribute("aria-valuenow", String(Math.floor(0.7 * R)));
+  expect(await page.evaluate(() => (window as unknown as { fileDrags: number }).fileDrags)).toBe(0);
 });
 
 test("+N more counts rows below the visible area and fade masks follow the scrolled edges", async ({ page }) => {

@@ -80,9 +80,17 @@ export function useListColumns(deps: ListColumnsDeps) {
   // re-renders only that card. Kept while its card stays open, even unmounted.
   const cardScroll = $state<Record<string, number>>({});
   const cardScrollTop = (path: string): number => cardScroll[path] ?? 0;
+  // A card scroll changes which rows are mounted, like a sideways scroll:
+  // FileList's tab stop, the marquee and drop hover follow it after the update.
+  const cardScrollWork = createRafCoalescer<void>(() => {
+    void tick().then(() => { if (viewport?.isConnected) { deps.onviewportscroll?.(); dropHover.refresh(); } });
+  });
+  onDestroy(() => cardScrollWork.cancel());
   function setCardScrollTop(path: string, top: number): void {
     const value = Number.isFinite(top) ? Math.max(0, top) : 0;
-    if (cardScroll[path] !== value) cardScroll[path] = value;
+    if (cardScroll[path] === value) return;
+    cardScroll[path] = value;
+    cardScrollWork.push();
   }
   // A grip drag previews one card's height without committing the layout.
   let preview = $state.raw<{ path: string; rows: number } | null>(null);
@@ -137,6 +145,8 @@ export function useListColumns(deps: ListColumnsDeps) {
       clamp();
       const open = new Set(model.items.flatMap(item => item.card ? [item.card.path] : []));
       for (const path of Object.keys(cardScroll)) if (!open.has(path)) delete cardScroll[path];
+      // A card closed mid-drag may never deliver its grip's cancel.
+      if (preview && !open.has(preview.path)) preview = null;
     });
     void tick().then(() => {
       if (!signal.aborted && viewport?.isConnected && viewport.getClientRects().length) {

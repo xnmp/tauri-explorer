@@ -63,7 +63,7 @@
 
 {#if content > 0}
   <!-- svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_noninteractive_element_interactions, a11y_click_events_have_key_events -- WAI movable separator is an interactive range; the click only stays out of the row. -->
-  <div class="list-card-grip" role="separator" tabindex="0" aria-orientation="horizontal"
+  <div class="list-card-grip" role="separator" tabindex="0" aria-orientation="horizontal" draggable="false"
     aria-label={`Resize ${name}`} aria-valuemin={1} aria-valuemax={maxRows} aria-valuenow={visible}
     class:dragging={previewRows !== null}
     onpointerdown={down} onpointermove={move} onpointerup={up}

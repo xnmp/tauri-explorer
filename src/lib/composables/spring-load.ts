@@ -9,7 +9,26 @@
  * first eligible hover, replaying that hover once it has loaded.
  */
 import { settingsStore } from "$lib/state/settings.svelte";
-import type { SpringLoadDriver } from "./spring-load-driver";
+import { dragState } from "$lib/state/drag.svelte";
+import { windowTabsManager } from "$lib/state/window-tabs.svelte";
+import { pathComparison } from "$lib/domain/path";
+import { isWindows } from "$lib/domain/platform";
+import { isVirtualPath } from "$lib/domain/virtual-path";
+import { internalDragPaths } from "$lib/domain/file-drop";
+import { providerFor } from "$lib/plugins/fs-providers";
+import { resolveDropTargetFromElement } from "./use-native-drop-target.svelte";
+import type { SpringDomDeps, SpringLoadDriver } from "./spring-load-driver";
+
+/** Real panes, the live drag's paths and modal ownership, handed to the lazy
+ * driver so it imports nothing the startup graph already holds. */
+const domDeps: SpringDomDeps = {
+  paths: pathComparison(isWindows),
+  pane: id => windowTabsManager.getExplorer(id),
+  plain: path => !isVirtualPath(path) && !providerFor(path),
+  blocked: element => resolveDropTargetFromElement(element as unknown as Element)?.type === "blocked",
+  dragged: () => internalDragPaths(dragState.latestSource(), isWindows) ?? [],
+  apply: (pane, paths) => windowTabsManager.getExplorer(pane)?.setSpringPeeks(paths),
+};
 
 let driver: SpringLoadDriver | null = null;
 let loading = false;
@@ -30,7 +49,7 @@ export function springHover(locate: () => Element | null): void {
   if (loading) return;
   loading = true;
   void import("./spring-load-driver").then(module => {
-    driver = module.createDomSpringLoadDriver();
+    driver = module.createDomSpringLoadDriver(domDeps);
     const replay = latest;
     latest = null;
     if (replay?.isConnected) driver.hover(replay);

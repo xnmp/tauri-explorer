@@ -12,14 +12,6 @@
  */
 import { createSpringLoadController, type SpringObservation, type SpringPaths, type SpringTarget, type SpringTimer } from "$lib/domain/spring-load";
 import type { PeekCapability } from "$lib/domain/folder-peek-flat";
-import { pathComparison } from "$lib/domain/path";
-import { isWindows } from "$lib/domain/platform";
-import { isVirtualPath } from "$lib/domain/virtual-path";
-import { internalDragPaths } from "$lib/domain/file-drop";
-import { providerFor } from "$lib/plugins/fs-providers";
-import { dragState } from "$lib/state/drag.svelte";
-import { windowTabsManager } from "$lib/state/window-tabs.svelte";
-import { resolveDropTargetFromElement } from "./use-native-drop-target.svelte";
 
 /** The DOM surface observation reads, so it is testable without a DOM. */
 export interface SpringHitElement {
@@ -143,17 +135,18 @@ export function createSpringLoadDriver<E>(deps: SpringLoadDriverDeps<E>): Spring
   };
 }
 
-/** The production driver: real panes, the live drag's paths, real timers. */
-export function createDomSpringLoadDriver(): SpringLoadDriver {
-  const deps: SpringHitDeps = {
-    pane: id => windowTabsManager.getExplorer(id),
-    plain: path => !isVirtualPath(path) && !providerFor(path),
-    blocked: element => resolveDropTargetFromElement(element as unknown as Element)?.type === "blocked",
-    dragged: () => internalDragPaths(dragState.latestSource(), isWindows) ?? [],
-  };
+export interface SpringDomDeps extends SpringHitDeps {
+  paths: SpringPaths;
+  apply(pane: string, paths: readonly string[]): void;
+}
+
+/** The production driver. Its eager dependencies are passed in by the
+ * facade: importing them here would make the bundler split them out of the
+ * startup chunks they share (#1242). */
+export function createDomSpringLoadDriver(deps: SpringDomDeps): SpringLoadDriver {
   return createSpringLoadDriver<Element>({
-    paths: pathComparison(isWindows),
+    paths: deps.paths,
     observe: element => observeSpringHit(element as unknown as SpringHitElement | null, deps),
-    apply: (pane, paths) => windowTabsManager.getExplorer(pane)?.setSpringPeeks(paths),
+    apply: deps.apply,
   });
 }

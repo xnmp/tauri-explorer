@@ -40,7 +40,7 @@ test("caret toggles only its branch, preserves selection, and restores nested pe
   expect(await page.evaluate(async () => (await import("/src/lib/state/window-tabs.svelte.ts")).windowTabsManager.getActiveExplorer()!.expandedPaths.size)).toBe(0);
 });
 
-test("List and Tiles stay flat and returning to Details restores expansion", async ({ page }) => {
+test("List shows the peek as a card, Tiles stays flat, and returning to Details restores expansion", async ({ page }) => {
   await row(page, `${root}/project`).getByRole("button", { name: "Expand project", exact: true }).click();
   await expect(row(page, `${root}/project/src`)).toBeVisible();
   for (const mode of ["list", "tiles", "details"] as const) {
@@ -48,8 +48,14 @@ test("List and Tiles stay flat and returning to Details restores expansion", asy
       const { windowTabsManager } = await import("/src/lib/state/window-tabs.svelte.ts");
       windowTabsManager.getActiveExplorer()!.setViewMode(mode);
     }, mode);
-    if (mode === "details") await expect(row(page, `${root}/project/src`)).toBeVisible();
-    else { await expect(page.locator(".peek-caret")).toHaveCount(0); await expect(row(page, `${root}/project/src`)).toHaveCount(0); }
+    if (mode === "list") {
+      // The lazily loaded List renders the same open set as a card (#1240).
+      await expect(page.locator(`.pane-tree:not(.retained) [data-card-scroll][data-path="${root}/project"] .entry-item[data-path="${root}/project/src"]`)).toBeVisible();
+    } else if (mode === "tiles") {
+      await expect(page.locator(".pane-tree:not(.retained) .tile-item").first()).toBeVisible();
+      await expect(page.locator(".peek-caret")).toHaveCount(0);
+      await expect(row(page, `${root}/project/src`)).toHaveCount(0);
+    } else await expect(row(page, `${root}/project/src`)).toBeVisible();
   }
 });
 

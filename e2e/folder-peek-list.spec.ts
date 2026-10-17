@@ -1,0 +1,395 @@
+import { test, expect, type Page } from "./fixtures";
+
+// List cards (#1240, spec §8.3–8.4): an open top-level folder in the column
+// flow is a card; its descendants scroll inside it under the fixed header.
+const root = "/folder-peek-list";
+const shown = ".pane-tree:not(.retained)";
+const runtimeErrors = new WeakMap<Page, string[]>();
+test.beforeEach(async ({ page }) => {
+  const errors: string[] = [];
+  runtimeErrors.set(page, errors);
+  page.on("pageerror", error => errors.push(error.message));
+  page.on("console", message => { if (message.text().includes("derived_inert") || message.text().includes("effect_update_depth")) errors.push(message.text()); });
+});
+test.afterEach(async ({ page }) => { expect(runtimeErrors.get(page)).toEqual([]); });
+
+const viewport = (page: Page) => page.locator(`${shown} .list-scroller`);
+const slot = (page: Page, path: string) => page.locator(`${shown} .list-slot[data-motion-key="entry:${path}"]`);
+const row = (page: Page, path: string) => page.locator(`${shown} .entry-item[data-path="${path}"]`);
+const caret = (page: Page, path: string) => row(page, path).locator(":scope > .list-caret-slot > .peek-caret");
+const card = (page: Page, path: string) => slot(page, path).locator("[data-card-scroll]");
+const layer = (page: Page) => page.locator(`${shown} .list-motion-layer`);
+
+async function open(page: Page, path = root, size?: { width: number; height: number }) {
+  if (size) await page.setViewportSize(size);
+  await page.goto(`/?path=${path}&viewMode=list`);
+  await expect(page.locator(`${shown} .list-item`).first()).toBeVisible();
+  await expect.poll(() => page.locator(`${shown} .list-view`).getAttribute("data-rows")).not.toBe("4");
+  return Number(await page.locator(`${shown} .list-view`).getAttribute("data-rows"));
+}
+const setting = (page: Page, patch: Record<string, boolean>) => page.evaluate(async values => {
+  const { settingsStore } = await import("/src/lib/state/settings.svelte.ts");
+  settingsStore.update(values);
+}, patch);
+/** Waits until no motion is running (no ghost, no inline motion style) and
+ * none starts within an animation's length afterwards. */
+async function settled(page: Page) {
+  const motion = () => page.evaluate(selector => {
+    const pane = document.querySelector(selector)!;
+    const styled = [...pane.querySelectorAll<HTMLElement>(".list-slot, [data-card-scroll]")]
+      .filter(el => el.style.transform || el.style.clipPath || el.style.visibility || (el.matches("[data-card-scroll]") && el.style.height));
+    return pane.querySelector(".list-motion-layer")!.childElementCount + styled.length;
+  }, shown);
+  await expect.poll(motion, { timeout: 3000 }).toBe(0);
+  await page.waitForTimeout(250);
+  await expect.poll(motion, { timeout: 3000 }).toBe(0);
+}
+const explorerCall = <T>(page: Page, body: string, arg?: unknown) => page.evaluate(async ([source, value]) => {
+  const { windowTabsManager } = await import("/src/lib/state/window-tabs.svelte.ts");
+  return new Function("explorer", "value", source)(windowTabsManager.getActiveExplorer()!, value);
+}, [body, arg] as const) as Promise<T>;
+/** Column and row of each mounted top-level item. */
+const placements = (page: Page) => page.locator(`${shown} .list-slot`).evaluateAll(slots => Object.fromEntries(slots.map(el => {
+  const element = el as HTMLElement;
+  return [element.dataset.motionKey!.slice("entry:".length), [Number(element.dataset.column), element.offsetTop / 30]];
+})));
+/** Clicks a folder's caret and waits until its peek has settled. */
+async function toggle(page: Page, path: string) {
+  const open = await row(page, path).getAttribute("aria-expanded") === "true";
+  await caret(page, path).click();
+  await expect(row(page, path)).toHaveAttribute("aria-expanded", String(!open));
+  await expect.poll(() => explorerCall<string>(page, "return explorer.peekStatus(value) ?? 'none'", path)).not.toBe("loading");
+  await settled(page);
+}
+
+test("opening shows a card in its column and shifts every later item by its rows", async ({ page }) => {
+  const R = await open(page);
+  const before = await placements(page);
+  expect(before[`${root}/Career`]).toEqual([0, 2]);
+  await toggle(page, `${root}/Career`);
+  const after = await placements(page);
+  // Career has 9 children: 6 visible rows (the default), a 7-slot card.
+  await expect(card(page, `${root}/Career`)).toHaveCSS("height", "180px");
+  await expect(card(page, `${root}/Career`)).toHaveAttribute("aria-label", "Career contents");
+  await expect(card(page, `${root}/Career`)).toHaveAttribute("role", "group");
+  await expect(card(page, `${root}/Career`).locator(".entry-item")).not.toHaveCount(0);
+  const linear = ([column, slotRow]: number[]) => column * R + slotRow;
+  for (const [path, place] of Object.entries(before)) {
+    if (!(path in after)) continue;
+    const shift = linear(place) > linear(before[`${root}/Career`]) ? 6 : 0;
+    expect([path, linear(after[path])]).toEqual([path, linear(place) + shift]);
+  }
+  // Children are entries of the pane, not top-level slots.
+  expect(Object.keys(after).some(path => path.startsWith(`${root}/Career/`))).toBe(false);
+  // The pane's own item count is unchanged by a peek.
+  await expect(page.locator(".status-bar").first()).toContainText("90 items");
+});
+
+test("a card that does not fit starts the next column, leaving a gap, and is scrolled into view", async ({ page }) => {
+  const R = await open(page, root, { width: 720, height: 430 });
+  expect(R).toBeLessThan(12);
+  expect(await viewport(page).evaluate(el => el.scrollLeft)).toBe(0);
+  await toggle(page, `${root}/Personal`);
+  const after = await placements(page);
+  expect(after[`${root}/Personal`]).toEqual([1, 0]);
+  expect(after[`${root}/Inbox`]).toEqual([0, 4]);
+  // Nothing fills the tail gap the wrapped card left in column 0.
+  expect(Object.values(after).filter(([column, slotRow]) => column === 0 && slotRow > 4)).toEqual([]);
+  // The whole card is inside the scrollport once its motion has settled.
+  await expect.poll(async () => {
+    const [box, port] = await Promise.all([slot(page, `${root}/Personal`).boundingBox(), viewport(page).boundingBox()]);
+    return box!.x >= port!.x - 1 && box!.x + box!.width <= port!.x + port!.width + 1;
+  }).toBe(true);
+  expect(await viewport(page).evaluate(el => el.scrollLeft)).toBeGreaterThan(0);
+});
+
+test("nested folders open inside the card with guide lines, the close caret and a fixed header", async ({ page }) => {
+  await open(page);
+  await toggle(page, `${root}/Career`);
+  const codex = (await placements(page))[`${root}/Codex`];
+  await toggle(page, `${root}/Career/Applications`);
+  const acme = row(page, `${root}/Career/Applications/Acme Corp`);
+  await expect(card(page, `${root}/Career`).locator(`.entry-item[data-path="${root}/Career/Applications/Acme Corp"]`)).toBeVisible();
+  // The card's height is unchanged (still 6 visible rows): nothing outside moved.
+  expect((await placements(page))[`${root}/Codex`]).toEqual(codex);
+  await expect(acme).toHaveAttribute("aria-level", "3");
+  await expect(row(page, `${root}/Career/Applications`)).toHaveAttribute("aria-expanded", "true");
+  await expect(slot(page, `${root}/Career`).locator(".list-guide")).toHaveCount(1);
+  // Close caret: 14px slot, 10px chevron, 16px per level, a child's caret under its parent's icon.
+  const geometry = await page.evaluate(([parent, child]) => {
+    const rect = (selector: string) => document.querySelector(selector)!.getBoundingClientRect();
+    const p = `.pane-tree:not(.retained) .entry-item[data-path="${parent}"]`, c = `.pane-tree:not(.retained) .entry-item[data-path="${child}"]`;
+    const guide = document.querySelector(".pane-tree:not(.retained) .list-guide")!.getBoundingClientRect();
+    return {
+      slot: rect(`${p} .list-caret-slot`).width, chevron: rect(`${p} .peek-caret svg`).width,
+      indent: rect(`${c} .peek-caret`).left - rect(`${p} .peek-caret`).left,
+      underIcon: Math.abs((rect(`${c} .peek-caret svg`).left + 5) - (rect(`${p} .list-icon`).left + 8)),
+      guideUnderCaret: Math.abs(guide.left + guide.width / 2 - (rect(`${p} .peek-caret svg`).left + 5)),
+    };
+  }, [`${root}/Career/Applications`, `${root}/Career/Applications/Acme Corp`]);
+  expect(geometry).toMatchObject({ slot: 14, chevron: 10, indent: 16 });
+  expect(geometry.underIcon).toBeLessThanOrEqual(2);
+  expect(geometry.guideUnderCaret).toBeLessThanOrEqual(1);
+  // Scrolling the card moves its descendants under the header, which stays put.
+  const header = await row(page, `${root}/Career`).boundingBox();
+  const first = await row(page, `${root}/Career/Applications`).boundingBox();
+  await card(page, `${root}/Career`).evaluate(el => { el.scrollTop = 60; });
+  await expect.poll(async () => (await row(page, `${root}/Career/Applications`).boundingBox())?.y ?? -1).toBeCloseTo(first!.y - 60, 0);
+  expect(await row(page, `${root}/Career`).boundingBox()).toEqual(header);
+});
+
+test("a rename inside a card commits in place and the card keeps its rows", async ({ page }) => {
+  await open(page);
+  await toggle(page, `${root}/Inbox`);
+  await row(page, `${root}/Inbox/quote.txt`).click();
+  await page.keyboard.press("F2");
+  const editor = page.locator(".rename-input");
+  await editor.fill("a-quote.txt");
+  await editor.press("Enter");
+  await expect(editor).toHaveCount(0);
+  await expect(card(page, `${root}/Inbox`).locator(`.entry-item[data-path="${root}/Inbox/a-quote.txt"]`)).toBeVisible();
+  await expect(card(page, `${root}/Inbox`).locator(".entry-item")).toHaveCount(6);
+});
+
+test("the grip resizes in whole rows, previews only its card, is remembered and never exceeds a column", async ({ page }) => {
+  const R = await open(page);
+  await toggle(page, `${root}/Archive`);
+  const grip = slot(page, `${root}/Archive`).getByRole("separator", { name: "Resize Archive" });
+  await expect(grip).toHaveAttribute("aria-valuenow", "6");
+  await expect(grip).toHaveAttribute("aria-valuemax", String(Math.floor(0.7 * R)));
+  const before = await placements(page);
+  const box = (await grip.boundingBox())!;
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2 + 40, { steps: 4 }); // 1.33 rows
+  // Only the card's scroll area previews; the layout has not moved.
+  await expect(card(page, `${root}/Archive`)).toHaveCSS("height", "210px");
+  expect(await placements(page)).toEqual(before);
+  await expect(slot(page, `${root}/Career`)).toHaveClass(/covered/);
+  await page.mouse.up();
+  await settled(page);
+  await expect(grip).toHaveAttribute("aria-valuenow", "7");
+  expect((await placements(page))[`${root}/Career`]).toEqual([before[`${root}/Career`][0], before[`${root}/Career`][1] + 1]);
+  await expect(slot(page, `${root}/Career`)).not.toHaveClass(/covered/);
+  // Remembered across collapse and re-open.
+  await toggle(page, `${root}/Archive`);
+  await toggle(page, `${root}/Archive`);
+  await expect(card(page, `${root}/Archive`)).toHaveCSS("height", "210px");
+  // Dragging far caps the card at floor(0.7R) rows: it always fits one column.
+  const far = (await grip.boundingBox())!;
+  await page.mouse.move(far.x + far.width / 2, far.y + far.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(far.x + far.width / 2, far.y + 4000, { steps: 4 });
+  await page.mouse.up();
+  await settled(page);
+  await expect(grip).toHaveAttribute("aria-valuenow", String(Math.floor(0.7 * R)));
+  expect(await slot(page, `${root}/Archive`).evaluate(el => el.offsetHeight)).toBeLessThanOrEqual(R * 30);
+  // Separator keys: one row per arrow, Home/End for the minimum and maximum.
+  await grip.focus();
+  await page.keyboard.press("ArrowUp");
+  await expect(grip).toHaveAttribute("aria-valuenow", String(Math.floor(0.7 * R) - 1));
+  await page.keyboard.press("Home");
+  await expect(grip).toHaveAttribute("aria-valuenow", "1");
+  await page.keyboard.press("End");
+  await expect(grip).toHaveAttribute("aria-valuenow", String(Math.floor(0.7 * R)));
+});
+
+test("+N more counts rows below the visible area and fade masks follow the scrolled edges", async ({ page }) => {
+  await open(page);
+  await toggle(page, `${root}/Archive`); // 50 rows, 6 visible
+  const scroller = card(page, `${root}/Archive`);
+  const more = slot(page, `${root}/Archive`).locator(".list-card-more");
+  const fades = () => scroller.evaluate(el => [getComputedStyle(el).getPropertyValue("--fade-top").trim(), getComputedStyle(el).getPropertyValue("--fade-bottom").trim()]);
+  await expect(more).toHaveText("+44 more");
+  expect(await fades()).toEqual(["0px", "28px"]);
+  await scroller.evaluate(el => { el.scrollTop = 300; });
+  await expect(more).toHaveText("+34 more");
+  await expect.poll(fades).toEqual(["28px", "28px"]);
+  await scroller.evaluate(el => { el.scrollTop = el.scrollHeight; });
+  await expect(more).toHaveCount(0);
+  await expect.poll(fades).toEqual(["28px", "0px"]);
+  // A card whose content fits shows neither.
+  await toggle(page, `${root}/Inbox`); // 6 rows
+  await expect(slot(page, `${root}/Inbox`).locator(".list-card-more")).toHaveCount(0);
+  expect(await card(page, `${root}/Inbox`).evaluate(el => getComputedStyle(el).getPropertyValue("--fade-bottom").trim())).toBe("0px");
+});
+
+test("Up/Down pass through a card's rows, scrolling the card, and stop at column ends", async ({ page }) => {
+  await open(page);
+  await toggle(page, `${root}/Archive`);
+  await row(page, `${root}/Archive`).click();
+  for (let i = 0; i < 9; i++) await page.keyboard.press("ArrowDown");
+  // Folders 2019..2023 then archive-01..04: content offset 8.
+  const target = row(page, `${root}/Archive/archive-04.pdf`);
+  await expect(target).toBeFocused();
+  await expect(target).toHaveClass(/selected/);
+  expect(await card(page, `${root}/Archive`).evaluate(el => el.scrollTop)).toBe(90);
+  const [rect, clip] = await Promise.all([target.boundingBox(), card(page, `${root}/Archive`).boundingBox()]);
+  expect(rect!.y).toBeGreaterThanOrEqual(clip!.y - 1);
+  expect(rect!.y + rect!.height).toBeLessThanOrEqual(clip!.y + clip!.height + 1);
+  for (let i = 0; i < 9; i++) await page.keyboard.press("ArrowUp");
+  await expect(row(page, `${root}/Archive`)).toBeFocused();
+  expect(await card(page, `${root}/Archive`).evaluate(el => el.scrollTop)).toBe(0);
+  await page.keyboard.press("ArrowUp");
+  await expect(row(page, `${root}/AI Draft Archive`)).toBeFocused();
+  // Left/Right stay spatial: from a card row to the same on-screen row.
+  await page.keyboard.press("ArrowDown");
+  await page.keyboard.press("ArrowDown"); // 2019, card slot row 2
+  await page.keyboard.press("ArrowRight");
+  const focusedTop = await page.evaluate(() => (document.activeElement as HTMLElement).getBoundingClientRect().top);
+  const fromTop = await row(page, `${root}/Archive/2019`).evaluate(el => el.getBoundingClientRect().top);
+  expect(Math.abs(focusedTop - fromTop)).toBeLessThanOrEqual(1);
+});
+
+test("a vertical wheel over a card scrolls the card first, then the List sideways", async ({ page }) => {
+  await open(page);
+  await toggle(page, `${root}/Archive`);
+  const scroller = card(page, `${root}/Archive`);
+  const box = (await scroller.boundingBox())!;
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  await page.mouse.wheel(0, 120);
+  await expect.poll(() => scroller.evaluate(el => el.scrollTop)).toBeGreaterThan(0);
+  expect(await viewport(page).evaluate(el => el.scrollLeft)).toBe(0);
+  await scroller.evaluate(el => { el.scrollTop = el.scrollHeight; });
+  await page.mouse.wheel(0, 120);
+  await expect.poll(() => viewport(page).evaluate(el => el.scrollLeft)).toBeGreaterThan(0);
+  // Ctrl+wheel is never taken by the card or the List.
+  const prevented = await scroller.evaluate(el => {
+    const event = new WheelEvent("wheel", { deltaY: -40, ctrlKey: true, bubbles: true, cancelable: true });
+    el.dispatchEvent(event);
+    return event.defaultPrevented;
+  });
+  expect(prevented).toBe(false);
+});
+
+test("with carets off a click toggles a folder, nested rows have no caret, and double-click navigates", async ({ page }) => {
+  await open(page);
+  await setting(page, { folderPeekCarets: false });
+  await expect(page.locator(`${shown} .peek-caret, ${shown} .list-caret-slot`)).toHaveCount(0);
+  await row(page, `${root}/Career`).click();
+  await expect(card(page, `${root}/Career`)).toBeVisible();
+  await expect(row(page, `${root}/Career`)).toHaveAttribute("aria-expanded", "true");
+  await row(page, `${root}/Career/Applications`).click();
+  await expect(row(page, `${root}/Career/Applications/Globex`)).toBeVisible();
+  await expect(card(page, `${root}/Career`).locator(".peek-caret")).toHaveCount(0);
+  await row(page, `${root}/Career`).click();
+  await expect(card(page, `${root}/Career`)).toHaveCount(0);
+  await row(page, `${root}/Inbox`).click();
+  await expect(card(page, `${root}/Inbox`)).toBeVisible();
+  const expanded = () => explorerCall<string[]>(page, "return [...explorer.expandedPaths]");
+  const was = await expanded();
+  expect(was).toContain(`${root}/Inbox`); // a closed card remembers its nested peeks
+  await row(page, `${root}/Codex`).dblclick();
+  await expect(page.locator(`${shown} .entry-item[data-path="${root}/Codex/AGENTS.md"]`)).toBeVisible();
+  await explorerCall(page, "return explorer.goBack()");
+  await expect(row(page, `${root}/Codex`)).toBeVisible();
+  expect(await expanded()).toEqual(was);
+  await expect(card(page, `${root}/Inbox`)).toBeVisible();
+});
+
+test("with Folder Peek off List is the classic row-major grid without cards", async ({ page }) => {
+  await open(page);
+  await toggle(page, `${root}/Career`);
+  await setting(page, { folderPeek: false });
+  await expect(page.locator(`${shown} .list-view[data-columns]`)).toBeVisible();
+  await expect(page.locator(`${shown} .list-motion-layer, ${shown} [data-card-scroll], ${shown} .peek-caret`)).toHaveCount(0);
+  await expect(row(page, `${root}/Career/Applications`)).toHaveCount(0);
+  await row(page, `${root}/Career`).click();
+  await expect(row(page, `${root}/Career/Applications`)).toHaveCount(0);
+  await setting(page, { folderPeek: true });
+  await expect(page.locator(`${shown} .list-scroller .peek-caret`).first()).toBeVisible();
+});
+
+test("only visible columns animate, with sanitized ghosts on the conveyor and an instant reduced-motion path", async ({ page }) => {
+  await open(page, root, { width: 720, height: 430 });
+  // Sample the first animation frames after a user toggle.
+  const sample = () => page.evaluate(async ([selector, path]) => {
+    const pane = document.querySelector(selector)!;
+    const port = pane.querySelector<HTMLElement>(".list-scroller")!;
+    (pane.querySelector(`.entry-item[data-path="${path}"] .peek-caret`) as HTMLElement).click();
+    const frames: { ghosts: number; ghostIdentity: number; moving: number[]; offscreenMoving: number }[] = [];
+    for (let i = 0; i < 6; i++) {
+      await new Promise(resolve => requestAnimationFrame(resolve));
+      const ghosts = [...pane.querySelector(".list-motion-layer")!.children] as HTMLElement[];
+      const moving = [...pane.querySelectorAll<HTMLElement>(".list-slot")].filter(el => el.style.transform);
+      const right = port.scrollLeft + port.clientWidth;
+      frames.push({
+        ghosts: ghosts.length,
+        ghostIdentity: ghosts.filter(g => g.matches(".entry-item, [data-path], [data-index], [role], [tabindex]") || g.querySelector(".entry-item, .list-item, [data-path], [data-index], [role], [tabindex], [data-card-scroll]")).length,
+        moving: moving.map(el => Number(el.dataset.column)),
+        offscreenMoving: moving.filter(el => el.offsetLeft > right + 8).length,
+      });
+    }
+    return frames;
+  }, [shown, `${root}/Career`] as const);
+  const frames = await sample();
+  expect(frames.some(frame => frame.moving.length > 0)).toBe(true);
+  expect(frames.some(frame => frame.ghosts > 0)).toBe(true); // items leaving column 0 at its bottom
+  expect(frames.every(frame => frame.ghostIdentity === 0 && frame.offscreenMoving === 0)).toBe(true);
+  await settled(page);
+  // Reduced motion: the next frame already shows the final layout.
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  const reduced = await sample();
+  expect(reduced.every(frame => frame.moving.length === 0 && frame.ghosts === 0)).toBe(true);
+  await expect(card(page, `${root}/Career`)).toHaveCount(0);
+});
+
+test("interrupted toggles of cards leave no ghost, stuck style or hidden entry", async ({ page }) => {
+  const R = await open(page);
+  const folders = ["Career", "Archive", "Personal", "Inbox", "Codex"].map(name => `${root}/${name}`);
+  let seed = 7;
+  const random = () => (seed = (seed * 48271) % 2147483647) / 2147483647;
+  for (let i = 0; i < 30; i++) {
+    const path = folders[Math.floor(random() * folders.length)];
+    await page.evaluate(([selector, target]) => (document.querySelector(`${selector} .entry-item[data-path="${target}"] .peek-caret`) as HTMLElement).click(), [shown, path] as const);
+    await page.waitForTimeout(Math.floor(random() * 120));
+  }
+  await settled(page);
+  const report = await page.evaluate(([selector, rows]) => {
+    const pane = document.querySelector(selector)!;
+    const port = pane.querySelector<HTMLElement>(".list-scroller")!.getBoundingClientRect();
+    const slots = [...pane.querySelectorAll<HTMLElement>(".list-slot")];
+    const problems: string[] = [];
+    const columns = new Map<number, HTMLElement[]>();
+    for (const el of slots) {
+      if (el.classList.contains("covered") || getComputedStyle(el).visibility !== "visible") problems.push(`hidden ${el.dataset.motionKey}`);
+      (columns.get(Number(el.dataset.column)) ?? columns.set(Number(el.dataset.column), []).get(Number(el.dataset.column))!).push(el);
+      const scroll = el.querySelector<HTMLElement>("[data-card-scroll]");
+      if (scroll && scroll.offsetHeight !== Number(getComputedStyle(scroll).getPropertyValue("--card-visible-rows")) * 30) problems.push(`card height ${el.dataset.motionKey}`);
+    }
+    for (const [column, list] of columns) {
+      list.sort((a, b) => a.offsetTop - b.offsetTop);
+      for (let i = 1; i < list.length; i++) if (list[i].offsetTop < list[i - 1].offsetTop + list[i - 1].offsetHeight) problems.push(`overlap in ${column}`);
+      if (list.at(-1)!.offsetTop + list.at(-1)!.offsetHeight > rows * 30) problems.push(`overflow in ${column}`);
+    }
+    // Every visible plain row is what the pointer hits at its centre.
+    for (const el of slots.filter(s => !s.querySelector("[data-card-scroll]"))) {
+      const r = el.getBoundingClientRect();
+      const x = r.left + r.width / 2, y = r.top + r.height / 2;
+      if (x < port.left || x > port.right) continue;
+      if (!el.contains(document.elementFromPoint(x, y))) problems.push(`occluded ${el.dataset.motionKey}`);
+    }
+    return problems;
+  }, [shown, R] as const);
+  expect(report).toEqual([]);
+  // The open set and the drawn cards agree.
+  const expanded = (await explorerCall<string[]>(page, "return [...explorer.expandedPaths]")).sort();
+  const drawn = await page.locator(`${shown} [data-card-scroll]`).evaluateAll(els => els.map(el => (el as HTMLElement).dataset.path!).sort());
+  expect(drawn).toEqual(expanded.filter(path => path.split("/").length === 3));
+});
+
+test("three open 5,000-row cards keep the mounted entries bounded", async ({ page }) => {
+  const R = await open(page, "/perf/huge-10000");
+  for (const name of ["folder-00000", "folder-00016", "folder-00032"]) {
+    await caret(page, `/perf/huge-10000/${name}`).click();
+    await expect(card(page, `/perf/huge-10000/${name}`).locator(".entry-item").first()).toBeVisible();
+  }
+  await settled(page);
+  const stats = await viewport(page).evaluate(el => ({ width: el.clientWidth, mounted: el.querySelectorAll(".entry-item").length }));
+  const cap = Math.floor(0.7 * R);
+  expect(stats.mounted).toBeLessThanOrEqual((Math.ceil(stats.width / 276) + 5) * R + 3 * (cap + 4));
+  // Deep inside a card, scrolling keeps the window small.
+  await card(page, "/perf/huge-10000/folder-00016").evaluate(el => { el.scrollTop = 2500 * 30; });
+  await expect.poll(() => card(page, "/perf/huge-10000/folder-00016").evaluate(el => Math.min(...[...el.querySelectorAll<HTMLElement>(".list-row")].map(r => r.offsetTop)))).toBeGreaterThanOrEqual(2490 * 30);
+  expect(await viewport(page).evaluate(el => el.querySelectorAll(".entry-item").length)).toBeLessThanOrEqual((Math.ceil(stats.width / 276) + 5) * R + 3 * (cap + 4));
+});

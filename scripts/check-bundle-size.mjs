@@ -50,13 +50,7 @@ const STARTUP_RAW_BUDGET = 866_617;
 // the trashed-item open guards and menu scoping, +278 bytes gzip (280,044
 // total). Routing every lazy call through one module was measured; a second
 // Vite preload wrapper cost ~100 bytes.
-// Raised 280,448 -> 281,472 (+1 KiB) for #1246 (selectable icon packs).
-// Clean dev at 12f562f6 measured 831,174 raw / 280,433 gzip (15 bytes of
-// headroom). Four-pack dispatch, preview state and shared folder decorations
-// measure 827,331 raw / 280,946 gzip: raw decreases 3,843 bytes, gzip rises
-// 513 bytes. Both colorful artwork catalogs are external SVG sprites; picker
-// descriptions remain lazy. The remaining behavior must paint on startup.
-const STARTUP_GZIP_BUDGET = 281_472;
+const STARTUP_GZIP_BUDGET = 280_448;
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const clientDir = resolve(repoRoot, ".svelte-kit/output/client");

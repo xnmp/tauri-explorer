@@ -96,6 +96,22 @@ row's own `class:drop-target` directive can remove the class when its state
 flips, so the capture listener re-adds it on the next `dragover`, which repeats
 while a drag rests.
 
+## A spring can unmount the drag's source row
+
+Virtualized views mount only the visible rows plus a small buffer. A big folder
+springing open above the source row pushes that row out of the window and
+unmounts it. The macOS/Windows pointer drag ran its cleanup in the row's
+`onDestroy`, so the gesture was silently cancelled mid-drag and the release
+dropped nothing.
+
+An unmount now releases only a press that has not crossed the drag threshold.
+An active drag keeps its window listeners, and keeps the explorer captured at
+drag start, until mouseup, Escape or blur. The HTML5 path already handled
+this: the row's owner retires its source as `owner-disposed` (Linux keeps an
+active native handoff alive), and the drop recovers the session from
+unexpired shared drag history (#1095). The browser spec covers both backends
+with a 40-file folder that springs open above the source.
+
 ## Keep the driver's imports out of the startup graph
 
 The first lazy driver imported window tabs, drag state and the drop-target

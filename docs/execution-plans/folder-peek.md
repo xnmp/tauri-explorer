@@ -691,6 +691,11 @@ Screenshots:
     the native Drop).
   - Selection, cursor and focus are untouched by temporary peeks; closing animates like
     a user close (reduced motion: instant).
+  - A macOS/Windows pointer drag belongs to the pointer, not to its source row. A big
+    folder springing open above the source pushes that row out of the virtual window;
+    its unmount used to cancel the gesture. Now an unmount only releases a press below
+    the drag threshold, and the drag keeps the pane it started in until mouseup,
+    Escape or blur.
   - A native (tauri-driver) spring spec is deferred: the XTest helper drags in one
     straight segment without a hold, and the spec would join the required DnD
     qualification without a local run (see the lesson).

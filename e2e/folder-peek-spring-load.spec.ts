@@ -281,19 +281,44 @@ test("carets off changes nothing, and the pane background still drops into the c
   await endDrag(page);
 });
 
+test("an HTML5 drag whose source row leaves the virtual window under a big spring peek still drops", async ({ page }) => {
+  await page.setViewportSize({ width: 900, height: 420 });
+  await page.goto(`/?path=${root}&viewMode=details`);
+  await expect(page.locator(views.details.folder(P("drag-me.txt")))).toBeVisible();
+  // The real row starts the drag (its own dragstart handler, as an engine would).
+  await page.evaluate(selector => {
+    const w = window as unknown as { __spring?: { transfer: DataTransfer; last: Element | null } };
+    w.__spring = { transfer: new DataTransfer(), last: null };
+    document.querySelector(selector)!.dispatchEvent(new DragEvent("dragstart", { bubbles: true, cancelable: true, dataTransfer: w.__spring.transfer }));
+  }, views.details.folder(P("drag-me.txt")));
+  await dragTo(page, views.details.folder(P("Bulk")));
+  await opened(page, [P("Bulk")]);
+  await expect(page.locator(views.details.folder(P("drag-me.txt")))).toHaveCount(0);
+  await dragTo(page, views.details.child(P("Bulk/bulk-02.txt")));
+  await dropOn(page, views.details.child(P("Bulk/bulk-02.txt")));
+  await expect.poll(() => listing(page, P("Bulk"))).toContain("drag-me.txt");
+  await endDrag(page);
+  await opened(page, []);
+});
+
 // The macOS/Windows in-app backend is a pointer drag driven by real mouse
 // input (navigator.platform "MacIntel" selects it); Escape cancels it.
-base("pointer drag (macOS): holding over a folder springs it open, Escape closes it, a release on a child row moves into it", async ({ browser }, info) => {
-  const context = await browser.newContext({ baseURL: info.project.use.baseURL });
+async function macPage(browser: import("@playwright/test").Browser, baseURL: string | undefined) {
+  const context = await browser.newContext({ baseURL });
   await context.addInitScript(() => Object.defineProperty(window.navigator, "platform", { get: () => "MacIntel" }));
   const page = await context.newPage();
   const errors: string[] = [];
   page.on("pageerror", error => errors.push(error.message));
-  await open(page, "details");
   const center = async (selector: string) => {
     const box = (await page.locator(selector).boundingBox())!;
     return { x: box.x + box.width / 2, y: box.y + box.height / 2 };
   };
+  return { context, page, errors, center };
+}
+
+base("pointer drag (macOS): holding over a folder springs it open, Escape closes it, a release on a child row moves into it", async ({ browser }, info) => {
+  const { context, page, errors, center } = await macPage(browser, info.project.use.baseURL);
+  await open(page, "details");
   const source = await center(views.details.folder(P("drag-me.txt")));
   const inbox = await center(views.details.folder(P("Inbox")));
   await page.mouse.move(source.x, source.y);
@@ -315,6 +340,29 @@ base("pointer drag (macOS): holding over a folder springs it open, Escape closes
   await expect(page.locator(`${shown} .entry-item.drop-target[data-path="${P("Inbox")}"]`)).toHaveCount(1);
   await page.mouse.up();
   await expect.poll(() => listing(page, P("Inbox"))).toContain("drag-me.txt");
+  await opened(page, []);
+  expect(errors).toEqual([]);
+  await context.close();
+});
+
+base("pointer drag (macOS): the drag survives its source row leaving the virtual window when a big folder springs open above it", async ({ browser }, info) => {
+  const { context, page, errors, center } = await macPage(browser, info.project.use.baseURL);
+  await page.setViewportSize({ width: 900, height: 420 });
+  await page.goto(`/?path=${root}&viewMode=details`);
+  await expect(page.locator(views.details.folder(P("drag-me.txt")))).toBeVisible();
+  const source = await center(views.details.folder(P("drag-me.txt")));
+  const bulk = await center(views.details.folder(P("Bulk")));
+  await page.mouse.move(source.x, source.y);
+  await page.mouse.down();
+  await page.mouse.move(source.x, source.y - 10, { steps: 2 });
+  await page.mouse.move(bulk.x, bulk.y, { steps: 4 });
+  await opened(page, [P("Bulk")]);
+  // Bulk's 40 rows pushed the source row out of the rendered window.
+  await expect(page.locator(views.details.folder(P("drag-me.txt")))).toHaveCount(0);
+  const child = await center(views.details.child(P("Bulk/bulk-02.txt")));
+  await page.mouse.move(child.x, child.y, { steps: 3 });
+  await page.mouse.up();
+  await expect.poll(() => listing(page, P("Bulk"))).toContain("drag-me.txt");
   await opened(page, []);
   expect(errors).toEqual([]);
   await context.close();

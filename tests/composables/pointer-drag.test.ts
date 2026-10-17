@@ -373,6 +373,32 @@ describe("usePointerDrag", () => {
     expect(dragState.clear).not.toHaveBeenCalled();
   });
 
+  it("an active drag outlives its source row's unmount and still drops (#1242)", async () => {
+    // A spring-loaded peek opening above the source can push its row out of
+    // the virtual window mid-drag; the gesture belongs to the pointer, not the row.
+    vi.mocked(resolveDropTargetAtPoint).mockReturnValue({ type: "folder", path: "/home/user/Documents" });
+    const explorer = makeMockExplorer();
+    const drag = usePointerDrag({ getExplorer: () => explorer, refreshPanes: undefined });
+    drag.handlePointerDown(makeMouseEvent({ clientX: 100, clientY: 100 }), makeEntry("file.txt"), false);
+    fireWindowEvent("mousemove", { clientX: 110, clientY: 100 });
+    drag.dispose();
+    expect(dragState.clear).not.toHaveBeenCalled();
+    fireWindowEvent("mousemove", { clientX: 150, clientY: 120 });
+    await fireWindowEvent("mouseup", { clientX: 150, clientY: 120 });
+    expect(handleFileDropMany).toHaveBeenCalledWith(["/home/user/file.txt"], "/home/user/Documents", false, expect.anything());
+    expect(registeredListeners["mousemove"] || []).toHaveLength(0);
+    expect(registeredListeners["mouseup"] || []).toHaveLength(0);
+  });
+
+  it("unmount before the drag threshold releases the press", () => {
+    const drag = usePointerDrag({ getExplorer: () => makeMockExplorer(), refreshPanes: undefined });
+    drag.handlePointerDown(makeMouseEvent({ clientX: 100, clientY: 100 }), makeEntry("file.txt"), false);
+    drag.dispose();
+    expect(registeredListeners["mousemove"] || []).toHaveLength(0);
+    expect(registeredListeners["mouseup"] || []).toHaveLength(0);
+    expect(dragState.start).not.toHaveBeenCalled();
+  });
+
   it("cleans up all listeners after drop", async () => {
     vi.mocked(resolveDropTargetAtPoint).mockReturnValue(null);
 

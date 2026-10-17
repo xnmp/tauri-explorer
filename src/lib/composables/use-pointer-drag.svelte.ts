@@ -63,21 +63,28 @@ export function usePointerDrag(deps: PointerDragDeps) {
   // A mousedown is usually a click. Recursive-root reduction over the whole
   // selection waits until the pointer crosses the drag threshold.
   let pending: { entry: FileEntry; isSelected: boolean; source: HTMLElement | null } | null = null;
+  /** The pane the gesture started in, captured at the drag start: the source
+   * row (and its props) can unmount while the drag continues. */
+  let gestureExplorer: ExplorerInstance | null = null;
+  const explorerOf = () => gestureExplorer ?? deps.getExplorer();
 
-  // Window listeners are added on pointerdown; if the owning component is
-  // destroyed mid-drag they would otherwise leak for the rest of the session.
+  /** The owning row unmounted. A press that has not become a drag is
+   * released (its window listeners would otherwise leak). An active drag
+   * belongs to the pointer, not the row: a spring-loaded peek (#1242) or a
+   * refresh can move its source row out of the virtual window mid-gesture,
+   * and the gesture still ends through mouseup, Escape or blur. */
+  function dispose(): void {
+    if (!dragActive) cleanup(false);
+  }
   try {
-    onDestroy(() => {
-      if (dragActive) clearHighlights();
-      cleanup(dragActive);
-    });
+    onDestroy(dispose);
   } catch {
     // Not called during component init (e.g. unit tests) — caller manages lifetime.
   }
 
   function refreshPanes(): void {
     if (deps.refreshPanes) deps.refreshPanes();
-    else deps.getExplorer().refresh({ silent: true });
+    else explorerOf().refresh({ silent: true });
   }
 
   function handlePointerDown(event: MouseEvent, entry: FileEntry, isSelected: boolean): void {
@@ -85,6 +92,7 @@ export function usePointerDrag(deps: PointerDragDeps) {
     event.preventDefault();
 
     pending = { entry, isSelected, source: (event.currentTarget as HTMLElement) || null };
+    gestureExplorer = null;
     dragPaths = [];
     entryData = null;
     sourceEl = null;
@@ -153,7 +161,7 @@ export function usePointerDrag(deps: PointerDragDeps) {
           : target?.type === "bookmark" && entryData?.kind !== "directory"
             ? target.path
           : target?.type === "background"
-            ? target.path || deps.getExplorer().currentPath
+            ? target.path || explorerOf().currentPath
             : undefined;
       // Don't highlight a destination where the drop would be a no-op (every
       // dragged item is already there, or it's the dragged folder / a descendant).
@@ -170,7 +178,7 @@ export function usePointerDrag(deps: PointerDragDeps) {
     if (!pending) return false;
     const { entry, isSelected, source } = pending;
     pending = null;
-    const explorer = deps.getExplorer();
+    const explorer = gestureExplorer = deps.getExplorer();
     const reduced = operationDrag(isSelected ? explorer.getSelectedEntries() : [entry], entry, isWindows, explorer.displayEntries);
     if (!reduced.ok) { toastStore.error(reduced.error); return false; }
     const primary = reduced.primary;
@@ -218,7 +226,7 @@ export function usePointerDrag(deps: PointerDragDeps) {
     if (!lease) return;
     const clear = captureHighlightCleanup();
     const isCopy = !!isCopyModifier(event);
-    const explorer = deps.getExplorer();
+    const explorer = explorerOf();
     try {
       if (!paths.length) return;
       if (target?.type === "terminal") {
@@ -299,7 +307,7 @@ export function usePointerDrag(deps: PointerDragDeps) {
     pending = null;
   }
 
-  return { handlePointerDown };
+  return { handlePointerDown, dispose };
 }
 
 /** The primary can become a selected ancestor after recursive reduction. */

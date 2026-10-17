@@ -243,10 +243,22 @@
     }
   }
 
+  // Where the last primary press began: a click released >= 5px away ended a
+  // pointer drag (the same threshold the drag composable uses), not a plain click.
+  let pressPoint: { x: number; y: number } | null = null;
+  function rememberPress(event: PointerEvent) {
+    pressPoint = { x: event.clientX, y: event.clientY };
+    releaseCursorReveal();
+  }
+  const endedDrag = (event: MouseEvent) => marquee.dragJustEnded
+    || (pressPoint !== null && Math.hypot(event.clientX - pressPoint.x, event.clientY - pressPoint.y) >= 5);
+
   function handleClick(entry: FileEntry, event: MouseEvent): void {
     const effect = clickSelectionEffect(event, paneId ?? "", windowTabsManager.activePaneId);
     retainCursorReveal(entry);
     explorer.selectEntry(entry, effect.selectionModifiers);
+    // Caret-less Folder Peek: the click also toggles (decided in the domain).
+    void explorer.toggleOnRowClick(entry, event, endedDrag(event));
     // Windows/macOS pointer-drag acquisition prevents mousedown's default
     // action, so those engines do not focus the clicked gridcell themselves.
     // Keep DOM focus aligned with the cursor regardless of drag backend.
@@ -438,7 +450,7 @@
     bind:this={contentRef}
     onwheelcapture={releaseCursorReveal}
     ontouchstartcapture={releaseCursorReveal}
-    onpointerdowncapture={releaseCursorReveal}
+    onpointerdowncapture={rememberPress}
     onmousedown={handleMarqueeStart}
     ondragover={handleListDragOver}
     ondragleave={handleListDragLeave}

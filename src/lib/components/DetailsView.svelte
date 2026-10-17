@@ -227,14 +227,14 @@
       {#if row.kind === "create"}
         <div role="gridcell"><InlineNewFolder {explorer} variant="details" /></div>
       {:else if row.kind === "peek-state"}
-        <div role="gridcell" class="peek-state" style:padding-left={`${41 + row.depth * 22}px`}>
-          <PeekGuides groups={explorer.detailRows.groups} row={index} />
+        <div role="gridcell" class="peek-state" style:padding-left={`${(explorer.peekCaretsShown ? 41 : 29) + row.depth * 22}px`}>
+          <PeekGuides groups={explorer.detailRows.groups} row={index} carets={explorer.peekCaretsShown} />
           <span role="status">{row.message}</span>
         </div>
       {:else}
         <FileItem index={row.entryIndex} entry={row.entry} {explorer}
           depth={row.depth} parentPath={row.parentPath} expanded={row.expanded}
-          peek={explorer.peekEnabled} canPeek={explorer.peekEnabled && row.entry.kind === "directory"}
+          peek={explorer.peekEnabled} carets={explorer.peekCaretsShown} canPeek={explorer.peekEnabled && row.entry.kind === "directory"}
           groups={explorer.detailRows.groups} rowIndex={index}
           onclick={(event) => onitemclick(row.entry, event)}
           ondblclick={() => onitemdblclick(row.entry)} selected={explorer.isSelected(row.entry)} />

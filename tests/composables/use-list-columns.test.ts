@@ -33,7 +33,7 @@ const create = new Function("$", "svelte", "flow", "dropHover", "createRafCoales
    ${compileClient("../../src/lib/composables/use-list-columns.svelte.ts")}
    return useListColumns;`)(client, svelte, flow, dropHover, createRafCoalescer) as typeof useListColumns;
 
-const entries = (n: number): FileEntry[] => Array.from({ length: n }, (_, i) => ({ name: `f${i}`, path: `/d/f${i}`, isDir: false, size: 1, modified: 0 }) as FileEntry);
+const entries = (n: number): FileEntry[] => Array.from({ length: n }, (_, i) => ({ name: `f${i}`, path: `/d/f${i}`, kind: "file", size: 1, modified: "2026-01-01T00:00:00Z" }) as FileEntry);
 
 function mount(items: readonly FileEntry[], size: { width: number; height: number }) {
   const listeners = new Map<string, (event: unknown) => void>();

@@ -3,6 +3,7 @@
   Issue: tauri-explorer-iw0, tauri-explorer-x25, tauri-explorer-as45, tauri-explorer-1k9k, tauri-explorer-im3m, tauri-explorer-9djf.5
 -->
 <script lang="ts">
+  import { loadView, optionalViewFor } from "./view-loaders";
   import { flushSync, tick, onDestroy, untrack } from "svelte";
   import { settingsStore } from "$lib/state/settings.svelte";
   import { setFileListFocusReturn } from "$lib/state/file-list-focus-context";
@@ -46,6 +47,12 @@
   let { explorer, presentation, scrollToEntry = $bindable(), getListNavigation = $bindable() }: Props = $props();
 
   const paneId = getPaneIdContext();
+  // Start the renderer chunk as soon as the view is known, in parallel with the
+  // directory listing; the {#await} blocks below join the same promise.
+  $effect.pre(() => {
+    const view = optionalViewFor(explorer.viewMode, settingsStore.folderPeek);
+    if (view) void loadView(view).catch(() => {});
+  });
   // A plugin view replaces the listing only where it applies; elsewhere the
   // pane shows its built-in view while retaining the preference.
   const resolution = $derived(presentation.resolution);
@@ -552,7 +559,7 @@
       {/await}
     {:else if explorer.viewMode === "list" && settingsStore.folderPeek}
       <!-- Optional renderers load on demand to keep the Details startup graph bounded. -->
-      {#await import("./ListColumnsView.svelte") then { default: ListColumnsView }}
+      {#await loadView("list-columns") then { default: ListColumnsView }}
         <ListColumnsView
           {explorer}
           bind:getNavigation={viewNavigation}
@@ -569,7 +576,7 @@
       {/await}
     {:else if explorer.viewMode === "list"}
       <!-- Classic row-major List (Folder Peek off). -->
-      {#await import("./ListView.svelte") then { default: ListView }}
+      {#await loadView("list") then { default: ListView }}
         <ListView
           {explorer}
           {contentWidth}
@@ -585,7 +592,7 @@
         <div class="status error-state">Unable to load List view</div>
       {/await}
     {:else}
-      {#await import("./TilesView.svelte") then { default: TilesView }}
+      {#await loadView("tiles") then { default: TilesView }}
         <TilesView
           {explorer}
           {contentWidth}

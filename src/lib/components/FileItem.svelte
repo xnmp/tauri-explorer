@@ -164,9 +164,13 @@
     {#if peek}
     <span class="peek-caret-slot">
       {#if canPeek}
-        <button class="peek-caret" type="button" draggable={false}
-          tabindex={explorer.focusedEntry?.path === entry.path ? 0 : -1}
+        <!-- A pointer affordance only: never a tab stop, and its mousedown keeps
+             focus where it was (the row or pane), so the pane keyboard contract
+             continues. Keyboard users toggle with the palette's Peek commands;
+             assistive tech still gets the button, label and expanded state. -->
+        <button class="peek-caret" type="button" draggable={false} tabindex="-1"
           aria-expanded={expanded} aria-label={`${expanded ? "Collapse" : "Expand"} ${entry.name}`}
+          onmousedown={(event) => event.preventDefault()}
           onclick={() => {
             if (paneId) windowTabsManager.setActivePane(paneId);
             explorer.togglePeek(entry.path);

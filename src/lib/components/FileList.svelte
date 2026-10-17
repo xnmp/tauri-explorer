@@ -309,7 +309,6 @@
 
   function handleKeydown(event: KeyboardEvent): void {
     if (pluginView || holdingView || windowTabsManager.getActiveExplorer() !== explorer) return;
-    if ((event.target as HTMLElement).closest(".peek-caret")) return;
     typeAhead.handleKeydown(event);
   }
 

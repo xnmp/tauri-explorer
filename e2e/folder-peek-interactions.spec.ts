@@ -119,15 +119,34 @@ test("delayed, empty and error rows do not enter selection, and 10k children vir
   await expect(row(page, `${root}/Large/item-09999.txt`)).toBeFocused();
 });
 
-test("caret keyboard activation keeps selection and ignores typeahead", async ({ page }) => {
+test("a caret click keeps focus and selection, so arrows continue from the cursor row", async ({ page }) => {
   const parent = row(page, `${root}/Alpha`); await parent.click();
-  const caret = parent.getByRole("button", { name: "Expand Alpha", exact: true });
-  await caret.focus(); await page.keyboard.press("Space");
-  await expect(row(page, `${root}/Alpha/same.txt`)).toBeVisible();
+  await expect(parent).toBeFocused();
+  await parent.getByRole("button", { name: "Expand Alpha", exact: true }).click();
+  await expect(row(page, `${root}/Alpha/Nested`)).toBeVisible();
+  // The caret is a pointer affordance: the row keeps DOM focus.
+  await expect(parent).toBeFocused();
   expect((await snapshot(page)).selected).toEqual([`${root}/Alpha`]);
-  await page.keyboard.press("Enter");
-  await expect(row(page, `${root}/Alpha/same.txt`)).toHaveCount(0);
-  expect((await snapshot(page)).selected).toEqual([`${root}/Alpha`]);
+  await page.keyboard.press("ArrowDown");
+  await expect(row(page, `${root}/Alpha/Nested`)).toBeFocused();
+  expect((await snapshot(page)).cursor).toBe(`${root}/Alpha/Nested`);
+  // Typeahead belongs to the focused row grid, scoped to the root level.
+  await page.keyboard.type("be");
+  await expect(row(page, `${root}/Beta`)).toBeFocused();
+});
+
+test("Tab and Shift+Tab never stop on a caret", async ({ page }) => {
+  await expand(page);
+  const parent = row(page, `${root}/Alpha`); await parent.click();
+  const onCaret = () => page.evaluate(() => !!document.activeElement?.closest(".peek-caret"));
+  const stops: boolean[] = [];
+  for (const key of ["Tab", "Shift+Tab", "Shift+Tab", "Tab", "Tab"]) {
+    await page.keyboard.press(key); stops.push(await onCaret());
+  }
+  await parent.click();
+  await page.keyboard.press("Shift+Tab"); stops.push(await onCaret());
+  expect(stops).not.toContain(true);
+  expect(await page.locator(".pane-tree:not(.retained) .peek-caret").evaluateAll(carets => carets.map(caret => (caret as HTMLElement).tabIndex))).not.toContain(0);
 });
 
 test("rename of an expanded folder prunes its old subtree and reopening uses renamed listings", async ({ page }) => {

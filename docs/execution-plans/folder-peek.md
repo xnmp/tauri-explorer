@@ -65,6 +65,13 @@ Not in v1:
 - **Toggle:** only clicking the caret expands or collapses.
   - Clicking the caret does not change the selection.
   - A single click on the row selects it; a double-click navigates into it (unchanged).
+  - Option `folderPeekCarets` (default on; palette "Toggle Folder Peek Carets", Settings
+    "Show Folder Peek Carets"): off hides the carets in Details and List (Tiles keeps
+    them) and a plain left click on a folder row selects it AND toggles its peek. Ctrl,
+    Shift, Meta and Alt clicks only select; file rows never toggle; a click that ends a
+    drag, marquee or rename-editor interaction does not toggle. Each click of a
+    double-click toggles, so the expanded set is unchanged before navigation. The
+    decision is `shouldToggleOnRowClick` in the domain; the toggle uses the caret's action.
 - **Caret and names:**
   - The caret points toward the content: right = closed, down = open. In Tiles it points
     up for an above panel.
@@ -187,7 +194,9 @@ Selection jumps to unmounted rows go through FileList's `scrollToEntry`.
 ## 7. Details view
 
 - The caret sits left of the folder icon in the Name column. File rows keep a blank caret
-  slot so names align.
+  slot so names align. With `folderPeekCarets` off there is no caret and no slot: children
+  still indent 22px per level, the guide line sits under the parent's folder icon, and
+  expanded names stay bold.
 - Children indent 22px per level, nest to any depth, and keep the columns aligned.
 - Selection is the existing soft fill plus a 3px accent bar at the row's indent.
 - Groups are UNBOXED: no fill and no border (the user rejected group boxes). The only
@@ -386,7 +395,8 @@ scrolling sideways.
 ## 10. Accessibility
 
 - The caret is a `button` with `aria-expanded` and the label "Expand <name>" or
-  "Collapse <name>".
+  "Collapse <name>". With carets off the folder row itself carries `aria-expanded`
+  (already set on the row) and the "Peek into Folder" command remains the keyboard path.
 - Details and List child rows carry `aria-level`.
 - A card or panel is `role="group"`, labelled "<name> contents".
 - The grip is `role="separator"` with `aria-orientation="horizontal"` and
@@ -540,6 +550,7 @@ Screenshots:
 - **Phase 1 selection on collapse:** prune now-hidden descendants from selectedPaths. If the cursor or anchor was hidden, move the cursor to the collapsed folder and clear the anchor, without selecting that folder. Entering List/Tiles applies the same pruning while retaining expanded membership. Root-level filtering keeps its existing behavior. Selected-entry snapshots were rejected because file actions on invisible selections are unsafe.
 - **Phase 1 capability/accessibility:** Details is a treegrid; List/Tiles remain flat grids with capability `none`, with no peek resources until their phases. Palette peek commands have no default shortcuts.
 - **Folder Peek toggle:** the `folderPeek` setting (default on; palette "Toggle Folder Peek", Settings checkbox) is one more input to `peekCapability`, so "off" is exactly capability `none`: classic `grid` Details with no caret slot, indent, `aria-level`, listings, watches or Git ownership; the peek commands are unavailable and Escape only clears the selection. Expanded membership stays in memory and the toggle applies live. A separate render path for "off" was rejected: it would let the two Details layouts drift.
+- **Carets option (#1248):** `folderPeekCarets` hides carets and makes a plain folder click toggle, because some users want a caret-free list and the classic single-click-selects behaviour never expanded anything. Decided purely (`shouldToggleOnRowClick`) and routed through `togglePeek`, so it shares the caret's capability, eligibility and lazy-load guards. Modifier clicks stay selection-only and double-click is two toggles then navigate: a click-delay to disambiguate was rejected as input latency. Drag/marquee-ending clicks are excluded by comparing the press and release points and the marquee grace window.
 - **Caret is not a tab stop:** the caret keeps its button role and accessible name for pointer and assistive-technology users, but has `tabindex="-1"` and prevents focus on mousedown. A focusable caret stole keyboard focus from the row grid, so arrows and typeahead stopped following the cursor row after a click, and Tab stopped on every expanded folder. Keyboard users expand the cursor row's folder with the "Peek into Folder" command (bindable) and step back out with Escape, so the caret needs no tab stop of its own.
 
 - **Details:** tinted or bordered group boxes were rejected; groups are unboxed.

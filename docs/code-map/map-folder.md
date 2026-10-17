@@ -382,6 +382,8 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `use-resize-owner.svelte.ts` — shared axis-aware pointer capture, geometry, keyboard and activity lifetime.
 - `use-controlled-size.svelte.ts` — external-source size adapter; transient drafts, final commits and value-based source supersession.
 - `use-list-columns.svelte.ts` — List column virtualizer over `buildListModel`; synchronous content-box sizing, wheel ownership (a scrollable card first), editor pinning, card scroll offsets, the grip drag session (window-level release, clamped to the card's column) and preview, entry/card reveal and settled callbacks.
+- `spring-load.ts` — eager spring-loaded peek facade (#1242): every drag backend reports the element under the drag (`springHover`), drop/end (`springEnd`) and pending-replay holds (`springHold`); free while Folder Peek is off, lazy-loads the driver with its eager dependencies injected.
+- `spring-load-driver.ts` — lazy spring-load driver: `observeSpringHit` (pane, identity anchors, folder eligibility from the element under the drag) and `createSpringLoadDriver` (controller, per-pane apply one macrotask later, holds).
 - `surface-drop-feedback.ts` — drop feedback for a List card's own surface: target resolution (nested pseudo-row or the card's folder, never a row) and retiring feedback when the pointer reaches a row inside it.
 - `use-list-motion.svelte.ts` — applies `domain/list-motion.ts` plans to the List canvas for user peek toggles only (FLIP, conveyor clip, card growth, sanitized ghosts in an inert layer, finish-on-interrupt).
 - `use-row-grid-view.svelte.ts` — shared virtualization wiring (rows, DnD, new-folder sentinel, scrollToIndex) for Tiles view.
@@ -460,6 +462,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `file-history.ts` — shared action, summary, receipt and HistoryPort types for the native history authority.
 - `list-column-flow.ts` — slot-aware column prefix scan, span lookup, the `ListFlowModel` types, card-aware List keyboard movement (`resolveListMove`), wheel mapping (`listWheelStep`: sub-pixel carry, native passthrough) and viewport math.
 - `list-cards.ts` — List cards (#1240): `buildListModel` over peek rows, height clamp, grip snapping/keys, "+N more", scroll-edge fades, card reveal/window/wheel policies and bounded session heights.
+- `spring-load.ts` — spring-loaded peek controller (#1242): `SPRING_LOAD_DELAY_MS`, pure `stepSpringLoad` (pending folder, nested open list, leave cascade, end) and the timer-injected `createSpringLoadController`.
 - `list-motion.ts` — pure List open/close motion plan (FLIP, conveyor distance with empty slots, card growth, visible-column gating) and easing/clip helpers.
 - `drop-feedback.ts` — pure decision for whether a DOM dragend may retire drop-hover feedback (stale echo vs cancelled drag).
 - `virtual-layout.ts` — variable-height virtual list layout math (VirtualList).

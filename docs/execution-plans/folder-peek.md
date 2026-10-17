@@ -153,6 +153,8 @@ separate cache that the views render on the side would leave them unselectable.
       ends or is cancelled.
     - A drop inside the peek targets that folder.
     - Temporary peeks do not enter the expanded set.
+    - In Details and List a folder inside a temporary peek springs open in turn; Tiles
+      springs top-level folders only, because panels do not nest.
 - **Context menu:** right-clicking a peeked item gives that item's normal menu.
   Right-clicking a card's or panel's empty area gives its folder's menu.
 - **Preview pane:** follows the selected entry by path, so it works once children are in
@@ -655,6 +657,43 @@ Screenshots:
     that shortfall. This is part of every frame of the same 150ms motion, so no reveal
     scroll follows it. Holding the row and then smooth-scrolling the panel into view
     was rejected: it moved the page twice, with a visible pause between.
+
+- **Phase 5 (spring-loaded peek, #1242):**
+  - Temporary peeks are a separate per-pane list in the lazy peek session. They are
+    projected with the expanded set (`withTemporaryPeeks`, ordinal 0, so they never
+    evict a user peek's watch) and load, render and animate like user peeks, but never
+    reach the expanded set, card rows or panel heights. Navigation drops them. A
+    "temporary" flag on expanded entries was rejected: every toggle, Collapse All,
+    height and persistence path would have had to filter it.
+  - One pure controller (`domain/spring-load.ts`, injected timer) serves every drag
+    backend through one eager facade: HTML5 DOM capture listeners, the native receiver
+    (Linux GTK and external drags) and the macOS/Windows pointer drag. The controller and
+    its DOM observation load lazily on the first eligible hover; with Folder Peek off
+    the facade returns before any hit test.
+  - "Inside" is identity, not geometry. The element under the drag gives its pane and
+    anchors: rows, a Details row wrapper and peek-state row, a List slot, a Tiles panel
+    or ribbon. A peek stays open while an anchor is its folder or below it, and leaving
+    closes it together with the temporary peeks opened inside it. Rect tests were
+    rejected because zoom coordinate spaces differ by engine (#493). The Tiles band gap
+    gets a transparent bridge in the panel's outline group, for temporary panels only.
+  - A temporary List card shrinks to the rows left in its column, down to header-only,
+    instead of wrapping, and is never revealed: either would move its header out from
+    under the held pointer. Tiles reveals as usual, since the reveal keeps the point
+    over the tile, the bridge or the panel.
+  - File rows, Details peek-state rows and the bridge inside a temporary peek drop into
+    its folder through the existing folder target and copy intent. Ordinary peeks keep
+    file rows as non-targets (phase 3). During a spring the peek fills the space the
+    user aims at, so a file row taking the drop away from the folder would be a trap.
+  - Opening and closing apply one macrotask after the controller changes, so a drop's
+    target handler, and a native Drop's position resolution, read the peek as it was.
+    A DOM drop waiting on a pending native start holds the peeks for its replay; a DOM
+    dragend never ends spring while a native gesture is live (Linux delivers it before
+    the native Drop).
+  - Selection, cursor and focus are untouched by temporary peeks; closing animates like
+    a user close (reduced motion: instant).
+  - A native (tauri-driver) spring spec is deferred: the XTest helper drags in one
+    straight segment without a hold, and the spec would join the required DnD
+    qualification without a local run (see the lesson).
 
 - **Details:** tinted or bordered group boxes were rejected; groups are unboxed.
 - **List layout:**

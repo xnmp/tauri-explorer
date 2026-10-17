@@ -6,6 +6,7 @@
  * Every handler, interceptor and readiness marker belongs to the page session:
  * aborting `signal` removes them, and nothing publishes afterwards.
  */
+import { settingsStore } from "../lib/state/settings.svelte";
 import { clipboardStore } from "../lib/state/clipboard.svelte";
 import { windowTabsManager } from "../lib/state/window-tabs.svelte";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
@@ -55,6 +56,7 @@ export function startWindowSessionProbe(signal: AbortSignal, warmReady?: Promise
       toggle: request => windowTabsManager.getActiveExplorer()?.togglePeek(request.path ?? ""),
       refresh: () => windowTabsManager.getActiveExplorer()?.refresh({ explicit: true }),
       details: () => windowTabsManager.getActiveExplorer()?.setViewMode("details"),
+      "enable-git-status": () => { settingsStore.update({ showGitStatus: true }); return settingsStore.showGitStatus; },
       collapse: () => windowTabsManager.getActiveExplorer()?.collapseAllPeeks(),
       copy: async request => {
         const explorer = windowTabsManager.getActiveExplorer()!;
@@ -188,7 +190,7 @@ export function startWindowSessionProbe(signal: AbortSignal, warmReady?: Promise
     // and a paint before reporting child readiness.
     const readyPath = () => {
       const explorer = windowTabsManager.getActiveExplorer();
-      return explorer && !explorer.loading && explorer.displayEntries.length > 0 &&
+      return explorer && !explorer.loading && explorer.ownDisplayEntries.length > 0 &&
         document.querySelector(".file-list") ? explorer.currentPath : null;
     };
     const reportReady = () => {

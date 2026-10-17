@@ -257,7 +257,7 @@ export function windowOperationHandlers(signal: AbortSignal): Record<WindowOpera
           // The unchanged native listing restores it after the held reply;
           // that observable publication is stronger than a settling delay.
           const seed = normalizeDirectorySeed({ currentPath: path,
-            entries: explorer.displayEntries.filter(entry => entry.name !== seedOmit),
+            entries: explorer.ownDisplayEntries.filter(entry => entry.name !== seedOmit),
             sortBy: explorer.sortBy, sortAscending: explorer.sortAscending,
             viewMode: explorer.viewMode, ts: now }, path, now);
           return seed && directorySeedFitsBudget(seed) ? seed : null;

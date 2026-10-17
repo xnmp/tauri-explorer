@@ -156,8 +156,8 @@ separate cache that the views render on the side would leave them unselectable.
     the cursor and moves the cursor to that folder.
   - Inline rename and creation keep their own Esc handling.
 - **Palette commands**, with no default shortcut:
-  - "Peek into Folder" toggles the cursor folder, or the folder containing the cursor.
-  - "Collapse All Peeks" empties the pane's expanded set for the current folder's subtree.
+  - "Peek into Folder" toggles the cursor folder, or the containing folder for a peeked child file. It is disabled for a depth-0 file.
+  - "Collapse All Peeks" removes every expanded path at or below currentPath, including dormant descendants; paths elsewhere remain.
 
 ## 6. Keyboard navigation
 
@@ -165,7 +165,7 @@ The navigation seam is `resolveFileListMove` (`domain/file-list-navigation.ts`).
 Selection jumps to unmounted rows go through FileList's `scrollToEntry`.
 
 - **Details:** Up/Down move ±1 through the visible entries, including children.
-  Home/End/PageUp/PageDown work over the same sequence. Left/Right are unchanged:
+  Existing Home/End/PageUp/PageDown bindings work over the same sequence; phase 1 adds no unmodified Home/End binding. Left/Right are unchanged:
   `yaziNavigation` keeps parent/open.
 - **List:** arrow keys keep their visual meaning (user: "up down keys should stay the
   same").
@@ -436,19 +436,20 @@ Scope: §2–§7 for Details, the palette commands and Esc layering, and drop on
 folder rows.
 
 Acceptance:
-- [ ] Clicking a caret expands or collapses that folder only; the selection is unchanged.
-      Nesting works to any depth, and children are sorted by the Details sort.
-- [ ] Expanded state survives navigating into and back out of a folder, view switches and
+- [x] Clicking a caret expands or collapses that folder only, without changing that folder's
+      selection. Collapsing prunes hidden selected descendants (§14). Nesting works to any
+      depth, and children are sorted by the Details sort.
+- [x] Expanded state survives navigating into and back out of a folder, view switches and
       tab switches. It is per pane and lost on restart.
-- [ ] Peeked items can be selected, including Shift-ranges across levels. Ctrl+A selects
+- [x] Peeked items can be selected, including Shift-ranges across levels. Ctrl+A selects
       the current folder's items only.
-- [ ] Rename, delete, copy and open work on peeked items. The preview pane and status-bar
+- [x] Rename, delete, copy and open work on peeked items. The preview pane and status-bar
       selection info follow them.
-- [ ] Esc clears the selection first, then closes the peek containing the cursor. The
+- [x] Esc clears the selection first, then closes the peek containing the cursor. The
       palette commands work.
-- [ ] Live updates: a file added in a peeked folder appears without a manual refresh
+- [x] Live updates: a file added in a peeked folder appears without a manual refresh
       (tier 3). Deleting an open folder removes it from the expanded set.
-- [ ] Loading, Empty and error rows render. Trash and virtual locations show no carets.
+- [x] Loading, Empty and error rows render. Trash and virtual locations show no carets.
 
 Screenshots:
 - [ ] `details-tree.png`: nested expansion with guide lines and bold names.
@@ -535,6 +536,9 @@ Screenshots:
   tunable.
 
 ## 14. Decision log (rejected alternatives)
+
+- **Phase 1 selection on collapse:** prune now-hidden descendants from selectedPaths. If the cursor or anchor was hidden, move the cursor to the collapsed folder and clear the anchor, without selecting that folder. Entering List/Tiles applies the same pruning while retaining expanded membership. Root-level filtering keeps its existing behavior. Selected-entry snapshots were rejected because file actions on invisible selections are unsafe.
+- **Phase 1 capability/accessibility:** Details is a treegrid; List/Tiles remain flat grids with capability `none`, with no peek resources until their phases. Palette peek commands have no default shortcuts.
 
 - **Details:** tinted or bordered group boxes were rejected; groups are unboxed.
 - **List layout:**

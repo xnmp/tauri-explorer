@@ -69,12 +69,19 @@ export async function activeExplorerPane(page: Page) {
   return page.locator(`.explorer-pane[data-pane-id="${paneId}"]`);
 }
 
-/** Execute a selection-aware action through the real command palette. */
+/** Execute a selection-aware action through the real command palette.
+ * An exact label wins over longer labels it prefixes ("Toggle Folder Peek"
+ * vs "Toggle Folder Peek Carets"); dynamic labels such as "Dock Preview Pane
+ * Auto (currently …)" still match by substring. */
 export async function runPaletteCommand(page: Page, label: string) {
   await page.keyboard.press("ControlOrMeta+Shift+P");
   const palette = page.locator(".command-palette-dialog");
   await palette.locator(".search-input").fill(label);
-  await palette.locator(".command-item").filter({ hasText: label }).click();
+  const matching = palette.locator(".command-item").filter({ hasText: label });
+  await matching.first().waitFor();
+  const exactLabel = new RegExp(`^${label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`);
+  const exact = matching.filter({ has: page.locator(".command-label", { hasText: exactLabel }) });
+  await ((await exact.count()) > 0 ? exact : matching).click();
   await expect(palette).toBeHidden();
 }
 

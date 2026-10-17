@@ -36,6 +36,9 @@ test("Open with offers installed applications and cancellation does not launch",
 
 for (const theme of ["light", "dark"]) for (const mode of ALL_VIEW_MODES) {
   test(`${mode} ${theme}: keyboard chooses the alternate app and menu remains visible at zoom`, async ({ page }) => {
+    await page.addInitScript(() => {
+      (globalThis as any).__mockControl = { latency: { list_open_with_applications: 1200 } };
+    });
     await seedSettings(page, { theme, zoomLevel: theme === "dark" ? 150 : 100 });
     await page.goto("/?path=/home/user/Documents");
     await waitForEntries(page);
@@ -55,9 +58,13 @@ for (const theme of ["light", "dark"]) for (const mode of ALL_VIEW_MODES) {
     await capture(page, ".context-menu", `${mode}-${theme}-menu`);
     await page.keyboard.press("Enter");
     const dialog = page.getByRole("dialog", { name: "Open with" });
+    const alternate = dialog.getByRole("button", { name: "Alternate Editor", exact: true });
+    // Cancel is focusable while the catalogue is still loading. Test the
+    // application-button focus cycle only after those buttons are available.
+    await expect(alternate).toBeVisible();
     await expect(dialog.getByRole("button", { name: "Cancel", exact: true })).toBeFocused();
     await page.keyboard.press("Shift+Tab");
-    await expect(dialog.getByRole("button", { name: "Alternate Editor", exact: true })).toBeFocused();
+    await expect(alternate).toBeFocused();
     await capture(page, ".modal-overlay", `${mode}-${theme}-chooser`);
     await page.keyboard.press("Enter");
     await expect(dialog).toHaveCount(0);

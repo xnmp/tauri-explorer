@@ -23,13 +23,17 @@
     videoUnavailable?: boolean;
     onvideounavailable?: () => void;
     name?: Snippet;
+    /** A control on the icon's corner (the Tiles Folder Peek caret, #1241). */
+    badge?: Snippet;
+    /** A motion ghost's copy (#1241): no drag-image hooks, so no live query reaches it. */
+    ghost?: boolean;
   }
 
-  let { entry, layout, videoUnavailable = false, onvideounavailable, name }: Props = $props();
+  let { entry, layout, videoUnavailable = false, onvideounavailable, name, badge, ghost = false }: Props = $props();
   const iconColor = $derived(getFileIconColor(entry));
 </script>
 
-<div class="tile-icon" style:color={iconColor} data-drag-icon>
+<div class="tile-icon" style:color={iconColor} data-drag-icon={ghost ? undefined : ""}>
   {#if isImageFile(entry)}
     <ThumbnailImage path={entry.path} size={layout.displaySize} genSize={layout.genSize} quality={layout.quality} fallbackColor={iconColor}>
       {#snippet fallback()}<FileIcon {entry} size="large" />{/snippet}
@@ -48,8 +52,9 @@
   {#if isVideoMediaFile(entry)}
     <span class="video-thumbnail-marker"><VideoIndicator /></span>
   {/if}
+  {@render badge?.()}
 </div>
-<span data-drag-name>{#if name}{@render name()}{:else}<EntryNameLabel name={entry.name} variant="tiles" />{/if}</span>
+<span data-drag-name={ghost ? undefined : ""} class:tile-name={ghost}>{#if name}{@render name()}{:else}<EntryNameLabel name={entry.name} variant="tiles" />{/if}</span>
 
 <style>
   .video-thumbnail-marker {

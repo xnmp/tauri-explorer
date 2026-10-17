@@ -24,6 +24,8 @@ export function createFolderPeekState(windows: boolean) {
     listing(path: string) { return session?.listing(path); },
     cardRows(path: string) { return session?.cardRows(path); },
     setCardRows(path: string, rows: number) { session?.setCardRows(path, rows); },
+    panelHeight(path: string) { return session?.panelHeight(path); },
+    setPanelHeight(path: string, height: number) { session?.setPanelHeight(path, height); },
     target(path: string) { return session?.target(path); },
     reconcile(paths: readonly string[], git = false) { session?.reconcile(paths, git); },
     async dispose() {

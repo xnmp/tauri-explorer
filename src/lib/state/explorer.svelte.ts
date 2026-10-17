@@ -270,12 +270,14 @@ function createExplorerState(seed?: ExplorerSeed, isFileListingSurface: () => bo
     pruneHiddenChildren(before, displayEntries);
     reconcilePeekResources();
   }
-  /** Carets are drawn only while peeking is available and the option is on. */
-  const caretsShown = () => capability !== "none" && settingsStore.folderPeekCarets;
+  /** Carets are drawn only while peeking is available and the option is on;
+   * Tiles always draws them (the option applies to Details and List, #1241). */
+  const caretsOptional = () => settingsStore.folderPeekCarets || coreState.viewMode === "tiles";
+  const caretsShown = () => capability !== "none" && caretsOptional();
   /** Caret-less peek: called after a row click's ordinary selection. */
   async function toggleOnRowClick(entry: FileEntry, modifiers: RowClickInput["modifiers"], wasDrag: boolean) {
     if (!shouldToggleOnRowClick({
-      caretsShown: capability === "none" || settingsStore.folderPeekCarets,
+      caretsShown: capability === "none" || caretsOptional(),
       isDirectory: entry.kind === "directory",
       eligible: capability !== "none" && !isVirtualPath(entry.path) && !providerFor(entry.path),
       modifiers, wasDrag,
@@ -1110,6 +1112,12 @@ function createExplorerState(seed?: ExplorerSeed, isFileListingSurface: () => bo
     setListCardRows(path: string, rows: number) {
       if (capability === "none" || peek.cardRows(path) === rows) return;
       peek.setCardRows(path, rows);
+    },
+    /** Remembered Tiles panel height (CSS px) for a top-level folder. */
+    tilePanelHeight(path: string) { return peek.panelHeight(path); },
+    setTilePanelHeight(path: string, height: number) {
+      if (capability === "none" || !Number.isFinite(height) || height < 1 || peek.panelHeight(path) === Math.round(height)) return;
+      peek.setPanelHeight(path, height);
     },
     get peekCaretsShown() { return caretsShown(); },
     collapseAllPeeks,

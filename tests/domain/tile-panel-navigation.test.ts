@@ -11,9 +11,11 @@ function nav(open: string[], scroll: Record<string, number> = {}, options: Param
   const state: TileNavigationState = { model, geometry: model.geometry, panelScrollTop: path => scroll[path] ?? 0 };
   const index = (path: string) => tree.entries.findIndex(e => e.path === path);
   const name = (i: number | undefined) => i === undefined ? undefined : tree.entries[i]?.path.slice(3);
-  const move = (from: string, k: string, mods: Partial<FileListKey> = {}) => {
+  /** The focused entry's name, or null when the key resolves to nothing. */
+  const move = (from: string, k: string, mods: Partial<FileListKey> = {}): string | null | undefined => {
     const result = resolveTileMove(state, key(k, mods), index(P(from)));
-    return result?.kind === "focus" ? name(result.index) : result;
+    if (result && result.kind !== "focus") throw new Error(`unexpected move ${result.kind}`);
+    return result ? name(result.index) : null;
   };
   return { model, tree, state, index, name, move };
 }

@@ -15,6 +15,8 @@ export function createFolderPeekSession(windows: boolean) {
   let snapshots = $state.raw<ReadonlyMap<string, PeekListing>>(new Map());
   /** List card heights (visible rows) per top-level path, for the session. */
   let cardRows = $state.raw<ReadonlyMap<string, number>>(new Map());
+  /** Tiles panel heights (CSS px) per top-level path, for the session. */
+  let panelHeights = $state.raw<ReadonlyMap<string, number>>(new Map());
   let ordinal = 0;
   let disposed = false;
   const resources = new Map<string, { target: RefreshTarget; retire(): Promise<void> }>();
@@ -93,6 +95,9 @@ export function createFolderPeekSession(windows: boolean) {
     listing(path: string) { return snapshots.get(path); },
     cardRows(path: string) { return cardRows.get(path); },
     setCardRows(path: string, rows: number) { if (!disposed) cardRows = rememberCardRows(cardRows, path, rows); },
+    panelHeight(path: string) { return panelHeights.get(path); },
+    // The same bounded, most-recent-last memory as the List card heights.
+    setPanelHeight(path: string, height: number) { if (!disposed) panelHeights = rememberCardRows(panelHeights, path, height); },
     target(path: string) { return [...resources].find(([key]) => pathComparison(windows).same(key, path))?.[1].target; },
     reconcile,
     async dispose() {

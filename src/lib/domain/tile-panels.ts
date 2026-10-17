@@ -40,8 +40,6 @@ export const PANEL_PAD_FAR = 12;
 export const PANEL_PAD_Y = PANEL_PAD_NEAR + PANEL_PAD_FAR;
 /** Default preferred height, in mini rows (plus padding). */
 export const PANEL_DEFAULT_ROWS = 3.5;
-/** Panel heights remembered per pane, like the expanded set's cap. */
-export const PANEL_HEIGHTS_CAP = 500;
 
 // ---------------------------------------------------------------------------
 // Placement (§9.1)
@@ -240,14 +238,40 @@ export function gripKeyHeight(key: string, side: BandSide, height: number, maxCo
   return null;
 }
 
-/** Session panel heights, most recently set last, bounded like the expanded set. */
-export function rememberPanelHeight(heights: ReadonlyMap<string, number>, path: string, height: number, cap = PANEL_HEIGHTS_CAP): Map<string, number> {
-  const next = new Map(heights);
-  next.delete(path);
-  if (!Number.isFinite(height) || height <= 0) return next;
-  next.set(path, Math.round(height));
-  while (next.size > Math.max(0, cap)) next.delete(next.keys().next().value!);
-  return next;
+/** A mini tile grid's surface: the tile layout at mini scale (TileSurface's CSS
+ * variables), keeping the parent's thumbnail generation size and quality. */
+export function miniSurfaceLayout(layout: TileLayout, mini: MiniTileLayout): TileLayout {
+  return {
+    ...layout,
+    displaySize: mini.iconSize, gap: MINI_GAP, padding: "5px 3px 3px", paddingY: 8,
+    nameHeight: MINI_NAME_HEIGHT, rowHeight: mini.rowHeight, iconScale: mini.iconSize / 64,
+    showFolderThumbnails: false,
+  };
+}
+/** Gap between mini tiles (inside each track). */
+export const MINI_GAP = 2;
+
+/** Grid padding at a panel's parent-facing (near) edge and far edge. */
+export const panelPadTop = (side: BandSide): number => side === "above" ? PANEL_PAD_FAR : PANEL_PAD_NEAR;
+
+function panelScrollRange(contentHeight: number, height: number, scrollTop: number) {
+  const max = Math.max(0, (Number.isFinite(contentHeight) ? contentHeight : 0) - Math.max(0, Number.isFinite(height) ? height : 0));
+  return { max, top: Math.max(0, Math.min(max, Number.isFinite(scrollTop) ? scrollTop : 0)) };
+}
+
+/** Which edges have content scrolled out of view (and so show the fade mask). */
+export function panelFades(contentHeight: number, height: number, scrollTop: number): Readonly<{ top: boolean; bottom: boolean }> {
+  const { max, top } = panelScrollRange(contentHeight, height, scrollTop);
+  return { top: top > 1, bottom: max - top > 1 };
+}
+
+/** "+N more": items in content rows whose centre lies below the visible area. */
+export function panelMoreCount(spec: Pick<TilePanelSpec, "side" | "entries" | "cols" | "contentHeight">, height: number, rowHeight: number, scrollTop: number): number {
+  const { max, top } = panelScrollRange(spec.contentHeight, height, scrollTop);
+  if (max - top <= 1 || !(rowHeight > 0)) return 0;
+  const bottom = top + Math.max(0, height) - panelPadTop(spec.side);
+  const firstBelow = Math.max(0, Math.floor(bottom / rowHeight - 0.5) + 1);
+  return Math.max(0, spec.entries.length - firstBelow * Math.max(1, spec.cols));
 }
 
 // ---------------------------------------------------------------------------

@@ -9,7 +9,7 @@
 import type { FileEntry } from "./file";
 import type { FileListKey, FileListMove } from "./file-list-navigation";
 import {
-  cellX, groupOffsets, PANEL_PAD_FAR, PANEL_PAD_NEAR, PANEL_PAD_X,
+  cellX, groupOffsets, PANEL_PAD_FAR, PANEL_PAD_NEAR, PANEL_PAD_X, panelPadTop,
   type EntryLocation, type GroupGeometry, type PanelBox, type TilePanelModel, type TilePanelSpec,
 } from "./tile-panels";
 
@@ -32,7 +32,7 @@ export interface TileRect { readonly x0: number; readonly x1: number; readonly y
 const centre = (r: TileRect) => ({ x: (r.x0 + r.x1) / 2, y: (r.y0 + r.y1) / 2 });
 
 /** Top padding of a panel's grid: the grip side of an above panel is its top. */
-const padTop = (box: PanelBox) => box.side === "above" ? PANEL_PAD_FAR : PANEL_PAD_NEAR;
+const padTop = (box: PanelBox) => panelPadTop(box.side);
 
 /** Where a panel's content row `row` starts, relative to its scroll area's content. */
 export const panelRowTop = (box: PanelBox, rowHeight: number, row: number): number => padTop(box) + row * rowHeight;

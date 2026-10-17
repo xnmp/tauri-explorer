@@ -14,11 +14,11 @@ export interface PeekSurface {
   mode: ViewMode;
 }
 /** Details and List (column flow, which is what List is while Folder Peek is
- * on) nest freely; Tiles has no peek until its phase (#1241). */
+ * on) nest freely; Tiles panels show top-level folders only (#1241). */
 export function peekCapability(surface: PeekSurface): PeekCapability {
   const { enabled, fileListing, builtinView, plainLocation, mode } = surface;
   if (!enabled || !fileListing || !builtinView || !plainLocation) return "none";
-  return mode === "details" || mode === "list" ? "tree" : "none";
+  return mode === "details" || mode === "list" ? "tree" : mode === "tiles" ? "top-level" : "none";
 }
 
 export interface RowClickInput {

@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
   bandHeight, buildTilePanelModel, cellX, chooseSide, clampPreferredHeight, computeBands, defaultPanelHeight,
-  gripKeyHeight, groupOffsets, miniTileLayout, panelGridColumns, panelHeightBounds, panelX, placePanels,
-  placementSides, rememberPanelHeight, ribbonChannel, segmentX, splitColumns, stackedLabelX, tabX,
+  gripKeyHeight, groupOffsets, miniSurfaceLayout, miniTileLayout, panelFades, panelGridColumns, panelHeightBounds, panelMoreCount, panelX, placePanels,
+  placementSides, ribbonChannel, segmentX, splitColumns, stackedLabelX, tabX,
   BAND_GAP, DETOUR_BELOW_MARGIN, DETOUR_STACKED_MARGIN, MIN_PANEL_COLUMNS, PANEL_PAD_X, PANEL_PAD_Y, STACKED_MARGIN,
   type BandSide, type ColumnSegment, type PanelPlacement, type PanelRequest, type RowMetrics,
 } from "$lib/domain/tile-panels";
@@ -301,15 +301,42 @@ describe("panel sizing (§9.2)", () => {
     expect(gripKeyHeight("End", "stacked", 200, 404, mini, bounds)).toBe(404);
     expect(gripKeyHeight("Enter", "below", 200, 404, mini, bounds)).toBeNull();
   });
+});
 
-  it("remembers heights per folder, most recent last, capped", () => {
-    let heights: Map<string, number> = new Map();
-    for (let i = 0; i < 5; i++) heights = rememberPanelHeight(heights, `p${i}`, 100 + i, 3);
-    expect([...heights]).toEqual([["p2", 102], ["p3", 103], ["p4", 104]]);
-    heights = rememberPanelHeight(heights, "p2", 300.4, 3);
-    expect([...heights.keys()]).toEqual(["p3", "p4", "p2"]);
-    expect(heights.get("p2")).toBe(300);
-    expect(rememberPanelHeight(heights, "p3", Number.NaN, 3).has("p3")).toBe(false);
+describe("panel scroll edges", () => {
+  const mini = miniTileLayout(MEDIUM);
+  const spec = (n: number, cols: number, side: BandSide = "below") => ({ side, entries: Array.from({ length: n }, (_, i) => i), cols, contentHeight: Math.ceil(n / cols) * mini.rowHeight + PANEL_PAD_Y });
+
+  it("fades only the edges with content scrolled out of view", () => {
+    const s = spec(30, 5);
+    const height = 2 * mini.rowHeight + PANEL_PAD_Y;
+    expect(panelFades(s.contentHeight, height, 0)).toEqual({ top: false, bottom: true });
+    expect(panelFades(s.contentHeight, height, 100)).toEqual({ top: true, bottom: true });
+    expect(panelFades(s.contentHeight, height, 1e9)).toEqual({ top: true, bottom: false });
+    expect(panelFades(s.contentHeight, s.contentHeight, 0)).toEqual({ top: false, bottom: false });
+    expect(panelFades(NaN, height, NaN)).toEqual({ top: false, bottom: false });
+  });
+
+  it("counts the items in rows whose centre lies below the visible area", () => {
+    // 30 items in 5 columns: 6 rows, two whole rows visible -> 4 rows (20 items) below.
+    const s = spec(30, 5);
+    const height = 2 * mini.rowHeight + PANEL_PAD_Y;
+    expect(panelMoreCount(s, height, mini.rowHeight, 0)).toBe(20);
+    // Scrolled half a row: the third row's centre is now visible.
+    expect(panelMoreCount(s, height, mini.rowHeight, mini.rowHeight / 2 + 1)).toBe(15);
+    expect(panelMoreCount(s, height, mini.rowHeight, 1e9)).toBe(0);
+    expect(panelMoreCount(s, s.contentHeight, mini.rowHeight, 0)).toBe(0);
+    // A shorter last row counts only its own items.
+    expect(panelMoreCount(spec(27, 5), height, mini.rowHeight, 0)).toBe(17);
+    expect(panelMoreCount(s, height, 0, 0)).toBe(0);
+  });
+
+  it("publishes the tile layout at mini scale for the nested surface", () => {
+    const surface = miniSurfaceLayout(MEDIUM, mini);
+    expect(surface).toMatchObject({ displaySize: mini.iconSize, rowHeight: mini.rowHeight, genSize: MEDIUM.genSize, showFolderThumbnails: false });
+    expect(surface.iconScale).toBeCloseTo(mini.iconSize / 64);
+    // Padding, icon, the 4px icon->name gap, the name and borders fit inside a mini row.
+    expect(surface.paddingY + mini.iconSize + 4 + surface.nameHeight + 4 + surface.gap).toBeLessThanOrEqual(mini.rowHeight);
   });
 });
 

@@ -83,18 +83,18 @@ describe("folder peek preorder and policies", () => {
       expect(peekCapability({ enabled: true, fileListing: true, builtinView: true, plainLocation: true, mode: "details", ...change })).toBe("none");
     });
   // One case per view mode × Folder Peek setting: column-flow List nests like
-  // Details (#1240); Tiles stays flat until its phase.
+  // Details (#1240); Tiles panels show top-level folders only (#1241).
   it.each([
     ["details", true, "tree"], ["details", false, "none"],
     ["list", true, "tree"], ["list", false, "none"],
-    ["tiles", true, "none"], ["tiles", false, "none"],
+    ["tiles", true, "top-level"], ["tiles", false, "none"],
   ] as const)("%s with Folder Peek %s is %s", (mode, enabled, expected) => {
     expect(peekCapability({ enabled, fileListing: true, builtinView: true, plainLocation: true, mode })).toBe(expected);
   });
   it("disables resources for unsupported views and resolves commands and Escape", () => {
     const surface = { enabled: true, fileListing: true, builtinView: true, plainLocation: true, mode: "details" as const };
     expect(peekCapability(surface)).toBe("tree");
-    expect(peekCapability({ ...surface, mode: "tiles" })).toBe("none");
+    expect(peekCapability({ ...surface, mode: "tiles" })).toBe("top-level");
     const tree = flatten();
     expect(resolvePeekCommandTarget(file, tree.meta)).toBe(nested.path);
     expect(resolvePeekCommandTarget(entry("/r/f", "file"), tree.meta)).toBeNull();

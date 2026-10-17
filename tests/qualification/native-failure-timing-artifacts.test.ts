@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
@@ -22,6 +22,7 @@ type CaptureCase = {
   logName: string;
   timingName: string;
   command: string;
+  platform: "Linux" | "Windows";
 };
 
 const captureCases: CaptureCase[] = [
@@ -30,12 +31,21 @@ const captureCases: CaptureCase[] = [
     logName: "native-contracts.log",
     timingName: "native-contracts-timing.txt",
     command: "bun run check:e2e:tauri",
+    platform: "Linux",
   },
   {
     name: "Build Tauri binary (debug, embedded frontend, no bundle)",
     logName: "tauri-build.log",
     timingName: "tauri-build-timing.txt",
     command: "bun run tauri build --debug --no-bundle",
+    platform: "Linux",
+  },
+  {
+    name: "Build Tauri binary (debug, embedded frontend, no bundle)",
+    logName: "tauri-build.log",
+    timingName: "tauri-build-timing.txt",
+    command: "bun run tauri build --debug --no-bundle",
+    platform: "Windows",
   },
 ];
 
@@ -51,32 +61,20 @@ async function captureStep(name: string): Promise<string> {
   return step!.run!;
 }
 
-function replaceProductionCommand(
-  step: string,
-  stepName: string,
-  exitStatus: number,
-): string {
-  const replacement = `bash -c 'printf "capture-marker-%s\\n" "${exitStatus}"; exit ${exitStatus}' `;
-  const contractCommand =
-    /CARGO_LOG=cargo::core::compiler::fingerprint=info \\\n+\s*bun run check:e2e:tauri/;
-  const buildCommand =
-    /CARGO_LOG=cargo::core::compiler::fingerprint=info \\\n+\s*bun run tauri build --debug --no-bundle --features e2e-hooks\$\{\{ runner\.os == 'Windows' && ',e2e-webview2-attach' \|\| '' \}\} \\\n+\s*/;
-  const command =
-    stepName === "Run native contracts" ? contractCommand : buildCommand;
-  const rendered = step.replace(command, replacement);
-
-  expect(rendered, `replace ${stepName} command`).not.toBe(step);
-  return `mkdir -p native-contract-diagnostics\n${rendered}`;
-}
-
-async function runCapture(step: string): Promise<{ code: number; directory: string }> {
+async function runCapture(step: string, exitStatus: number, platform: string): Promise<{ code: number; directory: string; stderr?: string }> {
   const directory = await mkdtemp(join(tmpdir(), "native-failure-timing-"));
+  // Execute the production shell unchanged. Replacing its command with a regex
+  // bypassed new platform branches; a PATH stub retains both real pipelines.
+  const bin = join(directory, "bin");
+  await mkdir(bin);
+  await writeFile(join(bin, "bun"), '#!/bin/sh\nprintf "capture-marker-%s\\n" "$NATIVE_CAPTURE_STATUS"\nexit "$NATIVE_CAPTURE_STATUS"\n', { mode: 0o755 });
 
   try {
-    await execFileAsync("bash", ["-e", "-o", "pipefail", "-c", step], {
+    const result = await execFileAsync("bash", ["-e", "-o", "pipefail", "-c", `mkdir -p native-contract-diagnostics\n${step}`], {
       cwd: directory,
+      env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, RUNNER_OS: platform, NATIVE_CAPTURE_STATUS: String(exitStatus) },
     });
-    return { code: 0, directory };
+    return { code: 0, directory, stderr: result.stderr };
   } catch (error) {
     const code = (error as { code?: number }).code;
     return { code: typeof code === "number" ? code : 1, directory };
@@ -85,21 +83,12 @@ async function runCapture(step: string): Promise<{ code: number; directory: stri
 
 describe("native capture timing artifacts under Bash errexit (#697)", () => {
   for (const captureCase of captureCases) {
-    it(`${captureCase.name} records a successful command`, async () => {
-      const directory = await mkdtemp(join(tmpdir(), "native-failure-timing-"));
+    it(`${captureCase.name} (${captureCase.platform}) records a successful command`, async () => {
+      const result = await runCapture(await captureStep(captureCase.name), 0, captureCase.platform);
+      const directory = result.directory;
 
       try {
-        const step = replaceProductionCommand(
-          await captureStep(captureCase.name),
-          captureCase.name,
-          0,
-        );
-        const result = await execFileAsync(
-          "bash",
-          ["-e", "-o", "pipefail", "-c", step],
-          { cwd: directory },
-        );
-
+        expect(result.code).toBe(0);
         expect(result.stderr).toBe("");
         expect(
           await readFile(
@@ -120,14 +109,10 @@ describe("native capture timing artifacts under Bash errexit (#697)", () => {
       }
     });
 
-    it(`${captureCase.name} records a failed command before returning its status`, async () => {
+    it(`${captureCase.name} (${captureCase.platform}) records a failed command before returning its status`, async () => {
       const exitStatus = 37;
       const result = await runCapture(
-        replaceProductionCommand(
-          await captureStep(captureCase.name),
-          captureCase.name,
-          exitStatus,
-        ),
+        await captureStep(captureCase.name), exitStatus, captureCase.platform,
       );
 
       try {

@@ -49,7 +49,7 @@
 </script>
 
 <script lang="ts">
-  import { untrack, type Snippet } from "svelte";
+  import { onDestroy, untrack, type Snippet } from "svelte";
   import { getThumbnailCache, setThumbnailCache } from "$lib/state/thumbnail-cache";
 
   /**
@@ -126,6 +126,16 @@
   let loadedKey: string | null = null;
   let inflightKey: string | null = null;
 
+  // Loads resume after awaits, possibly after this tile has unmounted (a
+  // virtual-list rechunk, a closed Tiles panel). A component-owned derived is
+  // not a safe guard then (Svelte's derived_inert): check liveness first, and
+  // a destroyed tile's response is simply stale.
+  let alive = true;
+  onDestroy(() => {
+    alive = false;
+  });
+  const stale = (key: string): boolean => !alive || key !== reloadKey;
+
   // Hydrate synchronously from the shared LRU cache at mount: remounts
   // (virtual-list rechunk, fullscreen-preview exit, duplicating a tab) must
   // paint the cached thumbnail on their FIRST frame instead of flashing the
@@ -187,10 +197,10 @@
       try {
         // Scrolled out of view (or props changed) while queued — skip the
         // fetch; the load effect retries if the tile comes back into view.
-        if (currentKey !== reloadKey || !visible) return;
+        if (stale(currentKey) || !visible) return;
 
         const result = await getVideoThumbnailData(currentPath, backendSize, quality);
-        if (currentKey !== reloadKey) return;
+        if (stale(currentKey)) return;
 
         if (result.ok) {
           fullUrl = result.data;
@@ -208,7 +218,7 @@
       }
     } finally {
       if (inflightKey === currentKey) inflightKey = null;
-      if (currentKey === reloadKey) loading = false;
+      if (!stale(currentKey)) loading = false;
     }
   }
 
@@ -243,10 +253,10 @@
       try {
         // Scrolled out of view (or props changed) while queued — skip the
         // fetch; the load effect retries if the tile comes back into view.
-        if (currentKey !== reloadKey || !visible) return;
+        if (stale(currentKey) || !visible) return;
 
         const microResult = await getMicroThumbnail(currentPath, backendSize, quality);
-        if (currentKey !== reloadKey) return;
+        if (stale(currentKey)) return;
 
         if (microResult.ok) {
           microUrl = microResult.data;
@@ -258,10 +268,10 @@
       // Stage 2: full thumbnail (should be a cache hit from micro's pre-warm)
       await fullPool.acquire();
       try {
-        if (currentKey !== reloadKey || (!visible && !microUrl)) return;
+        if (stale(currentKey) || (!visible && !microUrl)) return;
 
         const fullResult = await getThumbnailData(currentPath, backendSize, quality);
-        if (currentKey !== reloadKey) return;
+        if (stale(currentKey)) return;
 
         if (fullResult.ok) {
           fullUrl = fullResult.data;
@@ -272,7 +282,7 @@
         fullPool.release();
       }
 
-      if (currentKey === reloadKey && (fullUrl || microUrl || error)) {
+      if (!stale(currentKey) && (fullUrl || microUrl || error)) {
         loadedKey = currentKey; // terminal — error included, no scroll-wiggle retries
         if (fullUrl || microUrl) {
           setThumbnailCache(currentKey, { micro: microUrl, full: fullUrl });
@@ -280,7 +290,7 @@
       }
     } finally {
       if (inflightKey === currentKey) inflightKey = null;
-      if (currentKey === reloadKey) loading = false;
+      if (!stale(currentKey)) loading = false;
     }
   }
 </script>

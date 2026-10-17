@@ -22,6 +22,12 @@ window history for delayed receiver correlation. Do not hide/ungrab the window
 or add delays to mask ownership. The unchanged real cancel/retry test fails on
 the old fixed binary and passes after this lifecycle correction.
 
+Hosted macOS tests exposed a separate platform-invalid assertion: GTK source
+locality was injected into a callback fixture, then its Linux-only provenance
+field was expected on every OS. Keep the stale-identity and modifier contracts
+active everywhere; require GTK provenance on Linux and its omission elsewhere.
+Do not skip the tests or change production metadata to satisfy the fixture.
+
 See [the acceptance audit and outstanding boundaries](../testing/dnd-acceptance.md).
 Xvfb establishes GTK X11 behavior, not Windows/macOS pointer sources, GNOME
 Wayland, external-app interoperability or hook-free release artifacts.

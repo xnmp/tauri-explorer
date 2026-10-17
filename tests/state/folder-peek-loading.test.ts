@@ -68,10 +68,10 @@ it("collapse and re-open inside the watcher interval read immediately", async ()
   expect(sawLoading()).toBe(false);
 });
 
-it("returning from List to Details restores the peek immediately", async () => {
+it("returning from Tiles to Details restores the peek immediately", async () => {
   const pane = create();
   await pane.togglePeek(a.path); await immediate();
-  pane.setViewMode("list"); await immediate();
+  pane.setViewMode("tiles"); await immediate();
   expect(pane.displayEntries).toEqual([a, b]);
   rendered.length = 0;
   pane.setViewMode("details"); await immediate();

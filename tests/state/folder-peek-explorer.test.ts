@@ -28,7 +28,7 @@ afterEach(async () => { await Promise.all(panes.splice(0).map(p => p.destroy()))
 it("persists membership through navigation/back/view switches, stays pane-local, and drops invisible selection", async () => {
   const pane = create(); await pane.togglePeek(a.path); await settle();
   expect(pane.displayEntries).toContain(child);
-  pane.selectEntry(child); pane.setViewMode("list");
+  pane.selectEntry(child); pane.setViewMode("tiles");
   expect([...pane.selectedPaths]).toEqual([]); expect(pane.focusedEntry?.path).toBe(a.path);
   expect(pane.displayEntries).toEqual([a, b]); expect(pane.peekWatchSnapshot()).toEqual([]);
   pane.setViewMode("details"); await settle(); expect(pane.displayEntries).toContain(child);
@@ -75,7 +75,7 @@ it.each(["collapse", "view", "navigation", "destroy"])("does not revive a first 
   const opening = pane.togglePeek(a.path);
   let closing: Promise<void> | undefined;
   if (action === "collapse") pane.collapseAllPeeks();
-  if (action === "view") { pane.setViewMode("list"); pane.setViewMode("details"); }
+  if (action === "view") { pane.setViewMode("tiles"); pane.setViewMode("details"); }
   if (action === "navigation") await pane.navigateTo("/elsewhere");
   if (action === "destroy") closing = pane.destroy();
   release(session); await opening; await closing; await settle();

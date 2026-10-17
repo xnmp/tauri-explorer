@@ -2299,6 +2299,82 @@ pub mod drag_drop_snapshot {
     *OBSERVER.lock().unwrap_or_else(|poison| poison.into_inner()) = observer;
   }
 
+  #[derive(Clone, Copy, Default)]
+  pub struct SourceSnapshot {
+    pub window: Option<usize>,
+    pub local: Option<bool>,
+    pub token: Option<usize>,
+  }
+  pub type SourceResolver = Arc<dyn Fn(Option<usize>, Option<bool>) -> Option<usize> + Send + Sync>;
+  static SOURCE_RESOLVER: Mutex<Option<SourceResolver>> = Mutex::new(None);
+  pub fn set_source_resolver(resolver: Option<SourceResolver>) {
+    *SOURCE_RESOLVER
+      .lock()
+      .unwrap_or_else(|poison| poison.into_inner()) = resolver;
+  }
+  /// Resolve opaque host identity at the first receiver observation. GTK pools
+  /// IPC windows, so later URI delivery must never re-resolve that raw window.
+  pub fn resolve_source(window: Option<usize>, local: Option<bool>) -> SourceSnapshot {
+    let resolver = SOURCE_RESOLVER
+      .lock()
+      .unwrap_or_else(|poison| poison.into_inner())
+      .clone();
+    SourceSnapshot {
+      window,
+      local,
+      token: resolver.and_then(|resolve| resolve(window, local)),
+    }
+  }
+  thread_local! {
+    static SOURCE: std::cell::Cell<SourceSnapshot> = const { std::cell::Cell::new(SourceSnapshot { window: None, local: None, token: None }) };
+  }
+  pub fn source_window() -> Option<usize> {
+    SOURCE.with(|source| source.get().window)
+  }
+  pub fn source_is_local() -> Option<bool> {
+    SOURCE.with(|source| source.get().local)
+  }
+  pub fn source_token() -> Option<usize> {
+    SOURCE.with(|source| source.get().token)
+  }
+
+  pub fn dispatch_with_source_window(
+    window: usize,
+    copy_modifier: bool,
+    event: DragDropEvent,
+    source: Option<usize>,
+    local: Option<bool>,
+    handler: &dyn Fn(DragDropEvent) -> bool,
+  ) -> bool {
+    dispatch_with_source_snapshot(
+      window,
+      copy_modifier,
+      event,
+      SourceSnapshot {
+        window: source,
+        local,
+        token: None,
+      },
+      handler,
+    )
+  }
+  pub fn dispatch_with_source_snapshot(
+    window: usize,
+    copy_modifier: bool,
+    event: DragDropEvent,
+    source: SourceSnapshot,
+    handler: &dyn Fn(DragDropEvent) -> bool,
+  ) -> bool {
+    struct Restore(SourceSnapshot);
+    impl Drop for Restore {
+      fn drop(&mut self) {
+        SOURCE.with(|source| source.set(self.0));
+      }
+    }
+    let _restore = Restore(SOURCE.with(|current| current.replace(source)));
+    dispatch(window, copy_modifier, event, handler)
+  }
+
   /// Invoke a platform event's observer before the normal queued handler.
   pub fn dispatch(
     window: usize,

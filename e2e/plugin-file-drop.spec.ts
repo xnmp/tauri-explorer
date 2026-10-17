@@ -1,5 +1,5 @@
-/** Browser acceptance through a contributed demo-plugin target. Real OS
- * delivery is covered by native qualification, not synthetic DOM files. */
+/** Browser/mock acceptance through a contributed demo-plugin target. These
+ * tests exercise host routing; they do not run GTK native source delivery. */
 import { test, expect, type Page } from "./fixtures";
 import { runPaletteCommand, switchViewMode, waitForEntries } from "./helpers";
 

@@ -156,6 +156,23 @@ function restoreMockTrashItems(ids: string[]): FileBatchOutcome {
   return result;
 }
 
+function deleteMockTrashItems(ids: string[]): FileBatchOutcome {
+  const result: FileBatchOutcome = { succeeded: [], failed: [] };
+  for (const id of ids) {
+    const found = [...mockTrash].find(([, versions]) => versions.some(item => item.id === id));
+    if (!found) {
+      result.failed.push({ path: id, error: "This item is no longer in the trash list. Refresh the Trash and try again." });
+      continue;
+    }
+    const [path, versions] = found;
+    const remaining = versions.filter(item => item.id !== id);
+    if (remaining.length) mockTrash.set(path, remaining);
+    else mockTrash.delete(path);
+    result.succeeded.push(id);
+  }
+  return result;
+}
+
 function mockBatch(paths: string[], operation: (path: string) => void): FileBatchOutcome {
   const result: FileBatchOutcome = { succeeded: [], failed: [] };
   for (const path of new Set(paths)) {
@@ -1131,6 +1148,7 @@ const mockCommands: Record<string, CommandHandler> = {
   // so the source retains DOM-drop authority. Never fake a successful lease.
   native_file_drag_clock: () => ({ id: `browser:${performance.timeOrigin}`, now: performance.timeOrigin + performance.now() }),
   start_file_drag: () => { throw "Native file dragging is unavailable in the browser"; },
+  end_html5_file_drag: () => undefined,
   plugin_jobs_snapshot: () => mockAiPresentation().snapshot(),
   plugin_job_reveal: (args) => mockAiPresentation().snapshot().jobs.find(job => job.jobKey === args.jobKey)?.reveal ?? null,
   plugin_job_cancel: (args) => mockAiPresentation().cancel(String(args.jobKey)),
@@ -2913,6 +2931,7 @@ if (typeof window !== "undefined") {
   },
 
   list_trash: () => listMockTrash(),
+  delete_trash_items: (args) => deleteMockTrashItems(args.ids as string[]),
   restore_trash_items: (args) => restoreMockTrashItems(args.ids as string[]),
 
   open_recycle_bin: () => {
@@ -3124,7 +3143,7 @@ export async function mockInvoke<T>(cmd: string, args?: Record<string, unknown>)
       : actions.length === 1 ? actions[0] : { type: "batch", actions, label: "Delete" };
     return { result, history: mockFileHistory.push(action).summary } as T;
   }
-  if (cmd === "restore_trash_items") {
+  if (cmd === "restore_trash_items" || cmd === "delete_trash_items") {
     // Restoring from the Trash view records no undoable action.
     return { result, history: mockFileHistory.summary() } as T;
   }

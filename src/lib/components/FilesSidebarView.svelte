@@ -588,6 +588,7 @@
               title={loc.path}
               role="button"
               tabindex="0"
+              use:recentDrag.trackSource
               draggable={usesHtml5Drag}
               ondragstart={usesHtml5Drag ? (e) => recentDrag.start(e, { kind: "directory", path: loc.path, name: loc.name }) : undefined}
               ondragend={usesHtml5Drag ? recentDrag.end : undefined}

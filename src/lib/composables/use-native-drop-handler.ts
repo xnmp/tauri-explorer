@@ -49,16 +49,17 @@ export function useNativeDropHandler(deps: NativeDropDeps) {
     return !isMac && !isWindows ? dragState.survivingHtml5Source(observedAt, completedGestureSequence, observationClock) : null;
   }
 
-  function handleNativeEnter(rawPaths: string[], _position: { x: number; y: number }, source?: DragData | null, copyModifier?: boolean | null, observedAt?: number, completedGestureSequence?: number, observationClock?: string): void {
+  function handleNativeEnter(rawPaths: string[], _position: { x: number; y: number }, source?: DragData | null, copyModifier?: boolean | null, observedAt?: number, completedGestureSequence?: number, observationClock?: string, externalSource?: boolean): void {
     if (copyModifier != null) copyModifierHeld = copyModifier;
-    const data = nativeSource(rawPaths, source, observedAt, completedGestureSequence, observationClock);
+    // Native context identity outranks path/time inference from a pending renderer source.
+    const data = externalSource ? null : nativeSource(rawPaths, source, observedAt, completedGestureSequence, observationClock);
     const paths = resolveNativeDragPaths(rawPaths, data, isWindows);
     const livePaths = internalDragPaths(data, isWindows);
     const verifiedSource = livePaths && sameDropPathSet(paths, livePaths, isWindows);
     // Explicit Rust provenance is already correlated at the platform callback.
     // Inferred HTML5 identity also needs timestamp admission: an end/start in
     // the same JS millisecond cannot identify which gesture made this event.
-    if (dragState.expiredNativeObservation(observedAt, verifiedSource ? data : null, source == null, observationClock)) {
+    if (!externalSource && dragState.expiredNativeObservation(observedAt, verifiedSource ? data : null, source == null, observationClock)) {
       nativeGesture = { data: null, hasPaths: paths.length > 0, expired: true };
       nativeDomSession = paths.length ? dragState.cancelledNativeSession(observedAt, paths, isWindows, observationClock) : undefined;
       return;
@@ -68,8 +69,9 @@ export function useNativeDropHandler(deps: NativeDropDeps) {
     nativeDomSession = nativeGesture.data?.sessionId;
   }
 
-  async function handleNativeDrop(rawPaths: string[], position: { x: number; y: number }, source?: DragData | null, copyModifier?: boolean | null, observedAt?: number, completedGestureSequence?: number, observationClock?: string): Promise<void> {
-    const dragData = nativeDragSession(rawPaths)
+  async function handleNativeDrop(rawPaths: string[], position: { x: number; y: number }, source?: DragData | null, copyModifier?: boolean | null, observedAt?: number, completedGestureSequence?: number, observationClock?: string, externalSource?: boolean): Promise<void> {
+    if (externalSource) nativeDomSession = undefined;
+    const dragData = externalSource ? null : nativeDragSession(rawPaths)
       ? nativeSource(rawPaths, source, observedAt, completedGestureSequence, observationClock)
       : source ?? (nativeGesture ? nativeGesture.data : nativeSource(rawPaths, source, observedAt, completedGestureSequence, observationClock));
     const paths = resolveNativeDragPaths(rawPaths, dragData, isWindows);
@@ -81,8 +83,12 @@ export function useNativeDropHandler(deps: NativeDropDeps) {
     }
     const internalPaths = internalDragPaths(dragData, isWindows);
     const isInternalDrag = internalPaths !== null && sameDropPathSet(paths, internalPaths, isWindows);
-    if (nativeGesture?.expired || dragState.expiredNativeObservation(observedAt, isInternalDrag ? dragData : null,
-        source == null && !nativeGesture?.data, observationClock)) {
+    // The final platform Drop can carry verified provenance after an early
+    // Enter arrived before native source adoption. Recheck that proof instead
+    // of preserving the earlier inference's ambiguity.
+    const explicitSource = source != null && isInternalDrag;
+    if (!externalSource && ((nativeGesture?.expired && !explicitSource) || dragState.expiredNativeObservation(observedAt, isInternalDrag ? dragData : null,
+        source == null && !nativeGesture?.data, observationClock))) {
       nativeDomSession ??= dragState.cancelledNativeSession(observedAt, paths, isWindows, observationClock);
       nativeGesture = null;
       clearHighlights();

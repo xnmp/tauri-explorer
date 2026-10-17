@@ -130,14 +130,17 @@ export function createPaneMutations(ctx: PaneMutationContext) {
     const requestedPermanent = isPermanentArg ?? dialogStore.isPermanentDelete;
 
     const paths = [...new Set(entries.map((e) => e.path))];
-    const batch = await deleteEntries(paths, requestedPermanent);
+    const fromTrash = entries.some((entry) => entry.trash);
+    const batch = fromTrash
+      ? await (await import("./trash-location")).deleteFromTrash(entries)
+      : await deleteEntries(paths, requestedPermanent);
     if (!batch.ok) return batch.error;
     if (batch.warning) toastStore.error(batch.warning);
     const removed = batch.data.succeeded;
     const error = fileBatchError(batch.data);
     const affected = affectedBatchPaths(batch.data);
     // Moving to trash also changes the in-app Trash location, which has no watcher.
-    const trashChanged = !requestedPermanent && affected.length > 0;
+    const trashChanged = (fromTrash || !requestedPermanent) && affected.length > 0;
     if (affected.length) broadcastFileChange([...new Set(affected.map(parentDir)), ...(trashChanged ? [TRASH_PATH] : [])]);
 
     if (removed.length > 0) {
@@ -149,8 +152,10 @@ export function createPaneMutations(ctx: PaneMutationContext) {
         );
       }
       if (!error) dialogStore.cancelDelete(session);
-      await navigateAwayIfNeeded(deletedPaths);
-      frecencyStore.pruneNonExistent();
+      if (!fromTrash) {
+        await navigateAwayIfNeeded(deletedPaths);
+        frecencyStore.pruneNonExistent();
+      }
     }
     return error;
   }

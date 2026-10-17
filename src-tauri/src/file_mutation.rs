@@ -168,6 +168,44 @@ pub(crate) async fn restore_trash_items(
     .await
 }
 
+/// Permanently remove exact items listed in the Trash. Opaque IDs are receipt
+/// keys only and permanent deletion intentionally contributes no undo action.
+#[tauri::command]
+pub(crate) async fn delete_trash_items(
+    window: tauri::Window,
+    session_id: String,
+    ids: Vec<String>,
+) -> Result<MutationReply<FileBatchOutcome>, AppError> {
+    let owner = renderer_owner::acquire_owner(&window, &session_id)?;
+    let runtime = admission::runtime(&window)?;
+    file_history::run_forward(owner, false, Vec::new(), async move {
+        match crate::files::trash_inventory::delete(ids, &runtime).await {
+            Ok(result) => {
+                let changed = !result.succeeded.is_empty()
+                    || !result.uncertain.is_empty()
+                    || result.worker_error.is_some();
+                MutationOutcome {
+                    result: Ok(result),
+                    warning: None,
+                    effect: if changed {
+                        ForwardEffect::Changed(None)
+                    } else {
+                        ForwardEffect::Unchanged
+                    },
+                    affected: Vec::new(),
+                }
+            }
+            Err(error) => MutationOutcome {
+                result: Err(error),
+                warning: None,
+                effect: ForwardEffect::Unchanged,
+                affected: Vec::new(),
+            },
+        }
+    })
+    .await
+}
+
 fn parent(path: &str) -> Vec<String> {
     Path::new(path)
         .parent()

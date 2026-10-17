@@ -610,6 +610,12 @@ Screenshots:
     ResizeObserver delivery (#1061).
   - Sides are kept on column-count and width changes while feasible; otherwise panels
     are re-placed in opening order (the spec's rule, not the mock's re-place-all).
+    The pane's peek session holds the sides beside the panel heights, so they survive
+    navigating away and back and a view-mode round trip. Each layout merges its own
+    placements in. A folder keeps its side until it leaves the expanded set, and is
+    then placed afresh when re-opened. Memory local to the view was rejected: it was
+    lost on every remount, and any layout that did not place a folder (another
+    directory) erased that folder's side.
   - Opening reveals the panel after the motion settles. Revealing a target that is still
     growing chased a moving bottom edge. Arming and revealing reuse List's
     `stepMotionArm`, so the reveal outlives the 1.5s motion arm: a slow listing still

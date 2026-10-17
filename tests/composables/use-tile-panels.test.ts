@@ -72,6 +72,9 @@ function mount(open: readonly string[]) {
     peekStatus: () => "loaded",
     tilePanelHeight: (path: string) => { client.get(version); return heights.get(path); },
     setTilePanelHeight: (path: string, height: number) => { heights.set(path, height); commits.push([path, height]); bump(); },
+    // The session's side memory (plain here: the composable never tracks it).
+    tilePanelSides: new Map(),
+    rememberTilePanelSides(sides: ReadonlyMap<string, unknown>) { this.tilePanelSides = new Map(sides); },
   };
   const viewport = {
     scrollTop: 0, clientHeight: 1000, isConnected: true, getClientRects: () => [{}], scrollTo: () => {},

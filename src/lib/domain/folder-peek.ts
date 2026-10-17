@@ -26,6 +26,21 @@ export function toggleExpanded(expanded: ExpandedPaths, path: string, ordinal: n
   return next;
 }
 
+/**
+ * Per-folder memory that lives as long as the folder stays expanded (Tiles panel
+ * sides, §9.1): `placed` overrides, a remembered value of a folder still
+ * expanded but not placed this time (another directory is shown, or another view)
+ * is kept, and a folder that left `expanded` is forgotten. Returns `previous`
+ * itself when nothing changed, so a store can skip publishing.
+ */
+export function rememberWhileExpanded<V>(previous: ReadonlyMap<string, V>, placed: ReadonlyMap<string, V>, expanded: ExpandedPaths): ReadonlyMap<string, V> {
+  const next = new Map<string, V>();
+  for (const [path, value] of previous) if (expanded.has(path) && !placed.has(path)) next.set(path, value);
+  for (const [path, value] of placed) if (expanded.has(path)) next.set(path, value);
+  if (next.size === previous.size && [...next].every(([path, value]) => previous.has(path) && previous.get(path) === value)) return previous;
+  return next;
+}
+
 /** Remove every expanded path at or below any of `roots`. */
 export function collapseSubtree(expanded: ExpandedPaths, roots: readonly string[], windows: boolean): Map<string, number> {
   const covered = coverageOf(roots, windows);

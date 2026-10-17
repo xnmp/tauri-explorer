@@ -4,7 +4,8 @@ import { createPeekWatch } from "./pane-peek-watch";
 import { pathComparison } from "$lib/domain/path";
 import type { FileEntry } from "$lib/domain/file";
 import * as policies from "$lib/domain/folder-peek";
-import { toggleExpanded, collapseSubtree, pruneExpanded, type PeekListing } from "$lib/domain/folder-peek";
+import { toggleExpanded, collapseSubtree, pruneExpanded, rememberWhileExpanded, type ExpandedPaths, type PeekListing } from "$lib/domain/folder-peek";
+import type { BandSide } from "$lib/domain/tile-panels";
 import { rememberCardRows } from "$lib/domain/list-cards";
 import { createDirectoryListing } from "./directory-listing";
 import { gitStatusStore } from "./git-status.svelte";
@@ -17,6 +18,14 @@ export function createFolderPeekSession(windows: boolean) {
   let cardRows = $state.raw<ReadonlyMap<string, number>>(new Map());
   /** Tiles panel heights (CSS px) per top-level path, for the session. */
   let panelHeights = $state.raw<ReadonlyMap<string, number>>(new Map());
+  /** Tiles panel sides of the expanded folders, kept while feasible (§9.1). Unlike
+   * heights, a side lasts only while its folder stays expanded. */
+  let panelSides = $state.raw<ReadonlyMap<string, BandSide>>(new Map());
+  const noSides: ReadonlyMap<string, BandSide> = new Map();
+  function setExpanded(next: ExpandedPaths) {
+    expanded = next;
+    panelSides = rememberWhileExpanded(panelSides, noSides, next);
+  }
   let ordinal = 0;
   let disposed = false;
   const resources = new Map<string, { target: RefreshTarget; retire(): Promise<void> }>();
@@ -82,15 +91,15 @@ export function createFolderPeekSession(windows: boolean) {
   return {
     policies, watchFactory: createPeekWatch,
     get expanded() { return expanded; },
-    toggle(path: string) { if (!disposed) expanded = toggleExpanded(expanded, path, ++ordinal); },
-    collapse(path: string) { if (expanded.has(path)) { const next = new Map(expanded); next.delete(path); expanded = next; } },
+    toggle(path: string) { if (!disposed) setExpanded(toggleExpanded(expanded, path, ++ordinal)); },
+    collapse(path: string) { if (expanded.has(path)) { const next = new Map(expanded); next.delete(path); setExpanded(next); } },
     collapseAll(roots: readonly string[]) {
       const next = collapseSubtree(expanded, roots, windows);
-      if (next.size !== expanded.size) expanded = next;
+      if (next.size !== expanded.size) setExpanded(next);
     },
     prune(parent: string, entries: readonly FileEntry[]) {
       const next = pruneExpanded(expanded, parent, entries, windows);
-      if (next.size !== expanded.size) expanded = next;
+      if (next.size !== expanded.size) setExpanded(next);
     },
     listing(path: string) { return snapshots.get(path); },
     cardRows(path: string) { return cardRows.get(path); },
@@ -98,6 +107,9 @@ export function createFolderPeekSession(windows: boolean) {
     panelHeight(path: string) { return panelHeights.get(path); },
     // The same bounded, most-recent-last memory as the List card heights.
     setPanelHeight(path: string, height: number) { if (!disposed) panelHeights = rememberCardRows(panelHeights, path, height); },
+    get panelSides() { return panelSides; },
+    /** Merges one layout's sides; folders not placed in it keep theirs. */
+    rememberPanelSides(placed: ReadonlyMap<string, BandSide>) { if (!disposed) panelSides = rememberWhileExpanded(panelSides, placed, expanded); },
     target(path: string) { return [...resources].find(([key]) => pathComparison(windows).same(key, path))?.[1].target; },
     reconcile,
     async dispose() {

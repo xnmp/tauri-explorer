@@ -31,6 +31,7 @@ import { createFolderPeekState } from "./folder-peek.svelte";
 import { flatPeekEntries, flatPeekRows, peekCapability, shouldToggleOnRowClick, resolvePeekCommandTarget, resolvePeekEscape } from "$lib/domain/folder-peek-flat";
 import type { PeekLevelCache } from "$lib/domain/folder-peek";
 import type { RowClickInput } from "$lib/domain/folder-peek-flat";
+import type { BandSide } from "$lib/domain/tile-panels";
 import { isVirtualPath } from "$lib/domain/virtual-path";
 import { providerFor } from "$lib/plugins/fs-providers";
 import { basename, toNativeSeparators, pathComparison, coverageOf } from "$lib/domain/path";
@@ -1118,6 +1119,12 @@ function createExplorerState(seed?: ExplorerSeed, isFileListingSurface: () => bo
     setTilePanelHeight(path: string, height: number) {
       if (capability === "none" || !Number.isFinite(height) || height < 1 || peek.panelHeight(path) === Math.round(height)) return;
       peek.setPanelHeight(path, height);
+    },
+    /** Tiles panel sides of the expanded folders, from the last Tiles layout (§9.1). */
+    get tilePanelSides() { return peek.panelSides; },
+    /** Merges a Tiles layout's sides; a folder keeps its side until it leaves the expanded set. */
+    rememberTilePanelSides(sides: ReadonlyMap<string, BandSide>) {
+      if (capability !== "none") peek.rememberPanelSides(sides);
     },
     get peekCaretsShown() { return caretsShown(); },
     collapseAllPeeks,

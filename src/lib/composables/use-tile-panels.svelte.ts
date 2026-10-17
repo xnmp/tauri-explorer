@@ -93,19 +93,18 @@ export function useTilePanels(deps: TilePanelsDeps) {
   let grip: { path: string; pointer: number; y: number; height: number; side: BandSide; stop: () => void } | null = null;
 
   // ---- Model -----------------------------------------------------------------
-  /** Sides from the previous layout: kept while feasible (§9.1). */
-  let remembered: ReadonlyMap<string, BandSide> = new Map();
   const model = $derived.by(() => {
     const pane = explorer();
     const held = preview;
-    const built = buildTilePanelModel({
+    return buildTilePanelModel({
       rows: pane.detailRows, order: pane.expandedPaths, columns: deps.getColumns(), width, viewportHeight,
       layout: deps.getLayout(),
       preferred: path => held?.paths.includes(path) ? held.height : pane.tilePanelHeight(path),
-      remembered,
+      // Sides from earlier layouts, kept while feasible (§9.1). The pane's peek
+      // session holds them, so they outlive this view; untracked, because
+      // remembering this layout's sides is no reason to rebuild it.
+      remembered: untrack(() => pane.tilePanelSides),
     });
-    remembered = placementSides(built.placements);
-    return built;
   });
 
   // ---- Motion state ------------------------------------------------------------
@@ -259,6 +258,7 @@ export function useTilePanels(deps: TilePanelsDeps) {
       arm = step.next;
       const previous = last;
       last = { model: next, rows };
+      explorer().rememberTilePanelSides(placementSides(next.placements));
       // Forget scroll offsets of panels that closed (ghosts keep their own).
       for (const key of Object.keys(panelScroll)) if (!next.panels.has(key)) delete panelScroll[key];
       // A panel closed mid-drag never delivers its grip's release.

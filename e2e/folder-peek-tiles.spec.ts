@@ -308,6 +308,35 @@ test("a column-count change keeps each panel on its side while feasible", async 
   expect(await side(page, P("Inbox"))).toBe("below");
 });
 
+test("a kept side survives navigating away and back, and a view-mode round trip", async ({ page }) => {
+  expect(await open(page, root, { width: 730, height: 800 })).toBe(5);
+  await toggle(page, P("Career"));
+  await toggle(page, P("Inbox"));
+  await page.setViewportSize({ width: 900, height: 800 });
+  await expect.poll(() => columns(page)).toBe(7);
+  await settled(page);
+  expect(await side(page, P("Inbox"))).toBe("above");
+  // Into Codex and back: Inbox is still expanded and keeps its side, although
+  // Codex's layout never placed it.
+  await explorerCall(page, "return explorer.navigateTo(value)", P("Codex"));
+  await expect(tile(page, P("Codex/notes.md"))).toBeVisible();
+  await explorerCall(page, "return explorer.goBack()");
+  await expect(panel(page, P("Inbox"))).toHaveCount(1);
+  await settled(page);
+  expect(await side(page, P("Inbox"))).toBe("above");
+  // Details unmounts the panels view; Tiles mounts a new one.
+  await explorerCall(page, "explorer.setViewMode('details')");
+  await expect(page.locator(`${shown} .tile-row`)).toHaveCount(0);
+  await explorerCall(page, "explorer.setViewMode('tiles')");
+  await expect(panel(page, P("Inbox"))).toHaveCount(1);
+  await settled(page);
+  expect(await side(page, P("Inbox"))).toBe("above");
+  // Closing forgets the side: re-opened, Inbox fits below.
+  await toggle(page, P("Inbox"));
+  await toggle(page, P("Inbox"));
+  expect(await side(page, P("Inbox"))).toBe("below");
+});
+
 test("arrow keys enter a panel, walk its grid and leave it again", async ({ page }) => {
   await open(page);
   await toggle(page, P("Career"));

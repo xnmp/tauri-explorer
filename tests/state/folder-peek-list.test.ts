@@ -118,6 +118,36 @@ it("Tiles peeks top-level folders only, always with carets (#1241)", async () =>
   expect(pane.peekCaretsShown).toBe(false);
 });
 
+it("keeps Tiles panel sides per pane while each folder stays expanded, across navigation and view modes", async () => {
+  const left = create("tiles"), right = create("tiles");
+  await left.togglePeek(a.path); await left.togglePeek(b.path); await settle();
+  const toggled = left.peekChange;
+  left.rememberTilePanelSides(new Map([[a.path, "above"], [b.path, "below"]]));
+  expect([...left.tilePanelSides]).toEqual([[a.path, "above"], [b.path, "below"]]);
+  expect(right.tilePanelSides.size).toBe(0);
+  expect(left.peekChange).toBe(toggled);
+  // A layout that places only b (another directory, another mount) keeps a's side.
+  left.rememberTilePanelSides(new Map([[b.path, "stacked"]]));
+  expect([...left.tilePanelSides]).toEqual([[a.path, "above"], [b.path, "stacked"]]);
+  await left.navigateTo(a.path); await settle();
+  await left.navigateTo("/r"); await settle();
+  left.setViewMode("details"); await settle();
+  left.setViewMode("tiles"); await settle();
+  expect(left.tilePanelSides.get(a.path)).toBe("above");
+  // Closing a folder forgets its side (unlike its height); re-opening places it afresh.
+  await left.togglePeek(a.path); await settle();
+  expect([...left.tilePanelSides]).toEqual([[b.path, "stacked"]]);
+  await left.togglePeek(a.path); await settle();
+  expect(left.tilePanelSides.has(a.path)).toBe(false);
+  // A side for a folder that is not expanded is never remembered.
+  left.rememberTilePanelSides(new Map([["/r/elsewhere", "above"]]));
+  expect(left.tilePanelSides.has("/r/elsewhere")).toBe(false);
+  // Off is capability none: nothing is remembered.
+  settingsStore.update({ folderPeek: false });
+  left.rememberTilePanelSides(new Map([[b.path, "above"]]));
+  expect(left.tilePanelSides.get(b.path)).toBe("stacked");
+});
+
 it("remembers Tiles panel heights per pane for the session, without counting as a toggle", async () => {
   const left = create("tiles"), right = create("tiles");
   await left.togglePeek(a.path); await right.togglePeek(a.path); await settle();

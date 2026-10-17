@@ -27,7 +27,8 @@ function burstPayload(lines: number, width: number): string {
 async function openTerminal(): Promise<TerminalInput> {
   await $(".file-list").waitForExist({ timeout: 15_000 });
   if (!(await $(".terminal-panel").isDisplayed())) {
-    await browser.keys(["Control", "`"]);
+    await browser.keys(["Alt", "m"]);
+    await browser.keys("t");
   }
   await $(".terminal-panel .xterm").waitForDisplayed({ timeout: 10_000 });
   const input = await $(".terminal-panel textarea.xterm-helper-textarea");

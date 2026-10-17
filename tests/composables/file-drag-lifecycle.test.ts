@@ -863,3 +863,23 @@ it.each(["verified", "different-paths", "stale-sequence"] as const)("final %s na
   if (kind === "verified") expect(handler).toHaveBeenCalledExactlyOnceWith(paths, "pane");
   else expect(handler).not.toHaveBeenCalled();
 });
+
+it.each(["fresh-enter", "old-enter"] as const)("proven external GTK source keeps external policy with %s and an unsettled own source (#1217)", async kind => {
+  let tick = 10; const epoch = clockEpoch += 1000;
+  vi.spyOn(Date, "now").mockImplementation(() => epoch + tick);
+  vi.stubGlobal("performance", { timeOrigin: epoch, now: () => tick });
+  native.start.mockImplementationOnce(() => new Promise<void>(() => {}));
+  const handler = vi.fn(); cleanup.push(fileDropTargets.register(hit, handler));
+  begin(); await flush();
+  const source = dragState.current!;
+  const deliver = (type: string, externalSource?: boolean) => native.emit!({ payload: {
+    type, paths, source: null, externalSource, observedAt: epoch + tick,
+    observationClock: `browser:${epoch}`, position: { x: 40, y: 60 },
+  } });
+  if (kind === "old-enter") deliver("enter");
+  tick = 20;
+  if (kind === "fresh-enter") deliver("enter", true);
+  deliver("drop", true); await flush();
+  expect(handler).toHaveBeenCalledExactlyOnceWith(paths, "external");
+  expect(dragState.current?.sessionId).toBe(source.sessionId);
+});

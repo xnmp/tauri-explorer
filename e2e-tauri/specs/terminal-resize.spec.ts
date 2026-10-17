@@ -64,7 +64,8 @@ const countTo80 = process.platform === "win32"
     for (let i = 0; i < 5; i++) await browser.keys(["Control", "="]);
     await browser.waitUntil(async () => await browser.execute(() => parseFloat(document.documentElement.style.getPropertyValue("--app-zoom"))) === 1.5,
       { timeoutMsg: "root zoom did not reach 150%" });
-    await browser.keys(["Control", "`"]);
+    await browser.keys(["Alt", "m"]);
+    await browser.keys("t");
     await $(".terminal-panel .xterm").waitForDisplayed();
     await browser.waitUntil(async () => (await domText(".terminal-panel .xterm-rows")).trim().length > 0,
       { timeout: 45000, timeoutMsg: "shell never produced a prompt" });

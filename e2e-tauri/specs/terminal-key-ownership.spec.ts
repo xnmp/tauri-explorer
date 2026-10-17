@@ -27,6 +27,11 @@ const keyProbe = process.platform === "win32"
   : 'python3 -c "import os,sys,termios,tty;fd=sys.stdin.fileno();old=termios.tcgetattr(fd);tty.setraw(fd);print(\'key-\'+\'probe-ready\',flush=True);key=os.read(fd,1);termios.tcsetattr(fd,termios.TCSADRAIN,old);print(\'terminal-key-byte=\'+str(key[0]),flush=True)"';
 
 (process.platform === "linux" || process.platform === "win32" ? describe : describe.skip)("terminal key ownership (#496)", () => {
+  after(async () => {
+    // Native specs share their isolated profile. Do not leak this collision
+    // into later tests that exercise the shipped terminal shortcut.
+    await browser.execute(() => localStorage.removeItem("explorer-keybindings"));
+  });
   it("delivers Ctrl+Q to a terminal-hosted application instead of Explorer", async () => {
     // The native WebView keeps its tab layout between test runs. Start from
     // one tab so the two tab-navigation captures have an unambiguous state.
@@ -49,7 +54,14 @@ const keyProbe = process.platform === "win32"
         && document.documentElement.dataset.e2eHooksReady === "true"
         && document.querySelector(".file-list") !== null,
     refreshToken), { timeout: 15_000, timeoutMsg: "refreshed explorer never became ready" });
-    await browser.keys(["Control", "`"]);
+    // The deliberate Alt+M T collision above owns this chord outside xterm.
+    // Open through the palette, then verify terminal-focus chord ownership.
+    await browser.keys(["Control", "Shift", "p"]);
+    const terminalCommand = $(".command-palette-dialog input.search-input");
+    await terminalCommand.waitForDisplayed();
+    await terminalCommand.addValue("Toggle Terminal");
+    await $(".command-palette-dialog .command-item").click();
+    await $(".command-palette-dialog").waitForDisplayed({ reverse: true });
     await $(".terminal-panel .xterm").waitForDisplayed({ timeout: 10_000 });
     const input = await $(".terminal-panel textarea.xterm-helper-textarea");
     await input.waitForExist();

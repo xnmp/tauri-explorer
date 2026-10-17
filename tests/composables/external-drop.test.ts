@@ -4,7 +4,7 @@ vi.mock("@tauri-apps/api/webview", () => ({ getCurrentWebview: () => ({ listen: 
 import { dragClock } from "$lib/state/drag-clock";
 import { useExternalDrop } from "$lib/composables/use-external-drop.svelte";
 
-const event = (type: string) => ({ payload: { type, position: { x: 200, y: 300 }, paths: ["/a.png", "/b.png"], copyModifier: true, observedAt: 1011.25, observationClock: "process-clock", completedGestureSequence: 7 } });
+const event = (type: string) => ({ payload: { type, position: { x: 200, y: 300 }, paths: ["/a.png", "/b.png"], copyModifier: true, observedAt: 1011.25, observationClock: "process-clock", completedGestureSequence: 7, externalSource: true } });
 beforeEach(() => { native.listen.mockReset(); });
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
@@ -14,11 +14,11 @@ describe("native drop listener lifecycle", () => {
     const callbacks = { onEnter: vi.fn(), onOver: vi.fn(), onDrop: vi.fn(), onLeave: vi.fn() };
     const service = useExternalDrop(callbacks); await service.setup();
     native.deliver!(event("enter"));
-    expect(callbacks.onEnter).toHaveBeenCalledWith(["/a.png", "/b.png"], { x: 200, y: 300 }, undefined, true, 1011.25, 7, "process-clock");
+    expect(callbacks.onEnter).toHaveBeenCalledWith(["/a.png", "/b.png"], { x: 200, y: 300 }, undefined, true, 1011.25, 7, "process-clock", true);
     expect(callbacks.onOver).toHaveBeenCalledWith({ x: 200, y: 300 }, true);
     expect(service.state.isDragging).toBe(true);
     native.deliver!(event("drop"));
-    expect(callbacks.onDrop).toHaveBeenCalledExactlyOnceWith(["/a.png", "/b.png"], { x: 200, y: 300 }, undefined, true, 1011.25, 7, "process-clock");
+    expect(callbacks.onDrop).toHaveBeenCalledExactlyOnceWith(["/a.png", "/b.png"], { x: 200, y: 300 }, undefined, true, 1011.25, 7, "process-clock", true);
     expect(callbacks.onLeave).not.toHaveBeenCalled(); expect(service.state.isDragging).toBe(false);
     service.cleanup();
   });

@@ -11,7 +11,7 @@ export function startFileDrag(options: Options, onEvent: (result: CallbackPayloa
 }
 
 export type NativeFileDragEvent = (
-  | { type: "enter" | "drop"; paths: string[]; position: { x: number; y: number }; source: DragData | null }
+  | { type: "enter" | "drop"; paths: string[]; position: { x: number; y: number }; source: DragData | null; /** Native GTK context is proven to belong to another source. */ externalSource?: boolean }
   | { type: "over"; position: { x: number; y: number } }
   | { type: "leave" }
 ) & { copyModifier?: boolean | null; observedAt?: number; observationClock?: string;

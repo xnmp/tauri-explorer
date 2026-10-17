@@ -18,6 +18,26 @@ export function peekCapability(surface: PeekSurface): PeekCapability {
   return enabled && fileListing && builtinView && plainLocation && mode === "details" ? "tree" : "none";
 }
 
+export interface RowClickInput {
+  /** The surface draws expand carets; they own toggling, so a row click never does. */
+  caretsShown: boolean;
+  isDirectory: boolean;
+  /** The pane can peek here (feature on, plain location, supporting view). */
+  eligible: boolean;
+  modifiers: { ctrlKey: boolean; shiftKey: boolean; metaKey: boolean; altKey: boolean };
+  /** The click ended a pointer drag or marquee. */
+  wasDrag: boolean;
+}
+
+/** Caret-less peek (#1248): a plain primary click on a peekable folder row
+ * toggles it in addition to the ordinary selection. Modifier clicks stay
+ * pure selection gestures; the double-click's two clicks cancel out. */
+export function shouldToggleOnRowClick(input: RowClickInput): boolean {
+  const { ctrlKey, shiftKey, metaKey, altKey } = input.modifiers;
+  return !input.caretsShown && input.isDirectory && input.eligible && !input.wasDrag
+    && !(ctrlKey || shiftKey || metaKey || altKey);
+}
+
 export function flatPeekEntries(root: string, entries: readonly FileEntry[]): PeekTree {
   return {
     entries, expanded: [],

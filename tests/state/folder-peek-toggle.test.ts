@@ -119,3 +119,45 @@ it("a pane opened while Folder Peek is off never loads the peek session", async 
   expect(loads).toEqual([]);
   expect(rows(pane)).toEqual(["0:/r/a", "0:/r/b"]);
 });
+
+it("with carets hidden a plain row click toggles through the Explorer action and only selects the clicked row", async () => {
+  settingsStore.update({ folderPeekCarets: false });
+  const pane = create();
+  const plain = { ctrlKey: false, shiftKey: false, metaKey: false, altKey: false };
+  pane.selectEntry(a);
+  await pane.toggleOnRowClick(a, plain, false); await settle();
+  expect(rows(pane)).toEqual(["0:/r/a+", "1:/r/a/nested", "1:/r/a/child", "0:/r/b"]);
+  expect([...pane.selectedPaths]).toEqual([a.path]);
+  // A nested folder at depth 1 toggles too; selection stays the normal click's.
+  pane.selectEntry(nested);
+  await pane.toggleOnRowClick(nested, plain, false); await settle();
+  expect(rows(pane)).toContain("2:/r/a/nested/deep");
+  expect([...pane.selectedPaths]).toEqual([nested.path]);
+  // Modifier, file and drag-ending clicks never toggle.
+  await pane.toggleOnRowClick(nested, { ...plain, ctrlKey: true }, false); await settle();
+  await pane.toggleOnRowClick(child, plain, false); await settle();
+  await pane.toggleOnRowClick(nested, plain, true); await settle();
+  expect(pane.expandedPaths).toEqual(new Set([a.path, nested.path]));
+  // A second plain click collapses.
+  await pane.toggleOnRowClick(a, plain, false); await settle();
+  expect(rows(pane)).toEqual(["0:/r/a", "0:/r/b"]);
+});
+
+it("with carets shown a row click never toggles, and with Folder Peek off nothing does", async () => {
+  const plain = { ctrlKey: false, shiftKey: false, metaKey: false, altKey: false };
+  const pane = create();
+  expect(pane.peekCaretsShown).toBe(true);
+  await pane.toggleOnRowClick(a, plain, false); await settle();
+  expect(pane.expandedPaths.size).toBe(0);
+  settingsStore.update({ folderPeekCarets: false, folderPeek: false }); await settle();
+  expect(pane.peekCaretsShown).toBe(false);
+  await pane.toggleOnRowClick(a, plain, false); await settle();
+  expect(pane.expandedPaths.size).toBe(0);
+});
+
+it("toggling the carets option applies live", async () => {
+  const pane = create();
+  expect(pane.peekCaretsShown).toBe(true);
+  settingsStore.update({ folderPeekCarets: false }); await settle();
+  expect(pane.peekCaretsShown).toBe(false);
+});

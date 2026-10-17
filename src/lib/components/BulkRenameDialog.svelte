@@ -6,6 +6,8 @@
   import { renameEntry } from "$lib/api/files";
   import Modal from "./Modal.svelte";
   import type { FileEntry } from "$lib/domain/file";
+  import { bulkRenamePlan } from "$lib/domain/bulk-rename";
+  import { isWindows } from "$lib/domain/platform";
 
   interface Props {
     open: boolean;
@@ -35,48 +37,11 @@
     }
   });
 
-  /** Preview the renamed filenames */
-  const previews = $derived.by(() => {
-    return entries.map((entry) => {
-      // A leading dot marks a hidden file, not an extension (".bashrc" has no ext)
-      const dotIndex = entry.name.lastIndexOf(".");
-      const hasExt = dotIndex > 0;
-      const ext = hasExt ? entry.name.substring(dotIndex) : "";
-      const nameWithoutExt = hasExt ? entry.name.substring(0, dotIndex) : entry.name;
-
-      if (!findPattern) return { original: entry.name, renamed: entry.name, changed: false };
-
-      try {
-        let newName: string;
-        if (useRegex) {
-          const flags = caseSensitive ? "g" : "gi";
-          const regex = new RegExp(findPattern, flags);
-          newName = nameWithoutExt.replace(regex, replaceWith) + ext;
-        } else {
-          if (caseSensitive) {
-            newName = nameWithoutExt.split(findPattern).join(replaceWith) + ext;
-          } else {
-            const regex = new RegExp(findPattern.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "gi");
-            newName = nameWithoutExt.replace(regex, replaceWith) + ext;
-          }
-        }
-        return { original: entry.name, renamed: newName, changed: newName !== entry.name };
-      } catch {
-        return { original: entry.name, renamed: entry.name, changed: false };
-      }
-    });
-  });
-
-  const changedCount = $derived(previews.filter((p) => p.changed).length);
-
-  /** Target names that more than one file would end up with — renaming would clobber. */
-  const duplicateTargets = $derived.by(() => {
-    const counts = new Map<string, number>();
-    for (const p of previews) counts.set(p.renamed, (counts.get(p.renamed) ?? 0) + 1);
-    return [...counts.entries()]
-      .filter(([name, count]) => count > 1 && previews.some((p) => p.changed && p.renamed === name))
-      .map(([name]) => name);
-  });
+  const plan = $derived(bulkRenamePlan(entries, { find: findPattern, replace: replaceWith, regex: useRegex, caseSensitive }, isWindows));
+  const previews = $derived(plan.previews);
+  const changedCount = $derived(plan.changedCount);
+  /** Target names that two files of one folder would end up with — renaming would clobber. */
+  const duplicateTargets = $derived(plan.duplicates);
 
   const canRename = $derived(changedCount > 0 && duplicateTargets.length === 0 && !isRenaming);
 
@@ -87,15 +52,13 @@
 
     const failures: string[] = [];
     let renamedAny = false;
-    for (let i = 0; i < entries.length; i++) {
-      const preview = previews[i];
-      if (!preview.changed) continue;
-
-      const result = await renameEntry(entries[i].path, preview.renamed);
+    // Deepest first: a renamed folder would invalidate its selected children.
+    for (const { entry, name } of plan.operations) {
+      const result = await renameEntry(entry.path, name);
       if (result.ok) {
         renamedAny = true;
       } else {
-        failures.push(`"${entries[i].name}": ${result.error}`);
+        failures.push(`"${entry.name}": ${result.error}`);
       }
     }
 

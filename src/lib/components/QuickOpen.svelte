@@ -139,7 +139,7 @@ import { openFile } from "$lib/api/open";
     if (!explorer) return [];
     const lower = term.toLowerCase();
     const matched: SearchResult[] = [];
-    for (const entry of explorer.displayEntries) {
+    for (const entry of explorer.ownDisplayEntries) {
       const nameBonus = filenameMatchScore(entry.name, lower);
       const fuzzy = fuzzyScorePath(lower, entry.name);
       if (fuzzy <= 0 && nameBonus <= 0) continue;

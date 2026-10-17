@@ -28,6 +28,11 @@ export function useDropTarget(deps: DropTargetDeps) {
     copyDropTargets[entry.path] = copying;
   }
 
+  // A drag released right after crossing into a child of the row (icon, name)
+  // has seen dragenter for that element but no dragover yet. WebKit delivers
+  // `drop` only to a target whose dragenter was accepted, so accept both.
+  const handleDragEnter = handleDragOver;
+
   function handleDragLeave(event: DragEvent, entry: FileEntry): void {
     // dragenter/dragleave pair per ELEMENT, not per subtree: moving the
     // cursor onto a child of the row fires dragleave on the row, and the
@@ -76,6 +81,7 @@ export function useDropTarget(deps: DropTargetDeps) {
 
   return {
     handleDragOver,
+    handleDragEnter,
     handleDragLeave,
     handleDrop,
     isDropTarget,

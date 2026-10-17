@@ -135,15 +135,17 @@
     color: var(--text-primary);
   }
 
-  .list-view :global(.list-item:focus) {
+  /* View chrome must stay below FileList’s keyboard ring even when this
+     renderer’s styles arrive after the shared surface. */
+  .list-view :global(.list-item:where(:focus)) {
     outline: none;
   }
 
-  .list-view :global(.list-item:hover) {
+  .list-view :global(.list-item:where(:hover)) {
     background: var(--subtle-fill-secondary);
   }
 
-  .list-view :global(.list-item.selected) {
+  .list-view :global(.list-item:where(.selected)) {
     background: color-mix(in srgb, var(--accent) 8%, transparent);
     border-color: transparent;
     border-left-color: var(--accent);
@@ -169,7 +171,7 @@
     opacity: 0.5;
   }
 
-  .list-view :global(.list-item.in-clipboard:not(.cut)) {
+  .list-view :global(.list-item:where(.in-clipboard:not(.cut))) {
     outline: 1px dashed var(--accent);
     outline-offset: -1px;
   }

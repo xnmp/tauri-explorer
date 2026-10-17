@@ -426,7 +426,7 @@ function createWindowTabsManager(options: {
     const seed = canSeed
       ? {
           currentPath: sourceExplorer.currentPath,
-          entries: [...sourceExplorer.displayEntries],
+          entries: [...sourceExplorer.ownDisplayEntries],
           sortBy: sourceExplorer.sortBy,
           sortAscending: sourceExplorer.sortAscending,
           viewMode: sourceExplorer.viewMode,
@@ -436,7 +436,7 @@ function createWindowTabsManager(options: {
         : undefined;
     // Seeded/restored panes must not record duplicate visits.
     sessions.create(paneId, () => {
-      const explorer = createExplorerState(seed);
+      const explorer = createExplorerState(seed, () => !getPaneGitGraph(paneId));
       if (sourceExplorer?.fileViewChoice !== undefined) explorer.setFileView(sourceExplorer.fileViewChoice);
       return explorer;
     }, async (explorer) => {
@@ -588,7 +588,7 @@ function createWindowTabsManager(options: {
         const path = isActiveTarget ? opts.overridePath! : node.path;
         const fileView = node.fileView;
         sessions.reserve(paneId, () => {
-          const explorer = createExplorerState();
+          const explorer = createExplorerState(undefined, () => !getPaneGitGraph(paneId));
           // Restore the pane's plugin-view choice even before its plugin loads
           // (it shows the built-in view until the view registers). An explicit
           // built-in choice (null) overrides the default view for new panes.

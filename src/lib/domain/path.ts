@@ -55,19 +55,44 @@ export function pathComparison(windows: boolean) {
     const c = key(child), p = key(parent);
     return c !== null && p !== null && (c === p || c.startsWith(p.endsWith("/") ? p : p + "/"));
   };
-  const parent = (path: string): string | null => {
-    const p = key(path);
-    if (p === null) return null;
+  /** Parent of an already-normalized key, without re-normalizing it; a root
+   * is its own parent. Batch callers walk ancestors with this per key. */
+  const parentKey = (p: string): string => {
     const root = windows ? p.match(/^(?:[a-z]:\/|\/\/[^/]+\/[^/]+)/)?.[0] : p.startsWith("//") ? "//" : "/";
     if (!root || p === root) return p;
     const index = p.lastIndexOf("/");
     return index < root.length ? root : p.slice(0, index);
   };
+  const parent = (path: string): string | null => {
+    const p = key(path);
+    return p === null ? null : parentKey(p);
+  };
   const sameParent = (source: string, directory: string): boolean => {
     const p = parent(source);
     return p !== null && same(p, directory);
   };
-  return { key, same, contains, parent, sameParent };
+  return { key, same, contains, parent, parentKey, sameParent };
+}
+
+/** Batch form of `contains`: is a path equal to or inside any of `roots`?
+ * Roots are normalized once and each query is an O(depth) ancestor walk, so
+ * filtering n paths against m removed roots is O(n × depth), not O(n × m). */
+export function coverageOf(roots: Iterable<string>, windows: boolean): (path: string) => boolean {
+  const paths = pathComparison(windows);
+  const keys = new Set<string>();
+  for (const root of roots) {
+    const key = paths.key(root);
+    if (key !== null) keys.add(key);
+  }
+  return (path) => {
+    let key = keys.size ? paths.key(path) : null;
+    while (key !== null) {
+      if (keys.has(key)) return true;
+      const next = paths.parentKey(key);
+      key = next === key ? null : next;
+    }
+    return false;
+  };
 }
 
 const BARE_DRIVE_LETTER = /^([A-Za-z]):$/;

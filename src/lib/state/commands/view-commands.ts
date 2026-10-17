@@ -29,6 +29,16 @@ function setBuiltInView(mode: ViewMode): void {
 /** View commands */
 export const viewCommands: Command[] = [
   {
+    id: "view.peekFolder", scope: "pane", label: "Peek into Folder", category: "view",
+    when: () => !!getActiveExplorer()?.peekCommandTarget,
+    handler: () => { const explorer = getActiveExplorer(); if (explorer?.peekCommandTarget) return explorer.togglePeek(explorer.peekCommandTarget); },
+  },
+  {
+    id: "view.collapseAllPeeks", scope: "pane", label: "Collapse All Peeks", category: "view",
+    when: () => !!getActiveExplorer()?.peekEnabled,
+    handler: () => getActiveExplorer()?.collapseAllPeeks(),
+  },
+  {
     id: "view.details",
     scope: "pane",
     label: "Details View",

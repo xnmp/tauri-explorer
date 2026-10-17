@@ -92,3 +92,50 @@ describe("gitStatusStore per-directory keying", () => {
     expect(gitStatusStore.getStatus("/never-fetched", "x.txt")).toBeNull();
   });
 });
+
+describe("gitStatusStore observation coverage", () => {
+  it("skips a change observed no later than the latest scan, and refetches newer or untimed ones", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    try {
+      getGitStatusMock.mockResolvedValue({ ok: true, data: { is_git_repo: true, statuses: {} } });
+      const release = gitStatusStore.trackDirectory("/repo/src");
+      vi.setSystemTime(1_000);
+      await gitStatusStore.fetchForDirectory("/repo/src");
+      getGitStatusMock.mockClear();
+      gitStatusStore.invalidateDirectories(["/repo/src"], 1_000);
+      gitStatusStore.invalidateDirectories(["/repo/src"], 999);
+      await Promise.resolve();
+      expect(getGitStatusMock).not.toHaveBeenCalled();
+      gitStatusStore.invalidateDirectories(["/repo/src"], 1_001);
+      await vi.waitFor(() => expect(getGitStatusMock).toHaveBeenCalledTimes(1));
+      gitStatusStore.invalidateDirectories(["/repo/src"]);
+      await vi.waitFor(() => expect(getGitStatusMock).toHaveBeenCalledTimes(2));
+      // Untracked directories are never refreshed by invalidation.
+      gitStatusStore.invalidateDirectories(["/repo/other"]);
+      release();
+    } finally {
+      vi.useRealTimers();
+    }
+    expect(getGitStatusMock.mock.calls.map(([path]) => path)).toEqual(["/repo/src", "/repo/src"]);
+  });
+});
+
+describe("gitStatusStore failed scans", () => {
+  it("does not let a failed scan cover a later notification", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    try {
+      const release = gitStatusStore.trackDirectory("/repo/lib");
+      vi.setSystemTime(2_000);
+      getGitStatusMock.mockResolvedValueOnce({ ok: false, error: "index locked" });
+      await gitStatusStore.refreshDirectory("/repo/lib");
+      getGitStatusMock.mockClear();
+      getGitStatusMock.mockResolvedValue({ ok: true, data: { is_git_repo: true, statuses: {} } });
+      gitStatusStore.invalidateDirectories(["/repo/lib"], 1_500);
+      await vi.waitFor(() => expect(getGitStatusMock).toHaveBeenCalledTimes(1));
+      await gitStatusStore.fetchForDirectory("/repo/lib"); // joins that scan
+      release();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});

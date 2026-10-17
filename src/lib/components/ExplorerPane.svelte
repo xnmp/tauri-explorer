@@ -8,6 +8,7 @@
   import { createPanePointerFocus, focusFirstAccepting } from "$lib/state/pane-pointer-focus";
   import { resolveFileListMove } from "$lib/domain/file-list-navigation";
   import { tick, untrack } from "svelte";
+  import { createDeferredFocusRequest } from "$lib/state/deferred-focus";
   import { setPaneIdContext } from "$lib/state/pane-context";
   import type { ExplorerInstance } from "$lib/state/explorer.svelte";
   import { windowTabsManager } from "$lib/state/window-tabs.svelte";
@@ -146,23 +147,34 @@ import { nextRemovableRoot } from "$lib/domain/drives";
     }
   });
 
-  // Navigation completion also runs for restored background panes. Only the
-  // current pane may return focus to its listing, and that ownership must
-  // survive the render before touching the DOM.
-  function focusSelectedAfterNav() {
-    if (windowTabsManager.getActiveExplorer() !== paneExplorer) return;
+  // Capture ownership before IO; seeded panes can already accept interaction
+  // while their initial listing is still settling.
+  let navigationFocusRequest: ReturnType<typeof createDeferredFocusRequest> | null = null;
+  function prepareNavigationFocus() {
+    navigationFocusRequest?.cancel();
+    navigationFocusRequest = null;
+    if (windowTabsManager.getActiveExplorer() !== paneExplorer) return null;
     const active = document.activeElement;
-    if (active?.tagName === "INPUT" || active?.tagName === "TEXTAREA") return;
-    tick().then(() => {
-      if (!paneRef?.isConnected || windowTabsManager.getActiveExplorer() !== paneExplorer
-        || document.activeElement !== active) return;
-      const selected = paneExplorer.focusedEntry;
-      if (selected) {
-        fileListScrollToEntry?.(selected);
-      } else {
-        paneRef.focus({ preventScroll: true });
-      }
-    });
+    const request = createDeferredFocusRequest(window, () =>
+      !!paneRef?.isConnected && windowTabsManager.getActiveExplorer() === paneExplorer
+      && !dialogStore.isPaneBlocked(paneId)
+      && !document.activeElement?.matches("input, textarea, select, [contenteditable='true']")
+      && (document.activeElement === active
+        || (!!active && !active.isConnected && document.activeElement === document.body)),
+    );
+    navigationFocusRequest = request;
+    return {
+      cancel: request.cancel,
+      complete() {
+        void tick().then(() => {
+          if (navigationFocusRequest === request) navigationFocusRequest = null;
+          if (!request.consume()) return;
+          const selected = paneExplorer.focusedEntry;
+          if (selected) fileListScrollToEntry?.(selected);
+          else paneRef?.focus({ preventScroll: true });
+        });
+      },
+    };
   }
 
   function revealSelectedAfterSelection() {
@@ -177,9 +189,14 @@ import { nextRemovableRoot } from "$lib/domain/drives";
   }
 
   $effect(() => {
-    paneExplorer.onNavigate = focusSelectedAfterNav;
+    paneExplorer.onNavigationFocus = prepareNavigationFocus;
     paneExplorer.onReveal = revealSelectedAfterSelection;
-    return () => { paneExplorer.onNavigate = null; paneExplorer.onReveal = null; };
+    return () => {
+      navigationFocusRequest?.cancel();
+      navigationFocusRequest = null;
+      paneExplorer.onNavigationFocus = null;
+      paneExplorer.onReveal = null;
+    };
   });
 
   // Track which removable drive (if any) the current path lives on, and flag
@@ -290,7 +307,7 @@ import { nextRemovableRoot } from "$lib/domain/drives";
     // File navigation belongs to the collection. Ordinary controls, Miller
     // columns and sidebar widgets retain their own arrow keys. A pane-switch
     // command changes active-pane state before the old collection loses focus.
-    if (!target.matches('.file-list .entry-item, .file-list .virtual-viewport[role="grid"], .explorer-pane, body')) return;
+    if (!target.matches('.file-list .entry-item, .file-list .virtual-viewport:is([role="grid"], [role="treegrid"]), .explorer-pane, body')) return;
     const entries = paneExplorer.displayEntries;
     const cursor = paneExplorer.focusedEntry;
     const move = resolveFileListMove(event, {

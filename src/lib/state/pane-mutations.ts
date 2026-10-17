@@ -7,6 +7,8 @@
  * borrow the exact editor opening that admitted the operation.
  */
 
+import { operationRoots } from "$lib/domain/file-operation-selection";
+import { isWindows } from "$lib/domain/platform";
 import { TRASH_PATH } from "$lib/domain/virtual-path";
 import { createDirectory, createEmptyFile, renameEntry as apiRenameEntry, deleteEntries, createSymlink as apiCreateSymlink } from "$lib/api/files";
 import { extractArchive as apiExtractArchive, compressToZip as apiCompressToZip, cancelCompress as apiCancelCompress, cancelExtract as apiCancelExtract, type ZipProgressEvent } from "$lib/api/archive";
@@ -21,7 +23,7 @@ import { dialogStore } from "./dialogs.svelte";
 import { frecencyStore } from "./frecency.svelte";
 import { toastStore } from "./toast.svelte";
 import { renameThumbnailCache } from "$lib/state/thumbnail-cache";
-import { basename, joinPath, isInsideDir, parentDir } from "$lib/domain/path";
+import { basename, joinPath, isInsideDir, parentDir, nativeParentDir } from "$lib/domain/path";
 
 export interface PaneMutationContext {
   coreState: ExplorerCoreState;
@@ -32,10 +34,18 @@ export interface PaneMutationContext {
   alive: () => boolean;
   navigateTo: (path: string) => Promise<unknown>;
   refreshSilent: () => void;
+  operationEntries?: () => readonly FileEntry[];
+  captureDirectory?: (parent: string) => { publish(transform: (entries: readonly FileEntry[]) => readonly FileEntry[]): void };
+  /** Re-list one directory now (the pane's own folder or a peek) when a
+   * reply carries no receipt entry to publish. Defaults to `refreshSilent`. */
+  refreshDirectory?: (parent: string) => void;
+  /** Paths that no longer exist; one call per batch (O(n), not O(n²)). */
+  removed?: (paths: readonly string[]) => void;
 }
 
 export function createPaneMutations(ctx: PaneMutationContext) {
   const { coreState } = ctx;
+  const captureDirectory = ctx.captureDirectory ?? ((_parent: string) => ({ publish: (transform: (entries: readonly FileEntry[]) => readonly FileEntry[]) => { coreState.entries = transform(coreState.entries); } }));
 
   /** Leave the current directory if it was (inside) one of `deletedPaths`. */
   async function navigateAwayIfNeeded(deletedPaths: Set<string>): Promise<void> {
@@ -89,6 +99,7 @@ export function createPaneMutations(ctx: PaneMutationContext) {
     if (!renamingEntry) return "No entry selected for rename";
 
     const oldPath = renamingEntry.path;
+    const directory = captureDirectory(nativeParentDir(oldPath));
     const result = await apiRenameEntry(oldPath, newName);
 
     if (result.ok) {
@@ -97,7 +108,7 @@ export function createPaneMutations(ctx: PaneMutationContext) {
       renameThumbnailCache(oldPath, path);
       if (origin.current()) {
         if (entry) {
-          coreState.entries = coreState.entries.map((candidate) => candidate.path === oldPath ? entry : candidate);
+          directory.publish(entries => entries.map((candidate) => candidate.path === oldPath ? entry : candidate));
         }
         // Preserve identity through a rename without restoring selection or focus
         // that the user changed while the filesystem operation was pending.
@@ -106,7 +117,8 @@ export function createPaneMutations(ctx: PaneMutationContext) {
         }
         if (coreState.selectionAnchorPath === oldPath) coreState.selectionAnchorPath = path;
         if (coreState.cursorPath === oldPath) coreState.cursorPath = path;
-        if (!entry) ctx.refreshSilent();
+        if (!entry) (ctx.refreshDirectory ?? ctx.refreshSilent)(nativeParentDir(oldPath));
+        if (renamingEntry.kind === "directory") ctx.removed?.([oldPath]);
       }
       clipboardStore.rekeyPath(oldPath, path, entry);
       dialogStore.cancelRename(session);
@@ -125,7 +137,11 @@ export function createPaneMutations(ctx: PaneMutationContext) {
     if (!origin.current()) return "Pane is closed";
     // Direct actions (including Miller columns) do not own the global dialog.
     const session = entriesArg === undefined ? dialogStore.fileOperationSession : null;
-    const entries = entriesArg ?? dialogStore.deletingEntries;
+    const reduced = operationRoots(entriesArg ?? dialogStore.deletingEntries, isWindows, ctx.operationEntries?.());
+    if (!reduced.ok) return reduced.error;
+    const entries = reduced.entries;
+    // One capture per parent directory, not per entry.
+    const directories = new Map([...new Set(entries.map(entry => nativeParentDir(entry.path)))].map(parent => [parent, captureDirectory(parent)]));
     if (entries.length === 0) return "No entries selected for delete";
     const requestedPermanent = isPermanentArg ?? dialogStore.isPermanentDelete;
 
@@ -146,7 +162,8 @@ export function createPaneMutations(ctx: PaneMutationContext) {
     if (removed.length > 0) {
       const deletedPaths = new Set(removed);
       if (origin.current()) {
-        coreState.entries = coreState.entries.filter((e) => !deletedPaths.has(e.path));
+        for (const parent of new Set(removed.map(nativeParentDir))) directories.get(parent)!.publish(entries => entries.filter(e => !deletedPaths.has(e.path)));
+        ctx.removed?.(removed);
         ctx.setSelection(
           [...coreState.selectedPaths].filter((p) => !deletedPaths.has(p))
         );

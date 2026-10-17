@@ -62,9 +62,7 @@ export function useFileWatchers(deps: FileWatcherDeps) {
     directorySubscription = directoryEvents.subscribe(({ path }) => {
       emptyFolderResolver.invalidate([path]);
       repoRootCache.invalidate(path);
-      if (settingsStore.showGitStatus && gitStatusStore.currentPath === path) {
-        gitStatusStore.refresh();
-      }
+      if (settingsStore.showGitStatus) gitStatusStore.invalidateDirectories([path]);
     });
     void directorySubscription.ready().catch(() => {
       // Native navigation surfaces subscription failures and retries on demand.

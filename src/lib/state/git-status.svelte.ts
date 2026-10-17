@@ -44,6 +44,23 @@ function createGitStatusStore() {
    * displayable, but watcher refreshes skip them until a pane returns. */
   const staleDirectories = new Set<string>();
   const pendingByDir = new Map<string, number>();
+  const dirtyDirectories = new Set<string>();
+  /** When each directory's latest scan started, or was queued to start. A
+   * change observed no later than that is already covered by the scan, so a
+   * second trigger for one notification (window watcher and pane) is free. */
+  const requestedAt = new Map<string, number>();
+  function refreshDirectory(path: string, observedAt?: number): Promise<void> {
+    if (observedAt !== undefined && (requestedAt.get(path) ?? -Infinity) >= observedAt) {
+      return inFlight.get(path)?.promise ?? Promise.resolve();
+    }
+    if (inFlight.has(path)) { dirtyDirectories.add(path); requestedAt.set(path, Date.now()); }
+    return doFetch(path);
+  }
+  /** Refresh the tracked directories among `paths`. `observedAt` is when the
+   * underlying change was observed; omit it when unknown (always refetch). */
+  function invalidateDirectories(paths: readonly string[], observedAt?: number): void {
+    for (const path of paths) if (trackedDirectories.has(path)) void refreshDirectory(path, observedAt);
+  }
 
   async function fetchForDirectory(path: string): Promise<void> {
     currentPath = path;
@@ -68,8 +85,12 @@ function createGitStatusStore() {
     }
     const taskId = Math.floor(Math.random() * Number.MAX_SAFE_INTEGER);
     const flight = { taskId, promise: Promise.resolve(), abandoned: false };
+    requestedAt.set(path, Date.now());
     flight.promise = performFetch(path, flight).finally(() => {
-      if (inFlight.get(path) === flight) inFlight.delete(path);
+      if (inFlight.get(path) === flight) {
+        inFlight.delete(path);
+        if (dirtyDirectories.delete(path) && trackedDirectories.has(path)) void doFetch(path);
+      }
     });
     inFlight.set(path, flight);
     return flight.promise;
@@ -80,8 +101,10 @@ function createGitStatusStore() {
     loading = true;
     loadingDirs = { ...loadingDirs, [path]: true };
     const start = performance.now();
+    let succeeded = false;
     try {
       const result = await getGitStatus(path, flight.taskId);
+      succeeded = result.ok;
       const elapsedMs = Math.round(performance.now() - start);
       if (result.ok && !flight.abandoned) {
         console.info(
@@ -110,6 +133,8 @@ function createGitStatusStore() {
         console.warn(`[git-status] fetch for ${path} failed after ${elapsedMs}ms: ${result.error}`);
       }
     } finally {
+      // A failed scan covers nothing: the next change must fetch again.
+      if (!succeeded) requestedAt.delete(path);
       const remaining = (pendingByDir.get(path) ?? 1) - 1;
       if (remaining > 0) {
         pendingByDir.set(path, remaining);
@@ -144,6 +169,8 @@ function createGitStatusStore() {
         return;
       }
       trackedDirectories.delete(path);
+      dirtyDirectories.delete(path);
+      requestedAt.delete(path);
       // Preserve settled badges for instant back-navigation, but exclude this
       // directory from watcher-driven work until a pane tracks it again.
       if (byDir[path]) staleDirectories.add(path);
@@ -173,7 +200,7 @@ function createGitStatusStore() {
       return;
     }
     console.info(`[git-status] refresh: refetching ${dirs.length} dirs: ${dirs.join(", ")}`);
-    await Promise.all(dirs.map(doFetch));
+    await Promise.all(dirs.map(path => refreshDirectory(path)));
   }
 
   /** Status of an entry, looked up by the directory it lives in. */
@@ -186,6 +213,7 @@ function createGitStatusStore() {
     byDir = {};
     staleDirectories.clear();
     trackedDirectories.clear();
+    requestedAt.clear();
   }
 
   async function initWatcherListener(): Promise<void> {
@@ -207,6 +235,8 @@ function createGitStatusStore() {
     isDirLoading(directory: string): boolean { return loadingDirs[directory] ?? false; },
     trackDirectory,
     fetchForDirectory,
+    refreshDirectory,
+    invalidateDirectories,
     refresh,
     getStatus,
     clear,

@@ -381,9 +381,18 @@ export const mockFiles: Record<string, FileEntry[]> = {
   ],
 };
 
+// Isolated folder-peek contracts; never change the ordinary home fixture counts.
+mockFiles["/folder-peek"] = [dir("Alpha", "/folder-peek/Alpha"), dir("Beta", "/folder-peek/Beta"), dir("Empty", "/folder-peek/Empty"), dir("Error", "/folder-peek/Error"), dir("Large", "/folder-peek/Large"), file("root.txt", "/folder-peek/root.txt", 4)];
+mockFiles["/folder-peek/Alpha"] = [dir("Nested", "/folder-peek/Alpha/Nested"), file("same.txt", "/folder-peek/Alpha/same.txt", 12), file(".hidden", "/folder-peek/Alpha/.hidden", 1)];
+mockFiles["/folder-peek/Alpha/Nested"] = [file("deep.txt", "/folder-peek/Alpha/Nested/deep.txt", 7)];
+mockFiles["/folder-peek/Beta"] = [file("same.txt", "/folder-peek/Beta/same.txt", 20)];
+mockFiles["/folder-peek/Empty"] = [];
+mockFiles["/folder-peek/Large"] = Array.from({ length: 10_000 }, (_, index) => file(`item-${String(index).padStart(5, "0")}.txt`, `/folder-peek/Large/item-${String(index).padStart(5, "0")}.txt`, index));
+
 /** Static fake file contents, served by read_text_file and searched by
  *  start_content_search (written files take precedence over these). */
 export const mockFileContent: Record<string, string> = {
+  "/folder-peek/Alpha/same.txt": "Peek preview content",
   "/home/user/Documents/project/index.ts": 'export function greet(name: string): string {\n  return `Hello, ${name}!`;\n}\n',
   "/home/user/Documents/project/main.py": 'def greet(name: str) -> str:\n    return f"Hello, {name}!"\n',
   "/home/user/Documents/project/package.json": '{\n  "name": "project",\n  "version": "1.0.0"\n}\n',

@@ -16,6 +16,7 @@
  * - Undo (undo.svelte.ts) - global undo stack
  */
 
+import { reconcileDirectorySelection } from "$lib/domain/directory-reconciliation";
 import { isFileViewId } from "$lib/domain/file-view-id";
 import { createFileViewPresentation } from "./file-view-presentation.svelte";
 import { fileViewRegistry } from "$lib/plugins/file-view-registry.svelte";
@@ -24,7 +25,14 @@ import { clampNumericSetting } from "$lib/domain/settings-numbers";
 import { SvelteSet } from "svelte/reactivity";
 import { untrack } from "svelte";
 import { toastStore } from "./toast.svelte";
-import { basename, toNativeSeparators } from "$lib/domain/path";
+import { gitStatusStore } from "./git-status.svelte";
+import { archiveRoots, operationRoots } from "$lib/domain/file-operation-selection";
+import { createFolderPeekState } from "./folder-peek.svelte";
+import { flatPeekEntries, flatPeekRows, peekCapability, resolvePeekCommandTarget, resolvePeekEscape } from "$lib/domain/folder-peek-flat";
+import type { PeekLevelCache } from "$lib/domain/folder-peek";
+import { isVirtualPath } from "$lib/domain/virtual-path";
+import { providerFor } from "$lib/plugins/fs-providers";
+import { basename, toNativeSeparators, pathComparison, coverageOf } from "$lib/domain/path";
 import { isWindows } from "$lib/domain/platform";
 import { clipboardImageStatus, clipboardPasteImage } from "$lib/api/clipboard-image";
 import { withClipboardImageProgress } from "$lib/state/clipboard-image-progress.svelte";
@@ -57,10 +65,13 @@ import type { LoadReason } from "$lib/domain/load-diagnostics";
 import type { ExplorerSeed } from "$lib/domain/window-input";
 import type { PreviewTarget } from "$lib/plugins/preview-registry.svelte";
 
+interface NavigationFocusRequest { complete(): void; cancel(): void }
+interface NavigationFocusIntent { request: NavigationFocusRequest | null; offered: boolean }
+
 // Distinguishes concurrent panes in slow-load diagnostics (#1022).
 let explorerSerial = 0;
 
-function createExplorerState(seed?: ExplorerSeed) {
+function createExplorerState(seed?: ExplorerSeed, isFileListingSurface: () => boolean = () => true) {
   const pane = ++explorerSerial;
   // Listings are immutable revisions. Deep proxies would create per-entry
   // signals during whole-directory filtering, sorting and status aggregation.
@@ -114,7 +125,9 @@ function createExplorerState(seed?: ExplorerSeed) {
 
   /** Replace the selection contents, mutating the reactive Set in place.
    *  Only added/removed keys fire; untouched rows never re-render. */
+  let selectionRevision = 0;
   function setSelection(next: Iterable<string>): void {
+    selectionRevision++;
     const cur = coreState.selectedPaths;
     const nextSet = next instanceof Set ? (next as ReadonlySet<string>) : new Set(next);
     if (revealedPath && !nextSet.has(revealedPath)) revealedPath = null;
@@ -143,12 +156,16 @@ function createExplorerState(seed?: ExplorerSeed) {
   // setting, so panes without an explicit choice track Settings changes.
   let millerLayersOverride = $state<number | null>(null);
 
-  // Navigation callback for UI (e.g. focusing the selected item after nav)
-  let onNavigateCallback: (() => void) | null = null;
+  // Focus belongs to navigation intent, including a load that began before
+  // its pane mounted. Completion must not claim a newer toolbar interaction.
+  let navigationFocusFactory: (() => NavigationFocusRequest | null) | null = null;
+  let pendingNavigationFocus: NavigationFocusIntent | null = null;
   let onRevealCallback: (() => void) | null = null;
 
   // Filesystem observation ownership
-  const watch = createPaneWatch({ refresh: (options) => refresh(options) });
+  const peek = createFolderPeekState(isWindows);
+  const paths = pathComparison(isWindows);
+  const watch = createPaneWatch({ refresh: (options) => refresh(options), currentPath: () => coreState.currentPath, refreshPath: (path, options) => refresh(options, path) });
 
   // Read-only state accessor for components that need the raw state bag.
   // Exposes the $state proxy itself (typed read-only) — a spread copy here
@@ -160,12 +177,8 @@ function createExplorerState(seed?: ExplorerSeed) {
   // Derived State
   // ===================
 
-  const displayEntries = $derived.by(() => {
-    let filtered = filterHidden(coreState.entries, settingsStore.showHidden);
-    const manualHiddenNames = manualHiddenStore.namesIn(coreState.currentPath);
-    if (manualHiddenNames.size > 0 && !settingsStore.showManuallyHidden) {
-      filtered = filtered.filter((e) => !manualHiddenNames.has(e.name));
-    }
+  const ownDisplayEntries = $derived.by(() => {
+    let filtered = visibleEntriesFor(coreState.entries, coreState.currentPath);
     if (filterQuery) {
       const q = filterQuery.toLowerCase();
       filtered = filtered.filter((e) => e.name.toLowerCase().includes(q));
@@ -181,6 +194,102 @@ function createExplorerState(seed?: ExplorerSeed) {
       return sortEntries(filtered, coreState.sortBy, coreState.sortAscending);
     }
     return sortEntries(filtered, "name", true);
+  });
+
+  // Off (setting, surface, location or view) is one state: flat entries and no
+  // peek resources, while remembered membership survives for a later "on".
+  const capability = $derived(peekCapability({
+    enabled: settingsStore.folderPeek,
+    fileListing: isFileListingSurface(),
+    builtinView: fileViewPresentation.resolution.kind === "builtin",
+    plainLocation: !isVirtualPath(coreState.currentPath) && !providerFor(coreState.currentPath),
+    mode: coreState.viewMode,
+  }));
+  // Each peek level is projected once per listing snapshot and projection
+  // inputs, so a root keystroke or one peek's publish leaves other levels be.
+  let peekLevels: PeekLevelCache | undefined;
+  const peekProjectionKey = (parent: string) => [
+    coreState.sortBy, coreState.sortAscending, settingsStore.showHidden, settingsStore.showManuallyHidden,
+    ...(settingsStore.showManuallyHidden ? [] : manualHiddenStore.namesIn(parent)),
+  ].join("\0");
+  const peekTree = $derived.by(() => {
+    const policies = peek.policies;
+    if (!policies) return flatPeekEntries(coreState.currentPath, ownDisplayEntries);
+    peekLevels ??= policies.createPeekLevelCache(isWindows);
+    return policies.flattenPeekEntries({
+      root: coreState.currentPath, entries: ownDisplayEntries, expanded: peek.expanded,
+      listing: path => peek.listing(path)?.entries,
+      project: (entries, parent) => sortEntries(visibleEntriesFor(entries, parent), coreState.sortBy, coreState.sortAscending),
+      capability: peek.expanded.size ? capability : "none", windows: isWindows,
+      levels: peekLevels, projectionKey: peekProjectionKey,
+    });
+  });
+  const displayEntries = $derived(peekTree.entries as FileEntry[]);
+  const detailRows = $derived(peek.policies?.buildPeekRows(peekTree, peek.listing, creationSession !== null) ?? flatPeekRows(peekTree, creationSession !== null));
+
+  function pruneHiddenChildren(before: typeof peekTree, after: readonly FileEntry[]) {
+    const visible = new Set(after.map(e => e.path));
+    const hidden = new Set(before.entries.filter(e => (before.meta.get(e.path)?.depth ?? 0) > 0 && !visible.has(e.path)).map(e => e.path));
+    if (!hidden.size) return;
+    setSelection([...coreState.selectedPaths].filter(path => !hidden.has(path)));
+    const cursorHidden = coreState.cursorPath && hidden.has(coreState.cursorPath);
+    const anchorHidden = coreState.selectionAnchorPath && hidden.has(coreState.selectionAnchorPath);
+    if (cursorHidden || anchorHidden) {
+      let path = cursorHidden ? coreState.cursorPath : coreState.selectionAnchorPath;
+      while (path && !visible.has(path)) path = before.meta.get(path)?.parentPath ?? null;
+      coreState.cursorPath = path; coreState.selectionAnchorPath = null;
+    }
+  }
+  let peekIntent = 0;
+  // A function, not a narrowed read: capability is live across the lazy load.
+  const peeksAllowed = () => capability !== "none";
+  async function togglePeek(path: string) {
+    if (!peeksAllowed()) return;
+    if (!peek.policies) {
+      const generation = navGeneration;
+      const intent = peekIntent;
+      await peek.activate();
+      if (destroyed || generation !== navGeneration || intent !== peekIntent) return;
+    }
+    const entry = displayEntries.find(e => e.path === path);
+    if (!peeksAllowed() || entry?.kind !== "directory" || isVirtualPath(path) || providerFor(path)) return;
+    if (peek.watchFactory) watch.enablePeeks(peek.watchFactory);
+    const before = peekTree;
+    peek.toggle(path);
+    pruneHiddenChildren(before, displayEntries);
+    reconcilePeekResources();
+  }
+  function collapseAllPeeks() {
+    peekIntent++;
+    const before = peekTree;
+    peek.collapseAll([coreState.currentPath]);
+    pruneHiddenChildren(before, displayEntries);
+    reconcilePeekResources();
+  }
+  /** A pending navigation keeps the tree it may leave, with its snapshots
+   * and selected children, until it commits; only observation pauses (and
+   * pane-watch blocks peek publication) meanwhile. */
+  function applyPeekResources(reachable: readonly string[], expanded: ReadonlyMap<string, number>, loading: boolean, git: boolean) {
+    if (!loading) peek.reconcile(reachable, git);
+    watch.reconcilePeeks(loading ? [] : reachable, expanded);
+  }
+  function reconcilePeekResources() {
+    applyPeekResources(peekTree.expanded, peek.expanded, coreState.loading, settingsStore.showGitStatus);
+  }
+  const disposePeekEffects = $effect.root(() => {
+    let previous: { root: string; tree: typeof peekTree } | undefined;
+    $effect(() => {
+      const tree = peekTree;
+      const root = coreState.currentPath;
+      const loading = coreState.loading;
+      const expanded = peek.expanded;
+      const git = settingsStore.showGitStatus;
+      untrack(() => {
+        if (previous?.root === root) pruneHiddenChildren(previous.tree, tree.entries);
+        previous = { root, tree };
+        applyPeekResources(tree.expanded, expanded, loading, git);
+      });
+    });
   });
 
   const breadcrumbs = $derived(navigation.parseBreadcrumbs(coreState.currentPath));
@@ -208,14 +317,13 @@ function createExplorerState(seed?: ExplorerSeed) {
 
   // Accepted filesystem work outlives its pane. Only publication into that
   // pane borrows the navigation generation and lifetime.
-  function captureMutation() {
+  function captureOrigin() {
     const generation = navGeneration;
     const path = coreState.currentPath;
-    return {
-      path,
-      selectionCurrent: captureSelection(),
-      current: () => !destroyed && generation === navGeneration && path === coreState.currentPath,
-    };
+    return () => !destroyed && generation === navGeneration && path === coreState.currentPath;
+  }
+  function captureMutation() {
+    return { path: coreState.currentPath, selectionCurrent: captureSelection(), current: captureOrigin() };
   }
 
   // The pane's newest navigation trace. Starting another settles it as
@@ -231,10 +339,24 @@ function createExplorerState(seed?: ExplorerSeed) {
     return activeLoad;
   }
 
+  function beginNavigationFocus(): NavigationFocusIntent {
+    pendingNavigationFocus?.request?.cancel();
+    const intent = { request: untrack(() => navigationFocusFactory?.() ?? null), offered: navigationFocusFactory !== null };
+    pendingNavigationFocus = intent;
+    return intent;
+  }
+
+  function retireNavigationFocus(intent: NavigationFocusIntent) {
+    intent.request?.cancel();
+    intent.request = null;
+    if (pendingNavigationFocus === intent) pendingNavigationFocus = null;
+  }
+
   async function navigateInternal(
     rawPath: string,
     reason: LoadReason = "history",
     trace?: LoadTraceHandle,
+    focusIntent?: NavigationFocusIntent,
   ): Promise<"ok" | "error" | "stale"> {
     // Normalize separators to the platform-native style up front. The backend
     // echoes the requested path back verbatim as `currentPath`, so this is the
@@ -244,11 +366,17 @@ function createExplorerState(seed?: ExplorerSeed) {
     const path = toNativeSeparators(rawPath, isWindows ? "\\" : "/");
     if (destroyed) {
       trace?.finish("destroyed");
+      if (focusIntent) retireNavigationFocus(focusIntent);
       return "stale";
     }
     presentationDirectory = path;
     creationSession = null;
     const gen = ++navGeneration;
+    const navigationFocus = focusIntent ?? beginNavigationFocus();
+    // Cancel stale peek work at intent: releasing the peek slots drops their
+    // scheduled refreshes, and pane-watch rejects peek publication until the
+    // navigation settles. Snapshots and selection are retired at commit.
+    watch.invalidatePeeks();
     // A caller's trace is used only while it is still the pane's newest;
     // anything else starts this navigation's own trace.
     const load = trace && trace === activeLoad ? trace : traceLoad(path, reason);
@@ -257,6 +385,8 @@ function createExplorerState(seed?: ExplorerSeed) {
       // If we already have entries for this path (e.g. seeded from another tab),
       // don't show loading state — the existing entries stay visible while we refresh.
       const isSeeded = coreState.currentPath === path && coreState.entries.length > 0;
+      const initialSelectionRevision = selectionRevision;
+      const initialCursor = coreState.cursorPath;
       if (!isSeeded) {
         coreState.loading = true;
       }
@@ -279,6 +409,7 @@ function createExplorerState(seed?: ExplorerSeed) {
         presentationDirectory = result.path;
         coreState.currentPath = result.path;
         coreState.entries = result.entries;
+        peek.prune(result.path, result.entries);
         observation.commit();
 
         const savedSort = getSortPref(result.path);
@@ -287,9 +418,17 @@ function createExplorerState(seed?: ExplorerSeed) {
           coreState.sortAscending = savedSort.sortAscending;
         }
 
-        // Auto-select first item when navigating to a new directory
-        // Issue: tauri-explorer-130a
-        if (displayEntries.length > 0) {
+        // Seeded rows accept interaction before the load settles. Preserve that
+        // newer selection; ordinary navigation still selects the first item.
+        if (isSeeded && (selectionRevision !== initialSelectionRevision || coreState.cursorPath !== initialCursor)) {
+          const membership = peek.expanded.size ? [...result.entries, ...displayEntries] : result.entries;
+          const selection = reconcileDirectorySelection(membership, {
+            selectedPaths: coreState.selectedPaths, cursorPath: coreState.cursorPath, anchorPath: coreState.selectionAnchorPath,
+          });
+          setSelection(selection.selectedPaths);
+          coreState.cursorPath = selection.cursorPath;
+          coreState.selectionAnchorPath = selection.anchorPath;
+        } else if (displayEntries.length > 0) {
           setSelection([displayEntries[0].path]);
           coreState.selectionAnchorPath = displayEntries[0]?.path ?? null;
           coreState.cursorPath = coreState.selectionAnchorPath;
@@ -298,7 +437,9 @@ function createExplorerState(seed?: ExplorerSeed) {
           coreState.selectionAnchorPath = null;
         }
 
-        onNavigateCallback?.();
+        const focus = navigationFocus.request;
+        navigationFocus.request = null;
+        focus?.complete();
 
         coreState.loading = false;
         load.finish("ok");
@@ -311,15 +452,18 @@ function createExplorerState(seed?: ExplorerSeed) {
         return "error";
       }
     } finally {
+      retireNavigationFocus(navigationFocus);
       observation.close();
+      // Committed or failed, the newest navigation re-admits the tree it shows.
+      if (gen === navGeneration && !destroyed) reconcilePeekResources();
       // Idempotent: settles a trace an unexpected throw left open.
       load.finish("error");
     }
   }
 
   /** Navigate and push to history. Returns true on success. */
-  async function applyNavigation(path: string, reason: LoadReason, trace?: LoadTraceHandle): Promise<boolean> {
-    const status = await navigateInternal(path, reason, trace);
+  async function applyNavigation(path: string, reason: LoadReason, trace?: LoadTraceHandle, focusIntent?: NavigationFocusIntent): Promise<boolean> {
+    const status = await navigateInternal(path, reason, trace, focusIntent);
     if (status !== "ok") return false;
     const newHistory = navigation.pushToHistory(
       coreState.history,
@@ -345,6 +489,7 @@ function createExplorerState(seed?: ExplorerSeed) {
     options: { autoEnterSingleSubdir?: boolean } = {}
   ) {
     const { autoEnterSingleSubdir = true } = options;
+    const focusIntent = beginNavigationFocus();
 
     // Resolve the "auto-enter single subfolder" descent BEFORE committing any
     // navigation. Peeking at the directory listings without touching pane state
@@ -371,10 +516,11 @@ function createExplorerState(seed?: ExplorerSeed) {
       // its result must not land after the newer folder.
       success = trace && (trace !== activeLoad || destroyed)
         ? false
-        : await applyNavigation(target, "navigate", trace);
+        : await applyNavigation(target, "navigate", trace, focusIntent);
     } finally {
       // Idempotent: settles the trace if the descent threw.
       trace?.finish("error");
+      retireNavigationFocus(focusIntent);
     }
     if (success) {
       // Track the *resolved* path (separator-normalized by navigateInternal),
@@ -497,7 +643,33 @@ function createExplorerState(seed?: ExplorerSeed) {
     setSelection,
     requestReconcile: (path) => watch.changed({ path }),
     navigateToParent,
+    targetFor: peek.target,
+    ownsPath: (path, directory) => paths.sameParent(path, directory),
+    published: (path, entries, { needsRefresh, changed, initial, observedAt }) => {
+      if (!needsRefresh) peek.prune(path, entries);
+      // A peek's first listing had its badges loaded with the resource; after
+      // that only a changed listing does. A notification the window watcher
+      // already invalidated is covered by its observation time.
+      if (changed && !initial && peek.target(path)) gitStatusStore.invalidateDirectories([path], observedAt);
+    },
+    fanOut: watch.refreshPeeks,
   });
+
+  function captureDirectory(parent: string) {
+    const root = paths.same(parent, coreState.currentPath);
+    // Publication needs only pane identity, never a selection snapshot.
+    const current = captureOrigin();
+    const target = root ? undefined : peek.target(parent);
+    return {
+      publish(transform: (entries: readonly FileEntry[]) => readonly FileEntry[]) {
+        if (!current() || (!root && !target?.current())) { watch.requestPath(parent); return; }
+        const next = transform(root ? coreState.entries : target!.entries);
+        if (root) coreState.entries = next;
+        else target!.entries = next;
+        peek.prune(parent, next);
+      },
+    };
+  }
 
   const mutations = createPaneMutations({
     coreState,
@@ -506,6 +678,20 @@ function createExplorerState(seed?: ExplorerSeed) {
     alive: () => !destroyed,
     navigateTo,
     refreshSilent: () => { void refresh({ silent: true }); },
+    captureDirectory,
+    operationEntries: () => displayEntries,
+    // Immediate HOW reads: the reply already proves the directory changed.
+    refreshDirectory: (parent) => {
+      if (paths.same(parent, coreState.currentPath)) void refresh({ silent: true });
+      else if (peek.target(parent)) void refresh({ silent: true }, parent);
+    },
+    removed: (removedPaths) => {
+      if (!removedPaths.length) return;
+      peek.collapseAll(removedPaths);
+      const gone = coverageOf(removedPaths, isWindows);
+      setSelection([...coreState.selectedPaths].filter(path => !gone(path)));
+      reconcilePeekResources();
+    },
   });
 
   // ===================
@@ -530,7 +716,11 @@ function createExplorerState(seed?: ExplorerSeed) {
   // new panes) changes solely via the explicit "Set Current View Mode as
   // Default" command, never as a side effect of switching one pane's view.
   function setViewMode(mode: ViewMode) {
+    if (mode !== coreState.viewMode) peekIntent++;
+    const before = peekTree;
     coreState.viewMode = mode;
+    pruneHiddenChildren(before, displayEntries);
+    reconcilePeekResources();
   }
 
   // ===================
@@ -601,15 +791,15 @@ function createExplorerState(seed?: ExplorerSeed) {
 
   /** Replace listed paths, optionally retaining the marquee's anchor/cursor semantics. */
   function selectPaths(paths: readonly string[], focus: string | null = null, options: { keepAnchor?: boolean } = {}) {
-    const result = selection.selectPaths(coreState.entries, paths, coreState.selectionAnchorPath, coreState.cursorPath, focus, options);
+    const result = selection.selectPaths(displayEntries, paths, coreState.selectionAnchorPath, coreState.cursorPath, focus, options);
     setSelection(result.selectedPaths);
     coreState.selectionAnchorPath = result.anchorPath;
     coreState.cursorPath = result.cursorPath;
   }
 
   function selectAll() {
-    setSelection(displayEntries.map((e) => e.path));
-    coreState.selectionAnchorPath = displayEntries[0]?.path ?? null;
+    setSelection(ownDisplayEntries.map((e) => e.path));
+    coreState.selectionAnchorPath = ownDisplayEntries[0]?.path ?? null;
   }
 
   // ===================
@@ -617,7 +807,9 @@ function createExplorerState(seed?: ExplorerSeed) {
   // ===================
 
   async function startDelete(entries: FileEntry | FileEntry[]) {
-    const arr = Array.isArray(entries) ? entries : [entries];
+    const reduced = operationRoots(Array.isArray(entries) ? entries : [entries], isWindows, displayEntries);
+    if (!reduced.ok) { toastStore.error(reduced.error); return; }
+    const arr = reduced.entries;
     if (arr.length === 0) return;
 
     if (arr.some((entry) => entry.trash)) {
@@ -636,7 +828,9 @@ function createExplorerState(seed?: ExplorerSeed) {
 
   /** Start permanent delete — always shows confirmation dialog. */
   function startPermanentDelete(entries: FileEntry | FileEntry[]) {
-    const arr = Array.isArray(entries) ? entries : [entries];
+    const reduced = operationRoots(Array.isArray(entries) ? entries : [entries], isWindows, displayEntries);
+    if (!reduced.ok) { toastStore.error(reduced.error); return; }
+    const arr = reduced.entries;
     if (arr.length === 0) return;
     dialogStore.startDelete(arr, true);
   }
@@ -701,12 +895,26 @@ function createExplorerState(seed?: ExplorerSeed) {
   // ===================
 
   async function copyToClipboard(entries: FileEntry[]) {
+    const result = operationRoots(entries, isWindows, displayEntries);
+    if (!result.ok) { toastStore.error(result.error); return; }
+    entries = result.entries;
     if (!await clipboardStore.copy(entries)) return;
     const label = entries.length === 1 ? entries[0].name : `${entries.length} items`;
     toastStore.clipboard(`Copied: ${label}`, false);
   }
 
+  /** A selection may hold a peeked folder and its children; the archive
+   * takes each root once and refuses members that would share a name. */
+  async function compressToZip(entries: readonly FileEntry[]) {
+    const result = archiveRoots(entries, isWindows, displayEntries);
+    if (!result.ok) { toastStore.error(result.error); return; }
+    if (result.entries.length) await mutations.compressToZip(result.entries.map(entry => entry.path));
+  }
+
   async function cutToClipboard(entries: FileEntry[]) {
+    const result = operationRoots(entries, isWindows, displayEntries);
+    if (!result.ok) { toastStore.error(result.error); return; }
+    entries = result.entries;
     if (!await clipboardStore.cut(entries)) return;
     const label = entries.length === 1 ? entries[0].name : `${entries.length} items`;
     toastStore.clipboard(`Cut: ${label}`, true);
@@ -861,6 +1069,28 @@ function createExplorerState(seed?: ExplorerSeed) {
 
     // Top-level state getters (preferred over state.*)
     fileViewPresentation,
+    get ownEntries() { return coreState.entries; },
+    get ownDisplayEntries() { return ownDisplayEntries; },
+    get entryMeta() { return peekTree.meta; },
+    get detailRows() { return detailRows; },
+    get peekEnabled() { return capability !== "none"; },
+    get expandedPaths() { return new Set(peek.expanded.keys()); },
+    peekWatchSnapshot: watch.peekSnapshot,
+    togglePeek,
+    collapseAllPeeks,
+    get peekCommandTarget() { return capability !== "none" ? resolvePeekCommandTarget(focusedEntry, peekTree.meta) : null; },
+    get canEscapePeek() { return capability !== "none" && resolvePeekEscape(focusedEntry, peekTree.meta) !== null; },
+    escapeSelectionOrPeek() {
+      // A pending lazy renderer has no mounted editor to own its Escape.
+      if (creationSession) { cancelInlineNewFolder(); return; }
+      // Without peeks Escape is exactly the classic Clear Selection.
+      if (coreState.selectedPaths.size || capability === "none") { clearSelection(); return; }
+      const parent = resolvePeekEscape(focusedEntry, peekTree.meta);
+      if (!parent) return;
+      togglePeek(parent);
+      coreState.cursorPath = parent; coreState.selectionAnchorPath = null;
+      onRevealCallback?.();
+    },
     get currentPath() {
       return coreState.currentPath;
     },
@@ -919,7 +1149,7 @@ function createExplorerState(seed?: ExplorerSeed) {
     /** A malformed id is treated as the built-in view rather than stored. */
     setFileView(id: string | null) {
       const next = id !== null && isFileViewId(id) ? id : null;
-      if (next !== fileView) previewTarget = null;
+      if (next !== fileView) { previewTarget = null; peekIntent++; }
       fileViewChoice = next;
     },
     /** The plugin preview target for the current folder, if any. */
@@ -1031,7 +1261,7 @@ function createExplorerState(seed?: ExplorerSeed) {
     rename: mutations.rename,
     confirmDelete: mutations.confirmDelete,
     extractArchive: mutations.extractArchive,
-    compressToZip: mutations.compressToZip,
+    compressToZip,
     createSymlink: mutations.createSymlinkForEntry,
     // Clipboard
     copyToClipboard,
@@ -1044,9 +1274,17 @@ function createExplorerState(seed?: ExplorerSeed) {
     // Undo/Redo
     undo,
     redo,
-    // Navigation callback
-    set onNavigate(cb: (() => void) | null) {
-      onNavigateCallback = cb;
+    // A mounted pane can attach to an initial load already in flight.
+    set onNavigationFocus(factory: (() => NavigationFocusRequest | null) | null) {
+      navigationFocusFactory = factory;
+      if (pendingNavigationFocus) {
+        pendingNavigationFocus.request?.cancel();
+        pendingNavigationFocus.request = null;
+        if (factory && !pendingNavigationFocus.offered) {
+          pendingNavigationFocus.offered = true;
+          pendingNavigationFocus.request = untrack(factory);
+        }
+      }
     },
     set onReveal(cb: (() => void) | null) {
       onRevealCallback = cb;
@@ -1057,11 +1295,14 @@ function createExplorerState(seed?: ExplorerSeed) {
       // Seal pending listings and release late observation leases,
       // so a closed tab cannot retain a late native observation lease.
       destroyed = true;
+      pendingNavigationFocus?.request?.cancel();
+      pendingNavigationFocus = null;
+      disposePeekEffects();
       fileViewPresentation.dispose();
       creationSession = null;
       navGeneration += 1;
       activeLoad?.finish("destroyed");
-      const results = await Promise.allSettled([watch.destroy(), dirListing.cleanup()]);
+      const results = await Promise.allSettled([watch.destroy(), dirListing.cleanup(), peek.dispose()]);
       const failure = results.find((result) => result.status === "rejected");
       if (failure?.status === "rejected") throw failure.reason;
     },

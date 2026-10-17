@@ -271,7 +271,7 @@ export const selectionCommands: Command[] = [
     label: "Clear Selection",
     category: "selection",
     shortcut: "Escape",
-    handler: () => getActiveExplorer()?.clearSelection(),
-    when: () => (getActiveExplorer()?.state.selectedPaths.size ?? 0) > 0,
+    handler: () => getActiveExplorer()?.escapeSelectionOrPeek(),
+    when: () => (getActiveExplorer()?.state.selectedPaths.size ?? 0) > 0 || !!getActiveExplorer()?.canEscapePeek,
   },
 ];

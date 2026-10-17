@@ -20,14 +20,12 @@
   import { parentDir, basename } from "$lib/domain/path";
   import { rectDimToCSS } from "$lib/domain/zoom";
   import { marqueeLayerTransforms } from "$lib/domain/marquee-rect";
-  import DetailsView from "./DetailsView.svelte";
-  import ListView from "./ListView.svelte";
-  import TilesView from "./TilesView.svelte";
   import InlineNewFolder from "./InlineNewFolder.svelte";
   import PluginFileView from "./PluginFileView.svelte";
   import { fileViewRegistry } from "$lib/plugins/file-view-registry.svelte";
   import type { FileViewPresentation } from "$lib/state/file-view-presentation.svelte";
   import { getPaneIdContext } from "$lib/state/pane-context";
+  import { entryIndicesForRows } from "$lib/domain/folder-peek-flat";
   import { clickSelectionEffect } from "$lib/domain/workspace-selection";
 
   import type { FileEntry } from "$lib/domain/file";
@@ -146,7 +144,7 @@
       || explorer.currentPath !== reveal.directory || explorer.viewMode !== reveal.mode) return;
     const focus = document.activeElement;
     if (focus !== document.body && (!fileListRef?.contains(focus)
-      || !focus?.matches('.entry-item, .virtual-viewport[role="grid"]'))) return;
+      || !focus?.matches('.entry-item, .virtual-viewport:is([role="grid"], [role="treegrid"])'))) return;
     scrollToSelected(entry);
   }
 
@@ -162,7 +160,7 @@
 
   // Type-ahead selection composable
   const typeAhead = useTypeAhead(
-    () => explorer.displayEntries,
+    () => explorer.ownDisplayEntries,
     (entry) => {
       explorer.selectEntry(entry, {});
       scrollToSelected(entry);
@@ -237,7 +235,7 @@
       const index = Number(target.dataset.index);
       const entry = explorer.displayEntries[index];
       if (entry?.path === target.dataset.path) explorer.focusEntry(entry);
-    } else if (target.matches('.virtual-viewport[role="grid"]') && explorer.focusedEntry) {
+    } else if (target.matches('.virtual-viewport:is([role="grid"], [role="treegrid"])') && explorer.focusedEntry) {
       scrollToSelected(explorer.focusedEntry);
     } else {
       // Column controls and inline editors own their focus independently.
@@ -369,7 +367,7 @@
       indices = marquee.getSelectedIndicesFromDOM(contentRef, ".list-item", contentRef.querySelector<HTMLElement>(".virtual-viewport"));
     } else {
       const scrollTop = contentRef.querySelector('.virtual-viewport')?.scrollTop ?? 0;
-      indices = marquee.getSelectedIndices(scrollTop, explorer.displayEntries.length, marqueeHeaderHeight());
+      indices = entryIndicesForRows(explorer.detailRows, marquee.getSelectedIndices(scrollTop, explorer.detailRows.rows.length, marqueeHeaderHeight()));
     }
     if (indicesEqual(indices, lastMarqueeIndices)) return;
     lastMarqueeIndices = indices;
@@ -504,6 +502,7 @@
         <InlineNewFolder {explorer} variant="details" />
       </div>
     {:else if explorer.viewMode === "details"}
+      {#await import("./DetailsView.svelte") then { default: DetailsView }}
       <DetailsView
         {explorer}
         onitemclick={handleClick}
@@ -514,7 +513,9 @@
         bind:containsIndex={viewContainsIndex}
         bind:scrollToIndex={viewScrollToIndex}
       />
+      {/await}
     {:else if explorer.viewMode === "list"}
+      {#await import("./ListView.svelte") then { default: ListView }}
       <ListView
         {explorer}
         {contentWidth}
@@ -526,7 +527,9 @@
         bind:containsIndex={viewContainsIndex}
         bind:scrollToIndex={viewScrollToIndex}
       />
+      {/await}
     {:else}
+      {#await import("./TilesView.svelte") then { default: TilesView }}
       <TilesView
         {explorer}
         {contentWidth}
@@ -538,6 +541,7 @@
         bind:containsIndex={viewContainsIndex}
         bind:scrollToIndex={viewScrollToIndex}
       />
+      {/await}
     {/if}
 
     <!-- Marquee selection rectangle. Five fixed-size layers moved and scaled

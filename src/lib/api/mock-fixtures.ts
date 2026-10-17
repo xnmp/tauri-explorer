@@ -434,6 +434,14 @@ for (const root of ["/folder-peek-list", "/folder-peek-tiles"]) {
     }
   }
 }
+// Tiles panels in later grid rows (#1241): folders sort first, so 24 folders
+// fill several rows and leave room above a row for an above band.
+{
+  const root = "/folder-peek-tiles-rows";
+  const folders = Array.from({ length: 24 }, (_, i) => `Folder ${String(i + 1).padStart(2, "0")}`);
+  mockFiles[root] = [...folders.map(name => dir(name, `${root}/${name}`)), ...Array.from({ length: 30 }, (_, i) => file(`note-${String(i + 1).padStart(2, "0")}.txt`, `${root}/note-${String(i + 1).padStart(2, "0")}.txt`, 10 + i))];
+  for (const name of folders) mockFiles[`${root}/${name}`] = Array.from({ length: 8 }, (_, i) => file(`${name.replace(" ", "-").toLowerCase()}-${i + 1}.txt`, `${root}/${name}/${name.replace(" ", "-").toLowerCase()}-${i + 1}.txt`, i + 1));
+}
 // Tiles panels at scale (#1241): 10,000 tiles beside three open-able folders.
 {
   const root = "/folder-peek-tiles-large";

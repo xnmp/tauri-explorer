@@ -135,6 +135,11 @@ for (const viewMode of VIEW_MODES) {
         if (premium) await expect(page.locator("html")).toHaveAttribute("data-premium", "true");
         else await expect(page.locator("html")).not.toHaveAttribute("data-premium");
         if (viewMode !== "details") await switchViewMode(page, viewMode);
+        if (viewMode === "tiles") {
+          // Folder Peek panels (#1241): scan Tiles with a panel open.
+          await page.locator(`.tile-row .entry-item[data-path="/home/user/Documents"] .peek-caret`).click();
+          await expect(page.locator(".tile-panel .entry-item").first()).toBeVisible();
+        }
 
         await page.locator(".entry-item").nth(1).click();
         await expect(page.locator(".entry-item.selected")).toHaveCount(1);

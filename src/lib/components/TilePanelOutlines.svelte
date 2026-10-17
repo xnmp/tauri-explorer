@@ -11,6 +11,7 @@
   import type { GroupGeometry, RowMetrics } from "$lib/domain/tile-panels";
 
   interface Props {
+    /** Group-local geometry; the SVG's origin is the group's top-left. */
     geometry: GroupGeometry;
     metrics: RowMetrics;
     /** Mid-motion: bends shrink into whatever gap exists. */
@@ -25,7 +26,9 @@
   const outlines = $derived(groupOutlines(geometry, metrics, compact));
 </script>
 
-<svg class="tile-outlines" width={metrics.width} height={geometry.height} aria-hidden="true" focusable="false">
+<!-- A zero-size box drawing outside itself: nothing in the page (or axe's
+     contrast stack) sees an image layer over the tiles and panels. -->
+<svg class="tile-outlines" width="0" height="0" aria-hidden="true" focusable="false">
   <defs>
     {#each outlines as outline, i (outline.path)}
       <linearGradient id="{uid}-{i}" gradientUnits="userSpaceOnUse" x1="0" x2="0" y1={outline.accent.y1} y2={outline.accent.y2}>
@@ -51,6 +54,8 @@
     position: absolute;
     top: 0;
     left: 0;
+    width: 0;
+    height: 0;
     overflow: visible;
     pointer-events: none;
   }

@@ -55,7 +55,7 @@ test("column-major placement, bounded 10,000-entry window, and first/middle/fina
   await expect(entries(page).first()).toHaveAttribute("aria-setsize", "10000");
 });
 
-test("wheel maps the dominant axis exactly once, normalizes units and leaves Ctrl untouched", async ({ page }) => {
+test("wheel maps vertical input once, normalizes units, and leaves horizontal gestures and Ctrl to the browser", async ({ page }) => {
   await open(page);
   const wheel = async (x: number,y: number,mode = 0,ctrl = false) => viewport(page).evaluate((el,args) => {
     el.scrollLeft = 1000;
@@ -64,7 +64,7 @@ test("wheel maps the dominant axis exactly once, normalizes units and leaves Ctr
     return { left: el.scrollLeft, top: el.scrollTop, prevented: event.defaultPrevented };
   },{x,y,mode,ctrl});
   expect(await wheel(0,100)).toEqual({left:1100,top:0,prevented:true});
-  expect(await wheel(80,20)).toEqual({left:1080,top:0,prevented:true});
+  expect(await wheel(80,20)).toEqual({left:1000,top:0,prevented:false}); // native horizontal scrolling
   expect(await wheel(10,-90)).toEqual({left:910,top:0,prevented:true});
   expect(await wheel(0,2,1)).toEqual({left:1060,top:0,prevented:true});
   expect(await wheel(0,100,0,true)).toEqual({left:1000,top:0,prevented:false});
@@ -73,6 +73,21 @@ test("wheel maps the dominant axis exactly once, normalizes units and leaves Ctr
   await page.mouse.wheel(0,4000);
   await expect(entries(page).first()).not.toHaveAttribute("data-path",before!);
   expect(await viewport(page).evaluate(el => el.scrollTop)).toBe(0);
+});
+
+test("fractional wheel deltas scroll symmetrically in both directions", async ({ page }) => {
+  await open(page);
+  const run = (delta: number, count: number) => viewport(page).evaluate((el, args) => {
+    el.scrollLeft = 1000;
+    for (let i = 0; i < args.count; i++) el.dispatchEvent(new WheelEvent("wheel", { deltaY: args.delta, bubbles: true, cancelable: true }));
+    return el.scrollLeft - 1000;
+  }, { delta, count });
+  for (const d of [0.4, 0.7, 1.5]) {
+    const down = await run(d, 20);
+    const up = await run(-d, 20);
+    expect(Math.abs(down - 20 * d)).toBeLessThanOrEqual(1.01);
+    expect(up).toBe(-down);
+  }
 });
 
 test("arrows, boundaries, pages, Home/End and modifiers reveal and focus actual entries", async ({ page }) => {

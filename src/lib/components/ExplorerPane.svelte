@@ -314,7 +314,7 @@ import { nextRemovableRoot } from "$lib/domain/drives";
     const move = resolveFileListMove(event, {
       viewMode: paneExplorer.viewMode, columns: gridColumns(paneExplorer.viewMode),
       count: entries.length, cursorIndex: cursor ? entries.indexOf(cursor) : -1,
-      list: getListNavigation?.(),
+      listLayout: settingsStore.folderPeek ? "columns" : "rows", list: getListNavigation?.(),
       directory: cursor?.kind === "directory", yazi: settingsStore.yaziNavigation,
     });
     if (!move) return;

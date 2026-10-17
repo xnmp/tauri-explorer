@@ -136,7 +136,7 @@ describe("resolveFileListMove", () => {
     )).toEqual({ kind: "focus", index: 0, selection: "replace" });
   });
 
-  it.each(["tiles"] satisfies ViewMode[])(
+  it.each(["list", "tiles"] satisfies ViewMode[])(
     "uses row and column geometry in %s view without crossing listing edges",
     (viewMode) => {
       const grid = (cursorIndex: number) => layout({
@@ -174,16 +174,54 @@ describe("resolveFileListMove", () => {
     expect(resolveFileListMove(key("ArrowRight"), layout({ cursorIndex: 4 }))).toBeNull();
   });
 
-  it("applies Yazi parent/open only to unmodified Details, including empty folders", () => {
-    const details = layout({ yazi: true, directory: true });
-    expect(resolveFileListMove(key("ArrowLeft"), details)).toEqual({ kind: "parent" });
-    expect(resolveFileListMove(key("ArrowRight"), details)).toEqual({ kind: "open", index: 4 });
-    expect(resolveFileListMove(key("ArrowLeft", { ctrlKey: true }), details)).toBeNull();
-    expect(resolveFileListMove(key("ArrowLeft"), layout({ yazi: true, count: 0, cursorIndex: -1 }))).toEqual({ kind: "parent" });
-    const list = { entries: [], directory: "/files", layout: columnFlow(Array.from({ length: 10 }),4,() => ({ slots: 1, card: false })), sentinelOffset: 0, usableWidth: 500 };
-    expect(resolveFileListMove(key("ArrowLeft"), layout({ viewMode: "list", count: 10, cursorIndex: 5, list, yazi: true }))).toEqual({ kind: "focus", index: 1, selection: "replace" });
-    expect(resolveFileListMove(key("ArrowRight"), layout({ viewMode: "list", count: 10, cursorIndex: 5, list, yazi: true, directory: true }))).toEqual({ kind: "focus", index: 9, selection: "replace" });
-    expect(resolveFileListMove(key("ArrowLeft"), layout({ viewMode: "list", count: 0, cursorIndex: -1, yazi: true }))).toBeNull();
+  it("applies Yazi parent/open behavior only to unmodified keys in eligible layouts", () => {
+    const yaziList = layout({
+      viewMode: "list",
+      columns: 1,
+      count: 6,
+      cursorIndex: 3,
+      directory: true,
+      yazi: true,
+    });
+
+    expect(resolveFileListMove(key("ArrowLeft"), yaziList)).toEqual({ kind: "parent" });
+    expect(resolveFileListMove(key("ArrowRight"), yaziList)).toEqual({
+      kind: "open", index: 3,
+    });
+    const yaziDetails = { ...yaziList, viewMode: "details" as const };
+    expect(resolveFileListMove(key("ArrowLeft"), yaziDetails)).toEqual({ kind: "parent" });
+    expect(resolveFileListMove(key("ArrowRight"), yaziDetails)).toEqual({
+      kind: "open", index: 3,
+    });
+    expect(resolveFileListMove(key("ArrowLeft", { ctrlKey: true }), yaziList)).toEqual({
+      kind: "focus", index: 2, selection: "preserve",
+    });
+    expect(resolveFileListMove(key("ArrowRight", { metaKey: true }), yaziList)).toEqual({
+      kind: "focus", index: 4, selection: "preserve",
+    });
+    expect(resolveFileListMove(key("ArrowLeft", { shiftKey: true }), yaziList)).toEqual({
+      kind: "focus", index: 2, selection: "extend",
+    });
+
+    expect(resolveFileListMove(
+      key("ArrowLeft"),
+      { ...yaziList, viewMode: "tiles" },
+    )).toEqual({ kind: "focus", index: 2, selection: "replace" });
+    expect(resolveFileListMove(
+      key("ArrowLeft"),
+      { ...yaziList, columns: 2 },
+    )).toEqual({ kind: "focus", index: 2, selection: "replace" });
+  });
+
+  it("allows Yazi parent navigation from an empty eligible listing", () => {
+    expect(resolveFileListMove(
+      key("ArrowLeft"),
+      layout({ count: 0, cursorIndex: -1, yazi: true }),
+    )).toEqual({ kind: "parent" });
+    expect(resolveFileListMove(
+      key("ArrowLeft"),
+      layout({ viewMode: "list", columns: 1, count: 0, cursorIndex: -1, yazi: true }),
+    )).toEqual({ kind: "parent" });
   });
 
   it("ignores Alt chords regardless of the other modifiers", () => {
@@ -202,7 +240,7 @@ describe("resolveFileListMove", () => {
     (columns) => {
       expect(resolveFileListMove(
         key("ArrowDown"),
-        layout({ viewMode: "tiles", columns, count: 6, cursorIndex: 2 }),
+        layout({ viewMode: "list", columns, count: 6, cursorIndex: 2 }),
       )).toEqual({ kind: "focus", index: 3, selection: "replace" });
     },
   );
@@ -230,5 +268,28 @@ describe("resolveFileListMove", () => {
       key("ArrowDown"),
       layout({ count, cursorIndex }),
     )).toBeNull();
+  });
+
+  describe("column-flow List (Folder Peek on)", () => {
+    const list = {
+      entries: [], directory: "/files", sentinelOffset: 0, usableWidth: 500,
+      layout: columnFlow(Array.from({ length: 10 }), 4, () => ({ slots: 1, card: false })),
+    };
+    const columns = (o: Partial<Layout> = {}) => layout({ viewMode: "list", listLayout: "columns", count: 10, cursorIndex: 5, list, ...o });
+
+    it("moves spatially: Left/Right change column, Up/Down stay in it", () => {
+      expect(resolveFileListMove(key("ArrowLeft"), columns())).toEqual({ kind: "focus", index: 1, selection: "replace" });
+      expect(resolveFileListMove(key("ArrowRight"), columns())).toEqual({ kind: "focus", index: 9, selection: "replace" });
+      expect(resolveFileListMove(key("ArrowDown"), columns())).toEqual({ kind: "focus", index: 6, selection: "replace" });
+    });
+
+    it("never applies Yazi parent/open, even in a single-column listing", () => {
+      expect(resolveFileListMove(key("ArrowLeft"), columns({ yazi: true, columns: 1 }))).toEqual({ kind: "focus", index: 1, selection: "replace" });
+      expect(resolveFileListMove(key("ArrowRight"), columns({ yazi: true, directory: true }))).toEqual({ kind: "focus", index: 9, selection: "replace" });
+    });
+
+    it("yields no move without a settled layout snapshot", () => {
+      expect(resolveFileListMove(key("ArrowDown"), columns({ list: null }))).toBeNull();
+    });
   });
 });

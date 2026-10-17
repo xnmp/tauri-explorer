@@ -27,17 +27,19 @@ export type FileListMove =
 
 export function resolveFileListMove(
   event: FileListKey,
-  layout: { viewMode: ViewMode; columns: number; count: number; cursorIndex: number; directory: boolean; yazi: boolean; list?: ListNavigationSnapshot | null },
+  layout: { viewMode: ViewMode; columns: number; count: number; cursorIndex: number; directory: boolean; yazi: boolean;
+    /** "columns" = Folder Peek column flow (needs `list`); "rows" = classic row-major List. */
+    listLayout?: "rows" | "columns"; list?: ListNavigationSnapshot | null },
 ): FileListMove | null {
   if (event.altKey || !Number.isSafeInteger(layout.count) || layout.count < 0
     || !Number.isSafeInteger(layout.cursorIndex) || layout.cursorIndex < -1 || layout.cursorIndex >= layout.count) return null;
-  if (layout.viewMode === "list") {
+  if (layout.viewMode === "list" && layout.listLayout === "columns") {
     return layout.list ? resolveListMove(event, layout.list.layout, layout.cursorIndex, layout.list.usableWidth, layout.list.sentinelOffset) : null;
   }
   const modified = event.ctrlKey || event.metaKey;
   const arrow = ["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"].includes(event.key);
   const columns = Number.isFinite(layout.columns) ? Math.max(1, Math.floor(layout.columns)) : 1;
-  const yazi = layout.yazi && layout.viewMode === "details";
+  const yazi = layout.yazi && (layout.viewMode === "details" || (layout.viewMode === "list" && columns === 1));
   if (arrow && yazi && !modified && !event.shiftKey) {
     if (event.key === "ArrowLeft") return { kind: "parent" };
     if (event.key === "ArrowRight" && layout.directory && layout.cursorIndex >= 0) return { kind: "open", index: layout.cursorIndex };

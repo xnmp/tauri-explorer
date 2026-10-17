@@ -4,6 +4,7 @@
 -->
 <script lang="ts">
   import { flushSync, tick, onDestroy, untrack } from "svelte";
+  import { settingsStore } from "$lib/state/settings.svelte";
   import { setFileListFocusReturn } from "$lib/state/file-list-focus-context";
   import { createDeferredFocusRequest, type DeferredFocusRequest } from "$lib/state/deferred-focus";
   import type { ExplorerInstance } from "$lib/state/explorer.svelte";
@@ -89,7 +90,7 @@
 
   let viewNavigation = $state<(() => ListNavigationSnapshot) | undefined>();
   getListNavigation = () => {
-    if (explorer.loading || explorer.error || explorer.driveGone || pluginView || holdingView || explorer.viewMode !== "list") return null;
+    if (explorer.loading || explorer.error || explorer.driveGone || pluginView || holdingView || explorer.viewMode !== "list" || !settingsStore.folderPeek) return null;
     const snapshot = viewNavigation?.();
     return snapshot?.entries === explorer.displayEntries && snapshot.directory === explorer.currentPath ? snapshot : null;
   };
@@ -532,7 +533,7 @@
           Go back
         </button>
       </div>
-    {:else if explorer.displayEntries.length === 0 && explorer.isCreatingFolder && explorer.viewMode !== "list"}
+    {:else if explorer.displayEntries.length === 0 && explorer.isCreatingFolder && !(explorer.viewMode === "list" && settingsStore.folderPeek)}
       <div class="empty-create-folder">
         <InlineNewFolder {explorer} variant="details" />
       </div>
@@ -549,12 +550,29 @@
         bind:scrollToIndex={viewScrollToIndex}
       />
       {/await}
-    {:else if explorer.viewMode === "list"}
+    {:else if explorer.viewMode === "list" && settingsStore.folderPeek}
       <!-- Optional renderers load on demand to keep the Details startup graph bounded. -->
+      {#await import("./ListColumnsView.svelte") then { default: ListColumnsView }}
+        <ListColumnsView
+          {explorer}
+          bind:getNavigation={viewNavigation}
+          onitemclick={handleClick}
+          onitemdblclick={handleDoubleClick}
+          onviewportscroll={handleViewportScroll}
+          onlayoutchange={() => { updateMarqueeSelection(); handleViewLayoutChange(); }}
+          {fallbackTabStop}
+          bind:containsIndex={viewContainsIndex}
+          bind:scrollToIndex={viewScrollToIndex}
+        />
+      {:catch}
+        <div class="status error-state">Unable to load List view</div>
+      {/await}
+    {:else if explorer.viewMode === "list"}
+      <!-- Classic row-major List (Folder Peek off). -->
       {#await import("./ListView.svelte") then { default: ListView }}
         <ListView
           {explorer}
-          bind:getNavigation={viewNavigation}
+          {contentWidth}
           onitemclick={handleClick}
           onitemdblclick={handleDoubleClick}
           onviewportscroll={handleViewportScroll}

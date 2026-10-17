@@ -33,9 +33,11 @@
   interface Props {
     explorer: ExplorerInstance;
     variant: "details" | "list" | "tiles";
+    /** Column-flow List slot (Folder Peek): fixed 30px slot, overlaid error. */
+    columns?: boolean;
   }
 
-  let { explorer, variant }: Props = $props();
+  let { explorer, variant, columns = false }: Props = $props();
 
   const isFile = $derived(explorer.newEntryKind === "file");
   // Preview entry used solely to pick the correct icon for the inline row.
@@ -129,7 +131,7 @@
     {/if}
   </div>
 {:else if variant === "list"}
-  <div class="inline-new-folder list-inline-new-folder">
+  <div class="inline-new-folder list-inline-new-folder" class:list-columns-slot={columns}>
     <span class="list-icon">
       <FileIcon entry={iconEntry} size="small" />
     </span>
@@ -207,14 +209,19 @@
 
   /* List view variant */
   .list-inline-new-folder {
+    padding: 4px 8px;
+    height: auto;
+  }
+
+  .list-inline-new-folder.list-columns-slot {
     box-sizing: border-box;
     padding: 3px 8px;
     height: 30px;
     position: relative;
   }
 
-  .list-inline-new-folder .new-folder-input { min-width: 0; }
-  .list-inline-new-folder .new-folder-error {
+  .list-columns-slot .new-folder-input { min-width: 0; }
+  .list-columns-slot .new-folder-error {
     position: absolute;
     top: 100%;
     left: 8px;

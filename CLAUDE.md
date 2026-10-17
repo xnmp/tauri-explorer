@@ -146,6 +146,10 @@ Rules that bite:
   feature PR. Link existing qualification owners (for example DnD #1225) for
   platform-evidence gaps; those gaps alone do not establish a new ownership
   defect or justify a duplicate debt filing (#1251).
+- PR bodies are mutable evidence: attribute post-merge integration results to
+  the commit/PR that actually changed the code. A test readiness/locator fix
+  is not a production ownership recurrence; inspect the producing boundary
+  before counting it against an architecture trigger (#1262).
 - **Start at [docs/code-map/](docs/code-map/)**: [map-feature.md](docs/code-map/map-feature.md) for cross-layer work and bug hunts, [map-playbook.md](docs/code-map/map-playbook.md) recipes for task-shaped changes (new palette command / context-menu action / Tauri command / setting), [map-folder.md](docs/code-map/map-folder.md) as the exhaustive per-file index. For a small localized change you can already name, skip the maps and grep (measured net loss on cheap tasks; prose architecture docs were deleted for the same reason — see [STUDY.md](docs/code-map/STUDY.md)).
 - **Keep the maps current or they turn harmful.** New/moved source file → update `map-folder.md` (+ the `map-feature.md` cluster), then `python3 docs/code-map/validate.py --coverage`. CI runs the same check.
 - [docs/lessons/](docs/lessons/) — gotchas from closed issues, **one file per issue**: write `docs/lessons/<issue>-<slug>.md` when you fix a bug (never append to the frozen [docs/lessons_learnt.md](docs/lessons_learnt.md) archive — shared-file appends conflicted every open PR, #544). When hunting a bug, search both: `grep -ri <term> docs/lessons/ docs/lessons_learnt.md`.

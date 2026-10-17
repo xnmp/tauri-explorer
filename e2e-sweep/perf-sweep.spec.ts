@@ -375,3 +375,57 @@ test("List column flow: 10,000 entries", async ({ page }) => {
     });
   }
 });
+
+test("Tiles panels: 10,000 entries", async ({ page }) => {
+  await prepare(page);
+  const pane = '.pane-tree:not(.retained)';
+  const scroller = page.locator(`${pane} .tiles-scroller`);
+  // Older releases ignore the unknown key, so a baseline checkout still runs the classic case.
+  const folderPeek = (on: boolean) => page.evaluate(async value => {
+    const { settingsStore } = await import('/src/lib/state/settings.svelte.ts');
+    settingsStore.update({ folderPeek: value });
+  }, on);
+  // The same 30 frames of programmatic scrolling for every case, so their task time compares.
+  const scrollFrames = () => scroller.evaluate(el => new Promise<void>(resolve => {
+    let n = 0;
+    const next = () => {
+      el.scrollTop += 300;
+      if (++n === 30) resolve(); else requestAnimationFrame(next);
+    };
+    requestAnimationFrame(next);
+  }));
+  const home = async () => { await scroller.evaluate(el => { el.scrollTop = 0; }); await settle(page); };
+  const motionDone = () => page.waitForFunction(selector => {
+    const root = document.querySelector(selector)!;
+    return !root.querySelector('.tile-panel-ghost')
+      && ![...root.querySelectorAll<HTMLElement>('.tile-panel')].some(el => el.style.opacity);
+  }, pane);
+  const caret = page.locator(`${pane} .tile-row .entry-item[data-path="/perf/huge-10000/folder-00016"] .peek-caret`);
+  for (let i = 0; i < RUNS; i++) {
+    await page.setViewportSize({ width: 1280, height: 800 });
+    await page.goto('/?path=/perf/huge-10000&viewMode=tiles');
+    await waitForRows(page);
+    await folderPeek(false);
+    await page.locator(`${pane} .tiles-view:not(.tile-panels-view)`).waitFor();
+    await measure(page, 'tiles: 30 scroll frames (Folder Peek off)', scrollFrames);
+    await folderPeek(true);
+    await page.locator(`${pane} .tile-panels-view`).waitFor();
+    await home();
+    await measure(page, 'tiles: 30 scroll frames (no panel)', scrollFrames);
+    await home();
+    // A user toggle of a 5,000-entry folder, including its listing and the
+    // 150ms band motion, until no ghost or motion opacity remains.
+    await measure(page, 'tiles: open 5,000-entry panel', async () => {
+      await caret.click();
+      await page.locator(`${pane} .tile-panel .entry-item`).first().waitFor();
+      await motionDone();
+    });
+    await measure(page, 'tiles: 30 scroll frames (panel open)', scrollFrames);
+    await home();
+    await measure(page, 'tiles: close panel', async () => {
+      await caret.click();
+      await page.locator(`${pane} .tile-panel`).waitFor({ state: 'detached' });
+      await motionDone();
+    });
+  }
+});

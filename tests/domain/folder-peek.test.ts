@@ -1,5 +1,5 @@
-import { describe, expect, it } from "vitest";
-import { flattenPeekEntries, toggleExpanded, collapseSubtree, pruneExpanded, choosePeekWatches, peekCapability, resolvePeekCommandTarget, resolvePeekEscape } from "$lib/domain/folder-peek";
+import { describe, expect, it, vi } from "vitest";
+import { createPeekLevelCache, flattenPeekEntries, toggleExpanded, collapseSubtree, pruneExpanded, choosePeekWatches, peekCapability, resolvePeekCommandTarget, resolvePeekEscape } from "$lib/domain/folder-peek";
 import { pathComparison } from "$lib/domain/path";
 import { sortEntries, filterHidden, type FileEntry } from "$lib/domain/file";
 
@@ -28,6 +28,26 @@ describe("folder peek preorder and policies", () => {
   it("rejects duplicates, malformed and non-direct children", () => {
     const result = flattenPeekEntries({ root: "/r", entries: [a, a, entry("/r/../bad"), entry("relative"), entry("/r/a/deep")], expanded: new Map([[a.path, 1]]), listing: () => [a, entry("/r/a/x", "file"), entry("/r/ab/x", "file")], project: entries => [...entries], capability: "tree", windows: false });
     expect(result.entries.map(e => e.path)).toEqual([a.path, "/r/a/x"]);
+  });
+  it("re-projects only levels whose listing snapshot or projection inputs changed", () => {
+    const levels = createPeekLevelCache(false);
+    const project = vi.fn((entries: readonly FileEntry[], _parent: string) => [...entries]);
+    const tree = new Map([[a.path, [nested]], [nested.path, [file]], [b.path, [entry("/r/b/x", "file")]]]);
+    const expanded = new Map([[a.path, 1], [nested.path, 2], [b.path, 3]]);
+    const run = (roots = [a, b], inputs = "name") => flattenPeekEntries({ root: "/r", entries: roots, expanded, listing: path => tree.get(path), project, capability: "tree", windows: false, levels, projectionKey: () => inputs });
+    expect(run().entries.map(e => e.path)).toEqual([a.path, nested.path, file.path, b.path, "/r/b/x"]);
+    expect(project).toHaveBeenCalledTimes(3);
+    // A root filter keystroke supplies a new root array; no child re-projects.
+    project.mockClear();
+    expect(run([a]).entries.map(e => e.path)).toEqual([a.path, nested.path, file.path]);
+    expect(project).not.toHaveBeenCalled();
+    // One level publishes a new snapshot; only that level re-projects.
+    project.mockClear(); tree.set(nested.path, [file, entry("/r/a/n/g", "file")]);
+    expect(run().entries.map(e => e.path)).toContain("/r/a/n/g");
+    expect(project.mock.calls.map(([, parent]) => parent)).toEqual([nested.path]);
+    // Sort or hidden-rule changes re-project every level.
+    project.mockClear(); run(undefined, "size");
+    expect(project.mock.calls.map(([, parent]) => parent).sort()).toEqual([a.path, nested.path, b.path].sort());
   });
   it("loads all 10,000 children and handles deep nesting iteratively", () => {
     const children = Array.from({ length: 10_000 }, (_, i) => entry(`/r/a/${i}`, "file"));

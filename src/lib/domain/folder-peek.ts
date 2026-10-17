@@ -59,6 +59,40 @@ export interface PeekTree {
   expanded: readonly string[];
 }
 
+/** One level of the tree: its projected children admitted for their parent
+ * (normalized key present, direct child) with the keys computed once. */
+export interface PeekLevel { entries: readonly FileEntry[]; keys: readonly string[] }
+export type PeekLevelCache = (
+  listing: readonly FileEntry[], parent: string, projectionKey: string,
+  project: (entries: readonly FileEntry[]) => readonly FileEntry[],
+) => PeekLevel;
+
+/** Pane-lifetime memo of level projections, keyed by listing snapshot
+ * identity (snapshots are immutable revisions) plus the parent and every
+ * projection input. A root filter keystroke or one level's publish therefore
+ * re-projects only that level; sort and hidden-rule changes re-project all. */
+export function createPeekLevelCache(windows: boolean): PeekLevelCache {
+  const paths = pathComparison(windows);
+  const cache = new WeakMap<readonly FileEntry[], { parent: string; projectionKey: string; level: PeekLevel }>();
+  return (listing, parent, projectionKey, project) => {
+    const hit = cache.get(listing);
+    if (hit && hit.parent === parent && hit.projectionKey === projectionKey) return hit.level;
+    const parentKey = paths.key(parent);
+    const entries: FileEntry[] = [];
+    const keys: string[] = [];
+    // Flat virtual/provider roots are still valid listings; tree admission is
+    // stricter, rejecting malformed and cross-parent backend data.
+    for (const entry of parentKey === null ? [] : project(listing)) {
+      const key = paths.key(entry.path);
+      if (key === null || paths.parentKey(key) !== parentKey) continue;
+      entries.push(entry); keys.push(key);
+    }
+    const level = { entries, keys };
+    cache.set(listing, { parent, projectionKey, level });
+    return level;
+  };
+}
+
 export function flattenPeekEntries(options: {
   root: string;
   entries: readonly FileEntry[];
@@ -67,31 +101,38 @@ export function flattenPeekEntries(options: {
   project: (entries: readonly FileEntry[], parent: string) => readonly FileEntry[];
   capability: PeekCapability;
   windows: boolean;
+  /** Reused across passes by a pane; a fresh cache otherwise. */
+  levels?: PeekLevelCache;
+  /** Everything `project` reads besides the listing (sort, hidden rules). */
+  projectionKey?: (parent: string) => string;
 }): PeekTree {
   if (options.capability === "none") return flatPeekEntries(options.root, options.entries);
-  const paths = pathComparison(options.windows);
+  const levels = options.levels ?? createPeekLevelCache(options.windows);
+  const projectionKey = options.projectionKey ?? (() => "");
   const entries: FileEntry[] = [];
   const meta = new Map<string, PeekMeta>();
   const indices = new Map<string, number>();
   const expanded: string[] = [];
   const seen = new Set<string>();
-  const stack = [{ items: options.entries, offset: 0, parent: options.root, depth: 0 }];
+  // The root arrives already projected (filtered and sorted) by its owner.
+  const stack = [{ level: levels(options.entries, options.root, "root", items => items), offset: 0, parent: options.root, depth: 0 }];
   while (stack.length) {
     const frame = stack[stack.length - 1];
-    if (frame.offset === frame.items.length) { stack.pop(); continue; }
-    const entry = frame.items[frame.offset++];
-    const key = paths.key(entry.path);
-    // Flat virtual/provider roots are still valid listings; tree admission is
-    // stricter, rejecting malformed and cross-parent backend data.
-    if (seen.has(key ?? entry.path) || (!key || !paths.sameParent(entry.path, frame.parent))) continue;
-    seen.add(key ?? entry.path);
+    if (frame.offset === frame.level.entries.length) { stack.pop(); continue; }
+    const index = frame.offset++;
+    const entry = frame.level.entries[index];
+    const key = frame.level.keys[index];
+    if (seen.has(key)) continue;
+    seen.add(key);
     indices.set(entry.path, entries.length);
     entries.push(entry);
     meta.set(entry.path, { depth: frame.depth, parentPath: frame.parent });
     if (entry.kind !== "directory" || (options.capability === "top-level" && frame.depth > 0) || !options.expanded.has(entry.path)) continue;
     expanded.push(entry.path);
     const children = options.listing(entry.path);
-    if (children) stack.push({ items: options.project(children, entry.path), offset: 0, parent: entry.path, depth: frame.depth + 1 });
+    if (!children) continue;
+    const level = levels(children, entry.path, projectionKey(entry.path), items => options.project(items, entry.path));
+    stack.push({ level, offset: 0, parent: entry.path, depth: frame.depth + 1 });
   }
   return { entries, meta, indices, expanded };
 }

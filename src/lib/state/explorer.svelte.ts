@@ -29,6 +29,7 @@ import { gitStatusStore } from "./git-status.svelte";
 import { operationRoots } from "$lib/domain/file-operation-selection";
 import { createFolderPeekState } from "./folder-peek.svelte";
 import { flatPeekEntries, flatPeekRows, peekCapability, resolvePeekCommandTarget, resolvePeekEscape } from "$lib/domain/folder-peek-flat";
+import type { PeekLevelCache } from "$lib/domain/folder-peek";
 import { isVirtualPath } from "$lib/domain/virtual-path";
 import { providerFor } from "$lib/plugins/fs-providers";
 import { basename, toNativeSeparators, pathComparison, coverageOf } from "$lib/domain/path";
@@ -204,12 +205,25 @@ function createExplorerState(seed?: ExplorerSeed, isFileListingSurface: () => bo
     plainLocation: !isVirtualPath(coreState.currentPath) && !providerFor(coreState.currentPath),
     mode: coreState.viewMode,
   }));
-  const peekTree = $derived(peek.policies?.flattenPeekEntries({
-    root: coreState.currentPath, entries: ownDisplayEntries, expanded: peek.expanded,
-    listing: path => peek.listing(path)?.entries,
-    project: (entries, parent) => sortEntries(visibleEntriesFor(entries, parent), coreState.sortBy, coreState.sortAscending),
-    capability: peek.expanded.size ? capability : "none", windows: isWindows,
-  }) ?? flatPeekEntries(coreState.currentPath, ownDisplayEntries));
+  // Each peek level is projected once per listing snapshot and projection
+  // inputs, so a root keystroke or one peek's publish leaves other levels be.
+  let peekLevels: PeekLevelCache | undefined;
+  const peekProjectionKey = (parent: string) => [
+    coreState.sortBy, coreState.sortAscending, settingsStore.showHidden, settingsStore.showManuallyHidden,
+    ...(settingsStore.showManuallyHidden ? [] : manualHiddenStore.namesIn(parent)),
+  ].join("\0");
+  const peekTree = $derived.by(() => {
+    const policies = peek.policies;
+    if (!policies) return flatPeekEntries(coreState.currentPath, ownDisplayEntries);
+    peekLevels ??= policies.createPeekLevelCache(isWindows);
+    return policies.flattenPeekEntries({
+      root: coreState.currentPath, entries: ownDisplayEntries, expanded: peek.expanded,
+      listing: path => peek.listing(path)?.entries,
+      project: (entries, parent) => sortEntries(visibleEntriesFor(entries, parent), coreState.sortBy, coreState.sortAscending),
+      capability: peek.expanded.size ? capability : "none", windows: isWindows,
+      levels: peekLevels, projectionKey: peekProjectionKey,
+    });
+  });
   const displayEntries = $derived(peekTree.entries as FileEntry[]);
   const detailRows = $derived(peek.policies?.buildPeekRows(peekTree, peek.listing, creationSession !== null) ?? flatPeekRows(peekTree, creationSession !== null));
 

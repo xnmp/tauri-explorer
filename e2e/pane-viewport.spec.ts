@@ -74,17 +74,19 @@ for (const viewMode of ["details", "list", "tiles"] as const) {
     await installLayoutInspector(page);
     await page.locator(".entry-item").first().click();
     const viewport = page.locator(`.${viewMode}-view .virtual-viewport`);
-    await expect.poll(() => viewport.evaluate(element => element.scrollHeight - element.clientHeight)).toBeGreaterThan(100);
+    const position = () => viewport.evaluate((element, mode) => mode === "list" ? element.scrollLeft : element.scrollTop, viewMode);
+    await expect.poll(() => viewport.evaluate((element, mode) => mode === "list"
+      ? element.scrollWidth - element.clientWidth : element.scrollHeight - element.clientHeight, viewMode)).toBeGreaterThan(100);
     const box = (await viewport.boundingBox())!;
     await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
     await page.mouse.wheel(0, 600);
-    await expect.poll(() => viewport.evaluate(element => element.scrollTop)).toBeGreaterThan(100);
+    await expect.poll(position).toBeGreaterThan(100);
     await page.keyboard.press("Control+End");
     await expect(page.getByRole("complementary", { name: "File inspector" })).toBeVisible();
     const selected = page.locator(".entry-item.selected");
     await expect(selected.locator(".entry-name")).toHaveText("image-00498.png");
     await expect(selected).toBeInViewport();
-    await expect.poll(() => viewport.evaluate(element => element.scrollTop)).toBeGreaterThan(100);
+    await expect.poll(position).toBeGreaterThan(100);
     if (viewMode === "tiles") await page.screenshot({ path: info.outputPath("overflow-final-entry.png") });
   });
 }
@@ -242,17 +244,18 @@ for (const viewMode of ["details", "list", "tiles"] as const) {
     await page.locator('.entry-item[data-index="1"]').click();
     await expect(page.getByRole("complementary", { name: "File inspector" })).toBeVisible();
     const viewport = page.locator(`.${viewMode}-view .virtual-viewport`);
+    const position = () => viewport.evaluate((element, mode) => mode === "list" ? element.scrollLeft : element.scrollTop, viewMode);
     const box = (await viewport.boundingBox())!;
     await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
     await page.mouse.wheel(0, 1400);
-    await expect.poll(() => viewport.evaluate(element => element.scrollTop)).toBeGreaterThan(500);
+    await expect.poll(position).toBeGreaterThan(500);
     await expect(page.locator(".entry-item.selected")).toHaveCount(0);
-    const before = await viewport.evaluate(element => ({ top: element.scrollTop, height: element.clientHeight }));
+    const before = { position: await position(), height: await viewport.evaluate(element => element.clientHeight) };
     await page.setViewportSize({ width: 817, height: 760 });
     await expect.poll(() => viewport.evaluate(element => element.clientHeight)).not.toBe(before.height);
     // WebKit can continue wheel momentum during the resize. It must never
     // jump back to the retained selection at the top of the collection.
-    await expect.poll(() => viewport.evaluate(element => element.scrollTop)).toBeGreaterThanOrEqual(before.top);
+    await expect.poll(position).toBeGreaterThanOrEqual(before.position);
     await expect(page.locator(".entry-item.selected")).toHaveCount(0);
   });
 }

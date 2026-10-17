@@ -352,7 +352,7 @@ test.describe("Keyboard traversal", () => {
       expect(await tabToEntry(page)).toBe("/home/user/Archive");
       // Tiles can fit every fixture entry in one row, so ArrowDown correctly
       // has no destination. Use each renderer's guaranteed adjacent axis.
-      await page.keyboard.press(viewMode === "details" ? "ArrowDown" : "ArrowRight");
+      await page.keyboard.press(viewMode === "tiles" ? "ArrowRight" : "ArrowDown");
       const focusedPath = () => page.evaluate(() => {
         const el = document.activeElement as HTMLElement;
         return el.matches(".file-list .entry-item") ? el.dataset.path ?? null : null;

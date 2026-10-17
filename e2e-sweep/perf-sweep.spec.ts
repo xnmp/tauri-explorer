@@ -309,3 +309,51 @@ test("quick open", async ({ page }) => {
     await page.locator(".quick-open-dialog").waitFor({ state: "hidden" });
   }
 });
+
+test("List column flow: 10,000 entries", async ({ page }) => {
+  await prepare(page);
+  for (let i = 0; i < RUNS; i++) {
+    // Keep startup/scroll/reveal workloads identical across repeated samples.
+    await page.setViewportSize({ width: 1280, height: 800 });
+    await settle(page);
+    const taskStart = await taskSeconds(page);
+    await page.goto('/?path=/perf/huge-10000&viewMode=list');
+    await waitForRows(page);
+    await settle(page);
+    const taskMs = ((await taskSeconds(page)) - taskStart) * 1000;
+    const startup = await page.evaluate(() => {
+      const { longTasks, frames } = window.__sweep;
+      const gaps = frames.slice(1).map((frame, index) => frame - frames[index]);
+      return {
+        wallMs: performance.now(),
+        longTaskMs: longTasks.reduce((sum, task) => sum + task.duration, 0),
+        worstFrameMs: Math.max(0, ...gaps),
+      };
+    });
+    (results['list: 10000-entry startup'] ??= []).push({...startup,taskMs});
+    const viewport = page.locator('.pane-tree:not(.retained) .list-scroller');
+    await measure(page,'list: sustained sideways wheel',async () => {
+      await viewport.evaluate(el => new Promise<void>(resolve => {
+        let n = 0;
+        const next = () => {
+          el.dispatchEvent(new WheelEvent('wheel',{deltaY:180,bubbles:true,cancelable:true}));
+          if (++n === 30) resolve(); else requestAnimationFrame(next);
+        };
+        requestAnimationFrame(next);
+      }));
+    });
+    await viewport.focus();
+    await measure(page,'list: distant reveal',async () => {
+      await page.keyboard.press('End');
+      await page.locator('.list-item[data-index="9999"]').waitFor();
+    });
+    await measure(page,'list: R-changing resize',async () => {
+      await page.setViewportSize({width:1280,height:500});
+      await settle(page);
+    });
+    await measure(page,'list: scroll back',async () => {
+      await viewport.evaluate(el => { el.scrollLeft=0; });
+      await page.locator('.list-item[data-index="0"]').waitFor();
+    });
+  }
+});

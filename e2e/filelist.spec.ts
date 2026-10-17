@@ -58,14 +58,10 @@ for (const viewMode of VIEW_MODES) {
     });
 
     test("arrow keys move the selection between entries", async ({ page }) => {
-      // Details is a single column (ArrowDown/Up step by 1). List/Tiles are
-      // row-major grids where ArrowDown jumps a whole row (and legitimately
-      // no-ops on the last row), so the reliable single-step keys there are
-      // ArrowRight/Left. Anchor on a file (not a folder) so the yazi-style
-      // "ArrowRight enters the selected folder" branch can't trigger.
-      const forwardKey = viewMode === "details" ? "ArrowDown" : "ArrowRight";
-      const backKey = viewMode === "details" ? "ArrowUp" : "ArrowLeft";
-      const anchor = page.locator(".entry-item:not(.directory)").first();
+      // List fills vertically; Tiles steps horizontally. Pick an entry with a neighbor.
+      const forwardKey = viewMode === "tiles" ? "ArrowRight" : "ArrowDown";
+      const backKey = viewMode === "tiles" ? "ArrowLeft" : "ArrowUp";
+      const anchor = viewMode === "list" ? page.locator(".entry-item").first() : page.locator(".entry-item:not(.directory)").first();
 
       await anchor.click();
       await expect(anchor).toHaveClass(/selected/);

@@ -96,6 +96,12 @@ export async function switchViewMode(page: Page, mode: ViewMode) {
     // the empty band below the last row is at least this tall in every mock dir.
     clickY = Math.min(below, Math.round(box.height) - 8);
   }
+  // Height-filled List columns can reach below a short final column. Use the
+  // slot gap after the first row, rather than the last column's tail at x=10.
+  if (box && await content.locator(".list-view").isVisible()) {
+    const first = await content.locator(".list-item").first().boundingBox();
+    if (first) clickY = Math.round(first.y + first.height - box.y) + 2;
+  }
   await content.click({ button: "right", position: { x: 10, y: clickY } });
 
   // Wait for context menu

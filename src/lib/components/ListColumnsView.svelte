@@ -46,6 +46,7 @@
   const columns = useListColumns({
     getRows: () => explorer.detailRows,
     getPreferredRows: path => explorer.listCardRows(path),
+    getFitsInPlace: path => explorer.isSpringPeek(path),
     getPinnedPaths: () => dialogStore.renamingEntry ? [dialogStore.renamingEntry.path] : [],
     commitCardRows: (path, rows) => explorer.setListCardRows(path, rows),
     onviewportscroll: () => onviewportscroll?.(),
@@ -55,7 +56,9 @@
   let layer = $state<HTMLElement | null>(null);
   useListMotion({
     getModel: () => columns.model,
-    getChange: () => explorer.peekChange,
+    // A drag's temporary card animates but is never revealed: scrolling
+    // would move its header out from under the held pointer (#1242).
+    getChange: () => { const change = explorer.peekChange; return change?.temporary ? { ...change, reveal: false } : change; },
     getStatus: path => explorer.peekStatus(path),
     columnVisible: column => columns.columnVisible(column),
     getCanvas: () => canvas,

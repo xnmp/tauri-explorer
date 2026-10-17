@@ -22,8 +22,9 @@ import { isInsideDir, samePath } from "$lib/domain/path";
 
 interface ListMotionDeps {
   getModel: () => ListFlowModel;
-  /** The pane's last user peek toggle (`explorer.peekChange`). */
-  getChange: () => { path: string; serial: number } | null;
+  /** The pane's last user peek toggle (`explorer.peekChange`); `reveal: false`
+   * animates it without revealing its card (a spring-loaded peek, #1242). */
+  getChange: () => { path: string; serial: number; reveal?: boolean } | null;
   /** Listing state of an open peek ("loading" until its first listing settles). */
   getStatus: (path: string) => string | undefined;
   /** Whether a column intersects the scrollport now. */

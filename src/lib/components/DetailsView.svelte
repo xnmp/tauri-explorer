@@ -226,14 +226,18 @@
     bind:scrollToIndex={rowScrollToIndex}
   >
     {#snippet children(row, index)}
-      <div role="row" aria-rowindex={index + 1}
+      <!-- data-row-path: the row's identity for a drag's spring-load hit test
+           (#1242), which can land on this wrapper at a row's pixel-snapped edge. -->
+      <div role="row" aria-rowindex={index + 1} data-row-path={row.kind === "entry" ? row.entry.path : row.kind === "peek-state" ? row.parentPath : undefined}
         aria-level={row.kind === "entry" && explorer.peekEnabled ? row.depth + 1 : undefined}
         aria-expanded={row.kind === "entry" && explorer.peekEnabled && row.entry.kind === "directory" ? row.expanded : undefined}
         aria-selected={row.kind === "entry" && explorer.peekEnabled ? explorer.isSelected(row.entry) : undefined}>
       {#if row.kind === "create"}
         <div role="gridcell"><InlineNewFolder {explorer} variant="details" /></div>
       {:else if row.kind === "peek-state"}
-        <div role="gridcell" class="peek-state" style:padding-left={`${(explorer.peekCaretsShown ? 41 : 29) + row.depth * 22}px`}>
+        <!-- data-peek-state names the folder: inside a drag's temporary peek
+             this row drops into it (#1242); elsewhere it stays a background row. -->
+        <div role="gridcell" class="peek-state" data-peek-state={row.parentPath} style:padding-left={`${(explorer.peekCaretsShown ? 41 : 29) + row.depth * 22}px`}>
           <PeekGuides groups={explorer.detailRows.groups} row={index} carets={explorer.peekCaretsShown} />
           <span role="status">{row.message}</span>
         </div>

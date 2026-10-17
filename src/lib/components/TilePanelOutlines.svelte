@@ -20,8 +20,10 @@
     hot: string | null;
     /** Open panels (closing ghosts are not hover targets). */
     live: ReadonlyMap<string, unknown>;
+    /** A drag's temporary panels (#1242): their band gap is part of the peek. */
+    bridged?: readonly string[];
   }
-  let { geometry, metrics, compact, hot, live }: Props = $props();
+  let { geometry, metrics, compact, hot, live, bridged = [] }: Props = $props();
   const uid = $props.id();
   const outlines = $derived(groupOutlines(geometry, metrics, compact));
 </script>
@@ -46,6 +48,11 @@
       <path class="outline-hair" d={outline.d} />
       <path class="outline-accent" d={outline.d} stroke="url(#{uid}-{i})" />
       {#if outline.ribbon}<path class="outline-ribbon-hit" d={outline.ribbon} />{/if}
+      {#if outline.bridge && live.has(outline.path) && bridged.includes(outline.path)}
+        <!-- Crossing the gap between a temporary panel's tile and panel stays inside its peek. -->
+        <rect class="outline-bridge-hit" data-spring-bridge={outline.path}
+          x={outline.bridge.x} y={outline.bridge.y} width={outline.bridge.width} height={outline.bridge.height} />
+      {/if}
     </g>
   {/each}
 </svg>
@@ -65,4 +72,5 @@
   .outline-hair { fill: none; stroke: var(--surface-stroke); stroke-width: 1; }
   .outline-accent { fill: none; stroke-width: 1.5; stroke-linejoin: round; }
   .outline-ribbon-hit { fill: none; stroke: transparent; stroke-width: 14; pointer-events: stroke; }
+  .outline-bridge-hit { fill: transparent; stroke: none; pointer-events: fill; }
 </style>

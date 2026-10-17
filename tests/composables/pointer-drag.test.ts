@@ -35,6 +35,7 @@ vi.mock("$lib/composables/use-external-drag.svelte", () => ({
 
 vi.mock("$lib/composables/use-native-drop-target.svelte", () => ({
   resolveDropTargetAtPoint: vi.fn().mockReturnValue(null),
+  elementAtPoint: () => null,
   highlightTargetAtPoint: vi.fn(),
   clearHighlights: vi.fn(),
   captureHighlightCleanup: () => vi.fn(),

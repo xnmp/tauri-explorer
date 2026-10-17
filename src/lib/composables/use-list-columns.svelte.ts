@@ -19,6 +19,9 @@ interface ListColumnsDeps {
   getRows: () => PeekRows;
   /** Remembered card height (visible rows) for an open top-level folder. */
   getPreferredRows: (path: string) => number | undefined;
+  /** Cards that shrink to the rows left in their column instead of wrapping:
+   * a drag's temporary peeks, whose header must stay under the pointer (#1242). */
+  getFitsInPlace?: (path: string) => boolean;
   /** Entries whose slot, and card row, must stay mounted (inline editors). */
   getPinnedPaths: () => readonly string[];
   /** Store a card height chosen with its grip (`explorer.setListCardRows`). */
@@ -37,7 +40,7 @@ export function useListColumns(deps: ListColumnsDeps) {
   const rows = $derived(listRows(height));
   // A row-count change re-sizes and re-flows; only a row-model change rebuilds items.
   const structure = $derived(buildListStructure(deps.getRows()));
-  const model = $derived(sizeListModel(structure, rows, deps.getPreferredRows));
+  const model = $derived(sizeListModel(structure, rows, deps.getPreferredRows, deps.getFitsInPlace));
   const layout = $derived(model.layout);
   const extent = $derived(listExtent(layout.columns.length));
   const range = $derived(listColumnRange(layout.columns.length, left, width));

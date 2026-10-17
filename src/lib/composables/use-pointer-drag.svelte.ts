@@ -22,8 +22,9 @@ import { bookmarksStore } from "$lib/state/bookmarks.svelte";
 import { terminalPanelStore } from "$lib/state/terminal.svelte";
 import { handleFileDropMany } from "$lib/state/drop-operations";
 import { startExternalDrag } from "./use-external-drag.svelte";
-import { resolveDropTargetAtPoint, highlightTargetAtPoint, clearHighlights, captureHighlightCleanup } from "./use-native-drop-target.svelte";
+import { elementAtPoint, resolveDropTargetAtPoint, highlightTargetAtPoint, clearHighlights, captureHighlightCleanup } from "./use-native-drop-target.svelte";
 import { dispatchFileDrop, admitFileDrop } from "$lib/state/dispatch-file-drop";
+import { springEnd, springHover } from "./spring-load";
 import { internalDragPaths } from "$lib/domain/file-drop";
 import { isWindows, isCopyModifier } from "$lib/domain/platform";
 import { getZoomFactor } from "$lib/domain/zoom";
@@ -144,6 +145,7 @@ export function usePointerDrag(deps: PointerDragDeps) {
 
   function refreshHover(): void {
     if (dragActive && !nativeStarted) {
+      springHover(() => elementAtPoint(hoverPoint.x, hoverPoint.y));
       const target = resolveDropTargetAtPoint(hoverPoint.x, hoverPoint.y);
       const destDir =
         target?.type === "folder" || target?.type === "tab"
@@ -179,6 +181,9 @@ export function usePointerDrag(deps: PointerDragDeps) {
   }
 
   function startNativeDrag(): void {
+    // The OS drag owns the gesture now; this window's native receiver springs
+    // peeks again if it comes back.
+    springEnd();
     dropHover.clear(refreshHover);
     clearHighlights();
     removeListeners();
@@ -276,6 +281,9 @@ export function usePointerDrag(deps: PointerDragDeps) {
   }
 
   function cleanup(clearDrag: boolean): void {
+    // Mouseup (after resolving its target), Escape, blur and unmount. The
+    // close lands a macrotask later, after the drop has read its target.
+    if (dragActive) springEnd();
     dropHover.clear(refreshHover);
     removeListeners();
     if (ghostEl) {

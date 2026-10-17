@@ -15,7 +15,8 @@ import { modalOwnership } from "$lib/state/modal-ownership.svelte";
 
 export type DropTargetResult =
   | RegisteredDropTarget
-  | { type: "folder"; path: string; domMoveOnly?: true }
+  /** `spring`: a row inside a drag's temporary peek, redirected to its folder (#1242). */
+  | { type: "folder"; path: string; domMoveOnly?: true; spring?: true }
   | { type: "bookmark"; path: string }
   | { type: "tab"; tabId: string; path: string }
   | { type: "background"; path?: string; miller?: true; domDisabled?: true }
@@ -68,6 +69,28 @@ function peekDropSurface(el: Element): HTMLElement | null {
   return (el as HTMLElement).closest?.(".peek-drop-target[data-path]") ?? null;
 }
 
+/** Rows the spring redirect can retarget: file rows, peek-state rows and the
+ * Tiles band bridge of a temporary peek. */
+const SPRING_ROWS = ".entry-item[data-path], [data-peek-state], [data-spring-bridge]";
+
+/** A file row, peek-state row or bridge inside a drag's temporary peek
+ * targets that peek's folder (#1242); elsewhere such rows keep their
+ * ordinary behaviour. */
+function springDropTarget(el: Element): DropTargetResult {
+  const row = (el as HTMLElement).closest?.(SPRING_ROWS);
+  if (!row) return null;
+  const paneId = (el as HTMLElement).closest?.("[data-pane-id]")?.getAttribute("data-pane-id");
+  const explorer = paneId ? windowTabsManager.getExplorer(paneId) : undefined;
+  if (!explorer?.springPeeks.length) return null;
+  const bridge = row.getAttribute("data-spring-bridge");
+  const state = row.getAttribute("data-peek-state");
+  const path = bridge ?? state ?? row.getAttribute("data-path");
+  if (!path) return null;
+  const folder = bridge !== null ? (explorer.isSpringPeek(bridge) ? bridge : null)
+    : explorer.springDropFolder(path, state !== null ? "state" : "entry");
+  return folder ? { type: "folder", path: folder, spring: true } : null;
+}
+
 export function resolveDropTargetFromElement(el: Element | null): DropTargetResult {
   if (isDropOwnerBlocked(el)) return { type: "blocked" };
   if (!el) return null;
@@ -91,6 +114,9 @@ export function resolveDropTargetFromElement(el: Element | null): DropTargetResu
     const path = peekSurface.getAttribute("data-path");
     if (path) return { type: "folder", path };
   }
+
+  const spring = springDropTarget(el);
+  if (spring) return spring;
 
   // Miller column directory entries
   const millerEntry = (el as HTMLElement).closest?.(".col-entry[data-path]");
@@ -177,17 +203,25 @@ export function captureDropDestination(element: Element | null, fallbackExplorer
     && sameTarget(resolveDropTargetFromElement(element));
 }
 
+/** The element under an onDragDropEvent position (physical pixels). */
+export function elementAtNativePosition(position: { x: number; y: number }): Element | null {
+  const adjusted = adjustForHitTest(position);
+  return document.elementFromPoint(adjusted.x, adjusted.y);
+}
+
 /** Resolve drop target from onDragDropEvent position (physical pixels). */
 export function resolveDropTarget(position: { x: number; y: number }): DropTargetResult {
-  const adjusted = adjustForHitTest(position);
-  const el = document.elementFromPoint(adjusted.x, adjusted.y);
-  return resolveDropTargetFromElement(el);
+  return resolveDropTargetFromElement(elementAtNativePosition(position));
+}
+
+/** The element under pointer event coordinates (CSS viewport pixels). */
+export function elementAtPoint(x: number, y: number): Element | null {
+  return document.elementFromPoint(x, y);
 }
 
 /** Resolve drop target from pointer event coordinates (CSS viewport pixels). */
 export function resolveDropTargetAtPoint(x: number, y: number): DropTargetResult {
-  const el = document.elementFromPoint(x, y);
-  return resolveDropTargetFromElement(el);
+  return resolveDropTargetFromElement(elementAtPoint(x, y));
 }
 
 /** Highlight target from onDragDropEvent position (physical pixels). */
@@ -202,8 +236,23 @@ export function highlightTargetAtPoint(x: number, y: number): void {
 }
 
 function highlightAtCoords(cx: number, cy: number): void {
+  highlightTargetElement(document.elementFromPoint(cx, cy));
+}
+
+/** The element showing a spring redirect's feedback: the folder's own card or
+ * panel surface around the row, else the folder's row in the same listing. */
+function springHighlightElement(el: Element, folder: string): HTMLElement | null {
+  const content = (el as HTMLElement).closest?.(".content") as HTMLElement | null;
+  for (let node = el as HTMLElement | null; node && node !== content; node = node.parentElement) {
+    if (node.classList?.contains("peek-drop-target") && node.getAttribute("data-path") === folder) return node;
+  }
+  const escaped = typeof CSS !== "undefined" && CSS.escape ? CSS.escape(folder) : folder.replace(/["\\]/g, "\\$&");
+  return content?.querySelector<HTMLElement>(`.entry-item.directory[data-path="${escaped}"], .peek-drop-target[data-path="${escaped}"]`) ?? null;
+}
+
+/** Highlight the drop target an element resolves to (DOM drag events). */
+export function highlightTargetElement(el: Element | null): void {
   highlightRevision++;
-  const el = document.elementFromPoint(cx, cy);
   if (!el) {
     clearHighlights();
     clearSidebarHighlight();
@@ -227,6 +276,12 @@ function highlightAtCoords(cx: number, cy: number): void {
   const sidebarEl = (el as HTMLElement).closest?.(".quick-access") as HTMLElement | null;
   const terminalEl = (el as HTMLElement).closest?.(".terminal-panel") as HTMLElement | null;
   const peekSurface = peekDropSurface(el);
+  if (registered?.type === "folder" && registered.spring) {
+    clearSidebarHighlight();
+    notifyBookmarkDropTarget(false);
+    setHighlightedElement(springHighlightElement(el, registered.path));
+    return;
+  }
   const targetEl = terminalEl || folderEntry || peekSurface || millerEntry || tabEl || crumbEl || bookmarkEl || millerCol || (!sidebarEl ? (el as HTMLElement).closest?.(".content") as HTMLElement | null : null);
 
   if (sidebarEl) {

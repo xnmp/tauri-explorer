@@ -43,7 +43,8 @@ export interface NavBarButtons {
   refresh: boolean;
 }
 
-export type IconTheme = "default" | "material" | "minimal";
+export type { IconTheme } from '$lib/domain/icon-themes';
+import type { IconTheme } from '$lib/domain/icon-themes';
 
 // Tile sizes are pure layout data shared by every tile grid; re-exported here
 // for existing importers.
@@ -218,7 +219,7 @@ function persistedSettings(settings: Settings, extras: Record<string, unknown>):
 }
 
 const SETTING_ENUMS: Partial<Record<keyof Settings, readonly string[]>> = {
-  iconTheme: ["default", "material", "minimal"],
+  iconTheme: ["default", "material", "classic", "minimal", "catppuccin"],
   thumbnailSize: ["small", "medium", "large", "xlarge"],
   viewMode: ["details", "list", "tiles"],
   previewPanePosition: ["right", "bottom", "top", "auto"],
@@ -770,14 +771,6 @@ function createSettingsStore() {
           [column]: !settings.columnVisibility[column],
         },
       });
-    },
-    /** Effective icon theme: user setting wins; if "default", check --theme-icon-pack CSS var */
-    get effectiveIconTheme(): IconTheme {
-      if (settings.iconTheme !== "default") return settings.iconTheme;
-      if (typeof document === "undefined") return "default";
-      const css = getComputedStyle(document.documentElement).getPropertyValue("--theme-icon-pack").trim().replace(/["']/g, "");
-      if (css === "material" || css === "minimal") return css;
-      return "default";
     },
     toggleStatusBar(): void {
       update({ showStatusBar: !settings.showStatusBar });

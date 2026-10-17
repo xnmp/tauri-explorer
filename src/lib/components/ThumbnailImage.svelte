@@ -49,7 +49,7 @@
 </script>
 
 <script lang="ts">
-  import { untrack } from "svelte";
+  import { untrack, type Snippet } from "svelte";
   import { getThumbnailCache, setThumbnailCache } from "$lib/state/thumbnail-cache";
 
   /**
@@ -73,6 +73,8 @@
     /** Called when generation fails (e.g. no ffmpeg / no images) so the parent
      *  can render its own icon instead of the broken-image fallback. */
     onunavailable?: () => void;
+    /** File-view fallback follows its selected icon pack while thumbnails load/fail. */
+    fallback?: Snippet;
   }
 
   let {
@@ -83,6 +85,7 @@
     quality,
     fallbackColor = "#0078d4",
     onunavailable,
+    fallback,
   }: Props = $props();
 
   const backendSize = $derived(genSize ?? size);
@@ -292,20 +295,28 @@
          the whole grid during a cold scroll — measured to halve the frame
          rate. The static placeholder communicates "loading" well enough for
          the ~100-300ms a micro thumbnail takes. -->
+    {#if fallback}
+      <div class="thumbnail-placeholder pack-icon" style:--fallback-scale={size / 64}>{@render fallback()}</div>
+    {:else}
     <svg width={size} height={size} viewBox="0 0 48 48" fill="none" class="thumbnail-placeholder">
       <rect x="6" y="6" width="36" height="36" rx="4" fill={fallbackColor} fill-opacity="0.1"/>
       <rect x="6" y="6" width="36" height="36" rx="4" stroke={fallbackColor} stroke-width="1.5" stroke-opacity="0.3"/>
       <circle cx="16" cy="16" r="4" fill={fallbackColor} fill-opacity="0.3"/>
       <path d="M6 33L15 24L22 31L30 21L42 33V38C42 40.2091 40.2091 42 38 42H10C7.79086 42 6 40.2091 6 38V33Z" fill={fallbackColor} fill-opacity="0.2"/>
     </svg>
+    {/if}
   {:else if error && !microUrl}
     <!-- Fallback to image icon SVG -->
+    {#if fallback}
+      <div class="thumbnail-fallback pack-icon" style:--fallback-scale={size / 64}>{@render fallback()}</div>
+    {:else}
     <svg width={size} height={size} viewBox="0 0 48 48" fill="none" class="thumbnail-fallback">
       <rect x="6" y="6" width="36" height="36" rx="4" fill={fallbackColor} fill-opacity="0.15"/>
       <rect x="6" y="6" width="36" height="36" rx="4" stroke={fallbackColor} stroke-width="2"/>
       <circle cx="16" cy="16" r="4" fill={fallbackColor}/>
       <path d="M6 33L15 24L22 31L30 21L42 33V38C42 40.2091 40.2091 42 38 42H10C7.79086 42 6 40.2091 6 38V33Z" fill={fallbackColor} fill-opacity="0.4"/>
     </svg>
+    {/if}
   {:else}
     <!-- Two-layer thumbnail: micro (pixelated) underneath, full on top -->
     {#if microUrl}
@@ -358,6 +369,9 @@
   .thumbnail-fallback {
     opacity: 0.8;
   }
+
+  .pack-icon { width:100%; height:100%; display:flex; align-items:center; justify-content:center; }
+  .pack-icon :global(> *) { flex-shrink:0; transform:scale(var(--fallback-scale)); }
 
   .thumbnail-micro {
     width: 100%;

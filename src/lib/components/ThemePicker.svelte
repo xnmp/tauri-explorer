@@ -4,15 +4,28 @@
   Enter commits and persists it; Escape reverts to the previously-active theme.
 -->
 <script lang="ts">
-  import { tick, untrack } from "svelte";
+  import { tick, untrack, onDestroy } from "svelte";
   import { themeStore } from "$lib/state/theme.svelte";
+  import { iconThemeStore } from '$lib/state/icon-theme.svelte';
+  import type { IconTheme, IconPack } from '$lib/domain/icon-themes';
+  import { ICON_THEMES } from './icons/icon-theme-options';
+  import type { FileEntry } from '$lib/domain/file';
+  import FileIcon from './FileIcon.svelte';
 
   interface Props {
     open: boolean;
     onClose: () => void;
+    kind?: 'color' | 'icon';
   }
 
-  let { open, onClose }: Props = $props();
+  let { open, onClose, kind = 'color' }: Props = $props();
+  const iconMode = $derived(kind === 'icon');
+  const title = $derived(iconMode ? 'Select Icon Theme' : 'Select Color Theme');
+  interface PickerTheme { id: string; name: string; description: string; colors?: {accent: string; divider: string}; }
+  const availableThemes = $derived<readonly PickerTheme[]>(iconMode ? ICON_THEMES : themeStore.availableThemes);
+  const examples: readonly FileEntry[] = ['main.ts','script.py','files.zip','notes.txt'].map(name=>({name,path:`/icon-preview/${name}`,kind:'file',size:0,modified:''}));
+  const savedThemeId = () => iconMode ? iconThemeStore.currentThemeId : themeStore.currentThemeId;
+  const preview = (id: string) => iconMode ? iconThemeStore.previewTheme(id as IconTheme) : themeStore.previewTheme(id);
 
   let query = $state("");
   let selectedIndex = $state(0);
@@ -24,39 +37,41 @@
 
   const filteredThemes = $derived.by(() => {
     const q = query.trim().toLowerCase();
-    if (!q) return themeStore.availableThemes;
-    return themeStore.availableThemes.filter((t) =>
+    if (!q) return availableThemes;
+    return availableThemes.filter((t) =>
       t.name.toLowerCase().includes(q) || t.id.toLowerCase().includes(q)
     );
   });
 
   // Tracks an open picker session so the close branch below only fires for a
   // session that actually started. Plain let — only read/written in the effect.
-  let pickerSession = false;
+  let pickerSession: 'color' | 'icon' | null = null;
 
   $effect(() => {
     if (open && inputRef) {
-      pickerSession = true;
+      pickerSession = kind;
       // untrack: session init must not re-run when the theme store changes
       // mid-session (committing a theme mutates currentThemeId while the
       // picker is still open).
-      originalThemeId = untrack(() => themeStore.currentThemeId);
+      originalThemeId = untrack(savedThemeId);
       query = "";
       // Start selection at the currently-active theme so arrowing moves
       // relative to the user's current choice.
-      const idx = untrack(() => themeStore.availableThemes).findIndex((t) => t.id === originalThemeId);
+      const idx = untrack(() => availableThemes).findIndex((t) => t.id === originalThemeId);
       selectedIndex = idx >= 0 ? idx : 0;
       mouseMoved = false;
       tick().then(() => { inputRef?.focus(); scrollToSelected(); });
     } else if (!open && pickerSession) {
-      pickerSession = false;
+      const session = pickerSession;
+      pickerSession = null;
       // Revert any un-committed preview on every close path (Escape, click
       // outside, or the parent flipping `open` externally). After a commit,
       // currentThemeId is the newly-set theme, so re-applying it is a no-op.
       // Must run in the effect BODY, not a teardown: the teardown variant
       // observed a stale currentThemeId and reverted the committed theme,
       // making theme switches need two attempts (#251, #164).
-      themeStore.previewTheme(untrack(() => themeStore.currentThemeId));
+      if (session === 'icon') iconThemeStore.previewTheme(null);
+      else themeStore.previewTheme(untrack(() => themeStore.currentThemeId));
     }
   });
 
@@ -64,11 +79,17 @@
   $effect(() => {
     if (!open) return;
     const theme = filteredThemes[selectedIndex];
-    if (theme) themeStore.previewTheme(theme.id);
+    if (theme) preview(theme.id);
+  });
+
+  onDestroy(() => {
+    if (pickerSession === 'icon') iconThemeStore.previewTheme(null);
+    else if (pickerSession === 'color') themeStore.previewTheme(themeStore.currentThemeId);
   });
 
   function commit(themeId: string): void {
-    themeStore.setTheme(themeId);
+    if (iconMode) iconThemeStore.setTheme(themeId as IconTheme);
+    else themeStore.setTheme(themeId);
     onClose();
   }
 
@@ -123,13 +144,19 @@
   <!-- svelte-ignore a11y_no_static_element_interactions -->
   <!-- svelte-ignore a11y_click_events_have_key_events -->
   <div class="theme-picker-overlay" onclick={cancel} onkeydown={handleKeydown} onmousemove={() => { mouseMoved = true; }}>
-    <div class="theme-picker-dialog" onclick={(e) => e.stopPropagation()}>
+    <div class="theme-picker-dialog" role="dialog" aria-modal="true" aria-label={title} tabindex="-1" onclick={(e) => e.stopPropagation()}>
       <div class="search-container">
         <span class="search-prefix">🎨</span>
         <input
           type="text"
           class="search-input"
-          placeholder="Select Color Theme (type to filter, ↑↓ preview, Enter to commit, Esc to revert)"
+          placeholder={`${title} (↑↓ preview, Enter to apply, Esc to revert)`}
+          aria-label={title}
+          role="combobox"
+          aria-autocomplete="list"
+          aria-expanded="true"
+          aria-controls="theme-picker-options"
+          aria-activedescendant={filteredThemes[selectedIndex] ? `theme-option-${filteredThemes[selectedIndex].id}` : undefined}
           bind:value={query}
           bind:this={inputRef}
           oninput={handleInput}
@@ -138,19 +165,28 @@
 
       <div class="themes-container" bind:this={themesContainerRef}>
         {#if filteredThemes.length > 0}
-          <ul class="themes-list" role="listbox">
+          <ul class="themes-list" id="theme-picker-options" role="listbox" aria-label={title}>
             {#each filteredThemes as theme, index (theme.id)}
               {@const isSelected = index === selectedIndex}
               {@const isCurrent = theme.id === originalThemeId}
               <li
                 class="theme-item"
+                id={`theme-option-${theme.id}`}
                 class:selected={isSelected}
                 role="option"
                 aria-selected={isSelected}
                 onclick={() => commit(theme.id)}
                 onmouseenter={() => { if (mouseMoved) selectedIndex = index; }}
               >
-                <span class="swatch" style="background: {theme.colors.accent}; border-color: {theme.colors.divider};"></span>
+                {#if iconMode}
+                  <span class="icon-samples" aria-hidden="true">
+                    {#each examples as entry (entry.name)}
+                      <FileIcon {entry} size="small" theme={theme.id === 'default' ? iconThemeStore.suggestedTheme : theme.id as IconPack} />
+                    {/each}
+                  </span>
+                {:else if theme.colors}
+                  <span class="swatch" style="background: {theme.colors.accent}; border-color: {theme.colors.divider};"></span>
+                {/if}
                 <div class="theme-info">
                   <span class="theme-name">{theme.name}{#if isCurrent} <span class="current-tag">current</span>{/if}</span>
                   <span class="theme-description">{theme.description}</span>
@@ -243,6 +279,8 @@
     border: 1px solid;
     flex-shrink: 0;
   }
+
+  .icon-samples { display:flex; gap:10px; align-items:center; flex-shrink:0; }
 
   .theme-info {
     flex: 1;

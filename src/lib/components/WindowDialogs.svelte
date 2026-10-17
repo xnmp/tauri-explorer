@@ -181,7 +181,7 @@
 {/if}
 {#if ThemePicker.component}
   <svelte:boundary onerror={dialogCrash("Theme Picker", () => dialogStore.closeThemePicker())}>
-    <ThemePicker.component open={dialogStore.isThemePickerOpen} onClose={() => dialogStore.closeThemePicker()} />
+    <ThemePicker.component open={dialogStore.isThemePickerOpen} kind={dialogStore.themePickerKind} onClose={() => dialogStore.closeThemePicker()} />
   </svelte:boundary>
 {/if}
 {#if OptionPicker.component}

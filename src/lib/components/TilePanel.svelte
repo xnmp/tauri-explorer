@@ -13,9 +13,10 @@
   import { LIST_CARD_FADE } from "$lib/domain/list-cards";
   import {
     PANEL_PAD_X, PANEL_PAD_NEAR, panelFades, panelMoreCount, panelPadTop,
-    type MiniTileLayout, type PanelBox, type PanelHeightBounds, type TilePanelSpec,
+    type MiniTileLayout, type PanelBox, type TilePanelSpec,
   } from "$lib/domain/tile-panels";
   import type { useItemInteractions } from "$lib/composables/use-item-interactions.svelte";
+  import { createSurfaceDropFeedback, surfaceDropPath } from "$lib/composables/surface-drop-feedback";
   import FileIcon from "./FileIcon.svelte";
   import TilePanelGrip from "./TilePanelGrip.svelte";
   import TileSurface from "./TileSurface.svelte";
@@ -28,26 +29,24 @@
     entries: readonly FileEntry[];
     mini: MiniTileLayout;
     surface: TileLayout;
-    bounds: PanelHeightBounds;
-    /** The band's height and its tallest member's content (the grip's range). */
+    /** The band's height (the grip's value) and the grip's range. */
     bandHeight: number;
-    bandContent: number;
+    gripBounds: { min: number; max: number };
     /** Content offsets to mount (window, overscan and a renaming entry). */
     offsets: readonly number[];
     scrollTop: number;
     dragging: boolean;
     interactions: ReturnType<typeof useItemInteractions>;
     onscrolltop: (top: number) => void;
-    ongripstart: () => void;
-    ongrippreview: (height: number) => void;
-    ongripend: (height: number | null) => void;
+    ongripstart: (pointer: number, clientY: number) => void;
+    ongripkey: (key: string) => boolean;
     onclose: () => void;
     onlabel: () => void;
     tile: Snippet<[FileEntry, number, number]>;
   }
   let {
-    box, spec, folder, entries, mini, surface, bounds, bandHeight, bandContent, offsets, scrollTop, dragging,
-    interactions, onscrolltop, ongripstart, ongrippreview, ongripend, onclose, onlabel, tile,
+    box, spec, folder, entries, mini, surface, bandHeight, gripBounds, offsets, scrollTop, dragging,
+    interactions, onscrolltop, ongripstart, ongripkey, onclose, onlabel, tile,
   }: Props = $props();
 
   const fades = $derived(panelFades(spec.contentHeight, box.height, scrollTop));
@@ -75,36 +74,20 @@
     if (scroller && Math.abs(scroller.scrollTop - top) > 0.5) scroller.scrollTop = top;
   });
 
-  // The panel's own surface (not a mini tile) targets its folder. Tiles inside
-  // are their own targets (or none), so moving onto one retires the surface's
-  // feedback; no leave event fires for it, because the tile is inside.
-  const onSurface = (event: Event) => !(event.target instanceof Element && event.target.closest(".entry-item"));
-  let surfaceActive = false;
-  function surfaceOver(event: DragEvent): void {
-    if (!onSurface(event)) {
-      if (surfaceActive) interactions.releaseDropTarget(folder.path);
-      surfaceActive = false;
-      return;
-    }
-    surfaceActive = true;
-    interactions.handleDragOver(event, folder);
-  }
-  function surfaceDrop(event: DragEvent): void {
-    if (!onSurface(event)) return;
-    surfaceActive = false;
-    void interactions.handleDrop(event, folder);
-  }
+  // The panel's own surface (not a mini tile) targets its folder; mini tiles
+  // are their own targets (or none), so reaching one retires the surface's
+  // feedback (no leave fires for it: the tile is inside).
+  const onSurface = (event: Event) => surfaceDropPath(event.target, folder.path) !== null;
+  const surfaceDrop = createSurfaceDropFeedback(() => interactions, event => onSurface(event) ? folder : null);
 </script>
 
+<!-- svelte-ignore a11y_no_static_element_interactions -- a pointer drop and context-menu surface spanning the label, scroll area (the rowgroup) and grip; the folder's own tile is its keyboard path. -->
 <div class="tile-panel peek-drop-target" data-path={folder.path} data-panel-owner={folder.path}
-  role="rowgroup" aria-label={`${folder.name} contents`}
   class:above={box.side === "above"} class:stacked={box.side === "stacked"}
   class:drop-target={interactions.isDropTarget(folder.path)}
   style:left="{box.x0}px" style:top="{box.top}px" style:width="{box.width}px" style:height="{box.height}px"
   style:opacity={box.opacity < 1 ? box.opacity : undefined}
-  ondragenter={surfaceOver} ondragover={surfaceOver}
-  ondragleave={(event) => { if (surfaceActive) interactions.handleDragLeave(event, folder); surfaceActive = false; }}
-  ondrop={surfaceDrop}
+  ondragenter={surfaceDrop.over} ondragover={surfaceDrop.over} ondragleave={surfaceDrop.leave} ondrop={surfaceDrop.drop}
   oncontextmenu={(event) => { if (onSurface(event)) interactions.handleContextMenu(event, folder); }}>
   {#if box.label}
     <div class="tile-panel-label" role="row" style:left="{box.label.x0 - box.x0}px" style:width="{box.label.width}px" style:height="{box.labelHeight}px">
@@ -121,7 +104,11 @@
       </div>
     </div>
   {/if}
-  <TileSurface layout={surface} class="tile-panel-scroll" data-marquee-clip
+  <!-- The scroll area is the panel's rowgroup: tabindex -1 keeps Chrome from
+       making the scroller a Tab stop, and a focusable element inside a grid
+       needs a role of its own (the label and grip are rows of the grid). -->
+  <TileSurface layout={surface} class="tile-panel-scroll" data-marquee-clip tabindex={-1}
+    role="rowgroup" aria-label={`${folder.name} contents`}
     style="--fade-top: {fades.top ? LIST_CARD_FADE : 0}px; --fade-bottom: {fades.bottom ? LIST_CARD_FADE : 0}px"
     bind:element={scroller}
     onscroll={() => { if (scroller) onscrolltop(scroller.scrollTop); }}>
@@ -148,8 +135,8 @@
   </TileSurface>
   {#if more > 0}<span class="tile-panel-more" aria-hidden="true">+{more} more</span>{/if}
   {#if spec.entries.length > 0}
-    <TilePanelGrip name={folder.name} side={box.side} height={bandHeight} maxContent={bandContent} {mini} {bounds} {dragging}
-      onstart={ongripstart} onpreview={ongrippreview} onend={ongripend} />
+    <TilePanelGrip name={folder.name} side={box.side} height={bandHeight} min={gripBounds.min} max={gripBounds.max}
+      rowHeight={mini.rowHeight} {dragging} onstart={ongripstart} onkey={ongripkey} />
   {/if}
 </div>
 

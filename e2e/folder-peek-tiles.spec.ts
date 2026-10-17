@@ -83,8 +83,7 @@ test("opens below, then above, then stacked; opening never moves an existing pan
   expect(await open(page)).toBe(7);
   await toggle(page, P("Career"));
   expect(await side(page, P("Career"))).toBe("below");
-  await expect(panel(page, P("Career"))).toHaveAttribute("role", "rowgroup");
-  await expect(panel(page, P("Career"))).toHaveAttribute("aria-label", "Career contents");
+  await expect(page.getByRole("rowgroup", { name: "Career contents" })).toHaveAttribute("tabindex", "-1");
   await expect(caret(page, P("Career"))).toHaveAttribute("aria-label", "Collapse Career");
   // Its children are entries of the pane, shown as mini tiles; the name is bold.
   await expect(mini(page, P("Career/Applications"))).toBeVisible();
@@ -488,4 +487,80 @@ test("Folder Peek off gives classic Tiles: no carets, panels or bands", async ({
   expect(await explorerCall<number>(page, "return explorer.displayEntries.length")).toBe(90);
   await setting(page, { folderPeek: true });
   await expect(panel(page, P("Career"))).toHaveCount(1);
+});
+
+test("a grip drag whose band scrolls away mid-drag still commits on release and leaves no preview", async ({ page }) => {
+  const base = "/folder-peek-tiles-large";
+  await open(page, base);
+  await toggle(page, P("Alpha", base));
+  const grip = panel(page, P("Alpha", base)).getByRole("separator", { name: "Resize Alpha" });
+  const start = (await rect(page, P("Alpha", base))).height;
+  const box = (await grip.boundingBox())!;
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2 + 40, { steps: 4 });
+  await expect(grip).toHaveClass(/dragging/);
+  // Scrolling the list unmounts the band, grip and all, while the button is held.
+  await scroller(page).evaluate(el => { el.scrollTop = el.scrollHeight; });
+  await expect(panel(page, P("Alpha", base))).toHaveCount(0);
+  await page.mouse.up();
+  await scroller(page).evaluate(el => { el.scrollTop = 0; });
+  await expect(panel(page, P("Alpha", base))).toBeVisible();
+  await settled(page);
+  await expect(page.locator(`${shown} .tile-panel-grip.dragging`)).toHaveCount(0);
+  expect(Math.abs(await explorerCall<number>(page, "return explorer.tilePanelHeight(value)", P("Alpha", base)) - (start + 40))).toBeLessThanOrEqual(0.5);
+  expect(Math.abs((await rect(page, P("Alpha", base))).height - (start + 40))).toBeLessThanOrEqual(0.5);
+});
+
+test("closing a panel keeps keyboard focus on its parent tile: caret and Escape", async ({ page }) => {
+  await open(page);
+  const active = () => page.evaluate(() => document.activeElement?.closest<HTMLElement>(".entry-item")?.dataset.path ?? document.activeElement?.tagName ?? null);
+  await tile(page, P("Career")).click();
+  await toggle(page, P("Career"));
+  await expect.poll(active).toBe(P("Career"));
+  // Every frame of the closing motion keeps focus on the parent (never BODY).
+  const trail = await page.evaluate(async ([selector, path]) => {
+    const pane = document.querySelector(selector)!;
+    pane.querySelector<HTMLElement>(`.tile-row .entry-item[data-path="${path}"] .peek-caret`)!.click();
+    const seen: (string | null)[] = [];
+    for (let i = 0; i < 14; i++) {
+      await new Promise(resolve => requestAnimationFrame(resolve));
+      seen.push(document.activeElement?.closest<HTMLElement>(".entry-item")?.dataset.path ?? document.activeElement?.tagName ?? null);
+    }
+    return seen;
+  }, [shown, P("Career")] as const);
+  expect(new Set(trail)).toEqual(new Set([P("Career")]));
+  await settled(page);
+  expect(await active()).toBe(P("Career"));
+  // Escape from a mini tile: the first clears the selection, the second
+  // steps out, closing the panel with the cursor on its parent.
+  await toggle(page, P("Career"));
+  await mini(page, P("Portfolio", P("Career"))).click();
+  await expect.poll(active).toBe(P("Portfolio", P("Career")));
+  await page.keyboard.press("Escape");
+  await expect(page.locator(`${shown} .entry-item.selected`)).toHaveCount(0);
+  await page.keyboard.press("Escape");
+  await expect(caret(page, P("Career"))).toHaveAttribute("aria-expanded", "false");
+  await settled(page);
+  expect(await active()).toBe(P("Career"));
+});
+
+test("a panel whose slow listing settles after the motion window is still revealed", async ({ page }) => {
+  const base = "/folder-peek-tiles-rows";
+  await open(page, base, { width: 900, height: 500 });
+  await page.evaluate(async () => {
+    const { getMockControl } = await import("/src/lib/api/mock-control.ts");
+    getMockControl().latency = { list_directory_fresh: 2500 };
+  });
+  const path = P("Folder 15", base); // the third row, the last one on screen
+  await caret(page, path).click();
+  // Past the motion window (1.5s) the panel still shows its Loading row.
+  await page.waitForTimeout(1700);
+  expect(await explorerCall<string>(page, "return explorer.peekStatus(value) ?? 'none'", path)).toBe("loading");
+  await expect.poll(() => explorerCall<string>(page, "return explorer.peekStatus(value) ?? 'none'", path), { timeout: 8000 }).toBe("loaded");
+  await expect(panel(page, path).locator(".entry-item")).toHaveCount(8);
+  await settled(page);
+  const [box, port] = await Promise.all([rect(page, path), scroller(page).boundingBox()]);
+  expect(box.y).toBeGreaterThanOrEqual(port!.y - 1);
+  expect(box.y + box.height).toBeLessThanOrEqual(port!.y + port!.height + 1);
 });

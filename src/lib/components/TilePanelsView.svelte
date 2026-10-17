@@ -143,15 +143,13 @@
   {@const spec = model.panels.get(box.path)}
   {@const folder = spec ? explorer.displayEntries[spec.entryIndex] : undefined}
   {#if spec && folder}
-    {@const band = tiles.bandExtent(box.path)}
-    <TilePanel {box} {spec} {folder} entries={explorer.displayEntries} mini={model.mini} {surface} bounds={model.bounds}
-      bandHeight={band.height} bandContent={band.content}
+    <TilePanel {box} {spec} {folder} entries={explorer.displayEntries} mini={model.mini} {surface}
+      bandHeight={tiles.bandExtent(box.path).height} gripBounds={tiles.gripBounds(box.path)}
       offsets={tiles.panelOffsets(box.path, box)} scrollTop={tiles.panelScrollTop(box.path)} dragging={tiles.gripping(box.path)}
       {interactions} tile={miniTile}
       onscrolltop={(top) => tiles.setPanelScrollTop(box.path, top)}
-      ongripstart={() => tiles.startGrip(box.path)}
-      ongrippreview={(height) => tiles.previewGrip(box.path, height)}
-      ongripend={(height) => tiles.endGrip(box.path, height)}
+      ongripstart={(pointer, clientY) => tiles.beginGrip(box.path, pointer, clientY)}
+      ongripkey={(key) => tiles.gripKey(box.path, key)}
       onclose={() => toggle(box.path)}
       onlabel={() => tiles.revealParent(box.path)} />
   {:else}

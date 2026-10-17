@@ -6,9 +6,12 @@
  * the open/close motion.
  *
  * Motion (§9.5): only user toggles (`explorer.peekChange`, armed while the
- * opened listing loads) animate, by mixing the previous and next geometry each
- * frame; a new toggle or grip press finishes the running one first, and
- * reduced motion, refreshes, resizes and grip drags are instant. A closing
+ * opened listing loads, `stepMotionArm` as in List) animate, by mixing the
+ * previous and next geometry each frame; a new toggle or grip press finishes
+ * the running one first, and reduced motion, refreshes, resizes and grip drags
+ * are instant. The opened panel is revealed once its listing settles, however
+ * long that takes. The grip drag session lives here, ended by window
+ * listeners, so a band that unmounts mid-drag cannot strand it (#444). A closing
  * panel renders as an inert ghost captured from the previous rows (ghost rule:
  * no identity classes, data or ARIA, so no live query or state update reaches
  * it). Whatever changes, the toggled (or dragged) folder's row — else the first
@@ -24,15 +27,15 @@ import { dialogStore } from "$lib/state/dialogs.svelte";
 import { dropHover } from "$lib/state/drop-hover";
 import { createRafCoalescer } from "$lib/domain/raf-coalesce";
 import { TILE_GRID_PAD_X } from "$lib/domain/tile-layout";
+import { motionArmAt, stepMotionArm } from "$lib/domain/list-motion";
+import { rectDimToCSS } from "$lib/domain/zoom";
 import {
-  buildTilePanelModel, groupOffsets, placementSides, PANEL_PAD_Y,
+  buildTilePanelModel, clampPreferredHeight, gripKeyHeight, groupOffsets, placementSides, PANEL_PAD_Y,
   type BandSide, type GroupGeometry, type PanelBox, type TileGroup, type TilePanelModel,
 } from "$lib/domain/tile-panels";
 import { panelRevealTop, panelRowTop, resolveTileMove, type TileNavigationSnapshot } from "$lib/domain/tile-panel-navigation";
 import { canAnimate, easeOutCubic, geometryChanged, leavingPaths, mixGeometry, TILE_MOTION_MS } from "$lib/domain/tile-panel-motion";
 
-/** An opened folder's listing may arrive after its toggle; it still animates. */
-const ARM_MS = 1500;
 /** Mini rows mounted beyond a panel's visible area. */
 const PANEL_OVERSCAN = 1;
 /** The scroller's padding around the row groups. */
@@ -82,7 +85,8 @@ export function useTilePanels(deps: TilePanelsDeps) {
 
   // ---- Grip preview ----------------------------------------------------------
   let preview = $state.raw<{ paths: readonly string[]; height: number } | null>(null);
-  let gripHeld = false;
+  /** The grip a pointer is dragging (its band height and side at the press). */
+  let grip: { path: string; pointer: number; y: number; height: number; side: BandSide; stop: () => void } | null = null;
 
   // ---- Model -----------------------------------------------------------------
   /** Sides from the previous layout: kept while feasible (§9.1). */
@@ -157,8 +161,7 @@ export function useTilePanels(deps: TilePanelsDeps) {
 
   // ---- Motion -----------------------------------------------------------------------
   let last: { model: TilePanelModel; rows: PeekRows } | null = null;
-  let seen = untrack(() => explorer().peekChange?.serial ?? null);
-  let armed: { path: string; until: number } | null = null;
+  let arm = motionArmAt(untrack(() => explorer().peekChange?.serial ?? null));
   let anchorPath: string | null = null;
   let pendingAnchor: Anchor | null = null;
   let pendingReveal: string | null = null;
@@ -233,23 +236,30 @@ export function useTilePanels(deps: TilePanelsDeps) {
     const rows = explorer().detailRows;
     const change = explorer().peekChange;
     untrack(() => {
-      const now = performance.now();
-      const user = change !== null && change.serial !== seen;
-      if (change) seen = change.serial;
-      if (user) armed = { path: change.path, until: now + ARM_MS };
-      if (armed && now > armed.until) armed = null;
+      const user = change !== null && change.serial !== arm.seen;
+      // The toggled folder (armed for motion, or awaiting its reveal) keeps its row in place.
+      const tracked = arm.armed?.path ?? arm.reveal;
+      const step = stepMotionArm(arm, {
+        change, now: performance.now(),
+        status: path => explorer().peekStatus(path),
+        cardOf: path => next.panels.has(path) ? path : null,
+        // An interrupted motion still owes its reveal.
+        carried: running?.opened ?? null,
+      });
+      arm = step.next;
       const previous = last;
       last = { model: next, rows };
       // Forget scroll offsets of panels that closed (ghosts keep their own).
       for (const key of Object.keys(panelScroll)) if (!next.panels.has(key)) delete panelScroll[key];
+      // A panel closed mid-drag never delivers its grip's release.
+      if (grip && !next.panels.has(grip.path)) endGrip(null);
       if (!previous) return;
       const sameGrid = canAnimate(previous.model, next);
-      const path = user ? change.path : anchorPath ?? armed?.path ?? null;
+      const path = user ? change.path : anchorPath ?? tracked;
       const anchor = sameGrid ? captureAnchor(previous.model, frame ?? previous.model.geometry, path) : null;
-      const animate = !!armed && sameGrid && !gripHeld && !prefersReducedMotion();
+      const animate = step.animate && sameGrid && !grip && !prefersReducedMotion();
       // A new toggle, and every change that does not animate, finishes the running motion.
       if (user || !animate) finishMotion();
-      const opened = armed && next.panels.has(armed.path) ? armed.path : null;
       const from = frame ?? previous.model.geometry;
       if (animate && geometryChanged(from, next.geometry)) {
         // Retargeting a running motion starts from its current frame.
@@ -257,15 +267,13 @@ export function useTilePanels(deps: TilePanelsDeps) {
         const nextGhosts = ghostsFor(leaving, previous);
         stopFrames();
         ghosts = nextGhosts;
-        startMotion(from, next.geometry, anchor, opened);
+        startMotion(from, next.geometry, anchor, step.reveal);
         pendingAnchor = null;
       } else {
         finishMotion();
         pendingAnchor = anchor;
-        pendingReveal = opened;
+        pendingReveal = step.reveal;
       }
-      // The change that settles the opened folder's listing is its last animated one.
-      if (armed && explorer().peekStatus(armed.path) !== "loading") armed = null;
     });
   });
 
@@ -290,7 +298,7 @@ export function useTilePanels(deps: TilePanelsDeps) {
     });
   });
 
-  onDestroy(() => { finishMotion(); scrollWork.cancel(); });
+  onDestroy(() => { endGrip(null); finishMotion(); scrollWork.cancel(); });
 
   // ---- Panel windows -------------------------------------------------------------
   /** Content rows to mount for a panel: its visible rows plus overscan. */
@@ -399,20 +407,79 @@ export function useTilePanels(deps: TilePanelsDeps) {
       key: item.key, index: item.entryIndex, entry: item.entryIndex === null ? null : entries[item.entryIndex] ?? null,
     }));
   }
-  function startGrip(path: string): void {
-    finishMotion();
-    gripHeld = true;
-    anchorPath = path;
+  /** An open panel's grip: its side, band height and the range a drag may set. */
+  function gripRange(path: string) {
+    const spec = model.panels.get(path);
+    const box = spec && model.geometry[spec.row]?.boxes.find(b => b.path === path);
+    if (!spec || !box) return null;
+    const { height, content } = bandExtent(path);
+    return { side: box.side, height, content, max: Math.max(model.bounds.min, Math.min(model.bounds.max, content)) };
   }
-  function previewGrip(path: string, height: number): void {
-    preview = { paths: bandPaths(path), height };
+  /** The band height a drag from `session` reaches at `clientY`: the far edge
+   * grows away from the parent (down below it, up above it). */
+  function dragHeight(session: NonNullable<typeof grip>, clientY: number, content: number): number {
+    const direction = session.side === "above" ? -1 : 1;
+    return clampPreferredHeight(session.height + direction * rectDimToCSS(clientY - session.y), content, model.bounds);
   }
-  function endGrip(path: string, height: number | null): void {
-    gripHeld = false;
-    if (height !== null) for (const member of bandPaths(path)) explorer().setTilePanelHeight(member, height);
-    preview = null;
-    // The commit's own change still anchors this band's row.
+  /** A grip's band keeps its row in place through its preview and commit. */
+  function holdAnchor(path: string): void { anchorPath = path; }
+  function releaseAnchor(path: string): void {
+    // The final change (commit or preview reset) is still anchored.
     void tick().then(() => { if (anchorPath === path) anchorPath = null; });
+  }
+  /** Set the preferred height of every member of `path`'s band. */
+  function commitBand(path: string, height: number): void {
+    holdAnchor(path);
+    for (const member of bandPaths(path)) explorer().setTilePanelHeight(member, height);
+    releaseAnchor(path);
+  }
+  /** End the drag: commit at `clientY`, or cancel with null. */
+  function endGrip(clientY: number | null): void {
+    const session = grip;
+    if (!session) return;
+    grip = null;
+    session.stop();
+    const range = clientY === null ? null : gripRange(session.path);
+    preview = null;
+    if (range) commitBand(session.path, dragHeight(session, clientY!, range.content));
+    else releaseAnchor(session.path);
+  }
+  /** Start dragging `path`'s grip. Window listeners own the drag's end, so a
+   * band that unmounts mid-drag (scrolled out) still commits or cancels. */
+  function beginGrip(path: string, pointer: number, clientY: number): void {
+    endGrip(null);
+    const range = gripRange(path);
+    if (!range) return;
+    finishMotion();
+    holdAnchor(path);
+    const move = (event: PointerEvent) => {
+      if (event.pointerId !== pointer || !grip) return;
+      const current = gripRange(path);
+      if (!current) { endGrip(null); return; }
+      preview = { paths: bandPaths(path), height: dragHeight(grip, event.clientY, current.content) };
+    };
+    const up = (event: PointerEvent) => { if (event.pointerId === pointer) endGrip(event.clientY); };
+    // A blur (no pointerId) also ends the drag: the release may never arrive.
+    const cancel = (event: Event) => { if ((event as Partial<PointerEvent>).pointerId === undefined || (event as PointerEvent).pointerId === pointer) endGrip(null); };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", up);
+    window.addEventListener("pointercancel", cancel);
+    window.addEventListener("blur", cancel);
+    grip = { path, pointer, y: clientY, height: range.height, side: range.side, stop: () => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", up);
+      window.removeEventListener("pointercancel", cancel);
+      window.removeEventListener("blur", cancel);
+    } };
+  }
+  /** Separator keys on a panel's grip; true when the key was the grip's. */
+  function gripKey(path: string, key: string): boolean {
+    const range = gripRange(path);
+    if (!range) return false;
+    const next = gripKeyHeight(key, range.side, range.height, range.content, model.mini, model.bounds);
+    if (next === null) return false;
+    if (next !== Math.round(range.height)) { finishMotion(); commitBand(path, next); }
+    return true;
   }
 
   // ---- Hover -------------------------------------------------------------------------
@@ -430,7 +497,9 @@ export function useTilePanels(deps: TilePanelsDeps) {
     panelScrollTop, setPanelScrollTop, panelOffsets,
     gripping(path: string): boolean { return !!preview?.paths.includes(path); },
     bandExtent, cells,
-    startGrip, previewGrip, endGrip,
+    beginGrip, gripKey,
+    /** The grip's aria-valuemin/max for an open panel. */
+    gripBounds: (path: string) => ({ min: model.bounds.min, max: gripRange(path)?.max ?? model.bounds.min }),
     get hot() { return hot; },
     setHot(path: string | null) { if (hot !== path) hot = path; },
     revealEntry, containsEntry, revealParent,

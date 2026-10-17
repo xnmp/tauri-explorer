@@ -41,6 +41,22 @@ which warned `derived_inert` once the tile had unmounted (stack attribution:
 The loaders now check liveness (`onDestroy`) before reading the derived, as
 in the #680 rename lesson.
 
+## Shared with List cards (phase 3 review)
+
+- The grip session lives in the composable (`beginGrip`/`gripKey`), with
+  window listeners for its end. A component-local session on the grip
+  element stranded the preview when its band scrolled out mid-drag: the
+  element, and so its `pointerup`, were gone.
+- Reveal follows `stepMotionArm`, not the motion arm. Revealing only while
+  armed (1.5s) never revealed a panel whose listing settled later.
+- A panel's scroll area needs `tabindex="-1"` (Chrome makes scrollers Tab
+  stops). Inside a grid, that focusable element then needs a role: axe's
+  `aria-required-children` failed until the scroll area itself became the
+  rowgroup.
+- Closing a panel never hides the live parent tile. Only the panel's content
+  becomes a ghost, so focus stays on the parent, including after Escape steps
+  out of a mini tile.
+
 ## Tests
 
 - A long-running Vite server that has taken HMR updates serves `?t=` module

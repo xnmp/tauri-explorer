@@ -600,16 +600,23 @@ Screenshots:
     bands), with its height from the computed geometry. Outlines and ribbons join a row
     only to its own bands, so each group draws its own outlines. A page-wide overlay was
     rejected: it would need its own virtualization and offsets.
-  - Panels are `role="rowgroup"` labelled "<name> contents", not §10's `group`: the
-    Tiles grid may own only rows and rowgroups. The stacked label and the grip are rows
-    holding a gridcell.
+  - A panel's scroll area is its `role="rowgroup"` labelled "<name> contents", not
+    §10's `group`: the Tiles grid may own only rows and rowgroups. The scroll area has
+    `tabindex="-1"`, because Chrome otherwise makes scrollers Tab stops, and a focusable
+    element in a grid needs a role of its own. The stacked label and the grip are rows
+    holding a gridcell. The whole panel stays the folder's drop and context-menu surface.
   - The column count comes from the classic content-width rule, so turning peek on never
     changes C; panel widths use the probe's inner width, committed in the
     ResizeObserver delivery (#1061).
   - Sides are kept on column-count and width changes while feasible; otherwise panels
     are re-placed in opening order (the spec's rule, not the mock's re-place-all).
   - Opening reveals the panel after the motion settles. Revealing a target that is still
-    growing chased a moving bottom edge.
+    growing chased a moving bottom edge. Arming and revealing reuse List's
+    `stepMotionArm`, so the reveal outlives the 1.5s motion arm: a slow listing still
+    reveals its panel once it settles.
+  - The grip drag session lives in `useTilePanels`. Window `pointerup`, `pointercancel` and
+    `blur` end it, and unmounting cancels it. A band scrolled out mid-drag still commits on
+    release, and a panel closed mid-drag drops the preview.
   - A ribbon with no free channel between panels runs in the scroller's 8px side
     padding rather than crossing a panel.
   - A stacked label is max(parent tab width, 240px) wide, capped at the panel width, and

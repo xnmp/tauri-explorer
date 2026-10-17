@@ -627,8 +627,11 @@ Screenshots:
   - Renaming a mini tile edits in place and is clipped by the panel's scroll area. The
     renaming entry stays mounted while scrolled out. Lifting the editor out of the panel
     was not needed for v1.
-  - The outline layer is a zero-size SVG that draws outside itself. A full-size layer
-    under the tiles made axe report tile text as covered by an image in every theme.
+  - The outline layer is an SVG the size of its row group, behind the row and panels,
+    with pointer events off. A zero-size SVG drawing outside itself was rejected:
+    Chromium (and so WebView2) paints nothing for an empty SVG root. axe reads any SVG
+    under text as an image, so the WCAG scan replaces the decorative layer with the fill
+    it composites, rather than the product moving fill and hairline into CSS.
 
 - **Details:** tinted or bordered group boxes were rejected; groups are unboxed.
 - **List layout:**

@@ -1,5 +1,6 @@
 import AxeBuilder from "@axe-core/playwright";
 import { test, expect, type Page } from "./fixtures";
+import { colorDistance, decodePng } from "./png-pixels";
 
 // Tiles panels (#1241, spec §9): an open top-level folder shows its contents
 // in a panel in a band below or above its grid row, or stacked under the row.
@@ -341,6 +342,58 @@ test("double-clicking a panel's subfolder navigates into it", async ({ page }) =
   await expect(mini(page, P("Career/Applications")).locator(".peek-caret")).toHaveCount(0);
   await mini(page, P("Career/Applications")).dblclick();
   await expect.poll(() => explorerCall<string>(page, "return explorer.currentPath")).toBe(P("Career/Applications"));
+});
+
+interface Region { x: number; y: number; width: number; height: number }
+/** Pixels the outline layer paints in each region (viewport px): a screenshot
+ * with the layer shown against one with it hidden, so the count is what the
+ * outlines put on screen, whatever the theme. */
+async function outlinePaint(page: Page, regions: Record<string, Region>, threshold: number): Promise<Record<string, number>> {
+  const viewportWidth = page.viewportSize()!.width;
+  const painted = decodePng(await page.screenshot());
+  await page.evaluate(selector => document.querySelectorAll<SVGElement>(`${selector} .tile-outlines`).forEach(svg => { svg.style.visibility = "hidden"; }), shown);
+  const bare = decodePng(await page.screenshot());
+  await page.evaluate(selector => document.querySelectorAll<SVGElement>(`${selector} .tile-outlines`).forEach(svg => { svg.style.visibility = ""; }), shown);
+  const scale = painted.width / viewportWidth;
+  return Object.fromEntries(Object.entries(regions).map(([name, r]) => {
+    let changed = 0;
+    for (let y = Math.max(0, Math.floor(r.y * scale)); y < Math.min(painted.height, Math.ceil((r.y + r.height) * scale)); y++) {
+      for (let x = Math.max(0, Math.floor(r.x * scale)); x < Math.min(painted.width, Math.ceil((r.x + r.width) * scale)); x++) {
+        if (colorDistance(painted.pixel(x, y), bare.pixel(x, y)) > threshold) changed++;
+      }
+    }
+    return [name, changed / (scale * scale)];
+  }));
+}
+
+test("outlines paint the contour, accent, fill, ribbon and parent highlight", async ({ page }) => {
+  await open(page);
+  for (const name of ["Career", "Personal", "Inbox", "AI Draft Archive", "Codex"]) await toggle(page, P(name));
+  await scroller(page).evaluate(el => { el.scrollTop = 0; });
+  await page.mouse.move(5, 5);
+  await settled(page);
+  const career = await rect(page, P("Career"));
+  const parent = (await tile(page, P("Codex")).boundingBox())!;
+  const ribbon = await page.locator(`${shown} .outline-ribbon-hit`).first().evaluate(el => {
+    const { x, y, width, height } = el.getBoundingClientRect();
+    return { x, y, width, height };
+  });
+  const port = (await scroller(page).boundingBox())!;
+  const strokes = await outlinePaint(page, {
+    // The hairline down a below panel's side, the accent along its parent-facing
+    // top edge (clear of the tab), a stacked panel's ribbon and its parent's highlight.
+    side: { x: career.x - 3, y: career.y + career.height * 0.4, width: 6, height: career.height * 0.3 },
+    top: { x: career.x + career.width - 40, y: career.y - 3, width: 24, height: 6 },
+    ribbon: { ...ribbon, height: Math.min(ribbon.height, port.y + port.height - ribbon.y) },
+    highlight: { x: parent.x - 3, y: parent.y + 10, width: 6, height: parent.height - 20 },
+  }, 4);
+  expect(strokes.side).toBeGreaterThan(20);
+  expect(strokes.top).toBeGreaterThan(20);
+  expect(strokes.ribbon).toBeGreaterThan(300);
+  expect(strokes.highlight).toBeGreaterThan(50);
+  // The fill is a faint tint: below the panel's last row, every pixel changes a little.
+  const fill: Region = { x: career.x + career.width * 0.3, y: career.y + career.height - 7, width: career.width * 0.3, height: 4 };
+  expect((await outlinePaint(page, { fill }, 1)).fill).toBeGreaterThan(fill.width * fill.height * 0.8);
 });
 
 test("hover emphasis is immediate, with no transition", async ({ page }) => {

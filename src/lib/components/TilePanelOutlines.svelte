@@ -26,9 +26,10 @@
   const outlines = $derived(groupOutlines(geometry, metrics, compact));
 </script>
 
-<!-- A zero-size box drawing outside itself: nothing in the page (or axe's
-     contrast stack) sees an image layer over the tiles and panels. -->
-<svg class="tile-outlines" width="0" height="0" aria-hidden="true" focusable="false">
+<!-- The group's own box, behind its row and panels. It must have a real size:
+     Chromium paints nothing for an empty SVG root, even with overflow visible
+     (the ribbon's last-resort channel lies in the scroller padding beside it). -->
+<svg class="tile-outlines" aria-hidden="true" focusable="false">
   <defs>
     {#each outlines as outline, i (outline.path)}
       <linearGradient id="{uid}-{i}" gradientUnits="userSpaceOnUse" x1="0" x2="0" y1={outline.accent.y1} y2={outline.accent.y2}>
@@ -54,8 +55,8 @@
     position: absolute;
     top: 0;
     left: 0;
-    width: 0;
-    height: 0;
+    width: 100%;
+    height: 100%;
     overflow: visible;
     pointer-events: none;
   }

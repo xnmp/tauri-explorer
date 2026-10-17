@@ -1,3 +1,4 @@
+import AxeBuilder from "@axe-core/playwright";
 import { test, expect, type Page } from "./fixtures";
 
 // List cards (#1240, spec §8.3–8.4): an open top-level folder in the column
@@ -141,6 +142,37 @@ test("nested folders open inside the card with guide lines, the close caret and 
   expect(await row(page, `${root}/Career`).boundingBox()).toEqual(header);
 });
 
+test("assistive technology reads the List as a tree, with sibling positions, inside open cards", async ({ page }) => {
+  // Carets, the card group, its grip (inside the folder's treeitem) and pseudo-rows
+  // are all valid tree content. Contrast has its own per-theme scan. A card's
+  // scroll area holds no tab stop of its own by design: the tree's roving cursor
+  // reaches and scrolls every card row (the Up/Down test), which axe cannot see
+  // from tabindex alone.
+  const violations = async () => (await new AxeBuilder({ page }).include(`${shown} .list-view`)
+    .withTags(["wcag2a", "wcag2aa", "wcag21a", "wcag21aa"]).disableRules(["color-contrast", "scrollable-region-focusable"]).analyze())
+    .violations.map(v => `${v.id}: ${v.nodes.map(n => `${n.target.join(" ")} (${n.failureSummary})`).join(", ")}`);
+  await open(page);
+  await expect(viewport(page)).toHaveAttribute("role", "tree");
+  await toggle(page, `${root}/Career`);
+  await toggle(page, `${root}/Career/Portfolio`); // empty: an "Empty folder" pseudo-row
+  const empty = slot(page, `${root}/Career`).locator(".list-peek-state", { hasText: "Empty folder" });
+  await expect(empty).toHaveAttribute("role", "treeitem");
+  await expect(empty).toHaveAttribute("aria-level", "3");
+  expect(await violations()).toEqual([]);
+  await toggle(page, `${root}/Career/Applications`);
+  // Positions count siblings under the same parent, not the global entry index.
+  await expect(row(page, `${root}/Career/Applications`)).toHaveAttribute("aria-posinset", "1");
+  await expect(row(page, `${root}/Career/Applications`)).toHaveAttribute("aria-setsize", "9");
+  const globex = row(page, `${root}/Career/Applications/Globex`);
+  await expect(globex).toHaveAttribute("role", "treeitem");
+  await expect(globex).toHaveAttribute("aria-level", "3");
+  await expect(globex).toHaveAttribute("aria-expanded", "false");
+  await expect(globex).toHaveAttribute("aria-posinset", "2");
+  await expect(globex).toHaveAttribute("aria-setsize", "5");
+  await expect(row(page, `${root}/Career/Applications/follow-ups.md`)).not.toHaveAttribute("aria-expanded");
+  expect(await violations()).toEqual([]);
+});
+
 test("a rename inside a card commits in place and the card keeps its rows", async ({ page }) => {
   await open(page);
   await toggle(page, `${root}/Inbox`);
@@ -225,6 +257,15 @@ test("the grip resizes in whole rows, previews only its card, is remembered and 
   await page.keyboard.press("Home");
   await expect(grip).toHaveAttribute("aria-valuenow", "1");
   await page.keyboard.press("End");
+  await expect(grip).toHaveAttribute("aria-valuenow", String(Math.floor(0.7 * R)));
+  // The grip lives inside the folder's treeitem, yet pressing it never selects or
+  // toggles that folder, even with carets off, where a row click toggles.
+  await setting(page, { folderPeekCarets: false });
+  const still = (await grip.boundingBox())!;
+  await page.mouse.click(still.x + still.width / 2, still.y + still.height / 2);
+  await settled(page);
+  await expect(row(page, `${root}/Archive`)).toHaveAttribute("aria-expanded", "true");
+  await expect(row(page, `${root}/Archive`)).not.toHaveClass(/selected/);
   await expect(grip).toHaveAttribute("aria-valuenow", String(Math.floor(0.7 * R)));
 });
 

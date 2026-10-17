@@ -169,3 +169,21 @@ export function buildPeekRows(tree: PeekTree, listing: (path: string) => PeekLis
   for (const group of active) group.endRow = rows.length;
   return { rows, entryToRow, rowToEntry: rows.map(row => row.kind === "entry" ? row.entryIndex : null), groups };
 }
+
+/** Each entry's tree position among its siblings (entries sharing its parent),
+ * indexed by entry index. A virtualized tree has to state these itself:
+ * assistive technology would otherwise count only the mounted siblings. */
+export interface PeekTreePositions { readonly posinset: readonly number[]; readonly setsize: readonly number[] }
+export function peekTreePositions(rows: readonly PeekRow[]): PeekTreePositions {
+  const counts = new Map<string, number>();
+  const posinset: number[] = [];
+  const parents: string[] = [];
+  for (const row of rows) {
+    if (row.kind !== "entry") continue;
+    const position = (counts.get(row.parentPath) ?? 0) + 1;
+    counts.set(row.parentPath, position);
+    posinset[row.entryIndex] = position;
+    parents[row.entryIndex] = row.parentPath;
+  }
+  return { posinset, setsize: parents.map(parent => counts.get(parent)!) };
+}

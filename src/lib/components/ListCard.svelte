@@ -1,18 +1,18 @@
 <!--
   An open top-level folder in the List column flow (#1240): the descendants'
-  scroll area below the folder's own (fixed) header row, plus the bottom grip
-  and "+N more". The header, the slot and the card box belong to
-  ListColumnsView, so the header keeps its DOM node when the folder opens or
-  closes. Layout, clamp, scroll-edge and grip policies are pure (list-cards.ts);
-  scroll offsets and the grip preview live in useListColumns.
+  scroll area below the folder's own (fixed) header row, plus "+N more". The
+  header, the slot, the card box and the grip (ListCardGrip, inside the
+  header treeitem) belong to ListColumnsView, so the header keeps its DOM node
+  when the folder opens or closes. Layout, clamp and scroll-edge policies are
+  pure (list-cards.ts); scroll offsets and the grip preview live in
+  useListColumns.
 -->
 <script lang="ts">
   import type { Snippet } from "svelte";
   import type { FileEntry } from "$lib/domain/file";
   import type { PeekGroup, PeekRow } from "$lib/domain/folder-peek";
   import { LIST_SLOT_HEIGHT, type ListCardSpec } from "$lib/domain/list-column-flow";
-  import { cardFades, cardMaxRows, cardMoreCount, gripKeyRows, gripRows, LIST_CARD_FADE } from "$lib/domain/list-cards";
-  import { rectDimToCSS } from "$lib/domain/zoom";
+  import { cardFades, cardMoreCount, LIST_CARD_FADE } from "$lib/domain/list-cards";
   import type { useItemInteractions } from "$lib/composables/use-item-interactions.svelte";
 
   type EntryRow = Extract<PeekRow, { kind: "entry" }>;
@@ -24,8 +24,6 @@
     /** The pane's peek rows; the card shows `rows[card.start, card.end)`. */
     rows: readonly PeekRow[];
     groups: readonly PeekGroup[];
-    /** Rows per column (the grip's cap). */
-    R: number;
     carets: boolean;
     /** Content offsets to mount (window, overscan and pinned editors). */
     offsets: readonly number[];
@@ -34,17 +32,14 @@
     previewRows: number | null;
     interactions: ReturnType<typeof useItemInteractions>;
     onscrolltop: (top: number) => void;
-    onpreview: (rows: number | null) => void;
-    oncommit: (rows: number) => void;
     row: Snippet<[EntryRow]>;
   }
-  let { entry, card, rows, groups, R, carets, offsets, scrollTop, previewRows, interactions, onscrolltop, onpreview, oncommit, row }: Props = $props();
+  let { entry, card, rows, groups, carets, offsets, scrollTop, previewRows, interactions, onscrolltop, row }: Props = $props();
 
   const content = $derived(card.end - card.start);
   const visible = $derived(previewRows ?? card.visibleRows);
   const fades = $derived(cardFades(content, visible, scrollTop));
   const more = $derived(cardMoreCount(content, visible, scrollTop));
-  const maxRows = $derived(Math.max(1, Math.min(content, cardMaxRows(R))));
   // Nested levels get only a guide line, centred under their header's caret
   // (or, with carets off, its folder icon).
   const guides = $derived(groups.filter(group => group.depth > 0 && group.startRow >= card.start && group.endRow <= card.end && group.endRow > group.startRow));
@@ -106,38 +101,6 @@
     retarget(null);
     if (folder) void interactions.handleDrop(event, folder);
   }
-
-  // Grip: pointer travel snaps to whole rows; only this card previews until release.
-  let drag: { pointer: number; y: number; rows: number } | null = null;
-  function gripDown(event: PointerEvent): void {
-    if (event.button !== 0) return;
-    event.preventDefault();
-    event.stopPropagation();
-    (event.currentTarget as HTMLElement).setPointerCapture?.(event.pointerId);
-    drag = { pointer: event.pointerId, y: event.clientY, rows: visible };
-  }
-  const dragRows = (event: PointerEvent) => gripRows(drag!.rows, rectDimToCSS(event.clientY - drag!.y), content, R);
-  function gripMove(event: PointerEvent): void {
-    if (drag?.pointer === event.pointerId) onpreview(dragRows(event));
-  }
-  function gripUp(event: PointerEvent): void {
-    if (drag?.pointer !== event.pointerId) return;
-    const next = dragRows(event);
-    drag = null;
-    oncommit(next);
-  }
-  function gripCancel(): void {
-    if (!drag) return;
-    drag = null;
-    onpreview(null);
-  }
-  function gripKey(event: KeyboardEvent): void {
-    const next = gripKeyRows(event.key, card.visibleRows, content, R);
-    if (next === null) return;
-    event.preventDefault();
-    event.stopPropagation();
-    if (next !== card.visibleRows) oncommit(next);
-  }
 </script>
 
 <div class="list-card-body">
@@ -164,7 +127,8 @@
           {#if slot.row.kind === "entry"}
             {@render row(slot.row)}
           {:else if slot.row.kind === "peek-state"}
-            <div class="list-peek-state peek-drop-target" class:carets data-path={slot.row.parentPath}>
+            <!-- A tree group owns only treeitems (Details wraps this status in a gridcell). -->
+            <div class="list-peek-state peek-drop-target" class:carets data-path={slot.row.parentPath} role="treeitem" aria-level={slot.row.depth + 1} aria-selected="false">
               <span role="status">{slot.row.message}</span>
             </div>
           {/if}
@@ -172,16 +136,7 @@
       {/each}
     </div>
   </div>
-  {#if content > 0}
-    <!-- svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_noninteractive_element_interactions -- WAI movable separator is an interactive range. -->
-    <div class="list-card-grip" role="separator" tabindex="0" aria-orientation="horizontal"
-      aria-label={`Resize ${entry.name}`} aria-valuemin={1} aria-valuemax={maxRows} aria-valuenow={visible}
-      class:dragging={previewRows !== null}
-      onpointerdown={gripDown} onpointermove={gripMove} onpointerup={gripUp}
-      onpointercancel={gripCancel} onlostpointercapture={gripCancel}
-      onkeydown={gripKey}><i></i></div>
-    {#if more > 0}<span class="list-card-more">+{more} more</span>{/if}
-  {/if}
+  {#if more > 0}<span class="list-card-more" aria-hidden="true">+{more} more</span>{/if}
 </div>
 
 <style>
@@ -214,21 +169,6 @@
   }
   /* Aligned with the icons of the rows at its depth. */
   .list-peek-state.carets { padding-left: calc(27px + var(--depth) * 16px); }
-  .list-card-grip {
-    position: absolute;
-    bottom: -5px;
-    left: calc(50% - 26px);
-    width: 52px;
-    height: 14px;
-    display: grid;
-    place-items: center;
-    cursor: ns-resize;
-    touch-action: none;
-    z-index: 3;
-  }
-  .list-card-grip i { display: block; width: 38px; height: 4px; border-radius: 2px; background: var(--text-tertiary); opacity: 0.35; }
-  .list-card-grip:hover i, .list-card-grip.dragging i { opacity: 0.7; }
-  .list-card-grip:focus-visible { outline: 2px solid var(--focus-stroke-outer); outline-offset: -2px; border-radius: 4px; }
   .list-card-more {
     position: absolute;
     bottom: -5px;

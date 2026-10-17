@@ -554,9 +554,14 @@ Screenshots:
 - **Caret is not a tab stop:** the caret keeps its button role and accessible name for pointer and assistive-technology users, but has `tabindex="-1"` and prevents focus on mousedown. A focusable caret stole keyboard focus from the row grid, so arrows and typeahead stopped following the cursor row after a click, and Tab stopped on every expanded folder. Keyboard users expand the cursor row's folder with the "Peek into Folder" command (bindable) and step back out with Escape, so the caret needs no tab stop of its own.
 
 - **Phase 3 (List cards, #1240):**
-  - The card's `role="group"` ("<name> contents") is its scroll area, not the whole
-    card: the header stays an option in the listbox flow and keeps one DOM node whether
-    the folder is open or closed.
+  - With peek on, List is a `role="tree"` of `treeitem` rows: §10's `aria-level`,
+    `aria-expanded` and caret button are invalid on listbox options. Positions
+    (`aria-posinset`/`setsize`) count siblings under the same parent. The card's
+    `role="group"` ("<name> contents") is its scroll area, not the whole card: the
+    header stays a treeitem in the column flow and keeps one DOM node whether the
+    folder is open or closed. Because a tree owns only groups and treeitems, the grip
+    separator is rendered inside the folder's header treeitem (still on the card's
+    bottom edge) and Empty/Loading/Error rows are treeitems.
   - Every List level sorts by name, like the List root; the pane's Details sort applies
     only in Details. A Details sort (for example size) reordering a List card was
     rejected as surprising in a name-ordered view.

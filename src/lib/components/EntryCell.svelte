@@ -28,8 +28,12 @@
      *  selection maps a rendered (virtualized) tile/row back to its entry. */
     index?: number;
     column: number;
-    role?: "gridcell" | "option";
+    /** "treeitem" inside a peek tree (List cards, #1240), whose rows carry
+     *  level/expanded state that an "option" may not. */
+    role?: "gridcell" | "option" | "treeitem";
     setSize?: number;
+    /** A treeitem's position among its siblings; an option's is its index. */
+    posInSet?: number;
     /** Peek tree depth + 1 (List cards, #1240); omitted outside a peek tree. */
     level?: number;
     /** A folder's peek state; omitted for files and outside a peek tree. */
@@ -49,6 +53,7 @@
     column,
     role = "gridcell",
     setSize,
+    posInSet,
     level,
     expanded,
     onitemclick,
@@ -59,9 +64,9 @@
   const isRenaming = $derived(dialogStore.renamingEntry?.path === entry.path);
 
   const appearance = useEntryAppearance(() => entry, () => explorer.currentPath);
-  // A peek caret inside the cell is its own control: never a row click, double
-  // click or drag (mirrors FileItem).
-  const isPeekControl = (event: Event) => event.target instanceof Element && !!event.target.closest(".peek-caret");
+  // A peek caret or List card grip inside the cell is its own control: never a
+  // row click, double click or drag (mirrors FileItem).
+  const isPeekControl = (event: Event) => event.target instanceof Element && !!event.target.closest(".peek-caret, .list-card-grip");
 </script>
 
 <!-- svelte-ignore a11y_no_noninteractive_tabindex -- Roving composite focus is managed by FileList. -->
@@ -75,8 +80,8 @@
   data-path={entry.path}
   data-index={index}
   aria-colindex={role === "gridcell" ? column : undefined}
-  aria-posinset={role === "option" && index !== undefined ? index + 1 : undefined}
-  aria-setsize={role === "option" ? setSize : undefined}
+  aria-posinset={role === "treeitem" ? posInSet : role === "option" && index !== undefined ? index + 1 : undefined}
+  aria-setsize={role === "option" || role === "treeitem" ? setSize : undefined}
   aria-level={level}
   aria-expanded={expanded}
   class:directory={entry.kind === "directory"}

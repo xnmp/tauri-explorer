@@ -174,7 +174,7 @@
       || explorer.currentPath !== reveal.directory || explorer.viewMode !== reveal.mode) return;
     const focus = document.activeElement;
     if (focus !== document.body && (!fileListRef?.contains(focus)
-      || !focus?.matches('.entry-item, .virtual-viewport:is([role="grid"], [role="treegrid"], [role="listbox"])'))) return;
+      || !focus?.matches('.entry-item, .virtual-viewport:is([role="grid"], [role="treegrid"], [role="tree"], [role="listbox"])'))) return;
     scrollToSelected(entry);
   }
 
@@ -265,7 +265,7 @@
       const index = Number(target.dataset.index);
       const entry = explorer.displayEntries[index];
       if (entry?.path === target.dataset.path) explorer.focusEntry(entry);
-    } else if (target.matches('.virtual-viewport:is([role="grid"], [role="treegrid"], [role="listbox"])') && explorer.focusedEntry) {
+    } else if (target.matches('.virtual-viewport:is([role="grid"], [role="treegrid"], [role="tree"], [role="listbox"])') && explorer.focusedEntry) {
       scrollToSelected(explorer.focusedEntry);
     } else {
       // Column controls and inline editors own their focus independently.

@@ -9,7 +9,8 @@ moves and motion all read that one model.
 ## Keep the header node stable
 
 The header row renders outside `{#if item.card}` in the slot; `ListCard` adds
-only the scroll area, grip and "+N more" below it. Swapping a plain row for a
+only the scroll area and "+N more" below it (the grip lives in the header, see
+below). Swapping a plain row for a
 card component destroyed the focused row on every toggle (carets-off clicks and
 palette commands keep focus on it).
 
@@ -70,6 +71,27 @@ shown the new height, so animating its commit would snap back first.
 focuses it a tick later; `ListCard` applies the offset to the DOM in an effect
 and reports native scrolling back. A card that can still scroll takes a vertical
 wheel natively (no `preventDefault`), then the List's sideways mapping resumes.
+
+## A peek List is a tree, not a listbox
+
+Rows with `aria-level`/`aria-expanded` and a caret button are not valid
+listbox options (axe `aria-allowed-attr`, `nested-interactive`), which failed
+the theme-accessibility List scan in all 24 themes. With peek on the List is
+`role="tree"` with `treeitem` rows; `peekTreePositions` states each row's
+`aria-posinset`/`aria-setsize` among its own siblings, since a virtualized tree
+cannot leave them to the DOM. A tree may own only groups and treeitems, and
+axe looks through a `group` for them, so the card's separator grip is rendered
+inside the folder's header treeitem (`ListCardGrip`) and Empty/Loading/Error
+rows are treeitems. List entries are therefore not positioned: the caret and
+the grip resolve against the slot (`.list-place`, or a card's `.list-row`),
+which puts the grip on the card's bottom edge without measuring. A renaming
+row rises by its slot's `z-index` for the same reason. The grip and caret are
+excluded from row clicks, double clicks and drags (`EntryCell`'s
+`isPeekControl`).
+
+The idle `.list-motion-layer` (absolute, full canvas) must be `display: none`
+while empty: axe reports every row's text as "overlapped by another element"
+otherwise, although it has `pointer-events: none`.
 
 ## Tests
 

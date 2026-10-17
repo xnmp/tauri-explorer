@@ -49,8 +49,10 @@ test("column-major placement, bounded 10,000-entry window, and first/middle/fina
   await assertBound();
   await viewport(page).evaluate(el => { el.scrollLeft = 0; });
   await expect(entries(page).first()).toHaveAttribute("data-index", "0");
-  await expect(viewport(page)).toHaveAttribute("role", "listbox");
-  await expect(entries(page).first()).toHaveAttribute("role", "option");
+  // Folder Peek is on, so List rows form a tree (#1240): levels and expanded
+  // state are not allowed on listbox options.
+  await expect(viewport(page)).toHaveAttribute("role", "tree");
+  await expect(entries(page).first()).toHaveAttribute("role", "treeitem");
   await expect(entries(page).first()).toHaveAttribute("aria-posinset", "1");
   await expect(entries(page).first()).toHaveAttribute("aria-setsize", "10000");
 });

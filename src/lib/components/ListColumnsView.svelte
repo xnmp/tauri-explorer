@@ -8,9 +8,9 @@
   import { usePointerDrag } from "$lib/composables/use-pointer-drag.svelte";
   import { usesPointerDrag } from "$lib/domain/platform";
   import { dialogStore } from "$lib/state/dialogs.svelte";
-  import type { ListNavigationSnapshot } from "$lib/domain/list-column-flow";
+  import type { ListCardSpec, ListNavigationSnapshot } from "$lib/domain/list-column-flow";
   import { LIST_COLUMN_STRIDE, LIST_PADDING_X, LIST_SLOT_HEIGHT } from "$lib/domain/list-column-flow";
-  import type { PeekRow } from "$lib/domain/folder-peek";
+  import { peekTreePositions, type PeekRow } from "$lib/domain/folder-peek";
   import { windowTabsManager } from "$lib/state/window-tabs.svelte";
   import { getPaneIdContext } from "$lib/state/pane-context";
   import { getFileIconColor } from "$lib/domain/file-types";
@@ -20,6 +20,7 @@
   import InlineNewFolder from "./InlineNewFolder.svelte";
   import EntryCell from "./EntryCell.svelte";
   import ListCard from "./ListCard.svelte";
+  import ListCardGrip from "./ListCardGrip.svelte";
   import type { FileEntry } from "$lib/domain/file";
 
   type EntryRow = Extract<PeekRow, { kind: "entry" }>;
@@ -58,6 +59,9 @@
     revealCard: (path, smooth) => columns.revealCard(path, smooth),
   });
   const carets = $derived(explorer.peekCaretsShown);
+  // With peek on, rows are a tree: levels, expanded folders and caret buttons
+  // are not allowed on listbox options (axe aria-allowed-attr, nested-interactive).
+  const tree = $derived(explorer.peekEnabled ? peekTreePositions(explorer.detailRows.rows) : null);
   const revealIndex = (index: number) => columns.revealEntry(index);
   const contains = (index: number) => columns.containsEntry(index);
   const navigation = () => ({ entries: explorer.displayEntries, directory: explorer.currentPath, model: columns.model, usableWidth: columns.usableWidth, cardScrollTop: columns.cardScrollTop });
@@ -77,10 +81,11 @@
   }
 </script>
 
-{#snippet entryRow(row: EntryRow)}
-  <EntryCell role="option" setSize={explorer.displayEntries.length} column={1} class="list-item list-entry" index={row.entryIndex} entry={row.entry} {explorer} {interactions} {pointerDrag} {onitemclick} {onitemdblclick}
-    level={explorer.peekEnabled ? row.depth + 1 : undefined}
-    expanded={explorer.peekEnabled && row.entry.kind === "directory" ? row.expanded : undefined}>
+{#snippet entryRow(row: EntryRow, card?: ListCardSpec | null)}
+  <EntryCell role={tree ? "treeitem" : "option"} setSize={tree ? tree.setsize[row.entryIndex] : explorer.displayEntries.length} posInSet={tree?.posinset[row.entryIndex]}
+    column={1} class="list-item list-entry" index={row.entryIndex} entry={row.entry} {explorer} {interactions} {pointerDrag} {onitemclick} {onitemdblclick}
+    level={tree ? row.depth + 1 : undefined}
+    expanded={tree && row.entry.kind === "directory" ? row.expanded : undefined}>
     {#if carets && row.entry.kind === "directory"}
       <!-- A pointer affordance only (as in Details): never a tab stop, and its
            mousedown keeps focus where it was. Positioned in the row's caret
@@ -100,12 +105,20 @@
     <span class="list-icon" data-drag-icon style:color={row.entry.kind !== "directory" ? getFileIconColor(row.entry) : undefined}><FileIcon entry={row.entry} size="small" /></span>
     <span data-drag-name><EntryName entry={row.entry} {explorer} variant="list" bold={row.expanded} /></span>
     <GitStatusBadge directory={row.parentPath} entryName={row.entry.name} />
+    {#if card}
+      <!-- Inside the folder's treeitem (a tree owns only groups and treeitems),
+           positioned on the card's bottom edge against the slot. -->
+      <ListCardGrip name={row.entry.name} {card} R={columns.rows} previewRows={columns.previewRows(card.path)}
+        onpreview={(rows) => columns.setPreview(card.path, rows)}
+        oncommit={(rows) => commitRows(card.path, rows)} />
+    {/if}
   </EntryCell>
 {/snippet}
 
 <div class="list-view" class:carets data-rows={columns.rows}>
+  <!-- svelte-ignore a11y_no_noninteractive_tabindex -- tree and listbox are both interactive composites; the check cannot resolve a dynamic role. -->
   <div class="virtual-viewport list-scroller file-rows" class:short={columns.short}
-    role="listbox" aria-label="Files" aria-multiselectable="true" tabindex={fallbackTabStop ? 0 : -1}
+    role={tree ? "tree" : "listbox"} aria-label="Files" aria-multiselectable="true" tabindex={fallbackTabStop ? 0 : -1}
     use:columns.attach>
     <div class="list-measure" aria-hidden="true"></div>
     <div class="list-canvas" bind:this={canvas} style:width="{columns.extent - LIST_PADDING_X * 2}px" style:height="{columns.rows * LIST_SLOT_HEIGHT}px">
@@ -119,14 +132,12 @@
           {#if !slot.header}
             <InlineNewFolder {explorer} variant="list" columns />
           {:else}
-            {@render entryRow(slot.header)}
+            {@render entryRow(slot.header, slot.item.card)}
             {#if slot.item.card}
-              <ListCard entry={slot.header.entry} card={slot.item.card} rows={explorer.detailRows.rows} groups={explorer.detailRows.groups} R={columns.rows} {carets}
+              <ListCard entry={slot.header.entry} card={slot.item.card} rows={explorer.detailRows.rows} groups={explorer.detailRows.groups} {carets}
                 offsets={columns.cardOffsets(slot.item.card)} scrollTop={columns.cardScrollTop(slot.item.card.path)} previewRows={columns.previewRows(slot.item.card.path)}
                 {interactions} row={entryRow}
-                onscrolltop={(top) => columns.setCardScrollTop(slot.item.card!.path, top)}
-                onpreview={(rows) => columns.setPreview(slot.item.card!.path, rows)}
-                oncommit={(rows) => commitRows(slot.item.card!.path, rows)} />
+                onscrolltop={(top) => columns.setCardScrollTop(slot.item.card!.path, top)} />
             {/if}
           {/if}
         </div>
@@ -163,6 +174,9 @@
   .list-place { position: absolute; width: 260px; height: 30px; }
   .list-place.covered { visibility: hidden; }
   .list-motion-layer { position: absolute; inset: 0; pointer-events: none; z-index: 2; }
+  /* Idle, the layer must not exist for hit testing: axe reads an empty
+     full-canvas overlay as covering every row's text. */
+  .list-motion-layer:empty { display: none; }
 
   /* An open top-level folder: panel tint, hairline, radius 8 and a 1.5px accent
      border fading into the hairline, inset 2px inside its slots. Content-sized,
@@ -190,8 +204,10 @@
     -webkit-mask-image: linear-gradient(to bottom, #000, transparent var(--card-fade, 64px));
   }
 
+  /* Not positioned: absolute row controls (caret, card grip) resolve against
+     the row's slot (.list-place, or a card's .list-row), so a header's grip
+     can sit on its card's bottom edge. */
   .list-view :global(.list-entry) {
-    position: relative;
     display: flex;
     align-items: center;
     gap: 8px;
@@ -219,7 +235,7 @@
     outline: none;
   }
 
-  .list-view :global(.list-entry:where(:hover)) {
+  .list-view :global(.list-entry:where(:hover:not(:has(.list-card-grip:hover)))) {
     background: var(--subtle-fill-secondary);
   }
 
@@ -278,8 +294,9 @@
 
   .list-view :global(.list-entry .peek-caret) {
     position: absolute;
-    top: 2px;
-    left: calc(8px + var(--depth, 0) * 16px);
+    /* Against the slot: past the row's 2px margin, 1px border and indicator edge. */
+    top: 5px;
+    left: calc(var(--selection-indicator-width, 3px) + 8px + var(--depth, 0) * 16px);
     display: flex;
     align-items: center;
     justify-content: center;
@@ -321,6 +338,9 @@
      grid cell and virtual row must also allow the overflow. */
   .list-view :global(.list-entry:has(.rename-input)) {
     overflow: visible;
+  }
+  /* Entries are not positioned, so the renaming row's slot is what rises. */
+  .list-view :global(:is(.list-place, .list-row):has(.rename-input)) {
     z-index: 2;
   }
 </style>

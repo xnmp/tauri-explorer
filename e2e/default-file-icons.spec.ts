@@ -224,13 +224,16 @@ test('all aliases follow their identity category in both colorful packs',async({
 
 test('Minimal files use one monochrome foreground while folders retain their theme color',async({page})=>{
   await openIcons(page,'dark','minimal');
-  const colors=[];
-  for(const name of ['playwright.config.ts','main.js','report.pdf','index.html','movie.mp4']) {
-    colors.push(await row(page,name).locator('svg').first().evaluate(svg=>getComputedStyle(svg).color));
-  }
-  expect(new Set(colors).size).toBe(1);
-  const folderColor=await row(page,'Folder').locator('svg').first().evaluate(svg=>getComputedStyle(svg).color);
-  expect(folderColor).not.toBe(colors[0]);
+  // Assert file glyphs without thumbnail replacements, video markers or folder carets.
+  await chooseView(page,'details');
+  const color=(name:string)=>row(page,name).locator('.icon svg').first().evaluate(svg=>getComputedStyle(svg).color);
+  await expect.poll(async()=>{
+    const colors=await Promise.all(['playwright.config.ts','main.js','report.pdf','index.html','movie.mp4'].map(color));
+    const folderColor=await color('Folder');
+    return {fileColors:[...new Set(colors)],folderDistinct:folderColor!=='' && folderColor!==colors[0]};
+  },{message:'Minimal file glyphs must share a painted foreground and keep folders distinct'}).toEqual({
+    fileColors:[expect.stringMatching(/\S/)],folderDistinct:true,
+  });
 });
 
 test('photo folders retain pack styling and link/repository decorations at large sizes',async({page})=>{

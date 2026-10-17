@@ -1,5 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
-import { HOME_URL, waitForEntries, runPaletteCommand } from "./helpers";
+import { HOME_URL, MULTI_SELECT_MODIFIER, waitForEntries, runPaletteCommand } from "./helpers";
 const root = "/folder-peek";
 const row = (page: Page, path: string) => page.locator(`.pane-tree:not(.retained) .entry-item[data-path="${path}"]`);
 async function snapshot(page: Page) {
@@ -20,6 +20,21 @@ test.beforeEach(async ({ page }) => {
   }, root);
   await expect(row(page, `${root}/Alpha`)).toBeVisible();
 });
+async function listed(page: Page, directory: string) {
+  return page.evaluate(async target => {
+    const { fetchDirectory } = await import("/src/lib/api/files.ts");
+    const result = await fetchDirectory(target);
+    return result.ok ? result.data.entries.map(entry => entry.path) : [];
+  }, directory);
+}
+async function bulkRename(page: Page, find: string, replace: string) {
+  await runPaletteCommand(page, "Bulk Rename");
+  const dialog = page.locator(".dialog", { hasText: "Bulk Rename" });
+  await dialog.locator('input[placeholder="Text to find..."]').fill(find);
+  await dialog.locator('input[placeholder="Replacement..."]').fill(replace);
+  await dialog.locator(".btn-primary").click();
+  await expect(dialog).toHaveCount(0);
+}
 async function expand(page: Page, name = "Alpha", parent = root) {
   await row(page, `${parent}/${name}`).getByRole("button", { name: `Expand ${name}`, exact: true }).click();
 }
@@ -237,4 +252,32 @@ test("marquee ranges skip multiple status rows at fractional zoom", async ({ pag
   await page.mouse.move(content!.x + 30, child!.y + 1, { steps: 8 });
   await page.mouse.up();
   expect((await snapshot(page)).selected.sort()).toEqual([`${root}/Alpha/same.txt`, `${root}/Beta`, `${root}/Empty`, `${root}/Error`, `${root}/Large`, `${root}/root.txt`].sort());
+});
+
+test("bulk rename of a folder and its peeked child renames the child before the folder", async ({ page }) => {
+  await expand(page);
+  await row(page, `${root}/Alpha`).click();
+  await row(page, `${root}/Alpha/same.txt`).click({ modifiers: [MULTI_SELECT_MODIFIER] });
+  await bulkRename(page, "a", "4");
+  expect(await listed(page, root)).toContain(`${root}/4lph4`);
+  expect(await listed(page, `${root}/4lph4`)).toContain(`${root}/4lph4/s4me.txt`);
+});
+
+test("bulk rename allows one new name in two peeked folders", async ({ page }) => {
+  await expand(page); await expand(page, "Beta");
+  await row(page, `${root}/Alpha/same.txt`).click();
+  await row(page, `${root}/Beta/same.txt`).click({ modifiers: [MULTI_SELECT_MODIFIER] });
+  await bulkRename(page, "same", "other");
+  expect(await listed(page, `${root}/Alpha`)).toContain(`${root}/Alpha/other.txt`);
+  expect(await listed(page, `${root}/Beta`)).toContain(`${root}/Beta/other.txt`);
+});
+
+test("compressing same-named children of two peeks is refused before any archive is written", async ({ page }) => {
+  await expand(page); await expand(page, "Beta");
+  await row(page, `${root}/Alpha/same.txt`).click();
+  await row(page, `${root}/Beta/same.txt`).click({ modifiers: [MULTI_SELECT_MODIFIER] });
+  await row(page, `${root}/Beta/same.txt`).click({ button: "right" });
+  await page.locator(".menu-item", { hasText: "Compress to ZIP" }).click();
+  await expect(page.locator(".toast").filter({ hasText: "Selected items have the same name" })).toHaveCount(1);
+  expect((await listed(page, `${root}/Alpha`)).filter(path => path.endsWith(".zip"))).toEqual([]);
 });

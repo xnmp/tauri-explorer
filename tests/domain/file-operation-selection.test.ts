@@ -1,5 +1,5 @@
-import { expect, it } from "vitest";
-import { operationRoots, operationDrag } from "$lib/domain/file-operation-selection";
+import { describe, expect, it } from "vitest";
+import { archiveRoots, operationRoots, operationDrag } from "$lib/domain/file-operation-selection";
 import type { FileEntry } from "$lib/domain/file";
 const dir = (path: string, symlink = false): FileEntry => ({ path, name: path, kind: "directory", size: 0, modified: "", is_symlink: symlink });
 it("reduces covered descendants in stable order without changing UI selection", () => {
@@ -51,4 +51,18 @@ it("reduces ten thousand siblings and nested children in linear time", () => {
   expect(drag.ok && drag.primary).toBe(siblings[0]);
   // The quadratic reduction took ~1.4s for 1,000 siblings and ~23s for 4,000.
   expect(elapsed).toBeLessThan(1_500);
+});
+
+describe("archive roots", () => {
+  const file = (path: string): FileEntry => ({ path, name: path.split(/[\\/]/).at(-1)!, kind: "file", size: 1, modified: "" });
+  it("refuses reduced roots that share a basename, case-insensitively on Windows", () => {
+    expect(archiveRoots([file("/r/a/same.txt"), file("/r/b/same.txt")], false)).toEqual({ ok: false, error: "Selected items have the same name" });
+    expect(archiveRoots([file("/r/a/Same.txt"), file("/r/b/same.txt")], false).ok).toBe(true);
+    expect(archiveRoots([file("C:\\r\\a\\Same.txt"), file("C:\\r\\b\\same.txt")], true)).toEqual({ ok: false, error: "Selected items have the same name" });
+  });
+  it("reduces before checking names, and keeps a repeated selection of one path", () => {
+    const folder: FileEntry = { ...file("/r/a"), kind: "directory" };
+    expect(archiveRoots([folder, file("/r/a/same.txt"), file("/r/b/same.txt")], false)).toEqual({ ok: true, entries: [folder, file("/r/b/same.txt")] });
+    expect(archiveRoots([file("/r/a/x"), file("/r/a/x")], false)).toEqual({ ok: true, entries: [file("/r/a/x")] });
+  });
 });

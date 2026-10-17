@@ -77,3 +77,18 @@ export function operationDrag(entries: readonly FileEntry[], primary: FileEntry,
   }
   return { ...result, primary: reduced ?? primary };
 }
+
+/** Compression names each archive member by its basename alone, so two
+ * reduced roots with one name (children of different peeked folders) would
+ * collide inside the archive. Names compare case-insensitively on Windows. */
+export function archiveRoots(entries: readonly FileEntry[], windows: boolean, visibleEntries: readonly FileEntry[] = entries): OperationRoots {
+  const result = operationRoots(entries, windows, visibleEntries);
+  if (!result.ok) return result;
+  const names = new Set<string>();
+  for (const entry of result.entries) {
+    const name = windows ? entry.name.toLowerCase() : entry.name;
+    if (names.has(name)) return { ok: false, error: "Selected items have the same name" };
+    names.add(name);
+  }
+  return result;
+}

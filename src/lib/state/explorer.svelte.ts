@@ -26,7 +26,7 @@ import { SvelteSet } from "svelte/reactivity";
 import { untrack } from "svelte";
 import { toastStore } from "./toast.svelte";
 import { gitStatusStore } from "./git-status.svelte";
-import { operationRoots } from "$lib/domain/file-operation-selection";
+import { archiveRoots, operationRoots } from "$lib/domain/file-operation-selection";
 import { createFolderPeekState } from "./folder-peek.svelte";
 import { flatPeekEntries, flatPeekRows, peekCapability, resolvePeekCommandTarget, resolvePeekEscape } from "$lib/domain/folder-peek-flat";
 import type { PeekLevelCache } from "$lib/domain/folder-peek";
@@ -890,6 +890,14 @@ function createExplorerState(seed?: ExplorerSeed, isFileListingSurface: () => bo
     toastStore.clipboard(`Copied: ${label}`, false);
   }
 
+  /** A selection may hold a peeked folder and its children; the archive
+   * takes each root once and refuses members that would share a name. */
+  async function compressToZip(entries: readonly FileEntry[]) {
+    const result = archiveRoots(entries, isWindows, displayEntries);
+    if (!result.ok) { toastStore.error(result.error); return; }
+    if (result.entries.length) await mutations.compressToZip(result.entries.map(entry => entry.path));
+  }
+
   async function cutToClipboard(entries: FileEntry[]) {
     const result = operationRoots(entries, isWindows, displayEntries);
     if (!result.ok) { toastStore.error(result.error); return; }
@@ -1240,7 +1248,7 @@ function createExplorerState(seed?: ExplorerSeed, isFileListingSurface: () => bo
     rename: mutations.rename,
     confirmDelete: mutations.confirmDelete,
     extractArchive: mutations.extractArchive,
-    compressToZip: mutations.compressToZip,
+    compressToZip,
     createSymlink: mutations.createSymlinkForEntry,
     // Clipboard
     copyToClipboard,

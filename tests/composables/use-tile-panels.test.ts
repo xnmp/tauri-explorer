@@ -203,20 +203,22 @@ describe("useTilePanels cells", () => {
   });
   afterEach(() => { destroy(); vi.unstubAllGlobals(); });
 
-  it("hands a mounted row the same cells until the layout or the entries change", () => {
+  it("gives each row its own top-level tiles in order, indexed into the current display entries", () => {
     const mounted = mount([]);
     const { tiles } = mounted;
-    const [first, second] = tiles.model.groups;
-    const cells = tiles.cells(first);
-    expect(cells.map(cell => cell.entry?.name)).toEqual(["AI Draft Archive", "Archive", "Career", "Codex", "Inbox", "Personal", "Revenue NSW.pdf"]);
-    // VirtualList re-delivers a row's item every scroll frame: same row, same cells.
-    expect(tiles.cells(first)).toBe(cells);
-    expect(tiles.cells(second)).not.toBe(cells);
-    // Opening a folder rebuilds the layout, and with it the cells.
+    const names = () => tiles.model.groups.flatMap(group => tiles.cells(group).map(cell => cell.entry?.name));
+    expect(tiles.cells(tiles.model.groups[0]).map(cell => cell.entry?.name)).toEqual(["AI Draft Archive", "Archive", "Career", "Codex", "Inbox", "Personal", "Revenue NSW.pdf"]);
+    const top = names();
+    expect(tiles.model.groups.flatMap(group => tiles.cells(group).map(cell => cell.index))).toEqual(top.map((_, i) => i));
+    // Opening Career puts its children into the display entries after it: every
+    // row keeps its top-level tiles, each indexing the entry it shows.
     mounted.setOpen(["Career"]);
-    const reopened = tiles.cells(tiles.model.groups[0]);
-    expect(reopened).not.toBe(cells);
-    expect(reopened.map(cell => cell.entry?.name)).toEqual(cells.map(cell => cell.entry?.name));
+    const entries = rowsFor(["Career"]).tree.entries;
+    expect(names()).toEqual(top);
+    for (const group of tiles.model.groups) {
+      for (const cell of tiles.cells(group)) expect(entries[cell.index!]?.path).toBe(cell.entry!.path);
+    }
+    expect(tiles.cells(tiles.model.groups[1])[0].index).toBeGreaterThan(7);
     mounted.dispose();
   });
 });

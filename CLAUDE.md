@@ -321,6 +321,12 @@ on the runner side before `browser.execute`: its serialized callback cannot
 reference imported helpers. Windows backslashes otherwise reject a successfully
 acknowledged lease (#1254).
 
+A peek without its own directory lease can still refresh through a root
+notification: Windows reports child-directory metadata changes to its watched
+parent. Native overflow tests must assert a causal root receipt and fresh rows,
+not an elapsed interval of staleness. Touch the evicted directory's metadata
+explicitly to exercise that ancestor-notification path on Linux too (#1260).
+
 `createWindowTabsManager().dispose()` is asynchronous: await it in test teardown so
 explorer directory-listener cleanup settles before Vitest closes the worker (#611).
 

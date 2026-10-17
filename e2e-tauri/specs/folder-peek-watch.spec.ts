@@ -115,14 +115,18 @@ describe("folder peek native observation", () => {
     await receipt(nested, deletedAt); await waitForEntry(created, false);
     const overflow = path.join(folders[0], "overflow.txt"); fs.writeFileSync(overflow, "overflow");
     await peek("refresh"); await waitForEntry(overflow);
-    // The overflow peek has no notifications of its own: an unchanged wait
-    // proves that, then a real root notification's ordinary (non-explicit)
-    // pane refresh reaches it through scheduling.
-    const unnotified = path.join(folders[0], "unnotified.txt"); fs.writeFileSync(unnotified, "unnotified");
-    await browser.pause(2_500);
-    expect((await snapshot()).entries).not.toContain(unnotified);
-    const rootChangedAt = Date.now(); fs.writeFileSync(path.join(root, "root-change.txt"), "root");
-    await receipt(root, rootChangedAt); await waitForEntry(unnotified);
+    // Use an evicted leaf without the nested child's parent guard. No own
+    // lease does not preclude an ancestor notification refreshing this peek.
+    expect((await snapshot()).watches.find(slot => slot.path === folders[1])?.lease).toBeNull();
+    const ancestorRefreshed = path.join(folders[1], "ancestor-refresh.txt");
+    const changedAt = Date.now(); fs.writeFileSync(ancestorRefreshed, "ancestor refresh");
+    // Windows reports the child's directory metadata change to the root.
+    // Touch it explicitly so Linux exercises that same real watcher path.
+    const touchedAt = new Date(fs.statSync(folders[1]).mtimeMs + 1_000);
+    fs.utimesSync(folders[1], touchedAt, touchedAt);
+    await receipt(root, changedAt);
+    await waitForEntry(ancestorRefreshed);
+    await $(entryPathSelector(ancestorRefreshed)).waitForDisplayed({ timeout: 10_000 });
     const parentDeletedAt = Date.now(); fs.rmSync(folders[16], { recursive: true });
     await receipt(root, parentDeletedAt); await waitForEntry(folders[16], false);
     expect((await snapshot()).expanded).not.toContain(folders[16]);

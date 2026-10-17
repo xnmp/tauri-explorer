@@ -244,7 +244,7 @@
     const selected = explorer.getSelectedEntries();
     if (selected.length === 0) return;
     recordActioned();
-    await explorer.compressToZip(selected.map((e) => e.path));
+    await explorer.compressToZip(selected);
     contextMenuStore.close();
   }
 

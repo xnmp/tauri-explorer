@@ -28,6 +28,7 @@
   import type { ExplorerInstance } from "$lib/state/explorer.svelte";
   import FileIcon from "./FileIcon.svelte";
   import { tick } from "svelte";
+  import { windowTabsManager } from "$lib/state/window-tabs.svelte";
 
   interface Props {
     explorer: ExplorerInstance;
@@ -53,7 +54,7 @@
     const base = isFile ? "New File" : "New folder";
     const kind = isFile ? "file" : "directory";
     const existingNames = new Set(
-      explorer.displayEntries
+      explorer.ownDisplayEntries
         .filter((e) => e.kind === kind)
         .map((e) => e.name.toLowerCase())
     );
@@ -69,6 +70,7 @@
       newFolderName = getNextName();
       newFolderError = null;
       tick().then(() => {
+        if (!explorer.isCreatingFolder || windowTabsManager.getActiveExplorer() !== explorer) return;
         newFolderInput?.focus();
         newFolderInput?.select();
       });

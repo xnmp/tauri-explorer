@@ -76,6 +76,7 @@
   oncontextmenu={(e) => interactions.handleContextMenu(e, entry)}
   ondragstart={usesHtml5Drag ? (e) => interactions.handleDragStart(e, entry, explorer.isSelected(entry)) : undefined}
   ondragend={usesHtml5Drag ? interactions.handleDragEnd : undefined}
+  ondragenter={(e) => interactions.handleDragEnter(e, entry)}
   ondragover={(e) => interactions.handleDragOver(e, entry)}
   ondragleave={(e) => interactions.handleDragLeave(e, entry)}
   ondrop={(e) => interactions.handleDrop(e, entry)}

@@ -11,6 +11,8 @@
  */
 
 import { onDestroy } from "svelte";
+import { operationDrag } from "$lib/domain/file-operation-selection";
+import { toastStore } from "$lib/state/toast.svelte";
 import type { FileEntry } from "$lib/domain/file";
 import type { ExplorerInstance } from "$lib/state/explorer.svelte";
 import { basename, pathComparison } from "$lib/domain/path";
@@ -55,6 +57,9 @@ export function usePointerDrag(deps: PointerDragDeps) {
   let ghostEl: HTMLElement | null = null;
   let sourceEl: HTMLElement | null = null;
   let entryData: { path: string; name: string; kind: string; paths?: string[] } | null = null;
+  // A mousedown is usually a click. Recursive-root reduction over the whole
+  // selection waits until the pointer crosses the drag threshold.
+  let pending: { entry: FileEntry; isSelected: boolean; source: HTMLElement | null } | null = null;
 
   // Window listeners are added on pointerdown; if the owning component is
   // destroyed mid-drag they would otherwise leak for the rest of the session.
@@ -76,17 +81,14 @@ export function usePointerDrag(deps: PointerDragDeps) {
     if (event.button !== 0) return;
     event.preventDefault();
 
-    const explorer = deps.getExplorer();
-    const selectedEntries = explorer.getSelectedEntries();
-    const isMulti = selectedEntries.length > 1 && isSelected;
-    dragPaths = isMulti ? selectedEntries.map((e) => e.path) : [entry.path];
-    sourceEl = (event.currentTarget as HTMLElement) || null;
-
+    pending = { entry, isSelected, source: (event.currentTarget as HTMLElement) || null };
+    dragPaths = [];
+    entryData = null;
+    sourceEl = null;
     startX = event.clientX;
     startY = event.clientY;
     dragActive = false;
     nativeStarted = false;
-    entryData = { path: entry.path, name: entry.name, kind: entry.kind, paths: isMulti ? dragPaths : undefined };
 
     // Use mousemove/mouseup on window — implicit mouse capture ensures events
     // keep firing (with accurate coordinates) even after cursor leaves the viewport.
@@ -103,6 +105,7 @@ export function usePointerDrag(deps: PointerDragDeps) {
     if (!dragActive) {
       const dist = Math.sqrt(dx * dx + dy * dy);
       if (dist < THRESHOLD_PX) return;
+      if (!resolveDragSource()) { cleanup(false); return; }
       dragActive = true;
       dragState.start(entryData!);
       const fallback = dragPaths.length > 1 ? `${dragPaths.length} items` : basename(dragPaths[0]);
@@ -150,6 +153,21 @@ export function usePointerDrag(deps: PointerDragDeps) {
       }
       highlightTargetAtPoint(event.clientX, event.clientY);
     }
+  }
+
+  /** Reduce the gesture's sources once, at the real drag start. */
+  function resolveDragSource(): boolean {
+    if (!pending) return false;
+    const { entry, isSelected, source } = pending;
+    pending = null;
+    const explorer = deps.getExplorer();
+    const reduced = operationDrag(isSelected ? explorer.getSelectedEntries() : [entry], entry, isWindows, explorer.displayEntries);
+    if (!reduced.ok) { toastStore.error(reduced.error); return false; }
+    const primary = reduced.primary;
+    dragPaths = reduced.entries.map(e => e.path);
+    sourceEl = primary.path === entry.path ? source : reducedDragSource(source, primary.path);
+    entryData = { path: primary.path, name: primary.name, kind: primary.kind, paths: dragPaths.length > 1 ? dragPaths : undefined };
+    return true;
   }
 
   function startNativeDrag(): void {
@@ -260,9 +278,16 @@ export function usePointerDrag(deps: PointerDragDeps) {
     nativeStarted = false;
     dragPaths = [];
     entryData = null;
+    pending = null;
   }
 
   return { handlePointerDown };
+}
+
+/** The primary can become a selected ancestor after recursive reduction. */
+export function reducedDragSource(source: HTMLElement | null, path: string): HTMLElement | null {
+  const rows = source?.closest(".file-list")?.querySelectorAll<HTMLElement>(".entry-item") ?? [];
+  return [...rows].find(row => row.dataset.path === path) ?? null;
 }
 
 export function createDragGhost(

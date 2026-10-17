@@ -76,7 +76,7 @@ export const navigationCommands: Command[] = [
     label: "Refresh",
     category: "navigation",
     shortcut: "F5",
-    handler: () => getActiveExplorer()?.refresh(),
+    handler: () => getActiveExplorer()?.refresh({ explicit: true }),
     // While the active pane shows the commit graph, F5 belongs to
     // `gitGraph.refresh` below — refreshing the hidden file listing here would
     // double-handle the key with no visible effect (#417, #432).

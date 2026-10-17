@@ -12,18 +12,19 @@
 
   interface Props {
     entryName: string;
+    directory?: string;
     /** Hide badge during rename to avoid overlap */
     hideOnRename?: boolean;
   }
 
-  let { entryName, hideOnRename = false }: Props = $props();
+  let { entryName, hideOnRename = false, directory: parentDirectory }: Props = $props();
 
   // Statuses are keyed per directory; look up via the directory this entry
   // is rendered in (the owning pane's current path) so dual panes showing
   // different directories don't bleed badges into each other.
   const paneId = getPaneIdContext();
   const directory = $derived(
-    paneId ? windowTabsManager.getExplorer(paneId)?.currentPath ?? "" : "",
+    parentDirectory ?? (paneId ? windowTabsManager.getExplorer(paneId)?.currentPath ?? "" : ""),
   );
   const gitStatus = $derived(
     settingsStore.showGitStatus && directory

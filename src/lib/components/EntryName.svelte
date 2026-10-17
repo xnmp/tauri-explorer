@@ -18,9 +18,10 @@
     entry: FileEntry;
     explorer: ExplorerInstance;
     variant: "details" | "list" | "tiles";
+    bold?: boolean;
   }
 
-  let { entry, explorer, variant }: Props = $props();
+  let { entry, explorer, variant, bold = false }: Props = $props();
 
   const rename = useInlineRename(() => explorer);
 
@@ -251,7 +252,7 @@
     </span>
   {/if}
 {:else}
-  <EntryNameLabel name={entry.name} {variant} />
+  <EntryNameLabel name={entry.name} {variant} {bold} />
 {/if}
 
 <style>

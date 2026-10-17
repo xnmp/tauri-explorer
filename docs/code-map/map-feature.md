@@ -58,6 +58,15 @@ backend for E2E/browser).
 - FLOW: pointer events in item-interactions/marquee → mutate explorer selection set → views highlight via `selectedPaths`.
 - Settled selection: while a marquee drags, `FileList.svelte` holds `explorer.beginSelectionGesture()`; `PreviewPane.svelte` and `PluginInspector.svelte` read `getSettledSelectedEntries()` (the pre-drag selection until release), and `.content.marquee-active` stops entry hit-testing/hover under the pointer (#1169; `tests/state/selection-gesture.test.ts`, `e2e/marquee-preview-settle.spec.ts`)
 
+## Folder peek (Details, #1238)
+
+- `domain/folder-peek.ts`, `domain/folder-peek-flat.ts`, `state/folder-peek.svelte.ts`, lazy `state/folder-peek-session.svelte.ts` — session-only per-pane expansion (500 paths), projected preorder entries, status rows and row-index mappings. `explorer.svelte.ts` owns resources across retained-tab eviction; List/Tiles have no peek capability yet.
+- `components/DetailsView.svelte`, `FileItem.svelte`, `PeekGuides.svelte` — virtualized treegrid, 22px Name-only indentation, native caret buttons and continuous unboxed guides. Selection and keyboard movement use visible entries; Ctrl+A/typeahead/status totals use root entries. Collapsing prunes hidden child selections.
+- `state/pane-watch.ts`, `pane-refresh.ts`, `refresh-manager.ts` — shared per-path WHEN/WHETHER/HOW refresh split, newest-16 native directory/Git watches, fallback refresh for overflow, identity-guarded publication and subscriber retirement.
+- `domain/file-operation-selection.ts`, `state/pane-mutations.ts` — recursive batch roots and captured owning-directory publication for child mutations; native copy/session contracts remain unchanged.
+- `state/pane-peek-watch.ts` remains part of pane-watch’s WHETHER owner and loads with the first peek. The file-list dispatcher loads each built-in view renderer on demand, keeping the treegrid renderer out of the static startup graph.
+- Coverage: `tests/domain/folder-peek*.test.ts`, `file-operation-selection.test.ts`, `tests/state/folder-peek*.test.ts`, `e2e/folder-peek-*.spec.ts`, `e2e-tauri/specs/folder-peek-watch.spec.ts`. E2E-only `e2e-folder-peek` DOM RPC in `src/test-support/e2e-hooks.ts` publishes live lease ownership.
+
 ## Directory listing & refresh/watcher events
 
 - `state/explorer.svelte.ts` owns each immutable listing revision in `$state.raw`; its entries accessor preserves replacement publication through pane refresh/mutations without creating per-entry signals. Keep `ExplorerCoreState.entries` readonly; selection and other pane fields retain granular reactivity. Browser contracts in `e2e/listing-revisions.spec.ts` verify snapshot identity plus rendered publication in all three views.
@@ -254,7 +263,7 @@ backend for E2E/browser).
 
 - `composables/use-inline-rename.svelte.ts` — inline edit field lifecycle
 - `components/EntryName.svelte` — name label + inline rename input; the label itself is `components/EntryNameLabel.svelte`
-- `components/BulkRenameDialog.svelte` — multi-file pattern rename
+- `components/BulkRenameDialog.svelte` — multi-file pattern rename; its plan (previews, per-folder collisions, descendant-first order) is `domain/bulk-rename.ts`
 - `components/InlineNewFolder.svelte` — inline new-entry create (folder or file, per `explorer.newEntryKind`; #436)
 - `state/rename-suggestion.svelte.ts`, `domain/ai-rename.ts`, `api/ai-rename.ts` — AI rename suggestions
 - `api/files.ts` (renameEntry, createDirectory, createEmptyFile), `api/file-mutations.ts`, `src-tauri/src/file_mutation.rs` — native forward admission and settled history receipts; reusable filesystem primitives remain in `files/file_ops.rs`.

@@ -111,6 +111,7 @@ export interface Settings {
   windowsBackdrop: WindowsBackdrop; // Windows: translucent system backdrop (Mica/Acrylic), requires restart
   windowsBackdropOpacity: number; // Windows: acrylic tint opacity 0-100 (lower = more see-through)
   yaziNavigation: boolean; // left/right arrows navigate up/into folders in details/list view
+  folderPeek: boolean; // folder peek (inline folder expansion); off = classic views (#1238)
   previewFontSize: number; // base font size (px) for text/code/markdown previews
   showPreviewInfo: boolean; // preview pane chrome: file name, type badge, size and modified rows (off = content only, #494)
   autoEnterSingleSubdir: boolean; // when entering a dir with exactly one visible subdir (and nothing else), descend into it recursively
@@ -186,6 +187,7 @@ const DEFAULT_SETTINGS: Settings = {
   windowsBackdrop: "off",
   windowsBackdropOpacity: 65,
   yaziNavigation: true,
+  folderPeek: true,
   previewFontSize: 12,
   showPreviewInfo: true,
   autoEnterSingleSubdir: false,
@@ -672,6 +674,9 @@ function createSettingsStore() {
     get yaziNavigation() {
       return settings.yaziNavigation;
     },
+    get folderPeek() {
+      return settings.folderPeek;
+    },
     get previewFontSize() {
       return settings.previewFontSize;
     },
@@ -850,6 +855,7 @@ export const TOGGLE_SETTINGS: ToggleSettingMeta[] = [
   { key: "showRecycleBin", label: "Toggle Recycle Bin in Sidebar" },
   { key: "quickOpenDebug", id: "view.toggleQuickOpenDebug", label: "Toggle Quick Open Debug Scores" },
   { key: "yaziNavigation", label: "Toggle Yazi Navigation" },
+  { key: "folderPeek", id: "view.toggleFolderPeek", label: "Toggle Folder Peek" },
   { key: "autoEnterSingleSubdir", label: "Toggle Auto-Enter Single Subfolder" },
   { key: "tabTitleGitRoot", label: "Toggle Git Repo Root in Tab Title" },
   { key: "integratedTitleBar", label: "Toggle Integrated Title Bar" },

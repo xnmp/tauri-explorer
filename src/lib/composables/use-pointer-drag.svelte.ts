@@ -10,7 +10,7 @@
  * coordinates even after the cursor leaves the viewport.
  */
 
-import { onDestroy } from "svelte";
+import { onDestroy, tick } from "svelte";
 import { operationDrag } from "$lib/domain/file-operation-selection";
 import { toastStore } from "$lib/state/toast.svelte";
 import type { FileEntry } from "$lib/domain/file";
@@ -34,6 +34,11 @@ export interface PointerDragDeps {
   /** Refresh every pane that may show an affected directory after a drop.
    *  Defaults to refreshing only the owning pane. */
   refreshPanes?: () => void;
+  /** Whether a dragged path is still in the listing its row came from. The
+   *  default reads the gesture pane's listing (its root and open peeks); a
+   *  surface that lists other directories (Miller ancestor columns) supplies
+   *  its own. */
+  isListed?: (path: string) => boolean;
 }
 
 const THRESHOLD_PX = 5;
@@ -68,13 +73,22 @@ export function usePointerDrag(deps: PointerDragDeps) {
   let gestureExplorer: ExplorerInstance | null = null;
   const explorerOf = () => gestureExplorer ?? deps.getExplorer();
 
+  const isListed = deps.isListed ?? ((path: string) => explorerOf().entryMeta.has(path));
+  /** A dragged source left its listing (deleted or renamed elsewhere, or its
+   * pane navigated): a drop could only attempt a failing move. */
+  const sourceGone = () => dragPaths.some(path => !isListed(path));
+
   /** The owning row unmounted. A press that has not become a drag is
    * released (its window listeners would otherwise leak). An active drag
-   * belongs to the pointer, not the row: a spring-loaded peek (#1242) or a
-   * refresh can move its source row out of the virtual window mid-gesture,
-   * and the gesture still ends through mouseup, Escape or blur. */
+   * belongs to the pointer, not the row, whatever the Folder Peek setting: a
+   * spring-loaded peek (#1242), a refresh or a scroll can move its source row
+   * out of the virtual window mid-gesture, and the gesture still ends through
+   * mouseup, Escape or blur. Only a source that is genuinely gone cancels it,
+   * checked after the update: the row's teardown runs before that update's
+   * listing is readable (it still reads the removed entry). */
   function dispose(): void {
     if (!dragActive) cleanup(false);
+    else void tick().then(() => { if (dragActive && sourceGone()) onCancel(); });
   }
   try {
     onDestroy(dispose);
@@ -213,6 +227,8 @@ export function usePointerDrag(deps: PointerDragDeps) {
       return;
     }
 
+    // A source that left its listing after its row unmounted cancels here.
+    if (sourceGone()) { onCancel(); return; }
     if (ghostEl) ghostEl.style.display = "none";
     const target = resolveDropTargetAtPoint(event.clientX, event.clientY);
     const kind = entryData?.kind;

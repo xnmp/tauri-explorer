@@ -433,3 +433,60 @@ base("pointer drag (macOS): the drag survives its source row leaving the virtual
   expect(errors).toEqual([]);
   await context.close();
 });
+
+// Coordinator decision (#1242 review): the survival above is a cross-cutting
+// pointer-drag fix that holds with Folder Peek off as well (a scroll moves the
+// source row out of the virtual window just as a spring peek does).
+base("pointer drag (macOS), Folder Peek off: the drag survives its source row scrolling out of the virtual window", async ({ browser }, info) => {
+  const { context, page, errors, center } = await macPage(browser, info.project.use.baseURL);
+  await page.setViewportSize({ width: 900, height: 420 });
+  await page.goto(`/?path=${P("Bulk")}&viewMode=details`);
+  await page.evaluate(async () => (await import("/src/lib/state/settings.svelte.ts")).settingsStore.update({ folderPeek: false }));
+  const first = views.details.folder(P("Bulk/bulk-01.txt"));
+  await expect(page.locator(first)).toBeVisible();
+  const source = await center(first);
+  await page.mouse.move(source.x, source.y);
+  await page.mouse.down();
+  await page.mouse.move(source.x, source.y + 12, { steps: 2 });
+  await page.mouse.wheel(0, 2000);
+  await expect(page.locator(first)).toHaveCount(0);
+  const crumb = await center(`${shown} .crumb[data-path="${root}"]`);
+  await page.mouse.move(crumb.x, crumb.y, { steps: 4 });
+  await page.mouse.up();
+  await expect.poll(() => listing(page, root)).toContain("bulk-01.txt");
+  expect(await listing(page, P("Bulk"))).not.toContain("bulk-01.txt");
+  expect(await springPeeks(page)).toEqual([]);
+  expect(errors).toEqual([]);
+  await context.close();
+});
+
+base("pointer drag (macOS): a source deleted elsewhere mid-drag cancels the drag instead of attempting a move", async ({ browser }, info) => {
+  const { context, page, errors, center } = await macPage(browser, info.project.use.baseURL);
+  await open(page, "details");
+  const source = await center(views.details.folder(P("drag-me.txt")));
+  const inbox = await center(views.details.folder(P("Inbox")));
+  await page.mouse.move(source.x, source.y);
+  await page.mouse.down();
+  await page.mouse.move(source.x, source.y - 10, { steps: 2 });
+  await page.mouse.move(inbox.x, inbox.y, { steps: 4 });
+  await opened(page, [P("Inbox")]);
+  // Another program deletes the source; the pane's refresh drops its row.
+  await page.evaluate(async ([dir, name]) => {
+    const { mockFiles } = await import("/src/lib/api/mock-fixtures.ts");
+    mockFiles[dir] = mockFiles[dir].filter(entry => entry.name !== name);
+    const { windowTabsManager } = await import("/src/lib/state/window-tabs.svelte.ts");
+    await windowTabsManager.getActiveExplorer()!.refresh({ silent: true });
+  }, [root, "drag-me.txt"] as const);
+  await expect(page.locator(views.details.folder(P("drag-me.txt")))).toHaveCount(0);
+  // The drag ended there: no ghost, no spring, no highlight, and the release moves nothing.
+  await opened(page, []);
+  await expect(page.locator(".pointer-drag-ghost")).toHaveCount(0);
+  await expect(page.locator(`${shown} .drop-target`)).toHaveCount(0);
+  await page.mouse.move(inbox.x, inbox.y + 4, { steps: 2 });
+  await page.mouse.up();
+  await page.waitForTimeout(200);
+  expect(await listing(page, P("Inbox"))).toEqual(["Nested", "alpha.txt", "beta.txt"]);
+  await expect(page.locator(".toast.error")).toHaveCount(0);
+  expect(errors).toEqual([]);
+  await context.close();
+});

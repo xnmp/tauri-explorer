@@ -158,6 +158,13 @@ test("assistive technology reads the List as a tree, with sibling positions, ins
   const empty = slot(page, `${root}/Career`).locator(".list-peek-state", { hasText: "Empty folder" });
   await expect(empty).toHaveAttribute("role", "treeitem");
   await expect(empty).toHaveAttribute("aria-level", "3");
+  // The card's group sits beside its header, which owns it, yet is named alone.
+  const group = await card(page, `${root}/Career`).getAttribute("id");
+  expect(group).toBeTruthy();
+  await expect(row(page, `${root}/Career`)).toHaveAttribute("aria-owns", group!);
+  await expect(row(page, `${root}/Career`)).toHaveAccessibleName("Career");
+  expect(await row(page, `${root}/Career`).ariaSnapshot()).toContain('group "Career contents"');
+  await expect(row(page, `${root}/Inbox`)).not.toHaveAttribute("aria-owns");
   expect(await violations()).toEqual([]);
   await toggle(page, `${root}/Career/Applications`);
   // Positions count siblings under the same parent, not the global entry index.

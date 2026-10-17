@@ -38,6 +38,10 @@
     level?: number;
     /** A folder's peek state; omitted for files and outside a peek tree. */
     expanded?: boolean;
+    /** The id of a group of this row's children rendered outside it (a List
+     *  card's scroll area, #1240). The row is then named by its entry alone,
+     *  not by its owned content. */
+    owns?: string;
     onitemclick: (entry: FileEntry, event: MouseEvent) => void;
     onitemdblclick: (entry: FileEntry) => void;
     children: Snippet;
@@ -56,6 +60,7 @@
     posInSet,
     level,
     expanded,
+    owns,
     onitemclick,
     onitemdblclick,
     children,
@@ -76,7 +81,8 @@
 <!-- svelte-ignore a11y_click_events_have_key_events -- FileList owns cursor navigation; the window command router owns configurable Open/Preview and selection commands. -->
 <div
   {role}
-  aria-label={isVideoMediaFile(entry) ? `${entry.name}, video` : undefined}
+  aria-label={isVideoMediaFile(entry) ? `${entry.name}, video` : owns ? entry.name : undefined}
+  aria-owns={owns}
   tabindex={!isRenaming && explorer.focusedEntry?.path === entry.path ? 0 : -1}
   aria-selected={explorer.isSelected(entry)}
   class="{className} entry-item"

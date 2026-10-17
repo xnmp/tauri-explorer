@@ -40,6 +40,9 @@
   const paneId = getPaneIdContext();
   const interactions = useItemInteractions({ getExplorer: () => explorer, refreshPanes: () => windowTabsManager.refreshAllPanes(), selectOnContextMenu: true });
   const pointerDrag = usesPointerDrag ? usePointerDrag({ getExplorer: () => explorer, refreshPanes: () => windowTabsManager.refreshAllPanes() }) : null;
+  // A card's group is a sibling of its header treeitem, which owns it.
+  const uid = $props.id();
+  const cardGroupId = (entryIndex: number) => `${uid}-card-${entryIndex}`;
   const columns = useListColumns({
     getRows: () => explorer.detailRows,
     getPreferredRows: path => explorer.listCardRows(path),
@@ -81,7 +84,7 @@
 {#snippet entryRow(row: EntryRow, card?: ListCardSpec | null)}
   <EntryCell role={tree ? "treeitem" : "option"} setSize={tree ? tree.setsize[row.entryIndex] : explorer.displayEntries.length} posInSet={tree?.posinset[row.entryIndex]}
     column={1} class="list-item list-entry" index={row.entryIndex} entry={row.entry} {explorer} {interactions} {pointerDrag} {onitemclick} {onitemdblclick}
-    level={tree ? row.depth + 1 : undefined}
+    level={tree ? row.depth + 1 : undefined} owns={card && tree ? cardGroupId(row.entryIndex) : undefined}
     expanded={tree && row.entry.kind === "directory" ? row.expanded : undefined}>
     {#if carets && row.entry.kind === "directory"}
       <!-- A pointer affordance only (as in Details): never a tab stop, and its
@@ -131,7 +134,7 @@
           {:else}
             {@render entryRow(slot.header, slot.item.card)}
             {#if slot.item.card}
-              <ListCard entry={slot.header.entry} card={slot.item.card} rows={explorer.detailRows.rows} groups={explorer.detailRows.groups} {carets}
+              <ListCard entry={slot.header.entry} id={cardGroupId(slot.header.entryIndex)} card={slot.item.card} rows={explorer.detailRows.rows} groups={explorer.detailRows.groups} {carets}
                 offsets={columns.cardOffsets(slot.item.card)} scrollTop={columns.cardScrollTop(slot.item.card.path)} previewRows={columns.previewRows(slot.item.card.path)}
                 {interactions} row={entryRow}
                 onscrolltop={(top) => columns.setCardScrollTop(slot.item.card!.path, top)} />

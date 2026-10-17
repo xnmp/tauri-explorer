@@ -21,6 +21,8 @@
   interface Props {
     /** The card's folder (its header row). */
     entry: FileEntry;
+    /** The group's id, which the header treeitem owns (aria-owns). */
+    id: string;
     card: ListCardSpec;
     /** The pane's peek rows; the card shows `rows[card.start, card.end)`. */
     rows: readonly PeekRow[];
@@ -35,7 +37,7 @@
     onscrolltop: (top: number) => void;
     row: Snippet<[EntryRow]>;
   }
-  let { entry, card, rows, groups, carets, offsets, scrollTop, previewRows, interactions, onscrolltop, row }: Props = $props();
+  let { entry, id, card, rows, groups, carets, offsets, scrollTop, previewRows, interactions, onscrolltop, row }: Props = $props();
 
   const content = $derived(card.end - card.start);
   const visible = $derived(previewRows ?? card.visibleRows);
@@ -86,7 +88,7 @@
 
 <div class="list-card-body">
   <div class="list-card-scroll peek-drop-target" data-card-scroll data-marquee-clip data-path={entry.path}
-    role="group" aria-label={`${entry.name} contents`} tabindex="-1"
+    {id} role="group" aria-label={`${entry.name} contents`} tabindex="-1"
     style:--card-visible-rows={visible}
     style:--fade-top={`${fades.top ? LIST_CARD_FADE : 0}px`}
     style:--fade-bottom={`${fades.bottom ? LIST_CARD_FADE : 0}px`}

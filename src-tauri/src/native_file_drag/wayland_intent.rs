@@ -67,16 +67,6 @@ pub(super) fn begin(window: &gtk::ApplicationWindow, id: &str) -> Result<(), Str
     Ok(())
 }
 
-pub(super) fn unavailable(id: &str, error: String) {
-    GESTURE.with(|gesture| {
-        *gesture.borrow_mut() = Some(Gesture {
-            id: id.into(),
-            monitor: None,
-            result: Some(Err(error)),
-        })
-    });
-}
-
 pub(super) fn snapshot(id: &str) -> Option<Result<bool, String>> {
     GESTURE.with(|gesture| {
         let mut gesture = gesture.borrow_mut();

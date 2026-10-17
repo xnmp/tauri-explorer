@@ -159,6 +159,11 @@ Rules that bite:
 
 ## Verification
 
+The startup gzip cap applies to the whole static import closure, including
+content-hashed import names. A build exactly at the cap can differ by a few bytes
+between local and CI: #1223 measured 280,448 locally versus 280,450 in CI. Keep
+headroom and use `bun run check:bundle`; the main chunk alone is not the guard.
+
 The three test tiers see different things; pick by what could actually break:
 
 1. **Vitest (`tests/`)** — domain logic and store behavior. The default home for every fix's regression test.

@@ -2,7 +2,6 @@
  * Navigation commands: back, forward, up, home, refresh.
  */
 
-import { TRASH_PATH } from "$lib/domain/virtual-path";
 import type { Command } from "../commands.svelte";
 import { getActiveExplorer } from "./shared";
 import { windowTabsManager } from "../window-tabs.svelte";
@@ -12,13 +11,6 @@ import { activePaneIsGraph } from "./active-pane";
 import { settingsStore } from "../settings.svelte";
 
 export const navigationCommands: Command[] = [
-  {
-    id: "navigation.openRecycleBin",
-    scope: "pane",
-    label: "Open Recycle Bin",
-    category: "navigation",
-    handler: () => { void getActiveExplorer()?.navigateTo(TRASH_PATH); },
-  },
   {
     id: "navigation.focusAddressBar",
     scope: "pane",

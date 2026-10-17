@@ -99,7 +99,7 @@ export interface Settings {
   millerHideEmpty: boolean; // hide folders containing no visible entries from miller columns
   showManuallyHidden: boolean; // reveal manually-hidden entries (dimmed)
   showScmPanel: boolean; // show SCM panel (independent of sidebar)
-  enableTerminal: boolean; // feature flag: integrated terminal panel (Alt+M T)
+  enableTerminal: boolean; // feature flag: integrated terminal panel (Ctrl+`)
   enableGitGraph: boolean; // feature flag: git commit graph tab
   f5SyncsLocalBranches: boolean; // graph F5 also fetches + fast-forwards local branches behind their upstream (#432)
   scmTreeView: boolean; // group SCM file rows by folder hierarchy
@@ -823,7 +823,7 @@ export interface ToggleSettingMeta {
 }
 
 export const TOGGLE_SETTINGS: ToggleSettingMeta[] = [
-  { key: "showSidebar", id: "view.toggleSidebar", label: "Toggle Sidebar", shortcut: "Alt+M B" },
+  { key: "showSidebar", id: "view.toggleSidebar", label: "Toggle Sidebar" },
   { key: "showHidden", id: "view.toggleHidden", label: "Toggle Hidden Files", shortcut: "Ctrl+H" },
   { key: "showWindowControls", id: "view.toggleWindowControls", label: "Toggle Window Controls" },
   { key: "showAddressBar", id: "view.toggleAddressBar", label: "Toggle Address Bar", shortcut: "Alt+M D" },

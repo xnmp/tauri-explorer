@@ -83,7 +83,6 @@ export function useItemInteractions(deps: ItemInteractionsDeps) {
   return {
     handleDragStart,
     handleDragEnd,
-    trackDragSource: sourceDrag.trackSource,
     handleDragOver: dropTarget.handleDragOver,
     handleDragLeave: dropTarget.handleDragLeave,
     handleDrop: dropTarget.handleDrop,

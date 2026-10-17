@@ -4,7 +4,7 @@
  * of the startup bundle. Panes navigate, sort, select and switch views through
  * the ordinary explorer path; only listing and restore are special.
  */
-import { listTrash, restoreTrashItems, deleteTrashItems } from "$lib/api/trash";
+import { listTrash, restoreTrashItems } from "$lib/api/trash";
 import type { ApiResult } from "$lib/api/common";
 import type { DirectoryListing, FileEntry } from "$lib/domain/file";
 import { affectedBatchPaths, type FileBatchOutcome } from "$lib/domain/file-batch-outcome";
@@ -61,14 +61,6 @@ export function installTrashActions(menu: typeof contextMenuItems): void {
     when: (entries) => entries.length > 0 && entries.every((entry) => entry.trash?.originalPath),
     handler: (entries) => { void restoreFromTrash(entries); },
   }, 0);
-  menu.register({
-    id: "trash.delete",
-    label: "Permanently Delete…",
-    scope: "trash",
-    icon: "M3 4H13M6 4V2H10V4M4 4L5 14H11L12 4M7 6V12M9 6V12",
-    when: (entries) => entries.length > 0 && entries.every((entry) => entry.trash),
-    handler: (entries) => { windowTabsManager.getActiveExplorer()?.startPermanentDelete([...entries]); },
-  }, 1);
   // The external launcher stays reachable, e.g. for Finder's Put Back on macOS.
   menu.register({
     id: "trash.open-system",
@@ -135,23 +127,4 @@ export async function restoreFromTrash(
 /** Double-clicking a trashed item explains how to get it back. */
 export function explainTrashedOpen(entry: FileEntry): void {
   toastStore.show(`Restore ${entry.name} to open it. Right-click it and choose Restore.`, "info");
-}
-
-/** Translate native opaque IDs back to the pane's stable entry paths. */
-export async function deleteFromTrash(entries: readonly FileEntry[]): Promise<ApiResult<FileBatchOutcome>> {
-  if (!entries.every(entry => entry.trash)) return { ok: false, error: "Select only items in the Trash." };
-  const byId = new Map(entries.map(entry => [entry.trash!.id, entry.path]));
-  const result = await deleteTrashItems([...byId.keys()]);
-  if (!result.ok) return result;
-  const path = (id: string) => byId.get(id) ?? id;
-  const failure = (item: { path: string; error: string }) => ({ ...item, path: path(item.path) });
-  const outcome = result.data;
-  return { ...result, data: {
-    ...outcome,
-    succeeded: outcome.succeeded.map(path),
-    failed: outcome.failed.map(failure),
-    ...(outcome.uncertain ? { uncertain: outcome.uncertain.map(failure) } : {}),
-    ...(outcome.unstarted ? { unstarted: outcome.unstarted.map(path) } : {}),
-    ...(outcome.warnings ? { warnings: outcome.warnings.map(failure) } : {}),
-  } };
 }

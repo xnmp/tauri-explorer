@@ -388,7 +388,7 @@ test.describe("Keyboard traversal", () => {
     // spawn a terminal session.
     await openWindow(page);
     await page.locator(".explorer-pane .entry-item").first().click();
-    await page.keyboard.press("Alt+m"); await page.keyboard.press("t");
+    await page.keyboard.press("Control+`");
     const panel = page.locator(".terminal-panel");
     await expect(panel).toBeVisible();
     await expect(panel.locator("textarea.xterm-helper-textarea")).toBeFocused();
@@ -397,7 +397,7 @@ test.describe("Keyboard traversal", () => {
     // The terminal owns Tab: it must not move focus out of the panel.
     await page.keyboard.press("Tab");
     expect((await focusedStop(page))?.region).toBe("terminal");
-    await page.keyboard.press("Alt+m"); await page.keyboard.press("t");
+    await page.keyboard.press("Control+`");
     await expect(panel).toBeHidden();
     // Hiding the panel releases focus (the engine moves it off the hidden
     // input on its next update), and the file list takes the keyboard back.

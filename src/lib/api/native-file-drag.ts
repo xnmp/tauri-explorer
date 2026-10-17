@@ -11,14 +11,9 @@ export function startFileDrag(options: Options, onEvent: (result: CallbackPayloa
 }
 
 export type NativeFileDragEvent = (
-  | { type: "enter" | "drop"; paths: string[]; position: { x: number; y: number }; source: DragData | null; /** Native GTK context is proven to belong to another source. */ externalSource?: boolean }
+  | { type: "enter" | "drop"; paths: string[]; position: { x: number; y: number }; source: DragData | null }
   | { type: "over"; position: { x: number; y: number } }
   | { type: "leave" }
 ) & { copyModifier?: boolean | null; observedAt?: number; observationClock?: string;
   /** Captured at the platform event, independently of renderer completion IPC. */
   completedGestureSequence?: number };
-
-/** Exact HTML5 source retirement also fences a late native adoption command. */
-export function endHtml5FileDrag(source: DragData, reason: "ended" | "owner-disposed"): Promise<void> {
-  return invoke("end_html5_file_drag", { source, reason });
-}

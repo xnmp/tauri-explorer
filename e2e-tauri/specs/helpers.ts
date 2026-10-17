@@ -22,22 +22,6 @@ export function entryPathSelector(
   return `${scope}[data-path="${escaped}"]`;
 }
 
-/** Native sessions share WebKit storage. Establish keyboard defaults in the
- * replacement application, independent of an earlier fixture's overrides. */
-export async function resetNativeKeybindings(): Promise<void> {
-  const token = crypto.randomUUID();
-  await browser.execute((owner: string) => {
-    document.documentElement.dataset.e2eRefreshToken = owner;
-    localStorage.removeItem("explorer-keybindings");
-  }, token);
-  await browser.refresh();
-  await browser.waitUntil(() => browser.execute((owner: string) =>
-    document.documentElement.dataset.e2eRefreshToken !== owner
-      && document.documentElement.dataset.e2eHooksReady === "true"
-      && document.querySelector(".file-list") !== null,
-  token), { timeout: 15_000, timeoutMsg: "default keyboard fixture never became ready" });
-}
-
 /**
  * Wait for the first element of a freshly opened window. Session-loss
  * evidence is recorded on failure (#781); the existence contract and the

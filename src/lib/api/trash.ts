@@ -17,8 +17,3 @@ export async function listTrash(): Promise<ApiResult<TrashWireListing>> {
 export function restoreTrashItems(ids: string[]): Promise<ApiResult<FileBatchOutcome>> {
   return invokeFileMutation<FileBatchOutcome>("restore_trash_items", { ids });
 }
-
-/** Permanently delete exact listed artifacts; never accepts filesystem paths. */
-export function deleteTrashItems(ids: string[]): Promise<ApiResult<FileBatchOutcome>> {
-  return invokeFileMutation<FileBatchOutcome>("delete_trash_items", { ids });
-}

@@ -27,6 +27,7 @@ import { startWindowKeyboard } from "./window-keyboard";
 import { keybindingsStore } from "./keybindings.svelte";
 import { getCommand, executeCommand } from "./commands.svelte";
 import { dialogStore } from "./dialogs.svelte";
+import { terminalPanelStore } from "./terminal.svelte";
 import { windowSizeStore } from "./window-size.svelte";
 import { createFileRecoverySession } from "./file-recovery-session.svelte";
 import { markStartup } from "./startup-timing";
@@ -170,6 +171,7 @@ export function startWindowSession(options: WindowSessionOptions) {
     }
     stops.push(startWindowKeyboard(window, {
       bindings: keybindingsStore, getCommand, executeCommand, dialogs: dialogStore,
+      terminal: { get enabled() { return settingsStore.enableTerminal; }, toggle: () => terminalPanelStore.toggle() },
       toggleDualPane: () => windowTabsManager.toggleDualPane(), getActiveExplorer,
       getActivePaneId: () => windowTabsManager.activePaneId,
     }));

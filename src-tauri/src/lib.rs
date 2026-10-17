@@ -252,8 +252,6 @@ pub fn run_with_process_entry(launch_dir: Option<String>, t_process_entry: std::
     });
     #[cfg(target_os = "linux")]
     let builder = builder.plugin(renderer_owner::termination_recovery());
-    #[cfg(target_os = "linux")]
-    let builder = builder.plugin(native_file_drag::html5_source_lifecycle());
     // Every WebView sharing Windows' data directory must use the exact same
     // environment options. Inject the main window's attach-build arguments
     // into every spawning page so fresh and warm descendants preserve them.
@@ -328,7 +326,6 @@ pub fn run_with_process_entry(launch_dir: Option<String>, t_process_entry: std::
             // Launch info
             get_launch_cwd,
             native_file_drag::start_file_drag,
-            native_file_drag::end_html5_file_drag,
             native_file_drag::native_file_drag_clock,
             get_log_dir,
             system::get_app_info,
@@ -347,7 +344,6 @@ pub fn run_with_process_entry(launch_dir: Option<String>, t_process_entry: std::
             // Trash operations
             file_mutation::delete_entries,
             file_mutation::restore_trash_items,
-            file_mutation::delete_trash_items,
             files::trash_inventory::list_trash,
             files::recovery::commands::file_recovery_list,
             files::recovery::commands::file_recovery_retire_eligible,

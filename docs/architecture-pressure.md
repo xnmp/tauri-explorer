@@ -12,6 +12,12 @@ Passes: [#1205](https://github.com/xnmp/tauri-explorer/issues/1205)
 (first pass, 2026-10-16), [#1219](https://github.com/xnmp/tauri-explorer/issues/1219)
 (incremental pass, 2026-10-17).
 
+Post-pass correction (#1223): #1218 was reverted to restore the startup bundle
+budget after its merge failed CI. References below describe the inspected
+historical snapshot, not the current implementation. In particular, the native
+drag adapter and real row-to-folder transfer coverage from #1218 are absent
+again; re-evaluate that seam when the change is reintroduced.
+
 ## How the first pass inspected history
 
 There was no earlier ledger, so #1205 covered the whole `dev` history
@@ -201,7 +207,7 @@ separately.
   [#1218](https://github.com/xnmp/tauri-explorer/pull/1218) then fixes competing
   GTK source contexts, receiver action negotiation, multi-URI export,
   source-row disposal and delayed URI identity. The
-  [coverage audit](testing/1217-dnd-coverage-audit.md#new-regression-review)
+  [coverage audit in the reverted PR](https://github.com/xnmp/tauri-explorer/pull/1218/files)
   reports 22,683 synthetic tests green on broken source, then the same three
   real native outcome tests red before and green after the fix. Historical
   controls refute attributing onset to #1098; they use today's GTK runtime,

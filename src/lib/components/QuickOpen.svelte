@@ -19,7 +19,6 @@ import { openFile } from "$lib/api/open";
   import FileIcon from "./FileIcon.svelte";
   import Modal from "./Modal.svelte";
   import type { FileEntry } from "$lib/domain/file";
-  import { TRASH_PATH, isTrashRoot } from "$lib/domain/trash";
   import { frecencyStore } from "$lib/state/frecency.svelte";
   import {
     createQuickOpenSearchController,
@@ -88,11 +87,10 @@ import { openFile } from "$lib/api/open";
 
     // Recent files — scored with full fuzzy matching
     for (const entry of recentFilesStore.list) {
-      if (isTrashRoot(entry.path) && (scoreMap.get(directoryKey(TRASH_PATH)) ?? 0) <= 0) continue;
       const key = directoryKey(entry.path);
       if (seen.has(key)) continue;
       seen.add(key);
-      const fuzzy = fuzzyScorePath(lower, isTrashRoot(entry.path) ? "Recycle Bin Trash" : entry.path);
+      const fuzzy = fuzzyScorePath(lower, entry.path);
       if (fuzzy > 0) {
         const frecency = scoreMap.get(key) ?? 0;
         const nameBonus = filenameMatchScore(entry.name, lower);
@@ -108,12 +106,11 @@ import { openFile } from "$lib/api/open";
 
     // Frecency entries (mostly directories the user has navigated to)
     for (const entry of frecencyStore.entries) {
-      if (isTrashRoot(entry.path) && (scoreMap.get(directoryKey(TRASH_PATH)) ?? 0) <= 0) continue;
       const key = directoryKey(entry.path);
       if (seen.has(key)) continue;
       seen.add(key);
-      const name = isTrashRoot(entry.path) ? "Recycle Bin" : basename(entry.path);
-      const fuzzy = fuzzyScorePath(lower, isTrashRoot(entry.path) ? `${name} Trash` : entry.path);
+      const name = basename(entry.path);
+      const fuzzy = fuzzyScorePath(lower, entry.path);
       if (fuzzy > 0) {
         const frecency = scoreMap.get(key) ?? 0;
         const nameBonus = filenameMatchScore(name, lower);
@@ -194,7 +191,7 @@ import { openFile } from "$lib/api/open";
 
   // Show recent files when query is empty
   const recentResults = $derived<SearchResult[]>(
-    recentFilesStore.list.filter(entry => !isTrashRoot(entry.path) || frecencyStore.getScore(entry.path) > 0).map((entry) => ({
+    recentFilesStore.list.map((entry) => ({
       name: entry.name,
       path: entry.path,
       relativePath: entry.path,

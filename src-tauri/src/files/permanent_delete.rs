@@ -16,8 +16,6 @@ use std::path::Path;
 
 #[cfg(target_os = "linux")]
 pub(crate) use unix::prepare_selection;
-#[cfg(unix)]
-pub(crate) use unix::{prepare_exact_selection, PreparedSelection as ExactSelection};
 
 /// Delete one entry now. The returned warning reports completed deletion with
 /// leftover empty staging, which must not become an uncertain failure.
@@ -245,13 +243,7 @@ mod unix {
     /// A native path keeps non-Unicode names exact; there is no receipt key.
     pub(super) fn delete_native(path: &Path) -> Result<TrashSuccess, AppError> {
         let mut preparation = Preparation::new(MAX_PLAN_BYTES);
-        prepare_item(
-            &mut preparation,
-            path,
-            &mut random,
-            &mut birth_of_path,
-            None,
-        )?;
+        prepare_item(&mut preparation, path, &mut random, &mut birth_of_path)?;
         preparation
             .into_items()
             .pop_front()
@@ -280,35 +272,7 @@ mod unix {
     ) -> Result<PreparedSelection, AppError> {
         PreparedSelection::prepare(paths, maximum, |preparation, paths| {
             for path in paths {
-                prepare_item(preparation, Path::new(path), random, birth_of, None)?;
-            }
-            Ok(())
-        })
-    }
-
-    /// Native Trash identities use opaque receipt keys and exact native paths,
-    /// including non-UTF-8 names. Bind the listing's version before staging.
-    pub(crate) fn prepare_exact_selection(
-        keys: Arc<Vec<String>>,
-        entries: &[Result<(PathBuf, EntryVersion), String>],
-    ) -> Result<PreparedSelection, AppError> {
-        PreparedSelection::prepare(keys, MAX_PLAN_BYTES, |preparation, keys| {
-            if keys.len() != entries.len() {
-                return Err(AppError::WorkerFailed(
-                    "Trash deletion selection is misaligned".into(),
-                ));
-            }
-            for entry in entries {
-                match entry {
-                    Ok((path, version)) => prepare_item(
-                        preparation,
-                        path,
-                        &mut random,
-                        &mut birth_of_path,
-                        Some(version),
-                    )?,
-                    Err(error) => preparation.push(Err(AppError::Other(error.clone())))?,
-                }
+                prepare_item(preparation, Path::new(path), random, birth_of)?;
             }
             Ok(())
         })
@@ -319,7 +283,6 @@ mod unix {
         path: &Path,
         random: &mut impl FnMut(&mut [u8]) -> io::Result<()>,
         birth_of: &mut impl FnMut(&Path) -> io::Result<Option<Birth>>,
-        expected: Option<&EntryVersion>,
     ) -> Result<(), AppError> {
         // Birth time is read right after the version, before any claim.
         let (source, birth) = preparation.observe_with(path, |physical, version| {
@@ -331,11 +294,6 @@ mod unix {
         let Some(version) = source.version else {
             return preparation.push(Err(AppError::NotFound(path.display().to_string())));
         };
-        if expected.is_some_and(|expected| *expected != version) {
-            return preparation.push(Err(AppError::Other(
-                "The item in the Trash changed since it was listed; nothing was deleted".into(),
-            )));
-        }
         let (Some(parent), Some(name)) = (source.path.parent(), source.path.file_name()) else {
             return Err(AppError::InvalidPath(path.display().to_string()));
         };
@@ -364,11 +322,6 @@ mod unix {
     }
 
     impl PreparedSelection {
-        /// Consume a refused Trash item so later receipt keys stay aligned.
-        pub(crate) fn skip_next(&mut self, requested: &str) -> Result<(), AppError> {
-            self.run_next(requested, |_| Ok(()))
-        }
-
         pub(crate) fn execute_next(&mut self, requested: &str) -> Result<TrashSuccess, AppError> {
             self.execute_next_with(requested, &mut Native)
         }

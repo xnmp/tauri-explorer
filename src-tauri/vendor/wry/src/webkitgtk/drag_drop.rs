@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: MIT
 
 use std::{
-  cell::{Cell, RefCell, UnsafeCell},
+  cell::{Cell, UnsafeCell},
   path::PathBuf,
   rc::Rc,
 };
@@ -23,11 +23,6 @@ enum DragControllerState {
 struct DragDropController {
   paths: UnsafeCell<Option<Vec<PathBuf>>>,
   state: Cell<DragControllerState>,
-  context: RefCell<Option<gtk::gdk::DragContext>>,
-  source: Cell<crate::drag_drop_snapshot::SourceSnapshot>,
-  inside: Cell<bool>,
-  generation: Cell<u64>,
-  entered_at: Cell<u32>,
   position: Cell<(i32, i32)>,
   handler: Box<dyn Fn(DragDropEvent) -> bool>,
 }
@@ -38,60 +33,16 @@ impl DragDropController {
       handler,
       paths: UnsafeCell::new(None),
       state: Cell::new(DragControllerState::Left),
-      context: RefCell::new(None),
-      source: Cell::new(Default::default()),
-      inside: Cell::new(false),
-      generation: Cell::new(0),
-      entered_at: Cell::new(0),
       position: Cell::new((0, 0)),
     }
   }
 
-  fn store_paths(&self, paths: Vec<PathBuf>, context: &gtk::gdk::DragContext) {
-    self.context.replace(Some(context.clone()));
+  fn store_paths(&self, paths: Vec<PathBuf>) {
     unsafe { *self.paths.get() = Some(paths) };
   }
 
   fn take_paths(&self) -> Option<Vec<PathBuf>> {
     unsafe { &mut *self.paths.get() }.take()
-  }
-
-  fn owns_context(&self, context: &gtk::gdk::DragContext) -> bool {
-    self.context.borrow().as_ref() == Some(context)
-  }
-
-  fn observe_context(&self, context: &gtk::gdk::DragContext, time: u32) {
-    if !self.owns_context(context) || !self.inside.get() {
-      self.context.replace(Some(context.clone()));
-      let window =
-        unsafe { gtk::gdk::ffi::gdk_drag_context_get_source_window(context.as_ptr()) } as usize;
-      self.source.set(crate::drag_drop_snapshot::resolve_source(
-        (window != 0).then_some(window),
-        Some(context.drag_get_source_widget().is_some()),
-      ));
-      unsafe { *self.paths.get() = None };
-      self.leave();
-      self.inside.set(true);
-      self.generation.set(self.generation.get().wrapping_add(1));
-      self.entered_at.set(time);
-    }
-  }
-
-  fn accepts_data(&self, context: &gtk::gdk::DragContext, time: u32) -> bool {
-    self.owns_context(context)
-      && self.inside.get()
-      && (if time == 0 {
-        self.source.get().local != Some(true)
-      } else {
-        time.wrapping_sub(self.entered_at.get()) as i32 >= 0
-      })
-  }
-
-  fn filesystem_paths(&self) -> bool {
-    // SAFETY: GTK invokes this controller only on its owning main thread.
-    unsafe { &*self.paths.get() }
-      .as_ref()
-      .is_some_and(|paths| !paths.is_empty() && paths.iter().all(|path| path.is_absolute()))
   }
 
   fn store_position(&self, position: (i32, i32)) {
@@ -107,7 +58,6 @@ impl DragDropController {
   }
 
   fn leave(&self) {
-    self.inside.set(false);
     self.state.set(DragControllerState::Left);
   }
 
@@ -115,34 +65,11 @@ impl DragDropController {
     self.state.get()
   }
 
-  fn snapshot(
-    &self,
-    webview: &WebView,
-    _: &gtk::gdk::DragContext,
-  ) -> (bool, crate::drag_drop_snapshot::SourceSnapshot) {
+  fn call(&self, webview: &WebView, event: DragDropEvent) -> bool {
     let copying = gtk::gdk::Keymap::for_display(&webview.display()).is_some_and(|keymap| {
       keymap.modifier_state() & gtk::gdk::ModifierType::CONTROL_MASK.bits() != 0
     });
-    (copying, self.source.get())
-  }
-
-  fn call_snapshot(
-    &self,
-    webview: &WebView,
-    event: DragDropEvent,
-    snapshot: (bool, crate::drag_drop_snapshot::SourceSnapshot),
-  ) -> bool {
-    crate::drag_drop_snapshot::dispatch_with_source_snapshot(
-      window_id(webview),
-      snapshot.0,
-      event,
-      snapshot.1,
-      &*self.handler,
-    )
-  }
-
-  fn call(&self, webview: &WebView, event: DragDropEvent, context: &gtk::gdk::DragContext) -> bool {
-    self.call_snapshot(webview, event, self.snapshot(webview, context))
+    crate::drag_drop_snapshot::dispatch(window_id(webview), copying, event, &*self.handler)
   }
 }
 
@@ -158,12 +85,9 @@ pub(crate) fn connect_drag_event(webview: &WebView, handler: Box<dyn Fn(DragDrop
 
   {
     let controller = controller.clone();
-    webview.connect_drag_data_received(move |webview, context, _, _, data, info, time| {
-      if info == 2 && data.length() > 0 && controller.accepts_data(context, time) {
+    webview.connect_drag_data_received(move |webview, _, _, _, data, info, _| {
+      if info == 2 {
         let uris = data.uris();
-        if uris.is_empty() {
-          return;
-        }
         let paths = uris.iter().map(path_buf_from_uri).collect::<Vec<_>>();
         controller.enter();
         controller.call(
@@ -172,31 +96,17 @@ pub(crate) fn connect_drag_event(webview: &WebView, handler: Box<dyn Fn(DragDrop
             paths: paths.clone(),
             position: controller.position.get(),
           },
-          context,
         );
-        controller.store_paths(paths, context);
+        controller.store_paths(paths);
       }
     });
   }
 
   {
     let controller = controller.clone();
-    webview.connect_drag_motion(move |webview, context, x, y, time| {
-      controller.observe_context(context, time);
-      if controller.state() == DragControllerState::Entered && controller.owns_context(context) {
-        let accepted = controller.call(webview, DragDropEvent::Over { position: (x, y) }, context);
-        if accepted && controller.filesystem_paths() {
-          // The host owns this filesystem receiver. Acknowledge Copy only:
-          // internal move intent is separate, and WebKit must not negotiate a
-          // second DOM destination or request deletion from an external app.
-          let action = if context.actions().contains(gtk::gdk::DragAction::COPY) {
-            gtk::gdk::DragAction::COPY
-          } else {
-            gtk::gdk::DragAction::empty()
-          };
-          context.drag_status(action, time);
-          return true;
-        }
+    webview.connect_drag_motion(move |webview, _, x, y, _| {
+      if controller.state() == DragControllerState::Entered {
+        controller.call(webview, DragDropEvent::Over { position: (x, y) });
       } else {
         controller.store_position((x, y));
       }
@@ -207,26 +117,16 @@ pub(crate) fn connect_drag_event(webview: &WebView, handler: Box<dyn Fn(DragDrop
   {
     let controller = controller.clone();
     webview.connect_drag_drop(move |webview, ctx, x, y, time| {
-      let snapshot = controller.snapshot(webview, ctx);
-      if controller.state() == DragControllerState::Leaving && controller.owns_context(ctx) {
+      if controller.state() == DragControllerState::Leaving {
         if let Some(paths) = controller.take_paths() {
-          if paths.iter().all(|path| path.is_absolute())
-            && !ctx.actions().contains(gtk::gdk::DragAction::COPY)
-          {
-            ctx.drop_finish(false, time);
-            controller.leave();
-            controller.call_snapshot(webview, DragDropEvent::Leave, snapshot);
-            return true;
-          }
           ctx.drop_finish(true, time);
           controller.leave();
-          return controller.call_snapshot(
+          return controller.call(
             webview,
             DragDropEvent::Drop {
               paths,
               position: (x, y),
             },
-            snapshot,
           );
         }
       }
@@ -235,26 +135,15 @@ pub(crate) fn connect_drag_event(webview: &WebView, handler: Box<dyn Fn(DragDrop
     });
   }
 
-  webview.connect_drag_leave(move |webview, context, _| {
-    if !controller.owns_context(context) {
-      return;
-    }
-    // GDK Wayland reuses one destination context per seat. Leave is a real
-    // boundary even if its asynchronous URI request never produced Enter.
-    controller.inside.set(false);
+  webview.connect_drag_leave(move |webview, _, _| {
     if controller.state() != DragControllerState::Left {
       controller.leaving();
       let controller = controller.clone();
       let window = window_id(webview);
-      let original_context = context.clone();
-      let original_generation = controller.generation.get();
       let original_view = webview.downgrade();
       let original_window = webview.toplevel().map(|window| window.downgrade());
       gtk::glib::idle_add_local_once(move || {
-        if controller.state() == DragControllerState::Leaving
-          && controller.owns_context(&original_context)
-          && controller.generation.get() == original_generation
-        {
+        if controller.state() == DragControllerState::Leaving {
           controller.leave();
           crate::drag_drop_snapshot::dispatch_deferred(
             window,

@@ -797,7 +797,6 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 
 ### Native qualification tooling
 
-- `e2e-tauri/specs/file-drag.spec.ts`, `e2e-tauri/helpers/native-drag.py` — real GTK file-transfer outcomes driven by XTest after admitting a private Xvfb, D-Bus and XDG environment; validates source removal and destination contents.
 - `e2e-tauri/native-clipboard.ts` — independent OS clipboard probes for cross-window smoke: bounded asynchronous Windows PowerShell reads/external Copy with serializable failure diagnostics; X11 URI-list probes.
 - `e2e-tauri/windows-clipboard-read.ps1` — independent direct CF_HDROP/DragQueryFileW reader, avoiding stalled Shell clipboard cmdlets; real empty/single/multi-file Unicode contracts in `clipboard-cross-window.spec.ts`.
 - `tests/e2e-tauri/native-clipboard.test.ts` — cold-shell completion, direct Win32 command dispatch, timeout diagnostics, output validation and literal-path contracts for the native clipboard probes.
@@ -959,7 +958,6 @@ TraceExplorer's image UI, provider adapters and SQLite journal are maintained in
 - `src-tauri/src/installed_plugins/service_graph_tests.rs` — service graph version, identity, optional dependency and cycle contracts.
 - `src-tauri/src/installed_plugins/service_host.rs` — host lifetime service store and legacy recovery compatibility.
 - `src-tauri/src/native_deadline.rs` — scoped monotonic native lock, queue and RPC budgets.
-- `src-tauri/src/native_file_drag/linux_html5.rs` — adopts WebKitGTK’s original HTML5 drag with shared, exact-source native signal and renderer retirement handling; never starts a competing GTK drag.
 - `src-tauri/src/native_file_drag/wayland_intent.rs` — GNOME Wayland per-gesture source keyboard channel; freezes the first post-grab focus modifier snapshot independently of GTK cache and OS actions.
 - `src-tauri/test_support/wayland_drag_intent_test.rs` — in-process Wayland compositor tests for late Ctrl, post-drop key changes, foreign connection/queue isolation and snapshot lifetime.
 - `src-tauri/src/native_file_drag.rs` — async OS drag start (rejects shortcut sources before export), synchronous platform-completion retirement, sequence-bearing provenance and per-window receiver snapshots emitted before frontend channel reordering.

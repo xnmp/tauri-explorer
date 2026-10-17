@@ -333,7 +333,6 @@
                 data-kind={entry.kind}
                 onclick={() => handleClick(entry)}
                 oncontextmenu={(e) => handleContextMenu(e, entry)}
-                use:fileDrag.trackSource
                 draggable={usesHtml5Drag}
                 ondragstart={usesHtml5Drag ? (e) => handleDragStart(e, entry) : undefined}
                 ondragend={usesHtml5Drag ? handleDragEnd : undefined}

@@ -115,16 +115,13 @@
 {#snippet caret(entry: FileEntry)}
   {@const spec = model.panels.get(entry.path)}
   <!-- A pointer affordance only (as in Details and List): never a tab stop,
-       and its mousedown keeps focus where it was. -->
+       and its mousedown keeps focus where it was. The chevron is the button's
+       ::before, so a folder tile adds one element, not three. -->
   <button class="peek-caret tile-caret" type="button" draggable={false} tabindex="-1"
     class:open={!!spec} class:down={spec && spec.side !== "above"} class:up={spec?.side === "above"}
     aria-expanded={!!spec} aria-label={`${spec ? "Collapse" : "Expand"} ${entry.name}`}
     onmousedown={(event) => event.preventDefault()}
-    onclick={() => toggle(entry.path)}>
-    <svg width="11" height="11" viewBox="0 0 10 10" fill="none" aria-hidden="true">
-      <path d="M3.5 2 6.5 5 3.5 8" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" />
-    </svg>
-  </button>
+    onclick={() => toggle(entry.path)}></button>
 {/snippet}
 
 {#snippet tile(entry: FileEntry, index: number, column: number, mini: boolean)}
@@ -231,6 +228,15 @@
   }
   .tile-caret:hover { border-color: var(--accent); color: var(--text-primary); }
   .tile-caret.open { border-color: var(--accent); color: var(--accent-text); }
-  .tile-caret.down svg { transform: rotate(90deg); }
-  .tile-caret.up svg { transform: rotate(-90deg); }
+  /* Details' chevron (stroke 1.3, round caps) as a mask, as in List. */
+  .tile-caret::before {
+    content: "";
+    width: 11px;
+    height: 11px;
+    background: currentColor;
+    -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 10'%3E%3Cpath d='M3.5 2 6.5 5 3.5 8' fill='none' stroke='black' stroke-width='1.4' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") center / 11px 11px no-repeat;
+    mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 10'%3E%3Cpath d='M3.5 2 6.5 5 3.5 8' fill='none' stroke='black' stroke-width='1.4' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") center / 11px 11px no-repeat;
+  }
+  .tile-caret.down::before { transform: rotate(90deg); }
+  .tile-caret.up::before { transform: rotate(-90deg); }
 </style>

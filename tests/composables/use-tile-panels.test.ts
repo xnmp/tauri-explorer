@@ -192,3 +192,28 @@ describe("useTilePanels grip session", () => {
     mounted.dispose();
   });
 });
+
+describe("useTilePanels cells", () => {
+  beforeEach(() => {
+    vi.stubGlobal("requestAnimationFrame", () => 1);
+    vi.stubGlobal("cancelAnimationFrame", () => {});
+  });
+  afterEach(() => { destroy(); vi.unstubAllGlobals(); });
+
+  it("hands a mounted row the same cells until the layout or the entries change", () => {
+    const mounted = mount([]);
+    const { tiles } = mounted;
+    const [first, second] = tiles.model.groups;
+    const cells = tiles.cells(first);
+    expect(cells.map(cell => cell.entry?.name)).toEqual(["AI Draft Archive", "Archive", "Career", "Codex", "Inbox", "Personal", "Revenue NSW.pdf"]);
+    // VirtualList re-delivers a row's item every scroll frame: same row, same cells.
+    expect(tiles.cells(first)).toBe(cells);
+    expect(tiles.cells(second)).not.toBe(cells);
+    // Opening a folder rebuilds the layout, and with it the cells.
+    mounted.setOpen(["Career"]);
+    const reopened = tiles.cells(tiles.model.groups[0]);
+    expect(reopened).not.toBe(cells);
+    expect(reopened.map(cell => cell.entry?.name)).toEqual(cells.map(cell => cell.entry?.name));
+    mounted.dispose();
+  });
+});

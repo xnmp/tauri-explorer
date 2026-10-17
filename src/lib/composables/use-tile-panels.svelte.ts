@@ -56,6 +56,9 @@ export interface TileGhost {
   readonly firstRow: number;
 }
 
+/** A grid cell: the creation sentinel (entry null) or a top-level entry. */
+export interface TileCell { readonly key: string; readonly index: number | null; readonly entry: FileEntry | null }
+
 /** A row kept fixed on screen across a geometry change. */
 interface Anchor { group: number; top: number; scrollTop: number }
 
@@ -400,12 +403,25 @@ export function useTilePanels(deps: TilePanelsDeps) {
       content: Math.max(0, ...members.map(p => p.contentHeight)),
     };
   }
-  /** One grid row's cells: the creation sentinel (entry null) or a top-level entry. */
-  function cells(group: TileGroup): { key: string; index: number | null; entry: FileEntry | null }[] {
+  /** One grid row's cells, one array per row group for the model's lifetime:
+   * a mounted row re-reads its cells whenever VirtualList hands it its item
+   * again (every scroll frame), and fresh cell objects would update every
+   * mounted tile's props each time (#1240 "mounted slot identity"). */
+  const cellCache = $derived.by(() => {
+    void model;
+    void explorer().displayEntries;
+    return new WeakMap<TileGroup, readonly TileCell[]>();
+  });
+  function cells(group: TileGroup): readonly TileCell[] {
+    const cache = cellCache;
+    const cached = cache.get(group);
+    if (cached) return cached;
     const entries = explorer().displayEntries;
-    return model.items.slice(group.start, group.end).map(item => ({
+    const built = model.items.slice(group.start, group.end).map(item => ({
       key: item.key, index: item.entryIndex, entry: item.entryIndex === null ? null : entries[item.entryIndex] ?? null,
     }));
+    cache.set(group, built);
+    return built;
   }
   /** An open panel's grip: its side, band height and the range a drag may set. */
   function gripRange(path: string) {

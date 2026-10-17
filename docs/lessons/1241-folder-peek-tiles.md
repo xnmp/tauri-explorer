@@ -14,6 +14,20 @@ its own SVG with no cross-item overlay. `getItemHeight` reads the displayed
 geometry, which motion frames replace, so VirtualList's offsets follow every
 frame. Panels virtualize their own rows (window ±1 row, plus a renaming entry).
 
+## Mounted row identity
+
+VirtualList's destructured each item is an object, and Svelte treats an object
+derived as changed every time it is re-delivered, so every mounted row re-reads
+`tiles.cells(group)` on every scroll frame (407 calls for 86 new rows in 30
+frames). Fresh cell objects then updated every mounted tile's props each frame:
+with Folder Peek on and no panel open, plain scrolling cost 31% more renderer
+task time than classic Tiles in the perf sweep. `cells` now returns one array per
+row group for the model's lifetime (a `WeakMap` in a derived keyed by the
+model and entries), which brought it down to +8%. The remainder is the folder
+caret, measured where every tile is a folder. The caret's chevron is a masked
+`::before` like List's. Removing the inline SVG and the shadow did not measurably
+change the cost: it is the per-tile reactive block, not paint.
+
 ## Width and columns
 
 C comes from the classic `autoFillColumns(contentWidth - 16, ...)`, so turning

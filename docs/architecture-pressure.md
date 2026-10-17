@@ -6,11 +6,12 @@ An architecture pass updates this file. When an entry crosses its trigger, the
 pass files at most three `tech-debt` issues (never `ai-ready`; a human chooses
 which debt to work). "Defer" is a valid verdict. Drop entries once they expire.
 
-Covered through: ebd351f3f4149e294fbff621137c124e33e7146b
+Covered through: f3dfe80bc478ec8ea2b884a1c5706dda9e03eb7c
 
 Passes: [#1205](https://github.com/xnmp/tauri-explorer/issues/1205)
 (first pass, 2026-10-16), [#1219](https://github.com/xnmp/tauri-explorer/issues/1219)
-(incremental pass, 2026-10-17).
+(incremental pass, 2026-10-17), [#1251](https://github.com/xnmp/tauri-explorer/issues/1251)
+(incremental pass, 2026-10-18).
 
 ## How the first pass inspected history
 
@@ -76,6 +77,39 @@ crosses its threshold at this boundary, so this pass files **zero** issues.
 Existing [#1137](https://github.com/xnmp/tauri-explorer/issues/1137) remains open
 and owns renderer-workaround retirement; do not duplicate it.
 
+## Incremental inspection (#1251)
+
+Inspected all six commits in
+`ebd351f3f4149e294fbff621137c124e33e7146b..f3dfe80bc478ec8ea2b884a1c5706dda9e03eb7c`,
+the fetched `dev` tip for this pass. Read their changed production boundaries,
+tests, workflow wiring, design/acceptance documents and lessons, plus all six
+PR bodies, comments, reviews and review threads. Only #1220 has a GitHub review;
+all six have no comments or review threads. Independent-review claims in other
+PR bodies are not additional GitHub review records. This boundary excludes the
+ledger update itself and any later base changes.
+
+| Change | Evidence and disposition |
+| --- | --- |
+| [Previous ledger (#1220)](https://github.com/xnmp/tauri-explorer/pull/1220) | Documentation only. Its [approval](https://github.com/xnmp/tauri-explorer/pull/1220#pullrequestreview-5555385780) confirmed local counts and boundaries but could not independently access GitHub discussions/statuses. This pass retrieved those for the current window and checked the carried-forward filing owners. |
+| [Native DnD acceptance and context release (#1227)](https://github.com/xnmp/tauri-explorer/pull/1227) | `linux_html5::end_context` now releases the completed strong GTK context outside the tracker borrow, preserving immutable correlation history. Seven named filesystem/UI outcomes, current-binary provenance, fresh receipts and GTK acknowledgement suppression are enforced inside required Linux smoke. The [acceptance audit](testing/dnd-acceptance.md) and open [#1225](https://github.com/xnmp/tauri-explorer/issues/1225) retain platform, receiver and release-artifact gaps. This is one follow-up lifecycle correction after #1218, not two new identity/completion exceptions. |
+| [Enclosed-tau icon (#1232)](https://github.com/xnmp/tauri-explorer/pull/1232) | Canonical raster, generated platform assets and favicons only; README preserves the existing generator boundary. No source-policy change or pressured seam. |
+| [Open With readiness (#1235)](https://github.com/xnmp/tauri-explorer/pull/1235) | Test-only readiness correction: wait for the actual application button after deliberately delayed catalogue discovery, then retain exact focus and launch outcomes. No new production focus owner. Its release-run residual is the existing Git palette live-update defect [#1236](https://github.com/xnmp/tauri-explorer/issues/1236), not evidence of a peek or DnD ownership regression. |
+| [Release metadata (#1230)](https://github.com/xnmp/tauri-explorer/pull/1230) | Changelog and synchronized versions only. Its publication plan and reported test results do not qualify every hook-free release artifact; broader qualification stays with #1225. |
+| [Details Folder Peek (#1243)](https://github.com/xnmp/tauri-explorer/pull/1243) | Per-pane membership/listing resources extend `pane-watch` through lazy `pane-peek-watch`; first reads go directly through `pane-refresh`, notifications through `refresh-manager`. The 16-lease cap includes pending acquisition and failed retirement. Real-watcher tests cover child create/delete, nested Git index changes, pruning, overflow fan-out and collapse/reopen identity. Pure operation-root reduction and deepest-first rename handle cross-level selections. Lazy renderers retain FileList focus ownership. These extend ADR 0014, ADR 0015 and ADR 0016 rather than introduce a fourth refresh gate. Residuals: per-directory Git-status work is not yet deduplicated by repository root; Windows/UNC evidence is domain-only. List/Tiles peeks and spring loading are later phases, not regressions in this Details-only phase. |
+
+### Filing decision
+
+Rechecked all open/closed `tech-debt` filings and related drag/peek titles.
+#1206 remains the sole labelled filing, closed by #1211. No active entry has
+expired or crossed its intervention threshold, so this pass files **zero**
+issues and retains five entries. Merge the new peek pressure into file-list
+ownership below rather than add an overlapping watcher entry. Keep existing
+[#1225](https://github.com/xnmp/tauri-explorer/issues/1225) for DnD qualification,
+[#1137](https://github.com/xnmp/tauri-explorer/issues/1137) for renderer retirement,
+and [#1228](https://github.com/xnmp/tauri-explorer/issues/1228) for the native Trash
+test's stale locator; none warrants a duplicate architecture filing. No labels
+were changed. Existing expiries remain in force rather than restarting the clock.
+
 ## Entries
 
 Undated historical churn counts below are the first pass's snapshots at its
@@ -85,7 +119,8 @@ separately.
 ### Native command surface (registration, mock and IPC wrapper) — defer
 
 - **Seam:** each Tauri command is registered in `src-tauri/src/lib.rs`, wrapped
-  in `src/lib/api/*`, and faked in `src/lib/api/mock-invoke.ts` (3,212 lines)
+  in `src/lib/api/*`, and faked in `src/lib/api/mock-invoke.ts` (3,225 lines
+  at the #1251 boundary)
   for browser E2E.
 - **Evidence:** `lib.rs` (10) and `mock-invoke.ts` (9) are the next most-fixed
   files since 2026-08-17. Across the three periods above they had 25 / 17 / 10
@@ -98,6 +133,9 @@ separately.
   [#1218](https://github.com/xnmp/tauri-explorer/pull/1218) wires
   `delete_trash_items` and `end_html5_file_drag` through these same surfaces;
   these are feature additions, with no reported parity escape.
+  Since that window, [#1243](https://github.com/xnmp/tauri-explorer/pull/1243)
+  adds controllable child listings and subtree rename fixtures, but no native
+  commands or parity escape. The dispatcher grew by 13 lines.
 - **Trend:** the touch rate is rising with feature work; the drift-fix rate has
   fallen to zero since #917. The changes to `lib.rs` are wiring, not defects.
   The file remains below the 4,000-line trigger.
@@ -124,6 +162,8 @@ separately.
   window. The GTK source fix in #1218 concerns drag transport, not a missed
   environment scrub; [#1137](https://github.com/xnmp/tauri-explorer/issues/1137)
   remains open, so the early expiry has not fired.
+  The #1251 range likewise leaves renderer policy and child-environment
+  scrub sites unchanged; #1227's GTK interposer is test-only transport evidence.
 - **Trend:** new (all since 2026-10-11) and driven by the upstream WebKitGTK
   2.52 releases.
 - **Candidate intervention:** a single `process_ext` constructor for user-facing
@@ -148,6 +188,9 @@ separately.
   restore identities and #1218's purge uses the existing admission and prepared
   permanent-delete seams; neither bypasses the checkpoint engine. The five
   named ADRs are still Proposed in the ADR index.
+  The #1251 range also leaves `files/recovery/` untouched. #1243 reduces
+  recursive selections before existing batch APIs; it adds no recovery engine
+  or admission bypass.
 - **Trend:** falling since the 2026-10-01 consolidation.
 - **Candidate intervention:** none yet. First accept or revise the Proposed
   ADRs, so that later fixes have a written contract to check against.
@@ -174,10 +217,26 @@ separately.
   FileList 3, FileItem 1, MillerColumns 1, TilesView 1 and explorer 5
   (`git log <covered-tip> --since=2026-09-17 --no-merges --format='%s' -- <file>`,
   count subjects beginning `fix:`).
+  At the #1251 boundary, the same counts since 2026-09-18 are still
+  1 / 3 / 1 / 1 / 1 / 5, respectively. The large
+  [#1243](https://github.com/xnmp/tauri-explorer/pull/1243) feature adds child
+  publication, watch-cap/fallback and lazy-focus seams; its intra-PR corrections
+  are not separate deployed follow-up defects. `folder-peek-session` owns
+  listing identities, `pane-peek-watch` extends observation ownership, and
+  `pane-refresh` partitions selection reconciliation by actual parent. The
+  native `folder-peek-watch.spec.ts` and unit cap/late-acquisition contracts
+  exercise those boundaries. Keep this pressure in this entry, not a second
+  refresh/watch ledger item. The PR explicitly leaves per-repository Git-status
+  deduplication and native Windows/UNC qualification unresolved.
 - **Trend:** below the existing trigger in every file; retain the falling
-  first-pass assessment, but one day's incremental window cannot establish a
-  new long-term trend.
-- **Candidate intervention:** none; the ADRs above are the intervention.
+  first-pass assessment, but the two short incremental windows cannot establish
+  a new long-term trend. Peek adds ownership complexity without a deployed
+  recurrence yet; observe it as subsequent view phases land.
+- **Candidate intervention:** retain the existing ADR owners. If follow-up
+  fixes repeat child/root publication or lease-cap exceptions, extend the
+  existing `RefreshTarget` and pane-owned listing/observation seam rather than
+  add a component-local watcher or general tree framework. #1243 already uses
+  these seams to share initial/notification reads and mutation publication.
 - **Reconsideration trigger:** more than 6 `fix:` commits to any one of these
   files within 30 days.
 - **Expiry:** 2027-01-16.
@@ -206,11 +265,25 @@ separately.
   real native outcome tests red before and green after the fix. Historical
   controls refute attributing onset to #1098; they use today's GTK runtime,
   not historical platform builds.
+  [#1227](https://github.com/xnmp/tauri-explorer/pull/1227) finds a concrete
+  lifetime defect: completed strong GTK contexts kept the cancellation window
+  alive. It releases the context outside the shared borrow without adding
+  identity inference; the real Escape/retry contract rejects the old behavior.
+  The [new acceptance audit](testing/dnd-acceptance.md) records the earlier
+  zero-DnD green rollback, seven required run-bound outcomes and transport
+  negative control. #1243 accepts row `dragenter` as well as `dragover` and
+  reduces recursive sources through domain policy; neither creates another
+  native identity/completion owner.
 - **Trend:** repeated native ownership/intent changes in October; #1218 adds
   a dedicated adapter and real GTK X11 transfer coverage, so observe that
   intervention before proposing another extraction. Physical GNOME Wayland,
   cross-window and external-application delivery remain unqualified by those
   three GUI cases; Rust/protocol contracts cover narrower interleavings.
+  #1227 expands the required GTK X11 gate to seven outcomes. It is one new
+  lifecycle correction, not the two further identity/exception fixes in the
+  trigger. Wider acceptance remains open in
+  [#1225](https://github.com/xnmp/tauri-explorer/issues/1225); do not convert a
+  qualification gap into an unobserved stale-Move defect.
 - **Candidate intervention:** extend the existing exact-session lifecycle and
   pinned `SourceSnapshot` boundary if another transport needs it. The smallest
   further abstraction would be a typed source lease (adopt/bind/complete) shared

@@ -195,8 +195,15 @@ function createExplorerState(seed?: ExplorerSeed, isFileListingSurface: () => bo
     return sortEntries(filtered, "name", true);
   });
 
-  const capability = $derived(isFileListingSurface() && fileViewPresentation.resolution.kind === "builtin"
-    && !isVirtualPath(coreState.currentPath) && !providerFor(coreState.currentPath) ? peekCapability(coreState.viewMode) : "none");
+  // Off (setting, surface, location or view) is one state: flat entries and no
+  // peek resources, while remembered membership survives for a later "on".
+  const capability = $derived(peekCapability({
+    enabled: settingsStore.folderPeek,
+    fileListing: isFileListingSurface(),
+    builtinView: fileViewPresentation.resolution.kind === "builtin",
+    plainLocation: !isVirtualPath(coreState.currentPath) && !providerFor(coreState.currentPath),
+    mode: coreState.viewMode,
+  }));
   const peekTree = $derived(peek.policies?.flattenPeekEntries({
     root: coreState.currentPath, entries: ownDisplayEntries, expanded: peek.expanded,
     listing: path => peek.listing(path)?.entries,
@@ -220,7 +227,10 @@ function createExplorerState(seed?: ExplorerSeed, isFileListingSurface: () => bo
     }
   }
   let peekIntent = 0;
+  // A function, not a narrowed read: capability is live across the lazy load.
+  const peeksAllowed = () => capability !== "none";
   async function togglePeek(path: string) {
+    if (!peeksAllowed()) return;
     if (!peek.policies) {
       const generation = navGeneration;
       const intent = peekIntent;
@@ -228,7 +238,7 @@ function createExplorerState(seed?: ExplorerSeed, isFileListingSurface: () => bo
       if (destroyed || generation !== navGeneration || intent !== peekIntent) return;
     }
     const entry = displayEntries.find(e => e.path === path);
-    if (capability === "none" || entry?.kind !== "directory" || isVirtualPath(path) || providerFor(path)) return;
+    if (!peeksAllowed() || entry?.kind !== "directory" || isVirtualPath(path) || providerFor(path)) return;
     if (peek.watchFactory) watch.enablePeeks(peek.watchFactory);
     const before = peekTree;
     peek.toggle(path);
@@ -1030,8 +1040,10 @@ function createExplorerState(seed?: ExplorerSeed, isFileListingSurface: () => bo
     get peekCommandTarget() { return capability !== "none" ? resolvePeekCommandTarget(focusedEntry, peekTree.meta) : null; },
     get canEscapePeek() { return capability !== "none" && resolvePeekEscape(focusedEntry, peekTree.meta) !== null; },
     escapeSelectionOrPeek() {
+      // A pending lazy renderer has no mounted editor to own its Escape.
       if (creationSession) { cancelInlineNewFolder(); return; }
-      if (coreState.selectedPaths.size) { clearSelection(); return; }
+      // Without peeks Escape is exactly the classic Clear Selection.
+      if (coreState.selectedPaths.size || capability === "none") { clearSelection(); return; }
       const parent = resolvePeekEscape(focusedEntry, peekTree.meta);
       if (!parent) return;
       togglePeek(parent);

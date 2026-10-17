@@ -2,7 +2,21 @@
 import type { FileEntry, ViewMode } from "./file";
 import type { PeekMeta, PeekTree, PeekRows, PeekRow } from "./folder-peek";
 export type PeekCapability = "none" | "tree" | "top-level";
-export const peekCapability = (mode: ViewMode): PeekCapability => mode === "details" ? "tree" : "none";
+/** Everything that decides whether a pane may peek. Each "no" — the Folder Peek
+ * setting off, a git-graph/plugin surface, a virtual or provider location, or a
+ * view without peek support — is the same capability "none": no carets, no peek
+ * resources, flat entries. Remembered membership is retained by the caller. */
+export interface PeekSurface {
+  enabled: boolean;
+  fileListing: boolean;
+  builtinView: boolean;
+  plainLocation: boolean;
+  mode: ViewMode;
+}
+export function peekCapability(surface: PeekSurface): PeekCapability {
+  const { enabled, fileListing, builtinView, plainLocation, mode } = surface;
+  return enabled && fileListing && builtinView && plainLocation && mode === "details" ? "tree" : "none";
+}
 
 export function flatPeekEntries(root: string, entries: readonly FileEntry[]): PeekTree {
   return {

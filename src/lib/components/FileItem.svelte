@@ -36,12 +36,14 @@
     depth?: number;
     parentPath?: string;
     expanded?: boolean;
+    /** The pane renders a peek tree; false is the classic flat Details row. */
+    peek?: boolean;
     canPeek?: boolean;
     groups?: readonly PeekGroup[];
     rowIndex?: number;
   }
 
-  let { entry, index, onclick, ondblclick, selected = false, explorer, depth = 0, parentPath = explorer.currentPath, expanded = false, canPeek = false, groups = [], rowIndex = 0 }: Props = $props();
+  let { entry, index, onclick, ondblclick, selected = false, explorer, depth = 0, parentPath = explorer.currentPath, expanded = false, peek = false, canPeek = false, groups = [], rowIndex = 0 }: Props = $props();
 
   const paneId = getPaneIdContext();
 
@@ -121,7 +123,8 @@
   class="file-item entry-item"
   data-path={entry.path}
   data-index={index}
-  style:--peek-indent={`${depth * 22}px`}
+  style:--peek-indent={peek ? `${depth * 22}px` : undefined}
+  class:peek-row={peek}
   aria-colindex={1}
   class:directory={entry.kind === "directory"}
   class:hidden-entry={entry.name.startsWith(".") || isManuallyHidden}
@@ -156,8 +159,9 @@
   onmousedown={usesPointerDrag ? (e) => { if (isPeekControl(e)) return; e.stopPropagation(); pointerDrag!.handlePointerDown(e, entry, selected); } : undefined}
 >
   <!-- Name column -->
-  <PeekGuides {groups} row={rowIndex} />
-  <div class="name-cell" style:padding-left={`${depth * 22}px`}>
+  {#if peek}<PeekGuides {groups} row={rowIndex} />{/if}
+  <div class="name-cell" style:padding-left={peek ? `${depth * 22}px` : undefined}>
+    {#if peek}
     <span class="peek-caret-slot">
       {#if canPeek}
         <button class="peek-caret" type="button" draggable={false}
@@ -173,6 +177,7 @@
         </button>
       {/if}
     </span>
+    {/if}
     <div class="icon" data-drag-icon style:--file-icon-color={entry.kind !== "directory" ? getFileIconColor(entry) : undefined} aria-hidden="true">
       <FileIcon {entry} size="small" />
     </div>
@@ -241,7 +246,7 @@
   .peek-caret { display: flex; align-items: center; justify-content: center; width: 22px; height: 24px; padding: 0; border: 0; background: transparent; color: var(--text-secondary); cursor: pointer; border-radius: var(--radius-sm); }
   .peek-caret:hover { background: var(--subtle-fill-tertiary); color: var(--text-primary); }
   .peek-caret:focus-visible { outline: 2px solid var(--focus-stroke-outer); outline-offset: -2px; }
-  .file-item.selected::after { content: ""; position: absolute; left: calc(16px + var(--peek-indent)); top: 0; bottom: 0; width: 3px; background: var(--accent); pointer-events: none; }
+  .file-item.peek-row.selected::after { content: ""; position: absolute; left: calc(16px + var(--peek-indent)); top: 0; bottom: 0; width: 3px; background: var(--accent); pointer-events: none; }
 
   .file-item {
     display: grid;
@@ -279,8 +284,14 @@
   .file-item.selected {
     background: color-mix(in srgb, var(--accent) 8%, transparent);
     border-color: transparent;
-
+    border-left-color: var(--accent);
     border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+  }
+
+  /* The tree's bar sits at the row's indent instead. Same specificity as the
+     rule above (later wins); FileList's keyboard focus edge still overrides. */
+  .file-item.peek-row:where(.selected) {
+    border-left-color: transparent;
   }
 
   .file-item.selected:hover {

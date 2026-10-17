@@ -1,8 +1,5 @@
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import * as client from "svelte/internal/client";
-import { compileModule } from "svelte/compiler";
-import ts from "typescript";
-import { readFileSync } from "node:fs";
 const flushSync = () => client.flush();
 import type { FileEntry } from "$lib/domain/file";
 import type { DirectoryListingResult } from "$lib/state/directory-listing";
@@ -12,6 +9,7 @@ vi.mock("$lib/api/files", async original => ({ ...await original<typeof import("
 import { type ExplorerInstance } from "$lib/state/explorer.svelte";
 import { cancelPendingRefreshes } from "$lib/state/refresh-manager";
 import { settingsStore } from "$lib/state/settings.svelte";
+import { compileClient, compileExplorer } from "./folder-peek-harness";
 
 const entry = (path: string, kind: FileEntry["kind"] = "directory"): FileEntry => ({ path, name: path.split("/").at(-1)!, kind, size: 1, modified: "" });
 const a = entry("/r/a"), b = entry("/r/b"), child = entry("/r/a/child", "file"), nested = entry("/r/a/nested");
@@ -19,32 +17,10 @@ const trees: Record<string, FileEntry[]> = { "/r": [a, b], [a.path]: [child, nes
 let createExplorerState: typeof import("$lib/state/explorer.svelte").createExplorerState;
 const panes: ExplorerInstance[] = [];
 const effects: (() => void)[] = [];
-async function compileClient(modulePath: string, overrides: Record<string, unknown> = {}): Promise<Record<string, unknown>> {
-  const filename = new URL("../../src/lib/state/" + modulePath + ".ts", import.meta.url);
-  const javascript = ts.transpileModule(readFileSync(filename, "utf8"), { compilerOptions: { target: ts.ScriptTarget.ESNext, module: ts.ModuleKind.ESNext } }).outputText;
-  const imports: Record<string, unknown> = {};
-  for (const [, specifier] of javascript.matchAll(/import[^;]+from ["']([^"']+)["'];/g)) {
-    const target = specifier.startsWith("$lib/") ? new URL("../../src/lib/" + specifier.slice(5), import.meta.url).pathname
-      : specifier.startsWith(".") ? new URL(specifier, filename).pathname : specifier;
-    imports[specifier] = overrides[specifier] ?? (specifier === "svelte" ? { untrack: client.untrack } : await import(/* @vite-ignore */ target));
-  }
-  for (const [, specifier] of javascript.matchAll(/import\(["']([^"']+)["']\)/g)) {
-    const target = specifier.startsWith(".") ? new URL(specifier, filename).pathname : specifier;
-    imports[specifier] = overrides[specifier] ?? await import(/* @vite-ignore */ target);
-  }
-  const compiled = compileModule(javascript, { generate: "client" }).js.code
-    .replace("import * as $ from 'svelte/internal/client';", "")
-    .replace(/import (\{[^}]+\}|\* as \w+) from ["']([^"']+)["'];/g, (_, names, specifier) => names.startsWith("{") ? `const ${names.replaceAll(" as ", ": ")} = imports[${JSON.stringify(specifier)}];` : `const ${names.slice(5)} = imports[${JSON.stringify(specifier)}];`)
-    .replace(/export\s+\{[^}]*\}[^;]*;/g, "").replaceAll("export ", "").replace(/import\(["']([^"']+)["']\)/g, (_, specifier) => `Promise.resolve(imports[${JSON.stringify(specifier)}])`);
-  return new Function("$", "imports", compiled + `\nreturn { ${modulePath === "folder-peek-session.svelte" ? "createFolderPeekSession" : modulePath === "folder-peek.svelte" ? "createFolderPeekState" : "createExplorerState"} };`)(client, imports);
-}
-
 const create = (entries: FileEntry[] = [a, b]) => { let pane!: ExplorerInstance; effects.push(client.effect_root(() => { pane = createExplorerState({ currentPath: "/r", entries, sortBy: "name", sortAscending: true, viewMode: "details" }); client.render_effect(() => { pane.displayEntries; pane.detailRows; }); })); panes.push(pane); return pane; };
 async function settle(ms = 200) { flushSync(); await vi.advanceTimersByTimeAsync(ms); flushSync(); }
 beforeEach(async () => {
-  const session = await compileClient("folder-peek-session.svelte");
-  const peek = await compileClient("folder-peek.svelte", { "./folder-peek-session.svelte": session });
-  createExplorerState = (await compileClient("explorer.svelte", { "./folder-peek.svelte": peek })).createExplorerState as typeof createExplorerState;
+  createExplorerState = await compileExplorer();
   vi.useFakeTimers(); loads.length = 0; settingsStore.reset(); source.current = async path => ({ ok: true, path, entries: trees[path] ?? [] }); });
 afterEach(async () => { await Promise.all(panes.splice(0).map(p => p.destroy())); cancelPendingRefreshes(); vi.useRealTimers(); settingsStore.reset(); effects.splice(0).forEach(dispose => dispose()); });
 it("persists membership through navigation/back/view switches, stays pane-local, and drops invisible selection", async () => {

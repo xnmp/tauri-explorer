@@ -58,9 +58,15 @@ describe("folder peek preorder and policies", () => {
     expect(expanded.has("/r/0")).toBe(false);
     expect(choosePeekWatches([...expanded.keys()], expanded)).toEqual(Array.from({ length: 16 }, (_, i) => `/r/${500 - i}`));
   });
+  it.each([["setting off", { enabled: false }], ["git graph", { fileListing: false }], ["plugin view", { builtinView: false }], ["virtual location", { plainLocation: false }]] as const)(
+    "treats %s exactly like an unsupported view", (_label, change) => {
+      expect(peekCapability({ enabled: true, fileListing: true, builtinView: true, plainLocation: true, mode: "details", ...change })).toBe("none");
+    });
   it("disables resources for unsupported views and resolves commands and Escape", () => {
-    expect(peekCapability("list")).toBe("none");
-    expect(peekCapability("tiles")).toBe("none");
+    const surface = { enabled: true, fileListing: true, builtinView: true, plainLocation: true, mode: "details" as const };
+    expect(peekCapability(surface)).toBe("tree");
+    expect(peekCapability({ ...surface, mode: "list" })).toBe("none");
+    expect(peekCapability({ ...surface, mode: "tiles" })).toBe("none");
     const tree = flatten();
     expect(resolvePeekCommandTarget(file, tree.meta)).toBe(nested.path);
     expect(resolvePeekCommandTarget(entry("/r/f", "file"), tree.meta)).toBeNull();

@@ -3,7 +3,7 @@ import type { FileEntry } from "./file";
 import { flatPeekEntries } from "./folder-peek-flat";
 import type { PeekCapability } from "./folder-peek-flat";
 export { peekCapability, resolvePeekCommandTarget, resolvePeekEscape, entryIndicesForRows } from "./folder-peek-flat";
-export type { PeekCapability } from "./folder-peek-flat";
+export type { PeekCapability, PeekSurface } from "./folder-peek-flat";
 import { pathComparison } from "./path";
 
 export type ExpandedPaths = ReadonlyMap<string, number>;

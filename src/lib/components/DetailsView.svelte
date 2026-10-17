@@ -208,7 +208,7 @@
   {/if}
 
   <VirtualList class="file-rows"
-    role="treegrid" aria-label="Files" aria-multiselectable={true}
+    role={explorer.peekEnabled ? "treegrid" : "grid"} aria-label="Files" aria-multiselectable={true}
     aria-rowcount={listItems.length} aria-colcount={1}
     tabindex={fallbackTabStop ? 0 : -1}
     bind:containsIndex={rowContainsIndex}
@@ -221,9 +221,9 @@
   >
     {#snippet children(row, index)}
       <div role="row" aria-rowindex={index + 1}
-        aria-level={row.kind === "entry" ? row.depth + 1 : undefined}
+        aria-level={row.kind === "entry" && explorer.peekEnabled ? row.depth + 1 : undefined}
         aria-expanded={row.kind === "entry" && explorer.peekEnabled && row.entry.kind === "directory" ? row.expanded : undefined}
-        aria-selected={row.kind === "entry" ? explorer.isSelected(row.entry) : undefined}>
+        aria-selected={row.kind === "entry" && explorer.peekEnabled ? explorer.isSelected(row.entry) : undefined}>
       {#if row.kind === "create"}
         <div role="gridcell"><InlineNewFolder {explorer} variant="details" /></div>
       {:else if row.kind === "peek-state"}
@@ -234,7 +234,7 @@
       {:else}
         <FileItem index={row.entryIndex} entry={row.entry} {explorer}
           depth={row.depth} parentPath={row.parentPath} expanded={row.expanded}
-          canPeek={explorer.peekEnabled && row.entry.kind === "directory"}
+          peek={explorer.peekEnabled} canPeek={explorer.peekEnabled && row.entry.kind === "directory"}
           groups={explorer.detailRows.groups} rowIndex={index}
           onclick={(event) => onitemclick(row.entry, event)}
           ondblclick={() => onitemdblclick(row.entry)} selected={explorer.isSelected(row.entry)} />
